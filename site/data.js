@@ -92,12 +92,21 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
   }
 
   // ---------------------------------------------------------------------------
-  // Authed fetch (+ 401/403 retry through a silent token refresh)
+  // Authed fetch (+ one 401/403 retry through a silent token refresh)
   // ---------------------------------------------------------------------------
-  async function fetchAuthed(url) {
+  // The one place the retry policy lives. OneLake answers 401/403 once the token
+  // expires (~1h); auth.refresh() invalidates it and renews silently, then we replay
+  // the request once. If renewal fails, the original response is returned so the
+  // caller reports the real status.
+  async function authedFetch(url) {
     const go = () => fetch(url, { headers: auth.getHeaders() });
-    let r = await go();
-    if (r.status === 401 || r.status === 403) { await auth.refresh(); r = await go(); }
+    const r = await go();
+    if (r.status !== 401 && r.status !== 403) return r;
+    return (await auth.refresh()) ? go() : r;
+  }
+
+  async function fetchAuthed(url) {
+    const r = await authedFetch(url);
     if (!r.ok) throw new Error(`HTTP ${r.status} for …${String(url).slice(-72)}`);
     return new Uint8Array(await r.arrayBuffer());
   }
@@ -115,9 +124,7 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
       u.searchParams.set("recursive", String(recursive));
       u.searchParams.set("directory", strip(directory));
       if (cont) u.searchParams.set("continuation", cont);
-      const go = () => fetch(u.toString(), { headers: auth.getHeaders() });
-      let r = await go();
-      if (r.status === 401 || r.status === 403) { await auth.refresh(); r = await go(); }
+      const r = await authedFetch(u.toString());
       if (r.status === 404) return out;           // directory doesn't exist
       if (!r.ok) throw new Error(`list HTTP ${r.status} for ${strip(directory)}`);
       const j = await r.json().catch(() => ({}));

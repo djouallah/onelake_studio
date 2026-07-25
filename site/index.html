@@ -142,8 +142,8 @@
 
   <!-- COOP/COEP shim so DuckDB-WASM can use multiple threads (falls back to single-threaded). -->
   <script src="coi-serviceworker.js"></script>
-  <!-- config.js: Rayfin serves this with your managed clientId/tenantId in Fabric.
-       Locally, copy config.example.js -> config.js. If absent, the app runs no-auth. -->
+  <!-- config.js: tracked in git; holds the Entra SPA clientId/tenantId (public
+       identifiers, no secret). Missing or blank -> the app says so instead of 401-ing. -->
   <script src="config.js"></script>
   <script type="module" src="app.js"></script>
 </body>

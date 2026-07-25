@@ -3,10 +3,11 @@
 A **serverless, in-browser** tool to run read-only SQL against **any Apache Iceberg table in OneLake**.
 You type a lakehouse path — `workspace/lakehouse.Lakehouse` — the app lists that lakehouse's Iceberg
 tables, lets you **preview** any of them, and run **DuckDB SQL** directly in your browser. No backend,
-no data copied to a server, and **no Entra app registration** when deployed to Microsoft Fabric via Rayfin.
+no data copied to a server, and **nothing for your users to register** — they sign in with their own
+Entra identity and see exactly what they already have access to.
 
 It's built by generalizing two references:
-- [rayfin-duckdb-wasm](https://github.com/djouallah/rayfin-duckdb-wasm) — Rayfin static hosting on Fabric, DuckDB-WASM, config-injected MSAL auth.
+- [rayfin-duckdb-wasm](https://github.com/djouallah/rayfin-duckdb-wasm) — Rayfin static hosting on Fabric, DuckDB-WASM, MSAL auth.
 - [dbt_fabric_python_iceberg dashboard](https://github.com/djouallah/dbt_fabric_python_iceberg/blob/main/dashboard/index.html) — reading Iceberg (`read_avro` manifests → `read_parquet` data files) in DuckDB-WASM.
 
 ## How it works
@@ -26,37 +27,72 @@ preview/query → read-only SQL in your browser → results table + CSV export
 Everything runs client-side. Data files are fetched with your token and read by DuckDB-WASM; the table
 size you can query is bounded by your browser's memory.
 
-## Deploy to Fabric (Rayfin)
+## Auth: one registration, none for your users
 
-No app registration needed — Rayfin's managed auth (`services.auth.fabric.enabled` in
-[`rayfin/rayfin.yml`](rayfin/rayfin.yml)) provisions the Entra app and injects `clientId`/`tenantId`
-into `window.RAYFIN_WASM_CONFIG` at serve time; you sign in with your own Entra identity and get a
-OneLake (`storage.azure.com`) token.
+Reading OneLake from the browser needs an Entra access token for
+`https://storage.azure.com/user_impersonation`. **Rayfin cannot supply that token.** Its Fabric auth
+(`services.auth.fabric.enabled`) signs the user in through the Fabric portal and returns an *opaque
+Rayfin session* for Rayfin's own Data API — the SDK deliberately never exposes an Entra access token
+to application code. Static hosting also serves `dist/` verbatim; nothing is injected at serve time.
+
+So the app uses its own Entra **SPA public client** (PKCE, no secret), registered **once by whoever
+publishes the app**. It is **multi-tenant**: any work/school account signs in against its own
+directory and reads OneLake with its own permissions. Users register nothing — they click *Sign in*,
+accept a one-time consent prompt, and that's it.
+
+The registration is already made and its `clientId` is committed in [`site/config.js`](site/config.js)
+with `authority: "organizations"` (multi-tenant). That's public by design — MSAL puts it in the
+sign-in URL — and committing it means a fresh clone deploys a working app rather than a silently
+unauthenticated one.
+
+### Consent
+
+First sign-in from a tenant other than the app's home tenant shows **"OneLake Iceberg Viewer wants to
+access Azure Storage as you"** — one click, per user. To remove it for a whole tenant, an Entra admin
+there opens once:
+
+```
+https://login.microsoftonline.com/organizations/adminconsent?client_id=cbc29592-5f49-45ac-8a69-ca6d7030ab74
+```
+
+Tenants that disable user consent for unverified apps *require* that URL; nobody there can sign in
+until an admin runs it.
+
+### If you re-register or re-deploy
+
+The hosting origin must be a **Single-page application** redirect URI on the registration — the
+platform type matters, a "Web" or "Mobile & desktop" redirect fails from browser JS with
+`AADSTS9002326`. Currently registered (bare origins, no trailing slash):
+
+- `https://still-hawk-86bc044b26-westeurope.webapp.fabricapps.net`
+- `http://localhost:5173`
+
+If the Fabric item is recreated the hosting URL changes, and the new origin has to be added there.
+The only API permission needed is **Azure Storage → Delegated → `user_impersonation`**; no client
+secret, and "Allow public client flows" stays off.
+
+## Deploy to Fabric (Rayfin)
 
 ```bash
 npm install
 npx rayfin up
 ```
 
-After the first deploy, copy the printed webapp URL into `allowedRedirectUris` in `rayfin/rayfin.yml`
-and run `npx rayfin up` again.
+After the first deploy, copy the printed webapp URL into `allowedRedirectUris` in
+[`rayfin/rayfin.yml`](rayfin/rayfin.yml), run `npx rayfin up` again, and add the same URL as an SPA
+redirect URI on the Entra app (step 1 above).
 
 > **Open it standalone, not inside the Fabric portal iframe.** The Microsoft sign-in is blocked in the
 > embedded frame; the app detects this and shows an "Open in new tab" prompt.
 
 ## Local development
 
-There's no Rayfin host on `localhost` to inject config, so register a throwaway Entra **SPA** app
-(public client) with redirect URI `http://localhost:5173` and the delegated permission
-**Azure Storage → user_impersonation**, then:
-
 ```bash
-cp site/config.example.js site/config.js   # fill in clientId + tenantId
-# serve the site/ folder over http://localhost:5173 with any static server, e.g.
 npx serve site -l 5173
 ```
 
-`site/config.js` is gitignored.
+Same `site/config.js`, so nothing to fill in — `http://localhost:5173` is already an SPA redirect URI
+on the registration.
 
 ## Usage
 
@@ -80,10 +116,10 @@ npx serve site -l 5173
 site/
   index.html            UI shell (lakehouse bar, table sidebar, SQL editor, results)
   app.js                DOM wiring + auth gate
-  auth.js               MSAL provider (config-injected, storage scope, redirect flow)
+  auth.js               MSAL provider (storage scope, redirect flow, silent renewal)
   data.js               Iceberg engine on DuckDB-WASM (list/resolve/manifest/load/query)
   coi-serviceworker.js  COOP/COEP shim for DuckDB multithreading
-  config.example.js     local-dev config template (copy to config.js)
+  config.js             clientId + authority (tracked — public identifiers, no secret)
 build.mjs               static build: copies site/ -> dist/
 rayfin/rayfin.yml       Rayfin service config (managed Fabric auth + static hosting)
 ```

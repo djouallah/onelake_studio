@@ -1,7 +1,7 @@
 // =============================================================================
 // app.js — wire auth (auth.js) + Iceberg engine (data.js) to the DOM.
 // =============================================================================
-import { createAuth } from './auth.js';
+import { createAuth, describeAuthError } from './auth.js';
 import { createEngine } from './data.js';
 
 const $ = id => document.getElementById(id);
@@ -22,12 +22,11 @@ function setStatus(msg, type = '') {
 // ---------------------------------------------------------------------------
 // Auth gate
 // ---------------------------------------------------------------------------
-const auth = createAuth(cfg, { onStatus: setStatus });
+const auth = createAuth(cfg, { onStatus: setStatus, onExpired: showExpired });
 
-function showSignIn(onDone) {
+function showSignIn(onDone, msg = 'Sign in with your Microsoft (Entra) identity to read OneLake.') {
   const gate = $('authGate');
-  gate.querySelector('#authGateMsg').innerHTML =
-    'Sign in with your Microsoft (Entra) identity to read OneLake.';
+  gate.querySelector('#authGateMsg').innerHTML = msg;
   let btn = gate.querySelector('#signinBtn');
   if (!btn) {
     btn = document.createElement('button');
@@ -42,8 +41,24 @@ function showSignIn(onDone) {
       btn.textContent = 'Signing in…';
       if (await auth.ensureSession(true)) { gate.style.display = 'none'; await onDone(); }
       else btn.textContent = 'Sign in';
-    } catch (e) { setStatus('Sign-in failed: ' + e.message, 'error'); console.error(e); }
+    } catch (e) {
+      btn.textContent = 'Sign in';
+      const why = describeAuthError(e);
+      gate.querySelector('#authGateMsg').textContent = 'Sign-in failed: ' + why;
+      setStatus('Sign-in failed: ' + why, 'error');
+      console.error(e);
+    }
   };
+}
+
+// Silent token renewal failed mid-session (refresh token expired). DuckDB and the loaded
+// tables stay as they are — put the gate back up so one click restores the token.
+function showExpired() {
+  $('authGate').style.display = '';
+  showSignIn(
+    async () => { $('userBox').textContent = auth.getUserId() || ''; },
+    'Your OneLake session expired. Sign in again to keep querying.'
+  );
 }
 
 function showOpenInTab() {
@@ -268,8 +283,9 @@ const EMBEDDED = window.self !== window.top;   // inside the Fabric portal ifram
       showSignIn(start);
     }
   } catch (e) {
-    $('authGateMsg').textContent = 'Error: ' + e.message;
-    setStatus('Error: ' + e.message, 'error');
+    const why = describeAuthError(e);
+    $('authGateMsg').textContent = 'Error: ' + why;
+    setStatus('Error: ' + why, 'error');
     console.error(e);
   }
 })();
