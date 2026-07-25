@@ -172,7 +172,7 @@ export function describeAuthError(e) {
   return msg;
 }
 
-// Pick the provider. 'none' must be explicit — a missing clientId/tenantId is a broken
+// Pick the provider. 'none' must be explicit — a missing clientId/authority is a broken
 // deploy, not a request for anonymous access, so it gets the loud 'error' provider.
 export function createAuth(cfg = {}, { onStatus, onExpired } = {}) {
   if (cfg.auth === 'none') return createNoAuth();
