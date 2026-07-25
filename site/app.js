@@ -171,7 +171,11 @@ async function selectTable(row, t) {
     $('previewBtn').disabled = false;
     $('runBtn').disabled = false;
     await runQuery();
-    setStatus(`Loaded ${info.label} — ${info.fileCount} file(s), ${engine.fmtBytes(info.bytes)}.`, 'ok');
+    // Streamed tables were never downloaded whole, so there is no byte count to show —
+    // say what actually happened instead of implying a transfer that didn't occur.
+    setStatus(info.streamed
+      ? `${info.label} — ${info.fileCount} file(s), read on demand.`
+      : `Loaded ${info.label} — ${info.fileCount} file(s), ${engine.fmtBytes(info.bytes)}.`, 'ok');
   } catch (e) {
     setStatus('Load failed: ' + e.message, 'error');
     console.error(e);

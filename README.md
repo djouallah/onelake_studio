@@ -19,13 +19,16 @@ type: workspace/lakehouse.Lakehouse
 list tables   → DFS list of Tables/  (finds folders with a metadata/ dir = Iceberg)
 select table  → resolve current metadata.json → snapshot → manifest-list (Avro)
               → read manifests with read_avro → parquet data-file paths
-              → fetch each parquet (Bearer token) → register in DuckDB
+              → register each parquet URL (DuckDB range-reads it; sw.js adds the token)
               → CREATE VIEW "schema"."table" AS read_parquet([...])
 preview/query → read-only SQL in your browser → results table + CSV export
 ```
 
-Everything runs client-side. Data files are fetched with your token and read by DuckDB-WASM; the table
-size you can query is bounded by your browser's memory.
+Everything runs client-side. Selecting a table costs a few parquet footer reads, not a download: DuckDB
+issues HTTP range requests and pulls only the row groups and columns a query actually touches, so
+`SELECT … LIMIT 100` is roughly constant-time no matter how big the table is. If range reads aren't
+available (no service worker controlling the page) it falls back to downloading whole files in
+parallel, which is slower and bounded by browser memory.
 
 ## Auth: one registration, none for your users
 
@@ -107,7 +110,7 @@ on the registration.
 
 - **Iceberg only.** Delta tables are listed but greyed out (not queryable here yet).
 - **Read-only.** Only `SELECT` / `WITH` / `DESCRIBE` / `SHOW` / `EXPLAIN` / `SUMMARIZE` are allowed; there is no write path to OneLake.
-- **Whole data files are downloaded** for a loaded table (no snapshot pruning). Very large tables may exceed browser memory.
+- **No Iceberg-level pruning.** Partition and column statistics in the manifests aren't used to skip files, so every data file in the snapshot is part of the view. Parquet row-group and column pruning inside DuckDB still applies.
 - **Copy-on-write** Iceberg tables work directly; merge-on-read *delete files* are not applied.
 - The target folder must be a real Iceberg table (has a `Tables/…/metadata/` directory).
 
@@ -119,7 +122,8 @@ site/
   app.js                DOM wiring + auth gate
   auth.js               MSAL provider (storage scope, redirect flow, silent renewal)
   data.js               Iceberg engine on DuckDB-WASM (list/resolve/manifest/load/query)
-  coi-serviceworker.js  COOP/COEP shim for DuckDB multithreading
+  sw.js                 service worker: COOP/COEP shim + OneLake token on DuckDB's range reads
+  sw-register.js        registers sw.js, one reload so the first load is controlled
   config.js             clientId + tenantId (tracked — public identifiers, no secret)
 build.mjs               static build: copies site/ -> dist/
 rayfin/rayfin.yml       Rayfin service config (managed Fabric auth + static hosting)

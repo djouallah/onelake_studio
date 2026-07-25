@@ -20,7 +20,7 @@
 
 // @latest matches djouallah/dbt_fabric_python_iceberg's dashboard, which reads Iceberg
 // Avro manifests with read_avro() in the browser — the avro extension autoloads on first
-// use from the DuckDB extension repo (the coi-serviceworker makes that cross-origin fetch
+// use from the DuckDB extension repo (the service worker makes that cross-origin fetch
 // COEP-compatible). Pin to a specific version once a known-good one is confirmed for you.
 import * as duckdb from "https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@latest/+esm";
 
@@ -240,11 +240,54 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
   }
 
   // ---------------------------------------------------------------------------
-  // Load a table -> read-only VIEW. Data files are fetched with the bearer token
-  // and registered as parquet buffers; the view is `read_parquet([...all files])`.
+  // Load a table -> read-only VIEW.
+  // ---------------------------------------------------------------------------
+  // Two strategies, fast one first:
+  //
+  //   streamed  registerFileURL(HTTP) — DuckDB range-reads each parquet itself, so
+  //             opening a table costs a few footer reads and a query touches only
+  //             the row groups and columns it needs. sw.js signs those requests
+  //             (DuckDB's API can't set headers). Table size stops being bounded by
+  //             browser memory.
+  //   buffered  the old path: download whole files and register them as buffers.
+  //             Used when the streamed probe fails — no service worker controlling
+  //             the page, no token in it yet, a proxy that ignores Range. Correct,
+  //             just slow, so it's a fallback and never the plan.
+  //
   // Idempotent: a table already loaded is returned from cache.
   // ---------------------------------------------------------------------------
   const labelFor = t => t.schema ? `${t.schema}.${t.table}` : t.table;
+  const DOWNLOAD_CONCURRENCY = 8;
+
+  // Run `job` over items with a bounded number in flight, preserving result order.
+  async function pooled(items, job, limit = DOWNLOAD_CONCURRENCY) {
+    const out = new Array(items.length);
+    let next = 0;
+    await Promise.all(Array.from({ length: Math.min(limit, items.length) }, async () => {
+      while (true) {
+        const i = next++;
+        if (i >= items.length) return;
+        out[i] = await job(items[i], i);
+      }
+    }));
+    return out;
+  }
+
+  async function describe(ident) {
+    return (await conn.query(`DESCRIBE ${ident}`)).toArray().map(r => {
+      const j = r.toJSON();
+      return { name: j.column_name, type: j.column_type };
+    });
+  }
+
+  async function createView(ident, regs) {
+    await conn.query(
+      `CREATE OR REPLACE VIEW ${ident} AS SELECT * FROM read_parquet([${regs.map(n => `'${n}'`).join(", ")}])`);
+  }
+
+  async function dropAll(regs) {
+    for (const n of regs) { try { await db.dropFile(n); } catch (_) {} }
+  }
 
   async function loadTable(lh, t) {
     const label = labelFor(t);
@@ -259,17 +302,7 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
     onStatus(`Reading manifests for ${label}…`);
     const paths = await listDataFiles(ws, manifestList);
     if (!paths.length) throw new Error(`${label}: current snapshot has no data files`);
-
-    let bytes = 0;
-    const regs = [];
-    for (let i = 0; i < paths.length; i++) {
-      onStatus(`Downloading ${label} — file ${i + 1}/${paths.length}…`);
-      const buf = await fetchAuthed(toHttps(ws, paths[i]));
-      bytes += buf.byteLength;
-      const reg = `data_${++_seq}.parquet`;
-      await db.registerFileBuffer(reg, buf);
-      regs.push(reg);
-    }
+    const urls = paths.map(p => toHttps(ws, p));
 
     let ident;
     if (t.schema) {
@@ -278,16 +311,52 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
     } else {
       ident = `"${t.table}"`;
     }
-    await conn.query(
-      `CREATE OR REPLACE VIEW ${ident} AS SELECT * FROM read_parquet([${regs.map(n => `'${n}'`).join(", ")}])`);
 
-    const columns = (await conn.query(`DESCRIBE ${ident}`)).toArray().map(r => {
-      const j = r.toJSON();
-      return { name: j.column_name, type: j.column_type };
-    });
-    const info = { label, ident, columns, fileCount: paths.length, bytes };
+    // --- streamed ---
+    let regs = [];
+    let columns = null;
+    let bytes = null;                // unknown by design: nothing was downloaded whole
+    onStatus(`Opening ${label} — ${urls.length} file(s)…`);
+    try {
+      for (const u of urls) {
+        const reg = `data_${++_seq}.parquet`;
+        await db.registerFileURL(reg, u, duckdb.DuckDBDataProtocol.HTTP, false);
+        regs.push(reg);
+      }
+      await createView(ident, regs);
+      columns = await describe(ident);   // forces a real footer read — this is the probe
+    } catch (e) {
+      console.warn(`[engine] streaming ${label} failed, downloading instead:`, e.message);
+      await dropAll(regs);
+      regs = [];
+      columns = null;
+    }
+
+    // --- buffered fallback ---
+    if (!columns) {
+      let done = 0;
+      bytes = 0;
+      onStatus(`Downloading ${label} — 0/${urls.length} files…`);
+      const bufs = await pooled(urls, async u => {
+        const buf = await fetchAuthed(u);
+        onStatus(`Downloading ${label} — ${++done}/${urls.length} files…`);
+        return buf;
+      });
+      for (const buf of bufs) {
+        bytes += buf.byteLength;
+        const reg = `data_${++_seq}.parquet`;
+        await db.registerFileBuffer(reg, buf);
+        regs.push(reg);
+      }
+      await createView(ident, regs);
+      columns = await describe(ident);
+    }
+
+    const info = { label, ident, columns, fileCount: paths.length, bytes, streamed: bytes === null };
     loaded.set(label, info);
-    onStatus(`Loaded ${label} — ${paths.length} file(s), ${fmtBytes(bytes)}`);
+    onStatus(info.streamed
+      ? `Opened ${label} — ${paths.length} file(s), read on demand`
+      : `Loaded ${label} — ${paths.length} file(s), ${fmtBytes(bytes)}`);
     return info;
   }
 

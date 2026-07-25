@@ -48,7 +48,7 @@ function createConfigErrorAuth(message) {
 }
 
 // --- MSAL provider: Entra SPA public client, OneLake bearer token. ---
-// REDIRECT auth (not popup): the coi-serviceworker sets COOP: same-origin to get
+// REDIRECT auth (not popup): the service worker sets COOP: same-origin to get
 // crossOriginIsolated for DuckDB multi-threading, which severs the popup<->opener link once the
 // popup bounces through login.microsoftonline.com — so loginPopup can't return the token after the
 // session expires. A full-page redirect is COOP-safe. Redirect throws "redirect_in_iframe" inside
@@ -69,11 +69,31 @@ function createMsalAuth(cfg, { onExpired } = {}) {
   let _token = null;
   let _expiresAt = 0;
 
+  // --- Token bridge to the service worker (sw.js) ---------------------------
+  // DuckDB range-reads parquet straight from OneLake URLs, and its API can't set
+  // headers, so sw.js signs those requests instead. It only ever holds the token in
+  // memory, so push it on every change and answer 'need-token' if the worker was
+  // restarted and lost it.
+  function publishToken() {
+    try {
+      const c = navigator.serviceWorker && navigator.serviceWorker.controller;
+      if (c) c.postMessage({ type: 'onelake-token', token: _token });
+    } catch (_) { /* no service worker — data.js falls back to buffered downloads */ }
+  }
+  try {
+    navigator.serviceWorker.addEventListener('message', e => {
+      if (e.data && e.data.type === 'need-token') publishToken();
+    });
+    // A controller can arrive after we already hold a token (first load, or an update).
+    navigator.serviceWorker.addEventListener('controllerchange', publishToken);
+  } catch (_) { /* ditto */ }
+
   // MSAL hands back `expiresOn` as a Date; fall back to a conservative 50 minutes if a
   // response ever omits it (OneLake tokens are ~60-90 min).
   function keep(result) {
     _token = result.accessToken;
     _expiresAt = result.expiresOn ? result.expiresOn.getTime() : Date.now() + 50 * 60 * 1000;
+    publishToken();
   }
   function haveToken() {
     return !!_token && Date.now() < _expiresAt - EXPIRY_SKEW_MS;
@@ -81,6 +101,7 @@ function createMsalAuth(cfg, { onExpired } = {}) {
   function drop() {
     _token = null;
     _expiresAt = 0;
+    publishToken();   // stop the worker signing reads with a token we know is dead
   }
 
   // Lazy-load msal-browser only when this provider is actually used, so a no-auth

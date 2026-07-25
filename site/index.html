@@ -140,8 +140,9 @@
     <div id="authGateMsg">Loading…</div>
   </div>
 
-  <!-- COOP/COEP shim so DuckDB-WASM can use multiple threads (falls back to single-threaded). -->
-  <script src="coi-serviceworker.js"></script>
+  <!-- Service worker: COOP/COEP shim (DuckDB multithreading) + OneLake token injection
+       on DuckDB's own range requests. See sw.js. -->
+  <script src="sw-register.js"></script>
   <!-- config.js: tracked in git; holds the Entra SPA clientId + tenantId (public
        identifiers, no secret). Missing or blank -> the app says so instead of 401-ing. -->
   <script src="config.js"></script>
