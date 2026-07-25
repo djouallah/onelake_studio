@@ -8,8 +8,10 @@
 //   3. for a chosen Iceberg table, resolves its current metadata.json -> snapshot
 //      -> manifest-list, reads the Avro manifests with DuckDB's read_avro to get the
 //      data-file (parquet) paths,
-//   4. fetches those parquet files with the bearer token, registers them, and
-//      exposes the table as a read-only VIEW you can run SQL against.
+//   4. registers those parquet files as URLs so DuckDB range-reads them itself, and
+//      exposes the table as a read-only VIEW you can run SQL against. Nothing is
+//      downloaded whole: sw.js signs DuckDB's requests, so a query pulls only the
+//      row groups and columns it touches.
 //
 // The Iceberg reading (read_avro manifests -> read_parquet data files) mirrors
 // djouallah/dbt_fabric_python_iceberg's dashboard; the difference here is that the
@@ -92,10 +94,13 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
     return { workspace, item };
   }
 
-  // Normalize an Iceberg path (abfss://…, absolute https, or relative) to an authed https URL.
+  // Normalize an Iceberg path (abfs(s)://…, absolute https, or relative) to an authed https URL.
+  // Fabric writes `abfs://<workspace-guid>@onelake.dfs.fabric.microsoft.com/<item-guid>/Tables/…`
+  // — note the SINGLE s, and GUIDs rather than the friendly names the user typed. The filesystem
+  // component becomes the first path segment: https://onelake.dfs…/<workspace-guid>/<item-guid>/…
   function toHttps(ws, u) {
     u = String(u);
-    const ab = u.match(/^abfss:\/\/([^@]+)@[^/]+\/(.*)$/i);
+    const ab = u.match(/^abfss?:\/\/([^@]+)@[^/]+\/(.*)$/i);
     if (ab) return `https://${DFS_HOST}/${encodeURIComponent(decodeURIComponent(ab[1]))}/${encPath(ab[2])}`;
     if (/^https?:\/\//i.test(u)) return u;
     return `${dfsBase(ws)}/${encPath(u)}`;
@@ -217,6 +222,9 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
       manifestList: snap["manifest-list"],
       metadataFile: basename(current.name),
       metadataUrl: dfsUrl(ws, current.name),
+      // Fabric records absolute abfs:// URIs; tables written by other engines often use
+      // paths relative to the table root. Only the latter can be handed to iceberg_scan.
+      absolutePaths: /^abfss?:\/\//i.test(String(meta.location || "")),
     };
   }
 
@@ -256,43 +264,26 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
   // ---------------------------------------------------------------------------
   // Load a table -> read-only VIEW.
   // ---------------------------------------------------------------------------
-  // Three strategies, best one first. Each falls through to the next on failure, so a
-  // table always loads if it can load at all.
+  // Two strategies, best first. Everything is read over HTTP range requests — whole-file
+  // downloads are not a tier. Waiting minutes for a table to transfer isn't a usable
+  // product, so if range reads don't work the app says so rather than quietly grinding.
   //
-  //   iceberg   iceberg_scan(<metadata.json url>, allow_moved_paths = true). DuckDB's
-  //             own Iceberg reader: it applies merge-on-read DELETE files (the manifest
-  //             walk below silently ignores them, i.e. returns rows that were deleted),
-  //             prunes files by partition and column statistics, and handles schema
-  //             evolution. allow_moved_paths is the key: Fabric records absolute
-  //             abfss:// URIs inside the metadata, DuckDB-WASM has no abfss filesystem,
-  //             and this option makes it re-resolve every manifest and data file
-  //             relative to the https:// root we hand it instead. sw.js signs the reads.
+  //   iceberg   iceberg_scan(<url>, allow_moved_paths = true). DuckDB's own Iceberg
+  //             reader: applies merge-on-read DELETE files (the manifest walk below
+  //             ignores them, i.e. returns rows that were deleted), prunes files by
+  //             partition and column statistics, and handles schema evolution.
+  //             allow_moved_paths is the key: Fabric records absolute abfss:// URIs
+  //             inside the metadata, DuckDB-WASM has no abfss filesystem, and this
+  //             option re-resolves every manifest and data file relative to the https://
+  //             root we hand it instead. sw.js signs the reads.
   //   streamed  hand-rolled manifest walk, then registerFileURL(HTTP) per data file so
-  //             DuckDB still range-reads them. No delete-file handling, no pruning, but
-  //             it only needs read_avro. Used when the iceberg extension is unavailable
-  //             or its scan errors.
-  //   buffered  same manifest walk, but download whole files into memory. Used when
-  //             range reads don't work at all — no service worker controlling the page,
-  //             no token in it yet, a proxy that ignores Range. Correct, just slow.
+  //             DuckDB still range-reads them. No delete-file handling, no pruning; only
+  //             needs read_avro. Used when the iceberg extension is unavailable or its
+  //             scan errors — `info.fallbackReason` carries why.
   //
   // Idempotent: a table already loaded is returned from cache.
   // ---------------------------------------------------------------------------
   const labelFor = t => t.schema ? `${t.schema}.${t.table}` : t.table;
-  const DOWNLOAD_CONCURRENCY = 8;
-
-  // Run `job` over items with a bounded number in flight, preserving result order.
-  async function pooled(items, job, limit = DOWNLOAD_CONCURRENCY) {
-    const out = new Array(items.length);
-    let next = 0;
-    await Promise.all(Array.from({ length: Math.min(limit, items.length) }, async () => {
-      while (true) {
-        const i = next++;
-        if (i >= items.length) return;
-        out[i] = await job(items[i], i);
-      }
-    }));
-    return out;
-  }
 
   async function describe(ident) {
     return (await conn.query(`DESCRIBE ${ident}`)).toArray().map(r => {
@@ -318,7 +309,7 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
 
     const ws = lh.workspace;
     onStatus(`Resolving ${label}…`);
-    const { manifestList, metadataUrl } = await resolveIceberg(ws, t.root);
+    const { manifestList, absolutePaths } = await resolveIceberg(ws, t.root);
 
     let ident;
     if (t.schema) {
@@ -331,25 +322,44 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
     let columns = null;
     let mode = null;
     let fileCount = null;
-    let bytes = null;
+    let fallbackReason = null;
 
     // --- iceberg ---
-    if (icebergExt) {
+    // Only attempted when the metadata uses paths relative to the table root. Measured
+    // against a real Fabric table (DuckDB 1.5.2, iceberg extension):
+    //
+    //   iceberg_scan('<table root>', allow_moved_paths = true)
+    //     -> Invalid Configuration Error: Could not create full path from Iceberg Path
+    //        (https://onelake.dfs…/Tables/CH01/nation) and the relative path
+    //        (abfs://…@onelake.dfs…/Tables/CH01/nation/ducklake-….parquet)
+    //
+    // allow_moved_paths only rebases paths it considers RELATIVE; it refuses an absolute
+    // abfs:// URI outright, so it cannot bridge abfs -> https. Passing the metadata.json
+    // instead is worse: the option treats its argument as a directory and appends
+    // /metadata/snap-….avro to it (404). There is no third spelling. Hence the gate:
+    // absolute-path tables go straight to the manifest walk rather than burning a query
+    // on a failure we can predict.
+    if (icebergExt && !absolutePaths) {
+      const tableRoot = `${dfsBase(ws)}/${encPath(t.root)}`;
       onStatus(`Opening ${label} with the Iceberg reader…`);
       try {
         await conn.query(
           `CREATE OR REPLACE VIEW ${ident} AS ` +
-          `SELECT * FROM iceberg_scan('${metadataUrl}', allow_moved_paths = true)`);
+          `SELECT * FROM iceberg_scan('${tableRoot}', allow_moved_paths = true)`);
         columns = await describe(ident);   // forces a real metadata + footer read
         mode = "iceberg";
       } catch (e) {
-        console.warn(`[engine] iceberg_scan failed for ${label}, using manifest walk:`, e.message);
+        fallbackReason = e.message;
+        console.warn(`[engine] iceberg_scan('${tableRoot}') failed for ${label}:`, e.message);
         columns = null;
       }
+    } else if (absolutePaths) {
+      fallbackReason = "the table records absolute abfs:// paths, which iceberg_scan cannot resolve";
+    } else {
+      fallbackReason = "the iceberg extension did not load";
     }
 
-    // --- streamed / buffered: hand-rolled manifest walk ---
-    let regs = [];
+    // --- streamed: hand-rolled manifest walk, range-read per data file ---
     if (!columns) {
       onStatus(`Reading manifests for ${label}…`);
       const paths = await listDataFiles(ws, manifestList);
@@ -357,6 +367,7 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
       const urls = paths.map(p => toHttps(ws, p));
       fileCount = paths.length;
 
+      const regs = [];
       onStatus(`Opening ${label} — ${urls.length} file(s)…`);
       try {
         for (const u of urls) {
@@ -368,45 +379,29 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
         columns = await describe(ident);   // forces a real footer read — this is the probe
         mode = "streamed";
       } catch (e) {
-        console.warn(`[engine] streaming ${label} failed, downloading instead:`, e.message);
         await dropAll(regs);
-        regs = [];
-        columns = null;
-      }
-
-      if (!columns) {
-        let done = 0;
-        bytes = 0;
-        onStatus(`Downloading ${label} — 0/${urls.length} files…`);
-        const bufs = await pooled(urls, async u => {
-          const buf = await fetchAuthed(u);
-          onStatus(`Downloading ${label} — ${++done}/${urls.length} files…`);
-          return buf;
-        });
-        for (const buf of bufs) {
-          bytes += buf.byteLength;
-          const reg = `data_${++_seq}.parquet`;
-          await db.registerFileBuffer(reg, buf);
-          regs.push(reg);
-        }
-        await createView(ident, regs);
-        columns = await describe(ident);
-        mode = "buffered";
+        // Deliberately no whole-file download tier: on a big table that means minutes of
+        // waiting and the whole thing in browser memory. Fail with the cause instead.
+        throw new Error(
+          `Could not read ${label} over HTTP range requests: ${e.message}. ` +
+          `This usually means the service worker isn't controlling the page (reload once) ` +
+          `or it has no OneLake token yet.`);
       }
     }
 
-    const info = { label, ident, columns, mode, fileCount, bytes };
+    const info = { label, ident, columns, mode, fileCount, fallbackReason };
     loaded.set(label, info);
     onStatus(describeLoad(info));
+    if (fallbackReason) console.warn(`[engine] ${label} fell back to the manifest walk: ${fallbackReason}`);
     return info;
   }
 
-  // One sentence about how the table was actually opened. Worth being precise: only the
-  // 'iceberg' mode honours delete files, and only 'buffered' actually transferred bytes.
-  function describeLoad({ label, mode, fileCount, bytes }) {
+  // One sentence about how the table was actually opened. The manifest walk ignores
+  // merge-on-read DELETE files; Fabric's converted tables are copy-on-write so they have
+  // none, but a table written by Spark might, hence the caveat rather than silence.
+  function describeLoad({ label, mode, fileCount }) {
     if (mode === "iceberg") return `${label} — Iceberg reader, read on demand`;
-    if (mode === "streamed") return `${label} — ${fileCount} file(s), read on demand (no delete files)`;
-    return `Loaded ${label} — ${fileCount} file(s), ${fmtBytes(bytes)}`;
+    return `${label} — ${fileCount} file(s), read on demand (copy-on-write only)`;
   }
 
   // ---------------------------------------------------------------------------
@@ -449,12 +444,5 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
     return out;
   }
 
-  function fmtBytes(n) {
-    if (n < 1e3) return `${n} B`;
-    if (n < 1e6) return `${Math.round(n / 1e3)} KB`;
-    if (n < 1e9) return `${(n / 1e6).toFixed(1)} MB`;
-    return `${(n / 1e9).toFixed(2)} GB`;
-  }
-
-  return { init, parseLakehouse, listTables, loadTable, runSql, fmtBytes, describeLoad };
+  return { init, parseLakehouse, listTables, loadTable, runSql, describeLoad };
 }

@@ -17,25 +17,39 @@ type: workspace/lakehouse.Lakehouse
    │  (OneLake storage token from your Entra identity)
    ▼
 list tables   → DFS list of Tables/  (finds folders with a metadata/ dir = Iceberg)
-select table  → resolve current metadata.json over DFS
-              → CREATE VIEW "s"."t" AS iceberg_scan(<metadata url>, allow_moved_paths)
-                (DuckDB reads manifests + data itself; sw.js adds the token)
+select table  → resolve current metadata.json → snapshot → manifest-list (Avro)
+              → read manifests with read_avro → parquet data-file paths
+              → register each path as a URL; DuckDB range-reads it (sw.js adds the token)
+              → CREATE VIEW "schema"."table" AS read_parquet([...])
 preview/query → read-only SQL in your browser → results table + CSV export
 ```
 
-Everything runs client-side. Selecting a table costs a metadata read, not a download: DuckDB's `iceberg`
-extension walks the manifests itself and pulls only the row groups and columns a query actually touches,
-so `SELECT … LIMIT 100` is roughly constant-time no matter how big the table is.
+Everything runs client-side, and **nothing is downloaded whole**. Data files are registered as URLs, so
+DuckDB issues HTTP range requests and pulls only the row groups and columns a query touches — verified
+against OneLake, which answers `206 Partial Content`. `SELECT … LIMIT 100` is roughly constant-time no
+matter how big the table is. The service worker ([`site/sw.js`](site/sw.js)) attaches your OneLake token
+to those reads, because DuckDB's file APIs have no way to set request headers. If range reads don't work
+the app fails with the reason rather than falling back to a multi-minute download.
 
-`allow_moved_paths` is what makes this work against OneLake. Fabric records absolute `abfss://` URIs
-inside the Iceberg metadata and DuckDB-WASM has no `abfss` filesystem, so the option tells it to
-re-resolve every manifest and data file relative to the `https://` root instead. The service worker
-([`site/sw.js`](site/sw.js)) attaches your OneLake token to those reads, because DuckDB's file APIs have
-no way to set request headers.
+### Why not DuckDB's `iceberg` extension?
 
-Two fallbacks sit behind that, picked automatically if a step fails: the original manifest walk with
-per-file range reads, and — if range reads don't work at all — downloading whole files in parallel.
-Only the first tier applies delete files.
+It's available for WASM and it would bring delete-file handling and manifest-level pruning, but it
+cannot resolve Fabric's paths. Fabric records **absolute** `abfs://<workspace-guid>@onelake.dfs…` URIs
+inside the metadata (note the single `s`, and GUIDs rather than the friendly names you typed), and
+DuckDB-WASM has no `abfs` filesystem. Measured against a real table with DuckDB 1.5.2:
+
+```
+iceberg_scan('<table root>', allow_moved_paths = true)
+  -> Invalid Configuration Error: Could not create full path from Iceberg Path
+     (https://onelake.dfs…/Tables/CH01/nation) and the relative path
+     (abfs://…@onelake.dfs…/Tables/CH01/nation/ducklake-….parquet)
+```
+
+`allow_moved_paths` only rebases paths it considers *relative*; it refuses an absolute `abfs://` URI.
+Passing the `metadata.json` instead is worse — the option treats its argument as a directory and appends
+`/metadata/snap-….avro` to it (404). So the reader is attempted **only** when a table's metadata uses
+relative paths (tables written by other engines); Fabric-written tables go straight to the manifest walk
+instead of burning a query on a predictable failure.
 
 ## Auth: one registration, none for your users
 
@@ -117,8 +131,8 @@ on the registration.
 
 - **Iceberg only.** Delta tables are listed but greyed out (not queryable here yet).
 - **Read-only.** Only `SELECT` / `WITH` / `DESCRIBE` / `SHOW` / `EXPLAIN` / `SUMMARIZE` are allowed; there is no write path to OneLake.
-- **Pruning** by partition and column statistics comes from the `iceberg` reader; the fallback tiers put every data file in the snapshot into the view and rely on parquet row-group/column pruning alone.
-- **Merge-on-read delete files** are applied by the `iceberg` reader. If it falls back to the manifest walk (see the console), deletes are *not* applied and you may see deleted rows — the status line says which reader was used.
+- **No Iceberg-level pruning** on Fabric tables (see above): every data file in the snapshot is in the view, and pruning is whatever DuckDB gets from parquet row-group statistics and column projection. Fabric's converted manifests carry `record_count = 0` anyway, so there is little to prune on.
+- **Merge-on-read delete files are not applied** by the manifest walk. Fabric's Iceberg conversions are copy-on-write (manifest entries are all `content = 0`), so this doesn't affect them; a table written by Spark with positional deletes would show deleted rows. The status line names the reader that ran.
 - The target folder must be a real Iceberg table (has a `Tables/…/metadata/` directory).
 
 ## Project layout
