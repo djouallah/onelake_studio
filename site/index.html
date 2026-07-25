@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>OneLake Iceberg Viewer</title>
+  <title>OneLake Viewer</title>
   <link rel="preconnect" href="https://onelake.dfs.fabric.microsoft.com" crossorigin />
   <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin />
   <style>
@@ -108,7 +108,7 @@
 </head>
 <body>
   <header>
-    <div class="brand">OneLake&nbsp;Iceberg&nbsp;Viewer <small>· DuckDB-WASM</small></div>
+    <div class="brand">OneLake&nbsp;Viewer</div>
     <select id="wsSelect" title="Workspace"><option value="">Loading workspaces…</option></select>
     <select id="itemSelect" title="Lakehouse / Warehouse" disabled><option value="">Select a workspace first</option></select>
     <button id="connectBtn" title="Reload tables">Reload</button>
@@ -139,7 +139,7 @@
   <div id="status">Ready.</div>
 
   <div id="authGate">
-    <div style="font-size:1.3rem;font-weight:700">OneLake Iceberg Viewer</div>
+    <div style="font-size:1.3rem;font-weight:700">OneLake Viewer</div>
     <div id="authGateMsg">Loading…</div>
   </div>
 
