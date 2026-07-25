@@ -6,22 +6,21 @@
 // (SPA + PKCE doesn't use one). Committing it is what makes a fresh clone deploy a working
 // app instead of a silently unauthenticated one.
 //
-// The registration is MULTI-TENANT, so `authority` is 'organizations' rather than a tenant
-// GUID: any work/school account signs in against its own directory and reads OneLake with
-// its own permissions. Users register nothing. First sign-in from a tenant other than the
-// app's home tenant shows a one-time consent prompt ("Access Azure Storage as you"); see
-// README.md for the admin-consent URL that removes it org-wide.
+// The registration is SINGLE-TENANT, in the same tenant as the OneLake data, and that is
+// deliberate: this tenant's consent policy (microsoft-user-default-recommended) lets a user
+// self-consent to Azure Storage for an app registered in their own directory, but blocks
+// unverified apps from any other directory with "Need admin approval". A multi-tenant app
+// registered elsewhere cannot be signed into here without an Entra admin. So users register
+// nothing and need no admin — they click Sign in and accept one consent prompt.
 //
-// Forking this? Replace clientId with your own SPA registration's Application (client) ID.
+// Forking this into another tenant? Replace both values with your own SPA registration's
+// Application (client) ID and Directory (tenant) ID.
 window.RAYFIN_WASM_CONFIG = {
   // 'msal' = Entra sign-in + OneLake bearer token. 'none' = no auth (public data only).
   auth: "msal",
 
-  clientId: "cbc29592-5f49-45ac-8a69-ca6d7030ab74",
-
-  // 'organizations' = any Entra tenant (multi-tenant app). Use a tenant GUID to pin
-  // sign-in to a single directory.
-  authority: "organizations",
+  clientId: "43d4d19c-e393-4020-9b31-b3c3b272af3a",
+  tenantId: "4a86d5bb-4173-45ee-bfd5-a3b56ee2d3d5",
 
   // Optional: pre-fill the lakehouse path box, e.g. "myworkspace/mylakehouse.Lakehouse".
   defaultLakehouse: "",

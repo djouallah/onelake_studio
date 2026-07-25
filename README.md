@@ -36,27 +36,28 @@ Rayfin session* for Rayfin's own Data API — the SDK deliberately never exposes
 to application code. Static hosting also serves `dist/` verbatim; nothing is injected at serve time.
 
 So the app uses its own Entra **SPA public client** (PKCE, no secret), registered **once by whoever
-publishes the app**. It is **multi-tenant**: any work/school account signs in against its own
-directory and reads OneLake with its own permissions. Users register nothing — they click *Sign in*,
-accept a one-time consent prompt, and that's it.
+publishes the app**, in the same tenant as the OneLake data. Users register nothing — they click
+*Sign in*, accept a one-time consent prompt, and read OneLake with their own identity and their own
+permissions. Its `clientId`/`tenantId` are committed in [`site/config.js`](site/config.js): public by
+design (MSAL puts them in the sign-in URL), and committing them means a fresh clone deploys a working
+app rather than a silently unauthenticated one.
 
-The registration is already made and its `clientId` is committed in [`site/config.js`](site/config.js)
-with `authority: "organizations"` (multi-tenant). That's public by design — MSAL puts it in the
-sign-in URL — and committing it means a fresh clone deploys a working app rather than a silently
-unauthenticated one.
+### Consent — and why the app must be single-tenant
 
-### Consent
+First sign-in shows **"OneLake Iceberg Viewer wants to access Azure Storage as you"**. One click, per
+user, no admin.
 
-First sign-in from a tenant other than the app's home tenant shows **"OneLake Iceberg Viewer wants to
-access Azure Storage as you"** — one click, per user. To remove it for a whole tenant, an Entra admin
-there opens once:
+That only holds because the registration lives **in the same tenant as the user**. This tenant's
+consent policy is `microsoft-user-default-recommended`, which lets a user self-consent to an app
+registered in their own directory but refuses unverified apps from any other directory with *"Need
+admin approval — only an admin can grant."* A multi-tenant app registered elsewhere is therefore a
+dead end here: no one can sign in until an Entra admin consents for the whole tenant.
 
-```
-https://login.microsoftonline.com/organizations/adminconsent?client_id=cbc29592-5f49-45ac-8a69-ca6d7030ab74
-```
+So if you fork this into another tenant, register the SPA app **in that tenant** and put its ids in
+`config.js`. Don't try to share one multi-tenant registration across organizations.
 
-Tenants that disable user consent for unverified apps *require* that URL; nobody there can sign in
-until an admin runs it.
+An admin who wants to suppress the per-user prompt org-wide can grant tenant-wide consent once on the
+registration (**API permissions → Grant admin consent**), but nothing requires it.
 
 ### If you re-register or re-deploy
 
@@ -80,7 +81,7 @@ npx rayfin up
 
 After the first deploy, copy the printed webapp URL into `allowedRedirectUris` in
 [`rayfin/rayfin.yml`](rayfin/rayfin.yml), run `npx rayfin up` again, and add the same URL as an SPA
-redirect URI on the Entra app (step 1 above).
+redirect URI on the Entra app (see *If you re-register or re-deploy* above).
 
 > **Open it standalone, not inside the Fabric portal iframe.** The Microsoft sign-in is blocked in the
 > embedded frame; the app detects this and shows an "Open in new tab" prompt.
@@ -119,7 +120,7 @@ site/
   auth.js               MSAL provider (storage scope, redirect flow, silent renewal)
   data.js               Iceberg engine on DuckDB-WASM (list/resolve/manifest/load/query)
   coi-serviceworker.js  COOP/COEP shim for DuckDB multithreading
-  config.js             clientId + authority (tracked — public identifiers, no secret)
+  config.js             clientId + tenantId (tracked — public identifiers, no secret)
 build.mjs               static build: copies site/ -> dist/
 rayfin/rayfin.yml       Rayfin service config (managed Fabric auth + static hosting)
 ```
