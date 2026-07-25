@@ -31,7 +31,6 @@ const DFS_HOST = "onelake.dfs.fabric.microsoft.com";
 export function createEngine(auth, { onStatus = () => {} } = {}) {
   let db = null, conn = null, worker = null;
   let _seq = 0;
-  let icebergExt = false;     // did the 'iceberg' extension load? (set in init)
   const loaded = new Map();   // "schema.table" -> { label, ident, columns, fileCount, bytes }
 
   // ---------------------------------------------------------------------------
@@ -57,15 +56,6 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
     catch (_) {
       try { await conn.query("INSTALL avro; LOAD avro;"); }
       catch (e) { console.warn("[engine] avro preload skipped; relying on autoload:", e.message); }
-    }
-    // The 'iceberg' extension is the preferred reader (see loadTable): it applies
-    // merge-on-read delete files and prunes by partition/column stats, neither of
-    // which the hand-rolled manifest walk does. It has its own Avro reader, so it
-    // doesn't need the extension above. If it can't be loaded we fall back.
-    try { await conn.query("LOAD iceberg;"); icebergExt = true; }
-    catch (_) {
-      try { await conn.query("INSTALL iceberg; LOAD iceberg;"); icebergExt = true; }
-      catch (e) { console.warn("[engine] iceberg extension unavailable; using manifest walk:", e.message); }
     }
     console.log(`[engine] DuckDB ready — crossOriginIsolated=${self.crossOriginIsolated}`);
     return { db, conn };
@@ -122,7 +112,11 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
 
   async function fetchAuthed(url) {
     const r = await authedFetch(url);
-    if (!r.ok) throw new Error(`HTTP ${r.status} for …${String(url).slice(-72)}`);
+    if (!r.ok) {
+      const e = new Error(`HTTP ${r.status} for …${String(url).slice(-72)}`);
+      e.status = r.status;          // callers retry on this (see resolveIcebergRetrying)
+      throw e;
+    }
     return new Uint8Array(await r.arrayBuffer());
   }
   const fetchText = async u => new TextDecoder().decode(await fetchAuthed(u));
@@ -141,7 +135,11 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
       if (cont) u.searchParams.set("continuation", cont);
       const r = await authedFetch(u.toString());
       if (r.status === 404) return out;           // directory doesn't exist
-      if (!r.ok) throw new Error(`list HTTP ${r.status} for ${strip(directory)}`);
+      if (!r.ok) {
+        const e = new Error(`list HTTP ${r.status} for ${strip(directory)}`);
+        e.status = r.status;
+        throw e;
+      }
       const j = await r.json().catch(() => ({}));
       for (const p of (j.paths || [])) {
         out.push({
@@ -154,6 +152,45 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
       cont = r.headers.get("x-ms-continuation") || "";
     } while (cont);
     return out;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Catalog — workspaces and their data items, from the storage token alone.
+  // ---------------------------------------------------------------------------
+  // OneLake answers the ADLS Gen2 "List Filesystems" call at the account root, and each
+  // filesystem is a workspace. That means the whole catalog comes from the same
+  // storage.azure.com token the data reads use — no Fabric REST API, no extra Entra scope
+  // and no second consent prompt.
+  async function listWorkspaces() {
+    const out = [];
+    let cont = "";
+    do {
+      const u = new URL(`https://${DFS_HOST}/`);
+      u.searchParams.set("resource", "account");
+      if (cont) u.searchParams.set("continuation", cont);
+      const r = await authedFetch(u.toString());
+      if (!r.ok) throw new Error(`Could not list workspaces (HTTP ${r.status})`);
+      const j = await r.json().catch(() => ({}));
+      for (const f of (j.fileSystems || [])) out.push(f.name);
+      cont = r.headers.get("x-ms-continuation") || "";
+    } while (cont);
+    return out.sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
+  }
+
+  // Items that can hold OneLake tables. A workspace root is mostly notebooks, pipelines
+  // and environments; only these have a Tables/ directory worth browsing.
+  const TABLE_ITEMS = new Set(["Lakehouse", "Warehouse", "MirroredDatabase", "SQLDatabase"]);
+
+  async function listItems(ws) {
+    const entries = await listPaths(ws, "", false);
+    const items = [];
+    for (const e of entries) {
+      if (!e.isDir) continue;
+      const name = basename(e.name);
+      const kind = name.includes(".") ? name.split(".").pop() : "";
+      if (TABLE_ITEMS.has(kind)) items.push({ name, kind });
+    }
+    return items.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
   }
 
   // ---------------------------------------------------------------------------
@@ -191,6 +228,32 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
   // ---------------------------------------------------------------------------
   // Iceberg metadata resolution — DFS-by-name (no REST catalog / GUIDs).
   // ---------------------------------------------------------------------------
+  // Fabric generates a table's Iceberg metadata lazily, on access. The first request
+  // triggers generation and loses the race — you get an HTTP 400 for a metadata.json that
+  // the directory listing just told us exists — and a moment later the same table reads
+  // fine. So retry the WHOLE resolution rather than refetching the same URL: the second
+  // pass re-lists metadata/, which may by then expose a newer version-hint and a different
+  // vN.metadata.json than the one that failed.
+  const RESOLVE_BACKOFF_MS = [400, 1200, 3000];
+
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+  async function resolveIcebergRetrying(ws, root, label) {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await resolveIceberg(ws, root);
+      } catch (e) {
+        // 400/404 here means "not materialized yet", not "wrong". A missing metadata.json
+        // in a directory that exists is the same story.
+        const transient = e.status === 400 || e.status === 404 || /No \S*metadata\.json/.test(e.message);
+        if (!transient || attempt >= RESOLVE_BACKOFF_MS.length) throw e;
+        onStatus(`Waiting for Fabric to generate Iceberg metadata for ${label}… ` +
+                 `(attempt ${attempt + 2}/${RESOLVE_BACKOFF_MS.length + 1})`);
+        await sleep(RESOLVE_BACKOFF_MS[attempt]);
+      }
+    }
+  }
+
   async function resolveIceberg(ws, root) {
     const entries = await listPaths(ws, `${root}/metadata`, false);
     if (!entries.length)
@@ -222,16 +285,13 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
       manifestList: snap["manifest-list"],
       metadataFile: basename(current.name),
       metadataUrl: dfsUrl(ws, current.name),
-      // Fabric records absolute abfs:// URIs; tables written by other engines often use
-      // paths relative to the table root. Only the latter can be handed to iceberg_scan.
-      absolutePaths: /^abfss?:\/\//i.test(String(meta.location || "")),
     };
   }
 
   // ---------------------------------------------------------------------------
   // Manifest layer — read Avro manifest-list + manifests with DuckDB's read_avro.
   // Manifests are fetched to local buffers (WASM httpfs truncates larger avro files)
-  // and each live data-file (status != 2 DELETED) yields a parquet path.
+  // and each live entry (status != 2 DELETED) with content = 0 yields a parquet path.
   // ---------------------------------------------------------------------------
   async function readAvroRows(ws, url, columnsSql) {
     const name = `meta_${++_seq}.avro`;
@@ -242,48 +302,73 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
     } finally { try { await db.dropFile(name); } catch (_) {} }
   }
 
+  // Returns { dataFiles, deletes } for one manifest.
+  //
+  // `content` distinguishes what a manifest entry points at: 0 = data, 1 = position
+  // deletes, 2 = equality deletes. Filtering on it is not cosmetic — a delete file is a
+  // parquet whose schema is nothing like the table's (position deletes are file_path +
+  // pos), so feeding its path to read_parquet() alongside the data files either fails
+  // schema unification or yields junk rows. Format-version 1 manifests have no `content`
+  // field at all and are data-only, hence the fallback query.
   async function readManifest(ws, url) {
     const name = `meta_${++_seq}.avro`;
     await db.registerFileBuffer(name, await fetchAuthed(toHttps(ws, url)));
     try {
-      const t = await conn.query(
-        `SELECT status, data_file.file_path AS fp FROM read_avro('${name}')`);
-      return t.toArray().map(r => r.toJSON())
-        .filter(r => Number(r.status) !== 2)   // drop DELETED entries
-        .map(r => r.fp);
+      let rows;
+      try {
+        rows = (await conn.query(
+          `SELECT status, data_file.content AS content, data_file.file_path AS fp
+           FROM read_avro('${name}')`)).toArray().map(r => r.toJSON());
+      } catch (_) {
+        rows = (await conn.query(
+          `SELECT status, 0 AS content, data_file.file_path AS fp
+           FROM read_avro('${name}')`)).toArray().map(r => r.toJSON());
+      }
+      const live = rows.filter(r => Number(r.status) !== 2);   // drop DELETED entries
+      // String() is defensive normalization: these paths become registerFileURL() keys that
+      // have to compare equal to the SQL literals built from them, so don't let an Arrow
+      // value type reach either side.
+      const of = k => live.filter(r => Number(r.content || 0) === k).map(r => String(r.fp));
+      return { dataFiles: of(0), posDeletes: of(1), eqDeletes: of(2) };
     } finally { try { await db.dropFile(name); } catch (_) {} }
   }
 
   async function listDataFiles(ws, manifestList) {
     const manifests = (await readAvroRows(ws, manifestList, "manifest_path")).map(r => r.manifest_path);
-    const files = [];
-    for (const m of manifests) files.push(...await readManifest(ws, m));
-    return files;
+    const files = [], posDeletes = [], eqDeletes = [];
+    for (const m of manifests) {
+      const r = await readManifest(ws, m);
+      files.push(...r.dataFiles);
+      posDeletes.push(...r.posDeletes);
+      eqDeletes.push(...r.eqDeletes);
+    }
+    return { files, posDeletes, eqDeletes };
   }
 
   // ---------------------------------------------------------------------------
   // Load a table -> read-only VIEW.
   // ---------------------------------------------------------------------------
-  // Two strategies, best first. Everything is read over HTTP range requests — whole-file
-  // downloads are not a tier. Waiting minutes for a table to transfer isn't a usable
-  // product, so if range reads don't work the app says so rather than quietly grinding.
+  // One reader: walk the manifests, then let DuckDB range-read the parquet files. Nothing
+  // is downloaded whole — waiting minutes for a table to transfer isn't a usable product,
+  // so if range reads fail the app says so rather than quietly grinding.
   //
-  //   iceberg   iceberg_scan(<url>, allow_moved_paths = true). DuckDB's own Iceberg
-  //             reader: applies merge-on-read DELETE files (the manifest walk below
-  //             ignores them, i.e. returns rows that were deleted), prunes files by
-  //             partition and column statistics, and handles schema evolution.
-  //             allow_moved_paths is the key: Fabric records absolute abfss:// URIs
-  //             inside the metadata, DuckDB-WASM has no abfss filesystem, and this
-  //             option re-resolves every manifest and data file relative to the https://
-  //             root we hand it instead. sw.js signs the reads.
-  //   streamed  hand-rolled manifest walk, then registerFileURL(HTTP) per data file so
-  //             DuckDB still range-reads them. No delete-file handling, no pruning; only
-  //             needs read_avro. Used when the iceberg extension is unavailable or its
-  //             scan errors — `info.fallbackReason` carries why.
+  // DuckDB's own `iceberg` extension was tried and rejected. It loads in WASM, and its
+  // paths can be bridged by registering each abfs:// path as a file NAME aliased to the
+  // https URL (`allow_moved_paths` cannot — it refuses absolute URIs). Measured in the
+  // browser against a real Fabric table, iceberg_scan then returns the right rows... but
+  // `SELECT count(*)` answers 0, because it trusts the manifest statistics and Fabric's
+  // conversion writes record_count = 0. Silently wrong counts on the most common query in
+  // this app is a worse trade than the pruning it would buy — pruning those same zeroed
+  // statistics would not deliver anyway.
+  //
+  // The one thing the extension gave us for free, delete files, is handled here instead:
+  // position deletes via an anti-join in createView().
   //
   // Idempotent: a table already loaded is returned from cache.
   // ---------------------------------------------------------------------------
   const labelFor = t => t.schema ? `${t.schema}.${t.table}` : t.table;
+
+  const sqlStr = v => "'" + String(v).replace(/'/g, "''") + "'";
 
   async function describe(ident) {
     return (await conn.query(`DESCRIBE ${ident}`)).toArray().map(r => {
@@ -292,9 +377,54 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
     });
   }
 
-  async function createView(ident, regs) {
+  // Data files are registered under generated `data_N.parquet` names, so read_parquet's
+  // `filename` is that generated name — not the path an Iceberg delete file refers to.
+  // `mapTable` bridges the two (reg -> original path).
+  //
+  // Registering them under their original abfs:// path instead would remove the need for
+  // that mapping, and DuckDB-WASM's file registry does resolve such aliases — but only
+  // sometimes: it works in isolation and fails inside this engine's real sequence, after
+  // the Avro manifests have been read through registered buffers. Generated names have no
+  // such problem, so the mapping table is the cheap price of a reader that always works.
+  async function createView(ident, regs, delTable, mapTable) {
+    const list = regs.map(sqlStr).join(", ");
+    if (!delTable) {
+      await conn.query(`CREATE OR REPLACE VIEW ${ident} AS SELECT * FROM read_parquet([${list}])`);
+      return;
+    }
+    // EXCLUDE keeps the two bookkeeping columns out of the table's visible schema.
     await conn.query(
-      `CREATE OR REPLACE VIEW ${ident} AS SELECT * FROM read_parquet([${regs.map(n => `'${n}'`).join(", ")}])`);
+      `CREATE OR REPLACE VIEW ${ident} AS
+       SELECT * EXCLUDE (filename, file_row_number)
+       FROM read_parquet([${list}], filename = true, file_row_number = true) x
+       WHERE NOT EXISTS (
+         SELECT 1 FROM ${delTable} d JOIN ${mapTable} m ON m.orig = d.file_path
+         WHERE m.reg = x.filename AND d.pos = x.file_row_number)`);
+  }
+
+  // reg name -> original manifest path, so the anti-join can match a delete file's
+  // `file_path` against read_parquet's `filename`.
+  async function createMap(pairs) {
+    const name = `__map_${++_seq}`;
+    const values = pairs.map(([reg, orig]) => `(${sqlStr(reg)}, ${sqlStr(orig)})`).join(", ");
+    await conn.query(
+      `CREATE OR REPLACE TABLE ${name} AS SELECT * FROM (VALUES ${values}) v(reg, orig)`);
+    return name;
+  }
+
+  // Materialize the position-delete files (file_path, pos) into one small table.
+  async function loadPositionDeletes(ws, paths) {
+    const regs = [];
+    for (const p of paths) {
+      const reg = `del_${++_seq}.parquet`;
+      await db.registerFileURL(reg, toHttps(ws, p), duckdb.DuckDBDataProtocol.HTTP, false);
+      regs.push(reg);
+    }
+    const name = `__del_${++_seq}`;
+    await conn.query(
+      `CREATE OR REPLACE TABLE ${name} AS
+       SELECT file_path, pos FROM read_parquet([${regs.map(sqlStr).join(", ")}])`);
+    return name;
   }
 
   async function dropAll(regs) {
@@ -309,7 +439,7 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
 
     const ws = lh.workspace;
     onStatus(`Resolving ${label}…`);
-    const { manifestList, absolutePaths } = await resolveIceberg(ws, t.root);
+    const { manifestList } = await resolveIcebergRetrying(ws, t.root, label);
 
     let ident;
     if (t.schema) {
@@ -319,89 +449,53 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
       ident = `"${t.table}"`;
     }
 
-    let columns = null;
-    let mode = null;
-    let fileCount = null;
-    let fallbackReason = null;
+    onStatus(`Reading manifests for ${label}…`);
+    const { files: paths, posDeletes, eqDeletes } = await listDataFiles(ws, manifestList);
+    if (!paths.length) throw new Error(`${label}: current snapshot has no data files`);
 
-    // --- iceberg ---
-    // Only attempted when the metadata uses paths relative to the table root. Measured
-    // against a real Fabric table (DuckDB 1.5.2, iceberg extension):
-    //
-    //   iceberg_scan('<table root>', allow_moved_paths = true)
-    //     -> Invalid Configuration Error: Could not create full path from Iceberg Path
-    //        (https://onelake.dfs…/Tables/CH01/nation) and the relative path
-    //        (abfs://…@onelake.dfs…/Tables/CH01/nation/ducklake-….parquet)
-    //
-    // allow_moved_paths only rebases paths it considers RELATIVE; it refuses an absolute
-    // abfs:// URI outright, so it cannot bridge abfs -> https. Passing the metadata.json
-    // instead is worse: the option treats its argument as a directory and appends
-    // /metadata/snap-….avro to it (404). There is no third spelling. Hence the gate:
-    // absolute-path tables go straight to the manifest walk rather than burning a query
-    // on a failure we can predict.
-    if (icebergExt && !absolutePaths) {
-      const tableRoot = `${dfsBase(ws)}/${encPath(t.root)}`;
-      onStatus(`Opening ${label} with the Iceberg reader…`);
-      try {
-        await conn.query(
-          `CREATE OR REPLACE VIEW ${ident} AS ` +
-          `SELECT * FROM iceberg_scan('${tableRoot}', allow_moved_paths = true)`);
-        columns = await describe(ident);   // forces a real metadata + footer read
-        mode = "iceberg";
-      } catch (e) {
-        fallbackReason = e.message;
-        console.warn(`[engine] iceberg_scan('${tableRoot}') failed for ${label}:`, e.message);
-        columns = null;
+    // Map each data file to a generated name pointing at its https URL, so DuckDB
+    // range-reads it instead of us downloading it whole.
+    const regs = [], pairs = [];
+    let columns;
+    onStatus(`Opening ${label} — ${paths.length} file(s)…`);
+    try {
+      for (const p of paths) {
+        const reg = `data_${++_seq}.parquet`;
+        await db.registerFileURL(reg, toHttps(ws, p), duckdb.DuckDBDataProtocol.HTTP, false);
+        regs.push(reg);
+        pairs.push([reg, p]);
       }
-    } else if (absolutePaths) {
-      fallbackReason = "the table records absolute abfs:// paths, which iceberg_scan cannot resolve";
-    } else {
-      fallbackReason = "the iceberg extension did not load";
+      const delTable = posDeletes.length ? await loadPositionDeletes(ws, posDeletes) : null;
+      const mapTable = delTable ? await createMap(pairs) : null;
+      await createView(ident, regs, delTable, mapTable);
+      columns = await describe(ident);   // forces a real footer read — this is the probe
+    } catch (e) {
+      await dropAll(regs);
+      // Deliberately no whole-file download tier: on a big table that means minutes of
+      // waiting and the table in browser memory. Fail with the cause instead.
+      throw new Error(
+        `Could not read ${label} over HTTP range requests: ${e.message}. ` +
+        `This usually means the service worker isn't controlling the page (reload once) ` +
+        `or it has no OneLake token yet.`);
     }
 
-    // --- streamed: hand-rolled manifest walk, range-read per data file ---
-    if (!columns) {
-      onStatus(`Reading manifests for ${label}…`);
-      const paths = await listDataFiles(ws, manifestList);
-      if (!paths.length) throw new Error(`${label}: current snapshot has no data files`);
-      const urls = paths.map(p => toHttps(ws, p));
-      fileCount = paths.length;
+    const info = { label, ident, columns, fileCount: paths.length,
+                   posDeletes: posDeletes.length, eqDeletes: eqDeletes.length };
 
-      const regs = [];
-      onStatus(`Opening ${label} — ${urls.length} file(s)…`);
-      try {
-        for (const u of urls) {
-          const reg = `data_${++_seq}.parquet`;
-          await db.registerFileURL(reg, u, duckdb.DuckDBDataProtocol.HTTP, false);
-          regs.push(reg);
-        }
-        await createView(ident, regs);
-        columns = await describe(ident);   // forces a real footer read — this is the probe
-        mode = "streamed";
-      } catch (e) {
-        await dropAll(regs);
-        // Deliberately no whole-file download tier: on a big table that means minutes of
-        // waiting and the whole thing in browser memory. Fail with the cause instead.
-        throw new Error(
-          `Could not read ${label} over HTTP range requests: ${e.message}. ` +
-          `This usually means the service worker isn't controlling the page (reload once) ` +
-          `or it has no OneLake token yet.`);
-      }
-    }
-
-    const info = { label, ident, columns, mode, fileCount, fallbackReason };
     loaded.set(label, info);
     onStatus(describeLoad(info));
-    if (fallbackReason) console.warn(`[engine] ${label} fell back to the manifest walk: ${fallbackReason}`);
     return info;
   }
 
-  // One sentence about how the table was actually opened. The manifest walk ignores
-  // merge-on-read DELETE files; Fabric's converted tables are copy-on-write so they have
-  // none, but a table written by Spark might, hence the caveat rather than silence.
-  function describeLoad({ label, mode, fileCount }) {
-    if (mode === "iceberg") return `${label} — Iceberg reader, read on demand`;
-    return `${label} — ${fileCount} file(s), read on demand (copy-on-write only)`;
+  // One sentence about how the table was opened. Position deletes are applied silently —
+  // that is just correctness, not news. Equality deletes are NOT applied, so those get a
+  // warning; saying nothing would mean quietly returning rows the table no longer has.
+  function describeLoad({ label, fileCount, posDeletes, eqDeletes }) {
+    let s = `${label} — ${fileCount} file(s), read on demand`;
+    if (posDeletes) s += `, ${posDeletes} delete file(s) applied`;
+    if (eqDeletes) s += `. WARNING: ${eqDeletes} equality-delete file(s) NOT applied — ` +
+                        `deleted rows may still appear`;
+    return s;
   }
 
   // ---------------------------------------------------------------------------
@@ -444,5 +538,5 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
     return out;
   }
 
-  return { init, parseLakehouse, listTables, loadTable, runSql, describeLoad };
+  return { init, parseLakehouse, listWorkspaces, listItems, listTables, loadTable, runSql, describeLoad };
 }

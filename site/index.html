@@ -20,10 +20,11 @@
       display: flex; flex-direction: column;
     }
     a { color: var(--accent2); }
-    button, input {
+    button, input, select {
       font: inherit; color: var(--text); background: var(--panel);
       border: 1px solid var(--border); border-radius: 6px; padding: 0.45rem 0.7rem;
     }
+    select:disabled { opacity: 0.5; }
     button { cursor: pointer; }
     button:hover:not(:disabled) { border-color: var(--accent2); }
     button:disabled { opacity: 0.5; cursor: default; }
@@ -37,7 +38,8 @@
     }
     header .brand { font-weight: 700; letter-spacing: 0.2px; white-space: nowrap; }
     header .brand small { color: var(--muted); font-weight: 400; }
-    #lakehouseInput { flex: 1 1 320px; }
+    #wsSelect { flex: 1 1 260px; max-width: 380px; }
+    #itemSelect { flex: 1 1 220px; max-width: 320px; }
     header .spacer { flex: 1; }
     #userBox { color: var(--muted); font-size: 0.85rem; white-space: nowrap; }
 
@@ -107,8 +109,9 @@
 <body>
   <header>
     <div class="brand">OneLake&nbsp;Iceberg&nbsp;Viewer <small>· DuckDB-WASM</small></div>
-    <input id="lakehouseInput" placeholder="workspace/lakehouse.Lakehouse" autocomplete="off" spellcheck="false" />
-    <button id="connectBtn" class="primary">Connect</button>
+    <select id="wsSelect" title="Workspace"><option value="">Loading workspaces…</option></select>
+    <select id="itemSelect" title="Lakehouse / Warehouse" disabled><option value="">Select a workspace first</option></select>
+    <button id="connectBtn" title="Reload tables">Reload</button>
     <div class="spacer"></div>
     <div id="userBox"></div>
   </header>
@@ -116,7 +119,7 @@
   <main>
     <aside>
       <div class="head"><span>Tables</span><span id="tableCount"></span></div>
-      <div id="tableList"><div class="hint">Enter a lakehouse path and press <b>Connect</b>.</div></div>
+      <div id="tableList"><div class="hint">Pick a workspace, then a lakehouse or warehouse.</div></div>
     </aside>
 
     <section>

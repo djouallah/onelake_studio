@@ -84,10 +84,9 @@ async function start() {
   showSignedIn();
   engine = createEngine(auth, { onStatus: setStatus });
   await engine.init();
-  setStatus('Signed in. Enter a lakehouse path and press Connect.', 'ok');
-
   $('connectBtn').onclick = connect;
-  $('lakehouseInput').addEventListener('keydown', e => { if (e.key === 'Enter') connect(); });
+  $('wsSelect').onchange = onWorkspaceChange;
+  $('itemSelect').onchange = connect;
   $('runBtn').onclick = runQuery;
   $('previewBtn').onclick = () => { if (activeIdent) { $('sqlEditor').value = `SELECT * FROM ${activeIdent} LIMIT 100`; runQuery(); } };
   $('csvBtn').onclick = downloadCsv;
@@ -95,17 +94,89 @@ async function start() {
     if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); runQuery(); }
   });
 
-  if (cfg.defaultLakehouse) { $('lakehouseInput').value = cfg.defaultLakehouse; connect(); }
+  await loadCatalog();
+}
+
+// ---------------------------------------------------------------------------
+// Catalog — workspaces, then the lakehouses/warehouses inside one.
+// ---------------------------------------------------------------------------
+// Both levels come from the OneLake DFS API on the storage token we already hold, so
+// browsing costs no extra Entra permission and no second consent prompt.
+function fill(sel, options, placeholder) {
+  sel.innerHTML = '';
+  const first = document.createElement('option');
+  first.value = '';
+  first.textContent = placeholder;
+  sel.appendChild(first);
+  for (const o of options) {
+    const el = document.createElement('option');
+    el.value = o.value;
+    el.textContent = o.label;
+    sel.appendChild(el);
+  }
+}
+
+async function loadCatalog() {
+  const ws = $('wsSelect');
+  try {
+    setStatus('Loading workspaces…');
+    const names = await engine.listWorkspaces();
+    fill(ws, names.map(n => ({ value: n, label: n })), `Workspace (${names.length})`);
+    setStatus(`${names.length} workspace(s). Pick one to browse its tables.`, 'ok');
+
+    // cfg.defaultLakehouse ("workspace/item.Lakehouse") preselects both levels.
+    if (cfg.defaultLakehouse) {
+      const { workspace, item } = engine.parseLakehouse(cfg.defaultLakehouse);
+      if (names.includes(workspace)) {
+        ws.value = workspace;
+        await onWorkspaceChange();
+        const sel = $('itemSelect');
+        if ([...sel.options].some(o => o.value === item)) { sel.value = item; await connect(); }
+      }
+    }
+  } catch (e) {
+    fill(ws, [], 'Could not list workspaces');
+    setStatus('Could not list workspaces: ' + e.message, 'error');
+    console.error(e);
+  }
+}
+
+async function onWorkspaceChange() {
+  const workspace = $('wsSelect').value;
+  const sel = $('itemSelect');
+  activeIdent = null;
+  $('tableList').innerHTML = '<div class="hint">Pick a lakehouse or warehouse.</div>';
+  $('tableCount').textContent = '';
+  if (!workspace) {
+    sel.disabled = true;
+    fill(sel, [], 'Select a workspace first');
+    return;
+  }
+  sel.disabled = true;
+  fill(sel, [], 'Loading…');
+  try {
+    setStatus(`Listing items in ${workspace}…`);
+    const items = await engine.listItems(workspace);
+    fill(sel, items.map(i => ({ value: i.name, label: `${i.name.replace(/\.[^.]+$/, '')}  ·  ${i.kind}` })),
+         items.length ? `Item (${items.length})` : 'No lakehouses or warehouses');
+    sel.disabled = !items.length;
+    setStatus(items.length
+      ? `${items.length} lakehouse(s)/warehouse(s) in ${workspace}.`
+      : `${workspace} has no lakehouse or warehouse.`, items.length ? 'ok' : '');
+  } catch (e) {
+    fill(sel, [], 'Could not list items');
+    setStatus('Could not list items: ' + e.message, 'error');
+    console.error(e);
+  }
 }
 
 // ---------------------------------------------------------------------------
 // Connect -> list tables -> sidebar
 // ---------------------------------------------------------------------------
 async function connect() {
-  const raw = $('lakehouseInput').value;
-  try {
-    lakehouse = engine.parseLakehouse(raw);
-  } catch (e) { setStatus(e.message, 'error'); return; }
+  const workspace = $('wsSelect').value, item = $('itemSelect').value;
+  if (!workspace || !item) return;
+  lakehouse = { workspace, item };
 
   $('connectBtn').disabled = true;
   setStatus(`Listing tables in ${lakehouse.workspace}/${lakehouse.item}…`);

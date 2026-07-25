@@ -5,10 +5,12 @@
   "type": "module",
   "description": "Serverless, in-browser SQL over any OneLake Iceberg table. Type a workspace/lakehouse.Lakehouse path, browse its tables, preview, and query with DuckDB-WASM. Deployed to Microsoft Fabric via Rayfin.",
   "scripts": {
+    "dev": "serve site -l 5173",
     "build:fabric": "node build.mjs",
     "rayfin:up": "rayfin up"
   },
   "devDependencies": {
-    "@microsoft/rayfin-cli": "^1.33.1"
+    "@microsoft/rayfin-cli": "^1.33.1",
+    "serve": "^14.2.6"
   }
 }

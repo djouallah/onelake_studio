@@ -74,16 +74,29 @@ function createMsalAuth(cfg, { onExpired } = {}) {
   // headers, so sw.js signs those requests instead. It only ever holds the token in
   // memory, so push it on every change and answer 'need-token' if the worker was
   // restarted and lost it.
+  // Cache Storage is the durable channel: the browser terminates an idle service worker
+  // whenever it likes (reliably so during DuckDB's multi-MB WASM download), and a token
+  // kept only in its memory is gone by the time the parquet reads start. postMessage is
+  // kept as the fast path for the common case.
   function publishToken() {
     try {
       const c = navigator.serviceWorker && navigator.serviceWorker.controller;
       if (c) c.postMessage({ type: 'onelake-token', token: _token });
-    } catch (_) { /* no service worker — data.js falls back to buffered downloads */ }
+    } catch (_) { /* no service worker — reads will 401 and say so */ }
+    try {
+      caches.open('onelake-token').then(c =>
+        _token ? c.put('/__onelake_token', new Response(_token)) : c.delete('/__onelake_token')
+      ).catch(() => {});
+    } catch (_) { /* ditto */ }
   }
   try {
     navigator.serviceWorker.addEventListener('message', e => {
       if (e.data && e.data.type === 'need-token') publishToken();
     });
+    // A ServiceWorkerContainer buffers message events until startMessages() is called when
+    // you use addEventListener rather than .onmessage — without this the worker's
+    // 'need-token' request is never answered and its reads go out unauthenticated.
+    navigator.serviceWorker.startMessages();
     // A controller can arrive after we already hold a token (first load, or an update).
     navigator.serviceWorker.addEventListener('controllerchange', publishToken);
   } catch (_) { /* ditto */ }

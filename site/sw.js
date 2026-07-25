@@ -19,14 +19,18 @@
 //    every request already passes through here to be re-issued for COEP, this is
 //    the natural place to authorize them.
 //
-// The token is pushed in by auth.js (`onelake-token` messages) and held in memory
-// only. If this worker is restarted by the browser it loses the token, so a
-// request that arrives without one asks the page for it (`need-token`) and waits
-// briefly for the reply.
+// auth.js publishes the token two ways: a postMessage (fast) and a Cache Storage entry
+// (durable). The cache is what actually matters — the browser terminates an idle service
+// worker freely, and it was doing so during DuckDB's multi-MB WASM download, so a purely
+// in-memory token was gone by the time the parquet reads started and they 401'd. Asking
+// the page for it is the last resort, and only works because auth.js calls
+// startMessages(); a ServiceWorkerContainer queues message events until it does.
 // =============================================================================
 
 const ONELAKE_HOST = 'onelake.dfs.fabric.microsoft.com';
 const TOKEN_WAIT_MS = 3000;
+const TOKEN_CACHE = 'onelake-token';
+const TOKEN_KEY = '/__onelake_token';
 
 let coepCredentialless = false;
 let token = null;
@@ -49,8 +53,17 @@ self.addEventListener('message', e => {
   }
 });
 
-// Ask every open page for the current token. Coalesced: concurrent misses share
-// one round trip, and it resolves null on timeout so a request never hangs.
+// Survives worker restarts, unlike the in-memory copy.
+async function readTokenFromCache() {
+  try {
+    const c = await caches.open(TOKEN_CACHE);
+    const r = await c.match(TOKEN_KEY);
+    return r ? (await r.text()) || null : null;
+  } catch (_) { return null; }
+}
+
+// Last resort: ask every open page. Coalesced, so concurrent misses share one round
+// trip, and it resolves null on timeout so a request never hangs.
 function askClientsForToken() {
   if (waiting) return waiting.promise;
   let resolve;
@@ -71,7 +84,7 @@ async function authorize(request) {
   try { host = new URL(request.url).host; } catch (_) { return request; }
   if (host !== ONELAKE_HOST) return request;
 
-  const t = token || await askClientsForToken();
+  const t = token || (token = await readTokenFromCache()) || await askClientsForToken();
   if (!t) return request;                                     // let it 401 and surface honestly
   const headers = new Headers(request.headers);
   headers.set('Authorization', 'Bearer ' + t);

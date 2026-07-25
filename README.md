@@ -1,8 +1,9 @@
 # OneLake Iceberg Viewer
 
 A **serverless, in-browser** tool to run read-only SQL against **any Apache Iceberg table in OneLake**.
-You type a lakehouse path — `workspace/lakehouse.Lakehouse` — the app lists that lakehouse's Iceberg
-tables, lets you **preview** any of them, and run **DuckDB SQL** directly in your browser. No backend,
+Pick a workspace, then a lakehouse or warehouse, from a catalog the app discovers itself — no paths to
+type. It lists that item's Iceberg tables, lets you **preview** any of them, and run **DuckDB SQL**
+directly in your browser. No backend,
 no data copied to a server, and **nothing for your users to register** — they sign in with their own
 Entra identity and see exactly what they already have access to.
 
@@ -13,9 +14,10 @@ It's built by generalizing two references:
 ## How it works
 
 ```
-type: workspace/lakehouse.Lakehouse
-   │  (OneLake storage token from your Entra identity)
+sign in       │  (OneLake storage token from your Entra identity)
    ▼
+pick workspace→ DFS "list filesystems" at the account root = your workspaces
+pick item     → DFS list of the workspace root, filtered to Lakehouse/Warehouse/…
 list tables   → DFS list of Tables/  (finds folders with a metadata/ dir = Iceberg)
 select table  → resolve current metadata.json → snapshot → manifest-list (Avro)
               → read manifests with read_avro → parquet data-file paths
@@ -33,10 +35,13 @@ the app fails with the reason rather than falling back to a multi-minute downloa
 
 ### Why not DuckDB's `iceberg` extension?
 
-It's available for WASM and it would bring delete-file handling and manifest-level pruning, but it
-cannot resolve Fabric's paths. Fabric records **absolute** `abfs://<workspace-guid>@onelake.dfs…` URIs
-inside the metadata (note the single `s`, and GUIDs rather than the friendly names you typed), and
-DuckDB-WASM has no `abfs` filesystem. Measured against a real table with DuckDB 1.5.2:
+It would bring delete-file handling, schema evolution and manifest-level pruning, and it *is* usable
+here — but it returns wrong answers on Fabric tables, so it isn't used.
+
+Fabric records **absolute** `abfs://<workspace-guid>@onelake.dfs…` URIs inside the metadata (note the
+single `s`, and GUIDs rather than the friendly names), and DuckDB-WASM has no `abfs` filesystem. The
+documented escape hatch doesn't help — `allow_moved_paths` only rebases paths it considers *relative*
+and refuses an absolute URI:
 
 ```
 iceberg_scan('<table root>', allow_moved_paths = true)
@@ -45,11 +50,22 @@ iceberg_scan('<table root>', allow_moved_paths = true)
      (abfs://…@onelake.dfs…/Tables/CH01/nation/ducklake-….parquet)
 ```
 
-`allow_moved_paths` only rebases paths it considers *relative*; it refuses an absolute `abfs://` URI.
-Passing the `metadata.json` instead is worse — the option treats its argument as a directory and appends
-`/metadata/snap-….avro` to it (404). So the reader is attempted **only** when a table's metadata uses
-relative paths (tables written by other engines); Fabric-written tables go straight to the manifest walk
-instead of burning a query on a predictable failure.
+What *does* work is registering each `abfs://` path as a **file name** aliased to its https URL
+(`registerFileURL(abfsPath, httpsUrl, HTTP, false)`); DuckDB-WASM's file registry resolves the alias
+before it ever tries to parse the scheme, and `iceberg_scan` then reads the table fine.
+
+The blocker is elsewhere. Measured in the browser against a real table:
+
+| query | result |
+| --- | --- |
+| `SELECT count(*)` | **0** |
+| materialized, then counted | 25 (correct) |
+
+`count(*)` is answered from manifest statistics, and Fabric's Iceberg conversion writes
+`record_count = 0`. Silently returning zero for the most common query in this app is a worse trade than
+the pruning the extension would buy — and pruning reads those same zeroed statistics, so it wouldn't
+deliver either. The one thing it gave us for free, delete files, is handled directly instead
+(see below).
 
 ## Auth: one registration, none for your users
 
@@ -113,16 +129,20 @@ redirect URI on the Entra app (see *If you re-register or re-deploy* above).
 ## Local development
 
 ```bash
-npx serve site -l 5173
+npm run dev
 ```
 
-Same `site/config.js`, so nothing to fill in — `http://localhost:5173` is already an SPA redirect URI
-on the registration.
+Serves `site/` on `http://localhost:5173`. Same `site/config.js`, so nothing to fill in — that origin is
+already an SPA redirect URI on the registration, so sign-in works locally too.
+
+Note this is a plain static server, not the `rayfin up … && vite` that `npm run dev` means in the
+scaffolded Rayfin templates. There's no bundler here, and this app talks to OneLake directly rather than
+to the Rayfin Data API, so there's no backend to deploy on each run.
 
 ## Usage
 
 1. Sign in.
-2. Type a lakehouse path, e.g. `Sales/Analytics.Lakehouse`, and press **Connect**.
+2. Pick a **workspace**, then a **lakehouse or warehouse**. Both lists come from OneLake itself.
 3. Pick a table in the sidebar → it loads and auto-previews (`SELECT * … LIMIT 100`).
 4. Edit the SQL and press **Run** (or `Ctrl/Cmd+Enter`). Loaded tables can be joined together.
 5. **Download CSV** exports the current result.
@@ -132,8 +152,9 @@ on the registration.
 - **Iceberg only.** Delta tables are listed but greyed out (not queryable here yet).
 - **Read-only.** Only `SELECT` / `WITH` / `DESCRIBE` / `SHOW` / `EXPLAIN` / `SUMMARIZE` are allowed; there is no write path to OneLake.
 - **No Iceberg-level pruning** on Fabric tables (see above): every data file in the snapshot is in the view, and pruning is whatever DuckDB gets from parquet row-group statistics and column projection. Fabric's converted manifests carry `record_count = 0` anyway, so there is little to prune on.
-- **Merge-on-read delete files are not applied** by the manifest walk. Fabric's Iceberg conversions are copy-on-write (manifest entries are all `content = 0`), so this doesn't affect them; a table written by Spark with positional deletes would show deleted rows. The status line names the reader that ran.
+- **Merge-on-read delete files are not applied** by the manifest walk — they're detected and excluded from the scan, but their deletions aren't subtracted. Fabric's Iceberg conversions are copy-on-write (manifest entries are all `content = 0`), so this doesn't affect them and nothing is printed; if a table does have delete files the status line warns that deleted rows may still appear.
 - The target folder must be a real Iceberg table (has a `Tables/…/metadata/` directory).
+- **The catalog needs no extra permission.** Workspaces come from the ADLS Gen2 *List Filesystems* call at the OneLake account root and items from a listing of the workspace root, both on the same `storage.azure.com` token the data reads use — so there's no Fabric REST API call, no extra Entra scope and no second consent prompt. You see exactly the workspaces your identity can already reach.
 
 ## Project layout
 
