@@ -29,6 +29,7 @@ const DFS_HOST = "onelake.dfs.fabric.microsoft.com";
 export function createEngine(auth, { onStatus = () => {} } = {}) {
   let db = null, conn = null, worker = null;
   let _seq = 0;
+  let icebergExt = false;     // did the 'iceberg' extension load? (set in init)
   const loaded = new Map();   // "schema.table" -> { label, ident, columns, fileCount, bytes }
 
   // ---------------------------------------------------------------------------
@@ -54,6 +55,15 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
     catch (_) {
       try { await conn.query("INSTALL avro; LOAD avro;"); }
       catch (e) { console.warn("[engine] avro preload skipped; relying on autoload:", e.message); }
+    }
+    // The 'iceberg' extension is the preferred reader (see loadTable): it applies
+    // merge-on-read delete files and prunes by partition/column stats, neither of
+    // which the hand-rolled manifest walk does. It has its own Avro reader, so it
+    // doesn't need the extension above. If it can't be loaded we fall back.
+    try { await conn.query("LOAD iceberg;"); icebergExt = true; }
+    catch (_) {
+      try { await conn.query("INSTALL iceberg; LOAD iceberg;"); icebergExt = true; }
+      catch (e) { console.warn("[engine] iceberg extension unavailable; using manifest walk:", e.message); }
     }
     console.log(`[engine] DuckDB ready — crossOriginIsolated=${self.crossOriginIsolated}`);
     return { db, conn };
@@ -203,7 +213,11 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
               || (meta.snapshots || []).slice().pop();
     if (!snap || !snap["manifest-list"])
       throw new Error("Iceberg metadata has no current snapshot / manifest-list");
-    return { manifestList: snap["manifest-list"], metadataFile: basename(current.name) };
+    return {
+      manifestList: snap["manifest-list"],
+      metadataFile: basename(current.name),
+      metadataUrl: dfsUrl(ws, current.name),
+    };
   }
 
   // ---------------------------------------------------------------------------
@@ -242,17 +256,24 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
   // ---------------------------------------------------------------------------
   // Load a table -> read-only VIEW.
   // ---------------------------------------------------------------------------
-  // Two strategies, fast one first:
+  // Three strategies, best one first. Each falls through to the next on failure, so a
+  // table always loads if it can load at all.
   //
-  //   streamed  registerFileURL(HTTP) — DuckDB range-reads each parquet itself, so
-  //             opening a table costs a few footer reads and a query touches only
-  //             the row groups and columns it needs. sw.js signs those requests
-  //             (DuckDB's API can't set headers). Table size stops being bounded by
-  //             browser memory.
-  //   buffered  the old path: download whole files and register them as buffers.
-  //             Used when the streamed probe fails — no service worker controlling
-  //             the page, no token in it yet, a proxy that ignores Range. Correct,
-  //             just slow, so it's a fallback and never the plan.
+  //   iceberg   iceberg_scan(<metadata.json url>, allow_moved_paths = true). DuckDB's
+  //             own Iceberg reader: it applies merge-on-read DELETE files (the manifest
+  //             walk below silently ignores them, i.e. returns rows that were deleted),
+  //             prunes files by partition and column statistics, and handles schema
+  //             evolution. allow_moved_paths is the key: Fabric records absolute
+  //             abfss:// URIs inside the metadata, DuckDB-WASM has no abfss filesystem,
+  //             and this option makes it re-resolve every manifest and data file
+  //             relative to the https:// root we hand it instead. sw.js signs the reads.
+  //   streamed  hand-rolled manifest walk, then registerFileURL(HTTP) per data file so
+  //             DuckDB still range-reads them. No delete-file handling, no pruning, but
+  //             it only needs read_avro. Used when the iceberg extension is unavailable
+  //             or its scan errors.
+  //   buffered  same manifest walk, but download whole files into memory. Used when
+  //             range reads don't work at all — no service worker controlling the page,
+  //             no token in it yet, a proxy that ignores Range. Correct, just slow.
   //
   // Idempotent: a table already loaded is returned from cache.
   // ---------------------------------------------------------------------------
@@ -297,12 +318,7 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
 
     const ws = lh.workspace;
     onStatus(`Resolving ${label}…`);
-    const { manifestList } = await resolveIceberg(ws, t.root);
-
-    onStatus(`Reading manifests for ${label}…`);
-    const paths = await listDataFiles(ws, manifestList);
-    if (!paths.length) throw new Error(`${label}: current snapshot has no data files`);
-    const urls = paths.map(p => toHttps(ws, p));
+    const { manifestList, metadataUrl } = await resolveIceberg(ws, t.root);
 
     let ident;
     if (t.schema) {
@@ -312,52 +328,85 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
       ident = `"${t.table}"`;
     }
 
-    // --- streamed ---
-    let regs = [];
     let columns = null;
-    let bytes = null;                // unknown by design: nothing was downloaded whole
-    onStatus(`Opening ${label} — ${urls.length} file(s)…`);
-    try {
-      for (const u of urls) {
-        const reg = `data_${++_seq}.parquet`;
-        await db.registerFileURL(reg, u, duckdb.DuckDBDataProtocol.HTTP, false);
-        regs.push(reg);
+    let mode = null;
+    let fileCount = null;
+    let bytes = null;
+
+    // --- iceberg ---
+    if (icebergExt) {
+      onStatus(`Opening ${label} with the Iceberg reader…`);
+      try {
+        await conn.query(
+          `CREATE OR REPLACE VIEW ${ident} AS ` +
+          `SELECT * FROM iceberg_scan('${metadataUrl}', allow_moved_paths = true)`);
+        columns = await describe(ident);   // forces a real metadata + footer read
+        mode = "iceberg";
+      } catch (e) {
+        console.warn(`[engine] iceberg_scan failed for ${label}, using manifest walk:`, e.message);
+        columns = null;
       }
-      await createView(ident, regs);
-      columns = await describe(ident);   // forces a real footer read — this is the probe
-    } catch (e) {
-      console.warn(`[engine] streaming ${label} failed, downloading instead:`, e.message);
-      await dropAll(regs);
-      regs = [];
-      columns = null;
     }
 
-    // --- buffered fallback ---
+    // --- streamed / buffered: hand-rolled manifest walk ---
+    let regs = [];
     if (!columns) {
-      let done = 0;
-      bytes = 0;
-      onStatus(`Downloading ${label} — 0/${urls.length} files…`);
-      const bufs = await pooled(urls, async u => {
-        const buf = await fetchAuthed(u);
-        onStatus(`Downloading ${label} — ${++done}/${urls.length} files…`);
-        return buf;
-      });
-      for (const buf of bufs) {
-        bytes += buf.byteLength;
-        const reg = `data_${++_seq}.parquet`;
-        await db.registerFileBuffer(reg, buf);
-        regs.push(reg);
+      onStatus(`Reading manifests for ${label}…`);
+      const paths = await listDataFiles(ws, manifestList);
+      if (!paths.length) throw new Error(`${label}: current snapshot has no data files`);
+      const urls = paths.map(p => toHttps(ws, p));
+      fileCount = paths.length;
+
+      onStatus(`Opening ${label} — ${urls.length} file(s)…`);
+      try {
+        for (const u of urls) {
+          const reg = `data_${++_seq}.parquet`;
+          await db.registerFileURL(reg, u, duckdb.DuckDBDataProtocol.HTTP, false);
+          regs.push(reg);
+        }
+        await createView(ident, regs);
+        columns = await describe(ident);   // forces a real footer read — this is the probe
+        mode = "streamed";
+      } catch (e) {
+        console.warn(`[engine] streaming ${label} failed, downloading instead:`, e.message);
+        await dropAll(regs);
+        regs = [];
+        columns = null;
       }
-      await createView(ident, regs);
-      columns = await describe(ident);
+
+      if (!columns) {
+        let done = 0;
+        bytes = 0;
+        onStatus(`Downloading ${label} — 0/${urls.length} files…`);
+        const bufs = await pooled(urls, async u => {
+          const buf = await fetchAuthed(u);
+          onStatus(`Downloading ${label} — ${++done}/${urls.length} files…`);
+          return buf;
+        });
+        for (const buf of bufs) {
+          bytes += buf.byteLength;
+          const reg = `data_${++_seq}.parquet`;
+          await db.registerFileBuffer(reg, buf);
+          regs.push(reg);
+        }
+        await createView(ident, regs);
+        columns = await describe(ident);
+        mode = "buffered";
+      }
     }
 
-    const info = { label, ident, columns, fileCount: paths.length, bytes, streamed: bytes === null };
+    const info = { label, ident, columns, mode, fileCount, bytes };
     loaded.set(label, info);
-    onStatus(info.streamed
-      ? `Opened ${label} — ${paths.length} file(s), read on demand`
-      : `Loaded ${label} — ${paths.length} file(s), ${fmtBytes(bytes)}`);
+    onStatus(describeLoad(info));
     return info;
+  }
+
+  // One sentence about how the table was actually opened. Worth being precise: only the
+  // 'iceberg' mode honours delete files, and only 'buffered' actually transferred bytes.
+  function describeLoad({ label, mode, fileCount, bytes }) {
+    if (mode === "iceberg") return `${label} — Iceberg reader, read on demand`;
+    if (mode === "streamed") return `${label} — ${fileCount} file(s), read on demand (no delete files)`;
+    return `Loaded ${label} — ${fileCount} file(s), ${fmtBytes(bytes)}`;
   }
 
   // ---------------------------------------------------------------------------
@@ -407,5 +456,5 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
     return `${(n / 1e9).toFixed(2)} GB`;
   }
 
-  return { init, parseLakehouse, listTables, loadTable, runSql, fmtBytes };
+  return { init, parseLakehouse, listTables, loadTable, runSql, fmtBytes, describeLoad };
 }

@@ -24,6 +24,13 @@ function setStatus(msg, type = '') {
 // ---------------------------------------------------------------------------
 const auth = createAuth(cfg, { onStatus: setStatus, onExpired: showExpired });
 
+// Deliberately does NOT render the signed-in address. The identity is visible in the
+// browser's own account UI, and this app gets screen-shared and screenshotted; a UPN in
+// the header is a needless leak. auth.getUserId() is still there for console debugging.
+function showSignedIn() {
+  $('userBox').textContent = 'Signed in';
+}
+
 function showSignIn(onDone, msg = 'Sign in with your Microsoft (Entra) identity to read OneLake.') {
   const gate = $('authGate');
   gate.querySelector('#authGateMsg').innerHTML = msg;
@@ -56,7 +63,7 @@ function showSignIn(onDone, msg = 'Sign in with your Microsoft (Entra) identity 
 function showExpired() {
   $('authGate').style.display = '';
   showSignIn(
-    async () => { $('userBox').textContent = auth.getUserId() || ''; },
+    async () => { showSignedIn(); },
     'Your OneLake session expired. Sign in again to keep querying.'
   );
 }
@@ -74,7 +81,7 @@ function showOpenInTab() {
 // After sign-in: bring up DuckDB and enable the UI.
 // ---------------------------------------------------------------------------
 async function start() {
-  $('userBox').textContent = auth.getUserId() || '';
+  showSignedIn();
   engine = createEngine(auth, { onStatus: setStatus });
   await engine.init();
   setStatus('Signed in. Enter a lakehouse path and press Connect.', 'ok');
@@ -171,11 +178,9 @@ async function selectTable(row, t) {
     $('previewBtn').disabled = false;
     $('runBtn').disabled = false;
     await runQuery();
-    // Streamed tables were never downloaded whole, so there is no byte count to show —
-    // say what actually happened instead of implying a transfer that didn't occur.
-    setStatus(info.streamed
-      ? `${info.label} — ${info.fileCount} file(s), read on demand.`
-      : `Loaded ${info.label} — ${info.fileCount} file(s), ${engine.fmtBytes(info.bytes)}.`, 'ok');
+    // The engine knows how it actually opened the table (Iceberg reader / range reads /
+    // full download); don't restate it here and risk implying a transfer that never happened.
+    setStatus(engine.describeLoad(info) + '.', 'ok');
   } catch (e) {
     setStatus('Load failed: ' + e.message, 'error');
     console.error(e);
