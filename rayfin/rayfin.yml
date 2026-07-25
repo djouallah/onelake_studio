@@ -1,0 +1,28 @@
+id: onelake-iceberg-viewer
+name: onelake-iceberg-viewer
+version: 1.0.0
+services:
+  # Rayfin-managed auth. `fabric.enabled` provisions and manages the Entra app
+  # registration for you and injects clientId/tenantId into window.RAYFIN_WASM_CONFIG
+  # at serve time — so no manual app registration is needed to sign in with your
+  # own Entra identity and get a OneLake (storage.azure.com) token.
+  auth:
+    enabled: true
+    fabric:
+      enabled: true
+    password:
+      enabled: true
+    # Add your deployed webapp URL here after the first `rayfin up` prints it.
+    allowedRedirectUris:
+      - http://localhost:5173
+  data:
+    enabled: false
+  staticHosting:
+    enabled: true
+    folder: dist
+    buildCommand: npm run build:fabric
+    indexDocument: index.html
+  storage:
+    enabled: false
+  functions:
+    enabled: false

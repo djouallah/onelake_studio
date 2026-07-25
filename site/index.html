@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>OneLake Iceberg Viewer</title>
+  <link rel="preconnect" href="https://onelake.dfs.fabric.microsoft.com" crossorigin />
+  <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin />
+  <style>
+    :root {
+      --bg: #0d1117; --panel: #161b22; --panel2: #0b0f14; --border: #30363d;
+      --text: #e6edf3; --muted: #9da5b4; --accent: #2563eb; --accent2: #58a6ff;
+      --ok: #3fb950; --warn: #d29922; --err: #ff7b72;
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      margin: 0; background: var(--bg); color: var(--text);
+      font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      display: flex; flex-direction: column;
+    }
+    a { color: var(--accent2); }
+    button, input {
+      font: inherit; color: var(--text); background: var(--panel);
+      border: 1px solid var(--border); border-radius: 6px; padding: 0.45rem 0.7rem;
+    }
+    button { cursor: pointer; }
+    button:hover:not(:disabled) { border-color: var(--accent2); }
+    button:disabled { opacity: 0.5; cursor: default; }
+    button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+    input { min-width: 0; }
+
+    /* Header */
+    header {
+      display: flex; align-items: center; gap: 0.6rem; padding: 0.55rem 0.9rem;
+      border-bottom: 1px solid var(--border); background: var(--panel2); flex-wrap: wrap;
+    }
+    header .brand { font-weight: 700; letter-spacing: 0.2px; white-space: nowrap; }
+    header .brand small { color: var(--muted); font-weight: 400; }
+    #lakehouseInput { flex: 1 1 320px; }
+    header .spacer { flex: 1; }
+    #userBox { color: var(--muted); font-size: 0.85rem; white-space: nowrap; }
+
+    /* Layout */
+    main { flex: 1; display: flex; min-height: 0; }
+    aside {
+      width: 280px; min-width: 200px; border-right: 1px solid var(--border);
+      background: var(--panel); display: flex; flex-direction: column; overflow: hidden;
+    }
+    aside .head {
+      padding: 0.5rem 0.75rem; border-bottom: 1px solid var(--border);
+      color: var(--muted); font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.5px;
+      display: flex; justify-content: space-between; align-items: center;
+    }
+    #tableList { overflow: auto; flex: 1; }
+    .schemaGroup > .schemaName {
+      padding: 0.4rem 0.75rem; color: var(--muted); font-size: 0.78rem; font-weight: 600;
+      text-transform: uppercase; letter-spacing: 0.4px; position: sticky; top: 0; background: var(--panel);
+    }
+    .tableItem {
+      padding: 0.4rem 0.75rem 0.4rem 1.1rem; cursor: pointer; display: flex; align-items: center; gap: 0.4rem;
+      border-left: 2px solid transparent; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .tableItem:hover { background: #1c2330; }
+    .tableItem.active { background: #1c2330; border-left-color: var(--accent2); }
+    .tableItem.delta { color: var(--muted); cursor: not-allowed; }
+    .tableItem .tag { margin-left: auto; font-size: 0.65rem; color: var(--muted); border: 1px solid var(--border); border-radius: 4px; padding: 0 0.3rem; }
+    .tableItem.delta .tag { border-color: var(--warn); color: var(--warn); }
+
+    /* Content */
+    section { flex: 1; display: flex; flex-direction: column; min-width: 0; overflow: hidden; }
+    .toolbar { display: flex; gap: 0.5rem; align-items: center; padding: 0.5rem 0.75rem; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+    .toolbar .title { font-weight: 600; }
+    .toolbar .spacer { flex: 1; }
+    #schemaBar { padding: 0.4rem 0.75rem; border-bottom: 1px solid var(--border); color: var(--muted); font-size: 0.82rem; overflow-x: auto; white-space: nowrap; }
+    #schemaBar .col { display: inline-block; margin-right: 0.8rem; }
+    #schemaBar .col b { color: var(--text); }
+    #schemaBar .col span { color: var(--accent2); }
+    #sqlEditor {
+      width: 100%; min-height: 96px; max-height: 40vh; resize: vertical; padding: 0.6rem 0.75rem;
+      border: 0; border-bottom: 1px solid var(--border); background: var(--panel2); color: var(--text);
+      font-family: ui-monospace, "SFMono-Regular", Consolas, "Liberation Mono", monospace; font-size: 13px;
+    }
+    .resultsWrap { flex: 1; overflow: auto; }
+    table.results { border-collapse: collapse; width: 100%; font-size: 13px; }
+    table.results th, table.results td {
+      border: 1px solid var(--border); padding: 0.3rem 0.55rem; text-align: left; white-space: nowrap;
+      max-width: 420px; overflow: hidden; text-overflow: ellipsis;
+    }
+    table.results th { position: sticky; top: 0; background: var(--panel); z-index: 1; }
+    table.results td.num { text-align: right; font-variant-numeric: tabular-nums; }
+    table.results tr:nth-child(even) td { background: #10151c; }
+
+    #status { padding: 0.4rem 0.9rem; border-top: 1px solid var(--border); background: var(--panel2); color: var(--muted); font-size: 0.82rem; }
+    #status.error { color: var(--err); }
+    #status.ok { color: var(--ok); }
+    .hint { color: var(--muted); padding: 1.2rem; }
+
+    /* Auth gate */
+    #authGate {
+      position: fixed; inset: 0; background: rgba(13,17,23,0.96); z-index: 10;
+      display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1rem; text-align: center; padding: 1.5rem;
+    }
+    #authGateMsg { color: var(--muted); max-width: 520px; }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="brand">OneLake&nbsp;Iceberg&nbsp;Viewer <small>· DuckDB-WASM</small></div>
+    <input id="lakehouseInput" placeholder="workspace/lakehouse.Lakehouse" autocomplete="off" spellcheck="false" />
+    <button id="connectBtn" class="primary">Connect</button>
+    <div class="spacer"></div>
+    <div id="userBox"></div>
+  </header>
+
+  <main>
+    <aside>
+      <div class="head"><span>Tables</span><span id="tableCount"></span></div>
+      <div id="tableList"><div class="hint">Enter a lakehouse path and press <b>Connect</b>.</div></div>
+    </aside>
+
+    <section>
+      <div class="toolbar">
+        <span class="title" id="activeTable">No table selected</span>
+        <div class="spacer"></div>
+        <button id="previewBtn" disabled>Preview</button>
+        <button id="runBtn" class="primary" disabled>Run ▶</button>
+        <button id="csvBtn" disabled>Download CSV</button>
+      </div>
+      <div id="schemaBar"></div>
+      <textarea id="sqlEditor" spellcheck="false" placeholder="Select a table to load it, then write read-only SQL here…"></textarea>
+      <div class="resultsWrap"><div class="hint" id="resultsHint">Query results appear here.</div><table class="results" id="resultsTable" hidden></table></div>
+    </section>
+  </main>
+
+  <div id="status">Ready.</div>
+
+  <div id="authGate">
+    <div style="font-size:1.3rem;font-weight:700">OneLake Iceberg Viewer</div>
+    <div id="authGateMsg">Loading…</div>
+  </div>
+
+  <!-- COOP/COEP shim so DuckDB-WASM can use multiple threads (falls back to single-threaded). -->
+  <script src="coi-serviceworker.js"></script>
+  <!-- config.js: Rayfin serves this with your managed clientId/tenantId in Fabric.
+       Locally, copy config.example.js -> config.js. If absent, the app runs no-auth. -->
+  <script src="config.js"></script>
+  <script type="module" src="app.js"></script>
+</body>
+</html>

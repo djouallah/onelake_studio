@@ -1,0 +1,14 @@
+{
+  "name": "onelake-iceberg-viewer",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Serverless, in-browser SQL over any OneLake Iceberg table. Type a workspace/lakehouse.Lakehouse path, browse its tables, preview, and query with DuckDB-WASM. Deployed to Microsoft Fabric via Rayfin.",
+  "scripts": {
+    "build:fabric": "node build.mjs",
+    "rayfin:up": "rayfin up"
+  },
+  "devDependencies": {
+    "@microsoft/rayfin-cli": "^1.33.1"
+  }
+}

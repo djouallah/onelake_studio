@@ -1,0 +1,8 @@
+node_modules/
+dist/
+# Local-dev secrets: your own Entra SPA clientId/tenantId. In Fabric, Rayfin
+# injects window.RAYFIN_WASM_CONFIG, so config.js is only for localhost.
+site/config.js
+.rayfin/
+*.log
+.DS_Store
