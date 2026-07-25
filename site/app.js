@@ -12,6 +12,9 @@ let engine = null;
 let lakehouse = null;        // { workspace, item }
 let activeIdent = null;      // quoted identifier of the loaded table
 let lastResult = null;       // { fields, rows } for CSV export
+let pane = 'tables';         // which sidebar pane is showing: 'tables' | 'files'
+let lastTables = null;       // cached listTables() result, so switching panes is free
+let lastTableCount = '';
 
 function setStatus(msg, type = '') {
   const el = $('status');
@@ -87,6 +90,8 @@ async function start() {
   $('connectBtn').onclick = connect;
   $('wsSelect').onchange = onWorkspaceChange;
   $('itemSelect').onchange = connect;
+  $('tabTables').onclick = () => switchPane('tables');
+  $('tabFiles').onclick = () => switchPane('files');
   $('runBtn').onclick = runQuery;
   $('previewBtn').onclick = () => { if (activeIdent) { $('sqlEditor').value = `SELECT * FROM ${activeIdent} LIMIT 100`; runQuery(); } };
   $('csvBtn').onclick = downloadCsv;
@@ -145,6 +150,9 @@ async function onWorkspaceChange() {
   const workspace = $('wsSelect').value;
   const sel = $('itemSelect');
   activeIdent = null;
+  lakehouse = null;
+  lastTables = null;
+  lastTableCount = '';
   $('tableList').innerHTML = '<div class="hint">Pick a lakehouse or warehouse.</div>';
   $('tableCount').textContent = '';
   if (!workspace) {
@@ -183,9 +191,11 @@ async function connect() {
   $('tableList').innerHTML = '<div class="hint">Loading…</div>';
   try {
     const tables = await engine.listTables(lakehouse);
-    renderTableList(tables);
     const ice = tables.filter(t => t.kind === 'iceberg').length;
-    $('tableCount').textContent = `${ice}/${tables.length}`;
+    lastTables = tables;
+    lastTableCount = `${ice}/${tables.length}`;
+    if (pane === 'tables') { renderTableList(tables); $('tableCount').textContent = lastTableCount; }
+    else await renderFileTree();
     setStatus(`${ice} Iceberg table(s) found in ${lakehouse.item}.` +
       (tables.length > ice ? ` (${tables.length - ice} non-Iceberg hidden from querying)` : ''), 'ok');
   } catch (e) {
@@ -194,6 +204,96 @@ async function connect() {
     console.error(e);
   } finally {
     $('connectBtn').disabled = false;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Files/ tree — the unmanaged half of a lakehouse
+// ---------------------------------------------------------------------------
+// Listed one directory at a time, on expand: a lakehouse's Files/ can be arbitrarily
+// deep and wide, so a recursive listing up front would be slow for no benefit.
+function switchPane(which) {
+  pane = which;
+  $('tabTables').classList.toggle('active', which === 'tables');
+  $('tabFiles').classList.toggle('active', which === 'files');
+  if (!lakehouse) {
+    $('tableList').innerHTML = '<div class="hint">Pick a workspace, then a lakehouse or warehouse.</div>';
+    return;
+  }
+  if (which === 'tables') { renderTableList(lastTables || []); $('tableCount').textContent = lastTableCount; }
+  else renderFileTree();
+}
+
+async function renderFileTree() {
+  const list = $('tableList');
+  list.innerHTML = '<div class="hint">Loading…</div>';
+  $('tableCount').textContent = '';
+  try {
+    const root = document.createElement('div');
+    list.innerHTML = '';
+    list.appendChild(root);
+    await expandDir(root, '', 0);
+    if (!root.children.length) list.innerHTML = '<div class="hint">Nothing under Files/.</div>';
+  } catch (e) {
+    list.innerHTML = '<div class="hint">Could not list Files/.</div>';
+    setStatus('Files listing failed: ' + e.message, 'error');
+    console.error(e);
+  }
+}
+
+// Render one directory's children into `host`, indented by depth.
+async function expandDir(host, dir, depth) {
+  const entries = await engine.listFiles(lakehouse, dir);
+  for (const e of entries) {
+    const row = document.createElement('div');
+    row.className = 'fileItem' + (!e.isDir && !e.queryable ? ' plain' : '');
+    row.style.paddingLeft = (0.75 + depth * 0.8) + 'rem';
+    const caret = e.isDir ? '▸' : '';
+    row.innerHTML = `<span class="caret">${caret}</span><span>${escapeHtml(e.name)}</span>` +
+      (e.isDir ? '' : `<span class="size">${escapeHtml(engine.fmtBytes(e.bytes))}</span>`);
+    host.appendChild(row);
+
+    if (e.isDir) {
+      const kids = document.createElement('div');
+      kids.hidden = true;
+      host.appendChild(kids);
+      let loadedOnce = false;
+      row.onclick = async () => {
+        kids.hidden = !kids.hidden;
+        row.querySelector('.caret').textContent = kids.hidden ? '▸' : '▾';
+        if (!loadedOnce && !kids.hidden) {
+          loadedOnce = true;
+          try { await expandDir(kids, e.path.replace(/^.*?\/Files\/?/, ''), depth + 1); }
+          catch (err) { setStatus('Could not list ' + e.name + ': ' + err.message, 'error'); }
+        }
+      };
+    } else if (e.queryable) {
+      row.onclick = () => selectFile(row, e);
+    } else {
+      row.title = e.name + ' — not a parquet/csv/json file';
+    }
+  }
+}
+
+async function selectFile(row, file) {
+  document.querySelectorAll('.fileItem.active').forEach(el => el.classList.remove('active'));
+  row.classList.add('active');
+  $('activeTable').textContent = file.name;
+  setBusy(true);
+  try {
+    const info = await engine.loadFile(lakehouse, file);
+    activeIdent = info.ident;
+    renderSchemaBar(info);
+    $('sqlEditor').value = `SELECT * FROM ${info.ident} LIMIT 100`;
+    $('previewBtn').disabled = false;
+    $('runBtn').disabled = false;
+    await runQuery();
+    setStatus(engine.describeLoad(info) + '.', 'ok');
+  } catch (e) {
+    setStatus('Load failed: ' + e.message, 'error');
+    console.error(e);
+  } finally {
+    setBusy(false);
   }
 }
 

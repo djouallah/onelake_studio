@@ -143,13 +143,16 @@ to the Rayfin Data API, so there's no backend to deploy on each run.
 
 1. Sign in.
 2. Pick a **workspace**, then a **lakehouse or warehouse**. Both lists come from OneLake itself.
-3. Pick a table in the sidebar → it loads and auto-previews (`SELECT * … LIMIT 100`).
+3. Pick a table in the sidebar → it loads and auto-previews (`SELECT * … LIMIT 100`). Switch the
+   sidebar to **Files** to browse the lakehouse's `Files/` tree instead and query a parquet, CSV or
+   JSON file the same way.
 4. Edit the SQL and press **Run** (or `Ctrl/Cmd+Enter`). Loaded tables can be joined together.
 5. **Download CSV** exports the current result.
 
 ## Notes & limitations
 
-- **Iceberg only.** Delta tables are listed but greyed out (not queryable here yet).
+- **Iceberg only** under `Tables/`. Delta tables are listed but greyed out (not queryable here yet).
+- **Under `Files/`**, parquet / csv / tsv / json / jsonl are queryable and everything else is greyed out. Only parquet is read lazily — CSV and JSON have no footer or row groups, so DuckDB streams the whole file whatever its size, and the status line says so rather than claiming "read on demand".
 - **Read-only.** Only `SELECT` / `WITH` / `DESCRIBE` / `SHOW` / `EXPLAIN` / `SUMMARIZE` are allowed; there is no write path to OneLake.
 - **No Iceberg-level pruning** on Fabric tables (see above): every data file in the snapshot is in the view, and pruning is whatever DuckDB gets from parquet row-group statistics and column projection. Fabric's converted manifests carry `record_count = 0` anyway, so there is little to prune on.
 - **Merge-on-read delete files are not applied** by the manifest walk — they're detected and excluded from the scan, but their deletions aren't subtracted. Fabric's Iceberg conversions are copy-on-write (manifest entries are all `content = 0`), so this doesn't affect them and nothing is printed; if a table does have delete files the status line warns that deleted rows may still appear.

@@ -69,6 +69,27 @@
     .tableItem .tag { margin-left: auto; font-size: 0.65rem; color: var(--muted); border: 1px solid var(--border); border-radius: 4px; padding: 0 0.3rem; }
     .tableItem.delta .tag { border-color: var(--warn); color: var(--warn); }
 
+    /* Tables / Files switch */
+    .tabs { display: inline-flex; }
+    button.tab {
+      border-radius: 0; border: 1px solid var(--border); padding: 0.15rem 0.6rem;
+      font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.5px; color: var(--muted);
+    }
+    button.tab:first-child { border-radius: 5px 0 0 5px; }
+    button.tab:last-child { border-radius: 0 5px 5px 0; border-left: 0; }
+    button.tab.active { color: var(--text); background: #1c2330; border-color: var(--accent2); }
+
+    /* Files tree */
+    .fileItem {
+      padding: 0.35rem 0.75rem; cursor: pointer; display: flex; align-items: center; gap: 0.4rem;
+      border-left: 2px solid transparent; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .fileItem:hover { background: #1c2330; }
+    .fileItem.active { background: #1c2330; border-left-color: var(--accent2); }
+    .fileItem.plain { color: var(--muted); cursor: default; }
+    .fileItem .size { margin-left: auto; font-size: 0.7rem; color: var(--muted); padding-left: 0.5rem; }
+    .fileItem .caret { width: 0.7rem; display: inline-block; color: var(--muted); }
+
     /* Content */
     section { flex: 1; display: flex; flex-direction: column; min-width: 0; overflow: hidden; }
     .toolbar { display: flex; gap: 0.5rem; align-items: center; padding: 0.5rem 0.75rem; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
@@ -118,7 +139,12 @@
 
   <main>
     <aside>
-      <div class="head"><span>Tables</span><span id="tableCount"></span></div>
+      <div class="head">
+        <span class="tabs">
+          <button id="tabTables" class="tab active">Tables</button><button id="tabFiles" class="tab">Files</button>
+        </span>
+        <span id="tableCount"></span>
+      </div>
       <div id="tableList"><div class="hint">Pick a workspace, then a lakehouse or warehouse.</div></div>
     </aside>
 

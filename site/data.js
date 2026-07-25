@@ -194,6 +194,75 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
   }
 
   // ---------------------------------------------------------------------------
+  // Files/ browsing — the unmanaged half of a lakehouse.
+  // ---------------------------------------------------------------------------
+  // Nothing Iceberg here: Files/ is just a directory tree, so it is listed one level at a
+  // time (lazily, on expand) and a recognised data file is opened as a view the same way
+  // table data files are — registerFileURL + range reads.
+  const FILE_READERS = {
+    parquet: n => `read_parquet([${n}])`,
+    csv:     n => `read_csv_auto(${n})`,
+    tsv:     n => `read_csv_auto(${n}, delim='\\t')`,
+    txt:     n => `read_csv_auto(${n})`,
+    json:    n => `read_json_auto(${n})`,
+    jsonl:   n => `read_json_auto(${n}, format='newline_delimited')`,
+    ndjson:  n => `read_json_auto(${n}, format='newline_delimited')`,
+  };
+
+  const fileExt = name => {
+    const m = /\.([A-Za-z0-9]+)$/.exec(basename(name));
+    return m ? m[1].toLowerCase() : "";
+  };
+  const isQueryable = name => Object.prototype.hasOwnProperty.call(FILE_READERS, fileExt(name));
+
+  // One level of Files/ (or a subdirectory of it). `dir` is relative to Files/.
+  async function listFiles({ workspace, item }, dir = "") {
+    const base = `${item}/Files${dir ? "/" + strip(dir) : ""}`;
+    const entries = await listPaths(workspace, base, false);
+    return entries.map(e => ({
+      name: basename(e.name),
+      path: e.name,                       // workspace-relative, ready for dfsUrl()
+      isDir: e.isDir,
+      bytes: e.bytes,
+      queryable: !e.isDir && isQueryable(e.name),
+    })).sort((a, b) =>
+      (b.isDir - a.isDir) || a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
+  }
+
+  // Open one file under Files/ as a read-only view.
+  //
+  // Only parquet gets the lazy treatment — DuckDB range-reads its footer and row groups.
+  // CSV/JSON have no such structure, so DuckDB streams the whole file however big it is;
+  // that is inherent to the format, not a shortcut taken here.
+  async function loadFile(lh, file) {
+    const label = file.name;
+    if (loaded.has(label)) return loaded.get(label);
+    const ext = fileExt(file.name);
+    const reader = FILE_READERS[ext];
+    if (!reader) throw new Error(`${file.name}: not a parquet/csv/json file`);
+
+    const reg = `file_${++_seq}.${ext}`;
+    await db.registerFileURL(reg, dfsUrl(lh.workspace, file.path), duckdb.DuckDBDataProtocol.HTTP, false);
+
+    // Views are identified by the file's own name, so two files called data.parquet in
+    // different folders don't collide.
+    const view = file.path.replace(/^.*?\/Files\//, "").replace(/[^A-Za-z0-9_]/g, "_");
+    const ident = `"${view}"`;
+    try {
+      await conn.query(`CREATE OR REPLACE VIEW ${ident} AS SELECT * FROM ${reader(sqlStr(reg))}`);
+      const columns = await describe(ident);
+      const info = { label, ident, columns, fileCount: 1, posDeletes: 0, eqDeletes: 0,
+                     file: true, bytes: file.bytes, ext };
+      loaded.set(label, info);
+      onStatus(describeLoad(info));
+      return info;
+    } catch (e) {
+      try { await db.dropFile(reg); } catch (_) {}
+      throw new Error(`Could not read ${file.name}: ${e.message}`);
+    }
+  }
+
+  // ---------------------------------------------------------------------------
   // Table discovery — browse Tables/ by name, classify iceberg vs delta.
   // Handles both schema-enabled (Tables/<schema>/<table>) and flat (Tables/<table>).
   // ---------------------------------------------------------------------------
@@ -490,7 +559,12 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
   // One sentence about how the table was opened. Position deletes are applied silently —
   // that is just correctness, not news. Equality deletes are NOT applied, so those get a
   // warning; saying nothing would mean quietly returning rows the table no longer has.
-  function describeLoad({ label, fileCount, posDeletes, eqDeletes }) {
+  function describeLoad({ label, fileCount, posDeletes, eqDeletes, file, ext, bytes }) {
+    if (file) {
+      return ext === "parquet"
+        ? `${label} — read on demand`
+        : `${label} — ${ext.toUpperCase()} is read in full (${fmtBytes(bytes)}); no range reads for this format`;
+    }
     let s = `${label} — ${fileCount} file(s), read on demand`;
     if (posDeletes) s += `, ${posDeletes} delete file(s) applied`;
     if (eqDeletes) s += `. WARNING: ${eqDeletes} equality-delete file(s) NOT applied — ` +
@@ -527,6 +601,14 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
   // ---------------------------------------------------------------------------
   // Small utilities
   // ---------------------------------------------------------------------------
+  function fmtBytes(n) {
+    if (!(n > 0)) return "unknown size";
+    if (n < 1e3) return `${n} B`;
+    if (n < 1e6) return `${Math.round(n / 1e3)} KB`;
+    if (n < 1e9) return `${(n / 1e6).toFixed(1)} MB`;
+    return `${(n / 1e9).toFixed(2)} GB`;
+  }
+
   function normalizeRow(obj, fields) {
     const out = {};
     for (const f of fields) {
@@ -538,5 +620,6 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
     return out;
   }
 
-  return { init, parseLakehouse, listWorkspaces, listItems, listTables, loadTable, runSql, describeLoad };
+  return { init, parseLakehouse, listWorkspaces, listItems, listTables, loadTable,
+           listFiles, loadFile, runSql, describeLoad, fmtBytes };
 }
