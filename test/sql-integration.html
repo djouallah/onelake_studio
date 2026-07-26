@@ -1,0 +1,119 @@
+<!doctype html>
+<!-- Manual integration harness: runs the engine's GENERATED SQL against the real, pinned
+     DuckDB-WASM — the parts node --test can't reach. Verifies that PATH_KEY_SQL matches
+     paths.js pathKey inside DuckDB, that the createView anti-join applies position
+     deletes across abfs/abfss spellings with union_by_name, that Arrow results are
+     row-iterable with BIGINT intact, and that prepareReadOnlySql output executes.
+
+     To run: copy into site/, `npm run dev`, open http://localhost:5173/__sqltest
+     (or headless: drive it with playwright-core and wait for document.title === "DONE").
+     Lives in test/, not site/, so it never deploys. -->
+<meta charset="utf-8"><title>engine SQL integration test</title><body>
+<div id="log">START</div>
+<script type="module">
+const el = document.getElementById("log");
+const log = m => { el.textContent += "\n" + m; };
+const fail = m => log("FAIL " + m);
+const pass = m => log("PASS " + m);
+window.addEventListener("error", e => log("WINERR " + e.message));
+window.addEventListener("unhandledrejection", e => log("UNHANDLED " + (e.reason && e.reason.message)));
+
+log("module running");
+try {
+  const paths = await import("./paths.js");
+  const { pathKey, PATH_KEY_SQL, sqlStr, prepareReadOnlySql } = paths;
+  log("paths.js loaded");
+
+  const duckdb = await import("https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.33.1-dev57.0/+esm");
+  log("duckdb module loaded");
+  const bundle = await duckdb.selectBundle(duckdb.getJsDelivrBundles());
+  log("bundle: " + bundle.mainModule.split("/").pop());
+  const workerUrl = URL.createObjectURL(new Blob([`importScripts("${bundle.mainWorker}");`], { type: "text/javascript" }));
+  const worker = new Worker(workerUrl);
+  const db = new duckdb.AsyncDuckDB(new duckdb.ConsoleLogger(), worker);
+  await db.instantiate(bundle.mainModule, bundle.pthreadWorker);
+  log("instantiated");
+  const conn = await db.connect();
+  log("duckdb ready");
+
+  // --- 1. PATH_KEY_SQL must agree with JS pathKey on every spelling -----------
+  const samples = [
+    "abfs://WS@onelake.dfs.fabric.microsoft.com/ITEM/Tables/t/f.parquet",
+    "abfss://WS@onelake.dfs.fabric.microsoft.com/ITEM/Tables/t/f.parquet",
+    "https://onelake.dfs.fabric.microsoft.com/WS/ITEM/Tables/t/f.parquet",
+    "WS/ITEM/Tables/t/f.parquet",
+    "abfss://ws-guid@onelake.dfs.fabric.microsoft.com/item/Tables/t/part%20x/f-00001.parquet",
+  ];
+  const values = samples.map(s => `(${sqlStr(s)})`).join(", ");
+  const r1 = await conn.query(`SELECT ${PATH_KEY_SQL("p")} AS k FROM (VALUES ${values}) v(p)`);
+  const got = r1.toArray().map(r => r.toJSON().k);
+  let ok1 = true;
+  samples.forEach((s, i) => {
+    const want = pathKey(s);
+    if (got[i] !== want) { ok1 = false; fail(`PATH_KEY_SQL(${s}) = ${got[i]}, JS pathKey = ${want}`); }
+  });
+  if (ok1) pass("PATH_KEY_SQL agrees with pathKey on all samples");
+
+  // --- 2. The exact createView anti-join shape, on real parquet files ---------
+  await conn.query(`COPY (SELECT * FROM (VALUES (1), (2), (3)) t(a)) TO 'data_1.parquet' (FORMAT PARQUET)`);
+  await conn.query(`COPY (SELECT * FROM (VALUES (4, 'x'), (5, 'y')) t(a, b)) TO 'data_2.parquet' (FORMAT PARQUET)`);
+
+  const orig1 = "abfss://WS@onelake.dfs.fabric.microsoft.com/ITEM/Tables/t/data-1.parquet";
+  const orig2 = "abfss://WS@onelake.dfs.fabric.microsoft.com/ITEM/Tables/t/data-2.parquet";
+  await conn.query(`CREATE OR REPLACE TABLE __map_t AS SELECT * FROM (VALUES
+    ('data_1.parquet', ${sqlStr(pathKey(orig1))}),
+    ('data_2.parquet', ${sqlStr(pathKey(orig2))})) v(reg, pk)`);
+
+  const del1 = "abfs://WS@onelake.dfs.fabric.microsoft.com/ITEM/Tables/t/data-1.parquet";
+  const del2 = "abfs://WS@onelake.dfs.fabric.microsoft.com/ITEM/Tables/t/data-2.parquet";
+  await conn.query(`COPY (SELECT * FROM (VALUES
+    (${sqlStr(del1)}, 1), (${sqlStr(del2)}, 0)) t(file_path, pos))
+    TO 'del_1.parquet' (FORMAT PARQUET)`);
+  await conn.query(`CREATE OR REPLACE TABLE __del_t AS
+    SELECT ${PATH_KEY_SQL("file_path")} AS pk, pos
+    FROM read_parquet(['del_1.parquet'], union_by_name = true)`);
+
+  await conn.query(`CREATE OR REPLACE VIEW "t" AS
+    SELECT * EXCLUDE (filename, file_row_number)
+    FROM read_parquet(['data_1.parquet', 'data_2.parquet'], union_by_name = true,
+                      filename = true, file_row_number = true) x
+    WHERE NOT EXISTS (
+      SELECT 1 FROM __del_t d JOIN __map_t m ON m.pk = d.pk
+      WHERE m.reg = x.filename AND d.pos = x.file_row_number)`);
+
+  const r2 = await conn.query(`SELECT a, b FROM "t" ORDER BY a`);
+  const rows = r2.toArray().map(r => r.toJSON());
+  const wantRows = JSON.stringify([{ a: 1, b: null }, { a: 3, b: null }, { a: 5, b: "y" }]);
+  const gotRows = JSON.stringify(rows.map(r => ({ a: Number(r.a), b: r.b ?? null })));
+  if (gotRows === wantRows) pass("anti-join view: deletes applied across abfs/abfss, union_by_name fills NULLs");
+  else fail(`anti-join view rows = ${gotRows}, want ${wantRows}`);
+
+  const r3 = await conn.query(`SELECT count(*) AS n FROM __del_t d
+    WHERE NOT EXISTS (SELECT 1 FROM __map_t m WHERE m.pk = d.pk)`);
+  const n = Number(r3.toArray()[0].toJSON().n);
+  if (n === 0) pass("countUnmatchedDeletes = 0 when everything matches");
+  else fail(`countUnmatchedDeletes = ${n}, want 0`);
+
+  // --- 3. runSql's row iteration: `for (const r of res)` with r.toJSON() ------
+  const r4 = await conn.query(`SELECT 9007199254740993 AS big, 'x' AS s`);
+  let iterated = 0, bigType = "";
+  for (const r of r4) { iterated++; const j = r.toJSON(); bigType = typeof j.big; }
+  if (iterated === 1 && (bigType === "bigint" || bigType === "number"))
+    pass(`arrow Table is row-iterable; BIGINT arrives as ${bigType}`);
+  else fail(`iteration yielded ${iterated} rows, big typeof ${bigType}`);
+
+  // --- 4. prepareReadOnlySql output actually runs -----------------------------
+  const q = prepareReadOnlySql("SELECT 'a;b' AS v -- trailing comment");
+  const r5 = await conn.query(q);
+  const v = r5.toArray()[0].toJSON().v;
+  if (v === "a;b") pass("prepareReadOnlySql output runs and preserves the literal");
+  else fail(`literal came back as ${v}`);
+
+  log("DONE");
+  document.title = "DONE";
+} catch (e) {
+  fail("harness: " + (e && e.message));
+  log("DONE");
+  document.title = "DONE";
+}
+</script>

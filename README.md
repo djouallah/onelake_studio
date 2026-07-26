@@ -55,8 +55,10 @@ client secret.
 sign in       → OneLake storage token from your Entra identity
 pick workspace→ DFS "list filesystems" at the account root = your workspaces
 pick item     → DFS list of the workspace root = its lakehouses and warehouses
-select table  → resolve current metadata.json → snapshot → manifest list (Avro)
-              → read manifests → parquet data-file paths
+list tables   → OneLake's Iceberg REST catalog (same token, 3 requests);
+                falls back to walking Tables/ over DFS if it's unreachable
+select table  → metadata document from the catalog (or metadata.json over DFS)
+              → snapshot → manifest list (Avro) → parquet data-file paths
               → register each as a URL; DuckDB range-reads it (sw.js adds the token)
 preview/query → read-only SQL in your browser → results + CSV export
 ```
@@ -69,28 +71,40 @@ headers. It also supplies the COOP/COEP headers that GitHub Pages can't, which i
 reloads itself once.
 
 **Iceberg is the read path for everything.** OneLake publishes lakehouse tables in both formats,
-generating Iceberg metadata for Delta tables on demand — the first request triggers it and loses the
-race, which is why resolution retries with a backoff instead of failing. A table whose Iceberg metadata
-doesn't exist yet is listed as Delta and greyed out.
+generating Iceberg metadata on demand — the first request triggers it and loses the race, so resolution
+retries with a backoff sized to the documented 5s–2min conversion window. A table whose metadata hasn't
+been generated yet shows as *converting* but stays clickable: opening it waits, and if conversion failed
+the app reads Fabric's conversion log and shows the actual reason (most often the tenant/workspace
+Delta-to-Iceberg setting being off).
 
 ## Limitations
 
 - **Merge-on-read equality deletes are not applied.** They're detected and the status line warns; Fabric's
-  own conversions are copy-on-write, so this doesn't affect them. Position deletes *are* applied.
-- **No Iceberg-level pruning** — those same zeroed statistics mean there'd be nothing to prune on.
-  Pruning is whatever parquet row-group stats and column projection give you.
-- **Only parquet is read lazily.** CSV and JSON have no footer or row groups, so DuckDB streams the whole
-  file; the status line says so rather than claiming "read on demand".
+  own conversions are copy-on-write, so this doesn't affect them. Position deletes *are* applied (and
+  verified — deletes that match no data file raise a warning instead of silently returning dead rows).
+- **Column renames aren't merged.** Iceberg renames are metadata-only, and this reader matches parquet
+  columns by name, not field ID — a renamed column shows up as two half-NULL columns, with a warning.
+  Added columns are handled (`union_by_name`).
+- **No Iceberg-level pruning** — Fabric's conversion writes zeroed manifest statistics, so there'd be
+  nothing to prune on. Pruning is whatever parquet row-group stats and column projection give you.
+- **Only parquet is read lazily.** CSV, JSON, avro, xlsx and plain text have no footer or row groups, so
+  DuckDB pulls the whole file; the status line says so rather than claiming "read on demand".
+- **Results are capped at 200,000 materialised rows** (the status line says when a query hits it) — the
+  browser tab is the database, and an uncapped `SELECT *` on a 50M-row table would take it down.
 
 ## Run it yourself
 
 ```bash
 npm install
 npm run dev        # serves site/ on http://localhost:5173, an already-registered redirect URI
+npm test           # node --test over the engine's pure logic (paths, SQL guard, cache keys)
 ```
 
-No bundler — DuckDB-WASM and MSAL come from a CDN, and `npm run build` just copies `site/` → `dist/`.
-[`.github/workflows/pages.yml`](.github/workflows/pages.yml) deploys that to GitHub Pages on every push.
+No bundler — DuckDB-WASM and MSAL come from a CDN, and `npm run build` copies `site/` → `dist/` and
+stamps the commit into `version.js` (shown bottom-right in the app, so a cached build identifies itself).
+[`.github/workflows/pages.yml`](.github/workflows/pages.yml) runs the tests and deploys to GitHub Pages
+on every push. [`test/sql-integration.html`](test/sql-integration.html) is a manual harness that runs the
+engine's generated SQL against real DuckDB-WASM — copy it into `site/`, `npm run dev`, and open it.
 
 To host your own copy: fork it, register an SPA app with **your** URL as the redirect URI, put its
 `clientId` in [`site/config.js`](site/config.js), and set *Settings → Pages → Source: GitHub Actions*.
@@ -105,6 +119,7 @@ established one — a brand-new domain has no reputation either.
 
 ```
 site/index.html   UI shell + sign-in gate      site/data.js   Iceberg engine on DuckDB-WASM
-site/app.js       DOM wiring                   site/sw.js     COOP/COEP + token injection
-site/auth.js      MSAL provider                site/config.js clientId + authority (public, tracked)
+site/app.js       DOM wiring                   site/paths.js  pure logic (paths, SQL, cache keys)
+site/auth.js      MSAL provider                site/sw.js     COOP/COEP + token injection
+site/config.js    clientId + authority         test/          node --test suite for paths.js
 ```
