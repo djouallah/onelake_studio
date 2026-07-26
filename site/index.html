@@ -51,6 +51,9 @@
       width: 280px; min-width: 200px; border-right: 1px solid var(--border);
       background: var(--panel); display: flex; flex-direction: column; overflow: hidden;
     }
+    /* Collapsed: width 0 rather than display:none, so the sidebar keeps its scroll
+       position and expanding costs no re-render. */
+    aside.collapsed { width: 0; min-width: 0; border-right: 0; }
     aside .head {
       padding: 0.5rem 0.75rem; border-bottom: 1px solid var(--border);
       color: var(--muted); font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.5px;
@@ -97,10 +100,8 @@
     .toolbar { display: flex; gap: 0.5rem; align-items: center; padding: 0.5rem 0.75rem; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
     .toolbar .title { font-weight: 600; }
     .toolbar .spacer { flex: 1; }
-    #schemaBar { padding: 0.4rem 0.75rem; border-bottom: 1px solid var(--border); color: var(--muted); font-size: 0.82rem; overflow-x: auto; white-space: nowrap; }
-    #schemaBar .col { display: inline-block; margin-right: 0.8rem; }
-    #schemaBar .col b { color: var(--text); }
-    #schemaBar .col span { color: var(--accent2); }
+    .iconBtn { padding: 0.3rem 0.55rem; line-height: 1; color: var(--muted); }
+    .iconBtn:hover:not(:disabled) { color: var(--text); }
     #sqlEditor {
       width: 100%; min-height: 96px; max-height: 40vh; resize: vertical; padding: 0.6rem 0.75rem;
       border: 0; border-bottom: 1px solid var(--border); background: var(--panel2); color: var(--text);
@@ -112,7 +113,15 @@
       border: 1px solid var(--border); padding: 0.3rem 0.55rem; text-align: left; white-space: nowrap;
       max-width: 420px; overflow: hidden; text-overflow: ellipsis;
     }
-    table.results th { position: sticky; top: 0; background: var(--panel); z-index: 1; }
+    table.results th { position: sticky; top: 0; background: var(--panel); z-index: 1; vertical-align: bottom; }
+    /* The column type rides under its name in the header — no separate schema strip to
+       keep in sync with what the grid is actually showing. */
+    table.results th .cname { display: block; }
+    table.results th .ctype {
+      display: block; font-weight: 400; font-size: 0.72rem; color: var(--accent2);
+      letter-spacing: 0.2px;
+    }
+    table.results th.num { text-align: right; }
     table.results td.num { text-align: right; font-variant-numeric: tabular-nums; }
     table.results tr:nth-child(even) td { background: #10151c; }
 
@@ -175,7 +184,7 @@
   </header>
 
   <main>
-    <aside>
+    <aside id="sidebar">
       <div class="head">
         <span class="tabs">
           <button id="tabTables" class="tab active">Tables</button><button id="tabFiles" class="tab">Files</button>
@@ -187,13 +196,14 @@
 
     <section>
       <div class="toolbar">
+        <button id="sidebarToggle" class="iconBtn" title="Hide sidebar (Ctrl+B)"
+                aria-controls="sidebar" aria-expanded="true">«</button>
         <span class="title" id="activeTable">No table selected</span>
         <div class="spacer"></div>
         <button id="previewBtn" disabled>Preview</button>
         <button id="runBtn" class="primary" disabled>Run ▶</button>
         <button id="csvBtn" disabled>Download CSV</button>
       </div>
-      <div id="schemaBar"></div>
       <textarea id="sqlEditor" spellcheck="false" placeholder="Select a table to load it, then write read-only SQL here…"></textarea>
       <div class="resultsWrap"><div class="hint" id="resultsHint">Query results appear here.</div><table class="results" id="resultsTable" hidden></table></div>
     </section>

@@ -389,7 +389,6 @@ async function selectFile(row, file) {
   try {
     const info = await engine.loadFile(lakehouse, file);
     activeIdent = info.ident;
-    renderSchemaBar(info);
     $('sqlEditor').value = `SELECT * FROM ${info.ident} LIMIT 100`;
     $('previewBtn').disabled = false;
     $('runBtn').disabled = false;
@@ -452,7 +451,6 @@ async function selectTable(row, t) {
   try {
     const info = await engine.loadTable(lakehouse, t);
     activeIdent = info.ident;
-    renderSchemaBar(info);
     $('sqlEditor').value = `SELECT * FROM ${info.ident} LIMIT 100`;
     $('previewBtn').disabled = false;
     $('runBtn').disabled = false;
@@ -466,12 +464,6 @@ async function selectTable(row, t) {
   } finally {
     setBusy(false);
   }
-}
-
-function renderSchemaBar(info) {
-  $('schemaBar').innerHTML = info.columns
-    .map(c => `<span class="col"><b>${escapeHtml(c.name)}</b> <span>${escapeHtml(c.type)}</span></span>`)
-    .join('');
 }
 
 // ---------------------------------------------------------------------------
@@ -498,16 +490,32 @@ async function runQuery() {
   }
 }
 
+// Column types live in the header cells, under the names — an empty result still shows
+// the shape of what was asked for, which is what the old schema strip was for.
+const NUMERIC_TYPE = /^(U?(TINY|SMALL|BIG|HUGE)INT|U?INTEGER|DOUBLE|FLOAT|DECIMAL)/;
+
 function renderResults(res) {
   const table = $('resultsTable');
   const hint = $('resultsHint');
-  if (!res.rows.length) {
-    table.hidden = true; hint.hidden = false; hint.textContent = '(no rows)';
+  if (!res.fields.length) {
+    table.hidden = true; hint.hidden = false; hint.textContent = '(no columns)';
     return;
   }
   hint.hidden = true; table.hidden = false;
+  const types = res.types || [];
+  const head = '<thead><tr>' + res.fields.map((f, i) => {
+    const t = types[i] || '';
+    return `<th class="${NUMERIC_TYPE.test(t) ? 'num' : ''}" title="${escapeHtml(f + ' ' + t)}">` +
+      `<span class="cname">${escapeHtml(f)}</span>` +
+      `<span class="ctype">${escapeHtml(t)}</span></th>`;
+  }).join('') + '</tr></thead>';
+
+  if (!res.rows.length) {
+    table.innerHTML = head +
+      `<tbody><tr><td colspan="${res.fields.length}">(no rows)</td></tr></tbody>`;
+    return;
+  }
   const rows = res.rows.slice(0, MAX_DOM_ROWS);
-  const head = '<thead><tr>' + res.fields.map(f => `<th>${escapeHtml(f)}</th>`).join('') + '</tr></thead>';
   const body = '<tbody>' + rows.map(r => '<tr>' + res.fields.map(f => {
     const v = r[f];
     const num = typeof v === 'number';
@@ -538,6 +546,34 @@ function downloadCsv() {
 }
 
 // ---------------------------------------------------------------------------
+// Sidebar collapse — remembered across reloads, since it's a layout preference
+// (small screens, or a wide result set) rather than a per-session choice.
+// ---------------------------------------------------------------------------
+const SIDEBAR_KEY = 'onelakeStudio.sidebarCollapsed';
+
+function setSidebar(collapsed) {
+  $('sidebar').classList.toggle('collapsed', collapsed);
+  const btn = $('sidebarToggle');
+  btn.textContent = collapsed ? '»' : '«';
+  btn.title = (collapsed ? 'Show' : 'Hide') + ' sidebar (Ctrl+B)';
+  btn.setAttribute('aria-expanded', String(!collapsed));
+  try { localStorage.setItem(SIDEBAR_KEY, collapsed ? '1' : '0'); } catch (_) {}
+}
+
+function initSidebarToggle() {
+  let collapsed = false;
+  try { collapsed = localStorage.getItem(SIDEBAR_KEY) === '1'; } catch (_) {}
+  setSidebar(collapsed);
+  $('sidebarToggle').onclick = () => setSidebar(!$('sidebar').classList.contains('collapsed'));
+  document.addEventListener('keydown', e => {
+    if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && (e.key === 'b' || e.key === 'B')) {
+      e.preventDefault();
+      setSidebar(!$('sidebar').classList.contains('collapsed'));
+    }
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Utilities
 // ---------------------------------------------------------------------------
 function cellText(v) {
@@ -562,6 +598,7 @@ function setBusy(b) {
 const EMBEDDED = window.self !== window.top;   // inside an embedding iframe?
 $('byoLink').onclick = () => showByoForm();
 $('consentLink').onclick = () => showConsentHelp();
+initSidebarToggle();
 (async () => {
   try {
     if (await auth.ensureSession(false)) {
