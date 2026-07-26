@@ -96,6 +96,11 @@ export function adminConsentUrl(cfg) {
 // of parquet fetches over several minutes; renewing up front beats failing half way.
 const EXPIRY_SKEW_MS = 5 * 60 * 1000;
 
+// Where the durable copy of the token lives. sw.js reads the same two names — keep them
+// in step, and keep the value opaque: it is a bearer token on disk.
+const TOKEN_CACHE = 'onelake-token';
+const TOKEN_KEY = '/__onelake_token';
+
 // --- No-auth provider: everything is already accessible. ---
 function createNoAuth() {
   return {
@@ -104,6 +109,8 @@ function createNoAuth() {
     getHeaders() { return {}; },
     getUserId() { return 'anonymous'; },
     async refresh() { return true; },
+    async signOut() {},
+    async forgetDurableToken() {},
   };
 }
 
@@ -117,6 +124,8 @@ function createConfigErrorAuth(message) {
     getHeaders() { return {}; },
     getUserId() { return null; },
     async refresh() { return false; },
+    async signOut() {},
+    async forgetDurableToken() {},
   };
 }
 
@@ -141,6 +150,10 @@ function createMsalAuth(cfg, { onExpired } = {}) {
   let _msalApp = null;
   let _token = null;
   let _expiresAt = 0;
+  let _inflight = null;     // single-flight guard around acquire()
+  let _refreshing = null;   // single-flight guard around refresh()
+  let _renewTimer = null;   // proactive renewal, so DuckDB's own reads never see a 401
+  let _publishChain = Promise.resolve();   // serialises the Cache Storage writes
 
   // --- Token bridge to the service worker (sw.js) ---------------------------
   // DuckDB range-reads parquet straight from OneLake URLs, and its API can't set
@@ -151,20 +164,51 @@ function createMsalAuth(cfg, { onExpired } = {}) {
   // whenever it likes (reliably so during DuckDB's multi-MB WASM download), and a token
   // kept only in its memory is gone by the time the parquet reads start. postMessage is
   // kept as the fast path for the common case.
+  // Returns a promise that settles once the DURABLE copy has landed. The two writes are
+  // chained rather than fired independently: a put and a delete issued microtasks apart
+  // (drop() immediately followed by keep(), which is exactly what refresh() does when MSAL
+  // answers from its local cache) could otherwise land in the wrong order and leave the
+  // worker with no token at all until the next page reload.
   function publishToken() {
+    const token = _token, expiresAt = _expiresAt;
     try {
       const c = navigator.serviceWorker && navigator.serviceWorker.controller;
-      if (c) c.postMessage({ type: 'onelake-token', token: _token });
+      if (c) c.postMessage({ type: 'onelake-token', token, expiresAt });
     } catch (_) { /* no service worker — reads will 401 and say so */ }
-    try {
-      caches.open('onelake-token').then(c =>
-        _token ? c.put('/__onelake_token', new Response(_token)) : c.delete('/__onelake_token')
-      ).catch(() => {});
-    } catch (_) { /* ditto */ }
+
+    _publishChain = _publishChain.then(async () => {
+      try {
+        const c = await caches.open(TOKEN_CACHE);
+        if (token) {
+          // The expiry rides along, so a worker that restarts and reads this back can tell
+          // a live token from an hour-old one instead of signing requests with a corpse.
+          await c.put(TOKEN_KEY, new Response(token, {
+            headers: { 'x-onelake-expires-at': String(expiresAt) },
+          }));
+        } else {
+          await c.delete(TOKEN_KEY);
+        }
+      } catch (_) { /* best effort; postMessage is the fast path */ }
+    });
+    return _publishChain;
+  }
+
+  // Erase the durable copy without touching the in-memory one. Closing the tab should not
+  // leave a usable OneLake bearer token sitting in the profile directory on disk.
+  function forgetDurableToken() {
+    _publishChain = _publishChain
+      .then(() => caches.open(TOKEN_CACHE).then(c => c.delete(TOKEN_KEY)))
+      .catch(() => {});
+    return _publishChain;
   }
   try {
     navigator.serviceWorker.addEventListener('message', e => {
-      if (e.data && e.data.type === 'need-token') publishToken();
+      if (!e.data || e.data.type !== 'need-token') return;
+      // The worker only asks when it has nothing usable, so republishing the same dead
+      // token would leave its retry no better off. Renew first when ours is gone too;
+      // acquire() is single-flight, so a burst of these costs one round trip.
+      if (haveToken()) publishToken();
+      else acquire(false).catch(() => publishToken());
     });
     // A ServiceWorkerContainer buffers message events until startMessages() is called when
     // you use addEventListener rather than .onmessage — without this the worker's
@@ -174,12 +218,22 @@ function createMsalAuth(cfg, { onExpired } = {}) {
     navigator.serviceWorker.addEventListener('controllerchange', publishToken);
   } catch (_) { /* ditto */ }
 
+  // Cache Storage is disk-backed and outlives the tab. The durable copy is only there to
+  // survive a service-worker restart DURING a session, so drop it as the page goes away
+  // rather than leaving a live bearer token in the profile directory until someone
+  // happens to sign in again. 'pagehide' fires on close and on bfcache eviction, where
+  // 'beforeunload' and 'unload' are unreliable.
+  try {
+    window.addEventListener('pagehide', () => { forgetDurableToken(); });
+  } catch (_) { /* no window (tests) — nothing to clean up */ }
+
   // MSAL hands back `expiresOn` as a Date; fall back to a conservative 50 minutes if a
   // response ever omits it (OneLake tokens are ~60-90 min).
   function keep(result) {
     _token = result.accessToken;
     _expiresAt = result.expiresOn ? result.expiresOn.getTime() : Date.now() + 50 * 60 * 1000;
-    publishToken();
+    scheduleRenewal();
+    return publishToken();
   }
   function haveToken() {
     return !!_token && Date.now() < _expiresAt - EXPIRY_SKEW_MS;
@@ -187,7 +241,29 @@ function createMsalAuth(cfg, { onExpired } = {}) {
   function drop() {
     _token = null;
     _expiresAt = 0;
-    publishToken();   // stop the worker signing reads with a token we know is dead
+    clearTimeout(_renewTimer);
+    _renewTimer = null;
+    return publishToken();   // stop the worker signing reads with a token we know is dead
+  }
+
+  // Renew BEFORE the token dies, rather than waiting to be told it has.
+  //
+  // Nothing else can do this. DuckDB's parquet range reads are signed by sw.js and never
+  // pass through data.js's fetch wrapper, so the 401-and-retry path does not cover them:
+  // once the token expired mid-session, every query failed, the gate never came back, and
+  // only a page reload fixed it. A timer is the only thing that sees the whole session.
+  function scheduleRenewal() {
+    clearTimeout(_renewTimer);
+    if (!_expiresAt) return;
+    // Half the remaining skew window, so a renewal that itself fails still leaves time for
+    // the 401 path to try again before anything actually expires.
+    const delay = Math.max(30_000, _expiresAt - EXPIRY_SKEW_MS - Date.now() - EXPIRY_SKEW_MS / 2);
+    _renewTimer = setTimeout(() => {
+      // Not through refresh(): a silent renewal that fails here is not proof the session
+      // is over (the tab may just be offline), and re-gating the UI on that would be rude.
+      // The 401 path will re-gate if it turns out to matter.
+      acquire(false).catch(() => {});
+    }, delay);
   }
 
   // Lazy-load msal-browser only when this provider is actually used, so a no-auth
@@ -210,7 +286,25 @@ function createMsalAuth(cfg, { onExpired } = {}) {
   // Acquire a OneLake token. interactive=true navigates the whole tab to Microsoft and back.
   // Returns true if we now hold a usable token, false if interactive sign-in is still needed (or
   // has been kicked off — acquireTokenRedirect navigates away and never resolves).
-  async function acquire(interactive) {
+  //
+  // SINGLE-FLIGHT. Loading a table fires many requests at once, so they expire together and
+  // call in together. Without this, the second caller's drop() runs after the first caller
+  // has already stored a fresh token — publishing a null to the worker and deleting the
+  // durable copy, so any DuckDB read in that window went out unauthenticated and failed
+  // with no retry path. Concurrent callers now share one attempt and one answer.
+  function acquire(interactive) {
+    if (_inflight) return _inflight;
+    _inflight = acquireOnce(interactive).finally(() => { _inflight = null; });
+    return _inflight;
+  }
+
+  // NOTE: keep()/drop() return the durable-write promise, but nothing on this path awaits
+  // it. The ORDER of Cache Storage writes is guaranteed by the serialised _publishChain
+  // either way; awaiting would additionally make sign-in block on storage I/O, and a
+  // browser whose Cache API stalls (storage pressure, policy, private mode) would then
+  // hang the whole boot at "Loading…". The postMessage fast path has already delivered
+  // the token by the time these return.
+  async function acquireOnce(interactive) {
     await initMsal();
     if (haveToken()) return true;
     drop();                          // expired or explicitly invalidated — never reuse it
@@ -243,19 +337,50 @@ function createMsalAuth(cfg, { onExpired } = {}) {
       const a = _msalApp && _msalApp.getActiveAccount();
       return (a && (a.username || a.homeAccountId)) || null;
     },
-    // Called by the data layer when OneLake answers 401/403. The current token is known bad,
-    // so drop it before re-acquiring — otherwise acquire() would hand the same dead token
-    // straight back and the retry would fail identically.
-    async refresh() {
-      drop();
-      let ok = false;
-      try { ok = await acquire(false); } catch (e) { ok = false; }
-      // Silent renewal failed (refresh token expired / account removed): the session is over
-      // and only a full interactive sign-in can fix it. Let the UI re-gate rather than letting
-      // the caller surface an opaque HTTP error.
-      if (!ok && onExpired) { try { onExpired(); } catch (e) { /* UI callback must not throw here */ } }
-      return ok;
+    // Called by the data layer when OneLake answers 401. The token the caller used is known
+    // bad, so drop it before re-acquiring — otherwise acquire() would hand the same dead
+    // token straight back and the retry would fail identically.
+    //
+    // `staleToken` is what the failed request actually sent. Pass it: with requests in
+    // flight in parallel, a 401 raised against the OLD token can arrive after someone else
+    // has already renewed, and dropping the good token because of it starts the whole cycle
+    // again. If the token has already moved on, the caller just needs to retry.
+    refresh(staleToken) {
+      if (staleToken && _token && staleToken !== 'Bearer ' + _token) return Promise.resolve(true);
+      if (_refreshing) return _refreshing;
+      _refreshing = (async () => {
+        drop();   // not awaited — see the note above acquireOnce()
+        // An acquire() that was already in flight when we dropped may have decided
+        // "haveToken() → true" BEFORE the drop, so its answer is about a token that no
+        // longer exists. Let it settle, then start a fresh attempt of our own — the
+        // single-flight slot is free again once it resolves.
+        if (_inflight) { try { await _inflight; } catch (_) {} }
+        let ok = false;
+        try { ok = await acquire(false); } catch (e) { ok = false; }
+        // Silent renewal failed (refresh token expired / account removed): the session is over
+        // and only a full interactive sign-in can fix it. Let the UI re-gate rather than letting
+        // the caller surface an opaque HTTP error.
+        if (!ok && onExpired) { try { onExpired(); } catch (e) { /* UI callback must not throw here */ } }
+        return ok;
+      })().finally(() => { _refreshing = null; });
+      return _refreshing;
     },
+
+    // Forget the session. Without this there was no way, from inside the app, to get rid of
+    // a bearer token that Cache Storage had already written to disk. The one place the
+    // durable delete IS worth waiting for — but bounded, so a stalled Cache API degrades
+    // to "the token ages out on disk" instead of a sign-out button that hangs forever.
+    async signOut() {
+      const bound = p => Promise.race([p, new Promise(r => setTimeout(r, 2000))]);
+      await bound(drop());
+      await bound(forgetDurableToken());
+      try { if (_msalApp) await _msalApp.logoutRedirect(); } catch (_) { /* navigates away */ }
+    },
+
+    // The durable copy exists so a restarted service worker can keep signing DuckDB's
+    // reads mid-session. Once the page is going away nothing needs it, and leaving a live
+    // OneLake token in the profile directory is not a trade worth making.
+    forgetDurableToken,
   };
 }
 

@@ -34,6 +34,7 @@ const TOKEN_KEY = '/__onelake_token';
 
 let coepCredentialless = false;
 let token = null;
+let tokenExpiresAt = 0;      // 0 = unknown; a known-expired token is never used
 let waiting = null;          // { promise, resolve } while asking clients for a token
 
 self.addEventListener('install', () => self.skipWaiting());
@@ -45,6 +46,7 @@ self.addEventListener('message', e => {
     coepCredentialless = d.value;
   } else if (d.type === 'onelake-token') {
     token = d.token || null;
+    tokenExpiresAt = Number(d.expiresAt) || 0;
     if (waiting) { waiting.resolve(token); waiting = null; }
   } else if (d.type === 'deregister') {
     self.registration.unregister()
@@ -53,12 +55,22 @@ self.addEventListener('message', e => {
   }
 });
 
-// Survives worker restarts, unlike the in-memory copy.
+const expired = () => tokenExpiresAt > 0 && Date.now() >= tokenExpiresAt;
+
+// Survives worker restarts, unlike the in-memory copy. The expiry rides along in a header
+// so a worker that starts up an hour later can tell a live token from a dead one, instead
+// of signing every read with a corpse and reporting the 401 as a range-read failure.
 async function readTokenFromCache() {
   try {
     const c = await caches.open(TOKEN_CACHE);
     const r = await c.match(TOKEN_KEY);
-    return r ? (await r.text()) || null : null;
+    if (!r) return null;
+    const t = (await r.text()) || null;
+    if (!t) return null;
+    const exp = Number(r.headers.get('x-onelake-expires-at')) || 0;
+    if (exp > 0 && Date.now() >= exp) return null;
+    tokenExpiresAt = exp;
+    return t;
   } catch (_) { return null; }
 }
 
@@ -68,11 +80,26 @@ function askClientsForToken() {
   if (waiting) return waiting.promise;
   let resolve;
   const promise = new Promise(r => { resolve = r; });
-  waiting = { promise, resolve };
+  const mine = { promise, resolve };
+  waiting = mine;
   self.clients.matchAll({ includeUncontrolled: true })
     .then(cs => cs.forEach(c => c.postMessage({ type: 'need-token' })));
-  setTimeout(() => { if (waiting) { waiting.resolve(null); waiting = null; } }, TOKEN_WAIT_MS);
+  // Compare identity, not truthiness. This timer belongs to `mine`; if `mine` was already
+  // answered and a LATER waiter is now in the slot, firing here would resolve that one
+  // with null after a fraction of its own wait, and its request would go out unsigned.
+  setTimeout(() => { if (waiting === mine) { mine.resolve(null); waiting = null; } }, TOKEN_WAIT_MS);
   return promise;
+}
+
+// The current best token, re-reading the durable copy whenever the in-memory one is
+// missing or known stale. The old `token || (token = await read())` never looked again
+// once it had anything at all, so a worker holding a dead token held it until reload.
+async function currentToken() {
+  if (token && !expired()) return token;
+  token = await readTokenFromCache();
+  if (token) return token;
+  token = await askClientsForToken();
+  return token;
 }
 
 async function authorize(request) {
@@ -84,11 +111,30 @@ async function authorize(request) {
   try { host = new URL(request.url).host; } catch (_) { return request; }
   if (host !== ONELAKE_HOST) return request;
 
-  const t = token || (token = await readTokenFromCache()) || await askClientsForToken();
+  const t = await currentToken();
   if (!t) return request;                                     // let it 401 and surface honestly
   const headers = new Headers(request.headers);
   headers.set('Authorization', 'Bearer ' + t);
   return new Request(request, { headers });
+}
+
+// One retry for DuckDB's own reads. They never pass through data.js, so this is the only
+// place that can notice their token died — and without it a session that outlived its
+// token failed every query with no way back short of reloading the page.
+async function signedFetch(request) {
+  const signed = await authorize(request);
+  const res = await fetch(signed);
+  if (res.status !== 401 || signed === request) return res;
+
+  // Forget what we used, ask the page for a fresh one (it renews on demand), try once more.
+  const used = token;
+  token = null;
+  tokenExpiresAt = 0;
+  const fresh = await currentToken();
+  if (!fresh || fresh === used) return res;
+  const headers = new Headers(request.headers);
+  headers.set('Authorization', 'Bearer ' + fresh);
+  return fetch(new Request(request, { headers }));
 }
 
 // Re-stamp the isolation headers coi-serviceworker exists to add.
@@ -110,9 +156,15 @@ self.addEventListener('fetch', event => {
     ? new Request(req, { credentials: 'omit' })
     : req;
   event.respondWith(
-    authorize(base)
-      .then(r => fetch(r))
-      .then(isolate)
+    signedFetch(base)
+      .then(res => {
+        // A rebuilt Response cannot carry `url` or `redirected`, and for a NAVIGATION that
+        // matters: the browser would render the redirect target's body under the original
+        // URL, so the address bar and every relative URL resolve against the wrong base.
+        // Hand back a real redirect and let the browser ask again for the final URL.
+        if (req.mode === 'navigate' && res.redirected) return Response.redirect(res.url, 302);
+        return isolate(res);
+      })
       .catch(e => { console.error('[sw]', e); throw e; })
   );
 });
