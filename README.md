@@ -1,6 +1,6 @@
 # OneLake Studio
 
-**[Open the app →](https://djouallah.github.io/onelake_studio/)**
+**[Open the app →](https://studio.projectscontrols.com/)**
 
 Read-only SQL over **your own** OneLake, running entirely in your browser. Sign in with your Microsoft
 work or school account, pick a workspace and a lakehouse or warehouse from a catalog the app discovers
@@ -105,13 +105,13 @@ Register an app in your own tenant (a foreign app is what the policy blocks; you
 not), then open the app with it:
 
 ```
-https://djouallah.github.io/onelake_studio/?clientId=<application-id>&tenantId=<directory-id>
+https://studio.projectscontrols.com/?clientId=<application-id>&tenantId=<directory-id>
 ```
 
 The choice is stored in this browser's `localStorage`, so it survives the sign-in redirect and later
 visits; the gate has a link to switch back. The registration needs exactly:
 
-- Platform **Single-page application** with redirect URI `https://djouallah.github.io/onelake_studio/`
+- Platform **Single-page application** with redirect URI `https://studio.projectscontrols.com/`
   — the platform type matters, a "Web" or "Mobile & desktop" entry fails from browser JS with
   `AADSTS9002326`.
 - API permission **Azure Storage → Delegated → `user_impersonation`**.
@@ -132,7 +132,7 @@ that means concretely:
 - **Grant it once, for everyone:**
 
   ```
-  https://login.microsoftonline.com/organizations/adminconsent?client_id=cbc29592-5f49-45ac-8a69-ca6d7030ab74&redirect_uri=https%3A%2F%2Fdjouallah.github.io%2Fonelake_studio%2F
+  https://login.microsoftonline.com/organizations/adminconsent?client_id=cbc29592-5f49-45ac-8a69-ca6d7030ab74&redirect_uri=https%3A%2F%2Fstudio.projectscontrols.com%2F
   ```
 
 - **Review or revoke later:** Entra admin center → *Enterprise applications* → **OneLake Studio** →
@@ -156,6 +156,21 @@ To run your own instance, fork it, register an SPA app as described above with *
 redirect URI, put its `clientId` in [`site/config.js`](site/config.js) (use `authority: "organizations"`
 for multi-tenant, or your tenant GUID to pin it to one directory), and enable Pages with
 *Settings → Pages → Source: GitHub Actions*.
+
+### Don't serve it from `*.github.io`
+
+Measured, not theoretical: on a managed Windows machine the `github.io` URL was blocked outright by
+Windows **Enhanced Phishing Protection** — *"This content is blocked as phishing… your IT admin is not
+allowing you to access content from djouallah.github.io."* That feature watches for **Microsoft
+credential entry on non-Microsoft sites**, which is exactly what an MSAL sign-in button looks like, and
+`github.io` is a shared domain anyone can publish to with a long phishing history. The verdict is about
+the domain, not the page, so nothing in the app can talk its way out of it.
+
+Hence [`site/CNAME`](site/CNAME) and the custom domain: a hostname on an established domain you control
+carries its own reputation. Two records make it work — a DNS `CNAME` from `studio` to
+`djouallah.github.io`, and the `CNAME` file that tells Pages which host to answer for. Add the domain
+under *Settings → Pages → Verified domains* too; that stops anyone else's repo from claiming the same
+hostname if the DNS record ever outlives this deployment.
 
 ## Local development
 
@@ -200,6 +215,7 @@ site/
   sw.js                 service worker: COOP/COEP shim + OneLake token on DuckDB's range reads
   sw-register.js        registers sw.js, one reload so the first load is controlled
   config.js             clientId + authority (tracked — public identifiers, no secret)
+  CNAME                 custom domain for Pages, copied into dist/ by the build
 build.mjs               static build: copies site/ -> dist/
 .github/workflows/pages.yml   builds and deploys to GitHub Pages on push to main
 ```

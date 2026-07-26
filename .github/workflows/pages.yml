@@ -2,7 +2,8 @@
 #
 # "Build" is just build.mjs copying site/ -> dist/ — the app is plain HTML/JS and loads
 # DuckDB-WASM and MSAL from a CDN, so there is no bundler and nothing to install. The
-# artifact is served at https://djouallah.github.io/onelake_studio/.
+# artifact is served at https://studio.projectscontrols.com/ (site/CNAME rides along in
+# the copy, which is what tells Pages the custom domain).
 name: Deploy to GitHub Pages
 
 on:
