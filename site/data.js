@@ -960,6 +960,36 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
     return name;
   }
 
+  // After a failure inside the multi-file scan, find out which file caused it. LIMIT 0
+  // probes bind footers without reading data, and halving converges in log steps. If
+  // even SELECT 1 fails, the engine itself trapped and nothing more can be learned.
+  async function diagnoseOpenFailure(regs, pairs, unionByName) {
+    try { await conn.query("SELECT 1"); }
+    catch (_) { return " — the SQL engine crashed on this table; reload the page before opening another"; }
+    if (regs.length < 2) return "";
+
+    let budget = 24;                    // probes, not files — log-bounded either way
+    const union = unionByName ? ", union_by_name = true" : "";
+    const probe = async subset => {
+      if (budget-- <= 0) return [];     // give up quietly rather than probing forever
+      try {
+        await conn.query(`SELECT * FROM read_parquet([${subset.map(sqlStr).join(", ")}]${union}) LIMIT 0`);
+        return [];
+      } catch (_) {
+        if (subset.length === 1) return subset;
+        const mid = subset.length >> 1;
+        return [...await probe(subset.slice(0, mid)), ...await probe(subset.slice(mid))];
+      }
+    };
+    onStatus("Narrowing down which data file fails…");
+    const bad = await probe(regs);
+    if (!bad.length) return "";
+    const orig = new Map(pairs);
+    const names = bad.slice(0, 3).map(r => basename(orig.get(r) || r));
+    return ` — narrowed to data file(s): ${names.join(", ")}` +
+           (bad.length > 3 ? ` and ${bad.length - 3} more` : "");
+  }
+
   // How many delete records point at a data file the map doesn't know about? Anything but
   // zero means the anti-join is removing fewer rows than the snapshot says it should, and
   // reporting "N delete file(s) applied" would be a lie.
@@ -1020,10 +1050,11 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
     res.ident = ident;
     let columns;
     onStatus(`Opening ${label} — ${paths.length} file(s)…`);
+    const regs = [], pairs = [];
+    let stage = "registering data files";
     try {
       // Map each data file to a generated name pointing at its https URL, so DuckDB
       // range-reads it instead of us downloading it whole.
-      const regs = [], pairs = [];
       for (const p of paths) {
         const reg = `data_${++_seq}.parquet`;
         await db.registerFileURL(reg, toHttps(ws, p), duckdb.DuckDBDataProtocol.HTTP, false);
@@ -1031,11 +1062,15 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
         regs.push(reg);
         pairs.push([reg, p]);
       }
+      stage = "reading delete files";
       const delTable = posDeletes.length ? await loadPositionDeletes(key, ws, posDeletes) : null;
       const mapTable = delTable ? await createMap(key, pairs) : null;
+      stage = "creating the view";
       await createView(ident, regs, delTable, mapTable, resolved.evolved);
+      stage = "reading the parquet footers";
       columns = await describe(ident);   // forces a real footer read — this is the probe
 
+      stage = "checking deletes";
       if (delTable) {
         const unmatched = await countUnmatchedDeletes(delTable, mapTable);
         if (unmatched)
@@ -1043,12 +1078,18 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
                         `snapshot and could not be applied — some deleted rows may still appear`);
       }
     } catch (e) {
+      // Which FILE did it? An error like "table index is out of bounds" (a wasm trap on
+      // some parquet feature this build mishandles) names nothing, and a several-hundred
+      // file table gives the user nothing to report. Bisect with LIMIT 0 binds — the
+      // object cache makes re-binds cheap — before the registrations are released.
+      let detail = "";
+      try { detail = await diagnoseOpenFailure(regs, pairs, resolved.evolved); } catch (_) {}
       await release(key);
       // Deliberately no whole-file download tier: on a big table that means minutes of
       // waiting and the table in browser memory. Report the cause — and only the cause.
       // This used to append a guess about the service worker to every failure here,
       // including schema mismatches and expired tokens, and sent people off reloading.
-      throw new Error(`Could not open ${label}: ${e.message}`);
+      throw new Error(`Could not open ${label} while ${stage}: ${e.message}${detail}`);
     }
 
     // read_parquet matches columns by NAME; Iceberg identifies them by field ID. An
