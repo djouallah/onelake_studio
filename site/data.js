@@ -504,7 +504,7 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
     const label = labelFor(t);
     if (loaded.has(label)) return loaded.get(label);
     if (t.kind === "delta")
-      throw new Error(`${label} is a Delta table — this viewer supports Iceberg tables only (for now).`);
+      throw new Error(`${label} is a Delta table — OneLake Studio supports Iceberg tables only (for now).`);
 
     const ws = lh.workspace;
     onStatus(`Resolving ${label}…`);

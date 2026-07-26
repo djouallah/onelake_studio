@@ -6,21 +6,21 @@
 // (SPA + PKCE doesn't use one). Committing it is what makes a fresh clone deploy a working
 // app instead of a silently unauthenticated one.
 //
-// The registration is SINGLE-TENANT, in the same tenant as the OneLake data, and that is
-// deliberate: this tenant's consent policy (microsoft-user-default-recommended) lets a user
-// self-consent to Azure Storage for an app registered in their own directory, but blocks
-// unverified apps from any other directory with "Need admin approval". A multi-tenant app
-// registered elsewhere cannot be signed into here without an Entra admin. So users register
-// nothing and need no admin — they click Sign in and accept one consent prompt.
-//
-// Forking this into another tenant? Replace both values with your own SPA registration's
-// Application (client) ID and Directory (tenant) ID.
-window.RAYFIN_WASM_CONFIG = {
+// The registration is MULTI-TENANT (`authority: "organizations"`), so anyone with a work or
+// school account can sign in with their own identity and see their own OneLake. It is not
+// publisher-verified yet, and many tenants' consent policy blocks user consent to an
+// unverified app from another directory with "Need admin approval". Two answers, both
+// offered on the sign-in gate: an admin grants consent once (one URL), or the user points
+// the app at their own registration with ?clientId=…&tenantId=… (see auth.js).
+window.ONELAKE_STUDIO_CONFIG = {
   // 'msal' = Entra sign-in + OneLake bearer token. 'none' = no auth (public data only).
   auth: "msal",
 
-  clientId: "43d4d19c-e393-4020-9b31-b3c3b272af3a",
-  tenantId: "4a86d5bb-4173-45ee-bfd5-a3b56ee2d3d5",
+  // "OneLake Studio" SPA registration in projectscontrols.com, multi-tenant.
+  clientId: "cbc29592-5f49-45ac-8a69-ca6d7030ab74",
+  // 'organizations' = any work/school tenant signs in against its own directory. A tenant
+  // GUID here instead would pin the app to one directory.
+  authority: "organizations",
 
   // Optional: pre-fill the lakehouse path box, e.g. "myworkspace/mylakehouse.Lakehouse".
   defaultLakehouse: "",

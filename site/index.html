@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>OneLake Viewer</title>
+  <title>OneLake Studio</title>
   <link rel="preconnect" href="https://onelake.dfs.fabric.microsoft.com" crossorigin />
   <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin />
   <style>
@@ -121,15 +121,51 @@
 
     /* Auth gate */
     #authGate {
-      position: fixed; inset: 0; background: rgba(13,17,23,0.96); z-index: 10;
-      display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1rem; text-align: center; padding: 1.5rem;
+      position: fixed; inset: 0; background: rgba(13,17,23,0.97); z-index: 10;
+      display: flex; align-items: center; justify-content: center; padding: 1.5rem; overflow: auto;
     }
-    #authGateMsg { color: var(--muted); max-width: 520px; }
+    .gateCard {
+      max-width: 560px; width: 100%; display: flex; flex-direction: column; gap: 0.9rem;
+      text-align: center; margin: auto;
+    }
+    .gateBrand { font-size: 1.6rem; font-weight: 700; letter-spacing: 0.2px; }
+    .gateTag { color: var(--muted); }
+    #authGateMsg { color: var(--muted); }
+    #authGate .err { color: var(--err); }
+    #authActions { display: flex; flex-direction: column; align-items: center; gap: 0.8rem; }
+    #signinBtn { padding: 0.7rem 1.6rem; font-size: 1rem; }
+
+    /* Trust panel — claims only what the app actually does. */
+    .trust {
+      list-style: none; margin: 0.4rem 0 0; padding: 0.9rem 1.1rem; text-align: left;
+      background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+      color: var(--muted); font-size: 0.86rem; display: grid; gap: 0.5rem;
+    }
+    .trust li { display: flex; gap: 0.55rem; align-items: flex-start; }
+    .trust li::before { content: "✓"; color: var(--ok); font-weight: 700; line-height: 1.4; }
+    .trust b { color: var(--text); font-weight: 600; }
+
+    /* Consent / bring-your-own-registration blocks */
+    .gateBox {
+      text-align: left; background: var(--panel); border: 1px solid var(--border);
+      border-radius: 8px; padding: 0.9rem 1.1rem; font-size: 0.86rem; color: var(--muted);
+      display: grid; gap: 0.6rem; width: 100%;
+    }
+    .gateBox h4 { margin: 0; color: var(--text); font-size: 0.92rem; }
+    .copyRow { display: flex; gap: 0.4rem; }
+    .copyRow input {
+      flex: 1; font-family: ui-monospace, Consolas, monospace; font-size: 0.76rem;
+      background: var(--panel2); color: var(--muted);
+    }
+    .byoRow { display: flex; gap: 0.4rem; flex-wrap: wrap; }
+    .byoRow input { flex: 1 1 200px; font-family: ui-monospace, Consolas, monospace; font-size: 0.78rem; }
+    .gateFoot { color: var(--muted); font-size: 0.82rem; }
+    .gateFoot a { cursor: pointer; }
   </style>
 </head>
 <body>
   <header>
-    <div class="brand">OneLake&nbsp;Viewer</div>
+    <div class="brand">OneLake&nbsp;Studio</div>
     <select id="wsSelect" title="Workspace"><option value="">Loading workspaces…</option></select>
     <select id="itemSelect" title="Lakehouse / Warehouse" disabled><option value="">Select a workspace first</option></select>
     <button id="connectBtn" title="Reload tables">Reload</button>
@@ -165,14 +201,30 @@
   <div id="status">Ready.</div>
 
   <div id="authGate">
-    <div style="font-size:1.3rem;font-weight:700">OneLake Viewer</div>
-    <div id="authGateMsg">Loading…</div>
+    <div class="gateCard">
+      <div class="gateBrand">OneLake&nbsp;Studio</div>
+      <div class="gateTag">Read-only SQL over your own OneLake — Iceberg tables and lakehouse files — running entirely in your browser.</div>
+      <div id="authGateMsg">Loading…</div>
+      <!-- Sign-in button, and (only when needed) the consent / own-registration blocks. -->
+      <div id="authActions"></div>
+      <ul class="trust">
+        <li><b>Everything runs locally.</b> The query engine is DuckDB-WASM, inside this browser tab. There is no backend and no server to send your data to.</li>
+        <li><b>Your data is never copied.</b> Parquet files are read straight from OneLake into the tab, mostly as partial range requests, and nothing is relayed through anyone else.</li>
+        <li><b>One permission, yours.</b> The app asks only for Azure Storage <code>user_impersonation</code>, and reads OneLake as you — you see exactly what you already have access to.</li>
+        <li><b>Read-only.</b> Only SELECT-style statements are allowed; there is no write path to OneLake.</li>
+        <li><b>No analytics, no telemetry.</b> Your access token stays in this browser's storage and is sent only to Microsoft endpoints.</li>
+      </ul>
+      <div class="gateFoot">
+        <a href="https://github.com/djouallah/onelake_studio" target="_blank" rel="noopener">Read the source</a>
+        · <a id="byoLink">Use my own app registration</a>
+      </div>
+    </div>
   </div>
 
   <!-- Service worker: COOP/COEP shim (DuckDB multithreading) + OneLake token injection
        on DuckDB's own range requests. See sw.js. -->
   <script src="sw-register.js"></script>
-  <!-- config.js: tracked in git; holds the Entra SPA clientId + tenantId (public
+  <!-- config.js: tracked in git; holds the Entra SPA clientId + authority (public
        identifiers, no secret). Missing or blank -> the app says so instead of 401-ing. -->
   <script src="config.js"></script>
   <script type="module" src="app.js"></script>

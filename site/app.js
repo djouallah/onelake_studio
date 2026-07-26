@@ -1,11 +1,16 @@
 // =============================================================================
 // app.js — wire auth (auth.js) + Iceberg engine (data.js) to the DOM.
 // =============================================================================
-import { createAuth, describeAuthError } from './auth.js';
+import {
+  createAuth, describeAuthError, isConsentError,
+  resolveConfig, saveOverride, clearOverride, adminConsentUrl, appRedirectUri,
+} from './auth.js';
 import { createEngine } from './data.js';
 
 const $ = id => document.getElementById(id);
-const cfg = window.RAYFIN_WASM_CONFIG || {};
+// config.js gives the built-in registration; resolveConfig lets ?clientId=…&tenantId=…
+// (persisted in localStorage) replace it, which is how a locked-down tenant gets in.
+const cfg = resolveConfig(window.ONELAKE_STUDIO_CONFIG || {});
 
 const MAX_DOM_ROWS = 2000;   // cap rendered rows (CSV still exports the full result)
 let engine = null;
@@ -34,31 +39,129 @@ function showSignedIn() {
   $('userBox').textContent = 'Signed in';
 }
 
-function showSignIn(onDone, msg = 'Sign in with your Microsoft (Entra) identity to read OneLake.') {
+function gateMsg(text, isError = false) {
+  const el = $('authGateMsg');
+  el.textContent = text;
+  el.classList.toggle('err', isError);
+}
+
+function showSignIn(onDone, msg = 'Sign in with your Microsoft (Entra) work or school account to read OneLake.') {
   const gate = $('authGate');
-  gate.querySelector('#authGateMsg').innerHTML = msg;
-  let btn = gate.querySelector('#signinBtn');
+  gate.style.display = '';
+  gateMsg(msg);
+  let btn = $('signinBtn');
   if (!btn) {
     btn = document.createElement('button');
     btn.id = 'signinBtn';
     btn.className = 'primary';
-    btn.style.cssText = 'padding:0.7rem 1.5rem;font-size:1rem';
-    gate.appendChild(btn);
+    $('authActions').prepend(btn);
   }
+  btn.disabled = false;
   btn.textContent = 'Sign in';
   btn.onclick = async () => {
+    btn.disabled = true;
+    btn.textContent = 'Signing in…';
     try {
-      btn.textContent = 'Signing in…';
+      // acquireTokenRedirect navigates away and never resolves, so a `false` here means
+      // "no silent session and no redirect" — put the button back.
       if (await auth.ensureSession(true)) { gate.style.display = 'none'; await onDone(); }
-      else btn.textContent = 'Sign in';
+      else { btn.disabled = false; btn.textContent = 'Sign in'; }
     } catch (e) {
+      btn.disabled = false;
       btn.textContent = 'Sign in';
-      const why = describeAuthError(e);
-      gate.querySelector('#authGateMsg').textContent = 'Sign-in failed: ' + why;
-      setStatus('Sign-in failed: ' + why, 'error');
-      console.error(e);
+      showAuthFailure(e);
     }
   };
+  if (cfg.byo) showByoBanner();
+}
+
+// A failed sign-in that's really "your tenant hasn't consented" gets both fixes handed
+// over — the admin-consent URL and the bring-your-own-registration form — because that
+// is the expected outcome for an app that isn't publisher-verified.
+function showAuthFailure(e) {
+  const why = describeAuthError(e);
+  gateMsg('Sign-in failed: ' + why, true);
+  setStatus('Sign-in failed: ' + why, 'error');
+  if (isConsentError(e)) showConsentHelp();
+  console.error(e);
+}
+
+function showConsentHelp() {
+  if ($('consentBox')) return;
+  const url = adminConsentUrl(cfg);
+  const box = document.createElement('div');
+  box.id = 'consentBox';
+  box.className = 'gateBox';
+  box.innerHTML = `
+    <h4>Your tenant hasn't consented to this app yet</h4>
+    <div>Microsoft blocks user consent for an app registered in another organization unless its
+      publisher is verified, and this one isn't yet. Either route works:</div>
+    <div><b>1 — An Entra admin grants consent once</b>, for the whole tenant. Send them this URL:</div>
+    <div class="copyRow">
+      <input id="consentUrl" readonly value="${escapeHtml(url)}" />
+      <button id="copyConsentBtn">Copy</button>
+    </div>
+    <div><b>2 — Use your own app registration.</b> An SPA registration in your own tenant with the
+      Azure Storage <code>user_impersonation</code> permission and
+      <code>${escapeHtml(appRedirectUri())}</code> as a Single-page application redirect URI. No admin
+      needed, since it's an app from your own directory.</div>`;
+  $('authActions').appendChild(box);
+  $('copyConsentBtn').onclick = async () => {
+    const input = $('consentUrl');
+    input.select();
+    try { await navigator.clipboard.writeText(input.value); } catch (_) { document.execCommand('copy'); }
+    $('copyConsentBtn').textContent = 'Copied';
+    setTimeout(() => { $('copyConsentBtn').textContent = 'Copy'; }, 1500);
+  };
+  showByoForm();
+}
+
+// The form that switches the app to another registration. Reachable from the consent
+// block and from the "Use my own app registration" link at the bottom of the gate.
+function showByoForm() {
+  if ($('byoBox')) { $('byoClientId').focus(); return; }
+  const box = document.createElement('div');
+  box.id = 'byoBox';
+  box.className = 'gateBox';
+  box.innerHTML = `
+    <h4>Sign in with your own app registration</h4>
+    <div class="byoRow">
+      <input id="byoClientId" placeholder="Application (client) ID" spellcheck="false" />
+      <input id="byoTenantId" placeholder="Directory (tenant) ID — or blank" spellcheck="false" />
+    </div>
+    <div class="byoRow">
+      <button id="byoUseBtn" class="primary">Use it</button>
+      ${cfg.byo ? '<button id="byoResetBtn">Back to the built-in app</button>' : ''}
+      <span id="byoErr" class="err"></span>
+    </div>
+    <div>Kept in this browser only. Equivalent to opening
+      <code>?clientId=…&amp;tenantId=…</code> in the address bar.</div>`;
+  $('authActions').appendChild(box);
+  $('byoUseBtn').onclick = () => {
+    try {
+      saveOverride($('byoClientId').value, $('byoTenantId').value);
+      // Reload rather than re-create the provider: MSAL caches state per clientId, and a
+      // clean load with the new registration is the only way to be sure none is reused.
+      window.location.replace(appRedirectUri());
+    } catch (e) {
+      $('byoErr').textContent = e.message;
+    }
+  };
+  const reset = $('byoResetBtn');
+  if (reset) reset.onclick = () => { clearOverride(); window.location.replace(appRedirectUri()); };
+  $('byoClientId').focus();
+}
+
+// Signed in through someone's own registration — say so, and offer the way back.
+function showByoBanner() {
+  if ($('byoBanner')) return;
+  const el = document.createElement('div');
+  el.id = 'byoBanner';
+  el.className = 'gateFoot';
+  el.innerHTML = `Using your own app registration (<code>${escapeHtml(cfg.clientId)}</code>). ` +
+    '<a id="byoBannerReset">Use the built-in one instead</a>';
+  $('authActions').appendChild(el);
+  $('byoBannerReset').onclick = () => { clearOverride(); window.location.replace(appRedirectUri()); };
 }
 
 // Silent token renewal failed mid-session (refresh token expired). DuckDB and the loaded
@@ -74,10 +177,12 @@ function showExpired() {
 function showOpenInTab() {
   const gate = $('authGate');
   gate.innerHTML = `
-    <div style="font-size:1.3rem;font-weight:700">Open in a separate window</div>
-    <div id="authGateMsg">This app signs you in to OneLake, which the Fabric portal's embedded frame blocks. Open it in its own browser tab to continue.</div>
-    <a class="primary" style="padding:0.7rem 1.5rem;border-radius:6px;text-decoration:none;color:#fff"
-       href="${window.location.href}" target="_blank" rel="noopener">Open in new tab ↗</a>`;
+    <div class="gateCard">
+      <div class="gateBrand">Open in a separate window</div>
+      <div id="authGateMsg">This app signs you in to OneLake, which an embedded frame blocks. Open it in its own browser tab to continue.</div>
+      <a class="primary" style="padding:0.7rem 1.5rem;border-radius:6px;text-decoration:none;color:#fff;align-self:center"
+         href="${window.location.href}" target="_blank" rel="noopener">Open in new tab ↗</a>
+    </div>`;
 }
 
 // ---------------------------------------------------------------------------
@@ -451,7 +556,8 @@ function setBusy(b) {
 // ---------------------------------------------------------------------------
 // Boot: silent session check, then gate.
 // ---------------------------------------------------------------------------
-const EMBEDDED = window.self !== window.top;   // inside the Fabric portal iframe?
+const EMBEDDED = window.self !== window.top;   // inside an embedding iframe?
+$('byoLink').onclick = showByoForm;
 (async () => {
   try {
     if (await auth.ensureSession(false)) {
@@ -463,9 +569,9 @@ const EMBEDDED = window.self !== window.top;   // inside the Fabric portal ifram
       showSignIn(start);
     }
   } catch (e) {
-    const why = describeAuthError(e);
-    $('authGateMsg').textContent = 'Error: ' + why;
-    setStatus('Error: ' + why, 'error');
-    console.error(e);
+    // A redirect coming back with a consent failure lands here, not in the button
+    // handler — so the gate has to be rendered before the error is explained.
+    showSignIn(start);
+    showAuthFailure(e);
   }
 })();

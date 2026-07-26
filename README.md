@@ -1,14 +1,23 @@
-# OneLake Iceberg Viewer
+# OneLake Studio
 
-A **serverless, in-browser** tool to run read-only SQL against **any Apache Iceberg table in OneLake**.
-Pick a workspace, then a lakehouse or warehouse, from a catalog the app discovers itself — no paths to
-type. It lists that item's Iceberg tables, lets you **preview** any of them, and run **DuckDB SQL**
-directly in your browser. No backend,
-no data copied to a server, and **nothing for your users to register** — they sign in with their own
-Entra identity and see exactly what they already have access to.
+**[Open the app →](https://djouallah.github.io/onelake_studio/)**
+
+Read-only SQL over **your own** OneLake, running entirely in your browser. Sign in with your Microsoft
+work or school account, pick a workspace and a lakehouse or warehouse from a catalog the app discovers
+itself, and query its Iceberg tables and lakehouse files with **DuckDB-WASM**.
+
+There is no backend. Nothing is uploaded, nothing is proxied, and there is nothing for you to install or
+register — you see exactly the data your own identity already has access to.
+
+- **Everything runs locally.** The query engine is DuckDB-WASM, in the tab.
+- **Your data is never copied.** Parquet is read straight from OneLake into the browser, mostly as HTTP
+  range requests — only the row groups and columns a query touches.
+- **One permission.** Azure Storage `user_impersonation`, used solely to read OneLake as you.
+- **Read-only.** Only `SELECT` / `WITH` / `DESCRIBE` / `SHOW` / `EXPLAIN` / `SUMMARIZE` are accepted.
+- **No analytics, no telemetry.** The access token stays in your browser and goes only to Microsoft.
 
 It's built by generalizing two references:
-- [rayfin-duckdb-wasm](https://github.com/djouallah/rayfin-duckdb-wasm) — Rayfin static hosting on Fabric, DuckDB-WASM, MSAL auth.
+- [rayfin-duckdb-wasm](https://github.com/djouallah/rayfin-duckdb-wasm) — DuckDB-WASM in a static Fabric app, MSAL auth.
 - [dbt_fabric_python_iceberg dashboard](https://github.com/djouallah/dbt_fabric_python_iceberg/blob/main/dashboard/index.html) — reading Iceberg (`read_avro` manifests → `read_parquet` data files) in DuckDB-WASM.
 
 ## How it works
@@ -67,77 +76,97 @@ the pruning the extension would buy — and pruning reads those same zeroed stat
 deliver either. The one thing it gave us for free, delete files, is handled directly instead
 (see below).
 
-## Auth: one registration, none for your users
+## Sign-in, consent, and what to do if it says "Need admin approval"
 
-Reading OneLake from the browser needs an Entra access token for
-`https://storage.azure.com/user_impersonation`. **Rayfin cannot supply that token.** Its Fabric auth
-(`services.auth.fabric.enabled`) signs the user in through the Fabric portal and returns an *opaque
-Rayfin session* for Rayfin's own Data API — the SDK deliberately never exposes an Entra access token
-to application code. Static hosting also serves `dist/` verbatim; nothing is injected at serve time.
+Reading OneLake from a browser needs an Entra access token for
+`https://storage.azure.com/user_impersonation`. The app uses an Entra **SPA public client** (PKCE, no
+secret), registered once by the publisher and **multi-tenant**, so any work or school account can sign
+in against its own directory. Its `clientId` is committed in [`site/config.js`](site/config.js): public
+by design (MSAL puts it in every sign-in URL), and committing it is what makes a fresh clone deploy a
+working app instead of a silently unauthenticated one.
 
-So the app uses its own Entra **SPA public client** (PKCE, no secret), registered **once by whoever
-publishes the app**, in the same tenant as the OneLake data. Users register nothing — they click
-*Sign in*, accept a one-time consent prompt, and read OneLake with their own identity and their own
-permissions. Its `clientId`/`tenantId` are committed in [`site/config.js`](site/config.js): public by
-design (MSAL puts them in the sign-in URL), and committing them means a fresh clone deploys a working
-app rather than a silently unauthenticated one.
+Whether your first sign-in is one click or a stop sign depends on **your tenant's consent policy**, not
+on this app:
 
-### Consent — and why the app must be single-tenant
+- Tenants that allow user consent to any app: you accept one prompt and you're in.
+- Tenants on the *recommended* policy (`microsoft-user-default-recommended`, the common default): user
+  consent is allowed only for *"apps from verified publishers and apps registered in your tenant"*.
+  This app is **not publisher-verified yet**, so you'll see **"Need admin approval"**.
 
-First sign-in shows **"OneLake Iceberg Viewer wants to access Azure Storage as you"**. One click, per
-user, no admin.
+That is designed behaviour for an unverified multi-tenant app, and the sign-in screen hands you both
+fixes rather than stopping there:
 
-That only holds because the registration lives **in the same tenant as the user**. This tenant's
-consent policy is `microsoft-user-default-recommended`, which lets a user self-consent to an app
-registered in their own directory but refuses unverified apps from any other directory with *"Need
-admin approval — only an admin can grant."* A multi-tenant app registered elsewhere is therefore a
-dead end here: no one can sign in until an Entra admin consents for the whole tenant.
+1. **An admin grants consent once** for the whole tenant (see below).
+2. **Use your own app registration** — no admin, no fork, no deploy.
 
-So if you fork this into another tenant, register the SPA app **in that tenant** and put its ids in
-`config.js`. Don't try to share one multi-tenant registration across organizations.
+### Use your own app registration
 
-An admin who wants to suppress the per-user prompt org-wide can grant tenant-wide consent once on the
-registration (**API permissions → Grant admin consent**), but nothing requires it.
+Register an app in your own tenant (a foreign app is what the policy blocks; your own directory's app is
+not), then open the app with it:
 
-### If you re-register or re-deploy
-
-The hosting origin must be a **Single-page application** redirect URI on the registration — the
-platform type matters, a "Web" or "Mobile & desktop" redirect fails from browser JS with
-`AADSTS9002326`. Currently registered (bare origins, no trailing slash):
-
-- `https://still-hawk-86bc044b26-westeurope.webapp.fabricapps.net`
-- `http://localhost:5173`
-
-If the Fabric item is recreated the hosting URL changes, and the new origin has to be added there.
-The only API permission needed is **Azure Storage → Delegated → `user_impersonation`**; no client
-secret, and "Allow public client flows" stays off.
-
-## Deploy to Fabric (Rayfin)
-
-```bash
-npm install
-npx rayfin up
+```
+https://djouallah.github.io/onelake_studio/?clientId=<application-id>&tenantId=<directory-id>
 ```
 
-After the first deploy, copy the printed webapp URL into `allowedRedirectUris` in
-[`rayfin/rayfin.yml`](rayfin/rayfin.yml), run `npx rayfin up` again, and add the same URL as an SPA
-redirect URI on the Entra app (see *If you re-register or re-deploy* above).
+The choice is stored in this browser's `localStorage`, so it survives the sign-in redirect and later
+visits; the gate has a link to switch back. The registration needs exactly:
 
-> **Open it standalone, not inside the Fabric portal iframe.** The Microsoft sign-in is blocked in the
-> embedded frame; the app detects this and shows an "Open in new tab" prompt.
+- Platform **Single-page application** with redirect URI `https://djouallah.github.io/onelake_studio/`
+  — the platform type matters, a "Web" or "Mobile & desktop" entry fails from browser JS with
+  `AADSTS9002326`.
+- API permission **Azure Storage → Delegated → `user_impersonation`**.
+- No client secret; "Allow public client flows" stays off.
+
+### For admins
+
+You are being asked to consent to a third-party app that reads OneLake **as the signed-in user**. What
+that means concretely:
+
+- **Permission requested:** Azure Storage `user_impersonation` (delegated) — and nothing else. No Graph,
+  no directory read, no application permissions, no offline background access beyond MSAL's normal
+  refresh token in the user's browser.
+- **Delegated, so it can never exceed the user.** Every OneLake read carries that user's token; the app
+  cannot see a workspace they can't already open, and it issues no writes.
+- **No backend.** The app is static files on GitHub Pages; data goes from OneLake to the user's browser
+  directly. There is no server of ours in the path, and no telemetry.
+- **Grant it once, for everyone:**
+
+  ```
+  https://login.microsoftonline.com/organizations/adminconsent?client_id=cbc29592-5f49-45ac-8a69-ca6d7030ab74&redirect_uri=https%3A%2F%2Fdjouallah.github.io%2Fonelake_studio%2F
+  ```
+
+- **Review or revoke later:** Entra admin center → *Enterprise applications* → **OneLake Studio** →
+  *Permissions* / *Properties → Delete*. Users can also revoke their own grant at
+  [myapps.microsoft.com](https://myapps.microsoft.com).
+- **It is not publisher-verified.** There's no blue "verified" badge, and the consent screen says so.
+  Verification requires a Microsoft Cloud Partner Program account as the Partner Global Account; it's a
+  planned upgrade, not a claim being made today. Read the source before granting — that's the point of
+  the repo being public.
+
+If you'd rather not consent at all, users in your tenant can point the app at a registration of your own
+with the `?clientId=` route above.
+
+## Deploy your own copy
+
+The app is static files; any HTTPS host works. This repo publishes itself with
+[`.github/workflows/pages.yml`](.github/workflows/pages.yml) — `npm run build` copies `site/` → `dist/`,
+and `actions/deploy-pages` serves it.
+
+To run your own instance, fork it, register an SPA app as described above with **your** Pages URL as the
+redirect URI, put its `clientId` in [`site/config.js`](site/config.js) (use `authority: "organizations"`
+for multi-tenant, or your tenant GUID to pin it to one directory), and enable Pages with
+*Settings → Pages → Source: GitHub Actions*.
 
 ## Local development
 
 ```bash
+npm install
 npm run dev
 ```
 
-Serves `site/` on `http://localhost:5173`. Same `site/config.js`, so nothing to fill in — that origin is
-already an SPA redirect URI on the registration, so sign-in works locally too.
-
-Note this is a plain static server, not the `rayfin up … && vite` that `npm run dev` means in the
-scaffolded Rayfin templates. There's no bundler here, and this app talks to OneLake directly rather than
-to the Rayfin Data API, so there's no backend to deploy on each run.
+Serves `site/` on `http://localhost:5173`, which is already a registered SPA redirect URI, so sign-in
+works locally with the same committed `config.js`. There's no bundler — the page loads DuckDB-WASM and
+MSAL from a CDN — so the only dev dependency is a static file server.
 
 ## Usage
 
@@ -158,18 +187,19 @@ to the Rayfin Data API, so there's no backend to deploy on each run.
 - **Merge-on-read delete files are not applied** by the manifest walk — they're detected and excluded from the scan, but their deletions aren't subtracted. Fabric's Iceberg conversions are copy-on-write (manifest entries are all `content = 0`), so this doesn't affect them and nothing is printed; if a table does have delete files the status line warns that deleted rows may still appear.
 - The target folder must be a real Iceberg table (has a `Tables/…/metadata/` directory).
 - **The catalog needs no extra permission.** Workspaces come from the ADLS Gen2 *List Filesystems* call at the OneLake account root and items from a listing of the workspace root, both on the same `storage.azure.com` token the data reads use — so there's no Fabric REST API call, no extra Entra scope and no second consent prompt. You see exactly the workspaces your identity can already reach.
+- **Not inside an iframe.** Microsoft sign-in is blocked in an embedded frame; the app detects this and offers an "Open in new tab" link.
 
 ## Project layout
 
 ```
 site/
-  index.html            UI shell (lakehouse bar, table sidebar, SQL editor, results)
-  app.js                DOM wiring + auth gate
-  auth.js               MSAL provider (storage scope, redirect flow, silent renewal)
+  index.html            UI shell (sign-in gate + trust panel, catalog bar, sidebar, SQL editor, results)
+  app.js                DOM wiring + auth gate (consent help, own-registration override)
+  auth.js               MSAL provider (storage scope, redirect flow, silent renewal, registration override)
   data.js               Iceberg engine on DuckDB-WASM (list/resolve/manifest/load/query)
   sw.js                 service worker: COOP/COEP shim + OneLake token on DuckDB's range reads
   sw-register.js        registers sw.js, one reload so the first load is controlled
-  config.js             clientId + tenantId (tracked — public identifiers, no secret)
+  config.js             clientId + authority (tracked — public identifiers, no secret)
 build.mjs               static build: copies site/ -> dist/
-rayfin/rayfin.yml       Rayfin service config (managed Fabric auth + static hosting)
+.github/workflows/pages.yml   builds and deploys to GitHub Pages on push to main
 ```

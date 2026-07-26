@@ -1,4 +1,4 @@
-// Static "build" for Fabric static hosting: publish the contents of site/ to dist/.
+// Static "build": publish the contents of site/ to dist/, which GitHub Pages serves.
 // The app is plain HTML + DuckDB-WASM (loaded from CDN) that reads OneLake Iceberg tables
 // directly in the browser — no bundler, so we just copy site/ -> dist/.
 import { rm, cp } from "node:fs/promises";

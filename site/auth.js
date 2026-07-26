@@ -19,6 +19,79 @@
 const MSAL_ESM = "https://cdn.jsdelivr.net/npm/@azure/msal-browser@3.28.1/+esm";
 const OL_SCOPES = ['https://storage.azure.com/user_impersonation'];
 
+// =============================================================================
+// Where Microsoft sends the user back, and which registration signs them in.
+// =============================================================================
+
+// origin + path, NOT origin alone: on a GitHub project page the app lives at
+// /<repo>/, and returning to the bare origin lands on someone else's page instead of
+// this app. `index.html` is trimmed so an explicit link and the directory URL produce
+// the same redirect URI — Entra matches these strings exactly.
+export function appRedirectUri() {
+  return window.location.origin + window.location.pathname.replace(/index\.html$/, '');
+}
+
+// --- Bring-your-own registration --------------------------------------------
+// This app's registration is multi-tenant but not publisher-verified, so a tenant on
+// the recommended consent policy answers "Need admin approval" until an admin grants
+// consent once. That shouldn't be a dead end: anyone can point the app at their own
+// SPA registration instead, with no deploy and no fork.
+//
+//   ?clientId=<guid>&tenantId=<guid>   -> use that registration from now on
+//
+// Kept in localStorage because MSAL's redirect returns to the bare redirect URI and
+// drops the query string — and because the choice should survive a later visit.
+const BYO_KEY = 'onelake-studio-registration';
+const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const isAuthority = v => GUID.test(v) || /^(organizations|common|consumers)$/i.test(v);
+
+export function readOverride() {
+  try {
+    const o = JSON.parse(localStorage.getItem(BYO_KEY) || 'null');
+    if (o && GUID.test(o.clientId || '') && isAuthority(o.authority || '')) return o;
+  } catch (_) { /* corrupt entry — treated as absent */ }
+  return null;
+}
+
+export function saveOverride(clientId, authority) {
+  clientId = (clientId || '').trim();
+  authority = (authority || '').trim() || 'organizations';
+  if (!GUID.test(clientId)) throw new Error('Application (client) ID must be a GUID.');
+  if (!isAuthority(authority)) throw new Error('Directory (tenant) ID must be a GUID, or "organizations".');
+  localStorage.setItem(BYO_KEY, JSON.stringify({ clientId, authority }));
+}
+
+export function clearOverride() {
+  localStorage.removeItem(BYO_KEY);
+}
+
+// Merge config.js with a ?clientId=… in the address bar and anything saved earlier.
+// A URL parameter wins and is persisted; otherwise the saved override wins over the
+// built-in registration. Returns { ...cfg, byo } so the UI can say which one is in use.
+export function resolveConfig(base = {}) {
+  const q = new URLSearchParams(window.location.search);
+  const fromUrl = (q.get('clientId') || '').trim();
+  if (fromUrl) {
+    try {
+      saveOverride(fromUrl, q.get('tenantId') || q.get('authority') || 'organizations');
+    } catch (e) {
+      // Bad GUID in the URL: ignore it rather than wedging the app on a typo.
+      console.warn('Ignoring ?clientId=', e.message);
+    }
+  }
+  const o = readOverride();
+  return o ? { ...base, clientId: o.clientId, authority: o.authority, tenantId: null, byo: true }
+           : { ...base, byo: false };
+}
+
+// One-click fix for a tenant that blocks user consent: an admin opens this, signs in,
+// and grants the Azure Storage permission for the whole tenant, once.
+export function adminConsentUrl(cfg) {
+  return 'https://login.microsoftonline.com/organizations/adminconsent' +
+    `?client_id=${encodeURIComponent(cfg.clientId)}` +
+    `&redirect_uri=${encodeURIComponent(appRedirectUri())}`;
+}
+
 // Treat a token this close to expiry as already gone. Loading a table can mean dozens
 // of parquet fetches over several minutes; renewing up front beats failing half way.
 const EXPIRY_SKEW_MS = 5 * 60 * 1000;
@@ -60,7 +133,7 @@ function createMsalAuth(cfg, { onExpired } = {}) {
       // 'organizations' for a multi-tenant app (any work/school account signs in with
       // their own tenant); a tenant GUID pins it to one directory.
       authority: `https://login.microsoftonline.com/${cfg.authority || cfg.tenantId}`,
-      redirectUri: window.location.origin,
+      redirectUri: appRedirectUri(),
     },
     cache: { cacheLocation: 'localStorage' },
   };
@@ -186,19 +259,28 @@ function createMsalAuth(cfg, { onExpired } = {}) {
   };
 }
 
+// Does this failure mean "your tenant hasn't consented to this app"? That case gets an
+// actionable block on the gate (admin-consent URL + bring-your-own registration) rather
+// than a sentence, so app.js needs to recognise it. AADSTS50020 is here too: a foreign
+// unverified app can surface the block as "user account does not exist in tenant".
+export function isConsentError(e) {
+  const msg = (e && e.message) || String(e);
+  return /AADSTS65001|AADSTS90094|AADSTS900941|consent_required|interaction_required/.test(msg);
+}
+
 // Turn an MSAL/Entra failure into something that names the fix. These are the setup
 // mistakes this app can actually produce; anything else falls through unchanged.
 export function describeAuthError(e) {
   const msg = (e && e.message) || String(e);
-  const origin = window.location.origin;
+  const uri = appRedirectUri();
   if (/AADSTS9002326/.test(msg))
-    return `This app's redirect URI is registered under the wrong platform in Entra. It must be added under "Single-page application", not "Web" or "Mobile & desktop applications". (${origin})`;
+    return `This app's redirect URI is registered under the wrong platform in Entra. It must be added under "Single-page application", not "Web" or "Mobile & desktop applications". (${uri})`;
   if (/AADSTS50011|redirect_uri/i.test(msg))
-    return `${origin} is not a registered redirect URI. Add it to the app registration under Authentication -> Single-page application.`;
-  if (/AADSTS65001|AADSTS90094|consent_required/.test(msg))
-    return 'Admin consent for the Azure Storage "user_impersonation" permission has not been granted for this tenant. An Entra admin needs to grant it once on the app registration.';
+    return `${uri} is not a registered redirect URI. Add it to the app registration under Authentication -> Single-page application.`;
+  if (isConsentError(e))
+    return 'Your tenant has not consented to this app\'s Azure Storage permission. An Entra admin can grant it once for everyone, or you can sign in with your own app registration.';
   if (/AADSTS700016|unauthorized_client/.test(msg))
-    return 'The clientId in config.js is not an application this tenant can sign in to. Check clientId.';
+    return 'That application ID is not an app this tenant can sign in to. Check the clientId.';
   if (/AADSTS50020/.test(msg))
     return 'That account cannot sign in here. Use a work or school (Entra) account — personal Microsoft accounts have no OneLake.';
   if (/redirect_in_iframe|BrowserAuthError: redirect_in_iframe/.test(msg))
