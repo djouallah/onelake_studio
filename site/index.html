@@ -192,7 +192,11 @@
 <body>
   <header>
     <div class="brand">OneLake&nbsp;Studio</div>
-    <select id="wsSelect" title="Workspace"><option value="">Loading workspaces…</option></select>
+    <!-- A datalist combobox, not a <select>: tenants have hundreds of workspaces, and a
+         dropdown you can't type into doesn't scale past a dozen. -->
+    <input id="wsSelect" list="wsOptions" title="Workspace — type to search"
+           placeholder="Loading workspaces…" autocomplete="off" spellcheck="false" disabled />
+    <datalist id="wsOptions"></datalist>
     <select id="itemSelect" title="Lakehouse / Warehouse" disabled><option value="">Select a workspace first</option></select>
     <button id="connectBtn" title="Reload tables">Reload</button>
     <div class="spacer"></div>

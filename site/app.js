@@ -210,7 +210,8 @@ async function start() {
   engine = createEngine(auth, { onStatus: setStatus });
   await engine.init();
   $('connectBtn').onclick = () => connect({ force: true });
-  $('wsSelect').onchange = onWorkspaceChange;
+  $('wsSelect').addEventListener('input', onWorkspaceInput);
+  $('wsSelect').addEventListener('change', onWorkspaceInput);
   $('itemSelect').onchange = () => connect();
   $('tabTables').onclick = () => switchPane('tables');
   $('tabFiles').onclick = () => switchPane('files');
@@ -243,33 +244,76 @@ function fill(sel, options, placeholder) {
   }
 }
 
+// The workspace box is a datalist combobox: free text the user types, filtered as they
+// type by the browser. That means its value is a CLAIM, not a selection — everything
+// downstream goes through canonicalWs() to turn it into a real workspace name (exact
+// first, then case-insensitive) or null.
+let wsNames = [];
+let lastWs = '';       // the workspace whose items are currently loaded, to dedupe events
+
+function canonicalWs(v) {
+  const s = String(v || '').trim();
+  if (!s) return null;
+  if (wsNames.includes(s)) return s;
+  const lower = s.toLowerCase();
+  return wsNames.find(n => n.toLowerCase() === lower) || null;
+}
+
+function fillWorkspaces(names) {
+  wsNames = names;
+  const dl = $('wsOptions');
+  dl.innerHTML = '';
+  for (const n of names) {
+    const o = document.createElement('option');
+    o.value = n;
+    dl.appendChild(o);
+  }
+  const el = $('wsSelect');
+  el.disabled = !names.length;
+  el.placeholder = names.length ? `Workspace (${names.length}) — type to search` : 'No workspaces';
+}
+
+// Datalist quirk: picking an option fires 'input', typing fires 'input', Enter/blur fire
+// 'change'. One handler serves all three — act only when the text resolves to a real
+// workspace we aren't already showing, so keystrokes along the way cost nothing.
+function onWorkspaceInput() {
+  const el = $('wsSelect');
+  const v = el.value.trim();
+  if (!v) { if (lastWs) onWorkspaceChange(); return; }
+  const c = canonicalWs(v);
+  if (!c || c === lastWs) return;
+  if (el.value !== c) el.value = c;
+  onWorkspaceChange();
+}
+
 async function loadCatalog() {
-  const ws = $('wsSelect');
   try {
     setStatus('Loading workspaces…');
     const names = await engine.listWorkspaces();
-    fill(ws, names.map(n => ({ value: n, label: n })), `Workspace (${names.length})`);
-    setStatus(`${names.length} workspace(s). Pick one to browse its tables.`, 'ok');
+    fillWorkspaces(names);
+    setStatus(`${names.length} workspace(s). Type to search, pick one to browse its tables.`, 'ok');
 
     // cfg.defaultLakehouse ("workspace/item.Lakehouse") preselects both levels.
     if (cfg.defaultLakehouse) {
       const { workspace, item } = engine.parseLakehouse(cfg.defaultLakehouse);
       if (names.includes(workspace)) {
-        ws.value = workspace;
+        $('wsSelect').value = workspace;
         await onWorkspaceChange();
         const sel = $('itemSelect');
         if ([...sel.options].some(o => o.value === item)) { sel.value = item; await connect(); }
       }
     }
   } catch (e) {
-    fill(ws, [], 'Could not list workspaces');
+    fillWorkspaces([]);
+    $('wsSelect').placeholder = 'Could not list workspaces';
     setStatus('Could not list workspaces: ' + e.message, 'error');
     console.error(e);
   }
 }
 
 async function onWorkspaceChange() {
-  const workspace = $('wsSelect').value;
+  const workspace = canonicalWs($('wsSelect').value) || '';
+  lastWs = workspace;
   const sel = $('itemSelect');
   activeIdent = null;
   lastResult = null;
@@ -312,7 +356,7 @@ async function onWorkspaceChange() {
 // already on left every table served from cache, so "Reload" showed the same snapshot it
 // showed before and there was no way to pick up a table that had changed underneath.
 async function connect({ force = false } = {}) {
-  const workspace = $('wsSelect').value, item = $('itemSelect').value;
+  const workspace = canonicalWs($('wsSelect').value), item = $('itemSelect').value;
   if (!workspace || !item) return;
 
   // Views, registered files and helper tables from the previous lakehouse are dead the
