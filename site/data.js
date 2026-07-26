@@ -91,6 +91,13 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
     URL.revokeObjectURL(workerUrl);
     conn = await db.connect();
     await conn.query("SET preserve_insertion_order = false;");
+    // In-session caches: parquet footers/metadata objects survive across queries instead
+    // of being re-fetched and re-parsed per statement. Guarded — losing them costs
+    // repeat reads, not correctness. (Cross-session caching of the immutable data files
+    // themselves lives in sw.js, which can intercept DuckDB's range requests.)
+    for (const s of ["SET enable_http_metadata_cache = true", "SET enable_object_cache = true"]) {
+      try { await conn.query(s); } catch (e) { console.warn(`[engine] ${s}: ${e.message}`); }
+    }
     // Never throws: an optional extension that won't load costs one file format, which is
     // not a reason to refuse to start. LOAD alone succeeds when the wasm build already has
     // the extension; INSTALL+LOAD is the fetch-from-the-repo fallback.

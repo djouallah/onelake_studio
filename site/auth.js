@@ -370,10 +370,13 @@ function createMsalAuth(cfg, { onExpired } = {}) {
     // a bearer token that Cache Storage had already written to disk. The one place the
     // durable delete IS worth waiting for — but bounded, so a stalled Cache API degrades
     // to "the token ages out on disk" instead of a sign-out button that hangs forever.
+    // The locally cached table data goes with it: signing out means leaving neither the
+    // credential nor the data it fetched behind on this machine.
     async signOut() {
       const bound = p => Promise.race([p, new Promise(r => setTimeout(r, 2000))]);
       await bound(drop());
       await bound(forgetDurableToken());
+      await bound(caches.delete('onelake-data-v1').catch(() => {}));
       try { if (_msalApp) await _msalApp.logoutRedirect(); } catch (_) { /* navigates away */ }
     },
 

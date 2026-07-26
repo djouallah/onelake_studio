@@ -70,6 +70,13 @@ and pulls only the row groups and columns a query touches — OneLake answers `2
 headers. It also supplies the COOP/COEP headers that GitHub Pages can't, which is why the first load
 reloads itself once.
 
+**Repeat reads come from a local cache.** Browsers refuse to HTTP-cache `206` responses, so the service
+worker caches range reads itself (Cache Storage, 512 MB cap, oldest evicted first) — but only Iceberg
+data files and manifests under `Tables/`, which are immutable by design: a new snapshot writes new
+files, so a cached one can never be stale. Listings, metadata pointers and anything under `Files/` are
+always fetched fresh. Signing out deletes the cache along with the token, so neither the credential nor
+the data it fetched outlives the session on a shared machine.
+
 **Iceberg is the read path for everything.** OneLake publishes lakehouse tables in both formats,
 generating Iceberg metadata on demand — the first request triggers it and loses the race, so resolution
 retries with a backoff sized to the documented 5s–2min conversion window. A table whose metadata hasn't

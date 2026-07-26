@@ -32,6 +32,18 @@ const TOKEN_WAIT_MS = 3000;
 const TOKEN_CACHE = 'onelake-token';
 const TOKEN_KEY = '/__onelake_token';
 
+// Local data cache. Browsers refuse to HTTP-cache 206 Partial Content, so without this
+// every query re-fetches the same parquet footers and row groups. Only objects that are
+// IMMUTABLE BY DESIGN are cached — Iceberg data files and Avro manifests under Tables/,
+// where new data always means new files — so there is no invalidation problem to solve.
+// Listings, version-hint, metadata.json (rewritten by conversion) and anything under
+// Files/ (users overwrite those) are never cached. Cleared on sign-out, alongside the
+// token; pruned oldest-first past the cap.
+const DATA_CACHE = 'onelake-data-v1';
+const DATA_CACHE_MAX_BYTES = 512 * 1024 * 1024;
+const PRUNE_EVERY_PUTS = 32;
+let putsSincePrune = 0;
+
 let coepCredentialless = false;
 let token = null;
 let tokenExpiresAt = 0;      // 0 = unknown; a known-expired token is never used
@@ -48,6 +60,8 @@ self.addEventListener('message', e => {
     token = d.token || null;
     tokenExpiresAt = Number(d.expiresAt) || 0;
     if (waiting) { waiting.resolve(token); waiting = null; }
+  } else if (d.type === 'clear-data-cache') {
+    caches.delete(DATA_CACHE).catch(() => {});
   } else if (d.type === 'deregister') {
     self.registration.unregister()
       .then(() => self.clients.matchAll())
@@ -118,23 +132,104 @@ async function authorize(request) {
   return new Request(request, { headers });
 }
 
+// Is this an immutable OneLake object worth caching? Only data files and Avro manifests
+// under Tables/ — a new snapshot writes NEW files, so a cached one can never be stale.
+// The !search guard excludes every DFS listing call.
+function cacheableDataUrl(u) {
+  if (u.host !== ONELAKE_HOST || u.search) return false;
+  return /\/Tables\/[^?]*\.parquet$/i.test(u.pathname) ||
+         /\/Tables\/[^?]*\/metadata\/[^?]*\.avro$/i.test(u.pathname);
+}
+
+// The Cache API keys by URL only — the Range header is invisible to it — so the range
+// becomes part of the key. The URL has no query string (checked above), so this cannot
+// collide with a real request.
+const dataKey = (href, range) => href + '?__range=' + encodeURIComponent(range || 'full');
+
+async function fromDataCache(request, url) {
+  try {
+    const c = await caches.open(DATA_CACHE);
+    const hit = await c.match(dataKey(url.href, request.headers.get('Range')));
+    if (!hit) return null;
+    // Cache.put refuses 206s, so entries are stored as 200 + the original Content-Range
+    // in a private header; rebuild the partial response DuckDB expects.
+    const cr = hit.headers.get('x-content-range');
+    const headers = new Headers({ 'Content-Type': 'application/octet-stream' });
+    if (cr) headers.set('Content-Range', cr);
+    return new Response(hit.body, { status: cr ? 206 : 200, headers });
+  } catch (_) { return null; }
+}
+
+async function toDataCache(request, url, res) {
+  try {
+    if (res.status !== 200 && res.status !== 206) return;
+    const buf = await res.clone().arrayBuffer();
+    const c = await caches.open(DATA_CACHE);
+    await c.put(dataKey(url.href, request.headers.get('Range')), new Response(buf, {
+      status: 200,
+      headers: {
+        'x-content-range': res.headers.get('Content-Range') || '',
+        'x-bytes': String(buf.byteLength),
+        'x-at': String(Date.now()),
+      },
+    }));
+    if (++putsSincePrune >= PRUNE_EVERY_PUTS) { putsSincePrune = 0; await pruneDataCache(c); }
+  } catch (_) { /* caching is an optimisation, never a failure */ }
+}
+
+// Oldest-first eviction once the cap is passed, down to 80% so it doesn't run every put.
+async function pruneDataCache(c) {
+  const entries = [];
+  let total = 0;
+  for (const k of await c.keys()) {
+    const r = await c.match(k);
+    const bytes = Number(r && r.headers.get('x-bytes')) || 0;
+    const at = Number(r && r.headers.get('x-at')) || 0;
+    total += bytes;
+    entries.push({ k, bytes, at });
+  }
+  if (total <= DATA_CACHE_MAX_BYTES) return;
+  entries.sort((a, b) => a.at - b.at);
+  for (const e of entries) {
+    if (total <= DATA_CACHE_MAX_BYTES * 0.8) break;
+    await c.delete(e.k);
+    total -= e.bytes;
+  }
+}
+
 // One retry for DuckDB's own reads. They never pass through data.js, so this is the only
 // place that can notice their token died — and without it a session that outlived its
 // token failed every query with no way back short of reloading the page.
-async function signedFetch(request) {
-  const signed = await authorize(request);
-  const res = await fetch(signed);
-  if (res.status !== 401 || signed === request) return res;
+//
+// The data cache brackets the network: a hit answers without a token at all (the bytes
+// are already local), and a successful read is stored via event.waitUntil so the
+// response streams to DuckDB while the copy lands in the background.
+async function signedFetch(request, event) {
+  let url = null;
+  try { url = new URL(request.url); } catch (_) {}
+  const cacheable = url && request.method === 'GET' && cacheableDataUrl(url);
+  if (cacheable) {
+    const hit = await fromDataCache(request, url);
+    if (hit) return hit;
+  }
 
-  // Forget what we used, ask the page for a fresh one (it renews on demand), try once more.
-  const used = token;
-  token = null;
-  tokenExpiresAt = 0;
-  const fresh = await currentToken();
-  if (!fresh || fresh === used) return res;
-  const headers = new Headers(request.headers);
-  headers.set('Authorization', 'Bearer ' + fresh);
-  return fetch(new Request(request, { headers }));
+  const signed = await authorize(request);
+  let res = await fetch(signed);
+  if (res.status === 401 && signed !== request) {
+    // Forget what we used, ask the page for a fresh one (it renews on demand), try once more.
+    const used = token;
+    token = null;
+    tokenExpiresAt = 0;
+    const fresh = await currentToken();
+    if (fresh && fresh !== used) {
+      const headers = new Headers(request.headers);
+      headers.set('Authorization', 'Bearer ' + fresh);
+      res = await fetch(new Request(request, { headers }));
+    }
+  }
+
+  if (cacheable && event) event.waitUntil(toDataCache(request, url, res));
+  return res;
 }
 
 // Re-stamp the isolation headers coi-serviceworker exists to add.
@@ -156,7 +251,7 @@ self.addEventListener('fetch', event => {
     ? new Request(req, { credentials: 'omit' })
     : req;
   event.respondWith(
-    signedFetch(base)
+    signedFetch(base, event)
       .then(res => {
         // A rebuilt Response cannot carry `url` or `redirected`, and for a NAVIGATION that
         // matters: the browser would render the redirect target's body under the original
