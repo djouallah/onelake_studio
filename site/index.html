@@ -42,6 +42,8 @@
     #itemSelect { flex: 1 1 220px; max-width: 320px; }
     header .spacer { flex: 1; }
     #userBox { color: var(--muted); font-size: 0.85rem; white-space: nowrap; }
+    header .ghLink { color: var(--muted); font-size: 0.85rem; text-decoration: none; white-space: nowrap; }
+    header .ghLink:hover { color: var(--accent2); }
 
     /* Layout */
     main { flex: 1; display: flex; min-height: 0; }
@@ -167,6 +169,8 @@
     <select id="itemSelect" title="Lakehouse / Warehouse" disabled><option value="">Select a workspace first</option></select>
     <button id="connectBtn" title="Reload tables">Reload</button>
     <div class="spacer"></div>
+    <a class="ghLink" href="https://github.com/djouallah/onelake_studio" target="_blank" rel="noopener"
+       title="Source on GitHub">GitHub ↗</a>
     <div id="userBox"></div>
   </header>
 
@@ -208,7 +212,7 @@
       <div class="gateFoot">
         Can't sign in? <a id="consentLink">Ask your admin to consent</a>, or
         <a id="byoLink">use your own app registration</a> —
-        <a href="https://github.com/djouallah/onelake_studio#sign-in-consent-and-what-to-do-if-it-says-need-admin-approval"
+        <a href="https://github.com/djouallah/onelake_studio#signing-in"
            target="_blank" rel="noopener">how that works</a>.
       </div>
     </div>

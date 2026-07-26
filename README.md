@@ -2,220 +2,117 @@
 
 **[Open the app →](https://studio.projectscontrols.com/)**
 
-Read-only SQL over **your own** OneLake, running entirely in your browser. Sign in with your Microsoft
-work or school account, pick a workspace and a lakehouse or warehouse from a catalog the app discovers
-itself, and query its Iceberg tables and lakehouse files with **DuckDB-WASM**.
+Read-only SQL over your own OneLake, running entirely in your browser. Sign in with your Microsoft work
+or school account, pick a workspace and a lakehouse or warehouse, and query its tables and files.
 
-There is no backend. Nothing is uploaded, nothing is proxied, and there is nothing for you to install or
-register — you see exactly the data your own identity already has access to.
+- **Fully local.** DuckDB-WASM runs in the tab. No backend, nothing uploaded, nothing copied.
+- **Your identity, your data.** One delegated permission — Azure Storage `user_impersonation` — so you
+  see exactly what you already have access to.
+- **Read-only.** `SELECT` / `WITH` / `DESCRIBE` / `SHOW` / `EXPLAIN` / `SUMMARIZE`, nothing else.
+- **No analytics, no telemetry.** Your token stays in this browser and goes only to Microsoft.
 
-- **Everything runs locally.** The query engine is DuckDB-WASM, in the tab.
-- **Your data is never copied.** Parquet is read straight from OneLake into the browser, mostly as HTTP
-  range requests — only the row groups and columns a query touches.
-- **One permission.** Azure Storage `user_impersonation`, used solely to read OneLake as you.
-- **Read-only.** Only `SELECT` / `WITH` / `DESCRIBE` / `SHOW` / `EXPLAIN` / `SUMMARIZE` are accepted.
-- **No analytics, no telemetry.** The access token stays in your browser and goes only to Microsoft.
+## Signing in
 
-It's built by generalizing two references:
-- [rayfin-duckdb-wasm](https://github.com/djouallah/rayfin-duckdb-wasm) — DuckDB-WASM in a static Fabric app, MSAL auth.
-- [dbt_fabric_python_iceberg dashboard](https://github.com/djouallah/dbt_fabric_python_iceberg/blob/main/dashboard/index.html) — reading Iceberg (`read_avro` manifests → `read_parquet` data files) in DuckDB-WASM.
-
-## How it works
-
-```
-sign in       │  (OneLake storage token from your Entra identity)
-   ▼
-pick workspace→ DFS "list filesystems" at the account root = your workspaces
-pick item     → DFS list of the workspace root, filtered to Lakehouse/Warehouse/…
-list tables   → DFS list of Tables/  (finds folders with a metadata/ dir = Iceberg)
-select table  → resolve current metadata.json → snapshot → manifest-list (Avro)
-              → read manifests with read_avro → parquet data-file paths
-              → register each path as a URL; DuckDB range-reads it (sw.js adds the token)
-              → CREATE VIEW "schema"."table" AS read_parquet([...])
-preview/query → read-only SQL in your browser → results table + CSV export
-```
-
-Everything runs client-side, and **nothing is downloaded whole**. Data files are registered as URLs, so
-DuckDB issues HTTP range requests and pulls only the row groups and columns a query touches — verified
-against OneLake, which answers `206 Partial Content`. `SELECT … LIMIT 100` is roughly constant-time no
-matter how big the table is. The service worker ([`site/sw.js`](site/sw.js)) attaches your OneLake token
-to those reads, because DuckDB's file APIs have no way to set request headers. If range reads don't work
-the app fails with the reason rather than falling back to a multi-minute download.
-
-### Why not DuckDB's `iceberg` extension?
-
-It would bring delete-file handling, schema evolution and manifest-level pruning, and it *is* usable
-here — but it returns wrong answers on Fabric tables, so it isn't used.
-
-Fabric records **absolute** `abfs://<workspace-guid>@onelake.dfs…` URIs inside the metadata (note the
-single `s`, and GUIDs rather than the friendly names), and DuckDB-WASM has no `abfs` filesystem. The
-documented escape hatch doesn't help — `allow_moved_paths` only rebases paths it considers *relative*
-and refuses an absolute URI:
-
-```
-iceberg_scan('<table root>', allow_moved_paths = true)
-  -> Invalid Configuration Error: Could not create full path from Iceberg Path
-     (https://onelake.dfs…/Tables/CH01/nation) and the relative path
-     (abfs://…@onelake.dfs…/Tables/CH01/nation/ducklake-….parquet)
-```
-
-What *does* work is registering each `abfs://` path as a **file name** aliased to its https URL
-(`registerFileURL(abfsPath, httpsUrl, HTTP, false)`); DuckDB-WASM's file registry resolves the alias
-before it ever tries to parse the scheme, and `iceberg_scan` then reads the table fine.
-
-The blocker is elsewhere. Measured in the browser against a real table:
-
-| query | result |
-| --- | --- |
-| `SELECT count(*)` | **0** |
-| materialized, then counted | 25 (correct) |
-
-`count(*)` is answered from manifest statistics, and Fabric's Iceberg conversion writes
-`record_count = 0`. Silently returning zero for the most common query in this app is a worse trade than
-the pruning the extension would buy — and pruning reads those same zeroed statistics, so it wouldn't
-deliver either. The one thing it gave us for free, delete files, is handled directly instead
-(see below).
-
-## Sign-in, consent, and what to do if it says "Need admin approval"
-
-Reading OneLake from a browser needs an Entra access token for
-`https://storage.azure.com/user_impersonation`. The app uses an Entra **SPA public client** (PKCE, no
-secret), registered once by the publisher and **multi-tenant**, so any work or school account can sign
-in against its own directory. Its `clientId` is committed in [`site/config.js`](site/config.js): public
-by design (MSAL puts it in every sign-in URL), and committing it is what makes a fresh clone deploy a
-working app instead of a silently unauthenticated one.
+The app is registered as a multi-tenant Entra SPA (PKCE, no secret), so any work or school account can
+sign in against its own directory. Its `clientId` is committed in [`site/config.js`](site/config.js) —
+public by design, since MSAL puts it in every sign-in URL.
 
 Whether your first sign-in is one click or a stop sign depends on **your tenant's consent policy**, not
-on this app:
+on this app. Most tenants allow user consent only for *"apps from verified publishers and apps registered
+in your tenant"*. This app isn't publisher-verified, so you may get **"Need admin approval"**. The
+sign-in screen offers both ways through:
 
-- Tenants that allow user consent to any app: you accept one prompt and you're in.
-- Tenants on the *recommended* policy (`microsoft-user-default-recommended`, the common default): user
-  consent is allowed only for *"apps from verified publishers and apps registered in your tenant"*.
-  This app is **not publisher-verified yet**, so you'll see **"Need admin approval"**.
+### For admins
 
-That is designed behaviour for an unverified multi-tenant app, and the sign-in screen hands you both
-fixes rather than stopping there:
+One click grants it for the whole tenant:
 
-1. **An admin grants consent once** for the whole tenant (see below).
-2. **Use your own app registration** — no admin, no fork, no deploy.
+```
+https://login.microsoftonline.com/organizations/adminconsent?client_id=cbc29592-5f49-45ac-8a69-ca6d7030ab74&redirect_uri=https%3A%2F%2Fstudio.projectscontrols.com%2F
+```
+
+What you're approving: **Azure Storage `user_impersonation`, delegated, and nothing else** — no Graph, no
+directory access, no application permissions. Every read carries the signed-in user's own token, so the
+app can't reach anything they couldn't already open, and it never writes. Review or revoke later under
+*Enterprise applications → OneLake Studio*; users can revoke their own grant at
+[myapps.microsoft.com](https://myapps.microsoft.com).
 
 ### Use your own app registration
 
-Register an app in your own tenant (a foreign app is what the policy blocks; your own directory's app is
-not), then open the app with it:
+No admin needed — an app from your own tenant isn't what the policy blocks:
 
 ```
 https://studio.projectscontrols.com/?clientId=<application-id>&tenantId=<directory-id>
 ```
 
-The choice is stored in this browser's `localStorage`, so it survives the sign-in redirect and later
-visits; the gate has a link to switch back. The registration needs exactly:
+Saved in this browser, so it's a one-off. The registration needs only: platform **Single-page
+application** with redirect URI `https://studio.projectscontrols.com/` (the platform type matters — a
+"Web" entry fails with `AADSTS9002326`), and **Azure Storage → Delegated → `user_impersonation`**. No
+client secret.
 
-- Platform **Single-page application** with redirect URI `https://studio.projectscontrols.com/`
-  — the platform type matters, a "Web" or "Mobile & desktop" entry fails from browser JS with
-  `AADSTS9002326`.
-- API permission **Azure Storage → Delegated → `user_impersonation`**.
-- No client secret; "Allow public client flows" stays off.
+## How it works
 
-### For admins
+```
+sign in       → OneLake storage token from your Entra identity
+pick workspace→ DFS "list filesystems" at the account root = your workspaces
+pick item     → DFS list of the workspace root = its lakehouses and warehouses
+select table  → resolve current metadata.json → snapshot → manifest list (Avro)
+              → read manifests → parquet data-file paths
+              → register each as a URL; DuckDB range-reads it (sw.js adds the token)
+preview/query → read-only SQL in your browser → results + CSV export
+```
 
-You are being asked to consent to a third-party app that reads OneLake **as the signed-in user**. What
-that means concretely:
+**Nothing is downloaded whole.** Data files are registered as URLs, so DuckDB issues HTTP range requests
+and pulls only the row groups and columns a query touches — OneLake answers `206 Partial Content`, and
+`SELECT … LIMIT 100` is roughly constant-time however big the table is. The service worker
+([`site/sw.js`](site/sw.js)) attaches your token to those reads, because DuckDB's file APIs can't set
+headers. It also supplies the COOP/COEP headers that GitHub Pages can't, which is why the first load
+reloads itself once.
 
-- **Permission requested:** Azure Storage `user_impersonation` (delegated) — and nothing else. No Graph,
-  no directory read, no application permissions, no offline background access beyond MSAL's normal
-  refresh token in the user's browser.
-- **Delegated, so it can never exceed the user.** Every OneLake read carries that user's token; the app
-  cannot see a workspace they can't already open, and it issues no writes.
-- **No backend.** The app is static files on GitHub Pages; data goes from OneLake to the user's browser
-  directly. There is no server of ours in the path, and no telemetry.
-- **Grant it once, for everyone:**
+**Iceberg is the read path for everything.** OneLake publishes lakehouse tables in both formats,
+generating Iceberg metadata for Delta tables on demand — the first request triggers it and loses the
+race, which is why resolution retries with a backoff instead of failing. A table whose Iceberg metadata
+doesn't exist yet is listed as Delta and greyed out.
 
-  ```
-  https://login.microsoftonline.com/organizations/adminconsent?client_id=cbc29592-5f49-45ac-8a69-ca6d7030ab74&redirect_uri=https%3A%2F%2Fstudio.projectscontrols.com%2F
-  ```
+**DuckDB's `iceberg` extension isn't used.** It loads fine in WASM, but Fabric's converted manifests
+record `record_count = 0`, so `SELECT count(*)` answers **0** from manifest statistics while the same
+table materialized counts correctly. Walking the manifests by hand avoids that. (Fabric also writes
+absolute `abfs://` URIs the WASM build can't resolve, though aliasing each path via `registerFileURL`
+does work around that part.)
 
-- **Review or revoke later:** Entra admin center → *Enterprise applications* → **OneLake Studio** →
-  *Permissions* / *Properties → Delete*. Users can also revoke their own grant at
-  [myapps.microsoft.com](https://myapps.microsoft.com).
-- **It is not publisher-verified.** There's no blue "verified" badge, and the consent screen says so.
-  Verification requires a Microsoft Cloud Partner Program account as the Partner Global Account; it's a
-  planned upgrade, not a claim being made today. Read the source before granting — that's the point of
-  the repo being public.
+## Limitations
 
-If you'd rather not consent at all, users in your tenant can point the app at a registration of your own
-with the `?clientId=` route above.
+- **Merge-on-read equality deletes are not applied.** They're detected and the status line warns; Fabric's
+  own conversions are copy-on-write, so this doesn't affect them. Position deletes *are* applied.
+- **No Iceberg-level pruning** — those same zeroed statistics mean there'd be nothing to prune on.
+  Pruning is whatever parquet row-group stats and column projection give you.
+- **Only parquet is read lazily.** CSV and JSON have no footer or row groups, so DuckDB streams the whole
+  file; the status line says so rather than claiming "read on demand".
+- **Not inside an iframe** — Microsoft sign-in is blocked in an embedded frame; the app offers an
+  "open in new tab" link instead.
 
-## Deploy your own copy
-
-The app is static files; any HTTPS host works. This repo publishes itself with
-[`.github/workflows/pages.yml`](.github/workflows/pages.yml) — `npm run build` copies `site/` → `dist/`,
-and `actions/deploy-pages` serves it.
-
-To run your own instance, fork it, register an SPA app as described above with **your** Pages URL as the
-redirect URI, put its `clientId` in [`site/config.js`](site/config.js) (use `authority: "organizations"`
-for multi-tenant, or your tenant GUID to pin it to one directory), and enable Pages with
-*Settings → Pages → Source: GitHub Actions*.
-
-### Don't serve it from `*.github.io`
-
-Measured, not theoretical: on a managed Windows machine the `github.io` URL was blocked outright by
-Windows **Enhanced Phishing Protection** — *"This content is blocked as phishing… your IT admin is not
-allowing you to access content from djouallah.github.io."* That feature watches for **Microsoft
-credential entry on non-Microsoft sites**, which is exactly what an MSAL sign-in button looks like, and
-`github.io` is a shared domain anyone can publish to with a long phishing history. The verdict is about
-the domain, not the page, so nothing in the app can talk its way out of it.
-
-Hence [`site/CNAME`](site/CNAME) and the custom domain: a hostname on an established domain you control
-carries its own reputation. Two records make it work — a DNS `CNAME` from `studio` to
-`djouallah.github.io`, and the `CNAME` file that tells Pages which host to answer for. Add the domain
-under *Settings → Pages → Verified domains* too; that stops anyone else's repo from claiming the same
-hostname if the DNS record ever outlives this deployment.
-
-## Local development
+## Run it yourself
 
 ```bash
 npm install
-npm run dev
+npm run dev        # serves site/ on http://localhost:5173, an already-registered redirect URI
 ```
 
-Serves `site/` on `http://localhost:5173`, which is already a registered SPA redirect URI, so sign-in
-works locally with the same committed `config.js`. There's no bundler — the page loads DuckDB-WASM and
-MSAL from a CDN — so the only dev dependency is a static file server.
+No bundler — DuckDB-WASM and MSAL come from a CDN, and `npm run build` just copies `site/` → `dist/`.
+[`.github/workflows/pages.yml`](.github/workflows/pages.yml) deploys that to GitHub Pages on every push.
 
-## Usage
+To host your own copy: fork it, register an SPA app with **your** URL as the redirect URI, put its
+`clientId` in [`site/config.js`](site/config.js), and set *Settings → Pages → Source: GitHub Actions*.
 
-1. Sign in.
-2. Pick a **workspace**, then a **lakehouse or warehouse**. Both lists come from OneLake itself.
-3. Pick a table in the sidebar → it loads and auto-previews (`SELECT * … LIMIT 100`). Switch the
-   sidebar to **Files** to browse the lakehouse's `Files/` tree instead and query a parquet, CSV or
-   JSON file the same way.
-4. Edit the SQL and press **Run** (or `Ctrl/Cmd+Enter`). Loaded tables can be joined together.
-5. **Download CSV** exports the current result.
+**Don't serve it from `*.github.io`.** Measured, not theoretical: Windows Enhanced Phishing Protection
+blocked the `github.io` URL outright — that feature watches for Microsoft credential entry on
+non-Microsoft sites, and `github.io` is a shared domain with a long phishing history. Use a hostname on a
+domain you control ([`site/CNAME`](site/CNAME) plus a DNS CNAME to `<user>.github.io`), ideally an
+established one — a brand-new domain has no reputation either.
 
-## Notes & limitations
-
-- **Iceberg only** under `Tables/`. Delta tables are listed but greyed out (not queryable here yet).
-- **Under `Files/`**, parquet / csv / tsv / json / jsonl are queryable and everything else is greyed out. Only parquet is read lazily — CSV and JSON have no footer or row groups, so DuckDB streams the whole file whatever its size, and the status line says so rather than claiming "read on demand".
-- **Read-only.** Only `SELECT` / `WITH` / `DESCRIBE` / `SHOW` / `EXPLAIN` / `SUMMARIZE` are allowed; there is no write path to OneLake.
-- **No Iceberg-level pruning** on Fabric tables (see above): every data file in the snapshot is in the view, and pruning is whatever DuckDB gets from parquet row-group statistics and column projection. Fabric's converted manifests carry `record_count = 0` anyway, so there is little to prune on.
-- **Merge-on-read delete files are not applied** by the manifest walk — they're detected and excluded from the scan, but their deletions aren't subtracted. Fabric's Iceberg conversions are copy-on-write (manifest entries are all `content = 0`), so this doesn't affect them and nothing is printed; if a table does have delete files the status line warns that deleted rows may still appear.
-- The target folder must be a real Iceberg table (has a `Tables/…/metadata/` directory).
-- **The catalog needs no extra permission.** Workspaces come from the ADLS Gen2 *List Filesystems* call at the OneLake account root and items from a listing of the workspace root, both on the same `storage.azure.com` token the data reads use — so there's no Fabric REST API call, no extra Entra scope and no second consent prompt. You see exactly the workspaces your identity can already reach.
-- **Not inside an iframe.** Microsoft sign-in is blocked in an embedded frame; the app detects this and offers an "Open in new tab" link.
-
-## Project layout
+## Layout
 
 ```
-site/
-  index.html            UI shell (sign-in gate + trust panel, catalog bar, sidebar, SQL editor, results)
-  app.js                DOM wiring + auth gate (consent help, own-registration override)
-  auth.js               MSAL provider (storage scope, redirect flow, silent renewal, registration override)
-  data.js               Iceberg engine on DuckDB-WASM (list/resolve/manifest/load/query)
-  sw.js                 service worker: COOP/COEP shim + OneLake token on DuckDB's range reads
-  sw-register.js        registers sw.js, one reload so the first load is controlled
-  config.js             clientId + authority (tracked — public identifiers, no secret)
-  CNAME                 custom domain for Pages, copied into dist/ by the build
-build.mjs               static build: copies site/ -> dist/
-.github/workflows/pages.yml   builds and deploys to GitHub Pages on push to main
+site/index.html   UI shell + sign-in gate      site/data.js   Iceberg engine on DuckDB-WASM
+site/app.js       DOM wiring                   site/sw.js     COOP/COEP + token injection
+site/auth.js      MSAL provider                site/config.js clientId + authority (public, tracked)
 ```

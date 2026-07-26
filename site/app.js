@@ -295,13 +295,15 @@ async function connect() {
   $('tableList').innerHTML = '<div class="hint">Loading…</div>';
   try {
     const tables = await engine.listTables(lakehouse);
-    const ice = tables.filter(t => t.kind === 'iceberg').length;
+    // Storage format is the engine's business, not the user's. The only distinction worth
+    // surfacing is whether a table can be opened yet.
+    const ready = tables.filter(t => t.kind === 'iceberg').length;
     lastTables = tables;
-    lastTableCount = `${ice}/${tables.length}`;
+    lastTableCount = String(tables.length);
     if (pane === 'tables') { renderTableList(tables); $('tableCount').textContent = lastTableCount; }
     else await renderFileTree();
-    setStatus(`${ice} Iceberg table(s) found in ${lakehouse.item}.` +
-      (tables.length > ice ? ` (${tables.length - ice} non-Iceberg hidden from querying)` : ''), 'ok');
+    setStatus(`${tables.length} table(s) in ${lakehouse.item}.` +
+      (tables.length > ready ? ` ${tables.length - ready} not queryable yet.` : ''), 'ok');
   } catch (e) {
     $('tableList').innerHTML = '<div class="hint">Could not list tables.</div>';
     setStatus('List failed: ' + e.message, 'error');
@@ -425,11 +427,13 @@ function renderTableList(tables) {
     for (const t of items) {
       const row = document.createElement('div');
       row.className = 'tableItem' + (t.kind === 'delta' ? ' delta' : '');
+      // OneLake generates the metadata this app reads on demand, so "delta" here means
+      // "not published in a readable form yet", which is what the user needs to know.
       row.title = t.kind === 'delta'
-        ? `${t.table} — Delta table (Iceberg only, not queryable here)`
+        ? `${t.table} — not queryable yet; OneLake hasn't published this table's metadata`
         : t.kind === 'iceberg' ? t.table : `${t.table} — unknown table type`;
       row.innerHTML = `<span>${escapeHtml(t.table)}</span>` +
-        (t.kind !== 'iceberg' ? `<span class="tag">${t.kind || '?'}</span>` : '');
+        (t.kind !== 'iceberg' ? '<span class="tag">pending</span>' : '');
       if (t.kind !== 'delta') row.onclick = () => selectTable(row, t);
       g.appendChild(row);
     }
