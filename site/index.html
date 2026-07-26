@@ -135,15 +135,12 @@
     #authActions { display: flex; flex-direction: column; align-items: center; gap: 0.8rem; }
     #signinBtn { padding: 0.7rem 1.6rem; font-size: 1rem; }
 
-    /* Trust panel — claims only what the app actually does. */
-    .trust {
-      list-style: none; margin: 0.4rem 0 0; padding: 0.9rem 1.1rem; text-align: left;
-      background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
-      color: var(--muted); font-size: 0.86rem; display: grid; gap: 0.5rem;
+    /* Trust claims, compressed to chips — the long version lives in the README. */
+    .chips { display: flex; flex-wrap: wrap; gap: 0.4rem; justify-content: center; }
+    .chips span {
+      border: 1px solid var(--border); border-radius: 999px; padding: 0.15rem 0.65rem;
+      color: var(--muted); font-size: 0.78rem;
     }
-    .trust li { display: flex; gap: 0.55rem; align-items: flex-start; }
-    .trust li::before { content: "✓"; color: var(--ok); font-weight: 700; line-height: 1.4; }
-    .trust b { color: var(--text); font-weight: 600; }
 
     /* Consent / bring-your-own-registration blocks */
     .gateBox {
@@ -203,20 +200,16 @@
   <div id="authGate">
     <div class="gateCard">
       <div class="gateBrand">OneLake&nbsp;Studio</div>
-      <div class="gateTag">Read-only SQL over your own OneLake — Iceberg tables and lakehouse files — running entirely in your browser.</div>
+      <div class="gateTag">Read your OneLake. Fully local — your data never leaves this browser.</div>
       <div id="authGateMsg">Loading…</div>
       <!-- Sign-in button, and (only when needed) the consent / own-registration blocks. -->
       <div id="authActions"></div>
-      <ul class="trust">
-        <li><b>Everything runs locally.</b> The query engine is DuckDB-WASM, inside this browser tab. There is no backend and no server to send your data to.</li>
-        <li><b>Your data is never copied.</b> Parquet files are read straight from OneLake into the tab, mostly as partial range requests, and nothing is relayed through anyone else.</li>
-        <li><b>One permission, yours.</b> The app asks only for Azure Storage <code>user_impersonation</code>, and reads OneLake as you — you see exactly what you already have access to.</li>
-        <li><b>Read-only.</b> Only SELECT-style statements are allowed; there is no write path to OneLake.</li>
-        <li><b>No analytics, no telemetry.</b> Your access token stays in this browser's storage and is sent only to Microsoft endpoints.</li>
-      </ul>
+      <div class="chips"><span>No backend</span><span>Nothing copied</span><span>Read-only</span><span>No telemetry</span></div>
       <div class="gateFoot">
-        <a href="https://github.com/djouallah/onelake_studio" target="_blank" rel="noopener">Read the source</a>
-        · <a id="byoLink">Use my own app registration</a>
+        Can't sign in? <a id="consentLink">Ask your admin to consent</a>, or
+        <a id="byoLink">use your own app registration</a> —
+        <a href="https://github.com/djouallah/onelake_studio#sign-in-consent-and-what-to-do-if-it-says-need-admin-approval"
+           target="_blank" rel="noopener">how that works</a>.
       </div>
     </div>
   </div>

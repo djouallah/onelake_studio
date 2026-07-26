@@ -8,6 +8,7 @@ import {
 import { createEngine } from './data.js';
 
 const $ = id => document.getElementById(id);
+const DOCS = 'https://github.com/djouallah/onelake_studio';
 // config.js gives the built-in registration; resolveConfig lets ?clientId=…&tenantId=…
 // (persisted in localStorage) replace it, which is how a locked-down tenant gets in.
 const cfg = resolveConfig(window.ONELAKE_STUDIO_CONFIG || {});
@@ -45,7 +46,7 @@ function gateMsg(text, isError = false) {
   el.classList.toggle('err', isError);
 }
 
-function showSignIn(onDone, msg = 'Sign in with your Microsoft (Entra) work or school account to read OneLake.') {
+function showSignIn(onDone, msg = 'Sign in with your Microsoft work or school account.') {
   const gate = $('authGate');
   gate.style.display = '';
   gateMsg(msg);
@@ -82,29 +83,25 @@ function showAuthFailure(e) {
   const why = describeAuthError(e);
   gateMsg('Sign-in failed: ' + why, true);
   setStatus('Sign-in failed: ' + why, 'error');
-  if (isConsentError(e)) showConsentHelp();
+  if (isConsentError(e)) showConsentHelp(true);   // both fixes, since neither is guaranteed
   console.error(e);
 }
 
-function showConsentHelp() {
-  if ($('consentBox')) return;
+function showConsentHelp(withByo = false) {
+  if ($('consentBox')) { if (withByo) showByoForm(); return; }
   const url = adminConsentUrl(cfg);
   const box = document.createElement('div');
   box.id = 'consentBox';
   box.className = 'gateBox';
   box.innerHTML = `
-    <h4>Your tenant hasn't consented to this app yet</h4>
-    <div>Microsoft blocks user consent for an app registered in another organization unless its
-      publisher is verified, and this one isn't yet. Either route works:</div>
-    <div><b>1 — An Entra admin grants consent once</b>, for the whole tenant. Send them this URL:</div>
+    <h4>Ask an admin to consent</h4>
+    <div>One click, once, for your whole tenant. Send them this URL:</div>
     <div class="copyRow">
       <input id="consentUrl" readonly value="${escapeHtml(url)}" />
       <button id="copyConsentBtn">Copy</button>
     </div>
-    <div><b>2 — Use your own app registration.</b> An SPA registration in your own tenant with the
-      Azure Storage <code>user_impersonation</code> permission and
-      <code>${escapeHtml(appRedirectUri())}</code> as a Single-page application redirect URI. No admin
-      needed, since it's an app from your own directory.</div>`;
+    <div>What they're approving, and how to revoke it later, is in the
+      <a href="${DOCS}#for-admins" target="_blank" rel="noopener">admin notes</a>.</div>`;
   $('authActions').appendChild(box);
   $('copyConsentBtn').onclick = async () => {
     const input = $('consentUrl');
@@ -113,7 +110,7 @@ function showConsentHelp() {
     $('copyConsentBtn').textContent = 'Copied';
     setTimeout(() => { $('copyConsentBtn').textContent = 'Copy'; }, 1500);
   };
-  showByoForm();
+  if (withByo) showByoForm();
 }
 
 // The form that switches the app to another registration. Reachable from the consent
@@ -124,7 +121,10 @@ function showByoForm() {
   box.id = 'byoBox';
   box.className = 'gateBox';
   box.innerHTML = `
-    <h4>Sign in with your own app registration</h4>
+    <h4>Use your own app registration</h4>
+    <div>An app from your own tenant needs no admin.
+      <a href="${DOCS}#use-your-own-app-registration" target="_blank" rel="noopener">How to create one</a>
+      — it takes about five minutes.</div>
     <div class="byoRow">
       <input id="byoClientId" placeholder="Application (client) ID" spellcheck="false" />
       <input id="byoTenantId" placeholder="Directory (tenant) ID — or blank" spellcheck="false" />
@@ -134,8 +134,7 @@ function showByoForm() {
       ${cfg.byo ? '<button id="byoResetBtn">Back to the built-in app</button>' : ''}
       <span id="byoErr" class="err"></span>
     </div>
-    <div>Kept in this browser only. Equivalent to opening
-      <code>?clientId=…&amp;tenantId=…</code> in the address bar.</div>`;
+    <div>Saved in this browser, so this is a one-off — you won't be asked again.</div>`;
   $('authActions').appendChild(box);
   $('byoUseBtn').onclick = () => {
     try {
@@ -557,7 +556,8 @@ function setBusy(b) {
 // Boot: silent session check, then gate.
 // ---------------------------------------------------------------------------
 const EMBEDDED = window.self !== window.top;   // inside an embedding iframe?
-$('byoLink').onclick = showByoForm;
+$('byoLink').onclick = () => showByoForm();
+$('consentLink').onclick = () => showConsentHelp();
 (async () => {
   try {
     if (await auth.ensureSession(false)) {
