@@ -427,10 +427,15 @@ async function selectFile(row, file) {
   try {
     const info = await engine.loadFile(lakehouse, file);
     activeIdent = info.ident;
-    $('sqlEditor').value = `SELECT * FROM ${info.ident} LIMIT 100`;
-    $('previewBtn').disabled = false;
-    $('runBtn').disabled = false;
-    reportLoad(info, await runQuery());
+    // A database file with no tables attaches but leaves nothing to preview.
+    if (info.ident) {
+      $('sqlEditor').value = `SELECT * FROM ${info.ident} LIMIT 100`;
+      $('previewBtn').disabled = false;
+      $('runBtn').disabled = false;
+      reportLoad(info, await runQuery());
+    } else {
+      reportLoad(info, true);
+    }
   } catch (e) {
     setStatus('Load failed: ' + e.message, 'error');
     console.error(e);
@@ -649,7 +654,8 @@ function initSidebarToggle() {
 // Version stamp — which build this page is actually running.
 // ---------------------------------------------------------------------------
 // build.mjs writes the commit + build time into version.js on deploy (the tracked file
-// says "dev"). Shown in the header and on the sign-in gate, and linked to the commit,
+// says "dev"). One home only, by request: the status bar, bottom-right — always on
+// screen for a signed-in session and never overwritten by status messages. It exists
 // because a browser's cache will happily serve last week's app under today's URL and
 // nothing else on the page would give that away.
 function showVersion() {
@@ -658,22 +664,11 @@ function showVersion() {
   const when = v.builtAt ? new Date(v.builtAt) : null;
   const stamp = commit + (when ? ` · ${when.toISOString().slice(0, 16).replace('T', ' ')} UTC` : '');
 
-  const link = commit !== 'dev' && commit !== 'unknown'
-    ? `${DOCS}/commit/${encodeURIComponent(commit)}` : null;
-
-  // Three homes: the header, the gate footer, and — the one a signed-in session actually
-  // sees — the status bar, where nothing ever overwrites it.
-  const box = $('verBox');
-  box.textContent = commit;
-  box.title = `Build ${stamp}`;
-  if (link) box.href = link;
-
   const bar = $('statusVer');
   bar.textContent = `build ${commit}`;
   bar.title = `Build ${stamp} — click to see this commit on GitHub`;
-  if (link) bar.href = link;
-
-  $('gateVersion').textContent = `Build ${stamp}`;
+  if (commit !== 'dev' && commit !== 'unknown')
+    bar.href = `${DOCS}/commit/${encodeURIComponent(commit)}`;
 }
 
 // The stamp says which build the cache gave you; this says whether that's the current
