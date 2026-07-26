@@ -11,7 +11,7 @@ import assert from "node:assert/strict";
 import {
   DFS_HOST, strip, basename, encPath, dfsUrl, toHttps, pathKey,
   parseLakehouse, fileExt, readerFor, PARQUET_EXTS,
-  TEXT_EXTS, isTextExt,
+  TEXT_EXTS, isTextExt, DB_EXTS,
   sqlStr, quoteIdent, stripComments, prepareReadOnlySql,
   metadataVersion, pickMetadata,
   tableKey, fileKey, sanitizeIdent,
@@ -134,6 +134,19 @@ test("readerFor covers the advertised formats and nothing else", () => {
   assert.equal(readerFor("constructor"), null);
   assert.equal(readerFor("toString"), null);
   assert.ok(PARQUET_EXTS.has("parquet"));
+});
+
+test("DuckDB database files are recognised but not reader-based", () => {
+  assert.equal(fileExt("analytics.duckdb"), "duckdb");
+  assert.equal(fileExt("a/b/warehouse.ddb"), "ddb");
+  assert.ok(DB_EXTS.has("duckdb"));
+  assert.ok(DB_EXTS.has("ddb"));
+  // Attached, not read through a reader function.
+  assert.equal(readerFor("duckdb"), null);
+  // .db stays out on purpose: it is as often SQLite, and a file that fails to attach is
+  // worse than one that was never offered.
+  assert.equal(DB_EXTS.has("db"), false);
+  assert.equal(isTextExt("duckdb"), false);
 });
 
 test("plain-text formats are readable, compressed or not", () => {

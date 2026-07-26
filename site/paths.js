@@ -156,6 +156,13 @@ for (const base of ["csv", "tsv", "json", "jsonl", "ndjson", ...TEXT_EXTS])
 // The only formats with a footer and row groups, i.e. the only ones actually range-read.
 export const PARQUET_EXTS = new Set(["parquet", "parq", "pq"]);
 
+// DuckDB native database files. Not in FILE_READERS because they aren't opened through a
+// reader function — the engine ATTACHes them read-only and the file's own tables become
+// queryable. Block-structured, so DuckDB range-reads them like parquet rather than
+// pulling the whole file. Deliberately NOT ".db": that extension is as often SQLite,
+// and offering a file that then fails to attach is worse than not offering it.
+export const DB_EXTS = new Set(["duckdb", "ddb"]);
+
 // A codec suffix is part of the extension — "csv.gz", not "gz" — because it selects both
 // the reader and the decompression. Anything else (a .tar.gz) falls through to the
 // one-segment form and simply won't be in FILE_READERS.

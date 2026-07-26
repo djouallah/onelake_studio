@@ -87,8 +87,10 @@ Delta-to-Iceberg setting being off).
   Added columns are handled (`union_by_name`).
 - **No Iceberg-level pruning** — Fabric's conversion writes zeroed manifest statistics, so there'd be
   nothing to prune on. Pruning is whatever parquet row-group stats and column projection give you.
-- **Only parquet is read lazily.** CSV, JSON, avro, xlsx and plain text have no footer or row groups, so
-  DuckDB pulls the whole file; the status line says so rather than claiming "read on demand".
+- **Only parquet and `.duckdb` databases are read lazily.** A DuckDB database file under `Files/` is
+  ATTACHed read-only and block-read on demand; its tables are queryable as `<name>.<schema>.<table>`.
+  CSV, JSON, avro, xlsx and plain text have no such structure, so DuckDB pulls the whole file; the
+  status line says so rather than claiming "read on demand".
 - **Results are capped at 200,000 materialised rows** (the status line says when a query hits it) — the
   browser tab is the database, and an uncapped `SELECT *` on a 50M-row table would take it down.
 

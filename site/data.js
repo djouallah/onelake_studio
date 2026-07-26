@@ -30,7 +30,7 @@ import * as duckdb from "https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.33.1
 
 import {
   DFS_HOST, strip, basename, dfsBase, dfsUrl, toHttps, pathKey, PATH_KEY_SQL,
-  parseLakehouse, fileExt, readerFor, PARQUET_EXTS, isTextExt,
+  parseLakehouse, fileExt, readerFor, PARQUET_EXTS, DB_EXTS, isTextExt,
   sqlStr, quoteIdent, prepareReadOnlySql,
   pickMetadata, tableKey, fileKey, sanitizeIdent,
   normalizeValue, fmtBytes,
@@ -241,6 +241,7 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
   // The reader table itself lives in paths.js.
   const isQueryable = name => {
     const ext = fileExt(name);
+    if (DB_EXTS.has(ext)) return true;      // ATTACHed read-only, not read through a reader
     if (!readerFor(ext)) return false;
     return ext === "xlsx" ? canXlsx : true;
   };
@@ -268,7 +269,7 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
   // deleted row, for as long as the tab stayed open.
   function track(key) {
     let r = resources.get(key);
-    if (!r) { r = { ident: null, regs: [], tables: [] }; resources.set(key, r); }
+    if (!r) { r = { ident: null, regs: [], tables: [], attachments: [] }; resources.set(key, r); }
     return r;
   }
 
@@ -277,6 +278,8 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
     if (r) {
       if (r.ident) { try { await conn.query(`DROP VIEW IF EXISTS ${r.ident}`); } catch (_) {} }
       for (const t of r.tables) { try { await conn.query(`DROP TABLE IF EXISTS ${t}`); } catch (_) {} }
+      // Attached database files: DETACH before dropping the file registration under them.
+      for (const a of (r.attachments || [])) { try { await conn.query(`DETACH ${quoteIdent(a)}`); } catch (_) {} }
       for (const n of r.regs) { try { await db.dropFile(n); } catch (_) {} }
       resources.delete(key);
     }
@@ -320,13 +323,14 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
 
     const label = file.name;
     const ext = fileExt(file.name);
+    if (DB_EXTS.has(ext)) return loadDatabaseFile(lh, file, key);
     const reader = readerFor(ext);
     if (ext === "xlsx" && !canXlsx)
       throw new Error(`${file.name}: this DuckDB-WASM build has no 'excel' extension, so .xlsx can't be read.`);
     if (!reader)
       throw new Error(`${file.name}: unsupported file type — parquet, csv/tsv/txt, json/jsonl/ndjson, ` +
-                      `avro, xlsx and plain text (sql, yml, md, log, …) are readable; ` +
-                      `text formats also read as .gz/.zst.`);
+                      `avro, xlsx, .duckdb databases and plain text (sql, yml, md, log, …) are ` +
+                      `readable; text formats also read as .gz/.zst.`);
 
     const res = track(key);
     const reg = `file_${++_seq}.${ext}`;
@@ -346,6 +350,54 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
     } catch (e) {
       await release(key);
       throw new Error(`Could not read ${file.name}: ${e.message}`);
+    }
+  }
+
+  // A DuckDB database file is not read through a reader function — it is ATTACHed
+  // read-only, and its own tables become queryable as alias.schema.table. The file is
+  // registered as an HTTP URL first, so DuckDB range-reads the blocks a query touches
+  // (a .duckdb file has block structure, like parquet has row groups) instead of the
+  // whole database being downloaded.
+  async function loadDatabaseFile(lh, file, key) {
+    const res = track(key);
+    const reg = `dbfile_${++_seq}.duckdb`;
+    await db.registerFileURL(reg, dfsUrl(lh.workspace, file.path), duckdb.DuckDBDataProtocol.HTTP, false);
+    res.regs.push(reg);
+
+    // The alias is how the user names the database in SQL, so derive it from the file
+    // name; uniqueView guards it against colliding with an existing view or alias.
+    const alias = uniqueView(key, basename(file.name).replace(/\.[^.]+$/, ""));
+    try {
+      // READ_ONLY is not optional: the file lives in OneLake and the app never writes.
+      await conn.query(`ATTACH ${sqlStr(reg)} AS ${quoteIdent(alias)} (READ_ONLY)`);
+      res.attachments.push(alias);
+
+      // Tables AND views — a database file that only exposes views is still queryable.
+      const rows = (await conn.query(
+        `SELECT schema_name AS s, table_name AS t
+           FROM duckdb_tables() WHERE database_name = ${sqlStr(alias)}
+         UNION ALL
+         SELECT schema_name, view_name
+           FROM duckdb_views() WHERE database_name = ${sqlStr(alias)} AND NOT internal
+         ORDER BY 1, 2`)).toArray().map(r => r.toJSON());
+      const tables = rows.map(r => `${quoteIdent(alias)}.${quoteIdent(r.s)}.${quoteIdent(r.t)}`);
+
+      // Describe the first table — this is the probe that forces real block reads, so an
+      // unreadable or version-incompatible file fails HERE with the actual cause.
+      const first = tables[0] || null;
+      const columns = first ? await describe(first) : [];
+
+      const info = { label: file.name, ident: first, columns, fileCount: 1,
+                     posDeletes: 0, eqDeletes: 0, file: true, bytes: file.bytes, ext: fileExt(file.name),
+                     db: true, dbAlias: alias, dbTables: tables, warnings: [] };
+      if (!first)
+        info.warnings.push(`${alias} attached but contains no tables or views`);
+      loaded.set(key, info);
+      onStatus(describeLoad(info));
+      return info;
+    } catch (e) {
+      await release(key);
+      throw new Error(`Could not attach ${file.name}: ${e.message}`);
     }
   }
 
@@ -889,7 +941,12 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
   // One sentence about how the table was opened. Position deletes that applied cleanly are
   // not news — that is just correctness. Anything in `warnings` is a correctness caveat,
   // and rendering it as a warning rather than as success is the caller's job.
-  function describeLoad({ label, fileCount, posDeletes, file, ext, bytes, totalRecords }) {
+  function describeLoad({ label, fileCount, posDeletes, file, ext, bytes, totalRecords, db, dbAlias, dbTables }) {
+    if (db) {
+      const n = (dbTables || []).length;
+      return `${label} — attached read-only as ${dbAlias}, ${n} table(s)/view(s), read on demand` +
+             (n ? `. Query them as ${dbAlias}.<schema>.<table>` : "");
+    }
     if (file) {
       if (PARQUET_EXTS.has(ext)) return `${label} — read on demand`;
       if (isTextExt(ext)) return `${label} — read in full as text (${fmtBytes(bytes)}), one row per line`;
