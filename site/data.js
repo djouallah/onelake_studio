@@ -24,7 +24,12 @@
 // Avro manifests with read_avro() in the browser — the avro extension autoloads on first
 // use from the DuckDB extension repo (the service worker makes that cross-origin fetch
 // COEP-compatible). Pin to a specific version once a known-good one is confirmed for you.
-import * as duckdb from "https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@latest/+esm";
+// Pinned, not @latest: this is a CDN import with no lockfile behind it, so an unpinned
+// URL means every user's browser can pick up a new DuckDB the moment one is published —
+// including a build without the 'excel' extension, or with different SQL behaviour. This
+// version ships DuckDB v1.5.4 and has avro + excel; it is a dev tag by choice, since the
+// stable line lags. Bump it deliberately and re-run the format probe when you do.
+import * as duckdb from "https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.33.1-dev57.0/+esm";
 
 const DFS_HOST = "onelake.dfs.fabric.microsoft.com";
 
@@ -63,9 +68,9 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
     // duckdb-wasm autoloads it on first use; preloading up front just makes the first
     // manifest read fast — the autoload on the first read_avro() call is the real mechanism.
     await tryLoadExt("avro");
-    // read_xlsx() comes from 'excel'. Unlike avro this answer is remembered: the import
-    // above pins duckdb-wasm to @latest, so a future build could ship without it, and
-    // offering an .xlsx that then fails to open is worse than not offering it at all.
+    // read_xlsx() comes from 'excel'. Unlike avro this answer is remembered: the extension
+    // is fetched over the network, so it can fail for reasons the pinned version doesn't
+    // control, and offering an .xlsx that then fails to open is worse than not offering it.
     canXlsx = await tryLoadExt("excel");
     console.log(`[engine] DuckDB ready — crossOriginIsolated=${self.crossOriginIsolated}`);
     return { db, conn };
