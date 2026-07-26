@@ -31,6 +31,7 @@ const DFS_HOST = "onelake.dfs.fabric.microsoft.com";
 export function createEngine(auth, { onStatus = () => {} } = {}) {
   let db = null, conn = null, worker = null;
   let _seq = 0;
+  let canXlsx = false;        // set by init(); see the 'excel' preload there
   const loaded = new Map();   // "schema.table" -> { label, ident, columns, fileCount, bytes }
 
   // ---------------------------------------------------------------------------
@@ -48,15 +49,24 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
     URL.revokeObjectURL(workerUrl);
     conn = await db.connect();
     await conn.query("SET preserve_insertion_order = false;");
+    // Never throws: an optional extension that won't load costs one file format, which is
+    // not a reason to refuse to start. LOAD alone succeeds when the wasm build already has
+    // the extension; INSTALL+LOAD is the fetch-from-the-repo fallback.
+    const tryLoadExt = async ext => {
+      try { await conn.query(`LOAD ${ext};`); return true; }
+      catch (_) {
+        try { await conn.query(`INSTALL ${ext}; LOAD ${ext};`); return true; }
+        catch (e) { console.warn(`[engine] ${ext} extension unavailable:`, e.message); return false; }
+      }
+    };
     // read_avro() (used to parse Iceberg manifests) comes from the 'avro' extension.
-    // duckdb-wasm autoloads it on first use; try to preload it up front so the first
-    // manifest read is fast, but don't fail init if preloading isn't supported —
-    // the autoload on the first read_avro() call is the real mechanism.
-    try { await conn.query("LOAD avro;"); }
-    catch (_) {
-      try { await conn.query("INSTALL avro; LOAD avro;"); }
-      catch (e) { console.warn("[engine] avro preload skipped; relying on autoload:", e.message); }
-    }
+    // duckdb-wasm autoloads it on first use; preloading up front just makes the first
+    // manifest read fast — the autoload on the first read_avro() call is the real mechanism.
+    await tryLoadExt("avro");
+    // read_xlsx() comes from 'excel'. Unlike avro this answer is remembered: the import
+    // above pins duckdb-wasm to @latest, so a future build could ship without it, and
+    // offering an .xlsx that then fails to open is worse than not offering it at all.
+    canXlsx = await tryLoadExt("excel");
     console.log(`[engine] DuckDB ready — crossOriginIsolated=${self.crossOriginIsolated}`);
     return { db, conn };
   }
@@ -198,22 +208,47 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
   // ---------------------------------------------------------------------------
   // Nothing Iceberg here: Files/ is just a directory tree, so it is listed one level at a
   // time (lazily, on expand) and a recognised data file is opened as a view the same way
-  // table data files are — registerFileURL + range reads.
+  // table data files are — registerFileURL, then whichever reader the extension names.
   const FILE_READERS = {
     parquet: n => `read_parquet([${n}])`,
+    parq:    n => `read_parquet([${n}])`,
+    pq:      n => `read_parquet([${n}])`,
     csv:     n => `read_csv_auto(${n})`,
     tsv:     n => `read_csv_auto(${n}, delim='\\t')`,
     txt:     n => `read_csv_auto(${n})`,
     json:    n => `read_json_auto(${n})`,
     jsonl:   n => `read_json_auto(${n}, format='newline_delimited')`,
     ndjson:  n => `read_json_auto(${n}, format='newline_delimited')`,
+    avro:    n => `read_avro(${n})`,
+    xlsx:    n => `read_xlsx(${n})`,
   };
 
+  // Compressed text files need no reader of their own: DuckDB picks the codec off the file
+  // NAME, and loadFile() registers them under a name that keeps both halves of the
+  // extension (file_7.csv.gz), so the plain reader decompresses transparently.
+  for (const base of ["csv", "tsv", "json", "jsonl", "ndjson"])
+    for (const codec of ["gz", "zst"])
+      FILE_READERS[`${base}.${codec}`] = FILE_READERS[base];
+
+  // The only formats with a footer and row groups, i.e. the only ones actually range-read.
+  const PARQUET_EXTS = new Set(["parquet", "parq", "pq"]);
+
+  // A codec suffix is part of the extension — "csv.gz", not "gz" — because it selects both
+  // the reader and the decompression. Anything else (a .tar.gz) falls through to the
+  // one-segment form and simply won't be in FILE_READERS.
+  const COMPRESSED_EXT = /\.([A-Za-z0-9]+)\.(gz|zst)$/i;
   const fileExt = name => {
-    const m = /\.([A-Za-z0-9]+)$/.exec(basename(name));
+    const b = basename(name);
+    const two = COMPRESSED_EXT.exec(b);
+    if (two) return `${two[1].toLowerCase()}.${two[2].toLowerCase()}`;
+    const m = /\.([A-Za-z0-9]+)$/.exec(b);
     return m ? m[1].toLowerCase() : "";
   };
-  const isQueryable = name => Object.prototype.hasOwnProperty.call(FILE_READERS, fileExt(name));
+  const isQueryable = name => {
+    const ext = fileExt(name);
+    if (!Object.prototype.hasOwnProperty.call(FILE_READERS, ext)) return false;
+    return ext === "xlsx" ? canXlsx : true;
+  };
 
   // One level of Files/ (or a subdirectory of it). `dir` is relative to Files/.
   async function listFiles({ workspace, item }, dir = "") {
@@ -232,14 +267,19 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
   // Open one file under Files/ as a read-only view.
   //
   // Only parquet gets the lazy treatment — DuckDB range-reads its footer and row groups.
-  // CSV/JSON have no such structure, so DuckDB streams the whole file however big it is;
-  // that is inherent to the format, not a shortcut taken here.
+  // CSV/JSON have no such structure, avro is a linear container and xlsx is a zip whose
+  // parts have to be inflated, so DuckDB pulls those whole however big they are; that is
+  // inherent to the formats, not a shortcut taken here.
   async function loadFile(lh, file) {
     const label = file.name;
     if (loaded.has(label)) return loaded.get(label);
     const ext = fileExt(file.name);
     const reader = FILE_READERS[ext];
-    if (!reader) throw new Error(`${file.name}: not a parquet/csv/json file`);
+    if (ext === "xlsx" && !canXlsx)
+      throw new Error(`${file.name}: this DuckDB-WASM build has no 'excel' extension, so .xlsx can't be read.`);
+    if (!reader)
+      throw new Error(`${file.name}: unsupported file type — parquet, csv/tsv/txt, json/jsonl/ndjson ` +
+                      `(plain or .gz/.zst), avro and xlsx are readable.`);
 
     const reg = `file_${++_seq}.${ext}`;
     await db.registerFileURL(reg, dfsUrl(lh.workspace, file.path), duckdb.DuckDBDataProtocol.HTTP, false);
@@ -504,7 +544,7 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
     const label = labelFor(t);
     if (loaded.has(label)) return loaded.get(label);
     if (t.kind === "delta")
-      throw new Error(`${label} is a Delta table — OneLake Studio supports Iceberg tables only (for now).`);
+      throw new Error(`${label} isn't queryable yet — OneLake hasn't published metadata for it.`);
 
     const ws = lh.workspace;
     onStatus(`Resolving ${label}…`);
@@ -561,7 +601,7 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
   // warning; saying nothing would mean quietly returning rows the table no longer has.
   function describeLoad({ label, fileCount, posDeletes, eqDeletes, file, ext, bytes }) {
     if (file) {
-      return ext === "parquet"
+      return PARQUET_EXTS.has(ext)
         ? `${label} — read on demand`
         : `${label} — ${ext.toUpperCase()} is read in full (${fmtBytes(bytes)}); no range reads for this format`;
     }
