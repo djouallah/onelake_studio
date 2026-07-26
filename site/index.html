@@ -144,6 +144,8 @@
     #status.warn { color: var(--warn); }
     #statusVer { color: var(--muted); text-decoration: none; white-space: nowrap; }
     #statusVer:hover { color: var(--accent2); }
+    /* This tab is running an older build than the server has. */
+    #statusVer.stale { color: var(--warn); cursor: pointer; }
     .hint { color: var(--muted); padding: 1.2rem; }
 
     /* Auth gate */

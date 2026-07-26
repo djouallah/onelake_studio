@@ -676,6 +676,30 @@ function showVersion() {
   $('gateVersion').textContent = `Build ${stamp}`;
 }
 
+// The stamp says which build the cache gave you; this says whether that's the current
+// one. GitHub Pages serves with max-age=600, so for up to ten minutes after a deploy a
+// plain load replays the previous build — the one situation the stamp exists for.
+// A no-store fetch of version.js bypasses that cache, and a mismatch turns the stamp
+// into a "refresh" prompt instead of leaving you to diff hashes against GitHub.
+const VERSION_RECHECK_MS = 15 * 60 * 1000;
+
+async function checkForNewBuild() {
+  const mine = (window.ONELAKE_STUDIO_VERSION || {}).commit;
+  if (!mine || mine === 'dev' || mine === 'unknown') return;   // local dev has no server truth
+  try {
+    const r = await fetch('version.js', { cache: 'no-store' });
+    if (!r.ok) return;
+    const m = /commit:\s*"([^"]+)"/.exec(await r.text());
+    if (!m || m[1] === mine) return;
+    const bar = $('statusVer');
+    bar.textContent = `build ${mine} — ${m[1]} is live, click to refresh`;
+    bar.title = `This tab is running ${mine}; the server has ${m[1]}. Click to reload.`;
+    bar.removeAttribute('href');
+    bar.classList.add('stale');
+    bar.onclick = e => { e.preventDefault(); window.location.reload(); };
+  } catch (_) { /* offline — nothing worth saying */ }
+}
+
 // ---------------------------------------------------------------------------
 // Utilities
 // ---------------------------------------------------------------------------
@@ -703,6 +727,8 @@ $('byoLink').onclick = () => showByoForm();
 $('consentLink').onclick = () => showConsentHelp();
 initSidebarToggle();
 showVersion();
+checkForNewBuild();
+setInterval(checkForNewBuild, VERSION_RECHECK_MS);
 (async () => {
   try {
     if (await auth.ensureSession(false)) {
