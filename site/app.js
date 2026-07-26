@@ -5,7 +5,7 @@ import {
   createAuth, describeAuthError, isConsentError,
   resolveConfig, saveOverride, clearOverride, adminConsentUrl, appRedirectUri,
 } from './auth.js';
-import { createEngine } from './data.js';
+import { createEngine, READY } from './data.js';
 
 const $ = id => document.getElementById(id);
 const DOCS = 'https://github.com/djouallah/onelake_studio';
@@ -13,7 +13,9 @@ const DOCS = 'https://github.com/djouallah/onelake_studio';
 // (persisted in localStorage) replace it, which is how a locked-down tenant gets in.
 const cfg = resolveConfig(window.ONELAKE_STUDIO_CONFIG || {});
 
-const MAX_DOM_ROWS = 2000;   // cap rendered rows (CSV still exports the full result)
+// Cap on rendered rows only. The CSV exports everything the engine materialised, which is
+// itself capped — runQuery says so when the two differ.
+const MAX_DOM_ROWS = 2000;
 let engine = null;
 let lakehouse = null;        // { workspace, item }
 let activeIdent = null;      // quoted identifier of the loaded table
@@ -37,7 +39,23 @@ const auth = createAuth(cfg, { onStatus: setStatus, onExpired: showExpired });
 // browser's own account UI, and this app gets screen-shared and screenshotted; a UPN in
 // the header is a needless leak. auth.getUserId() is still there for console debugging.
 function showSignedIn() {
-  $('userBox').textContent = 'Signed in';
+  const box = $('userBox');
+  box.textContent = '';
+  const label = document.createElement('span');
+  label.textContent = 'Signed in';
+  const out = document.createElement('a');
+  out.textContent = 'Sign out';
+  out.className = 'signout';
+  // There was no way to end a session from inside the app, which also meant no way to get
+  // rid of the bearer token Cache Storage had written to disk on this machine.
+  out.onclick = async () => {
+    out.textContent = 'Signing out…';
+    // Guarded: signOut ships with the token-lifecycle change to auth.js; until then the
+    // button just reloads back to the gate.
+    try { if (auth.signOut) await auth.signOut(); } catch (e) { console.error(e); }
+    window.location.replace(appRedirectUri());
+  };
+  box.append(label, out);
 }
 
 function gateMsg(text, isError = false) {
@@ -191,9 +209,9 @@ async function start() {
   showSignedIn();
   engine = createEngine(auth, { onStatus: setStatus });
   await engine.init();
-  $('connectBtn').onclick = connect;
+  $('connectBtn').onclick = () => connect({ force: true });
   $('wsSelect').onchange = onWorkspaceChange;
-  $('itemSelect').onchange = connect;
+  $('itemSelect').onchange = () => connect();
   $('tabTables').onclick = () => switchPane('tables');
   $('tabFiles').onclick = () => switchPane('files');
   $('runBtn').onclick = runQuery;
@@ -254,9 +272,14 @@ async function onWorkspaceChange() {
   const workspace = $('wsSelect').value;
   const sel = $('itemSelect');
   activeIdent = null;
-  lakehouse = null;
+  lastResult = null;
   lastTables = null;
   lastTableCount = '';
+  // This is the point where the previous lakehouse is left behind — and because it also
+  // clears `lakehouse`, connect() can no longer tell that the target changed. Hand the
+  // engine's views and registered files back here instead.
+  if (lakehouse) await engine.reset();
+  lakehouse = null;
   $('tableList').innerHTML = '<div class="hint">Pick a lakehouse or warehouse.</div>';
   $('tableCount').textContent = '';
   if (!workspace) {
@@ -285,9 +308,24 @@ async function onWorkspaceChange() {
 // ---------------------------------------------------------------------------
 // Connect -> list tables -> sidebar
 // ---------------------------------------------------------------------------
-async function connect() {
+// `force` is what the Reload button passes. Without it, re-listing a lakehouse you are
+// already on left every table served from cache, so "Reload" showed the same snapshot it
+// showed before and there was no way to pick up a table that had changed underneath.
+async function connect({ force = false } = {}) {
   const workspace = $('wsSelect').value, item = $('itemSelect').value;
   if (!workspace || !item) return;
+
+  // Views, registered files and helper tables from the previous lakehouse are dead the
+  // moment we point somewhere else, and they cost WASM memory for as long as the tab
+  // lives. Cache entries are keyed per lakehouse so a stale one can't be served, but the
+  // DuckDB objects behind them still have to be given back.
+  const moved = lakehouse && (lakehouse.workspace !== workspace || lakehouse.item !== item);
+  if (force || moved) {
+    activeIdent = null;
+    lastResult = null;
+    $('activeTable').textContent = 'No table selected';
+    await engine.reset();
+  }
   lakehouse = { workspace, item };
 
   $('connectBtn').disabled = true;
@@ -297,13 +335,13 @@ async function connect() {
     const tables = await engine.listTables(lakehouse);
     // Storage format is the engine's business, not the user's. The only distinction worth
     // surfacing is whether a table can be opened yet.
-    const ready = tables.filter(t => t.kind === 'iceberg').length;
+    const ready = tables.filter(t => t.kind === READY).length;
     lastTables = tables;
     lastTableCount = String(tables.length);
     if (pane === 'tables') { renderTableList(tables); $('tableCount').textContent = lastTableCount; }
     else await renderFileTree();
     setStatus(`${tables.length} table(s) in ${lakehouse.item}.` +
-      (tables.length > ready ? ` ${tables.length - ready} not queryable yet.` : ''), 'ok');
+      (tables.length > ready ? ` ${tables.length - ready} awaiting Iceberg conversion.` : ''), 'ok');
   } catch (e) {
     $('tableList').innerHTML = '<div class="hint">Could not list tables.</div>';
     setStatus('List failed: ' + e.message, 'error');
@@ -392,8 +430,7 @@ async function selectFile(row, file) {
     $('sqlEditor').value = `SELECT * FROM ${info.ident} LIMIT 100`;
     $('previewBtn').disabled = false;
     $('runBtn').disabled = false;
-    await runQuery();
-    setStatus(engine.describeLoad(info) + '.', 'ok');
+    reportLoad(info, await runQuery());
   } catch (e) {
     setStatus('Load failed: ' + e.message, 'error');
     console.error(e);
@@ -425,15 +462,18 @@ function renderTableList(tables) {
     }
     for (const t of items) {
       const row = document.createElement('div');
-      row.className = 'tableItem' + (t.kind === 'delta' ? ' delta' : '');
-      // OneLake generates the metadata this app reads on demand, so "delta" here means
-      // "not published in a readable form yet", which is what the user needs to know.
-      row.title = t.kind === 'delta'
-        ? `${t.table} — not queryable yet; OneLake hasn't published this table's metadata`
-        : t.kind === 'iceberg' ? t.table : `${t.table} — unknown table type`;
+      const pending = t.kind !== READY;
+      row.className = 'tableItem' + (pending ? ' pending' : '');
+      // OneLake surfaces every table as Iceberg, so a table with no metadata/ isn't a
+      // format we can't read — it's one whose conversion hasn't run. That can still be
+      // in flight, so let it be clicked: loadTable waits and then says what went wrong.
+      row.title = pending
+        ? `${t.table} — Iceberg metadata not written yet. Click to wait for it; ` +
+          `conversion takes up to two minutes, or may not be enabled for this workspace.`
+        : t.table;
       row.innerHTML = `<span>${escapeHtml(t.table)}</span>` +
-        (t.kind !== 'iceberg' ? '<span class="tag">pending</span>' : '');
-      if (t.kind !== 'delta') row.onclick = () => selectTable(row, t);
+        (pending ? '<span class="tag">converting</span>' : '');
+      row.onclick = () => selectTable(row, t);
       g.appendChild(row);
     }
     list.appendChild(g);
@@ -454,10 +494,9 @@ async function selectTable(row, t) {
     $('sqlEditor').value = `SELECT * FROM ${info.ident} LIMIT 100`;
     $('previewBtn').disabled = false;
     $('runBtn').disabled = false;
-    await runQuery();
-    // The engine knows how it actually opened the table (Iceberg reader / range reads /
-    // full download); don't restate it here and risk implying a transfer that never happened.
-    setStatus(engine.describeLoad(info) + '.', 'ok');
+    reportLoad(info, await runQuery());
+    row.classList.remove('pending');
+    row.querySelector('.tag')?.remove();
   } catch (e) {
     setStatus('Load failed: ' + e.message, 'error');
     console.error(e);
@@ -466,9 +505,29 @@ async function selectTable(row, t) {
   }
 }
 
+// The engine knows how it actually opened the table (range reads / full download) and
+// whether anything about the read is not to be trusted; don't restate either here.
+//
+// Two rules. A load that carries warnings — equality deletes that were skipped, delete
+// records that matched nothing, columns the current schema doesn't know — is not a
+// success, so it must not render in the success colour. And if the auto-preview failed,
+// its error stays on screen: overwriting it with a green load message told the user
+// everything was fine while the results pane still showed the previous table.
+function reportLoad(info, queryOk) {
+  // The query error is already on screen and is the more actionable of the two, so a
+  // failed preview keeps the status line whatever the load had to say about itself.
+  if (!queryOk) return;
+  const warnings = info.warnings || [];
+  setStatus(
+    engine.describeLoad(info) + (warnings.length ? '. Warning: ' + warnings.join('; ') : '') + '.',
+    warnings.length ? 'warn' : 'ok');
+}
+
 // ---------------------------------------------------------------------------
 // Run SQL -> results table
 // ---------------------------------------------------------------------------
+// Returns whether the query succeeded, so a caller that has its own message to show
+// (selectTable, selectFile) can keep quiet when the error is the more useful thing.
 async function runQuery() {
   const sql = $('sqlEditor').value;
   setBusy(true);
@@ -479,12 +538,23 @@ async function runQuery() {
     renderResults(res);
     const ms = Math.round(performance.now() - t0);
     const shown = Math.min(res.rows.length, MAX_DOM_ROWS);
-    setStatus(`${res.rows.length.toLocaleString('en')} row(s) in ${ms} ms` +
-      (res.rows.length > shown ? ` — showing first ${shown.toLocaleString('en')}` : ''), 'ok');
+
+    // Two different caps, and conflating them would be a lie about the CSV. MAX_DOM_ROWS
+    // only limits what is drawn; res.truncated means the engine stopped materialising and
+    // the rows beyond it do not exist here at all, so the export is short too.
+    let msg = `${res.rows.length.toLocaleString('en')} row(s) in ${ms} ms`;
+    if (res.rows.length > shown) msg += ` — showing first ${shown.toLocaleString('en')}`;
+    if (res.truncated)
+      msg += `. Stopped at ${res.limit.toLocaleString('en')} rows of ` +
+             `${res.numRows.toLocaleString('en')} — add a LIMIT or narrow the query; ` +
+             `the CSV export is capped at the same point`;
+    setStatus(msg, res.truncated ? 'warn' : 'ok');
     $('csvBtn').disabled = res.rows.length === 0;
+    return true;
   } catch (e) {
     setStatus('Query error: ' + e.message, 'error');
     console.error(e);
+    return false;
   } finally {
     setBusy(false);
   }
@@ -542,7 +612,9 @@ function downloadCsv() {
   a.href = url;
   a.download = ($('activeTable').textContent || 'query').replace(/[^\w.-]+/g, '_') + '.csv';
   a.click();
-  URL.revokeObjectURL(url);
+  // Revoking in this same task races the download the click just started, and Firefox in
+  // particular ends up saving nothing. One turn of the event loop is enough.
+  setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
 // ---------------------------------------------------------------------------

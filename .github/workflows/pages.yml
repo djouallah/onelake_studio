@@ -29,6 +29,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
+      # site/paths.js is plain ESM with no dependencies, so the suite runs straight off a
+      # checkout with no npm install. A red suite must not reach Pages.
+      - run: npm test
       - run: npm run build
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3

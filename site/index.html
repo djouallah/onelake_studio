@@ -41,7 +41,8 @@
     #wsSelect { flex: 1 1 260px; max-width: 380px; }
     #itemSelect { flex: 1 1 220px; max-width: 320px; }
     header .spacer { flex: 1; }
-    #userBox { color: var(--muted); font-size: 0.85rem; white-space: nowrap; }
+    #userBox { color: var(--muted); font-size: 0.85rem; white-space: nowrap; display: flex; gap: 0.6rem; align-items: center; }
+    #userBox .signout { cursor: pointer; }
     header .ghLink { color: var(--muted); font-size: 0.85rem; text-decoration: none; white-space: nowrap; }
     header .ghLink:hover { color: var(--accent2); }
 
@@ -70,9 +71,11 @@
     }
     .tableItem:hover { background: #1c2330; }
     .tableItem.active { background: #1c2330; border-left-color: var(--accent2); }
-    .tableItem.delta { color: var(--muted); cursor: not-allowed; }
+    /* Awaiting Iceberg conversion — dimmed, but still clickable: the wait is often the
+       whole story, and loadTable is what finds out which. */
+    .tableItem.pending { color: var(--muted); }
     .tableItem .tag { margin-left: auto; font-size: 0.65rem; color: var(--muted); border: 1px solid var(--border); border-radius: 4px; padding: 0 0.3rem; }
-    .tableItem.delta .tag { border-color: var(--warn); color: var(--warn); }
+    .tableItem.pending .tag { border-color: var(--warn); color: var(--warn); }
 
     /* Tables / Files switch */
     .tabs { display: inline-flex; }
@@ -128,6 +131,9 @@
     #status { padding: 0.4rem 0.9rem; border-top: 1px solid var(--border); background: var(--panel2); color: var(--muted); font-size: 0.82rem; }
     #status.error { color: var(--err); }
     #status.ok { color: var(--ok); }
+    /* A load that came with caveats — skipped equality deletes, a truncated result — is
+       not a success, and must not be shown in the success colour. */
+    #status.warn { color: var(--warn); }
     .hint { color: var(--muted); padding: 1.2rem; }
 
     /* Auth gate */

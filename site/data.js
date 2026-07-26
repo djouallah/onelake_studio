@@ -5,25 +5,22 @@
 //   1. brings up DuckDB-WASM,
 //   2. lists the lakehouse's tables over the OneLake DFS (ADLS Gen2) API by
 //      friendly name (workspace/lakehouse.Lakehouse) — no GUIDs, storage token only,
-//   3. for a chosen Iceberg table, resolves its current metadata.json -> snapshot
-//      -> manifest-list, reads the Avro manifests with DuckDB's read_avro to get the
+//   3. for a chosen table, resolves its current metadata.json -> snapshot ->
+//      manifest-list, reads the Avro manifests with DuckDB's read_avro to get the
 //      data-file (parquet) paths,
 //   4. registers those parquet files as URLs so DuckDB range-reads them itself, and
 //      exposes the table as a read-only VIEW you can run SQL against. Nothing is
 //      downloaded whole: sw.js signs DuckDB's requests, so a query pulls only the
 //      row groups and columns it touches.
 //
-// The Iceberg reading (read_avro manifests -> read_parquet data files) mirrors
-// djouallah/dbt_fabric_python_iceberg's dashboard; the difference here is that the
-// table is discovered by friendly name over DFS instead of a GUID REST-catalog call.
+// The pure half — path and URI handling, SQL text, cache keys, version selection — lives
+// in paths.js and is covered by test/paths.test.js. Anything here that can be written as
+// a function of strings belongs there instead: that is where the mistakes that silently
+// return the wrong rows were hiding, and clicking around does not find them.
 //
 // DOM-free: progress is reported through the injected `onStatus` callback.
 // =============================================================================
 
-// @latest matches djouallah/dbt_fabric_python_iceberg's dashboard, which reads Iceberg
-// Avro manifests with read_avro() in the browser — the avro extension autoloads on first
-// use from the DuckDB extension repo (the service worker makes that cross-origin fetch
-// COEP-compatible). Pin to a specific version once a known-good one is confirmed for you.
 // Pinned, not @latest: this is a CDN import with no lockfile behind it, so an unpinned
 // URL means every user's browser can pick up a new DuckDB the moment one is published —
 // including a build without the 'excel' extension, or with different SQL behaviour. This
@@ -31,13 +28,42 @@
 // stable line lags. Bump it deliberately and re-run the format probe when you do.
 import * as duckdb from "https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.33.1-dev57.0/+esm";
 
-const DFS_HOST = "onelake.dfs.fabric.microsoft.com";
+import {
+  DFS_HOST, strip, basename, dfsBase, dfsUrl, toHttps, pathKey, PATH_KEY_SQL,
+  parseLakehouse, fileExt, readerFor, PARQUET_EXTS, isTextExt,
+  sqlStr, quoteIdent, prepareReadOnlySql,
+  pickMetadata, tableKey, fileKey, sanitizeIdent,
+  normalizeValue, fmtBytes,
+} from "./paths.js";
+
+// There is one DuckDB connection, so DuckDB work has to be serialised — but the network
+// does not. Listing a lakehouse used to be one round trip per table awaited in a for
+// loop: 150+ serialised calls, tens of seconds, before the sidebar rendered.
+const MAX_PARALLEL = 8;
+
+// Materialising a result costs one JS object per row on top of DuckDB's Arrow batches, so
+// an unbounded SELECT * is how you take the tab down. Cap it and say so.
+const MAX_ROWS = 200_000;
+
+// Fabric generates Iceberg metadata lazily, and Microsoft documents the conversion as
+// taking between 5 seconds and 2 minutes. The old schedule gave up after 4.6s, so the
+// retry usually ran out well before Fabric finished.
+const RESOLVE_BACKOFF_MS = [500, 1500, 3000, 6000, 10000, 15000, 20000, 30000];
+
+// A table directory either has metadata/ or it doesn't. OneLake surfaces everything as
+// Iceberg, so "no metadata/" is a STATE — conversion hasn't run — not a second table
+// format we are unable to read.
+export const READY = "ready";
+export const UNCONVERTED = "unconverted";
 
 export function createEngine(auth, { onStatus = () => {} } = {}) {
   let db = null, conn = null, worker = null;
   let _seq = 0;
-  let canXlsx = false;        // set by init(); see the 'excel' preload there
-  const loaded = new Map();   // "schema.table" -> { label, ident, columns, fileCount, bytes }
+  let canXlsx = false;              // set by init(); see the 'excel' preload there
+
+  const loaded = new Map();         // cache key -> info
+  const resources = new Map();      // cache key -> { ident, regs[], tables[] }, for release()
+  const viewNames = new Map();      // view identifier -> the cache key that owns it
 
   // ---------------------------------------------------------------------------
   // DuckDB bootstrap
@@ -77,52 +103,42 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
   }
 
   // ---------------------------------------------------------------------------
-  // Path helpers
+  // Small helpers
   // ---------------------------------------------------------------------------
-  const strip = s => String(s).replace(/^\/+|\/+$/g, "");
-  const basename = p => strip(p).split("/").pop();
-  const encPath = p => strip(p).split("/").map(encodeURIComponent).join("/");
-  const dfsBase = ws => `https://${DFS_HOST}/${encodeURIComponent(ws)}`;
-  // A DFS "list" entry .name is already relative to the filesystem (workspace) root.
-  const dfsUrl = (ws, name) => `${dfsBase(ws)}/${encPath(name)}`;
-
-  // "workspace/lakehouse.Lakehouse" (or a full https/abfss URL) -> { workspace, item }.
-  function parseLakehouse(input) {
-    let s = String(input || "").trim();
-    if (!s) throw new Error("Enter a lakehouse path, e.g.  myworkspace/mylakehouse.Lakehouse");
-    s = s.replace(/^https?:\/\/[^/]+\//i, "").replace(/^abfss:\/\/[^@]+@[^/]+\//i, "");
-    const parts = strip(s).split("/").filter(Boolean);
-    if (parts.length < 2) throw new Error(`Path must be  workspace/lakehouse.Lakehouse  (got "${input}")`);
-    const workspace = parts[0];
-    let item = parts[1];
-    if (!/\.lakehouse$/i.test(item)) item += ".Lakehouse";
-    return { workspace, item };
+  async function mapPool(items, fn, limit = MAX_PARALLEL) {
+    const out = new Array(items.length);
+    let next = 0;
+    await Promise.all(
+      Array.from({ length: Math.min(limit, items.length) }, async () => {
+        for (;;) {
+          const i = next++;
+          if (i >= items.length) return;
+          out[i] = await fn(items[i], i);
+        }
+      })
+    );
+    return out;
   }
 
-  // Normalize an Iceberg path (abfs(s)://…, absolute https, or relative) to an authed https URL.
-  // Fabric writes `abfs://<workspace-guid>@onelake.dfs.fabric.microsoft.com/<item-guid>/Tables/…`
-  // — note the SINGLE s, and GUIDs rather than the friendly names the user typed. The filesystem
-  // component becomes the first path segment: https://onelake.dfs…/<workspace-guid>/<item-guid>/…
-  function toHttps(ws, u) {
-    u = String(u);
-    const ab = u.match(/^abfss?:\/\/([^@]+)@[^/]+\/(.*)$/i);
-    if (ab) return `https://${DFS_HOST}/${encodeURIComponent(decodeURIComponent(ab[1]))}/${encPath(ab[2])}`;
-    if (/^https?:\/\//i.test(u)) return u;
-    return `${dfsBase(ws)}/${encPath(u)}`;
-  }
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
 
   // ---------------------------------------------------------------------------
-  // Authed fetch (+ one 401/403 retry through a silent token refresh)
+  // Authed fetch (+ one 401 retry through a silent token refresh)
   // ---------------------------------------------------------------------------
-  // The one place the retry policy lives. OneLake answers 401/403 once the token
-  // expires (~1h); auth.refresh() invalidates it and renews silently, then we replay
-  // the request once. If renewal fails, the original response is returned so the
-  // caller reports the real status.
+  // Only 401 means "your token expired". A 403 means "this identity may not read this",
+  // which a new token will not fix — and treating it as expiry was actively harmful:
+  // refreshing drops the token first, including the copy the service worker is using for
+  // the tables the user CAN read. auth.refresh() coalesces concurrent callers itself.
   async function authedFetch(url) {
-    const go = () => fetch(url, { headers: auth.getHeaders() });
-    const r = await go();
-    if (r.status !== 401 && r.status !== 403) return r;
-    return (await auth.refresh()) ? go() : r;
+    const headers = auth.getHeaders();
+    const r = await fetch(url, { headers });
+    if (r.status !== 401) return r;
+    // Hand back the credential that actually failed. Requests go out in parallel, so a
+    // 401 raised against an old token can land after someone else already renewed, and
+    // refresh() needs to be able to tell that apart from "the current token is dead".
+    return (await auth.refresh(headers.Authorization))
+      ? fetch(url, { headers: auth.getHeaders() })
+      : r;
   }
 
   async function fetchAuthed(url) {
@@ -142,6 +158,7 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
   async function listPaths(ws, directory, recursive = false) {
     const out = [];
     let cont = "";
+    let page = 0;
     do {
       const u = new URL(dfsBase(ws));
       u.searchParams.set("resource", "filesystem");
@@ -149,7 +166,13 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
       u.searchParams.set("directory", strip(directory));
       if (cont) u.searchParams.set("continuation", cont);
       const r = await authedFetch(u.toString());
-      if (r.status === 404) return out;           // directory doesn't exist
+      // A 404 on the FIRST page means the directory isn't there, which is a normal answer.
+      // A 404 part way through pagination means it went away under us, and returning the
+      // rows gathered so far would report a truncated listing as a complete one.
+      if (r.status === 404) {
+        if (page === 0) return out;
+        throw new Error(`Listing of ${strip(directory)} was interrupted — it changed while being read`);
+      }
       if (!r.ok) {
         const e = new Error(`list HTTP ${r.status} for ${strip(directory)}`);
         e.status = r.status;
@@ -165,6 +188,7 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
         });
       }
       cont = r.headers.get("x-ms-continuation") || "";
+      page++;
     } while (cont);
     return out;
   }
@@ -214,57 +238,10 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
   // Nothing Iceberg here: Files/ is just a directory tree, so it is listed one level at a
   // time (lazily, on expand) and a recognised data file is opened as a view the same way
   // table data files are — registerFileURL, then whichever reader the extension names.
-  const FILE_READERS = {
-    parquet: n => `read_parquet([${n}])`,
-    parq:    n => `read_parquet([${n}])`,
-    pq:      n => `read_parquet([${n}])`,
-    csv:     n => `read_csv_auto(${n})`,
-    tsv:     n => `read_csv_auto(${n}, delim='\\t')`,
-    txt:     n => `read_csv_auto(${n})`,
-    json:    n => `read_json_auto(${n})`,
-    jsonl:   n => `read_json_auto(${n}, format='newline_delimited')`,
-    ndjson:  n => `read_json_auto(${n}, format='newline_delimited')`,
-    avro:    n => `read_avro(${n})`,
-    xlsx:    n => `read_xlsx(${n})`,
-  };
-
-  // Plain text that isn't tabular — a dbt model, a schema.yml, a log — is still worth
-  // opening, so read it one row per line instead of leaving it dead in the tree. The CSV
-  // reader does that with splitting disabled: no delimiter that occurs in text, no quote
-  // or escape character, so every byte of a line lands in the single declared column.
-  const textLines = n =>
-    `(SELECT rtrim(line, chr(13)) AS line FROM read_csv(${n}, ` +
-    `columns={'line': 'VARCHAR'}, delim='\\x1F', quote='', escape='', ` +
-    `header=false, auto_detect=false))`;
-  const TEXT_EXTS = ["sql", "yml", "yaml", "md", "toml", "ini", "cfg", "conf",
-                     "properties", "log", "sh", "py", "html", "xml", "css", "js"];
-  for (const ext of TEXT_EXTS) FILE_READERS[ext] = textLines;
-  const isTextExt = ext => TEXT_EXTS.includes(ext.replace(/\.(gz|zst)$/, ""));
-
-  // Compressed text files need no reader of their own: DuckDB picks the codec off the file
-  // NAME, and loadFile() registers them under a name that keeps both halves of the
-  // extension (file_7.csv.gz), so the plain reader decompresses transparently.
-  for (const base of ["csv", "tsv", "json", "jsonl", "ndjson", ...TEXT_EXTS])
-    for (const codec of ["gz", "zst"])
-      FILE_READERS[`${base}.${codec}`] = FILE_READERS[base];
-
-  // The only formats with a footer and row groups, i.e. the only ones actually range-read.
-  const PARQUET_EXTS = new Set(["parquet", "parq", "pq"]);
-
-  // A codec suffix is part of the extension — "csv.gz", not "gz" — because it selects both
-  // the reader and the decompression. Anything else (a .tar.gz) falls through to the
-  // one-segment form and simply won't be in FILE_READERS.
-  const COMPRESSED_EXT = /\.([A-Za-z0-9]+)\.(gz|zst)$/i;
-  const fileExt = name => {
-    const b = basename(name);
-    const two = COMPRESSED_EXT.exec(b);
-    if (two) return `${two[1].toLowerCase()}.${two[2].toLowerCase()}`;
-    const m = /\.([A-Za-z0-9]+)$/.exec(b);
-    return m ? m[1].toLowerCase() : "";
-  };
+  // The reader table itself lives in paths.js.
   const isQueryable = name => {
     const ext = fileExt(name);
-    if (!Object.prototype.hasOwnProperty.call(FILE_READERS, ext)) return false;
+    if (!readerFor(ext)) return false;
     return ext === "xlsx" ? canXlsx : true;
   };
 
@@ -282,17 +259,68 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
       (b.isDir - a.isDir) || a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
   }
 
+  // ---------------------------------------------------------------------------
+  // Resource lifecycle
+  // ---------------------------------------------------------------------------
+  // Everything a load creates — the view, the registered file URLs, the helper tables —
+  // is recorded against its cache key so it can be handed back. Without this, every table
+  // opened in a session leaked its registrations plus a `__del_` table holding one row per
+  // deleted row, for as long as the tab stayed open.
+  function track(key) {
+    let r = resources.get(key);
+    if (!r) { r = { ident: null, regs: [], tables: [] }; resources.set(key, r); }
+    return r;
+  }
+
+  async function release(key) {
+    const r = resources.get(key);
+    if (r) {
+      if (r.ident) { try { await conn.query(`DROP VIEW IF EXISTS ${r.ident}`); } catch (_) {} }
+      for (const t of r.tables) { try { await conn.query(`DROP TABLE IF EXISTS ${t}`); } catch (_) {} }
+      for (const n of r.regs) { try { await db.dropFile(n); } catch (_) {} }
+      resources.delete(key);
+    }
+    loaded.delete(key);
+    for (const [name, owner] of [...viewNames]) if (owner === key) viewNames.delete(name);
+  }
+
+  // Called when the user switches lakehouse. Cache entries are keyed per lakehouse so a
+  // stale one can no longer be served, but the DuckDB objects behind them are still there
+  // and still cost memory, so give those back too.
+  async function reset() {
+    for (const key of [...resources.keys()]) await release(key);
+    loaded.clear();
+    resources.clear();
+    viewNames.clear();
+  }
+
+  // A DuckDB identifier for this key that no other key already owns. sanitizeIdent is
+  // lossy — a/data.parquet, a-data.parquet and a.data.parquet all reduce to the same stem
+  // — and CREATE OR REPLACE VIEW would silently repoint whichever got there first.
+  function uniqueView(key, stem) {
+    let name = sanitizeIdent(stem) || "view";
+    if (/^\d/.test(name)) name = "_" + name;
+    while (viewNames.has(name) && viewNames.get(name) !== key) name = `${name}_${++_seq}`;
+    viewNames.set(name, key);
+    return name;
+  }
+
+  // ---------------------------------------------------------------------------
   // Open one file under Files/ as a read-only view.
-  //
+  // ---------------------------------------------------------------------------
   // Only parquet gets the lazy treatment — DuckDB range-reads its footer and row groups.
   // CSV/JSON have no such structure, avro is a linear container and xlsx is a zip whose
   // parts have to be inflated, so DuckDB pulls those whole however big they are; that is
   // inherent to the formats, not a shortcut taken here.
   async function loadFile(lh, file) {
+    // Keyed on the full path, not the basename: Files/a/data.parquet and
+    // Files/b/data.parquet are different files and must not share a cache entry.
+    const key = fileKey(lh, file);
+    if (loaded.has(key)) return loaded.get(key);
+
     const label = file.name;
-    if (loaded.has(label)) return loaded.get(label);
     const ext = fileExt(file.name);
-    const reader = FILE_READERS[ext];
+    const reader = readerFor(ext);
     if (ext === "xlsx" && !canXlsx)
       throw new Error(`${file.name}: this DuckDB-WASM build has no 'excel' extension, so .xlsx can't be read.`);
     if (!reader)
@@ -300,72 +328,184 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
                       `avro, xlsx and plain text (sql, yml, md, log, …) are readable; ` +
                       `text formats also read as .gz/.zst.`);
 
+    const res = track(key);
     const reg = `file_${++_seq}.${ext}`;
     await db.registerFileURL(reg, dfsUrl(lh.workspace, file.path), duckdb.DuckDBDataProtocol.HTTP, false);
+    res.regs.push(reg);
 
-    // Views are identified by the file's own name, so two files called data.parquet in
-    // different folders don't collide.
-    const view = file.path.replace(/^.*?\/Files\//, "").replace(/[^A-Za-z0-9_]/g, "_");
-    const ident = `"${view}"`;
+    const ident = quoteIdent(uniqueView(key, file.path.replace(/^.*?\/Files\//, "")));
     try {
       await conn.query(`CREATE OR REPLACE VIEW ${ident} AS SELECT * FROM ${reader(sqlStr(reg))}`);
+      res.ident = ident;
       const columns = await describe(ident);
       const info = { label, ident, columns, fileCount: 1, posDeletes: 0, eqDeletes: 0,
-                     file: true, bytes: file.bytes, ext };
-      loaded.set(label, info);
+                     file: true, bytes: file.bytes, ext, warnings: [] };
+      loaded.set(key, info);
       onStatus(describeLoad(info));
       return info;
     } catch (e) {
-      try { await db.dropFile(reg); } catch (_) {}
+      await release(key);
       throw new Error(`Could not read ${file.name}: ${e.message}`);
     }
   }
 
   // ---------------------------------------------------------------------------
-  // Table discovery — browse Tables/ by name, classify iceberg vs delta.
+  // Table discovery — browse Tables/ by name.
   // Handles both schema-enabled (Tables/<schema>/<table>) and flat (Tables/<table>).
   // ---------------------------------------------------------------------------
   function classifyChildren(kids) {
-    const hasIceberg = kids.some(k => k.isDir && basename(k.name) === "metadata");
-    const hasDelta = kids.some(k => k.isDir && basename(k.name) === "_delta_log");
-    return hasIceberg ? "iceberg" : hasDelta ? "delta" : null;
+    if (kids.some(k => k.isDir && basename(k.name) === "metadata")) return READY;
+    // A table directory always holds something. An empty listing means this level is a
+    // schema with no tables in it, not a table.
+    return kids.length ? UNCONVERTED : null;
   }
 
-  async function listTables({ workspace, item }) {
+  async function listTables(lh) {
+    // Three requests instead of one per table, when the catalog is reachable.
+    const viaCatalog = await ircListTables(lh);
+    if (viaCatalog) return viaCatalog;
+    return listTablesOverDfs(lh);
+  }
+
+  async function listTablesOverDfs({ workspace, item }) {
     const level1 = (await listPaths(workspace, `${item}/Tables`, false)).filter(e => e.isDir);
+    const kidsOf = await mapPool(level1, l1 => listPaths(workspace, l1.name, false));
+
+    // A level-1 directory is either a table (it has metadata/, or files of its own) or a
+    // schema whose children are tables. Only the schema case needs a second level, and
+    // those all go out at once rather than one await at a time.
     const tables = [];
-    for (const l1 of level1) {
-      const kids = await listPaths(workspace, l1.name, false);
+    const schemaDirs = [];
+    level1.forEach((l1, i) => {
+      const kids = kidsOf[i];
       const kind = classifyChildren(kids);
-      if (kind) {
-        // Table directly under Tables/ (flat, non-schema lakehouse).
-        tables.push({ schema: null, table: basename(l1.name), root: l1.name, kind });
+      const looksLikeSchema = kind !== READY && kids.length > 0 && kids.every(k => k.isDir);
+      if (kind === READY || !looksLikeSchema) {
+        if (kind) tables.push({ schema: null, table: basename(l1.name), root: l1.name, kind });
       } else {
-        // Treat l1 as a schema; its child dirs are tables.
-        const schema = basename(l1.name);
-        for (const t of kids.filter(k => k.isDir)) {
-          const tkids = await listPaths(workspace, t.name, false);
-          tables.push({ schema, table: basename(t.name), root: t.name, kind: classifyChildren(tkids) });
-        }
+        for (const t of kids) schemaDirs.push({ schema: basename(l1.name), entry: t });
       }
-    }
+    });
+
+    const grandKids = await mapPool(schemaDirs, s => listPaths(workspace, s.entry.name, false));
+    schemaDirs.forEach((s, i) => {
+      tables.push({
+        schema: s.schema,
+        table: basename(s.entry.name),
+        root: s.entry.name,
+        kind: classifyChildren(grandKids[i]) || UNCONVERTED,
+      });
+    });
+
     return tables.sort((a, b) =>
       (a.schema || "").localeCompare(b.schema || "") || a.table.localeCompare(b.table));
   }
 
   // ---------------------------------------------------------------------------
-  // Iceberg metadata resolution — DFS-by-name (no REST catalog / GUIDs).
+  // OneLake's Iceberg REST Catalog — the fast path for discovery and metadata.
+  // ---------------------------------------------------------------------------
+  // OneLake exposes a read-only Iceberg REST Catalog (IRC), and it costs nothing extra to
+  // use: it authenticates with the SAME https://storage.azure.com token this app already
+  // holds, so there is still no second Entra scope and no second consent prompt. It also
+  // accepts the friendly `workspace/item.Lakehouse` name the user already picked, so no
+  // GUID lookups.
+  //
+  // Two things it replaces outright:
+  //   - discovery. Three requests for a whole lakehouse instead of one directory listing
+  //     per table (150+ serialised calls on a big one).
+  //   - metadata resolution. Get table returns the entire metadata document INLINE, so
+  //     there is no metadata/ listing, no version-hint.text, and no guessing which
+  //     *.metadata.json is current.
+  //
+  // It is gated on the same tenant/workspace conversion setting that makes metadata/ exist
+  // at all, so it can't see a table the DFS walk could. But it can be unreachable for
+  // reasons that have nothing to do with the data — CORS, a private-link tenant, an older
+  // region — so every failure falls back to the DFS walk below and is never fatal.
+  const TABLE_API = "https://onelake.table.fabric.microsoft.com/iceberg";
+
+  let ircPrefix = null;      // the `prefix` the config call hands back, per lakehouse
+  let ircPrefixKey = null;
+  let ircOff = false;        // one failure is enough; don't re-probe on every click
+
+  async function ircGet(path) {
+    const r = await authedFetch(TABLE_API + path);
+    if (!r.ok) {
+      const e = new Error(`Iceberg catalog HTTP ${r.status}`);
+      e.status = r.status;
+      throw e;
+    }
+    return r.json();
+  }
+
+  // The warehouse identifier is the whole "workspace/item" pair; the prefix it returns is
+  // a PATH prefix, so its slash must survive into the next URL unencoded.
+  async function ircPrefixFor(lh) {
+    const warehouse = `${lh.workspace}/${lh.item}`;
+    if (ircPrefixKey === warehouse && ircPrefix) return ircPrefix;
+    const cfg = await ircGet(`/v1/config?warehouse=${encodeURIComponent(warehouse)}`);
+    ircPrefix = (cfg.overrides && cfg.overrides.prefix) || warehouse;
+    ircPrefixKey = warehouse;
+    return ircPrefix;
+  }
+
+  const ircSeg = s => String(s).split("/").map(encodeURIComponent).join("/");
+
+  // Returns the same shape as the DFS listTables(), or null if the catalog can't serve it.
+  async function ircListTables(lh) {
+    if (ircOff) return null;
+    try {
+      const prefix = await ircPrefixFor(lh);
+      const ns = await ircGet(`/v1/${prefix}/namespaces`);
+      // A namespace is an array of levels; OneLake only ever returns one level, and uses
+      // a synthetic "dbo" for items that don't have schemas of their own.
+      const names = (ns.namespaces || []).map(n => (Array.isArray(n) ? n.join(".") : String(n)));
+      if (!names.length) return [];
+
+      const lists = await mapPool(names, n =>
+        ircGet(`/v1/${prefix}/namespaces/${ircSeg(n)}/tables`));
+
+      const tables = [];
+      names.forEach((schema, i) => {
+        for (const id of (lists[i].identifiers || [])) {
+          // `root` is only needed if we end up falling back to the DFS walk or reading a
+          // conversion log; the catalog itself needs nothing but the namespace and the
+          // name. It is resolved lazily by dfsRootFor(), because the namespace here may
+          // be the synthetic "dbo" OneLake reports for items that have no schemas — in
+          // which case Tables/dbo/<t> does not exist and Tables/<t> is the real path.
+          tables.push({ schema, table: id.name, root: null, kind: READY, irc: true });
+        }
+      });
+      return tables.sort((a, b) =>
+        (a.schema || "").localeCompare(b.schema || "") || a.table.localeCompare(b.table));
+    } catch (e) {
+      ircOff = true;
+      console.info(`[engine] Iceberg REST catalog unavailable (${e.message}); using the DFS walk`);
+      return null;
+    }
+  }
+
+  // Get table -> the metadata document, inline. No listing, no version guessing.
+  async function ircResolve(lh, t) {
+    const prefix = await ircPrefixFor(lh);
+    const doc = await ircGet(
+      `/v1/${prefix}/namespaces/${ircSeg(t.schema)}/tables/${ircSeg(t.table)}`);
+    if (!doc || !doc.metadata) throw new Error("Iceberg catalog returned no metadata for this table");
+    return {
+      ...readMetadataDoc(doc.metadata, `${t.schema}.${t.table}`),
+      metadataFile: basename(doc["metadata-location"] || ""),
+      metadataUrl: doc["metadata-location"] ? toHttps(lh.workspace, doc["metadata-location"]) : null,
+    };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Iceberg metadata resolution — DFS-by-name fallback (no REST catalog / GUIDs).
   // ---------------------------------------------------------------------------
   // Fabric generates a table's Iceberg metadata lazily, on access. The first request
   // triggers generation and loses the race — you get an HTTP 400 for a metadata.json that
   // the directory listing just told us exists — and a moment later the same table reads
   // fine. So retry the WHOLE resolution rather than refetching the same URL: the second
   // pass re-lists metadata/, which may by then expose a newer version-hint and a different
-  // vN.metadata.json than the one that failed.
-  const RESOLVE_BACKOFF_MS = [400, 1200, 3000];
-
-  const sleep = ms => new Promise(r => setTimeout(r, ms));
-
+  // metadata.json than the one that failed.
   async function resolveIcebergRetrying(ws, root, label) {
     for (let attempt = 0; ; attempt++) {
       try {
@@ -373,10 +513,12 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
       } catch (e) {
         // 400/404 here means "not materialized yet", not "wrong". A missing metadata.json
         // in a directory that exists is the same story.
-        const transient = e.status === 400 || e.status === 404 || /No \S*metadata\.json/.test(e.message);
+        const transient = e.status === 400 || e.status === 404 ||
+                          /No \S*metadata\.json|No metadata\//.test(e.message);
         if (!transient || attempt >= RESOLVE_BACKOFF_MS.length) throw e;
+        const waited = RESOLVE_BACKOFF_MS.slice(0, attempt + 1).reduce((a, b) => a + b, 0);
         onStatus(`Waiting for Fabric to generate Iceberg metadata for ${label}… ` +
-                 `(attempt ${attempt + 2}/${RESOLVE_BACKOFF_MS.length + 1})`);
+                 `(${Math.round(waited / 1000)}s so far; conversion can take up to two minutes)`);
         await sleep(RESOLVE_BACKOFF_MS[attempt]);
       }
     }
@@ -384,36 +526,85 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
 
   async function resolveIceberg(ws, root) {
     const entries = await listPaths(ws, `${root}/metadata`, false);
-    if (!entries.length)
-      throw new Error(`No metadata/ under ${root} — is this an Iceberg table?`);
-    const jsons = entries.filter(e => /\.metadata\.json$/i.test(basename(e.name)));
-    if (!jsons.length) throw new Error(`No *.metadata.json under ${root}/metadata`);
+    if (!entries.length) throw new Error(`No metadata/ under ${root}`);
 
-    // Prefer the version-hint pointer; otherwise take the newest metadata.json.
-    let current = null;
+    // Prefer the version-hint pointer; otherwise take the highest version NUMBER. Not the
+    // newest lastModified: that has one-second resolution, so v9 and v10 written in the
+    // same second tie and the older snapshot can win with nothing said about it.
+    let hintText = null;
     const hint = entries.find(e => basename(e.name).toLowerCase() === "version-hint.text");
     if (hint) {
-      try {
-        const v = (await fetchText(dfsUrl(ws, hint.name))).trim();
-        current = jsons.find(j => {
-          const b = basename(j.name);
-          return b === `v${v}.metadata.json` || b === `${v}.metadata.json` || new RegExp(`^0*${v}-`).test(b);
-        });
-      } catch (_) { /* fall back to newest */ }
+      try { hintText = await fetchText(dfsUrl(ws, hint.name)); }
+      catch (_) { /* fall back to the highest version */ }
     }
-    if (!current) current = jsons.slice().sort((a, b) => a.mtime - b.mtime).pop();
+    const current = pickMetadata(entries, hintText);
+    if (!current) throw new Error(`No *.metadata.json under ${root}/metadata`);
 
-    const meta = await fetchJson(dfsUrl(ws, current.name));
-    const curId = String(meta["current-snapshot-id"]);
-    const snap = (meta.snapshots || []).find(s => String(s["snapshot-id"]) === curId)
-              || (meta.snapshots || []).slice().pop();
-    if (!snap || !snap["manifest-list"])
-      throw new Error("Iceberg metadata has no current snapshot / manifest-list");
     return {
-      manifestList: snap["manifest-list"],
+      ...readMetadataDoc(await fetchJson(dfsUrl(ws, current.name)), basename(current.name)),
       metadataFile: basename(current.name),
       metadataUrl: dfsUrl(ws, current.name),
     };
+  }
+
+  // The parts of an Iceberg metadata document this reader needs. Shared, because the same
+  // document arrives two ways: fetched from metadata/ over DFS, or handed over inline by
+  // the REST catalog's Get table. The validation belongs in one place either way.
+  function readMetadataDoc(meta, source) {
+    // Guessing is worse than failing here. Falling back to the last element of the
+    // snapshots array, as an earlier version did, opens the table against a snapshot that
+    // is not defined to be the current one and says nothing about having done so.
+    const curId = meta["current-snapshot-id"];
+    if (curId == null)
+      throw new Error(`${source} has no current-snapshot-id — the metadata is incomplete`);
+    const snap = (meta.snapshots || []).find(s => String(s["snapshot-id"]) === String(curId));
+    if (!snap)
+      throw new Error(`${source} names snapshot ${curId}, which is not in its snapshot list`);
+    if (!snap["manifest-list"]) throw new Error(`${source}: the current snapshot has no manifest-list`);
+
+    const schema = (meta.schemas || []).find(s => s["schema-id"] === meta["current-schema-id"])
+                || (meta.schemas || [])[0];
+
+    return {
+      manifestList: snap["manifest-list"],
+      // Column names of the table's CURRENT schema, used below to spot a physical/logical
+      // mismatch once the parquet files are unioned. Field IDs are in here too, but
+      // read_parquet matches by name, so honouring them needs a different reader.
+      schemaColumns: schema ? (schema.fields || []).map(f => f.name) : null,
+      totalRecords: Number((snap.summary || {})["total-records"]) || null,
+    };
+  }
+
+  // Where this table's directory actually is. A table found through the DFS walk already
+  // knows; one found through the catalog does not, because OneLake reports a synthetic
+  // "dbo" namespace for items that have no schemas of their own — so Tables/dbo/<t> may
+  // not exist while Tables/<t> does. Two cheap listings settle it, and only on the paths
+  // that need a directory at all (the fallback resolve, and the conversion log).
+  async function dfsRootFor(ws, item, t) {
+    if (t.root) return t.root;
+    const candidates = [`${item}/Tables/${t.schema}/${t.table}`, `${item}/Tables/${t.table}`];
+    for (const c of candidates) {
+      try { if ((await listPaths(ws, c, false)).length) { t.root = c; return c; } }
+      catch (_) { /* try the other shape */ }
+    }
+    t.root = candidates[0];
+    return t.root;
+  }
+
+  // When conversion hasn't produced metadata/, Fabric leaves a log saying why. Reading it
+  // turns "is this an Iceberg table?" into the actual reason.
+  async function readConversionLog(ws, root) {
+    for (const dir of [`${root}/metadata`, `${root}/_delta_log`]) {
+      let entries;
+      try { entries = await listPaths(ws, dir, false); } catch (_) { continue; }
+      const log = entries.find(e => !e.isDir && /conversion.*log.*\.txt$/i.test(basename(e.name)));
+      if (!log) continue;
+      try {
+        const text = (await fetchText(dfsUrl(ws, log.name))).trim();
+        if (text) return text.length > 400 ? text.slice(0, 400) + "…" : text;
+      } catch (_) { /* the log is best-effort; never let it mask the real error */ }
+    }
+    return null;
   }
 
   // ---------------------------------------------------------------------------
@@ -421,16 +612,21 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
   // Manifests are fetched to local buffers (WASM httpfs truncates larger avro files)
   // and each live entry (status != 2 DELETED) with content = 0 yields a parquet path.
   // ---------------------------------------------------------------------------
-  async function readAvroRows(ws, url, columnsSql) {
+  async function withAvroBuffer(bytes, run) {
     const name = `meta_${++_seq}.avro`;
-    await db.registerFileBuffer(name, await fetchAuthed(toHttps(ws, url)));
+    await db.registerFileBuffer(name, bytes);
     try {
-      const t = await conn.query(`SELECT ${columnsSql} FROM read_avro('${name}')`);
+      const t = await run(name);
       return t.toArray().map(r => r.toJSON());
     } finally { try { await db.dropFile(name); } catch (_) {} }
   }
 
-  // Returns { dataFiles, deletes } for one manifest.
+  async function readAvroRows(ws, url, columnsSql) {
+    return withAvroBuffer(await fetchAuthed(toHttps(ws, url)), name =>
+      conn.query(`SELECT ${columnsSql} FROM read_avro('${name}')`));
+  }
+
+  // Returns { dataFiles, posDeletes, eqDeletes } for one manifest.
   //
   // `content` distinguishes what a manifest entry points at: 0 = data, 1 = position
   // deletes, 2 = equality deletes. Filtering on it is not cosmetic — a delete file is a
@@ -438,37 +634,42 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
   // pos), so feeding its path to read_parquet() alongside the data files either fails
   // schema unification or yields junk rows. Format-version 1 manifests have no `content`
   // field at all and are data-only, hence the fallback query.
-  async function readManifest(ws, url) {
-    const name = `meta_${++_seq}.avro`;
-    await db.registerFileBuffer(name, await fetchAuthed(toHttps(ws, url)));
+  async function readManifest(bytes) {
+    let rows;
     try {
-      let rows;
-      try {
-        rows = (await conn.query(
-          `SELECT status, data_file.content AS content, data_file.file_path AS fp
-           FROM read_avro('${name}')`)).toArray().map(r => r.toJSON());
-      } catch (_) {
-        rows = (await conn.query(
-          `SELECT status, 0 AS content, data_file.file_path AS fp
-           FROM read_avro('${name}')`)).toArray().map(r => r.toJSON());
-      }
-      const live = rows.filter(r => Number(r.status) !== 2);   // drop DELETED entries
-      // String() is defensive normalization: these paths become registerFileURL() keys that
-      // have to compare equal to the SQL literals built from them, so don't let an Arrow
-      // value type reach either side.
-      const of = k => live.filter(r => Number(r.content || 0) === k).map(r => String(r.fp));
-      return { dataFiles: of(0), posDeletes: of(1), eqDeletes: of(2) };
-    } finally { try { await db.dropFile(name); } catch (_) {} }
+      rows = await withAvroBuffer(bytes, name => conn.query(
+        `SELECT status, data_file.content AS content, data_file.file_path AS fp
+         FROM read_avro('${name}')`));
+    } catch (_) {
+      rows = await withAvroBuffer(bytes, name => conn.query(
+        `SELECT status, 0 AS content, data_file.file_path AS fp
+         FROM read_avro('${name}')`));
+    }
+    const live = rows.filter(r => Number(r.status) !== 2);   // drop DELETED entries
+    // String() is defensive normalization: these paths become registerFileURL() keys that
+    // have to compare equal to the SQL literals built from them, so don't let an Arrow
+    // value type reach either side.
+    const of = k => live.filter(r => Number(r.content || 0) === k).map(r => String(r.fp));
+    return { dataFiles: of(0), posDeletes: of(1), eqDeletes: of(2) };
   }
 
   async function listDataFiles(ws, manifestList) {
-    const manifests = (await readAvroRows(ws, manifestList, "manifest_path")).map(r => r.manifest_path);
+    const manifests = (await readAvroRows(ws, manifestList, "manifest_path"))
+      .map(r => String(r.manifest_path));
+
     const files = [], posDeletes = [], eqDeletes = [];
-    for (const m of manifests) {
-      const r = await readManifest(ws, m);
-      files.push(...r.dataFiles);
-      posDeletes.push(...r.posDeletes);
-      eqDeletes.push(...r.eqDeletes);
+    // Fetch a batch in parallel — the network is the slow half — then parse it serially,
+    // because there is one connection. Batching rather than fetching everything up front
+    // keeps at most MAX_PARALLEL manifest buffers alive at a time.
+    for (let i = 0; i < manifests.length; i += MAX_PARALLEL) {
+      const buffers = await mapPool(manifests.slice(i, i + MAX_PARALLEL),
+                                    m => fetchAuthed(toHttps(ws, m)));
+      for (const bytes of buffers) {
+        const r = await readManifest(bytes);
+        files.push(...r.dataFiles);
+        posDeletes.push(...r.posDeletes);
+        eqDeletes.push(...r.eqDeletes);
+      }
     }
     return { files, posDeletes, eqDeletes };
   }
@@ -480,23 +681,23 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
   // is downloaded whole — waiting minutes for a table to transfer isn't a usable product,
   // so if range reads fail the app says so rather than quietly grinding.
   //
-  // DuckDB's own `iceberg` extension was tried and rejected. It loads in WASM, and its
-  // paths can be bridged by registering each abfs:// path as a file NAME aliased to the
-  // https URL (`allow_moved_paths` cannot — it refuses absolute URIs). Measured in the
-  // browser against a real Fabric table, iceberg_scan then returns the right rows... but
-  // `SELECT count(*)` answers 0, because it trusts the manifest statistics and Fabric's
-  // conversion writes record_count = 0. Silently wrong counts on the most common query in
-  // this app is a worse trade than the pruning it would buy — pruning those same zeroed
-  // statistics would not deliver anyway.
+  // DuckDB's own `iceberg` extension DOES load in WASM (it is published for wasm_eh and
+  // wasm_mvp), but it still cannot be used here. Fabric writes ABSOLUTE abfss:// URIs into
+  // the metadata; resolving those needs the `azure` filesystem, and `azure` has no WASM
+  // build — Microsoft's own DuckDB sample for OneLake Iceberg loads `azure` + `httpfs` for
+  // exactly this reason. `allow_moved_paths` doesn't rescue it either; it refuses absolute
+  // URIs. The only bridge is to pre-register every abfss:// path as a virtual file aliased
+  // to its https URL, and enumerating those paths IS the manifest walk below — so the
+  // extension would add a dependency without removing any work. (Measured against a real
+  // Fabric table it also answered SELECT count(*) as 0, trusting a manifest record_count
+  // of 0.) Revisit if OneLake ever writes relative paths, or `azure` ships for WASM.
   //
-  // The one thing the extension gave us for free, delete files, is handled here instead:
-  // position deletes via an anti-join in createView().
+  // Delete files are handled here instead: position deletes via an anti-join in
+  // createView(). Equality deletes are not applied, and say so.
   //
   // Idempotent: a table already loaded is returned from cache.
   // ---------------------------------------------------------------------------
   const labelFor = t => t.schema ? `${t.schema}.${t.table}` : t.table;
-
-  const sqlStr = v => "'" + String(v).replace(/'/g, "''") + "'";
 
   async function describe(ident) {
     return (await conn.query(`DESCRIBE ${ident}`)).toArray().map(r => {
@@ -507,155 +708,220 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
 
   // Data files are registered under generated `data_N.parquet` names, so read_parquet's
   // `filename` is that generated name — not the path an Iceberg delete file refers to.
-  // `mapTable` bridges the two (reg -> original path).
+  // `mapTable` bridges the two (reg -> normalized original path).
   //
   // Registering them under their original abfs:// path instead would remove the need for
   // that mapping, and DuckDB-WASM's file registry does resolve such aliases — but only
   // sometimes: it works in isolation and fails inside this engine's real sequence, after
   // the Avro manifests have been read through registered buffers. Generated names have no
   // such problem, so the mapping table is the cheap price of a reader that always works.
+  //
+  // union_by_name is not optional. Iceberg tables gain columns over time, and without it
+  // DuckDB takes the first file's schema and errors on every later one — which used to
+  // surface as an unrelated "reload the page" message and made the table unopenable.
   async function createView(ident, regs, delTable, mapTable) {
     const list = regs.map(sqlStr).join(", ");
     if (!delTable) {
-      await conn.query(`CREATE OR REPLACE VIEW ${ident} AS SELECT * FROM read_parquet([${list}])`);
+      await conn.query(
+        `CREATE OR REPLACE VIEW ${ident} AS
+         SELECT * FROM read_parquet([${list}], union_by_name = true)`);
       return;
     }
     // EXCLUDE keeps the two bookkeeping columns out of the table's visible schema.
     await conn.query(
       `CREATE OR REPLACE VIEW ${ident} AS
        SELECT * EXCLUDE (filename, file_row_number)
-       FROM read_parquet([${list}], filename = true, file_row_number = true) x
+       FROM read_parquet([${list}], union_by_name = true,
+                         filename = true, file_row_number = true) x
        WHERE NOT EXISTS (
-         SELECT 1 FROM ${delTable} d JOIN ${mapTable} m ON m.orig = d.file_path
+         SELECT 1 FROM ${delTable} d JOIN ${mapTable} m ON m.pk = d.pk
          WHERE m.reg = x.filename AND d.pos = x.file_row_number)`);
   }
 
-  // reg name -> original manifest path, so the anti-join can match a delete file's
-  // `file_path` against read_parquet's `filename`.
-  async function createMap(pairs) {
+  // reg name -> normalized original path, so the anti-join can match a delete file's
+  // `file_path` against the data file it refers to. Both sides go through pathKey():
+  // Iceberg does not promise the two strings are byte-identical — abfs vs abfss alone
+  // differs between writers — and an exact match that finds nothing silently resurrects
+  // every deleted row while still reporting the deletes as applied.
+  async function createMap(key, pairs) {
     const name = `__map_${++_seq}`;
-    const values = pairs.map(([reg, orig]) => `(${sqlStr(reg)}, ${sqlStr(orig)})`).join(", ");
+    const values = pairs.map(([reg, orig]) => `(${sqlStr(reg)}, ${sqlStr(pathKey(orig))})`).join(", ");
     await conn.query(
-      `CREATE OR REPLACE TABLE ${name} AS SELECT * FROM (VALUES ${values}) v(reg, orig)`);
+      `CREATE OR REPLACE TABLE ${name} AS SELECT * FROM (VALUES ${values}) v(reg, pk)`);
+    track(key).tables.push(name);
     return name;
   }
 
-  // Materialize the position-delete files (file_path, pos) into one small table.
-  async function loadPositionDeletes(ws, paths) {
+  // Materialize the position-delete files into one small table, keyed the same way.
+  async function loadPositionDeletes(key, ws, paths) {
+    const res = track(key);
     const regs = [];
     for (const p of paths) {
       const reg = `del_${++_seq}.parquet`;
       await db.registerFileURL(reg, toHttps(ws, p), duckdb.DuckDBDataProtocol.HTTP, false);
+      res.regs.push(reg);
       regs.push(reg);
     }
     const name = `__del_${++_seq}`;
     await conn.query(
       `CREATE OR REPLACE TABLE ${name} AS
-       SELECT file_path, pos FROM read_parquet([${regs.map(sqlStr).join(", ")}])`);
+       SELECT ${PATH_KEY_SQL("file_path")} AS pk, pos
+       FROM read_parquet([${regs.map(sqlStr).join(", ")}], union_by_name = true)`);
+    res.tables.push(name);
     return name;
   }
 
-  async function dropAll(regs) {
-    for (const n of regs) { try { await db.dropFile(n); } catch (_) {} }
+  // How many delete records point at a data file the map doesn't know about? Anything but
+  // zero means the anti-join is removing fewer rows than the snapshot says it should, and
+  // reporting "N delete file(s) applied" would be a lie.
+  async function countUnmatchedDeletes(delTable, mapTable) {
+    const r = await conn.query(
+      `SELECT count(*) AS n FROM ${delTable} d
+       WHERE NOT EXISTS (SELECT 1 FROM ${mapTable} m WHERE m.pk = d.pk)`);
+    return Number(r.toArray()[0].toJSON().n) || 0;
   }
 
   async function loadTable(lh, t) {
-    const label = labelFor(t);
-    if (loaded.has(label)) return loaded.get(label);
-    if (t.kind === "delta")
-      throw new Error(`${label} isn't queryable yet — OneLake hasn't published metadata for it.`);
+    // Keyed per lakehouse: the engine outlives the user's choice of one, and two
+    // lakehouses can both hold a dbo.sales.
+    const key = tableKey(lh, t);
+    if (loaded.has(key)) return loaded.get(key);
 
     const ws = lh.workspace;
-    onStatus(`Resolving ${label}…`);
-    const { manifestList } = await resolveIcebergRetrying(ws, t.root, label);
+    const label = labelFor(t);
+    const warnings = [];
 
-    let ident;
-    if (t.schema) {
-      await conn.query(`CREATE SCHEMA IF NOT EXISTS "${t.schema}"`);
-      ident = `"${t.schema}"."${t.table}"`;
-    } else {
-      ident = `"${t.table}"`;
+    onStatus(`Resolving ${label}…`);
+    let resolved;
+    try {
+      // The catalog hands the metadata over inline, so when it's reachable this is one
+      // request. If it fails for this table, the DFS walk is still there.
+      if (t.irc) {
+        try {
+          resolved = await ircResolve(lh, t);
+        } catch (e) {
+          console.info(`[engine] catalog could not resolve ${label} (${e.message}); reading metadata/ directly`);
+          resolved = await resolveIcebergRetrying(ws, await dfsRootFor(ws, lh.item, t), label);
+        }
+      } else {
+        resolved = await resolveIcebergRetrying(ws, t.root, label);
+      }
+    } catch (e) {
+      // "No metadata yet" is a state with three actionable causes, and Fabric records
+      // which one applies in a conversion log next to the table.
+      const log = await readConversionLog(ws, await dfsRootFor(ws, lh.item, t));
+      if (log) throw new Error(`${label} has no Iceberg metadata yet. Fabric's conversion log says: ${log}`);
+      throw new Error(
+        `${label} has no Iceberg metadata. OneLake writes it on demand and conversion can take ` +
+        `up to two minutes, but if it never appears then Delta-to-Iceberg conversion is probably ` +
+        `not enabled for this tenant or workspace. (${e.message})`);
     }
 
+    const ident = t.schema
+      ? `${quoteIdent(t.schema)}.${quoteIdent(t.table)}`
+      : quoteIdent(t.table);
+    if (t.schema) await conn.query(`CREATE SCHEMA IF NOT EXISTS ${quoteIdent(t.schema)}`);
+    viewNames.set(ident, key);
+
     onStatus(`Reading manifests for ${label}…`);
-    const { files: paths, posDeletes, eqDeletes } = await listDataFiles(ws, manifestList);
+    const { files: paths, posDeletes, eqDeletes } = await listDataFiles(ws, resolved.manifestList);
     if (!paths.length) throw new Error(`${label}: current snapshot has no data files`);
 
-    // Map each data file to a generated name pointing at its https URL, so DuckDB
-    // range-reads it instead of us downloading it whole.
-    const regs = [], pairs = [];
+    const res = track(key);
+    res.ident = ident;
     let columns;
     onStatus(`Opening ${label} — ${paths.length} file(s)…`);
     try {
+      // Map each data file to a generated name pointing at its https URL, so DuckDB
+      // range-reads it instead of us downloading it whole.
+      const regs = [], pairs = [];
       for (const p of paths) {
         const reg = `data_${++_seq}.parquet`;
         await db.registerFileURL(reg, toHttps(ws, p), duckdb.DuckDBDataProtocol.HTTP, false);
+        res.regs.push(reg);
         regs.push(reg);
         pairs.push([reg, p]);
       }
-      const delTable = posDeletes.length ? await loadPositionDeletes(ws, posDeletes) : null;
-      const mapTable = delTable ? await createMap(pairs) : null;
+      const delTable = posDeletes.length ? await loadPositionDeletes(key, ws, posDeletes) : null;
+      const mapTable = delTable ? await createMap(key, pairs) : null;
       await createView(ident, regs, delTable, mapTable);
       columns = await describe(ident);   // forces a real footer read — this is the probe
+
+      if (delTable) {
+        const unmatched = await countUnmatchedDeletes(delTable, mapTable);
+        if (unmatched)
+          warnings.push(`${unmatched} delete record(s) point at data files that aren't in this ` +
+                        `snapshot and could not be applied — some deleted rows may still appear`);
+      }
     } catch (e) {
-      await dropAll(regs);
+      await release(key);
       // Deliberately no whole-file download tier: on a big table that means minutes of
-      // waiting and the table in browser memory. Fail with the cause instead.
-      throw new Error(
-        `Could not read ${label} over HTTP range requests: ${e.message}. ` +
-        `This usually means the service worker isn't controlling the page (reload once) ` +
-        `or it has no OneLake token yet.`);
+      // waiting and the table in browser memory. Report the cause — and only the cause.
+      // This used to append a guess about the service worker to every failure here,
+      // including schema mismatches and expired tokens, and sent people off reloading.
+      throw new Error(`Could not open ${label}: ${e.message}`);
     }
 
-    const info = { label, ident, columns, fileCount: paths.length,
-                   posDeletes: posDeletes.length, eqDeletes: eqDeletes.length };
+    // read_parquet matches columns by NAME; Iceberg identifies them by field ID. An
+    // Iceberg rename is metadata-only, so the old physical name survives in older files
+    // and turns up here as a column the current schema doesn't have. Merging them needs a
+    // field-ID-aware reader, which this isn't — but we can decline to pretend it's fine.
+    if (resolved.schemaColumns) {
+      const known = new Set(resolved.schemaColumns);
+      const extra = columns.map(c => c.name).filter(n => !known.has(n));
+      if (extra.length)
+        warnings.push(`column(s) ${extra.join(", ")} are in the data files but not in the table's ` +
+                      `current schema — it was renamed or had columns dropped, so values may be ` +
+                      `split across the old and new names`);
+    }
+    if (eqDeletes.length)
+      warnings.push(`${eqDeletes.length} equality-delete file(s) are NOT applied — deleted rows may still appear`);
 
-    loaded.set(label, info);
+    const info = { label, ident, columns, fileCount: paths.length,
+                   posDeletes: posDeletes.length, eqDeletes: eqDeletes.length,
+                   totalRecords: resolved.totalRecords, warnings };
+
+    loaded.set(key, info);
     onStatus(describeLoad(info));
     return info;
   }
 
-  // One sentence about how the table was opened. Position deletes are applied silently —
-  // that is just correctness, not news. Equality deletes are NOT applied, so those get a
-  // warning; saying nothing would mean quietly returning rows the table no longer has.
-  function describeLoad({ label, fileCount, posDeletes, eqDeletes, file, ext, bytes }) {
+  // One sentence about how the table was opened. Position deletes that applied cleanly are
+  // not news — that is just correctness. Anything in `warnings` is a correctness caveat,
+  // and rendering it as a warning rather than as success is the caller's job.
+  function describeLoad({ label, fileCount, posDeletes, file, ext, bytes, totalRecords }) {
     if (file) {
       if (PARQUET_EXTS.has(ext)) return `${label} — read on demand`;
       if (isTextExt(ext)) return `${label} — read in full as text (${fmtBytes(bytes)}), one row per line`;
       return `${label} — ${ext.toUpperCase()} is read in full (${fmtBytes(bytes)}); no range reads for this format`;
     }
     let s = `${label} — ${fileCount} file(s), read on demand`;
+    if (totalRecords != null) s += `, ${totalRecords.toLocaleString("en")} row(s)`;
     if (posDeletes) s += `, ${posDeletes} delete file(s) applied`;
-    if (eqDeletes) s += `. WARNING: ${eqDeletes} equality-delete file(s) NOT applied — ` +
-                        `deleted rows may still appear`;
     return s;
   }
 
   // ---------------------------------------------------------------------------
   // Read-only SQL. One statement, must start with a read keyword.
   // ---------------------------------------------------------------------------
-  const READ_START = /^\s*(with|select|describe|show|explain|summarize|pragma|values|from|table|pivot|unpivot)\b/i;
-
-  function stripComments(sql) {
-    return String(sql)
-      .replace(/\/\*[\s\S]*?\*\//g, " ")
-      .replace(/--[^\n]*/g, " ")
-      .trim()
-      .replace(/;+\s*$/, "");
-  }
-
+  // The parsing and the guard live in paths.js, where they are tested: doing this with a
+  // pair of regexes used to eat a /* */ that was part of a string value — changing the
+  // result set with no error at all — and reject a perfectly legal SELECT 'a;b'.
   async function runSql(sql) {
-    const clean = stripComments(sql);
-    if (!clean) throw new Error("Empty query.");
-    if (clean.includes(";"))
-      throw new Error("Run one statement at a time (no ';').");
-    if (!READ_START.test(clean))
-      throw new Error("Read-only: only SELECT / WITH / DESCRIBE / SHOW / EXPLAIN / SUMMARIZE queries are allowed.");
+    const clean = prepareReadOnlySql(sql);
     const res = await conn.query(clean);
     const fields = res.schema.fields.map(f => f.name);
     const types = res.schema.fields.map(f => arrowTypeName(f.type));
-    const rows = res.toArray().map(r => normalizeRow(r.toJSON(), fields));
-    return { fields, types, rows, numRows: Number(res.numRows) };
+
+    // Cap what gets turned into JS objects. Everything downstream — the DOM table, the CSV
+    // — works off this array, so an uncapped SELECT * on a large table takes the tab out.
+    const rows = [];
+    let truncated = false;
+    for (const r of res) {
+      if (rows.length >= MAX_ROWS) { truncated = true; break; }
+      rows.push(normalizeRow(r.toJSON(), fields));
+    }
+    return { fields, types, rows, numRows: Number(res.numRows), truncated, limit: MAX_ROWS };
   }
 
   // Results come back as Arrow, so the column types are Arrow's, not DuckDB's. Name them
@@ -683,28 +949,12 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
     }
   }
 
-  // ---------------------------------------------------------------------------
-  // Small utilities
-  // ---------------------------------------------------------------------------
-  function fmtBytes(n) {
-    if (!(n > 0)) return "unknown size";
-    if (n < 1e3) return `${n} B`;
-    if (n < 1e6) return `${Math.round(n / 1e3)} KB`;
-    if (n < 1e9) return `${(n / 1e6).toFixed(1)} MB`;
-    return `${(n / 1e9).toFixed(2)} GB`;
-  }
-
   function normalizeRow(obj, fields) {
     const out = {};
-    for (const f of fields) {
-      let v = obj[f];
-      if (typeof v === "bigint") v = Number(v);
-      else if (v != null && typeof v === "object" && typeof v.toJSON === "function") v = v.toJSON();
-      out[f] = v;
-    }
+    for (const f of fields) out[f] = normalizeValue(obj[f]);
     return out;
   }
 
-  return { init, parseLakehouse, listWorkspaces, listItems, listTables, loadTable,
+  return { init, reset, parseLakehouse, listWorkspaces, listItems, listTables, loadTable,
            listFiles, loadFile, runSql, describeLoad, fmtBytes };
 }
