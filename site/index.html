@@ -186,6 +186,9 @@
     <div class="spacer"></div>
     <a class="ghLink" href="https://github.com/djouallah/onelake_studio" target="_blank" rel="noopener"
        title="Source on GitHub">GitHub ↗</a>
+    <!-- Which build this page is actually running (browser caches lie). Filled by app.js
+         from version.js; links to the commit. -->
+    <a class="ghLink" id="verBox" target="_blank" rel="noopener"></a>
     <div id="userBox"></div>
   </header>
 
@@ -231,6 +234,7 @@
         <a href="https://github.com/djouallah/onelake_studio#signing-in"
            target="_blank" rel="noopener">how that works</a>.
       </div>
+      <div class="gateFoot" id="gateVersion"></div>
     </div>
   </div>
 
@@ -240,6 +244,9 @@
   <!-- config.js: tracked in git; holds the Entra SPA clientId + authority (public
        identifiers, no secret). Missing or blank -> the app says so instead of 401-ing. -->
   <script src="config.js"></script>
+  <!-- version.js: build.mjs stamps the commit + build time into the deployed copy; the
+       tracked file says "dev". Shown in the header and the sign-in gate. -->
+  <script src="version.js"></script>
   <script type="module" src="app.js"></script>
 </body>
 </html>

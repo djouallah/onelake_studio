@@ -646,6 +646,28 @@ function initSidebarToggle() {
 }
 
 // ---------------------------------------------------------------------------
+// Version stamp — which build this page is actually running.
+// ---------------------------------------------------------------------------
+// build.mjs writes the commit + build time into version.js on deploy (the tracked file
+// says "dev"). Shown in the header and on the sign-in gate, and linked to the commit,
+// because a browser's cache will happily serve last week's app under today's URL and
+// nothing else on the page would give that away.
+function showVersion() {
+  const v = window.ONELAKE_STUDIO_VERSION || {};
+  const commit = v.commit || 'unknown';
+  const when = v.builtAt ? new Date(v.builtAt) : null;
+  const stamp = commit + (when ? ` · ${when.toISOString().slice(0, 16).replace('T', ' ')} UTC` : '');
+
+  const box = $('verBox');
+  box.textContent = commit;
+  box.title = `Build ${stamp}`;
+  if (commit !== 'dev' && commit !== 'unknown')
+    box.href = `${DOCS}/commit/${encodeURIComponent(commit)}`;
+
+  $('gateVersion').textContent = `Build ${stamp}`;
+}
+
+// ---------------------------------------------------------------------------
 // Utilities
 // ---------------------------------------------------------------------------
 function cellText(v) {
@@ -671,6 +693,7 @@ const EMBEDDED = window.self !== window.top;   // inside an embedding iframe?
 $('byoLink').onclick = () => showByoForm();
 $('consentLink').onclick = () => showConsentHelp();
 initSidebarToggle();
+showVersion();
 (async () => {
   try {
     if (await auth.ensureSession(false)) {
