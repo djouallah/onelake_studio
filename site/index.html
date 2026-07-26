@@ -128,12 +128,22 @@
     table.results td.num { text-align: right; font-variant-numeric: tabular-nums; }
     table.results tr:nth-child(even) td { background: #10151c; }
 
-    #status { padding: 0.4rem 0.9rem; border-top: 1px solid var(--border); background: var(--panel2); color: var(--muted); font-size: 0.82rem; }
+    /* Status bar: the message on the left, the build stamp pinned on the right. The stamp
+       lives HERE because a signed-in session never sees the gate — the bottom bar is the
+       one place the running version is always on screen. */
+    .statusBar {
+      display: flex; justify-content: space-between; align-items: center; gap: 1rem;
+      padding: 0.4rem 0.9rem; border-top: 1px solid var(--border); background: var(--panel2);
+      font-size: 0.82rem;
+    }
+    #status { color: var(--muted); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     #status.error { color: var(--err); }
     #status.ok { color: var(--ok); }
     /* A load that came with caveats — skipped equality deletes, a truncated result — is
        not a success, and must not be shown in the success colour. */
     #status.warn { color: var(--warn); }
+    #statusVer { color: var(--muted); text-decoration: none; white-space: nowrap; }
+    #statusVer:hover { color: var(--accent2); }
     .hint { color: var(--muted); padding: 1.2rem; }
 
     /* Auth gate */
@@ -218,7 +228,10 @@
     </section>
   </main>
 
-  <div id="status">Ready.</div>
+  <div class="statusBar">
+    <div id="status">Ready.</div>
+    <a id="statusVer" target="_blank" rel="noopener"></a>
+  </div>
 
   <div id="authGate">
     <div class="gateCard">

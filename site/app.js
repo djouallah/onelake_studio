@@ -658,11 +658,20 @@ function showVersion() {
   const when = v.builtAt ? new Date(v.builtAt) : null;
   const stamp = commit + (when ? ` · ${when.toISOString().slice(0, 16).replace('T', ' ')} UTC` : '');
 
+  const link = commit !== 'dev' && commit !== 'unknown'
+    ? `${DOCS}/commit/${encodeURIComponent(commit)}` : null;
+
+  // Three homes: the header, the gate footer, and — the one a signed-in session actually
+  // sees — the status bar, where nothing ever overwrites it.
   const box = $('verBox');
   box.textContent = commit;
   box.title = `Build ${stamp}`;
-  if (commit !== 'dev' && commit !== 'unknown')
-    box.href = `${DOCS}/commit/${encodeURIComponent(commit)}`;
+  if (link) box.href = link;
+
+  const bar = $('statusVer');
+  bar.textContent = `build ${commit}`;
+  bar.title = `Build ${stamp} — click to see this commit on GitHub`;
+  if (link) bar.href = link;
 
   $('gateVersion').textContent = `Build ${stamp}`;
 }
