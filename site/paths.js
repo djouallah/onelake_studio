@@ -156,12 +156,13 @@ for (const base of ["csv", "tsv", "json", "jsonl", "ndjson", ...TEXT_EXTS])
 // The only formats with a footer and row groups, i.e. the only ones actually range-read.
 export const PARQUET_EXTS = new Set(["parquet", "parq", "pq"]);
 
-// DuckDB native database files. Not in FILE_READERS because they aren't opened through a
-// reader function — the engine ATTACHes them read-only and the file's own tables become
-// queryable. Block-structured, so DuckDB range-reads them like parquet rather than
-// pulling the whole file. Deliberately NOT ".db": that extension is as often SQLite,
-// and offering a file that then fails to attach is worse than not offering it.
-export const DB_EXTS = new Set(["duckdb", "ddb"]);
+// Database files. Not in FILE_READERS because they aren't opened through a reader
+// function — the engine ATTACHes them read-only and the file's own tables become
+// queryable. Block/page-structured, so DuckDB range-reads them like parquet rather than
+// pulling the whole file. The extension does NOT decide the engine: ATTACH sniffs the
+// file content (SQLite announces itself in its header), so a DuckDB database stored as
+// .db and a real SQLite file both work — which matters because .db is common for both.
+export const DB_EXTS = new Set(["duckdb", "ddb", "db", "sqlite", "sqlite3"]);
 
 // A codec suffix is part of the extension — "csv.gz", not "gz" — because it selects both
 // the reader and the decompression. Anything else (a .tar.gz) falls through to the
@@ -321,6 +322,18 @@ export const fileKey = (lh, file) => `${lh.workspace}/${lh.item}#file:${strip(fi
 // A DuckDB-safe identifier stem. Collisions are still possible (a/b and a-b both become
 // a_b), so callers must make the result unique before creating a view with it.
 export const sanitizeIdent = s => String(s).replace(/[^A-Za-z0-9_]/g, "_");
+
+// SQLite files open with the 16-byte header "SQLite format 3\0". This is how a database
+// file's ENGINE is decided — never by extension, since people store DuckDB databases as
+// .db too. SQLite is read by sql.js and copied into DuckDB tables; anything else
+// attaches as a lazily range-read DuckDB database.
+const SQLITE_MAGIC = "SQLite format 3";
+export function isSqliteHeader(bytes) {
+  if (!bytes || bytes.length < SQLITE_MAGIC.length) return false;
+  for (let i = 0; i < SQLITE_MAGIC.length; i++)
+    if (bytes[i] !== SQLITE_MAGIC.charCodeAt(i)) return false;
+  return true;
+}
 
 // -----------------------------------------------------------------------------
 // Values

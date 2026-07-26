@@ -150,6 +150,53 @@ try {
     fail("attach harness: " + String(e) + (e && e.stack ? " @ " + String(e.stack).split("\n")[1] : ""));
   }
 
+  // --- 6. SQLite file served as .db: sniff, then sql.js -> DuckDB copy ---------
+  // DuckDB's own sqlite extension is a dead end in this WASM build: its VFS cannot open
+  // a registered buffer, a registered HTTP URL, or a direct URL through httpfs (all
+  // measured to fail with SQLITE_CANTOPEN). So production opens SQLite files with
+  // sql.js and copies each table into DuckDB via NDJSON — which is what this mirrors,
+  // using the same SQL shapes as loadSqliteFile().
+  try {
+    const bytes = new Uint8Array(await (await fetch("/__sample_sqlite.db")).arrayBuffer());
+    const { isSqliteHeader } = paths;
+    if (isSqliteHeader(bytes)) pass("header sniff identifies the SQLite file");
+    else fail("header sniff missed 'SQLite format 3'");
+    const duckBytes = new Uint8Array(await (await fetch("/__sample.duckdb", { headers: { Range: "bytes=0-15" } })).arrayBuffer());
+    if (!isSqliteHeader(duckBytes)) pass("header sniff does not misfire on a DuckDB file");
+    else fail("header sniff misidentified the DuckDB file as SQLite");
+
+    const sqljsMod = await import("https://cdn.jsdelivr.net/npm/sql.js@1.13.0/+esm");
+    const initSqlJs = sqljsMod.default || sqljsMod;
+    const SQL = await initSqlJs({ locateFile: f => `https://cdn.jsdelivr.net/npm/sql.js@1.13.0/dist/${f}` });
+    log("s6: sql.js ready");
+    const sdb = new SQL.Database(bytes);
+
+    const master = sdb.exec(`SELECT name FROM sqlite_master WHERE type IN ('table','view')
+                             AND name NOT LIKE 'sqlite_%' ORDER BY name`);
+    const names = (master[0] ? master[0].values : []).map(v => String(v[0]));
+    if (names.join(",") === "s1") pass("sql.js lists the SQLite tables");
+    else fail(`sql.js found [${names.join(",")}], want [s1]`);
+
+    await conn.query(`CREATE SCHEMA IF NOT EXISTS "sqfix"`);
+    const data = sdb.exec(`SELECT * FROM "s1"`)[0];
+    const lines = data.values.map(row => JSON.stringify(Object.fromEntries(
+      data.columns.map((c, i) => [c, row[i] instanceof Uint8Array ? null : row[i]])))).join("\n");
+    await db.registerFileBuffer("sqfix.json", new TextEncoder().encode(lines));
+    await conn.query(`CREATE OR REPLACE TABLE "sqfix"."s1" AS
+                      SELECT * FROM read_json('sqfix.json', format='newline_delimited')`);
+    sdb.close();
+
+    const r7 = await conn.query(`SELECT count(*) AS n, max(s) AS m FROM "sqfix"."s1"`);
+    const j = r7.toArray()[0].toJSON();
+    if (Number(j.n) === 3 && j.m === "c") pass("SQLite table copied into DuckDB and queryable");
+    else fail(`sqlite copy got n=${j.n} m=${j.m}, want n=3 m=c`);
+
+    await conn.query(`DROP SCHEMA "sqfix" CASCADE`);
+    pass("DROP SCHEMA CASCADE works (release path)");
+  } catch (e) {
+    fail("sqlite harness: " + String(e) + (e && e.stack ? " @ " + String(e.stack).split("\n")[1] : ""));
+  }
+
   log("DONE");
   document.title = "DONE";
 } catch (e) {

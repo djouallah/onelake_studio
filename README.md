@@ -87,9 +87,12 @@ Delta-to-Iceberg setting being off).
   Added columns are handled (`union_by_name`).
 - **No Iceberg-level pruning** — Fabric's conversion writes zeroed manifest statistics, so there'd be
   nothing to prune on. Pruning is whatever parquet row-group stats and column projection give you.
-- **Only parquet and `.duckdb` databases are read lazily.** A DuckDB database file under `Files/` is
-  ATTACHed read-only and block-read on demand; its tables are queryable as `<name>.<schema>.<table>`.
-  CSV, JSON, avro, xlsx and plain text have no such structure, so DuckDB pulls the whole file; the
+- **Only parquet and DuckDB databases are read lazily.** A database file under `Files/` (`.duckdb`,
+  `.ddb`, `.db`, `.sqlite`) is opened by sniffing its header, never its extension. A DuckDB file is
+  ATTACHed read-only and block-read on demand — tables queryable as `<name>.<schema>.<table>`. A SQLite
+  file is read by sql.js and **copied** into DuckDB tables (`<name>.<table>`, capped at 200 MB, BLOBs
+  come through as NULL) — DuckDB's own sqlite extension cannot open any browser-supplied file in WASM.
+  CSV, JSON, avro, xlsx and plain text have no block structure either, so DuckDB pulls those whole; the
   status line says so rather than claiming "read on demand".
 - **Results are capped at 200,000 materialised rows** (the status line says when a query hits it) — the
   browser tab is the database, and an uncapped `SELECT *` on a 50M-row table would take it down.

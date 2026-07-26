@@ -30,7 +30,7 @@ import * as duckdb from "https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.33.1
 
 import {
   DFS_HOST, strip, basename, dfsBase, dfsUrl, toHttps, pathKey, PATH_KEY_SQL,
-  parseLakehouse, fileExt, readerFor, PARQUET_EXTS, DB_EXTS, isTextExt,
+  parseLakehouse, fileExt, readerFor, PARQUET_EXTS, DB_EXTS, isSqliteHeader, isTextExt,
   sqlStr, quoteIdent, prepareReadOnlySql,
   pickMetadata, tableKey, fileKey, sanitizeIdent,
   normalizeValue, fmtBytes,
@@ -129,15 +129,15 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
   // which a new token will not fix — and treating it as expiry was actively harmful:
   // refreshing drops the token first, including the copy the service worker is using for
   // the tables the user CAN read. auth.refresh() coalesces concurrent callers itself.
-  async function authedFetch(url) {
-    const headers = auth.getHeaders();
+  async function authedFetch(url, extraHeaders) {
+    const headers = { ...auth.getHeaders(), ...extraHeaders };
     const r = await fetch(url, { headers });
     if (r.status !== 401) return r;
     // Hand back the credential that actually failed. Requests go out in parallel, so a
     // 401 raised against an old token can land after someone else already renewed, and
     // refresh() needs to be able to tell that apart from "the current token is dead".
     return (await auth.refresh(headers.Authorization))
-      ? fetch(url, { headers: auth.getHeaders() })
+      ? fetch(url, { headers: { ...auth.getHeaders(), ...extraHeaders } })
       : r;
   }
 
@@ -269,7 +269,7 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
   // deleted row, for as long as the tab stayed open.
   function track(key) {
     let r = resources.get(key);
-    if (!r) { r = { ident: null, regs: [], tables: [], attachments: [] }; resources.set(key, r); }
+    if (!r) { r = { ident: null, regs: [], tables: [], attachments: [], schemas: [] }; resources.set(key, r); }
     return r;
   }
 
@@ -278,6 +278,8 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
     if (r) {
       if (r.ident) { try { await conn.query(`DROP VIEW IF EXISTS ${r.ident}`); } catch (_) {} }
       for (const t of r.tables) { try { await conn.query(`DROP TABLE IF EXISTS ${t}`); } catch (_) {} }
+      // Schemas holding copied-in database tables: CASCADE takes the tables with them.
+      for (const s of (r.schemas || [])) { try { await conn.query(`DROP SCHEMA IF EXISTS ${quoteIdent(s)} CASCADE`); } catch (_) {} }
       // Attached database files: DETACH before dropping the file registration under them.
       for (const a of (r.attachments || [])) { try { await conn.query(`DETACH ${quoteIdent(a)}`); } catch (_) {} }
       for (const n of r.regs) { try { await db.dropFile(n); } catch (_) {} }
@@ -329,8 +331,8 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
       throw new Error(`${file.name}: this DuckDB-WASM build has no 'excel' extension, so .xlsx can't be read.`);
     if (!reader)
       throw new Error(`${file.name}: unsupported file type — parquet, csv/tsv/txt, json/jsonl/ndjson, ` +
-                      `avro, xlsx, .duckdb databases and plain text (sql, yml, md, log, …) are ` +
-                      `readable; text formats also read as .gz/.zst.`);
+                      `avro, xlsx, database files (.duckdb/.db/.sqlite) and plain text ` +
+                      `(sql, yml, md, log, …) are readable; text formats also read as .gz/.zst.`);
 
     const res = track(key);
     const reg = `file_${++_seq}.${ext}`;
@@ -353,20 +355,35 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
     }
   }
 
-  // A DuckDB database file is not read through a reader function — it is ATTACHed
-  // read-only, and its own tables become queryable as alias.schema.table. The file is
-  // registered as an HTTP URL first, so DuckDB range-reads the blocks a query touches
-  // (a .duckdb file has block structure, like parquet has row groups) instead of the
-  // whole database being downloaded.
+  // A database file's ENGINE is decided by sniffing the first 16 bytes, never by
+  // extension (people store DuckDB databases as .db, and .db is also SQLite's usual
+  // name):
+  //   - DuckDB file  -> registered as an HTTP URL and ATTACHed read-only; block-read on
+  //     demand like parquet. Its tables are queryable as alias.schema.table.
+  //   - SQLite file  -> opened with sql.js and COPIED into DuckDB tables under a schema
+  //     named after the file. Not a shortcut: DuckDB's sqlite extension loads in this
+  //     WASM build but its VFS cannot open ANY file the app can supply — registered
+  //     buffer, registered HTTP URL, or a direct URL through httpfs were all measured to
+  //     fail with SQLITE_CANTOPEN — so the official SQLite build does the reading and
+  //     DuckDB gets a copy. SQLite files are the xlsx of databases: page-based, usually
+  //     small, meant to be local; the copy is capped rather than unbounded.
   async function loadDatabaseFile(lh, file, key) {
     const res = track(key);
-    const reg = `dbfile_${++_seq}.duckdb`;
-    await db.registerFileURL(reg, dfsUrl(lh.workspace, file.path), duckdb.DuckDBDataProtocol.HTTP, false);
-    res.regs.push(reg);
+    const ext = fileExt(file.name);
+    const url = dfsUrl(lh.workspace, file.path);
+
+    const head = await authedFetch(url, { Range: "bytes=0-15" });
+    if (!head.ok) throw new Error(`Could not read ${file.name} (HTTP ${head.status})`);
+    const sqlite = isSqliteHeader(new Uint8Array(await head.arrayBuffer()));
 
     // The alias is how the user names the database in SQL, so derive it from the file
     // name; uniqueView guards it against colliding with an existing view or alias.
     const alias = uniqueView(key, basename(file.name).replace(/\.[^.]+$/, ""));
+    if (sqlite) return loadSqliteFile(file, key, url, alias);
+
+    const reg = `dbfile_${++_seq}.${ext}`;
+    await db.registerFileURL(reg, url, duckdb.DuckDBDataProtocol.HTTP, false);
+    res.regs.push(reg);
     try {
       // READ_ONLY is not optional: the file lives in OneLake and the app never writes.
       await conn.query(`ATTACH ${sqlStr(reg)} AS ${quoteIdent(alias)} (READ_ONLY)`);
@@ -388,8 +405,9 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
       const columns = first ? await describe(first) : [];
 
       const info = { label: file.name, ident: first, columns, fileCount: 1,
-                     posDeletes: 0, eqDeletes: 0, file: true, bytes: file.bytes, ext: fileExt(file.name),
-                     db: true, dbAlias: alias, dbTables: tables, warnings: [] };
+                     posDeletes: 0, eqDeletes: 0, file: true, bytes: file.bytes, ext,
+                     db: true, dbAlias: alias, dbTables: tables, dbEngine: "DuckDB",
+                     warnings: [] };
       if (!first)
         info.warnings.push(`${alias} attached but contains no tables or views`);
       loaded.set(key, info);
@@ -398,6 +416,92 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
     } catch (e) {
       await release(key);
       throw new Error(`Could not attach ${file.name}: ${e.message}`);
+    }
+  }
+
+  // SQLite path: sql.js reads the file, DuckDB gets a copy. Pinned like every other CDN
+  // dependency. Each table lands as <alias>.<table> (a schema, not an attached database,
+  // so the qualifier is two-part). BLOBs don't survive the JSON hop and are nulled with
+  // a warning rather than silently mangled.
+  const SQLJS_VERSION = "1.13.0";
+  const SQLJS_ESM = `https://cdn.jsdelivr.net/npm/sql.js@${SQLJS_VERSION}/+esm`;
+  const SQLJS_DIST = `https://cdn.jsdelivr.net/npm/sql.js@${SQLJS_VERSION}/dist/`;
+  const SQLITE_MAX_BYTES = 200e6;
+  let _sqljs = null;
+
+  const sqliteQuote = s => '"' + String(s).replace(/"/g, '""') + '"';
+
+  async function loadSqliteFile(file, key, url, alias) {
+    if (file.bytes > SQLITE_MAX_BYTES)
+      throw new Error(`${file.name} is ${fmtBytes(file.bytes)} — over the ${fmtBytes(SQLITE_MAX_BYTES)} ` +
+                      `cap for copying a SQLite file into the browser.`);
+    onStatus(`Fetching ${file.name} (${fmtBytes(file.bytes)}) — SQLite is read in full…`);
+    const bytes = await fetchAuthed(url);
+
+    if (!_sqljs) {
+      const mod = await import(SQLJS_ESM);
+      const initSqlJs = mod.default || mod;
+      _sqljs = await initSqlJs({ locateFile: f => SQLJS_DIST + f });
+    }
+    const sdb = new _sqljs.Database(bytes);
+    const res = track(key);
+    const warnings = [];
+    try {
+      const master = sdb.exec(
+        `SELECT name FROM sqlite_master WHERE type IN ('table','view')
+         AND name NOT LIKE 'sqlite_%' ORDER BY name`);
+      const names = (master[0] ? master[0].values : []).map(v => String(v[0]));
+
+      await conn.query(`CREATE SCHEMA IF NOT EXISTS ${quoteIdent(alias)}`);
+      res.schemas.push(alias);
+
+      const tables = [];
+      onStatus(`Copying ${names.length} table(s) from ${file.name} into DuckDB…`);
+      for (const t of names) {
+        const ident = `${quoteIdent(alias)}.${quoteIdent(t)}`;
+        const data = sdb.exec(`SELECT * FROM ${sqliteQuote(t)}`);
+        if (!data.length) {
+          // No rows: keep the shape anyway, from the SQLite schema.
+          const pragma = sdb.exec(`PRAGMA table_info(${sqliteQuote(t)})`);
+          const cols = (pragma[0] ? pragma[0].values : []).map(v => `${quoteIdent(String(v[1]))} VARCHAR`);
+          if (!cols.length) continue;
+          await conn.query(`CREATE OR REPLACE TABLE ${ident} (${cols.join(", ")})`);
+          tables.push(ident);
+          continue;
+        }
+        const { columns, values } = data[0];
+        let blobs = false;
+        const lines = values.map(row => JSON.stringify(Object.fromEntries(
+          columns.map((c, i) => {
+            let v = row[i];
+            if (v instanceof Uint8Array) { blobs = true; v = null; }
+            return [c, v];
+          })))).join("\n");
+        if (blobs) warnings.push(`${t}: BLOB values are not carried over and read as NULL`);
+
+        const jn = `sqjson_${++_seq}.json`;
+        await db.registerFileBuffer(jn, new TextEncoder().encode(lines));
+        try {
+          await conn.query(`CREATE OR REPLACE TABLE ${ident} AS
+                            SELECT * FROM read_json(${sqlStr(jn)}, format='newline_delimited')`);
+        } finally { try { await db.dropFile(jn); } catch (_) {} }
+        tables.push(ident);
+      }
+
+      const first = tables[0] || null;
+      const columns = first ? await describe(first) : [];
+      const info = { label: file.name, ident: first, columns, fileCount: 1,
+                     posDeletes: 0, eqDeletes: 0, file: true, bytes: file.bytes, ext: fileExt(file.name),
+                     db: true, dbAlias: alias, dbTables: tables, dbEngine: "SQLite", warnings };
+      if (!first) info.warnings.push(`${alias}: the SQLite file has no tables`);
+      loaded.set(key, info);
+      onStatus(describeLoad(info));
+      return info;
+    } catch (e) {
+      await release(key);
+      throw new Error(`Could not read ${file.name}: ${e.message}`);
+    } finally {
+      try { sdb.close(); } catch (_) {}
     }
   }
 
@@ -941,10 +1045,15 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
   // One sentence about how the table was opened. Position deletes that applied cleanly are
   // not news — that is just correctness. Anything in `warnings` is a correctness caveat,
   // and rendering it as a warning rather than as success is the caller's job.
-  function describeLoad({ label, fileCount, posDeletes, file, ext, bytes, totalRecords, db, dbAlias, dbTables }) {
+  function describeLoad({ label, fileCount, posDeletes, file, ext, bytes, totalRecords,
+                          db, dbAlias, dbTables, dbEngine }) {
     if (db) {
       const n = (dbTables || []).length;
-      return `${label} — attached read-only as ${dbAlias}, ${n} table(s)/view(s), read on demand` +
+      if (dbEngine === "SQLite") {
+        return `${label} — SQLite (${fmtBytes(bytes)}) copied into DuckDB, ${n} table(s)` +
+               (n ? `. Query them as ${dbAlias}.<table>` : "");
+      }
+      return `${label} — DuckDB attached read-only as ${dbAlias}, ${n} table(s)/view(s), read on demand` +
              (n ? `. Query them as ${dbAlias}.<schema>.<table>` : "");
     }
     if (file) {
