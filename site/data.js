@@ -70,6 +70,17 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
   // ---------------------------------------------------------------------------
   async function init() {
     onStatus("Loading DuckDB-WASM…");
+    // SINGLE-THREADED (eh) BY MEASUREMENT, NOT OVERSIGHT. The threaded coi bundle exists
+    // on the CDN at this pin and DOES run — measured in headless Chrome behind the
+    // service worker: crossOriginIsolated=true, platform=wasm_threads, threads=4. But
+    // the wasm_threads extension binaries on extensions.duckdb.org are incompatible with
+    // this build: LOAD avro fails with "did not contain the expected entrypoint
+    // 'avro_duckdb_cpp_init'" (excel likewise), and read_avro IS the Iceberg manifest
+    // reader — threads at the cost of tables is no trade. Recheck with
+    // test/sql-integration.html when bumping the pin; the coi bundle map is:
+    //   coi: { mainModule: DIST+"duckdb-coi.wasm", mainWorker: DIST+"duckdb-browser-coi.worker.js",
+    //          pthreadWorker: DIST+"duckdb-browser-coi.pthread.worker.js" }
+    // (each worker URL wrapped in a same-origin blob importScripts shim).
     const bundle = await duckdb.selectBundle(duckdb.getJsDelivrBundles());
     const workerUrl = URL.createObjectURL(
       new Blob([`importScripts("${bundle.mainWorker}");`], { type: "text/javascript" })
@@ -98,7 +109,14 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
     // is fetched over the network, so it can fail for reasons the pinned version doesn't
     // control, and offering an .xlsx that then fails to open is worse than not offering it.
     canXlsx = await tryLoadExt("excel");
-    console.log(`[engine] DuckDB ready — crossOriginIsolated=${self.crossOriginIsolated}`);
+    // `threads` is the proof, not the bundle name: >1 means the coi build actually got
+    // its SharedArrayBuffer and the isolation work is paying for itself.
+    let threads = "?";
+    try {
+      threads = (await conn.query(`SELECT current_setting('threads') AS t`)).toArray()[0].toJSON().t;
+    } catch (_) {}
+    console.log(`[engine] DuckDB ready — bundle=${basename(bundle.mainModule)}, ` +
+                `crossOriginIsolated=${self.crossOriginIsolated}, threads=${threads}`);
     return { db, conn };
   }
 
