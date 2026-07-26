@@ -752,6 +752,9 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
       // mismatch once the parquet files are unioned. Field IDs are in here too, but
       // read_parquet matches by name, so honouring them needs a different reader.
       schemaColumns: schema ? (schema.fields || []).map(f => f.name) : null,
+      // More than one schema in the log means the table evolved and its data files can
+      // disagree — only then is union_by_name worth its price (see createView).
+      evolved: (meta.schemas || []).length > 1,
       totalRecords: Number((snap.summary || {})["total-records"]) || null,
     };
   }
@@ -897,22 +900,27 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
   // the Avro manifests have been read through registered buffers. Generated names have no
   // such problem, so the mapping table is the cheap price of a reader that always works.
   //
-  // union_by_name is not optional. Iceberg tables gain columns over time, and without it
-  // DuckDB takes the first file's schema and errors on every later one — which used to
-  // surface as an unrelated "reload the page" message and made the table unopenable.
-  async function createView(ident, regs, delTable, mapTable) {
+  // union_by_name only when the metadata says the schema EVOLVED. It is what lets files
+  // with added columns scan together (without it DuckDB errors on the first mismatched
+  // file) — but it makes bind read the footer of EVERY file up front, and on a
+  // many-hundred-file table that is hundreds of HTTPS range reads before a
+  // `LIMIT 100` preview produces its first row. A never-evolved table (one schema in
+  // the log, the overwhelmingly common case) binds off the first footer and touches
+  // other files only when the scan actually reaches them.
+  async function createView(ident, regs, delTable, mapTable, unionByName) {
     const list = regs.map(sqlStr).join(", ");
+    const union = unionByName ? ", union_by_name = true" : "";
     if (!delTable) {
       await conn.query(
         `CREATE OR REPLACE VIEW ${ident} AS
-         SELECT * FROM read_parquet([${list}], union_by_name = true)`);
+         SELECT * FROM read_parquet([${list}]${union})`);
       return;
     }
     // EXCLUDE keeps the two bookkeeping columns out of the table's visible schema.
     await conn.query(
       `CREATE OR REPLACE VIEW ${ident} AS
        SELECT * EXCLUDE (filename, file_row_number)
-       FROM read_parquet([${list}], union_by_name = true,
+       FROM read_parquet([${list}]${union},
                          filename = true, file_row_number = true) x
        WHERE NOT EXISTS (
          SELECT 1 FROM ${delTable} d JOIN ${mapTable} m ON m.pk = d.pk
@@ -1025,7 +1033,7 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
       }
       const delTable = posDeletes.length ? await loadPositionDeletes(key, ws, posDeletes) : null;
       const mapTable = delTable ? await createMap(key, pairs) : null;
-      await createView(ident, regs, delTable, mapTable);
+      await createView(ident, regs, delTable, mapTable, resolved.evolved);
       columns = await describe(ident);   // forces a real footer read — this is the probe
 
       if (delTable) {
