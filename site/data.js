@@ -228,10 +228,23 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
     xlsx:    n => `read_xlsx(${n})`,
   };
 
+  // Plain text that isn't tabular — a dbt model, a schema.yml, a log — is still worth
+  // opening, so read it one row per line instead of leaving it dead in the tree. The CSV
+  // reader does that with splitting disabled: no delimiter that occurs in text, no quote
+  // or escape character, so every byte of a line lands in the single declared column.
+  const textLines = n =>
+    `(SELECT rtrim(line, chr(13)) AS line FROM read_csv(${n}, ` +
+    `columns={'line': 'VARCHAR'}, delim='\\x1F', quote='', escape='', ` +
+    `header=false, auto_detect=false))`;
+  const TEXT_EXTS = ["sql", "yml", "yaml", "md", "toml", "ini", "cfg", "conf",
+                     "properties", "log", "sh", "py", "html", "xml", "css", "js"];
+  for (const ext of TEXT_EXTS) FILE_READERS[ext] = textLines;
+  const isTextExt = ext => TEXT_EXTS.includes(ext.replace(/\.(gz|zst)$/, ""));
+
   // Compressed text files need no reader of their own: DuckDB picks the codec off the file
   // NAME, and loadFile() registers them under a name that keeps both halves of the
   // extension (file_7.csv.gz), so the plain reader decompresses transparently.
-  for (const base of ["csv", "tsv", "json", "jsonl", "ndjson"])
+  for (const base of ["csv", "tsv", "json", "jsonl", "ndjson", ...TEXT_EXTS])
     for (const codec of ["gz", "zst"])
       FILE_READERS[`${base}.${codec}`] = FILE_READERS[base];
 
@@ -283,8 +296,9 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
     if (ext === "xlsx" && !canXlsx)
       throw new Error(`${file.name}: this DuckDB-WASM build has no 'excel' extension, so .xlsx can't be read.`);
     if (!reader)
-      throw new Error(`${file.name}: unsupported file type — parquet, csv/tsv/txt, json/jsonl/ndjson ` +
-                      `(plain or .gz/.zst), avro and xlsx are readable.`);
+      throw new Error(`${file.name}: unsupported file type — parquet, csv/tsv/txt, json/jsonl/ndjson, ` +
+                      `avro, xlsx and plain text (sql, yml, md, log, …) are readable; ` +
+                      `text formats also read as .gz/.zst.`);
 
     const reg = `file_${++_seq}.${ext}`;
     await db.registerFileURL(reg, dfsUrl(lh.workspace, file.path), duckdb.DuckDBDataProtocol.HTTP, false);
@@ -606,9 +620,9 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
   // warning; saying nothing would mean quietly returning rows the table no longer has.
   function describeLoad({ label, fileCount, posDeletes, eqDeletes, file, ext, bytes }) {
     if (file) {
-      return PARQUET_EXTS.has(ext)
-        ? `${label} — read on demand`
-        : `${label} — ${ext.toUpperCase()} is read in full (${fmtBytes(bytes)}); no range reads for this format`;
+      if (PARQUET_EXTS.has(ext)) return `${label} — read on demand`;
+      if (isTextExt(ext)) return `${label} — read in full as text (${fmtBytes(bytes)}), one row per line`;
+      return `${label} — ${ext.toUpperCase()} is read in full (${fmtBytes(bytes)}); no range reads for this format`;
     }
     let s = `${label} — ${fileCount} file(s), read on demand`;
     if (posDeletes) s += `, ${posDeletes} delete file(s) applied`;

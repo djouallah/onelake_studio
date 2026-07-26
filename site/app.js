@@ -376,7 +376,7 @@ async function expandDir(host, dir, depth) {
     } else if (e.queryable) {
       row.onclick = () => selectFile(row, e);
     } else {
-      row.title = e.name + ' — not a parquet/csv/json file';
+      row.title = e.name + ' — no reader for this file type';
     }
   }
 }
