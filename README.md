@@ -73,12 +73,6 @@ generating Iceberg metadata for Delta tables on demand — the first request tri
 race, which is why resolution retries with a backoff instead of failing. A table whose Iceberg metadata
 doesn't exist yet is listed as Delta and greyed out.
 
-**DuckDB's `iceberg` extension isn't used.** It loads fine in WASM, but Fabric's converted manifests
-record `record_count = 0`, so `SELECT count(*)` answers **0** from manifest statistics while the same
-table materialized counts correctly. Walking the manifests by hand avoids that. (Fabric also writes
-absolute `abfs://` URIs the WASM build can't resolve, though aliasing each path via `registerFileURL`
-does work around that part.)
-
 ## Limitations
 
 - **Merge-on-read equality deletes are not applied.** They're detected and the status line warns; Fabric's
@@ -87,8 +81,6 @@ does work around that part.)
   Pruning is whatever parquet row-group stats and column projection give you.
 - **Only parquet is read lazily.** CSV and JSON have no footer or row groups, so DuckDB streams the whole
   file; the status line says so rather than claiming "read on demand".
-- **Not inside an iframe** — Microsoft sign-in is blocked in an embedded frame; the app offers an
-  "open in new tab" link instead.
 
 ## Run it yourself
 
