@@ -200,6 +200,9 @@
       font-size: 0.82rem;
     }
     #status { color: var(--muted); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    #status.clickable { cursor: pointer; }
+    /* Clicked open: the whole message, wrapped, capped so it can never swallow the app. */
+    #status.expanded { white-space: pre-wrap; overflow: auto; max-height: 8rem; text-overflow: clip; }
     #status.error { color: var(--err); }
     #status.ok { color: var(--ok); }
     /* A load that came with caveats — skipped equality deletes, a truncated result — is

@@ -46,6 +46,14 @@ function setStatus(msg, type = '') {
   const el = $('status');
   el.textContent = msg;
   el.className = type;
+  // The bar is one ellipsised line, and an engine error is long — the file, the SQL, and
+  // the HTTP status the service worker saw all arrive together and all get cut off. The
+  // useful half was always the tail. Keep the whole thing reachable: hover for it, and
+  // click an error open. Truncating a diagnostic to "what this crap" is not reporting it.
+  el.title = msg;
+  el.classList.toggle('clickable', type === 'error');
+  el.onclick = type === 'error' ? () => el.classList.toggle('expanded') : null;
+  if (type !== 'error') el.classList.remove('expanded');
 }
 
 // ---------------------------------------------------------------------------

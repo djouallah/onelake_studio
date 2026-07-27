@@ -376,6 +376,27 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
     return r;
   }
 
+  // A load that is torn down must clean up after ITSELF and nothing else.
+  //
+  // resources are keyed by table and track(key) hands every load of that table the SAME
+  // record, which was harmless while a load could only end by finishing or failing
+  // outright. Cancellation broke it: open a table, open it again before the first finishes,
+  // and the first load's release(key) pulled the file registrations out from under the
+  // second — surfacing as "Failed to open file: data_3.parquet" while the SECOND load was
+  // creating its view, blaming a file that was fine.
+  //
+  // So: full teardown only while this load still owns the key; otherwise drop just the
+  // files this load registered and leave the successor's alone.
+  async function releaseOwned(key, regs, gen) {
+    const r = resources.get(key);
+    if (!r || r.gen === gen) { await release(key); return; }
+    for (const n of regs) {
+      try { await db.dropFile(n); } catch (_) {}
+      const i = r.regs.indexOf(n);
+      if (i >= 0) r.regs.splice(i, 1);
+    }
+  }
+
   async function release(key) {
     const r = resources.get(key);
     if (r) {
@@ -1302,6 +1323,7 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
     if (!paths.length) throw new Error(`${label}: current snapshot has no data files`);
 
     const res = track(key);
+    res.gen = gen;          // whoever set this last owns the teardown; see releaseOwned()
     res.ident = ident;
     let columns;
     onStatus(`Opening ${label} — ${paths.length} file(s)…`);
@@ -1340,14 +1362,16 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
     } catch (e) {
       // A stop is not a failure and has no culprit file to bisect for. Release what was
       // registered and report it as itself.
-      if (e.cancelled) { await release(key); throw e; }
+      if (e.cancelled) { await releaseOwned(key, regs, gen); throw e; }
       // Which FILE did it? An error like "table index is out of bounds" (a wasm trap on
       // some parquet feature this build mishandles) names nothing, and a several-hundred
       // file table gives the user nothing to report. Bisect with LIMIT 0 binds — the
       // object cache makes re-binds cheap — before the registrations are released.
       let detail = "";
       try { detail = await diagnoseOpenFailure(regs, pairs, resolved.evolved); } catch (_) {}
-      await release(key);
+      // Ownership-aware for the same reason a cancel is: a superseded load that fails must
+      // not take the load that replaced it down with it.
+      await releaseOwned(key, regs, gen);
       // Deliberately no whole-file download tier: on a big table that means minutes of
       // waiting and the table in browser memory. Report the cause — and only the cause.
       // This used to append a guess about the service worker to every failure here,
