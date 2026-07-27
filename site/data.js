@@ -376,6 +376,17 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
     return r;
   }
 
+  // Every registration and every drop, with who did it and when. A load that finds its
+  // file missing from the registry can then answer the only question that matters —
+  // which code path took it — instead of leaving a race, a token and the wasm equally
+  // suspect. Session-bounded: one small entry per registered name.
+  const regLog = new Map();    // registered name -> ms timestamp
+  const dropLog = new Map();   // registered name -> { why, at }
+  async function drop(n, why) {
+    try { await db.dropFile(n); } catch (_) {}
+    dropLog.set(n, { why, at: Date.now() });
+  }
+
   // A load that is torn down must clean up after ITSELF and nothing else.
   //
   // resources are keyed by table and track(key) hands every load of that table the SAME
@@ -394,7 +405,7 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
     const r = resources.get(key);
     if (!r || r.gen === gen) { await release(key); return; }
     for (const n of regs) {
-      try { await db.dropFile(n); } catch (_) {}
+      await drop(n, `teardown of a superseded load of ${key} (gen ${gen}, owner gen ${r.gen})`);
       const i = r.regs.indexOf(n);
       if (i >= 0) r.regs.splice(i, 1);
     }
@@ -419,7 +430,7 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
       for (const s of schemas) { try { await q(`DROP SCHEMA IF EXISTS ${quoteIdent(s)} CASCADE`); } catch (_) {} }
       // Attached database files: DETACH before dropping the file registration under them.
       for (const a of attachments) { try { await q(`DETACH ${quoteIdent(a)}`); } catch (_) {} }
-      for (const n of regs) { try { await db.dropFile(n); } catch (_) {} }
+      for (const n of regs) { await drop(n, `full release of ${key} (snapshot gen ${gen})`); }
       // A successor may have claimed the key while the drops above were queued; the
       // record, the cache entry and the view names are then ITS state, not this
       // teardown's to delete.
@@ -1288,8 +1299,13 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
     const facts = [];
     try {
       const hits = await db.globFiles(reg);
-      if (!hits || !hits.length)
-        facts.push(`${reg} is missing from DuckDB's file registry — most likely another load dropped it`);
+      if (!hits || !hits.length) {
+        const d = dropLog.get(reg), at = regLog.get(reg);
+        facts.push(d
+          ? `${reg} is missing from DuckDB's file registry — dropped ${Math.round((Date.now() - d.at) / 1000)}s ago by ${d.why}`
+          : `${reg} is missing from DuckDB's file registry, yet no code path dropped it` +
+            (at ? ` (registered ${Math.round((Date.now() - at) / 1000)}s ago)` : " (and no registration was recorded either)"));
+      }
     } catch (_) { /* this duckdb-wasm has no globFiles — nothing to check */ }
     if (path && ws) {
       try {
@@ -1391,6 +1407,7 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
         check();
         const reg = `data_${++_seq}.parquet`;
         await db.registerFileURL(reg, toHttps(ws, p), duckdb.DuckDBDataProtocol.HTTP, false);
+        regLog.set(reg, Date.now());
         res.regs.push(reg);
         regs.push(reg);
         pairs.push([reg, p]);

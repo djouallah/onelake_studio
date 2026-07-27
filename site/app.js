@@ -826,6 +826,19 @@ function renderTableList(tables) {
 // Select a table -> load -> schema bar + preview
 // ---------------------------------------------------------------------------
 async function selectTable(row, t) {
+  // Without the service worker controlling the page, DuckDB's OneLake reads go out
+  // unsigned and every one 401s — the load cannot succeed, so say why up front instead
+  // of failing on the first footer read with a message that blames the file. The two
+  // ways a page ends up here: DevTools with "Bypass for network" checked, and a hard
+  // reload (which bypasses the worker for that one page load).
+  if ('serviceWorker' in navigator && !navigator.serviceWorker.controller) {
+    setStatus(
+      'Cannot open tables: the service worker is not controlling this page, so OneLake ' +
+      'reads would go out unsigned and fail. Do a normal reload (F5) to fix it. If DevTools ' +
+      'is open, make sure "Bypass for network" is unchecked under Application → Service ' +
+      'Workers; a hard reload (Ctrl+Shift+R) also causes this for one page load.', 'error');
+    return;
+  }
   document.querySelectorAll('.tableItem.active').forEach(el => el.classList.remove('active'));
   row.classList.add('active');
   $('activeTable').textContent = t.schema ? `${t.schema}.${t.table}` : t.table;
