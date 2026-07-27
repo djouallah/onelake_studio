@@ -1,0 +1,119 @@
+<!doctype html>
+<!-- Manual probe harness: does a COMMUNITY extension (h3, zipfs) install, load, and
+     answer in real DuckDB-WASM? Unlike sql-integration.html (which regression-tests the
+     app's generated SQL against the app's pin), this page exists to produce a findings
+     report for the duckdb-wasm maintainers, so it is version-parameterized: ?v=<npm tag>
+     tests any published @duckdb/duckdb-wasm without touching the app's pin, and every
+     failure is recorded with its verbatim error text.
+
+     To run: copy into site/ as __exttest.html, copy test/fixtures/sample.zip (from
+     make_sample.py) to site/__sample.zip, `npm run dev`, then open
+       http://localhost:5173/__exttest              (the app's pinned version)
+       http://localhost:5173/__exttest?v=1.33.1-dev58.0
+     (or headless: drive it with playwright-core and wait for document.title === "DONE").
+     Lives in test/, not site/, so it never deploys. -->
+<meta charset="utf-8"><title>community extensions probe</title><body>
+<div id="log">START</div>
+<script type="module">
+const el = document.getElementById("log");
+const log = m => { el.textContent += "\n" + m; };
+const fail = m => log("FAIL " + m);
+const pass = m => log("PASS " + m);
+window.addEventListener("error", e => log("WINERR " + e.message));
+window.addEventListener("unhandledrejection", e => log("UNHANDLED " + (e.reason && e.reason.message)));
+
+const V = new URLSearchParams(location.search).get("v") || "1.33.1-dev57.0"; // app pin
+const results = { package: V, engine: null, platform: null, bundle: null, extensions: [] };
+
+try {
+  log(`duckdb-wasm package: ${V}`);
+  const duckdb = await import(`https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@${V}/+esm`);
+  const bundle = await duckdb.selectBundle(duckdb.getJsDelivrBundles());
+  results.bundle = bundle.mainModule.split("/").pop();
+  log("bundle: " + results.bundle);
+  const workerUrl = URL.createObjectURL(new Blob([`importScripts("${bundle.mainWorker}");`], { type: "text/javascript" }));
+  const worker = new Worker(workerUrl);
+  const db = new duckdb.AsyncDuckDB(new duckdb.ConsoleLogger(), worker);
+  await db.instantiate(bundle.mainModule, bundle.pthreadWorker);
+  const conn = await db.connect();
+  const one = async sql => (await conn.query(sql)).toArray()[0].toJSON();
+  results.engine = (await one(`SELECT version() AS v`)).v;
+  results.platform = (await one(`PRAGMA platform`)).platform;
+  log(`engine: ${results.engine}  platform: ${results.platform}`);
+  log(`userAgent: ${navigator.userAgent}`);
+
+  const fnNames = async () => new Set((await conn.query(
+    `SELECT DISTINCT function_name AS f FROM duckdb_functions()`)).toArray().map(x => x.toJSON().f));
+
+  // One extension's failure must never stop the next: each step lands in `r` (and the
+  // final JSON block) with its verbatim error, because the errors ARE the deliverable.
+  const testExt = async (ext, smokes) => {
+    const r = { ext, install: null, load: null, newFunctions: [], smokes: [] };
+    results.extensions.push(r);
+    const before = await fnNames();
+    try { await conn.query(`INSTALL ${ext} FROM community;`); r.install = "OK (FROM community)"; }
+    catch (e) {
+      r.install = `FAIL FROM community: ${e.message}`;
+      // Second spelling of the same intent — distinguishes "the community alias is
+      // broken" from "community installs are broken".
+      try {
+        await conn.query(`SET custom_extension_repository = 'https://community-extensions.duckdb.org';`);
+        await conn.query(`INSTALL ${ext};`);
+        r.install += " | OK via custom_extension_repository";
+      } catch (e2) { r.install += ` | FAIL via custom_extension_repository: ${e2.message}`; }
+    }
+    log(`${ext} INSTALL: ${r.install}`);
+    try { await conn.query(`LOAD ${ext};`); r.load = "OK"; }
+    catch (e) { r.load = `FAIL: ${e.message}`; }
+    log(`${ext} LOAD: ${r.load}`);
+    if (r.load !== "OK") { fail(`${ext}: not loadable`); return r; }
+    const after = await fnNames();
+    r.newFunctions = [...after].filter(f => !before.has(f)).sort();
+    log(`${ext} exports ${r.newFunctions.length} functions: ${r.newFunctions.join(", ")}`);
+    for (const s of smokes) {
+      const entry = { sql: s.sql, ok: false, got: null, error: null };
+      r.smokes.push(entry);
+      try {
+        const rows = (await conn.query(s.sql)).toArray().map(x => x.toJSON());
+        entry.got = JSON.stringify(rows, (k, v) => typeof v === "bigint" ? String(v) : v);
+        entry.ok = s.check ? s.check(rows) : true;
+        (entry.ok ? pass : fail)(`${ext}: ${s.sql} -> ${entry.got}`);
+      } catch (e) { entry.error = e.message; fail(`${ext}: ${s.sql} -> ${e.message}`); }
+    }
+    return r;
+  };
+
+  // h3: expected cell cross-checked against native DuckDB v1.5.5 (INSTALL h3 FROM
+  // community; same query) — deterministic, so assert exact.
+  await testExt("h3", [
+    { sql: `SELECT h3_latlng_to_cell_string(37.7887987, -122.3931578, 9) AS c`,
+      check: rows => rows[0].c === "89283082a0fffff" },
+    { sql: `SELECT h3_is_valid_cell('8928308280fffff') AS v`,
+      check: rows => rows[0].v === true },
+    { sql: `SELECT h3_cell_to_parent(h3_string_to_h3('8928308280fffff'), 5) AS p` },
+  ]);
+
+  // zipfs: reads an entry inside a registered zip. Every path spelling is tried and
+  // reported — VFS path-rooting is exactly where a wasm-specific breakage would hide.
+  // slice(): registerFileBuffer transfers the buffer to the worker, detaching it —
+  // registering the same Uint8Array twice throws "ArrayBuffer is detached".
+  const zipBytes = new Uint8Array(await (await fetch("/__sample.zip")).arrayBuffer());
+  await db.registerFileBuffer("sample.zip", zipBytes.slice());
+  await db.registerFileBuffer("/rooted-sample.zip", zipBytes.slice());
+  await testExt("zipfs", [
+    { sql: `SELECT count(*) AS n FROM read_csv('zip://sample.zip/points.csv')`,
+      check: rows => Number(rows[0].n) === 2 },
+    { sql: `SELECT * FROM 'zip://sample.zip/points.csv'` },
+    { sql: `SELECT count(*) AS n FROM read_csv('zip:///rooted-sample.zip/points.csv')` },
+  ]);
+
+  log("JSON " + JSON.stringify(results, null, 2));
+  log("DONE");
+  document.title = "DONE";
+} catch (e) {
+  fail("harness: " + (e && e.message));
+  log("JSON " + JSON.stringify(results, null, 2));
+  log("DONE");
+  document.title = "DONE";
+}
+</script>

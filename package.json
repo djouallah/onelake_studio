@@ -10,6 +10,7 @@
     "build": "node build.mjs"
   },
   "devDependencies": {
+    "playwright-core": "^1.62.0-alpha-2026-07-19",
     "serve": "^14.2.6"
   }
 }
