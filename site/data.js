@@ -111,6 +111,11 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
     e.cancelled = true;
     return e;
   }
+  // A superseded load gets one last resume between its awaits before check() throws,
+  // and a progress message written there lands ON TOP of the successor's status —
+  // "Opening <old table> — 72 file(s)…" over a screen showing the new one. Every load
+  // writes status through this guard, so a load that is no longer current says nothing.
+  const statusFor = gen => m => { if (gen === loadGen) onStatus(m); };
 
   // ---------------------------------------------------------------------------
   // DuckDB bootstrap
@@ -490,6 +495,7 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
     const check = () => { if (gen !== loadGen) throw cancelledError(); };
     if (loaded.has(key)) return loaded.get(key);
 
+    const status = statusFor(gen);
     const label = file.name;
     const ext = fileExt(file.name);
     if (DB_EXTS.has(ext)) return loadDatabaseFile(lh, file, key, gen, check);
@@ -519,7 +525,7 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
       const info = { label, ident, columns, fileCount: 1, posDeletes: 0, eqDeletes: 0,
                      file: true, bytes: file.bytes, ext, warnings: [] };
       loaded.set(key, info);
-      onStatus(describeLoad(info));
+      status(describeLoad(info));
       return info;
     } catch (e) {
       await releaseOwned(key, [reg], gen);
@@ -537,6 +543,7 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
   async function loadZipFile(lh, file, key, gen, check) {
     if (!canZip)
       throw new Error(`${file.name}: this DuckDB-WASM build couldn't load the 'zipfs' extension, so zip archives can't be read.`);
+    const status = statusFor(gen);
     const res = track(key);
     res.gen = gen;
     res.views = [];
@@ -584,7 +591,7 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
       if (!first && !warnings.length)
         info.warnings.push(`no readable entries among ${entries.length} — parquet, csv, json, avro, xlsx and text formats are supported inside a zip`);
       loaded.set(key, info);
-      onStatus(describeLoad(info));
+      status(describeLoad(info));
       return info;
     } catch (e) {
       await releaseOwned(key, [reg], gen);
@@ -606,6 +613,7 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
   //     DuckDB gets a copy. SQLite files are the xlsx of databases: page-based, usually
   //     small, meant to be local; the copy is capped rather than unbounded.
   async function loadDatabaseFile(lh, file, key, gen, check) {
+    const status = statusFor(gen);
     const res = track(key);
     res.gen = gen;
     const ext = fileExt(file.name);
@@ -652,7 +660,7 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
       if (!first)
         info.warnings.push(`${alias} attached but contains no tables or views`);
       loaded.set(key, info);
-      onStatus(describeLoad(info));
+      status(describeLoad(info));
       return info;
     } catch (e) {
       await releaseOwned(key, [reg], gen);
@@ -677,7 +685,8 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
     if (file.bytes > SQLITE_MAX_BYTES)
       throw new Error(`${file.name} is ${fmtBytes(file.bytes)} — over the ${fmtBytes(SQLITE_MAX_BYTES)} ` +
                       `cap for copying a SQLite file into the browser.`);
-    onStatus(`Fetching ${file.name} (${fmtBytes(file.bytes)}) — SQLite is read in full…`);
+    const status = statusFor(gen);
+    status(`Fetching ${file.name} (${fmtBytes(file.bytes)}) — SQLite is read in full…`);
     const bytes = await fetchAuthed(url);
 
     if (!_sqljs) {
@@ -699,7 +708,7 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
       res.schemas.push(alias);
 
       const tables = [];
-      onStatus(`Copying ${names.length} table(s) from ${file.name} into DuckDB…`);
+      status(`Copying ${names.length} table(s) from ${file.name} into DuckDB…`);
       for (const t of names) {
         // One copied table per iteration — the loop a big SQLite file spends its time in.
         check();
@@ -740,7 +749,7 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
                      db: true, dbAlias: alias, dbTables: tables, dbEngine: "SQLite", warnings };
       if (!first) info.warnings.push(`${alias}: the SQLite file has no tables`);
       loaded.set(key, info);
-      onStatus(describeLoad(info));
+      status(describeLoad(info));
       return info;
     } catch (e) {
       await releaseOwned(key, [], gen);
@@ -1384,12 +1393,13 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
     if (loaded.has(key)) return loaded.get(key);
     const gen = loadGen;
     const check = () => { if (gen !== loadGen) throw cancelledError(); };
+    const status = statusFor(gen);
 
     const ws = lh.workspace;
     const label = labelFor(t);
     const warnings = [];
 
-    onStatus(`Resolving ${label}…`);
+    status(`Resolving ${label}…`);
     let resolved;
     try {
       // The catalog hands the metadata over inline, so when it's reachable this is one
@@ -1421,7 +1431,7 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
     if (t.schema) await q(`CREATE SCHEMA IF NOT EXISTS ${quoteIdent(t.schema)}`);
 
     check();
-    onStatus(`Reading manifests for ${label}…`);
+    status(`Reading manifests for ${label}…`);
     const { files: paths, posDeletes, eqDeletes } =
       await listDataFiles(ws, resolved.manifestList, check);
     if (!paths.length) throw new Error(`${label}: current snapshot has no data files`);
@@ -1433,7 +1443,7 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
     // track() is state a concurrent release(key) sweeps with nothing to check against.
     viewNames.set(ident, key);
     let columns;
-    onStatus(`Opening ${label} — ${paths.length} file(s)…`);
+    status(`Opening ${label} — ${paths.length} file(s)…`);
     const regs = [], pairs = [];
     // Hoisted: the column-mapping pass below rebuilds the view and has to preserve the
     // delete anti-join it was first built with.
@@ -1523,7 +1533,7 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
                    totalRecords: resolved.totalRecords, warnings };
 
     loaded.set(key, info);
-    onStatus(describeLoad(info));
+    status(describeLoad(info));
     return info;
   }
 
