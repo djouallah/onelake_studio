@@ -180,8 +180,9 @@
     #authActions { display: flex; flex-direction: column; align-items: center; gap: 0.8rem; }
     #signinBtn { padding: 0.7rem 1.6rem; font-size: 1rem; }
 
-    /* Trust claims, compressed to chips — the long version lives in the README. */
-    .chips { display: flex; flex-wrap: wrap; gap: 0.4rem; justify-content: center; }
+    /* Trust claims, compressed to chips — the long version lives in the README. Last row
+       of the card: they're reassurance, not something to read before signing in. */
+    .chips { display: flex; flex-wrap: wrap; gap: 0.4rem; justify-content: center; margin-top: 0.3rem; }
     .chips span {
       border: 1px solid var(--border); border-radius: 999px; padding: 0.15rem 0.65rem;
       color: var(--muted); font-size: 0.78rem;
@@ -269,15 +270,16 @@
       <!-- Sign-in button, and (only when needed) the consent / own-registration blocks. -->
       <div id="authActions"></div>
       <div class="gateFoot"><a id="gateClose">← Continue without signing in</a></div>
-      <div class="chips"><span>No backend</span><span>Nothing copied</span><span>Read-only</span><span>No telemetry</span></div>
-      <div class="gateFoot">
-        <b>Sign in</b> uses this app's built-in registration — it works once your tenant has
-        consented to it (many tenants need an admin to approve it once).
-        Blocked with “Need admin approval”? <a id="consentLink">Ask your admin to consent</a>,
+      <!-- One line, not a paragraph: the only thing worth saying up front is what to do
+           when the built-in registration is blocked. Hidden while a BYO registration is
+           in use — the banner in #authActions is then the whole story. -->
+      <div class="gateFoot" id="gateHelp">
+        Blocked with “Need admin approval”? <a id="consentLink">Ask your admin to consent</a>
         or <a id="byoLink">use your own app registration</a> —
         <a href="https://github.com/djouallah/onelake_studio#signing-in"
            target="_blank" rel="noopener">how that works</a>.
       </div>
+      <div class="chips"><span>No backend</span><span>Nothing copied</span><span>Read-only</span><span>No telemetry</span></div>
     </div>
   </div>
 
