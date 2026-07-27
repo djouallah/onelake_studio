@@ -94,23 +94,125 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
   // holding it, and waiting its turn would mean waiting for the thing it is cancelling.
   let queue = Promise.resolve();
   function serial(fn) {
-    const run = queue.then(fn, fn);   // the next statement runs however the last one ended
+    const run = queue.then(() => guarded(fn), () => guarded(fn));
     queue = run.then(() => {}, () => {});
     return run;
   }
   const q = sql => serial(() => conn.query(sql));
 
+  // cancelSent() only works while the worker is PROCESSING MESSAGES — the chunk-polled
+  // execution phase. The bind phase of a statement over many registered HTTP files is one
+  // long synchronous stretch (footer reads are sync XHR inside the worker), and a worker
+  // blocked there processes nothing: not the cancel, not the successor load's first
+  // registration, nothing. That is the whole failure mode this epoch machinery exists
+  // for: the ONLY thing that can interrupt a worker stuck in sync XHR is terminate().
+  //
+  // A terminated worker's pending promises never settle, so every worker-bound call is
+  // raced against the epoch's abort promise — otherwise whoever was awaiting the blocked
+  // call would hang forever on a promise whose worker no longer exists.
+  let workerEpoch = 0;          // bumped only by restart()
+  let epochAbort, epochReject;  // rejects (e.workerRestart = true) when the worker dies
+  let initPromise = null;       // the current epoch's init — the ready barrier
+  let restarting = null;        // single-flight restart
+  let engineAlive = false;      // set at the end of _init(); the watchdog no-ops until then
+  function resetEpoch() {
+    epochAbort = new Promise((_, rej) => { epochReject = rej; });
+    epochAbort.catch(() => {}); // an epoch that ends with no racer must not log unhandled
+  }
+  resetEpoch();
+
+  // Every worker-bound call goes through here. On a restart-abort, ownership decides the
+  // outcome: a call belonging to a superseded load dies as a cancel, but a call belonging
+  // to the CURRENT load — the one the user just clicked, parked behind the very statement
+  // being killed — retries once against the fresh engine. That retry is provably safe:
+  // worker messages are FIFO and the watchdog ping is posted synchronously inside
+  // cancelLoad(), before the successor posts anything, so an unanswered ping means no
+  // message after the cancel was ever processed — the parked call had zero side effects.
+  // Every statement is also idempotent (CREATE OR REPLACE, IF NOT EXISTS,
+  // register-overwrites), so running it again is running it for the first time.
+  async function guarded(fn) {
+    const myGen = loadGen, myEpoch = workerEpoch;
+    if (initPromise) await initPromise;    // never run against a null or half-built conn
+    // Chained before a restart AND no longer wanted: die before touching the new engine.
+    // Chained before a restart but still current-gen (a successor's queued statement, a
+    // teardown DROP): proceed — the new engine is exactly where it should run.
+    if (myEpoch !== workerEpoch && myGen !== loadGen) throw cancelledError();
+    try {
+      return await Promise.race([fn(), epochAbort]);
+    } catch (e) {
+      if (!e || !e.workerRestart) throw e;             // fn's own failure, not the terminate
+      if (myGen !== loadGen) throw cancelledError();   // the doomed load's own call
+      await initPromise;                               // module-let: the NEW epoch's init
+      return Promise.race([fn(), epochAbort]);         // once; a second restart rejects
+    }
+  }
+
   let loadGen = 0;
-  // Fire-and-forget ON PURPOSE. The worker runs a footer-heavy bind as one long
-  // synchronous stretch (its HTTP reads are sync XHR), so it only PROCESSES a cancel
-  // when the current chunk yields — and awaiting the acknowledgement here parked the
-  // NEXT load behind the very statement being cancelled, before it could even write
-  // "Resolving…", leaving the superseded load's status on screen the whole wait.
+  // Fire-and-forget ON PURPOSE. Awaiting the acknowledgement here parked the NEXT load
+  // behind the very statement being cancelled, before it could even write "Resolving…".
   // Message order does the correctness work: the cancel is queued ahead of anything
   // the successor sends, so it can only ever kill the predecessor's statement.
+  //
+  // The watchdog is the enforcement. A cancel the worker never processes (blocked in a
+  // sync bind, see above) used to leave the app hung and the abandoned load burning
+  // network until it finished on its own; now an unanswered ping terminates the worker.
   function cancelLoad() {
     loadGen++;
     try { if (conn) conn.cancelSent().catch(() => {}); } catch (_) { /* nothing was pending */ }
+    armWatchdog();
+  }
+
+  // Did the worker actually hear the cancel? getVersion() is a pure message round trip —
+  // it touches no connection state, so it cannot interleave with a draining stream. A
+  // healthy worker answers in milliseconds even mid-query (execution is chunk-polled);
+  // only a worker stuck in a synchronous stretch lets the timer win. The ping is posted
+  // HERE, synchronously after the cancel, so it precedes anything the successor sends —
+  // that FIFO ordering is what makes guarded()'s retry safe.
+  const WATCHDOG_MS = 2000;
+  let watchdogArmed = false;
+  function armWatchdog() {
+    if (watchdogArmed || restarting || !engineAlive || !db) return;
+    watchdogArmed = true;
+    const myEpoch = workerEpoch;
+    // A ping that cannot be sent must not break the cancel it rides on.
+    let ping;
+    try { ping = db.getVersion(); } catch (_) { ping = new Promise(() => {}); }
+    Promise.race([
+      ping.then(() => "ok", () => "ok"),   // any settle = messages are flowing
+      sleep(WATCHDOG_MS).then(() => "stuck"),
+    ]).then(r => {
+      watchdogArmed = false;
+      if (r === "stuck" && myEpoch === workerEpoch && !restarting)
+        restart(`cancel not honoured within ${WATCHDOG_MS}ms — worker blocked in a synchronous bind`);
+    });
+  }
+
+  // The hard way out, for a worker no message can reach. Everything the worker held —
+  // views, registered files, caches — dies with it, so the caches of what died are
+  // cleared too; a table clicked again reloads from scratch, which is also the honest
+  // answer. `queue` is deliberately NOT reset: a second chain running beside statements
+  // already chained on the first is exactly the measured silent-truncation hazard the
+  // hand-serialisation exists to prevent — the epoch rejection drains the one chain
+  // instead. loadGen survives so ownership checks keep meaning what they meant.
+  function restart(reason) {
+    if (restarting) return restarting;
+    restarting = (async () => {
+      engineAlive = false;
+      workerEpoch++;
+      try { if (worker) worker.terminate(); } catch (_) {}
+      worker = db = conn = null;      // synchronously: nothing can post to the old worker
+      loaded.clear(); resources.clear(); viewNames.clear();
+      regLog.clear(); dropLog.clear();          // the registry they describe died with it
+      const rej = epochReject;
+      resetEpoch();                             // BEFORE rejecting: retriers race the new epoch
+      initPromise = _init({ quiet: true });     // BEFORE rejecting: retriers await the NEW init
+      const e = cancelledError();
+      e.workerRestart = true;
+      rej(e);                                   // releases every parked worker-bound promise
+      console.info(`[engine] worker restarted: ${reason}`);
+      await initPromise;
+    })().finally(() => { restarting = null; });
+    return restarting;
   }
   // Distinguishable so the UI can say "stopped" rather than reporting a failure.
   function cancelledError() {
@@ -127,8 +229,18 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
   // ---------------------------------------------------------------------------
   // DuckDB bootstrap
   // ---------------------------------------------------------------------------
-  async function init() {
-    onStatus("Loading DuckDB-WASM…");
+  // init() is also the ready barrier guarded() awaits, so the app's engineReady and the
+  // engine's own gate are one promise — a statement can never run against a null conn.
+  // restart() calls _init({quiet:true}) directly: the restart happens under a successor
+  // load's own status line, and "Loading DuckDB-WASM…" stamped over "Resolving <table>…"
+  // would report the mechanism instead of the work.
+  function init(opts) {
+    initPromise = _init(opts);
+    return initPromise;
+  }
+
+  async function _init({ quiet = false } = {}) {
+    if (!quiet) onStatus("Loading DuckDB-WASM…");
     // SINGLE-THREADED (eh) BY MEASUREMENT, NOT OVERSIGHT. The threaded coi bundle exists
     // on the CDN at this pin and DOES run — measured in headless Chrome behind the
     // service worker: crossOriginIsolated=true, platform=wasm_threads, threads=4. But
@@ -193,6 +305,7 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
     } catch (_) {}
     console.log(`[engine] DuckDB ready — bundle=${basename(bundle.mainModule)}, ` +
                 `crossOriginIsolated=${self.crossOriginIsolated}, threads=${threads}`);
+    engineAlive = true;   // only now may the watchdog terminate this worker
     return { db, conn };
   }
 
@@ -395,7 +508,7 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
   const regLog = new Map();    // registered name -> ms timestamp
   const dropLog = new Map();   // registered name -> { why, at }
   async function drop(n, why) {
-    try { await db.dropFile(n); } catch (_) {}
+    try { await guarded(() => db.dropFile(n)); } catch (_) {}
     dropLog.set(n, { why, at: Date.now() });
   }
 
@@ -518,7 +631,7 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
     const res = track(key);
     res.gen = gen;
     const reg = `file_${++_seq}.${ext}`;
-    await db.registerFileURL(reg, dfsUrl(lh.workspace, file.path), duckdb.DuckDBDataProtocol.HTTP, false);
+    await guarded(() => db.registerFileURL(reg, dfsUrl(lh.workspace, file.path), duckdb.DuckDBDataProtocol.HTTP, false));
     regLog.set(reg, Date.now());
     res.regs.push(reg);
 
@@ -555,7 +668,7 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
     res.gen = gen;
     res.views = [];
     const reg = `zipfile_${++_seq}.zip`;
-    await db.registerFileURL(reg, dfsUrl(lh.workspace, file.path), duckdb.DuckDBDataProtocol.HTTP, false);
+    await guarded(() => db.registerFileURL(reg, dfsUrl(lh.workspace, file.path), duckdb.DuckDBDataProtocol.HTTP, false));
     regLog.set(reg, Date.now());
     res.regs.push(reg);
     try {
@@ -637,7 +750,7 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
     if (sqlite) return loadSqliteFile(file, key, url, alias, gen, check);
 
     const reg = `dbfile_${++_seq}.${ext}`;
-    await db.registerFileURL(reg, url, duckdb.DuckDBDataProtocol.HTTP, false);
+    await guarded(() => db.registerFileURL(reg, url, duckdb.DuckDBDataProtocol.HTTP, false));
     regLog.set(reg, Date.now());
     res.regs.push(reg);
     try {
@@ -741,11 +854,11 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
         if (blobs) warnings.push(`${t}: BLOB values are not carried over and read as NULL`);
 
         const jn = `sqjson_${++_seq}.json`;
-        await db.registerFileBuffer(jn, new TextEncoder().encode(lines));
+        await guarded(() => db.registerFileBuffer(jn, new TextEncoder().encode(lines)));
         try {
           await q(`CREATE OR REPLACE TABLE ${ident} AS
                             SELECT * FROM read_json(${sqlStr(jn)}, format='newline_delimited')`);
-        } finally { try { await db.dropFile(jn); } catch (_) {} }
+        } finally { try { await guarded(() => db.dropFile(jn)); } catch (_) {} }
         tables.push(ident);
       }
 
@@ -1071,11 +1184,11 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
   // ---------------------------------------------------------------------------
   async function withAvroBuffer(bytes, run) {
     const name = `meta_${++_seq}.avro`;
-    await db.registerFileBuffer(name, bytes);
+    await guarded(() => db.registerFileBuffer(name, bytes));
     try {
       const t = await run(name);
       return t.toArray().map(r => r.toJSON());
-    } finally { try { await db.dropFile(name); } catch (_) {} }
+    } finally { try { await guarded(() => db.dropFile(name)); } catch (_) {} }
   }
 
   async function readAvroRows(ws, url, columnsSql) {
@@ -1291,7 +1404,7 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
     const regs = [];
     for (const p of paths) {
       const reg = `del_${++_seq}.parquet`;
-      await db.registerFileURL(reg, toHttps(ws, p), duckdb.DuckDBDataProtocol.HTTP, false);
+      await guarded(() => db.registerFileURL(reg, toHttps(ws, p), duckdb.DuckDBDataProtocol.HTTP, false));
       res.regs.push(reg);
       regs.push(reg);
     }
@@ -1353,7 +1466,7 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
   async function diagnoseOneFile(reg, path, ws) {
     const facts = [];
     try {
-      const hits = await db.globFiles(reg);
+      const hits = await guarded(() => db.globFiles(reg));
       if (!hits || !hits.length) {
         const d = dropLog.get(reg), at = regLog.get(reg);
         facts.push(d
@@ -1463,7 +1576,7 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
         // The hundreds-of-round-trips loop, and so the one that most needs a way out.
         check();
         const reg = `data_${++_seq}.parquet`;
-        await db.registerFileURL(reg, toHttps(ws, p), duckdb.DuckDBDataProtocol.HTTP, false);
+        await guarded(() => db.registerFileURL(reg, toHttps(ws, p), duckdb.DuckDBDataProtocol.HTTP, false));
         regLog.set(reg, Date.now());
         res.regs.push(reg);
         regs.push(reg);

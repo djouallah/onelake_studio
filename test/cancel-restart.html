@@ -1,0 +1,96 @@
+<!doctype html>
+<!-- =========================================================================
+  cancel-restart.html — regression test for the blocked-worker cancel path.
+
+  THE BUG THIS GUARDS: the DuckDB worker runs a footer-heavy bind as one long
+  synchronous stretch (its HTTP reads are sync XHR), and a worker blocked there
+  processes no messages — cancelSent() included. Before the watchdog+restart fix,
+  cancelling such a load left the app hung: the next statement queued forever
+  behind the very statement being "cancelled". Test 1 reproduces exactly that
+  with parquet URLs whose server never responds; pre-fix, this page never
+  reaches DONE and the driver times out.
+
+  Run via test/run-cancel-restart.mjs, which serves site/ at the origin root
+  (so /data.js resolves), routes /__canceltest here, and never answers /stall/*.
+  Needs CDN access for the duckdb-wasm bundle, like test/sql-integration.html.
+========================================================================== -->
+<html>
+<head><meta charset="utf-8"><title>RUNNING</title></head>
+<body>
+<pre id="log"></pre>
+<script type="module">
+const logEl = document.getElementById("log");
+const log = m => { logEl.textContent += m + "\n"; console.log(m); };
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+// Count engine restarts by the fixed line restart() logs. Hooked BEFORE the
+// engine module is imported (dynamic import below) so nothing is missed.
+let restarts = 0;
+const origInfo = console.info.bind(console);
+console.info = (...a) => {
+  if (String(a[0]).includes("worker restarted")) restarts++;
+  origInfo(...a);
+};
+
+let failed = 0;
+const check = (ok, what) => { log((ok ? "PASS" : "FAIL") + " — " + what); if (!ok) failed++; };
+
+try {
+  const { createEngine } = await import("/data.js");
+  const engine = createEngine(
+    { getHeaders: () => ({}), refresh: async () => false },
+    { onStatus: m => console.log("[status] " + m) }
+  );
+  await engine.init();
+  log("engine up");
+
+  // --- Test 1: cancel while the worker is blocked in a synchronous bind -----
+  // /stall/* accepts the socket and never responds, so the worker's first sync
+  // footer XHR blocks it indefinitely — the exact state a many-hundred-file
+  // OneLake table puts it in. union_by_name makes bind read every footer.
+  const stalled = [1, 2, 3, 4]
+    .map(i => `'${location.origin}/stall/f${i}.parquet'`).join(", ");
+  const p1 = engine.runSql(
+    `SELECT * FROM read_parquet([${stalled}], union_by_name = true) LIMIT 0`);
+  p1.catch(() => {});                 // judged below; don't log unhandled meanwhile
+  await sleep(700);                   // let the worker enter the blocked bind
+  log("cancelling the blocked load…");
+  engine.cancelLoad();
+
+  // The follow-up statement is the user clicking the next table: pre-fix it
+  // parked forever behind the blocked bind. Post-fix the watchdog (2s) fires,
+  // the worker restarts quietly, and this answers.
+  const t0 = performance.now();
+  const r1 = await engine.runSql("SELECT 42 AS v");
+  const took = Math.round(performance.now() - t0);
+  check(Number(r1.rows[0].v) === 42, `follow-up query answered 42 (${took}ms after cancel)`);
+  check(took < 30000, "follow-up query answered in under 30s");
+  const e1 = await p1.then(() => null, e => e);
+  check(e1 && e1.cancelled === true, "blocked query rejected as cancelled, not as an error");
+  check(restarts === 1, `exactly one worker restart (saw ${restarts})`);
+
+  // --- Test 2: a cancellable query must NOT trigger a restart ---------------
+  // Chunk-polled execution processes messages between chunks, so cancelSent()
+  // is honoured, the ping answers, and the watchdog stays quiet.
+  const p2 = engine.runSql(
+    "SELECT sum(sqrt(range::DOUBLE)) AS s FROM range(2000000000)");
+  p2.catch(() => {});
+  await sleep(500);
+  log("cancelling the running (cancellable) query…");
+  engine.cancelLoad();
+  const e2 = await p2.then(() => null, e => e);
+  check(e2 && e2.cancelled === true, "running query rejected as cancelled");
+  await sleep(3000);                  // past the watchdog window
+  check(restarts === 1, `no false restart for an honoured cancel (saw ${restarts})`);
+  const r2 = await engine.runSql("SELECT 7 AS v");
+  check(Number(r2.rows[0].v) === 7, "engine still answers after the honoured cancel");
+} catch (e) {
+  failed++;
+  log("FAIL — unexpected: " + (e && e.stack || e));
+}
+
+log(failed ? `DONE — ${failed} FAILURE(S)` : "DONE — all passed");
+document.title = "DONE";
+</script>
+</body>
+</html>
