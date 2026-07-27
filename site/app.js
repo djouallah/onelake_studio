@@ -768,8 +768,9 @@ async function selectFile(row, file) {
   activeFile = file;
   activeDocExt = fileExt(file.name);
   activeDocEligible = isTextExt(activeDocExt);
-  // Same rule as selectTable: no stale rows under this file's name while it opens.
+  // Same rule as selectTable: no stale rows or stale SQL under this file's name.
   clearResults(`(loading ${file.name}…)`);
+  $('sqlEditor').value = `-- loading ${file.name}…`;
   setBusy(true, { stoppable: true });
   try {
     const info = await engine.loadFile(lakehouse, file);
@@ -869,8 +870,10 @@ async function selectTable(row, t) {
   activeDocExt = '';
   // The previous table's rows must not sit on screen under the new table's name while
   // it loads — that reads as the app showing the wrong data. Clear to a placeholder
-  // now; the preview repaints when it lands.
+  // now; the preview repaints when it lands. The editor gets the same treatment: the
+  // old table's SQL sitting under the new table's title reads just as wrong.
   clearResults(`(loading ${$('activeTable').textContent}…)`);
+  $('sqlEditor').value = `-- loading ${$('activeTable').textContent}…`;
   setBusy(true, { stoppable: true });
   try {
     const info = await engine.loadTable(lakehouse, t);

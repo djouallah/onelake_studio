@@ -101,9 +101,16 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
   const q = sql => serial(() => conn.query(sql));
 
   let loadGen = 0;
-  async function cancelLoad() {
+  // Fire-and-forget ON PURPOSE. The worker runs a footer-heavy bind as one long
+  // synchronous stretch (its HTTP reads are sync XHR), so it only PROCESSES a cancel
+  // when the current chunk yields — and awaiting the acknowledgement here parked the
+  // NEXT load behind the very statement being cancelled, before it could even write
+  // "Resolving…", leaving the superseded load's status on screen the whole wait.
+  // Message order does the correctness work: the cancel is queued ahead of anything
+  // the successor sends, so it can only ever kill the predecessor's statement.
+  function cancelLoad() {
     loadGen++;
-    try { if (conn) await conn.cancelSent(); } catch (_) { /* nothing was pending */ }
+    try { if (conn) conn.cancelSent().catch(() => {}); } catch (_) { /* nothing was pending */ }
   }
   // Distinguishable so the UI can say "stopped" rather than reporting a failure.
   function cancelledError() {
