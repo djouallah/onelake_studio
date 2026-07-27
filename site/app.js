@@ -239,6 +239,12 @@ function showOpenInTab() {
 // that unlocks the workspace picker (afterSignIn).
 const PENDING_SQL_KEY = 'onelake-studio-pending-sql';
 
+// The landing page is a query result: on a fresh boot the app reads its own README
+// through the engine and the Pretty view renders it. The docs demonstrate the tool
+// by being served by it.
+const README_SQL =
+  "select content from read_text('https://raw.githubusercontent.com/djouallah/onelake_studio/refs/heads/main/README.md')";
+
 async function startLocal() {
   engine = createEngine(auth, { onStatus: setStatus });
   await engine.init();
@@ -272,7 +278,16 @@ async function startLocal() {
     sessionStorage.removeItem(PENDING_SQL_KEY);
     if (stash && !$('sqlEditor').value) $('sqlEditor').value = stash;
   } catch (_) {}
-  setStatus('DuckDB ready — run SQL now, or sign in to browse OneLake.', 'ok');
+  const booted = 'DuckDB ready — run SQL now, or sign in to browse OneLake.';
+  if (!$('sqlEditor').value) {
+    // Fresh visit: show the README as the landing content. The stash branch above
+    // means a sign-in round trip never loses the user's SQL to this. Offline or
+    // blocked, runQuery reports its error — the boot message below replaces it,
+    // because a failed docs fetch must not read as a broken app.
+    $('sqlEditor').value = README_SQL;
+    await runQuery();
+  }
+  setStatus(booted, 'ok');
 }
 
 // After a OneLake session exists (silent on boot, or interactive): unlock browsing.
