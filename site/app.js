@@ -862,7 +862,6 @@ const NUMERIC_TYPE = /^(U?(TINY|SMALL|BIG|HUGE)INT|U?INTEGER|DOUBLE|FLOAT|DECIMA
 // nothing on screen ever belongs to a query other than the current one.
 function clearResults(hint = '') {
   docSeq++;              // an in-flight showDoc() must not paint over this
-  docMode = 'pretty';
   $('docBar').hidden = true;
   $('docView').hidden = true;
   $('docView').innerHTML = '';
@@ -910,7 +909,11 @@ function renderResults(res) {
   // when the source was something that can hold a document in the first place.
   if (docAllowed && isDocResult(res)) {
     $('docBar').hidden = false;
-    showDoc(res.rows[0][res.fields[0]]);
+    setDocTabs();
+    // docMode is a session preference, not per-query state: someone who switched to Raw
+    // meant it, and having the next document flip them back to Pretty made the toggle feel
+    // like it had not been pressed. Raw is already what the grid above shows.
+    if (docMode === 'pretty') showDoc(res.rows[0][res.fields[0]]);
   }
 }
 

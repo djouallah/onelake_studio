@@ -160,6 +160,24 @@ test("zip archives are recognised but not reader-based", () => {
   assert.equal(readerFor("csv.zip"), null);
 });
 
+// The delimiter has to be a BYTE. Measured in the pinned DuckDB-WASM: delim='\x1F' is the
+// four characters backslash-x-1-F (the CSV reader unescapes \t, \n and \r, but not \xNN),
+// so reading any file that mentions that escape sequence as text — a regex, a separator
+// constant — failed outright with "CSV Error on Line: N".
+test("the text reader splits on a real byte and trims exactly one CR", () => {
+  const sql = readerFor("sql")("'f.sql'");
+  assert.ok(sql.includes("delim=chr(31)"), sql);
+  assert.ok(!sql.includes("\\x1F"), "a literal \\x1F delimiter splits on text, not on a byte");
+  // Exactly one trailing CR (the CRLF's), never a CR the line's own content ends with.
+  assert.ok(sql.includes("ends_with(line, chr(13))"), sql);
+  assert.ok(!sql.includes("rtrim("), sql);
+  // .txt is a document, not a headerless CSV.
+  assert.ok(readerFor("txt")("'f.txt'").includes("delim=chr(31)"));
+  // ...but '\t' IS one of the escapes the CSV reader expands, so the tsv reader is right
+  // as written. Verified, not assumed — it errors on real tabs, so it sees real tabs.
+  assert.ok(readerFor("tsv")("'f.tsv'").includes("delim='\\t'"));
+});
+
 test("isSqliteHeader sniffs the engine from bytes, not the extension", () => {
   const enc = s => new Uint8Array([...s].map(c => c.charCodeAt(0)));
   assert.equal(isSqliteHeader(enc("SQLite format 3 ...page data...")), true);

@@ -123,7 +123,6 @@ export const FILE_READERS = {
   pq:      n => `read_parquet([${n}])`,
   csv:     n => `read_csv_auto(${n})`,
   tsv:     n => `read_csv_auto(${n}, delim='\\t')`,
-  txt:     n => `read_csv_auto(${n})`,
   json:    n => `read_json_auto(${n})`,
   jsonl:   n => `read_json_auto(${n}, format='newline_delimited')`,
   ndjson:  n => `read_json_auto(${n}, format='newline_delimited')`,
@@ -135,12 +134,27 @@ export const FILE_READERS = {
 // opening, so read it one row per line instead of leaving it dead in the tree. The CSV
 // reader does that with splitting disabled: no delimiter that occurs in text, no quote
 // or escape character, so every byte of a line lands in the single declared column.
+//
+// chr(31), not '\x1F'. A DuckDB single-quoted string is literal apart from the handful of
+// escapes the CSV reader unescapes itself (\t, \n, \r — which is why the .tsv reader above
+// is right), and \xNN is NOT among them: the delimiter was the four characters
+// backslash-x-1-F, so ANY file that mentions that escape sequence as text — a regex, a
+// separator constant, this comment — split into two columns and failed to open with
+// "CSV Error on Line: N". Measured against the pinned build, not reasoned about.
+// (delim='' also works and can collide with nothing, but an empty delimiter is not
+// documented behaviour to rely on; a raw 0x1F byte means the file was never text.)
+//
+// The CR trim is exact rather than rtrim(line, chr(13)), which strips EVERY trailing CR —
+// a line whose own content ends in a carriage return lost it along with the CRLF's.
 const textLines = n =>
-  `(SELECT rtrim(line, chr(13)) AS line FROM read_csv(${n}, ` +
-  `columns={'line': 'VARCHAR'}, delim='\\x1F', quote='', escape='', ` +
+  `(SELECT CASE WHEN ends_with(line, chr(13)) THEN left(line, length(line) - 1) ELSE line END AS line ` +
+  `FROM read_csv(${n}, columns={'line': 'VARCHAR'}, delim=chr(31), quote='', escape='', ` +
   `header=false, auto_detect=false))`;
 
-export const TEXT_EXTS = ["sql", "yml", "yaml", "md", "toml", "ini", "cfg", "conf",
+// .txt belongs here, not with the CSV formats: the most document-shaped extension there
+// is was being auto-parsed into columns, which also kept it out of the compressed-text
+// list below and out of the Pretty view.
+export const TEXT_EXTS = ["sql", "yml", "yaml", "md", "txt", "toml", "ini", "cfg", "conf",
                           "properties", "log", "sh", "py", "html", "xml", "css", "js"];
 for (const ext of TEXT_EXTS) FILE_READERS[ext] = textLines;
 
