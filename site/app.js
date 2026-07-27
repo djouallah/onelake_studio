@@ -266,6 +266,12 @@ function wireUi() {
   $('connectBtn').onclick = () => connect({ force: true });
   $('wsSelect').addEventListener('input', onWorkspaceInput);
   $('wsSelect').addEventListener('change', onWorkspaceInput);
+  $('wsSelect').addEventListener('input', openWsMenu);
+  $('wsSelect').addEventListener('focus', openWsMenu);
+  $('wsSelect').addEventListener('keydown', onWsKey);
+  // Safe because the rows pick on mousedown-with-preventDefault, so choosing one never
+  // takes the focus away in the first place.
+  $('wsSelect').addEventListener('blur', hideWsMenu);
   $('itemSelect').onchange = () => connect();
   $('tabTables').onclick = () => switchPane('tables');
   $('tabFiles').onclick = () => switchPane('files');
@@ -344,12 +350,18 @@ function fill(sel, options, placeholder) {
   }
 }
 
-// The workspace box is a datalist combobox: free text the user types, filtered as they
-// type by the browser. That means its value is a CLAIM, not a selection — everything
-// downstream goes through canonicalWs() to turn it into a real workspace name (exact
-// first, then case-insensitive) or null.
+// The workspace box is a search box: free text the user types, matched against the list
+// as they type. Its value is a CLAIM, not a selection — everything downstream goes
+// through canonicalWs() to turn it into a real workspace name (exact first, then
+// case-insensitive) or null.
+//
+// The suggestions below it are drawn here rather than by a <datalist>, whose popup the
+// browser hands to the OS: white, page-tall and offset from the box it belongs to.
+const WS_MENU_MAX = 60;   // the menu scrolls; drawing 500 rows nobody reads does not help
 let wsNames = [];
 let lastWs = '';       // the workspace whose items are currently loaded, to dedupe events
+let wsShown = [];      // the names the menu is currently listing
+let wsActive = -1;     // highlighted row, -1 = none (typing beats arrowing)
 
 function canonicalWs(v) {
   const s = String(v || '').trim();
@@ -361,21 +373,77 @@ function canonicalWs(v) {
 
 function fillWorkspaces(names) {
   wsNames = names;
-  const dl = $('wsOptions');
-  dl.innerHTML = '';
-  for (const n of names) {
-    const o = document.createElement('option');
-    o.value = n;
-    dl.appendChild(o);
-  }
   const el = $('wsSelect');
   el.disabled = !names.length;
   el.placeholder = names.length ? `Workspace (${names.length}) — type to search` : 'No workspaces';
+  hideWsMenu();
 }
 
-// Datalist quirk: picking an option fires 'input', typing fires 'input', Enter/blur fire
-// 'change'. One handler serves all three — act only when the text resolves to a real
-// workspace we aren't already showing, so keystrokes along the way cost nothing.
+function openWsMenu() {
+  const el = $('wsSelect');
+  if (el.disabled) return;
+  const q = el.value.trim().toLowerCase();
+  wsShown = (q ? wsNames.filter(n => n.toLowerCase().includes(q)) : wsNames).slice(0, WS_MENU_MAX);
+  wsActive = -1;
+  const menu = $('wsMenu');
+  menu.textContent = '';
+  if (!wsShown.length) {
+    const none = document.createElement('div');
+    none.className = 'none';
+    none.textContent = 'No workspace matches';
+    menu.appendChild(none);
+  }
+  for (const [i, n] of wsShown.entries()) {
+    const row = document.createElement('div');
+    row.textContent = n;
+    // mousedown, not click: the input's blur fires first and would take the menu — and
+    // this row — down before the click ever landed on it.
+    row.addEventListener('mousedown', e => { e.preventDefault(); pickWs(i); });
+    menu.appendChild(row);
+  }
+  menu.hidden = false;
+}
+
+function hideWsMenu() {
+  $('wsMenu').hidden = true;
+  wsActive = -1;
+}
+
+function markWsActive() {
+  const rows = $('wsMenu').children;
+  for (const [i, row] of [...rows].entries()) row.classList.toggle('on', i === wsActive);
+  if (rows[wsActive]) rows[wsActive].scrollIntoView({ block: 'nearest' });
+}
+
+function pickWs(i) {
+  const name = wsShown[i];
+  if (!name) return;
+  $('wsSelect').value = name;
+  hideWsMenu();
+  onWorkspaceInput();
+}
+
+// Arrows walk the menu, Enter takes the highlighted row, Escape puts it away. With no row
+// highlighted, Enter falls through to the 'change' handler — which resolves whatever was
+// typed — so a name typed in full still works without ever opening the menu.
+function onWsKey(e) {
+  if (e.key === 'Escape') { hideWsMenu(); return; }
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    e.preventDefault();
+    if ($('wsMenu').hidden) openWsMenu();
+    if (!wsShown.length) return;
+    wsActive = e.key === 'ArrowDown'
+      ? (wsActive + 1) % wsShown.length
+      : (wsActive <= 0 ? wsShown.length : wsActive) - 1;
+    markWsActive();
+    return;
+  }
+  if (e.key === 'Enter' && wsActive >= 0) { e.preventDefault(); pickWs(wsActive); }
+}
+
+// Typing fires 'input', Enter/blur fire 'change', and pickWs calls this directly. One
+// handler serves all three — act only when the text resolves to a real workspace we
+// aren't already showing, so keystrokes along the way cost nothing.
 function onWorkspaceInput() {
   const el = $('wsSelect');
   const v = el.value.trim();

@@ -8,6 +8,9 @@
   <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin />
   <style>
     :root {
+      /* Native popups (the lakehouse <select>, scrollbars, the caret) are drawn by the OS,
+         not by these variables — without this they come up white on a dark page. */
+      color-scheme: dark;
       --bg: #0d1117; --panel: #161b22; --panel2: #0b0f14; --border: #30363d;
       --text: #e6edf3; --muted: #9da5b4; --accent: #2563eb; --accent2: #58a6ff;
       --ok: #3fb950; --warn: #d29922; --err: #ff7b72;
@@ -38,7 +41,21 @@
     }
     header .brand { font-weight: 700; letter-spacing: 0.2px; white-space: nowrap; }
     header .brand small { color: var(--muted); font-weight: 400; }
-    #wsSelect { flex: 1 1 260px; max-width: 380px; }
+    #wsCombo { position: relative; flex: 1 1 260px; max-width: 380px; }
+    #wsSelect { width: 100%; }
+    .comboMenu {
+      position: absolute; z-index: 20; top: calc(100% + 4px); left: 0; right: 0;
+      max-height: 340px; overflow-y: auto; padding: 0.25rem;
+      background: var(--panel); border: 1px solid var(--border); border-radius: 6px;
+      box-shadow: 0 10px 28px rgba(0, 0, 0, 0.55);
+    }
+    .comboMenu div {
+      padding: 0.35rem 0.55rem; border-radius: 4px; cursor: pointer;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .comboMenu div:hover, .comboMenu div.on { background: var(--accent); color: #fff; }
+    .comboMenu .none { color: var(--muted); cursor: default; }
+    .comboMenu .none:hover { background: none; color: var(--muted); }
     #itemSelect { flex: 1 1 220px; max-width: 320px; }
     header .spacer { flex: 1; }
     #userBox { color: var(--muted); font-size: 0.85rem; white-space: nowrap; display: flex; gap: 0.6rem; align-items: center; }
@@ -210,11 +227,15 @@
 <body>
   <header>
     <div class="brand">OneLake&nbsp;Studio</div>
-    <!-- A datalist combobox, not a <select>: tenants have hundreds of workspaces, and a
-         dropdown you can't type into doesn't scale past a dozen. -->
-    <input id="wsSelect" list="wsOptions" title="Workspace — type to search"
-           placeholder="Sign in to browse OneLake" autocomplete="off" spellcheck="false" disabled />
-    <datalist id="wsOptions"></datalist>
+    <!-- A search box, not a <select>: tenants have hundreds of workspaces, and a dropdown
+         you can't type into doesn't scale past a dozen. The suggestions under it are our
+         own list — a <datalist> is one line of HTML but its popup is drawn by the OS,
+         white and squat in the middle of a dark app. -->
+    <div class="combo" id="wsCombo">
+      <input id="wsSelect" title="Workspace — type to search"
+             placeholder="Sign in to browse OneLake" autocomplete="off" spellcheck="false" disabled />
+      <div id="wsMenu" class="comboMenu" hidden></div>
+    </div>
     <select id="itemSelect" title="Lakehouse / Warehouse" disabled><option value="">Select a workspace first</option></select>
     <button id="connectBtn" title="Reload tables">Reload</button>
     <div class="spacer"></div>
