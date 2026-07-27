@@ -225,6 +225,17 @@ async function pruneDataCache(c) {
 async function signedFetch(request, event) {
   let url = null;
   try { url = new URL(request.url); } catch (_) {}
+
+  // Same-origin app files REVALIDATE instead of trusting the HTTP cache. Pages caches
+  // every file for 10 minutes on its own clock, so a page opened minutes after a deploy
+  // came up as a MIX of builds — new app.js over old data.js — and a just-shipped fix
+  // was provably absent from the very page reporting on it. An ETag 304 costs one round
+  // trip and buys a page that is one build. CDN assets are version-pinned and immutable;
+  // they keep the plain cache.
+  if (url && url.origin === self.location.origin && request.method === 'GET') {
+    if (request.mode === 'navigate') return fetch(url.href, { cache: 'no-cache' });
+    return fetch(request, { cache: 'no-cache' });
+  }
   const cacheable = url && request.method === 'GET' && cacheableDataUrl(url);
   if (cacheable) {
     const hit = await fromDataCache(request, url);
