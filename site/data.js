@@ -848,15 +848,48 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
       // Column names of the table's CURRENT schema, used below to spot a physical/logical
       // mismatch once the parquet files are unioned.
       schemaColumns: schema ? (schema.fields || []).map(f => f.name) : null,
-      // The same fields keyed by ID. read_parquet matches by name, but a column-mapped
-      // writer (every Fabric Warehouse) puts GUIDs in the parquet and keeps the readable
-      // names only here — the field ID is the bridge back. See aliasByFieldId().
-      schemaFields: schema ? (schema.fields || []).map(f => ({ id: f.id, name: f.name })) : null,
+      // Physical parquet name -> readable name, when the writer used column mapping.
+      nameMapping: readNameMapping(meta, schema),
       // More than one schema in the log means the table evolved and its data files can
       // disagree — only then is union_by_name worth its price (see createView).
       evolved: (meta.schemas || []).length > 1,
       totalRecords: Number((snap.summary || {})["total-records"]) || null,
     };
+  }
+
+  // alias -> current column name, from the table's `schema.name-mapping.default`.
+  //
+  // Fabric Warehouse writes column-mapped Delta, so the field names in its parquet files
+  // are GUIDs (`col-81f65814-…`) and the readable names live only in metadata. Nothing in
+  // the footers bridges the two: field_id is absent on every column (probed on a real
+  // Warehouse file — created_by "parquet-cpp-arrow Microsoft Fabric 14.0.2"). Iceberg's
+  // answer for exactly that case is a name mapping, and Fabric publishes one: each entry
+  // carries a field ID and every name that has meant it, physical GUID included.
+  //
+  // Returns null when the table has no mapping — every Lakehouse table, since delta-rs
+  // writes readable names — which is the signal to leave the columns alone.
+  function readNameMapping(meta, schema) {
+    const raw = (meta.properties || {})["schema.name-mapping.default"];
+    if (!raw) return null;
+    let entries;
+    // It is a JSON document inside a JSON string. Malformed means no mapping, not a
+    // failure to open: a GUID header is bad, a table that won't open is worse.
+    try { entries = typeof raw === "string" ? JSON.parse(raw) : raw; } catch (_) { return null; }
+    if (!Array.isArray(entries)) return null;
+
+    const byId = new Map(((schema || {}).fields || [])
+      .filter(f => f.id != null).map(f => [String(f.id), f.name]));
+    const out = new Map();
+    for (const e of entries) {
+      // The current schema decides what a field is called NOW; names[0] is only a
+      // fallback for an ID the schema no longer lists.
+      const current = byId.get(String(e["field-id"])) || (e.names || [])[0];
+      if (!current) continue;
+      for (const n of (e.names || []))
+        // A name that maps to two different fields is not one worth trusting.
+        out.set(n, out.has(n) && out.get(n) !== current ? null : current);
+    }
+    return out.size ? out : null;
   }
 
   // Where this table's directory actually is. A table found through the DFS walk already
@@ -1034,51 +1067,25 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
          WHERE m.reg = x.filename AND d.pos = x.file_row_number)`);
   }
 
-  // Physical parquet field name -> logical Iceberg name, via field ID.
+  // The projection that turns the scanned names into the readable ones, or null to leave
+  // the view as it is.
   //
-  // Fabric Warehouse writes its Delta with column mapping on, so the names in the parquet
-  // footers are GUIDs (`col-81f65814-…`) and the readable names exist only in metadata.
-  // read_parquet matches by name, so without this a Warehouse table renders as a grid of
-  // GUID headers and no hand-written SQL can name a column. Iceberg identifies fields by
-  // ID and Fabric stamps those IDs into the footers, which is what makes the tables
-  // readable by Iceberg engines at all — so the IDs are the mapping.
-  //
-  // A name seen twice (a nested field reusing a leaf name) maps to nothing: aliasing the
-  // wrong column is worse than showing the physical one.
-  async function physicalNameMap(reg, fields) {
-    const byId = new Map((fields || [])
-      .filter(f => f.id != null).map(f => [String(f.id), f.name]));
-    if (!byId.size) return null;
-    const rows = (await conn.query(`SELECT name, field_id FROM parquet_schema(${sqlStr(reg)})`))
-      .toArray().map(r => r.toJSON());
-    const out = new Map();
-    for (const r of rows) {
-      // Absent IDs come back as NULL, and as -1 on some builds; neither identifies a field.
-      if (r.field_id == null || Number(r.field_id) < 0) continue;
-      const n = String(r.name);
-      out.set(n, out.has(n) ? null : (byId.get(String(r.field_id)) || null));
-    }
-    return out;
-  }
-
   // All or nothing. A partial mapping would leave a table half-readable and half-GUID
-  // while implying both names are real, and any table that isn't column-mapped never
-  // reaches here — so returning null (keep the physical names, keep the warning) is the
-  // honest answer whenever a single column fails to resolve.
-  async function aliasByFieldId(reg, columns, fields) {
-    let map;
-    // Best-effort: an engine whose parquet_schema has no field_id must not stop a table
-    // from opening at all.
-    try { map = await physicalNameMap(reg, fields); } catch (_) { return null; }
-    if (!map) return null;
+  // while implying both names are real, so a single unresolved column means no aliasing
+  // at all — the physical names stand and the caller warns. Null also comes back when
+  // nothing would change, which is every table whose names were already readable.
+  function aliasFor(columns, mapping) {
+    if (!mapping) return null;
     const pairs = [], used = new Set();
+    let changed = false;
     for (const c of columns) {
-      const log = map.get(c.name);
-      if (!log || used.has(log)) return null;
-      used.add(log);
-      pairs.push([c.name, log]);
+      const name = mapping.get(c.name);
+      if (!name || used.has(name)) return null;
+      used.add(name);
+      if (name !== c.name) changed = true;
+      pairs.push([c.name, name]);
     }
-    return pairs;
+    return changed ? pairs : null;
   }
 
   // reg name -> normalized original path, so the anti-join can match a delete file's
@@ -1251,17 +1258,17 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
 
     // read_parquet matches columns by NAME, and a column the current schema doesn't have
     // means one of two very different things. Either the writer is column-mapped and the
-    // name is physical (a Warehouse GUID) — fixable by field ID, below. Or the table was
-    // renamed: an Iceberg rename is metadata-only, so the old name survives in older files
-    // and there is nothing to map it to. Only the second is worth warning about, and this
-    // used to report every Warehouse column as the second.
+    // name is physical (a Warehouse GUID) — the name mapping fixes that, below. Or the
+    // table was renamed: an Iceberg rename is metadata-only, so the old name survives in
+    // older files and there is nothing to map it to. Only the second is worth warning
+    // about, and this used to report every Warehouse column as the second.
     if (resolved.schemaColumns) {
       const known = new Set(resolved.schemaColumns);
       let extra = columns.map(c => c.name).filter(n => !known.has(n));
       // Best-effort throughout: a table that opened is not worth losing over a cosmetic
       // rename, and CREATE OR REPLACE leaves the working view standing if it fails.
       if (extra.length) try {
-        const aliases = await aliasByFieldId(regs[0], columns, resolved.schemaFields);
+        const aliases = aliasFor(columns, resolved.nameMapping);
         if (aliases) {
           await createView(ident, regs, delTable, mapTable, resolved.evolved, aliases);
           columns = await describe(ident);
