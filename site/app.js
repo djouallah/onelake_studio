@@ -768,6 +768,8 @@ async function selectFile(row, file) {
   activeFile = file;
   activeDocExt = fileExt(file.name);
   activeDocEligible = isTextExt(activeDocExt);
+  // Same rule as selectTable: no stale rows under this file's name while it opens.
+  clearResults(`(loading ${file.name}…)`);
   setBusy(true, { stoppable: true });
   try {
     const info = await engine.loadFile(lakehouse, file);
@@ -865,6 +867,10 @@ async function selectTable(row, t) {
   activeFile = null;            // a table has no single file to hand back
   activeDocEligible = false;    // ...and is a table, whatever shape the preview comes back
   activeDocExt = '';
+  // The previous table's rows must not sit on screen under the new table's name while
+  // it loads — that reads as the app showing the wrong data. Clear to a placeholder
+  // now; the preview repaints when it lands.
+  clearResults(`(loading ${$('activeTable').textContent}…)`);
   setBusy(true, { stoppable: true });
   try {
     const info = await engine.loadTable(lakehouse, t);
