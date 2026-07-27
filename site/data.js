@@ -1253,8 +1253,16 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
     return out;
   }
 
+  // The file itself, byte for byte, straight off OneLake. Not reassembled from the query
+  // result: the reader splits on line endings and drops the CR of a CRLF, so a rebuilt
+  // copy is a plausible file rather than the one that is stored. Compressed text comes
+  // back compressed, which is also what "download this file" means.
+  async function readFileBytes(lh, file) {
+    return fetchAuthed(dfsUrl(lh.workspace, file.path));
+  }
+
   return { init, reset, parseLakehouse, listWorkspaces, listItems, listTables, loadTable,
-           listFiles, loadFile, runSql, describeLoad, fmtBytes };
+           listFiles, loadFile, readFileBytes, runSql, describeLoad, fmtBytes };
 }
 
 // -----------------------------------------------------------------------------

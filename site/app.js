@@ -6,7 +6,7 @@ import {
   resolveConfig, saveOverride, clearOverride, adminConsentUrl, appRedirectUri,
 } from './auth.js';
 import { createEngine, READY } from './data.js';
-import { isDocResult, textLinesDoc, fileExt, isTextExt, escapeHtml } from './paths.js';
+import { isDocResult, textLinesDoc, fileExt, isTextExt, escapeHtml, basename } from './paths.js';
 // Static import is safe: docview.js itself is tiny — the CDN fetch of the markdown
 // parser only happens inside renderMarkdown(), and only for a document that IS markdown.
 import { renderDocument } from './docview.js';
@@ -26,6 +26,7 @@ let engineUp = false;        // ...and the settled form of it, for the synchrono
 let signedIn = false;        // OneLake session established (browsing unlocked)
 let lakehouse = null;        // { workspace, item }
 let activeIdent = null;      // quoted identifier of the loaded table
+let activeFile = null;       // the Files-tab entry behind it, when a file is what was opened
 let lastResult = null;       // { fields, rows } for CSV export
 let pane = 'tables';         // which sidebar pane is showing: 'tables' | 'files'
 let docMode = 'pretty';      // Pretty | Raw for a document result; reset each query
@@ -330,7 +331,7 @@ function wireUi() {
     $('sqlEditor').value = previewSql(activeIdent, activeDocEligible);
     runQuery({ doc: activeDocEligible, ext: activeDocExt });
   };
-  $('csvBtn').onclick = downloadCsv;
+  $('csvBtn').onclick = downloadActive;
   $('docPretty').onclick = () => {
     if (docMode === 'pretty' || !lastResult) return;
     docMode = 'pretty';
@@ -695,6 +696,7 @@ async function selectFile(row, file) {
   // comes back as a single multiline cell). Every other reader — parquet, csv, json, avro,
   // xlsx, a database file, a zip entry — produces a TABLE, and a table with one cell in it
   // is still a table.
+  activeFile = file;
   activeDocExt = fileExt(file.name);
   activeDocEligible = isTextExt(activeDocExt);
   setBusy(true);
@@ -767,7 +769,8 @@ async function selectTable(row, t) {
   document.querySelectorAll('.tableItem.active').forEach(el => el.classList.remove('active'));
   row.classList.add('active');
   $('activeTable').textContent = t.schema ? `${t.schema}.${t.table}` : t.table;
-  activeDocEligible = false;    // a table is a table, whatever shape the preview comes back
+  activeFile = null;            // a table has no single file to hand back
+  activeDocEligible = false;    // ...and is a table, whatever shape the preview comes back
   activeDocExt = '';
   setBusy(true);
   try {
@@ -847,6 +850,7 @@ async function runQuery({ doc = true, ext = '' } = {}) {
              `the CSV export is capped at the same point`;
     setStatus(msg, res.truncated ? 'warn' : 'ok');
     $('csvBtn').disabled = res.rows.length === 0;
+    setExportLabel();
     return true;
   } catch (e) {
     // The pane is not a scratchpad of whatever last worked. Leaving the previous result up
@@ -877,6 +881,7 @@ function clearResults(hint = '') {
   $('resultsHint').textContent = hint;
   lastResult = null;
   $('csvBtn').disabled = true;
+  setExportLabel();
 }
 
 // The document a result holds, or null if it holds none. TWO shapes qualify and both have
@@ -972,6 +977,48 @@ function setDocTabs() {
 // ---------------------------------------------------------------------------
 // CSV export
 // ---------------------------------------------------------------------------
+// The export button does whichever of two things the thing on screen actually is. A grid
+// of rows exports as CSV; a FILE opened from the tree downloads as that file — a .bim
+// asked for is a .bim, not its lines wrapped in CSV quoting.
+function exportIsFile() {
+  return !!(activeFile && lastResult && docOf(lastResult) != null);
+}
+
+function setExportLabel() {
+  const btn = $('csvBtn');
+  const file = exportIsFile();
+  btn.textContent = file ? 'Download file' : 'Download CSV';
+  btn.title = file ? `Save ${activeFile.name} exactly as it is stored` : '';
+}
+
+async function downloadActive() {
+  if (!exportIsFile()) return downloadCsv();
+  const btn = $('csvBtn');
+  btn.disabled = true;
+  try {
+    // Straight from OneLake, not rebuilt from the rows: the reader dropped the CR of every
+    // CRLF and a file's final newline, so the grid can no longer produce the exact bytes.
+    const bytes = await engine.readFileBytes(lakehouse, activeFile);
+    save(new Blob([bytes], { type: 'application/octet-stream' }), activeFile.name);
+    setStatus(`Downloaded ${activeFile.name} (${engine.fmtBytes(bytes.length)}).`, 'ok');
+  } catch (e) {
+    setStatus('Download failed: ' + explainRead(e.message), 'error');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function save(blob, name) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = basename(name);
+  a.click();
+  // Revoking in this same task races the download the click just started, and Firefox in
+  // particular ends up saving nothing. One turn of the event loop is enough.
+  setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+
 function downloadCsv() {
   if (!lastResult || !lastResult.rows.length) return;
   const { fields, rows } = lastResult;
@@ -981,15 +1028,8 @@ function downloadCsv() {
   };
   const lines = [fields.map(q).join(',')];
   for (const r of rows) lines.push(fields.map(f => q(r[f])).join(','));
-  const blob = new Blob([lines.join('\r\n')], { type: 'text/csv;charset=utf-8' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = ($('activeTable').textContent || 'query').replace(/[^\w.-]+/g, '_') + '.csv';
-  a.click();
-  // Revoking in this same task races the download the click just started, and Firefox in
-  // particular ends up saving nothing. One turn of the event loop is enough.
-  setTimeout(() => URL.revokeObjectURL(url), 0);
+  save(new Blob([lines.join('\r\n')], { type: 'text/csv;charset=utf-8' }),
+       ($('activeTable').textContent || 'query').replace(/[^\w.-]+/g, '_') + '.csv');
 }
 
 // ---------------------------------------------------------------------------
