@@ -334,7 +334,7 @@ function wireUi() {
   $('docPretty').onclick = () => {
     if (docMode === 'pretty' || !lastResult) return;
     docMode = 'pretty';
-    showDoc(lastResult.rows[0][lastResult.fields[0]]);   // module cached — instant
+    showDoc(docOf(lastResult));   // renderer module already loaded — instant
   };
   $('docRaw').onclick = () => {
     docMode = 'raw';
@@ -879,6 +879,16 @@ function clearResults(hint = '') {
   $('csvBtn').disabled = true;
 }
 
+// The document a result holds, or null if it holds none. TWO shapes qualify and both have
+// to be read the same way everywhere — rendering the result and clicking back to Pretty
+// took different routes, and the tab's route was the old single-cell one, so returning
+// from Raw showed the first LINE of the file ("{") as the whole document.
+function docOf(res) {
+  if (!docAllowed || !res) return null;
+  return isDocResult(res) ? res.rows[0][res.fields[0]]   // read_text(): one cell
+                          : textLinesDoc(res);           // the Files tab: one row per line
+}
+
 function renderResults(res) {
   const table = $('resultsTable');
   const hint = $('resultsHint');
@@ -913,10 +923,7 @@ function renderResults(res) {
   // The grid above is always rendered and stays the source of truth (CSV exports it
   // regardless). A document result additionally gets the Pretty view on top — but only
   // when the source was something that can hold a document in the first place.
-  // Two shapes reach here: read_text()'s single cell, and the Files tab's row-per-line.
-  const doc = !docAllowed ? null
-            : isDocResult(res) ? res.rows[0][res.fields[0]]
-            : textLinesDoc(res);
+  const doc = docOf(res);
   if (doc != null) {
     $('docBar').hidden = false;
     setDocTabs();
