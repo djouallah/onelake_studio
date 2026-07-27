@@ -480,12 +480,20 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
     // Keyed on the full path, not the basename: Files/a/data.parquet and
     // Files/b/data.parquet are different files and must not share a cache entry.
     const key = fileKey(lh, file);
+    // Supersede first, even on a cache hit: the click means "show me THIS", so whatever
+    // is still loading stands down instead of repainting the screen later with a table
+    // the user has left. Same discipline as loadTable, for the same reason — a file
+    // opened during a table load used to leave both running and the UI split between
+    // them.
+    await cancelLoad();
+    const gen = loadGen;
+    const check = () => { if (gen !== loadGen) throw cancelledError(); };
     if (loaded.has(key)) return loaded.get(key);
 
     const label = file.name;
     const ext = fileExt(file.name);
-    if (DB_EXTS.has(ext)) return loadDatabaseFile(lh, file, key);
-    if (ZIP_EXTS.has(ext)) return loadZipFile(lh, file, key);
+    if (DB_EXTS.has(ext)) return loadDatabaseFile(lh, file, key, gen, check);
+    if (ZIP_EXTS.has(ext)) return loadZipFile(lh, file, key, gen, check);
     const reader = readerFor(ext);
     if (ext === "xlsx" && !canXlsx)
       throw new Error(`${file.name}: this DuckDB-WASM build has no 'excel' extension, so .xlsx can't be read.`);
@@ -495,13 +503,17 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
                       `(sql, yml, md, log, …) are readable; text formats also read as .gz/.zst.`);
 
     const res = track(key);
+    res.gen = gen;
     const reg = `file_${++_seq}.${ext}`;
     await db.registerFileURL(reg, dfsUrl(lh.workspace, file.path), duckdb.DuckDBDataProtocol.HTTP, false);
+    regLog.set(reg, Date.now());
     res.regs.push(reg);
 
     const ident = quoteIdent(uniqueView(key, file.path.replace(/^.*?\/Files\//, "")));
     try {
-      await q(`CREATE OR REPLACE VIEW ${ident} AS SELECT * FROM ${reader(sqlStr(reg))}`);
+      // stream(): a non-parquet reader pulls the file WHOLE inside this one statement,
+      // and Stop must be able to kill it.
+      await stream(`CREATE OR REPLACE VIEW ${ident} AS SELECT * FROM ${reader(sqlStr(reg))}`);
       res.ident = ident;
       const columns = await describe(ident);
       const info = { label, ident, columns, fileCount: 1, posDeletes: 0, eqDeletes: 0,
@@ -510,7 +522,8 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
       onStatus(describeLoad(info));
       return info;
     } catch (e) {
-      await release(key);
+      await releaseOwned(key, [reg], gen);
+      if (e.cancelled) throw e;
       throw new Error(`Could not read ${file.name}: ${e.message}`);
     }
   }
@@ -521,13 +534,15 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
   // over a registered HTTP URL in test/extensions.html). Each entry with a known reader
   // becomes its own view; the archive itself has no rows to show.
   const ZIP_MAX_VIEWS = 50;
-  async function loadZipFile(lh, file, key) {
+  async function loadZipFile(lh, file, key, gen, check) {
     if (!canZip)
       throw new Error(`${file.name}: this DuckDB-WASM build couldn't load the 'zipfs' extension, so zip archives can't be read.`);
     const res = track(key);
+    res.gen = gen;
     res.views = [];
     const reg = `zipfile_${++_seq}.zip`;
     await db.registerFileURL(reg, dfsUrl(lh.workspace, file.path), duckdb.DuckDBDataProtocol.HTTP, false);
+    regLog.set(reg, Date.now());
     res.regs.push(reg);
     try {
       const entries = (await q(
@@ -544,15 +559,19 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
       }
       const views = [];
       for (const e of readable) {
+        // One view per entry, each inflating its entry to bind — the loop that most
+        // needs a way out.
+        check();
         const reader = readerFor(fileExt(e.n));
         // Owner "<key>::<entry>": two entries whose names sanitize to the same identifier
         // must get distinct views, and uniqueView only dedupes across distinct owners.
         const ident = quoteIdent(uniqueView(`${key}::${e.n}`, e.n));
         try {
-          await q(`CREATE OR REPLACE VIEW ${ident} AS SELECT * FROM ${reader(sqlStr(`zip://${reg}/${e.n}`))}`);
+          await stream(`CREATE OR REPLACE VIEW ${ident} AS SELECT * FROM ${reader(sqlStr(`zip://${reg}/${e.n}`))}`);
           views.push(ident);
           res.views.push(ident);
         } catch (err) {
+          if (err && err.cancelled) throw err;   // a stop is not a bad entry
           warnings.push(`${e.n}: ${err.message}`);
         }
       }
@@ -568,7 +587,8 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
       onStatus(describeLoad(info));
       return info;
     } catch (e) {
-      await release(key);
+      await releaseOwned(key, [reg], gen);
+      if (e.cancelled) throw e;
       throw new Error(`Could not read ${file.name}: ${e.message}`);
     }
   }
@@ -585,22 +605,25 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
   //     fail with SQLITE_CANTOPEN — so the official SQLite build does the reading and
   //     DuckDB gets a copy. SQLite files are the xlsx of databases: page-based, usually
   //     small, meant to be local; the copy is capped rather than unbounded.
-  async function loadDatabaseFile(lh, file, key) {
+  async function loadDatabaseFile(lh, file, key, gen, check) {
     const res = track(key);
+    res.gen = gen;
     const ext = fileExt(file.name);
     const url = dfsUrl(lh.workspace, file.path);
 
     const head = await authedFetch(url, { Range: "bytes=0-15" });
     if (!head.ok) throw new Error(`Could not read ${file.name} (HTTP ${head.status})`);
+    check();
     const sqlite = isSqliteHeader(new Uint8Array(await head.arrayBuffer()));
 
     // The alias is how the user names the database in SQL, so derive it from the file
     // name; uniqueView guards it against colliding with an existing view or alias.
     const alias = uniqueView(key, basename(file.name).replace(/\.[^.]+$/, ""));
-    if (sqlite) return loadSqliteFile(file, key, url, alias);
+    if (sqlite) return loadSqliteFile(file, key, url, alias, gen, check);
 
     const reg = `dbfile_${++_seq}.${ext}`;
     await db.registerFileURL(reg, url, duckdb.DuckDBDataProtocol.HTTP, false);
+    regLog.set(reg, Date.now());
     res.regs.push(reg);
     try {
       // READ_ONLY is not optional: the file lives in OneLake and the app never writes.
@@ -632,7 +655,8 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
       onStatus(describeLoad(info));
       return info;
     } catch (e) {
-      await release(key);
+      await releaseOwned(key, [reg], gen);
+      if (e.cancelled) throw e;
       throw new Error(`Could not attach ${file.name}: ${e.message}`);
     }
   }
@@ -649,7 +673,7 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
 
   const sqliteQuote = s => '"' + String(s).replace(/"/g, '""') + '"';
 
-  async function loadSqliteFile(file, key, url, alias) {
+  async function loadSqliteFile(file, key, url, alias, gen, check) {
     if (file.bytes > SQLITE_MAX_BYTES)
       throw new Error(`${file.name} is ${fmtBytes(file.bytes)} — over the ${fmtBytes(SQLITE_MAX_BYTES)} ` +
                       `cap for copying a SQLite file into the browser.`);
@@ -663,6 +687,7 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
     }
     const sdb = new _sqljs.Database(bytes);
     const res = track(key);
+    res.gen = gen;
     const warnings = [];
     try {
       const master = sdb.exec(
@@ -676,6 +701,8 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
       const tables = [];
       onStatus(`Copying ${names.length} table(s) from ${file.name} into DuckDB…`);
       for (const t of names) {
+        // One copied table per iteration — the loop a big SQLite file spends its time in.
+        check();
         const ident = `${quoteIdent(alias)}.${quoteIdent(t)}`;
         const data = sdb.exec(`SELECT * FROM ${sqliteQuote(t)}`);
         if (!data.length) {
@@ -716,7 +743,8 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
       onStatus(describeLoad(info));
       return info;
     } catch (e) {
-      await release(key);
+      await releaseOwned(key, [], gen);
+      if (e.cancelled) throw e;
       throw new Error(`Could not read ${file.name}: ${e.message}`);
     } finally {
       try { sdb.close(); } catch (_) {}
@@ -1183,15 +1211,20 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
     const union = unionByName ? ", union_by_name = true" : "";
     const proj = aliases &&
       aliases.map(([phys, log]) => `${quoteIdent(phys)} AS ${quoteIdent(log)}`).join(", ");
+    // stream(), not q(): under union_by_name this bind reads the footer of EVERY file —
+    // hundreds of HTTPS round trips inside one statement — and a conn.query() cannot be
+    // cancelled, so Stop (and everything queued behind, including reset()) hung on it.
+    // conn.send() runs DDL fine (verified against the pinned build) and dies on
+    // cancelSent().
     if (!delTable) {
-      await q(
+      await stream(
         `CREATE OR REPLACE VIEW ${ident} AS
          SELECT ${proj || "*"} FROM read_parquet([${list}]${union})`);
       return;
     }
     // EXCLUDE keeps the two bookkeeping columns out of the table's visible schema. An
     // explicit projection already names only real columns, so it needs no EXCLUDE.
-    await q(
+    await stream(
       `CREATE OR REPLACE VIEW ${ident} AS
        SELECT ${proj || "* EXCLUDE (filename, file_row_number)"}
        FROM read_parquet([${list}]${union},
@@ -1247,7 +1280,9 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
       regs.push(reg);
     }
     const name = `__del_${++_seq}`;
-    await q(
+    // stream() for the same reason as createView: this reads the delete files over HTTP
+    // inside one statement, and it must die on Stop.
+    await stream(
       `CREATE OR REPLACE TABLE ${name} AS
        SELECT ${PATH_KEY_SQL("file_path")} AS pk, pos
        FROM read_parquet([${regs.map(sqlStr).join(", ")}], union_by_name = true)`);
@@ -1267,9 +1302,13 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
     const probe = async subset => {
       if (budget-- <= 0) return [];     // give up quietly rather than probing forever
       try {
-        await q(`SELECT * FROM read_parquet([${subset.map(sqlStr).join(", ")}]${union}) LIMIT 0`);
+        // stream(): probes bind footers over HTTP too, and a diagnosis must not be the
+        // thing that can't be stopped.
+        await stream(`SELECT * FROM read_parquet([${subset.map(sqlStr).join(", ")}]${union}) LIMIT 0`);
         return [];
-      } catch (_) {
+      } catch (e) {
+        // A cancelled probe is not a bad file — stop diagnosing, report nothing.
+        if (e && e.cancelled) throw e;
         if (subset.length === 1) return subset;
         const mid = subset.length >> 1;
         return [...await probe(subset.slice(0, mid)), ...await probe(subset.slice(mid))];
@@ -1334,14 +1373,15 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
     // Keyed per lakehouse: the engine outlives the user's choice of one, and two
     // lakehouses can both hold a dbo.sales.
     const key = tableKey(lh, t);
-    if (loaded.has(key)) return loaded.get(key);
-
-    // Supersede whatever came before. A previous load stands down at its next check(),
-    // and a previous query dies in the worker — without this, picking a second table
-    // simply queued behind the first one's preview and looked like a frozen app, which
-    // is the bug 54229d3 claimed to fix and didn't: nothing ever bumped the counter
-    // except the Stop button.
+    // Supersede whatever came before — even on a cache hit, because the click means
+    // "show me THIS" and the in-flight load must stand down rather than repaint the
+    // screen later. A previous load stands down at its next check(), and a previous
+    // query dies in the worker — without this, picking a second table simply queued
+    // behind the first one's preview and looked like a frozen app, which is the bug
+    // 54229d3 claimed to fix and didn't: nothing ever bumped the counter except the
+    // Stop button.
     await cancelLoad();
+    if (loaded.has(key)) return loaded.get(key);
     const gen = loadGen;
     const check = () => { if (gen !== loadGen) throw cancelledError(); };
 

@@ -748,7 +748,16 @@ async function expandDir(host, dir, depth) {
   }
 }
 
+// The last click wins. Loads run for seconds and stay clickable throughout, so a load
+// that resumes after a NEWER selection must not touch the screen — that is how a
+// dim_duid preview ended up rendered under dbt.log's name while a third table was
+// still loading underneath. Each selection takes a ticket; after every await, a stale
+// ticket means stand down silently (the engine side already cancelled the stale load —
+// this guards the UI writes that happen after the await returns).
+let selSeq = 0;
+
 async function selectFile(row, file) {
+  const my = ++selSeq;
   document.querySelectorAll('.fileItem.active').forEach(el => el.classList.remove('active'));
   row.classList.add('active');
   $('activeTable').textContent = file.name;
@@ -759,9 +768,10 @@ async function selectFile(row, file) {
   activeFile = file;
   activeDocExt = fileExt(file.name);
   activeDocEligible = isTextExt(activeDocExt);
-  setBusy(true);
+  setBusy(true, { stoppable: true });
   try {
     const info = await engine.loadFile(lakehouse, file);
+    if (my !== selSeq) return;
     activeIdent = info.ident;
     // A database file with no tables attaches but leaves nothing to preview.
     if (info.ident) {
@@ -773,11 +783,20 @@ async function selectFile(row, file) {
       reportLoad(info, true);
     }
   } catch (e) {
-    clearResults('(no result — the file could not be opened)');
-    setStatus('Load failed: ' + explainRead(e.message), 'error');
-    console.error(e);
+    if (my !== selSeq) return;
+    if (e.cancelled) {
+      clearResults('(no result — loading stopped)');
+      setStatus(`Stopped loading ${file.name}.`);
+      row.classList.remove('active');
+    } else {
+      clearResults('(no result — the file could not be opened)');
+      setStatus('Load failed: ' + explainRead(e.message), 'error');
+      console.error(e);
+    }
   } finally {
-    setBusy(false);
+    // A stale selection's teardown must not flip the busy state out from under the
+    // newer selection's own load.
+    if (my === selSeq) setBusy(false);
   }
 }
 
@@ -839,6 +858,7 @@ async function selectTable(row, t) {
       'Workers; a hard reload (Ctrl+Shift+R) also causes this for one page load.', 'error');
     return;
   }
+  const my = ++selSeq;
   document.querySelectorAll('.tableItem.active').forEach(el => el.classList.remove('active'));
   row.classList.add('active');
   $('activeTable').textContent = t.schema ? `${t.schema}.${t.table}` : t.table;
@@ -848,6 +868,7 @@ async function selectTable(row, t) {
   setBusy(true, { stoppable: true });
   try {
     const info = await engine.loadTable(lakehouse, t);
+    if (my !== selSeq) return;
     activeIdent = info.ident;
     $('sqlEditor').value = previewSql(info.ident, false);
     $('previewBtn').disabled = false;
@@ -856,6 +877,7 @@ async function selectTable(row, t) {
     row.classList.remove('pending');
     row.querySelector('.tag')?.remove();
   } catch (e) {
+    if (my !== selSeq) return;
     // A load the user stopped is not a failure, and calling it one in red is how a UI
     // teaches people to distrust its errors.
     if (e.cancelled) {
@@ -868,7 +890,9 @@ async function selectTable(row, t) {
       console.error(e);
     }
   } finally {
-    setBusy(false);
+    // A stale selection's teardown must not flip the busy state out from under the
+    // newer selection's own load.
+    if (my === selSeq) setBusy(false);
   }
 }
 
@@ -1270,8 +1294,9 @@ function cellText(v) {
   if (typeof v === 'object') return JSON.stringify(v);
   return String(v);
 }
-// `stoppable` is only true for a table load, which is the only work cancelLoad() reaches.
-// Offering Stop for anything else would be a button that does nothing.
+// `stoppable` is true for table loads, file loads and queries — all of them now run
+// through cancellable statements that cancelLoad() reaches. Offering Stop for anything
+// else would be a button that does nothing.
 function setBusy(b, { stoppable = false } = {}) {
   const stop = $('stopBtn');
   stop.hidden = !(b && stoppable);
