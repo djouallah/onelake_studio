@@ -1247,31 +1247,6 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
     return { fields, types, rows, numRows: Number(res.numRows), truncated, limit: MAX_ROWS };
   }
 
-  // Results come back as Arrow, so the column types are Arrow's, not DuckDB's. Name them
-  // the way DuckDB does — those are the names the user wrote the query against, and the
-  // ones DESCRIBE would have shown.
-  const ARROW_NAME = { 1: "NULL", 4: "BLOB", 5: "VARCHAR", 6: "BOOLEAN", 8: "DATE",
-                       11: "INTERVAL", 13: "STRUCT", 14: "UNION", 15: "BLOB",
-                       17: "MAP", 19: "BLOB", 20: "VARCHAR" };
-  const INT_NAME = { 8: "TINYINT", 16: "SMALLINT", 32: "INTEGER", 64: "BIGINT", 128: "HUGEINT" };
-
-  function arrowTypeName(t) {
-    if (!t) return "";
-    switch (t.typeId) {
-      case 2: {   // Int — width and signedness live on the type
-        const n = INT_NAME[t.bitWidth] || "INTEGER";
-        return t.isSigned === false ? "U" + n : n;
-      }
-      case 3: return t.precision === 2 ? "DOUBLE" : "FLOAT";   // Precision: HALF/SINGLE/DOUBLE
-      case 7: return `DECIMAL(${t.precision},${t.scale})`;
-      case 9: return "TIME";
-      case 10: return t.timezone ? "TIMESTAMPTZ" : "TIMESTAMP";
-      case 12: case 16: return arrowTypeName(t.children && t.children[0] && t.children[0].type) + "[]";
-      case 18: return "INTERVAL";
-      default: return ARROW_NAME[t.typeId] || String(t).toUpperCase();
-    }
-  }
-
   function normalizeRow(obj, fields) {
     const out = {};
     for (const f of fields) out[f] = normalizeValue(obj[f]);
@@ -1280,4 +1255,32 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
 
   return { init, reset, parseLakehouse, listWorkspaces, listItems, listTables, loadTable,
            listFiles, loadFile, runSql, describeLoad, fmtBytes };
+}
+
+// -----------------------------------------------------------------------------
+// Results come back as Arrow, so the column types are Arrow's, not DuckDB's. Name them
+// the way DuckDB does — those are the names the user wrote the query against, and the
+// ones DESCRIBE would have shown. Module-scope and exported: it is pure, and the
+// integration harness uses it to prove real Arrow types reach isDocResult.
+// -----------------------------------------------------------------------------
+const ARROW_NAME = { 1: "NULL", 4: "BLOB", 5: "VARCHAR", 6: "BOOLEAN", 8: "DATE",
+                     11: "INTERVAL", 13: "STRUCT", 14: "UNION", 15: "BLOB",
+                     17: "MAP", 19: "BLOB", 20: "VARCHAR" };
+const INT_NAME = { 8: "TINYINT", 16: "SMALLINT", 32: "INTEGER", 64: "BIGINT", 128: "HUGEINT" };
+
+export function arrowTypeName(t) {
+  if (!t) return "";
+  switch (t.typeId) {
+    case 2: {   // Int — width and signedness live on the type
+      const n = INT_NAME[t.bitWidth] || "INTEGER";
+      return t.isSigned === false ? "U" + n : n;
+    }
+    case 3: return t.precision === 2 ? "DOUBLE" : "FLOAT";   // Precision: HALF/SINGLE/DOUBLE
+    case 7: return `DECIMAL(${t.precision},${t.scale})`;
+    case 9: return "TIME";
+    case 10: return t.timezone ? "TIMESTAMPTZ" : "TIMESTAMP";
+    case 12: case 16: return arrowTypeName(t.children && t.children[0] && t.children[0].type) + "[]";
+    case 18: return "INTERVAL";
+    default: return ARROW_NAME[t.typeId] || String(t).toUpperCase();
+  }
 }

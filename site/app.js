@@ -6,6 +6,10 @@ import {
   resolveConfig, saveOverride, clearOverride, adminConsentUrl, appRedirectUri,
 } from './auth.js';
 import { createEngine, READY } from './data.js';
+import { isDocResult } from './paths.js';
+// Static import is safe: docview.js itself is tiny — the CDN fetch of the markdown
+// parser only happens inside renderMarkdown(), on the first pretty render.
+import { renderMarkdown } from './docview.js';
 
 const $ = id => document.getElementById(id);
 const DOCS = 'https://github.com/djouallah/onelake_studio';
@@ -22,6 +26,8 @@ let lakehouse = null;        // { workspace, item }
 let activeIdent = null;      // quoted identifier of the loaded table
 let lastResult = null;       // { fields, rows } for CSV export
 let pane = 'tables';         // which sidebar pane is showing: 'tables' | 'files'
+let docMode = 'pretty';      // Pretty | Raw for a document result; reset each query
+let docSeq = 0;              // a slow CDN import must not paint over a newer result
 let lastTables = null;       // cached listTables() result, so switching panes is free
 let lastTableCount = '';
 
@@ -246,6 +252,17 @@ async function startLocal() {
   $('runBtn').onclick = runQuery;
   $('previewBtn').onclick = () => { if (activeIdent) { $('sqlEditor').value = `SELECT * FROM ${activeIdent} LIMIT 100`; runQuery(); } };
   $('csvBtn').onclick = downloadCsv;
+  $('docPretty').onclick = () => {
+    if (docMode === 'pretty' || !lastResult) return;
+    docMode = 'pretty';
+    showDoc(lastResult.rows[0][lastResult.fields[0]]);   // module cached — instant
+  };
+  $('docRaw').onclick = () => {
+    docMode = 'raw';
+    setDocTabs();
+    $('docView').hidden = true;
+    $('resultsTable').hidden = false;
+  };
   $('sqlEditor').addEventListener('keydown', e => {
     if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); runQuery(); }
   });
@@ -662,6 +679,11 @@ const NUMERIC_TYPE = /^(U?(TINY|SMALL|BIG|HUGE)INT|U?INTEGER|DOUBLE|FLOAT|DECIMA
 function renderResults(res) {
   const table = $('resultsTable');
   const hint = $('resultsHint');
+  // A doc view from the previous result must never survive into this one.
+  docSeq++; docMode = 'pretty';
+  $('docBar').hidden = true;
+  $('docView').hidden = true;
+  $('docView').innerHTML = '';
   if (!res.fields.length) {
     table.hidden = true; hint.hidden = false; hint.textContent = '(no columns)';
     return;
@@ -687,6 +709,38 @@ function renderResults(res) {
     return `<td class="${num ? 'num' : ''}">${escapeHtml(cellText(v))}</td>`;
   }).join('') + '</tr>').join('') + '</tbody>';
   table.innerHTML = head + body;
+
+  // The grid above is always rendered and stays the source of truth (CSV exports it
+  // regardless). A document result additionally gets the Pretty view on top.
+  if (isDocResult(res)) {
+    $('docBar').hidden = false;
+    showDoc(res.rows[0][res.fields[0]]);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Document view: a 1×1 multiline VARCHAR rendered as markdown (docview.js).
+// Fails closed — any renderer trouble leaves the escaped grid on screen.
+// ---------------------------------------------------------------------------
+async function showDoc(text) {
+  const seq = ++docSeq;
+  try {
+    const html = await renderMarkdown(text);
+    if (seq !== docSeq || docMode !== 'pretty') return;
+    $('docView').innerHTML = html;
+    $('docView').hidden = false;
+    $('resultsTable').hidden = true;
+    setDocTabs();
+  } catch (e) {
+    if (seq !== docSeq) return;
+    $('docBar').hidden = true;
+    setStatus('Markdown renderer unavailable (' + e.message + ') — showing raw.', 'warn');
+  }
+}
+
+function setDocTabs() {
+  $('docPretty').classList.toggle('active', docMode === 'pretty');
+  $('docRaw').classList.toggle('active', docMode !== 'pretty');
 }
 
 // ---------------------------------------------------------------------------

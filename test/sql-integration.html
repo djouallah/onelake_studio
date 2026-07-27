@@ -238,6 +238,29 @@ try {
     fail("zipfs harness: " + (e && e.message));
   }
 
+  // --- 9. isDocResult against real Arrow types — the gate on the Pretty markdown ------
+  // view. Shapes the result exactly like runSql() does (arrowTypeName from data.js),
+  // so this proves DuckDB's Utf8 really arrives as the 'VARCHAR' string the heuristic
+  // matches on. The Pretty render itself (CDN fetch of marked) is app-only and needs
+  // real Chrome — it never fires under a --virtual-time-budget headless run.
+  try {
+    const { isDocResult } = paths;
+    const { arrowTypeName } = await import("./data.js");
+    const shape = r => ({
+      fields: r.schema.fields.map(f => f.name),
+      types: r.schema.fields.map(f => arrowTypeName(f.type)),
+      rows: r.toArray().map(x => x.toJSON()),
+    });
+    const doc = shape(await conn.query(`SELECT 'l1' || chr(10) || 'l2' AS doc`));
+    const scalar = shape(await conn.query(`SELECT 42 AS v`));
+    if (doc.types[0] === "VARCHAR" && isDocResult(doc)) pass("isDocResult accepts a real 1×1 multiline VARCHAR");
+    else fail(`isDocResult(doc) = ${isDocResult(doc)}, types = [${doc.types}]`);
+    if (!isDocResult(scalar)) pass("isDocResult rejects SELECT 42");
+    else fail(`isDocResult(SELECT 42) = true, types = [${scalar.types}]`);
+  } catch (e) {
+    fail("isDocResult harness: " + (e && e.message));
+  }
+
   log("DONE");
   document.title = "DONE";
 } catch (e) {

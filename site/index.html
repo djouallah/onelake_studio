@@ -128,6 +128,22 @@
     table.results td.num { text-align: right; font-variant-numeric: tabular-nums; }
     table.results tr:nth-child(even) td { background: #10151c; }
 
+    /* Document view — a 1×1 multiline VARCHAR result rendered as markdown. The bar
+       reuses the sidebar's .tabs look; z-index sits above the sticky grid header. */
+    .docBar { position: sticky; top: 0; z-index: 2; display: block; padding: 0.45rem 0.75rem; background: var(--bg); }
+    .docView { max-width: 860px; padding: 0.25rem 1.5rem 2rem; line-height: 1.6; }
+    .docView h1, .docView h2 { border-bottom: 1px solid var(--border); padding-bottom: 0.3rem; }
+    .docView pre { background: var(--panel2); border: 1px solid var(--border); border-radius: 6px; padding: 0.75rem 1rem; overflow: auto; }
+    .docView code {
+      background: var(--panel2); border-radius: 4px; padding: 0.1rem 0.35rem;
+      font-family: ui-monospace, "SFMono-Regular", Consolas, "Liberation Mono", monospace; font-size: 0.9em;
+    }
+    .docView pre code { background: none; padding: 0; }
+    .docView blockquote { margin: 0; padding: 0 1rem; border-left: 3px solid var(--border); color: var(--muted); }
+    .docView img { max-width: 100%; }
+    .docView table { border-collapse: collapse; }
+    .docView th, .docView td { border: 1px solid var(--border); padding: 0.3rem 0.6rem; }
+
     /* Status bar: the message on the left, the build stamp pinned on the right. The stamp
        lives HERE because a signed-in session never sees the gate — the bottom bar is the
        one place the running version is always on screen. */
@@ -227,7 +243,14 @@
         <button id="csvBtn" disabled>Download CSV</button>
       </div>
       <textarea id="sqlEditor" spellcheck="false" placeholder="Write read-only SQL here — no sign-in needed. Try: SELECT 42"></textarea>
-      <div class="resultsWrap"><div class="hint" id="resultsHint">Query results appear here.</div><table class="results" id="resultsTable" hidden></table></div>
+      <div class="resultsWrap">
+        <div class="docBar tabs" id="docBar" hidden>
+          <button id="docPretty" class="tab active">Pretty</button><button id="docRaw" class="tab">Raw</button>
+        </div>
+        <div class="hint" id="resultsHint">Query results appear here.</div>
+        <article id="docView" class="docView" hidden></article>
+        <table class="results" id="resultsTable" hidden></table>
+      </div>
     </section>
   </main>
 
