@@ -76,7 +76,7 @@ try {
   navigator.serviceWorker.addEventListener('message', e => {
     const d = e.data || {};
     if (d.type !== 'onelake-read-failed') return;
-    lastReadFailure = { status: d.status, pathname: d.pathname, at: Date.now() };
+    lastReadFailure = { status: d.status, pathname: d.pathname, signed: d.signed, at: Date.now() };
     // Nothing else can renew on DuckDB's behalf: data.js retries its own 401s, but it
     // never issued this request. refresh() is single-flight, so a burst costs one round
     // trip, and it re-gates the UI if the session is genuinely over.
@@ -87,18 +87,37 @@ try {
 } catch (_) { /* no service worker — the bare message is all there is */ }
 
 // Pin what the worker saw onto DuckDB's opaque wording, when the two are about the
-// same moment.
+// same moment — and always append the page facts that tell the identical-looking
+// causes apart: which build this is (a stale cache replays fixed bugs), whether the
+// worker is even controlling the page (if not, DuckDB's reads go out unsigned and
+// every one 401s), and whether the page holds a token at all.
 function explainRead(message) {
   const msg = String(message);
   if (!/Failed to open file|HTTP Error|Could not establish connection/i.test(msg)) return msg;
   const f = lastReadFailure;
-  if (!f || Date.now() - f.at > READ_FAILURE_TTL_MS) return msg;
-  const what = f.status === 0 ? 'could not be reached' : `answered HTTP ${f.status}`;
-  const why = f.status === 401 ? ' — the OneLake token had expired; renewing it now, so try again'
-            : f.status === 403 ? ' — this identity may not read that path'
-            : f.status === 404 ? ' — the file is no longer there (the table may have been rewritten since it was listed)'
-            : '';
-  return `${msg}. OneLake ${what} for ${f.pathname}${why}`;
+  const recent = f && Date.now() - f.at <= READ_FAILURE_TTL_MS;
+  let out = msg;
+  if (recent) {
+    const what = f.status === 0 ? 'could not be reached' : `answered HTTP ${f.status}`;
+    const why = f.status === 401 ? ' — the OneLake token had expired; renewing it now, so try again'
+              : f.status === 403 ? ' — this identity may not read that path'
+              : f.status === 404 ? ' — the file is no longer there (the table may have been rewritten since it was listed)'
+              : '';
+    out += `. OneLake ${what} for ${f.pathname}${f.signed === false ? ' (the request went out unsigned)' : ''}${why}`;
+  }
+  const swc = !!(navigator.serviceWorker && navigator.serviceWorker.controller);
+  const stale = f && !recent;
+  out += ` [build ${(window.ONELAKE_STUDIO_VERSION || {}).commit || 'dev'}; ` +
+    (swc ? 'the service worker is controlling this page'
+         : 'the service worker is NOT controlling this page, so DuckDB reads go out unsigned — reload the page') +
+    `; crossOriginIsolated ${!!self.crossOriginIsolated}` +
+    `; page-side token ${Object.keys(auth.getHeaders()).length ? 'held' : 'absent'}` +
+    (recent ? '' :
+     stale ? `; last read failure the worker reported: HTTP ${f.status} for ${f.pathname}, ${Math.round((Date.now() - f.at) / 1000)}s ago${f.signed === false ? ', sent unsigned' : ''}`
+     : swc ? '; the worker reported no failed OneLake read — the open failed before any request went out'
+           : '') +
+    ']';
+  return out;
 }
 
 // Deliberately does NOT render the signed-in address. The identity is visible in the

@@ -1247,10 +1247,9 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
   // After a failure inside the multi-file scan, find out which file caused it. LIMIT 0
   // probes bind footers without reading data, and halving converges in log steps. If
   // even SELECT 1 fails, the engine itself trapped and nothing more can be learned.
-  async function diagnoseOpenFailure(regs, pairs, unionByName) {
+  async function diagnoseOpenFailure(regs, pairs, unionByName, ws) {
     try { await q("SELECT 1"); }
     catch (_) { return " — the SQL engine crashed on this table; reload the page before opening another"; }
-    if (regs.length < 2) return "";
 
     let budget = 24;                    // probes, not files — log-bounded either way
     const union = unionByName ? ", union_by_name = true" : "";
@@ -1267,11 +1266,42 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
     };
     onStatus("Narrowing down which data file fails…");
     const bad = await probe(regs);
-    if (!bad.length) return "";
+    // The same list binding cleanly a moment later IS the diagnosis: the failure was
+    // transient — a read that went out unsigned or against a just-expired token and
+    // has since been retried with a live one. Nothing is wrong with the table.
+    if (!bad.length)
+      return " — yet the same file list binds cleanly when re-probed just now: the " +
+             "failure was transient (most likely an unsigned or expired-token read), so try again";
     const orig = new Map(pairs);
     const names = bad.slice(0, 3).map(r => basename(orig.get(r) || r));
-    return ` — narrowed to data file(s): ${names.join(", ")}` +
-           (bad.length > 3 ? ` and ${bad.length - 3} more` : "");
+    const scope = regs.length < 2 ? "" :
+      ` — narrowed to data file(s): ${names.join(", ")}` +
+      (bad.length > 3 ? ` and ${bad.length - 3} more` : "");
+    return scope + await diagnoseOneFile(bad[0], orig.get(bad[0]), ws);
+  }
+
+  // Two checks that tell apart the ways an open can fail with identical wording: a name
+  // gone from DuckDB's file registry never touched the network (another load dropped
+  // it), while a dead token or a deleted object answers a page-signed read with its
+  // status. Both facts are reported; either alone can mislead.
+  async function diagnoseOneFile(reg, path, ws) {
+    const facts = [];
+    try {
+      const hits = await db.globFiles(reg);
+      if (!hits || !hits.length)
+        facts.push(`${reg} is missing from DuckDB's file registry — most likely another load dropped it`);
+    } catch (_) { /* this duckdb-wasm has no globFiles — nothing to check */ }
+    if (path && ws) {
+      try {
+        const r = await fetch(toHttps(ws, path), { headers: { ...auth.getHeaders(), Range: "bytes=0-7" } });
+        facts.push(r.ok
+          ? "a page-signed range read of the object succeeds, so the file and the page's token are fine"
+          : `a page-signed range read of the object answers HTTP ${r.status}`);
+      } catch (e) {
+        facts.push(`a page-signed range read of the object failed outright (${e.message})`);
+      }
+    }
+    return facts.length ? ` — ${facts.join("; ")}` : "";
   }
 
   // How many delete records point at a data file the map doesn't know about? Anything but
@@ -1393,7 +1423,7 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
       // file table gives the user nothing to report. Bisect with LIMIT 0 binds — the
       // object cache makes re-binds cheap — before the registrations are released.
       let detail = "";
-      try { detail = await diagnoseOpenFailure(regs, pairs, resolved.evolved); } catch (_) {}
+      try { detail = await diagnoseOpenFailure(regs, pairs, resolved.evolved, ws); } catch (_) {}
       // Ownership-aware for the same reason a cancel is: a superseded load that fails must
       // not take the load that replaced it down with it.
       await releaseOwned(key, regs, gen);
