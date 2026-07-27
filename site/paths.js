@@ -154,8 +154,11 @@ const textLines = n =>
 // .txt belongs here, not with the CSV formats: the most document-shaped extension there
 // is was being auto-parsed into columns, which also kept it out of the compressed-text
 // list below and out of the Pretty view.
+// .bim and .tmdl are semantic-model definitions — a Tabular .bim IS JSON, and both sit in
+// a lakehouse's semanticmodel/ folder, where they were greyed out as unknown formats.
 export const TEXT_EXTS = ["sql", "yml", "yaml", "md", "txt", "toml", "ini", "cfg", "conf",
-                          "properties", "log", "sh", "py", "html", "xml", "css", "js"];
+                          "properties", "log", "sh", "py", "html", "xml", "css", "js",
+                          "bim", "tmdl"];
 for (const ext of TEXT_EXTS) FILE_READERS[ext] = textLines;
 
 export const isTextExt = ext => TEXT_EXTS.includes(String(ext).replace(/\.(gz|zst)$/, ""));
@@ -426,6 +429,20 @@ export function docKind(text, ext = "") {
 export function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, c =>
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+// ...and the OTHER shape a document arrives in. read_text() gives one cell, but the Files
+// tab reads plain text one row per line (see textLines), so a whole file comes back as N
+// rows of a single VARCHAR column called `line` — which isDocResult was never going to
+// match, so opening a .sql or a .bim from the tree only ever offered the line grid.
+// Joining them back is exactly reversing the split. Returns the document, or null.
+export function textLinesDoc(res) {
+  if (!res || !Array.isArray(res.fields) || res.fields.length !== 1) return null;
+  if (res.fields[0] !== "line" || ((res.types || [])[0] || "") !== "VARCHAR") return null;
+  if (!Array.isArray(res.rows) || !res.rows.length) return null;
+  // Same rule as isDocResult: half a file rendered as the file is worse than no Pretty tab.
+  if (res.truncated) return null;
+  return res.rows.map(r => (r.line == null ? "" : String(r.line))).join("\n");
 }
 
 export function fmtBytes(n) {

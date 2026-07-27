@@ -6,7 +6,7 @@ import {
   resolveConfig, saveOverride, clearOverride, adminConsentUrl, appRedirectUri,
 } from './auth.js';
 import { createEngine, READY } from './data.js';
-import { isDocResult, fileExt, isTextExt, escapeHtml } from './paths.js';
+import { isDocResult, textLinesDoc, fileExt, isTextExt, escapeHtml } from './paths.js';
 // Static import is safe: docview.js itself is tiny — the CDN fetch of the markdown
 // parser only happens inside renderMarkdown(), and only for a document that IS markdown.
 import { renderDocument } from './docview.js';
@@ -327,7 +327,7 @@ function wireUi() {
   $('runBtn').onclick = () => runQuery();
   $('previewBtn').onclick = () => {
     if (!activeIdent) return;
-    $('sqlEditor').value = `SELECT * FROM ${activeIdent} LIMIT 100`;
+    $('sqlEditor').value = previewSql(activeIdent, activeDocEligible);
     runQuery({ doc: activeDocEligible, ext: activeDocExt });
   };
   $('csvBtn').onclick = downloadCsv;
@@ -703,7 +703,7 @@ async function selectFile(row, file) {
     activeIdent = info.ident;
     // A database file with no tables attaches but leaves nothing to preview.
     if (info.ident) {
-      $('sqlEditor').value = `SELECT * FROM ${info.ident} LIMIT 100`;
+      $('sqlEditor').value = previewSql(info.ident, activeDocEligible);
       $('previewBtn').disabled = false;
       $('runBtn').disabled = false;
       reportLoad(info, await runQuery({ doc: activeDocEligible, ext: activeDocExt }));
@@ -773,7 +773,7 @@ async function selectTable(row, t) {
   try {
     const info = await engine.loadTable(lakehouse, t);
     activeIdent = info.ident;
-    $('sqlEditor').value = `SELECT * FROM ${info.ident} LIMIT 100`;
+    $('sqlEditor').value = previewSql(info.ident, false);
     $('previewBtn').disabled = false;
     $('runBtn').disabled = false;
     reportLoad(info, await runQuery({ doc: false }));
@@ -811,6 +811,12 @@ function reportLoad(info, queryOk) {
 // ---------------------------------------------------------------------------
 // Returns whether the query succeeded, so a caller that has its own message to show
 // (selectTable, selectFile) can keep quiet when the error is the more useful thing.
+// A table gets the first hundred rows; a text file gets ALL of it. The file is downloaded
+// whole either way (there is nothing to range-read in a .sql), and a LIMIT here would cut
+// the document silently — Pretty would render the first hundred lines of a file as if they
+// were the file. The engine's own row cap still applies and still says so.
+const previewSql = (ident, whole) => `SELECT * FROM ${ident}` + (whole ? '' : ' LIMIT 100');
+
 // `doc` says whether a document view may be offered for this result at all. It defaults
 // to true because hand-written SQL is where read_text() lives; the two callers that know
 // they are previewing a TABLE (selectTable, and selectFile for every tabular format) pass
@@ -907,13 +913,17 @@ function renderResults(res) {
   // The grid above is always rendered and stays the source of truth (CSV exports it
   // regardless). A document result additionally gets the Pretty view on top — but only
   // when the source was something that can hold a document in the first place.
-  if (docAllowed && isDocResult(res)) {
+  // Two shapes reach here: read_text()'s single cell, and the Files tab's row-per-line.
+  const doc = !docAllowed ? null
+            : isDocResult(res) ? res.rows[0][res.fields[0]]
+            : textLinesDoc(res);
+  if (doc != null) {
     $('docBar').hidden = false;
     setDocTabs();
     // docMode is a session preference, not per-query state: someone who switched to Raw
     // meant it, and having the next document flip them back to Pretty made the toggle feel
     // like it had not been pressed. Raw is already what the grid above shows.
-    if (docMode === 'pretty') showDoc(res.rows[0][res.fields[0]]);
+    if (docMode === 'pretty') showDoc(doc);
   }
 }
 

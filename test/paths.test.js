@@ -15,7 +15,7 @@ import {
   sqlStr, quoteIdent, stripComments, prepareReadOnlySql,
   metadataVersion, pickMetadata,
   tableKey, fileKey, sanitizeIdent,
-  normalizeValue, fmtBytes, isDocResult, docKind, escapeHtml,
+  normalizeValue, fmtBytes, isDocResult, textLinesDoc, docKind, escapeHtml,
 } from "../site/paths.js";
 
 // -----------------------------------------------------------------------------
@@ -413,6 +413,26 @@ test("isDocResult rejects everything that is not that shape", () => {
   assert.equal(isDocResult({ fields: [], types: [], rows: [] }), false);
   assert.equal(isDocResult({ fields: ["c"], rows: [{ c: "a\nb" }] }), false);
   assert.equal(isDocResult(null), false);
+});
+
+// -----------------------------------------------------------------------------
+// textLinesDoc — the other shape a document arrives in. The Files tab reads plain text
+// one row per line, so a whole file is N rows of `line`, which isDocResult cannot match.
+// -----------------------------------------------------------------------------
+test("textLinesDoc rejoins the line grid the Files tab produces", () => {
+  const lines = rows => ({ fields: ["line"], types: ["VARCHAR"], rows: rows.map(line => ({ line })) });
+  assert.equal(textLinesDoc(lines(["def model(dbt, session):", "    return None", ""])),
+               "def model(dbt, session):\n    return None\n");
+  assert.equal(textLinesDoc(lines(["one line"])), "one line");
+  // A blank line read back as NULL is a blank line, not the text "null".
+  assert.equal(textLinesDoc(lines([null, "b"])), "\nb");
+  // Half a file rendered as the file is worse than no Pretty tab at all.
+  assert.equal(textLinesDoc({ ...lines(["a"]), truncated: true }), null);
+  // Anything that is not that exact shape.
+  assert.equal(textLinesDoc({ fields: ["x"], types: ["VARCHAR"], rows: [{ x: "a" }] }), null);
+  assert.equal(textLinesDoc({ fields: ["line"], types: ["INTEGER"], rows: [{ line: 1 }] }), null);
+  assert.equal(textLinesDoc(lines([])), null);
+  assert.equal(textLinesDoc(null), null);
 });
 
 // -----------------------------------------------------------------------------
