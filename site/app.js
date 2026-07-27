@@ -327,6 +327,13 @@ function wireUi() {
   // Wrapped, not passed directly: onclick hands the handler a MouseEvent, which would
   // land in runQuery's options argument.
   $('runBtn').onclick = () => runQuery();
+  // Disable on the way out: the load ends at its next checkpoint, not this instant, and a
+  // button that still invites clicking implies the first one didn't take.
+  $('stopBtn').onclick = () => {
+    engine.cancelLoad();
+    $('stopBtn').disabled = true;
+    setStatus('Stopping…');
+  };
   $('previewBtn').onclick = () => {
     if (!activeIdent) return;
     $('sqlEditor').value = previewSql(activeIdent, activeDocEligible);
@@ -798,7 +805,7 @@ async function selectTable(row, t) {
   activeFile = null;            // a table has no single file to hand back
   activeDocEligible = false;    // ...and is a table, whatever shape the preview comes back
   activeDocExt = '';
-  setBusy(true);
+  setBusy(true, { stoppable: true });
   try {
     const info = await engine.loadTable(lakehouse, t);
     activeIdent = info.ident;
@@ -809,9 +816,17 @@ async function selectTable(row, t) {
     row.classList.remove('pending');
     row.querySelector('.tag')?.remove();
   } catch (e) {
-    clearResults('(no result — the table could not be opened)');
-    setStatus('Load failed: ' + explainRead(e.message), 'error');
-    console.error(e);
+    // A load the user stopped is not a failure, and calling it one in red is how a UI
+    // teaches people to distrust its errors.
+    if (e.cancelled) {
+      clearResults('(no result — loading stopped)');
+      setStatus(`Stopped loading ${$('activeTable').textContent}.`);
+      row.classList.remove('active');
+    } else {
+      clearResults('(no result — the table could not be opened)');
+      setStatus('Load failed: ' + explainRead(e.message), 'error');
+      console.error(e);
+    }
   } finally {
     setBusy(false);
   }
@@ -1203,7 +1218,12 @@ function cellText(v) {
   if (typeof v === 'object') return JSON.stringify(v);
   return String(v);
 }
-function setBusy(b) {
+// `stoppable` is only true for a table load, which is the only work cancelLoad() reaches.
+// Offering Stop for anything else would be a button that does nothing.
+function setBusy(b, { stoppable = false } = {}) {
+  const stop = $('stopBtn');
+  stop.hidden = !(b && stoppable);
+  if (!stop.hidden) stop.disabled = false;
   $('connectBtn').disabled = b;
   // Run needs only the engine — SELECT h3_latlng_to_cell(...) is a fine first query
   // with no lakehouse selected. Preview rewrites the editor to SELECT * FROM <active

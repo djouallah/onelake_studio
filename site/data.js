@@ -67,6 +67,26 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
   const resources = new Map();      // cache key -> { ident, regs[], tables[] }, for release()
   const viewNames = new Map();      // view identifier -> the cache key that owns it
 
+  // Opening a big table is not one slow request, it is hundreds of small ones — the
+  // manifest walk, then a registration per data file — and until there was a way out of
+  // it every button stayed disabled for the duration with only a page reload to escape.
+  //
+  // A generation counter is the whole mechanism: cancelLoad() bumps it, and the load
+  // checks between steps whether the number still matches. That gives up at the next
+  // boundary rather than mid-request, because interrupting a fetch already in flight
+  // would mean an AbortController threaded through every call and would not end the load
+  // meaningfully sooner — what takes the time is the count of requests, not any one of
+  // them. It also makes a superseded load (click another table while one is running)
+  // stand down on its own.
+  let loadGen = 0;
+  function cancelLoad() { loadGen++; }
+  // Distinguishable so the UI can say "stopped" rather than reporting a failure.
+  function cancelledError() {
+    const e = new Error("load stopped");
+    e.cancelled = true;
+    return e;
+  }
+
   // ---------------------------------------------------------------------------
   // DuckDB bootstrap
   // ---------------------------------------------------------------------------
@@ -970,7 +990,7 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
     return { dataFiles: of(0), posDeletes: of(1), eqDeletes: of(2) };
   }
 
-  async function listDataFiles(ws, manifestList) {
+  async function listDataFiles(ws, manifestList, check = () => {}) {
     const manifests = (await readAvroRows(ws, manifestList, "manifest_path"))
       .map(r => String(r.manifest_path));
 
@@ -979,6 +999,9 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
     // because there is one connection. Batching rather than fetching everything up front
     // keeps at most MAX_PARALLEL manifest buffers alive at a time.
     for (let i = 0; i < manifests.length; i += MAX_PARALLEL) {
+      // Per batch, not per manifest: a batch is already in flight together, and stopping
+      // between batches bounds the wait at one round trip.
+      check();
       const buffers = await mapPool(manifests.slice(i, i + MAX_PARALLEL),
                                     m => fetchAuthed(toHttps(ws, m)));
       for (const bytes of buffers) {
@@ -1167,6 +1190,11 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
     const key = tableKey(lh, t);
     if (loaded.has(key)) return loaded.get(key);
 
+    // Claim this generation. Anything that bumps it — the Stop button, or the user
+    // picking a different table — makes the next check() end this load.
+    const gen = loadGen;
+    const check = () => { if (gen !== loadGen) throw cancelledError(); };
+
     const ws = lh.workspace;
     const label = labelFor(t);
     const warnings = [];
@@ -1203,8 +1231,10 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
     if (t.schema) await conn.query(`CREATE SCHEMA IF NOT EXISTS ${quoteIdent(t.schema)}`);
     viewNames.set(ident, key);
 
+    check();
     onStatus(`Reading manifests for ${label}…`);
-    const { files: paths, posDeletes, eqDeletes } = await listDataFiles(ws, resolved.manifestList);
+    const { files: paths, posDeletes, eqDeletes } =
+      await listDataFiles(ws, resolved.manifestList, check);
     if (!paths.length) throw new Error(`${label}: current snapshot has no data files`);
 
     const res = track(key);
@@ -1220,6 +1250,8 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
       // Map each data file to a generated name pointing at its https URL, so DuckDB
       // range-reads it instead of us downloading it whole.
       for (const p of paths) {
+        // The hundreds-of-round-trips loop, and so the one that most needs a way out.
+        check();
         const reg = `data_${++_seq}.parquet`;
         await db.registerFileURL(reg, toHttps(ws, p), duckdb.DuckDBDataProtocol.HTTP, false);
         res.regs.push(reg);
@@ -1242,6 +1274,9 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
                         `snapshot and could not be applied — some deleted rows may still appear`);
       }
     } catch (e) {
+      // A stop is not a failure and has no culprit file to bisect for. Release what was
+      // registered and report it as itself.
+      if (e.cancelled) { await release(key); throw e; }
       // Which FILE did it? An error like "table index is out of bounds" (a wasm trap on
       // some parquet feature this build mishandles) names nothing, and a several-hundred
       // file table gives the user nothing to report. Bisect with LIMIT 0 binds — the
@@ -1362,7 +1397,7 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
   }
 
   return { init, reset, parseLakehouse, listWorkspaces, listItems, listTables, loadTable,
-           listFiles, loadFile, readFileBytes, runSql, describeLoad, fmtBytes };
+           listFiles, loadFile, readFileBytes, runSql, describeLoad, fmtBytes, cancelLoad };
 }
 
 // -----------------------------------------------------------------------------

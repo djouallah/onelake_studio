@@ -293,6 +293,10 @@
         <span class="title" id="activeTable">No table selected</span>
         <div class="spacer"></div>
         <button id="previewBtn" disabled>Preview</button>
+        <!-- Only on screen while a load is in flight, which is the only time anything can
+             be stopped. A permanently visible Stop that is disabled 99% of the time reads
+             as broken. -->
+        <button id="stopBtn" hidden title="Stop loading this table">Stop ■</button>
         <button id="runBtn" class="primary" disabled>Run ▶</button>
         <button id="csvBtn" disabled>Download CSV</button>
       </div>
