@@ -6,10 +6,10 @@ import {
   resolveConfig, saveOverride, clearOverride, adminConsentUrl, appRedirectUri,
 } from './auth.js';
 import { createEngine, READY } from './data.js';
-import { isDocResult, fileExt, isTextExt } from './paths.js';
+import { isDocResult, fileExt, isTextExt, escapeHtml } from './paths.js';
 // Static import is safe: docview.js itself is tiny — the CDN fetch of the markdown
-// parser only happens inside renderMarkdown(), on the first pretty render.
-import { renderMarkdown } from './docview.js';
+// parser only happens inside renderMarkdown(), and only for a document that IS markdown.
+import { renderDocument } from './docview.js';
 
 const $ = id => document.getElementById(id);
 const DOCS = 'https://github.com/djouallah/onelake_studio';
@@ -34,7 +34,9 @@ let docSeq = 0;              // a slow CDN import must not paint over a newer re
 // a one-column, one-row parquet is still a table, and offering to "prettify" it means
 // offering to render one cell as if it were the file. Set per query by runQuery.
 let docAllowed = true;
-let activeDocEligible = false;   // ...and the same answer for the loaded table/file, for Preview
+let docSourceExt = '';           // ...and which file it came from, when it came from one
+let activeDocEligible = false;   // the same two answers for the loaded table/file, for Preview
+let activeDocExt = '';
 let lastTables = null;       // cached listTables() result, so switching panes is free
 let lastTableCount = '';
 
@@ -286,7 +288,7 @@ function wireUi() {
   $('previewBtn').onclick = () => {
     if (!activeIdent) return;
     $('sqlEditor').value = `SELECT * FROM ${activeIdent} LIMIT 100`;
-    runQuery({ doc: activeDocEligible });
+    runQuery({ doc: activeDocEligible, ext: activeDocExt });
   };
   $('csvBtn').onclick = downloadCsv;
   $('docPretty').onclick = () => {
@@ -653,7 +655,8 @@ async function selectFile(row, file) {
   // comes back as a single multiline cell). Every other reader — parquet, csv, json, avro,
   // xlsx, a database file, a zip entry — produces a TABLE, and a table with one cell in it
   // is still a table.
-  activeDocEligible = isTextExt(fileExt(file.name));
+  activeDocExt = fileExt(file.name);
+  activeDocEligible = isTextExt(activeDocExt);
   setBusy(true);
   try {
     const info = await engine.loadFile(lakehouse, file);
@@ -663,7 +666,7 @@ async function selectFile(row, file) {
       $('sqlEditor').value = `SELECT * FROM ${info.ident} LIMIT 100`;
       $('previewBtn').disabled = false;
       $('runBtn').disabled = false;
-      reportLoad(info, await runQuery({ doc: activeDocEligible }));
+      reportLoad(info, await runQuery({ doc: activeDocEligible, ext: activeDocExt }));
     } else {
       reportLoad(info, true);
     }
@@ -725,6 +728,7 @@ async function selectTable(row, t) {
   row.classList.add('active');
   $('activeTable').textContent = t.schema ? `${t.schema}.${t.table}` : t.table;
   activeDocEligible = false;    // a table is a table, whatever shape the preview comes back
+  activeDocExt = '';
   setBusy(true);
   try {
     const info = await engine.loadTable(lakehouse, t);
@@ -771,10 +775,11 @@ function reportLoad(info, queryOk) {
 // to true because hand-written SQL is where read_text() lives; the two callers that know
 // they are previewing a TABLE (selectTable, and selectFile for every tabular format) pass
 // false, so a one-column preview of one can never be mistaken for a document.
-async function runQuery({ doc = true } = {}) {
+async function runQuery({ doc = true, ext = '' } = {}) {
   const sql = $('sqlEditor').value;
   setBusy(true);
   docAllowed = doc;
+  docSourceExt = ext;
   let t0 = performance.now();
   try {
     await engineReady;   // Ctrl+Enter is live before the engine is
@@ -870,22 +875,32 @@ function renderResults(res) {
 }
 
 // ---------------------------------------------------------------------------
-// Document view: a 1×1 multiline VARCHAR rendered as markdown (docview.js).
+// Document view: a 1×1 multiline VARCHAR rendered as itself (docview.js) — JSON
+// re-indented, markdown rendered, anything else left exactly as it came.
 // Fails closed — any renderer trouble leaves the escaped grid on screen.
 // ---------------------------------------------------------------------------
+const DOC_KIND_TITLE = {
+  json: 'Rendered as indented JSON',
+  markdown: 'Rendered as markdown',
+  text: 'Shown as plain text, exactly as stored',
+};
+
 async function showDoc(text) {
   const seq = ++docSeq;
   try {
-    const html = await renderMarkdown(text);
+    const { html, kind } = await renderDocument(text, docSourceExt);
     if (seq !== docSeq || docMode !== 'pretty') return;
     $('docView').innerHTML = html;
+    // Only prose gets the reading measure; code keeps the full width (see index.html).
+    $('docView').classList.toggle('prose', kind === 'markdown');
     $('docView').hidden = false;
     $('resultsTable').hidden = true;
+    $('docPretty').title = DOC_KIND_TITLE[kind] || '';
     setDocTabs();
   } catch (e) {
     if (seq !== docSeq) return;
     $('docBar').hidden = true;
-    setStatus('Markdown renderer unavailable (' + e.message + ') — showing raw.', 'warn');
+    setStatus('Document renderer unavailable (' + e.message + ') — showing raw.', 'warn');
   }
 }
 
@@ -997,9 +1012,6 @@ function cellText(v) {
   if (v == null) return '';
   if (typeof v === 'object') return JSON.stringify(v);
   return String(v);
-}
-function escapeHtml(s) {
-  return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 function setBusy(b) {
   $('connectBtn').disabled = b;

@@ -367,6 +367,53 @@ export function isDocResult(res) {
   return typeof v === "string" && v.includes("\n");
 }
 
+// What IS this document? "Pretty" used to mean one thing — run it through a markdown
+// parser — and a markdown parser is a lossy renderer for everything that isn't markdown:
+// it eats indentation, joins lines into paragraphs, and drops anything that looks like a
+// tag. A dbt macro or a JSON blob came out unreadable. So decide first, render second.
+//
+// JSON wins over markdown because a JSON document is unambiguous — it parsed — while the
+// markdown markers are heuristics. Only objects and arrays count: bare `12` and `"x"` are
+// valid JSON but nobody means them as a document.
+const MARKDOWN_MARKERS = [
+  /^ {0,3}#{1,6}\s+\S/m,             // ATX heading
+  /^ {0,3}(```|~~~)/m,               // fenced code block
+  /^ {0,3}([-*+]|\d+\.)\s+\S/m,      // list item
+  /^ {0,3}>\s/m,                     // block quote
+  /^ {0,3}\|.*\|/m,                  // table row
+  /\[[^\]\n]+\]\([^)\s]+\)/,         // inline link
+  /(\*\*|__)\S[^\n]*\1/,             // bold
+];
+
+// `ext` is the extension of the file the text CAME FROM, when there is one. It settles
+// what sniffing cannot: `  - name: fct_price` is a YAML sequence and a markdown bullet,
+// character for character, and only the .yml tells them apart. Hand-written SQL has no
+// source file (read_text over a URL, a string literal), so that case still sniffs — and
+// there, markdown is the likely intent.
+export const MARKDOWN_EXTS = new Set(["md", "markdown", "mdx"]);
+
+export function docKind(text, ext = "") {
+  const s = String(text);
+  const t = s.trim();
+  if ((t.startsWith("{") && t.endsWith("}")) || (t.startsWith("[") && t.endsWith("]"))) {
+    try {
+      const v = JSON.parse(t);
+      if (v && typeof v === "object") return "json";
+    } catch (_) { /* not JSON after all — fall through to the text/markdown question */ }
+  }
+  const e = String(ext).toLowerCase().replace(/^\./, "").replace(/\.(gz|zst)$/, "");
+  if (e) return MARKDOWN_EXTS.has(e) ? "markdown" : "text";
+  return MARKDOWN_MARKERS.some(re => re.test(s)) ? "markdown" : "text";
+}
+
+// Shared by every innerHTML this app builds — the grid, the file tree, and the two
+// document views that are NOT markdown (those are escaped here rather than sanitized,
+// because nothing in them was ever meant to be HTML).
+export function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
 export function fmtBytes(n) {
   if (!(n > 0)) return "unknown size";
   if (n < 1e3) return `${n} B`;

@@ -15,7 +15,7 @@ import {
   sqlStr, quoteIdent, stripComments, prepareReadOnlySql,
   metadataVersion, pickMetadata,
   tableKey, fileKey, sanitizeIdent,
-  normalizeValue, fmtBytes, isDocResult,
+  normalizeValue, fmtBytes, isDocResult, docKind, escapeHtml,
 } from "../site/paths.js";
 
 // -----------------------------------------------------------------------------
@@ -395,6 +395,63 @@ test("isDocResult rejects everything that is not that shape", () => {
   assert.equal(isDocResult({ fields: [], types: [], rows: [] }), false);
   assert.equal(isDocResult({ fields: ["c"], rows: [{ c: "a\nb" }] }), false);
   assert.equal(isDocResult(null), false);
+});
+
+// -----------------------------------------------------------------------------
+// docKind — which renderer the Pretty view uses. Running everything through the
+// markdown parser is what turned a dbt macro and a JSON blob into unreadable soup.
+// -----------------------------------------------------------------------------
+test("docKind: JSON documents are JSON", () => {
+  assert.equal(docKind('{\n  "a": 1,\n  "b": [2, 3]\n}'), "json");
+  assert.equal(docKind('  [ {"a": 1},\n {"b": 2} ]  '), "json");
+  // Valid JSON, but nobody means a bare scalar as a document.
+  assert.equal(docKind("12"), "text");
+  assert.equal(docKind('"just a string"'), "text");
+  // Looks like JSON, isn't — must not be handed to JSON.parse downstream.
+  assert.equal(docKind('{ "a": 1,\n  oops }'), "text");
+});
+
+test("docKind: code and logs stay text", () => {
+  // A dbt macro: braces, quotes, a `#` that is not a heading because it is mid-line.
+  assert.equal(docKind("{% macro f(a) %}\n  select 1 # not a heading\n{% endmacro %}"), "text");
+  assert.equal(docKind("2026-07-27 10:00:00 INFO started\n2026-07-27 10:00:01 INFO done\n"), "text");
+  assert.equal(docKind("SELECT *\nFROM t\nWHERE a = 'b'\n"), "text");
+});
+
+// The case sniffing cannot win: a YAML sequence and a markdown bullet list are the same
+// characters. Only the file the text came from can settle it.
+test("docKind: a known extension beats the markers", () => {
+  const yaml = "version: 2\nmodels:\n  - name: fct_price\n";
+  assert.equal(docKind(yaml, "yml"), "text");
+  assert.equal(docKind(yaml, ".YAML"), "text");
+  assert.equal(docKind(yaml), "markdown");          // no source file: the markers are all there is
+  // A .sql full of markdown-looking punctuation is still SQL.
+  assert.equal(docKind("-- notes\n- a\n- b\nselect 1\n", "sql"), "text");
+  // ...and a markdown file is markdown even when it holds no markers at all.
+  assert.equal(docKind("just one plain line\nand another\n", "md"), "markdown");
+  // A codec suffix is not the extension.
+  assert.equal(docKind("# Title\n\nprose\n", "md.gz"), "markdown");
+  assert.equal(docKind("plain\nlines\n", "log.zst"), "text");
+  // JSON still wins: it parsed, so there is nothing to guess about.
+  assert.equal(docKind('{"a": 1}', "log"), "json");
+});
+
+test("docKind: markdown markers win over plain text", () => {
+  assert.equal(docKind("# Title\n\nsome prose\n"), "markdown");
+  assert.equal(docKind("intro\n\n```sql\nselect 1\n```\n"), "markdown");
+  assert.equal(docKind("things:\n\n- one\n- two\n"), "markdown");
+  assert.equal(docKind("see [the docs](https://example.com) for more\n"), "markdown");
+  assert.equal(docKind("| a | b |\n| - | - |\n| 1 | 2 |\n"), "markdown");
+  assert.equal(docKind("this is **bold** text\n"), "markdown");
+  // A YAML list is not a markdown list: the marker has to start the line.
+  assert.equal(docKind("key: value\nother: 1\n"), "text");
+});
+
+// -----------------------------------------------------------------------------
+test("escapeHtml", () => {
+  assert.equal(escapeHtml('<a href="x">&</a>'), "&lt;a href=&quot;x&quot;&gt;&amp;&lt;/a&gt;");
+  assert.equal(escapeHtml("it's"), "it&#39;s");
+  assert.equal(escapeHtml(42), "42");
 });
 
 // -----------------------------------------------------------------------------

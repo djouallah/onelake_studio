@@ -154,9 +154,20 @@
     /* Document view — a 1×1 multiline VARCHAR result rendered as markdown. The bar
        reuses the sidebar's .tabs look; z-index sits above the sticky grid header. */
     .docBar { position: sticky; top: 0; z-index: 2; display: block; padding: 0.45rem 0.75rem; background: var(--bg); }
-    .docView { max-width: 860px; padding: 0.25rem 1.5rem 2rem; line-height: 1.6; }
+    /* The 860px measure is for PROSE. A document that is code gets the full width, so the
+       clamp lives on the markdown case only. */
+    .docView { padding: 0.25rem 1.5rem 2rem; line-height: 1.6; }
+    .docView.prose { max-width: 860px; }
     .docView h1, .docView h2 { border-bottom: 1px solid var(--border); padding-bottom: 0.3rem; }
     .docView pre { background: var(--panel2); border: 1px solid var(--border); border-radius: 6px; padding: 0.75rem 1rem; overflow: auto; }
+    /* A whole document that IS code (a dbt macro, a JSON blob, a log) rather than a code
+       block inside prose: no prose measure, no wrapping — a long line scrolls in its own
+       box instead of being reflowed into something that is no longer the file. */
+    .docView pre.doc {
+      font-family: ui-monospace, "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+      font-size: 0.86rem; line-height: 1.45; white-space: pre; overflow-x: auto;
+      margin: 0; tab-size: 4;
+    }
     .docView code {
       background: var(--panel2); border-radius: 4px; padding: 0.1rem 0.35rem;
       font-family: ui-monospace, "SFMono-Regular", Consolas, "Liberation Mono", monospace; font-size: 0.9em;

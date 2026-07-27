@@ -1,10 +1,18 @@
 // =============================================================================
-// docview.js — markdown -> sanitized HTML for the Pretty result view.
+// docview.js — turn a document result into HTML for the Pretty view.
 //
-// Both dependencies are lazily imported from the CDN on the first pretty render,
-// so a user who never queries a document never fetches them. Pinned ESM from
-// jsDelivr, same pattern as sql.js (data.js) and msal (auth.js).
+// Three renderers behind one tab, chosen by paths.js docKind():
+//   json     -> re-indented and escaped into a <pre>
+//   text     -> escaped into a <pre>, byte for byte
+//   markdown -> marked + DOMPurify
+//
+// Only the markdown branch needs the parser, so both dependencies are lazily imported
+// from the CDN on the first markdown render — a .sql macro or a JSON blob renders with
+// no network at all. Pinned ESM from jsDelivr, same pattern as sql.js (data.js) and
+// msal (auth.js).
 // =============================================================================
+import { docKind, escapeHtml } from './paths.js';
+
 const MARKED_ESM = 'https://cdn.jsdelivr.net/npm/marked@18.0.7/+esm';
 const DOMPURIFY_ESM = 'https://cdn.jsdelivr.net/npm/dompurify@3.4.12/+esm';
 
@@ -29,4 +37,16 @@ export async function renderMarkdown(text) {
   }
   const html = _md.marked.parse(String(text), { gfm: true, async: false });
   return _md.purify.sanitize(html);
+}
+
+// Returns { html, kind } — the kind is what the tab reports it did, so "Pretty" never
+// has to be taken on faith. `ext` is the source file's extension when there is one; see
+// docKind for why a .yml cannot be told from markdown without it.
+export async function renderDocument(text, ext = '') {
+  const kind = docKind(text, ext);
+  if (kind === 'json')
+    return { kind, html: `<pre class="doc">${escapeHtml(JSON.stringify(JSON.parse(String(text).trim()), null, 2))}</pre>` };
+  if (kind === 'text')
+    return { kind, html: `<pre class="doc">${escapeHtml(text)}</pre>` };
+  return { kind, html: await renderMarkdown(text) };
 }
