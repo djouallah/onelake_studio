@@ -30,7 +30,8 @@ import * as duckdb from "https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.33.1
 
 import {
   DFS_HOST, strip, basename, dfsBase, dfsUrl, toHttps, pathKey, PATH_KEY_SQL,
-  parseLakehouse, fileExt, readerFor, PARQUET_EXTS, DB_EXTS, ZIP_EXTS, isSqliteHeader, isTextExt,
+  parseLakehouse, itemKind, holdsTables,
+  fileExt, readerFor, PARQUET_EXTS, DB_EXTS, ZIP_EXTS, isSqliteHeader, isTextExt,
   sqlStr, quoteIdent, prepareReadOnlySql,
   pickMetadata, tableKey, fileKey, sanitizeIdent,
   normalizeValue, fmtBytes,
@@ -252,18 +253,14 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
     return out.sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
   }
 
-  // Items that can hold OneLake tables. A workspace root is mostly notebooks, pipelines
-  // and environments; only these have a Tables/ directory worth browsing.
-  const TABLE_ITEMS = new Set(["Lakehouse", "Warehouse", "MirroredDatabase", "SQLDatabase"]);
-
+  // Which items hold tables is a rule about names, so it lives in paths.js under test.
   async function listItems(ws) {
     const entries = await listPaths(ws, "", false);
     const items = [];
     for (const e of entries) {
       if (!e.isDir) continue;
       const name = basename(e.name);
-      const kind = name.includes(".") ? name.split(".").pop() : "";
-      if (TABLE_ITEMS.has(kind)) items.push({ name, kind });
+      if (holdsTables(name)) items.push({ name, kind: itemKind(name) });
     }
     return items.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
   }

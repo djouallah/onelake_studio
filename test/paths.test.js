@@ -10,7 +10,8 @@ import assert from "node:assert/strict";
 
 import {
   DFS_HOST, strip, basename, encPath, dfsUrl, toHttps, pathKey,
-  parseLakehouse, fileExt, readerFor, PARQUET_EXTS,
+  parseLakehouse, itemKind, holdsTables, hasFilesArea, kindLabel,
+  fileExt, readerFor, PARQUET_EXTS,
   TEXT_EXTS, isTextExt, DB_EXTS, ZIP_EXTS, isSqliteHeader,
   sqlStr, quoteIdent, stripComments, prepareReadOnlySql,
   metadataVersion, pickMetadata,
@@ -79,6 +80,54 @@ test("pathKey makes abfs and abfss delete entries join", () => {
   const fromManifest = "abfss://WS@onelake.dfs.fabric.microsoft.com/ITEM/Tables/t/f.parquet";
   const fromDeleteFile = "abfs://WS@onelake.dfs.fabric.microsoft.com/ITEM/Tables/t/f.parquet";
   assert.equal(pathKey(fromManifest), pathKey(fromDeleteFile));
+});
+
+// -----------------------------------------------------------------------------
+// Workspace items — what the picker offers, and which pane it offers with it
+// -----------------------------------------------------------------------------
+test("itemKind reads the kind off a OneLake item directory", () => {
+  assert.equal(itemKind("sales.Lakehouse"), "Lakehouse");
+  assert.equal(itemKind("ws/aemo.Warehouse"), "Warehouse");
+  assert.equal(itemKind("my.data.MirroredDatabase"), "MirroredDatabase");   // dots in the name
+  assert.equal(itemKind("Notebook one"), "");
+  assert.equal(itemKind(""), "");
+});
+
+test("holdsTables covers every mirrored source, not a fixed list of them", () => {
+  // Snowflake and Azure SQL mirror as MirroredDatabase; an Azure Databricks catalog is
+  // its own item type. Both mirror into OneLake and both expose Tables/.
+  assert.ok(holdsTables("snowflake_sales.MirroredDatabase"));
+  assert.ok(holdsTables("dbx_main.MirroredAzureDatabricksCatalog"));
+  assert.ok(holdsTables("wh.MirroredWarehouse"));
+  assert.ok(holdsTables("sales.Lakehouse"));
+  assert.ok(holdsTables("aemo.Warehouse"));
+  assert.ok(holdsTables("app.SQLDatabase"));
+  // ...and nothing that has no Tables/ under it at all.
+  assert.ok(!holdsTables("daily load.Notebook"));
+  assert.ok(!holdsTables("prod.Environment"));
+  assert.ok(!holdsTables("sales.Report"));
+  assert.ok(!holdsTables("some folder"));
+});
+
+test("hasFilesArea is the lakehouse alone", () => {
+  // Files/ is the unmanaged half of a lakehouse. Listing it on anything else returned
+  // the item's internal storage directories.
+  assert.ok(hasFilesArea("sales.Lakehouse"));
+  assert.ok(hasFilesArea("sales.lakehouse"));       // OneLake's casing is not a promise
+  assert.ok(!hasFilesArea("aemo.Warehouse"));
+  assert.ok(!hasFilesArea("snowflake_sales.MirroredDatabase"));
+  assert.ok(!hasFilesArea("dbx_main.MirroredAzureDatabricksCatalog"));
+  assert.ok(!hasFilesArea(""));
+});
+
+test("kindLabel shortens the API's names, and passes the rest through", () => {
+  assert.equal(kindLabel("MirroredAzureDatabricksCatalog"), "Databricks catalog");
+  assert.equal(kindLabel("MirroredDatabase"), "Mirrored database");
+  assert.equal(kindLabel("SQLDatabase"), "SQL database");
+  assert.equal(kindLabel("Lakehouse"), "Lakehouse");
+  assert.equal(kindLabel("Warehouse"), "Warehouse");
+  // An item type nobody has taught it yet still names itself rather than going blank.
+  assert.equal(kindLabel("MirroredSomethingNew"), "MirroredSomethingNew");
 });
 
 // -----------------------------------------------------------------------------

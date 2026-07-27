@@ -6,7 +6,8 @@ import {
   resolveConfig, saveOverride, clearOverride, adminConsentUrl, appRedirectUri,
 } from './auth.js';
 import { createEngine, READY } from './data.js';
-import { isDocResult, textLinesDoc, fileExt, isTextExt, escapeHtml, basename } from './paths.js';
+import { isDocResult, textLinesDoc, fileExt, isTextExt, escapeHtml, basename,
+         hasFilesArea, kindLabel } from './paths.js';
 // Static import is safe: docview.js itself is tiny — the CDN fetch of the markdown
 // parser only happens inside renderMarkdown(), and only for a document that IS markdown.
 import { renderDocument } from './docview.js';
@@ -381,7 +382,7 @@ async function afterSignIn() {
   showSignedIn();
   $('wsSelect').placeholder = 'Loading workspaces…';
   if (!lakehouse)
-    $('tableList').innerHTML = '<div class="hint">Pick a workspace, then a lakehouse or warehouse.</div>';
+    $('tableList').innerHTML = '<div class="hint">Pick a workspace, then an item to browse.</div>';
   await loadCatalog();
 }
 
@@ -547,7 +548,7 @@ async function onWorkspaceChange() {
   if (lakehouse) await engine.reset();
   lakehouse = null;
   setPaneTabs('');   // no item picked: the switch goes back to offering both panes
-  $('tableList').innerHTML = '<div class="hint">Pick a lakehouse or warehouse.</div>';
+  $('tableList').innerHTML = '<div class="hint">Pick a lakehouse, warehouse or mirrored item.</div>';
   $('tableCount').textContent = '';
   if (!workspace) {
     sel.disabled = true;
@@ -559,12 +560,12 @@ async function onWorkspaceChange() {
   try {
     setStatus(`Listing items in ${workspace}…`);
     const items = await engine.listItems(workspace);
-    fill(sel, items.map(i => ({ value: i.name, label: `${i.name.replace(/\.[^.]+$/, '')}  ·  ${i.kind}` })),
-         items.length ? `Item (${items.length})` : 'No lakehouses or warehouses');
+    fill(sel, items.map(i => ({ value: i.name, label: `${i.name.replace(/\.[^.]+$/, '')}  ·  ${kindLabel(i.kind)}` })),
+         items.length ? `Item (${items.length})` : 'Nothing with tables in it');
     sel.disabled = !items.length;
     setStatus(items.length
-      ? `${items.length} lakehouse(s)/warehouse(s) in ${workspace}.`
-      : `${workspace} has no lakehouse or warehouse.`, items.length ? 'ok' : '');
+      ? `${items.length} item(s) with tables in ${workspace}.`
+      : `${workspace} has nothing with tables in it.`, items.length ? 'ok' : '');
   } catch (e) {
     fill(sel, [], 'Could not list items');
     setStatus('Could not list items: ' + e.message, 'error');
@@ -625,18 +626,14 @@ async function connect({ force = false } = {}) {
 // ---------------------------------------------------------------------------
 // Listed one directory at a time, on expand: a lakehouse's Files/ can be arbitrarily
 // deep and wide, so a recursive listing up front would be slow for no benefit.
-// Files/ is the unmanaged half of a LAKEHOUSE. A warehouse — and a mirrored or SQL
-// database — keeps its tables in OneLake but has no Files/ at all, so browsing it there
-// listed whatever the DFS API returned for the missing path: the item's internal
-// storage directories, GUIDs nobody asked to see. Offer the switch only where there is
-// something real behind it. Kind is the item name's suffix, the same thing listItems
-// matched on, so no extra call is needed to know it.
-const itemHasFiles = item => /\.Lakehouse$/i.test(item || '');
-
+// Only a lakehouse has a Files/ pane behind the switch (hasFilesArea says why). Kind is
+// the item name's suffix, the same thing listItems matched on, so no extra call is
+// needed to know it.
+//
 // `item` empty means nothing is picked yet — leave the switch as it is rather than
 // flickering it away between a workspace change and the item that follows.
 function setPaneTabs(item) {
-  const files = !item || itemHasFiles(item);
+  const files = !item || hasFilesArea(item);
   $('tabFiles').hidden = !files;
   $('paneTabs').classList.toggle('solo', !files);
   // A warehouse picked while the Files pane was open must not leave that pane showing.
@@ -653,7 +650,7 @@ function switchPane(which) {
   $('tabFiles').classList.toggle('active', which === 'files');
   if (!lakehouse) {
     $('tableList').innerHTML = signedIn
-      ? '<div class="hint">Pick a workspace, then a lakehouse or warehouse.</div>'
+      ? '<div class="hint">Pick a workspace, then an item to browse.</div>'
       : '<div class="hint">Sign in to OneLake to browse tables and files.</div>';
     return;
   }

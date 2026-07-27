@@ -115,6 +115,47 @@ export function parseLakehouse(input) {
 }
 
 // -----------------------------------------------------------------------------
+// Workspace items — which ones hold OneLake tables, and what to call them
+// -----------------------------------------------------------------------------
+// A workspace root is mostly notebooks, pipelines, reports and environments. The ones
+// worth listing are the items whose directory has a Tables/ under it, and a OneLake
+// directory names its own kind: "sales.Lakehouse", "aemo.Warehouse".
+export const itemKind = name => {
+  const m = /\.([^.]+)$/.exec(basename(name || ""));
+  return m ? m[1] : "";
+};
+
+// Mirroring is a family, not one item type: a Snowflake or Azure SQL mirror lands as
+// MirroredDatabase, an Azure Databricks catalog as MirroredAzureDatabricksCatalog, and
+// Fabric keeps adding sources. They all mirror INTO OneLake and all expose Tables/, so
+// the rule is the prefix rather than a list that goes stale every release — an item
+// matched here that turns out to hold nothing lists as zero tables, which is a true
+// answer and a cheap one.
+const TABLE_ITEM_KINDS = new Set(["Lakehouse", "Warehouse", "SQLDatabase"]);
+export const holdsTables = name => {
+  const kind = itemKind(name);
+  return TABLE_ITEM_KINDS.has(kind) || /^Mirrored/i.test(kind);
+};
+
+// Files/ is the unmanaged half of a LAKEHOUSE. Everything else here stores its tables
+// in OneLake and nothing else, so browsing Files/ on one listed the item's internal
+// storage directories — GUIDs nobody asked to see.
+export const hasFilesArea = name => /^lakehouse$/i.test(itemKind(name));
+
+// The kind as the picker should say it. MirroredAzureDatabricksCatalog is the API's
+// name for it, not a label — spelled out it is wider than the item name it annotates.
+const KIND_LABELS = {
+  mirroredazuredatabrickscatalog: "Databricks catalog",
+  mirroreddatabase: "Mirrored database",
+  mirroredwarehouse: "Mirrored warehouse",
+  sqldatabase: "SQL database",
+};
+export const kindLabel = kind => {
+  const k = String(kind || "");
+  return KIND_LABELS[k.toLowerCase()] || k;
+};
+
+// -----------------------------------------------------------------------------
 // File formats
 // -----------------------------------------------------------------------------
 export const FILE_READERS = {
