@@ -16,6 +16,12 @@
       --ok: #3fb950; --warn: #d29922; --err: #ff7b72;
     }
     * { box-sizing: border-box; }
+    /* The UA's own `[hidden] { display: none }` is a plain attribute selector, so ANY class
+       rule with a display of its own silently outranks it. That is not a style nit: el.hidden
+       = true is how this app takes things off screen, and .docBar/.tabs both set display, so
+       the Pretty|Raw bar could never be hidden — it survived onto every later result, and
+       clicking Pretty rendered the first cell of whatever grid was showing. */
+    [hidden] { display: none !important; }
     html, body { height: 100%; }
     body {
       margin: 0; background: var(--bg); color: var(--text);

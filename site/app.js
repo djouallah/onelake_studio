@@ -6,7 +6,7 @@ import {
   resolveConfig, saveOverride, clearOverride, adminConsentUrl, appRedirectUri,
 } from './auth.js';
 import { createEngine, READY } from './data.js';
-import { isDocResult } from './paths.js';
+import { isDocResult, fileExt, isTextExt } from './paths.js';
 // Static import is safe: docview.js itself is tiny — the CDN fetch of the markdown
 // parser only happens inside renderMarkdown(), on the first pretty render.
 import { renderMarkdown } from './docview.js';
@@ -30,6 +30,11 @@ let lastResult = null;       // { fields, rows } for CSV export
 let pane = 'tables';         // which sidebar pane is showing: 'tables' | 'files'
 let docMode = 'pretty';      // Pretty | Raw for a document result; reset each query
 let docSeq = 0;              // a slow CDN import must not paint over a newer result
+// Whether THIS result's source could be a document at all. Shape alone is not enough:
+// a one-column, one-row parquet is still a table, and offering to "prettify" it means
+// offering to render one cell as if it were the file. Set per query by runQuery.
+let docAllowed = true;
+let activeDocEligible = false;   // ...and the same answer for the loaded table/file, for Preview
 let lastTables = null;       // cached listTables() result, so switching panes is free
 let lastTableCount = '';
 
@@ -275,8 +280,14 @@ function wireUi() {
   $('itemSelect').onchange = () => connect();
   $('tabTables').onclick = () => switchPane('tables');
   $('tabFiles').onclick = () => switchPane('files');
-  $('runBtn').onclick = runQuery;
-  $('previewBtn').onclick = () => { if (activeIdent) { $('sqlEditor').value = `SELECT * FROM ${activeIdent} LIMIT 100`; runQuery(); } };
+  // Wrapped, not passed directly: onclick hands the handler a MouseEvent, which would
+  // land in runQuery's options argument.
+  $('runBtn').onclick = () => runQuery();
+  $('previewBtn').onclick = () => {
+    if (!activeIdent) return;
+    $('sqlEditor').value = `SELECT * FROM ${activeIdent} LIMIT 100`;
+    runQuery({ doc: activeDocEligible });
+  };
   $('csvBtn').onclick = downloadCsv;
   $('docPretty').onclick = () => {
     if (docMode === 'pretty' || !lastResult) return;
@@ -638,6 +649,11 @@ async function selectFile(row, file) {
   document.querySelectorAll('.fileItem.active').forEach(el => el.classList.remove('active'));
   row.classList.add('active');
   $('activeTable').textContent = file.name;
+  // Only the plain-text formats are read as a document (one row per line, so a small file
+  // comes back as a single multiline cell). Every other reader — parquet, csv, json, avro,
+  // xlsx, a database file, a zip entry — produces a TABLE, and a table with one cell in it
+  // is still a table.
+  activeDocEligible = isTextExt(fileExt(file.name));
   setBusy(true);
   try {
     const info = await engine.loadFile(lakehouse, file);
@@ -647,11 +663,12 @@ async function selectFile(row, file) {
       $('sqlEditor').value = `SELECT * FROM ${info.ident} LIMIT 100`;
       $('previewBtn').disabled = false;
       $('runBtn').disabled = false;
-      reportLoad(info, await runQuery());
+      reportLoad(info, await runQuery({ doc: activeDocEligible }));
     } else {
       reportLoad(info, true);
     }
   } catch (e) {
+    clearResults('(no result — the file could not be opened)');
     setStatus('Load failed: ' + e.message, 'error');
     console.error(e);
   } finally {
@@ -707,6 +724,7 @@ async function selectTable(row, t) {
   document.querySelectorAll('.tableItem.active').forEach(el => el.classList.remove('active'));
   row.classList.add('active');
   $('activeTable').textContent = t.schema ? `${t.schema}.${t.table}` : t.table;
+  activeDocEligible = false;    // a table is a table, whatever shape the preview comes back
   setBusy(true);
   try {
     const info = await engine.loadTable(lakehouse, t);
@@ -714,10 +732,11 @@ async function selectTable(row, t) {
     $('sqlEditor').value = `SELECT * FROM ${info.ident} LIMIT 100`;
     $('previewBtn').disabled = false;
     $('runBtn').disabled = false;
-    reportLoad(info, await runQuery());
+    reportLoad(info, await runQuery({ doc: false }));
     row.classList.remove('pending');
     row.querySelector('.tag')?.remove();
   } catch (e) {
+    clearResults('(no result — the table could not be opened)');
     setStatus('Load failed: ' + e.message, 'error');
     console.error(e);
   } finally {
@@ -748,16 +767,21 @@ function reportLoad(info, queryOk) {
 // ---------------------------------------------------------------------------
 // Returns whether the query succeeded, so a caller that has its own message to show
 // (selectTable, selectFile) can keep quiet when the error is the more useful thing.
-async function runQuery() {
+// `doc` says whether a document view may be offered for this result at all. It defaults
+// to true because hand-written SQL is where read_text() lives; the two callers that know
+// they are previewing a TABLE (selectTable, and selectFile for every tabular format) pass
+// false, so a one-column preview of one can never be mistaken for a document.
+async function runQuery({ doc = true } = {}) {
   const sql = $('sqlEditor').value;
   setBusy(true);
+  docAllowed = doc;
   let t0 = performance.now();
   try {
     await engineReady;   // Ctrl+Enter is live before the engine is
     t0 = performance.now();   // ...and waiting for it is not query time
     const res = await engine.runSql(sql);
-    lastResult = res;
     renderResults(res);
+    lastResult = res;
     const ms = Math.round(performance.now() - t0);
     const shown = Math.min(res.rows.length, MAX_DOM_ROWS);
 
@@ -774,6 +798,9 @@ async function runQuery() {
     $('csvBtn').disabled = res.rows.length === 0;
     return true;
   } catch (e) {
+    // The pane is not a scratchpad of whatever last worked. Leaving the previous result up
+    // is how a JSON file from another lakehouse ended up on screen under a .sql file's name.
+    clearResults('(no result — the query failed)');
     setStatus('Query error: ' + e.message, 'error');
     console.error(e);
     return false;
@@ -786,14 +813,27 @@ async function runQuery() {
 // the shape of what was asked for, which is what the old schema strip was for.
 const NUMERIC_TYPE = /^(U?(TINY|SMALL|BIG|HUGE)INT|U?INTEGER|DOUBLE|FLOAT|DECIMAL)/;
 
+// Empty the whole pane. Every path that ends without a result goes through here, so
+// nothing on screen ever belongs to a query other than the current one.
+function clearResults(hint = '') {
+  docSeq++;              // an in-flight showDoc() must not paint over this
+  docMode = 'pretty';
+  $('docBar').hidden = true;
+  $('docView').hidden = true;
+  $('docView').innerHTML = '';
+  $('resultsTable').hidden = true;
+  $('resultsTable').innerHTML = '';
+  $('resultsHint').hidden = !hint;
+  $('resultsHint').textContent = hint;
+  lastResult = null;
+  $('csvBtn').disabled = true;
+}
+
 function renderResults(res) {
   const table = $('resultsTable');
   const hint = $('resultsHint');
   // A doc view from the previous result must never survive into this one.
-  docSeq++; docMode = 'pretty';
-  $('docBar').hidden = true;
-  $('docView').hidden = true;
-  $('docView').innerHTML = '';
+  clearResults();
   if (!res.fields.length) {
     table.hidden = true; hint.hidden = false; hint.textContent = '(no columns)';
     return;
@@ -821,8 +861,9 @@ function renderResults(res) {
   table.innerHTML = head + body;
 
   // The grid above is always rendered and stays the source of truth (CSV exports it
-  // regardless). A document result additionally gets the Pretty view on top.
-  if (isDocResult(res)) {
+  // regardless). A document result additionally gets the Pretty view on top — but only
+  // when the source was something that can hold a document in the first place.
+  if (docAllowed && isDocResult(res)) {
     $('docBar').hidden = false;
     showDoc(res.rows[0][res.fields[0]]);
   }
