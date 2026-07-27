@@ -386,7 +386,10 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
   // creating its view, blaming a file that was fine.
   //
   // So: full teardown only while this load still owns the key; otherwise drop just the
-  // files this load registered and leave the successor's alone.
+  // files this load registered and leave the successor's alone. The superseded branch
+  // knowingly leaves this load's __del_/__map_ tables and delete-file registrations in
+  // the shared record — the next full release reclaims them; threading them through
+  // here would widen exactly the surface being kept race-safe.
   async function releaseOwned(key, regs, gen) {
     const r = resources.get(key);
     if (!r || r.gen === gen) { await release(key); return; }
@@ -400,15 +403,27 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
   async function release(key) {
     const r = resources.get(key);
     if (r) {
-      if (r.ident) { try { await q(`DROP VIEW IF EXISTS ${r.ident}`); } catch (_) {} }
+      // Snapshots, taken before the first await. The record is shared per table key and
+      // a successor load appends to these arrays while the drops below wait their turn
+      // on the serial queue — iterating the live arrays here is how a superseded load
+      // dropped the files its successor had just registered.
+      const gen = r.gen, ident = r.ident;
+      const views = [...(r.views || [])], tables = [...r.tables];
+      const schemas = [...(r.schemas || [])], attachments = [...(r.attachments || [])];
+      const regs = [...r.regs];
+      if (ident) { try { await q(`DROP VIEW IF EXISTS ${ident}`); } catch (_) {} }
       // Zip archives create one view per readable entry; ident is just the first.
-      for (const v of (r.views || [])) { try { await q(`DROP VIEW IF EXISTS ${v}`); } catch (_) {} }
-      for (const t of r.tables) { try { await q(`DROP TABLE IF EXISTS ${t}`); } catch (_) {} }
+      for (const v of views) { try { await q(`DROP VIEW IF EXISTS ${v}`); } catch (_) {} }
+      for (const t of tables) { try { await q(`DROP TABLE IF EXISTS ${t}`); } catch (_) {} }
       // Schemas holding copied-in database tables: CASCADE takes the tables with them.
-      for (const s of (r.schemas || [])) { try { await q(`DROP SCHEMA IF EXISTS ${quoteIdent(s)} CASCADE`); } catch (_) {} }
+      for (const s of schemas) { try { await q(`DROP SCHEMA IF EXISTS ${quoteIdent(s)} CASCADE`); } catch (_) {} }
       // Attached database files: DETACH before dropping the file registration under them.
-      for (const a of (r.attachments || [])) { try { await q(`DETACH ${quoteIdent(a)}`); } catch (_) {} }
-      for (const n of r.regs) { try { await db.dropFile(n); } catch (_) {} }
+      for (const a of attachments) { try { await q(`DETACH ${quoteIdent(a)}`); } catch (_) {} }
+      for (const n of regs) { try { await db.dropFile(n); } catch (_) {} }
+      // A successor may have claimed the key while the drops above were queued; the
+      // record, the cache entry and the view names are then ITS state, not this
+      // teardown's to delete.
+      if (resources.get(key) !== r || r.gen !== gen) return;
       resources.delete(key);
     }
     loaded.delete(key);
@@ -422,6 +437,10 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
   // stale one can no longer be served, but the DuckDB objects behind them are still there
   // and still cost memory, so give those back too.
   async function reset() {
+    // Switching lakehouse supersedes whatever is loading: the in-flight load stands
+    // down at its next check() as a cancel instead of finding its files gone and
+    // reporting "Failed to open file" against a table the user has already left.
+    await cancelLoad();
     for (const key of [...resources.keys()]) await release(key);
     loaded.clear();
     resources.clear();
@@ -1314,7 +1333,6 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
       ? `${quoteIdent(t.schema)}.${quoteIdent(t.table)}`
       : quoteIdent(t.table);
     if (t.schema) await q(`CREATE SCHEMA IF NOT EXISTS ${quoteIdent(t.schema)}`);
-    viewNames.set(ident, key);
 
     check();
     onStatus(`Reading manifests for ${label}…`);
@@ -1325,6 +1343,9 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
     const res = track(key);
     res.gen = gen;          // whoever set this last owns the teardown; see releaseOwned()
     res.ident = ident;
+    // Claimed only once there is a record for release() to guard: a claim made before
+    // track() is state a concurrent release(key) sweeps with nothing to check against.
+    viewNames.set(ident, key);
     let columns;
     onStatus(`Opening ${label} — ${paths.length} file(s)…`);
     const regs = [], pairs = [];
@@ -1363,6 +1384,10 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
       // A stop is not a failure and has no culprit file to bisect for. Release what was
       // registered and report it as itself.
       if (e.cancelled) { await releaseOwned(key, regs, gen); throw e; }
+      // Superseded while failing: the error belongs to a load nobody is waiting on, and
+      // some of the ways it can fail here ARE the supersession — its files dropped out
+      // from under it. The current load's own errors still have gen === loadGen.
+      if (gen !== loadGen) { await releaseOwned(key, regs, gen); throw cancelledError(); }
       // Which FILE did it? An error like "table index is out of bounds" (a wasm trap on
       // some parquet feature this build mishandles) names nothing, and a several-hundred
       // file table gives the user nothing to report. Bisect with LIMIT 0 binds — the
