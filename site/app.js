@@ -546,6 +546,7 @@ async function onWorkspaceChange() {
   // engine's views and registered files back here instead.
   if (lakehouse) await engine.reset();
   lakehouse = null;
+  setPaneTabs('');   // no item picked: the switch goes back to offering both panes
   $('tableList').innerHTML = '<div class="hint">Pick a lakehouse or warehouse.</div>';
   $('tableCount').textContent = '';
   if (!workspace) {
@@ -594,6 +595,7 @@ async function connect({ force = false } = {}) {
     await engine.reset();
   }
   lakehouse = { workspace, item };
+  setPaneTabs(item);   // before the pane is rendered below: it can move `pane` off Files
 
   $('connectBtn').disabled = true;
   setStatus(`Listing tables in ${lakehouse.workspace}/${lakehouse.item}…`);
@@ -623,6 +625,28 @@ async function connect({ force = false } = {}) {
 // ---------------------------------------------------------------------------
 // Listed one directory at a time, on expand: a lakehouse's Files/ can be arbitrarily
 // deep and wide, so a recursive listing up front would be slow for no benefit.
+// Files/ is the unmanaged half of a LAKEHOUSE. A warehouse — and a mirrored or SQL
+// database — keeps its tables in OneLake but has no Files/ at all, so browsing it there
+// listed whatever the DFS API returned for the missing path: the item's internal
+// storage directories, GUIDs nobody asked to see. Offer the switch only where there is
+// something real behind it. Kind is the item name's suffix, the same thing listItems
+// matched on, so no extra call is needed to know it.
+const itemHasFiles = item => /\.Lakehouse$/i.test(item || '');
+
+// `item` empty means nothing is picked yet — leave the switch as it is rather than
+// flickering it away between a workspace change and the item that follows.
+function setPaneTabs(item) {
+  const files = !item || itemHasFiles(item);
+  $('tabFiles').hidden = !files;
+  $('paneTabs').classList.toggle('solo', !files);
+  // A warehouse picked while the Files pane was open must not leave that pane showing.
+  if (!files && pane === 'files') {
+    pane = 'tables';
+    $('tabTables').classList.add('active');
+    $('tabFiles').classList.remove('active');
+  }
+}
+
 function switchPane(which) {
   pane = which;
   $('tabTables').classList.toggle('active', which === 'tables');

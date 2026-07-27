@@ -108,6 +108,9 @@
     }
     button.tab:first-child { border-radius: 5px 0 0 5px; }
     button.tab:last-child { border-radius: 0 5px 5px 0; border-left: 0; }
+    /* Warehouses have no Files/ pane, so Tables is the only button left — a half-rounded
+       pill with two square corners reads as a switch with its other half missing. */
+    .tabs.solo button.tab { border-radius: 5px; }
     button.tab.active { color: var(--text); background: #1c2330; border-color: var(--accent2); }
 
     /* Files tree */
@@ -264,7 +267,7 @@
   <main>
     <aside id="sidebar">
       <div class="head">
-        <span class="tabs">
+        <span class="tabs" id="paneTabs">
           <button id="tabTables" class="tab active">Tables</button><button id="tabFiles" class="tab">Files</button>
         </span>
         <span id="tableCount"></span>
