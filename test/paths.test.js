@@ -15,7 +15,7 @@ import {
   sqlStr, quoteIdent, stripComments, prepareReadOnlySql,
   metadataVersion, pickMetadata,
   tableKey, fileKey, sanitizeIdent,
-  normalizeValue, fmtBytes,
+  normalizeValue, fmtBytes, isDocResult,
 } from "../site/paths.js";
 
 // -----------------------------------------------------------------------------
@@ -360,6 +360,41 @@ test("normalizeValue leaves other values alone", () => {
   assert.equal(normalizeValue("x"), "x");
   assert.equal(normalizeValue(1.5), 1.5);
   assert.deepEqual(normalizeValue({ toJSON: () => ({ a: 1 }) }), { a: 1 });
+});
+
+// -----------------------------------------------------------------------------
+// isDocResult — the gate on the Pretty markdown view. Anything false here keeps
+// the grid path byte-identical, so the false cases matter as much as the true.
+// -----------------------------------------------------------------------------
+test("isDocResult accepts a 1×1 multiline VARCHAR", () => {
+  const readme = "# OneLake Studio\n\nRead-only SQL over your own OneLake.";
+  assert.equal(isDocResult(
+    { fields: ["content"], types: ["VARCHAR"], rows: [{ content: readme }] }), true);
+  assert.equal(isDocResult(
+    { fields: ["c"], types: ["VARCHAR"], rows: [{ c: "a\nb" }] }), true);
+});
+
+test("isDocResult rejects everything that is not that shape", () => {
+  // SELECT 42 — wrong type.
+  assert.equal(isDocResult(
+    { fields: ["v"], types: ["INTEGER"], rows: [{ v: 42 }] }), false);
+  // Single line — no document signal.
+  assert.equal(isDocResult(
+    { fields: ["c"], types: ["VARCHAR"], rows: [{ c: "hello" }] }), false);
+  // Two columns.
+  assert.equal(isDocResult(
+    { fields: ["a", "b"], types: ["VARCHAR", "VARCHAR"],
+      rows: [{ a: "x\ny", b: "x\ny" }] }), false);
+  // Two rows.
+  assert.equal(isDocResult(
+    { fields: ["c"], types: ["VARCHAR"], rows: [{ c: "a\nb" }, { c: "c\nd" }] }), false);
+  // Null value.
+  assert.equal(isDocResult(
+    { fields: ["c"], types: ["VARCHAR"], rows: [{ c: null }] }), false);
+  // Empty result / missing pieces.
+  assert.equal(isDocResult({ fields: [], types: [], rows: [] }), false);
+  assert.equal(isDocResult({ fields: ["c"], rows: [{ c: "a\nb" }] }), false);
+  assert.equal(isDocResult(null), false);
 });
 
 // -----------------------------------------------------------------------------

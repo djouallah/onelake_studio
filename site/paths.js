@@ -355,6 +355,18 @@ export function normalizeValue(v) {
   return v;
 }
 
+// A 1×1 multiline VARCHAR result is presumed to be a document (read_text over a
+// README, a NOTICE file) and gets offered as rendered markdown. rows.length, not
+// numRows: a truncated result must never qualify. No length threshold — multiline
+// is the whole signal; a threshold would make the feature feel flaky.
+export function isDocResult(res) {
+  if (!res || !Array.isArray(res.fields) || res.fields.length !== 1) return false;
+  if (!Array.isArray(res.rows) || res.rows.length !== 1) return false;
+  if (((res.types || [])[0] || "") !== "VARCHAR") return false;
+  const v = res.rows[0][res.fields[0]];
+  return typeof v === "string" && v.includes("\n");
+}
+
 export function fmtBytes(n) {
   if (!(n > 0)) return "unknown size";
   if (n < 1e3) return `${n} B`;
