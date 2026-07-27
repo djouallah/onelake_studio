@@ -21,6 +21,8 @@ const cfg = resolveConfig(window.ONELAKE_STUDIO_CONFIG || {});
 // itself capped — runQuery says so when the two differ.
 const MAX_DOM_ROWS = 2000;
 let engine = null;
+let engineReady = null;      // resolves when engine.init() has finished; gates every use of it
+let engineUp = false;        // ...and the settled form of it, for the synchronous checks
 let signedIn = false;        // OneLake session established (browsing unlocked)
 let lakehouse = null;        // { workspace, item }
 let activeIdent = null;      // quoted identifier of the loaded table
@@ -257,10 +259,10 @@ const PENDING_SQL_KEY = 'onelake-studio-pending-sql';
 const README_SQL =
   "select content from read_text('https://raw.githubusercontent.com/djouallah/onelake_studio/refs/heads/main/README.md')";
 
-async function startLocal() {
-  engine = createEngine(auth, { onStatus: setStatus });
-  await engine.init();
-  $('runBtn').disabled = false;   // SQL needs the engine, not a lakehouse
+// Every handler, wired before anything is awaited. It used to happen after engine.init(),
+// which was also what kept connect()/runQuery() off a null engine; that guarantee now
+// comes from awaiting engineReady inside those two, so the controls can exist during boot.
+function wireUi() {
   $('connectBtn').onclick = () => connect({ force: true });
   $('wsSelect').addEventListener('input', onWorkspaceInput);
   $('wsSelect').addEventListener('change', onWorkspaceInput);
@@ -290,16 +292,26 @@ async function startLocal() {
     sessionStorage.removeItem(PENDING_SQL_KEY);
     if (stash && !$('sqlEditor').value) $('sqlEditor').value = stash;
   } catch (_) {}
-  const booted = 'DuckDB ready — run SQL now, or sign in to browse OneLake.';
+}
+
+// engineReady, not engine.init(), because runQuery() below awaits engineReady and this
+// function calls runQuery — awaiting its own promise would deadlock the boot.
+async function startEngine() {
+  await engineReady;
+  engineUp = true;
+  $('runBtn').disabled = false;   // SQL needs the engine, not a lakehouse
   if (!$('sqlEditor').value) {
-    // Fresh visit: show the README as the landing content. The stash branch above
+    // Fresh visit: show the README as the landing content. The stash branch in wireUi
     // means a sign-in round trip never loses the user's SQL to this. Offline or
     // blocked, runQuery reports its error — the boot message below replaces it,
     // because a failed docs fetch must not read as a broken app.
     $('sqlEditor').value = README_SQL;
     await runQuery();
   }
-  setStatus(booted, 'ok');
+  // The auth stage runs alongside this one now, so it may already have said something
+  // truer — "N workspace(s)" beats "sign in to browse OneLake". Only claim the line when
+  // there's no session to talk about.
+  if (!signedIn) setStatus('DuckDB ready — run SQL now, or sign in to browse OneLake.', 'ok');
 }
 
 // After a OneLake session exists (silent on boot, or interactive): unlock browsing.
@@ -446,6 +458,7 @@ async function onWorkspaceChange() {
 async function connect({ force = false } = {}) {
   const workspace = canonicalWs($('wsSelect').value), item = $('itemSelect').value;
   if (!workspace || !item) return;
+  await engineReady;   // the picker can be used before DuckDB has finished booting
 
   // Views, registered files and helper tables from the previous lakehouse are dead the
   // moment we point somewhere else, and they cost WASM memory for as long as the tab
@@ -670,8 +683,10 @@ function reportLoad(info, queryOk) {
 async function runQuery() {
   const sql = $('sqlEditor').value;
   setBusy(true);
-  const t0 = performance.now();
+  let t0 = performance.now();
   try {
+    await engineReady;   // Ctrl+Enter is live before the engine is
+    t0 = performance.now();   // ...and waiting for it is not query time
     const res = await engine.runSql(sql);
     lastResult = res;
     renderResults(res);
@@ -882,13 +897,22 @@ function setBusy(b) {
   // Run needs only the engine — SELECT h3_latlng_to_cell(...) is a fine first query
   // with no lakehouse selected. Preview rewrites the editor to SELECT * FROM <active
   // table>, so it alone keeps waiting for one.
-  $('runBtn').disabled = !engine || b;
+  // `engine` exists from the first line of boot now, so it says nothing about readiness —
+  // engineUp is the flag that used to be implied by it being non-null.
+  $('runBtn').disabled = !engineUp || b;
   $('previewBtn').disabled = !activeIdent || b;
 }
 
 // ---------------------------------------------------------------------------
-// Boot: local engine first, then a silent session check — never a gate up front.
+// Boot: paint the UI, then run the engine and the silent session check side by side.
 // ---------------------------------------------------------------------------
+// Neither stage is quick — DuckDB is a wasm bundle plus four extensions off a CDN, and
+// MSAL's ssoSilent is an iframe round trip to Microsoft that a visitor with no session
+// there pays a full timeout for. Running them in series put the header's sign-in button
+// (static DOM that needs neither) behind both, ~3.5s on a warm cache and ~14s cold with
+// no Microsoft session. Nothing in the auth stage touches DuckDB: listWorkspaces and
+// listItems are plain authed fetches, and the two calls that do need the engine —
+// connect() and runQuery() — await engineReady themselves.
 const EMBEDDED = window.self !== window.top;   // inside an embedding iframe?
 $('byoLink').onclick = () => showByoForm();
 $('consentLink').onclick = () => showConsentHelp();
@@ -897,24 +921,35 @@ initSidebarToggle();
 showVersion();
 checkForNewBuild();
 setInterval(checkForNewBuild, VERSION_RECHECK_MS);
+wireUi();
+// Painted before either stage starts. If the silent check turns out to find a session,
+// afterSignIn swaps this for "Signed in" — and closes the gate, if it was opened in the
+// meantime, so an early click on it costs nothing.
+showSignedOut();
+engine = createEngine(auth, { onStatus: setStatus });
+engineReady = engine.init();
+
+// Engine trouble (CDN down, wasm refused) must not block the sign-in path, and auth
+// trouble must not block local SQL — the two halves fail independently, so they get a
+// try/catch each rather than one around both.
 (async () => {
-  // Engine trouble (CDN down, wasm refused) must not block the sign-in path, and auth
-  // trouble must not block local SQL — the two halves fail independently.
   try {
-    await startLocal();
+    await startEngine();
   } catch (e) {
     setStatus('Engine failed to start: ' + e.message, 'error');
     console.error(e);
   }
+})();
+
+(async () => {
   try {
     // Silent only: restores a returning user's session (and completes a sign-in
-    // redirect landing back here) without ever prompting a new visitor.
+    // redirect landing back here) without ever prompting a new visitor. No session ->
+    // the button showSignedOut already painted is the right one, so there's nothing to do.
     if (await auth.ensureSession(false)) await afterSignIn();
-    else showSignedOut();
   } catch (e) {
     // A redirect coming back with a consent failure lands here, not in the button
     // handler — so the gate has to be rendered before the error is explained.
-    showSignedOut();
     showSignIn(afterSignIn);
     showAuthFailure(e);
   }
