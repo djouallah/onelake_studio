@@ -101,10 +101,10 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
     // Never throws: an optional extension that won't load costs one file format, which is
     // not a reason to refuse to start. LOAD alone succeeds when the wasm build already has
     // the extension; INSTALL+LOAD is the fetch-from-the-repo fallback.
-    const tryLoadExt = async ext => {
+    const tryLoadExt = async (ext, repo = "") => {
       try { await conn.query(`LOAD ${ext};`); return true; }
       catch (_) {
-        try { await conn.query(`INSTALL ${ext}; LOAD ${ext};`); return true; }
+        try { await conn.query(`INSTALL ${ext}${repo ? ` FROM ${repo}` : ""}; LOAD ${ext};`); return true; }
         catch (e) { console.warn(`[engine] ${ext} extension unavailable:`, e.message); return false; }
       }
     };
@@ -116,6 +116,12 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
     // is fetched over the network, so it can fail for reasons the pinned version doesn't
     // control, and offering an .xlsx that then fails to open is worse than not offering it.
     canXlsx = await tryLoadExt("excel");
+    // h3_* (hexagonal spatial indexing) lives in the COMMUNITY repository — a plain
+    // INSTALL looks in extensions.duckdb.org and 404s, hence FROM community. Loaded at
+    // init because the editor's read-only guard blocks INSTALL/LOAD; once loaded,
+    // SELECT h3_latlng_to_cell(...) just works. No capability flag: nothing in the UI
+    // gates on h3, and a failure costs only the h3_* functions (warned by tryLoadExt).
+    if (await tryLoadExt("h3", "community")) console.log("[engine] h3 community extension loaded");
     // `threads` is the proof, not the bundle name: >1 means the coi build actually got
     // its SharedArrayBuffer and the isolation work is paying for itself.
     let threads = "?";

@@ -197,6 +197,21 @@ try {
     fail("sqlite harness: " + String(e) + (e && e.stack ? " @ " + String(e.stack).split("\n")[1] : ""));
   }
 
+  // --- 7. h3 community extension — mirrors init()'s tryLoadExt("h3", "community") -----
+  // Expected cell cross-checked against native DuckDB (INSTALL h3 FROM community).
+  // If this fails after a pin bump, check community-extensions.duckdb.org serves the
+  // new engine version for wasm_eh before blaming the app.
+  try {
+    try { await conn.query(`LOAD h3;`); }
+    catch (_) { await conn.query(`INSTALL h3 FROM community; LOAD h3;`); }
+    const c = (await conn.query(
+      `SELECT h3_latlng_to_cell_string(37.7887987, -122.3931578, 9) AS c`)).toArray()[0].toJSON().c;
+    if (c === "89283082a0fffff") pass("h3 community extension loads and answers");
+    else fail(`h3 cell = ${c}, want 89283082a0fffff`);
+  } catch (e) {
+    fail("h3 harness: " + (e && e.message));
+  }
+
   log("DONE");
   document.title = "DONE";
 } catch (e) {
