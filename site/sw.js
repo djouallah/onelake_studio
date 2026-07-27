@@ -116,20 +116,38 @@ async function currentToken() {
   return token;
 }
 
+// Returns { request, ours }. `ours` means THIS worker is responsible for the credential on
+// this request — and it stays true when no token was found, because that is precisely the
+// case the 401 retry below exists for. Comparing the returned request's identity, as this
+// used to, silently excluded it: an unsigned request is `=== request`, so the one failure a
+// fresh token would have fixed was the one failure that never got retried.
 async function authorize(request) {
   // A no-cors request has a guarded header list — Authorization can't be set on it,
   // and OneLake would reject an opaque request anyway.
-  if (request.mode === 'no-cors') return request;
-  if (request.headers.has('Authorization')) return request;   // fetchAuthed already signed it
+  if (request.mode === 'no-cors') return { request, ours: false };
+  // fetchAuthed already signed it, and owns its own refresh-and-retry.
+  if (request.headers.has('Authorization')) return { request, ours: false };
   let host;
-  try { host = new URL(request.url).host; } catch (_) { return request; }
-  if (host !== ONELAKE_HOST) return request;
+  try { host = new URL(request.url).host; } catch (_) { return { request, ours: false }; }
+  if (host !== ONELAKE_HOST) return { request, ours: false };
 
   const t = await currentToken();
-  if (!t) return request;                                     // let it 401 and surface honestly
+  if (!t) return { request, ours: true };                     // unsigned, and still ours to retry
   const headers = new Headers(request.headers);
   headers.set('Authorization', 'Bearer ' + t);
-  return new Request(request, { headers });
+  return { request: new Request(request, { headers }), ours: true };
+}
+
+// DuckDB reads OneLake through this worker and reports every failure as
+// "Failed to open file: <registered name>" — no status, no URL. The page cannot see these
+// requests at all, so tell it what actually came back; app.js pins the answer onto that
+// error message. Fire-and-forget: diagnostics must never delay or fail a read.
+function reportReadFailure(url, status, signed) {
+  self.clients.matchAll({ includeUncontrolled: true })
+    .then(cs => cs.forEach(c => c.postMessage({
+      type: 'onelake-read-failed', status, pathname: url.pathname, signed,
+    })))
+    .catch(() => {});
 }
 
 // Is this an immutable OneLake object worth caching? Only data files and Avro manifests
@@ -213,9 +231,15 @@ async function signedFetch(request, event) {
     if (hit) return hit;
   }
 
-  const signed = await authorize(request);
-  let res = await fetch(signed);
-  if (res.status === 401 && signed !== request) {
+  const { request: signed, ours } = await authorize(request);
+  let res;
+  try {
+    res = await fetch(signed);
+  } catch (e) {
+    if (ours && url && !url.search) reportReadFailure(url, 0, signed !== request);
+    throw e;
+  }
+  if (res.status === 401 && ours) {
     // Forget what we used, ask the page for a fresh one (it renews on demand), try once more.
     const used = token;
     token = null;
@@ -227,6 +251,10 @@ async function signedFetch(request, event) {
       res = await fetch(new Request(request, { headers }));
     }
   }
+  // `!url.search` keeps DFS listing calls out of it: every one of those carries a query
+  // string and is issued BY data.js, which reports its own failures with the directory it
+  // was reading. Only the bare object reads — DuckDB's — are unexplained without this.
+  if (ours && url && !url.search && !res.ok) reportReadFailure(url, res.status, signed !== request);
 
   if (cacheable && event) event.waitUntil(toDataCache(request, url, res));
   return res;

@@ -223,8 +223,23 @@ function createMsalAuth(cfg, { onExpired } = {}) {
   // rather than leaving a live bearer token in the profile directory until someone
   // happens to sign in again. 'pagehide' fires on close and on bfcache eviction, where
   // 'beforeunload' and 'unload' are unreliable.
+  //
+  // ...and put it back on the way in. 'pagehide' also fires when the page goes into the
+  // bfcache, which it comes BACK from — with its in-memory token intact but the durable
+  // copy deleted. A service worker restarted in that window (the browser kills idle ones
+  // freely) then found Cache Storage empty and had nothing to sign DuckDB's reads with,
+  // and DuckDB reports that as "Failed to open file", not as an auth problem. 'pageshow'
+  // is the only event that fires on a bfcache restore.
   try {
     window.addEventListener('pagehide', () => { forgetDurableToken(); });
+    const rearm = () => { if (haveToken()) publishToken(); };
+    window.addEventListener('pageshow', rearm);
+    // Belt and braces for the other way a worker can die under a live page: the tab sat in
+    // the background long enough to be frozen. Cheap — publishToken is a no-op write when
+    // the value hasn't changed, and nothing awaits it.
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') rearm();
+    });
   } catch (_) { /* no window (tests) — nothing to clean up */ }
 
   // MSAL hands back `expiresOn` as a Date; fall back to a conservative 50 minutes if a

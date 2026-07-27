@@ -51,6 +51,46 @@ function setStatus(msg, type = '') {
 // ---------------------------------------------------------------------------
 const auth = createAuth(cfg, { onStatus: setStatus, onExpired: showExpired });
 
+// ---------------------------------------------------------------------------
+// What the service worker saw
+// ---------------------------------------------------------------------------
+// DuckDB reads OneLake itself, over registered URLs, and reports EVERY failed open the
+// same way: "Failed to open file: data_10.parquet". No status, no URL — an expired token,
+// a deleted file and a network drop are one message. Those requests never pass through
+// data.js, so the page cannot observe them; sw.js is the only thing that sees the answer,
+// and it now says so. That turns the whole class of "wtf is this" into a status code.
+let lastReadFailure = null;              // { status, pathname, at }
+const READ_FAILURE_TTL_MS = 30_000;      // older than this and it is about some other query
+
+try {
+  navigator.serviceWorker.addEventListener('message', e => {
+    const d = e.data || {};
+    if (d.type !== 'onelake-read-failed') return;
+    lastReadFailure = { status: d.status, pathname: d.pathname, at: Date.now() };
+    // Nothing else can renew on DuckDB's behalf: data.js retries its own 401s, but it
+    // never issued this request. refresh() is single-flight, so a burst costs one round
+    // trip, and it re-gates the UI if the session is genuinely over.
+    if (d.status === 401) auth.refresh().catch(() => {});
+  });
+  // Without startMessages() a container using addEventListener never delivers.
+  navigator.serviceWorker.startMessages();
+} catch (_) { /* no service worker — the bare message is all there is */ }
+
+// Pin what the worker saw onto DuckDB's opaque wording, when the two are about the
+// same moment.
+function explainRead(message) {
+  const msg = String(message);
+  if (!/Failed to open file|HTTP Error|Could not establish connection/i.test(msg)) return msg;
+  const f = lastReadFailure;
+  if (!f || Date.now() - f.at > READ_FAILURE_TTL_MS) return msg;
+  const what = f.status === 0 ? 'could not be reached' : `answered HTTP ${f.status}`;
+  const why = f.status === 401 ? ' — the OneLake token had expired; renewing it now, so try again'
+            : f.status === 403 ? ' — this identity may not read that path'
+            : f.status === 404 ? ' — the file is no longer there (the table may have been rewritten since it was listed)'
+            : '';
+  return `${msg}. OneLake ${what} for ${f.pathname}${why}`;
+}
+
 // Deliberately does NOT render the signed-in address. The identity is visible in the
 // browser's own account UI, and this app gets screen-shared and screenshotted; a UPN in
 // the header is a needless leak. auth.getUserId() is still there for console debugging.
@@ -672,7 +712,7 @@ async function selectFile(row, file) {
     }
   } catch (e) {
     clearResults('(no result — the file could not be opened)');
-    setStatus('Load failed: ' + e.message, 'error');
+    setStatus('Load failed: ' + explainRead(e.message), 'error');
     console.error(e);
   } finally {
     setBusy(false);
@@ -741,7 +781,7 @@ async function selectTable(row, t) {
     row.querySelector('.tag')?.remove();
   } catch (e) {
     clearResults('(no result — the table could not be opened)');
-    setStatus('Load failed: ' + e.message, 'error');
+    setStatus('Load failed: ' + explainRead(e.message), 'error');
     console.error(e);
   } finally {
     setBusy(false);
@@ -806,7 +846,7 @@ async function runQuery({ doc = true, ext = '' } = {}) {
     // The pane is not a scratchpad of whatever last worked. Leaving the previous result up
     // is how a JSON file from another lakehouse ended up on screen under a .sql file's name.
     clearResults('(no result — the query failed)');
-    setStatus('Query error: ' + e.message, 'error');
+    setStatus('Query error: ' + explainRead(e.message), 'error');
     console.error(e);
     return false;
   } finally {
