@@ -2,8 +2,10 @@
 
 **[Open the app →](https://studio.projectscontrols.com/)**
 
-Read-only SQL over your own OneLake, running entirely in your browser. Sign in with your Microsoft work
-or school account, pick a workspace and a lakehouse or warehouse, and query its tables and files.
+Read-only SQL over your own OneLake, running entirely in your browser. The SQL editor works the moment
+the page loads — no account needed (DuckDB with the h3 spatial extension, fully local). Sign in with
+your Microsoft work or school account to browse OneLake: pick a workspace and a lakehouse or warehouse,
+and query its tables and files.
 
 - **Fully local.** DuckDB-WASM runs in the tab. No backend, nothing uploaded, nothing copied.
 - **Your identity, your data.** One delegated permission — Azure Storage `user_impersonation` — so you
@@ -13,6 +15,7 @@ or school account, pick a workspace and a lakehouse or warehouse, and query its 
 
 ## Signing in
 
+Signing in is only needed to reach OneLake — the editor and engine run without it.
 The app is registered as a multi-tenant Entra SPA (PKCE, no secret), so any work or school account can
 sign in against its own directory. Its `clientId` is committed in [`site/config.js`](site/config.js) —
 public by design, since MSAL puts it in every sign-in URL.

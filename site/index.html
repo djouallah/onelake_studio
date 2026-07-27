@@ -195,7 +195,7 @@
     <!-- A datalist combobox, not a <select>: tenants have hundreds of workspaces, and a
          dropdown you can't type into doesn't scale past a dozen. -->
     <input id="wsSelect" list="wsOptions" title="Workspace — type to search"
-           placeholder="Loading workspaces…" autocomplete="off" spellcheck="false" disabled />
+           placeholder="Sign in to browse OneLake" autocomplete="off" spellcheck="false" disabled />
     <datalist id="wsOptions"></datalist>
     <select id="itemSelect" title="Lakehouse / Warehouse" disabled><option value="">Select a workspace first</option></select>
     <button id="connectBtn" title="Reload tables">Reload</button>
@@ -213,7 +213,7 @@
         </span>
         <span id="tableCount"></span>
       </div>
-      <div id="tableList"><div class="hint">Pick a workspace, then a lakehouse or warehouse.</div></div>
+      <div id="tableList"><div class="hint">Sign in to OneLake to browse tables and files.</div></div>
     </aside>
 
     <section>
@@ -226,7 +226,7 @@
         <button id="runBtn" class="primary" disabled>Run ▶</button>
         <button id="csvBtn" disabled>Download CSV</button>
       </div>
-      <textarea id="sqlEditor" spellcheck="false" placeholder="Select a table to load it, then write read-only SQL here…"></textarea>
+      <textarea id="sqlEditor" spellcheck="false" placeholder="Write read-only SQL here — no sign-in needed. Try: SELECT h3_latlng_to_cell_string(37.7887987, -122.3931578, 9)"></textarea>
       <div class="resultsWrap"><div class="hint" id="resultsHint">Query results appear here.</div><table class="results" id="resultsTable" hidden></table></div>
     </section>
   </main>
@@ -236,13 +236,16 @@
     <a id="statusVer" target="_blank" rel="noopener"></a>
   </div>
 
-  <div id="authGate">
+  <!-- Hidden by default: the app is usable without OneLake — this shows on demand when
+       the user asks to sign in (or a restored session needs re-auth). -->
+  <div id="authGate" style="display:none">
     <div class="gateCard">
       <div class="gateBrand">OneLake&nbsp;Studio</div>
       <div class="gateTag">Read your OneLake. Fully local — your data never leaves this browser.</div>
-      <div id="authGateMsg">Loading…</div>
+      <div id="authGateMsg">Sign in with your Microsoft work or school account.</div>
       <!-- Sign-in button, and (only when needed) the consent / own-registration blocks. -->
       <div id="authActions"></div>
+      <div class="gateFoot"><a id="gateClose">← Continue without signing in</a></div>
       <div class="chips"><span>No backend</span><span>Nothing copied</span><span>Read-only</span><span>No telemetry</span></div>
       <div class="gateFoot">
         <b>Sign in</b> uses this app's built-in registration — it works once your tenant has

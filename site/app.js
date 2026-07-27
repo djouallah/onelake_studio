@@ -17,6 +17,7 @@ const cfg = resolveConfig(window.ONELAKE_STUDIO_CONFIG || {});
 // itself capped — runQuery says so when the two differ.
 const MAX_DOM_ROWS = 2000;
 let engine = null;
+let signedIn = false;        // OneLake session established (browsing unlocked)
 let lakehouse = null;        // { workspace, item }
 let activeIdent = null;      // quoted identifier of the loaded table
 let lastResult = null;       // { fields, rows } for CSV export
@@ -58,6 +59,22 @@ function showSignedIn() {
   box.append(label, out);
 }
 
+// The signed-out header affordance. Signing in is an upgrade, not a precondition: the
+// engine and the SQL editor already work, this only unlocks browsing OneLake.
+function showSignedOut() {
+  const box = $('userBox');
+  box.textContent = '';
+  const btn = document.createElement('button');
+  btn.className = 'primary';
+  btn.textContent = 'Sign in to OneLake';
+  btn.onclick = () => {
+    // MSAL redirect auth can't run inside an embedding iframe — hand over a real tab.
+    if (auth.mode === 'msal' && EMBEDDED) showOpenInTab();
+    else showSignIn(afterSignIn);
+  };
+  box.appendChild(btn);
+}
+
 function gateMsg(text, isError = false) {
   const el = $('authGateMsg');
   el.textContent = text;
@@ -80,6 +97,9 @@ function showSignIn(onDone, msg = 'Sign in with your Microsoft work or school ac
   btn.onclick = async () => {
     btn.disabled = true;
     btn.textContent = 'Signing in…';
+    // The redirect flow reloads the page — a query someone wrote before deciding to
+    // sign in must survive the round trip. Restored (once) by the boot path.
+    try { sessionStorage.setItem(PENDING_SQL_KEY, $('sqlEditor').value); } catch (_) {}
     try {
       // acquireTokenRedirect navigates away and never resolves, so a `false` here means
       // "no silent session and no redirect" — put the button back.
@@ -199,16 +219,24 @@ function showOpenInTab() {
       <div id="authGateMsg">This app signs you in to OneLake, which an embedded frame blocks. Open it in its own browser tab to continue.</div>
       <a class="primary" style="padding:0.7rem 1.5rem;border-radius:6px;text-decoration:none;color:#fff;align-self:center"
          href="${window.location.href}" target="_blank" rel="noopener">Open in new tab ↗</a>
+      <div class="gateFoot"><a id="gateClose">← Continue without signing in</a></div>
     </div>`;
+  gate.style.display = '';
+  $('gateClose').onclick = () => { gate.style.display = 'none'; };
 }
 
 // ---------------------------------------------------------------------------
-// After sign-in: bring up DuckDB and enable the UI.
+// Boot: bring up DuckDB and enable the UI — no sign-in required.
 // ---------------------------------------------------------------------------
-async function start() {
-  showSignedIn();
+// The engine is a purely local machine; the token is only touched when OneLake is
+// listed or read. So the editor works for everyone, and signing in is the upgrade
+// that unlocks the workspace picker (afterSignIn).
+const PENDING_SQL_KEY = 'onelake-studio-pending-sql';
+
+async function startLocal() {
   engine = createEngine(auth, { onStatus: setStatus });
   await engine.init();
+  $('runBtn').disabled = false;   // SQL needs the engine, not a lakehouse
   $('connectBtn').onclick = () => connect({ force: true });
   $('wsSelect').addEventListener('input', onWorkspaceInput);
   $('wsSelect').addEventListener('change', onWorkspaceInput);
@@ -221,7 +249,23 @@ async function start() {
   $('sqlEditor').addEventListener('keydown', e => {
     if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); runQuery(); }
   });
+  // SQL written before a sign-in redirect comes back here after the round trip.
+  try {
+    const stash = sessionStorage.getItem(PENDING_SQL_KEY);
+    sessionStorage.removeItem(PENDING_SQL_KEY);
+    if (stash && !$('sqlEditor').value) $('sqlEditor').value = stash;
+  } catch (_) {}
+  setStatus('DuckDB ready — run SQL now, or sign in to browse OneLake.', 'ok');
+}
 
+// After a OneLake session exists (silent on boot, or interactive): unlock browsing.
+async function afterSignIn() {
+  signedIn = true;
+  $('authGate').style.display = 'none';
+  showSignedIn();
+  $('wsSelect').placeholder = 'Loading workspaces…';
+  if (!lakehouse)
+    $('tableList').innerHTML = '<div class="hint">Pick a workspace, then a lakehouse or warehouse.</div>';
   await loadCatalog();
 }
 
@@ -405,7 +449,9 @@ function switchPane(which) {
   $('tabTables').classList.toggle('active', which === 'tables');
   $('tabFiles').classList.toggle('active', which === 'files');
   if (!lakehouse) {
-    $('tableList').innerHTML = '<div class="hint">Pick a workspace, then a lakehouse or warehouse.</div>';
+    $('tableList').innerHTML = signedIn
+      ? '<div class="hint">Pick a workspace, then a lakehouse or warehouse.</div>'
+      : '<div class="hint">Sign in to OneLake to browse tables and files.</div>';
     return;
   }
   if (which === 'tables') { renderTableList(lastTables || []); $('tableCount').textContent = lastTableCount; }
@@ -752,36 +798,43 @@ function escapeHtml(s) {
 }
 function setBusy(b) {
   $('connectBtn').disabled = b;
-  // Run/Preview are only meaningful once a table is loaded.
-  const canQuery = !!activeIdent && !b;
-  $('runBtn').disabled = !canQuery;
-  $('previewBtn').disabled = !canQuery;
+  // Run needs only the engine — SELECT h3_latlng_to_cell(...) is a fine first query
+  // with no lakehouse selected. Preview rewrites the editor to SELECT * FROM <active
+  // table>, so it alone keeps waiting for one.
+  $('runBtn').disabled = !engine || b;
+  $('previewBtn').disabled = !activeIdent || b;
 }
 
 // ---------------------------------------------------------------------------
-// Boot: silent session check, then gate.
+// Boot: local engine first, then a silent session check — never a gate up front.
 // ---------------------------------------------------------------------------
 const EMBEDDED = window.self !== window.top;   // inside an embedding iframe?
 $('byoLink').onclick = () => showByoForm();
 $('consentLink').onclick = () => showConsentHelp();
+$('gateClose').onclick = () => { $('authGate').style.display = 'none'; };
 initSidebarToggle();
 showVersion();
 checkForNewBuild();
 setInterval(checkForNewBuild, VERSION_RECHECK_MS);
 (async () => {
+  // Engine trouble (CDN down, wasm refused) must not block the sign-in path, and auth
+  // trouble must not block local SQL — the two halves fail independently.
   try {
-    if (await auth.ensureSession(false)) {
-      $('authGate').style.display = 'none';
-      await start();
-    } else if (auth.mode === 'msal' && EMBEDDED) {
-      showOpenInTab();
-    } else {
-      showSignIn(start);
-    }
+    await startLocal();
+  } catch (e) {
+    setStatus('Engine failed to start: ' + e.message, 'error');
+    console.error(e);
+  }
+  try {
+    // Silent only: restores a returning user's session (and completes a sign-in
+    // redirect landing back here) without ever prompting a new visitor.
+    if (await auth.ensureSession(false)) await afterSignIn();
+    else showSignedOut();
   } catch (e) {
     // A redirect coming back with a consent failure lands here, not in the button
     // handler — so the gate has to be rendered before the error is explained.
-    showSignIn(start);
+    showSignedOut();
+    showSignIn(afterSignIn);
     showAuthFailure(e);
   }
 })();
