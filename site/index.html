@@ -204,6 +204,7 @@
     .byoRow input { flex: 1 1 200px; font-family: ui-monospace, Consolas, monospace; font-size: 0.78rem; }
     .gateFoot { color: var(--muted); font-size: 0.82rem; }
     .gateFoot a { cursor: pointer; }
+    .gateOpts { display: grid; gap: 0.45rem; justify-items: center; }
   </style>
 </head>
 <body>
@@ -269,15 +270,13 @@
       <div id="authGateMsg">Sign in with your Microsoft work or school account.</div>
       <!-- Sign-in button, and (only when needed) the consent / own-registration blocks. -->
       <div id="authActions"></div>
-      <div class="gateFoot"><a id="gateClose">← Continue without signing in</a></div>
-      <!-- One line, not a paragraph: the only thing worth saying up front is what to do
-           when the built-in registration is blocked. Hidden while a BYO registration is
-           in use — the banner in #authActions is then the whole story. -->
-      <div class="gateFoot" id="gateHelp">
-        Blocked with “Need admin approval”? <a id="consentLink">Ask your admin to consent</a>
-        or <a id="byoLink">use your own app registration</a> —
-        <a href="https://github.com/djouallah/onelake_studio#signing-in"
-           target="_blank" rel="noopener">how that works</a>.
+      <!-- The three ways past this screen, one per line and unexplained: prose about each
+           only matters once you pick one, and each block says its own piece then. A link
+           hides itself while the block it opens is on screen. -->
+      <div class="gateFoot gateOpts">
+        <a id="byoLink">Use your own app registration</a>
+        <a id="consentLink">Ask your admin to consent to the built-in one</a>
+        <a id="gateClose">← Continue without signing in</a>
       </div>
       <div class="chips"><span>No backend</span><span>Nothing copied</span><span>Read-only</span><span>No telemetry</span></div>
     </div>

@@ -131,15 +131,16 @@ function showAuthFailure(e) {
   console.error(e);
 }
 
-// The help line at the foot of the gate offers exactly these two fixes; once one of them
-// is on screen with its own heading and its own docs link, the line is just noise.
-function hideGateHelp() {
-  const help = $('gateHelp');
-  if (help) help.hidden = true;
+// A foot link is an offer to open a block; once that block is open, with its own heading
+// and its own docs link, the offer is just noise. (Guarded: showOpenInTab rebuilds the
+// gate without the foot options.)
+function hideOption(id) {
+  const a = $(id);
+  if (a) a.hidden = true;
 }
 
 function showConsentHelp(withByo = false) {
-  hideGateHelp();
+  hideOption('consentLink');
   if ($('consentBox')) { if (withByo) showByoForm(); return; }
   const url = adminConsentUrl(cfg);
   const box = document.createElement('div');
@@ -168,7 +169,7 @@ function showConsentHelp(withByo = false) {
 // The form that switches the app to another registration. Reachable from the consent
 // block and from the "Use my own app registration" link at the bottom of the gate.
 function showByoForm() {
-  hideGateHelp();
+  hideOption('byoLink');
   if ($('byoBox')) { $('byoClientId').focus(); return; }
   const box = document.createElement('div');
   box.id = 'byoBox';
@@ -204,13 +205,11 @@ function showByoForm() {
   $('byoClientId').focus();
 }
 
-// Signed in through someone's own registration — say so, and offer the way back. The
-// generic help line below is about the built-in registration, so it's redundant here:
-// this banner takes its place, and names the one condition for going back.
+// Signed in through someone's own registration — say so, and offer the way back, with
+// the one condition attached. That makes the "use your own" option below redundant.
 function showByoBanner() {
   if ($('byoBanner')) return;
-  const help = $('gateHelp');
-  if (help) help.hidden = true;
+  hideOption('byoLink');
   const el = document.createElement('div');
   el.id = 'byoBanner';
   el.className = 'gateFoot';
