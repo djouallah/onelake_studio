@@ -212,6 +212,32 @@ try {
     fail("h3 harness: " + (e && e.message));
   }
 
+  // --- 8. zipfs community extension — mirrors loadZipFile(): registerFileURL over -----
+  // HTTP (the production shape; range reads, no full download), zip_contents to list,
+  // a view per readable entry. Fixture: test/fixtures/sample.zip (make_sample.py),
+  // copied into site/ as __sample.zip alongside this page.
+  try {
+    try { await conn.query(`LOAD zipfs;`); }
+    catch (_) { await conn.query(`INSTALL zipfs FROM community; LOAD zipfs;`); }
+    await db.registerFileURL("zipfile_it.zip", location.origin + "/__sample.zip",
+                             duckdb.DuckDBDataProtocol.HTTP, false);
+    const ents = (await conn.query(
+      `SELECT file_name AS n FROM zip_contents('zipfile_it.zip') WHERE NOT is_directory`))
+      .toArray().map(r => r.toJSON().n);
+    if (ents.join(",") === "points.csv") pass("zip_contents lists the archive over a registered URL");
+    else fail(`zip_contents found [${ents.join(",")}], want [points.csv]`);
+    await conn.query(`CREATE OR REPLACE VIEW "zip_points" AS
+                      SELECT * FROM read_csv_auto('zip://zipfile_it.zip/points.csv')`);
+    const zn = Number((await conn.query(`SELECT count(*) AS n FROM "zip_points"`)).toArray()[0].toJSON().n);
+    if (zn === 2) pass("view over zip:// entry answers");
+    else fail(`zip entry count = ${zn}, want 2`);
+    await conn.query(`DROP VIEW "zip_points"`);
+    await db.dropFile("zipfile_it.zip");
+    pass("zip release path works (DROP VIEW + dropFile)");
+  } catch (e) {
+    fail("zipfs harness: " + (e && e.message));
+  }
+
   log("DONE");
   document.title = "DONE";
 } catch (e) {

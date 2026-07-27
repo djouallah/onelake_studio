@@ -30,7 +30,7 @@ import * as duckdb from "https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.33.1
 
 import {
   DFS_HOST, strip, basename, dfsBase, dfsUrl, toHttps, pathKey, PATH_KEY_SQL,
-  parseLakehouse, fileExt, readerFor, PARQUET_EXTS, DB_EXTS, isSqliteHeader, isTextExt,
+  parseLakehouse, fileExt, readerFor, PARQUET_EXTS, DB_EXTS, ZIP_EXTS, isSqliteHeader, isTextExt,
   sqlStr, quoteIdent, prepareReadOnlySql,
   pickMetadata, tableKey, fileKey, sanitizeIdent,
   normalizeValue, fmtBytes,
@@ -60,6 +60,7 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
   let db = null, conn = null, worker = null;
   let _seq = 0;
   let canXlsx = false;              // set by init(); see the 'excel' preload there
+  let canZip = false;               // set by init(); see the 'zipfs' preload there
 
   const loaded = new Map();         // cache key -> info
   const resources = new Map();      // cache key -> { ident, regs[], tables[] }, for release()
@@ -122,6 +123,10 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
     // SELECT h3_latlng_to_cell(...) just works. No capability flag: nothing in the UI
     // gates on h3, and a failure costs only the h3_* functions (warned by tryLoadExt).
     if (await tryLoadExt("h3", "community")) console.log("[engine] h3 community extension loaded");
+    // zipfs (also community) is remembered like excel: it gates whether .zip files are
+    // offered in the Files tree, and offering a zip that then fails to open is worse
+    // than not offering it.
+    canZip = await tryLoadExt("zipfs", "community");
     // `threads` is the proof, not the bundle name: >1 means the coi build actually got
     // its SharedArrayBuffer and the isolation work is paying for itself.
     let threads = "?";
@@ -273,6 +278,7 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
   const isQueryable = name => {
     const ext = fileExt(name);
     if (DB_EXTS.has(ext)) return true;      // ATTACHed read-only, not read through a reader
+    if (ZIP_EXTS.has(ext)) return canZip;   // entries opened as views, not the archive itself
     if (!readerFor(ext)) return false;
     return ext === "xlsx" ? canXlsx : true;
   };
@@ -308,6 +314,8 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
     const r = resources.get(key);
     if (r) {
       if (r.ident) { try { await conn.query(`DROP VIEW IF EXISTS ${r.ident}`); } catch (_) {} }
+      // Zip archives create one view per readable entry; ident is just the first.
+      for (const v of (r.views || [])) { try { await conn.query(`DROP VIEW IF EXISTS ${v}`); } catch (_) {} }
       for (const t of r.tables) { try { await conn.query(`DROP TABLE IF EXISTS ${t}`); } catch (_) {} }
       // Schemas holding copied-in database tables: CASCADE takes the tables with them.
       for (const s of (r.schemas || [])) { try { await conn.query(`DROP SCHEMA IF EXISTS ${quoteIdent(s)} CASCADE`); } catch (_) {} }
@@ -317,7 +325,10 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
       resources.delete(key);
     }
     loaded.delete(key);
-    for (const [name, owner] of [...viewNames]) if (owner === key) viewNames.delete(name);
+    // Zip entry views register under "<key>::<entry>" owners so same-stem entries in one
+    // archive can't silently repoint each other's view — release them with their key.
+    for (const [name, owner] of [...viewNames])
+      if (owner === key || String(owner).startsWith(key + "::")) viewNames.delete(name);
   }
 
   // Called when the user switches lakehouse. Cache entries are keyed per lakehouse so a
@@ -357,12 +368,13 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
     const label = file.name;
     const ext = fileExt(file.name);
     if (DB_EXTS.has(ext)) return loadDatabaseFile(lh, file, key);
+    if (ZIP_EXTS.has(ext)) return loadZipFile(lh, file, key);
     const reader = readerFor(ext);
     if (ext === "xlsx" && !canXlsx)
       throw new Error(`${file.name}: this DuckDB-WASM build has no 'excel' extension, so .xlsx can't be read.`);
     if (!reader)
       throw new Error(`${file.name}: unsupported file type — parquet, csv/tsv/txt, json/jsonl/ndjson, ` +
-                      `avro, xlsx, database files (.duckdb/.db/.sqlite) and plain text ` +
+                      `avro, xlsx, zip, database files (.duckdb/.db/.sqlite) and plain text ` +
                       `(sql, yml, md, log, …) are readable; text formats also read as .gz/.zst.`);
 
     const res = track(key);
@@ -377,6 +389,64 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
       const columns = await describe(ident);
       const info = { label, ident, columns, fileCount: 1, posDeletes: 0, eqDeletes: 0,
                      file: true, bytes: file.bytes, ext, warnings: [] };
+      loaded.set(key, info);
+      onStatus(describeLoad(info));
+      return info;
+    } catch (e) {
+      await release(key);
+      throw new Error(`Could not read ${file.name}: ${e.message}`);
+    }
+  }
+
+  // Zip archives: registered as an HTTP URL like every other file — the zipfs extension
+  // range-reads the central directory from the archive's tail and inflates only the
+  // entries actually queried, so a large archive costs what you read from it (verified
+  // over a registered HTTP URL in test/extensions.html). Each entry with a known reader
+  // becomes its own view; the archive itself has no rows to show.
+  const ZIP_MAX_VIEWS = 50;
+  async function loadZipFile(lh, file, key) {
+    if (!canZip)
+      throw new Error(`${file.name}: this DuckDB-WASM build couldn't load the 'zipfs' extension, so zip archives can't be read.`);
+    const res = track(key);
+    res.views = [];
+    const reg = `zipfile_${++_seq}.zip`;
+    await db.registerFileURL(reg, dfsUrl(lh.workspace, file.path), duckdb.DuckDBDataProtocol.HTTP, false);
+    res.regs.push(reg);
+    try {
+      const entries = (await conn.query(
+        `SELECT file_name AS n FROM zip_contents(${sqlStr(reg)})
+         WHERE NOT is_directory ORDER BY file_name`)).toArray().map(r => r.toJSON());
+      let readable = entries.filter(e => {
+        const x = fileExt(e.n);
+        return readerFor(x) && (x !== "xlsx" || canXlsx);
+      });
+      const warnings = [];
+      if (readable.length > ZIP_MAX_VIEWS) {
+        warnings.push(`only the first ${ZIP_MAX_VIEWS} of ${readable.length} readable entries were opened`);
+        readable = readable.slice(0, ZIP_MAX_VIEWS);
+      }
+      const views = [];
+      for (const e of readable) {
+        const reader = readerFor(fileExt(e.n));
+        // Owner "<key>::<entry>": two entries whose names sanitize to the same identifier
+        // must get distinct views, and uniqueView only dedupes across distinct owners.
+        const ident = quoteIdent(uniqueView(`${key}::${e.n}`, e.n));
+        try {
+          await conn.query(`CREATE OR REPLACE VIEW ${ident} AS SELECT * FROM ${reader(sqlStr(`zip://${reg}/${e.n}`))}`);
+          views.push(ident);
+          res.views.push(ident);
+        } catch (err) {
+          warnings.push(`${e.n}: ${err.message}`);
+        }
+      }
+      const first = views[0] || null;
+      res.ident = first;
+      const columns = first ? await describe(first) : [];
+      const info = { label: file.name, ident: first, columns, fileCount: entries.length,
+                     posDeletes: 0, eqDeletes: 0, file: true, bytes: file.bytes, ext: "zip",
+                     zip: true, zipViews: views, warnings };
+      if (!first && !warnings.length)
+        info.warnings.push(`no readable entries among ${entries.length} — parquet, csv, json, avro, xlsx and text formats are supported inside a zip`);
       loaded.set(key, info);
       onStatus(describeLoad(info));
       return info;
@@ -1126,7 +1196,14 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
   // not news — that is just correctness. Anything in `warnings` is a correctness caveat,
   // and rendering it as a warning rather than as success is the caller's job.
   function describeLoad({ label, fileCount, posDeletes, file, ext, bytes, totalRecords,
-                          db, dbAlias, dbTables, dbEngine }) {
+                          db, dbAlias, dbTables, dbEngine, zip, zipViews }) {
+    if (zip) {
+      const n = (zipViews || []).length;
+      const list = n ? `: ${zipViews.slice(0, 5).join(", ")}${n > 5 ? ", …" : ""}` : "";
+      return `${label} — zip archive (${fmtBytes(bytes)}), ${fileCount} entr${fileCount === 1 ? "y" : "ies"}, ` +
+             `${n} opened as view${n === 1 ? "" : "s"}${list}` +
+             (n ? `. Entries decompress on demand` : "");
+    }
     if (db) {
       const n = (dbTables || []).length;
       if (dbEngine === "SQLite") {

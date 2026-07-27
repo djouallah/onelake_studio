@@ -164,6 +164,12 @@ export const PARQUET_EXTS = new Set(["parquet", "parq", "pq"]);
 // .db and a real SQLite file both work — which matters because .db is common for both.
 export const DB_EXTS = new Set(["duckdb", "ddb", "db", "sqlite", "sqlite3"]);
 
+// Zip archives. Not in FILE_READERS because an archive isn't one dataset — the engine
+// (zipfs extension) lists the entries and opens each readable one as its own view over
+// a zip:// path. Range-read: the central directory sits at the archive's tail and
+// entries inflate only when queried, so a large archive costs what you read from it.
+export const ZIP_EXTS = new Set(["zip"]);
+
 // A codec suffix is part of the extension — "csv.gz", not "gz" — because it selects both
 // the reader and the decompression. Anything else (a .tar.gz) falls through to the
 // one-segment form and simply won't be in FILE_READERS.

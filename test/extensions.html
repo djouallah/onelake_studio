@@ -100,11 +100,21 @@ try {
   const zipBytes = new Uint8Array(await (await fetch("/__sample.zip")).arrayBuffer());
   await db.registerFileBuffer("sample.zip", zipBytes.slice());
   await db.registerFileBuffer("/rooted-sample.zip", zipBytes.slice());
+  // The URL registration is the load-bearing probe for the app: OneLake files are
+  // registered as HTTP URLs (range reads), never downloaded — if zipfs can open this,
+  // it can open a zip in a lakehouse without pulling it whole.
+  await db.registerFileURL("url-sample.zip", location.origin + "/__sample.zip",
+                           duckdb.DuckDBDataProtocol.HTTP, false);
   await testExt("zipfs", [
     { sql: `SELECT count(*) AS n FROM read_csv('zip://sample.zip/points.csv')`,
       check: rows => Number(rows[0].n) === 2 },
     { sql: `SELECT * FROM 'zip://sample.zip/points.csv'` },
     { sql: `SELECT count(*) AS n FROM read_csv('zip:///rooted-sample.zip/points.csv')` },
+    { sql: `SELECT * FROM zip_contents('sample.zip')` },
+    { sql: `SELECT * FROM archive_contents('sample.zip')` },
+    { sql: `SELECT count(*) AS n FROM read_csv('zip://url-sample.zip/points.csv')`,
+      check: rows => Number(rows[0].n) === 2 },
+    { sql: `SELECT * FROM zip_contents('url-sample.zip')` },
   ]);
 
   log("JSON " + JSON.stringify(results, null, 2));
