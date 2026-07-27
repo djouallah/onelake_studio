@@ -902,6 +902,10 @@ async function runQuery({ doc = true, ext = '' } = {}) {
     // the user picking another table, that table's own status must not be overwritten.
     if (e.cancelled) {
       clearResults('(no result — query stopped)');
+      // Say so. Without this the status line kept whatever the Stop button had written
+      // and sat on "Stopping…" forever, because the caller skips its own message when the
+      // query failed. A load that supersedes this one overwrites it a moment later.
+      setStatus('Stopped.');
       return false;
     }
     clearResults('(no result — the query failed)');

@@ -82,6 +82,24 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
   // already running inside the worker — one worker, one query at a time, so a preview of
   // a 186-file table holds up everything behind it. cancelSent() reaches that; see
   // stream() for why it only works for queries issued with send().
+  // conn.query() was serialised by the worker for free — statements queued and each saw
+  // the whole result. conn.send() is not, and losing that guarantee is not a small thing:
+  // MEASURED, starting a second query while a stream was draining truncated the first
+  // SILENTLY — 4,000,000 rows came back as 22,528 with no error at all — which the app
+  // then renders as a short or torn grid indistinguishable from real data. Streaming buys
+  // cancellability at the price of serialising by hand, so every statement goes through
+  // here and a stream holds the queue for its whole drain.
+  //
+  // cancelSent() deliberately does NOT queue: its entire job is to interrupt whatever is
+  // holding it, and waiting its turn would mean waiting for the thing it is cancelling.
+  let queue = Promise.resolve();
+  function serial(fn) {
+    const run = queue.then(fn, fn);   // the next statement runs however the last one ended
+    queue = run.then(() => {}, () => {});
+    return run;
+  }
+  const q = sql => serial(() => conn.query(sql));
+
   let loadGen = 0;
   async function cancelLoad() {
     loadGen++;
@@ -361,14 +379,14 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
   async function release(key) {
     const r = resources.get(key);
     if (r) {
-      if (r.ident) { try { await conn.query(`DROP VIEW IF EXISTS ${r.ident}`); } catch (_) {} }
+      if (r.ident) { try { await q(`DROP VIEW IF EXISTS ${r.ident}`); } catch (_) {} }
       // Zip archives create one view per readable entry; ident is just the first.
-      for (const v of (r.views || [])) { try { await conn.query(`DROP VIEW IF EXISTS ${v}`); } catch (_) {} }
-      for (const t of r.tables) { try { await conn.query(`DROP TABLE IF EXISTS ${t}`); } catch (_) {} }
+      for (const v of (r.views || [])) { try { await q(`DROP VIEW IF EXISTS ${v}`); } catch (_) {} }
+      for (const t of r.tables) { try { await q(`DROP TABLE IF EXISTS ${t}`); } catch (_) {} }
       // Schemas holding copied-in database tables: CASCADE takes the tables with them.
-      for (const s of (r.schemas || [])) { try { await conn.query(`DROP SCHEMA IF EXISTS ${quoteIdent(s)} CASCADE`); } catch (_) {} }
+      for (const s of (r.schemas || [])) { try { await q(`DROP SCHEMA IF EXISTS ${quoteIdent(s)} CASCADE`); } catch (_) {} }
       // Attached database files: DETACH before dropping the file registration under them.
-      for (const a of (r.attachments || [])) { try { await conn.query(`DETACH ${quoteIdent(a)}`); } catch (_) {} }
+      for (const a of (r.attachments || [])) { try { await q(`DETACH ${quoteIdent(a)}`); } catch (_) {} }
       for (const n of r.regs) { try { await db.dropFile(n); } catch (_) {} }
       resources.delete(key);
     }
@@ -432,7 +450,7 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
 
     const ident = quoteIdent(uniqueView(key, file.path.replace(/^.*?\/Files\//, "")));
     try {
-      await conn.query(`CREATE OR REPLACE VIEW ${ident} AS SELECT * FROM ${reader(sqlStr(reg))}`);
+      await q(`CREATE OR REPLACE VIEW ${ident} AS SELECT * FROM ${reader(sqlStr(reg))}`);
       res.ident = ident;
       const columns = await describe(ident);
       const info = { label, ident, columns, fileCount: 1, posDeletes: 0, eqDeletes: 0,
@@ -461,7 +479,7 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
     await db.registerFileURL(reg, dfsUrl(lh.workspace, file.path), duckdb.DuckDBDataProtocol.HTTP, false);
     res.regs.push(reg);
     try {
-      const entries = (await conn.query(
+      const entries = (await q(
         `SELECT file_name AS n FROM zip_contents(${sqlStr(reg)})
          WHERE NOT is_directory ORDER BY file_name`)).toArray().map(r => r.toJSON());
       let readable = entries.filter(e => {
@@ -480,7 +498,7 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
         // must get distinct views, and uniqueView only dedupes across distinct owners.
         const ident = quoteIdent(uniqueView(`${key}::${e.n}`, e.n));
         try {
-          await conn.query(`CREATE OR REPLACE VIEW ${ident} AS SELECT * FROM ${reader(sqlStr(`zip://${reg}/${e.n}`))}`);
+          await q(`CREATE OR REPLACE VIEW ${ident} AS SELECT * FROM ${reader(sqlStr(`zip://${reg}/${e.n}`))}`);
           views.push(ident);
           res.views.push(ident);
         } catch (err) {
@@ -535,11 +553,11 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
     res.regs.push(reg);
     try {
       // READ_ONLY is not optional: the file lives in OneLake and the app never writes.
-      await conn.query(`ATTACH ${sqlStr(reg)} AS ${quoteIdent(alias)} (READ_ONLY)`);
+      await q(`ATTACH ${sqlStr(reg)} AS ${quoteIdent(alias)} (READ_ONLY)`);
       res.attachments.push(alias);
 
       // Tables AND views — a database file that only exposes views is still queryable.
-      const rows = (await conn.query(
+      const rows = (await q(
         `SELECT schema_name AS s, table_name AS t
            FROM duckdb_tables() WHERE database_name = ${sqlStr(alias)}
          UNION ALL
@@ -601,7 +619,7 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
          AND name NOT LIKE 'sqlite_%' ORDER BY name`);
       const names = (master[0] ? master[0].values : []).map(v => String(v[0]));
 
-      await conn.query(`CREATE SCHEMA IF NOT EXISTS ${quoteIdent(alias)}`);
+      await q(`CREATE SCHEMA IF NOT EXISTS ${quoteIdent(alias)}`);
       res.schemas.push(alias);
 
       const tables = [];
@@ -614,7 +632,7 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
           const pragma = sdb.exec(`PRAGMA table_info(${sqliteQuote(t)})`);
           const cols = (pragma[0] ? pragma[0].values : []).map(v => `${quoteIdent(String(v[1]))} VARCHAR`);
           if (!cols.length) continue;
-          await conn.query(`CREATE OR REPLACE TABLE ${ident} (${cols.join(", ")})`);
+          await q(`CREATE OR REPLACE TABLE ${ident} (${cols.join(", ")})`);
           tables.push(ident);
           continue;
         }
@@ -631,7 +649,7 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
         const jn = `sqjson_${++_seq}.json`;
         await db.registerFileBuffer(jn, new TextEncoder().encode(lines));
         try {
-          await conn.query(`CREATE OR REPLACE TABLE ${ident} AS
+          await q(`CREATE OR REPLACE TABLE ${ident} AS
                             SELECT * FROM read_json(${sqlStr(jn)}, format='newline_delimited')`);
         } finally { try { await db.dropFile(jn); } catch (_) {} }
         tables.push(ident);
@@ -967,7 +985,7 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
 
   async function readAvroRows(ws, url, columnsSql) {
     return withAvroBuffer(await fetchAuthed(toHttps(ws, url)), name =>
-      conn.query(`SELECT ${columnsSql} FROM read_avro('${name}')`));
+      q(`SELECT ${columnsSql} FROM read_avro('${name}')`));
   }
 
   // Returns { dataFiles, posDeletes, eqDeletes } for one manifest.
@@ -981,11 +999,11 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
   async function readManifest(bytes) {
     let rows;
     try {
-      rows = await withAvroBuffer(bytes, name => conn.query(
+      rows = await withAvroBuffer(bytes, name => q(
         `SELECT status, data_file.content AS content, data_file.file_path AS fp
          FROM read_avro('${name}')`));
     } catch (_) {
-      rows = await withAvroBuffer(bytes, name => conn.query(
+      rows = await withAvroBuffer(bytes, name => q(
         `SELECT status, 0 AS content, data_file.file_path AS fp
          FROM read_avro('${name}')`));
     }
@@ -1060,20 +1078,21 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
   // first batch does, and an empty result still yields one batch, so the first batch is
   // always where the fields come from.
   async function stream(sql, onBatch = () => {}) {
-    let reader;
-    try {
-      reader = await conn.send(sql);
-      let schema = null;
-      for await (const batch of reader) {
-        if (!schema) schema = batch.schema;
-        onBatch(batch, schema);
+    return serial(async () => {
+      try {
+        const reader = await conn.send(sql);
+        let schema = null;
+        for await (const batch of reader) {
+          if (!schema) schema = batch.schema;
+          onBatch(batch, schema);
+        }
+        return schema;
+      } catch (e) {
+        // DuckDB reports a cancelled query as an error. It is not one.
+        if (/cancel/i.test(e.message || "")) throw cancelledError();
+        throw e;
       }
-      return schema;
-    } catch (e) {
-      // DuckDB reports a cancelled query as an error. It is not one.
-      if (/cancel/i.test(e.message || "")) throw cancelledError();
-      throw e;
-    }
+    });
   }
 
   async function describe(ident) {
@@ -1114,14 +1133,14 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
     const proj = aliases &&
       aliases.map(([phys, log]) => `${quoteIdent(phys)} AS ${quoteIdent(log)}`).join(", ");
     if (!delTable) {
-      await conn.query(
+      await q(
         `CREATE OR REPLACE VIEW ${ident} AS
          SELECT ${proj || "*"} FROM read_parquet([${list}]${union})`);
       return;
     }
     // EXCLUDE keeps the two bookkeeping columns out of the table's visible schema. An
     // explicit projection already names only real columns, so it needs no EXCLUDE.
-    await conn.query(
+    await q(
       `CREATE OR REPLACE VIEW ${ident} AS
        SELECT ${proj || "* EXCLUDE (filename, file_row_number)"}
        FROM read_parquet([${list}]${union},
@@ -1160,7 +1179,7 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
   async function createMap(key, pairs) {
     const name = `__map_${++_seq}`;
     const values = pairs.map(([reg, orig]) => `(${sqlStr(reg)}, ${sqlStr(pathKey(orig))})`).join(", ");
-    await conn.query(
+    await q(
       `CREATE OR REPLACE TABLE ${name} AS SELECT * FROM (VALUES ${values}) v(reg, pk)`);
     track(key).tables.push(name);
     return name;
@@ -1177,7 +1196,7 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
       regs.push(reg);
     }
     const name = `__del_${++_seq}`;
-    await conn.query(
+    await q(
       `CREATE OR REPLACE TABLE ${name} AS
        SELECT ${PATH_KEY_SQL("file_path")} AS pk, pos
        FROM read_parquet([${regs.map(sqlStr).join(", ")}], union_by_name = true)`);
@@ -1189,7 +1208,7 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
   // probes bind footers without reading data, and halving converges in log steps. If
   // even SELECT 1 fails, the engine itself trapped and nothing more can be learned.
   async function diagnoseOpenFailure(regs, pairs, unionByName) {
-    try { await conn.query("SELECT 1"); }
+    try { await q("SELECT 1"); }
     catch (_) { return " — the SQL engine crashed on this table; reload the page before opening another"; }
     if (regs.length < 2) return "";
 
@@ -1198,7 +1217,7 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
     const probe = async subset => {
       if (budget-- <= 0) return [];     // give up quietly rather than probing forever
       try {
-        await conn.query(`SELECT * FROM read_parquet([${subset.map(sqlStr).join(", ")}]${union}) LIMIT 0`);
+        await q(`SELECT * FROM read_parquet([${subset.map(sqlStr).join(", ")}]${union}) LIMIT 0`);
         return [];
       } catch (_) {
         if (subset.length === 1) return subset;
@@ -1219,7 +1238,7 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
   // zero means the anti-join is removing fewer rows than the snapshot says it should, and
   // reporting "N delete file(s) applied" would be a lie.
   async function countUnmatchedDeletes(delTable, mapTable) {
-    const r = await conn.query(
+    const r = await q(
       `SELECT count(*) AS n FROM ${delTable} d
        WHERE NOT EXISTS (SELECT 1 FROM ${mapTable} m WHERE m.pk = d.pk)`);
     return Number(r.toArray()[0].toJSON().n) || 0;
@@ -1273,7 +1292,7 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
     const ident = t.schema
       ? `${quoteIdent(t.schema)}.${quoteIdent(t.table)}`
       : quoteIdent(t.table);
-    if (t.schema) await conn.query(`CREATE SCHEMA IF NOT EXISTS ${quoteIdent(t.schema)}`);
+    if (t.schema) await q(`CREATE SCHEMA IF NOT EXISTS ${quoteIdent(t.schema)}`);
     viewNames.set(ident, key);
 
     check();
