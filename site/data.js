@@ -846,9 +846,12 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
     return {
       manifestList: snap["manifest-list"],
       // Column names of the table's CURRENT schema, used below to spot a physical/logical
-      // mismatch once the parquet files are unioned. Field IDs are in here too, but
-      // read_parquet matches by name, so honouring them needs a different reader.
+      // mismatch once the parquet files are unioned.
       schemaColumns: schema ? (schema.fields || []).map(f => f.name) : null,
+      // The same fields keyed by ID. read_parquet matches by name, but a column-mapped
+      // writer (every Fabric Warehouse) puts GUIDs in the parquet and keeps the readable
+      // names only here — the field ID is the bridge back. See aliasByFieldId().
+      schemaFields: schema ? (schema.fields || []).map(f => ({ id: f.id, name: f.name })) : null,
       // More than one schema in the log means the table evolved and its data files can
       // disagree — only then is union_by_name worth its price (see createView).
       evolved: (meta.schemas || []).length > 1,
@@ -1004,24 +1007,78 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
   // `LIMIT 100` preview produces its first row. A never-evolved table (one schema in
   // the log, the overwhelmingly common case) binds off the first footer and touches
   // other files only when the scan actually reaches them.
-  async function createView(ident, regs, delTable, mapTable, unionByName) {
+  //
+  // `aliases` (physical -> logical pairs, in table order) replaces the star with an
+  // explicit projection. It arrives only for a column-mapped table, and only once every
+  // column resolved — see aliasByFieldId().
+  async function createView(ident, regs, delTable, mapTable, unionByName, aliases) {
     const list = regs.map(sqlStr).join(", ");
     const union = unionByName ? ", union_by_name = true" : "";
+    const proj = aliases &&
+      aliases.map(([phys, log]) => `${quoteIdent(phys)} AS ${quoteIdent(log)}`).join(", ");
     if (!delTable) {
       await conn.query(
         `CREATE OR REPLACE VIEW ${ident} AS
-         SELECT * FROM read_parquet([${list}]${union})`);
+         SELECT ${proj || "*"} FROM read_parquet([${list}]${union})`);
       return;
     }
-    // EXCLUDE keeps the two bookkeeping columns out of the table's visible schema.
+    // EXCLUDE keeps the two bookkeeping columns out of the table's visible schema. An
+    // explicit projection already names only real columns, so it needs no EXCLUDE.
     await conn.query(
       `CREATE OR REPLACE VIEW ${ident} AS
-       SELECT * EXCLUDE (filename, file_row_number)
+       SELECT ${proj || "* EXCLUDE (filename, file_row_number)"}
        FROM read_parquet([${list}]${union},
                          filename = true, file_row_number = true) x
        WHERE NOT EXISTS (
          SELECT 1 FROM ${delTable} d JOIN ${mapTable} m ON m.pk = d.pk
          WHERE m.reg = x.filename AND d.pos = x.file_row_number)`);
+  }
+
+  // Physical parquet field name -> logical Iceberg name, via field ID.
+  //
+  // Fabric Warehouse writes its Delta with column mapping on, so the names in the parquet
+  // footers are GUIDs (`col-81f65814-…`) and the readable names exist only in metadata.
+  // read_parquet matches by name, so without this a Warehouse table renders as a grid of
+  // GUID headers and no hand-written SQL can name a column. Iceberg identifies fields by
+  // ID and Fabric stamps those IDs into the footers, which is what makes the tables
+  // readable by Iceberg engines at all — so the IDs are the mapping.
+  //
+  // A name seen twice (a nested field reusing a leaf name) maps to nothing: aliasing the
+  // wrong column is worse than showing the physical one.
+  async function physicalNameMap(reg, fields) {
+    const byId = new Map((fields || [])
+      .filter(f => f.id != null).map(f => [String(f.id), f.name]));
+    if (!byId.size) return null;
+    const rows = (await conn.query(`SELECT name, field_id FROM parquet_schema(${sqlStr(reg)})`))
+      .toArray().map(r => r.toJSON());
+    const out = new Map();
+    for (const r of rows) {
+      // Absent IDs come back as NULL, and as -1 on some builds; neither identifies a field.
+      if (r.field_id == null || Number(r.field_id) < 0) continue;
+      const n = String(r.name);
+      out.set(n, out.has(n) ? null : (byId.get(String(r.field_id)) || null));
+    }
+    return out;
+  }
+
+  // All or nothing. A partial mapping would leave a table half-readable and half-GUID
+  // while implying both names are real, and any table that isn't column-mapped never
+  // reaches here — so returning null (keep the physical names, keep the warning) is the
+  // honest answer whenever a single column fails to resolve.
+  async function aliasByFieldId(reg, columns, fields) {
+    let map;
+    // Best-effort: an engine whose parquet_schema has no field_id must not stop a table
+    // from opening at all.
+    try { map = await physicalNameMap(reg, fields); } catch (_) { return null; }
+    if (!map) return null;
+    const pairs = [], used = new Set();
+    for (const c of columns) {
+      const log = map.get(c.name);
+      if (!log || used.has(log)) return null;
+      used.add(log);
+      pairs.push([c.name, log]);
+    }
+    return pairs;
   }
 
   // reg name -> normalized original path, so the anti-join can match a delete file's
@@ -1148,6 +1205,9 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
     let columns;
     onStatus(`Opening ${label} — ${paths.length} file(s)…`);
     const regs = [], pairs = [];
+    // Hoisted: the column-mapping pass below rebuilds the view and has to preserve the
+    // delete anti-join it was first built with.
+    let delTable = null, mapTable = null;
     let stage = "registering data files";
     try {
       // Map each data file to a generated name pointing at its https URL, so DuckDB
@@ -1160,8 +1220,8 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
         pairs.push([reg, p]);
       }
       stage = "reading delete files";
-      const delTable = posDeletes.length ? await loadPositionDeletes(key, ws, posDeletes) : null;
-      const mapTable = delTable ? await createMap(key, pairs) : null;
+      delTable = posDeletes.length ? await loadPositionDeletes(key, ws, posDeletes) : null;
+      mapTable = delTable ? await createMap(key, pairs) : null;
       stage = "creating the view";
       await createView(ident, regs, delTable, mapTable, resolved.evolved);
       stage = "reading the parquet footers";
@@ -1189,13 +1249,25 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
       throw new Error(`Could not open ${label} while ${stage}: ${e.message}${detail}`);
     }
 
-    // read_parquet matches columns by NAME; Iceberg identifies them by field ID. An
-    // Iceberg rename is metadata-only, so the old physical name survives in older files
-    // and turns up here as a column the current schema doesn't have. Merging them needs a
-    // field-ID-aware reader, which this isn't — but we can decline to pretend it's fine.
+    // read_parquet matches columns by NAME, and a column the current schema doesn't have
+    // means one of two very different things. Either the writer is column-mapped and the
+    // name is physical (a Warehouse GUID) — fixable by field ID, below. Or the table was
+    // renamed: an Iceberg rename is metadata-only, so the old name survives in older files
+    // and there is nothing to map it to. Only the second is worth warning about, and this
+    // used to report every Warehouse column as the second.
     if (resolved.schemaColumns) {
       const known = new Set(resolved.schemaColumns);
-      const extra = columns.map(c => c.name).filter(n => !known.has(n));
+      let extra = columns.map(c => c.name).filter(n => !known.has(n));
+      // Best-effort throughout: a table that opened is not worth losing over a cosmetic
+      // rename, and CREATE OR REPLACE leaves the working view standing if it fails.
+      if (extra.length) try {
+        const aliases = await aliasByFieldId(regs[0], columns, resolved.schemaFields);
+        if (aliases) {
+          await createView(ident, regs, delTable, mapTable, resolved.evolved, aliases);
+          columns = await describe(ident);
+          extra = columns.map(c => c.name).filter(n => !known.has(n));
+        }
+      } catch (_) { /* keep the physical names and warn below */ }
       if (extra.length)
         warnings.push(`column(s) ${extra.join(", ")} are in the data files but not in the table's ` +
                       `current schema — it was renamed or had columns dropped, so values may be ` +
