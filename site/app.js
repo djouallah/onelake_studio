@@ -867,7 +867,9 @@ const previewSql = (ident, whole) => `SELECT * FROM ${ident}` + (whole ? '' : ' 
 // false, so a one-column preview of one can never be mistaken for a document.
 async function runQuery({ doc = true, ext = '' } = {}) {
   const sql = $('sqlEditor').value;
-  setBusy(true);
+  // Queries run through send() now, so a query is stoppable too — and the preview inside
+  // selectTable is a query, which is where the wait actually was.
+  setBusy(true, { stoppable: true });
   docAllowed = doc;
   docSourceExt = ext;
   let t0 = performance.now();
@@ -896,6 +898,12 @@ async function runQuery({ doc = true, ext = '' } = {}) {
   } catch (e) {
     // The pane is not a scratchpad of whatever last worked. Leaving the previous result up
     // is how a JSON file from another lakehouse ended up on screen under a .sql file's name.
+    // A stopped query clears the same way but is not an error — and when it was stopped by
+    // the user picking another table, that table's own status must not be overwritten.
+    if (e.cancelled) {
+      clearResults('(no result — query stopped)');
+      return false;
+    }
     clearResults('(no result — the query failed)');
     setStatus('Query error: ' + explainRead(e.message), 'error');
     console.error(e);

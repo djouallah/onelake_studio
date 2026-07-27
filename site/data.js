@@ -78,8 +78,15 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
   // meaningfully sooner — what takes the time is the count of requests, not any one of
   // them. It also makes a superseded load (click another table while one is running)
   // stand down on its own.
+  // Bumping the counter only stops the JS walk. The other half of a stuck app is a query
+  // already running inside the worker — one worker, one query at a time, so a preview of
+  // a 186-file table holds up everything behind it. cancelSent() reaches that; see
+  // stream() for why it only works for queries issued with send().
   let loadGen = 0;
-  function cancelLoad() { loadGen++; }
+  async function cancelLoad() {
+    loadGen++;
+    try { if (conn) await conn.cancelSent(); } catch (_) { /* nothing was pending */ }
+  }
   // Distinguishable so the UI can say "stopped" rather than reporting a failure.
   function cancelledError() {
     const e = new Error("load stopped");
@@ -1039,11 +1046,45 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
   // ---------------------------------------------------------------------------
   const labelFor = t => t.schema ? `${t.schema}.${t.table}` : t.table;
 
+  // Every query that can be slow goes through here rather than conn.query().
+  //
+  // conn.query() is the worker's RUN_QUERY: it runs to completion inside the worker and
+  // cancelSent() answers false. Measured on the pinned build — a 35s scan ignored the
+  // cancel and ran the full 35s — and that is precisely what left a click on another
+  // table queued behind the first table's preview with nothing able to interrupt it.
+  // conn.send() is the pending-query path, polled in chunks, and cancelSent() kills it
+  // mid-scan: same scan, dead 1.0s in, connection usable 8ms later, a new table's DDL
+  // running 7ms after that.
+  //
+  // The reader carries no schema of its own (checked: reader.schema is undefined). The
+  // first batch does, and an empty result still yields one batch, so the first batch is
+  // always where the fields come from.
+  async function stream(sql, onBatch = () => {}) {
+    let reader;
+    try {
+      reader = await conn.send(sql);
+      let schema = null;
+      for await (const batch of reader) {
+        if (!schema) schema = batch.schema;
+        onBatch(batch, schema);
+      }
+      return schema;
+    } catch (e) {
+      // DuckDB reports a cancelled query as an error. It is not one.
+      if (/cancel/i.test(e.message || "")) throw cancelledError();
+      throw e;
+    }
+  }
+
   async function describe(ident) {
-    return (await conn.query(`DESCRIBE ${ident}`)).toArray().map(r => {
-      const j = r.toJSON();
-      return { name: j.column_name, type: j.column_type };
+    const out = [];
+    await stream(`DESCRIBE ${ident}`, batch => {
+      for (const r of batch) {
+        const j = r.toJSON();
+        out.push({ name: j.column_name, type: j.column_type });
+      }
     });
+    return out;
   }
 
   // Data files are registered under generated `data_N.parquet` names, so read_parquet's
@@ -1190,8 +1231,12 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
     const key = tableKey(lh, t);
     if (loaded.has(key)) return loaded.get(key);
 
-    // Claim this generation. Anything that bumps it — the Stop button, or the user
-    // picking a different table — makes the next check() end this load.
+    // Supersede whatever came before. A previous load stands down at its next check(),
+    // and a previous query dies in the worker — without this, picking a second table
+    // simply queued behind the first one's preview and looked like a frozen app, which
+    // is the bug 54229d3 claimed to fix and didn't: nothing ever bumped the counter
+    // except the Stop button.
+    await cancelLoad();
     const gen = loadGen;
     const check = () => { if (gen !== loadGen) throw cancelledError(); };
 
@@ -1367,19 +1412,26 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
   // result set with no error at all — and reject a perfectly legal SELECT 'a;b'.
   async function runSql(sql) {
     const clean = prepareReadOnlySql(sql);
-    const res = await conn.query(clean);
-    const fields = res.schema.fields.map(f => f.name);
-    const types = res.schema.fields.map(f => arrowTypeName(f.type));
+    let fields = null, types = null;
+    const rows = [];
+    let numRows = 0, truncated = false;
 
     // Cap what gets turned into JS objects. Everything downstream — the DOM table, the CSV
     // — works off this array, so an uncapped SELECT * on a large table takes the tab out.
-    const rows = [];
-    let truncated = false;
-    for (const r of res) {
-      if (rows.length >= MAX_ROWS) { truncated = true; break; }
-      rows.push(normalizeRow(r.toJSON(), fields));
-    }
-    return { fields, types, rows, numRows: Number(res.numRows), truncated, limit: MAX_ROWS };
+    // The batches keep being drained past the cap: numRows is the size of the whole
+    // result, and the message that says "stopped at N of M" needs a truthful M.
+    await stream(clean, (batch, schema) => {
+      if (!fields) {
+        fields = schema.fields.map(f => f.name);
+        types = schema.fields.map(f => arrowTypeName(f.type));
+      }
+      numRows += batch.numRows;
+      for (const r of batch) {
+        if (rows.length >= MAX_ROWS) { truncated = true; break; }
+        rows.push(normalizeRow(r.toJSON(), fields));
+      }
+    });
+    return { fields: fields || [], types: types || [], rows, numRows, truncated, limit: MAX_ROWS };
   }
 
   function normalizeRow(obj, fields) {
