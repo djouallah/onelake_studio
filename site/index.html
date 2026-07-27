@@ -72,9 +72,16 @@
     /* Layout */
     main { flex: 1; display: flex; min-height: 0; }
     aside {
-      width: 280px; min-width: 200px; border-right: 1px solid var(--border);
+      width: var(--sidebarW, 280px); min-width: 200px; border-right: 1px solid var(--border);
       background: var(--panel); display: flex; flex-direction: column; overflow: hidden;
+      position: relative;
     }
+    /* A GUID-named Iceberg data file is longer than any width that would be a sane
+       default, so the right edge is draggable and the width is remembered. */
+    #sidebarResizer { position: absolute; top: 0; right: 0; bottom: 0; width: 5px; cursor: col-resize; z-index: 5; }
+    #sidebarResizer:hover, body.resizing #sidebarResizer { background: var(--accent2); }
+    aside.collapsed #sidebarResizer { display: none; }
+    body.resizing { cursor: col-resize; user-select: none; }
     /* Collapsed: width 0 rather than display:none, so the sidebar keeps its scroll
        position and expanding costs no re-render. */
     aside.collapsed { width: 0; min-width: 0; border-right: 0; }
@@ -90,8 +97,11 @@
     }
     .tableItem {
       padding: 0.4rem 0.75rem 0.4rem 1.1rem; cursor: pointer; display: flex; align-items: center; gap: 0.4rem;
-      border-left: 2px solid transparent; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      border-left: 2px solid transparent; white-space: nowrap; overflow: hidden;
     }
+    /* text-overflow does nothing on the flex row itself — the name that overflows is the
+       span, so the ellipsis has to live there or the name is cut mid-glyph with no sign. */
+    .tableItem .name, .fileItem .name { overflow: hidden; text-overflow: ellipsis; }
     .tableItem:hover { background: #1c2330; }
     .tableItem.active { background: #1c2330; border-left-color: var(--accent2); }
     /* Awaiting Iceberg conversion — dimmed, but still clickable: the wait is often the
@@ -116,13 +126,13 @@
     /* Files tree */
     .fileItem {
       padding: 0.35rem 0.75rem; cursor: pointer; display: flex; align-items: center; gap: 0.4rem;
-      border-left: 2px solid transparent; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      border-left: 2px solid transparent; white-space: nowrap; overflow: hidden;
     }
     .fileItem:hover { background: #1c2330; }
     .fileItem.active { background: #1c2330; border-left-color: var(--accent2); }
     .fileItem.plain { color: var(--muted); cursor: default; }
-    .fileItem .size { margin-left: auto; font-size: 0.7rem; color: var(--muted); padding-left: 0.5rem; }
-    .fileItem .caret { width: 0.7rem; display: inline-block; color: var(--muted); }
+    .fileItem .size { margin-left: auto; flex: none; font-size: 0.7rem; color: var(--muted); padding-left: 0.5rem; }
+    .fileItem .caret { width: 0.7rem; flex: none; display: inline-block; color: var(--muted); }
 
     /* Content */
     section { flex: 1; display: flex; flex-direction: column; min-width: 0; overflow: hidden; }
@@ -273,6 +283,7 @@
         <span id="tableCount"></span>
       </div>
       <div id="tableList"><div class="hint">Sign in to OneLake to browse tables and files.</div></div>
+      <div id="sidebarResizer" title="Drag to resize · double-click to fit the longest name"></div>
     </aside>
 
     <section>

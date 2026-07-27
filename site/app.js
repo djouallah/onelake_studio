@@ -685,8 +685,11 @@ async function expandDir(host, dir, depth) {
     row.className = 'fileItem' + (!e.isDir && !e.queryable ? ' plain' : '');
     row.style.paddingLeft = (0.75 + depth * 0.8) + 'rem';
     const caret = e.isDir ? '▸' : '';
-    row.innerHTML = `<span class="caret">${caret}</span><span>${escapeHtml(e.name)}</span>` +
+    row.innerHTML = `<span class="caret">${caret}</span><span class="name">${escapeHtml(e.name)}</span>` +
       (e.isDir ? '' : `<span class="size">${escapeHtml(engine.fmtBytes(e.bytes))}</span>`);
+    // A GUID data file is longer than the sidebar however wide it's dragged, so the row
+    // always carries its own full name.
+    row.title = e.name;
     host.appendChild(row);
 
     if (e.isDir) {
@@ -776,7 +779,7 @@ function renderTableList(tables) {
         ? `${t.table} — Iceberg metadata not written yet. Click to wait for it; ` +
           `conversion takes up to two minutes, or may not be enabled for this workspace.`
         : t.table;
-      row.innerHTML = `<span>${escapeHtml(t.table)}</span>` +
+      row.innerHTML = `<span class="name">${escapeHtml(t.table)}</span>` +
         (pending ? '<span class="tag">converting</span>' : '');
       row.onclick = () => selectTable(row, t);
       g.appendChild(row);
@@ -1084,6 +1087,70 @@ function initSidebarToggle() {
 }
 
 // ---------------------------------------------------------------------------
+// Sidebar width — draggable, and remembered for the same reason the collapse state is.
+// ---------------------------------------------------------------------------
+// A Files/ tree bottoms out in GUID-named Iceberg data files, indented one level per
+// directory: no fixed width shows those whole, so the width is the user's to set.
+const SIDEBAR_W_KEY = 'onelakeStudio.sidebarWidth';
+const SIDEBAR_MIN = 200;
+
+// The results grid still needs room, so the ceiling follows the window.
+const maxSidebarWidth = () => Math.max(SIDEBAR_MIN, window.innerWidth - 360);
+
+function setSidebarWidth(px, persist) {
+  const w = Math.round(Math.min(maxSidebarWidth(), Math.max(SIDEBAR_MIN, px)));
+  document.documentElement.style.setProperty('--sidebarW', w + 'px');
+  if (persist) { try { localStorage.setItem(SIDEBAR_W_KEY, String(w)); } catch (_) {} }
+}
+
+// Double-click the grip: widen to whatever the longest name on screen needs. A name
+// ellipsizes by shrinking its own span rather than overflowing the row, so the span's
+// scrollWidth is the only place its full length survives.
+function fitSidebarWidth() {
+  const left = $('sidebar').getBoundingClientRect().left;
+  let want = SIDEBAR_MIN;
+  for (const el of document.querySelectorAll('#tableList .name')) {
+    const tail = el.parentElement.querySelector('.size, .tag');
+    want = Math.max(want, el.getBoundingClientRect().left - left + el.scrollWidth +
+      (tail ? tail.offsetWidth + 8 : 0) + 26);   // row padding + scrollbar
+  }
+  return want;
+}
+
+function initSidebarResize() {
+  let saved = 0;
+  try { saved = parseInt(localStorage.getItem(SIDEBAR_W_KEY), 10) || 0; } catch (_) {}
+  if (saved) setSidebarWidth(saved, false);
+
+  const grip = $('sidebarResizer');
+  grip.addEventListener('pointerdown', e => {
+    e.preventDefault();
+    grip.setPointerCapture(e.pointerId);
+    document.body.classList.add('resizing');
+    const left = $('sidebar').getBoundingClientRect().left;
+    const move = ev => setSidebarWidth(ev.clientX - left, false);
+    const done = ev => {
+      grip.removeEventListener('pointermove', move);
+      grip.removeEventListener('pointerup', done);
+      grip.removeEventListener('pointercancel', done);
+      document.body.classList.remove('resizing');
+      setSidebarWidth(ev.clientX - left, true);
+    };
+    grip.addEventListener('pointermove', move);
+    grip.addEventListener('pointerup', done);
+    grip.addEventListener('pointercancel', done);
+  });
+  grip.addEventListener('dblclick', () => setSidebarWidth(fitSidebarWidth(), true));
+  // The ceiling moves with the window, so a shrunk window must pull the sidebar back in.
+  // Collapsed measures 0 — re-clamping that would throw away the width being kept for
+  // when it reopens.
+  window.addEventListener('resize', () => {
+    const aside = $('sidebar');
+    if (!aside.classList.contains('collapsed')) setSidebarWidth(aside.offsetWidth, false);
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Version stamp — which build this page is actually running.
 // ---------------------------------------------------------------------------
 // build.mjs writes the commit + build time into version.js on deploy (the tracked file
@@ -1162,6 +1229,7 @@ $('byoLink').onclick = () => showByoForm();
 $('consentLink').onclick = () => showConsentHelp();
 $('gateClose').onclick = () => { $('authGate').style.display = 'none'; };
 initSidebarToggle();
+initSidebarResize();
 showVersion();
 checkForNewBuild();
 setInterval(checkForNewBuild, VERSION_RECHECK_MS);
