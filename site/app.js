@@ -560,8 +560,10 @@ async function onWorkspaceChange() {
   try {
     setStatus(`Listing items in ${workspace}…`);
     const items = await engine.listItems(workspace);
-    fill(sel, items.map(i => ({ value: i.name, label: `${i.name.replace(/\.[^.]+$/, '')}  ·  ${kindLabel(i.kind)}` })),
-         items.length ? `Item (${items.length})` : 'Nothing with tables in it');
+    fill(sel, items.map(i => ({
+      value: i.name,
+      label: `${i.name.replace(/\.[^.]+$/, '')}  ·  ${kindLabel(i.kind)}`,
+    })), items.length ? `Item (${items.length})` : 'Nothing with tables in it');
     sel.disabled = !items.length;
     setStatus(items.length
       ? `${items.length} item(s) with tables in ${workspace}.`

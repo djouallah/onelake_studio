@@ -125,13 +125,36 @@ export const itemKind = name => {
   return m ? m[1] : "";
 };
 
-// Mirroring is a family, not one item type: a Snowflake or Azure SQL mirror lands as
-// MirroredDatabase, an Azure Databricks catalog as MirroredAzureDatabricksCatalog, and
-// Fabric keeps adding sources. They all mirror INTO OneLake and all expose Tables/, so
-// the rule is the prefix rather than a list that goes stale every release — an item
-// matched here that turns out to hold nothing lists as zero tables, which is a true
-// answer and a cheap one.
-const TABLE_ITEM_KINDS = new Set(["Lakehouse", "Warehouse", "SQLDatabase"]);
+// These names came from listing 49 real workspaces over the DFS API, not from the portal
+// or the Fabric REST API — OneLake names an item directory after Fabric's INTERNAL type,
+// and the three disagree constantly. Guessing the REST spelling is why a workspace full
+// of Databricks catalogs came up empty:
+//
+//   portal "SQL database"                       ->  <name>.SQLDbNative
+//   portal "Mirrored Azure Databricks catalog"  ->  <name>.DatabricksCatalog
+//   portal "KQL database" / "Eventhouse"        ->  .KustoDatabase / .KustoEventHouse
+//   portal "Notebook"                           ->  <name>.SynapseNotebook
+//
+// What belongs here is narrower than "has a Tables/": it is the items that write Delta
+// INTO OneLake, which is what OneLake then serves as Iceberg. Confirmed by finding
+// _delta_log and metadata/ side by side under a table of each:
+//
+//   Lakehouse, Warehouse, SQLDbNative   -> Tables/<schema>/<t>/{_delta_log, metadata}
+//   DatabricksCatalog                   -> Tables/<schema>/<t> is a SHORTCUT: no files in
+//                                          OneLake, so nothing to convert. Listing through
+//                                          it is refused outright ("Stored connections with
+//                                          authentication type 'Key' are not supported for
+//                                          shortcuts of type 'DatabricksCatalog'"), and the
+//                                          Iceberg catalog names the tables but 400s on
+//                                          every one. There is nothing here to read.
+//   KustoDatabase                       -> Tables/ existed but was empty on every KQL
+//                                          database probed; nothing to confirm.
+const TABLE_ITEM_KINDS = new Set(["Lakehouse", "Warehouse", "SQLDbNative"]);
+
+// Fabric mirroring (Snowflake, Azure SQL, Cosmos) does land Delta in OneLake, so it
+// belongs — but that tenant has no such item, so the internal suffix is UNVERIFIED and
+// this prefix is the one guess left in the file. If it is wrong the item is absent from
+// the picker, and the item names listItems logs are what identifies the real one.
 export const holdsTables = name => {
   const kind = itemKind(name);
   return TABLE_ITEM_KINDS.has(kind) || /^Mirrored/i.test(kind);
@@ -142,13 +165,11 @@ export const holdsTables = name => {
 // storage directories — GUIDs nobody asked to see.
 export const hasFilesArea = name => /^lakehouse$/i.test(itemKind(name));
 
-// The kind as the picker should say it. MirroredAzureDatabricksCatalog is the API's
-// name for it, not a label — spelled out it is wider than the item name it annotates.
+// The kind as the picker should say it: what the person sees in Fabric, not the internal
+// type. Anything unlisted names itself, which is still better than being invisible.
 const KIND_LABELS = {
-  mirroredazuredatabrickscatalog: "Databricks catalog",
+  sqldbnative: "SQL database",
   mirroreddatabase: "Mirrored database",
-  mirroredwarehouse: "Mirrored warehouse",
-  sqldatabase: "SQL database",
 };
 export const kindLabel = kind => {
   const k = String(kind || "");

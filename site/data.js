@@ -178,11 +178,26 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
       : r;
   }
 
+  // OneLake says why it refused, in the body, and every one of those sentences was being
+  // dropped on the floor. The one that cost the most: listing a mirrored Databricks
+  // catalog's table answers 400 with "Stored connections with authentication type 'Key'
+  // are not supported for shortcuts of type 'DatabricksCatalog'" — the actual reason the
+  // table cannot be read, and the app instead spent 86 seconds waiting for an Iceberg
+  // conversion that was never going to come, then blamed the tenant's settings.
+  async function oneLakeMessage(r) {
+    try {
+      const j = JSON.parse(await r.text());
+      return (j && j.error && j.error.message) || "";
+    } catch (_) { return ""; }
+  }
+
   async function fetchAuthed(url) {
     const r = await authedFetch(url);
     if (!r.ok) {
-      const e = new Error(`HTTP ${r.status} for …${String(url).slice(-72)}`);
+      const said = await oneLakeMessage(r);
+      const e = new Error(`HTTP ${r.status} for …${String(url).slice(-72)}` + (said ? ` — ${said}` : ""));
       e.status = r.status;          // callers retry on this (see resolveIcebergRetrying)
+      e.said = said;                // ...and stop retrying when OneLake called it permanent
       throw e;
     }
     return new Uint8Array(await r.arrayBuffer());
@@ -211,8 +226,10 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
         throw new Error(`Listing of ${strip(directory)} was interrupted — it changed while being read`);
       }
       if (!r.ok) {
-        const e = new Error(`list HTTP ${r.status} for ${strip(directory)}`);
+        const said = await oneLakeMessage(r);
+        const e = new Error(`list HTTP ${r.status} for ${strip(directory)}` + (said ? ` — ${said}` : ""));
         e.status = r.status;
+        e.said = said;
         throw e;
       }
       const j = await r.json().catch(() => ({}));
@@ -253,15 +270,22 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
     return out.sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
   }
 
-  // Which items hold tables is a rule about names, so it lives in paths.js under test.
+  // The items that hold OneLake tables; which kinds those are is a rule about names, so it
+  // lives in paths.js under test. Everything the workspace holds is logged, because "what
+  // does OneLake actually CALL this item?" is otherwise unanswerable from inside the app —
+  // and an item type spelled differently than assumed is exactly how a workspace full of
+  // Databricks catalogs came up empty with nothing said.
   async function listItems(ws) {
     const entries = await listPaths(ws, "", false);
-    const items = [];
+    const items = [], skipped = [];
     for (const e of entries) {
       if (!e.isDir) continue;
       const name = basename(e.name);
       if (holdsTables(name)) items.push({ name, kind: itemKind(name) });
+      else if (itemKind(name)) skipped.push(name);
     }
+    console.info(`[engine] ${ws}: ${items.length} item(s) with tables` +
+                 (skipped.length ? `; skipped ${skipped.length} — ${skipped.join(", ")}` : ""));
     return items.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
   }
 

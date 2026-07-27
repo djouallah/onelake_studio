@@ -93,19 +93,21 @@ test("itemKind reads the kind off a OneLake item directory", () => {
   assert.equal(itemKind(""), "");
 });
 
-test("holdsTables covers every mirrored source, not a fixed list of them", () => {
-  // Snowflake and Azure SQL mirror as MirroredDatabase; an Azure Databricks catalog is
-  // its own item type. Both mirror into OneLake and both expose Tables/.
-  assert.ok(holdsTables("snowflake_sales.MirroredDatabase"));
-  assert.ok(holdsTables("dbx_main.MirroredAzureDatabricksCatalog"));
-  assert.ok(holdsTables("wh.MirroredWarehouse"));
+test("holdsTables is the items that write Delta into OneLake", () => {
+  // The suffixes are OneLake's internal type names, taken from a real tenant's listing —
+  // a Fabric SQL database is .SQLDbNative, not .SQLDatabase.
   assert.ok(holdsTables("sales.Lakehouse"));
   assert.ok(holdsTables("aemo.Warehouse"));
-  assert.ok(holdsTables("app.SQLDatabase"));
-  // ...and nothing that has no Tables/ under it at all.
-  assert.ok(!holdsTables("daily load.Notebook"));
-  assert.ok(!holdsTables("prod.Environment"));
-  assert.ok(!holdsTables("sales.Report"));
+  assert.ok(holdsTables("mkdb.SQLDbNative"));
+  assert.ok(holdsTables("snowflake_sales.MirroredDatabase"));   // unverified, see paths.js
+  // A mirrored Databricks catalog is shortcuts to Databricks' own storage: no Delta in
+  // OneLake, so nothing is served as Iceberg and there is nothing here to read.
+  assert.ok(!holdsTables("dbrickscat11.DatabricksCatalog"));
+  // ...and the rest of a workspace, by its real suffixes.
+  assert.ok(!holdsTables("Notebook 1.SynapseNotebook"));
+  assert.ok(!holdsTables("MKEnviron.Environment"));
+  assert.ok(!holdsTables("Monitoring Eventhouse.KustoEventHouse"));
+  assert.ok(!holdsTables("Dataflow 1.DataflowFabric"));
   assert.ok(!holdsTables("some folder"));
 });
 
@@ -115,15 +117,14 @@ test("hasFilesArea is the lakehouse alone", () => {
   assert.ok(hasFilesArea("sales.Lakehouse"));
   assert.ok(hasFilesArea("sales.lakehouse"));       // OneLake's casing is not a promise
   assert.ok(!hasFilesArea("aemo.Warehouse"));
+  assert.ok(!hasFilesArea("mkdb.SQLDbNative"));
   assert.ok(!hasFilesArea("snowflake_sales.MirroredDatabase"));
-  assert.ok(!hasFilesArea("dbx_main.MirroredAzureDatabricksCatalog"));
   assert.ok(!hasFilesArea(""));
 });
 
-test("kindLabel shortens the API's names, and passes the rest through", () => {
-  assert.equal(kindLabel("MirroredAzureDatabricksCatalog"), "Databricks catalog");
+test("kindLabel says what Fabric shows, not the internal type", () => {
+  assert.equal(kindLabel("SQLDbNative"), "SQL database");
   assert.equal(kindLabel("MirroredDatabase"), "Mirrored database");
-  assert.equal(kindLabel("SQLDatabase"), "SQL database");
   assert.equal(kindLabel("Lakehouse"), "Lakehouse");
   assert.equal(kindLabel("Warehouse"), "Warehouse");
   // An item type nobody has taught it yet still names itself rather than going blank.
