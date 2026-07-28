@@ -8,7 +8,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import {
-  DFS_HOST, strip, basename, encPath, dfsUrl, toHttps, pathKey,
+  DFS_HOST, DFS_ORIGIN, strip, basename, encPath, dfsBase, dfsUrl, toHttps, pathKey,
   parseLakehouse, itemKind, holdsTables, hasFilesArea, kindLabel,
   fileExt, readerFor, PARQUET_EXTS,
   TEXT_EXTS, isTextExt, DB_EXTS, ZIP_EXTS, IMAGE_EXTS, isSqliteHeader,
@@ -63,6 +63,62 @@ test("toHttps accepts both abfs:// and abfss://", () => {
 test("toHttps passes an absolute https URL through, and resolves a relative one", () => {
   assert.equal(toHttps("ws", "https://example.test/a/b"), "https://example.test/a/b");
   assert.equal(toHttps("my ws", "item/Tables/t"), `https://${DFS_HOST}/my%20ws/item/Tables/t`);
+});
+
+// -----------------------------------------------------------------------------
+// Origin override — the VS Code extension points these at a loopback proxy that signs
+// DuckDB's range reads, because a webview has no service worker to do it with.
+// -----------------------------------------------------------------------------
+// An override carries a path prefix, which is the case a bare host substitution would miss.
+const PROXY = "http://127.0.0.1:54321/s3cr3t/dfs";
+
+test("the default origin leaves every URL byte-identical", () => {
+  // This is the regression net for the WEB app: passing the default explicitly must produce
+  // exactly what passing nothing produces, or the origin parameter changed live behaviour.
+  assert.equal(DFS_ORIGIN, `https://${DFS_HOST}`);
+  const cases = [
+    "abfs://WS@onelake.dfs.fabric.microsoft.com/ITEM/Tables/t/my%20part/f.parquet",
+    "abfss://WS@onelake.dfs.fabric.microsoft.com/ITEM/Tables/t/f.parquet",
+    `https://${DFS_HOST}/WS/ITEM/Tables/t/f.parquet`,
+    "https://example.test/a/b",
+    "item/Tables/t",
+  ];
+  for (const c of cases) assert.equal(toHttps("my ws", c, DFS_ORIGIN), toHttps("my ws", c));
+  assert.equal(dfsBase("my ws", DFS_ORIGIN), dfsBase("my ws"));
+  assert.equal(dfsUrl("my ws", "a b.csv", DFS_ORIGIN), dfsUrl("my ws", "a b.csv"));
+});
+
+test("an override origin redirects dfsBase and dfsUrl, encoding unchanged", () => {
+  assert.equal(dfsBase("my ws", PROXY), `${PROXY}/my%20ws`);
+  assert.equal(dfsUrl("my ws", "item/Files/a b.csv", PROXY), `${PROXY}/my%20ws/item/Files/a%20b.csv`);
+});
+
+test("an override origin redirects all three toHttps input shapes", () => {
+  // abfs:// — the authority becomes the first path segment, as with the default.
+  assert.equal(
+    toHttps("ignored", "abfs://WS@onelake.dfs.fabric.microsoft.com/ITEM/Tables/t/f.parquet", PROXY),
+    `${PROXY}/WS/ITEM/Tables/t/f.parquet`);
+  // Relative.
+  assert.equal(toHttps("my ws", "item/Tables/t", PROXY), `${PROXY}/my%20ws/item/Tables/t`);
+  // Absolute OneLake — this is the one that would silently bypass the proxy and 401.
+  assert.equal(
+    toHttps("ignored", `https://${DFS_HOST}/WS/ITEM/Tables/t/f.parquet`, PROXY),
+    `${PROXY}/WS/ITEM/Tables/t/f.parquet`);
+});
+
+test("an override origin does not touch a URL on another host", () => {
+  // Only OneLake's own host is ours to redirect; a shortcut or a signed URL elsewhere is not.
+  assert.equal(toHttps("ws", "https://example.test/a/b", PROXY), "https://example.test/a/b");
+  // A look-alike host must not match either — the dots in DFS_HOST are escaped for this.
+  const lookalike = "https://onelakexdfsxfabricxmicrosoftxcom/WS/f.parquet";
+  assert.equal(toHttps("ws", lookalike, PROXY), lookalike);
+});
+
+test("an override origin preserves already-escaped Iceberg paths", () => {
+  // Same %2520 regression as the default path, but through the redirect.
+  const uri = "abfs://WS@onelake.dfs.fabric.microsoft.com/ITEM/Tables/t/my%20part/f.parquet";
+  assert.equal(toHttps("ignored", uri, PROXY), `${PROXY}/WS/ITEM/Tables/t/my%20part/f.parquet`);
+  assert.ok(!toHttps("ignored", uri, PROXY).includes("%2520"));
 });
 
 test("pathKey collapses every spelling of the same data file", () => {

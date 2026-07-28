@@ -13,6 +13,16 @@
 
 export const DFS_HOST = "onelake.dfs.fabric.microsoft.com";
 
+// Where OneLake data reads are addressed. Every URL below is built from this rather than
+// from DFS_HOST alone, so one value redirects the lot: the VS Code extension signs DuckDB's
+// range reads through a loopback proxy (a webview has no service worker to do it with), and
+// hands the engine `http://127.0.0.1:<port>/<secret>/dfs`. An override is therefore a URL
+// PREFIX, not just an authority — it may carry a path, and never a trailing slash.
+export const DFS_ORIGIN = `https://${DFS_HOST}`;
+
+// The dots are escaped: unescaped they are `any character`, so a look-alike host would match.
+const DFS_PREFIX = new RegExp(`^https?://${DFS_HOST.replace(/\./g, "\\.")}/`, "i");
+
 // -----------------------------------------------------------------------------
 // Path basics
 // -----------------------------------------------------------------------------
@@ -25,11 +35,11 @@ export const basename = p => strip(p).split("/").pop();
 // existing %20 into %2520; see toHttps for that side.
 export const encPath = p => strip(p).split("/").map(encodeURIComponent).join("/");
 
-export const dfsBase = (ws, host = DFS_HOST) => `https://${host}/${encodeURIComponent(ws)}`;
+export const dfsBase = (ws, origin = DFS_ORIGIN) => `${origin}/${encodeURIComponent(ws)}`;
 
 // A DFS "list" entry .name is already relative to the filesystem (workspace) root,
 // and is raw, so it gets encoded.
-export const dfsUrl = (ws, name, host = DFS_HOST) => `${dfsBase(ws, host)}/${encPath(name)}`;
+export const dfsUrl = (ws, name, origin = DFS_ORIGIN) => `${dfsBase(ws, origin)}/${encPath(name)}`;
 
 // Normalize a path out of Iceberg metadata to an authed https URL.
 //
@@ -40,13 +50,17 @@ export const dfsUrl = (ws, name, host = DFS_HOST) => `${dfsBase(ws, host)}/${enc
 // The input is a URI, so its path is ALREADY percent-encoded and is carried across
 // untouched. Re-encoding it here is what produced %2520 for any table whose partition
 // values or file names contain a space or a literal %.
-export function toHttps(ws, u, host = DFS_HOST) {
+export function toHttps(ws, u, origin = DFS_ORIGIN) {
   const s = String(u);
   const ab = /^abfss?:\/\/([^@/]+)@[^/]+\/(.*)$/i.exec(s);
-  if (ab) return `https://${host}/${ab[1]}/${strip(ab[2])}`;
-  if (/^https?:\/\//i.test(s)) return s;
+  if (ab) return `${origin}/${ab[1]}/${strip(ab[2])}`;
+  // An absolute URL that already names OneLake is re-pointed at `origin` — with the default
+  // that rewrite is the identity, but under an override it is the difference between a read
+  // the proxy signs and one that goes straight to OneLake and comes back 401. Anything on
+  // another host belongs to someone else and is left alone.
+  if (/^https?:\/\//i.test(s)) return DFS_PREFIX.test(s) ? `${origin}/${s.replace(DFS_PREFIX, "")}` : s;
   // A relative reference, still a URI reference — only the workspace we prepend is raw.
-  return `${dfsBase(ws, host)}/${strip(s)}`;
+  return `${dfsBase(ws, origin)}/${strip(s)}`;
 }
 
 // Reduce any of the forms a data-file path can take to one comparable key:

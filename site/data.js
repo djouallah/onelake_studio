@@ -30,8 +30,12 @@
 // stable line lags. Bump it deliberately and re-run the format probe when you do.
 import * as duckdb from "https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.33.1-dev57.0/+esm";
 
+// dfsBase/dfsUrl/toHttps come in under `…At` names and are re-bound to this engine's origin
+// inside createEngine — see the note there. Import them under their plain names anywhere in
+// this file and the reads go straight to OneLake, unsigned, under a proxied origin.
 import {
-  DFS_HOST, strip, basename, dfsBase, dfsUrl, toHttps, pathKey, PATH_KEY_SQL,
+  DFS_ORIGIN, strip, basename, dfsBase as dfsBaseAt, dfsUrl as dfsUrlAt,
+  toHttps as toHttpsAt, pathKey, PATH_KEY_SQL,
   parseLakehouse, itemKind, holdsTables,
   fileExt, readerFor, PARQUET_EXTS, DB_EXTS, ZIP_EXTS, isSqliteHeader, isTextExt,
   sqlStr, quoteIdent, prepareReadOnlySql,
@@ -62,7 +66,25 @@ const QUICK_PEEK_ROWS = 100;
 // there yet" answer.
 const RESOLVE_BACKOFF_MS = [500, 1500, 3000, 6000, 10000, 15000, 20000, 30000];
 
-export function createEngine(auth, { onStatus = () => {} } = {}) {
+// The Iceberg REST catalog, which is a different host from the data reads and so needs its
+// own override. Same reason as DFS_ORIGIN in paths.js: no trailing slash, may carry a path.
+const TABLE_ORIGIN = "https://onelake.table.fabric.microsoft.com";
+
+// `dfsOrigin` / `tableOrigin` redirect every OneLake request this engine makes. The web app
+// leaves them alone. The VS Code extension sets both to a loopback proxy that attaches the
+// bearer token, because a webview has no service worker — the thing that signs DuckDB's
+// range reads in the browser — and DuckDB's file API cannot set a header itself.
+export function createEngine(auth, {
+  onStatus = () => {},
+  dfsOrigin = DFS_ORIGIN,
+  tableOrigin = TABLE_ORIGIN,
+} = {}) {
+  // Re-bound to this engine's origin so the ~10 call sites below need no argument, and so a
+  // call site added later is redirected too rather than quietly reaching past the proxy.
+  const dfsBase = ws => dfsBaseAt(ws, dfsOrigin);
+  const dfsUrl = (ws, name) => dfsUrlAt(ws, name, dfsOrigin);
+  const toHttps = (ws, u) => toHttpsAt(ws, u, dfsOrigin);
+
   let db = null, conn = null, worker = null;
   let _seq = 0;
   let canXlsx = false;              // set by init(); see the 'excel' preload there
@@ -444,7 +466,7 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
     const out = [];
     let cont = "";
     do {
-      const u = new URL(`https://${DFS_HOST}/`);
+      const u = new URL(`${dfsOrigin}/`);
       u.searchParams.set("resource", "account");
       if (cont) u.searchParams.set("continuation", cont);
       const r = await authedFetch(u.toString());
@@ -923,7 +945,7 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
   // never clear. The walk also never worked for warehouses, which have no metadata/
   // directory at all. So a catalog failure is now FATAL and LOUD, because a silent
   // downgrade to one-listing-per-table is how a slow sidebar hides a broken catalog.
-  const TABLE_API = "https://onelake.table.fabric.microsoft.com/iceberg";
+  const TABLE_API = `${tableOrigin}/iceberg`;
 
   const ircPrefixes = new Map();  // warehouse -> the `prefix` the config call hands back
 

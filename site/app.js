@@ -1629,7 +1629,14 @@ wireUi();
 // afterSignIn swaps this for "Signed in" — and closes the gate, if it was opened in the
 // meantime, so an early click on it costs nothing.
 showSignedOut();
-engine = createEngine(auth, { onStatus: setStatus });
+// Both origins are normally absent, and createEngine's defaults address OneLake directly.
+// The VS Code extension supplies a loopback proxy for each, because a webview has no
+// service worker to sign DuckDB's range reads with.
+engine = createEngine(auth, {
+  onStatus: setStatus,
+  dfsOrigin: cfg.dfsOrigin,
+  tableOrigin: cfg.tableOrigin,
+});
 engineReady = engine.init();
 
 // Engine trouble (CDN down, wasm refused) must not block the sign-in path, and auth
