@@ -46,10 +46,10 @@ const MAX_PARALLEL = 8;
 // an unbounded SELECT * is how you take the tab down. Cap it and say so.
 const MAX_ROWS = 200_000;
 
-// Quick peek during a many-file table open: rows from the first data file, painted while
-// the remaining registrations and the footer-heavy view bind still run. Below the file
-// threshold the open is quick anyway and the peek would only stand in front of it.
-const QUICK_PEEK_MIN_FILES = 8;
+// Quick peek during a table open: rows from the first data file, painted while the
+// remaining registrations and the footer-heavy view bind still run. Fires for any file
+// count — even a one-file table paints faster from a LIMIT than from the full bind,
+// and a peek the real open outruns is repainted over harmlessly (FIFO on serial()).
 const QUICK_PEEK_ROWS = 100;
 
 // Fabric generates Iceberg metadata lazily, and Microsoft documents the conversion as
@@ -1584,7 +1584,7 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
     // suppressed when position deletes exist — a raw first-file read bypasses the
     // anti-join and would show deleted rows as live.
     const quickPeek = reg => {
-      if (!onPeek || paths.length < QUICK_PEEK_MIN_FILES || posDeletes.length) return;
+      if (!onPeek || posDeletes.length) return;
       materialize(`SELECT * FROM read_parquet([${sqlStr(reg)}]) LIMIT ${QUICK_PEEK_ROWS}`)
         .then(out => { if (gen === loadGen) onPeek(peekAliased(out), paths.length); })
         .catch(() => {});
