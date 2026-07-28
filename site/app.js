@@ -7,7 +7,7 @@ import {
 } from './auth.js';
 import { createEngine, READY } from './data.js';
 import { isDocResult, textLinesDoc, fileExt, isTextExt, escapeHtml, basename,
-         hasFilesArea, kindLabel, IMAGE_EXTS } from './paths.js';
+         hasFilesArea, kindLabel, IMAGE_EXTS, sqlNeedsTable, quoteIdent } from './paths.js';
 // Static import is safe: docview.js itself is tiny — the CDN fetch of the markdown
 // parser only happens inside renderMarkdown(), and only for a document that IS markdown.
 import { renderDocument } from './docview.js';
@@ -41,9 +41,16 @@ let activeDocEligible = false;   // the same two answers for the loaded table/fi
 let activeDocExt = '';
 let lastTables = null;       // cached listTables() result, so switching panes is free
 let lastTableCount = '';
-let activeInfo = null;       // the loaded TABLE's info object — what the Stats tab renders
-let viewMode = 'data';       // Data | Stats for a loaded table; snaps back to Data per result
+let activeInfo = null;       // the selected TABLE's info object — what the Stats tab renders
+let viewMode = 'data';       // Data | Stats for a selected table
 let statsPrev = null;        // hidden-flags of the data surfaces while Stats covers them
+// Reading a table is metered, so a selection buys the cheapest thing that answers the
+// question and nothing more. 'stats' = metadata only (no data read at all), 'peek' = one
+// parquet file, 'loaded' = every file registered behind a real view. Each step happens
+// only when the user asks for it, and never twice.
+let activeTableRef = null;   // the table object behind the selection, for escalating
+let tableStage = 'none';     // 'none' | 'stats' | 'peek' | 'loaded'
+let freshLoad = null;        // info from an escalation that still owes the user a report
 
 function setStatus(msg, type = '') {
   const el = $('status');
@@ -356,7 +363,7 @@ function wireUi() {
   $('tabFiles').onclick = () => switchPane('files');
   // Wrapped, not passed directly: onclick hands the handler a MouseEvent, which would
   // land in runQuery's options argument.
-  $('runBtn').onclick = () => runQuery();
+  $('runBtn').onclick = () => runWithTable();
   // Disable on the way out: the load ends at its next checkpoint, not this instant, and a
   // button that still invites clicking implies the first one didn't take.
   $('stopBtn').onclick = () => {
@@ -364,10 +371,11 @@ function wireUi() {
     $('stopBtn').disabled = true;
     setStatus('Stopping…');
   };
+  // Preview means "show me this thing", so it always pays for the table if it has to.
   $('previewBtn').onclick = () => {
-    if (!activeIdent) return;
-    $('sqlEditor').value = previewSql(activeIdent, activeDocEligible);
-    runQuery({ doc: activeDocEligible, ext: activeDocExt });
+    const ident = activeIdent || (activeTableRef && identOf(activeTableRef));
+    if (!ident) return;
+    runWithTable(previewSql(ident, activeDocEligible));
   };
   $('csvBtn').onclick = downloadActive;
   $('docPretty').onclick = () => {
@@ -381,10 +389,10 @@ function wireUi() {
     $('docView').hidden = true;
     $('resultsTable').hidden = false;
   };
-  $('viewData').onclick = showData;
+  $('viewData').onclick = onDataTab;
   $('viewStats').onclick = showStats;
   $('sqlEditor').addEventListener('keydown', e => {
-    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); runQuery(); }
+    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); runWithTable(); }
   });
   // SQL written before a sign-in redirect comes back here after the round trip.
   try {
@@ -595,6 +603,7 @@ async function onWorkspaceChange() {
   const sel = $('itemSelect');
   activeIdent = null;
   setActiveStats(null);
+  activeTableRef = null; tableStage = 'none';
   lastResult = null;
   lastTables = null;
   lastTableCount = '';
@@ -661,6 +670,7 @@ async function connect({ force = false } = {}) {
   if (force || moved) {
     activeIdent = null;
     setActiveStats(null);
+    activeTableRef = null; tableStage = 'none';
     lastResult = null;
     $('activeTable').textContent = 'No table selected';
     // Teardown drains serialized DROPs for every open table before; the listing is pure
@@ -816,6 +826,7 @@ async function selectFile(row, file) {
   activeDocExt = fileExt(file.name);
   activeDocEligible = isTextExt(activeDocExt);
   setActiveStats(null);          // a file is not a table; no snapshot behind it
+  activeTableRef = null; tableStage = 'none';
   // Same rule as selectTable: no stale rows or stale SQL under this file's name.
   clearResults(`(loading ${file.name}…)`);
   $('sqlEditor').value = `-- loading ${file.name}…`;
@@ -866,6 +877,7 @@ async function selectImage(row, file) {
   activeFile = file;
   activeIdent = null;            // no table behind this: Preview/Run stay disabled
   setActiveStats(null);
+  activeTableRef = null; tableStage = 'none';
   activeDocEligible = false;
   clearResults(`(loading ${file.name}…)`);
   $('sqlEditor').value = `-- ${file.name} is an image — shown in the results pane`;
@@ -956,53 +968,141 @@ async function selectTable(row, t) {
   activeFile = null;            // a table has no single file to hand back
   activeDocEligible = false;    // ...and is a table, whatever shape the preview comes back
   activeDocExt = '';
-  // The previous table's rows must not sit on screen under the new table's name while
-  // it loads — that reads as the app showing the wrong data. Clear to a placeholder
-  // now; the preview repaints when it lands. The editor gets the same treatment: the
-  // old table's SQL sitting under the new table's title reads just as wrong.
-  clearResults(`(loading ${$('activeTable').textContent}…)`);
+  activeIdent = null;           // no view exists yet — nothing is bound until asked for
+  activeTableRef = t;
+  tableStage = 'none';
+  // The previous table's rows must not sit on screen under the new table's name — that
+  // reads as the app showing the wrong data. The editor gets the same treatment.
+  clearResults(`(no rows read yet — open the Data tab)`);
   setActiveStats(null);   // the OLD table's stats must not show under the new name
-  $('sqlEditor').value = `-- loading ${$('activeTable').textContent}…`;
-  setBusy(true, { stoppable: true });
+  $('sqlEditor').value = `-- reading ${$('activeTable').textContent} metadata…`;
+  // Not stoppable: this tier is one or two small metadata requests, and a Stop button
+  // for something that is already over by the time it renders is theatre.
+  setBusy(true);
   try {
-    // Quick peek: the engine hands over rows from the first data file while the rest of
-    // a many-file open still runs. Same staleness rule as every paint here (my/selSeq);
-    // the real preview below repaints over it when the open completes. A peek is a
-    // table, never a document, and it is not exportable — CSV stays disabled because
-    // only runQuery enables it.
-    const info = await engine.loadTable(lakehouse, t, { onPeek: (out, fileCount) => {
-      if (my !== selSeq) return;
-      docAllowed = false;
-      renderResults(out);
-      setStatus(`Quick look at the first of ${fileCount} file(s) — still opening…`);
-    } });
+    // Selecting a table reads its METADATA and nothing else — no manifests, no parquet,
+    // no bytes of data. That is the whole point: browsing a lakehouse should not cost
+    // anything, and the tiers below spend only when the user asks to see rows.
+    const info = await engine.statTable(lakehouse, t);
     if (my !== selSeq) return;
+    // Re-selecting a table that is still bound gets its full info back, ident and all;
+    // a fresh selection gets ident null, which is what keeps it unbound.
     activeIdent = info.ident;
+    tableStage = info.stage === 'loaded' ? 'loaded' : 'stats';
     setActiveStats(info);
-    $('sqlEditor').value = previewSql(info.ident, false);
-    $('previewBtn').disabled = false;
-    $('runBtn').disabled = false;
-    reportLoad(info, await runQuery({ doc: false }));
+    showStats();                    // statistics ARE the landing view for a table now
+    // SQL that will work the moment the table is bound; Run binds it (see needsBind).
+    // The buttons are left to setBusy(false) in the finally — one owner for that state.
+    $('sqlEditor').value = previewSql(identOf(t), false);
+    setStatus(engine.describeLoad(info));
     row.classList.remove('pending');
     row.querySelector('.tag')?.remove();
   } catch (e) {
     if (my !== selSeq) return;
-    // A load the user stopped is not a failure, and calling it one in red is how a UI
-    // teaches people to distrust its errors.
-    if (e.cancelled) {
-      clearResults('(no result — loading stopped)');
-      setStatus(`Stopped loading ${$('activeTable').textContent}.`);
-      row.classList.remove('active');
-    } else {
-      clearResults('(no result — the table could not be opened)');
-      setStatus('Load failed: ' + explainRead(e.message), 'error');
-      console.error(e);
-    }
+    reportTableError(e, row);
   } finally {
     // A stale selection's teardown must not flip the busy state out from under the
     // newer selection's own load.
     if (my === selSeq) setBusy(false);
   }
+}
+
+// The identifier a table's view WILL have, derivable without opening anything — the
+// engine builds the same string from the same two parts.
+const identOf = t => t.schema ? `${quoteIdent(t.schema)}.${quoteIdent(t.table)}`
+                              : quoteIdent(t.table);
+
+function reportTableError(e, row) {
+  // A load the user stopped is not a failure, and calling it one in red is how a UI
+  // teaches people to distrust its errors.
+  if (e.cancelled) {
+    clearResults('(no result — loading stopped)');
+    setStatus(`Stopped loading ${$('activeTable').textContent}.`);
+    if (row) row.classList.remove('active');
+  } else {
+    clearResults('(no result — the table could not be opened)');
+    setStatus('Load failed: ' + explainRead(e.message), 'error');
+    console.error(e);
+  }
+}
+
+// Tier 2 — the Data tab's first click. Rows from ONE parquet file, so "what does this
+// data look like" costs a single footer and a single row group instead of the table.
+async function peekIntoView() {
+  const my = selSeq;
+  setBusy(true, { stoppable: true });
+  try {
+    const out = await engine.peekTable(lakehouse, activeTableRef);
+    if (my !== selSeq) return;
+    // A merge-on-read table has no honest cheap preview: reading one file raw would show
+    // rows its delete files have removed. Pay for the real open rather than lie.
+    if (out.suppressed) {
+      setStatus(`${$('activeTable').textContent} has delete files, so a single-file preview ` +
+                `could show deleted rows — opening the whole table instead…`, 'warn');
+      await runWithTable();
+      return;
+    }
+    tableStage = 'peek';
+    docAllowed = false;             // a peek is a table, whatever shape it comes back
+    renderResults(out);             // this lands the pane in the Data view by itself
+    setStatus(`${out.rows.length} row(s) from 1 of ${out.fileCount} file(s) — the other ` +
+              `${out.fileCount - 1} were not read. Run a query to read the whole table.`);
+  } catch (e) {
+    if (my !== selSeq) return;
+    reportTableError(e);
+  } finally {
+    if (my === selSeq) setBusy(false);
+  }
+}
+
+// Tier 3 — every data file registered behind a real view, which is what SQL needs.
+// Returns the info, or null if it could not be bound. The metadata and the manifest walk
+// are already paid for by the tiers above; this adds the per-file registrations.
+async function bindTable() {
+  if (!activeTableRef) return null;
+  if (tableStage === 'loaded') return activeInfo;
+  const my = selSeq;
+  setBusy(true, { stoppable: true });
+  try {
+    const info = await engine.loadTable(lakehouse, activeTableRef, {
+      // Rows from the first file while the rest of a many-file open still runs.
+      onPeek: (out, fileCount) => {
+        if (my !== selSeq) return;
+        docAllowed = false;
+        renderResults(out);
+        setStatus(`Quick look at the first of ${fileCount} file(s) — still opening…`);
+      } });
+    if (my !== selSeq) return null;
+    activeIdent = info.ident;
+    tableStage = 'loaded';
+    freshLoad = info;               // owed a report once the caller's query lands
+    setActiveStats(info);           // richer now: real columns, delete counts, warnings
+    return info;
+  } catch (e) {
+    if (my !== selSeq) return null;
+    reportTableError(e);
+    return null;
+  } finally {
+    if (my === selSeq) setBusy(false);
+  }
+}
+
+// Run SQL against the selected table, binding it first if the SQL actually needs it.
+// `sql` replaces the editor contents when given (the Preview button); otherwise whatever
+// the user wrote is run as-is.
+async function runWithTable(sql) {
+  if (sql != null) $('sqlEditor').value = sql;
+  if (needsBind()) { if (!await bindTable()) return; }
+  const ok = await runQuery({ doc: activeDocEligible, ext: activeDocExt });
+  if (freshLoad) { reportLoad(freshLoad, ok); freshLoad = null; }
+}
+
+// Whether the editor's SQL requires the selected table to be bound. `SELECT 42` with a
+// table selected must not register a single file — that would be spending money on a
+// query that never mentions the table.
+function needsBind() {
+  return activeTableRef && tableStage !== 'loaded' &&
+         sqlNeedsTable($('sqlEditor').value, activeTableRef.table);
 }
 
 // The engine knows how it actually opened the table (range reads / full download) and
@@ -1243,6 +1343,14 @@ function showStats() {
   setViewTabs();
 }
 
+// The Data tab is where the user asks to see rows, so it is also where the first data
+// egress of a table selection happens — one file, not the table (see peekIntoView).
+function onDataTab() {
+  if (viewMode !== 'stats') return;
+  if (tableStage === 'stats' && activeTableRef) { peekIntoView(); return; }
+  showData();
+}
+
 function showData() {
   if (viewMode !== 'stats') return;
   viewMode = 'data';
@@ -1257,12 +1365,17 @@ function showData() {
 function statsCardHtml(info) {
   const s = info.stats || {};
   const n = v => v == null ? '—' : Number(v).toLocaleString('en');
+  const deletes = info.posDeletes || info.eqDeletes || s.totalDeleteFiles;
   const rows = [];
   rows.push(['Rows', n(info.totalRecords) +
-    (info.posDeletes ? ` (physical — before ${info.posDeletes} position-delete file(s))` : '')]);
+    (deletes ? ' (physical — before delete files are applied)' : '')]);
   rows.push(['Data files', n(info.fileCount)]);
-  if (info.posDeletes || info.eqDeletes || s.totalDeleteFiles)
-    rows.push(['Delete files', `${n(info.posDeletes)} position, ${n(info.eqDeletes)} equality`]);
+  // Before the table is bound, the only breakdown available is the snapshot's own total;
+  // the position/equality split comes from the manifests, which tier 1 never reads.
+  if (deletes)
+    rows.push(['Delete files', info.stage === 'loaded'
+      ? `${n(info.posDeletes)} position, ${n(info.eqDeletes)} equality`
+      : n(s.totalDeleteFiles)]);
   rows.push(['Total size', s.totalFilesSize == null ? '—' : engine.fmtBytes(s.totalFilesSize)]);
   if (s.totalFilesSize && info.fileCount)
     rows.push(['Avg file size', engine.fmtBytes(s.totalFilesSize / info.fileCount)]);
@@ -1276,9 +1389,22 @@ function statsCardHtml(info) {
   // Probed: the conversion doesn't write this property today, so the line only appears
   // if that ever changes. Absence is unknown, not "no" — no line is the honest render.
   if (s.vorderProp != null) rows.push(['V-Order', s.vorderProp ? 'enabled' : 'disabled']);
+
+  // The schema is free at every tier: from the Iceberg metadata before the table is
+  // bound, from DESCRIBE after. Both arrive as {name, type}.
+  const cols = info.columns || [];
+  const colList = cols.length
+    ? '<h3>Columns</h3><table>' + cols.map(c =>
+        `<tr><th>${escapeHtml(c.name)}</th><td>${escapeHtml(c.type || '')}</td></tr>`).join('') +
+      '</table>'
+    : '';
+  const note = info.stage === 'loaded'
+    ? 'From the Iceberg snapshot metadata — nothing was scanned to show this.'
+    : 'From the Iceberg snapshot metadata — no data files have been read yet. ' +
+      'Open Data for rows from one file, or run a query to read the whole table.';
   return '<table>' + rows.map(([k, v]) =>
     `<tr><th>${escapeHtml(k)}</th><td>${escapeHtml(String(v))}</td></tr>`).join('') +
-    '</table><p class="statsNote">From the Iceberg snapshot metadata — nothing was scanned.</p>';
+    '</table>' + colList + `<p class="statsNote">${escapeHtml(note)}</p>`;
 }
 
 // ---------------------------------------------------------------------------
@@ -1499,7 +1625,10 @@ function setBusy(b, { stoppable = false } = {}) {
   // `engine` exists from the first line of boot now, so it says nothing about readiness —
   // engineUp is the flag that used to be implied by it being non-null.
   $('runBtn').disabled = !engineUp || b;
-  $('previewBtn').disabled = !activeIdent || b;
+  // Preview is the button that says "show me this thing", so it is live as soon as
+  // something is selected — a table selected but not yet bound very much included,
+  // since binding it is exactly what Preview is for.
+  $('previewBtn').disabled = !(activeIdent || activeTableRef) || b;
 }
 
 // ---------------------------------------------------------------------------

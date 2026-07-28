@@ -14,7 +14,7 @@ import {
   fileExt, readerFor, PARQUET_EXTS,
   TEXT_EXTS, isTextExt, DB_EXTS, ZIP_EXTS, IMAGE_EXTS, isSqliteHeader,
   sqlStr, quoteIdent, stripComments, prepareReadOnlySql,
-  metadataVersion, pickMetadata, snapshotStats,
+  metadataVersion, pickMetadata, snapshotStats, icebergFields, icebergTypeName, sqlNeedsTable,
   tableKey, fileKey, sanitizeIdent,
   normalizeValue, fmtBytes, isDocResult, textLinesDoc, docKind, escapeHtml,
 } from "../site/paths.js";
@@ -376,6 +376,45 @@ test("pickMetadata falls back to mtime when no name carries a version", () => {
     { name: "t/metadata/bbb.metadata.json", mtime: 200 },
   ];
   assert.equal(pickMetadata(entries).name, "t/metadata/bbb.metadata.json");
+});
+
+// -----------------------------------------------------------------------------
+// Binding a table registers every data file and reads their footers — metered egress.
+// A false positive here spends the user's money; a false negative costs one click.
+test("sqlNeedsTable only fires when the SQL really names the table", () => {
+  assert.equal(sqlNeedsTable('SELECT * FROM "landing"."fct_price" LIMIT 100', "fct_price"), true);
+  assert.equal(sqlNeedsTable("select count(*) from landing.fct_price", "fct_price"), true);
+  assert.equal(sqlNeedsTable("SELECT 42", "fct_price"), false);
+  assert.equal(sqlNeedsTable("SELECT * FROM read_parquet('x.parquet')", "fct_price"), false);
+  // The near-miss that would otherwise open the wrong (and much bigger) table.
+  assert.equal(sqlNeedsTable('SELECT * FROM "landing"."fct_price_today"', "fct_price"), false);
+  assert.equal(sqlNeedsTable('SELECT * FROM "landing"."fct_price"', "fct_price_today"), false);
+  // A name that appears only in a comment is not a reference.
+  assert.equal(sqlNeedsTable("-- fct_price is big\nSELECT 1", "fct_price"), false);
+  assert.equal(sqlNeedsTable("", "fct_price"), false);
+  assert.equal(sqlNeedsTable("SELECT * FROM t", null), false);
+});
+
+// -----------------------------------------------------------------------------
+test("icebergFields: the schema without touching a parquet footer", () => {
+  const schema = { fields: [
+    { id: 1, name: "DUID", required: true, type: "string" },
+    { id: 2, name: "RRP", required: false, type: "decimal(18,8)" },
+    { id: 3, name: "tags", type: { type: "list", element: "string" } },
+    { id: 4, name: "props", type: { type: "map", key: "string", value: "long" } },
+    { id: 5, name: "src", type: { type: "struct",
+      fields: [{ name: "file" }, { name: "line" }] } },
+  ] };
+  assert.deepEqual(icebergFields(schema), [
+    { name: "DUID", type: "string" },
+    { name: "RRP", type: "decimal(18,8)" },
+    { name: "tags", type: "list<string>" },
+    { name: "props", type: "map<string, long>" },
+    { name: "src", type: "struct<file, line>" },
+  ]);
+  assert.deepEqual(icebergFields(null), []);
+  assert.deepEqual(icebergFields({}), []);
+  assert.equal(icebergTypeName(undefined), "");
 });
 
 // -----------------------------------------------------------------------------

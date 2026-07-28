@@ -101,53 +101,81 @@ try {
   await page.waitForFunction(() => document.getElementById("tableList").innerText.includes("fct_price_today"),
     { timeout: 60000 });
 
-  check(await page.locator("#viewBar").isHidden(), "no table open yet — no Data|Stats bar");
+  check(await page.locator("#viewBar").isHidden(), "no table selected yet — no Data|Stats bar");
 
-  // Open landing.fct_price_today: 6,995 rows / 4 files / 564,322 B / zstd (probed).
+  // --- Tier 1: selecting a table shows statistics, and reads no data to do it. ---
+  // landing.fct_price_today: 6,995 rows / 4 files / 564,322 B / zstd (probed).
   await page.locator(".tableItem", { hasText: /^fct_price_today$/ }).first().click();
-  await page.waitForFunction(() => !document.getElementById("viewBar").hidden, { timeout: 120000 });
-  check(true, "table opened and the Data|Stats bar appeared");
-  check(await page.locator("#statsView").isHidden(), "stats stay hidden until asked");
-
-  await page.click("#viewStats");
+  await page.waitForFunction(() => !document.getElementById("statsView").hidden,
+    { timeout: 60000 });
+  check(true, "selection lands on the Stats view with no click");
+  check(await page.locator("#resultsTable").isHidden(), "…and no grid of rows");
   const card = await page.locator("#statsView").innerText();
-  check(!(await page.locator("#statsView").isHidden()), "Stats click shows the card");
-  check(await page.locator("#resultsTable").isHidden(), "…and covers the grid");
   check(card.includes("6,995"), `rows on the card (saw: ${card.split("\n")[0]}…)`);
   check(/Data files\s*4\b/.test(card), "4 data files");
   check(/\d+ KB/.test(card), "total size from the snapshot summary");
   check(card.includes("zstd"), "compression codec from the table properties");
   check(card.includes("Iceberg v2"), "format version");
   check(!/V-Order/.test(card), "no V-Order line — the metadata doesn't carry it (probed)");
-  check(/nothing was scanned/.test(card), "provenance note");
+  check(/SETTLEMENTDATE|RRP|DUID/i.test(card), "columns listed from the Iceberg schema");
+  check(/no data files have been read yet/i.test(card), "the card says nothing was read");
+  const status1 = await page.locator("#status").innerText();
+  check(/statistics only, no data read/i.test(status1), `status says the same (${status1})`);
 
+  // --- Tier 2: the Data tab reads ONE file, and says so. ---
   await page.click("#viewData");
-  check(await page.locator("#statsView").isHidden(), "Data click hides the card");
-  check(!(await page.locator("#resultsTable").isHidden()), "…and the grid is back");
+  await page.waitForFunction(() => {
+    const t = document.getElementById("resultsTable");
+    return !t.hidden && t.innerText.trim().length > 0;
+  }, { timeout: 120000 });
+  check(await page.locator("#statsView").isHidden(), "Data tab replaces the card with rows");
+  const status2 = await page.locator("#status").innerText();
+  check(/of 4 file\(s\)/.test(status2) && /not read/.test(status2),
+    `status names what was NOT read (${status2})`);
 
-  // A new result must snap the view back to Data even if Stats was up.
+  // Back and forth must not re-read anything: the peek is kept.
   await page.click("#viewStats");
-  await page.fill("#sqlEditor", "SELECT 1 AS one");
+  check(!(await page.locator("#statsView").isHidden()), "Stats comes back");
+  await page.click("#viewData");
+  check(!(await page.locator("#resultsTable").isHidden()), "…and Data restores the same rows");
+
+  // --- SQL that does not name the table must not bind it. ---
+  await page.fill("#sqlEditor", "SELECT 42 AS answer");
   await page.click("#runBtn");
   await page.waitForFunction(() => {
     const t = document.getElementById("resultsTable");
-    return !t.hidden && t.innerText.includes("one");
+    return !t.hidden && t.innerText.includes("answer");
   }, { timeout: 30000 });
-  check(await page.locator("#statsView").isHidden(), "a new result snaps back to the Data view");
-  check(!(await page.locator("#viewBar").isHidden()), "…but the bar stays while the table is open");
+  check(await page.evaluate(() => document.getElementById("status").innerText)
+    .then(s => !/file\(s\), read on demand/.test(s)),
+    "a query that never mentions the table does not open it");
 
-  // Stats after the snap-back still render (from the cached info), for the same table.
-  await page.click("#viewStats");
-  check((await page.locator("#statsView").innerText()).includes("6,995"),
-    "stats re-render from cache after a query");
+  // --- Tier 3: Preview binds the table for real. ---
+  await page.click("#previewBtn");
+  await page.waitForFunction(() => {
+    const s = document.getElementById("status").innerText;
+    return /read on demand/.test(s) || /Load failed/.test(s);
+  }, { timeout: 180000 });
+  const status3 = await page.locator("#status").innerText();
+  check(/4 file\(s\), read on demand/.test(status3), `Preview opened the table (${status3})`);
+  check((await page.locator("#resultsTable").innerText()).length > 0, "…and rows are on screen");
 
-  // Switching tables: bar hides during the load, then shows the NEW table's numbers.
-  await page.locator(".tableItem", { hasText: /^dim_calendar$/ }).first().click();
-  await page.waitForFunction(() => !document.getElementById("viewBar").hidden, { timeout: 120000 });
+  // The card is richer once bound, and still the same table's numbers.
   await page.click("#viewStats");
   const card2 = await page.locator("#statsView").innerText();
-  check(card2.includes("3,197") && !card2.includes("6,995"),
-    "second table shows its own stats, not the first table's");
+  check(card2.includes("6,995") && /nothing was scanned/.test(card2),
+    "the card updates to the opened table's own note");
+
+  // --- Switching tables goes back to statistics-only for the new one. ---
+  await page.locator(".tableItem", { hasText: /^dim_calendar$/ }).first().click();
+  await page.waitForFunction(() => {
+    const v = document.getElementById("statsView");
+    return !v.hidden && v.innerText.includes("3,197");
+  }, { timeout: 60000 });
+  const card3 = await page.locator("#statsView").innerText();
+  check(!card3.includes("6,995"), "second table shows its own stats, not the first table's");
+  check(await page.locator("#resultsTable").isHidden(),
+    "…and reads no rows just because the previous table was open");
 
   if (!fails.length) { console.log("RESULT: OK — stats tab verified against the real lakehouse"); code = 0; }
   else console.log(`RESULT: FAILED — ${fails.length}: ${fails.join("; ")}`);

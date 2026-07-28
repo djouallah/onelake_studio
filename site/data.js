@@ -33,7 +33,7 @@ import {
   parseLakehouse, itemKind, holdsTables,
   fileExt, readerFor, PARQUET_EXTS, DB_EXTS, ZIP_EXTS, isSqliteHeader, isTextExt,
   sqlStr, quoteIdent, prepareReadOnlySql,
-  pickMetadata, snapshotStats, tableKey, fileKey, sanitizeIdent,
+  pickMetadata, snapshotStats, icebergFields, tableKey, fileKey, sanitizeIdent,
   normalizeValue, fmtBytes,
 } from "./paths.js";
 
@@ -72,6 +72,13 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
   const loaded = new Map();         // cache key -> info
   const resources = new Map();      // cache key -> { ident, regs[], tables[] }, for release()
   const viewNames = new Map();      // view identifier -> the cache key that owns it
+  // Reading a table is billed by the byte, so it happens in three deliberate tiers and
+  // each one's answer is kept: statTable (metadata only) -> peekTable (ONE parquet) ->
+  // loadTable (every file, a real view). These two caches are what stop a later tier
+  // from paying again for what an earlier one already fetched. Neither holds DuckDB
+  // state, so a worker restart keeps them — only a lakehouse switch clears them.
+  const resolvedC = new Map();      // cache key -> the resolved Iceberg metadata document
+  const filesC = new Map();         // cache key -> { files[], posDeletes[], eqDeletes[] }
 
   // Opening a big table is not one slow request, it is hundreds of small ones — the
   // manifest walk, then a registration per data file — and until there was a way out of
@@ -587,6 +594,8 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
     loaded.clear();
     resources.clear();
     viewNames.clear();
+    resolvedC.clear();
+    filesC.clear();
   }
 
   // A DuckDB identifier for this key that no other key already owns. sanitizeIdent is
@@ -1112,6 +1121,10 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
       schemaColumns: schema ? (schema.fields || []).map(f => f.name) : null,
       // Physical parquet name -> readable name, when the writer used column mapping.
       nameMapping: readNameMapping(meta, schema),
+      // The table's columns as the METADATA states them — name and Iceberg type. This is
+      // what the Stats tier shows instead of a DESCRIBE, so a table's schema is on screen
+      // before a single parquet footer has been read.
+      schemaFields: icebergFields(schema),
       // More than one schema in the log means the table evolved and its data files can
       // disagree — only then is union_by_name worth its price (see createView).
       evolved: (meta.schemas || []).length > 1,
@@ -1508,28 +1521,17 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
     return Number(r.toArray()[0].toJSON().n) || 0;
   }
 
-  async function loadTable(lh, t, { onPeek } = {}) {
-    // Keyed per lakehouse: the engine outlives the user's choice of one, and two
-    // lakehouses can both hold a dbo.sales.
+  // ---------------------------------------------------------------------------
+  // Tier 1: the table's Iceberg metadata, and nothing else.
+  // ---------------------------------------------------------------------------
+  // One request through the catalog, or two off the metadata directory. No manifests,
+  // no parquet, no DuckDB. Everything the Stats tab shows comes from here, which is why
+  // opening a table now costs kilobytes instead of a scan: the rest is read only when
+  // the user asks to see rows.
+  async function resolveTable(lh, t, label) {
     const key = tableKey(lh, t);
-    // Supersede whatever came before — even on a cache hit, because the click means
-    // "show me THIS" and the in-flight load must stand down rather than repaint the
-    // screen later. A previous load stands down at its next check(), and a previous
-    // query dies in the worker — without this, picking a second table simply queued
-    // behind the first one's preview and looked like a frozen app, which is the bug
-    // 54229d3 claimed to fix and didn't: nothing ever bumped the counter except the
-    // Stop button.
-    await cancelLoad();
-    if (loaded.has(key)) return loaded.get(key);
-    const gen = loadGen;
-    const check = () => { if (gen !== loadGen) throw cancelledError(); };
-    const status = statusFor(gen);
-
+    if (resolvedC.has(key)) return resolvedC.get(key);
     const ws = lh.workspace;
-    const label = labelFor(t);
-    const warnings = [];
-
-    status(`Resolving ${label}…`);
     let resolved;
     try {
       // The catalog hands the metadata over inline, so when it's reachable this is one
@@ -1554,6 +1556,125 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
         `up to two minutes, but if it never appears then Delta-to-Iceberg conversion is probably ` +
         `not enabled for this tenant or workspace. (${e.message})`);
     }
+    resolvedC.set(key, resolved);
+    return resolved;
+  }
+
+  // What a table selection costs now. `columns` comes from the Iceberg schema rather than
+  // a DESCRIBE, so the schema is on screen without a single footer read; `ident` is null
+  // because no view exists yet, and that is what tells the caller this is tier 1.
+  async function statTable(lh, t) {
+    // A click means "show me THIS": stand down whatever was loading, exactly as an open
+    // does — otherwise a previous table's open keeps spending on files nobody wants.
+    await cancelLoad();
+    const key = tableKey(lh, t);
+    if (loaded.has(key)) return loaded.get(key);   // a fully opened table knows strictly more
+    const label = labelFor(t);
+    const status = statusFor(loadGen);
+    status(`Reading ${label} metadata…`);
+    const resolved = await resolveTable(lh, t, label);
+    const stats = resolved.stats || {};
+    const info = {
+      label, ident: null, stage: "stats",
+      columns: resolved.schemaFields || [],
+      // From the snapshot summary, not from a manifest walk — the walk is tier 2.
+      fileCount: stats.totalDataFiles,
+      posDeletes: 0, eqDeletes: 0,
+      totalRecords: resolved.totalRecords, stats, warnings: [],
+    };
+    status(describeLoad(info));
+    return info;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Tier 2: rows from the FIRST data file, and no others.
+  // ---------------------------------------------------------------------------
+  // The manifest walk (small avro) plus one parquet footer and one row group. No view is
+  // created and the other N-1 files are never touched — this is the cheapest honest way
+  // to answer "what does the data look like".
+  async function peekTable(lh, t) {
+    await cancelLoad();
+    const key = tableKey(lh, t);
+    const gen = loadGen;
+    const check = () => { if (gen !== loadGen) throw cancelledError(); };
+    const status = statusFor(gen);
+    const label = labelFor(t);
+    const ws = lh.workspace;
+
+    const resolved = await resolveTable(lh, t, label);
+    check();
+    const { files, posDeletes } = await fileListFor(key, ws, resolved, check, label, status);
+    if (!files.length) throw new Error(`${label}: current snapshot has no data files`);
+    // Reading one file raw bypasses the delete anti-join, so deleted rows would show as
+    // live. There is no cheap HONEST peek at a merge-on-read table: say so and let the
+    // caller decide to pay for the real open.
+    if (posDeletes.length) return { suppressed: true, fileCount: files.length };
+
+    status(`Reading the first of ${files.length} file(s) in ${label}…`);
+    const res = track(key);
+    res.gen = gen;
+    const reg = `peek_${++_seq}.parquet`;
+    await guarded(() => db.registerFileURL(reg, toHttps(ws, files[0]),
+                                           duckdb.DuckDBDataProtocol.HTTP, false));
+    regLog.set(reg, Date.now());
+    res.regs.push(reg);
+    check();
+    // materialize(), never a bare conn.send() — see the silent-truncation note on stream().
+    const out = await materialize(
+      `SELECT * FROM read_parquet([${sqlStr(reg)}]) LIMIT ${QUICK_PEEK_ROWS}`);
+    check();
+    return { ...aliasOutput(out, resolved.nameMapping), fileCount: files.length };
+  }
+
+  // A Warehouse's physical column names are GUIDs; give a raw file read the same logical
+  // names the real view gets, off its own field list. All-or-nothing, like the view.
+  function aliasOutput(out, nameMapping) {
+    const aliases = aliasFor(out.fields.map(name => ({ name })), nameMapping);
+    if (!aliases) return out;
+    const logical = new Map(aliases);
+    const fields = out.fields.map(f => logical.get(f) || f);
+    const rows = out.rows.map(r =>
+      Object.fromEntries(out.fields.map((f, i) => [fields[i], r[f]])));
+    return { ...out, fields, rows };
+  }
+
+  // The manifest walk, once per table. Tier 2 pays for it and tier 3 inherits it — which
+  // is the difference between peeking-then-opening costing one walk or two.
+  async function fileListFor(key, ws, resolved, check, label, status) {
+    if (filesC.has(key)) return filesC.get(key);
+    status(`Reading manifests for ${label}…`);
+    const r = await listDataFiles(ws, resolved.manifestList, check);
+    filesC.set(key, r);
+    return r;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Tier 3: every data file registered, a real queryable view.
+  // ---------------------------------------------------------------------------
+  async function loadTable(lh, t, { onPeek } = {}) {
+    // Keyed per lakehouse: the engine outlives the user's choice of one, and two
+    // lakehouses can both hold a dbo.sales.
+    const key = tableKey(lh, t);
+    // Supersede whatever came before — even on a cache hit, because the click means
+    // "show me THIS" and the in-flight load must stand down rather than repaint the
+    // screen later. A previous load stands down at its next check(), and a previous
+    // query dies in the worker — without this, picking a second table simply queued
+    // behind the first one's preview and looked like a frozen app, which is the bug
+    // 54229d3 claimed to fix and didn't: nothing ever bumped the counter except the
+    // Stop button.
+    await cancelLoad();
+    if (loaded.has(key)) return loaded.get(key);
+    const gen = loadGen;
+    const check = () => { if (gen !== loadGen) throw cancelledError(); };
+    const status = statusFor(gen);
+
+    const ws = lh.workspace;
+    const label = labelFor(t);
+    const warnings = [];
+
+    status(`Resolving ${label}…`);
+    // Free on the normal path: the Stats tier already resolved and cached this.
+    const resolved = await resolveTable(lh, t, label);
 
     const ident = t.schema
       ? `${quoteIdent(t.schema)}.${quoteIdent(t.table)}`
@@ -1561,9 +1682,9 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
     if (t.schema) await q(`CREATE SCHEMA IF NOT EXISTS ${quoteIdent(t.schema)}`);
 
     check();
-    status(`Reading manifests for ${label}…`);
+    // Also free after a peek: the walk is cached per table.
     const { files: paths, posDeletes, eqDeletes } =
-      await listDataFiles(ws, resolved.manifestList, check);
+      await fileListFor(key, ws, resolved, check, label, status);
     if (!paths.length) throw new Error(`${label}: current snapshot has no data files`);
 
     const res = track(key);
@@ -1587,19 +1708,8 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
     const quickPeek = reg => {
       if (!onPeek || posDeletes.length) return;
       materialize(`SELECT * FROM read_parquet([${sqlStr(reg)}]) LIMIT ${QUICK_PEEK_ROWS}`)
-        .then(out => { if (gen === loadGen) onPeek(peekAliased(out), paths.length); })
+        .then(out => { if (gen === loadGen) onPeek(aliasOutput(out, resolved.nameMapping), paths.length); })
         .catch(() => {});
-    };
-    // A Warehouse's physical names are GUIDs; give the peek the same logical names the
-    // real view gets, off the peek's own field list. All-or-nothing, like the view.
-    const peekAliased = out => {
-      const aliases = aliasFor(out.fields.map(name => ({ name })), resolved.nameMapping);
-      if (!aliases) return out;
-      const logical = new Map(aliases);
-      const fields = out.fields.map(f => logical.get(f) || f);
-      const rows = out.rows.map(r =>
-        Object.fromEntries(out.fields.map((f, i) => [fields[i], r[f]])));
-      return { ...out, fields, rows };
     };
 
     const regs = [], pairs = [];
@@ -1687,7 +1797,7 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
     if (eqDeletes.length)
       warnings.push(`${eqDeletes.length} equality-delete file(s) are NOT applied — deleted rows may still appear`);
 
-    const info = { label, ident, columns, fileCount: paths.length,
+    const info = { label, ident, columns, fileCount: paths.length, stage: "loaded",
                    posDeletes: posDeletes.length, eqDeletes: eqDeletes.length,
                    totalRecords: resolved.totalRecords, stats: resolved.stats, warnings };
 
@@ -1700,7 +1810,15 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
   // not news — that is just correctness. Anything in `warnings` is a correctness caveat,
   // and rendering it as a warning rather than as success is the caller's job.
   function describeLoad({ label, fileCount, posDeletes, file, ext, bytes, totalRecords,
-                          db, dbAlias, dbTables, dbEngine, zip, zipViews }) {
+                          db, dbAlias, dbTables, dbEngine, zip, zipViews, stage }) {
+    // Tier 1. Say plainly that nothing has been read yet, because the whole point of
+    // this state is that it cost nothing — and that the next click is what spends.
+    if (stage === "stats") {
+      let s = `${label} — statistics only, no data read`;
+      if (totalRecords != null) s += `: ${totalRecords.toLocaleString("en")} row(s)`;
+      if (fileCount != null) s += ` in ${fileCount} file(s)`;
+      return s + ". Open Data to read rows";
+    }
     if (zip) {
       const n = (zipViews || []).length;
       const list = n ? `: ${zipViews.slice(0, 5).join(", ")}${n > 5 ? ", …" : ""}` : "";
@@ -1778,7 +1896,8 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
     return fetchAuthed(dfsUrl(lh.workspace, file.path));
   }
 
-  return { init, reset, parseLakehouse, listWorkspaces, listItems, listTables, loadTable,
+  return { init, reset, parseLakehouse, listWorkspaces, listItems, listTables,
+           statTable, peekTable, loadTable,
            listFiles, loadFile, readFileBytes, runSql, describeLoad, fmtBytes, cancelLoad };
 }
 

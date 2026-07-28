@@ -402,6 +402,37 @@ export function pickMetadata(entries, hintText) {
   return jsons.slice().sort(byVersionThenMtime).pop();
 }
 
+// Does this SQL actually reference the named table? Binding a table means registering
+// every one of its data files and reading their footers — real money on a metered lake —
+// so it must not happen because someone ran `SELECT 42` while a table happened to be
+// selected. Comments are stripped first: a table named in a comment is not a reference.
+// Errs toward NOT binding; the cost of a miss is an "unknown table" the user fixes with
+// the Preview button, and the cost of a false positive is a bill.
+export function sqlNeedsTable(sql, table) {
+  if (!sql || !table) return false;
+  const esc = String(table).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  // Bounded by anything that cannot be part of an identifier — quotes included, so both
+  // `mart.sales` and `"mart"."sales"` match, but `sales_archive` does not.
+  return new RegExp(`(^|[^\\w"])"?${esc}"?($|[^\\w"])`, "i").test(stripComments(String(sql)));
+}
+
+// An Iceberg schema's columns as {name, type} — deliberately the same shape DESCRIBE
+// returns, so a schema read from metadata alone and one read from the parquet footers
+// render through identical code. A nested type arrives as an object rather than a string;
+// name it by its kind, because dumping the JSON into a type column helps nobody.
+export function icebergTypeName(t) {
+  if (t == null) return "";
+  if (typeof t === "string") return t;
+  const kind = t.type || "";
+  if (kind === "list") return `list<${icebergTypeName(t.element)}>`;
+  if (kind === "map") return `map<${icebergTypeName(t.key)}, ${icebergTypeName(t.value)}>`;
+  if (kind === "struct") return `struct<${(t.fields || []).map(f => f.name).join(", ")}>`;
+  return kind;
+}
+
+export const icebergFields = schema =>
+  ((schema || {}).fields || []).map(f => ({ name: f.name, type: icebergTypeName(f.type) }));
+
 // Table-level statistics out of an Iceberg metadata document and its current snapshot —
 // the fields the Fabric conversion fills from the source table's own statistics. Only
 // the snapshot summary is trustworthy here: Fabric writes zeroed PER-FILE manifest
