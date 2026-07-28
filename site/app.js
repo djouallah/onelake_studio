@@ -568,7 +568,16 @@ async function loadCatalog() {
   }
 }
 
+// The last click wins here too. Discovery is network-bound and the pickers stay clickable
+// throughout, so a listing that resumes after a NEWER workspace/item choice must not touch
+// the screen — two fast item clicks otherwise paint whichever listing finished LAST, not
+// whichever was clicked last. Same ticket pattern as selSeq below, shared between the two
+// entry points because a workspace change must supersede an in-flight item connect and
+// vice versa. Superseded listings still finish their fetches; they just stand down silently.
+let catSeq = 0;
+
 async function onWorkspaceChange() {
+  const my = ++catSeq;
   const workspace = canonicalWs($('wsSelect').value) || '';
   lastWs = workspace;
   const sel = $('itemSelect');
@@ -579,7 +588,12 @@ async function onWorkspaceChange() {
   // This is the point where the previous lakehouse is left behind — and because it also
   // clears `lakehouse`, connect() can no longer tell that the target changed. Hand the
   // engine's views and registered files back here instead.
-  if (lakehouse) await engine.reset();
+  if (lakehouse) {
+    await engine.reset();
+    // Superseded while the old item was being torn down: the newer call saw `lakehouse`
+    // still set, so it runs (or ran) its own reset and owns all state from here.
+    if (my !== catSeq) return;
+  }
   lakehouse = null;
   setPaneTabs('');   // no item picked: the switch goes back to offering both panes
   $('tableList').innerHTML = '<div class="hint">Pick a lakehouse, warehouse or mirrored item.</div>';
@@ -594,6 +608,7 @@ async function onWorkspaceChange() {
   try {
     setStatus(`Listing items in ${workspace}…`);
     const items = await engine.listItems(workspace);
+    if (my !== catSeq) return;
     fill(sel, items.map(i => ({
       value: i.name,
       label: `${i.name.replace(/\.[^.]+$/, '')}  ·  ${kindLabel(i.kind)}`,
@@ -603,6 +618,7 @@ async function onWorkspaceChange() {
       ? `${items.length} item(s) with tables in ${workspace}.`
       : `${workspace} has nothing with tables in it.`, items.length ? 'ok' : '');
   } catch (e) {
+    if (my !== catSeq) return;
     fill(sel, [], 'Could not list items');
     setStatus('Could not list items: ' + e.message, 'error');
     console.error(e);
@@ -616,9 +632,11 @@ async function onWorkspaceChange() {
 // already on left every table served from cache, so "Reload" showed the same snapshot it
 // showed before and there was no way to pick up a table that had changed underneath.
 async function connect({ force = false } = {}) {
+  const my = ++catSeq;
   const workspace = canonicalWs($('wsSelect').value), item = $('itemSelect').value;
   if (!workspace || !item) return;
   await engineReady;   // the picker can be used before DuckDB has finished booting
+  if (my !== catSeq) return;
 
   // Views, registered files and helper tables from the previous lakehouse are dead the
   // moment we point somewhere else, and they cost WASM memory for as long as the tab
@@ -630,6 +648,8 @@ async function connect({ force = false } = {}) {
     lastResult = null;
     $('activeTable').textContent = 'No table selected';
     await engine.reset();
+    // A stale connect must not clobber the `lakehouse` a newer selection owns.
+    if (my !== catSeq) return;
   }
   lakehouse = { workspace, item };
   setPaneTabs(item);   // before the pane is rendered below: it can move `pane` off Files
@@ -639,21 +659,24 @@ async function connect({ force = false } = {}) {
   $('tableList').innerHTML = '<div class="hint">Loading…</div>';
   try {
     const tables = await engine.listTables(lakehouse);
+    if (my !== catSeq) return;
     // Storage format is the engine's business, not the user's. The only distinction worth
     // surfacing is whether a table can be opened yet.
     const ready = tables.filter(t => t.kind === READY).length;
     lastTables = tables;
     lastTableCount = String(tables.length);
     if (pane === 'tables') { renderTableList(tables); $('tableCount').textContent = lastTableCount; }
-    else await renderFileTree();
+    else { await renderFileTree(); if (my !== catSeq) return; }
     setStatus(`${tables.length} table(s) in ${lakehouse.item}.` +
       (tables.length > ready ? ` ${tables.length - ready} awaiting Iceberg conversion.` : ''), 'ok');
   } catch (e) {
+    if (my !== catSeq) return;
     $('tableList').innerHTML = '<div class="hint">Could not list tables.</div>';
     setStatus('List failed: ' + e.message, 'error');
     console.error(e);
   } finally {
-    $('connectBtn').disabled = false;
+    // A stale connect's cleanup must not re-enable the button under the newer one's listing.
+    if (my === catSeq) $('connectBtn').disabled = false;
   }
 }
 
