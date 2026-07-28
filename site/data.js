@@ -3,9 +3,11 @@
 // =============================================================================
 // Given an AuthProvider (auth.js) and a lakehouse path, this module:
 //   1. brings up DuckDB-WASM,
-//   2. lists the lakehouse's tables over the OneLake DFS (ADLS Gen2) API by
-//      friendly name (workspace/lakehouse.Lakehouse) — no GUIDs, storage token only,
-//   3. for a chosen table, resolves its current metadata.json -> snapshot ->
+//   2. lists the lakehouse's tables through OneLake's Iceberg REST catalog by friendly
+//      name (workspace/lakehouse.Lakehouse) — no GUIDs, storage token only. DFS is still
+//      how Files/ and the workspace/item pickers are listed, and how every BYTE is read;
+//      table LISTING is the catalog's alone,
+//   3. for a chosen table, asks the catalog for its metadata document -> snapshot ->
 //      manifest-list, reads the Avro manifests with DuckDB's read_avro to get the
 //      data-file (parquet) paths,
 //   4. registers those parquet files as URLs so DuckDB range-reads them itself, and
@@ -33,7 +35,7 @@ import {
   parseLakehouse, itemKind, holdsTables,
   fileExt, readerFor, PARQUET_EXTS, DB_EXTS, ZIP_EXTS, isSqliteHeader, isTextExt,
   sqlStr, quoteIdent, prepareReadOnlySql,
-  pickMetadata, snapshotStats, icebergFields, tableKey, fileKey, sanitizeIdent,
+  snapshotStats, icebergFields, tableKey, fileKey, sanitizeIdent,
   normalizeValue, fmtBytes,
 } from "./paths.js";
 
@@ -53,15 +55,12 @@ const MAX_ROWS = 200_000;
 const QUICK_PEEK_ROWS = 100;
 
 // Fabric generates Iceberg metadata lazily, and Microsoft documents the conversion as
-// taking between 5 seconds and 2 minutes. The old schedule gave up after 4.6s, so the
-// retry usually ran out well before Fabric finished.
+// taking between 5 seconds and 2 minutes. Measured against this tenant a freshly written
+// table resolved on the FIRST attempt — conversion had finished before the write call
+// returned, without the catalog being asked — so this is insurance for a cold or slower
+// case, not the common path. It costs one request per attempt and only fires on a "not
+// there yet" answer.
 const RESOLVE_BACKOFF_MS = [500, 1500, 3000, 6000, 10000, 15000, 20000, 30000];
-
-// A table directory either has metadata/ or it doesn't. OneLake surfaces everything as
-// Iceberg, so "no metadata/" is a STATE — conversion hasn't run — not a second table
-// format we are unable to read.
-export const READY = "ready";
-export const UNCONVERTED = "unconverted";
 
 export function createEngine(auth, { onStatus = () => {} } = {}) {
   let db = null, conn = null, worker = null;
@@ -342,6 +341,14 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
 
   const sleep = ms => new Promise(r => setTimeout(r, ms));
 
+  // A retry that sleeps thirty seconds between attempts cannot be cancelled at the sleep
+  // boundary alone — Stop would sit there looking ignored for half a minute. Slicing it is
+  // the whole mechanism; nothing here interrupts a request already in flight, which is the
+  // same bargain the generation counter makes everywhere else in this file.
+  async function nap(ms, check = () => {}) {
+    for (let left = ms; left > 0; left -= 250) { await sleep(Math.min(250, left)); check(); }
+  }
+
   // ---------------------------------------------------------------------------
   // Authed fetch (+ one 401 retry through a silent token refresh)
   // ---------------------------------------------------------------------------
@@ -379,14 +386,11 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
     if (!r.ok) {
       const said = await oneLakeMessage(r);
       const e = new Error(`HTTP ${r.status} for …${String(url).slice(-72)}` + (said ? ` — ${said}` : ""));
-      e.status = r.status;          // callers retry on this (see resolveIcebergRetrying)
-      e.said = said;                // ...and stop retrying when OneLake called it permanent
+      e.status = r.status;          // callers retry on this (see ircResolve)
       throw e;
     }
     return new Uint8Array(await r.arrayBuffer());
   }
-  const fetchText = async u => new TextDecoder().decode(await fetchAuthed(u));
-  const fetchJson = async u => JSON.parse(await fetchText(u));
 
   // ADLS Gen2 "List Path" over the workspace filesystem. Returns [{name,isDir,bytes,mtime}].
   // recursive=false lists only the immediate children of `directory` (no data-file walk).
@@ -412,7 +416,6 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
         const said = await oneLakeMessage(r);
         const e = new Error(`list HTTP ${r.status} for ${strip(directory)}` + (said ? ` — ${said}` : ""));
         e.status = r.status;
-        e.said = said;
         throw e;
       }
       const j = await r.json().catch(() => ({}));
@@ -896,59 +899,7 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
   }
 
   // ---------------------------------------------------------------------------
-  // Table discovery — browse Tables/ by name.
-  // Handles both schema-enabled (Tables/<schema>/<table>) and flat (Tables/<table>).
-  // ---------------------------------------------------------------------------
-  function classifyChildren(kids) {
-    if (kids.some(k => k.isDir && basename(k.name) === "metadata")) return READY;
-    // A table directory always holds something. An empty listing means this level is a
-    // schema with no tables in it, not a table.
-    return kids.length ? UNCONVERTED : null;
-  }
-
-  async function listTables(lh) {
-    // Three requests instead of one per table, when the catalog is reachable.
-    const viaCatalog = await ircListTables(lh);
-    if (viaCatalog) return viaCatalog;
-    return listTablesOverDfs(lh);
-  }
-
-  async function listTablesOverDfs({ workspace, item }) {
-    const level1 = (await listPaths(workspace, `${item}/Tables`, false)).filter(e => e.isDir);
-    const kidsOf = await mapPool(level1, l1 => listPaths(workspace, l1.name, false));
-
-    // A level-1 directory is either a table (it has metadata/, or files of its own) or a
-    // schema whose children are tables. Only the schema case needs a second level, and
-    // those all go out at once rather than one await at a time.
-    const tables = [];
-    const schemaDirs = [];
-    level1.forEach((l1, i) => {
-      const kids = kidsOf[i];
-      const kind = classifyChildren(kids);
-      const looksLikeSchema = kind !== READY && kids.length > 0 && kids.every(k => k.isDir);
-      if (kind === READY || !looksLikeSchema) {
-        if (kind) tables.push({ schema: null, table: basename(l1.name), root: l1.name, kind });
-      } else {
-        for (const t of kids) schemaDirs.push({ schema: basename(l1.name), entry: t });
-      }
-    });
-
-    const grandKids = await mapPool(schemaDirs, s => listPaths(workspace, s.entry.name, false));
-    schemaDirs.forEach((s, i) => {
-      tables.push({
-        schema: s.schema,
-        table: basename(s.entry.name),
-        root: s.entry.name,
-        kind: classifyChildren(grandKids[i]) || UNCONVERTED,
-      });
-    });
-
-    return tables.sort((a, b) =>
-      (a.schema || "").localeCompare(b.schema || "") || a.table.localeCompare(b.table));
-  }
-
-  // ---------------------------------------------------------------------------
-  // OneLake's Iceberg REST Catalog — the fast path for discovery and metadata.
+  // OneLake's Iceberg REST Catalog — the ONLY way tables are found and opened.
   // ---------------------------------------------------------------------------
   // OneLake exposes a read-only Iceberg REST Catalog (IRC), and it costs nothing extra to
   // use: it authenticates with the SAME https://storage.azure.com token this app already
@@ -963,23 +914,30 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
   //     there is no metadata/ listing, no version-hint.text, and no guessing which
   //     *.metadata.json is current.
   //
-  // It is gated on the same tenant/workspace conversion setting that makes metadata/ exist
-  // at all, so it can't see a table the DFS walk could. But it can be unreachable for
-  // reasons that have nothing to do with the data — CORS, a private-link tenant, an older
-  // region — so every failure falls back to the DFS walk below and is never fatal.
+  // There used to be a DFS directory walk behind this as an automatic fallback. It is gone,
+  // and that is a deliberate narrowing rather than a lost capability. Measured across every
+  // item kind this app will open — lakehouses, a warehouse, eight SQL databases — the
+  // catalog answered for all of them, and its table set matched the walk's everywhere
+  // except one empty leftover directory the catalog correctly does not name: a phantom that
+  // could never be opened but sat in the sidebar wearing a "converting" badge that would
+  // never clear. The walk also never worked for warehouses, which have no metadata/
+  // directory at all. So a catalog failure is now FATAL and LOUD, because a silent
+  // downgrade to one-listing-per-table is how a slow sidebar hides a broken catalog.
   const TABLE_API = "https://onelake.table.fabric.microsoft.com/iceberg";
 
   const ircPrefixes = new Map();  // warehouse -> the `prefix` the config call hands back
-  // One failure is enough for THAT item; don't re-probe it on every click. But an item the
-  // catalog can't serve (a mirrored Databricks catalog 400s, a transient 5xx) says nothing
-  // about the next item, so the switch is per item — a session-wide one silently downgraded
-  // every later lakehouse to the one-listing-per-table DFS walk.
-  const ircOff = new Set();       // warehouse keys the catalog has failed for
 
+  // The catalog's refusal is now the WHOLE diagnosis a user gets, so its own words have to
+  // survive. "Iceberg catalog HTTP 403" covered a missing permission, conversion being
+  // disabled, and a mirrored catalog that cannot be read — and distinguished none of them.
+  // OneLake explains itself in the body, in the same {error:{message}} shape the DFS reads
+  // already parse. The path goes in the message too: with the per-namespace /tables calls
+  // fanned out below, WHICH namespace failed is the first thing worth knowing.
   async function ircGet(path) {
     const r = await authedFetch(TABLE_API + path);
     if (!r.ok) {
-      const e = new Error(`Iceberg catalog HTTP ${r.status}`);
+      const said = await oneLakeMessage(r);
+      const e = new Error(`Iceberg catalog HTTP ${r.status} for ${path}` + (said ? ` — ${said}` : ""));
       e.status = r.status;
       throw e;
     }
@@ -999,101 +957,71 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
 
   const ircSeg = s => String(s).split("/").map(encodeURIComponent).join("/");
 
-  // Returns the same shape as the DFS listTables(), or null if the catalog can't serve it.
-  async function ircListTables(lh) {
-    if (ircOff.has(`${lh.workspace}/${lh.item}`)) return null;
-    try {
-      const prefix = await ircPrefixFor(lh);
-      const ns = await ircGet(`/v1/${prefix}/namespaces`);
-      // A namespace is an array of levels; OneLake only ever returns one level, and uses
-      // a synthetic "dbo" for items that don't have schemas of their own.
-      const names = (ns.namespaces || []).map(n => (Array.isArray(n) ? n.join(".") : String(n)));
-      if (!names.length) return [];
+  // Every table in the item, as {schema, table}. A failure THROWS — app.js paints it, and
+  // re-picking the item simply tries again. There is deliberately no memo of the failure:
+  // the old per-item off-switch existed to stop re-probing before the DFS walk answered,
+  // and with no walk left it could only turn one transient 429 into an item that stayed
+  // dead for the rest of the session (nothing, not even reset(), ever cleared it).
+  async function listTables(lh) {
+    const prefix = await ircPrefixFor(lh);
+    const ns = await ircGet(`/v1/${prefix}/namespaces`);
+    // A namespace is an array of levels; OneLake only ever returns one level, and uses
+    // a synthetic "dbo" for items that don't have schemas of their own.
+    const names = (ns.namespaces || []).map(n => (Array.isArray(n) ? n.join(".") : String(n)));
+    if (!names.length) return [];
 
-      const lists = await mapPool(names, n =>
-        ircGet(`/v1/${prefix}/namespaces/${ircSeg(n)}/tables`));
+    // One rejected /tables rejects the whole listing, on purpose: a sidebar quietly missing
+    // a schema is indistinguishable from a lakehouse that never had one, and every
+    // expensive bug in this app has been of exactly that shape.
+    const lists = await mapPool(names, n =>
+      ircGet(`/v1/${prefix}/namespaces/${ircSeg(n)}/tables`));
 
-      const tables = [];
-      names.forEach((schema, i) => {
-        for (const id of (lists[i].identifiers || [])) {
-          // `root` is only needed if we end up falling back to the DFS walk or reading a
-          // conversion log; the catalog itself needs nothing but the namespace and the
-          // name. It is resolved lazily by dfsRootFor(), because the namespace here may
-          // be the synthetic "dbo" OneLake reports for items that have no schemas — in
-          // which case Tables/dbo/<t> does not exist and Tables/<t> is the real path.
-          tables.push({ schema, table: id.name, root: null, kind: READY, irc: true });
-        }
-      });
-      return tables.sort((a, b) =>
-        (a.schema || "").localeCompare(b.schema || "") || a.table.localeCompare(b.table));
-    } catch (e) {
-      ircOff.add(`${lh.workspace}/${lh.item}`);
-      console.info(`[engine] Iceberg REST catalog unavailable for ${lh.item} (${e.message}); using the DFS walk`);
-      return null;
-    }
+    const tables = [];
+    names.forEach((schema, i) => {
+      for (const id of (lists[i].identifiers || [])) tables.push({ schema, table: id.name });
+    });
+    return tables.sort((a, b) =>
+      (a.schema || "").localeCompare(b.schema || "") || a.table.localeCompare(b.table));
   }
 
   // Get table -> the metadata document, inline. No listing, no version guessing.
-  async function ircResolve(lh, t) {
+  //
+  // Retried, and this is the only reason a retry exists here: Fabric generates a table's
+  // Iceberg metadata lazily, so the very call that triggers generation can lose the race to
+  // it. Retrying a 404 would be absurd for an arbitrary name, but this table came out of
+  // the catalog's OWN listing moments ago — "it does not exist" from a catalog that just
+  // named it means "not yet", and the schedule is sized to Microsoft's documented 5s-2min
+  // conversion window. Everything else the catalog says is a real answer (403 = this
+  // identity may not read it, 401 = the token) and must not be sat on for eighty-six
+  // seconds before the user is told.
+  async function ircResolve(lh, t, label, status, check) {
     const prefix = await ircPrefixFor(lh);
-    const doc = await ircGet(
-      `/v1/${prefix}/namespaces/${ircSeg(t.schema)}/tables/${ircSeg(t.table)}`);
-    if (!doc || !doc.metadata) throw new Error("Iceberg catalog returned no metadata for this table");
-    return {
-      ...readMetadataDoc(doc.metadata, `${t.schema}.${t.table}`),
-      metadataFile: basename(doc["metadata-location"] || ""),
-      metadataUrl: doc["metadata-location"] ? toHttps(lh.workspace, doc["metadata-location"]) : null,
-    };
-  }
-
-  // ---------------------------------------------------------------------------
-  // Iceberg metadata resolution — DFS-by-name fallback (no REST catalog / GUIDs).
-  // ---------------------------------------------------------------------------
-  // Fabric generates a table's Iceberg metadata lazily, on access. The first request
-  // triggers generation and loses the race — you get an HTTP 400 for a metadata.json that
-  // the directory listing just told us exists — and a moment later the same table reads
-  // fine. So retry the WHOLE resolution rather than refetching the same URL: the second
-  // pass re-lists metadata/, which may by then expose a newer version-hint and a different
-  // metadata.json than the one that failed.
-  async function resolveIcebergRetrying(ws, root, label) {
+    const path = `/v1/${prefix}/namespaces/${ircSeg(t.schema)}/tables/${ircSeg(t.table)}`;
     for (let attempt = 0; ; attempt++) {
       try {
-        return await resolveIceberg(ws, root);
+        const doc = await ircGet(path);
+        // No .status on this one, so the predicate below treats it as permanent — which it
+        // is: a 200 carrying no metadata document is a broken answer, not an unfinished
+        // conversion.
+        if (!doc || !doc.metadata) throw new Error(`${label}: the catalog returned no metadata document`);
+        return readMetadataDoc(doc.metadata, label);
       } catch (e) {
-        // 400/404 here means "not materialized yet", not "wrong". A missing metadata.json
-        // in a directory that exists is the same story.
-        const transient = e.status === 400 || e.status === 404 ||
-                          /No \S*metadata\.json|No metadata\//.test(e.message);
-        if (!transient || attempt >= RESOLVE_BACKOFF_MS.length) throw e;
-        const waited = RESOLVE_BACKOFF_MS.slice(0, attempt + 1).reduce((a, b) => a + b, 0);
-        onStatus(`Waiting for Fabric to generate Iceberg metadata for ${label}… ` +
-                 `(${Math.round(waited / 1000)}s so far; conversion can take up to two minutes)`);
-        await sleep(RESOLVE_BACKOFF_MS[attempt]);
+        if (e.cancelled) throw e;
+        const notYet = e.status === 400 || e.status === 404;
+        const busy = e.status === 429 || e.status >= 500;
+        if (!(notYet || busy) || attempt >= RESOLVE_BACKOFF_MS.length) throw e;
+        const waited = Math.round(
+          RESOLVE_BACKOFF_MS.slice(0, attempt + 1).reduce((a, b) => a + b, 0) / 1000);
+        // Two messages, because "waiting for Fabric to convert" while the truth is "the
+        // catalog is rate-limiting us" is the confidently-wrong status line this file
+        // keeps refusing to write.
+        status(notYet
+          ? `Waiting for Fabric to generate Iceberg metadata for ${label}… ` +
+            `(${waited}s so far; conversion can take up to two minutes)`
+          : `The Iceberg catalog answered HTTP ${e.status} for ${label}; retrying… (${waited}s so far)`);
+        await nap(RESOLVE_BACKOFF_MS[attempt], check);
       }
     }
-  }
-
-  async function resolveIceberg(ws, root) {
-    const entries = await listPaths(ws, `${root}/metadata`, false);
-    if (!entries.length) throw new Error(`No metadata/ under ${root}`);
-
-    // Prefer the version-hint pointer; otherwise take the highest version NUMBER. Not the
-    // newest lastModified: that has one-second resolution, so v9 and v10 written in the
-    // same second tie and the older snapshot can win with nothing said about it.
-    let hintText = null;
-    const hint = entries.find(e => basename(e.name).toLowerCase() === "version-hint.text");
-    if (hint) {
-      try { hintText = await fetchText(dfsUrl(ws, hint.name)); }
-      catch (_) { /* fall back to the highest version */ }
-    }
-    const current = pickMetadata(entries, hintText);
-    if (!current) throw new Error(`No *.metadata.json under ${root}/metadata`);
-
-    return {
-      ...readMetadataDoc(await fetchJson(dfsUrl(ws, current.name)), basename(current.name)),
-      metadataFile: basename(current.name),
-      metadataUrl: dfsUrl(ws, current.name),
-    };
   }
 
   // The parts of an Iceberg metadata document this reader needs. Shared, because the same
@@ -1166,38 +1094,6 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
         out.set(n, out.has(n) && out.get(n) !== current ? null : current);
     }
     return out.size ? out : null;
-  }
-
-  // Where this table's directory actually is. A table found through the DFS walk already
-  // knows; one found through the catalog does not, because OneLake reports a synthetic
-  // "dbo" namespace for items that have no schemas of their own — so Tables/dbo/<t> may
-  // not exist while Tables/<t> does. Two cheap listings settle it, and only on the paths
-  // that need a directory at all (the fallback resolve, and the conversion log).
-  async function dfsRootFor(ws, item, t) {
-    if (t.root) return t.root;
-    const candidates = [`${item}/Tables/${t.schema}/${t.table}`, `${item}/Tables/${t.table}`];
-    for (const c of candidates) {
-      try { if ((await listPaths(ws, c, false)).length) { t.root = c; return c; } }
-      catch (_) { /* try the other shape */ }
-    }
-    t.root = candidates[0];
-    return t.root;
-  }
-
-  // When conversion hasn't produced metadata/, Fabric leaves a log saying why. Reading it
-  // turns "is this an Iceberg table?" into the actual reason.
-  async function readConversionLog(ws, root) {
-    for (const dir of [`${root}/metadata`, `${root}/_delta_log`]) {
-      let entries;
-      try { entries = await listPaths(ws, dir, false); } catch (_) { continue; }
-      const log = entries.find(e => !e.isDir && /conversion.*log.*\.txt$/i.test(basename(e.name)));
-      if (!log) continue;
-      try {
-        const text = (await fetchText(dfsUrl(ws, log.name))).trim();
-        if (text) return text.length > 400 ? text.slice(0, 400) + "…" : text;
-      } catch (_) { /* the log is best-effort; never let it mask the real error */ }
-    }
-    return null;
   }
 
   // ---------------------------------------------------------------------------
@@ -1524,37 +1420,31 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
   // ---------------------------------------------------------------------------
   // Tier 1: the table's Iceberg metadata, and nothing else.
   // ---------------------------------------------------------------------------
-  // One request through the catalog, or two off the metadata directory. No manifests,
-  // no parquet, no DuckDB. Everything the Stats tab shows comes from here, which is why
-  // opening a table now costs kilobytes instead of a scan: the rest is read only when
-  // the user asks to see rows.
-  async function resolveTable(lh, t, label) {
+  // One request through the catalog. No manifests, no parquet, no DuckDB. Everything the
+  // Stats tab shows comes from here, which is why opening a table now costs kilobytes
+  // instead of a scan: the rest is read only when the user asks to see rows.
+  async function resolveTable(lh, t, label, status, check) {
     const key = tableKey(lh, t);
     if (resolvedC.has(key)) return resolvedC.get(key);
-    const ws = lh.workspace;
     let resolved;
     try {
-      // The catalog hands the metadata over inline, so when it's reachable this is one
-      // request. If it fails for this table, the DFS walk is still there.
-      if (t.irc) {
-        try {
-          resolved = await ircResolve(lh, t);
-        } catch (e) {
-          console.info(`[engine] catalog could not resolve ${label} (${e.message}); reading metadata/ directly`);
-          resolved = await resolveIcebergRetrying(ws, await dfsRootFor(ws, lh.item, t), label);
-        }
-      } else {
-        resolved = await resolveIcebergRetrying(ws, t.root, label);
-      }
+      resolved = await ircResolve(lh, t, label, status, check);
     } catch (e) {
-      // "No metadata yet" is a state with three actionable causes, and Fabric records
-      // which one applies in a conversion log next to the table.
-      const log = await readConversionLog(ws, await dfsRootFor(ws, lh.item, t));
-      if (log) throw new Error(`${label} has no Iceberg metadata yet. Fabric's conversion log says: ${log}`);
-      throw new Error(
-        `${label} has no Iceberg metadata. OneLake writes it on demand and conversion can take ` +
-        `up to two minutes, but if it never appears then Delta-to-Iceberg conversion is probably ` +
-        `not enabled for this tenant or workspace. (${e.message})`);
+      // A load the user stopped is not a failure, and app.js tells the two apart by
+      // e.cancelled alone — re-dressing a Stop as a metadata error would paint it red.
+      if (e.cancelled) throw e;
+      // The catalog is the only source now, so its own words ARE the diagnosis; the old
+      // wrapper replaced them with a guess. Only "not there yet" earns the conversion
+      // story appended, because that is the one cause a user can act on — and the catalog
+      // cannot say it itself: its 404 body is a flat "The given table does not exist",
+      // identical for a table mid-conversion and one that never existed.
+      const notYet = e.status === 400 || e.status === 404;
+      throw new Error(`Could not read ${label} from OneLake's Iceberg catalog: ${e.message}` +
+        (notYet
+          ? ". OneLake writes Iceberg metadata on demand and conversion can take up to two " +
+            "minutes; if it never appears, Delta-to-Iceberg conversion is probably not " +
+            "enabled for this tenant or workspace."
+          : ""));
     }
     resolvedC.set(key, resolved);
     return resolved;
@@ -1570,9 +1460,14 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
     const key = tableKey(lh, t);
     if (loaded.has(key)) return loaded.get(key);   // a fully opened table knows strictly more
     const label = labelFor(t);
-    const status = statusFor(loadGen);
+    // Captured, not read live: the resolve can now sit in a retry loop, and a superseded
+    // selection must not stamp "Waiting for Fabric… <old table>" over the new one.
+    const gen = loadGen;
+    const check = () => { if (gen !== loadGen) throw cancelledError(); };
+    const status = statusFor(gen);
     status(`Reading ${label} metadata…`);
-    const resolved = await resolveTable(lh, t, label);
+    const resolved = await resolveTable(lh, t, label, status, check);
+    check();
     const stats = resolved.stats || {};
     const info = {
       label, ident: null, stage: "stats",
@@ -1601,7 +1496,7 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
     const label = labelFor(t);
     const ws = lh.workspace;
 
-    const resolved = await resolveTable(lh, t, label);
+    const resolved = await resolveTable(lh, t, label, status, check);
     check();
     const { files, posDeletes } = await fileListFor(key, ws, resolved, check, label, status);
     if (!files.length) throw new Error(`${label}: current snapshot has no data files`);
@@ -1674,7 +1569,7 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
 
     status(`Resolving ${label}…`);
     // Free on the normal path: the Stats tier already resolved and cached this.
-    const resolved = await resolveTable(lh, t, label);
+    const resolved = await resolveTable(lh, t, label, status, check);
 
     const ident = t.schema
       ? `${quoteIdent(t.schema)}.${quoteIdent(t.table)}`

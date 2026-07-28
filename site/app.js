@@ -5,7 +5,7 @@ import {
   createAuth, describeAuthError, isConsentError,
   resolveConfig, saveOverride, clearOverride, adminConsentUrl, appRedirectUri,
 } from './auth.js';
-import { createEngine, READY } from './data.js';
+import { createEngine } from './data.js';
 import { isDocResult, textLinesDoc, fileExt, isTextExt, escapeHtml, basename,
          hasFilesArea, kindLabel, IMAGE_EXTS, sqlNeedsTable, quoteIdent } from './paths.js';
 // Static import is safe: docview.js itself is tiny — the CDN fetch of the markdown
@@ -691,15 +691,11 @@ async function connect({ force = false } = {}) {
     const [tables] = await Promise.all([engine.listTables(lakehouse), resetP]);
     if (my !== catSeq) return;
     const took = fmtElapsed(performance.now() - t0);
-    // Storage format is the engine's business, not the user's. The only distinction worth
-    // surfacing is whether a table can be opened yet.
-    const ready = tables.filter(t => t.kind === READY).length;
     lastTables = tables;
     lastTableCount = String(tables.length);
     if (pane === 'tables') { renderTableList(tables); $('tableCount').textContent = lastTableCount; }
     else { await renderFileTree(); if (my !== catSeq) return; }
-    setStatus(`${tables.length} table(s) in ${lakehouse.item}, listed in ${took}.` +
-      (tables.length > ready ? ` ${tables.length - ready} awaiting Iceberg conversion.` : ''), 'ok');
+    setStatus(`${tables.length} table(s) in ${lakehouse.item}, listed in ${took}.`, 'ok');
   } catch (e) {
     if (my !== catSeq) return;
     $('tableList').innerHTML = '<div class="hint">Could not list tables.</div>';
@@ -926,17 +922,9 @@ function renderTableList(tables) {
     }
     for (const t of items) {
       const row = document.createElement('div');
-      const pending = t.kind !== READY;
-      row.className = 'tableItem' + (pending ? ' pending' : '');
-      // OneLake surfaces every table as Iceberg, so a table with no metadata/ isn't a
-      // format we can't read — it's one whose conversion hasn't run. That can still be
-      // in flight, so let it be clicked: loadTable waits and then says what went wrong.
-      row.title = pending
-        ? `${t.table} — Iceberg metadata not written yet. Click to wait for it; ` +
-          `conversion takes up to two minutes, or may not be enabled for this workspace.`
-        : t.table;
-      row.innerHTML = `<span class="name">${escapeHtml(t.table)}</span>` +
-        (pending ? '<span class="tag">converting</span>' : '');
+      row.className = 'tableItem';
+      row.title = t.table;
+      row.innerHTML = `<span class="name">${escapeHtml(t.table)}</span>`;
       row.onclick = () => selectTable(row, t);
       g.appendChild(row);
     }
@@ -976,9 +964,11 @@ async function selectTable(row, t) {
   clearResults(`(no rows read yet — open the Data tab)`);
   setActiveStats(null);   // the OLD table's stats must not show under the new name
   $('sqlEditor').value = `-- reading ${$('activeTable').textContent} metadata…`;
-  // Not stoppable: this tier is one or two small metadata requests, and a Stop button
-  // for something that is already over by the time it renders is theatre.
-  setBusy(true);
+  // Stoppable. This used to be one small request that was over before a Stop button could
+  // render — but the catalog resolve now retries while Fabric writes a table's Iceberg
+  // metadata, and an unstoppable minute and a half is exactly what the generation counter
+  // exists to prevent.
+  setBusy(true, { stoppable: true });
   try {
     // Selecting a table reads its METADATA and nothing else — no manifests, no parquet,
     // no bytes of data. That is the whole point: browsing a lakehouse should not cost
@@ -995,8 +985,6 @@ async function selectTable(row, t) {
     // The buttons are left to setBusy(false) in the finally — one owner for that state.
     $('sqlEditor').value = previewSql(identOf(t), false);
     setStatus(engine.describeLoad(info));
-    row.classList.remove('pending');
-    row.querySelector('.tag')?.remove();
   } catch (e) {
     if (my !== selSeq) return;
     reportTableError(e, row);
@@ -1045,8 +1033,11 @@ async function peekIntoView() {
     tableStage = 'peek';
     docAllowed = false;             // a peek is a table, whatever shape it comes back
     renderResults(out);             // this lands the pane in the Data view by itself
-    setStatus(`${out.rows.length} row(s) from 1 of ${out.fileCount} file(s) — the other ` +
-              `${out.fileCount - 1} were not read. Run a query to read the whole table.`);
+    // A one-file table would otherwise read "1 of 1 file(s) — the other 0 were not read".
+    const rest = out.fileCount - 1;
+    setStatus(`${out.rows.length} row(s) from ${rest ? `1 of ${out.fileCount} file(s) — the other ` +
+              `${rest} ${rest === 1 ? "was" : "were"} not read` : "the table's only file"}. ` +
+              `Run a query to read the whole table.`);
   } catch (e) {
     if (my !== selSeq) return;
     reportTableError(e);

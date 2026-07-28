@@ -105,11 +105,6 @@
     .tableItem .name, .fileItem .name { overflow: hidden; text-overflow: ellipsis; }
     .tableItem:hover { background: #1c2330; }
     .tableItem.active { background: #1c2330; border-left-color: var(--accent2); }
-    /* Awaiting Iceberg conversion — dimmed, but still clickable: the wait is often the
-       whole story, and loadTable is what finds out which. */
-    .tableItem.pending { color: var(--muted); }
-    .tableItem .tag { margin-left: auto; font-size: 0.65rem; color: var(--muted); border: 1px solid var(--border); border-radius: 4px; padding: 0 0.3rem; }
-    .tableItem.pending .tag { border-color: var(--warn); color: var(--warn); }
 
     /* Tables / Files switch */
     .tabs { display: inline-flex; }

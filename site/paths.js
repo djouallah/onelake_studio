@@ -362,46 +362,6 @@ export function prepareReadOnlySql(raw) {
   return sql;
 }
 
-// -----------------------------------------------------------------------------
-// Iceberg metadata version selection
-// -----------------------------------------------------------------------------
-// Fabric names metadata files vN.metadata.json; other writers use N.metadata.json or
-// 00001-<uuid>.metadata.json. All three carry the version as a leading integer, which is
-// a total order — unlike lastModified, which has one-second resolution, so v9 and v10
-// written in the same second tie and the older one can win.
-export function metadataVersion(name) {
-  const m = /^v?(\d+)(?=[-.])/i.exec(basename(name));
-  return m ? Number(m[1]) : null;
-}
-
-function byVersionThenMtime(a, b) {
-  const va = metadataVersion(a.name), vb = metadataVersion(b.name);
-  if (va != null && vb != null && va !== vb) return va - vb;
-  if (va != null && vb == null) return 1;         // a parsed version beats an unparsed one
-  if (va == null && vb != null) return -1;
-  return (a.mtime || 0) - (b.mtime || 0);
-}
-
-// Choose the current metadata.json from a listing of the table's metadata/ directory.
-// `hintText` is the contents of version-hint.text when it exists. Returns null if the
-// directory holds no metadata.json at all.
-export function pickMetadata(entries, hintText) {
-  const jsons = (entries || []).filter(e => /\.metadata\.json$/i.test(basename(e.name)));
-  if (!jsons.length) return null;
-
-  const v = hintText == null ? "" : String(hintText).trim();
-  if (v) {
-    const want = Number(v);
-    const hit = jsons.find(j => {
-      const b = basename(j.name);
-      if (b === `v${v}.metadata.json` || b === `${v}.metadata.json`) return true;
-      return Number.isFinite(want) && metadataVersion(b) === want;
-    });
-    if (hit) return hit;
-  }
-  return jsons.slice().sort(byVersionThenMtime).pop();
-}
-
 // Does this SQL actually reference the named table? Binding a table means registering
 // every one of its data files and reading their footers — real money on a metered lake —
 // so it must not happen because someone ran `SELECT 42` while a table happened to be

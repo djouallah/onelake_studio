@@ -35,9 +35,15 @@ const server = http.createServer(async (req, res) => {
 });
 await new Promise(r => server.listen(PORT, "127.0.0.1", r));
 
+// Every OneLake request the app makes passes through here, which makes this the live-
+// service proof that tables are the catalog's alone: no DFS listing under Tables/, and
+// nothing ever touching _delta_log.
+const asked = [];
+
 // Real request, real response — only the token and CORS are added in the middle.
 async function proxy(route) {
   const req = route.request();
+  if (req.method() !== "OPTIONS") asked.push(decodeURIComponent(req.url()));
   if (req.method() === "OPTIONS")
     return route.fulfill({ status: 204, headers: {
       "access-control-allow-origin": "*", "access-control-allow-headers": "*",
@@ -84,12 +90,13 @@ async function expectedFor(item, schema, table) {
 }
 
 let code = 1;
+let ctx = null;
 const fails = [];
 const check = (ok, name) => { console.log(`${ok ? "ok " : "FAIL"} — ${name}`); if (!ok) fails.push(name); };
 const browser = await chromium.launch({
   executablePath: "C:/Program Files/Google/Chrome/Application/chrome.exe", headless: true });
 try {
-  const ctx = await browser.newContext({ serviceWorkers: "block" });
+  ctx = await browser.newContext({ serviceWorkers: "block" });
   await ctx.addInitScript(() => {
     // selectTable refuses without a controlling SW; there is none when the SW is blocked.
     const fake = { state: "activated", postMessage: () => {} };
@@ -153,7 +160,9 @@ try {
   }, { timeout: 120000 });
   check(await page.locator("#statsView").isHidden(), "Data tab replaces the card with rows");
   const status2 = await page.locator("#status").innerText();
-  check(new RegExp(`of ${want.files} file\\(s\\)`).test(status2) && /not read/.test(status2),
+  check(want.files > 1
+    ? new RegExp(`of ${want.files} file\\(s\\)`).test(status2) && /not read/.test(status2)
+    : /only file/.test(status2),
     `status names what was NOT read (${status2})`);
 
   // Back and forth must not re-read anything: the peek is kept.
@@ -203,10 +212,28 @@ try {
   check(await page.locator("#resultsTable").isHidden(),
     "…and reads no rows just because the previous table was open");
 
+  // --- Tables came from the catalog, and only from the catalog. ---
+  const listedTables = asked.filter(u => /[?&]directory=[^&]*Tables/.test(u));
+  check(!listedTables.length,
+    `the app never listed Tables/ over DFS (saw: ${listedTables.slice(0, 2).join(" ") || "none"})`);
+  const deltaLog = asked.filter(u => /_delta_log/.test(u));
+  check(!deltaLog.length,
+    `…and never touched _delta_log (saw: ${deltaLog.slice(0, 2).join(" ") || "none"})`);
+  check(asked.some(u => u.includes("onelake.table.fabric.microsoft.com")),
+    "…while the Iceberg catalog did the work");
+
   if (!fails.length) { console.log("RESULT: OK — stats tab verified against the real lakehouse"); code = 0; }
   else console.log(`RESULT: FAILED — ${fails.length}: ${fails.join("; ")}`);
 } catch (e) {
   console.log("RESULT: FAILED —", e.message);
+  // A bare "waitForFunction timed out" says nothing about which screen it gave up on.
+  try {
+    const page = ctx.pages()[0];
+    for (const id of ["status", "tableList", "activeTable"])
+      console.log(`  #${id}: ${(await page.locator("#" + id).innerText()).slice(0, 300)}`);
+    console.log("  #itemSelect options:",
+      await page.locator("#itemSelect").evaluate(el => [...el.options].map(o => o.value).join(", ")));
+  } catch (_) { /* the page may be gone; the message above is what there is */ }
 } finally {
   await browser.close().catch(() => {});
   server.close();

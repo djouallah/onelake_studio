@@ -58,9 +58,8 @@ client secret.
 sign in       → OneLake storage token from your Entra identity
 pick workspace→ DFS "list filesystems" at the account root = your workspaces
 pick item     → DFS list of the workspace root = its lakehouses and warehouses
-list tables   → OneLake's Iceberg REST catalog (same token, 3 requests);
-                falls back to walking Tables/ over DFS if it's unreachable
-select table  → metadata document from the catalog (or metadata.json over DFS)
+list tables   → OneLake's Iceberg REST catalog (same token, 3 requests for a whole item)
+select table  → metadata document from the catalog, inline → statistics only, no data read
               → snapshot → manifest list (Avro) → parquet data-file paths
               → register each as a URL; DuckDB range-reads it (sw.js adds the token)
 preview/query → read-only SQL in your browser → results + CSV export
@@ -80,15 +79,23 @@ files, so a cached one can never be stale. Listings, metadata pointers and anyth
 always fetched fresh. Signing out deletes the cache along with the token, so neither the credential nor
 the data it fetched outlives the session on a shared machine.
 
-**Iceberg is the read path for everything.** OneLake publishes lakehouse tables in both formats,
-generating Iceberg metadata on demand — the first request triggers it and loses the race, so resolution
-retries with a backoff sized to the documented 5s–2min conversion window. A table whose metadata hasn't
-been generated yet shows as *converting* but stays clickable: opening it waits, and if conversion failed
-the app reads Fabric's conversion log and shows the actual reason (most often the tenant/workspace
-Delta-to-Iceberg setting being off).
+**Iceberg is the read path for everything, and the catalog is the only way in.** OneLake publishes
+lakehouse and warehouse tables through a read-only Iceberg REST catalog that takes the same storage
+token: three requests list a whole item, and opening a table gets its metadata document inline. Nothing
+walks `Tables/` over DFS. That walk cost one directory listing per table, never worked for warehouses
+(they have no `metadata/` directory at all), and the only thing it ever added — measured across every
+item kind this app opens — was an empty leftover directory shown as a table that could not be opened.
+Fabric generates that metadata lazily, so a first request can in principle lose the race to its own
+conversion; resolution retries with a backoff sized to the documented 5s–2min window, says so on the
+status line, and Stop works throughout. If the catalog refuses, the app shows what it said rather than
+guessing.
 
 ## Limitations
 
+- **A lakehouse with no schemas of its own lists its tables under `dbo`.** That's the synthetic
+  namespace OneLake's catalog reports for those items, so generated SQL reads `FROM "dbo"."sales"`.
+- **An item its catalog can't serve shows an error rather than a table list.** There is no DFS
+  fallback; re-picking the item tries again.
 - **Merge-on-read equality deletes are not applied.** They're detected and the status line warns; Fabric's
   own conversions are copy-on-write, so this doesn't affect them. Position deletes *are* applied (and
   verified — deletes that match no data file raise a warning instead of silently returning dead rows).

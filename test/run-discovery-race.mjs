@@ -2,8 +2,11 @@
 // routed config.js, SW blocked so the route sees every request) against a faked OneLake.
 //   1. Last click wins: item A's catalog answers slowly, B's instantly; click A then B —
 //      the sidebar must show B's tables. Pre-catSeq, A's listing painted over B's.
-//   2. Per-item ircOff: item C's catalog 400s (DFS walk fallback); item D picked next must
-//      still be tried against the catalog. Pre-fix, one failure turned it off for the session.
+//   2. A catalog failure is loud and NOT remembered: item C's catalog 400s, so the sidebar
+//      must say so in the catalog's own words rather than showing an empty list; item D
+//      picked next is unaffected; and re-picking C tries again rather than staying dead.
+//      (Until the DFS walk was deleted, C quietly fell back to listing Tables/ instead.)
+//   3. Tables are the catalog's alone: no DFS listing under Tables/ may happen at all.
 // Not part of CI — a hand tool, like run-boot-smoke. Run: node test/run-discovery-race.mjs
 import http from "node:http";
 import { readFile } from "node:fs/promises";
@@ -37,18 +40,18 @@ const json = (route, body, status = 200) => route.fulfill({
   body: JSON.stringify(body),
 });
 
-// --- Fake DFS: workspace list, item list, and a real Tables/ walk for C only. ---
+// --- Fake DFS: the workspace list and the item list, and nothing else. There are
+// deliberately no Tables/ fixtures: a walk is exactly what must never happen now. ---
 const dfs = new Map([
   ["", ITEMS.map(n => ({ name: n, isDirectory: "true" }))],
-  ["C.Lakehouse/Tables", [{ name: "C.Lakehouse/Tables/c_table", isDirectory: "true" }]],
-  ["C.Lakehouse/Tables/c_table",
-    [{ name: "C.Lakehouse/Tables/c_table/metadata", isDirectory: "true" }]],
 ]);
+const dfsDirs = [];   // every directory the app asked DFS to list — check 3 reads this
 async function dfsHandler(route) {
   const u = new URL(route.request().url());
   if (u.searchParams.get("resource") === "account")
     return json(route, { fileSystems: [{ name: WS }] });
   const dir = u.searchParams.get("directory") ?? "";
+  dfsDirs.push(dir);
   return json(route, { paths: dfs.get(dir) || [] });
 }
 
@@ -66,7 +69,10 @@ async function ircHandler(route) {
     (path.match(/\/v1\/ws1\/([^/]+)/) || [])[1] && `ws1/${(path.match(/\/v1\/ws1\/([^/]+)/))[1]}`;
   if (!warehouse) return json(route, {}, 400);
   const item = warehouse.split("/")[1];
-  if (item === "C.Lakehouse") return json(route, { error: "no catalog for you" }, 400);
+  // The real service's error shape, verified against OneLake: {error:{message}}. A fake
+  // that answers a different shape tests the app against a service that doesn't exist.
+  if (item === "C.Lakehouse")
+    return json(route, { error: { message: "no catalog for you" } }, 400);
   if (item === "A.Lakehouse" && path.endsWith("/config")) await sleep(1500);
   if (path.endsWith("/config")) return json(route, {});
   if (path.endsWith("/namespaces")) return json(route, { namespaces: [["dbo"]] });
@@ -120,11 +126,18 @@ try {
   check(status1.includes("B.Lakehouse"),
     `last click wins the status bar (saw: ${status1})`);
 
-  // --- 2. ircOff is per item ---
+  // --- 2. A catalog failure is visible, isolated, and not remembered ---
+  const cBefore = ircLog.filter(p => p.includes("C.Lakehouse")).length;
   await page.selectOption("#itemSelect", "C.Lakehouse");
-  await page.waitForFunction(() => document.getElementById("tableList").innerText.includes("c_table"),
+  await page.waitForFunction(
+    () => document.getElementById("tableList").innerText.includes("Could not list tables"),
     { timeout: 15000 });
-  check(true, "catalog-less item C still lists via the DFS walk");
+  const statusC = await page.locator("#status").innerText();
+  check(/no catalog for you/.test(statusC),
+    `C's failure surfaces the catalog's own words (saw: ${statusC})`);
+  check(await page.locator("#status").evaluate(el => el.className.includes("error")),
+    "…as an error, not a quiet empty list");
+
   const before = ircLog.length;
   await page.selectOption("#itemSelect", "D.Lakehouse");
   await page.waitForFunction(() => document.getElementById("tableList").innerText.includes("d_table"),
@@ -133,7 +146,20 @@ try {
   check(dCalls.length > 0,
     `item D still uses the catalog after C's failure (${dCalls.length} catalog call(s))`);
 
-  if (!fails.length) { console.log("RESULT: OK — discovery race + per-item ircOff hold"); code = 0; }
+  // Re-picking the failed item must try again — there is no session-wide off switch now
+  // that there is no walk to fall back to.
+  await page.selectOption("#itemSelect", "C.Lakehouse");
+  await page.waitForFunction(
+    () => document.getElementById("tableList").innerText.includes("Could not list tables"),
+    { timeout: 15000 });
+  check(ircLog.filter(p => p.includes("C.Lakehouse")).length > cBefore + 1,
+    "re-picking a failed item retries the catalog rather than staying dead");
+
+  // --- 3. Nothing walked Tables/ over DFS ---
+  check(!dfsDirs.some(d => /(^|\/)Tables(\/|$)/.test(d)),
+    `no DFS listing under Tables/ (saw: ${dfsDirs.join(", ") || "none"})`);
+
+  if (!fails.length) { console.log("RESULT: OK — discovery race, loud recoverable catalog failure, no DFS walk"); code = 0; }
   else console.log(`RESULT: FAILED — ${fails.length} check(s): ${fails.join("; ")}`);
 } catch (e) {
   console.log("RESULT: FAILED —", e.message);

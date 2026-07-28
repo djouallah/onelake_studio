@@ -2,8 +2,7 @@
 //
 // These cover the cases that used to return wrong data silently: cache keys that
 // collided across folders and lakehouses, comment stripping that ate string literals,
-// URI escaping applied to an already-escaped path, and metadata version selection that
-// fell back to a one-second-resolution timestamp.
+// and URI escaping applied to an already-escaped path.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -14,7 +13,7 @@ import {
   fileExt, readerFor, PARQUET_EXTS,
   TEXT_EXTS, isTextExt, DB_EXTS, ZIP_EXTS, IMAGE_EXTS, isSqliteHeader,
   sqlStr, quoteIdent, stripComments, prepareReadOnlySql,
-  metadataVersion, pickMetadata, snapshotStats, icebergFields, icebergTypeName, sqlNeedsTable,
+  snapshotStats, icebergFields, icebergTypeName, sqlNeedsTable,
   tableKey, fileKey, sanitizeIdent,
   normalizeValue, fmtBytes, isDocResult, textLinesDoc, docKind, escapeHtml,
 } from "../site/paths.js";
@@ -321,61 +320,6 @@ test("prepareReadOnlySql handles dollar-quoted strings", () => {
 
 test("prepareReadOnlySql handles a doubled quote inside a literal", () => {
   assert.equal(prepareReadOnlySql("SELECT 'it''s; fine'"), "SELECT 'it''s; fine'");
-});
-
-// -----------------------------------------------------------------------------
-// Metadata version selection (C4)
-// -----------------------------------------------------------------------------
-test("metadataVersion parses the writer naming conventions", () => {
-  assert.equal(metadataVersion("v9.metadata.json"), 9);
-  assert.equal(metadataVersion("v10.metadata.json"), 10);
-  assert.equal(metadataVersion("321.metadata.json"), 321);
-  assert.equal(metadataVersion("00001-8bf3227-b5d2.metadata.json"), 1);
-  assert.equal(metadataVersion("ws/t/metadata/v7.metadata.json"), 7);
-  assert.equal(metadataVersion("weird.metadata.json"), null);
-});
-
-test("pickMetadata prefers the highest version, not the newest mtime", () => {
-  // Both written in the same second: lastModified ties, and lexicographic order put v9
-  // last, so the older snapshot won.
-  const entries = [
-    { name: "t/metadata/v9.metadata.json", mtime: 1000 },
-    { name: "t/metadata/v10.metadata.json", mtime: 1000 },
-  ];
-  assert.equal(pickMetadata(entries).name, "t/metadata/v10.metadata.json");
-  // Order of the listing must not matter.
-  assert.equal(pickMetadata(entries.slice().reverse()).name, "t/metadata/v10.metadata.json");
-});
-
-test("pickMetadata honours version-hint.text", () => {
-  const entries = [
-    { name: "t/metadata/v1.metadata.json", mtime: 1 },
-    { name: "t/metadata/v2.metadata.json", mtime: 2 },
-    { name: "t/metadata/v3.metadata.json", mtime: 3 },
-  ];
-  assert.equal(pickMetadata(entries, "2").name, "t/metadata/v2.metadata.json");
-  assert.equal(pickMetadata(entries, " 2\n").name, "t/metadata/v2.metadata.json");
-  // A hint pointing at a file that is not there falls back to the newest version.
-  assert.equal(pickMetadata(entries, "99").name, "t/metadata/v3.metadata.json");
-});
-
-test("pickMetadata ignores non-metadata entries and reports an empty directory", () => {
-  assert.equal(pickMetadata([{ name: "t/metadata/version-hint.text", mtime: 5 }]), null);
-  assert.equal(pickMetadata([]), null);
-  assert.equal(pickMetadata(undefined), null);
-  const mixed = [
-    { name: "t/metadata/snap-123.avro", mtime: 9 },
-    { name: "t/metadata/v2.metadata.json", mtime: 1 },
-  ];
-  assert.equal(pickMetadata(mixed).name, "t/metadata/v2.metadata.json");
-});
-
-test("pickMetadata falls back to mtime when no name carries a version", () => {
-  const entries = [
-    { name: "t/metadata/aaa.metadata.json", mtime: 100 },
-    { name: "t/metadata/bbb.metadata.json", mtime: 200 },
-  ];
-  assert.equal(pickMetadata(entries).name, "t/metadata/bbb.metadata.json");
 });
 
 // -----------------------------------------------------------------------------
