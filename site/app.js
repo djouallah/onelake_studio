@@ -367,6 +367,8 @@ function wireUi() {
     runQuery({ doc: activeDocEligible, ext: activeDocExt });
   };
   $('csvBtn').onclick = downloadActive;
+  // Bubbles up from a double-clicked card in the .bim diagram (bimview.js).
+  $('docView').addEventListener('bim-open-table', e => openModelTable(e.detail));
   $('docPretty').onclick = () => {
     if (docMode === 'pretty' || !lastResult) return;
     docMode = 'pretty';
@@ -916,6 +918,8 @@ function renderTableList(tables) {
         : t.table;
       row.innerHTML = `<span class="name">${escapeHtml(t.table)}</span>` +
         (pending ? '<span class="tag">converting</span>' : '');
+      row.dataset.table = t.table;
+      if (t.schema) row.dataset.schema = t.schema;
       row.onclick = () => selectTable(row, t);
       g.appendChild(row);
     }
@@ -926,6 +930,28 @@ function renderTableList(tables) {
 // ---------------------------------------------------------------------------
 // Select a table -> load -> schema bar + preview
 // ---------------------------------------------------------------------------
+// A semantic model's tables are OneLake tables (Direct Lake reads the item's own
+// Tables/), so double-clicking a card in the .bim diagram opens the real thing. The
+// card hands over the model name plus the partition's entityName/schemaName — the
+// entity is what Tables/ knows when the model renamed its table.
+function openModelTable({ name, entity, schema }) {
+  const want = (entity || name).toLowerCase();
+  const cands = (lastTables || []).filter(t => t.table.toLowerCase() === want);
+  const t = cands.find(c => (c.schema || '').toLowerCase() === (schema || '').toLowerCase())
+    || cands[0];
+  if (!t) {
+    setStatus(`No table named ${entity || name} under this item's Tables/ — ` +
+      `the model may read from a different item.`, 'warn');
+    return;
+  }
+  switchPane('tables');   // renders lastTables synchronously, so the row exists below
+  const row = [...document.querySelectorAll('#tableList .tableItem')]
+    .find(r => r.dataset.table === t.table && (r.dataset.schema || '') === (t.schema || ''));
+  if (!row) return;
+  row.scrollIntoView({ block: 'nearest' });
+  selectTable(row, t);
+}
+
 async function selectTable(row, t) {
   // Without the service worker controlling the page, DuckDB's OneLake reads go out
   // unsigned and every one 401s — the load cannot succeed, so say why up front instead

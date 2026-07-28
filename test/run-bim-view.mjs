@@ -49,7 +49,8 @@ const FIXTURE = JSON.stringify({
           { name: "Total Sales", expression: ["", "SUM ( Sales[Amount] )"] },
           { name: "Avg Price", expression: "DIVIDE ( [Total Sales], SUM ( Sales[Qty] ) )" },
         ],
-        partitions: [{ name: "p1", mode: "directLake" }] },
+        partitions: [{ name: "p1", mode: "directLake",
+          source: { type: "entity", entityName: "sales_fact", schemaName: "dbo" } }] },
       { name: "Customer", columns: [
           { name: "CustomerKey", dataType: "int64" }, { name: "Name", dataType: "string" },
           { name: "Country", dataType: "string" }] },
@@ -147,6 +148,12 @@ try {
     out.dimmedCards = [...dv.querySelectorAll(".bimCard.dimmed")].map(c => c.dataset.table);
     dv.querySelector(".bimWrap").dispatchEvent(new MouseEvent("mouseleave"));
     out.hlAfter = dv.querySelectorAll("g.bimRel.hl").length;
+    // Double-click: the card carries the partition's entity name, and the event
+    // reaches app.js — no lakehouse here, so the "not in this item" status IS the
+    // proof the whole chain (card → CustomEvent → openModelTable) is wired.
+    out.entity = sales.dataset.entity + "|" + sales.dataset.schema;
+    sales.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+    out.dblStatus = document.getElementById("status").textContent;
     return out;
   }, FIXTURE);
 
@@ -174,6 +181,9 @@ try {
   check("hover highlights and clears",
     r.hl === 1 && r.hlAfter === 0 && r.dimmedCards.length === 3 && !r.dimmedCards.includes("Sales"),
     `hl=${r.hl} after=${r.hlAfter} dimmed=${r.dimmedCards.join(",")}`);
+  check("card carries the Direct Lake entity name", r.entity === "sales_fact|dbo", r.entity);
+  check("double-click reaches the app's table lookup",
+    /No table named sales_fact/.test(r.dblStatus), r.dblStatus);
   check("no page errors", pageErrors.length === 0, pageErrors.join(" | "));
 
   const shot = process.env.BIM_SHOT;

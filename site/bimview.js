@@ -140,8 +140,13 @@ function cardHtml(t) {
   const badge = mode ? `<span class="bimBadge">${escapeHtml(mode)}</span>` : '';
   const hid = t.isHidden ? ' hiddenT' : '';
   const hidTag = t.isHidden ? '<span class="dt">(hidden)</span>' : '';
-  return `<div class="bimCard${hid}" data-table="${escapeHtml(t.name)}">` +
-    `<div class="bimHead"><span class="nm" title="${escapeHtml(t.name)}">${escapeHtml(t.name)}</span>${hidTag}${badge}</div>` +
+  // The OneLake table behind the card: a model table can be renamed, so the
+  // partition's entityName (and schemaName) is the name Tables/ actually knows.
+  const src = t.partitions?.[0]?.source || {};
+  const ent = src.entityName ? ` data-entity="${escapeHtml(src.entityName)}"` : '';
+  const sch = src.schemaName ? ` data-schema="${escapeHtml(src.schemaName)}"` : '';
+  return `<div class="bimCard${hid}" data-table="${escapeHtml(t.name)}"${ent}${sch}>` +
+    `<div class="bimHead"><span class="nm" title="${escapeHtml(t.name)} — double-click to open the table">${escapeHtml(t.name)}</span>${hidTag}${badge}</div>` +
     shown + more + `</div>`;
 }
 
@@ -388,6 +393,18 @@ function mount(docViewEl) {
     const card = b.closest('.bimCard');
     card.classList.toggle('open');
     b.textContent = card.classList.contains('open') ? 'show less' : `+${b.dataset.more} more`;
+  });
+  // A model table is an OneLake table; double-click hands the card's names up to
+  // the app, which knows the item's Tables/ — bimview itself knows only the model.
+  wrap.addEventListener('dblclick', e => {
+    if (e.target.closest('.bimMore')) return;
+    const card = e.target.closest('.bimCard');
+    if (!card) return;
+    card.dispatchEvent(new CustomEvent('bim-open-table', { bubbles: true, detail: {
+      name: card.dataset.table,
+      entity: card.dataset.entity || '',
+      schema: card.dataset.schema || '',
+    } }));
   });
   wrap.addEventListener('mouseover', e => {
     const card = e.target.closest('.bimCard');
