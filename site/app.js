@@ -3,7 +3,7 @@
 // =============================================================================
 import {
   createAuth, describeAuthError, isConsentError,
-  resolveConfig, saveOverride, clearOverride, adminConsentUrl, appRedirectUri,
+  resolveConfig, saveOverride, clearOverride, appRedirectUri,
 } from './auth.js';
 import { createEngine } from './data.js';
 import { isDocResult, textLinesDoc, fileExt, isTextExt, escapeHtml, basename,
@@ -14,8 +14,9 @@ import { renderDocument } from './docview.js';
 
 const $ = id => document.getElementById(id);
 const DOCS = 'https://github.com/djouallah/onelake_studio';
-// config.js gives the built-in registration; resolveConfig lets ?clientId=…&tenantId=…
-// (persisted in localStorage) replace it, which is how a locked-down tenant gets in.
+// config.js ships no registration, so cfg.clientId is normally empty until the user names
+// one — via ?clientId=…&tenantId=… or the gate form, persisted in localStorage by
+// resolveConfig. An empty clientId here is the ordinary first run, not a broken deploy.
 const cfg = resolveConfig(window.ONELAKE_STUDIO_CONFIG || {});
 
 // Cap on rendered rows only. The CSV exports everything the engine materialised, which is
@@ -178,6 +179,15 @@ function gateMsg(text, isError = false) {
 function showSignIn(onDone, msg = 'Sign in with your Microsoft work or school account.') {
   const gate = $('authGate');
   gate.style.display = '';
+  // No registration named yet: a Sign-in button here could only throw, so ask for the one
+  // thing that's missing instead. `onDone` is dropped on purpose — saving a registration
+  // reloads the page (MSAL caches state per clientId), so nothing here survives to run it;
+  // the reloaded gate starts over with a clientId in hand.
+  if (!cfg.clientId) {
+    gateMsg('OneLake Studio signs in through an Entra app registration in your own tenant. Name one to continue.');
+    showByoForm();
+    return;
+  }
   gateMsg(msg);
   let btn = $('signinBtn');
   if (!btn) {
@@ -208,14 +218,14 @@ function showSignIn(onDone, msg = 'Sign in with your Microsoft work or school ac
   if (cfg.byo) showByoBanner();
 }
 
-// A failed sign-in that's really "your tenant hasn't consented" gets both fixes handed
-// over — the admin-consent URL and the bring-your-own-registration form — because that
-// is the expected outcome for an app that isn't publisher-verified.
+// A failed sign-in that's really "this registration has no Azure Storage consent" gets the
+// form handed over, since the usual cause is a registration missing that permission — or
+// the wrong one pasted in.
 function showAuthFailure(e) {
   const why = describeAuthError(e);
   gateMsg('Sign-in failed: ' + why, true);
   setStatus('Sign-in failed: ' + why, 'error');
-  if (isConsentError(e)) showConsentHelp(true);   // both fixes, since neither is guaranteed
+  if (isConsentError(e)) showByoForm();
   console.error(e);
 }
 
@@ -227,35 +237,8 @@ function hideOption(id) {
   if (a) a.hidden = true;
 }
 
-function showConsentHelp(withByo = false) {
-  hideOption('consentLink');
-  if ($('consentBox')) { if (withByo) showByoForm(); return; }
-  const url = adminConsentUrl(cfg);
-  const box = document.createElement('div');
-  box.id = 'consentBox';
-  box.className = 'gateBox';
-  box.innerHTML = `
-    <h4>Ask an admin to consent</h4>
-    <div>One click, once, for your whole tenant. Send them this URL:</div>
-    <div class="copyRow">
-      <input id="consentUrl" readonly value="${escapeHtml(url)}" />
-      <button id="copyConsentBtn">Copy</button>
-    </div>
-    <div>What they're approving, and how to revoke it later, is in the
-      <a href="${DOCS}#for-admins" target="_blank" rel="noopener">admin notes</a>.</div>`;
-  $('authActions').appendChild(box);
-  $('copyConsentBtn').onclick = async () => {
-    const input = $('consentUrl');
-    input.select();
-    try { await navigator.clipboard.writeText(input.value); } catch (_) { document.execCommand('copy'); }
-    $('copyConsentBtn').textContent = 'Copied';
-    setTimeout(() => { $('copyConsentBtn').textContent = 'Copy'; }, 1500);
-  };
-  if (withByo) showByoForm();
-}
-
-// The form that switches the app to another registration. Reachable from the consent
-// block and from the "Use my own app registration" link at the bottom of the gate.
+// The form that names the registration to sign in with — the front door, not a workaround.
+// Shown on first use, and again from the "Use a different app registration" link.
 function showByoForm() {
   hideOption('byoLink');
   if ($('byoBox')) { $('byoClientId').focus(); return; }
@@ -263,17 +246,18 @@ function showByoForm() {
   box.id = 'byoBox';
   box.className = 'gateBox';
   box.innerHTML = `
-    <h4>Use your own app registration</h4>
-    <div>An app from your own tenant needs no admin.
-      <a href="${DOCS}#use-your-own-app-registration" target="_blank" rel="noopener">How to create one</a>
-      — it takes about five minutes.</div>
+    <h4>Your app registration</h4>
+    <div>A single-page-application registration in your tenant, with the delegated
+      permission <code>Azure Storage → user_impersonation</code>.
+      <a href="${DOCS}#signing-in" target="_blank" rel="noopener">How to create one</a>
+      — about two minutes, and there's a CLI one-liner.</div>
     <div class="byoRow">
       <input id="byoClientId" placeholder="Application (client) ID" spellcheck="false" />
       <input id="byoTenantId" placeholder="Directory (tenant) ID — or blank" spellcheck="false" />
     </div>
     <div class="byoRow">
       <button id="byoUseBtn" class="primary">Use it</button>
-      ${cfg.byo ? '<button id="byoResetBtn">Back to the built-in app</button>' : ''}
+      ${cfg.byo ? '<button id="byoResetBtn">Use a different one</button>' : ''}
       <span id="byoErr" class="err"></span>
     </div>
     <div>Saved in this browser, so this is a one-off — you won't be asked again.</div>`;
@@ -293,16 +277,17 @@ function showByoForm() {
   $('byoClientId').focus();
 }
 
-// Signed in through someone's own registration — say so, and offer the way back, with
-// the one condition attached. That makes the "use your own" option below redundant.
+// Name the registration in play, and offer to swap it. Pasting the wrong GUID is easy and
+// the resulting Entra errors don't say which app they mean — so show it. That also makes
+// the "use your own" option below redundant.
 function showByoBanner() {
   if ($('byoBanner')) return;
   hideOption('byoLink');
   const el = document.createElement('div');
   el.id = 'byoBanner';
   el.className = 'gateFoot';
-  el.innerHTML = `Using your own app registration (<code>${escapeHtml(cfg.clientId)}</code>) — ` +
-    '<a id="byoBannerReset">use the built-in one</a>, if your tenant has consented to it.';
+  el.innerHTML = `Signing in through <code>${escapeHtml(cfg.clientId)}</code> — ` +
+    '<a id="byoBannerReset">use a different registration</a>.';
   $('authActions').appendChild(el);
   $('byoBannerReset').onclick = () => { clearOverride(); window.location.replace(appRedirectUri()); };
 }
@@ -1633,7 +1618,6 @@ function setBusy(b, { stoppable = false } = {}) {
 // connect() and runQuery() — await engineReady themselves.
 const EMBEDDED = window.self !== window.top;   // inside an embedding iframe?
 $('byoLink').onclick = () => showByoForm();
-$('consentLink').onclick = () => showConsentHelp();
 $('gateClose').onclick = () => { $('authGate').style.display = 'none'; };
 initSidebarToggle();
 initSidebarResize();

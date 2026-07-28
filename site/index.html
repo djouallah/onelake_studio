@@ -385,14 +385,14 @@
       <div class="gateBrand">OneLake&nbsp;Studio</div>
       <div class="gateTag">Read your OneLake. Fully local — your data never leaves this browser.</div>
       <div id="authGateMsg">Sign in with your Microsoft work or school account.</div>
-      <!-- Sign-in button, and (only when needed) the consent / own-registration blocks. -->
+      <!-- Sign-in button, and the app-registration block — which is the whole gate on a
+           first run, since nothing can be signed into until a registration is named. -->
       <div id="authActions"></div>
-      <!-- The three ways past this screen, one per line and unexplained: prose about each
-           only matters once you pick one, and each block says its own piece then. A link
-           hides itself while the block it opens is on screen. -->
+      <!-- The ways past this screen, one per line and unexplained: prose about each only
+           matters once you pick one, and each block says its own piece then. A link hides
+           itself while the block it opens is on screen. -->
       <div class="gateFoot gateOpts">
-        <a id="byoLink">Use your own app registration</a>
-        <a id="consentLink">Ask your admin to consent to the built-in one</a>
+        <a id="byoLink">Use a different app registration</a>
         <a id="gateClose">← Continue without signing in</a>
       </div>
       <div class="chips"><span>No backend</span><span>Nothing copied</span><span>Read-only</span><span>No telemetry</span></div>
@@ -402,8 +402,9 @@
   <!-- Service worker: COOP/COEP shim (DuckDB multithreading) + OneLake token injection
        on DuckDB's own range requests. See sw.js. -->
   <script src="sw-register.js"></script>
-  <!-- config.js: tracked in git; holds the Entra SPA clientId + authority (public
-       identifiers, no secret). Missing or blank -> the app says so instead of 401-ing. -->
+  <!-- config.js: tracked in git; ships an empty clientId on purpose — the user names an
+       Entra SPA registration from their own tenant, and the gate asks for it. A fork can
+       set one here (public identifier, no secret) to skip that. -->
   <script src="config.js"></script>
   <!-- version.js: build.mjs stamps the commit + build time into the deployed copy; the
        tracked file says "dev". Shown in the header and the sign-in gate. -->

@@ -16,41 +16,43 @@ and query its tables and files.
 ## Signing in
 
 Signing in is only needed to reach OneLake — the editor and engine run without it.
-The app is registered as a multi-tenant Entra SPA (PKCE, no secret), so any work or school account can
-sign in against its own directory. Its `clientId` is committed in [`site/config.js`](site/config.js) —
-public by design, since MSAL puts it in every sign-in URL.
 
-Whether your first sign-in is one click or a stop sign depends on **your tenant's consent policy**, not
-on this app. Most tenants allow user consent only for *"apps from verified publishers and apps registered
-in your tenant"*. This app isn't publisher-verified, so you may get **"Need admin approval"**. The
-sign-in screen offers both ways through:
-
-### For admins
-
-One click grants it for the whole tenant:
-
-```
-https://login.microsoftonline.com/organizations/adminconsent?client_id=cbc29592-5f49-45ac-8a69-ca6d7030ab74&redirect_uri=https%3A%2F%2Fstudio.projectscontrols.com%2F
-```
-
-What you're approving: **Azure Storage `user_impersonation`, delegated, and nothing else** — no Graph, no
-directory access, no application permissions. Every read carries the signed-in user's own token, so the
-app can't reach anything they couldn't already open, and it never writes. Review or revoke later under
-*Enterprise applications → OneLake Studio*; users can revoke their own grant at
-[myapps.microsoft.com](https://myapps.microsoft.com).
-
-### Use your own app registration
-
-No admin needed — an app from your own tenant isn't what the policy blocks:
+The app signs in through an Entra app registration in **your own tenant**. Create one, paste its two
+GUIDs into the sign-in screen, and this browser remembers them — a one-off. They also go in the URL:
 
 ```
 https://studio.projectscontrols.com/?clientId=<application-id>&tenantId=<directory-id>
 ```
 
-Saved in this browser, so it's a one-off. The registration needs only: platform **Single-page
-application** with redirect URI `https://studio.projectscontrols.com/` (the platform type matters — a
-"Web" entry fails with `AADSTS9002326`), and **Azure Storage → Delegated → `user_impersonation`**. No
-client secret.
+The registration needs exactly two things:
+
+- Platform **Single-page application**, with redirect URI `https://studio.projectscontrols.com/`. The
+  platform type matters — a *Web* entry fails with `AADSTS9002326`. Entra matches the URI exactly, so
+  use the address you actually open the app on, trailing slash included.
+- API permission **Azure Storage → Delegated → `user_impersonation`**.
+
+Nothing else: no client secret (SPA + PKCE doesn't use one), no Graph, no directory access, no
+application permissions. Every read carries your own token, so the app reaches only what you can already
+open, and it never writes.
+
+With the Azure CLI, both GUIDs in one go:
+
+```bash
+az ad app create \
+  --display-name "OneLake Studio" \
+  --sign-in-audience AzureADMyOrg \
+  --spa-redirect-uris "https://studio.projectscontrols.com/" \
+  --required-resource-accesses '[{"resourceAppId":"e406a681-f3d4-42a8-90b6-c2b029497af1","resourceAccess":[{"id":"03e0da56-190b-40ad-a80c-ea378c433f7f","type":"Scope"}]}]' \
+  --query appId -o tsv          # clientId
+az account show --query tenantId -o tsv   # tenantId
+```
+
+`e406a681-…` is the Azure Storage resource; `03e0da56-…` is its `user_impersonation` scope.
+
+Whether that first sign-in is one click or waits on an approval is your tenant's consent policy, not this
+app. A registration in your own directory isn't what the strict policy blocks, but a tenant can still
+require admin consent for everything — an admin then grants it once from the registration's
+*API permissions* page.
 
 ## How it works
 
@@ -120,7 +122,7 @@ guessing.
 
 ```bash
 npm install
-npm run dev        # serves site/ on http://localhost:5173, an already-registered redirect URI
+npm run dev        # serves site/ on http://localhost:5173 — add that as a redirect URI to sign in
 npm test           # node --test over the engine's pure logic (paths, SQL guard, cache keys)
 ```
 
@@ -130,8 +132,10 @@ stamps the commit into `version.js` (shown bottom-right in the app, so a cached 
 on every push. [`test/sql-integration.html`](test/sql-integration.html) is a manual harness that runs the
 engine's generated SQL against real DuckDB-WASM — copy it into `site/`, `npm run dev`, and open it.
 
-To host your own copy: fork it, register an SPA app with **your** URL as the redirect URI, put its
-`clientId` in [`site/config.js`](site/config.js), and set *Settings → Pages → Source: GitHub Actions*.
+To host your own copy: fork it, register an SPA app with **your** URL as the redirect URI, and set
+*Settings → Pages → Source: GitHub Actions*. Users can name that registration on the sign-in screen; an
+internal deploy can skip the asking by putting its `clientId` — and a tenant GUID in `authority` to pin
+it — in [`site/config.js`](site/config.js), which ships empty here.
 
 **Don't serve it from `*.github.io`.** Measured, not theoretical: Windows Enhanced Phishing Protection
 blocked the `github.io` URL outright — that feature watches for Microsoft credential entry on

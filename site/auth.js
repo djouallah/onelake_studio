@@ -31,16 +31,18 @@ export function appRedirectUri() {
   return window.location.origin + window.location.pathname.replace(/index\.html$/, '');
 }
 
-// --- Bring-your-own registration --------------------------------------------
-// This app's registration is multi-tenant but not publisher-verified, so a tenant on
-// the recommended consent policy answers "Need admin approval" until an admin grants
-// consent once. That shouldn't be a dead end: anyone can point the app at their own
-// SPA registration instead, with no deploy and no fork.
+// --- Which registration signs the user in ------------------------------------
+// This app has no registration of its own (config.js ships an empty clientId), so the
+// user names one from their own tenant. That is the design, not a fallback: the app
+// that reads your lakehouse should be one you control — your redirect URIs, your
+// revocation — and an empty clientId is a claim anyone can check in one look.
 //
 //   ?clientId=<guid>&tenantId=<guid>   -> use that registration from now on
 //
 // Kept in localStorage because MSAL's redirect returns to the bare redirect URI and
 // drops the query string — and because the choice should survive a later visit.
+// A clientId in config.js (a private fork, an internal deploy) still works as the
+// default, and this override still wins over it.
 const BYO_KEY = 'onelake-studio-registration';
 const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const isAuthority = v => GUID.test(v) || /^(organizations|common|consumers)$/i.test(v);
@@ -66,8 +68,8 @@ export function clearOverride() {
 }
 
 // Merge config.js with a ?clientId=… in the address bar and anything saved earlier.
-// A URL parameter wins and is persisted; otherwise the saved override wins over the
-// built-in registration. Returns { ...cfg, byo } so the UI can say which one is in use.
+// A URL parameter wins and is persisted; otherwise the saved override wins over whatever
+// config.js set (normally nothing). Returns { ...cfg, byo } so the UI can say which is in use.
 export function resolveConfig(base = {}) {
   const q = new URLSearchParams(window.location.search);
   const fromUrl = (q.get('clientId') || '').trim();
@@ -82,14 +84,6 @@ export function resolveConfig(base = {}) {
   const o = readOverride();
   return o ? { ...base, clientId: o.clientId, authority: o.authority, tenantId: null, byo: true }
            : { ...base, byo: false };
-}
-
-// One-click fix for a tenant that blocks user consent: an admin opens this, signs in,
-// and grants the Azure Storage permission for the whole tenant, once.
-export function adminConsentUrl(cfg) {
-  return 'https://login.microsoftonline.com/organizations/adminconsent' +
-    `?client_id=${encodeURIComponent(cfg.clientId)}` +
-    `&redirect_uri=${encodeURIComponent(appRedirectUri())}`;
 }
 
 // Treat a token this close to expiry as already gone. Loading a table can mean dozens
@@ -114,13 +108,22 @@ function createNoAuth() {
   };
 }
 
-// --- Misconfigured provider: msal was asked for but the identifiers are missing. ---
+// --- No registration named yet, or a broken one. ---
 // Fails loudly and early. The alternative (falling back to no-auth) produces a UI that
 // looks signed-in and then answers every OneLake request with a bare HTTP 401.
-function createConfigErrorAuth(message) {
+// `mode` separates the two cases: 'unconfigured' is the ordinary first run, which app.js
+// answers with the registration form; 'error' is a deploy someone got wrong.
+function createConfigErrorAuth(message, mode = 'error') {
   return {
-    mode: 'error',
-    async ensureSession() { throw new Error(message); },
+    mode,
+    // A silent restore on an app nobody has configured yet is not a failure: there is no
+    // session to restore, and the signed-out button is already the right UI. Saying so
+    // with `false` keeps boot quiet, exactly as a missing MSAL session does. A deliberate
+    // attempt — or a genuinely broken deploy, which should be loud on sight — still throws.
+    async ensureSession(interactive = false) {
+      if (mode === 'unconfigured' && !interactive) return false;
+      throw new Error(message);
+    },
     getHeaders() { return {}; },
     getUserId() { return null; },
     async refresh() { return false; },
@@ -402,10 +405,9 @@ function createMsalAuth(cfg, { onExpired } = {}) {
   };
 }
 
-// Does this failure mean "your tenant hasn't consented to this app"? That case gets an
-// actionable block on the gate (admin-consent URL + bring-your-own registration) rather
-// than a sentence, so app.js needs to recognise it. AADSTS50020 is here too: a foreign
-// unverified app can surface the block as "user account does not exist in tenant".
+// Does this failure mean "nobody has consented to this registration's Azure Storage
+// permission"? That case gets an actionable block on the gate (the registration form)
+// rather than a sentence, so app.js needs to recognise it.
 export function isConsentError(e) {
   const msg = (e && e.message) || String(e);
   return /AADSTS65001|AADSTS90094|AADSTS900941|consent_required|interaction_required/.test(msg);
@@ -421,9 +423,9 @@ export function describeAuthError(e) {
   if (/AADSTS50011|redirect_uri/i.test(msg))
     return `${uri} is not a registered redirect URI. Add it to the app registration under Authentication -> Single-page application.`;
   if (isConsentError(e))
-    return 'Your tenant has not consented to this app\'s Azure Storage permission. An Entra admin can grant it once for everyone, or you can sign in with your own app registration.';
+    return 'That registration has no consent for Azure Storage. Add the delegated permission Azure Storage -> user_impersonation to it in Entra; if your tenant blocks user consent, an admin grants it once from the registration\'s API permissions page.';
   if (/AADSTS700016|unauthorized_client/.test(msg))
-    return 'That application ID is not an app this tenant can sign in to. Check the clientId.';
+    return 'That application ID is not an app this tenant can sign in to. Check the clientId, and that the registration lives in the tenant you signed in against.';
   if (/AADSTS50020/.test(msg))
     return 'That account cannot sign in here. Use a work or school (Entra) account — personal Microsoft accounts have no OneLake.';
   if (/redirect_in_iframe|BrowserAuthError: redirect_in_iframe/.test(msg))
@@ -431,14 +433,23 @@ export function describeAuthError(e) {
   return msg;
 }
 
-// Pick the provider. 'none' must be explicit — a missing clientId/authority is a broken
-// deploy, not a request for anonymous access, so it gets the loud 'error' provider.
+// Pick the provider. 'none' must be explicit — no clientId is not a request for anonymous
+// access, it just means nobody has named a registration yet.
 export function createAuth(cfg = {}, { onStatus, onExpired } = {}) {
   if (cfg.auth === 'none') return createNoAuth();
-  if (!cfg.clientId || !(cfg.authority || cfg.tenantId)) {
+  if (!cfg.clientId) {
+    // The ordinary first run. app.js opens the registration form on the strength of an empty
+    // cfg.clientId, so this message is only a backstop for a path that reaches the provider.
     return createConfigErrorAuth(
-      'site/config.js is missing clientId or authority, so this app cannot get a OneLake token. ' +
-      'See the "Entra setup" section of README.md.'
+      'This app has no Entra registration of its own. Point it at one in your tenant to reach ' +
+      'OneLake — the sign-in screen asks for it, and README.md has the two-minute recipe.',
+      'unconfigured'
+    );
+  }
+  if (!(cfg.authority || cfg.tenantId)) {
+    return createConfigErrorAuth(
+      'A clientId is set but the authority is missing, so this app cannot get a OneLake token. ' +
+      'See "Signing in" in README.md.'
     );
   }
   return createMsalAuth(cfg, { onExpired });
