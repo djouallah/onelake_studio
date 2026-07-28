@@ -954,9 +954,12 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
   // region — so every failure falls back to the DFS walk below and is never fatal.
   const TABLE_API = "https://onelake.table.fabric.microsoft.com/iceberg";
 
-  let ircPrefix = null;      // the `prefix` the config call hands back, per lakehouse
-  let ircPrefixKey = null;
-  let ircOff = false;        // one failure is enough; don't re-probe on every click
+  const ircPrefixes = new Map();  // warehouse -> the `prefix` the config call hands back
+  // One failure is enough for THAT item; don't re-probe it on every click. But an item the
+  // catalog can't serve (a mirrored Databricks catalog 400s, a transient 5xx) says nothing
+  // about the next item, so the switch is per item — a session-wide one silently downgraded
+  // every later lakehouse to the one-listing-per-table DFS walk.
+  const ircOff = new Set();       // warehouse keys the catalog has failed for
 
   async function ircGet(path) {
     const r = await authedFetch(TABLE_API + path);
@@ -972,18 +975,18 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
   // a PATH prefix, so its slash must survive into the next URL unencoded.
   async function ircPrefixFor(lh) {
     const warehouse = `${lh.workspace}/${lh.item}`;
-    if (ircPrefixKey === warehouse && ircPrefix) return ircPrefix;
+    if (ircPrefixes.has(warehouse)) return ircPrefixes.get(warehouse);
     const cfg = await ircGet(`/v1/config?warehouse=${encodeURIComponent(warehouse)}`);
-    ircPrefix = (cfg.overrides && cfg.overrides.prefix) || warehouse;
-    ircPrefixKey = warehouse;
-    return ircPrefix;
+    const prefix = (cfg.overrides && cfg.overrides.prefix) || warehouse;
+    ircPrefixes.set(warehouse, prefix);
+    return prefix;
   }
 
   const ircSeg = s => String(s).split("/").map(encodeURIComponent).join("/");
 
   // Returns the same shape as the DFS listTables(), or null if the catalog can't serve it.
   async function ircListTables(lh) {
-    if (ircOff) return null;
+    if (ircOff.has(`${lh.workspace}/${lh.item}`)) return null;
     try {
       const prefix = await ircPrefixFor(lh);
       const ns = await ircGet(`/v1/${prefix}/namespaces`);
@@ -1009,8 +1012,8 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
       return tables.sort((a, b) =>
         (a.schema || "").localeCompare(b.schema || "") || a.table.localeCompare(b.table));
     } catch (e) {
-      ircOff = true;
-      console.info(`[engine] Iceberg REST catalog unavailable (${e.message}); using the DFS walk`);
+      ircOff.add(`${lh.workspace}/${lh.item}`);
+      console.info(`[engine] Iceberg REST catalog unavailable for ${lh.item} (${e.message}); using the DFS walk`);
       return null;
     }
   }
