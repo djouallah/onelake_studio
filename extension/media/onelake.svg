@@ -1,0 +1,7 @@
+<svg width="24" height="24" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+  <!-- Same stacked-layers mark as media/icon.png, monochrome: the activity bar recolours
+       it per theme and per selected state, so it must be a single currentColor shape. -->
+  <ellipse cx="12" cy="6" rx="8.5" ry="2.4" fill="currentColor"/>
+  <ellipse cx="12" cy="12" rx="8.5" ry="2.4" fill="currentColor"/>
+  <ellipse cx="12" cy="18" rx="8.5" ry="2.4" fill="currentColor"/>
+</svg>

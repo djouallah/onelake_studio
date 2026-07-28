@@ -6,6 +6,7 @@
   "publisher": "djouallah",
   "license": "MIT",
   "repository": { "type": "git", "url": "https://github.com/djouallah/onelake_studio.git" },
+  "icon": "media/icon.png",
   "engines": { "vscode": "^1.90.0" },
   "categories": ["Data Science", "Visualization", "Other"],
   "keywords": ["fabric", "onelake", "iceberg", "duckdb", "lakehouse"],
@@ -17,6 +18,31 @@
         "command": "onelakeStudio.open",
         "title": "Open OneLake Studio",
         "category": "OneLake Studio"
+      },
+      {
+        "command": "onelakeStudio.switchAccount",
+        "title": "Switch Microsoft Account",
+        "category": "OneLake Studio"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "onelakeStudio",
+          "title": "OneLake Studio",
+          "icon": "media/onelake.svg"
+        }
+      ]
+    },
+    "views": {
+      "onelakeStudio": [
+        { "id": "onelakeStudio.start", "name": "OneLake Studio" }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "onelakeStudio.start",
+        "contents": "Query OneLake Iceberg tables with DuckDB, signed in with the Microsoft account VS Code already holds.\n[Open OneLake Studio](command:onelakeStudio.open)\n[Switch account](command:onelakeStudio.switchAccount)"
       }
     ],
     "configuration": {

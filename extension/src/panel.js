@@ -91,4 +91,11 @@ async function openPanel(context, proxy) {
   return panel;
 }
 
-module.exports = { openPanel };
+// Disposing the panel is how switching account takes effect: the engine's resolved-metadata
+// and manifest caches, and Cache Storage, all live in the webview, so the old identity's data
+// goes with it. Rebinding the token alone would leave the previous account's tables on screen.
+function closePanel() {
+  if (current) current.dispose();   // onDidDispose nulls `current`
+}
+
+module.exports = { openPanel, closePanel };

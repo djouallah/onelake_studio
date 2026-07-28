@@ -2,6 +2,7 @@
   "name": "onelake-studio",
   "private": true,
   "version": "1.0.0",
+  "license": "MIT",
   "type": "module",
   "description": "Serverless, in-browser SQL over OneLake. Sign in with your own Entra identity, browse your workspaces and lakehouses, and query Iceberg tables and files with DuckDB-WASM. Nothing leaves the browser.",
   "scripts": {

@@ -14,6 +14,10 @@ const dst = new URL("./site/", here);
 await rm(dst, { recursive: true, force: true });
 await cp(src, dst, { recursive: true });
 
+// vsce looks for the LICENSE beside package.json and will not climb out of the extension
+// directory to find the repo's. Copied for the same reason site/ is: one source of truth.
+await cp(new URL("../LICENSE", here), new URL("./LICENSE", here));
+
 let commit = process.env.GITHUB_SHA || "";
 if (!commit) {
   try { commit = execSync("git rev-parse HEAD", { encoding: "utf8" }).trim(); } catch (_) {}

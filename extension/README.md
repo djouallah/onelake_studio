@@ -1,7 +1,8 @@
 # OneLake Studio for VS Code
 
 Browse your Fabric workspaces and query OneLake Iceberg tables with DuckDB, in a panel
-inside VS Code. Run **OneLake Studio: Open** from the command palette.
+inside VS Code. Open it from the OneLake Studio icon in the activity bar, or run
+**OneLake Studio: Open** from the command palette.
 
 Sign-in is the VS Code Microsoft account you already use — there is nothing to register.
 The web version needs an Entra app registration in your own tenant, because a browser has
@@ -10,6 +11,13 @@ no other way to get a OneLake token; VS Code does, so this does not ask.
 The query engine is the same one that runs at
 [studio.projectscontrols.com](https://studio.projectscontrols.com/) — this loads `site/`
 directly rather than forking it.
+
+## Commands
+
+| Command | What it does |
+| --- | --- |
+| **OneLake Studio: Open** | Opens the panel, signing in if needed. |
+| **OneLake Studio: Switch Microsoft Account** | Asks which account to use instead of reusing the remembered one, and reopens the panel so the previous account's tables do not survive the switch. To sign out altogether, use the Accounts menu in the bottom left — that is VS Code's to own, not an extension's. |
 
 ## Settings
 
