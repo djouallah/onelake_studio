@@ -7,7 +7,7 @@ import {
 } from './auth.js';
 import { createEngine, READY } from './data.js';
 import { isDocResult, textLinesDoc, fileExt, isTextExt, escapeHtml, basename,
-         hasFilesArea, kindLabel } from './paths.js';
+         hasFilesArea, kindLabel, IMAGE_EXTS } from './paths.js';
 // Static import is safe: docview.js itself is tiny — the CDN fetch of the markdown
 // parser only happens inside renderMarkdown(), and only for a document that IS markdown.
 import { renderDocument } from './docview.js';
@@ -753,7 +753,8 @@ async function expandDir(host, dir, depth) {
   const entries = await engine.listFiles(lakehouse, dir);
   for (const e of entries) {
     const row = document.createElement('div');
-    row.className = 'fileItem' + (!e.isDir && !e.queryable ? ' plain' : '');
+    const isImage = !e.isDir && !e.queryable && IMAGE_EXTS.has(fileExt(e.name));
+    row.className = 'fileItem' + (!e.isDir && !e.queryable && !isImage ? ' plain' : '');
     row.style.paddingLeft = (0.75 + depth * 0.8) + 'rem';
     const caret = e.isDir ? '▸' : '';
     row.innerHTML = `<span class="caret">${caret}</span><span class="name">${escapeHtml(e.name)}</span>` +
@@ -779,6 +780,8 @@ async function expandDir(host, dir, depth) {
       };
     } else if (e.queryable) {
       row.onclick = () => selectFile(row, e);
+    } else if (isImage) {
+      row.onclick = () => selectImage(row, e);
     } else {
       row.title = e.name + ' — no reader for this file type';
     }
@@ -836,6 +839,43 @@ async function selectFile(row, file) {
   } finally {
     // A stale selection's teardown must not flip the busy state out from under the
     // newer selection's own load.
+    if (my === selSeq) setBusy(false);
+  }
+}
+
+// The image on screen holds one object URL. clearResults() is the only place the <img>
+// leaves the DOM, so it is the only place the URL is revoked.
+let imageUrl = null;
+
+// An image never goes through DuckDB: fetch the bytes with auth and show them over a
+// blob URL. A plain <img src="https://onelake.dfs…"> would go out as a no-cors request,
+// which the service worker refuses to sign, so it would 401.
+async function selectImage(row, file) {
+  const my = ++selSeq;
+  document.querySelectorAll('.fileItem.active').forEach(el => el.classList.remove('active'));
+  row.classList.add('active');
+  $('activeTable').textContent = file.name;
+  activeFile = file;
+  activeIdent = null;            // no table behind this: Preview/Run stay disabled
+  activeDocEligible = false;
+  clearResults(`(loading ${file.name}…)`);
+  $('sqlEditor').value = `-- ${file.name} is an image — shown in the results pane`;
+  setBusy(true);                 // not stoppable: one plain fetch
+  try {
+    const bytes = await engine.readFileBytes(lakehouse, file);
+    if (my !== selSeq) return;
+    clearResults();              // revokes the previous image's URL, bumps docSeq
+    imageUrl = URL.createObjectURL(
+      new Blob([bytes], { type: IMAGE_EXTS.get(fileExt(file.name)) }));
+    $('docView').innerHTML = `<img src="${imageUrl}" alt="${escapeHtml(file.name)}">`;
+    $('docView').hidden = false;
+    setStatus(`${file.name} — ${engine.fmtBytes(bytes.length)}.`, 'ok');
+  } catch (e) {
+    if (my !== selSeq) return;
+    clearResults('(no result — the image could not be read)');
+    setStatus('Load failed: ' + explainRead(e.message), 'error');
+    console.error(e);
+  } finally {
     if (my === selSeq) setBusy(false);
   }
 }
@@ -1048,6 +1088,7 @@ function clearResults(hint = '') {
   $('docBar').hidden = true;
   $('docView').hidden = true;
   $('docView').innerHTML = '';
+  if (imageUrl) { URL.revokeObjectURL(imageUrl); imageUrl = null; }
   $('resultsTable').hidden = true;
   $('resultsTable').innerHTML = '';
   $('resultsHint').hidden = !hint;

@@ -12,7 +12,7 @@ import {
   DFS_HOST, strip, basename, encPath, dfsUrl, toHttps, pathKey,
   parseLakehouse, itemKind, holdsTables, hasFilesArea, kindLabel,
   fileExt, readerFor, PARQUET_EXTS,
-  TEXT_EXTS, isTextExt, DB_EXTS, ZIP_EXTS, isSqliteHeader,
+  TEXT_EXTS, isTextExt, DB_EXTS, ZIP_EXTS, IMAGE_EXTS, isSqliteHeader,
   sqlStr, quoteIdent, stripComments, prepareReadOnlySql,
   metadataVersion, pickMetadata,
   tableKey, fileKey, sanitizeIdent,
@@ -208,6 +208,17 @@ test("zip archives are recognised but not reader-based", () => {
   // A zipped csv is a codec DuckDB doesn't stream — .csv.zip is not .csv.gz.
   assert.equal(fileExt("a.csv.zip"), "zip");
   assert.equal(readerFor("csv.zip"), null);
+});
+
+test("image extensions carry a mime and never go through DuckDB", () => {
+  for (const [ext, mime] of IMAGE_EXTS) {
+    assert.ok(mime.startsWith("image/"), `${ext} carries an image mime`);
+    assert.equal(readerFor(ext), null, `${ext} has no DuckDB reader`);
+    assert.equal(isTextExt(ext), false, `${ext} is not text`);
+  }
+  assert.equal(IMAGE_EXTS.get("jpg"), "image/jpeg");
+  assert.ok(IMAGE_EXTS.has(fileExt("charts/Q3.PNG")));   // fileExt lowercases
+  assert.ok(!IMAGE_EXTS.has(fileExt("a.png.gz")));       // no codec story for pixels
 });
 
 // The delimiter has to be a BYTE. Measured in the pinned DuckDB-WASM: delim='\x1F' is the

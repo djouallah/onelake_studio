@@ -249,6 +249,15 @@ export const DB_EXTS = new Set(["duckdb", "ddb", "db", "sqlite", "sqlite3"]);
 // entries inflate only when queried, so a large archive costs what you read from it.
 export const ZIP_EXTS = new Set(["zip"]);
 
+// Image files. Not in FILE_READERS because DuckDB is never involved — the app fetches
+// the bytes itself (readFileBytes) and shows them as an <img> over a blob URL. The
+// value is the mime the Blob must carry: a typeless object URL renders nothing.
+export const IMAGE_EXTS = new Map([
+  ["png", "image/png"], ["jpg", "image/jpeg"], ["jpeg", "image/jpeg"],
+  ["gif", "image/gif"], ["webp", "image/webp"], ["svg", "image/svg+xml"],
+  ["bmp", "image/bmp"], ["ico", "image/x-icon"],
+]);
+
 // A codec suffix is part of the extension — "csv.gz", not "gz" — because it selects both
 // the reader and the decompression. Anything else (a .tar.gz) falls through to the
 // one-segment form and simply won't be in FILE_READERS.
