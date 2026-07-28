@@ -46,6 +46,12 @@ const MAX_PARALLEL = 8;
 // an unbounded SELECT * is how you take the tab down. Cap it and say so.
 const MAX_ROWS = 200_000;
 
+// Quick peek during a many-file table open: rows from the first data file, painted while
+// the remaining registrations and the footer-heavy view bind still run. Below the file
+// threshold the open is quick anyway and the peek would only stand in front of it.
+const QUICK_PEEK_MIN_FILES = 8;
+const QUICK_PEEK_ROWS = 100;
+
 // Fabric generates Iceberg metadata lazily, and Microsoft documents the conversion as
 // taking between 5 seconds and 2 minutes. The old schedule gave up after 4.6s, so the
 // retry usually ran out well before Fabric finished.
@@ -1501,7 +1507,7 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
     return Number(r.toArray()[0].toJSON().n) || 0;
   }
 
-  async function loadTable(lh, t) {
+  async function loadTable(lh, t, { onPeek } = {}) {
     // Keyed per lakehouse: the engine outlives the user's choice of one, and two
     // lakehouses can both hold a dbo.sales.
     const key = tableKey(lh, t);
@@ -1567,6 +1573,34 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
     viewNames.set(ident, key);
     let columns;
     status(`Opening ${label} — ${paths.length} file(s)…`);
+
+    // Quick peek: rows from the FIRST data file, on screen while the rest of the open
+    // runs. Registrations go through guarded() only, so the serial queue is idle for the
+    // whole loop below — a statement issued after the first registration is guaranteed to
+    // run ahead of createView's footer-heavy bind (FIFO on serial()), binds one footer,
+    // and paints early. Best-effort by design: it must go through materialize()/stream()
+    // (a bare conn.send() is the measured silent-truncation hazard), a superseded or
+    // failed peek says nothing (the real open reports its own errors), and it is
+    // suppressed when position deletes exist — a raw first-file read bypasses the
+    // anti-join and would show deleted rows as live.
+    const quickPeek = reg => {
+      if (!onPeek || paths.length < QUICK_PEEK_MIN_FILES || posDeletes.length) return;
+      materialize(`SELECT * FROM read_parquet([${sqlStr(reg)}]) LIMIT ${QUICK_PEEK_ROWS}`)
+        .then(out => { if (gen === loadGen) onPeek(peekAliased(out), paths.length); })
+        .catch(() => {});
+    };
+    // A Warehouse's physical names are GUIDs; give the peek the same logical names the
+    // real view gets, off the peek's own field list. All-or-nothing, like the view.
+    const peekAliased = out => {
+      const aliases = aliasFor(out.fields.map(name => ({ name })), resolved.nameMapping);
+      if (!aliases) return out;
+      const logical = new Map(aliases);
+      const fields = out.fields.map(f => logical.get(f) || f);
+      const rows = out.rows.map(r =>
+        Object.fromEntries(out.fields.map((f, i) => [fields[i], r[f]])));
+      return { ...out, fields, rows };
+    };
+
     const regs = [], pairs = [];
     // Hoisted: the column-mapping pass below rebuilds the view and has to preserve the
     // delete anti-join it was first built with.
@@ -1584,6 +1618,7 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
         res.regs.push(reg);
         regs.push(reg);
         pairs.push([reg, p]);
+        if (regs.length === 1) quickPeek(reg);
       }
       stage = "reading delete files";
       delTable = posDeletes.length ? await loadPositionDeletes(key, ws, posDeletes) : null;
@@ -1699,7 +1734,13 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
   // pair of regexes used to eat a /* */ that was part of a string value — changing the
   // result set with no error at all — and reject a perfectly legal SELECT 'a;b'.
   async function runSql(sql) {
-    const clean = prepareReadOnlySql(sql);
+    return materialize(prepareReadOnlySql(sql));
+  }
+
+  // A statement's whole result as plain JS, in the shape the results grid renders.
+  // Shared by user SQL (above, after the read-only guard) and the engine's own quick
+  // peek, which builds its SQL itself.
+  async function materialize(clean) {
     let fields = null, types = null;
     const rows = [];
     let numRows = 0, truncated = false;

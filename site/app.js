@@ -913,7 +913,17 @@ async function selectTable(row, t) {
   $('sqlEditor').value = `-- loading ${$('activeTable').textContent}…`;
   setBusy(true, { stoppable: true });
   try {
-    const info = await engine.loadTable(lakehouse, t);
+    // Quick peek: the engine hands over rows from the first data file while the rest of
+    // a many-file open still runs. Same staleness rule as every paint here (my/selSeq);
+    // the real preview below repaints over it when the open completes. A peek is a
+    // table, never a document, and it is not exportable — CSV stays disabled because
+    // only runQuery enables it.
+    const info = await engine.loadTable(lakehouse, t, { onPeek: (out, fileCount) => {
+      if (my !== selSeq) return;
+      docAllowed = false;
+      renderResults(out);
+      setStatus(`Quick look at the first of ${fileCount} file(s) — still opening…`);
+    } });
     if (my !== selSeq) return;
     activeIdent = info.ident;
     $('sqlEditor').value = previewSql(info.ident, false);
