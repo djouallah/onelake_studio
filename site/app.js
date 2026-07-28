@@ -588,12 +588,11 @@ async function onWorkspaceChange() {
   // This is the point where the previous lakehouse is left behind — and because it also
   // clears `lakehouse`, connect() can no longer tell that the target changed. Hand the
   // engine's views and registered files back here instead.
-  if (lakehouse) {
-    await engine.reset();
-    // Superseded while the old item was being torn down: the newer call saw `lakehouse`
-    // still set, so it runs (or ran) its own reset and owns all state from here.
-    if (my !== catSeq) return;
-  }
+  // Teardown of the old item's views is queue work, the item listing is pure fetch — they
+  // overlap, and the Promise.all below means nothing is painted until both are done.
+  // `lakehouse` goes null before the first await so a connect() arriving mid-teardown
+  // can't see the old item and start a second reset of it.
+  const resetP = lakehouse ? engine.reset() : null;
   lakehouse = null;
   setPaneTabs('');   // no item picked: the switch goes back to offering both panes
   $('tableList').innerHTML = '<div class="hint">Pick a lakehouse, warehouse or mirrored item.</div>';
@@ -601,13 +600,14 @@ async function onWorkspaceChange() {
   if (!workspace) {
     sel.disabled = true;
     fill(sel, [], 'Select a workspace first');
+    if (resetP) await resetP;   // a teardown failure must not go unobserved
     return;
   }
   sel.disabled = true;
   fill(sel, [], 'Loading…');
   try {
     setStatus(`Listing items in ${workspace}…`);
-    const items = await engine.listItems(workspace);
+    const [items] = await Promise.all([engine.listItems(workspace), resetP]);
     if (my !== catSeq) return;
     fill(sel, items.map(i => ({
       value: i.name,
@@ -643,13 +643,17 @@ async function connect({ force = false } = {}) {
   // lives. Cache entries are keyed per lakehouse so a stale one can't be served, but the
   // DuckDB objects behind them still have to be given back.
   const moved = lakehouse && (lakehouse.workspace !== workspace || lakehouse.item !== item);
+  let resetP = null;
   if (force || moved) {
     activeIdent = null;
     lastResult = null;
     $('activeTable').textContent = 'No table selected';
-    await engine.reset();
-    // A stale connect must not clobber the `lakehouse` a newer selection owns.
-    if (my !== catSeq) return;
+    // Teardown drains serialized DROPs for every open table before; the listing is pure
+    // fetch and never touches the worker or its queue, so the two overlap. The
+    // Promise.all below keeps the old invariant: the sidebar is never painted (no table
+    // is clickable) until the teardown has finished, and either failure lands in the
+    // same catch with nothing left unobserved.
+    resetP = engine.reset();
   }
   lakehouse = { workspace, item };
   setPaneTabs(item);   // before the pane is rendered below: it can move `pane` off Files
@@ -658,7 +662,7 @@ async function connect({ force = false } = {}) {
   setStatus(`Listing tables in ${lakehouse.workspace}/${lakehouse.item}…`);
   $('tableList').innerHTML = '<div class="hint">Loading…</div>';
   try {
-    const tables = await engine.listTables(lakehouse);
+    const [tables] = await Promise.all([engine.listTables(lakehouse), resetP]);
     if (my !== catSeq) return;
     // Storage format is the engine's business, not the user's. The only distinction worth
     // surfacing is whether a table can be opened yet.
