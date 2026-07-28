@@ -367,8 +367,6 @@ function wireUi() {
     runQuery({ doc: activeDocEligible, ext: activeDocExt });
   };
   $('csvBtn').onclick = downloadActive;
-  // Bubbles up from a double-clicked card in the .bim diagram (bimview.js).
-  $('docView').addEventListener('bim-open-table', e => openModelTable(e.detail));
   $('docPretty').onclick = () => {
     if (docMode === 'pretty' || !lastResult) return;
     docMode = 'pretty';
@@ -918,8 +916,6 @@ function renderTableList(tables) {
         : t.table;
       row.innerHTML = `<span class="name">${escapeHtml(t.table)}</span>` +
         (pending ? '<span class="tag">converting</span>' : '');
-      row.dataset.table = t.table;
-      if (t.schema) row.dataset.schema = t.schema;
       row.onclick = () => selectTable(row, t);
       g.appendChild(row);
     }
@@ -930,70 +926,7 @@ function renderTableList(tables) {
 // ---------------------------------------------------------------------------
 // Select a table -> load -> schema bar + preview
 // ---------------------------------------------------------------------------
-// A semantic model's tables are OneLake tables, so double-clicking a card in the .bim
-// diagram opens the real thing. The card hands over the model name plus the partition's
-// entityName/schemaName — the entity is what Tables/ knows when the model renamed its
-// table — and the model's declared SOURCE, because a model can read from any item in
-// the tenant, not just the one whose Files/ holds the .bim. Current item first (free,
-// and the usual deployment); otherwise go where the model says it reads from.
-async function openModelTable({ name, entity, schema, source }) {
-  const shown = entity || name;
-  const t = matchModelTable(lastTables || [], shown, schema);
-  if (t) {
-    switchPane('tables');   // renders lastTables synchronously, so the row exists below
-    const row = [...document.querySelectorAll('#tableList .tableItem')]
-      .find(r => r.dataset.table === t.table && (r.dataset.schema || '') === (t.schema || ''));
-    if (!row) return;
-    row.scrollIntoView({ block: 'nearest' });
-    selectTable(row, t);
-    return;
-  }
-  if (!source || (!source.workspace && !lakehouse)) {
-    setStatus(`No table named ${shown} under this item's Tables/, ` +
-      `and the model does not say where it reads from.`, 'warn');
-    return;
-  }
-  const my = ++selSeq;
-  setStatus(`${shown} is not in this item — looking in the model's source (${source.item})…`);
-  try {
-    // A OneLake source names workspace and item outright (as names or GUIDs — DFS
-    // accepts both). A SQL-endpoint source names only its database, which is named
-    // after the item; the workspace isn't in the expression, so try the current one.
-    const lh = source.workspace ? { workspace: source.workspace, item: source.item }
-                                : await sameWorkspaceItem(source.item);
-    const tables = await engine.listTables(lh);
-    if (my !== selSeq) return;
-    const ft = matchModelTable(tables, shown, schema);
-    if (!ft) {
-      setStatus(`No table named ${shown} in this item or in the model's source ${source.item}.`, 'warn');
-      return;
-    }
-    selectTable(null, ft, lh);
-  } catch (e) {
-    if (my !== selSeq) return;
-    setStatus(`Could not open the model's source ${source.item}: ${e.message}`, 'warn');
-    console.error(e);
-  }
-}
-
-function matchModelTable(tables, name, schema) {
-  const want = name.toLowerCase();
-  const cands = tables.filter(t => t.table.toLowerCase() === want);
-  return cands.find(c => (c.schema || '').toLowerCase() === (schema || '').toLowerCase())
-    || cands[0] || null;
-}
-
-async function sameWorkspaceItem(name) {
-  const items = await engine.listItems(lakehouse.workspace);
-  const hit = items.find(i => i.name.replace(/\.[^.]*$/, '').toLowerCase() === name.toLowerCase());
-  if (!hit) throw new Error(`no item named ${name} in ${lakehouse.workspace}`);
-  return { workspace: lakehouse.workspace, item: hit.name };
-}
-
-// `row` is null and `lh` is another item when the table was reached through a .bim
-// diagram rather than the sidebar — no row to highlight, and the label carries the
-// source item's name so the title doesn't silently claim the current item.
-async function selectTable(row, t, lh = lakehouse) {
+async function selectTable(row, t) {
   // Without the service worker controlling the page, DuckDB's OneLake reads go out
   // unsigned and every one 401s — the load cannot succeed, so say why up front instead
   // of failing on the first footer read with a message that blames the file. The two
@@ -1009,10 +942,8 @@ async function selectTable(row, t, lh = lakehouse) {
   }
   const my = ++selSeq;
   document.querySelectorAll('.tableItem.active').forEach(el => el.classList.remove('active'));
-  row?.classList.add('active');
-  const label = t.schema ? `${t.schema}.${t.table}` : t.table;
-  $('activeTable').textContent = lh === lakehouse
-    ? label : `${label} · ${lh.item.replace(/\.[A-Za-z]+$/, '')}`;
+  row.classList.add('active');
+  $('activeTable').textContent = t.schema ? `${t.schema}.${t.table}` : t.table;
   activeFile = null;            // a table has no single file to hand back
   activeDocEligible = false;    // ...and is a table, whatever shape the preview comes back
   activeDocExt = '';
@@ -1029,7 +960,7 @@ async function selectTable(row, t, lh = lakehouse) {
     // the real preview below repaints over it when the open completes. A peek is a
     // table, never a document, and it is not exportable — CSV stays disabled because
     // only runQuery enables it.
-    const info = await engine.loadTable(lh, t, { onPeek: (out, fileCount) => {
+    const info = await engine.loadTable(lakehouse, t, { onPeek: (out, fileCount) => {
       if (my !== selSeq) return;
       docAllowed = false;
       renderResults(out);
@@ -1041,8 +972,8 @@ async function selectTable(row, t, lh = lakehouse) {
     $('previewBtn').disabled = false;
     $('runBtn').disabled = false;
     reportLoad(info, await runQuery({ doc: false }));
-    row?.classList.remove('pending');
-    row?.querySelector('.tag')?.remove();
+    row.classList.remove('pending');
+    row.querySelector('.tag')?.remove();
   } catch (e) {
     if (my !== selSeq) return;
     // A load the user stopped is not a failure, and calling it one in red is how a UI
@@ -1050,7 +981,7 @@ async function selectTable(row, t, lh = lakehouse) {
     if (e.cancelled) {
       clearResults('(no result — loading stopped)');
       setStatus(`Stopped loading ${$('activeTable').textContent}.`);
-      row?.classList.remove('active');
+      row.classList.remove('active');
     } else {
       clearResults('(no result — the table could not be opened)');
       setStatus('Load failed: ' + explainRead(e.message), 'error');

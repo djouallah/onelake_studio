@@ -140,35 +140,9 @@ function cardHtml(t) {
   const badge = mode ? `<span class="bimBadge">${escapeHtml(mode)}</span>` : '';
   const hid = t.isHidden ? ' hiddenT' : '';
   const hidTag = t.isHidden ? '<span class="dt">(hidden)</span>' : '';
-  // The OneLake table behind the card: a model table can be renamed, so the
-  // partition's entityName (and schemaName) is the name Tables/ actually knows.
-  const src = t.partitions?.[0]?.source || {};
-  const ent = src.entityName ? ` data-entity="${escapeHtml(src.entityName)}"` : '';
-  const sch = src.schemaName ? ` data-schema="${escapeHtml(src.schemaName)}"` : '';
-  return `<div class="bimCard${hid}" data-table="${escapeHtml(t.name)}"${ent}${sch}>` +
-    `<div class="bimHead"><span class="nm" title="${escapeHtml(t.name)} — double-click to open the table">${escapeHtml(t.name)}</span>${hidTag}${badge}</div>` +
+  return `<div class="bimCard${hid}" data-table="${escapeHtml(t.name)}">` +
+    `<div class="bimHead"><span class="nm" title="${escapeHtml(t.name)}">${escapeHtml(t.name)}</span>${hidTag}${badge}</div>` +
     shown + more + `</div>`;
-}
-
-// Where the model reads from. A model is not bound to whatever item is on screen —
-// Direct Lake's shared M expression names the source: either the OneLake path
-// (workspace and item, as names or GUIDs) or a SQL endpoint whose database is named
-// after its item (the expression never says which workspace that is). The diagram
-// carries the reference so a double-clicked card can be resolved in the RIGHT item.
-function sourceRef(model) {
-  const texts = [];
-  for (const e of model.expressions || [])
-    texts.push([].concat(e.expression || []).join('\n'));
-  for (const t of model.tables || [])
-    for (const p of t.partitions || [])
-      texts.push([].concat(p.source?.expression || []).join('\n'));
-  const all = texts.join('\n');
-  const dec = s => { try { return decodeURIComponent(s); } catch { return s; } };
-  let m = /onelake\.dfs\.fabric\.microsoft\.com\/([^/"'\s]+)\/([^/"'\s]+)/i.exec(all);
-  if (m) return { workspace: dec(m[1]), item: dec(m[2]) };
-  m = /Sql\.Database\s*\(\s*"[^"]*"\s*,\s*"([^"]+)"/.exec(all);
-  if (m) return { workspace: '', item: m[1] };
-  return null;
 }
 
 function relGroup(r) {
@@ -203,9 +177,8 @@ export function renderBim(parsed) {
     ? `<div class="bimNote">${hiddenDates} auto-generated date table${hiddenDates === 1 ? '' : 's'} hidden</div>`
     : '';
 
-  const src = sourceRef(model);
   const html =
-    `<div class="bimWrap"${src ? ` data-source="${escapeHtml(JSON.stringify(src))}"` : ''}>` +
+    `<div class="bimWrap">` +
     `<div class="bimMeta">${meta}</div>` +
     `<svg class="bimEdges" width="0" height="0">${rels.map(relGroup).join('')}</svg>` +
     `<div class="bimCards">${tierize(tables, rels)
@@ -415,22 +388,6 @@ function mount(docViewEl) {
     const card = b.closest('.bimCard');
     card.classList.toggle('open');
     b.textContent = card.classList.contains('open') ? 'show less' : `+${b.dataset.more} more`;
-  });
-  // A model table is an OneLake table; double-click hands the card's names — and the
-  // model's declared source — up to the app, which knows how to list Tables/ anywhere.
-  // bimview itself knows only the model.
-  let source = null;
-  try { source = JSON.parse(wrap.dataset.source || 'null'); } catch (_) {}
-  wrap.addEventListener('dblclick', e => {
-    if (e.target.closest('.bimMore')) return;
-    const card = e.target.closest('.bimCard');
-    if (!card) return;
-    card.dispatchEvent(new CustomEvent('bim-open-table', { bubbles: true, detail: {
-      name: card.dataset.table,
-      entity: card.dataset.entity || '',
-      schema: card.dataset.schema || '',
-      source,
-    } }));
   });
   wrap.addEventListener('mouseover', e => {
     const card = e.target.closest('.bimCard');
