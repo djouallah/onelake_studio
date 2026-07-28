@@ -16,6 +16,17 @@ and query its tables and files.
 - **Read-only.** `SELECT` / `WITH` / `DESCRIBE` / `SHOW` / `EXPLAIN` / `SUMMARIZE`, nothing else.
 - **No analytics, no telemetry.** Your token stays in this browser and goes only to Microsoft.
 
+## In VS Code
+
+[**OneLake Studio**](https://marketplace.visualstudio.com/items?itemName=djouallah.onelake-studio) on
+the Marketplace is the same engine in a VS Code panel, and it needs no app registration: VS Code's own
+Microsoft account provider is a first-party application, so `getSession` returns the OneLake token
+directly. Install it, then run **OneLake Studio: Open**.
+
+It loads [`site/`](site/) rather than forking it — the extension replaces two things: the sign-in
+(VS Code's account) and the service worker, which a webview does not have. `extension/src/proxy.js`
+signs OneLake reads from the extension host instead, so the token never enters the page at all.
+
 ## Signing in
 
 Signing in is only needed to reach OneLake — the editor and engine run without it.

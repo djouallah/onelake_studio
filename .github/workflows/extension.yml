@@ -1,33 +1,34 @@
-# Publish the VS Code extension to the Marketplace.
+# Builds the VS Code extension and attaches the .vsix as an artifact.
 #
-# Triggered by a tag, so publishing is a deliberate act rather than a side effect of a
-# push — unlike pages.yml, which deploys the web app on every commit to main. The two are
-# independent: pages.yml only ever copies site/, so extension/ never reaches the web app,
-# and this workflow never touches Pages.
+# It does NOT publish. Publishing is one command from a laptop:
 #
-# Needs a repository secret VSCE_PAT: an Azure DevOps Personal Access Token with
-# Marketplace > Manage scope, belonging to the publisher named in extension/package.json.
-# The publisher has to exist first — create it at https://marketplace.visualstudio.com/manage
+#   az login                                   # as the account owning the publisher
+#   node extension/copy-site.mjs
+#   cd extension && npx @vscode/vsce publish --azure-credential
 #
-# Release: bump "version" in extension/package.json, commit, then
-#   git tag ext-v0.1.0 && git push origin ext-v0.1.0
-name: Publish VS Code extension
+# --azure-credential authenticates with Entra ID, which is why there is no VSCE_PAT secret
+# here and no Azure DevOps Personal Access Token to create — that route needs a token minted
+# under "All accessible organizations" with a Marketplace>Manage scope hidden behind "Show
+# all scopes", by the same identity that owns the publisher. Not worth reproducing in CI for
+# a release that happens by hand anyway.
+#
+# So this workflow's job is to prove a release WOULD build: it runs the tests and packages,
+# on every ext-v* tag and on demand. Download the artifact to install a build locally.
+#
+# Independent of pages.yml, which deploys the web app on every commit to main: that one only
+# ever copies site/, so extension/ never reaches Pages and this never touches it.
+name: Build VS Code extension
 
 on:
   push:
     tags: ["ext-v*"]
   workflow_dispatch:
-    inputs:
-      dry_run:
-        description: "Package only, do not publish"
-        type: boolean
-        default: true
 
 permissions:
   contents: read
 
 jobs:
-  publish:
+  package:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -40,9 +41,9 @@ jobs:
       # failure there ships a panel that reads OneLake with no token.
       - run: npm test
 
-      # vsce packages the extension directory and nothing above it, so site/ has to be
-      # copied in. `vscode:prepublish` does this too; run it here so a dry run also proves
-      # the copy works.
+      # vsce packages the extension directory and nothing above it, so site/ and the LICENSE
+      # have to be copied in. `vscode:prepublish` does this too; running it here means a
+      # failure in the copy shows up as its own step.
       - run: node extension/copy-site.mjs
 
       - name: Package
@@ -53,10 +54,3 @@ jobs:
         with:
           name: onelake-studio-vsix
           path: extension/onelake-studio.vsix
-
-      - name: Publish
-        if: startsWith(github.ref, 'refs/tags/ext-v')
-        working-directory: extension
-        env:
-          VSCE_PAT: ${{ secrets.VSCE_PAT }}
-        run: npx --yes @vscode/vsce publish --packagePath onelake-studio.vsix
