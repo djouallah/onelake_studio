@@ -39,10 +39,24 @@ export async function renderMarkdown(text) {
   return _md.purify.sanitize(html);
 }
 
-// Returns { html, kind } — the kind is what the tab reports it did, so "Pretty" never
-// has to be taken on faith. `ext` is the source file's extension when there is one; see
-// docKind for why a .yml cannot be told from markdown without it.
+// Returns { html, kind, mount? } — the kind is what the tab reports it did, so "Pretty"
+// never has to be taken on faith. `ext` is the source file's extension when there is one;
+// see docKind for why a .yml cannot be told from markdown without it. A renderer that
+// needs the DOM after insertion (the .bim diagram measures cards to route its edges)
+// also returns mount(el), which showDoc calls once the element is visible.
 export async function renderDocument(text, ext = '') {
+  // A .bim IS JSON, but re-indented JSON is not what a semantic model looks like —
+  // bimview draws its tables and relationships instead. Anything that stops this
+  // (parse failure, no tables) falls through to the plain JSON/text branches below.
+  if (String(ext).toLowerCase().replace(/^\./, '').replace(/\.(gz|zst)$/, '') === 'bim') {
+    try {
+      const parsed = JSON.parse(String(text).trim());
+      if (Array.isArray(parsed?.model?.tables) && parsed.model.tables.length) {
+        const { renderBim } = await import('./bimview.js');
+        return { kind: 'bim', ...renderBim(parsed) };
+      }
+    } catch (_) { /* not a parseable model after all */ }
+  }
   const kind = docKind(text, ext);
   if (kind === 'json')
     return { kind, html: `<pre class="doc">${escapeHtml(JSON.stringify(JSON.parse(String(text).trim()), null, 2))}</pre>` };

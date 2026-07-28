@@ -192,6 +192,53 @@
     .docView table { border-collapse: collapse; }
     .docView th, .docView td { border: 1px solid var(--border); padding: 0.3rem 0.6rem; }
 
+    /* Semantic model diagram (bimview.js) — table cards over an SVG edge layer.
+       The SVG is absolute inside the relative wrapper with wrapper-relative
+       coordinates, so it scrolls with the cards; .bimCards sits above it. */
+    .bimWrap { position: relative; }
+    /* The bottom padding is headroom: edges blocked by a neighbouring card arc
+       over the top of the row, and this is the airspace they arc through. */
+    .bimMeta { color: var(--muted); font-size: 0.78rem; padding: 0.35rem 0 2.2rem; }
+    .bimEdges { position: absolute; inset: 0; pointer-events: none; overflow: visible; }
+    .bimCards { position: relative; display: flex; flex-wrap: wrap; gap: 1.5rem 1.75rem; align-items: flex-start; }
+    .bimCard {
+      background: var(--panel); border: 1px solid var(--border); border-radius: 6px;
+      width: 230px; font-size: 12px; overflow: hidden; transition: opacity 0.12s;
+    }
+    .bimCard.hiddenT { opacity: 0.55; }
+    .bimCard.dimmed { opacity: 0.25; }
+    .bimHead {
+      display: flex; align-items: baseline; gap: 0.4rem; padding: 0.45rem 0.6rem;
+      border-bottom: 1px solid var(--border); font-weight: 600; font-size: 12.5px;
+    }
+    .bimHead .nm, .bimRow .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .bimBadge {
+      margin-left: auto; flex: none; font-weight: 400; font-size: 0.65rem; color: var(--muted);
+      border: 1px solid var(--border); border-radius: 4px; padding: 0 0.3rem;
+    }
+    .bimRow { display: flex; align-items: baseline; gap: 0.35rem; padding: 0.16rem 0.6rem; }
+    .bimRow:first-of-type { padding-top: 0.35rem; }
+    .bimRow.dim { opacity: 0.5; }
+    .bimRow .mk { flex: none; width: 1.1em; color: var(--accent2); font-size: 0.68rem; }
+    .bimRow .dt { margin-left: auto; flex: none; color: var(--muted); font-size: 0.68rem; padding-left: 0.4rem; }
+    .bimRow.msep { border-top: 1px solid var(--border); margin-top: 0.25rem; padding-top: 0.35rem; }
+    .bimCard .moreRows { display: none; }
+    .bimCard.open .moreRows { display: block; }
+    .bimMore {
+      display: block; width: 100%; text-align: left; padding: 0.25rem 0.6rem 0.4rem;
+      color: var(--muted); font-size: 0.7rem;
+    }
+    .bimMore:hover { color: var(--accent2); }
+    .bimRel .edge { fill: none; stroke: var(--border); stroke-width: 1.5; }
+    .bimRel .arrow { fill: var(--muted); }
+    .bimRel .glyph { fill: var(--muted); font-size: 10px; text-anchor: middle; }
+    .bimRel.inactive .edge { stroke-dasharray: 4 3; }
+    .bimRel.hl .edge { stroke: var(--accent2); stroke-width: 2; }
+    .bimRel.hl .arrow { fill: var(--accent2); }
+    .bimRel.hl .glyph { fill: var(--accent2); }
+    .bimRel.dimmed { opacity: 0.15; }
+    .bimNote { color: var(--muted); font-size: 0.75rem; padding-top: 1rem; }
+
     /* Status bar: the message on the left, the build stamp pinned on the right. The stamp
        lives HERE because a signed-in session never sees the gate — the bottom bar is the
        one place the running version is always on screen. */

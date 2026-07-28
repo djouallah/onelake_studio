@@ -1121,18 +1121,22 @@ const DOC_KIND_TITLE = {
   json: 'Rendered as indented JSON',
   markdown: 'Rendered as markdown',
   text: 'Shown as plain text, exactly as stored',
+  bim: 'Rendered as semantic model diagram',
 };
 
 async function showDoc(text) {
   const seq = ++docSeq;
   try {
-    const { html, kind } = await renderDocument(text, docSourceExt);
+    const { html, kind, mount } = await renderDocument(text, docSourceExt);
     if (seq !== docSeq || docMode !== 'pretty') return;
     $('docView').innerHTML = html;
     // Only prose gets the reading measure; code keeps the full width (see index.html).
     $('docView').classList.toggle('prose', kind === 'markdown');
     $('docView').hidden = false;
     $('resultsTable').hidden = true;
+    // After unhiding, never before: a mounting renderer (the .bim diagram) measures
+    // its elements, and everything inside a hidden ancestor measures 0×0.
+    if (mount) mount($('docView'));
     $('docPretty').title = DOC_KIND_TITLE[kind] || '';
     setDocTabs();
   } catch (e) {
