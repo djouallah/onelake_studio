@@ -117,9 +117,17 @@ try {
   check(src1.startsWith("blob:"), "the image renders over a blob URL, decoded 1×1");
   check(await page.locator("#docBar").isHidden(), "Pretty|Raw bar stays hidden for pixels");
   check(await page.locator("#previewBtn").isDisabled(), "Preview stays disabled");
-  check(await page.locator("#csvBtn").isDisabled(), "Download stays disabled");
   const status = await page.locator("#status").innerText();
   check(status.includes("chart.png"), `status names the file (saw: ${status})`);
+
+  // --- Download: the button offers the file and saves the exact stored bytes. ---
+  check(await page.locator("#csvBtn").isEnabled(), "Download is enabled for an image");
+  check((await page.locator("#csvBtn").innerText()) === "Download file",
+    "the button says Download file, not Download CSV");
+  const [dl] = await Promise.all([page.waitForEvent("download"), page.click("#csvBtn")]);
+  const saved = await readFile(await dl.path());
+  check(dl.suggestedFilename() === "chart.png" && saved.equals(PNG_RED),
+    "the download is chart.png, byte-for-byte as stored");
 
   // --- Second image: uppercase .PNG works, and the first blob URL is revoked. ---
   await page.locator(".fileItem", { hasText: "logo.PNG" }).click();

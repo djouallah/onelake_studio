@@ -869,6 +869,8 @@ async function selectImage(row, file) {
       new Blob([bytes], { type: IMAGE_EXTS.get(fileExt(file.name)) }));
     $('docView').innerHTML = `<img src="${imageUrl}" alt="${escapeHtml(file.name)}">`;
     $('docView').hidden = false;
+    $('csvBtn').disabled = false;
+    setExportLabel();            // "Download file" — the image is a file on screen
     setStatus(`${file.name} — ${engine.fmtBytes(bytes.length)}.`, 'ok');
   } catch (e) {
     if (my !== selSeq) return;
@@ -1197,9 +1199,10 @@ function setDocTabs() {
 // ---------------------------------------------------------------------------
 // The export button does whichever of two things the thing on screen actually is. A grid
 // of rows exports as CSV; a FILE opened from the tree downloads as that file — a .bim
-// asked for is a .bim, not its lines wrapped in CSV quoting.
+// asked for is a .bim, not its lines wrapped in CSV quoting. An image counts as a file
+// too: imageUrl is non-null exactly while an <img> is on screen.
 function exportIsFile() {
-  return !!(activeFile && lastResult && docOf(lastResult) != null);
+  return !!(activeFile && (imageUrl || (lastResult && docOf(lastResult) != null)));
 }
 
 function setExportLabel() {
