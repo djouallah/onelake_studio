@@ -1,23 +1,39 @@
-# Builds the VS Code extension and attaches the .vsix as an artifact.
+# Publishes the VS Code extension to the Marketplace when an ext-v* tag is pushed.
 #
-# It does NOT publish. Publishing is one command from a laptop:
+# Release:
+#   bump "version" in extension/package.json, commit, then
+#   git tag ext-v0.1.1 && git push origin ext-v0.1.1
 #
-#   az login                                   # as the account owning the publisher
-#   node extension/copy-site.mjs
-#   cd extension && npx @vscode/vsce publish --azure-credential
+# NO TOKEN. Authentication is GitHub's OIDC exchanged for an Entra token, so there is nothing
+# stored here that can leak or expire. That is not only hygiene: the Marketplace PAT has to be
+# scoped to "All accessible organizations", and Azure DevOps retires that kind of PAT on
+# 2026-12-01.
 #
-# --azure-credential authenticates with Entra ID, which is why there is no VSCE_PAT secret
-# here and no Azure DevOps Personal Access Token to create — that route needs a token minted
-# under "All accessible organizations" with a Marketplace>Manage scope hidden behind "Show
-# all scopes", by the same identity that owns the publisher. Not worth reproducing in CI for
-# a release that happens by hand anyway.
+# The trust chain, for whoever debugs this later:
+#   1. `id-token: write` lets the job mint a GitHub OIDC token. Without it azure/login fails
+#      with an unhelpful error about being unable to get a token.
+#   2. `environment: azure` puts the job's OIDC subject at
+#      repo:djouallah/onelake_studio:environment:azure — which is exactly what the federated
+#      credential on the Entra app trusts. Binding to the environment rather than a branch is
+#      what stops a fork, or any other branch, from publishing.
+#   3. azure/login trades that for an Entra token. `allow-no-subscriptions` because the app
+#      has NO Azure role assignments at all — vsce only ever wants a token for the Azure
+#      DevOps resource, never a subscription.
+#   4. vsce --azure-credential picks the session up through DefaultAzureCredential.
 #
-# So this workflow's job is to prove a release WOULD build: it runs the tests and packages,
-# on every ext-v* tag and on demand. Download the artifact to install a build locally.
+# The app registration ("onelake-studio-marketplace-publish", client
+# 066502f5-c8c9-4ecc-8a91-05889062b1f9) holds no client secret. Its Marketplace identity is
+# f7ad18bc-e846-6506-9c98-cd2ec81fa38f, which must be a member of the `djouallah` publisher
+# with the **Contributor** role — Creator is not enough, and getting that wrong is what
+# produces "You need to be logged in with your corporate credentials" at the publish step
+# after everything else has already succeeded.
+#
+# Every run packages and uploads the .vsix as an artifact, so workflow_dispatch is a real dry
+# run — it builds and attaches the file, and only a tag reaches the publish step.
 #
 # Independent of pages.yml, which deploys the web app on every commit to main: that one only
 # ever copies site/, so extension/ never reaches Pages and this never touches it.
-name: Build VS Code extension
+name: Publish VS Code extension
 
 on:
   push:
@@ -28,8 +44,12 @@ permissions:
   contents: read
 
 jobs:
-  package:
+  publish:
     runs-on: ubuntu-latest
+    environment: azure
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -54,3 +74,27 @@ jobs:
         with:
           name: onelake-studio-vsix
           path: extension/onelake-studio.vsix
+
+      - name: Sign in to Azure
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          allow-no-subscriptions: true
+
+      # Runs on every build, tag or not, and costs one request. It prints the identity the
+      # Marketplace will actually see, which is the one fact worth having in the log: if a
+      # publish ever fails on permissions, comparing this id against the publisher's member
+      # list answers "wrong identity" vs "wrong role" immediately, instead of by guesswork.
+      - name: Show the Marketplace identity
+        run: |
+          echo "Marketplace user id (must be a Contributor on publisher 'djouallah'):"
+          az rest -u https://app.vssps.visualstudio.com/_apis/profile/profiles/me \
+                  --resource 499b84ac-1321-427f-aa17-267ca6975798 --query id -o tsv
+
+      # Only a tag publishes. The exact file that was packaged and uploaded above is the one
+      # that goes out — --packagePath rather than a second build.
+      - name: Publish
+        if: startsWith(github.ref, 'refs/tags/ext-v')
+        working-directory: extension
+        run: npx --yes @vscode/vsce publish --azure-credential --packagePath onelake-studio.vsix
