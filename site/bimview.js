@@ -150,6 +150,27 @@ function cardHtml(t) {
     shown + more + `</div>`;
 }
 
+// Where the model reads from. A model is not bound to whatever item is on screen —
+// Direct Lake's shared M expression names the source: either the OneLake path
+// (workspace and item, as names or GUIDs) or a SQL endpoint whose database is named
+// after its item (the expression never says which workspace that is). The diagram
+// carries the reference so a double-clicked card can be resolved in the RIGHT item.
+function sourceRef(model) {
+  const texts = [];
+  for (const e of model.expressions || [])
+    texts.push([].concat(e.expression || []).join('\n'));
+  for (const t of model.tables || [])
+    for (const p of t.partitions || [])
+      texts.push([].concat(p.source?.expression || []).join('\n'));
+  const all = texts.join('\n');
+  const dec = s => { try { return decodeURIComponent(s); } catch { return s; } };
+  let m = /onelake\.dfs\.fabric\.microsoft\.com\/([^/"'\s]+)\/([^/"'\s]+)/i.exec(all);
+  if (m) return { workspace: dec(m[1]), item: dec(m[2]) };
+  m = /Sql\.Database\s*\(\s*"[^"]*"\s*,\s*"([^"]+)"/.exec(all);
+  if (m) return { workspace: '', item: m[1] };
+  return null;
+}
+
 function relGroup(r) {
   // Default TOM semantics: many-to-one from→to, filter flows to→from.
   const glyph = c => c === 'many' ? '*' : c === 'none' ? '' : '1';
@@ -182,8 +203,9 @@ export function renderBim(parsed) {
     ? `<div class="bimNote">${hiddenDates} auto-generated date table${hiddenDates === 1 ? '' : 's'} hidden</div>`
     : '';
 
+  const src = sourceRef(model);
   const html =
-    `<div class="bimWrap">` +
+    `<div class="bimWrap"${src ? ` data-source="${escapeHtml(JSON.stringify(src))}"` : ''}>` +
     `<div class="bimMeta">${meta}</div>` +
     `<svg class="bimEdges" width="0" height="0">${rels.map(relGroup).join('')}</svg>` +
     `<div class="bimCards">${tierize(tables, rels)
@@ -394,8 +416,11 @@ function mount(docViewEl) {
     card.classList.toggle('open');
     b.textContent = card.classList.contains('open') ? 'show less' : `+${b.dataset.more} more`;
   });
-  // A model table is an OneLake table; double-click hands the card's names up to
-  // the app, which knows the item's Tables/ — bimview itself knows only the model.
+  // A model table is an OneLake table; double-click hands the card's names — and the
+  // model's declared source — up to the app, which knows how to list Tables/ anywhere.
+  // bimview itself knows only the model.
+  let source = null;
+  try { source = JSON.parse(wrap.dataset.source || 'null'); } catch (_) {}
   wrap.addEventListener('dblclick', e => {
     if (e.target.closest('.bimMore')) return;
     const card = e.target.closest('.bimCard');
@@ -404,6 +429,7 @@ function mount(docViewEl) {
       name: card.dataset.table,
       entity: card.dataset.entity || '',
       schema: card.dataset.schema || '',
+      source,
     } }));
   });
   wrap.addEventListener('mouseover', e => {

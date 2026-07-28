@@ -69,7 +69,29 @@ const FIXTURE = JSON.stringify({
       { name: "r3", fromTable: "Sales", fromColumn: "DateKey", toTable: "Date", toColumn: "DateKey", isActive: false },
       { name: "r4", fromTable: "Sales", fromColumn: "DateKey", toTable: "LocalDateTable_aaa", toColumn: "Date" },
     ],
+    // Direct Lake's shared expression: the model reads from ws1/src.Lakehouse —
+    // NOT from whatever item the app has open. The faked DFS below hosts it.
+    expressions: [{ name: "DatabaseQuery", kind: "m", expression: [
+      "let",
+      "    Source = AzureStorage.DataLake(\"https://onelake.dfs.fabric.microsoft.com/ws1/src.Lakehouse\")",
+      "in",
+      "    Source",
+    ] }],
   },
+});
+
+// Faked OneLake: enough of ws1/src.Lakehouse for a catalog-less listTables walk to
+// find sales_fact. The Iceberg catalog host answers 400 so the DFS path is taken.
+const dfs = new Map([
+  ["src.Lakehouse/Tables",
+    [{ name: "src.Lakehouse/Tables/sales_fact", isDirectory: "true" }]],
+  ["src.Lakehouse/Tables/sales_fact",
+    [{ name: "src.Lakehouse/Tables/sales_fact/metadata", isDirectory: "true" }]],
+]);
+const json = (route, body, status = 200) => route.fulfill({
+  status, contentType: "application/json",
+  headers: { "access-control-allow-origin": "*" },
+  body: JSON.stringify(body),
 });
 
 const checks = [];
@@ -83,6 +105,12 @@ const browser = await chromium.launch({
   executablePath: "C:/Program Files/Google/Chrome/Application/chrome.exe", headless: true });
 try {
   const ctx = await browser.newContext({ serviceWorkers: "block", viewport: { width: 1400, height: 900 } });
+  await ctx.route(u => u.hostname === "onelake.dfs.fabric.microsoft.com", r => {
+    const u = new URL(r.request().url());
+    return json(r, { paths: dfs.get(u.searchParams.get("directory") || "") || [] });
+  });
+  await ctx.route(u => u.hostname === "onelake.table.fabric.microsoft.com",
+    r => json(r, { error: "no catalog" }, 400));
   const page = await ctx.newPage();
   const pageErrors = [];
   page.on("pageerror", e => pageErrors.push(e.message));
@@ -148,12 +176,8 @@ try {
     out.dimmedCards = [...dv.querySelectorAll(".bimCard.dimmed")].map(c => c.dataset.table);
     dv.querySelector(".bimWrap").dispatchEvent(new MouseEvent("mouseleave"));
     out.hlAfter = dv.querySelectorAll("g.bimRel.hl").length;
-    // Double-click: the card carries the partition's entity name, and the event
-    // reaches app.js — no lakehouse here, so the "not in this item" status IS the
-    // proof the whole chain (card → CustomEvent → openModelTable) is wired.
     out.entity = sales.dataset.entity + "|" + sales.dataset.schema;
-    sales.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
-    out.dblStatus = document.getElementById("status").textContent;
+    out.source = dv.querySelector(".bimWrap").dataset.source || "";
     return out;
   }, FIXTURE);
 
@@ -182,8 +206,27 @@ try {
     r.hl === 1 && r.hlAfter === 0 && r.dimmedCards.length === 3 && !r.dimmedCards.includes("Sales"),
     `hl=${r.hl} after=${r.hlAfter} dimmed=${r.dimmedCards.join(",")}`);
   check("card carries the Direct Lake entity name", r.entity === "sales_fact|dbo", r.entity);
-  check("double-click reaches the app's table lookup",
-    /No table named sales_fact/.test(r.dblStatus), r.dblStatus);
+  check("diagram carries the model's source",
+    /ws1/.test(r.source) && /src\.Lakehouse/.test(r.source), r.source);
+
+  // Double-click, miss everywhere: Product is in neither the (absent) current item nor
+  // the model's source — the answer names both places it looked.
+  await page.dblclick('.bimCard[data-table="Product"] .bimHead');
+  await page.waitForFunction(() =>
+    /No table named Product/.test(document.getElementById("status").textContent),
+    { timeout: 15000 });
+  const s1 = await page.locator("#status").innerText();
+  check("miss says it tried the model's source too", /src\.Lakehouse/.test(s1), s1);
+
+  // Double-click, hit: Sales' entity exists in the source item, so the chain resolves
+  // it there (event → openModelTable → foreign listTables → match) and hands it to
+  // selectTable — whose service-worker guard is the expected stop in this harness.
+  await page.dblclick('.bimCard[data-table="Sales"] .bimHead');
+  await page.waitForFunction(() =>
+    /Cannot open tables/.test(document.getElementById("status").textContent),
+    { timeout: 15000 });
+  check("hit in the model's source reaches selectTable", true);
+
   check("no page errors", pageErrors.length === 0, pageErrors.join(" | "));
 
   const shot = process.env.BIM_SHOT;
