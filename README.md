@@ -1,6 +1,9 @@
 # OneLake Studio
 
-**[Open the app →](https://studio.projectscontrols.com/)**
+A static web app — a folder of HTML and JavaScript with no backend — so it runs from anywhere that
+serves files: GitHub Pages, a blob container, a company intranet, or `npx serve` on your own machine.
+[**studio.projectscontrols.com**](https://studio.projectscontrols.com/) is just a demo instance to try
+it on; host your own and it behaves identically.
 
 Read-only SQL over your own OneLake, running entirely in your browser. The SQL editor works the moment
 the page loads — no account needed (DuckDB with the h3 spatial extension, fully local). Sign in with
@@ -26,28 +29,37 @@ https://studio.projectscontrols.com/?clientId=<application-id>&tenantId=<directo
 
 The registration needs exactly two things:
 
-- Platform **Single-page application**, with redirect URI `https://studio.projectscontrols.com/`. The
-  platform type matters — a *Web* entry fails with `AADSTS9002326`. Entra matches the URI exactly, so
-  use the address you actually open the app on, trailing slash included.
+- Platform **Single-page application**, with the address you serve the app from as the redirect URI —
+  `https://studio.projectscontrols.com/` for the demo, `http://localhost:5173/` for `npm run dev`, your
+  own URL for your own copy. Entra matches it exactly, trailing slash included, and one registration can
+  list several. The platform type matters: a *Web* entry fails with `AADSTS9002326`.
 - API permission **Azure Storage → Delegated → `user_impersonation`**.
 
 Nothing else: no client secret (SPA + PKCE doesn't use one), no Graph, no directory access, no
 application permissions. Every read carries your own token, so the app reaches only what you can already
 open, and it never writes.
 
-With the Azure CLI, both GUIDs in one go:
+With the Azure CLI, both GUIDs in one go — swap the redirect URIs for wherever you serve the app:
 
 ```bash
-az ad app create \
-  --display-name "OneLake Studio" \
-  --sign-in-audience AzureADMyOrg \
-  --spa-redirect-uris "https://studio.projectscontrols.com/" \
-  --required-resource-accesses '[{"resourceAppId":"e406a681-f3d4-42a8-90b6-c2b029497af1","resourceAccess":[{"id":"03e0da56-190b-40ad-a80c-ea378c433f7f","type":"Scope"}]}]' \
-  --query appId -o tsv          # clientId
+az rest --method POST --uri https://graph.microsoft.com/v1.0/applications \
+  --headers "Content-Type=application/json" \
+  --body '{
+    "displayName": "OneLake Studio",
+    "signInAudience": "AzureADMyOrg",
+    "spa": { "redirectUris": ["https://studio.projectscontrols.com/", "http://localhost:5173/"] },
+    "requiredResourceAccess": [{
+      "resourceAppId": "e406a681-f3d4-42a8-90b6-c2b029497af1",
+      "resourceAccess": [{ "id": "03e0da56-190b-40ad-a80c-ea378c433f7f", "type": "Scope" }]
+    }]
+  }' --query appId -o tsv                 # clientId
 az account show --query tenantId -o tsv   # tenantId
 ```
 
-`e406a681-…` is the Azure Storage resource; `03e0da56-…` is its `user_impersonation` scope.
+`e406a681-…` is the Azure Storage resource and `03e0da56-…` its `user_impersonation` scope — the same
+two constants in every tenant. This goes through Graph rather than `az ad app create` because that
+command can only write `web` and `publicClient` redirect URIs; a `web` entry is the `AADSTS9002326`
+case above, and `spa` is the one that works.
 
 Whether that first sign-in is one click or waits on an approval is your tenant's consent policy, not this
 app. A registration in your own directory isn't what the strict policy blocks, but a tenant can still
