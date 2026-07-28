@@ -126,6 +126,12 @@ try {
     out.svgH = +dv.querySelector(".bimEdges").getAttribute("height");
     out.note = dv.querySelector(".bimNote")?.textContent || "";
     out.meta = dv.querySelector(".bimMeta")?.textContent || "";
+    // Tiers: the fact (many side of every relationship) sinks below its
+    // dimensions; the isolated Helper stays in the top tier.
+    out.tiers = [...dv.querySelectorAll(".bimTier")].map(t =>
+      [...t.querySelectorAll(".bimCard")].map(c => c.dataset.table));
+    const top = n => dv.querySelector(`.bimCard[data-table="${n}"]`).getBoundingClientRect().top;
+    out.factBelow = top("Sales") > top("Customer") && top("Sales") > top("Date") && top("Sales") > top("Helper");
     // Fold: Sales has 15 columns + 2 measures = 17 rows, cap is 12.
     const sales = dv.querySelector('.bimCard[data-table="Sales"]');
     const more = sales.querySelector(".bimMore");
@@ -159,6 +165,9 @@ try {
   check("SVG sized to content", r.svgH > 50, `h=${r.svgH}`);
   check("hidden-date footnote", /2 auto-generated date tables hidden/.test(r.note), r.note);
   check("meta line", /5 tables · 3 relationships · 2 measures/.test(r.meta), r.meta);
+  check("fact tier below dimensions",
+    r.tiers.length === 2 && r.tiers[1].join(",") === "Sales" && r.factBelow,
+    JSON.stringify(r.tiers));
   check("fold: collapsed then expands on click",
     /\+5 more/.test(r.moreLabel) && r.foldedHidden && r.foldedShown,
     `label=${r.moreLabel} hidden=${r.foldedHidden} shown=${r.foldedShown}`);

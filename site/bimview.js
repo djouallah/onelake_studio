@@ -59,6 +59,57 @@ function orderTables(tables, rels) {
   return out;
 }
 
+// Vertical placement comes from the relationships themselves: the many side of
+// a many-to-one is the table being filtered, so filters flow downhill — a table
+// sits one tier below every table it points up to. Pure dimensions end up on
+// top, facts sink to the bottom, snowflaked dimensions land in between. No
+// naming conventions involved; one-to-one and many-to-many express no
+// preference and isolated tables stay in the top tier.
+function tierize(tables, rels) {
+  const names = new Set(tables.map(t => t.name));
+  const upAdj = new Map(tables.map(t => [t.name, []]));
+  for (const r of rels) {
+    const fromMany = (r.fromCardinality || 'many') === 'many';
+    const toMany = (r.toCardinality || 'one') === 'many';
+    if (fromMany === toMany) continue;
+    const [many, one] = fromMany ? [r.fromTable, r.toTable] : [r.toTable, r.fromTable];
+    upAdj.get(many)?.push(one);
+  }
+  const depth = new Map(), visiting = new Set();
+  const height = n => {
+    if (depth.has(n)) return depth.get(n);
+    if (visiting.has(n)) return 0; // relationship cycle — break it, don't recurse forever
+    visiting.add(n);
+    const h = Math.max(0, ...upAdj.get(n).filter(m => names.has(m)).map(m => height(m) + 1));
+    visiting.delete(n);
+    depth.set(n, h);
+    return h;
+  };
+  const tiers = [];
+  for (const t of orderTables(tables, rels)) {
+    const h = height(t.name);
+    (tiers[h] = tiers[h] || []).push(t);
+  }
+  // Barycenter pass: within a tier, sit under the average position of your
+  // neighbours in the tier above — fewer edges crossing on the way down.
+  const adj = new Map(tables.map(t => [t.name, []]));
+  for (const r of rels) {
+    adj.get(r.fromTable)?.push(r.toTable);
+    adj.get(r.toTable)?.push(r.fromTable);
+  }
+  for (let k = 1; k < tiers.length; k++) {
+    const above = new Map(tiers[k - 1].map((t, i) => [t.name, i]));
+    tiers[k] = tiers[k]
+      .map((t, i) => {
+        const ns = adj.get(t.name).filter(n => above.has(n)).map(n => above.get(n));
+        return { t, i, score: ns.length ? ns.reduce((a, b) => a + b, 0) / ns.length : i };
+      })
+      .sort((a, b) => a.score - b.score || a.i - b.i)
+      .map(e => e.t);
+  }
+  return tiers;
+}
+
 function columnRow(c) {
   const dim = c.isHidden ? ' dim' : '';
   const mk = c.type === 'calculated' ? 'fx' : '';
@@ -130,7 +181,8 @@ export function renderBim(parsed) {
     `<div class="bimWrap">` +
     `<div class="bimMeta">${meta}</div>` +
     `<svg class="bimEdges" width="0" height="0">${rels.map(relGroup).join('')}</svg>` +
-    `<div class="bimCards">${orderTables(tables, rels).map(cardHtml).join('')}</div>` +
+    `<div class="bimCards">${tierize(tables, rels)
+      .map(tier => `<div class="bimTier">${tier.map(cardHtml).join('')}</div>`).join('')}</div>` +
     note + `</div>`;
   return { html, mount };
 }
@@ -175,14 +227,17 @@ function triangle(p, u, s) {
 function pickSides(ra, rb, clear) {
   const hy = r => r.top + Math.min(24, (r.bottom - r.top) / 2);
   const cx = r => (r.left + r.right) / 2;
-  if (ra.right + 8 < rb.left)
-    return clear(ra.right, hy(ra) - 6, rb.left, hy(rb) + 6) ? ['right', 'left'] : ['top', 'top'];
-  if (rb.right + 8 < ra.left)
-    return clear(rb.right, hy(rb) - 6, ra.left, hy(ra) + 6) ? ['left', 'right'] : ['top', 'top'];
+  // Vertical separation first: the tiered layout stacks a fact below its
+  // dimensions, and a diagonal pair must fan tier-to-tier — the horizontal
+  // branch would see the non-overlapping x-ranges and detour over the top.
   if (ra.bottom < rb.top)
     return clear(cx(ra) - 6, ra.bottom, cx(rb) + 6, rb.top) ? ['bottom', 'top'] : ['left', 'left'];
   if (rb.bottom < ra.top)
     return clear(cx(ra) - 6, ra.top, cx(rb) + 6, rb.bottom) ? ['top', 'bottom'] : ['left', 'left'];
+  if (ra.right + 8 < rb.left)
+    return clear(ra.right, hy(ra) - 6, rb.left, hy(rb) + 6) ? ['right', 'left'] : ['top', 'top'];
+  if (rb.right + 8 < ra.left)
+    return clear(rb.right, hy(rb) - 6, ra.left, hy(ra) + 6) ? ['left', 'right'] : ['top', 'top'];
   return ['right', 'left']; // overlapping — degenerate but never invisible
 }
 

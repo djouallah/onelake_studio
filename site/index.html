@@ -200,7 +200,10 @@
        over the top of the row, and this is the airspace they arc through. */
     .bimMeta { color: var(--muted); font-size: 0.78rem; padding: 0.35rem 0 2.2rem; }
     .bimEdges { position: absolute; inset: 0; pointer-events: none; overflow: visible; }
-    .bimCards { position: relative; display: flex; flex-wrap: wrap; gap: 1.5rem 1.75rem; align-items: flex-start; }
+    /* One tier per relationship level, dimensions on top, facts at the bottom
+       (bimview.js tierize). The tier gap is the airspace the vertical edges use. */
+    .bimCards { position: relative; display: flex; flex-direction: column; gap: 2.6rem; }
+    .bimTier { display: flex; flex-wrap: wrap; justify-content: center; gap: 1.5rem 1.75rem; align-items: flex-start; }
     .bimCard {
       background: var(--panel); border: 1px solid var(--border); border-radius: 6px;
       width: 230px; font-size: 12px; overflow: hidden; transition: opacity 0.12s;
