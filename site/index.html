@@ -361,10 +361,11 @@
       </div>
       <textarea id="sqlEditor" spellcheck="false" placeholder="Write read-only SQL here — no sign-in needed. Try: SELECT 42"></textarea>
       <div class="resultsWrap">
-        <!-- Only while a TABLE is open: its result grid vs. its statistics. Distinct from
-             #docBar below, which belongs to a document-shaped RESULT. -->
+        <!-- Only while a TABLE is selected, and Stats leads because it is where a
+             selection lands: statistics cost nothing, the preview costs one file.
+             Distinct from #docBar below, which belongs to a document-shaped RESULT. -->
         <div class="docBar tabs" id="viewBar" hidden>
-          <button id="viewData" class="tab active">Data</button><button id="viewStats" class="tab">Stats</button>
+          <button id="viewStats" class="tab active">Stats</button><button id="viewPreview" class="tab">Preview</button>
         </div>
         <article id="statsView" class="docView" hidden></article>
         <div class="docBar tabs" id="docBar" hidden>

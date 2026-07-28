@@ -389,7 +389,7 @@ function wireUi() {
     $('docView').hidden = true;
     $('resultsTable').hidden = false;
   };
-  $('viewData').onclick = onDataTab;
+  $('viewPreview').onclick = onPreviewTab;
   $('viewStats').onclick = showStats;
   $('sqlEditor').addEventListener('keydown', e => {
     if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); runWithTable(); }
@@ -973,7 +973,7 @@ async function selectTable(row, t) {
   tableStage = 'none';
   // The previous table's rows must not sit on screen under the new table's name — that
   // reads as the app showing the wrong data. The editor gets the same treatment.
-  clearResults(`(no rows read yet — open the Data tab)`);
+  clearResults(`(no rows read yet — open the Preview tab)`);
   setActiveStats(null);   // the OLD table's stats must not show under the new name
   $('sqlEditor').value = `-- reading ${$('activeTable').textContent} metadata…`;
   // Not stoppable: this tier is one or two small metadata requests, and a Stop button
@@ -1325,7 +1325,7 @@ function setActiveStats(info) {
 }
 
 function setViewTabs() {
-  $('viewData').classList.toggle('active', viewMode === 'data');
+  $('viewPreview').classList.toggle('active', viewMode === 'data');
   $('viewStats').classList.toggle('active', viewMode === 'stats');
 }
 
@@ -1343,9 +1343,9 @@ function showStats() {
   setViewTabs();
 }
 
-// The Data tab is where the user asks to see rows, so it is also where the first data
-// egress of a table selection happens — one file, not the table (see peekIntoView).
-function onDataTab() {
+// The Preview tab is where the user first asks to see rows, so it is also where the first
+// data read of a table selection happens — one file, not the table (see peekIntoView).
+function onPreviewTab() {
   if (viewMode !== 'stats') return;
   if (tableStage === 'stats' && activeTableRef) { peekIntoView(); return; }
   showData();
@@ -1401,7 +1401,7 @@ function statsCardHtml(info) {
   const note = info.stage === 'loaded'
     ? 'From the Iceberg snapshot metadata — nothing was scanned to show this.'
     : 'From the Iceberg snapshot metadata — no data files have been read yet. ' +
-      'Open Data for rows from one file, or run a query to read the whole table.';
+      'Open Preview for rows from one file, or Open table to read all of them.';
   return '<table>' + rows.map(([k, v]) =>
     `<tr><th>${escapeHtml(k)}</th><td>${escapeHtml(String(v))}</td></tr>`).join('') +
     '</table>' + colList + `<p class="statsNote">${escapeHtml(note)}</p>`;
@@ -1416,6 +1416,18 @@ function statsCardHtml(info) {
 // too: imageUrl is non-null exactly while an <img> is on screen.
 function exportIsFile() {
   return !!(activeFile && (imageUrl || (lastResult && docOf(lastResult) != null)));
+}
+
+// The toolbar button and the Preview TAB are different amounts of money, so they must not
+// share a word. For a table the button binds every data file — "Open table" is what that
+// is; for a file there is nothing to bind and it stays the plain preview it always was.
+function setPreviewLabel() {
+  const btn = $('previewBtn');
+  const table = !!activeTableRef;
+  btn.textContent = table ? 'Open table' : 'Preview';
+  btn.title = table
+    ? 'Read every data file in this table and query it — the Preview tab reads only one file'
+    : '';
 }
 
 function setExportLabel() {
@@ -1625,10 +1637,10 @@ function setBusy(b, { stoppable = false } = {}) {
   // `engine` exists from the first line of boot now, so it says nothing about readiness —
   // engineUp is the flag that used to be implied by it being non-null.
   $('runBtn').disabled = !engineUp || b;
-  // Preview is the button that says "show me this thing", so it is live as soon as
-  // something is selected — a table selected but not yet bound very much included,
-  // since binding it is exactly what Preview is for.
+  // Live as soon as something is selected — a table selected but not yet bound very much
+  // included, since binding it is exactly what this button is for.
   $('previewBtn').disabled = !(activeIdent || activeTableRef) || b;
+  setPreviewLabel();
 }
 
 // ---------------------------------------------------------------------------

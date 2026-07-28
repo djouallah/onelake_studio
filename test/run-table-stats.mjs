@@ -101,7 +101,7 @@ try {
   await page.waitForFunction(() => document.getElementById("tableList").innerText.includes("fct_price_today"),
     { timeout: 60000 });
 
-  check(await page.locator("#viewBar").isHidden(), "no table selected yet — no Data|Stats bar");
+  check(await page.locator("#viewBar").isHidden(), "no table selected yet — no Stats|Preview bar");
 
   // --- Tier 1: selecting a table shows statistics, and reads no data to do it. ---
   // landing.fct_price_today: 6,995 rows / 4 files / 564,322 B / zstd (probed).
@@ -122,13 +122,18 @@ try {
   const status1 = await page.locator("#status").innerText();
   check(/statistics only, no data read/i.test(status1), `status says the same (${status1})`);
 
-  // --- Tier 2: the Data tab reads ONE file, and says so. ---
-  await page.click("#viewData");
+  check(await page.locator("#viewStats").evaluate(el => el.classList.contains("active")),
+    "Stats is the active tab, and it comes first");
+  check(await page.locator("#previewBtn").innerText().then(s => /Open table/i.test(s)),
+    "the toolbar button says what it costs — not the tab's word");
+
+  // --- Tier 2: the Preview tab reads ONE file, and says so. ---
+  await page.click("#viewPreview");
   await page.waitForFunction(() => {
     const t = document.getElementById("resultsTable");
     return !t.hidden && t.innerText.trim().length > 0;
   }, { timeout: 120000 });
-  check(await page.locator("#statsView").isHidden(), "Data tab replaces the card with rows");
+  check(await page.locator("#statsView").isHidden(), "Preview tab replaces the card with rows");
   const status2 = await page.locator("#status").innerText();
   check(/of 4 file\(s\)/.test(status2) && /not read/.test(status2),
     `status names what was NOT read (${status2})`);
@@ -136,8 +141,8 @@ try {
   // Back and forth must not re-read anything: the peek is kept.
   await page.click("#viewStats");
   check(!(await page.locator("#statsView").isHidden()), "Stats comes back");
-  await page.click("#viewData");
-  check(!(await page.locator("#resultsTable").isHidden()), "…and Data restores the same rows");
+  await page.click("#viewPreview");
+  check(!(await page.locator("#resultsTable").isHidden()), "…and Preview restores the same rows");
 
   // --- SQL that does not name the table must not bind it. ---
   await page.fill("#sqlEditor", "SELECT 42 AS answer");
@@ -150,14 +155,14 @@ try {
     .then(s => !/file\(s\), read on demand/.test(s)),
     "a query that never mentions the table does not open it");
 
-  // --- Tier 3: Preview binds the table for real. ---
+  // --- Tier 3: the toolbar button binds the table for real. ---
   await page.click("#previewBtn");
   await page.waitForFunction(() => {
     const s = document.getElementById("status").innerText;
     return /read on demand/.test(s) || /Load failed/.test(s);
   }, { timeout: 180000 });
   const status3 = await page.locator("#status").innerText();
-  check(/4 file\(s\), read on demand/.test(status3), `Preview opened the table (${status3})`);
+  check(/4 file\(s\), read on demand/.test(status3), `Open table opened it (${status3})`);
   check((await page.locator("#resultsTable").innerText()).length > 0, "…and rows are on screen");
 
   // The card is richer once bound, and still the same table's numbers.
