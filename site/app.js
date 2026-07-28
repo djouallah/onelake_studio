@@ -425,6 +425,11 @@ async function afterSignIn() {
 // ---------------------------------------------------------------------------
 // Both levels come from the OneLake DFS API on the storage token we already hold, so
 // browsing costs no extra Entra permission and no second consent prompt.
+
+// OneLake listings run for whole seconds; saying how many turns "is it stuck?" into an
+// answer. Queries report "in N ms" (runQuery) — listings read better in seconds.
+const fmtElapsed = ms => ms < 1000 ? `${Math.round(ms)} ms` : `${(ms / 1000).toFixed(1)} s`;
+
 function fill(sel, options, placeholder) {
   sel.innerHTML = '';
   const first = document.createElement('option');
@@ -546,9 +551,11 @@ function onWorkspaceInput() {
 async function loadCatalog() {
   try {
     setStatus('Loading workspaces…');
+    const t0 = performance.now();
     const names = await engine.listWorkspaces();
     fillWorkspaces(names);
-    setStatus(`${names.length} workspace(s). Type to search, pick one to browse its tables.`, 'ok');
+    setStatus(`${names.length} workspace(s) in ${fmtElapsed(performance.now() - t0)}. ` +
+      'Type to search, pick one to browse its tables.', 'ok');
 
     // cfg.defaultLakehouse ("workspace/item.Lakehouse") preselects both levels.
     if (cfg.defaultLakehouse) {
@@ -607,6 +614,7 @@ async function onWorkspaceChange() {
   fill(sel, [], 'Loading…');
   try {
     setStatus(`Listing items in ${workspace}…`);
+    const t0 = performance.now();
     const [items] = await Promise.all([engine.listItems(workspace), resetP]);
     if (my !== catSeq) return;
     fill(sel, items.map(i => ({
@@ -615,7 +623,7 @@ async function onWorkspaceChange() {
     })), items.length ? `Item (${items.length})` : 'Nothing with tables in it');
     sel.disabled = !items.length;
     setStatus(items.length
-      ? `${items.length} item(s) with tables in ${workspace}.`
+      ? `${items.length} item(s) with tables in ${workspace}, listed in ${fmtElapsed(performance.now() - t0)}.`
       : `${workspace} has nothing with tables in it.`, items.length ? 'ok' : '');
   } catch (e) {
     if (my !== catSeq) return;
@@ -662,8 +670,10 @@ async function connect({ force = false } = {}) {
   setStatus(`Listing tables in ${lakehouse.workspace}/${lakehouse.item}…`);
   $('tableList').innerHTML = '<div class="hint">Loading…</div>';
   try {
+    const t0 = performance.now();
     const [tables] = await Promise.all([engine.listTables(lakehouse), resetP]);
     if (my !== catSeq) return;
+    const took = fmtElapsed(performance.now() - t0);
     // Storage format is the engine's business, not the user's. The only distinction worth
     // surfacing is whether a table can be opened yet.
     const ready = tables.filter(t => t.kind === READY).length;
@@ -671,7 +681,7 @@ async function connect({ force = false } = {}) {
     lastTableCount = String(tables.length);
     if (pane === 'tables') { renderTableList(tables); $('tableCount').textContent = lastTableCount; }
     else { await renderFileTree(); if (my !== catSeq) return; }
-    setStatus(`${tables.length} table(s) in ${lakehouse.item}.` +
+    setStatus(`${tables.length} table(s) in ${lakehouse.item}, listed in ${took}.` +
       (tables.length > ready ? ` ${tables.length - ready} awaiting Iceberg conversion.` : ''), 'ok');
   } catch (e) {
     if (my !== catSeq) return;
