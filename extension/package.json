@@ -2,7 +2,7 @@
   "name": "onelake-studio",
   "displayName": "OneLake Studio",
   "description": "Browse and query Microsoft Fabric OneLake Iceberg tables with DuckDB, signed in with your VS Code Microsoft account.",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "publisher": "djouallah",
   "license": "MIT",
   "repository": { "type": "git", "url": "https://github.com/djouallah/onelake_studio.git" },
