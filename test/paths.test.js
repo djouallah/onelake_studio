@@ -388,7 +388,8 @@ test("snapshotStats reads the summary and metadata fields", () => {
       { "spec-id": 1, fields: [{ name: "day", transform: "day" },
                                { name: "region", transform: "identity" }] },
     ],
-    properties: { "delta.parquet.vorder.enabled": "TRUE " },
+    properties: { "delta.parquet.vorder.enabled": "TRUE ",
+                  "write.parquet.compression-codec": "zstd" },
     snapshots: [{}, {}, {}],
   };
   const snap = {
@@ -397,6 +398,7 @@ test("snapshotStats reads the summary and metadata fields", () => {
                "total-data-files": "19", "total-delete-files": "2" },
   };
   assert.deepEqual(snapshotStats(meta, snap), {
+    codec: "zstd",
     totalFilesSize: 52428800, totalDataFiles: 19, totalDeleteFiles: 2,
     operation: "append", snapshotTs: 1753600000000, snapshotCount: 3, formatVersion: 2,
     partitionColumns: ["day (day)", "region"], vorderProp: true,
@@ -406,6 +408,7 @@ test("snapshotStats reads the summary and metadata fields", () => {
 test("snapshotStats: missing summary fields become nulls, never guesses", () => {
   const s = snapshotStats({}, {});
   assert.deepEqual(s, {
+    codec: null,
     totalFilesSize: null, totalDataFiles: null, totalDeleteFiles: null, operation: null,
     snapshotTs: null, snapshotCount: 0, formatVersion: null,
     partitionColumns: [], vorderProp: null,

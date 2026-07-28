@@ -418,13 +418,18 @@ export function snapshotStats(meta, snap) {
   const partitionColumns = ((spec || {}).fields || []).map(f =>
     f.transform && f.transform !== "identity" ? `${f.name} (${f.transform})` : f.name);
 
-  // Fabric may mirror the source table's V-Order property into the Iceberg properties.
-  // Absent means UNKNOWN, not "no" — the caller must not render a verdict from null.
-  const vorderRaw = (meta.properties || {})["delta.parquet.vorder.enabled"];
+  // Probed 2026-07-28 on a real Lakehouse (DFS) and Warehouse (IRC): Fabric's conversion
+  // (Apache XTable) does NOT mirror `delta.parquet.vorder.enabled` into the Iceberg
+  // properties — so this stays null in practice and the UI must render nothing, not "no".
+  // It is read anyway because it is free and lights up if the conversion ever starts
+  // writing it. The compression codec, by contrast, IS there on both probed items.
+  const props = meta.properties || {};
+  const vorderRaw = props["delta.parquet.vorder.enabled"];
   const vorderProp = vorderRaw == null ? null
     : String(vorderRaw).trim().toLowerCase() === "true";
 
   return {
+    codec: props["write.parquet.compression-codec"] || null,
     totalFilesSize: num(summary["total-files-size"]),
     totalDataFiles: num(summary["total-data-files"]),
     totalDeleteFiles: num(summary["total-delete-files"]),

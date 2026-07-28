@@ -41,6 +41,9 @@ let activeDocEligible = false;   // the same two answers for the loaded table/fi
 let activeDocExt = '';
 let lastTables = null;       // cached listTables() result, so switching panes is free
 let lastTableCount = '';
+let activeInfo = null;       // the loaded TABLE's info object — what the Stats tab renders
+let viewMode = 'data';       // Data | Stats for a loaded table; snaps back to Data per result
+let statsPrev = null;        // hidden-flags of the data surfaces while Stats covers them
 
 function setStatus(msg, type = '') {
   const el = $('status');
@@ -378,6 +381,8 @@ function wireUi() {
     $('docView').hidden = true;
     $('resultsTable').hidden = false;
   };
+  $('viewData').onclick = showData;
+  $('viewStats').onclick = showStats;
   $('sqlEditor').addEventListener('keydown', e => {
     if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); runQuery(); }
   });
@@ -589,6 +594,7 @@ async function onWorkspaceChange() {
   lastWs = workspace;
   const sel = $('itemSelect');
   activeIdent = null;
+  setActiveStats(null);
   lastResult = null;
   lastTables = null;
   lastTableCount = '';
@@ -654,6 +660,7 @@ async function connect({ force = false } = {}) {
   let resetP = null;
   if (force || moved) {
     activeIdent = null;
+    setActiveStats(null);
     lastResult = null;
     $('activeTable').textContent = 'No table selected';
     // Teardown drains serialized DROPs for every open table before; the listing is pure
@@ -808,6 +815,7 @@ async function selectFile(row, file) {
   activeFile = file;
   activeDocExt = fileExt(file.name);
   activeDocEligible = isTextExt(activeDocExt);
+  setActiveStats(null);          // a file is not a table; no snapshot behind it
   // Same rule as selectTable: no stale rows or stale SQL under this file's name.
   clearResults(`(loading ${file.name}…)`);
   $('sqlEditor').value = `-- loading ${file.name}…`;
@@ -857,6 +865,7 @@ async function selectImage(row, file) {
   $('activeTable').textContent = file.name;
   activeFile = file;
   activeIdent = null;            // no table behind this: Preview/Run stay disabled
+  setActiveStats(null);
   activeDocEligible = false;
   clearResults(`(loading ${file.name}…)`);
   $('sqlEditor').value = `-- ${file.name} is an image — shown in the results pane`;
@@ -952,6 +961,7 @@ async function selectTable(row, t) {
   // now; the preview repaints when it lands. The editor gets the same treatment: the
   // old table's SQL sitting under the new table's title reads just as wrong.
   clearResults(`(loading ${$('activeTable').textContent}…)`);
+  setActiveStats(null);   // the OLD table's stats must not show under the new name
   $('sqlEditor').value = `-- loading ${$('activeTable').textContent}…`;
   setBusy(true, { stoppable: true });
   try {
@@ -968,6 +978,7 @@ async function selectTable(row, t) {
     } });
     if (my !== selSeq) return;
     activeIdent = info.ident;
+    setActiveStats(info);
     $('sqlEditor').value = previewSql(info.ident, false);
     $('previewBtn').disabled = false;
     $('runBtn').disabled = false;
@@ -1087,6 +1098,13 @@ const NUMERIC_TYPE = /^(U?(TINY|SMALL|BIG|HUGE)INT|U?INTEGER|DOUBLE|FLOAT|DECIMA
 // nothing on screen ever belongs to a query other than the current one.
 function clearResults(hint = '') {
   docSeq++;              // an in-flight showDoc() must not paint over this
+  // A new result belongs to the Data view; the Stats tab stays clickable (#viewBar is
+  // "a table is open" state, owned by setActiveStats, and is deliberately not touched).
+  viewMode = 'data';
+  statsPrev = null;
+  $('statsView').hidden = true;
+  $('statsView').innerHTML = '';
+  setViewTabs();
   $('docBar').hidden = true;
   $('docView').hidden = true;
   $('docView').innerHTML = '';
@@ -1192,6 +1210,75 @@ async function showDoc(text) {
 function setDocTabs() {
   $('docPretty').classList.toggle('active', docMode === 'pretty');
   $('docRaw').classList.toggle('active', docMode !== 'pretty');
+}
+
+// ---------------------------------------------------------------------------
+// Stats view: Data | Stats for a loaded table (#viewBar). Everything on the card
+// was already fetched to open the table — rendering it is synchronous and free.
+// ---------------------------------------------------------------------------
+// The bar belongs to "a table is open", not to any one result, so clearResults leaves
+// it alone; every path that opens something that is NOT a table hands null here.
+function setActiveStats(info) {
+  activeInfo = (info && info.stats) ? info : null;
+  $('viewBar').hidden = !activeInfo;
+  if (!activeInfo && viewMode === 'stats') showData();
+}
+
+function setViewTabs() {
+  $('viewData').classList.toggle('active', viewMode === 'data');
+  $('viewStats').classList.toggle('active', viewMode === 'stats');
+}
+
+// Stats covers the result surfaces rather than replacing them: whatever combination of
+// hint/grid/doc was showing is put back EXACTLY on return — re-deriving it from
+// renderResults' rules here is how the two would drift apart.
+function showStats() {
+  if (!activeInfo || viewMode === 'stats') return;
+  viewMode = 'stats';
+  statsPrev = ['resultsHint', 'docView', 'resultsTable', 'docBar']
+    .map(id => [id, $(id).hidden]);
+  for (const [id] of statsPrev) $(id).hidden = true;
+  $('statsView').innerHTML = statsCardHtml(activeInfo);
+  $('statsView').hidden = false;
+  setViewTabs();
+}
+
+function showData() {
+  if (viewMode !== 'stats') return;
+  viewMode = 'data';
+  $('statsView').hidden = true;
+  if (statsPrev) for (const [id, h] of statsPrev) $(id).hidden = h;
+  statsPrev = null;
+  setViewTabs();
+}
+
+// Only what the Iceberg snapshot metadata already said — no scans, no footers, and no
+// guesses: a fact the metadata doesn't carry renders as an em dash, never as "no".
+function statsCardHtml(info) {
+  const s = info.stats || {};
+  const n = v => v == null ? '—' : Number(v).toLocaleString('en');
+  const rows = [];
+  rows.push(['Rows', n(info.totalRecords) +
+    (info.posDeletes ? ` (physical — before ${info.posDeletes} position-delete file(s))` : '')]);
+  rows.push(['Data files', n(info.fileCount)]);
+  if (info.posDeletes || info.eqDeletes || s.totalDeleteFiles)
+    rows.push(['Delete files', `${n(info.posDeletes)} position, ${n(info.eqDeletes)} equality`]);
+  rows.push(['Total size', s.totalFilesSize == null ? '—' : engine.fmtBytes(s.totalFilesSize)]);
+  if (s.totalFilesSize && info.fileCount)
+    rows.push(['Avg file size', engine.fmtBytes(s.totalFilesSize / info.fileCount)]);
+  rows.push(['Columns', n((info.columns || []).length)]);
+  rows.push(['Partitioning', (s.partitionColumns || []).length ? s.partitionColumns.join(', ') : 'none']);
+  rows.push(['Compression', s.codec || '—']);
+  rows.push(['Last write', s.snapshotTs == null ? '—' :
+    new Date(s.snapshotTs).toLocaleString('en') + (s.operation ? ` (${s.operation})` : '')]);
+  rows.push(['Snapshots', n(s.snapshotCount || null)]);
+  if (s.formatVersion != null) rows.push(['Format', `Iceberg v${s.formatVersion}`]);
+  // Probed: the conversion doesn't write this property today, so the line only appears
+  // if that ever changes. Absence is unknown, not "no" — no line is the honest render.
+  if (s.vorderProp != null) rows.push(['V-Order', s.vorderProp ? 'enabled' : 'disabled']);
+  return '<table>' + rows.map(([k, v]) =>
+    `<tr><th>${escapeHtml(k)}</th><td>${escapeHtml(String(v))}</td></tr>`).join('') +
+    '</table><p class="statsNote">From the Iceberg snapshot metadata — nothing was scanned.</p>';
 }
 
 // ---------------------------------------------------------------------------

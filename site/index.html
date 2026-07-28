@@ -192,6 +192,11 @@
     .docView table { border-collapse: collapse; }
     .docView th, .docView td { border: 1px solid var(--border); padding: 0.3rem 0.6rem; }
 
+    /* Stats card (#statsView, Data|Stats bar) — metadata key/value rows. */
+    #statsView th { text-align: left; font-weight: 500; color: var(--muted); }
+    #statsView td { font-variant-numeric: tabular-nums; }
+    .statsNote { color: var(--muted); font-size: 0.85rem; }
+
     /* Semantic model diagram (bimview.js) — table cards over an SVG edge layer.
        The SVG is absolute inside the relative wrapper with wrapper-relative
        coordinates, so it scrolls with the cards; .bimCards sits above it. */
@@ -356,6 +361,12 @@
       </div>
       <textarea id="sqlEditor" spellcheck="false" placeholder="Write read-only SQL here — no sign-in needed. Try: SELECT 42"></textarea>
       <div class="resultsWrap">
+        <!-- Only while a TABLE is open: its result grid vs. its statistics. Distinct from
+             #docBar below, which belongs to a document-shaped RESULT. -->
+        <div class="docBar tabs" id="viewBar" hidden>
+          <button id="viewData" class="tab active">Data</button><button id="viewStats" class="tab">Stats</button>
+        </div>
+        <article id="statsView" class="docView" hidden></article>
         <div class="docBar tabs" id="docBar" hidden>
           <button id="docPretty" class="tab active">Pretty</button><button id="docRaw" class="tab">Raw</button>
         </div>
