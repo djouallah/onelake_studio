@@ -1817,7 +1817,7 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
       let s = `${label} — statistics only, no data read`;
       if (totalRecords != null) s += `: ${totalRecords.toLocaleString("en")} row(s)`;
       if (fileCount != null) s += ` in ${fileCount} file(s)`;
-      return s + ". Open Preview for rows from one file";
+      return s + ". Open Data for rows from one file";
     }
     if (zip) {
       const n = (zipViews || []).length;
