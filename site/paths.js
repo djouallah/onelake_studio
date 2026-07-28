@@ -402,6 +402,41 @@ export function pickMetadata(entries, hintText) {
   return jsons.slice().sort(byVersionThenMtime).pop();
 }
 
+// Table-level statistics out of an Iceberg metadata document and its current snapshot —
+// the fields the Fabric conversion fills from the source table's own statistics. Only
+// the snapshot summary is trustworthy here: Fabric writes zeroed PER-FILE manifest
+// statistics (measured — see readManifest's caller), so nothing below reads manifests.
+export function snapshotStats(meta, snap) {
+  meta = meta || {}; snap = snap || {};
+  const summary = snap.summary || {};
+  const num = v => Number(v) || null;
+
+  // Partition fields of the CURRENT spec. `default-spec-id` can legitimately be 0, so
+  // only fall back to the first spec when the id is absent or unmatched.
+  const specs = meta["partition-specs"] || [];
+  const spec = specs.find(s => s["spec-id"] === meta["default-spec-id"]) || specs[0];
+  const partitionColumns = ((spec || {}).fields || []).map(f =>
+    f.transform && f.transform !== "identity" ? `${f.name} (${f.transform})` : f.name);
+
+  // Fabric may mirror the source table's V-Order property into the Iceberg properties.
+  // Absent means UNKNOWN, not "no" — the caller must not render a verdict from null.
+  const vorderRaw = (meta.properties || {})["delta.parquet.vorder.enabled"];
+  const vorderProp = vorderRaw == null ? null
+    : String(vorderRaw).trim().toLowerCase() === "true";
+
+  return {
+    totalFilesSize: num(summary["total-files-size"]),
+    totalDataFiles: num(summary["total-data-files"]),
+    totalDeleteFiles: num(summary["total-delete-files"]),
+    operation: summary.operation || null,
+    snapshotTs: num(snap["timestamp-ms"]),
+    snapshotCount: (meta.snapshots || []).length,
+    formatVersion: meta["format-version"] != null ? Number(meta["format-version"]) : null,
+    partitionColumns,
+    vorderProp,
+  };
+}
+
 // -----------------------------------------------------------------------------
 // Cache keys
 // -----------------------------------------------------------------------------

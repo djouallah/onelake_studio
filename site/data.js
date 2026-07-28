@@ -33,7 +33,7 @@ import {
   parseLakehouse, itemKind, holdsTables,
   fileExt, readerFor, PARQUET_EXTS, DB_EXTS, ZIP_EXTS, isSqliteHeader, isTextExt,
   sqlStr, quoteIdent, prepareReadOnlySql,
-  pickMetadata, tableKey, fileKey, sanitizeIdent,
+  pickMetadata, snapshotStats, tableKey, fileKey, sanitizeIdent,
   normalizeValue, fmtBytes,
 } from "./paths.js";
 
@@ -1116,6 +1116,7 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
       // disagree — only then is union_by_name worth its price (see createView).
       evolved: (meta.schemas || []).length > 1,
       totalRecords: Number((snap.summary || {})["total-records"]) || null,
+      stats: snapshotStats(meta, snap),
     };
   }
 
@@ -1688,7 +1689,7 @@ export function createEngine(auth, { onStatus = () => {} } = {}) {
 
     const info = { label, ident, columns, fileCount: paths.length,
                    posDeletes: posDeletes.length, eqDeletes: eqDeletes.length,
-                   totalRecords: resolved.totalRecords, warnings };
+                   totalRecords: resolved.totalRecords, stats: resolved.stats, warnings };
 
     loaded.set(key, info);
     status(describeLoad(info));

@@ -14,7 +14,7 @@ import {
   fileExt, readerFor, PARQUET_EXTS,
   TEXT_EXTS, isTextExt, DB_EXTS, ZIP_EXTS, IMAGE_EXTS, isSqliteHeader,
   sqlStr, quoteIdent, stripComments, prepareReadOnlySql,
-  metadataVersion, pickMetadata,
+  metadataVersion, pickMetadata, snapshotStats,
   tableKey, fileKey, sanitizeIdent,
   normalizeValue, fmtBytes, isDocResult, textLinesDoc, docKind, escapeHtml,
 } from "../site/paths.js";
@@ -376,6 +376,59 @@ test("pickMetadata falls back to mtime when no name carries a version", () => {
     { name: "t/metadata/bbb.metadata.json", mtime: 200 },
   ];
   assert.equal(pickMetadata(entries).name, "t/metadata/bbb.metadata.json");
+});
+
+// -----------------------------------------------------------------------------
+test("snapshotStats reads the summary and metadata fields", () => {
+  const meta = {
+    "format-version": 2,
+    "default-spec-id": 1,
+    "partition-specs": [
+      { "spec-id": 0, fields: [] },
+      { "spec-id": 1, fields: [{ name: "day", transform: "day" },
+                               { name: "region", transform: "identity" }] },
+    ],
+    properties: { "delta.parquet.vorder.enabled": "TRUE " },
+    snapshots: [{}, {}, {}],
+  };
+  const snap = {
+    "timestamp-ms": 1753600000000,
+    summary: { operation: "append", "total-records": "1000", "total-files-size": "52428800",
+               "total-data-files": "19", "total-delete-files": "2" },
+  };
+  assert.deepEqual(snapshotStats(meta, snap), {
+    totalFilesSize: 52428800, totalDataFiles: 19, totalDeleteFiles: 2,
+    operation: "append", snapshotTs: 1753600000000, snapshotCount: 3, formatVersion: 2,
+    partitionColumns: ["day (day)", "region"], vorderProp: true,
+  });
+});
+
+test("snapshotStats: missing summary fields become nulls, never guesses", () => {
+  const s = snapshotStats({}, {});
+  assert.deepEqual(s, {
+    totalFilesSize: null, totalDataFiles: null, totalDeleteFiles: null, operation: null,
+    snapshotTs: null, snapshotCount: 0, formatVersion: null,
+    partitionColumns: [], vorderProp: null,
+  });
+  assert.deepEqual(snapshotStats(undefined, undefined), s);
+});
+
+test("snapshotStats: V-Order property false vs absent are different answers", () => {
+  const at = p => snapshotStats({ properties: p }, {}).vorderProp;
+  assert.equal(at({ "delta.parquet.vorder.enabled": "false" }), false);
+  assert.equal(at({ "delta.parquet.vorder.enabled": "garbage" }), false);
+  assert.equal(at({}), null);   // absent = unknown, the UI must not render a verdict
+});
+
+test("snapshotStats: spec-id 0 is a real spec-id, not a missing one", () => {
+  const meta = {
+    "default-spec-id": 0,
+    "partition-specs": [
+      { "spec-id": 0, fields: [{ name: "yr", transform: "identity" }] },
+      { "spec-id": 1, fields: [{ name: "other", transform: "identity" }] },
+    ],
+  };
+  assert.deepEqual(snapshotStats(meta, {}).partitionColumns, ["yr"]);
 });
 
 // -----------------------------------------------------------------------------
