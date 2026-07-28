@@ -5,3 +5,6 @@ dist/
 *.duckdb
 test/fixtures/*.db
 test/fixtures/*.zip
+test/fixtures/*.parquet
+extension/site/
+extension/*.vsix

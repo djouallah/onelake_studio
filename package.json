@@ -6,7 +6,7 @@
   "description": "Serverless, in-browser SQL over OneLake. Sign in with your own Entra identity, browse your workspaces and lakehouses, and query Iceberg tables and files with DuckDB-WASM. Nothing leaves the browser.",
   "scripts": {
     "dev": "serve site -l 5173",
-    "test": "node --test test/paths.test.js",
+    "test": "node --test test/paths.test.js test/panel-html.test.js",
     "build": "node build.mjs"
   },
   "devDependencies": {

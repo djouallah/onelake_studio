@@ -1,0 +1,39 @@
+{
+  "name": "onelake-studio",
+  "displayName": "OneLake Studio",
+  "description": "Browse and query Microsoft Fabric OneLake Iceberg tables with DuckDB, signed in with your VS Code Microsoft account.",
+  "version": "0.1.0",
+  "publisher": "djouallah",
+  "license": "MIT",
+  "repository": { "type": "git", "url": "https://github.com/djouallah/onelake_studio.git" },
+  "engines": { "vscode": "^1.90.0" },
+  "categories": ["Data Science", "Visualization", "Other"],
+  "keywords": ["fabric", "onelake", "iceberg", "duckdb", "lakehouse"],
+  "main": "./src/extension.js",
+  "activationEvents": [],
+  "contributes": {
+    "commands": [
+      {
+        "command": "onelakeStudio.open",
+        "title": "Open OneLake Studio",
+        "category": "OneLake Studio"
+      }
+    ],
+    "configuration": {
+      "title": "OneLake Studio",
+      "properties": {
+        "onelakeStudio.tenantId": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Directory (tenant) GUID to sign in against. Leave empty for your home tenant; set it to reach a tenant you are a guest in."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "node ./copy-site.mjs"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.90.0"
+  }
+}

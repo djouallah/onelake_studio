@@ -1,0 +1,16 @@
+{
+  // F5 opens an Extension Development Host with the extension loaded, then run
+  // "Open OneLake Studio" from the command palette.
+  //
+  // No build step and no copy: with extension/site/ absent, panel.js falls back to the
+  // repo's own site/, so an edit to the web app shows up on the next panel open.
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Run OneLake Studio extension",
+      "type": "extensionHost",
+      "request": "launch",
+      "args": ["--extensionDevelopmentPath=${workspaceFolder}/extension"]
+    }
+  ]
+}
