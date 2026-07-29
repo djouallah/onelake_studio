@@ -107,7 +107,13 @@
           "type": "number",
           "default": 20,
           "minimum": 0,
-          "markdownDescription": "Disk to spend caching OneLake data, in GB. Only Iceberg data files and manifests are cached — objects a new snapshot replaces rather than rewrites, so a cached one can never be stale. Reading a table you have opened before comes off disk instead of the network. Set to `0` to cache nothing; `OneLake Studio: Clear Cached OneLake Data` empties it and reports what it freed."
+          "markdownDescription": "Disk to spend caching OneLake data, in GB. Iceberg data files and manifests are kept until evicted — a new snapshot writes new files, so a cached one can never be stale. Reading a table you have opened before comes off disk instead of the network. Set to `0` to cache nothing; `OneLake Studio: Clear Cached OneLake Data` empties it and reports what it freed."
+        },
+        "onelakeStudio.catalogTtlMinutes": {
+          "type": "number",
+          "default": 5,
+          "minimum": 0,
+          "markdownDescription": "How long catalog answers, listings and other mutable objects are served from disk before OneLake is asked again. Within this window a table opens from the last-known answer, no network check — a snapshot written moments ago shows up once the window lapses. Raise it if your tables change rarely and the catalog's seconds-per-call annoy you more than a stale-by-minutes view. `0` asks OneLake every time."
         }
       }
     }
