@@ -171,27 +171,33 @@ function createCache(dir, { maxBytes = DEFAULT_MAX_BYTES, ttlMs = DEFAULT_TTL_MS
       // microseconds and can never queue behind the network's problems.
       const meta = JSON.parse(fsSync.readFileSync(join(dir, `${k}.json`), 'utf8'));
       if (meta.v !== SIDE_V) return null;          // a pre-slicing entry; the sweep owns it
-      // A TTL entry past its time is a miss, not an error: the refetch replaces it.
-      if (meta.exp && Date.now() > meta.exp) return null;
+      // A TTL entry past its time is still THE ANSWER — the last one OneLake gave, served
+      // instantly, marked stale so the caller refreshes it in the background. The
+      // measured alternative was 3-9 seconds of Fabric catalog per 3KB on every open
+      // that fell outside the window. Worst case now: one click shows the previous
+      // snapshot, and the click after it is current.
+      const stale = !!(meta.exp && Date.now() > meta.exp);
       const size = Number(meta.bytes) || 0;
       const hdr = meta.hdr || null;
-      if (method === 'HEAD') return { status: 200, length: size, contentRange: '', stream: null, headers: hdr };
+      if (method === 'HEAD') {
+        return { status: 200, length: size, contentRange: '', stream: null, headers: hdr, stale };
+      }
       if (meta.head) return null;                  // a length only; the bytes are not here
       const bin = join(dir, `${k}.bin`);
       const r = parseRange(rangeHeader, size);
       if (r === 'invalid') return null;
       if (r === 'unsatisfiable') {
-        return { status: 416, length: 0, contentRange: `bytes */${size}`, stream: null, headers: hdr };
+        return { status: 416, length: 0, contentRange: `bytes */${size}`, stream: null, headers: hdr, stale };
       }
       if (!r) {
         return { status: 200, length: size, contentRange: '', stream: fsSync.createReadStream(bin),
-                 headers: hdr };
+                 headers: hdr, stale };
       }
       return {
         status: 206, length: r.end - r.start + 1,
         contentRange: `bytes ${r.start}-${r.end}/${size}`,
         stream: fsSync.createReadStream(bin, { start: r.start, end: r.end }),
-        headers: hdr,
+        headers: hdr, stale,
       };
     } catch (_) { return null; }
   }
@@ -227,20 +233,37 @@ function createCache(dir, { maxBytes = DEFAULT_MAX_BYTES, ttlMs = DEFAULT_TTL_MS
     // instead of inferring it from time passing.
     const done = track(new Promise(resolve => {
       stream.on('close', async () => {
-        if (broken) return resolve({ stored: false, bytes: 0 });
+        if (broken) return resolve({ stored: false, bytes: 0, reason: 'aborted' });
         try {
           const bytes = stream.bytesWritten;
-          if (!bytes) { await fs.rm(tmp, { force: true }); return resolve({ stored: false, bytes: 0 }); }
-          await fs.rename(tmp, join(dir, `${k}.bin`));
+          if (!bytes) {
+            await fs.rm(tmp, { force: true });
+            return resolve({ stored: false, bytes: 0, reason: 'empty body' });
+          }
+          // Replacing an entry (a TTL refresh) renames over a .bin that a reader may
+          // have held open milliseconds ago, and Windows answers that with EPERM until
+          // the handle is truly gone. Unlink first (Node opens with share-delete, so
+          // this succeeds even mid-read), then retry the rename a few times — the
+          // window is the tail of a response, not a lock.
+          const bin = join(dir, `${k}.bin`);
+          for (let attempt = 0; ; attempt++) {
+            try { await fs.rm(bin, { force: true }); await fs.rename(tmp, bin); break; }
+            catch (e) {
+              if (attempt >= 4) throw e;
+              await new Promise(r => setTimeout(r, 50 * (attempt + 1)));
+            }
+          }
           await fs.writeFile(join(dir, `${k}.json`),
             JSON.stringify({ bytes, at: Date.now(), v: SIDE_V, ...extra }));
           total += bytes;
           if (total > maxBytes) await prune();
           resolve({ stored: true, bytes });
-        } catch (_) {
-          // An optimisation, never a failure — but the tmp must not outlive the attempt.
+        } catch (e) {
+          // An optimisation, never a failure — but the tmp must not outlive the attempt,
+          // and the reason must not vanish: a write that fails silently is how "the
+          // cache doesn't work" stays undiagnosed for a day.
           fs.rm(tmp, { force: true }).catch(() => {});
-          resolve({ stored: false, bytes: 0 });
+          resolve({ stored: false, bytes: 0, reason: (e && e.message) || String(e) });
         }
       });
     }));
@@ -394,8 +417,9 @@ function createCache(dir, { maxBytes = DEFAULT_MAX_BYTES, ttlMs = DEFAULT_TTL_MS
       try {
         const m = JSON.parse(await fs.readFile(join(dir, `${k}.json`), 'utf8'));
         const torn = !m.head && !bins.has(k);
-        const expired = m.exp && Date.now() > m.exp;
-        if (m.v !== SIDE_V || torn || expired) {
+        // Expired TTL entries are NOT swept: stale is served instantly and refreshed
+        // behind, so an old answer is an asset, not garbage. Eviction still applies.
+        if (m.v !== SIDE_V || torn) {
           await fs.rm(join(dir, `${k}.json`), { force: true });
           await fs.rm(join(dir, `${k}.bin`), { force: true }).catch(() => {});
           continue;

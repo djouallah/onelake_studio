@@ -113,7 +113,7 @@
           "type": "number",
           "default": 5,
           "minimum": 0,
-          "markdownDescription": "How long catalog answers, listings and other mutable objects are served from disk before OneLake is asked again. Within this window a table opens from the last-known answer, no network check — a snapshot written moments ago shows up once the window lapses. Raise it if your tables change rarely and the catalog's seconds-per-call annoy you more than a stale-by-minutes view. `0` asks OneLake every time."
+          "markdownDescription": "How old a catalog answer, listing or other mutable object may be before it is refreshed. The last-known answer is ALWAYS served instantly from disk — a table you have ever opened opens without waiting on the catalog; once the answer is older than this, a background refresh fetches the current one, so a new snapshot shows up one click later. `0` disables the caching and asks OneLake every time."
         }
       }
     }

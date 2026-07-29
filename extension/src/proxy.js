@@ -253,6 +253,38 @@ async function handle(req, res, opts) {
     const hit = await opts.cache.open(upstream, range, req.method);
     const lookupMs = Date.now() - askAt;
     if (hit) {
+      // Stale is served, never waited on: the last answer OneLake gave goes out now,
+      // and the fresh one is fetched behind it — the catalog was measured charging
+      // 3-9 seconds per 3KB, and that wait belongs in the background, not in front of
+      // a click. Single-flight through the same fills map as every write, so a burst
+      // of stale hits buys exactly one refresh; its outcome is a STORE line.
+      if (hit.stale && req.method === 'GET' && !opts.refreshing.has(upstream)) {
+        // Claimed BEFORE the fetch: the cache's own single-flight map only engages once
+        // a write begins, and the upstream round trip happens first — without this, a
+        // burst of stale hits bought a fetch each.
+        opts.refreshing.add(upstream);
+        const t1 = Date.now();
+        (async () => {
+          const g = await fetchUpstream(upstream, opts.getToken, {});
+          if (!g.resp || g.resp.status !== 200) { if (g.resp) g.resp.stream.resume(); return; }
+          const freshHdr = {};
+          for (const h of PASS_THROUGH) {
+            const v = g.resp.headers[h];
+            if (v != null) freshHdr[h] = v;
+          }
+          const entry = opts.cache.beginPutFull(upstream, { headers: freshHdr });
+          if (!entry) { g.resp.stream.resume(); return; }
+          g.resp.stream.on('error', () => entry.abort());
+          g.resp.stream.pipe(entry.stream);
+          const o = await entry.done;
+          if (opts.onLog) opts.onLog({
+            method: 'STORE', kind: r.kind, path: r.rest, range: '',
+            ms: Date.now() - t1, status: 0,
+            cache: o.stored ? 'store' : 'store-failed', bytes: o.bytes || 0,
+            ...(o.stored ? {} : { error: o.reason || 'refresh failed' }),
+          });
+        })().catch(() => {}).finally(() => opts.refreshing.delete(upstream));
+      }
       if (hit.status === 416) {
         res.writeHead(416, { 'content-range': hit.contentRange });
         log({ cache: 'hit', status: 416, bytes: 0, lookupMs });
@@ -391,7 +423,8 @@ function startProxy({ getToken, cacheDir, cacheMaxBytes, cacheTtlMs, onLog, cdnU
     // != null, not truthiness: zero is a real answer ("ask OneLake every time").
     ...(cacheTtlMs != null ? { ttlMs: cacheTtlMs } : {}),
   });
-  const opts = { getToken, dfsUpstream, tableUpstream, secret, cache, onLog, cdnUpstream, vendorDir };
+  const opts = { getToken, dfsUpstream, tableUpstream, secret, cache, onLog, cdnUpstream, vendorDir,
+                 refreshing: new Set() };
 
   const server = http.createServer((req, res) => {
     handle(req, res, opts).catch(e => {

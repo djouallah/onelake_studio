@@ -219,8 +219,8 @@ async function ensureProxy(context) {
       out.appendLine(
         'columns: total | method | status | verdict | bytes | where the time went | range | path');
       out.appendLine(
-        '  hit  = served from disk    miss = fetched, and KEPT — immutable objects forever,' +
-        ' catalog/listings for 5 minutes    skip = fetched, not kept');
+        '  hit  = served from disk (a stale catalog answer is served instantly and refreshed' +
+        ' behind)    miss = fetched, and KEPT    skip = fetched, not kept');
       out.appendLine(
         '  STORE ok = a background download kept the whole object, so its next read is local');
     }

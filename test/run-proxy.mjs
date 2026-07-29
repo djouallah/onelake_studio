@@ -332,12 +332,18 @@ const TABLE_FILE = `${proxy.dfsOrigin}/ws/lh.Lakehouse/Tables/t/data_0.parquet`;
     await new Promise(r => setTimeout(r, 400));   // real time: the TTL is a clock, not an event
     before = log.length;
     await (await fetch(url)).arrayBuffer();
-    eq(log.length, before + 1, "past the TTL the same URL is asked again");
+    await (await fetch(url)).arrayBuffer();
+    // The requests themselves are served from disk; the ≤1 allows the background
+    // refresh to have already reached the upstream, because it starts immediately.
+    ok(log.length - before <= 1,
+       "past the TTL the STALE answer is served instantly — the wait is not the user's");
+    for (let i = 0; i < 100 && log.length === before; i++) await new Promise(r => setTimeout(r, 20));
     await short.cacheIdle();
+    eq(log.length, before + 1, "…and exactly ONE background refresh fetched the fresh answer");
 
     before = log.length;
     await (await fetch(url)).arrayBuffer();
-    eq(log.length, before, "…and the fresh answer took the stale one's place on disk");
+    eq(log.length, before, "…which took the stale one's place and serves the next ask");
   } finally {
     await short.close();
     await rm(TTL_DIR, { recursive: true, force: true }).catch(() => {});
