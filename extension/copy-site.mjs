@@ -32,7 +32,27 @@ let commit = process.env.GITHUB_SHA || "";
 if (!commit) {
   try { commit = execSync("git rev-parse HEAD", { encoding: "utf8" }).trim(); } catch (_) {}
 }
-const short = commit ? commit.slice(0, 7) : "unknown";
+let short = commit ? commit.slice(0, 7) : "unknown";
+
+// A stamp that names a commit NOT containing the code being packaged is worse than no
+// stamp: the badge is the only way to tell which build is installed, and reading a stale
+// one costs exactly the debugging the badge exists to prevent. Packaging before committing
+// does this every time — it stamps the parent commit onto the changes you just made, so
+// the build looks a version older than it is and the real change looks like it never
+// shipped.
+//
+// Not an error, because packaging a dirty tree is the normal way to test a change. It is
+// labelled instead, which is a claim anyone can check.
+if (!process.env.GITHUB_SHA) {
+  let dirty = "";
+  try { dirty = execSync("git status --porcelain", { encoding: "utf8" }).trim(); } catch (_) {}
+  if (dirty) {
+    short += "+dirty";
+    console.warn(`WARNING: packaging with uncommitted changes — stamping ${short}.` +
+                 ` Commit first if this build is meant to be identifiable.`);
+  }
+}
+
 await writeFile(new URL("./version.js", dst),
   `window.ONELAKE_STUDIO_VERSION = { commit: ${JSON.stringify(short)}, builtAt: ${JSON.stringify(new Date().toISOString())} };\n`);
 
