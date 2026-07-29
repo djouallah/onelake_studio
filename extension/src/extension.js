@@ -81,8 +81,12 @@ function logRead(e) {
   const status = filling ? (e.cache === 'store' ? 'ok' : 'ERR') : String(e.status);
   const size = e.bytes ? ` ${(e.bytes / 1024).toFixed(0)}KB` : '';
   const path = e.path.length > 64 ? '…' + e.path.slice(-63) : e.path;
+  // The verdict is its own column. A first-ever download that was kept and a cache that
+  // failed to keep it both said just "net Xms", and a user reading the log concluded —
+  // reasonably — that nothing was being cached at all.
+  const verdict = e.cache === 'store-failed' ? 'FAIL ' : (e.cache || '').padEnd(5);
   out.appendLine(
-    `${String(e.ms).padStart(6)}ms  ${e.method.padEnd(4)} ${status.padEnd(3)}` +
+    `${String(e.ms).padStart(6)}ms  ${e.method.padEnd(4)} ${status.padEnd(3)} ${verdict}` +
     `${size.padStart(9)}  ${where.padEnd(24)} ${e.range || ''} ${path}` +
     (e.error ? `  !! ${e.error}` : ''));
 }
@@ -183,9 +187,9 @@ async function ensureProxy(context) {
         ? `cache: ${fmtBytes(c.maxBytes)} max in ${c.dir} (currently ${fmtBytes(await proxy.cacheSize())})`
         : `cache: OFF — ${c.problem}${c.dir ? ` (${c.dir})` : ''}`);
       out.appendLine(
-        'columns: total | method | status | bytes | where the time went | range | path');
+        'columns: total | method | status | verdict | bytes | where the time went | range | path');
       out.appendLine(
-        '  hit  = served from disk    miss = fetched from OneLake' +
+        '  hit  = served from disk    miss = fetched, and KEPT for next time' +
         '    skip = fetched, never stored (not an immutable object)');
       out.appendLine(
         '  STORE ok = a background download kept the whole object, so its next read is local');
