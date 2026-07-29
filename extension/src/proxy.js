@@ -78,6 +78,8 @@ function route(reqUrl, secret) {
 
 async function handle(req, res, opts) {
   cors(res);
+  // Answered before anything else and never logged: a preflight touches no token, no
+  // cache and no network, and one per file would bury the reads that do.
   if (req.method === 'OPTIONS') { res.writeHead(204); return res.end(); }
   if (req.method !== 'GET' && req.method !== 'HEAD') {
     res.writeHead(405); return res.end('proxy serves GET and HEAD only');
@@ -90,19 +92,34 @@ async function handle(req, res, opts) {
   const upstream = (r.kind === 'dfs' ? opts.dfsUpstream : opts.tableUpstream) + r.rest + r.query;
   const range = req.headers.range || '';
 
+  // "Slow" is not a diagnosis, and none of this is observable from the webview — DuckDB's
+  // reads never pass through the page, and the page cannot see how long the network took
+  // or whether anything was served locally. Every read reports where its time went:
+  // waiting for the account provider, waiting for OneLake, or not waiting at all.
+  const t0 = Date.now();
+  const log = extra => {
+    if (!opts.onLog) return;
+    opts.onLog({
+      method: req.method, kind: r.kind, path: r.rest, range,
+      ms: Date.now() - t0, ...extra,
+    });
+  };
+
   // A hit answers without a token and without touching the network — the bytes are
-  // already on this machine, and they belong to an object that cannot change. HEAD is
-  // left alone: it is asking for a length, not for bytes.
-  if (opts.cache && req.method === 'GET') {
-    const hit = await opts.cache.get(upstream, range);
+  // already on this machine, and they belong to an object that cannot change.
+  if (opts.cache) {
+    const hit = await opts.cache.get(upstream, range, req.method);
     if (hit) {
-      res.writeHead(hit.contentRange ? 206 : 200, {
+      const head = {
         'content-type': 'application/octet-stream',
-        'content-length': String(hit.body.length),
+        'content-length': String(hit.length),
         'accept-ranges': 'bytes',
         ...(hit.contentRange ? { 'content-range': hit.contentRange } : {}),
-      });
-      return res.end(hit.body);
+      };
+      const status = hit.contentRange ? 206 : 200;
+      res.writeHead(status, head);
+      log({ cache: 'hit', status, bytes: hit.length });
+      return res.end(req.method === 'HEAD' ? undefined : hit.body);
     }
   }
 
@@ -115,10 +132,20 @@ async function handle(req, res, opts) {
   };
 
   let up;
+  let tokenMs = 0;
+  let netMs = 0;
   try {
+    const tokenAt = Date.now();
     let token = await opts.getToken();
-    if (!token) { res.writeHead(401); return res.end('no Microsoft account session'); }
+    tokenMs = Date.now() - tokenAt;
+    if (!token) {
+      res.writeHead(401);
+      log({ cache: 'miss', status: 401, tokenMs });
+      return res.end('no Microsoft account session');
+    }
+    const netAt = Date.now();
     up = await send(token);
+    netMs = Date.now() - netAt;
     // The token the caller handed over is cached — it has to be, or every one of DuckDB's
     // range reads pays a round trip to the account provider — so this is where an expiry
     // is discovered. Asking for a fresh one and retrying keeps the self-healing that
@@ -127,10 +154,15 @@ async function handle(req, res, opts) {
     // path, and a new token will not change its mind.
     if (up.status === 401) {
       const fresh = await opts.getToken({ fresh: true });
-      if (fresh && fresh !== token) up = await send(fresh);
+      if (fresh && fresh !== token) {
+        const retryAt = Date.now();
+        up = await send(fresh);
+        netMs += Date.now() - retryAt;
+      }
     }
   } catch (e) {
     res.writeHead(502);
+    log({ cache: 'miss', status: 502, tokenMs, netMs, error: (e && e.message) || String(e) });
     return res.end(`proxy could not reach OneLake: ${(e && e.message) || e}`);
   }
 
@@ -142,7 +174,15 @@ async function handle(req, res, opts) {
   // Upstream's status is passed through untouched — 206, and 401/403/404, all of which
   // the engine reads and turns into its own diagnosis.
   res.writeHead(up.status, out);
-  if (req.method === 'HEAD' || !up.body) return res.end();
+  if (req.method === 'HEAD' || !up.body) {
+    // An immutable file's length is as immutable as its bytes, and DuckDB asks for it
+    // before every open. Storing it turns a round trip to OneLake into a local read.
+    if (req.method === 'HEAD' && up.status === 200 && opts.cache) {
+      opts.cache.putHead(upstream, out['content-length']);
+    }
+    log({ cache: 'miss', status: up.status, tokenMs, netMs, bytes: Number(out['content-length']) || 0 });
+    return res.end();
+  }
 
   // Streamed to DuckDB either way; when it is worth keeping, the chunks are also collected
   // and written afterwards. The read never waits on the write, and a write that fails
@@ -152,15 +192,13 @@ async function handle(req, res, opts) {
   // of something that will never be stored — a CSV under Files/, a listing — would be held
   // in memory on its way past for nothing.
   const body = Readable.fromWeb(up.body);
-  const keep = opts.cache && req.method === 'GET' &&
-    (up.status === 200 || up.status === 206) && cacheable(upstream);
-  if (!keep) return void body.pipe(res);
+  const keep = opts.cache && (up.status === 200 || up.status === 206) && cacheable(upstream);
 
-  let chunks = [];
+  let chunks = keep ? [] : null;
   let size = 0;
   body.on('data', c => {
-    if (!chunks) return;
     size += c.length;
+    if (!chunks) return;
     // Past the cap this would be a copy of something that is not going to be stored.
     if (size > MAX_ENTRY_BYTES) { chunks = null; return; }
     chunks.push(c);
@@ -169,12 +207,15 @@ async function handle(req, res, opts) {
     if (chunks) {
       opts.cache.put(upstream, range, up.status, out['content-range'] || '', Buffer.concat(chunks, size));
     }
+    // Logged on end, not on headers: for a large file the bytes are most of the wait, and
+    // a number that stops at the first byte would say the read was fast.
+    log({ cache: 'miss', status: up.status, tokenMs, netMs, bytes: size });
   });
   body.pipe(res);
 }
 
 // Resolves to { port, secret, dfsOrigin, tableOrigin, close() }.
-function startProxy({ getToken, cacheDir,
+function startProxy({ getToken, cacheDir, onLog,
                       dfsUpstream = DFS_UPSTREAM, tableUpstream = TABLE_UPSTREAM } = {}) {
   if (typeof getToken !== 'function') throw new TypeError('startProxy needs a getToken() function');
 
@@ -182,7 +223,7 @@ function startProxy({ getToken, cacheDir,
   // Absent cacheDir means no cache — every read goes upstream, which is what the proxy
   // did before and is still a correct proxy.
   const cache = createCache(cacheDir);
-  const opts = { getToken, dfsUpstream, tableUpstream, secret, cache };
+  const opts = { getToken, dfsUpstream, tableUpstream, secret, cache, onLog };
 
   const server = http.createServer((req, res) => {
     handle(req, res, opts).catch(e => {

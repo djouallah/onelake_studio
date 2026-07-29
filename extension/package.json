@@ -36,6 +36,16 @@
         "title": "Refresh",
         "category": "OneLake Studio",
         "icon": "$(refresh)"
+      },
+      {
+        "command": "onelakeStudio.showLog",
+        "title": "Show Read Log",
+        "category": "OneLake Studio"
+      },
+      {
+        "command": "onelakeStudio.clearCache",
+        "title": "Clear Cached OneLake Data",
+        "category": "OneLake Studio"
       }
     ],
     "viewsContainers": {

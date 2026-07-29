@@ -63,6 +63,24 @@ async function proxyToken({ fresh = false } = {}) {
 
 let proxy = null;
 
+// Nothing about a slow read is visible from the webview: DuckDB's requests never pass
+// through the page, so it cannot see how many there were, how big, how long OneLake took,
+// or whether anything was answered locally. This is the only place that knows, and
+// "OneLake Studio" in the Output panel is where it says so. Idle by default — an output
+// channel costs nothing until somebody opens it.
+let out = null;
+function logRead(e) {
+  if (!out) return;
+  const where = e.cache === 'hit' ? 'cache'
+    : [e.tokenMs > 5 ? `token ${e.tokenMs}ms` : '', `net ${e.netMs}ms`].filter(Boolean).join(' + ');
+  const size = e.bytes ? ` ${(e.bytes / 1024).toFixed(0)}KB` : '';
+  const path = e.path.length > 64 ? '…' + e.path.slice(-63) : e.path;
+  out.appendLine(
+    `${String(e.ms).padStart(6)}ms  ${e.method.padEnd(4)} ${String(e.status).padEnd(3)}` +
+    `${size.padStart(9)}  ${where.padEnd(24)} ${e.range || ''} ${path}` +
+    (e.error ? `  !! ${e.error}` : ''));
+}
+
 async function ensureProxy(context) {
   if (!proxy) {
     proxy = await startProxy({
@@ -71,6 +89,7 @@ async function ensureProxy(context) {
       // build. Without it the panel re-downloaded every parquet footer and row group on
       // every open, which the website has not done since the worker started caching them.
       cacheDir: join(context.globalStorageUri.fsPath, 'onelake-data'),
+      onLog: logRead,
     });
     context.subscriptions.push({ dispose: () => proxy && proxy.close() });
   }
@@ -98,6 +117,9 @@ async function setSignedIn(value) {
 }
 
 async function activate(context) {
+  out = vscode.window.createOutputChannel('OneLake Studio');
+  context.subscriptions.push(out);
+
   const { site } = await siteRoot(context.extensionUri);
   // Listing goes straight to OneLake on the VS Code token — the proxy is for DuckDB's
   // range reads, which run in the webview and cannot set a header of their own.
@@ -125,6 +147,15 @@ async function activate(context) {
     }),
 
     vscode.commands.registerCommand('onelakeStudio.refresh', n => tree.refresh(n)),
+
+    vscode.commands.registerCommand('onelakeStudio.showLog', () => out.show(true)),
+
+    // Reading the same table twice should be quick, and if it is not, this is how to
+    // prove the cache is the reason rather than assume it.
+    vscode.commands.registerCommand('onelakeStudio.clearCache', async () => {
+      if (proxy) await proxy.clearCache();
+      vscode.window.showInformationMessage('OneLake Studio: cached OneLake data cleared.');
+    }),
 
     vscode.commands.registerCommand('onelakeStudio.openTable', n => openInPanel({
       type: 'open-table',

@@ -193,6 +193,21 @@ const TABLE_FILE = `${proxy.dfsOrigin}/ws/lh.Lakehouse/Tables/t/data_0.parquet`;
   eq(log.length, other + 1, "a different range is a different object, and is fetched");
 }
 {
+  // DuckDB sizes a file with a HEAD before every open. An immutable file's length is as
+  // immutable as its bytes, so the second one should not be a round trip either.
+  const first = log.length;
+  const a = await fetch(TABLE_FILE, { method: "HEAD" });
+  eq(a.headers.get("content-length"), String(parquet.length), "a HEAD is sized upstream first");
+  eq(log.length, first + 1, "…which costs one request");
+  await new Promise(r => setTimeout(r, 150));
+
+  const second = log.length;
+  const b = await fetch(TABLE_FILE, { method: "HEAD" });
+  eq(log.length, second, "the next HEAD for the same file does not go upstream");
+  eq(b.headers.get("content-length"), String(parquet.length), "…and reports the same length");
+  eq((await b.arrayBuffer()).byteLength, 0, "…with no body, because that is what HEAD means");
+}
+{
   // Files/ is overwritten by users, a listing carries a query string, and metadata.json is
   // rewritten by conversion. Caching any of them would serve a stale answer that no
   // invalidation here could ever catch.

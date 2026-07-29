@@ -53,19 +53,39 @@ function createCache(dir) {
 
   const ensure = () => (ready || (ready = fs.mkdir(dir, { recursive: true })));
 
-  // Returns { body, contentRange } or null. The body is a Buffer: these are the sizes
-  // DuckDB range-reads in, and streaming a local file adds machinery for nothing.
-  async function get(url, range) {
+  // Returns { body, length, contentRange } or null. The body is a Buffer: these are the
+  // sizes DuckDB range-reads in, and streaming a local file adds machinery for nothing.
+  //
+  // A HEAD is asking for a length, not for bytes, and DuckDB issues one before every open.
+  // An immutable file's length is as immutable as its contents, so it is answered from the
+  // sidecar alone — no body is read off disk to satisfy a question about a number.
+  async function get(url, range, method = 'GET') {
     if (!cacheable(url)) return null;
     try {
       await ensure();
+      if (method === 'HEAD') {
+        const meta = JSON.parse(await fs.readFile(join(dir, `${keyOf(url, 'HEAD')}.json`), 'utf8'));
+        return { body: null, length: Number(meta.bytes) || 0, contentRange: '' };
+      }
       const k = keyOf(url, range);
       const [body, meta] = await Promise.all([
         fs.readFile(join(dir, `${k}.bin`)),
         fs.readFile(join(dir, `${k}.json`), 'utf8'),
       ]);
-      return { body, contentRange: JSON.parse(meta).contentRange || '' };
+      return { body, length: body.length, contentRange: JSON.parse(meta).contentRange || '' };
     } catch (_) { return null; }
+  }
+
+  // A length, with no .bin beside it. prune() reads .json files and would see a zero-byte
+  // entry, which is what it should see: this costs nothing to keep and nothing to lose.
+  async function putHead(url, contentLength) {
+    const bytes = Number(contentLength);
+    if (!cacheable(url) || !Number.isFinite(bytes) || bytes <= 0) return;
+    try {
+      await ensure();
+      await fs.writeFile(join(dir, `${keyOf(url, 'HEAD')}.json`),
+        JSON.stringify({ contentRange: '', bytes, at: Date.now(), head: true }));
+    } catch (_) {}
   }
 
   async function put(url, range, status, contentRange, body) {
@@ -97,7 +117,9 @@ function createCache(dir) {
       for (const n of names) {
         try {
           const m = JSON.parse(await fs.readFile(join(dir, n), 'utf8'));
-          const bytes = Number(m.bytes) || 0;
+          // A HEAD entry is a number, not bytes on disk. Counting its file's length here
+          // would evict real entries to make room for something occupying nothing.
+          const bytes = m.head ? 0 : Number(m.bytes) || 0;
           total += bytes;
           entries.push({ k: n.slice(0, -5), bytes, at: Number(m.at) || 0 });
         } catch (_) { /* a torn entry prunes itself below */ }
@@ -120,7 +142,7 @@ function createCache(dir) {
     ready = null;
   }
 
-  return { get, put, clear, dir };
+  return { get, put, putHead, clear, dir };
 }
 
 module.exports = { createCache, cacheable, MAX_ENTRY_BYTES };
