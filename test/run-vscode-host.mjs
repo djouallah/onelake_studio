@@ -270,6 +270,18 @@ try {
   check("nothing cached reads as network", /☁ network/.test(remote.text) && /210 MB/.test(remote.text),
     remote.text);
 
+  // A background fill is network spend the user did not wait for. The reads were local,
+  // and saying only "local" while a download runs would be a lie by omission — the ⇣
+  // discloses it, and the tooltip explains what it bought.
+  const filling = await indicator({
+    reads: 2, hits: 2, misses: 0, skips: 0, stores: 1, cacheBytes: 1e6, netBytes: 0,
+    storeBytes: 150e6, netMs: 0, cacheStored: 2.1e9, cacheMax: 20e9 });
+  check("a background fill is disclosed next to local reads",
+    /▤ local/.test(filling.text) && /⇣ 150 MB/.test(filling.text), filling.text);
+  check("...and the tooltip says what it bought",
+    /background download/.test(filling.title) && /150 MB/.test(filling.title),
+    filling.title.replace(/\n/g, " | "));
+
   // A skip is not a miss, and the difference is the whole diagnosis: those objects will
   // cost the network every time however long you wait.
   const skipped = await indicator({

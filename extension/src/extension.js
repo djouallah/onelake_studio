@@ -72,12 +72,17 @@ let out = null;
 function logRead(e) {
   tally(e);
   if (!out) return;
+  // A STORE line is a background fill settling — the download that makes the next read
+  // of that object local. It is not a read anyone waited for, and it says so.
+  const filling = e.cache === 'store' || e.cache === 'store-failed';
   const where = e.cache === 'hit' ? 'cache'
+    : filling ? 'background fill'
     : [e.tokenMs > 5 ? `token ${e.tokenMs}ms` : '', `net ${e.netMs}ms`].filter(Boolean).join(' + ');
+  const status = filling ? (e.cache === 'store' ? 'ok' : 'ERR') : String(e.status);
   const size = e.bytes ? ` ${(e.bytes / 1024).toFixed(0)}KB` : '';
   const path = e.path.length > 64 ? '…' + e.path.slice(-63) : e.path;
   out.appendLine(
-    `${String(e.ms).padStart(6)}ms  ${e.method.padEnd(4)} ${String(e.status).padEnd(3)}` +
+    `${String(e.ms).padStart(6)}ms  ${e.method.padEnd(4)} ${status.padEnd(3)}` +
     `${size.padStart(9)}  ${where.padEnd(24)} ${e.range || ''} ${path}` +
     (e.error ? `  !! ${e.error}` : ''));
 }
@@ -100,13 +105,22 @@ let burst = null;
 let postTimer = null, idleTimer = null;
 
 function tally(e) {
-  if (!burst) burst = { reads: 0, hits: 0, misses: 0, skips: 0, cacheBytes: 0, netBytes: 0, netMs: 0 };
-  burst.reads++;
-  if (e.cache === 'hit') { burst.hits++; burst.cacheBytes += e.bytes || 0; }
-  else {
-    if (e.cache === 'skip') burst.skips++; else burst.misses++;
-    burst.netBytes += e.bytes || 0;
-    burst.netMs += e.netMs || 0;
+  if (!burst) burst = { reads: 0, hits: 0, misses: 0, skips: 0, stores: 0,
+                        cacheBytes: 0, netBytes: 0, storeBytes: 0, netMs: 0 };
+  if (e.cache === 'store' || e.cache === 'store-failed') {
+    // A background fill is not a read anyone waited for, so it is not one of `reads` —
+    // but its bytes are real network spend, counted apart so the indicator can disclose
+    // the download without calling it part of what the user waited on. A failed fill
+    // shows in the log; there is nothing of it to count.
+    if (e.cache === 'store') { burst.stores++; burst.storeBytes += e.bytes || 0; }
+  } else {
+    burst.reads++;
+    if (e.cache === 'hit') { burst.hits++; burst.cacheBytes += e.bytes || 0; }
+    else {
+      if (e.cache === 'skip') burst.skips++; else burst.misses++;
+      burst.netBytes += e.bytes || 0;
+      burst.netMs += e.netMs || 0;
+    }
   }
   if (!postTimer) postTimer = setTimeout(() => { postTimer = null; postReads(); }, POST_EVERY_MS);
   clearTimeout(idleTimer);
@@ -171,8 +185,10 @@ async function ensureProxy(context) {
       out.appendLine(
         'columns: total | method | status | bytes | where the time went | range | path');
       out.appendLine(
-        '  hit  = served from disk    miss = fetched, and stored for next time' +
+        '  hit  = served from disk    miss = fetched from OneLake' +
         '    skip = fetched, never stored (not an immutable object)');
+      out.appendLine(
+        '  STORE ok = a background download kept the whole object, so its next read is local');
     }
   }
   return proxy;

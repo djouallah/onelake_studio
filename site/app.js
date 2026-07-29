@@ -1790,16 +1790,21 @@ if (HOST_VSCODE) {
     el.hidden = false;
     el.className = '';
     const fromNet = m.misses + m.skips;
+    // Background fills: downloads the extension started so the NEXT read is local. Real
+    // network spend, so "local" is never claimed while one is in the burst — the ⇣ says
+    // the bytes served locally were bought in the background.
+    const filled = m.storeBytes || 0;
+    const dl = filled ? ` · ⇣ ${bytes(filled)}` : '';
     if (m.cacheOff) {
       el.textContent = '☁ no cache';
       el.className = 'nocache';
     } else if (!fromNet) {
-      el.textContent = '▤ local';
+      el.textContent = `▤ local${dl}`;
       el.className = 'local';
     } else if (m.hits) {
-      el.textContent = `▤ ${m.hits} · ☁ ${fromNet} · ${bytes(m.netBytes)}`;
+      el.textContent = `▤ ${m.hits} · ☁ ${fromNet} · ${bytes(m.netBytes)}${dl}`;
     } else {
-      el.textContent = `☁ network · ${bytes(m.netBytes)}`;
+      el.textContent = `☁ network · ${bytes(m.netBytes)}${dl}`;
     }
     el.title = [
       `${m.reads} read(s) behind the last thing you waited for.`,
@@ -1808,6 +1813,8 @@ if (HOST_VSCODE) {
       // A skip is not a miss: those objects are ones the cache is not allowed to hold, so
       // they will cost the network every time and no amount of waiting changes that.
       m.skips ? `${m.skips} of those can never be cached — they are not immutable objects.` : '',
+      m.stores ? `${m.stores} background download(s) filled the cache (${bytes(filled)}) ` +
+                 `so the next read is local.` : '',
       m.cacheOff ? `Cache is OFF: ${m.cacheOff}` : `Cache holds ${bytes(m.cacheStored)} of ${bytes(m.cacheMax)}.`,
       'Click for the full read log.',
     ].filter(Boolean).join('\n');
