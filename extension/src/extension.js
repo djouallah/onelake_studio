@@ -110,6 +110,21 @@ async function ensureProxy(context) {
       onLog: logRead,
     });
     context.subscriptions.push({ dispose: () => proxy && proxy.close() });
+
+    // Said once, at the top of the log, because every question about speed starts here.
+    // A cache that could not make its directory looks exactly like one that is working
+    // and never hitting: both are just "slow".
+    const c = proxy.cacheStatus();
+    if (out) {
+      out.appendLine(c.usable
+        ? `cache: ${fmtBytes(c.maxBytes)} max in ${c.dir} (currently ${fmtBytes(await proxy.cacheSize())})`
+        : `cache: OFF — ${c.problem}${c.dir ? ` (${c.dir})` : ''}`);
+      out.appendLine(
+        'columns: total | method | status | bytes | where the time went | range | path');
+      out.appendLine(
+        '  hit  = served from disk    miss = fetched, and stored for next time' +
+        '    skip = fetched, never stored (not an immutable object)');
+    }
   }
   return proxy;
 }

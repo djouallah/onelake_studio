@@ -177,10 +177,12 @@ async function handle(req, res, opts) {
   if (req.method === 'HEAD' || !up.body) {
     // An immutable file's length is as immutable as its bytes, and DuckDB asks for it
     // before every open. Storing it turns a round trip to OneLake into a local read.
+    let stored = false;
     if (req.method === 'HEAD' && up.status === 200 && opts.cache) {
-      opts.cache.putHead(upstream, out['content-length']);
+      stored = opts.cache.putHead(upstream, out['content-length']);
     }
-    log({ cache: 'miss', status: up.status, tokenMs, netMs, bytes: Number(out['content-length']) || 0 });
+    log({ cache: stored ? 'miss' : 'skip', status: up.status, tokenMs, netMs,
+          bytes: Number(out['content-length']) || 0 });
     return res.end();
   }
 
@@ -194,9 +196,11 @@ async function handle(req, res, opts) {
   body.on('data', c => { size += c.length; });
   body.on('error', () => entry && entry.abort());
   body.on('end', () => {
-    // Logged on end, not on headers: for a large file the bytes are most of the wait, and
-    // a number that stopped at the first byte would call the read fast.
-    log({ cache: 'miss', status: up.status, tokenMs, netMs, bytes: size });
+    // "miss" and "skip" are different answers and were being reported as one. A miss will
+    // be there next time; a skip never will, because this object is not one the cache is
+    // allowed to hold. If every line says skip, the rule about which paths are immutable
+    // is wrong for this tenant — which is not something to guess at from the outside.
+    log({ cache: entry ? 'miss' : 'skip', status: up.status, tokenMs, netMs, bytes: size });
   });
   if (entry) body.pipe(entry.stream);
   body.pipe(res);
@@ -236,6 +240,7 @@ function startProxy({ getToken, cacheDir, cacheMaxBytes, onLog,
         // or signing out throws them away.
         clearCache: () => (cache ? cache.clear() : Promise.resolve()),
         cacheSize: () => (cache ? cache.size() : Promise.resolve(0)),
+        cacheStatus: () => (cache ? cache.status() : { usable: false, problem: 'caching is off', dir: null }),
         close: () => new Promise(done => server.close(done)),
       });
     });

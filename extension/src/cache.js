@@ -70,8 +70,18 @@ function createCache(dir, { maxBytes = DEFAULT_MAX_BYTES } = {}) {
   // Made once, synchronously, at proxy start: a write stream has to be openable the
   // instant a response starts arriving, and an async mkdir would mean buffering the head
   // of every body while waiting for it — the thing this file exists not to do.
+  //
+  // The failure is kept rather than swallowed. A cache that cannot make its directory is
+  // indistinguishable from one that is working and never hitting — both are just "slow" —
+  // and that is not a thing to find out by reasoning about it.
   let usable = true;
-  try { fsSync.mkdirSync(dir, { recursive: true }); } catch (_) { usable = false; }
+  let problem = '';
+  try {
+    fsSync.mkdirSync(dir, { recursive: true });
+  } catch (e) {
+    usable = false;
+    problem = (e && e.message) || String(e);
+  }
 
   const ensure = async () => { if (!usable) throw new Error('no cache directory'); };
 
@@ -100,14 +110,12 @@ function createCache(dir, { maxBytes = DEFAULT_MAX_BYTES } = {}) {
 
   // A length, with no .bin beside it. prune() reads .json files and would see a zero-byte
   // entry, which is what it should see: this costs nothing to keep and nothing to lose.
-  async function putHead(url, contentLength) {
+  function putHead(url, contentLength) {
     const bytes = Number(contentLength);
-    if (!cacheable(url) || !Number.isFinite(bytes) || bytes <= 0) return;
-    try {
-      await ensure();
-      await fs.writeFile(join(dir, `${keyOf(url, 'HEAD')}.json`),
-        JSON.stringify({ contentRange: '', bytes, at: Date.now(), head: true }));
-    } catch (_) {}
+    if (!usable || !cacheable(url) || !Number.isFinite(bytes) || bytes <= 0) return false;
+    fs.writeFile(join(dir, `${keyOf(url, 'HEAD')}.json`),
+      JSON.stringify({ contentRange: '', bytes, at: Date.now(), head: true })).catch(() => {});
+    return true;
   }
 
   // Returns a writable to tee the response into, or null when this is not worth storing.
@@ -205,7 +213,8 @@ function createCache(dir, { maxBytes = DEFAULT_MAX_BYTES } = {}) {
     } catch (_) { usable = false; }
   }
 
-  return { get, beginPut, putHead, clear, size, dir, maxBytes };
+  return { get, beginPut, putHead, clear, size, dir, maxBytes,
+           status: () => ({ usable, problem, dir, maxBytes }) };
 }
 
 module.exports = { createCache, cacheable, DEFAULT_MAX_BYTES };
