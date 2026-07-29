@@ -19,6 +19,14 @@ const DOCS = 'https://github.com/djouallah/onelake_studio';
 // resolveConfig. An empty clientId here is the ordinary first run, not a broken deploy.
 const cfg = resolveConfig(window.ONELAKE_STUDIO_CONFIG || {});
 
+// Running inside the VS Code extension's webview rather than a browser tab. The two hosts
+// share every line of this file; what differs is chrome that belongs to a browser (a sign-in
+// gate, a sign-out link, a build stamp, a link out to GitHub), browsing — which the editor's
+// own sidebar owns — and how OneLake reads get signed: a service worker in a tab, the
+// extension's loopback proxy here. Each of those reads this flag and nothing else.
+const HOST_VSCODE = cfg.host === 'vscode';
+if (HOST_VSCODE) document.body.classList.add('host-vscode');
+
 // Cap on rendered rows only. The CSV exports everything the engine materialised, which is
 // itself capped — runQuery says so when the two differ.
 const MAX_DOM_ROWS = 2000;
@@ -118,11 +126,17 @@ function explainRead(message) {
   }
   const swc = !!(navigator.serviceWorker && navigator.serviceWorker.controller);
   const stale = f && !recent;
-  out += ` [build ${(window.ONELAKE_STUDIO_VERSION || {}).commit || 'dev'}; ` +
-    (swc ? 'the service worker is controlling this page'
-         : 'the service worker is NOT controlling this page, so DuckDB reads go out unsigned — reload the page') +
+  // In the webview there is no service worker and no page-side token by design — the
+  // extension's loopback proxy signs DuckDB's reads. Reporting the browser's facts here
+  // told users to reload a page that was never going to grow a worker, which is worse
+  // than saying nothing: it is a confident wrong answer.
+  const signer = HOST_VSCODE
+    ? "the extension's loopback proxy signs DuckDB's reads"
+    : (swc ? 'the service worker is controlling this page'
+           : 'the service worker is NOT controlling this page, so DuckDB reads go out unsigned — reload the page');
+  out += ` [build ${(window.ONELAKE_STUDIO_VERSION || {}).commit || 'dev'}; ` + signer +
     `; crossOriginIsolated ${!!self.crossOriginIsolated}` +
-    `; page-side token ${Object.keys(auth.getHeaders()).length ? 'held' : 'absent'}` +
+    (HOST_VSCODE ? '' : `; page-side token ${Object.keys(auth.getHeaders()).length ? 'held' : 'absent'}`) +
     (recent ? '' :
      stale ? `; last read failure the worker reported: HTTP ${f.status} for ${f.pathname}, ${Math.round((Date.now() - f.at) / 1000)}s ago${f.signed === false ? ', sent unsigned' : ''}`
      : swc ? '; the worker reported no failed OneLake read — the open failed before any request went out'
@@ -135,6 +149,11 @@ function explainRead(message) {
 // browser's own account UI, and this app gets screen-shared and screenshotted; a UPN in
 // the header is a needless leak. auth.getUserId() is still there for console debugging.
 function showSignedIn() {
+  // VS Code owns the identity: the Accounts menu signs in and out, and the extension's
+  // Switch Microsoft Account command changes which one is used. A second, half-working
+  // set of controls in here — the sign-out below navigates the page, which a webview has
+  // nowhere to navigate to — is worse than none.
+  if (HOST_VSCODE) return;
   const box = $('userBox');
   box.textContent = '';
   const label = document.createElement('span');
@@ -157,6 +176,7 @@ function showSignedIn() {
 // The signed-out header affordance. Signing in is an upgrade, not a precondition: the
 // engine and the SQL editor already work, this only unlocks browsing OneLake.
 function showSignedOut() {
+  if (HOST_VSCODE) return;   // see showSignedIn
   const box = $('userBox');
   box.textContent = '';
   const btn = document.createElement('button');
@@ -327,8 +347,13 @@ const PENDING_SQL_KEY = 'onelake-studio-pending-sql';
 // The landing page is a query result: on a fresh boot the app reads its own README
 // through the engine and the Pretty view renders it. The docs demonstrate the tool
 // by being served by it.
-const README_SQL =
-  "select content from read_text('https://raw.githubusercontent.com/djouallah/onelake_studio/refs/heads/main/README.md')";
+//
+// The VS Code host overrides the URL with the copy packaged inside the extension: a
+// webview's CSP has no reason to allow GitHub, the packaged file is the one that
+// documents the installed version, and it needs no network.
+const README_URL = cfg.readmeUrl ||
+  'https://raw.githubusercontent.com/djouallah/onelake_studio/refs/heads/main/README.md';
+const README_SQL = `select content from read_text('${README_URL}')`;
 
 // Every handler, wired before anything is awaited. It used to happen after engine.init(),
 // which was also what kept connect()/runQuery() off a null engine; that guarantee now
@@ -393,18 +418,31 @@ async function startEngine() {
   await engineReady;
   engineUp = true;
   $('runBtn').disabled = false;   // SQL needs the engine, not a lakehouse
+  let landingFailed = false;
   if (!$('sqlEditor').value) {
     // Fresh visit: show the README as the landing content. The stash branch in wireUi
     // means a sign-in round trip never loses the user's SQL to this. Offline or
     // blocked, runQuery reports its error — the boot message below replaces it,
     // because a failed docs fetch must not read as a broken app.
     $('sqlEditor').value = README_SQL;
-    await runQuery();
+    landingFailed = !await runQuery();
   }
   // The auth stage runs alongside this one now, so it may already have said something
   // truer — "N workspace(s)" beats "sign in to browse OneLake". Only claim the line when
   // there's no session to talk about.
-  if (!signedIn) setStatus('DuckDB ready — run SQL now, or sign in to browse OneLake.', 'ok');
+  //
+  // ...unless the landing query left a red error on the bar. That claim was only ever
+  // true for the browser, where a signed-in session means the auth stage spoke; in the
+  // webview the session is implicit and always present, so nothing overwrote the docs
+  // fetch's failure and "Query error" was the first thing a new user saw. A failed
+  // README is not a broken app, and must not be reported as one in either host.
+  if (!signedIn || landingFailed) {
+    const where = HOST_VSCODE ? 'pick a table in the OneLake sidebar'
+                              : 'sign in to browse OneLake';
+    setStatus(`DuckDB ready — run SQL now, or ${where}.` +
+      (landingFailed ? ' (The welcome page could not be read — the engine itself is fine.)' : ''),
+      landingFailed ? 'warn' : 'ok');
+  }
 }
 
 // After a OneLake session exists (silent on boot, or interactive): unlock browsing.
@@ -926,7 +964,12 @@ async function selectTable(row, t) {
   // of failing on the first footer read with a message that blames the file. The two
   // ways a page ends up here: DevTools with "Bypass for network" checked, and a hard
   // reload (which bypasses the worker for that one page load).
-  if ('serviceWorker' in navigator && !navigator.serviceWorker.controller) {
+  // Not in the webview, where there is no service worker by design and the extension's
+  // loopback proxy signs the reads instead. This passes there today only because
+  // `navigator.serviceWorker` happens to be undefined — one VS Code release exposing a
+  // dormant container would make every table refuse to open with a paragraph about
+  // DevTools.
+  if (!HOST_VSCODE && 'serviceWorker' in navigator && !navigator.serviceWorker.controller) {
     setStatus(
       'Cannot open tables: the service worker is not controlling this page, so OneLake ' +
       'reads would go out unsigned and fail. Do a normal reload (F5) to fix it. If DevTools ' +
@@ -1621,9 +1664,14 @@ $('byoLink').onclick = () => showByoForm();
 $('gateClose').onclick = () => { $('authGate').style.display = 'none'; };
 initSidebarToggle();
 initSidebarResize();
-showVersion();
-checkForNewBuild();
-setInterval(checkForNewBuild, VERSION_RECHECK_MS);
+// The stamp answers "which build did the cache give me", which is a browser's question.
+// An installed extension has one copy of the app and VS Code owns its version, so the
+// stamp says nothing and the poller asks a server that isn't there.
+if (!HOST_VSCODE) {
+  showVersion();
+  checkForNewBuild();
+  setInterval(checkForNewBuild, VERSION_RECHECK_MS);
+}
 wireUi();
 // Painted before either stage starts. If the silent check turns out to find a session,
 // afterSignIn swaps this for "Signed in" — and closes the gate, if it was opened in the

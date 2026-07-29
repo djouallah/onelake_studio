@@ -20,7 +20,9 @@ const { rewriteHtml } = require('./html');
 //                      alone does NOT work in a VS Code webview.
 //   worker-src blob: — DuckDB builds its worker from a Blob that importScripts the CDN.
 //   connect-src      — the proxy, jsDelivr (duckdb-wasm, and marked/dompurify which the
-//                      doc view lazy-loads), and the DuckDB extension repository.
+//                      doc view lazy-loads), the DuckDB extension repository, and
+//                      cspSource, which is how DuckDB reads the packaged README that the
+//                      landing query renders.
 function csp(webview, nonce, proxyOrigin) {
   return [
     `default-src 'none'`,
@@ -29,20 +31,27 @@ function csp(webview, nonce, proxyOrigin) {
     `style-src ${webview.cspSource} 'unsafe-inline'`,
     `script-src ${webview.cspSource} 'nonce-${nonce}' 'unsafe-eval' https://cdn.jsdelivr.net`,
     `worker-src blob:`,
-    `connect-src ${proxyOrigin} https://cdn.jsdelivr.net https://extensions.duckdb.org`,
+    `connect-src ${webview.cspSource} ${proxyOrigin} https://cdn.jsdelivr.net https://extensions.duckdb.org`,
   ].join('; ');
 }
 
 // Packaged, site/ is copied inside the extension by copy-site.mjs. Under F5 from a
 // checkout that copy does not exist yet, so fall back to the repo's own site/ — which
 // also means an edit to the web app shows up in the panel on reload, with no build step.
+//
+// The README travels with the packaged copy but not with the checkout's site/, where it
+// lives one level up at the repo root. Both are resolved here, together, because the
+// answer decides what goes in localResourceRoots.
 async function siteRoot(extensionUri) {
   const packaged = vscode.Uri.joinPath(extensionUri, 'site');
   try {
     await vscode.workspace.fs.stat(vscode.Uri.joinPath(packaged, 'index.html'));
-    return packaged;
+    return { site: packaged, readme: vscode.Uri.joinPath(packaged, 'README.md') };
   } catch (_) {
-    return vscode.Uri.joinPath(extensionUri, '..', 'site');
+    return {
+      site: vscode.Uri.joinPath(extensionUri, '..', 'site'),
+      readme: vscode.Uri.joinPath(extensionUri, '..', 'README.md'),
+    };
   }
 }
 
@@ -63,14 +72,16 @@ let current = null;
 async function openPanel(context, proxy) {
   if (current) { current.reveal(vscode.ViewColumn.Active); return current; }
 
-  const siteUri = await siteRoot(context.extensionUri);
+  const { site: siteUri, readme: readmeUri } = await siteRoot(context.extensionUri);
   const panel = vscode.window.createWebviewPanel(
     'onelakeStudio', 'OneLake Studio', vscode.ViewColumn.Active, {
       enableScripts: true,
       // DuckDB spends real time and network booting; tearing it down whenever the tab
       // loses focus would make the extension feel broken.
       retainContextWhenHidden: true,
-      localResourceRoots: [siteUri],
+      // The README's directory is the site directory when packaged, and the repo root
+      // under F5 — listing both costs nothing and keeps the fallback readable.
+      localResourceRoots: [siteUri, vscode.Uri.joinPath(readmeUri, '..')],
     });
 
   try {
@@ -78,8 +89,14 @@ async function openPanel(context, proxy) {
       // The proxy attaches the bearer token, so the page needs no credential of its own
       // and never holds one — strictly better than the browser build, where it does.
       auth: 'none',
+      // Everything the app does differently in here hangs off this one word.
+      host: 'vscode',
       dfsOrigin: proxy.dfsOrigin,
       tableOrigin: proxy.tableOrigin,
+      // The landing query reads this instead of raw.githubusercontent.com, which the CSP
+      // above has no business allowing. It also documents the version that is installed
+      // rather than whatever is on main.
+      readmeUrl: panel.webview.asWebviewUri(readmeUri).toString(),
     }, `http://127.0.0.1:${proxy.port}`);
   } catch (e) {
     panel.dispose();

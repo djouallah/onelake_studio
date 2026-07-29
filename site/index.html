@@ -15,7 +15,90 @@
       --bg: #0d1117; --panel: #161b22; --panel2: #0b0f14; --border: #30363d;
       --text: #e6edf3; --muted: #9da5b4; --accent: #2563eb; --accent2: #58a6ff;
       --ok: #3fb950; --warn: #d29922; --err: #ff7b72;
+      /* Row states and the grid's zebra stripe. Variables rather than the literals they
+         used to be, because a theme that maps the palette but not these gets a themed app
+         with GitHub-blue selection in it. */
+      --hover: #1c2330; --sel: #1c2330; --stripe: #10151c;
     }
+
+    /* ---------------------------------------------------------------------------
+       Running inside the VS Code extension's webview.
+       ---------------------------------------------------------------------------
+       A webview gets the whole --vscode-* palette defined on :root and its theme kind
+       named as a class on <body>; app.js adds .host-vscode when the injected config says
+       so. Redefining this app's own variables under that class is the entire theming
+       story — every rule further down keeps using --bg/--panel/--text and follows the
+       editor's theme, light, dark or high contrast, including one switched while the
+       panel is open. Nothing here applies in a browser tab. */
+    body.host-vscode {
+      --bg:      var(--vscode-editor-background);
+      --panel:   var(--vscode-sideBar-background);
+      --panel2:  var(--vscode-editorGroupHeader-tabsBackground);
+      --border:  var(--vscode-panel-border, var(--vscode-editorWidget-border));
+      --text:    var(--vscode-foreground);
+      --muted:   var(--vscode-descriptionForeground);
+      --accent:  var(--vscode-button-background);
+      --accent2: var(--vscode-textLink-foreground);
+      --ok:      var(--vscode-charts-green);
+      --warn:    var(--vscode-charts-yellow);
+      --err:     var(--vscode-errorForeground);
+      --hover:   var(--vscode-list-hoverBackground);
+      --sel:     var(--vscode-list-activeSelectionBackground);
+      --stripe:  var(--vscode-tree-tableOddRowsBackground, transparent);
+      font-family: var(--vscode-font-family);
+      font-size: var(--vscode-font-size);
+    }
+    /* The one thing the palette variables cannot carry: OS-drawn parts (the <select>
+       popup, scrollbars, the caret) read `color-scheme`, not colours, and the browser
+       build forces dark above. VS Code names the kind on <body>, so hand it straight
+       over — a light theme with a dark scrollbar is the tell that survives everything
+       else being right. */
+    body.host-vscode.vscode-light, body.host-vscode.vscode-high-contrast-light { color-scheme: light; }
+    body.host-vscode.vscode-dark, body.host-vscode.vscode-high-contrast { color-scheme: dark; }
+    /* VS Code's own controls are square-cornered and use a separate input palette; 6px
+       pills in a settings-shaped surface are the single biggest tell that this is a web
+       page in a frame. */
+    body.host-vscode button, body.host-vscode input, body.host-vscode select {
+      border-radius: 2px;
+      background: var(--vscode-input-background);
+      color: var(--vscode-input-foreground, var(--vscode-foreground));
+      border-color: var(--vscode-input-border, var(--vscode-contrastBorder, transparent));
+    }
+    body.host-vscode button.primary {
+      background: var(--vscode-button-background); color: var(--vscode-button-foreground);
+      border-color: var(--vscode-button-border, var(--vscode-contrastBorder, transparent));
+    }
+    body.host-vscode button.primary:hover:not(:disabled) { background: var(--vscode-button-hoverBackground); }
+    body.host-vscode button:hover:not(:disabled) { border-color: var(--vscode-focusBorder); }
+    body.host-vscode :focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
+    /* The SQL box is an editor; it should be the editor's font at the editor's size. */
+    body.host-vscode #sqlEditor {
+      background: var(--vscode-editor-background);
+      font-family: var(--vscode-editor-font-family);
+      font-size: var(--vscode-editor-font-size);
+    }
+    body.host-vscode .comboMenu {
+      background: var(--vscode-quickInput-background, var(--panel));
+      box-shadow: 0 2px 8px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.36));
+    }
+    body.host-vscode .comboMenu div:hover, body.host-vscode .comboMenu div.on {
+      background: var(--vscode-list-activeSelectionBackground);
+      color: var(--vscode-list-activeSelectionForeground);
+    }
+    body.host-vscode table.results th { background: var(--vscode-keybindingTable-headerBackground, var(--panel)); }
+    body.host-vscode .docView pre, body.host-vscode .docView code {
+      background: var(--vscode-textCodeBlock-background, var(--panel2));
+    }
+
+    /* Chrome that belongs to a browser tab. The link out to GitHub, the account box (whose
+       sign-out navigates the page — a webview has nowhere to go), the build stamp with its
+       "a newer build is live" poller, and the registration gate all answer questions the
+       editor already answers. app.js sets .host-vscode; none of this applies in a tab. */
+    body.host-vscode .ghLink,
+    body.host-vscode #userBox,
+    body.host-vscode #statusVer,
+    body.host-vscode #authGate { display: none !important; }
+
     * { box-sizing: border-box; }
     /* The UA's own `[hidden] { display: none }` is a plain attribute selector, so ANY class
        rule with a display of its own silently outranks it. That is not a style nit: el.hidden
@@ -103,8 +186,8 @@
     /* text-overflow does nothing on the flex row itself — the name that overflows is the
        span, so the ellipsis has to live there or the name is cut mid-glyph with no sign. */
     .tableItem .name, .fileItem .name { overflow: hidden; text-overflow: ellipsis; }
-    .tableItem:hover { background: #1c2330; }
-    .tableItem.active { background: #1c2330; border-left-color: var(--accent2); }
+    .tableItem:hover { background: var(--hover); }
+    .tableItem.active { background: var(--sel); border-left-color: var(--accent2); }
 
     /* Tables / Files switch */
     .tabs { display: inline-flex; }
@@ -117,15 +200,15 @@
     /* Warehouses have no Files/ pane, so Tables is the only button left — a half-rounded
        pill with two square corners reads as a switch with its other half missing. */
     .tabs.solo button.tab { border-radius: 5px; }
-    button.tab.active { color: var(--text); background: #1c2330; border-color: var(--accent2); }
+    button.tab.active { color: var(--text); background: var(--sel); border-color: var(--accent2); }
 
     /* Files tree */
     .fileItem {
       padding: 0.35rem 0.75rem; cursor: pointer; display: flex; align-items: center; gap: 0.4rem;
       border-left: 2px solid transparent; white-space: nowrap; overflow: hidden;
     }
-    .fileItem:hover { background: #1c2330; }
-    .fileItem.active { background: #1c2330; border-left-color: var(--accent2); }
+    .fileItem:hover { background: var(--hover); }
+    .fileItem.active { background: var(--sel); border-left-color: var(--accent2); }
     .fileItem.plain { color: var(--muted); cursor: default; }
     .fileItem .size { margin-left: auto; flex: none; font-size: 0.7rem; color: var(--muted); padding-left: 0.5rem; }
     .fileItem .caret { width: 0.7rem; flex: none; display: inline-block; color: var(--muted); }
@@ -158,7 +241,7 @@
     }
     table.results th.num { text-align: right; }
     table.results td.num { text-align: right; font-variant-numeric: tabular-nums; }
-    table.results tr:nth-child(even) td { background: #10151c; }
+    table.results tr:nth-child(even) td { background: var(--stripe); }
 
     /* Document view — a 1×1 multiline VARCHAR result rendered as markdown. The bar
        reuses the sidebar's .tabs look; z-index sits above the sticky grid header. */
