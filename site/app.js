@@ -450,6 +450,10 @@ async function afterSignIn() {
   signedIn = true;
   $('authGate').style.display = 'none';
   showSignedIn();
+  // In the editor the sidebar tree owns browsing and lists OneLake itself. A second
+  // account-wide workspace listing here would be a slow round trip on every panel open,
+  // to fill a picker that is not on screen.
+  if (HOST_VSCODE) return;
   $('wsSelect').placeholder = 'Loading workspaces…';
   if (!lakehouse)
     $('tableList').innerHTML = '<div class="hint">Pick a workspace, then an item to browse.</div>';
@@ -677,6 +681,20 @@ async function onWorkspaceChange() {
 // `force` is what the Reload button passes. Without it, re-listing a lakehouse you are
 // already on left every table served from cache, so "Reload" showed the same snapshot it
 // showed before and there was no way to pick up a table that had changed underneath.
+// Views, registered files and helper tables from the previous lakehouse are dead the moment
+// we point somewhere else, and they cost WASM memory for as long as the page lives. Cache
+// entries are keyed per lakehouse so a stale one can't be served, but the DuckDB objects
+// behind them still have to be given back. Returns the teardown promise rather than awaiting
+// it — every caller has something to overlap it with, and none may leave it unobserved.
+function leaveLakehouse() {
+  activeIdent = null;
+  setActiveStats(null);
+  activeTableRef = null; tableStage = 'none';
+  lastResult = null;
+  $('activeTable').textContent = 'No table selected';
+  return engine.reset();
+}
+
 async function connect({ force = false } = {}) {
   const my = ++catSeq;
   const workspace = canonicalWs($('wsSelect').value), item = $('itemSelect').value;
@@ -689,20 +707,12 @@ async function connect({ force = false } = {}) {
   // lives. Cache entries are keyed per lakehouse so a stale one can't be served, but the
   // DuckDB objects behind them still have to be given back.
   const moved = lakehouse && (lakehouse.workspace !== workspace || lakehouse.item !== item);
-  let resetP = null;
-  if (force || moved) {
-    activeIdent = null;
-    setActiveStats(null);
-    activeTableRef = null; tableStage = 'none';
-    lastResult = null;
-    $('activeTable').textContent = 'No table selected';
-    // Teardown drains serialized DROPs for every open table before; the listing is pure
-    // fetch and never touches the worker or its queue, so the two overlap. The
-    // Promise.all below keeps the old invariant: the sidebar is never painted (no table
-    // is clickable) until the teardown has finished, and either failure lands in the
-    // same catch with nothing left unobserved.
-    resetP = engine.reset();
-  }
+  // Teardown drains serialized DROPs for every open table before; the listing is pure
+  // fetch and never touches the worker or its queue, so the two overlap. The Promise.all
+  // below keeps the old invariant: the sidebar is never painted (no table is clickable)
+  // until the teardown has finished, and either failure lands in the same catch with
+  // nothing left unobserved.
+  const resetP = (force || moved) ? leaveLakehouse() : null;
   lakehouse = { workspace, item };
   setPaneTabs(item);   // before the pane is rendered below: it can move `pane` off Files
 
@@ -1712,3 +1722,73 @@ engineReady = engine.init();
     showAuthFailure(e);
   }
 })();
+
+// ---------------------------------------------------------------------------
+// The editor's sidebar, driving this panel
+// ---------------------------------------------------------------------------
+// Browsing lives in the VS Code tree; this is the other end of that. A click over there
+// arrives here as one message and is handed to exactly the same selectTable/selectFile
+// the panel's own sidebar calls, so a table opened from the tree costs the same three
+// tiers, takes the same ticket, and reports the same way. No second code path for the
+// same act, and nothing here is reachable from a browser tab.
+if (HOST_VSCODE) {
+  // Only the webview defines this. The guard is what lets the same page be driven in a
+  // plain browser for testing — without it the whole block throws on load.
+  const vs = typeof acquireVsCodeApi === 'function' ? acquireVsCodeApi() : { postMessage() {} };
+
+  // selectTable/selectFile take the row they were clicked on so they can mark it. Nothing
+  // in the tree has a row on this side, and a detached element satisfies them without
+  // pretending the hidden list is what was clicked.
+  const detachedRow = () => document.createElement('div');
+
+  // The panel follows the tree rather than leading it, so this is a plain state change:
+  // no listing, no picker to update. The teardown is the part that matters — the previous
+  // lakehouse's views and registrations have to be handed back before another one's
+  // tables are opened.
+  async function goToLakehouse(workspace, item) {
+    await engineReady;
+    if (lakehouse && lakehouse.workspace === workspace && lakehouse.item === item) return;
+    const resetP = lakehouse ? leaveLakehouse() : null;
+    lakehouse = { workspace, item };
+    setPaneTabs(item);
+    if (resetP) await resetP;
+  }
+
+  async function openTable(m) {
+    await goToLakehouse(m.workspace, m.item);
+    await selectTable(detachedRow(), { schema: m.schema || '', table: m.table });
+  }
+
+  // The tree knows the path but not whether this build of DuckDB can read it — `queryable`
+  // depends on which extensions loaded, which is this side's business. So the entry is
+  // taken from the engine's own listing of the containing directory rather than rebuilt
+  // from the message.
+  async function openFile(m) {
+    await goToLakehouse(m.workspace, m.item);
+    const rel = String(m.path).replace(/^.*?\/Files\/?/, '');
+    const dir = rel.includes('/') ? rel.slice(0, rel.lastIndexOf('/')) : '';
+    const entry = (await engine.listFiles(lakehouse, dir)).find(e => e.path === m.path);
+    if (!entry) { setStatus(`${basename(m.path)} is no longer there.`, 'warn'); return; }
+    if (entry.queryable) await selectFile(detachedRow(), entry);
+    else if (IMAGE_EXTS.has(fileExt(entry.name))) await selectImage(detachedRow(), entry);
+    else setStatus(`No reader for ${entry.name}.`, 'warn');
+  }
+
+  window.addEventListener('message', async e => {
+    const m = e.data || {};
+    try {
+      if (m.type === 'open-table') await openTable(m);
+      else if (m.type === 'open-file') await openFile(m);
+      // The tree was refreshed, so what this side holds about the old listing is suspect.
+      else if (m.type === 'reset') { await engineReady; await leaveLakehouse(); lakehouse = null; }
+    } catch (err) {
+      setStatus('Could not open that: ' + explainRead(err.message), 'error');
+      console.error(err);
+    }
+  });
+
+  // Said once the engine is up, because that is when a message can actually be acted on.
+  // Until then the extension holds the last click rather than dropping it — booting DuckDB
+  // takes seconds, and a click in that window is the most likely one there is.
+  engineReady.then(() => vs.postMessage({ type: 'ready' }), () => {});
+}

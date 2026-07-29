@@ -99,6 +99,15 @@
     body.host-vscode #statusVer,
     body.host-vscode #authGate { display: none !important; }
 
+    /* Browsing moved to the editor's own sidebar, which keeps its expansion state, filters
+       when you type, and stays on screen while this tab shows a result. A second tree
+       inside the tab — with its own workspace picker and item dropdown — would be the same
+       job done worse, and two of them disagreeing is a bug waiting to be filed. The markup
+       stays: connect() still writes #tableList, it is simply never looked at. */
+    body.host-vscode > header,
+    body.host-vscode #sidebar,
+    body.host-vscode #sidebarToggle { display: none !important; }
+
     * { box-sizing: border-box; }
     /* The UA's own `[hidden] { display: none }` is a plain attribute selector, so ANY class
        rule with a display of its own silently outranks it. That is not a style nit: el.hidden

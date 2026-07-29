@@ -17,12 +17,25 @@
       {
         "command": "onelakeStudio.open",
         "title": "Open OneLake Studio",
-        "category": "OneLake Studio"
+        "category": "OneLake Studio",
+        "icon": "$(window)"
       },
       {
         "command": "onelakeStudio.switchAccount",
         "title": "Switch Microsoft Account",
+        "category": "OneLake Studio",
+        "icon": "$(account)"
+      },
+      {
+        "command": "onelakeStudio.signIn",
+        "title": "Sign in to OneLake",
         "category": "OneLake Studio"
+      },
+      {
+        "command": "onelakeStudio.refresh",
+        "title": "Refresh",
+        "category": "OneLake Studio",
+        "icon": "$(refresh)"
       }
     ],
     "viewsContainers": {
@@ -36,15 +49,42 @@
     },
     "views": {
       "onelakeStudio": [
-        { "id": "onelakeStudio.start", "name": "OneLake Studio" }
+        { "id": "onelakeStudio.explorer", "name": "OneLake" }
       ]
     },
     "viewsWelcome": [
       {
-        "view": "onelakeStudio.start",
-        "contents": "Query OneLake Iceberg tables with DuckDB, signed in with the Microsoft account VS Code already holds.\n[Open OneLake Studio](command:onelakeStudio.open)\n[Switch account](command:onelakeStudio.switchAccount)"
+        "view": "onelakeStudio.explorer",
+        "when": "!onelakeStudio.signedIn",
+        "contents": "Browse and query OneLake Iceberg tables with DuckDB, signed in with the Microsoft account VS Code already holds — you register nothing.\n[Sign in to OneLake](command:onelakeStudio.signIn)"
       }
     ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "onelakeStudio.refresh",
+          "when": "view == onelakeStudio.explorer && onelakeStudio.signedIn",
+          "group": "navigation@1"
+        },
+        {
+          "command": "onelakeStudio.open",
+          "when": "view == onelakeStudio.explorer",
+          "group": "navigation@2"
+        },
+        {
+          "command": "onelakeStudio.switchAccount",
+          "when": "view == onelakeStudio.explorer",
+          "group": "1_account"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "onelakeStudio.refresh",
+          "when": "view == onelakeStudio.explorer && viewItem =~ /^(workspace|item|dir)$/",
+          "group": "inline"
+        }
+      ]
+    },
     "configuration": {
       "title": "OneLake Studio",
       "properties": {

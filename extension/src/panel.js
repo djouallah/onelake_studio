@@ -13,6 +13,7 @@ const vscode = require('vscode');
 const crypto = require('node:crypto');
 const { TextDecoder } = require('node:util');
 const { rewriteHtml } = require('./html');
+const { siteRoot } = require('./site');
 
 // A webview is a sandboxed iframe with no CSP of its own, so this is the only thing
 // between the page and the network.
@@ -35,26 +36,6 @@ function csp(webview, nonce, proxyOrigin) {
   ].join('; ');
 }
 
-// Packaged, site/ is copied inside the extension by copy-site.mjs. Under F5 from a
-// checkout that copy does not exist yet, so fall back to the repo's own site/ — which
-// also means an edit to the web app shows up in the panel on reload, with no build step.
-//
-// The README travels with the packaged copy but not with the checkout's site/, where it
-// lives one level up at the repo root. Both are resolved here, together, because the
-// answer decides what goes in localResourceRoots.
-async function siteRoot(extensionUri) {
-  const packaged = vscode.Uri.joinPath(extensionUri, 'site');
-  try {
-    await vscode.workspace.fs.stat(vscode.Uri.joinPath(packaged, 'index.html'));
-    return { site: packaged, readme: vscode.Uri.joinPath(packaged, 'README.md') };
-  } catch (_) {
-    return {
-      site: vscode.Uri.joinPath(extensionUri, '..', 'site'),
-      readme: vscode.Uri.joinPath(extensionUri, '..', 'README.md'),
-    };
-  }
-}
-
 async function buildHtml(webview, siteUri, cfg, proxyOrigin) {
   const bytes = await vscode.workspace.fs.readFile(vscode.Uri.joinPath(siteUri, 'index.html'));
   const nonce = crypto.randomBytes(16).toString('base64');
@@ -68,6 +49,19 @@ async function buildHtml(webview, siteUri, cfg, proxyOrigin) {
 
 // One panel; invoking the command again reveals it rather than booting a second DuckDB.
 let current = null;
+
+// The page cannot be told to open a table until it exists, and it does not exist for
+// several seconds — DuckDB is a wasm bundle plus four extensions off a CDN. A click in the
+// tree that lands in that window must not be dropped, so it waits here until app.js says
+// it is listening. Only the last one is kept: they are all "show me this", and replaying a
+// queue of them would open four tables in a row to arrive where one click asked for.
+let pending = null;
+let ready = false;
+
+function postToPanel(msg) {
+  if (current && ready) current.webview.postMessage(msg);
+  else pending = msg;
+}
 
 async function openPanel(context, proxy) {
   if (current) { current.reveal(vscode.ViewColumn.Active); return current; }
@@ -103,7 +97,13 @@ async function openPanel(context, proxy) {
     throw e;
   }
 
-  panel.onDidDispose(() => { current = null; }, null, context.subscriptions);
+  panel.webview.onDidReceiveMessage(msg => {
+    if (!msg || msg.type !== 'ready') return;
+    ready = true;
+    if (pending) { panel.webview.postMessage(pending); pending = null; }
+  }, null, context.subscriptions);
+
+  panel.onDidDispose(() => { current = null; ready = false; }, null, context.subscriptions);
   current = panel;
   return panel;
 }
@@ -112,7 +112,8 @@ async function openPanel(context, proxy) {
 // and manifest caches, and Cache Storage, all live in the webview, so the old identity's data
 // goes with it. Rebinding the token alone would leave the previous account's tables on screen.
 function closePanel() {
-  if (current) current.dispose();   // onDidDispose nulls `current`
+  pending = null;
+  if (current) current.dispose();   // onDidDispose nulls `current` and clears `ready`
 }
 
-module.exports = { openPanel, closePanel };
+module.exports = { openPanel, closePanel, postToPanel };

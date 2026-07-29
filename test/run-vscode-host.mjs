@@ -79,16 +79,41 @@ try {
     executablePath: "C:/Program Files/Google/Chrome/Application/chrome.exe", headless: true });
   const ctx = await browser.newContext({ serviceWorkers: "block" });
 
-  // Exactly what extension/src/html.js injects in place of the config.js tag.
+  // What extension/src/html.js injects in place of the config.js tag. The proxy origins
+  // are left off so the fake OneLake below can be routed on its real hostnames, the way
+  // every other harness here fakes it — which origin the reads go to is the proxy's
+  // business and is covered by run-proxy.mjs.
   await ctx.route("**/config.js", r => r.fulfill({
     contentType: "text/javascript",
     body: `window.ONELAKE_STUDIO_CONFIG = ${JSON.stringify({
-      auth: "none", host: "vscode",
-      dfsOrigin: `http://127.0.0.1:${PORT}/dfs`,
-      tableOrigin: `http://127.0.0.1:${PORT}/irc`,
-      readmeUrl: README_URL,
+      auth: "none", host: "vscode", readmeUrl: README_URL,
     })};`,
   }));
+
+  const ircCalls = [];
+  await ctx.route(u => u.hostname === "onelake.table.fabric.microsoft.com", route => {
+    const u = new URL(route.request().url());
+    ircCalls.push(u.searchParams.get("warehouse") || decodeURIComponent(u.pathname));
+    return route.fulfill({
+      status: 404, contentType: "application/json",
+      headers: { "access-control-allow-origin": "*" },
+      body: JSON.stringify({ error: { message: "no fixtures here" } }),
+    });
+  });
+
+  const dfsCalls = [];
+  await ctx.route(u => u.hostname === "onelake.dfs.fabric.microsoft.com", route => {
+    const u = new URL(route.request().url());
+    dfsCalls.push(u.searchParams.get("resource") === "account"
+      ? "account" : `dir:${u.searchParams.get("directory") ?? ""}`);
+    return route.fulfill({
+      status: 200, contentType: "application/json",
+      headers: { "access-control-allow-origin": "*" },
+      body: JSON.stringify(u.searchParams.get("resource") === "account"
+        ? { fileSystems: [{ name: "ws1" }] }
+        : { paths: [] }),
+    });
+  });
 
   const page = await ctx.newPage();
   page.on("pageerror", e => console.log("[pageerror]", e.message));
@@ -101,6 +126,10 @@ try {
       s.textContent = css;
       document.head.appendChild(s);
     });
+    // The webview's own bridge to the extension host. Stubbed so what the page posts can
+    // be read back.
+    window.__posted = [];
+    window.acquireVsCodeApi = () => ({ postMessage: m => window.__posted.push(m) });
   }, { css: FAKE_THEME });
 
   const readmeHits = [];
@@ -165,12 +194,46 @@ try {
   check("the SQL box uses the editor font", /Consolas/.test(painted.editorFont), painted.editorFont);
   check("color-scheme follows the theme kind", painted.scheme === "dark", painted.scheme);
 
-  // --- and the engine still works --------------------------------------------
+  // --- the engine still works ------------------------------------------------
   await page.fill("#sqlEditor", "select 6*7 as answer");
   await page.click("#runBtn");
   await page.waitForFunction(
     () => /\b42\b/.test(document.getElementById("resultsTable").innerText || ""), { timeout: 60000 });
   check("SQL still runs", true);
+
+  // --- browsing belongs to the editor's sidebar ------------------------------
+  for (const [label, sel] of [["the header", "header"], ["the in-panel sidebar", "#sidebar"],
+                              ["the sidebar toggle", "#sidebarToggle"]]) {
+    const shown = await page.evaluate(s => {
+      const el = document.querySelector(s);
+      return !!el && getComputedStyle(el).display !== "none";
+    }, sel);
+    check(`${label} is gone`, !shown);
+  }
+  check("the panel does not list workspaces itself", !dfsCalls.includes("account"),
+    dfsCalls.join(", ") || "no DFS calls at all");
+
+  // --- the channel to the extension ------------------------------------------
+  check("the page announced it is listening",
+    await page.evaluate(() => window.__posted.some(m => m.type === "ready")));
+
+  // A tree click arrives as one message. The fake OneLake has no Iceberg fixtures behind
+  // it, so this proves the routing — the message reached selectTable with the right
+  // identity and the right lakehouse — not the read, which run-table-stats.mjs covers
+  // against a real one.
+  await page.evaluate(() => window.postMessage(
+    { type: "open-table", workspace: "ws1", item: "A.Lakehouse", schema: "dbo", table: "a_table" }, "*"));
+  await page.waitForFunction(
+    () => document.getElementById("activeTable").textContent === "dbo.a_table", { timeout: 15000 })
+    .catch(() => {});
+  check("a table from the tree opens in the panel",
+    await page.evaluate(() => document.getElementById("activeTable").textContent === "dbo.a_table"),
+    await page.evaluate(() => document.getElementById("activeTable").textContent));
+  // The engine asks the Iceberg catalog for the warehouse it was pointed at, so this is
+  // where a bridge that set the wrong lakehouse — or none — would show up.
+  await page.waitForFunction(() => true);
+  check("...against the lakehouse the tree named",
+    ircCalls.includes("ws1/A.Lakehouse"), ircCalls.join(", ") || "the catalog was never asked");
 } catch (e) {
   check("the run completed", false, e.message);
 } finally {

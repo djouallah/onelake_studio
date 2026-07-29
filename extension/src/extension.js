@@ -16,7 +16,10 @@
 
 const vscode = require('vscode');
 const { startProxy } = require('./proxy');
-const { openPanel, closePanel } = require('./panel');
+const { openPanel, closePanel, postToPanel } = require('./panel');
+const { createCatalog } = require('./catalog');
+const { LakehouseTree } = require('./tree');
+const { siteRoot } = require('./site');
 
 // The same scope site/auth.js asks MSAL for. OneLake accepts tokens in the storage
 // audience only, and this one covers both the data reads and the Iceberg catalog.
@@ -52,26 +55,76 @@ async function show(context, options) {
   if (!token) {
     vscode.window.showWarningMessage(
       'OneLake Studio needs a Microsoft account to reach OneLake. Sign-in was cancelled.');
-    return;
+    return false;
   }
   await openPanel(context, await ensureProxy(context));
+  return true;
+}
+
+// The tree and the welcome view are two states of one view: the welcome buttons show
+// while this is false. Kept in a context key rather than asked for on every render, so a
+// collapsed tree costs no token lookups.
+let signedIn = false;
+async function setSignedIn(value) {
+  signedIn = value;
+  await vscode.commands.executeCommand('setContext', 'onelakeStudio.signedIn', value);
 }
 
 async function activate(context) {
-  // The activity-bar view is empty by design — its whole content is the welcome buttons in
-  // package.json. Registering a provider anyway, because a contributed view with none logs
-  // a warning on every activation.
+  const { site } = await siteRoot(context.extensionUri);
+  // Listing goes straight to OneLake on the VS Code token — the proxy is for DuckDB's
+  // range reads, which run in the webview and cannot set a header of their own.
+  const catalog = createCatalog({
+    getToken: () => getToken({ createIfNone: false }),
+    siteFsPath: site.fsPath,
+  });
+  const tree = new LakehouseTree({ catalog, isSignedIn: () => signedIn });
+
+  await setSignedIn(!!await getToken({ createIfNone: false }));
+
+  // Opening a table means: make sure a panel exists, then tell it what to show. The panel
+  // buffers the message if DuckDB is still booting.
+  async function openInPanel(msg) {
+    if (!await show(context, { createIfNone: true })) return;
+    postToPanel(msg);
+  }
+
   context.subscriptions.push(
-    vscode.window.registerTreeDataProvider('onelakeStudio.start', {
-      getChildren: () => [],
-      getTreeItem: item => item,
+    vscode.window.createTreeView('onelakeStudio.explorer', {
+      treeDataProvider: tree,
+      showCollapseAll: true,
     }),
+
+    vscode.commands.registerCommand('onelakeStudio.refresh', n => tree.refresh(n)),
+
+    vscode.commands.registerCommand('onelakeStudio.openTable', n => openInPanel({
+      type: 'open-table',
+      workspace: n.workspace, item: n.item, schema: n.schema, table: n.table,
+    })),
+
+    vscode.commands.registerCommand('onelakeStudio.openFile', n => openInPanel({
+      type: 'open-file', workspace: n.workspace, item: n.item, path: n.path,
+    })),
 
     vscode.commands.registerCommand('onelakeStudio.open', async () => {
       try {
         await show(context, { createIfNone: true });
+        await setSignedIn(!!await getToken({ createIfNone: false }));
+        tree.refresh();
       } catch (e) {
         vscode.window.showErrorMessage(`OneLake Studio could not start: ${(e && e.message) || e}`);
+      }
+    }),
+
+    // Signing in is what the welcome view offers when there is no session; it exists so
+    // that button has something to call that does not also open a panel.
+    vscode.commands.registerCommand('onelakeStudio.signIn', async () => {
+      try {
+        await getToken({ createIfNone: true });
+        await setSignedIn(!!await getToken({ createIfNone: false }));
+        tree.refresh();
+      } catch (e) {
+        vscode.window.showErrorMessage(`Could not sign in: ${(e && e.message) || e}`);
       }
     }),
 
@@ -81,9 +134,13 @@ async function activate(context) {
     vscode.commands.registerCommand('onelakeStudio.switchAccount', async () => {
       try {
         // Closed before asking: whichever account is picked, the panel on screen belongs to
-        // the previous one, and its cached tables should not survive the switch.
+        // the previous one, and its cached tables should not survive the switch. The tree
+        // holds the same kind of stale answer, so it is emptied on the way out too.
         closePanel();
+        tree.refresh();
         await show(context, { createIfNone: true, clearSessionPreference: true });
+        await setSignedIn(!!await getToken({ createIfNone: false }));
+        tree.refresh();
       } catch (e) {
         vscode.window.showErrorMessage(`Could not switch account: ${(e && e.message) || e}`);
       }
@@ -93,8 +150,11 @@ async function activate(context) {
     // elsewhere. The proxy picks up whatever is current on its next request by itself, so
     // this only exists to make the failure a sentence instead of a wall of 401s.
     vscode.authentication.onDidChangeSessions(async e => {
-      if (e.provider.id !== 'microsoft' || !proxy) return;
-      if (!await getToken({ createIfNone: false })) {
+      if (e.provider.id !== 'microsoft') return;
+      const live = !!await getToken({ createIfNone: false });
+      await setSignedIn(live);
+      tree.refresh();
+      if (!live && proxy) {
         closePanel();
         vscode.window.showInformationMessage(
           'OneLake Studio signed out — the Microsoft account is no longer available.');
