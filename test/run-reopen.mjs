@@ -186,6 +186,32 @@ try {
   }
 
   // ---------------------------------------------------------------------------
+  // The original bug, as a regression test
+  // ---------------------------------------------------------------------------
+  // httpfs range-reads when the file is big enough to bother, and the range asked for
+  // differs between query shapes and sessions. Under the range-keyed cache the reads
+  // after a cold look went straight back to the network, forever. Whole-object storage
+  // means one cold look — whatever shape its reads took — leaves the object on disk,
+  // and every later read of any shape is served locally.
+  console.log("\n  after one cold httpfs peek, every shape of read is local:");
+  await proxy.clearCache();
+  const p1 = reqs.length;
+  const rows1 = await page.evaluate(() => window.peekDirect());
+  await proxy.cacheIdle();
+  const cold = reqs.slice(p1);
+  console.log(`  cold peek: ${rows1} rows · ${cold.length} upstream request(s) ` +
+              `(${cold.filter(r => r.range).length} ranged)`);
+  ok(rows1 === 100, "the cold peek reads its rows");
+  const p2 = reqs.length;
+  for (const range of ["bytes=0-99", `bytes=${parquet.length - 8}-`, "bytes=1000-2999"]) {
+    await (await fetch(URL_UNDER_TEST, { headers: { Range: range } })).arrayBuffer();
+  }
+  await (await fetch(URL_UNDER_TEST, { method: "HEAD" })).arrayBuffer();
+  ok(reqs.length === p2,
+     `…and afterwards ranges, tails and HEADs are all served from disk ` +
+     `(${reqs.length - p2} went upstream)`);
+
+  // ---------------------------------------------------------------------------
   // What a preview costs, with and without directIO
   // ---------------------------------------------------------------------------
   // peekTable exists so that "show me this table" reads ONE data file instead of all of
@@ -194,6 +220,7 @@ try {
   // flag that decides, and data.js has always passed false.
   console.log("\n  --- what a 100-row preview costs ---");
   const measure = async (label, directIO, name) => {
+    await proxy.cacheIdle();           // a fill from the previous run must not bleed in
     await proxy.clearCache();          // each measurement starts cold, or it measures the cache
     const at = reqs.length;
     const t0 = Date.now();
@@ -214,6 +241,7 @@ try {
   // Same query, but the URL goes to httpfs rather than through registerFileURL.
   let direct = null;
   try {
+    await proxy.cacheIdle();
     await proxy.clearCache();
     const at = reqs.length;
     const t0 = Date.now();

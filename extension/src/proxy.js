@@ -76,6 +76,38 @@ function route(reqUrl, secret) {
   return { kind: m[2], rest: m[3] || '/', query };
 }
 
+// One authenticated upstream round trip, with the 401-retry a cached token makes
+// necessary: the caller caches what getToken returns, so an expiry is discovered here as
+// a 401, and asking for a fresh token and retrying is the only thing that could help.
+// Only 401 — a 403 means this identity may not read that path, and a new token will not
+// change its mind. Never throws: an unreachable upstream comes back as { resp: null }
+// with the error and whatever timings were measured, because the foreground path and the
+// background fill want different things done about it.
+async function fetchUpstream(upstream, getToken, { method = 'GET', range = '', accept = '' } = {}) {
+  const out = { resp: null, tokenMs: 0, netMs: 0, error: '' };
+  try {
+    const tokenAt = Date.now();
+    const token = await getToken();
+    out.tokenMs = Date.now() - tokenAt;
+    if (!token) { out.error = 'no session'; return out; }
+    const headers = { authorization: 'Bearer ' + token };
+    if (range) headers.range = range;
+    if (accept) headers.accept = accept;
+    const netAt = Date.now();
+    let resp = await fetch(upstream, { method, headers, redirect: 'follow' });
+    if (resp.status === 401) {
+      const fresh = await getToken({ fresh: true });
+      if (fresh && fresh !== token) {
+        headers.authorization = 'Bearer ' + fresh;
+        resp = await fetch(upstream, { method, headers, redirect: 'follow' });
+      }
+    }
+    out.netMs = Date.now() - netAt;
+    out.resp = resp;
+  } catch (e) { out.error = (e && e.message) || String(e); }
+  return out;
+}
+
 async function handle(req, res, opts) {
   cors(res);
   // Answered before anything else and never logged: a preflight touches no token, no
@@ -134,47 +166,20 @@ async function handle(req, res, opts) {
   }
 
   // Built fresh rather than forwarded: whatever the page sent, the token is ours.
-  const send = token => {
-    const headers = { authorization: 'Bearer ' + token };
-    if (req.headers.range) headers.range = req.headers.range;
-    if (req.headers.accept) headers.accept = req.headers.accept;
-    return fetch(upstream, { method: req.method, headers, redirect: 'follow' });
-  };
-
-  let up;
-  let tokenMs = 0;
-  let netMs = 0;
-  try {
-    const tokenAt = Date.now();
-    let token = await opts.getToken();
-    tokenMs = Date.now() - tokenAt;
-    if (!token) {
+  const got = await fetchUpstream(upstream, opts.getToken,
+    { method: req.method, range, accept: req.headers.accept || '' });
+  const { tokenMs, netMs } = got;
+  if (!got.resp) {
+    if (got.error === 'no session') {
       res.writeHead(401);
       log({ cache: 'miss', status: 401, tokenMs });
       return res.end('no Microsoft account session');
     }
-    const netAt = Date.now();
-    up = await send(token);
-    netMs = Date.now() - netAt;
-    // The token the caller handed over is cached — it has to be, or every one of DuckDB's
-    // range reads pays a round trip to the account provider — so this is where an expiry
-    // is discovered. Asking for a fresh one and retrying keeps the self-healing that
-    // fetching per request used to give for free, at one wasted request per hour rather
-    // than one lookup per read. Only 401: a 403 means this identity may not read that
-    // path, and a new token will not change its mind.
-    if (up.status === 401) {
-      const fresh = await opts.getToken({ fresh: true });
-      if (fresh && fresh !== token) {
-        const retryAt = Date.now();
-        up = await send(fresh);
-        netMs += Date.now() - retryAt;
-      }
-    }
-  } catch (e) {
     res.writeHead(502);
-    log({ cache: 'miss', status: 502, tokenMs, netMs, error: (e && e.message) || String(e) });
-    return res.end(`proxy could not reach OneLake: ${(e && e.message) || e}`);
+    log({ cache: 'miss', status: 502, tokenMs, netMs, error: got.error });
+    return res.end(`proxy could not reach OneLake: ${got.error}`);
   }
+  const up = got.resp;
 
   const out = {};
   for (const h of PASS_THROUGH) {
@@ -194,6 +199,30 @@ async function handle(req, res, opts) {
     log({ cache: stored ? 'miss' : 'skip', status: up.status, tokenMs, netMs,
           bytes: Number(out['content-length']) || 0 });
     return res.end();
+  }
+
+  // A ranged miss is served exactly as asked — and the whole object is fetched ONCE in
+  // the background, because the next range will be different and the object never will
+  // be. Spend disk, not network: from the moment the fill lands, every range of this
+  // file is a local slice. The fill is fire-and-forget on this request's path; its
+  // outcome surfaces as its own STORE log line, once per download, not once per read
+  // that overlapped it.
+  if (opts.cache && req.method === 'GET' && up.status === 206) {
+    const m = /\/(\d+)\s*$/.exec(out['content-range'] || '');
+    const fillAt = Date.now();
+    const fill = opts.cache.ensureFull(upstream, async () => {
+      const g = await fetchUpstream(upstream, opts.getToken, {});
+      if (!g.resp) throw new Error(g.error || 'unreachable');
+      return g.resp;
+    }, { totalBytes: m ? Number(m[1]) : undefined });
+    if (fill.started && opts.onLog) {
+      fill.done.then(o => opts.onLog({
+        method: 'STORE', kind: r.kind, path: r.rest, range: '',
+        ms: Date.now() - fillAt, status: 0,
+        cache: o.stored ? 'store' : 'store-failed', bytes: o.bytes || 0,
+        ...(o.stored ? {} : { error: o.reason || 'unknown' }),
+      })).catch(() => {});
+    }
   }
 
   // Streamed to DuckDB, and — when it is worth keeping — teed to disk on the way past.

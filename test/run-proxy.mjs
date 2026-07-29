@@ -172,20 +172,42 @@ console.log("--- proxy behaviour ---");
 // test as what must.
 const TABLE_FILE = `${proxy.dfsOrigin}/ws/lh.Lakehouse/Tables/t/data_0.parquet`;
 {
-  // A cold ranged read passes through and stores nothing: a slice is not the object, and
-  // storing slices keyed by range was precisely the design that never served a hit —
-  // duckdb's next range never matched the last one. (Filling the object in the
-  // background from a ranged miss is the follow-up change.)
+  // A cold ranged read is served exactly as asked — and triggers ONE background fetch of
+  // the whole object, because the next range will be different and the object never will
+  // be. This is the fix for the original disease: the old design stored the slice under
+  // its range, and nothing ever asked for the same slice twice.
+  const RANGED_FILE = `${proxy.dfsOrigin}/ws/lh.Lakehouse/Tables/t/data_r.parquet`;
   const before = log.length;
-  const a = await fetch(TABLE_FILE, { headers: { Range: "bytes=0-99" } });
+  const a = await fetch(RANGED_FILE, { headers: { Range: "bytes=0-99" } });
   const aBody = Buffer.from(await a.arrayBuffer());
   eq(a.status, 206, "a cold ranged read is answered");
-  eq(log.length, before + 1, "…from upstream");
   ok(aBody.equals(parquet.subarray(0, 100)), "…with exactly those bytes");
   await proxy.cacheIdle();
-  const again = log.length;
-  await (await fetch(TABLE_FILE, { headers: { Range: "bytes=0-99" } })).arrayBuffer();
-  eq(log.length, again + 1, "…and no slice was stored: only whole objects are kept");
+  const mine = log.slice(before);
+  eq(mine.length, 2, "…and costs two upstream requests: the slice, and one whole-object fill");
+  eq(mine.filter(x => !x.range).length, 1, "…where the fill asked for the object, not a range");
+
+  const at = log.length;
+  const b = await fetch(RANGED_FILE, { headers: { Range: "bytes=200-299" } });
+  const bBody = Buffer.from(await b.arrayBuffer());
+  eq(b.status, 206, "a DIFFERENT range afterwards is a 206");
+  eq(log.length, at, "…served locally — the read shape that used to refetch every time");
+  ok(bBody.equals(parquet.subarray(200, 300)), "…byte-exact");
+}
+{
+  // Many cold ranged reads of one object at once: one fill between them, not one each.
+  const SF_FILE = `${proxy.dfsOrigin}/ws/lh.Lakehouse/Tables/t/data_sf.parquet`;
+  const before = log.length;
+  await Promise.all([[0, 99], [100, 199], [300, 399], [500, 599]].map(([s, e]) =>
+    fetch(SF_FILE, { headers: { Range: `bytes=${s}-${e}` } }).then(r => r.arrayBuffer())));
+  await proxy.cacheIdle();
+  const mine = log.slice(before);
+  eq(mine.filter(x => x.range).length, 4, "four concurrent cold ranged reads go upstream");
+  eq(mine.filter(x => !x.range).length, 1, "…and share exactly ONE background fill");
+  const at = log.length;
+  const whole = Buffer.from(await (await fetch(SF_FILE)).arrayBuffer());
+  eq(log.length, at, "…which now serves even the whole object locally");
+  ok(whole.equals(parquet), "…byte-for-byte");
 }
 {
   // The shape that matters most: duckdb-wasm often reads a data file WHOLE rather than
@@ -274,8 +296,10 @@ const TABLE_FILE = `${proxy.dfsOrigin}/ws/lh.Lakehouse/Tables/t/data_0.parquet`;
 {
   await proxy.clearCache();
   const before = log.length;
-  await fetch(TABLE_FILE, { headers: { Range: "bytes=0-99" } });
-  eq(log.length, before + 1, "clearing the cache really lets go of the bytes");
+  await (await fetch(TABLE_FILE, { headers: { Range: "bytes=0-99" } })).arrayBuffer();
+  await proxy.cacheIdle();   // the fill this triggers must not bleed into later counts
+  eq(log.slice(before).filter(x => x.range === "bytes=0-99").length, 1,
+     "clearing the cache really lets go of the bytes: the read goes upstream again");
 }
 // Eviction, on its own proxy with a cap small enough to cross. The default is twenty
 // gigabytes precisely so this never runs in practice — which is why it needs proving here
@@ -331,6 +355,15 @@ const TABLE_FILE = `${proxy.dfsOrigin}/ws/lh.Lakehouse/Tables/t/data_0.parquet`;
     const before = log.length;
     await (await fetch(url)).arrayBuffer();
     eq(log.length, before, "a file bigger than the whole cap is still kept");
+
+    // The tee keeps what it was already paying for; the background fill must not START
+    // a download that can never be kept.
+    const ranged = `${tiny.dfsOrigin}/ws/lh.Lakehouse/Tables/t/data_10.parquet`;
+    const at = log.length;
+    await (await fetch(ranged, { headers: { Range: "bytes=0-99" } })).arrayBuffer();
+    await tiny.cacheIdle();
+    eq(log.length, at + 1,
+       "…but a ranged read of one fills nothing: a download that cannot be kept is not begun");
   } finally {
     await tiny.close();
     await rm(TINY_DIR, { recursive: true, force: true }).catch(() => {});

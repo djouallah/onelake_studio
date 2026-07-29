@@ -32,6 +32,7 @@ const fs = require('node:fs/promises');
 const fsSync = require('node:fs');
 const { createHash } = require('node:crypto');
 const { join } = require('node:path');
+const { Readable } = require('node:stream');
 
 // sw.js caps its cache at half a gigabyte, and that number is not a policy — it is what
 // a browser's storage quota will tolerate before it starts evicting on its own. None of
@@ -173,17 +174,11 @@ function createCache(dir, { maxBytes = DEFAULT_MAX_BYTES } = {}) {
     return true;
   }
 
-  // Returns a writable to tee a COMPLETE 200 body into, or null when this is not worth
-  // storing — including when the object is already stored or already being stored. The
-  // caller pipes the body to it alongside the client; nothing waits on it.
-  //
-  // Written under a temp name and renamed on completion, so a half-written entry can
-  // never be served: rename is atomic, whereas reading a .bin that is still being
-  // appended to returns a truncated file and DuckDB blames the data.
-  function beginPutFull(url) {
-    if (!usable || !cacheable(url)) return null;
-    const k = keyOf(url);
-    if (fills.has(k) || fsSync.existsSync(join(dir, `${k}.bin`))) return null;
+  // The raw write machinery, shared by the tee and the background fill. Written under a
+  // temp name and renamed on completion, so a half-written entry can never be served:
+  // rename is atomic, whereas reading a .bin that is still being appended to returns a
+  // truncated file and DuckDB blames the data.
+  function startFill(k) {
     const tmp = join(dir, `${k}.${process.pid}.${++tmpSeq}.tmp`);
     let stream;
     try { stream = fsSync.createWriteStream(tmp); } catch (_) { return null; }
@@ -214,10 +209,78 @@ function createCache(dir, { maxBytes = DEFAULT_MAX_BYTES } = {}) {
         }
       });
     }));
-    fills.set(k, done);
-    done.finally(() => fills.delete(k));
     // A read that dies part way through must not leave a plausible-looking entry behind.
     return { stream, abort: () => { scrap(); stream.destroy(); }, done };
+  }
+
+  // Returns a writable to tee a COMPLETE 200 body into, or null when this is not worth
+  // storing — including when the object is already stored or already being stored. The
+  // caller pipes the body to it alongside the client; nothing waits on it.
+  function beginPutFull(url) {
+    if (!usable || !cacheable(url)) return null;
+    const k = keyOf(url);
+    if (fills.has(k) || fsSync.existsSync(join(dir, `${k}.bin`))) return null;
+    const entry = startFill(k);
+    if (!entry) return null;
+    fills.set(k, entry.done);
+    entry.done.finally(() => fills.delete(k));
+    return entry;
+  }
+
+  // A ranged miss means the engine wants pieces of an object this cache does not hold.
+  // The pieces asked for change with every query shape and every session; the object
+  // never changes at all. So the miss is served as asked, and the WHOLE object is
+  // fetched once in the background — spend disk, not network. From then on every range
+  // is a local slice.
+  //
+  // Single-flight per URL: however many ranged misses arrive while a fill runs, there is
+  // one download, shared with the tee path through the same map. A failure is remembered
+  // for a minute so a persistent 403 cannot become a fetch storm, and an object that
+  // could never fit under the cap is not downloaded at all — it would be spend with no
+  // possible payoff. (Merely over the REMAINING budget is different: prune makes room.)
+  //
+  // fetchFull is provided by the caller and owns tokens and retries; it resolves to a
+  // WHATWG Response. Returns { started, done } — started says whether THIS call began a
+  // download, which is what lets the caller log one outcome per fill rather than one per
+  // request that happened to overlap it.
+  const failedAt = new Map();
+  const FAIL_TTL_MS = 60 * 1000;
+  function ensureFull(url, fetchFull, { totalBytes } = {}) {
+    const skip = reason => ({ started: false, done: Promise.resolve({ stored: false, bytes: 0, reason }) });
+    if (!usable || !cacheable(url)) return skip('not cacheable');
+    const k = keyOf(url);
+    if (fills.has(k)) return { started: false, done: fills.get(k) };
+    if (fsSync.existsSync(join(dir, `${k}.bin`))) return skip('already stored');
+    const failed = failedAt.get(k);
+    if (failed && Date.now() - failed < FAIL_TTL_MS) return skip('failed recently');
+    if (Number.isFinite(totalBytes) && totalBytes > maxBytes) return skip('larger than the whole cache');
+
+    const job = (async () => {
+      let entry = null;
+      try {
+        const resp = await fetchFull();
+        if (!resp || resp.status !== 200 || !resp.body) {
+          failedAt.set(k, Date.now());
+          return { stored: false, bytes: 0, reason: `upstream ${resp ? resp.status : 'unreachable'}` };
+        }
+        entry = startFill(k);
+        if (!entry) return { stored: false, bytes: 0, reason: 'no write stream' };
+        const body = Readable.fromWeb(resp.body);
+        body.on('error', () => entry.abort());
+        body.pipe(entry.stream);
+        const out = await entry.done;
+        if (!out.stored) failedAt.set(k, Date.now());
+        return out;
+      } catch (e) {
+        if (entry) entry.abort();
+        failedAt.set(k, Date.now());
+        return { stored: false, bytes: 0, reason: (e && e.message) || String(e) };
+      }
+    })();
+    fills.set(k, job);
+    track(job);
+    job.finally(() => fills.delete(k));
+    return { started: true, done: job };
   }
 
   // Every entry, with its size and age. The one walk both measuring and pruning need.
@@ -347,7 +410,7 @@ function createCache(dir, { maxBytes = DEFAULT_MAX_BYTES } = {}) {
     try { total = await measure(); } catch (_) { total = 0; }
   }
 
-  return { open, beginPutFull, putHead, clear, size, storedBytes, idle, dir, maxBytes,
+  return { open, beginPutFull, ensureFull, putHead, clear, size, storedBytes, idle, dir, maxBytes,
            status: () => ({ usable, problem, dir, maxBytes, storedBytes: total }) };
 }
 
