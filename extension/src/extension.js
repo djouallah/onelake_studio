@@ -93,6 +93,21 @@ function logRead(e) {
     (e.error ? `  !! ${e.error}` : ''));
 }
 
+// The click, measured end to end. The per-read lines say where each request's time went;
+// this line is the number the user actually lived through — click to on-screen — which
+// includes everything the reads cannot see: the catalog, the worker, the rendering. When
+// an OPEN line is seconds and the read lines under it are milliseconds, the time went to
+// one of those, and that difference is the diagnosis.
+function logOpened(m) {
+  if (!out) return;
+  const what = m.kind === 'table' ? 'metadata + stats on screen'
+             : m.kind === 'rows' ? 'rows on screen'
+             : 'file on screen';
+  const label = String(m.label || '').slice(0, 80);
+  out.appendLine(
+    `${String(Number(m.ms) || 0).padStart(6)}ms  OPEN ${label} — click to ${what}`);
+}
+
 // ---------------------------------------------------------------------------
 // What the panel's indicator shows
 // ---------------------------------------------------------------------------
@@ -216,7 +231,7 @@ async function show(context, options) {
       'OneLake Studio needs a Microsoft account to reach OneLake. Sign-in was cancelled.');
     return false;
   }
-  await openPanel(context, await ensureProxy(context));
+  await openPanel(context, await ensureProxy(context), { onOpened: logOpened });
   return true;
 }
 

@@ -71,7 +71,7 @@ function postLive(msg) {
   if (current && ready) current.webview.postMessage(msg);
 }
 
-async function openPanel(context, proxy) {
+async function openPanel(context, proxy, { onOpened } = {}) {
   if (current) { current.reveal(vscode.ViewColumn.Active); return current; }
 
   const { site: siteUri, readme: readmeUri } = await siteRoot(context.extensionUri,
@@ -115,6 +115,11 @@ async function openPanel(context, proxy) {
       // The read indicator in the panel's status bar is clickable, and this is what it
       // does: the breakdown it summarises lives in the output channel.
       vscode.commands.executeCommand('onelakeStudio.showLog');
+    } else if (msg.type === 'opened' && onOpened) {
+      // The page timed a click from arrival to rendered and is reporting the total —
+      // the one number the per-read lines cannot add up to, because the wait includes
+      // everything between the reads: the worker, the catalog, the rendering.
+      onOpened(msg);
     }
   }, null, context.subscriptions);
 

@@ -59,6 +59,9 @@ let statsPrev = null;        // hidden-flags of the data surfaces while Stats co
 // only when the user asks for it, and never twice.
 let activeTableRef = null;   // the table object behind the selection, for escalating
 let tableStage = 'none';     // 'none' | 'stats' | 'peek' | 'loaded'
+// Click-to-on-screen timings, reported into the extension's read log. A no-op outside
+// the webview; the HOST_VSCODE block below rebinds it to the real postMessage.
+let reportOpened = () => {};
 let freshLoad = null;        // info from an escalation that still owes the user a report
 
 function setStatus(msg, type = '') {
@@ -1072,6 +1075,7 @@ function reportTableError(e, row) {
 // data look like" costs a single footer and a single row group instead of the table.
 async function peekIntoView() {
   const my = selSeq;
+  const t0 = Date.now();
   setBusy(true, { stoppable: true });
   try {
     const out = await engine.peekTable(lakehouse, activeTableRef);
@@ -1087,6 +1091,7 @@ async function peekIntoView() {
     tableStage = 'peek';
     docAllowed = false;             // a peek is a table, whatever shape it comes back
     renderResults(out);             // this lands the pane in the Data view by itself
+    reportOpened('rows', $('activeTable').textContent, Date.now() - t0);
     // A one-file table would otherwise read "1 of 1 file(s) — the other 0 were not read".
     const rest = out.fileCount - 1;
     setStatus(`${out.rows.length} row(s) from ${rest ? `1 of ${out.fileCount} file(s) — the other ` +
@@ -1839,11 +1844,23 @@ if (HOST_VSCODE) {
 
   $('readSrc').onclick = () => vs.postMessage({ type: 'show-log' });
 
+  // The number the user lived through: one tree click arrives as one message, and when
+  // the await settles the thing is on screen. Posted to the extension so the read log
+  // can print it above the per-request lines — the total those lines cannot add up to.
+  reportOpened = (kind, label, ms) => vs.postMessage({ type: 'opened', kind, label, ms });
+
   window.addEventListener('message', async e => {
     const m = e.data || {};
     try {
-      if (m.type === 'open-table') await openTable(m);
-      else if (m.type === 'open-file') await openFile(m);
+      if (m.type === 'open-table') {
+        const t0 = Date.now();
+        await openTable(m);
+        reportOpened('table', m.schema ? `${m.schema}.${m.table}` : m.table, Date.now() - t0);
+      } else if (m.type === 'open-file') {
+        const t0 = Date.now();
+        await openFile(m);
+        reportOpened('file', basename(m.path), Date.now() - t0);
+      }
       // The tree was refreshed, so what this side holds about the old listing is suspect.
       else if (m.type === 'reset') { await engineReady; await leaveLakehouse(); lakehouse = null; }
       else if (m.type === 'reads') showReads(m);

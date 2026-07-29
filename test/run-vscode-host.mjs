@@ -246,6 +246,14 @@ try {
   await page.waitForFunction(() => true);
   check("...against the lakehouse the tree named",
     ircCalls.includes("ws1/A.Lakehouse"), ircCalls.join(", ") || "the catalog was never asked");
+  // The page reports how long the click took, end to end — the number the extension's
+  // read log prints as an OPEN line above the per-request breakdown.
+  const opened = await page.evaluate(() =>
+    (window.__posted || []).find(m => m.type === "opened"));
+  check("...and the click's total time was reported for the log",
+    !!opened && opened.kind === "table" && Number.isFinite(opened.ms) && opened.ms >= 0 &&
+    opened.label === "dbo.a_table",
+    opened ? `${opened.kind} ${opened.label} ${opened.ms}ms` : "no 'opened' message posted");
 
   // --- where the bytes came from ---------------------------------------------
   // The extension counts the reads (the page cannot see DuckDB's) and sends the total.
