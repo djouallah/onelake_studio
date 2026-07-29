@@ -11,7 +11,7 @@
 //
 // Run: node test/run-proxy.mjs
 import http from "node:http";
-import { readFile, writeFile, stat, mkdir, mkdtemp, rm } from "node:fs/promises";
+import { readFile, writeFile, stat, mkdir, mkdtemp, rm, readdir, utimes } from "node:fs/promises";
 import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join, extname } from "node:path";
@@ -177,8 +177,8 @@ const TABLE_FILE = `${proxy.dfsOrigin}/ws/lh.Lakehouse/Tables/t/data_0.parquet`;
   const aBody = Buffer.from(await a.arrayBuffer());
   eq(log.length, before + 1, "a first read of a data file goes upstream");
 
-  // The write lands after the body has been streamed; give the 'end' handler its turn.
-  await new Promise(r => setTimeout(r, 150));
+  // The write lands after the body has been streamed; cacheIdle() is its landing signal.
+  await proxy.cacheIdle();
 
   const hitAt = log.length;
   const b = await fetch(TABLE_FILE, { headers: { Range: "bytes=0-99" } });
@@ -200,7 +200,7 @@ const TABLE_FILE = `${proxy.dfsOrigin}/ws/lh.Lakehouse/Tables/t/data_0.parquet`;
   const first = log.length;
   await (await fetch(TABLE_FILE)).arrayBuffer();
   eq(log.length, first + 1, "a whole-file read goes upstream once");
-  await new Promise(r => setTimeout(r, 400));
+  await proxy.cacheIdle();
 
   const second = log.length;
   const r = await fetch(TABLE_FILE);
@@ -216,7 +216,7 @@ const TABLE_FILE = `${proxy.dfsOrigin}/ws/lh.Lakehouse/Tables/t/data_0.parquet`;
   const a = await fetch(TABLE_FILE, { method: "HEAD" });
   eq(a.headers.get("content-length"), String(parquet.length), "a HEAD is sized upstream first");
   eq(log.length, first + 1, "…which costs one request");
-  await new Promise(r => setTimeout(r, 150));
+  await proxy.cacheIdle();
 
   const second = log.length;
   const b = await fetch(TABLE_FILE, { method: "HEAD" });
@@ -234,7 +234,7 @@ const TABLE_FILE = `${proxy.dfsOrigin}/ws/lh.Lakehouse/Tables/t/data_0.parquet`;
     ["table metadata", `${proxy.dfsOrigin}/ws/lh.Lakehouse/Tables/t/metadata/v1.metadata.json`],
   ]) {
     await fetch(url, { headers: { Range: "bytes=0-31" } });
-    await new Promise(r => setTimeout(r, 100));
+    await proxy.cacheIdle();
     const before = log.length;
     await fetch(url, { headers: { Range: "bytes=0-31" } });
     eq(log.length, before + 1, `${what} is never cached`);
@@ -259,7 +259,7 @@ const TABLE_FILE = `${proxy.dfsOrigin}/ws/lh.Lakehouse/Tables/t/data_0.parquet`;
     dfsUpstream: upBase, tableUpstream: upBase,
   });
   const url = n => `${small.dfsOrigin}/ws/lh.Lakehouse/Tables/t/data_${n}.parquet`;
-  const settle = () => new Promise(r => setTimeout(r, 600));
+  const settle = () => small.cacheIdle();
   try {
     await (await fetch(url(1))).arrayBuffer();
     await settle();
@@ -296,13 +296,52 @@ const TABLE_FILE = `${proxy.dfsOrigin}/ws/lh.Lakehouse/Tables/t/data_0.parquet`;
   const url = `${tiny.dfsOrigin}/ws/lh.Lakehouse/Tables/t/data_9.parquet`;
   try {
     await (await fetch(url)).arrayBuffer();
-    await new Promise(r => setTimeout(r, 600));
+    await tiny.cacheIdle();
     const before = log.length;
     await (await fetch(url)).arrayBuffer();
     eq(log.length, before, "a file bigger than the whole cap is still kept");
   } finally {
     await tiny.close();
     await rm(TINY_DIR, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+{
+  // A crash between the rename and the sidecar leaves a .bin no read can ever serve, that
+  // scan() never counts and prune() never deletes — a leak with no expiry. A sidecar with
+  // no .bin is the same tear from the other side. An abandoned .tmp is an interrupted
+  // write — but a YOUNG .tmp may be another VS Code window's write still in flight
+  // (globalStorage is shared), so age, not existence, is what convicts it. Start-up is
+  // the moment all of these are recognised, and what was validly on disk from an earlier
+  // session must be counted then too — for a long time it silently was not.
+  const SWEEP_DIR = await mkdtemp(join(tmpdir(), "onelake-sweep-"));
+  const seed = (name, bytes) => writeFile(join(SWEEP_DIR, name), Buffer.alloc(bytes));
+  await seed("0rphan.bin", 2048);                                   // renamed, sidecar never written
+  await writeFile(join(SWEEP_DIR, "t0rn.json"), JSON.stringify({ bytes: 4096, at: Date.now() }));
+  await seed("stale.123.1.tmp", 1024);
+  const old = new Date(Date.now() - 2 * 60 * 60 * 1000);
+  await utimes(join(SWEEP_DIR, "stale.123.1.tmp"), old, old);
+  await seed("fresh.456.2.tmp", 1024);                              // possibly another window's
+  await seed("g00d.bin", 2048);                                     // a real entry from "last session"
+  await writeFile(join(SWEEP_DIR, "g00d.json"), JSON.stringify({ bytes: 2048, at: Date.now() }));
+
+  const swept = await startProxy({
+    getToken: async () => TOKEN,
+    cacheDir: SWEEP_DIR, dfsUpstream: upBase, tableUpstream: upBase,
+  });
+  try {
+    await swept.cacheIdle();
+    const left = await readdir(SWEEP_DIR);
+    ok(!left.includes("0rphan.bin"), "a .bin with no sidecar is swept at start-up");
+    ok(!left.includes("t0rn.json"), "a sidecar with no .bin is swept too");
+    ok(!left.includes("stale.123.1.tmp"), "an hour-old .tmp is swept");
+    ok(left.includes("fresh.456.2.tmp"), "a fresh .tmp is spared — it may be another window's live write");
+    ok(left.includes("g00d.bin") && left.includes("g00d.json"), "a whole entry is untouched");
+    eq(swept.cacheStatus().storedBytes, 2048,
+       "…and bytes already on disk are counted at start-up, not discovered later");
+  } finally {
+    await swept.close();
+    await rm(SWEEP_DIR, { recursive: true, force: true }).catch(() => {});
   }
 }
 

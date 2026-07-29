@@ -166,8 +166,8 @@ try {
   ok(n1 > 0, "the first open reads the table");
   ok(firstReqs > 0, "…from the network, since nothing was cached yet");
 
-  // The cache is written as the body streams past; give the rename its turn.
-  await new Promise(r => setTimeout(r, 800));
+  // The cache is written as the body streams past; cacheIdle() resolves when it lands.
+  await proxy.cacheIdle();
 
   console.log("\n  coming back (new registration, same object):");
   const second = reqs.length;

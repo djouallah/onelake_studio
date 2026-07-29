@@ -55,17 +55,13 @@ function cacheable(urlStr) {
 const keyOf = (url, range) =>
   createHash('sha256').update(`${url}\n${range || 'full'}`).digest('hex');
 
+// A .tmp file younger than this may be another VS Code window's write in progress —
+// globalStorage is shared between windows — so age, not existence, is what convicts it.
+const TMP_MAX_AGE_MS = 60 * 60 * 1000;
+
 function createCache(dir, { maxBytes = DEFAULT_MAX_BYTES } = {}) {
   if (!dir) return null;
   let tmpSeq = 0;
-
-  // Pruning means stat-ing every entry, and at twenty gigabytes that is a lot of files to
-  // walk for the common case of being nowhere near the limit. So the total is carried in
-  // memory: measured once in the background at start-up, added to on every write, and
-  // re-established by the prune itself. Wrong only in the safe direction — a total that
-  // drifts high prunes early, and the scan corrects it.
-  let total = 0;
-  let sized = measure().catch(() => {});
 
   // Made once, synchronously, at proxy start: a write stream has to be openable the
   // instant a response starts arriving, and an async mkdir would mean buffering the head
@@ -74,6 +70,9 @@ function createCache(dir, { maxBytes = DEFAULT_MAX_BYTES } = {}) {
   // The failure is kept rather than swallowed. A cache that cannot make its directory is
   // indistinguishable from one that is working and never hitting — both are just "slow" —
   // and that is not a thing to find out by reasoning about it.
+  //
+  // Declared before anything that runs — sweepAndMeasure() below reads `usable`, and a
+  // `let` further down the file is not initialised yet when an earlier line calls it.
   let usable = true;
   let problem = '';
   try {
@@ -82,6 +81,19 @@ function createCache(dir, { maxBytes = DEFAULT_MAX_BYTES } = {}) {
     usable = false;
     problem = (e && e.message) || String(e);
   }
+
+  // Pruning means stat-ing every entry, and at twenty gigabytes that is a lot of files to
+  // walk for the common case of being nowhere near the limit. So the total is carried in
+  // memory: measured once in the background at start-up, added to on every write, and
+  // re-established by the prune itself. Wrong only in the safe direction — a total that
+  // drifts high prunes early, and the scan corrects it.
+  let total = 0;
+  let sized = sweepAndMeasure().catch(() => {});
+
+  // Every write the cache has promised but not finished. idle() is the tests' answer to
+  // "has everything landed?", replacing sleeps that guessed.
+  const pending = new Set();
+  const track = p => { pending.add(p); p.finally(() => pending.delete(p)); return p; };
 
   const ensure = async () => { if (!usable) throw new Error('no cache directory'); };
 
@@ -113,8 +125,8 @@ function createCache(dir, { maxBytes = DEFAULT_MAX_BYTES } = {}) {
   function putHead(url, contentLength) {
     const bytes = Number(contentLength);
     if (!usable || !cacheable(url) || !Number.isFinite(bytes) || bytes <= 0) return false;
-    fs.writeFile(join(dir, `${keyOf(url, 'HEAD')}.json`),
-      JSON.stringify({ contentRange: '', bytes, at: Date.now(), head: true })).catch(() => {});
+    track(fs.writeFile(join(dir, `${keyOf(url, 'HEAD')}.json`),
+      JSON.stringify({ contentRange: '', bytes, at: Date.now(), head: true })).catch(() => {}));
     return true;
   }
 
@@ -135,20 +147,31 @@ function createCache(dir, { maxBytes = DEFAULT_MAX_BYTES } = {}) {
     let broken = false;
     const scrap = () => { broken = true; fs.rm(tmp, { force: true }).catch(() => {}); };
     stream.on('error', scrap);
-    stream.on('finish', async () => {
-      if (broken) return;
-      try {
-        const bytes = stream.bytesWritten;
-        if (!bytes) { await fs.rm(tmp, { force: true }); return; }
-        await fs.rename(tmp, join(dir, `${k}.bin`));
-        await fs.writeFile(join(dir, `${k}.json`),
-          JSON.stringify({ contentRange: contentRange || '', bytes, at: Date.now() }));
-        total += bytes;
-        if (total > maxBytes) await prune();
-      } catch (_) { /* an optimisation, never a failure */ }
-    });
+    // 'close', not 'finish': close means the file descriptor has been released, and
+    // renaming a file Windows still holds a handle on is an EPERM waiting for load. The
+    // outcome is a promise so a caller (and idle()) can know whether the entry landed,
+    // instead of inferring it from time passing.
+    const done = track(new Promise(resolve => {
+      stream.on('close', async () => {
+        if (broken) return resolve({ stored: false, bytes: 0 });
+        try {
+          const bytes = stream.bytesWritten;
+          if (!bytes) { await fs.rm(tmp, { force: true }); return resolve({ stored: false, bytes: 0 }); }
+          await fs.rename(tmp, join(dir, `${k}.bin`));
+          await fs.writeFile(join(dir, `${k}.json`),
+            JSON.stringify({ contentRange: contentRange || '', bytes, at: Date.now() }));
+          total += bytes;
+          if (total > maxBytes) await prune();
+          resolve({ stored: true, bytes });
+        } catch (_) {
+          // An optimisation, never a failure — but the tmp must not outlive the attempt.
+          fs.rm(tmp, { force: true }).catch(() => {});
+          resolve({ stored: false, bytes: 0 });
+        }
+      });
+    }));
     // A read that dies part way through must not leave a plausible-looking entry behind.
-    return { stream, abort: () => { scrap(); stream.destroy(); } };
+    return { stream, abort: () => { scrap(); stream.destroy(); }, done };
   }
 
   // Every entry, with its size and age. The one walk both measuring and pruning need.
@@ -172,6 +195,49 @@ function createCache(dir, { maxBytes = DEFAULT_MAX_BYTES } = {}) {
     const entries = await scan();
     total = entries.reduce((n, e) => n + e.bytes, 0);
     return total;
+  }
+
+  // The start-up walk: count what is here, and remove what should never have survived.
+  // A crash between the rename and the sidecar leaves a .bin no read can use — scan()
+  // lists only .json, so it is never counted and never pruned, a leak with no expiry. A
+  // data .json with no .bin is the same tear seen from the other side, and would serve a
+  // promise with no bytes behind it. An abandoned .tmp is an interrupted write; a fresh
+  // one may be another window's write still in flight, so only old ones go.
+  async function sweepAndMeasure() {
+    if (!usable) return 0;
+    const names = await fs.readdir(dir);
+    const jsons = new Set(), bins = new Set();
+    for (const n of names) {
+      if (n.endsWith('.json')) jsons.add(n.slice(0, -5));
+      else if (n.endsWith('.bin')) bins.add(n.slice(0, -4));
+    }
+    for (const n of names) {
+      if (!n.endsWith('.tmp')) continue;
+      try {
+        const st = await fs.stat(join(dir, n));
+        if (Date.now() - st.mtimeMs > TMP_MAX_AGE_MS) await fs.rm(join(dir, n), { force: true });
+      } catch (_) {}
+    }
+    for (const k of bins) {
+      if (!jsons.has(k)) await fs.rm(join(dir, `${k}.bin`), { force: true }).catch(() => {});
+    }
+    let sum = 0;
+    for (const k of jsons) {
+      try {
+        const m = JSON.parse(await fs.readFile(join(dir, `${k}.json`), 'utf8'));
+        if (!m.head && !bins.has(k)) { await fs.rm(join(dir, `${k}.json`), { force: true }); continue; }
+        sum += m.head ? 0 : Number(m.bytes) || 0;
+      } catch (_) { await fs.rm(join(dir, `${k}.json`), { force: true }).catch(() => {}); }
+    }
+    total = sum;
+    return total;
+  }
+
+  // The sweep has run and nothing the cache promised to write is still in flight. New
+  // writes can start while old ones settle, hence the loop rather than one snapshot.
+  async function idle() {
+    await sized;
+    while (pending.size) await Promise.allSettled([...pending]);
   }
 
   // Oldest-first eviction once the cap is passed, down to 80% so it does not run again on
@@ -210,15 +276,26 @@ function createCache(dir, { maxBytes = DEFAULT_MAX_BYTES } = {}) {
 
   // Signing out, or switching account, is the one moment these bytes should not survive —
   // they were read with the identity being left behind. sw.js does the same on sign-out.
+  //
+  // Per-file, and the directory itself is kept: removing the whole tree and remaking it
+  // is EPERM-prone on Windows the moment any entry is open in a read, and one stubborn
+  // file is no reason to declare the cache dead for the rest of the session. Whatever
+  // refuses to go is re-counted, stays subject to eviction, and the next clear gets
+  // another chance at it.
   async function clear() {
     try {
-      await fs.rm(dir, { recursive: true, force: true });
-      fsSync.mkdirSync(dir, { recursive: true });   // still usable straight afterwards
-      total = 0;
-    } catch (_) { usable = false; }
+      const names = await fs.readdir(dir);
+      await Promise.all(names.map(n => fs.rm(join(dir, n), { force: true }).catch(() => {})));
+    } catch (_) {
+      // The directory itself is missing or unreadable — remake it; only a directory that
+      // cannot exist makes the cache unusable.
+      try { fsSync.mkdirSync(dir, { recursive: true }); }
+      catch (e) { usable = false; problem = (e && e.message) || String(e); }
+    }
+    try { total = await measure(); } catch (_) { total = 0; }
   }
 
-  return { get, beginPut, putHead, clear, size, storedBytes, dir, maxBytes,
+  return { get, beginPut, putHead, clear, size, storedBytes, idle, dir, maxBytes,
            status: () => ({ usable, problem, dir, maxBytes, storedBytes: total }) };
 }
 

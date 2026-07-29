@@ -240,6 +240,9 @@ function startProxy({ getToken, cacheDir, cacheMaxBytes, onLog,
         // or signing out throws them away.
         clearCache: () => (cache ? cache.clear() : Promise.resolve()),
         cacheSize: () => (cache ? cache.size() : Promise.resolve(0)),
+        // Settled when the start-up sweep is done and no write is in flight — what a
+        // test awaits instead of guessing a duration.
+        cacheIdle: () => (cache ? cache.idle() : Promise.resolve()),
         cacheStatus: () => (cache ? cache.status()
           : { usable: false, problem: 'caching is off', dir: null, maxBytes: 0, storedBytes: 0 }),
         close: () => new Promise(done => server.close(done)),
