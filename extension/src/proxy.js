@@ -106,20 +106,30 @@ async function handle(req, res, opts) {
   };
 
   // A hit answers without a token and without touching the network — the bytes are
-  // already on this machine, and they belong to an object that cannot change.
+  // already on this machine, and they belong to an object that cannot change. The cache
+  // stores whole objects and slices them per request, so any range of a stored file is a
+  // hit — including a 416, which is the stored length answering, not the network.
   if (opts.cache) {
-    const hit = await opts.cache.get(upstream, range, req.method);
+    const hit = await opts.cache.open(upstream, range, req.method);
     if (hit) {
-      const head = {
+      if (hit.status === 416) {
+        res.writeHead(416, { 'content-range': hit.contentRange });
+        log({ cache: 'hit', status: 416, bytes: 0 });
+        return res.end();
+      }
+      res.writeHead(hit.status, {
         'content-type': 'application/octet-stream',
         'content-length': String(hit.length),
         'accept-ranges': 'bytes',
         ...(hit.contentRange ? { 'content-range': hit.contentRange } : {}),
-      };
-      const status = hit.contentRange ? 206 : 200;
-      res.writeHead(status, head);
-      log({ cache: 'hit', status, bytes: hit.length });
-      return res.end(req.method === 'HEAD' ? undefined : hit.body);
+      });
+      log({ cache: 'hit', status: hit.status, bytes: hit.length });
+      if (req.method === 'HEAD' || !hit.stream) return res.end();
+      // Eviction can win a race against a read that just opened: the sidecar answered,
+      // the .bin is gone. Killing the response makes DuckDB retry — and the retry misses
+      // and goes upstream — where a hung socket would just be a hang.
+      hit.stream.on('error', () => res.destroy());
+      return hit.stream.pipe(res);
     }
   }
 
@@ -189,8 +199,13 @@ async function handle(req, res, opts) {
   // Streamed to DuckDB, and — when it is worth keeping — teed to disk on the way past.
   // Nothing is held in memory and nothing waits on the write: a file too big to buffer is
   // exactly the one most worth having next time.
+  //
+  // Only a COMPLETE 200 body is teed: it is the object itself. A 206 is a slice, and
+  // storing slices keyed by range was the old design's disease — nothing ever asked for
+  // the same slice twice.
   const body = Readable.fromWeb(up.body);
-  const entry = opts.cache && opts.cache.beginPut(upstream, range, up.status, out['content-range'] || '');
+  const entry = (opts.cache && up.status === 200 && !out['content-range'])
+    ? opts.cache.beginPutFull(upstream) : null;
 
   let size = 0;
   body.on('data', c => { size += c.length; });

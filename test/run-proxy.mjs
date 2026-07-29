@@ -172,31 +172,27 @@ console.log("--- proxy behaviour ---");
 // test as what must.
 const TABLE_FILE = `${proxy.dfsOrigin}/ws/lh.Lakehouse/Tables/t/data_0.parquet`;
 {
+  // A cold ranged read passes through and stores nothing: a slice is not the object, and
+  // storing slices keyed by range was precisely the design that never served a hit —
+  // duckdb's next range never matched the last one. (Filling the object in the
+  // background from a ranged miss is the follow-up change.)
   const before = log.length;
   const a = await fetch(TABLE_FILE, { headers: { Range: "bytes=0-99" } });
   const aBody = Buffer.from(await a.arrayBuffer());
-  eq(log.length, before + 1, "a first read of a data file goes upstream");
-
-  // The write lands after the body has been streamed; cacheIdle() is its landing signal.
+  eq(a.status, 206, "a cold ranged read is answered");
+  eq(log.length, before + 1, "…from upstream");
+  ok(aBody.equals(parquet.subarray(0, 100)), "…with exactly those bytes");
   await proxy.cacheIdle();
-
-  const hitAt = log.length;
-  const b = await fetch(TABLE_FILE, { headers: { Range: "bytes=0-99" } });
-  const bBody = Buffer.from(await b.arrayBuffer());
-  eq(log.length, hitAt, "the second one does not");
-  eq(b.status, 206, "…and is still a 206");
-  eq(b.headers.get("content-range"), `bytes 0-99/${parquet.length}`, "…with the range it asked for");
-  ok(aBody.equals(bBody), "…and byte-for-byte the same answer");
-
-  const other = log.length;
-  await fetch(TABLE_FILE, { headers: { Range: "bytes=200-299" } });
-  eq(log.length, other + 1, "a different range is a different object, and is fetched");
+  const again = log.length;
+  await (await fetch(TABLE_FILE, { headers: { Range: "bytes=0-99" } })).arrayBuffer();
+  eq(log.length, again + 1, "…and no slice was stored: only whole objects are kept");
 }
 {
-  // The shape that matters most, and the one an in-memory cache gets wrong: duckdb-wasm
-  // often reads a data file WHOLE rather than by range (see part 2), and a Fabric Iceberg
-  // data file is far bigger than anything worth buffering. Multi-megabyte, no Range, and
-  // it has to come back byte-identical off disk.
+  // The shape that matters most: duckdb-wasm often reads a data file WHOLE rather than
+  // by range (see part 2), and a Fabric Iceberg data file is far bigger than anything
+  // worth buffering. Multi-megabyte, no Range, teed to disk as it streams past — and
+  // from then on the stored object answers EVERY shape of read, because a range is a
+  // slice of it, not a different thing.
   const first = log.length;
   await (await fetch(TABLE_FILE)).arrayBuffer();
   eq(log.length, first + 1, "a whole-file read goes upstream once");
@@ -208,21 +204,56 @@ const TABLE_FILE = `${proxy.dfsOrigin}/ws/lh.Lakehouse/Tables/t/data_0.parquet`;
   eq(log.length, second, "the whole file is served from disk the second time");
   eq(body.length, parquet.length, `…all ${(parquet.length / 1e6).toFixed(1)}MB of it`);
   ok(body.equals(parquet), "…byte-for-byte");
+
+  // Overlapping, disjoint, and open-ended ranges of the stored object — the reads the
+  // old design refetched every single time.
+  for (const [start, end] of [[0, 99], [200, 299], [50, 149]]) {
+    const at = log.length;
+    const rr = await fetch(TABLE_FILE, { headers: { Range: `bytes=${start}-${end}` } });
+    const bb = Buffer.from(await rr.arrayBuffer());
+    eq(rr.status, 206, `bytes=${start}-${end} of a stored object is a 206`);
+    eq(log.length, at, "…served locally");
+    eq(rr.headers.get("content-range"), `bytes ${start}-${end}/${parquet.length}`,
+       "…with the right content-range");
+    ok(bb.equals(parquet.subarray(start, end + 1)), "…and exactly those bytes");
+  }
+  {
+    const at = log.length;
+    const tail = parquet.length - 64;
+    const rr = await fetch(TABLE_FILE, { headers: { Range: `bytes=${tail}-` } });
+    const bb = Buffer.from(await rr.arrayBuffer());
+    eq(log.length, at, "an open-ended tail range is served locally");
+    ok(bb.equals(parquet.subarray(tail)), "…to the last byte");
+  }
+  {
+    const at = log.length;
+    const rr = await fetch(TABLE_FILE, { headers: { Range: `bytes=${parquet.length + 5}-` } });
+    eq(rr.status, 416, "a range past the end is a 416");
+    eq(rr.headers.get("content-range"), `bytes */${parquet.length}`, "…that names the real size");
+    eq(log.length, at, "…answered locally — the stored length knows the answer");
+  }
 }
 {
-  // DuckDB sizes a file with a HEAD before every open. An immutable file's length is as
-  // immutable as its bytes, so the second one should not be a round trip either.
-  const first = log.length;
-  const a = await fetch(TABLE_FILE, { method: "HEAD" });
-  eq(a.headers.get("content-length"), String(parquet.length), "a HEAD is sized upstream first");
-  eq(log.length, first + 1, "…which costs one request");
-  await proxy.cacheIdle();
-
-  const second = log.length;
+  // DuckDB sizes a file with a HEAD before every open. A stored object knows its own
+  // length, so a HEAD after a GET costs nothing — even though no HEAD was ever proxied.
+  const at = log.length;
   const b = await fetch(TABLE_FILE, { method: "HEAD" });
-  eq(log.length, second, "the next HEAD for the same file does not go upstream");
-  eq(b.headers.get("content-length"), String(parquet.length), "…and reports the same length");
+  eq(log.length, at, "a HEAD of a stored object does not go upstream at all");
+  eq(b.headers.get("content-length"), String(parquet.length), "…and reports the object's length");
   eq((await b.arrayBuffer()).byteLength, 0, "…with no body, because that is what HEAD means");
+}
+{
+  // A HEAD on a file never fetched still keeps the one thing it learned — the length.
+  const HEAD_FILE = `${proxy.dfsOrigin}/ws/lh.Lakehouse/Tables/t/data_h.parquet`;
+  const at = log.length;
+  const a = await fetch(HEAD_FILE, { method: "HEAD" });
+  eq(a.headers.get("content-length"), String(parquet.length), "a HEAD on an unseen file is sized upstream");
+  eq(log.length, at + 1, "…which costs one request");
+  await proxy.cacheIdle();
+  const then = log.length;
+  const b = await fetch(HEAD_FILE, { method: "HEAD" });
+  eq(log.length, then, "the next HEAD is answered from the sidecar");
+  eq(b.headers.get("content-length"), String(parquet.length), "…and reports the same length");
 }
 {
   // Files/ is overwritten by users, a listing carries a query string, and metadata.json is
@@ -323,7 +354,9 @@ const TABLE_FILE = `${proxy.dfsOrigin}/ws/lh.Lakehouse/Tables/t/data_0.parquet`;
   await utimes(join(SWEEP_DIR, "stale.123.1.tmp"), old, old);
   await seed("fresh.456.2.tmp", 1024);                              // possibly another window's
   await seed("g00d.bin", 2048);                                     // a real entry from "last session"
-  await writeFile(join(SWEEP_DIR, "g00d.json"), JSON.stringify({ bytes: 2048, at: Date.now() }));
+  await writeFile(join(SWEEP_DIR, "g00d.json"), JSON.stringify({ bytes: 2048, at: Date.now(), v: 2 }));
+  await seed("legacy.bin", 512);                                    // the range-keyed era: no v
+  await writeFile(join(SWEEP_DIR, "legacy.json"), JSON.stringify({ contentRange: "", bytes: 512, at: Date.now() }));
 
   const swept = await startProxy({
     getToken: async () => TOKEN,
@@ -337,6 +370,8 @@ const TABLE_FILE = `${proxy.dfsOrigin}/ws/lh.Lakehouse/Tables/t/data_0.parquet`;
     ok(!left.includes("stale.123.1.tmp"), "an hour-old .tmp is swept");
     ok(left.includes("fresh.456.2.tmp"), "a fresh .tmp is spared — it may be another window's live write");
     ok(left.includes("g00d.bin") && left.includes("g00d.json"), "a whole entry is untouched");
+    ok(!left.includes("legacy.bin") && !left.includes("legacy.json"),
+       "an entry from the range-keyed era is swept — nothing can ever ask for its key again");
     eq(swept.cacheStatus().storedBytes, 2048,
        "…and bytes already on disk are counted at start-up, not discovered later");
   } finally {

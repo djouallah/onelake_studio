@@ -15,8 +15,13 @@
 // overwrite those) are never cached, and there is therefore no invalidation problem to
 // solve. If sw.js's predicate changes, this one has to change with it.
 //
-// A range is part of the key, because the same file is read at many offsets and the
-// answers are different bytes.
+// ONE entry per URL, holding the whole object; any byte range is answered by slicing it.
+// The first version keyed entries by (url, range) instead, and that is what made the
+// cache useless in practice: a HEAD hit advertises accept-ranges, which invites
+// duckdb-wasm to range-read, and no stored range ever matched the next request's range —
+// the cache steered the engine into the one read pattern it could not serve. An immutable
+// object's bytes are the same however they are sliced, so the object is the unit of
+// storage and the range is only a way of serving it.
 //
 // No `vscode` import: the directory is injected, which is what lets test/run-proxy.mjs
 // drive it. Caching is an optimisation — every failure in this file is swallowed, and the
@@ -43,6 +48,15 @@ const DEFAULT_MAX_BYTES = 20 * 1024 * 1024 * 1024;
 // worth setting, so the effect was that nothing got cached on precisely the tables where
 // caching decides whether the second look is instant.
 
+// The sidecar format version. Entries written by the range-keyed design carry no `v` at
+// all, and their keys can never be asked for again — the start-up sweep deletes them on
+// sight, which is the whole migration.
+const SIDE_V = 2;
+
+// A .tmp file younger than this may be another VS Code window's write in progress —
+// globalStorage is shared between windows — so age, not existence, is what convicts it.
+const TMP_MAX_AGE_MS = 60 * 60 * 1000;
+
 // Immutable OneLake objects, and nothing else. `search` excludes every DFS listing call.
 function cacheable(urlStr) {
   let u;
@@ -52,12 +66,27 @@ function cacheable(urlStr) {
          /\/Tables\/[^?]*\/metadata\/[^?]*\.avro$/i.test(u.pathname);
 }
 
-const keyOf = (url, range) =>
-  createHash('sha256').update(`${url}\n${range || 'full'}`).digest('hex');
+const keyOf = url => createHash('sha256').update(url).digest('hex');
 
-// A .tmp file younger than this may be another VS Code window's write in progress —
-// globalStorage is shared between windows — so age, not existence, is what convicts it.
-const TMP_MAX_AGE_MS = 60 * 60 * 1000;
+// `bytes=a-b`, `bytes=a-` and `bytes=-n` — the shapes an HTTP reader actually sends.
+// null when there is no header at all; 'unsatisfiable' when the object cannot answer
+// (416); 'invalid' for anything else, including multi-range, which the caller forwards
+// upstream verbatim rather than guessing at.
+function parseRange(header, size) {
+  if (!header) return null;
+  const m = /^bytes=(\d*)-(\d*)$/.exec(String(header).trim());
+  if (!m || (!m[1] && !m[2])) return 'invalid';
+  if (!m[1]) {                                   // bytes=-n : the last n bytes
+    const n = Number(m[2]);
+    if (!n) return 'unsatisfiable';
+    return { start: Math.max(0, size - n), end: size - 1 };
+  }
+  const start = Number(m[1]);
+  if (start >= size) return 'unsatisfiable';
+  const end = m[2] ? Math.min(Number(m[2]), size - 1) : size - 1;
+  if (end < start) return 'invalid';
+  return { start, end };
+}
 
 function createCache(dir, { maxBytes = DEFAULT_MAX_BYTES } = {}) {
   if (!dir) return null;
@@ -95,51 +124,66 @@ function createCache(dir, { maxBytes = DEFAULT_MAX_BYTES } = {}) {
   const pending = new Set();
   const track = p => { pending.add(p); p.finally(() => pending.delete(p)); return p; };
 
+  // One fill per URL at a time, whoever started it. The map is what stops a tee and a
+  // background download — or two of either — writing the same object twice.
+  const fills = new Map();
+
   const ensure = async () => { if (!usable) throw new Error('no cache directory'); };
 
-  // Returns { body, length, contentRange } or null. The body is a Buffer: these are the
-  // sizes DuckDB range-reads in, and streaming a local file adds machinery for nothing.
-  //
-  // A HEAD is asking for a length, not for bytes, and DuckDB issues one before every open.
-  // An immutable file's length is as immutable as its contents, so it is answered from the
-  // sidecar alone — no body is read off disk to satisfy a question about a number.
-  async function get(url, range, method = 'GET') {
+  // The read side. Resolves null on a miss (or anything unservable, which is the same
+  // answer); otherwise { status, length, contentRange, stream } where stream is null for
+  // HEAD and 416. A HEAD is answered from the sidecar alone — a stored object knows its
+  // own length even if no HEAD was ever proxied for it — and a range is a
+  // createReadStream slice of the one stored .bin.
+  async function open(url, rangeHeader, method = 'GET') {
     if (!cacheable(url)) return null;
     try {
       await ensure();
-      if (method === 'HEAD') {
-        const meta = JSON.parse(await fs.readFile(join(dir, `${keyOf(url, 'HEAD')}.json`), 'utf8'));
-        return { body: null, length: Number(meta.bytes) || 0, contentRange: '' };
+      const k = keyOf(url);
+      const meta = JSON.parse(await fs.readFile(join(dir, `${k}.json`), 'utf8'));
+      if (meta.v !== SIDE_V) return null;          // a pre-slicing entry; the sweep owns it
+      const size = Number(meta.bytes) || 0;
+      if (method === 'HEAD') return { status: 200, length: size, contentRange: '', stream: null };
+      if (meta.head) return null;                  // a length only; the bytes are not here
+      const bin = join(dir, `${k}.bin`);
+      const r = parseRange(rangeHeader, size);
+      if (r === 'invalid') return null;
+      if (r === 'unsatisfiable') {
+        return { status: 416, length: 0, contentRange: `bytes */${size}`, stream: null };
       }
-      const k = keyOf(url, range);
-      const [body, meta] = await Promise.all([
-        fs.readFile(join(dir, `${k}.bin`)),
-        fs.readFile(join(dir, `${k}.json`), 'utf8'),
-      ]);
-      return { body, length: body.length, contentRange: JSON.parse(meta).contentRange || '' };
+      if (!r) return { status: 200, length: size, contentRange: '', stream: fsSync.createReadStream(bin) };
+      return {
+        status: 206, length: r.end - r.start + 1,
+        contentRange: `bytes ${r.start}-${r.end}/${size}`,
+        stream: fsSync.createReadStream(bin, { start: r.start, end: r.end }),
+      };
     } catch (_) { return null; }
   }
 
-  // A length, with no .bin beside it. prune() reads .json files and would see a zero-byte
-  // entry, which is what it should see: this costs nothing to keep and nothing to lose.
+  // A length, with no .bin beside it. Never written over a full entry's sidecar — that
+  // would orphan its bytes — and not while a fill is landing: the length arrives with
+  // the body.
   function putHead(url, contentLength) {
     const bytes = Number(contentLength);
     if (!usable || !cacheable(url) || !Number.isFinite(bytes) || bytes <= 0) return false;
-    track(fs.writeFile(join(dir, `${keyOf(url, 'HEAD')}.json`),
-      JSON.stringify({ contentRange: '', bytes, at: Date.now(), head: true })).catch(() => {}));
+    const k = keyOf(url);
+    if (fills.has(k) || fsSync.existsSync(join(dir, `${k}.json`))) return false;
+    track(fs.writeFile(join(dir, `${k}.json`),
+      JSON.stringify({ bytes, at: Date.now(), v: SIDE_V, head: true })).catch(() => {}));
     return true;
   }
 
-  // Returns a writable to tee the response into, or null when this is not worth storing.
-  // The caller pipes the body to it alongside the client; nothing waits on it.
+  // Returns a writable to tee a COMPLETE 200 body into, or null when this is not worth
+  // storing — including when the object is already stored or already being stored. The
+  // caller pipes the body to it alongside the client; nothing waits on it.
   //
-  // Written under a temp name and renamed on completion, so a half-written entry can never
-  // be served: rename is atomic, whereas reading a .bin that is still being appended to
-  // returns a truncated file and DuckDB blames the data.
-  function beginPut(url, range, status, contentRange) {
+  // Written under a temp name and renamed on completion, so a half-written entry can
+  // never be served: rename is atomic, whereas reading a .bin that is still being
+  // appended to returns a truncated file and DuckDB blames the data.
+  function beginPutFull(url) {
     if (!usable || !cacheable(url)) return null;
-    if (status !== 200 && status !== 206) return null;
-    const k = keyOf(url, range);
+    const k = keyOf(url);
+    if (fills.has(k) || fsSync.existsSync(join(dir, `${k}.bin`))) return null;
     const tmp = join(dir, `${k}.${process.pid}.${++tmpSeq}.tmp`);
     let stream;
     try { stream = fsSync.createWriteStream(tmp); } catch (_) { return null; }
@@ -159,7 +203,7 @@ function createCache(dir, { maxBytes = DEFAULT_MAX_BYTES } = {}) {
           if (!bytes) { await fs.rm(tmp, { force: true }); return resolve({ stored: false, bytes: 0 }); }
           await fs.rename(tmp, join(dir, `${k}.bin`));
           await fs.writeFile(join(dir, `${k}.json`),
-            JSON.stringify({ contentRange: contentRange || '', bytes, at: Date.now() }));
+            JSON.stringify({ bytes, at: Date.now(), v: SIDE_V }));
           total += bytes;
           if (total > maxBytes) await prune();
           resolve({ stored: true, bytes });
@@ -170,6 +214,8 @@ function createCache(dir, { maxBytes = DEFAULT_MAX_BYTES } = {}) {
         }
       });
     }));
+    fills.set(k, done);
+    done.finally(() => fills.delete(k));
     // A read that dies part way through must not leave a plausible-looking entry behind.
     return { stream, abort: () => { scrap(); stream.destroy(); }, done };
   }
@@ -202,7 +248,8 @@ function createCache(dir, { maxBytes = DEFAULT_MAX_BYTES } = {}) {
   // lists only .json, so it is never counted and never pruned, a leak with no expiry. A
   // data .json with no .bin is the same tear seen from the other side, and would serve a
   // promise with no bytes behind it. An abandoned .tmp is an interrupted write; a fresh
-  // one may be another window's write still in flight, so only old ones go.
+  // one may be another window's write still in flight, so only old ones go. And a sidecar
+  // without `v: 2` is from the range-keyed era — a key nothing will ever ask for again.
   async function sweepAndMeasure() {
     if (!usable) return 0;
     const names = await fs.readdir(dir);
@@ -225,7 +272,12 @@ function createCache(dir, { maxBytes = DEFAULT_MAX_BYTES } = {}) {
     for (const k of jsons) {
       try {
         const m = JSON.parse(await fs.readFile(join(dir, `${k}.json`), 'utf8'));
-        if (!m.head && !bins.has(k)) { await fs.rm(join(dir, `${k}.json`), { force: true }); continue; }
+        const torn = !m.head && !bins.has(k);
+        if (m.v !== SIDE_V || torn) {
+          await fs.rm(join(dir, `${k}.json`), { force: true });
+          await fs.rm(join(dir, `${k}.bin`), { force: true }).catch(() => {});
+          continue;
+        }
         sum += m.head ? 0 : Number(m.bytes) || 0;
       } catch (_) { await fs.rm(join(dir, `${k}.json`), { force: true }).catch(() => {}); }
     }
@@ -295,8 +347,8 @@ function createCache(dir, { maxBytes = DEFAULT_MAX_BYTES } = {}) {
     try { total = await measure(); } catch (_) { total = 0; }
   }
 
-  return { get, beginPut, putHead, clear, size, storedBytes, idle, dir, maxBytes,
+  return { open, beginPutFull, putHead, clear, size, storedBytes, idle, dir, maxBytes,
            status: () => ({ usable, problem, dir, maxBytes, storedBytes: total }) };
 }
 
-module.exports = { createCache, cacheable, DEFAULT_MAX_BYTES };
+module.exports = { createCache, cacheable, parseRange, DEFAULT_MAX_BYTES };
