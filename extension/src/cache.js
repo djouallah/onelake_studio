@@ -24,15 +24,19 @@
 // =============================================================================
 
 const fs = require('node:fs/promises');
+const fsSync = require('node:fs');
 const { createHash } = require('node:crypto');
 const { join } = require('node:path');
 
 const MAX_BYTES = 512 * 1024 * 1024;
 const PRUNE_EVERY_PUTS = 32;
-// One response is held in memory to be written. A whole-file GET of a large parquet is
-// the one shape that could hurt, and it is also the one least worth storing, so it is
-// skipped rather than buffered.
-const MAX_ENTRY_BYTES = 64 * 1024 * 1024;
+
+// Written straight to disk as it streams past, never held in memory. The first version of
+// this buffered the response so it could enforce a per-entry size cap — and that cap was
+// invented here, not copied: sw.js has none. duckdb-wasm often reads a data file WHOLE
+// rather than by range, and a Fabric Iceberg data file is routinely bigger than any cap
+// worth setting, so the effect was that nothing got cached on precisely the tables where
+// caching decides whether the second look is instant.
 
 // Immutable OneLake objects, and nothing else. `search` excludes every DFS listing call.
 function cacheable(urlStr) {
@@ -48,10 +52,16 @@ const keyOf = (url, range) =>
 
 function createCache(dir) {
   if (!dir) return null;
-  let ready = null;
   let putsSincePrune = 0;
+  let tmpSeq = 0;
 
-  const ensure = () => (ready || (ready = fs.mkdir(dir, { recursive: true })));
+  // Made once, synchronously, at proxy start: a write stream has to be openable the
+  // instant a response starts arriving, and an async mkdir would mean buffering the head
+  // of every body while waiting for it — the thing this file exists not to do.
+  let usable = true;
+  try { fsSync.mkdirSync(dir, { recursive: true }); } catch (_) { usable = false; }
+
+  const ensure = async () => { if (!usable) throw new Error('no cache directory'); };
 
   // Returns { body, length, contentRange } or null. The body is a Buffer: these are the
   // sizes DuckDB range-reads in, and streaming a local file adds machinery for nothing.
@@ -88,23 +98,36 @@ function createCache(dir) {
     } catch (_) {}
   }
 
-  async function put(url, range, status, contentRange, body) {
-    if (!cacheable(url)) return;
-    if (status !== 200 && status !== 206) return;
-    if (!body || body.length === 0 || body.length > MAX_ENTRY_BYTES) return;
-    try {
-      await ensure();
-      const k = keyOf(url, range);
-      // Written to a temp name and renamed, so a half-written file is never a hit: rename
-      // is atomic, readFile of the .bin would otherwise happily return a truncated read
-      // and DuckDB would blame the file.
-      const tmp = join(dir, `${k}.${process.pid}.tmp`);
-      await fs.writeFile(tmp, body);
-      await fs.rename(tmp, join(dir, `${k}.bin`));
-      await fs.writeFile(join(dir, `${k}.json`),
-        JSON.stringify({ contentRange: contentRange || '', bytes: body.length, at: Date.now() }));
-      if (++putsSincePrune >= PRUNE_EVERY_PUTS) { putsSincePrune = 0; await prune(); }
-    } catch (_) { /* an optimisation, never a failure */ }
+  // Returns a writable to tee the response into, or null when this is not worth storing.
+  // The caller pipes the body to it alongside the client; nothing waits on it.
+  //
+  // Written under a temp name and renamed on completion, so a half-written entry can never
+  // be served: rename is atomic, whereas reading a .bin that is still being appended to
+  // returns a truncated file and DuckDB blames the data.
+  function beginPut(url, range, status, contentRange) {
+    if (!usable || !cacheable(url)) return null;
+    if (status !== 200 && status !== 206) return null;
+    const k = keyOf(url, range);
+    const tmp = join(dir, `${k}.${process.pid}.${++tmpSeq}.tmp`);
+    let stream;
+    try { stream = fsSync.createWriteStream(tmp); } catch (_) { return null; }
+
+    let broken = false;
+    const scrap = () => { broken = true; fs.rm(tmp, { force: true }).catch(() => {}); };
+    stream.on('error', scrap);
+    stream.on('finish', async () => {
+      if (broken) return;
+      try {
+        const bytes = stream.bytesWritten;
+        if (!bytes) { await fs.rm(tmp, { force: true }); return; }
+        await fs.rename(tmp, join(dir, `${k}.bin`));
+        await fs.writeFile(join(dir, `${k}.json`),
+          JSON.stringify({ contentRange: contentRange || '', bytes, at: Date.now() }));
+        if (++putsSincePrune >= PRUNE_EVERY_PUTS) { putsSincePrune = 0; await prune(); }
+      } catch (_) { /* an optimisation, never a failure */ }
+    });
+    // A read that dies part way through must not leave a plausible-looking entry behind.
+    return { stream, abort: () => { scrap(); stream.destroy(); } };
   }
 
   // Oldest-first eviction once the cap is passed, down to 80% so it does not run on
@@ -138,11 +161,13 @@ function createCache(dir) {
   // Signing out, or switching account, is the one moment these bytes should not survive —
   // they were read with the identity being left behind. sw.js does the same on sign-out.
   async function clear() {
-    try { await fs.rm(dir, { recursive: true, force: true }); } catch (_) {}
-    ready = null;
+    try {
+      await fs.rm(dir, { recursive: true, force: true });
+      fsSync.mkdirSync(dir, { recursive: true });   // still usable straight afterwards
+    } catch (_) { usable = false; }
   }
 
-  return { get, put, putHead, clear, dir };
+  return { get, beginPut, putHead, clear, dir };
 }
 
-module.exports = { createCache, cacheable, MAX_ENTRY_BYTES };
+module.exports = { createCache, cacheable };

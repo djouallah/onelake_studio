@@ -28,7 +28,7 @@
 const http = require('node:http');
 const crypto = require('node:crypto');
 const { Readable } = require('node:stream');
-const { createCache, cacheable, MAX_ENTRY_BYTES } = require('./cache');
+const { createCache } = require('./cache');
 
 const DFS_UPSTREAM = 'https://onelake.dfs.fabric.microsoft.com';
 const TABLE_UPSTREAM = 'https://onelake.table.fabric.microsoft.com';
@@ -184,33 +184,21 @@ async function handle(req, res, opts) {
     return res.end();
   }
 
-  // Streamed to DuckDB either way; when it is worth keeping, the chunks are also collected
-  // and written afterwards. The read never waits on the write, and a write that fails
-  // costs a future cache miss and nothing else.
-  //
-  // `cacheable` is checked here rather than left to put(): otherwise every whole-file read
-  // of something that will never be stored — a CSV under Files/, a listing — would be held
-  // in memory on its way past for nothing.
+  // Streamed to DuckDB, and — when it is worth keeping — teed to disk on the way past.
+  // Nothing is held in memory and nothing waits on the write: a file too big to buffer is
+  // exactly the one most worth having next time.
   const body = Readable.fromWeb(up.body);
-  const keep = opts.cache && (up.status === 200 || up.status === 206) && cacheable(upstream);
+  const entry = opts.cache && opts.cache.beginPut(upstream, range, up.status, out['content-range'] || '');
 
-  let chunks = keep ? [] : null;
   let size = 0;
-  body.on('data', c => {
-    size += c.length;
-    if (!chunks) return;
-    // Past the cap this would be a copy of something that is not going to be stored.
-    if (size > MAX_ENTRY_BYTES) { chunks = null; return; }
-    chunks.push(c);
-  });
+  body.on('data', c => { size += c.length; });
+  body.on('error', () => entry && entry.abort());
   body.on('end', () => {
-    if (chunks) {
-      opts.cache.put(upstream, range, up.status, out['content-range'] || '', Buffer.concat(chunks, size));
-    }
     // Logged on end, not on headers: for a large file the bytes are most of the wait, and
-    // a number that stops at the first byte would say the read was fast.
+    // a number that stopped at the first byte would call the read fast.
     log({ cache: 'miss', status: up.status, tokenMs, netMs, bytes: size });
   });
+  if (entry) body.pipe(entry.stream);
   body.pipe(res);
 }
 

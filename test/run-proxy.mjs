@@ -193,6 +193,23 @@ const TABLE_FILE = `${proxy.dfsOrigin}/ws/lh.Lakehouse/Tables/t/data_0.parquet`;
   eq(log.length, other + 1, "a different range is a different object, and is fetched");
 }
 {
+  // The shape that matters most, and the one an in-memory cache gets wrong: duckdb-wasm
+  // often reads a data file WHOLE rather than by range (see part 2), and a Fabric Iceberg
+  // data file is far bigger than anything worth buffering. Multi-megabyte, no Range, and
+  // it has to come back byte-identical off disk.
+  const first = log.length;
+  await (await fetch(TABLE_FILE)).arrayBuffer();
+  eq(log.length, first + 1, "a whole-file read goes upstream once");
+  await new Promise(r => setTimeout(r, 400));
+
+  const second = log.length;
+  const r = await fetch(TABLE_FILE);
+  const body = Buffer.from(await r.arrayBuffer());
+  eq(log.length, second, "the whole file is served from disk the second time");
+  eq(body.length, parquet.length, `…all ${(parquet.length / 1e6).toFixed(1)}MB of it`);
+  ok(body.equals(parquet), "…byte-for-byte");
+}
+{
   // DuckDB sizes a file with a HEAD before every open. An immutable file's length is as
   // immutable as its bytes, so the second one should not be a round trip either.
   const first = log.length;
