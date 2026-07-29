@@ -74,7 +74,7 @@ function postLive(msg) {
   if (current && ready) current.webview.postMessage(msg);
 }
 
-async function openPanel(context, proxy, { onOpened } = {}) {
+async function openPanel(context, proxy, { onOpened, onBoot } = {}) {
   if (current) { current.reveal(vscode.ViewColumn.Active); return current; }
 
   const { site: siteUri, readme: readmeUri } = await siteRoot(context.extensionUri,
@@ -122,6 +122,11 @@ async function openPanel(context, proxy, { onOpened } = {}) {
       // The read indicator in the panel's status bar is clickable, and this is what it
       // does: the breakdown it summarises lives in the output channel.
       vscode.commands.executeCommand('onelakeStudio.showLog');
+    } else if (msg.type === 'boot' && onBoot) {
+      // The engine timing itself. Its stages happen inside the webview and the worker,
+      // where the proxy's log cannot see them — which is how a boot spending half a
+      // minute compiling wasm produced a read log of nothing but 1ms hits.
+      onBoot(msg);
     } else if (msg.type === 'opened' && onOpened) {
       // The page timed a click from arrival to rendered and is reporting the total —
       // the one number the per-read lines cannot add up to, because the wait includes

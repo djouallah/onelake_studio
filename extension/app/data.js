@@ -101,6 +101,12 @@ const TABLE_ORIGIN = "https://onelake.table.fabric.microsoft.com";
 // range reads in the browser — and DuckDB's file API cannot set a header itself.
 export function createEngine(auth, {
   onStatus = () => {},
+  // Called once per boot with a per-stage millisecond breakdown. It exists because the
+  // read log measures the proxy — request in, response out — and the expensive part of
+  // booting happens AFTER the last byte is delivered, inside the worker, where nothing
+  // was watching. A boot that served 35MB of wasm in 1ms and still took half a minute
+  // was indistinguishable from a fast one in the only instrument we had.
+  onBoot = () => {},
   dfsOrigin = DFS_ORIGIN,
   tableOrigin = TABLE_ORIGIN,
 } = {}) {
@@ -300,6 +306,17 @@ export function createEngine(auth, {
   }
 
   async function _init({ quiet = false } = {}) {
+    // Stage clock. `instantiate` is the one that matters: it is where the 35MB wasm is
+    // compiled, and whether Chromium hands back a cached compilation or recompiles from
+    // scratch is the whole difference between this and the browser build. Everything
+    // else is here so that number can be read in context rather than assumed.
+    const stages = [];
+    let markAt = (typeof performance !== "undefined" ? performance.now() : Date.now());
+    const mark = name => {
+      const now = (typeof performance !== "undefined" ? performance.now() : Date.now());
+      stages.push({ stage: name, ms: Math.round(now - markAt) });
+      markAt = now;
+    };
     if (!quiet) onStatus("Loading DuckDB-WASM…");
     // SINGLE-THREADED (eh) BY MEASUREMENT, NOT OVERSIGHT. The threaded coi bundle exists
     // on the CDN at this pin and DOES run — measured in headless Chrome behind the
@@ -313,6 +330,7 @@ export function createEngine(auth, {
     //          pthreadWorker: DIST+"duckdb-browser-coi.pthread.worker.js" }
     // (each worker URL wrapped in a same-origin blob importScripts shim).
     const bundle = await duckdb.selectBundle(duckdb.getJsDelivrBundles());
+    mark("selectBundle");
     // Through the proxy's disk cache, like the module import above: the worker fetches
     // the wasm itself, so its URLs have to be rewritten before the worker sees them.
     for (const k of ["mainModule", "mainWorker", "pthreadWorker"]) {
@@ -327,7 +345,13 @@ export function createEngine(auth, {
     );
     worker = new Worker(workerUrl);
     db = new duckdb.AsyncDuckDB(new duckdb.ConsoleLogger(), worker);
+    mark("worker");
     await db.instantiate(bundle.mainModule, bundle.pthreadWorker);
+    // THE number. Fetching the wasm is a proxy hit measured in milliseconds; compiling it
+    // is not, and only a cached compilation makes this small. If it is seconds on a repeat
+    // boot, Chromium threw the compiled module away and the caching contract on the /cdn
+    // response is not reaching it.
+    mark("instantiate(wasm compile)");
     URL.revokeObjectURL(workerUrl);
     if (!quiet) onStatus("Loading DuckDB extensions…");
     conn = await db.connect();
@@ -343,11 +367,17 @@ export function createEngine(auth, {
     // not a reason to refuse to start. LOAD alone succeeds when the wasm build already has
     // the extension; INSTALL+LOAD is the fetch-from-the-repo fallback.
     const tryLoadExt = async (ext, repo = "") => {
-      try { await conn.query(`LOAD ${ext};`); return true; }
-      catch (_) {
-        try { await conn.query(`INSTALL ${ext}${repo ? ` FROM ${repo}` : ""}; LOAD ${ext};`); return true; }
-        catch (e) { console.warn(`[engine] ${ext} extension unavailable:`, e.message); return false; }
-      }
+      const ok = await (async () => {
+        try { await conn.query(`LOAD ${ext};`); return true; }
+        catch (_) {
+          try { await conn.query(`INSTALL ${ext}${repo ? ` FROM ${repo}` : ""}; LOAD ${ext};`); return true; }
+          catch (e) { console.warn(`[engine] ${ext} extension unavailable:`, e.message); return false; }
+        }
+      })();
+      // Timed individually: these are four separate downloads-and-compiles, and one of
+      // them being slow reads nothing like all four being slow.
+      mark(`ext:${ext}${ok ? "" : " (failed)"}`);
+      return ok;
     };
     // INSTALL fetches over the network; through the proxy those fetches land in the
     // same disk cache as the wasm, so extension loads after the first boot are local.
@@ -380,6 +410,12 @@ export function createEngine(auth, {
     } catch (_) {}
     console.log(`[engine] DuckDB ready — bundle=${basename(bundle.mainModule)}, ` +
                 `crossOriginIsolated=${self.crossOriginIsolated}, threads=${threads}`);
+    // Reported rather than logged-and-forgotten: in the extension this crosses to the
+    // host and lands in the output channel beside the read log, which is the only place
+    // the two halves of a slow boot can be compared.
+    const totalMs = stages.reduce((n, s) => n + s.ms, 0);
+    console.log(`[engine] boot ${totalMs}ms — ` + stages.map(s => `${s.stage} ${s.ms}ms`).join(", "));
+    try { onBoot({ stages, totalMs, quiet }); } catch (_) {}
     engineAlive = true;   // only now may the watchdog terminate this worker
     return { db, conn };
   }

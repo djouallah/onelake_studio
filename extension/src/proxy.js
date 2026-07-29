@@ -54,9 +54,51 @@ function cors(res) {
   res.setHeader('access-control-allow-methods', 'GET, HEAD, OPTIONS');
   // Range is not a CORS-safelisted request header, so the webview sends a preflight
   // ahead of every ranged read and this has to answer it.
-  res.setHeader('access-control-allow-headers', 'range, accept, content-type');
+  res.setHeader('access-control-allow-headers',
+    'range, accept, content-type, if-none-match, if-modified-since');
   res.setHeader('access-control-expose-headers', PASS_THROUGH.join(', '));
   res.setHeader('access-control-max-age', '86400');
+}
+
+// -----------------------------------------------------------------------------
+// Making the engine cacheable to Chromium
+// -----------------------------------------------------------------------------
+// Chromium stores a COMPILED WebAssembly module beside the resource's HTTP cache entry.
+// A response it declines to cache therefore has no code cache entry either, and 35MB of
+// duckdb-eh.wasm is recompiled from scratch on every panel open — seconds, after the
+// bytes have already arrived, which is why the read log could show `1ms hit packaged`
+// on a boot that still felt broken.
+//
+// That was the entire difference from the website: jsDelivr sends
+// `cache-control: immutable` plus an ETag, so Chrome caches the bytes AND the compiled
+// module, and every later visit compiles nothing. Serving the same bytes from here with
+// only content-type/content-length/accept-ranges opted us out of both.
+//
+// `immutable` is honest for these: engine bytes ship inside the extension and change
+// only when the extension itself is replaced. The validator is derived from size+mtime,
+// so a re-vendored file invalidates its own entry without anyone remembering to.
+const IMMUTABLE = 'public, max-age=31536000, immutable';
+
+function immutableFor(st) {
+  return {
+    'cache-control': IMMUTABLE,
+    etag: `"${st.size.toString(16)}-${Math.floor(st.mtimeMs).toString(16)}"`,
+    'last-modified': new Date(st.mtime).toUTCString(),
+  };
+}
+
+// A 304 is how Chromium KEEPS an entry it already has instead of dropping it — which
+// for the wasm means keeping the compiled module too. An if-none-match match wins
+// outright when present: RFC 9110 makes the validator the stronger signal, and the
+// date has one-second resolution that a freshly vendored file can land inside.
+function isFresh(req, hdr) {
+  const inm = req.headers['if-none-match'];
+  if (inm) return inm.split(',').some(t => t.trim() === hdr.etag);
+  const ims = req.headers['if-modified-since'];
+  if (!ims) return false;
+  const since = Date.parse(ims);
+  const mod = Date.parse(hdr['last-modified']);
+  return Number.isFinite(since) && Number.isFinite(mod) && mod <= since;
 }
 
 // Constant-time, because the secret is the only thing standing between a local
@@ -148,10 +190,20 @@ async function serveVendor(req, res, vendorDir, rest, log) {
   const type = low.endsWith('.wasm') ? 'application/wasm'
     : low.endsWith('.json') ? 'application/json'
     : 'text/javascript';
+  // Without these Chromium refuses to cache the response, and without a cache entry it
+  // throws away the compiled wasm too — see immutableFor() above.
+  const fresh = immutableFor(st);
+  if (isFresh(req, fresh)) {
+    res.writeHead(304, fresh);
+    log({ cache: 'hit', vendor: true, status: 304, bytes: 0 });
+    res.end();
+    return true;
+  }
   res.writeHead(200, {
     'content-type': type,
     'content-length': String(st.size),
     'accept-ranges': 'bytes',
+    ...fresh,
   });
   log({ cache: 'hit', vendor: true, status: 200, bytes: st.size });
   if (req.method === 'HEAD') { res.end(); return true; }
@@ -298,6 +350,12 @@ async function handle(req, res, opts) {
         ...(hit.headers || {}),
         'content-length': String(hit.length),
         'accept-ranges': 'bytes',
+        // Same reasoning as serveVendor: a cdn object is addressed by a versioned URL and
+        // cannot change under it, so letting Chromium keep it — and the module it compiled
+        // from it — is both safe and the difference between booting and recompiling. Data
+        // reads deliberately get nothing: their freshness is this cache's business, decided
+        // by the TTL and serve-stale logic above, not the webview's.
+        ...(r.kind === 'cdn' ? { 'cache-control': IMMUTABLE } : {}),
         ...(hit.contentRange ? { 'content-range': hit.contentRange } : {}),
       });
       log({ cache: 'hit', status: hit.status, bytes: hit.length, lookupMs });
@@ -347,6 +405,11 @@ async function handle(req, res, opts) {
   }
   // Upstream's status is passed through untouched — 206, and 401/403/404, all of which
   // the engine reads and turns into its own diagnosis.
+  // The cdn route adds the caching contract on the way past, so a FIRST boot — the one
+  // that has no vendor file and no cache entry yet — still leaves Chromium holding the
+  // compiled wasm. Without it the very install that pays to download 35MB gets nothing
+  // back for it.
+  if (r.kind === 'cdn' && up.status === 200) out['cache-control'] = IMMUTABLE;
   res.writeHead(up.status, out);
   if (req.method === 'HEAD') {
     up.stream.resume();   // no body is coming, but the socket must go back to the pool

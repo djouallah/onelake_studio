@@ -32,6 +32,11 @@ if (HOST_VSCODE) document.body.classList.add('host-vscode');
 const MAX_DOM_ROWS = 2000;
 let engine = null;
 let engineReady = null;      // resolves when engine.init() has finished; gates every use of it
+// The engine boots before the VS Code bridge below has its postMessage handle, and the
+// boot report is the one message that is always ready first. Buffered here rather than
+// dropped: the report describing the slow boot is precisely the one worth keeping.
+let pendingBoot = null;
+let reportBoot = b => { pendingBoot = b; };
 let engineUp = false;        // ...and the settled form of it, for the synchronous checks
 let signedIn = false;        // OneLake session established (browsing unlocked)
 let lakehouse = null;        // { workspace, item }
@@ -1721,6 +1726,10 @@ showSignedOut();
 // service worker to sign DuckDB's range reads with.
 engine = createEngine(auth, {
   onStatus: setStatus,
+  // Sent to the host, where it prints beside the read log. The read log times the proxy;
+  // this times what happens after the bytes land, which is where a boot that looks
+  // instant in the log actually spends its seconds.
+  onBoot: reportBoot,
   dfsOrigin: cfg.dfsOrigin,
   tableOrigin: cfg.tableOrigin,
 });
@@ -1764,6 +1773,11 @@ if (HOST_VSCODE) {
   // Only the webview defines this. The guard is what lets the same page be driven in a
   // plain browser for testing — without it the whole block throws on load.
   const vs = typeof acquireVsCodeApi === 'function' ? acquireVsCodeApi() : { postMessage() {} };
+
+  // Now there is somewhere to send it. Later boots (a worker restart re-runs _init) go
+  // straight out; the first one has almost certainly already happened.
+  reportBoot = b => vs.postMessage({ type: 'boot', ...b });
+  if (pendingBoot) { reportBoot(pendingBoot); pendingBoot = null; }
 
   // selectTable/selectFile take the row they were clicked on so they can mark it. Nothing
   // in the tree has a row on this side, and a detached element satisfies them without

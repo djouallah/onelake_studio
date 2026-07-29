@@ -99,6 +99,26 @@ function logRead(e) {
 // includes everything the reads cannot see: the catalog, the worker, the rendering. When
 // an OPEN line is seconds and the read lines under it are milliseconds, the time went to
 // one of those, and that difference is the diagnosis.
+// The other half of a slow boot, and until now the invisible half. Every line in the read
+// log above is the proxy answering; these are the stages that run after it has finished —
+// compiling the wasm, starting the worker, loading the four extensions. A boot whose reads
+// are all 1ms hits and whose total is thirty seconds spent all of it here.
+//
+// `instantiate` is the one to read: it is the 35MB wasm compile. Chromium keeps a compiled
+// module beside the resource's HTTP cache entry, so on a repeat boot it should be a small
+// number. If it is seconds every time, the caching contract the /cdn route now sends is
+// not reaching the webview, and no amount of serving those bytes faster will help.
+function logBoot(m) {
+  if (!out) return;
+  const stages = Array.isArray(m.stages) ? m.stages : [];
+  out.appendLine(
+    `${String(Number(m.totalMs) || 0).padStart(6)}ms  BOOT engine ready` +
+    (m.quiet ? ' (worker restart)' : ''));
+  for (const s of stages) {
+    out.appendLine(`${String(Number(s.ms) || 0).padStart(6)}ms       ${s.stage}`);
+  }
+}
+
 function logOpened(m) {
   if (!out) return;
   const what = m.kind === 'table' ? 'metadata + stats on screen'
@@ -235,7 +255,7 @@ async function show(context, options) {
       'OneLake Studio needs a Microsoft account to reach OneLake. Sign-in was cancelled.');
     return false;
   }
-  await openPanel(context, await ensureProxy(context), { onOpened: logOpened });
+  await openPanel(context, await ensureProxy(context), { onOpened: logOpened, onBoot: logBoot });
   return true;
 }
 

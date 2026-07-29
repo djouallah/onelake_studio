@@ -502,7 +502,28 @@ const TABLE_FILE = `${proxy.dfsOrigin}/ws/lh.Lakehouse/Tables/t/data_0.parquet`;
     eq((await w.arrayBuffer()).byteLength, 4, "…byte for byte");
     eq(cdnLog.length, before, "…still no network");
 
-    await fetch(`${pv.cdnOrigin}/cdn.jsdelivr.net/npm/not-packaged@1.0.0/+esm`);
+    // THE regression that has no symptom. Chromium keeps a COMPILED WebAssembly module
+    // beside the resource's HTTP cache entry, so a response it will not cache costs a
+    // full 35MB recompile on every panel open — while the read log still reports a 1ms
+    // hit, because the proxy's part really was 1ms. Serving these bytes fast is not the
+    // same as serving them cacheably, and only one of the two is visible from the log.
+    ok(/immutable/.test(w.headers.get("cache-control") || ""),
+       "a packaged file is cacheable — no cache entry means Chromium recompiles the wasm every boot");
+    ok(w.headers.get("etag"), "…and carries a validator");
+    ok(w.headers.get("last-modified"), "…and a last-modified");
+
+    const wEtag = w.headers.get("etag");
+    const w304 = await fetch(`${pv.cdnOrigin}/extensions.duckdb.org/v1.5.4/wasm_eh/x.duckdb_extension.wasm`,
+                             { headers: { "if-none-match": wEtag } });
+    eq(w304.status, 304, "…and revalidates to a 304, which is how Chromium KEEPS the compiled module");
+    eq((await w304.arrayBuffer()).byteLength, 0, "…with no body");
+
+    // The first boot of a fresh install has no vendor file and no cache entry, and it is
+    // the one that pays to download the engine. It must get the contract too, or that
+    // download buys nothing for next time.
+    const netCdn = await fetch(`${pv.cdnOrigin}/cdn.jsdelivr.net/npm/not-packaged@1.0.0/+esm`);
+    ok(/immutable/.test(netCdn.headers.get("cache-control") || ""),
+       "a cdn miss served from the network is cacheable too");
     eq(cdnLog.length, before + 1, "what is not packaged falls through to the network");
 
     // Raw http, because fetch() normalises ../ away before sending — the attack needs
