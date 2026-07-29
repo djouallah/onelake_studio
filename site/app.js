@@ -844,6 +844,7 @@ let selSeq = 0;
 
 async function selectFile(row, file) {
   const my = ++selSeq;
+  engine.cancelLoad();   // same verdict as selectTable: the last thing is no longer waited for
   document.querySelectorAll('.fileItem.active').forEach(el => el.classList.remove('active'));
   row.classList.add('active');
   $('activeTable').textContent = file.name;
@@ -988,6 +989,13 @@ async function selectTable(row, t) {
     return;
   }
   const my = ++selSeq;
+  // A click on a table is also a verdict on whatever is still running: the user has
+  // stopped waiting for it. Cancel it NOW — the superseded walk stands down at its next
+  // checkpoint, a statement mid-flight is cancelled, and a worker wedged in a
+  // synchronous bind is terminated by the watchdog. Without this, the click queued
+  // behind ALL of it — measured as "Reading the first of 1 file(s)… " hanging for many
+  // seconds while every byte it needed was already on disk.
+  engine.cancelLoad();
   document.querySelectorAll('.tableItem.active').forEach(el => el.classList.remove('active'));
   row.classList.add('active');
   $('activeTable').textContent = t.schema ? `${t.schema}.${t.table}` : t.table;
