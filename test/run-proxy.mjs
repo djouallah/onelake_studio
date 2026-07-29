@@ -257,6 +257,37 @@ const TABLE_FILE = `${proxy.dfsOrigin}/ws/lh.Lakehouse/Tables/t/data_0.parquet`;
   }
 }
 {
+  // A WHOLE object asked for as a range. This is the commonest read native DuckDB makes —
+  // httpfs sizes a file from HEAD and then asks for `bytes=0-<size-1>` — and OneLake
+  // answers it 206. Treating every 206 as a fragment meant this was never stored, so a
+  // Files/ read (xlsx, zip, csv, sqlite) paid the network on EVERY open. Measured on one
+  // .xlsx before the fix: three upstream trips, the file downloaded twice, nothing kept.
+  //
+  // Table data escaped it only because /Tables/ parquet is classified immutable and
+  // ensureFull filled it separately — so the bug was invisible exactly where the tests
+  // were looking. This URL is deliberately a Files/ path: tier 'ttl', no ensureFull.
+  const FILES_OBJ = `${proxy.dfsOrigin}/ws/lh.Lakehouse/Files/book.xlsx`;
+  const at = log.length;
+  const r1 = await fetch(FILES_OBJ, { headers: { Range: `bytes=0-${parquet.length - 1}` } });
+  const b1 = Buffer.from(await r1.arrayBuffer());
+  eq(r1.status, 206, "a whole-object read expressed as a range comes back 206");
+  ok(b1.equals(parquet), "…with the whole object in it");
+  eq(log.length, at + 1, "…and it went upstream once");
+  await proxy.cacheIdle();
+
+  const at2 = log.length;
+  const r2 = await fetch(FILES_OBJ);
+  const b2 = Buffer.from(await r2.arrayBuffer());
+  eq(log.length, at2, "the second read is served from disk — the 206 WAS the object");
+  ok(b2.equals(parquet), "…byte-for-byte");
+  // The stored entry must describe the object, not the request that fetched it: replaying
+  // the fetching reader's content-range onto a later unranged read would be a lie about
+  // what was served.
+  eq(r2.status, 200, "…as a plain 200");
+  eq(r2.headers.get("content-range"), null, "…carrying no stale content-range");
+  eq(r2.headers.get("content-length"), String(parquet.length), "…and the object's real length");
+}
+{
   // DuckDB sizes a file with a HEAD before every open. A stored object knows its own
   // length, so a HEAD after a GET costs nothing — even though no HEAD was ever proxied.
   const at = log.length;

@@ -49,6 +49,21 @@ const PASS_THROUGH = [
   'etag', 'last-modified', 'x-ms-continuation',
 ];
 
+// `bytes 0-393870/393871` — a 206 that happens to carry the entire object. httpfs asks
+// for a whole file this way, so treating every 206 as a fragment threw away the commonest
+// complete body the proxy sees.
+function coversWholeObject(contentRange) {
+  const m = /^bytes\s+(\d+)-(\d+)\/(\d+)$/.exec(String(contentRange || '').trim());
+  if (!m) return false;
+  return Number(m[1]) === 0 && Number(m[2]) === Number(m[3]) - 1;
+}
+
+// True only for a range that is genuinely a fragment — a whole-object 206 is not partial.
+function isPartial(contentRange) {
+  if (!contentRange) return false;
+  return !coversWholeObject(contentRange);
+}
+
 function cors(res) {
   res.setHeader('access-control-allow-origin', '*');
   res.setHeader('access-control-allow-methods', 'GET, HEAD, OPTIONS');
@@ -452,12 +467,32 @@ async function handle(req, res, opts) {
   // Nothing is held in memory and nothing waits on the write: a file too big to buffer is
   // exactly the one most worth having next time.
   //
-  // Only a COMPLETE 200 body is teed: it is the object itself. A 206 is a slice, and
-  // storing slices keyed by range was the old design's disease — nothing ever asked for
-  // the same slice twice.
+  // A COMPLETE body is teed. That used to mean "status 200 and no content-range", which
+  // silently excluded the commonest read native DuckDB makes: httpfs asks for a whole file
+  // as `bytes=0-<size-1>`, which OneLake answers 206 with a content-range covering
+  // everything. It IS the object, and refusing to keep it meant a Files/ read — xlsx, zip,
+  // csv, sqlite — was never cached at all and paid the network on every open. MEASURED
+  // opening one .xlsx: three upstream trips, the whole file downloaded twice, all
+  // three verdicts `skip`. (Table data escapes this only because /Tables/ parquet is
+  // classified immutable, so ensureFull fills it separately above.)
+  //
+  // A partial slice is still never stored: keying stored ranges was the old design's
+  // disease — nothing ever asked for the same slice twice.
+  const wholeViaRange = up.status === 206 && coversWholeObject(out['content-range']);
   const body = up.stream;
-  const entry = (opts.cache && up.status === 200 && !out['content-range'])
-    ? opts.cache.beginPutFull(upstream, { headers: out }) : null;
+  // What is STORED describes the object, not the request that happened to fetch it. A
+  // whole-object 206 carries `content-range: bytes 0-N/N+1`, and cache hits replay stored
+  // headers verbatim — so keeping it would stamp one reader's range onto every later
+  // answer, including a plain unranged read. Length is restated from the object's own
+  // total for the same reason.
+  const storedHeaders = { ...out };
+  if (wholeViaRange) {
+    const total = /\/(\d+)\s*$/.exec(out['content-range'] || '');
+    delete storedHeaders['content-range'];
+    if (total) storedHeaders['content-length'] = total[1];
+  }
+  const entry = (opts.cache && (up.status === 200 || wholeViaRange) && !isPartial(out['content-range']))
+    ? opts.cache.beginPutFull(upstream, { headers: storedHeaders }) : null;
 
   let size = 0;
   body.on('data', c => { size += c.length; });
