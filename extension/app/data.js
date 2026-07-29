@@ -1596,7 +1596,20 @@ export function createEngine(auth, {
     // fills the same cache through the proxy (sw.js in the browser build), and once it
     // lands the worker's own read is local and over in milliseconds. If it fails, the
     // worker's read simply pays the network the old way.
-    try { await (await fetch(toHttps(ws, files[0]))).arrayBuffer(); } catch (_) {}
+    //
+    // DRAINED, never buffered. arrayBuffer() materialised the whole file in the
+    // renderer's memory, and a big first file crashed the webview outright — seen in the
+    // field as a flicker and a full engine reboot on every table click. The bytes are
+    // not wanted here; the proxy tees them to disk as they stream past.
+    try {
+      const r = await fetch(toHttps(ws, files[0]));
+      if (r.body && r.body.getReader) {
+        const reader = r.body.getReader();
+        while (!(await reader.read()).done) { /* discard */ }
+      } else {
+        await r.arrayBuffer();   // no streams API — small responses only in practice
+      }
+    } catch (_) {}
     check();
     const res = track(key);
     res.gen = gen;
