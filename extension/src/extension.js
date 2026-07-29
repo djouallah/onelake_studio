@@ -77,7 +77,8 @@ function logRead(e) {
   const filling = e.cache === 'store' || e.cache === 'store-failed';
   // A hit whose disk lookup was slow says so; a hit whose TOTAL is slow while the lookup
   // was instant means the request sat somewhere before the cache was even asked.
-  const where = e.cache === 'hit' ? (e.lookupMs > 100 ? `cache (lookup ${e.lookupMs}ms)` : 'cache')
+  const where = e.vendor ? 'packaged'
+    : e.cache === 'hit' ? (e.lookupMs > 100 ? `cache (lookup ${e.lookupMs}ms)` : 'cache')
     : filling ? 'background fill'
     : [e.tokenMs > 5 ? `token ${e.tokenMs}ms` : '', `net ${e.netMs}ms`].filter(Boolean).join(' + ');
   const status = filling ? (e.cache === 'store' ? 'ok' : 'ERR') : String(e.status);
@@ -200,6 +201,9 @@ async function ensureProxy(context) {
       cacheDir: max > 0 ? join(context.globalStorageUri.fsPath, 'onelake-data') : null,
       cacheMaxBytes: max,
       cacheTtlMs: catalogTtlMs(),
+      // The engine ships inside the extension (vendor.mjs at package time); the proxy
+      // serves it from here before cache or network, so boot needs no CDN at all.
+      vendorDir: join(context.extensionUri.fsPath, 'vendor'),
       onLog: logRead,
     });
     context.subscriptions.push({ dispose: () => proxy && proxy.close() });

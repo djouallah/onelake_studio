@@ -9,3 +9,6 @@ test/fixtures/*.parquet
 extension/site/
 extension/LICENSE
 extension/*.vsix
+# The engine, downloaded by extension/vendor.mjs at package time (and once per checkout
+# for F5). Pinned, reproducible artifacts — ~40MB that has no business in git history.
+extension/vendor/

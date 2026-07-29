@@ -462,8 +462,58 @@ const TABLE_FILE = `${proxy.dfsOrigin}/ws/lh.Lakehouse/Tables/t/data_0.parquet`;
     eq(cdnLog.length, 1, "…without touching any network");
   } finally {
     await p.close();
-    cdnSrv.close();
     await rm(CDN_DIR, { recursive: true, force: true }).catch(() => {});
+  }
+
+  // Packaged bytes beat everything: vendor.mjs mirrors the CDN layout into the
+  // extension, and the proxy serves those files before cache or network — an installed
+  // extension boots with no CDN at all. What is NOT packaged still falls through to the
+  // network, and no request can name a file outside the vendor directory.
+  const VENDOR_TMP = await mkdtemp(join(tmpdir(), "onelake-vendor-"));
+  const MOD = "export const packaged = true;\n";
+  await mkdir(join(VENDOR_TMP, "cdn.jsdelivr.net", "npm", "pkg@1.0.0"), { recursive: true });
+  await writeFile(join(VENDOR_TMP, "cdn.jsdelivr.net", "npm", "pkg@1.0.0", "+esm"), MOD);
+  await mkdir(join(VENDOR_TMP, "extensions.duckdb.org", "v1.5.4", "wasm_eh"), { recursive: true });
+  await writeFile(join(VENDOR_TMP, "extensions.duckdb.org", "v1.5.4", "wasm_eh", "x.duckdb_extension.wasm"),
+                  Buffer.from([0, 97, 115, 109]));
+  await writeFile(join(tmpdir(), "onelake-vendor-outside.txt", ), "secret").catch(() => {});
+  const V_DIR = await mkdtemp(join(tmpdir(), "onelake-vcache-"));
+  const pv = await startProxy({
+    getToken: async () => TOKEN, cacheDir: V_DIR,
+    dfsUpstream: upBase, tableUpstream: upBase,
+    cdnUpstream: `http://127.0.0.1:${cdnSrv.address().port}`,
+    vendorDir: VENDOR_TMP,
+  });
+  try {
+    const before = cdnLog.length;
+    const a = await fetch(`${pv.cdnOrigin}/cdn.jsdelivr.net/npm/pkg@1.0.0/+esm`);
+    eq(await a.text(), MOD, "a packaged module is served from inside the extension");
+    eq(a.headers.get("content-type"), "text/javascript", "…as a module, extension-less '+esm' included");
+    eq(cdnLog.length, before, "…with no network at all");
+
+    const w = await fetch(`${pv.cdnOrigin}/extensions.duckdb.org/v1.5.4/wasm_eh/x.duckdb_extension.wasm`);
+    eq(w.headers.get("content-type"), "application/wasm", "a packaged wasm binary says it is wasm");
+    eq((await w.arrayBuffer()).byteLength, 4, "…byte for byte");
+    eq(cdnLog.length, before, "…still no network");
+
+    await fetch(`${pv.cdnOrigin}/cdn.jsdelivr.net/npm/not-packaged@1.0.0/+esm`);
+    eq(cdnLog.length, before + 1, "what is not packaged falls through to the network");
+
+    // Raw http, because fetch() normalises ../ away before sending — the attack needs
+    // the literal segments to reach the server.
+    const raw = await new Promise(resolve => {
+      const u = new URL(pv.cdnOrigin);
+      http.get({ host: u.hostname, port: u.port,
+                 path: `${u.pathname}/cdn.jsdelivr.net/../../onelake-vendor-outside.txt` }, r => {
+        let b = ""; r.on("data", c => (b += c)); r.on("end", () => resolve(b));
+      }).on("error", () => resolve(""));
+    });
+    ok(raw !== "secret", "dot-dot segments cannot escape the vendor directory");
+  } finally {
+    await pv.close();
+    cdnSrv.close();
+    await rm(VENDOR_TMP, { recursive: true, force: true }).catch(() => {});
+    await rm(V_DIR, { recursive: true, force: true }).catch(() => {});
   }
 }
 {

@@ -2,6 +2,7 @@
 node_modules/**
 copy-site.mjs
 make-icon.mjs
+vendor.mjs
 **/*.vsix
 
 # The tracked source of the app. What ships is site/ — the stamped artifact copy-site.mjs

@@ -28,6 +28,9 @@
 const http = require('node:http');
 const https = require('node:https');
 const crypto = require('node:crypto');
+const fs = require('node:fs/promises');
+const fsSync = require('node:fs');
+const { join } = require('node:path');
 const { createCache, CDN_HOSTS } = require('./cache');
 
 const DFS_UPSTREAM = 'https://onelake.dfs.fabric.microsoft.com';
@@ -128,6 +131,36 @@ function nodeFetch(urlStr, method, headers, hops = 3) {
   });
 }
 
+// The engine, from inside the extension. vendor.mjs mirrors the CDN's file layout into
+// extension/vendor/<host>/<path> at package time, and this serves those files before the
+// cache and before any network — an installed extension boots with no CDN at all, and
+// the network exists only for whatever a future duckdb asks for that the package
+// predates. Path segments of '.' and '..' are dropped outright, so a request can name
+// nothing outside the vendor directory.
+async function serveVendor(req, res, vendorDir, rest, log) {
+  const file = join(vendorDir, ...rest.split('/').filter(s => s && s !== '.' && s !== '..'));
+  let st;
+  try { st = await fs.stat(file); } catch (_) { return false; }
+  if (!st.isFile()) return false;
+  // jsDelivr's '+esm' files have no extension but are ES modules; a module served as
+  // octet-stream is a refused import, not a slower one.
+  const low = file.toLowerCase();
+  const type = low.endsWith('.wasm') ? 'application/wasm'
+    : low.endsWith('.json') ? 'application/json'
+    : 'text/javascript';
+  res.writeHead(200, {
+    'content-type': type,
+    'content-length': String(st.size),
+    'accept-ranges': 'bytes',
+  });
+  log({ cache: 'hit', vendor: true, status: 200, bytes: st.size });
+  if (req.method === 'HEAD') { res.end(); return true; }
+  const stream = fsSync.createReadStream(file);
+  stream.on('error', () => res.destroy());
+  stream.pipe(res);
+  return true;
+}
+
 // One authenticated upstream round trip, with the 401-retry a cached token makes
 // necessary: the caller caches what getToken returns, so an expiry is discovered here as
 // a 401, and asking for a fresh token and retrying is the only thing that could help.
@@ -201,6 +234,12 @@ async function handle(req, res, opts) {
       ms: Date.now() - t0, ...extra,
     });
   };
+
+  // Packaged engine bytes first — shipped inside the extension, no cache entry and no
+  // network involved.
+  if (r.kind === 'cdn' && opts.vendorDir) {
+    if (await serveVendor(req, res, opts.vendorDir, r.rest, log)) return;
+  }
 
   // A hit answers without a token and without touching the network — the bytes are
   // already on this machine, and they belong to an object that cannot change. The cache
@@ -340,7 +379,7 @@ async function handle(req, res, opts) {
 }
 
 // Resolves to { port, secret, dfsOrigin, tableOrigin, close() }.
-function startProxy({ getToken, cacheDir, cacheMaxBytes, cacheTtlMs, onLog, cdnUpstream,
+function startProxy({ getToken, cacheDir, cacheMaxBytes, cacheTtlMs, onLog, cdnUpstream, vendorDir,
                       dfsUpstream = DFS_UPSTREAM, tableUpstream = TABLE_UPSTREAM } = {}) {
   if (typeof getToken !== 'function') throw new TypeError('startProxy needs a getToken() function');
 
@@ -352,7 +391,7 @@ function startProxy({ getToken, cacheDir, cacheMaxBytes, cacheTtlMs, onLog, cdnU
     // != null, not truthiness: zero is a real answer ("ask OneLake every time").
     ...(cacheTtlMs != null ? { ttlMs: cacheTtlMs } : {}),
   });
-  const opts = { getToken, dfsUpstream, tableUpstream, secret, cache, onLog, cdnUpstream };
+  const opts = { getToken, dfsUpstream, tableUpstream, secret, cache, onLog, cdnUpstream, vendorDir };
 
   const server = http.createServer((req, res) => {
     handle(req, res, opts).catch(e => {
