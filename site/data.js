@@ -100,6 +100,7 @@ export function createEngine(auth, {
   // state, so a worker restart keeps them — only a lakehouse switch clears them.
   const resolvedC = new Map();      // cache key -> the resolved Iceberg metadata document
   const filesC = new Map();         // cache key -> { files[], posDeletes[], eqDeletes[] }
+  const peekC = new Map();          // cache key -> the peek's rows, built once per snapshot
 
   // Opening a big table is not one slow request, it is hundreds of small ones — the
   // manifest walk, then a registration per data file — and until there was a way out of
@@ -621,6 +622,7 @@ export function createEngine(auth, {
     viewNames.clear();
     resolvedC.clear();
     filesC.clear();
+    peekC.clear();
   }
 
   // A DuckDB identifier for this key that no other key already owns. sanitizeIdent is
@@ -1510,8 +1512,15 @@ export function createEngine(auth, {
   // created and the other N-1 files are never touched — this is the cheapest honest way
   // to answer "what does the data look like".
   async function peekTable(lh, t) {
-    await cancelLoad();
     const key = tableKey(lh, t);
+    // Built once, then simply there. The same table's peek is the same snapshot
+    // (resolvedC pins the resolve for the session), the same first file, the same
+    // hundred rows — re-reading them through the worker on every visit was pure spend.
+    // Plain JS rows, no DuckDB state: a worker restart keeps this, which is exactly
+    // when it matters — coming back to a table after a cancel renders instantly while
+    // the new worker is still waking up. reset() clears it with its siblings.
+    if (peekC.has(key)) return peekC.get(key);
+    await cancelLoad();
     const gen = loadGen;
     const check = () => { if (gen !== loadGen) throw cancelledError(); };
     const status = statusFor(gen);
@@ -1540,7 +1549,9 @@ export function createEngine(auth, {
     const out = await materialize(
       `SELECT * FROM read_parquet([${sqlStr(reg)}]) LIMIT ${QUICK_PEEK_ROWS}`);
     check();
-    return { ...aliasOutput(out, resolved.nameMapping), fileCount: files.length };
+    const result = { ...aliasOutput(out, resolved.nameMapping), fileCount: files.length };
+    peekC.set(key, result);
+    return result;
   }
 
   // A Warehouse's physical column names are GUIDs; give a raw file read the same logical
