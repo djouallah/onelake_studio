@@ -11,6 +11,7 @@ import { isDocResult, textLinesDoc, fileExt, isTextExt, escapeHtml, basename,
 // Static import is safe: docview.js itself is tiny — the CDN fetch of the markdown
 // parser only happens inside renderMarkdown(), and only for a document that IS markdown.
 import { renderDocument } from './docview.js';
+import { vscodeApi } from './vscode-api.js';
 
 const $ = id => document.getElementById(id);
 const DOCS = 'https://github.com/djouallah/onelake_studio';
@@ -1770,9 +1771,10 @@ engineReady = engine.init();
 // tiers, takes the same ticket, and reports the same way. No second code path for the
 // same act, and nothing here is reachable from a browser tab.
 if (HOST_VSCODE) {
-  // Only the webview defines this. The guard is what lets the same page be driven in a
-  // plain browser for testing — without it the whole block throws on load.
-  const vs = typeof acquireVsCodeApi === 'function' ? acquireVsCodeApi() : { postMessage() {} };
+  // acquireVsCodeApi() may be called only once per webview, and the native engine needs
+  // the same handle — so it is acquired in vscode-api.js and shared. Outside a webview it
+  // is a no-op postMessage, which is what lets this page be driven in a plain browser.
+  const vs = vscodeApi();
 
   // Now there is somewhere to send it. Later boots (a worker restart re-runs _init) go
   // straight out; the first one has almost certainly already happened.

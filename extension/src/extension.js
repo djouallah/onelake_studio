@@ -248,6 +248,34 @@ async function ensureProxy(context) {
   return proxy;
 }
 
+// Real DuckDB, in this process. Built once and kept for the window's lifetime: an engine
+// costs ~17ms to create but its four extensions are downloaded on first use, and doing
+// that per panel open is the mistake the wasm build could not avoid.
+//
+// Loaded lazily so a failure to load the native binding — an unsupported platform, a vsix
+// built for another architecture — surfaces when the panel opens, with a message, rather
+// than taking activation down with it.
+let engine = null;
+function ensureEngine(context) {
+  if (engine) return engine;
+  try {
+    const { createEngineHost } = require('./engine-host');
+    engine = createEngineHost({
+      // Beside the data cache, so the four extensions are downloaded once per install
+      // rather than once per session — and never into the user's own ~/.duckdb, where
+      // they would outlive the extension that fetched them.
+      extensionDir: join(context.globalStorageUri.fsPath, 'duckdb-extensions'),
+      onLog: b => logBoot({ ...b, native: true }),
+    });
+  } catch (e) {
+    out && out.appendLine(`native DuckDB unavailable: ${e.message}`);
+    vscode.window.showErrorMessage(
+      `OneLake Studio could not load DuckDB for this platform (${process.platform}-${process.arch}): ${e.message}`);
+    engine = null;
+  }
+  return engine;
+}
+
 async function show(context, options) {
   const token = await getToken(options);
   if (!token) {
@@ -255,7 +283,8 @@ async function show(context, options) {
       'OneLake Studio needs a Microsoft account to reach OneLake. Sign-in was cancelled.');
     return false;
   }
-  await openPanel(context, await ensureProxy(context), { onOpened: logOpened, onBoot: logBoot });
+  await openPanel(context, await ensureProxy(context),
+    { onOpened: logOpened, onBoot: logBoot, engine: ensureEngine(context) });
   return true;
 }
 
@@ -388,7 +417,12 @@ async function activate(context) {
 }
 
 function deactivate() {
-  return proxy ? proxy.close() : undefined;
+  // The engine holds a native database handle and a temp directory; closing it is what
+  // releases both. Settled together so a slow engine shutdown cannot strand the proxy's.
+  return Promise.all([
+    proxy ? proxy.close() : undefined,
+    engine ? engine.close() : undefined,
+  ]);
 }
 
 module.exports = { activate, deactivate };

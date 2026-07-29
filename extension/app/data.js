@@ -45,14 +45,34 @@ let cdnBase = (typeof window !== "undefined" &&
   (window.ONELAKE_STUDIO_CONFIG || {}).cdnOrigin) || "";
 const withCdn = url => (cdnBase ? url.replace(/^https:\/\//, cdnBase + "/") : url);
 
+// A VS Code extension host is Node, so the extension runs REAL DuckDB there and this page
+// only talks to it. Measured, boot to a usable engine: ~284ms native against ~2000ms warm
+// and 6.6s cold for the wasm build, with 8 threads instead of 1. The wasm figure does not
+// improve with caching either — duckdb-wasm hands instantiateStreaming a synthetic
+// Response built from a TransformStream (it wants progress events), and Chromium can only
+// attach a compiled module to a real HTTP cache entry, so the 35MB compile is paid on
+// every panel open no matter what the proxy sends.
+//
+// Everything below this line is unchanged by that choice: the engine's whole dependency
+// on DuckDB is eight calls, and duckdb-native.js answers them from the host.
+const NATIVE = typeof window !== "undefined" &&
+  (window.ONELAKE_STUDIO_CONFIG || {}).nativeEngine === true;
+
 // Dynamic, because a static import cannot be rerouted.
 let duckdb;
-try { duckdb = await import(withCdn(DUCKDB_ESM)); }
-catch (e) {
-  if (!cdnBase) throw e;
-  console.warn("[engine] proxied duckdb import failed, booting from the CDN directly:", e.message);
-  cdnBase = "";
-  duckdb = await import(DUCKDB_ESM);
+if (NATIVE) {
+  // The wasm module is never fetched. DuckDBDataProtocol is the only thing the code below
+  // reads off it — registerFileURL's protocol argument, which the native side ignores
+  // because it reads the URL directly.
+  duckdb = { DuckDBDataProtocol: { HTTP: "http" } };
+} else {
+  try { duckdb = await import(withCdn(DUCKDB_ESM)); }
+  catch (e) {
+    if (!cdnBase) throw e;
+    console.warn("[engine] proxied duckdb import failed, booting from the CDN directly:", e.message);
+    cdnBase = "";
+    duckdb = await import(DUCKDB_ESM);
+  }
 }
 
 // dfsBase/dfsUrl/toHttps come in under `…At` names and are re-bound to this engine's origin
@@ -317,6 +337,31 @@ export function createEngine(auth, {
       stages.push({ stage: name, ms: Math.round(now - markAt) });
       markAt = now;
     };
+    // The native engine already exists in the host — extensions and all — so there is no
+    // bundle to select, no worker to start and no wasm to compile. It reports its own boot
+    // stages through the same onBoot channel so the two engines are comparable in the
+    // output channel rather than only in argument.
+    if (NATIVE) {
+      if (!quiet) onStatus("Starting DuckDB…");
+      const { connectNative } = await import("./duckdb-native.js");
+      const nat = connectNative();
+      db = nat.db;
+      conn = nat.conn;
+      // The host owns extension loading, so it owns the answer to what can be opened.
+      // Guarded: a capability probe that fails must not stop the engine coming up.
+      try {
+        const caps = await db.capabilities();
+        canXlsx = !!(caps && caps.excel);
+        canZip = !!(caps && caps.zipfs);
+      } catch (e) { console.warn("[engine] capability probe failed:", e.message); }
+      mark("native engine");
+      const totalMs = stages.reduce((n, s) => n + s.ms, 0);
+      console.log(`[engine] DuckDB ready — native (extension host), ` +
+                  stages.map(s => `${s.stage} ${s.ms}ms`).join(", "));
+      try { onBoot({ stages, totalMs, quiet, native: true }); } catch (_) {}
+      engineAlive = true;
+      return { db, conn };
+    }
     if (!quiet) onStatus("Loading DuckDB-WASM…");
     // SINGLE-THREADED (eh) BY MEASUREMENT, NOT OVERSIGHT. The threaded coi bundle exists
     // on the CDN at this pin and DOES run — measured in headless Chrome behind the
@@ -1955,6 +2000,11 @@ const INT_NAME = { 8: "TINYINT", 16: "SMALLINT", 32: "INTEGER", 64: "BIGINT", 12
 
 export function arrowTypeName(t) {
   if (!t) return "";
+  // The native engine sends DuckDB's own type name, which is what everything below is
+  // trying to reconstruct from Arrow metadata. When it is already the answer, use it —
+  // no DECIMAL precision to re-derive, no signedness to infer, no TIMESTAMPTZ to guess
+  // from a timezone field.
+  if (typeof t.duckdbName === "string") return t.duckdbName;
   switch (t.typeId) {
     case 2: {   // Int — width and signedness live on the type
       const n = INT_NAME[t.bitWidth] || "INTEGER";

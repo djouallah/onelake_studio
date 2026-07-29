@@ -74,7 +74,32 @@ function postLive(msg) {
   if (current && ready) current.webview.postMessage(msg);
 }
 
-async function openPanel(context, proxy, { onOpened, onBoot } = {}) {
+// The engine bridge. data.js runs in the webview exactly as it always has; its eight
+// DuckDB calls arrive here and are answered by real DuckDB in this process. Streaming
+// results come back as a sequence of `engine-batch` messages under the call's own id,
+// then one `engine-result` to close it — which is the shape conn.send() had.
+//
+// Every failure is reported as `engine-error` rather than being dropped: a call whose
+// promise never settles is a boot that hangs at "Starting DuckDB…" with nothing said,
+// and that failure mode has already cost this project a day once.
+function wireEngine(panel, engine) {
+  return async msg => {
+    const { id, method, args } = msg;
+    try {
+      const value = await engine.call(method, args || [],
+        batch => panel.webview.postMessage({ type: 'engine-batch', id, batch }));
+      panel.webview.postMessage({ type: 'engine-result', id, value });
+    } catch (e) {
+      panel.webview.postMessage({
+        type: 'engine-error', id,
+        message: (e && e.message) || String(e),
+        cancelled: !!(e && e.cancelled),
+      });
+    }
+  };
+}
+
+async function openPanel(context, proxy, { onOpened, onBoot, engine } = {}) {
   if (current) { current.reveal(vscode.ViewColumn.Active); return current; }
 
   const { site: siteUri, readme: readmeUri } = await siteRoot(context.extensionUri,
@@ -97,6 +122,10 @@ async function openPanel(context, proxy, { onOpened, onBoot } = {}) {
       auth: 'none',
       // Everything the app does differently in here hangs off this one word.
       host: 'vscode',
+      // Run DuckDB natively in the extension host instead of compiling a wasm build in
+      // the webview. Off when no engine was supplied, which leaves the wasm path — the
+      // browser build's path — intact as the fallback.
+      nativeEngine: !!engine,
       dfsOrigin: proxy.dfsOrigin,
       tableOrigin: proxy.tableOrigin,
       // Boot bytes come off the disk cache through this: the wasm, the worker, the
@@ -113,9 +142,15 @@ async function openPanel(context, proxy, { onOpened, onBoot } = {}) {
     throw e;
   }
 
+  const onEngineCall = engine ? wireEngine(panel, engine) : null;
+
   panel.webview.onDidReceiveMessage(msg => {
     if (!msg) return;
-    if (msg.type === 'ready') {
+    if (msg.type === 'engine-call') {
+      if (onEngineCall) onEngineCall(msg);
+      else panel.webview.postMessage({ type: 'engine-error', id: msg.id,
+        message: 'the native engine is not available in this build' });
+    } else if (msg.type === 'ready') {
       ready = true;
       if (pending) { panel.webview.postMessage(pending); pending = null; }
     } else if (msg.type === 'show-log') {
