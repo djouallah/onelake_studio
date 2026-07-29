@@ -142,11 +142,16 @@ async function handle(req, res, opts) {
   // stores whole objects and slices them per request, so any range of a stored file is a
   // hit — including a 416, which is the stored length answering, not the network.
   if (opts.cache) {
+    // Timed, because a hit's total has been seen at nine seconds in the field with no
+    // column saying where they went. lookupMs isolates the disk lookup itself — if the
+    // total is large and lookupMs is not, the stall happened before the proxy was asked.
+    const askAt = Date.now();
     const hit = await opts.cache.open(upstream, range, req.method);
+    const lookupMs = Date.now() - askAt;
     if (hit) {
       if (hit.status === 416) {
         res.writeHead(416, { 'content-range': hit.contentRange });
-        log({ cache: 'hit', status: 416, bytes: 0 });
+        log({ cache: 'hit', status: 416, bytes: 0, lookupMs });
         return res.end();
       }
       res.writeHead(hit.status, {
@@ -155,7 +160,7 @@ async function handle(req, res, opts) {
         'accept-ranges': 'bytes',
         ...(hit.contentRange ? { 'content-range': hit.contentRange } : {}),
       });
-      log({ cache: 'hit', status: hit.status, bytes: hit.length });
+      log({ cache: 'hit', status: hit.status, bytes: hit.length, lookupMs });
       if (req.method === 'HEAD' || !hit.stream) return res.end();
       // Eviction can win a race against a read that just opened: the sidecar answered,
       // the .bin is gone. Killing the response makes DuckDB retry — and the retry misses

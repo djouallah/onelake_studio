@@ -75,7 +75,9 @@ function logRead(e) {
   // A STORE line is a background fill settling — the download that makes the next read
   // of that object local. It is not a read anyone waited for, and it says so.
   const filling = e.cache === 'store' || e.cache === 'store-failed';
-  const where = e.cache === 'hit' ? 'cache'
+  // A hit whose disk lookup was slow says so; a hit whose TOTAL is slow while the lookup
+  // was instant means the request sat somewhere before the cache was even asked.
+  const where = e.cache === 'hit' ? (e.lookupMs > 100 ? `cache (lookup ${e.lookupMs}ms)` : 'cache')
     : filling ? 'background fill'
     : [e.tokenMs > 5 ? `token ${e.tokenMs}ms` : '', `net ${e.netMs}ms`].filter(Boolean).join(' + ');
   const status = filling ? (e.cache === 'store' ? 'ok' : 'ERR') : String(e.status);
