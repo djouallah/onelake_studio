@@ -74,7 +74,8 @@ function postLive(msg) {
 async function openPanel(context, proxy) {
   if (current) { current.reveal(vscode.ViewColumn.Active); return current; }
 
-  const { site: siteUri, readme: readmeUri } = await siteRoot(context.extensionUri);
+  const { site: siteUri, readme: readmeUri } = await siteRoot(context.extensionUri,
+    { dev: context.extensionMode === vscode.ExtensionMode.Development });
   const panel = vscode.window.createWebviewPanel(
     'onelakeStudio', 'OneLake Studio', vscode.ViewColumn.Active, {
       enableScripts: true,

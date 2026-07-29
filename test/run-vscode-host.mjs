@@ -166,13 +166,23 @@ try {
 
   // --- browser-only chrome ---------------------------------------------------
   for (const [label, sel] of [["the GitHub link", ".ghLink"], ["the account box", "#userBox"],
-                              ["the build stamp", "#statusVer"], ["the auth gate", "#authGate"]]) {
+                              ["the auth gate", "#authGate"]]) {
     const shown = await page.evaluate(s => {
       const el = document.querySelector(s);
       return !!el && getComputedStyle(el).display !== "none";
     }, sel);
     check(`${label} is gone`, !shown);
   }
+
+  // The build stamp is NOT browser-only chrome: a Marketplace install, a sideloaded vsix
+  // and an F5 checkout look identical from inside the panel, and the stamp is the one
+  // thing that says which of them is running. It cost an hour once.
+  const stamp = await page.evaluate(() => {
+    const el = document.getElementById("statusVer");
+    return { shown: !!el && getComputedStyle(el).display !== "none", text: el ? el.textContent : "" };
+  });
+  check("the build stamp stays, and names a build", stamp.shown && /^build \S+/.test(stamp.text),
+    stamp.text || "(empty)");
 
   // --- the palette resolved --------------------------------------------------
   const painted = await page.evaluate(() => {

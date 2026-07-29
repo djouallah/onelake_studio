@@ -13,17 +13,29 @@ const vscode = require('vscode');
 
 let resolved = null;
 
-async function siteRoot(extensionUri) {
+async function siteRoot(extensionUri, { dev = false } = {}) {
   if (resolved) return resolved;
   const packaged = vscode.Uri.joinPath(extensionUri, 'site');
+  const checkout = {
+    site: vscode.Uri.joinPath(extensionUri, '..', 'site'),
+    readme: vscode.Uri.joinPath(extensionUri, '..', 'README.md'),
+  };
+  // Under F5 the checkout wins even when a packaged copy exists: copy-site.mjs leaves
+  // extension/site/ behind after a local package, and an F5 that silently served that
+  // snapshot would run yesterday's app — wearing yesterday's build stamp, which is the
+  // one lie the stamp exists to prevent. Dev serves the repo (stamped "dev"); an
+  // installed build has no checkout to prefer.
+  if (dev) {
+    try {
+      await vscode.workspace.fs.stat(vscode.Uri.joinPath(checkout.site, 'index.html'));
+      return (resolved = checkout);
+    } catch (_) {}
+  }
   try {
     await vscode.workspace.fs.stat(vscode.Uri.joinPath(packaged, 'index.html'));
     resolved = { site: packaged, readme: vscode.Uri.joinPath(packaged, 'README.md') };
   } catch (_) {
-    resolved = {
-      site: vscode.Uri.joinPath(extensionUri, '..', 'site'),
-      readme: vscode.Uri.joinPath(extensionUri, '..', 'README.md'),
-    };
+    resolved = checkout;
   }
   return resolved;
 }

@@ -218,7 +218,8 @@ async function activate(context) {
   out = vscode.window.createOutputChannel('OneLake Studio');
   context.subscriptions.push(out);
 
-  const { site } = await siteRoot(context.extensionUri);
+  const { site } = await siteRoot(context.extensionUri,
+    { dev: context.extensionMode === vscode.ExtensionMode.Development });
   // Listing goes straight to OneLake on the VS Code token — the proxy is for DuckDB's
   // range reads, which run in the webview and cannot set a header of their own.
   const catalog = createCatalog({

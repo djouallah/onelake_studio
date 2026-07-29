@@ -91,12 +91,13 @@
     }
 
     /* Chrome that belongs to a browser tab. The link out to GitHub, the account box (whose
-       sign-out navigates the page — a webview has nowhere to go), the build stamp with its
-       "a newer build is live" poller, and the registration gate all answer questions the
-       editor already answers. app.js sets .host-vscode; none of this applies in a tab. */
+       sign-out navigates the page — a webview has nowhere to go) and the registration
+       gate answer questions the editor already answers. The build stamp is NOT hidden:
+       a Marketplace install, a sideloaded vsix and an F5 checkout all look identical
+       from inside, and the stamp is what tells them apart on sight. app.js sets
+       .host-vscode; none of this applies in a tab. */
     body.host-vscode .ghLink,
     body.host-vscode #userBox,
-    body.host-vscode #statusVer,
     body.host-vscode #authGate { display: none !important; }
 
     /* Browsing moved to the editor's own sidebar, which keeps its expansion state, filters

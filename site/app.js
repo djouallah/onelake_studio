@@ -1674,11 +1674,13 @@ $('byoLink').onclick = () => showByoForm();
 $('gateClose').onclick = () => { $('authGate').style.display = 'none'; };
 initSidebarToggle();
 initSidebarResize();
-// The stamp answers "which build did the cache give me", which is a browser's question.
-// An installed extension has one copy of the app and VS Code owns its version, so the
-// stamp says nothing and the poller asks a server that isn't there.
+// The staleness poller is a browser question — GitHub Pages caches for ten minutes, and
+// a webview has no server to ask. But WHICH build is running is everyone's question: a
+// Marketplace install, a sideloaded vsix and an F5 checkout look identical from inside,
+// and "is it even running my fix?" once cost an hour of chasing a bug in code that was
+// not there. The stamp shows everywhere — "dev" from a checkout, a commit otherwise.
+showVersion();
 if (!HOST_VSCODE) {
-  showVersion();
   checkForNewBuild();
   setInterval(checkForNewBuild, VERSION_RECHECK_MS);
 }
