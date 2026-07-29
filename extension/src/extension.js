@@ -283,8 +283,13 @@ async function show(context, options) {
       'OneLake Studio needs a Microsoft account to reach OneLake. Sign-in was cancelled.');
     return false;
   }
+  // The engine is not optional any more — there is no wasm fallback to degrade to — so a
+  // platform whose binding will not load is told plainly instead of being handed a panel
+  // that boots to a spinner and never moves.
+  const eng = ensureEngine(context);
+  if (!eng) return false;
   await openPanel(context, await ensureProxy(context),
-    { onOpened: logOpened, onBoot: logBoot, engine: ensureEngine(context) });
+    { onOpened: logOpened, onBoot: logBoot, engine: eng });
   return true;
 }
 

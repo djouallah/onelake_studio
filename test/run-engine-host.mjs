@@ -113,7 +113,97 @@ console.log("--- engine-host ---");
 }
 
 // =============================================================================
-// Part 2 — the real page, over the real bridge
+// Part 2 — the real read path: native DuckDB through the signed loopback proxy
+// =============================================================================
+// This is what the extension actually does with data, and it was previously covered only
+// for the wasm engine (run-proxy.mjs Part 2). Native DuckDB reads parquet over http via
+// httpfs and — unlike duckdb-wasm, which only ever made whole-file GETs — it RANGE-reads.
+// The proxy's cache already slices stored objects into 206s, so that is an improvement,
+// but it is a different code path through the proxy and it deserves its own proof:
+// the reads must be signed, and the second read must come off disk.
+console.log("\n--- native DuckDB reading through the signed proxy ---");
+{
+  const { startProxy } = require("../extension/src/proxy.js");
+  const TOKEN = "test-token-not-a-real-one";
+  const FIXTURE = join(root, "test", "fixtures", "sample.parquet");
+
+  let parquet = null;
+  try { parquet = await readFile(FIXTURE); } catch (_) {}
+  if (!parquet) {
+    console.log("   (skipped — test/fixtures/sample.parquet absent; run test/run-proxy.mjs once to generate it)");
+  } else {
+    const seen = [];
+    const upstream = http.createServer((req, res) => {
+      seen.push({ range: req.headers.range || null, auth: req.headers.authorization || null });
+      if (req.headers.authorization !== `Bearer ${TOKEN}`) {
+        res.writeHead(401).end("upstream saw no bearer token"); return;
+      }
+      const head = { "content-type": "application/octet-stream", "accept-ranges": "bytes" };
+      const m = /^bytes=(\d+)-(\d*)$/.exec(req.headers.range || "");
+      if (m) {
+        const start = Number(m[1]);
+        const end = m[2] ? Math.min(Number(m[2]), parquet.length - 1) : parquet.length - 1;
+        const slice = parquet.subarray(start, end + 1);
+        res.writeHead(206, { ...head, "content-length": String(slice.length),
+                             "content-range": `bytes ${start}-${end}/${parquet.length}` });
+        res.end(req.method === "HEAD" ? undefined : slice); return;
+      }
+      res.writeHead(200, { ...head, "content-length": String(parquet.length) });
+      res.end(req.method === "HEAD" ? undefined : parquet);
+    });
+    await new Promise(r => upstream.listen(0, "127.0.0.1", r));
+    const upBase = `http://127.0.0.1:${upstream.address().port}`;
+
+    const cacheDir = await mkdtemp(join(tmpdir(), "onelake-native-read-"));
+    const events = [];
+    const proxy = await startProxy({
+      getToken: async () => TOKEN,
+      cacheDir,
+      dfsUpstream: upBase,
+      tableUpstream: upBase,
+      onLog: e => events.push(e),
+    });
+
+    const h2 = createEngineHost({ extensionDir: EXT_DIR });
+    try {
+      // A REAL OneLake data-file path. The shape matters: cache.js tierOf() treats only
+      // `/Tables/…*.parquet` (and a table's metadata avro) as immutable, and only an
+      // immutable object gets the background whole-file fill. A flat `/ws/data.parquet`
+      // is classified 'ttl', never filled, and every read would pay the network — which
+      // is what this test found when it used one.
+      const url = `${proxy.dfsOrigin}/ws/MyLh.Lakehouse/Tables/dbo/trips/data_0.parquet`;
+      // Registered exactly as data.js registers a data file, then read through the same
+      // read_parquet() shape loadTable builds.
+      await h2.call("registerFileURL", ["data_1.parquet", url]);
+      const r = await h2.call("query", ["SELECT count(*) AS n FROM read_parquet('data_1.parquet')"]);
+      eq(Number(r.rows[0].n), 400000, "native DuckDB read a parquet file through the proxy");
+      ok(seen.length > 0 && seen.every(s => s.auth === `Bearer ${TOKEN}`),
+         `…and every upstream read was signed (${seen.length} request(s), none unauthenticated)`);
+      ok(seen.some(s => s.range), "…by RANGE, which duckdb-wasm never did");
+
+      // A ranged miss is served as asked and the WHOLE object is fetched behind it —
+      // "spend disk, not network", so that every later range is a local slice. Awaited,
+      // never slept on: without this the second query races the background fill and goes
+      // to the network, which is exactly what this check exists to catch.
+      await proxy.cacheIdle();
+
+      const before = seen.length;
+      const again = await h2.call("query",
+        ["SELECT count(*) AS n FROM read_parquet('data_1.parquet') WHERE id < 10"]);
+      eq(Number(again.rows[0].n), 10, "a second read answers correctly");
+      eq(seen.length, before, "…entirely from the disk cache — the network was not touched again");
+      ok(events.some(e => e.cache === "hit"), "…and the proxy logged it as a hit");
+    } finally {
+      await h2.close().catch(() => {});
+      await proxy.close();
+      upstream.close();
+      await rm(cacheDir, { recursive: true, force: true }).catch(() => {});
+    }
+  }
+}
+
+// =============================================================================
+// Part 3 — the real page, over the real bridge
 // =============================================================================
 console.log("\n--- extension/app in real Chrome, driven by the native engine ---");
 
@@ -142,8 +232,6 @@ const server = http.createServer(async (req, res) => {
         nonce: NONCE,
         config: {
           auth: "none", host: "vscode",
-          // The whole point of this run.
-          nativeEngine: true,
           dfsOrigin: ORIGIN, tableOrigin: ORIGIN,
           readmeUrl: `${ORIGIN}/README.md`,
         },

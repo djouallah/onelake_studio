@@ -11,6 +11,14 @@ import { readFile } from "node:fs/promises";
 import { join, extname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
+import { createRequire } from "node:module";
+
+// The engine the panel really runs. Wired in below so the page can finish booting: with
+// DuckDB native in the host, a webview whose engine-calls go unanswered never gets a
+// usable Run button, and every check in this file happens after that point.
+const require = createRequire(import.meta.url);
+const { createEngineHost } = require("../extension/src/engine-host.js");
+const engine = createEngineHost();
 
 const root = join(fileURLToPath(new URL(".", import.meta.url)), "..");
 const PORT = 5199;
@@ -21,8 +29,16 @@ const MIME = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; cha
 // real extension, so serve it from where it actually is rather than requiring a build.
 // The app itself comes from extension/app/ — the extension's tracked fork, the code the
 // panel really runs — never from site/, which belongs to the website.
+
+// README reads are counted HERE rather than off page.on('request'), because the landing
+// query's read no longer happens in the page at all: read_text() runs inside native DuckDB
+// in the extension host, so Chrome never sees it. Watching the server catches the read
+// wherever it is made, which is what the check actually cares about.
+const readmeServed = [];
+
 const server = http.createServer(async (req, res) => {
   const path = new URL(req.url, "http://x").pathname;
+  if (path === "/README.md") readmeServed.push(path);
   const file = path === "/README.md" ? join(root, "README.md")
              : join(root, "extension", "app", path === "/" ? "index.html" : path.slice(1));
   try {
@@ -128,15 +144,37 @@ try {
       s.textContent = css;
       document.head.appendChild(s);
     });
-    // The webview's own bridge to the extension host. Stubbed so what the page posts can
-    // be read back.
+    // The webview's own bridge to the extension host. What the page posts is recorded so
+    // the checks below can read it back — and `engine-call` is forwarded to a REAL
+    // engine-host, because the engine is native now and a page with nothing answering it
+    // never finishes booting.
     window.__posted = [];
-    window.acquireVsCodeApi = () => ({ postMessage: m => window.__posted.push(m) });
+    window.acquireVsCodeApi = () => ({
+      postMessage: m => {
+        window.__posted.push(m);
+        if (m && m.type === "engine-call") {
+          window.__hostCall(m).then(r => window.postMessage(r, "*"));
+        }
+      },
+    });
   }, { css: FAKE_THEME });
 
-  const readmeHits = [];
+  await page.exposeBinding("__hostCall", async ({ page: p }, msg) => {
+    try {
+      const value = await engine.call(msg.method, msg.args || [],
+        batch => p.evaluate(m => window.postMessage(m, "*"),
+                            { type: "engine-batch", id: msg.id, batch }).catch(() => {}));
+      return { type: "engine-result", id: msg.id, value };
+    } catch (e) {
+      return { type: "engine-error", id: msg.id, message: e.message };
+    }
+  });
+
+  // Any attempt by the PAGE to reach GitHub for the README would still show up here —
+  // that half of the check is unchanged, and is the half that matters for privacy.
+  const githubHits = [];
   page.on("request", r => {
-    if (/README\.md/i.test(r.url())) readmeHits.push(r.url());
+    if (/githubusercontent|github\.com/i.test(r.url())) githubHits.push(r.url());
   });
 
   await page.goto(`http://127.0.0.1:${PORT}/`);
@@ -157,8 +195,10 @@ try {
   });
   check("the landing README rendered", docRendered);
   check("it was read from the packaged copy, not GitHub",
-    readmeHits.length > 0 && readmeHits.every(u => u.startsWith(README_URL)),
-    readmeHits.join(", ") || "no README request seen");
+    readmeServed.length > 0 && githubHits.length === 0,
+    readmeServed.length
+      ? `${readmeServed.length} local read(s), ${githubHits.length} to github`
+      : "no README read seen on the local server");
 
   const status = await page.evaluate(() => {
     const el = document.getElementById("status");
@@ -331,6 +371,8 @@ try {
 } finally {
   if (browser) await browser.close().catch(() => {});
   server.close();
+  // Holds a native database handle and a temp directory; without this the run does not exit.
+  await engine.close().catch(() => {});
 }
 
 const failed = checks.filter(c => !c.ok).length;

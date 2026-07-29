@@ -23,57 +23,37 @@
 // DOM-free: progress is reported through the injected `onStatus` callback.
 // =============================================================================
 
-// Pinned, not @latest: this is a CDN import with no lockfile behind it, so an unpinned
-// URL means every user's browser can pick up a new DuckDB the moment one is published —
-// including a build without the 'excel' extension, or with different SQL behaviour. This
-// version ships DuckDB v1.5.4 and has avro + excel; it is a dev tag by choice, since the
-// stable line lags. Bump it deliberately and re-run the format probe when you do.
-const DUCKDB_ESM = "https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.33.1-dev57.0/+esm";
+// THE ENGINE IS NATIVE DuckDB, IN THE EXTENSION HOST — there is no WebAssembly in this
+// page any more. A VS Code extension host is Node, so it runs the real thing. Measured,
+// boot to a usable engine:
+//
+//                      duckdb-wasm                @duckdb/node-api
+//   engine + connect   ~760ms                     17ms
+//   four extensions    ~1187ms warm               263ms warm
+//   engine ready       ~2000ms warm, 6.6s cold    284ms
+//   threads            1                          8
+//
+// The wasm side never improved with caching, and could not: duckdb-wasm pipes the wasm
+// response through a TransformStream (it wants progress events) and hands
+// instantiateStreaming a SYNTHETIC Response, while Chromium can only attach a compiled
+// module to a real HTTP cache entry. So the 35MB compile was paid on every panel open no
+// matter what the proxy sent, and the four extensions were four more modules compiled
+// fresh every session.
+//
+// Everything below this line is unchanged by that: this engine's whole dependency on
+// DuckDB is eight calls, and duckdb-native.js answers them from the host. See
+// extension/src/engine-host.js.
+//
+// DuckDBDataProtocol survives only as a shape — registerFileURL's protocol argument, which
+// the native side ignores because it reads the URL directly.
+const duckdb = { DuckDBDataProtocol: { HTTP: "http" } };
 
-// In the extension every boot fetch — this module, the worker, the wasm, the extension
-// binaries — goes through the loopback proxy's /cdn route and its disk cache, because a
-// webview has no persistent HTTP cache and re-downloading ~40MB of engine on every panel
-// open put 25-30 seconds in front of the first click of every session. cdnOrigin is that
-// route; absent (the browser build, where Chrome's own cache does this job), every URL
-// passes through untouched.
-// Mutable on purpose: the module import below is the canary. If the proxied route
-// cannot serve IT, it cannot serve the worker, the wasm or the extensions either — and a
-// worker whose importScripts 404s does not fail, it hangs the boot at "Loading
-// DuckDB-WASM…" forever. One failure downgrades EVERYTHING to the direct CDN, which is
-// the browser build's behaviour: slower, but it boots.
-let cdnBase = (typeof window !== "undefined" &&
+// sql.js and the markdown renderer still load in the page, and still come through the
+// proxy's /cdn route and its vendor directory. cdnOrigin is that route; absent, the URLs
+// pass through untouched.
+const cdnBase = (typeof window !== "undefined" &&
   (window.ONELAKE_STUDIO_CONFIG || {}).cdnOrigin) || "";
 const withCdn = url => (cdnBase ? url.replace(/^https:\/\//, cdnBase + "/") : url);
-
-// A VS Code extension host is Node, so the extension runs REAL DuckDB there and this page
-// only talks to it. Measured, boot to a usable engine: ~284ms native against ~2000ms warm
-// and 6.6s cold for the wasm build, with 8 threads instead of 1. The wasm figure does not
-// improve with caching either — duckdb-wasm hands instantiateStreaming a synthetic
-// Response built from a TransformStream (it wants progress events), and Chromium can only
-// attach a compiled module to a real HTTP cache entry, so the 35MB compile is paid on
-// every panel open no matter what the proxy sends.
-//
-// Everything below this line is unchanged by that choice: the engine's whole dependency
-// on DuckDB is eight calls, and duckdb-native.js answers them from the host.
-const NATIVE = typeof window !== "undefined" &&
-  (window.ONELAKE_STUDIO_CONFIG || {}).nativeEngine === true;
-
-// Dynamic, because a static import cannot be rerouted.
-let duckdb;
-if (NATIVE) {
-  // The wasm module is never fetched. DuckDBDataProtocol is the only thing the code below
-  // reads off it — registerFileURL's protocol argument, which the native side ignores
-  // because it reads the URL directly.
-  duckdb = { DuckDBDataProtocol: { HTTP: "http" } };
-} else {
-  try { duckdb = await import(withCdn(DUCKDB_ESM)); }
-  catch (e) {
-    if (!cdnBase) throw e;
-    console.warn("[engine] proxied duckdb import failed, booting from the CDN directly:", e.message);
-    cdnBase = "";
-    duckdb = await import(DUCKDB_ESM);
-  }
-}
 
 // dfsBase/dfsUrl/toHttps come in under `…At` names and are re-bound to this engine's origin
 // inside createEngine — see the note there. Import them under their plain names anywhere in
@@ -341,127 +321,25 @@ export function createEngine(auth, {
     // bundle to select, no worker to start and no wasm to compile. It reports its own boot
     // stages through the same onBoot channel so the two engines are comparable in the
     // output channel rather than only in argument.
-    if (NATIVE) {
-      if (!quiet) onStatus("Starting DuckDB…");
-      const { connectNative } = await import("./duckdb-native.js");
-      const nat = connectNative();
-      db = nat.db;
-      conn = nat.conn;
-      // The host owns extension loading, so it owns the answer to what can be opened.
-      // Guarded: a capability probe that fails must not stop the engine coming up.
-      try {
-        const caps = await db.capabilities();
-        canXlsx = !!(caps && caps.excel);
-        canZip = !!(caps && caps.zipfs);
-      } catch (e) { console.warn("[engine] capability probe failed:", e.message); }
-      mark("native engine");
-      const totalMs = stages.reduce((n, s) => n + s.ms, 0);
-      console.log(`[engine] DuckDB ready — native (extension host), ` +
-                  stages.map(s => `${s.stage} ${s.ms}ms`).join(", "));
-      try { onBoot({ stages, totalMs, quiet, native: true }); } catch (_) {}
-      engineAlive = true;
-      return { db, conn };
-    }
-    if (!quiet) onStatus("Loading DuckDB-WASM…");
-    // SINGLE-THREADED (eh) BY MEASUREMENT, NOT OVERSIGHT. The threaded coi bundle exists
-    // on the CDN at this pin and DOES run — measured in headless Chrome behind the
-    // service worker: crossOriginIsolated=true, platform=wasm_threads, threads=4. But
-    // the wasm_threads extension binaries on extensions.duckdb.org are incompatible with
-    // this build: LOAD avro fails with "did not contain the expected entrypoint
-    // 'avro_duckdb_cpp_init'" (excel likewise), and read_avro IS the Iceberg manifest
-    // reader — threads at the cost of tables is no trade. Recheck with
-    // test/sql-integration.html when bumping the pin; the coi bundle map is:
-    //   coi: { mainModule: DIST+"duckdb-coi.wasm", mainWorker: DIST+"duckdb-browser-coi.worker.js",
-    //          pthreadWorker: DIST+"duckdb-browser-coi.pthread.worker.js" }
-    // (each worker URL wrapped in a same-origin blob importScripts shim).
-    const bundle = await duckdb.selectBundle(duckdb.getJsDelivrBundles());
-    mark("selectBundle");
-    // Through the proxy's disk cache, like the module import above: the worker fetches
-    // the wasm itself, so its URLs have to be rewritten before the worker sees them.
-    for (const k of ["mainModule", "mainWorker", "pthreadWorker"]) {
-      if (bundle[k]) bundle[k] = withCdn(bundle[k]);
-    }
-    // Each stage names itself. A boot that sticks used to stick on "Loading
-    // DuckDB-WASM…" whatever was actually wrong; the stage on screen when it stops IS
-    // the diagnosis — worker/wasm, or the engine coming up, or the extensions.
-    if (!quiet) onStatus("Starting the DuckDB worker…");
-    const workerUrl = URL.createObjectURL(
-      new Blob([`importScripts("${bundle.mainWorker}");`], { type: "text/javascript" })
-    );
-    worker = new Worker(workerUrl);
-    db = new duckdb.AsyncDuckDB(new duckdb.ConsoleLogger(), worker);
-    mark("worker");
-    await db.instantiate(bundle.mainModule, bundle.pthreadWorker);
-    // THE number. Fetching the wasm is a proxy hit measured in milliseconds; compiling it
-    // is not, and only a cached compilation makes this small. If it is seconds on a repeat
-    // boot, Chromium threw the compiled module away and the caching contract on the /cdn
-    // response is not reaching it.
-    mark("instantiate(wasm compile)");
-    URL.revokeObjectURL(workerUrl);
-    if (!quiet) onStatus("Loading DuckDB extensions…");
-    conn = await db.connect();
-    await conn.query("SET preserve_insertion_order = false;");
-    // In-session caches: parquet footers/metadata objects survive across queries instead
-    // of being re-fetched and re-parsed per statement. Guarded — losing them costs
-    // repeat reads, not correctness. (Cross-session caching of the immutable data files
-    // themselves lives in sw.js, which can intercept DuckDB's range requests.)
-    for (const s of ["SET enable_http_metadata_cache = true", "SET enable_object_cache = true"]) {
-      try { await conn.query(s); } catch (e) { console.warn(`[engine] ${s}: ${e.message}`); }
-    }
-    // Never throws: an optional extension that won't load costs one file format, which is
-    // not a reason to refuse to start. LOAD alone succeeds when the wasm build already has
-    // the extension; INSTALL+LOAD is the fetch-from-the-repo fallback.
-    const tryLoadExt = async (ext, repo = "") => {
-      const ok = await (async () => {
-        try { await conn.query(`LOAD ${ext};`); return true; }
-        catch (_) {
-          try { await conn.query(`INSTALL ${ext}${repo ? ` FROM ${repo}` : ""}; LOAD ${ext};`); return true; }
-          catch (e) { console.warn(`[engine] ${ext} extension unavailable:`, e.message); return false; }
-        }
-      })();
-      // Timed individually: these are four separate downloads-and-compiles, and one of
-      // them being slow reads nothing like all four being slow.
-      mark(`ext:${ext}${ok ? "" : " (failed)"}`);
-      return ok;
-    };
-    // INSTALL fetches over the network; through the proxy those fetches land in the
-    // same disk cache as the wasm, so extension loads after the first boot are local.
-    // The URL shape is preserved by passthrough — <repo>/<duckdb-ver>/<platform>/<ext>.
-    const coreRepo = cdnBase ? `'${cdnBase}/extensions.duckdb.org'` : "";
-    const commRepo = cdnBase ? `'${cdnBase}/community-extensions.duckdb.org'` : "community";
-    // read_avro() (used to parse Iceberg manifests) comes from the 'avro' extension.
-    // duckdb-wasm autoloads it on first use; preloading up front just makes the first
-    // manifest read fast — the autoload on the first read_avro() call is the real mechanism.
-    await tryLoadExt("avro", coreRepo);
-    // read_xlsx() comes from 'excel'. Unlike avro this answer is remembered: the extension
-    // is fetched over the network, so it can fail for reasons the pinned version doesn't
-    // control, and offering an .xlsx that then fails to open is worse than not offering it.
-    canXlsx = await tryLoadExt("excel", coreRepo);
-    // h3_* (hexagonal spatial indexing) lives in the COMMUNITY repository — a plain
-    // INSTALL looks in extensions.duckdb.org and 404s, hence FROM community. Loaded at
-    // init because the editor's read-only guard blocks INSTALL/LOAD; once loaded,
-    // SELECT h3_latlng_to_cell(...) just works. No capability flag: nothing in the UI
-    // gates on h3, and a failure costs only the h3_* functions (warned by tryLoadExt).
-    if (await tryLoadExt("h3", commRepo)) console.log("[engine] h3 community extension loaded");
-    // zipfs (also community) is remembered like excel: it gates whether .zip files are
-    // offered in the Files tree, and offering a zip that then fails to open is worse
-    // than not offering it.
-    canZip = await tryLoadExt("zipfs", commRepo);
-    // `threads` is the proof, not the bundle name: >1 means the coi build actually got
-    // its SharedArrayBuffer and the isolation work is paying for itself.
-    let threads = "?";
+    if (!quiet) onStatus("Starting DuckDB…");
+    const { connectNative } = await import("./duckdb-native.js");
+    const nat = connectNative();
+    db = nat.db;
+    conn = nat.conn;
+    // The host owns extension loading, so it owns the answer to what can be opened.
+    // Guarded: a capability probe that fails must not stop the engine coming up — a
+    // missing 'excel' costs .xlsx, not the session.
     try {
-      threads = (await conn.query(`SELECT current_setting('threads') AS t`)).toArray()[0].toJSON().t;
-    } catch (_) {}
-    console.log(`[engine] DuckDB ready — bundle=${basename(bundle.mainModule)}, ` +
-                `crossOriginIsolated=${self.crossOriginIsolated}, threads=${threads}`);
-    // Reported rather than logged-and-forgotten: in the extension this crosses to the
-    // host and lands in the output channel beside the read log, which is the only place
-    // the two halves of a slow boot can be compared.
+      const caps = await db.capabilities();
+      canXlsx = !!(caps && caps.excel);
+      canZip = !!(caps && caps.zipfs);
+    } catch (e) { console.warn("[engine] capability probe failed:", e.message); }
+    mark("native engine");
     const totalMs = stages.reduce((n, s) => n + s.ms, 0);
-    console.log(`[engine] boot ${totalMs}ms — ` + stages.map(s => `${s.stage} ${s.ms}ms`).join(", "));
-    try { onBoot({ stages, totalMs, quiet }); } catch (_) {}
-    engineAlive = true;   // only now may the watchdog terminate this worker
+    console.log("[engine] DuckDB ready — native (extension host), " +
+                stages.map(s => `${s.stage} ${s.ms}ms`).join(", "));
+    try { onBoot({ stages, totalMs, quiet, native: true }); } catch (_) {}
+    engineAlive = true;
     return { db, conn };
   }
 

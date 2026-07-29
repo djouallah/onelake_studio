@@ -1,29 +1,27 @@
 // Verifies extension/src/proxy.js — the thing that replaces sw.js in a VS Code webview.
-//
-// Two halves, and the second is the one that mattered enough to build this before any
-// extension UI: DuckDB-WASM must issue RANGE reads against a loopback URL that carries a
-// path prefix (http://127.0.0.1:<port>/<secret>/dfs/...). If it instead downloaded whole
-// files, or refused the cross-origin read, the whole extension design is wrong — and the
-// symptom in the app would be "slow", not "broken", which is the kind of thing that ships.
+// It signs OneLake reads with a bearer the page never holds, and keeps what it fetches on
+// disk: whole immutable objects, sliced per range, plus a TTL tier that serves stale and
+// refreshes behind the answer.
 //
 // No editor and no credentials: proxy.js takes its token as an injected function, and the
 // upstream here is a fake OneLake that checks for it.
+//
+// The engine reading THROUGH this proxy is tested in test/run-engine-host.mjs — against
+// native DuckDB, which is what ships. This file is the proxy's own behaviour.
 //
 // Run: node test/run-proxy.mjs
 import http from "node:http";
 import { readFile, writeFile, stat, mkdir, mkdtemp, rm, readdir, utimes } from "node:fs/promises";
 import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
-import { join, extname } from "node:path";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { chromium } from "playwright-core";
 
 import { startProxy } from "../extension/src/proxy.js";
 
 const root = join(fileURLToPath(new URL(".", import.meta.url)), "..");
 const FIXTURE = join(root, "test", "fixtures", "sample.parquet");
 const TOKEN = "test-token-not-a-real-one";
-const PAGE_PORT = 5199;
 
 let pass = 0, fail = 0;
 const ok = (cond, msg) => { if (cond) { pass++; console.log("ok  —", msg); }
@@ -587,125 +585,25 @@ const TABLE_FILE = `${proxy.dfsOrigin}/ws/lh.Lakehouse/Tables/t/data_0.parquet`;
 }
 
 // =============================================================================
-// Part 2 — DuckDB-WASM range-reading through it, in real Chrome
+// Part 2 lived here: DuckDB-WASM range-reading through the proxy in real Chrome.
 // =============================================================================
-console.log("\n--- DuckDB-WASM through the proxy (real Chrome) ---");
+// Deleted with the wasm engine itself. The extension runs native DuckDB in the extension
+// host now, so booting a WebAssembly build through this proxy tests something the product
+// no longer does — and it needed the 39MB of vendored wasm that no longer ships.
+//
+// Its real subject, "the engine reads OneLake through the signed proxy and the second read
+// is local", moved to test/run-engine-host.mjs Part 2, against the engine that actually
+// ships. The CSP it also proved is simpler now: no 'unsafe-eval', no worker-src blob:,
+// because nothing in the webview compiles WebAssembly any more.
 
-// The CSP the extension really generates (panel.js csp()), with the webview's cspSource
-// standing in as this page's origin. Chromium enforces a policy identically wherever it
-// comes from, so this is where 'unsafe-eval' — which a VS Code webview needs for
-// WebAssembly.instantiate, and where wasm-unsafe-eval alone does not work — gets proven,
-// along with worker-src blob: for DuckDB's Blob worker and connect-src for its downloads.
-const NONCE = "t3stn0nce";
-const PAGE_CSP = [
-  `default-src 'none'`,
-  `img-src http://127.0.0.1:${PAGE_PORT} data: blob:`,
-  `font-src http://127.0.0.1:${PAGE_PORT}`,
-  `style-src http://127.0.0.1:${PAGE_PORT} 'unsafe-inline'`,
-  // The proxy origin in script-src is what lets the engine BOOT through the proxy: the
-  // module import and the worker's importScripts are script loads. Mirrors panel.js csp().
-  `script-src http://127.0.0.1:${PAGE_PORT} 'nonce-${NONCE}' 'unsafe-eval' http://127.0.0.1:${proxy.port} https://cdn.jsdelivr.net`,
-  `worker-src blob:`,
-  `connect-src http://127.0.0.1:${proxy.port} https://cdn.jsdelivr.net https://extensions.duckdb.org https://community-extensions.duckdb.org`,
-].join("; ");
+// Awaited, never slept on. The serve-stale checks above deliberately leave background
+// refreshes running, and closing the fake OneLake out from under one of them surfaces as
+// an unhandled "fetch failed" that kills the run with no failing check to explain it.
+await proxy.cacheIdle();
+upstream.close();
+await proxy.close();
+await rm(CACHE_DIR, { recursive: true, force: true }).catch(() => {});
 
-// The engine boots the way the extension's panel boots now: module, worker and wasm all
-// through the proxy's /cdn route (against the REAL jsDelivr upstream), so this is also
-// the proof that a version-pinned boot works end to end from the disk cache.
-const PAGE = `<!doctype html><meta charset=utf-8><title>working</title>
-<meta http-equiv="Content-Security-Policy" content="${PAGE_CSP}">
-<body><script type="module" nonce="${NONCE}">
-const CDN = ${JSON.stringify(proxy.cdnOrigin)};
-const withCdn = u => u.replace("https://", CDN + "/");
-const duckdb = await import(withCdn("https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.33.1-dev57.0/+esm"));
-const say = m => { document.title = m; };
-try {
-  const bundle = await duckdb.selectBundle(duckdb.getJsDelivrBundles());
-  for (const k of ["mainModule", "mainWorker", "pthreadWorker"])
-    if (bundle[k]) bundle[k] = withCdn(bundle[k]);
-  const workerUrl = URL.createObjectURL(
-    new Blob([\`importScripts("\${bundle.mainWorker}");\`], { type: "text/javascript" }));
-  const worker = new Worker(workerUrl);
-  const db = new duckdb.AsyncDuckDB(new duckdb.ConsoleLogger(), worker);
-  await db.instantiate(bundle.mainModule, bundle.pthreadWorker);
-  // Exactly what data.js does for a table's data files.
-  await db.registerFileURL("f.parquet", ${JSON.stringify(`${proxy.dfsOrigin}/ws/f.parquet`)}, duckdb.DuckDBDataProtocol.HTTP, false);
-  const conn = await db.connect();
-  const res = await conn.query("SELECT count(*) AS n, max(d) AS m FROM read_parquet('f.parquet')");
-  const row = res.toArray()[0];
-  window.ANSWER = { n: Number(row.n), m: Number(row.m) };
-  say("DONE");
-} catch (e) { window.ANSWER = { error: String(e && e.message || e) }; say("ERROR"); }
-</script>`;
-
-const pageServer = http.createServer((req, res) => {
-  res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-  res.end(PAGE);
-});
-await new Promise(r => pageServer.listen(PAGE_PORT, "127.0.0.1", r));
-
-const before = log.length;
-let browser;
-try {
-  browser = await chromium.launch({
-    executablePath: "C:/Program Files/Google/Chrome/Application/chrome.exe", headless: true });
-  const ctx = await browser.newContext({ serviceWorkers: "block" });
-  const page = await ctx.newPage();
-  page.on("pageerror", e => console.log("[pageerror]", e.message));
-  await page.goto(`http://127.0.0.1:${PAGE_PORT}/`);
-  await page.waitForFunction(() => ["DONE", "ERROR"].includes(document.title), { timeout: 180000 });
-  const answer = await page.evaluate(() => window.ANSWER);
-
-  ok(!answer.error,
-     `DuckDB booted and read through the proxy under the extension's real CSP` +
-     `${answer.error ? ` — ${answer.error}` : ""}`);
-  if (!answer.error) {
-    eq(answer.n, 400000, "…and got every row");
-    eq(answer.m, 799998, "…with the right values");
-  }
-
-  const reads = log.slice(before);
-  ok(reads.length > 0 && reads.every(r => r.auth === `Bearer ${TOKEN}`),
-     `every read arrived signed (${reads.length} request(s), none unauthenticated)`);
-
-  // MEASURED, and not what this file originally asserted: duckdb-wasm 1.33.1-dev57.0 never
-  // sends a Range header for an HTTP file. Probed four ways in real Chrome — registerFileURL
-  // with directIO both ways, a bare http:// URL, and parquet_file_metadata, which needs only
-  // the footer — and every one of them was a single whole-file GET, with the origin
-  // advertising `accept-ranges: bytes` throughout. So this proxy is at parity with what sw.js
-  // does in the browser, and the cost of opening a table is the file count, not the bytes
-  // within a file — which is exactly what the statTable/peekTable/loadTable tiers already
-  // assume. If a later duckdb-wasm starts ranging, the part-1 checks above already prove the
-  // proxy handles 206 correctly, and this check turns into a nice surprise rather than a bug.
-  ok(reads.every(r => !r.range), `parity with the browser build: no ranged reads issued ` +
-     `(duckdb-wasm ${reads.length === 1 ? "made one whole-file GET" : "made whole-file GETs"})`);
-
-  const bootReads = proxyEvents.filter(e => e.kind === "cdn");
-  ok(bootReads.length > 0, `the engine booted THROUGH the proxy (${bootReads.length} cdn read(s))`);
-
-  // The second boot is the whole point: everything the engine needs is now on disk, and
-  // a fresh page — a new panel open, as far as the engine is concerned — must not need
-  // the CDN at all.
-  await proxy.cacheIdle();
-  const cdnAt = proxyEvents.length;
-  await page.goto(`http://127.0.0.1:${PAGE_PORT}/`);
-  await page.waitForFunction(() => ["DONE", "ERROR"].includes(document.title), { timeout: 180000 });
-  const again = await page.evaluate(() => window.ANSWER);
-  ok(!again.error && again.n === 400000,
-     `a second boot still answers${again.error ? ` — ${again.error}` : ""}`);
-  const rebootCdn = proxyEvents.slice(cdnAt).filter(e => e.kind === "cdn");
-  ok(rebootCdn.length > 0 && rebootCdn.every(e => e.cache === "hit"),
-     `…with every engine byte from disk (${rebootCdn.length} cdn read(s), ` +
-     `${rebootCdn.filter(e => e.cache === "hit").length} hit(s))`);
-} catch (e) {
-  fail++; console.log("FAIL—", e.message);
-} finally {
-  await browser?.close().catch(() => {});
-  pageServer.close();
-  await proxy.close();
-  upstream.close();
-  await rm(CACHE_DIR, { recursive: true, force: true }).catch(() => {});
-}
-
-console.log(`\nRESULT: ${fail ? "FAILED" : "OK"} — ${pass}/${pass + fail} checks passed`);
+console.log(`
+RESULT: ${fail ? "FAILED" : "OK"} — ${pass}/${pass + fail} checks passed`);
 process.exit(fail ? 1 : 0);

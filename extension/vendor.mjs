@@ -1,11 +1,16 @@
 // =============================================================================
 // vendor.mjs — put the engine INSIDE the extension
 // =============================================================================
-// Downloads everything the panel needs to boot — the duckdb-wasm ES module and its
-// dependency closure, the worker, the wasm, the extension binaries, sql.js and the
+// Downloads what the WEBVIEW still fetches — sql.js (the .db/.sqlite reader) and the
 // markdown renderer — into extension/vendor/<host>/<path>, mirroring the CDN's own
 // layout. The proxy's /cdn route serves these files first and only falls back to the
 // network for anything missing, so an installed extension boots with no CDN at all.
+//
+// DuckDB is NOT here any more. It runs natively in the extension host (see
+// src/engine-host.js), installed as a real dependency, so the 39MB of wasm this used to
+// download — the module closure, the worker, the 35MB binary and four extension
+// binaries — no longer exists in the vsix or on the boot path. That took the package
+// from 22.5MB to under 10MB and removed 'unsafe-eval' from the panel's CSP.
 //
 // Run once for a checkout (F5 falls back to the network until you do) and by
 // vscode:prepublish for every package. vendor/ is gitignored: these are pinned,
@@ -19,10 +24,6 @@ import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const VENDOR = join(here, "vendor");
-
-// The one pin, same as extension/app/data.js. Bump both together.
-const PIN = "1.33.1-dev57.0";
-const PKG = `/npm/@duckdb/duckdb-wasm@${PIN}`;
 
 const fetched = new Set();
 let bytes = 0;
@@ -68,40 +69,12 @@ async function grabEsmClosure(path) {
   for (const dep of deps) await grabEsmClosure(dep);
 }
 
-console.log(`vendoring the engine into ${VENDOR} ...`);
-
-// The module the app imports, with its whole import closure.
-await grabEsmClosure(`${PKG}/+esm`);
-
-// What selectBundle picks on a modern Chromium (the only browser a webview can be):
-// the eh bundle. The worker fetches the wasm itself, by these exact dist URLs.
-await grab("cdn.jsdelivr.net", `${PKG}/dist/duckdb-browser-eh.worker.js`);
-await grab("cdn.jsdelivr.net", `${PKG}/dist/duckdb-eh.wasm`);
-
-// The extension binaries. The repo path is <repo>/<duckdb-version>/<platform>/<name>;
-// the duckdb version string is read out of the worker bundle rather than guessed, since
-// a dev-tagged duckdb-wasm can sit on a dev-tagged duckdb.
-const workerText = (await readFile(
-  join(VENDOR, "cdn.jsdelivr.net", "npm", `@duckdb`, `duckdb-wasm@${PIN}`, "dist",
-       "duckdb-browser-eh.worker.js"))).toString("utf8");
-const verMatch = workerText.match(/["'](v\d+\.\d+[^"']*?)["']/g) || [];
-const versions = [...new Set(verMatch.map(s => s.slice(1, -1)))]
-  .filter(v => /^v\d+\.\d+(\.\d+)?(-[\w.]+)?$/.test(v));
-console.log(`  duckdb version candidates in the worker: ${versions.join(", ") || "(none)"}`);
-const EXT_PLATFORM = "wasm_eh";
-for (const ver of versions.length ? versions : ["v1.5.4"]) {
-  for (const ext of ["avro", "excel"]) {
-    await grab("extensions.duckdb.org", `/${ver}/${EXT_PLATFORM}/${ext}.duckdb_extension.wasm`,
-               { optional: true });
-  }
-  for (const ext of ["h3", "zipfs"]) {
-    await grab("community-extensions.duckdb.org", `/${ver}/${EXT_PLATFORM}/${ext}.duckdb_extension.wasm`,
-               { optional: true });
-  }
-}
+console.log(`vendoring webview assets into ${VENDOR} ...`);
 
 // sql.js (the .db/.sqlite reader) and the markdown renderer — small, and the difference
-// between "works offline" and "mostly works offline".
+// between "works offline" and "mostly works offline". These genuinely run IN the page:
+// sql.js because duckdb-wasm's sqlite VFS could never open an app-supplied file, and
+// marked/dompurify because rendering a document is the webview's own job.
 const SQLJS = "1.13.0";
 await grabEsmClosure(`/npm/sql.js@${SQLJS}/+esm`);
 await grab("cdn.jsdelivr.net", `/npm/sql.js@${SQLJS}/dist/sql-wasm.wasm`, { optional: true });

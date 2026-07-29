@@ -17,25 +17,25 @@ const { siteRoot } = require('./site');
 
 // A webview is a sandboxed iframe with no CSP of its own, so this is the only thing
 // between the page and the network.
-//   'unsafe-eval'    — WebAssembly.instantiate is refused without it. `wasm-unsafe-eval`
-//                      alone does NOT work in a VS Code webview.
-//   worker-src blob: — DuckDB builds its worker from a Blob that importScripts the proxy.
-//   script-src proxy — the engine boots THROUGH the proxy's /cdn route now (dynamic
-//                      import of the duckdb module, the worker's importScripts): both are
-//                      script loads. The CDN hosts stay listed as the fallback when the
-//                      proxied fetch fails.
-//   connect-src      — the proxy (data reads AND the wasm fetch inside the worker), the
-//                      CDNs as fallback, and cspSource, which is how DuckDB reads the
-//                      packaged README that the landing query renders.
+//
+// 'unsafe-eval' and worker-src blob: are GONE, and that is a real tightening rather than
+// tidying. They existed solely because DuckDB ran as WebAssembly in this page: instantiate
+// is refused without 'unsafe-eval' (and `wasm-unsafe-eval` alone does not work in a VS
+// Code webview), and duckdb-wasm built its worker from a Blob. The engine is native in the
+// extension host now, so the page compiles nothing and spawns nothing.
+//
+//   script-src proxy — sql.js and the markdown renderer still load through the proxy's
+//                      /cdn route, which serves them from the vendor directory.
+//   connect-src      — the proxy (every OneLake read is signed there) and cspSource, which
+//                      is how the landing query reads the packaged README.
 function csp(webview, nonce, proxyOrigin) {
   return [
     `default-src 'none'`,
     `img-src ${webview.cspSource} data: blob:`,
     `font-src ${webview.cspSource}`,
     `style-src ${webview.cspSource} 'unsafe-inline'`,
-    `script-src ${webview.cspSource} 'nonce-${nonce}' 'unsafe-eval' ${proxyOrigin} https://cdn.jsdelivr.net`,
-    `worker-src blob:`,
-    `connect-src ${webview.cspSource} ${proxyOrigin} https://cdn.jsdelivr.net https://extensions.duckdb.org https://community-extensions.duckdb.org`,
+    `script-src ${webview.cspSource} 'nonce-${nonce}' ${proxyOrigin} https://cdn.jsdelivr.net`,
+    `connect-src ${webview.cspSource} ${proxyOrigin} https://cdn.jsdelivr.net`,
   ].join('; ');
 }
 
@@ -122,10 +122,6 @@ async function openPanel(context, proxy, { onOpened, onBoot, engine } = {}) {
       auth: 'none',
       // Everything the app does differently in here hangs off this one word.
       host: 'vscode',
-      // Run DuckDB natively in the extension host instead of compiling a wasm build in
-      // the webview. Off when no engine was supplied, which leaves the wasm path — the
-      // browser build's path — intact as the fallback.
-      nativeEngine: !!engine,
       dfsOrigin: proxy.dfsOrigin,
       tableOrigin: proxy.tableOrigin,
       // Boot bytes come off the disk cache through this: the wasm, the worker, the
