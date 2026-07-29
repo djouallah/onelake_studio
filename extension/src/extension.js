@@ -17,7 +17,7 @@
 const vscode = require('vscode');
 const { join } = require('node:path');
 const { startProxy } = require('./proxy');
-const { openPanel, closePanel, postToPanel } = require('./panel');
+const { openPanel, closePanel, postToPanel, postLive } = require('./panel');
 const { createCatalog } = require('./catalog');
 const { LakehouseTree } = require('./tree');
 const { siteRoot } = require('./site');
@@ -70,6 +70,7 @@ let proxy = null;
 // channel costs nothing until somebody opens it.
 let out = null;
 function logRead(e) {
+  tally(e);
   if (!out) return;
   const where = e.cache === 'hit' ? 'cache'
     : [e.tokenMs > 5 ? `token ${e.tokenMs}ms` : '', `net ${e.netMs}ms`].filter(Boolean).join(' + ');
@@ -79,6 +80,54 @@ function logRead(e) {
     `${String(e.ms).padStart(6)}ms  ${e.method.padEnd(4)} ${String(e.status).padEnd(3)}` +
     `${size.padStart(9)}  ${where.padEnd(24)} ${e.range || ''} ${path}` +
     (e.error ? `  !! ${e.error}` : ''));
+}
+
+// ---------------------------------------------------------------------------
+// What the panel's indicator shows
+// ---------------------------------------------------------------------------
+// The provenance of a read is only knowable here, and it was only ever written to an
+// output channel — which is not where anyone looks when something feels slow. So it goes
+// on screen, in the panel's status bar.
+//
+// Not per read: opening a table is hundreds of them, and an indicator that flickers once
+// per request reports the mechanism instead of the answer. They are gathered into a burst
+// — everything between one idle gap and the next — so what shows up is "the thing you just
+// waited for", which is the question being asked.
+const BURST_IDLE_MS = 500;    // this much quiet ends a burst
+const POST_EVERY_MS = 250;    // ...and it is reported no more often than this while running
+
+let burst = null;
+let postTimer = null, idleTimer = null;
+
+function tally(e) {
+  if (!burst) burst = { reads: 0, hits: 0, misses: 0, skips: 0, cacheBytes: 0, netBytes: 0, netMs: 0 };
+  burst.reads++;
+  if (e.cache === 'hit') { burst.hits++; burst.cacheBytes += e.bytes || 0; }
+  else {
+    if (e.cache === 'skip') burst.skips++; else burst.misses++;
+    burst.netBytes += e.bytes || 0;
+    burst.netMs += e.netMs || 0;
+  }
+  if (!postTimer) postTimer = setTimeout(() => { postTimer = null; postReads(); }, POST_EVERY_MS);
+  clearTimeout(idleTimer);
+  // The settled number is the one worth reading, and it is also the one that arrives after
+  // the last response — so the burst is reported once more when the reads stop, and the
+  // next read after that starts a new one.
+  idleTimer = setTimeout(() => { postReads(); burst = null; }, BURST_IDLE_MS);
+}
+
+function postReads() {
+  if (!burst) return;
+  // storedBytes, not cacheSize() — the latter walks the whole directory, which is fine for
+  // a command someone invoked and not for something on a 250ms timer.
+  const c = proxy ? proxy.cacheStatus() : null;
+  postLive({
+    type: 'reads',
+    ...burst,
+    cacheOff: c && !c.usable ? (c.problem || 'caching is off') : '',
+    cacheStored: c ? c.storedBytes : 0,
+    cacheMax: c ? c.maxBytes : 0,
+  });
 }
 
 const GB = 1024 * 1024 * 1024;

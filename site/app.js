@@ -1772,6 +1772,49 @@ if (HOST_VSCODE) {
     else await selectFile(detachedRow(), entry);
   }
 
+  // Where the bytes came from. DuckDB's reads never pass through this page — it cannot see
+  // how many there were or how long OneLake took — so the extension counts them and sends
+  // the total. Deliberately NOT written through setStatus: that does `el.className = type`
+  // and would drop any class parked on it, and this is a standing fact rather than a
+  // message about what just happened.
+  // A round number is a round number: "20.0 GB" and "210.0 MB" read like a measurement
+  // taken to a precision nobody asked for. And zero is nothing, not "1 KB".
+  const trim = s => s.replace(/\.0$/, '');
+  const bytes = n => !n ? 'nothing'
+                   : n >= 1e9 ? `${trim((n / 1e9).toFixed(1))} GB`
+                   : n >= 1e6 ? `${trim((n / 1e6).toFixed(1))} MB`
+                   : `${Math.max(1, Math.round(n / 1e3))} KB`;
+
+  function showReads(m) {
+    const el = $('readSrc');
+    el.hidden = false;
+    el.className = '';
+    const fromNet = m.misses + m.skips;
+    if (m.cacheOff) {
+      el.textContent = '☁ no cache';
+      el.className = 'nocache';
+    } else if (!fromNet) {
+      el.textContent = '▤ local';
+      el.className = 'local';
+    } else if (m.hits) {
+      el.textContent = `▤ ${m.hits} · ☁ ${fromNet} · ${bytes(m.netBytes)}`;
+    } else {
+      el.textContent = `☁ network · ${bytes(m.netBytes)}`;
+    }
+    el.title = [
+      `${m.reads} read(s) behind the last thing you waited for.`,
+      m.hits ? `${m.hits} from this machine (${bytes(m.cacheBytes)}).` : 'None came from this machine.',
+      fromNet ? `${fromNet} from OneLake (${bytes(m.netBytes)}, ${(m.netMs / 1000).toFixed(1)}s).` : '',
+      // A skip is not a miss: those objects are ones the cache is not allowed to hold, so
+      // they will cost the network every time and no amount of waiting changes that.
+      m.skips ? `${m.skips} of those can never be cached — they are not immutable objects.` : '',
+      m.cacheOff ? `Cache is OFF: ${m.cacheOff}` : `Cache holds ${bytes(m.cacheStored)} of ${bytes(m.cacheMax)}.`,
+      'Click for the full read log.',
+    ].filter(Boolean).join('\n');
+  }
+
+  $('readSrc').onclick = () => vs.postMessage({ type: 'show-log' });
+
   window.addEventListener('message', async e => {
     const m = e.data || {};
     try {
@@ -1779,6 +1822,7 @@ if (HOST_VSCODE) {
       else if (m.type === 'open-file') await openFile(m);
       // The tree was refreshed, so what this side holds about the old listing is suspect.
       else if (m.type === 'reset') { await engineReady; await leaveLakehouse(); lakehouse = null; }
+      else if (m.type === 'reads') showReads(m);
     } catch (err) {
       setStatus('Could not open that: ' + explainRead(err.message), 'error');
       console.error(err);

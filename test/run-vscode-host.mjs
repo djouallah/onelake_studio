@@ -234,6 +234,60 @@ try {
   await page.waitForFunction(() => true);
   check("...against the lakehouse the tree named",
     ircCalls.includes("ws1/A.Lakehouse"), ircCalls.join(", ") || "the catalog was never asked");
+
+  // --- where the bytes came from ---------------------------------------------
+  // The extension counts the reads (the page cannot see DuckDB's) and sends the total.
+  // Each of these is a state someone will actually be looking at when they wonder why
+  // something took as long as it did.
+  const indicator = async msg => {
+    await page.evaluate(m => window.postMessage(m, "*"), { type: "reads", ...msg });
+    await page.waitForFunction(() => !document.getElementById("readSrc").hidden, { timeout: 5000 })
+      .catch(() => {});
+    return page.evaluate(() => {
+      const el = document.getElementById("readSrc");
+      return { text: el.textContent, cls: el.className, title: el.title, hidden: el.hidden };
+    });
+  };
+
+  const allLocal = await indicator({
+    reads: 14, hits: 14, misses: 0, skips: 0, cacheBytes: 31e6, netBytes: 0, netMs: 0,
+    cacheStored: 2.1e9, cacheMax: 20e9 });
+  check("all-from-disk reads say so", allLocal.text === "▤ local" && allLocal.cls === "local",
+    `${allLocal.text} / ${allLocal.cls}`);
+
+  const mixed = await indicator({
+    reads: 12, hits: 9, misses: 3, skips: 0, cacheBytes: 31e6, netBytes: 4.2e6, netMs: 1800,
+    cacheStored: 2.1e9, cacheMax: 20e9 });
+  check("a mixed read reports both sides", /▤ 9/.test(mixed.text) && /☁ 3/.test(mixed.text),
+    mixed.text);
+  check("...and the tooltip has the breakdown",
+    /9 from this machine/.test(mixed.title) && /3 from OneLake/.test(mixed.title) &&
+    /2\.1 GB of 20 GB/.test(mixed.title), mixed.title.replace(/\n/g, " | "));
+
+  const remote = await indicator({
+    reads: 4, hits: 0, misses: 4, skips: 0, cacheBytes: 0, netBytes: 210e6, netMs: 9000,
+    cacheStored: 0, cacheMax: 20e9 });
+  check("nothing cached reads as network", /☁ network/.test(remote.text) && /210 MB/.test(remote.text),
+    remote.text);
+
+  // A skip is not a miss, and the difference is the whole diagnosis: those objects will
+  // cost the network every time however long you wait.
+  const skipped = await indicator({
+    reads: 6, hits: 0, misses: 0, skips: 6, cacheBytes: 0, netBytes: 12e6, netMs: 900,
+    cacheStored: 0, cacheMax: 20e9 });
+  check("a skip is explained as never-cacheable",
+    /can never be cached/.test(skipped.title), skipped.title.replace(/\n/g, " | "));
+
+  const off = await indicator({
+    reads: 3, hits: 0, misses: 0, skips: 3, cacheBytes: 0, netBytes: 1e6, netMs: 400,
+    cacheOff: "EPERM: operation not permitted, mkdir", cacheStored: 0, cacheMax: 0 });
+  check("a cache that could not start says so", off.text === "☁ no cache" && off.cls === "nocache",
+    `${off.text} / ${off.cls}`);
+  check("...and names the reason", /EPERM/.test(off.title), off.title.replace(/\n/g, " | "));
+
+  await page.click("#readSrc");
+  check("clicking it asks the extension for the log",
+    await page.evaluate(() => window.__posted.some(m => m.type === "show-log")));
 } catch (e) {
   check("the run completed", false, e.message);
 } finally {

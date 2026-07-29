@@ -63,6 +63,14 @@ function postToPanel(msg) {
   else pending = msg;
 }
 
+// For messages that describe the present rather than ask for something: read counts, cache
+// state. Deliberately NOT buffered — `pending` holds exactly one message, so parking a
+// stat there would throw away the click that is waiting to be delivered, and a stat
+// replayed after a boot describes reads the user has long since stopped waiting for.
+function postLive(msg) {
+  if (current && ready) current.webview.postMessage(msg);
+}
+
 async function openPanel(context, proxy) {
   if (current) { current.reveal(vscode.ViewColumn.Active); return current; }
 
@@ -98,9 +106,15 @@ async function openPanel(context, proxy) {
   }
 
   panel.webview.onDidReceiveMessage(msg => {
-    if (!msg || msg.type !== 'ready') return;
-    ready = true;
-    if (pending) { panel.webview.postMessage(pending); pending = null; }
+    if (!msg) return;
+    if (msg.type === 'ready') {
+      ready = true;
+      if (pending) { panel.webview.postMessage(pending); pending = null; }
+    } else if (msg.type === 'show-log') {
+      // The read indicator in the panel's status bar is clickable, and this is what it
+      // does: the breakdown it summarises lives in the output channel.
+      vscode.commands.executeCommand('onelakeStudio.showLog');
+    }
   }, null, context.subscriptions);
 
   panel.onDidDispose(() => { current = null; ready = false; }, null, context.subscriptions);
@@ -116,4 +130,4 @@ function closePanel() {
   if (current) current.dispose();   // onDidDispose nulls `current` and clears `ready`
 }
 
-module.exports = { openPanel, closePanel, postToPanel };
+module.exports = { openPanel, closePanel, postToPanel, postLive };

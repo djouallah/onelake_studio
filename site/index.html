@@ -351,6 +351,17 @@
     /* A load that came with caveats — skipped equality deletes, a truncated result — is
        not a success, and must not be shown in the success colour. */
     #status.warn { color: var(--warn); }
+    /* Read provenance. Sits between the message and the build stamp; #status is still the
+       only element that grows, so a long status keeps ellipsising rather than shoving this
+       off the bar. Same three colours the message uses — muted for a plain fact, ok when
+       everything came off disk, warn when there is no cache to come off. */
+    #readSrc {
+      color: var(--muted); white-space: nowrap; flex: none; cursor: pointer;
+      font-variant-numeric: tabular-nums;
+    }
+    #readSrc:hover { color: var(--text); }
+    #readSrc.local { color: var(--ok); }
+    #readSrc.nocache { color: var(--warn); }
     #statusVer { color: var(--muted); text-decoration: none; white-space: nowrap; }
     #statusVer:hover { color: var(--accent2); }
     /* This tab is running an older build than the server has. */
@@ -467,6 +478,10 @@
 
   <div class="statusBar">
     <div id="status">Ready.</div>
+    <!-- Where the bytes behind the last thing you waited for came from. Only the VS Code
+         host fills this in: a browser tab reads OneLake directly, with no proxy in front
+         of it and nothing on disk, so there is no answer to give. -->
+    <span id="readSrc" hidden></span>
     <a id="statusVer" target="_blank" rel="noopener"></a>
   </div>
 

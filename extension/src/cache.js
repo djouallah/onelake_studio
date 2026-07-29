@@ -198,10 +198,15 @@ function createCache(dir, { maxBytes = DEFAULT_MAX_BYTES } = {}) {
     } catch (_) {}
   }
 
-  // What this is costing on disk, for the command that offers to hand it back.
+  // What this is costing on disk, for the command that offers to hand it back. Walks every
+  // entry, so it is for a one-off question, not for anything on a timer.
   async function size() {
     try { await sized; return await measure(); } catch (_) { return 0; }
   }
+
+  // The same number without the walk — the running total, good enough for a status line
+  // and cheap enough to ask for on every update.
+  const storedBytes = () => total;
 
   // Signing out, or switching account, is the one moment these bytes should not survive —
   // they were read with the identity being left behind. sw.js does the same on sign-out.
@@ -213,8 +218,8 @@ function createCache(dir, { maxBytes = DEFAULT_MAX_BYTES } = {}) {
     } catch (_) { usable = false; }
   }
 
-  return { get, beginPut, putHead, clear, size, dir, maxBytes,
-           status: () => ({ usable, problem, dir, maxBytes }) };
+  return { get, beginPut, putHead, clear, size, storedBytes, dir, maxBytes,
+           status: () => ({ usable, problem, dir, maxBytes, storedBytes: total }) };
 }
 
 module.exports = { createCache, cacheable, DEFAULT_MAX_BYTES };
