@@ -66,9 +66,24 @@ const TMP_MAX_AGE_MS = 60 * 60 * 1000;
 //                 after the first and OneLake charges 2–10 seconds each time. Five
 //                 minutes of possible staleness was chosen, explicitly, over that.
 const DEFAULT_TTL_MS = 5 * 60 * 1000;
+
+// The hosts the engine boots from. Their URLs are version-pinned (a jsDelivr path
+// carries its @version, an extension path its duckdb version), so like the data files
+// they are immutable — kept forever, with their response headers, because an ESM module
+// served without its content-type is not a faster answer but a SyntaxError.
+const CDN_HOSTS = new Set(['cdn.jsdelivr.net', 'extensions.duckdb.org',
+                           'community-extensions.duckdb.org']);
+
+//   'cdn'       — boot bytes from the allowlisted CDN hosts: immutable, headers kept.
+//                 Recognised by hostname, or by first path segment for the proxy's
+//                 /cdn/<host>/… test seam where the real host rides in the path.
+//   'immutable' — data files and manifests under Tables/: kept until evicted.
+//   'ttl'       — everything else: kept briefly (see above).
 function tierOf(urlStr) {
   let u;
   try { u = new URL(urlStr); } catch (_) { return false; }
+  const seg = (u.pathname.split('/')[1] || '').toLowerCase();
+  if (CDN_HOSTS.has(u.hostname.toLowerCase()) || CDN_HOSTS.has(seg)) return 'cdn';
   const immutable = !u.search &&
     (/\/Tables\/[^?]*\.parquet$/i.test(u.pathname) ||
      /\/Tables\/[^?]*\/metadata\/[^?]*\.avro$/i.test(u.pathname));
@@ -257,7 +272,9 @@ function createCache(dir, { maxBytes = DEFAULT_MAX_BYTES, ttlMs = DEFAULT_TTL_MS
         if (!m.exp || Date.now() <= m.exp) return null;
       } catch (_) {}
     }
-    const extra = tier === 'ttl' ? { exp: Date.now() + ttlMs, hdr: headers || {} } : {};
+    const extra = tier === 'ttl' ? { exp: Date.now() + ttlMs, hdr: headers || {} }
+                : tier === 'cdn' ? { hdr: headers || {} }
+                : {};
     const entry = startFill(k, extra);
     if (!entry) return null;
     fills.set(k, entry.done);
@@ -456,4 +473,4 @@ function createCache(dir, { maxBytes = DEFAULT_MAX_BYTES, ttlMs = DEFAULT_TTL_MS
            status: () => ({ usable, problem, dir, maxBytes, storedBytes: total }) };
 }
 
-module.exports = { createCache, cacheable, tierOf, parseRange, DEFAULT_MAX_BYTES };
+module.exports = { createCache, cacheable, tierOf, parseRange, CDN_HOSTS, DEFAULT_MAX_BYTES };

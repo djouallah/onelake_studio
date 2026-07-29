@@ -19,20 +19,23 @@ const { siteRoot } = require('./site');
 // between the page and the network.
 //   'unsafe-eval'    — WebAssembly.instantiate is refused without it. `wasm-unsafe-eval`
 //                      alone does NOT work in a VS Code webview.
-//   worker-src blob: — DuckDB builds its worker from a Blob that importScripts the CDN.
-//   connect-src      — the proxy, jsDelivr (duckdb-wasm, and marked/dompurify which the
-//                      doc view lazy-loads), the DuckDB extension repository, and
-//                      cspSource, which is how DuckDB reads the packaged README that the
-//                      landing query renders.
+//   worker-src blob: — DuckDB builds its worker from a Blob that importScripts the proxy.
+//   script-src proxy — the engine boots THROUGH the proxy's /cdn route now (dynamic
+//                      import of the duckdb module, the worker's importScripts): both are
+//                      script loads. The CDN hosts stay listed as the fallback when the
+//                      proxied fetch fails.
+//   connect-src      — the proxy (data reads AND the wasm fetch inside the worker), the
+//                      CDNs as fallback, and cspSource, which is how DuckDB reads the
+//                      packaged README that the landing query renders.
 function csp(webview, nonce, proxyOrigin) {
   return [
     `default-src 'none'`,
     `img-src ${webview.cspSource} data: blob:`,
     `font-src ${webview.cspSource}`,
     `style-src ${webview.cspSource} 'unsafe-inline'`,
-    `script-src ${webview.cspSource} 'nonce-${nonce}' 'unsafe-eval' https://cdn.jsdelivr.net`,
+    `script-src ${webview.cspSource} 'nonce-${nonce}' 'unsafe-eval' ${proxyOrigin} https://cdn.jsdelivr.net`,
     `worker-src blob:`,
-    `connect-src ${webview.cspSource} ${proxyOrigin} https://cdn.jsdelivr.net https://extensions.duckdb.org`,
+    `connect-src ${webview.cspSource} ${proxyOrigin} https://cdn.jsdelivr.net https://extensions.duckdb.org https://community-extensions.duckdb.org`,
   ].join('; ');
 }
 
@@ -96,6 +99,10 @@ async function openPanel(context, proxy, { onOpened } = {}) {
       host: 'vscode',
       dfsOrigin: proxy.dfsOrigin,
       tableOrigin: proxy.tableOrigin,
+      // Boot bytes come off the disk cache through this: the wasm, the worker, the
+      // extensions. Without it every panel open re-downloaded ~40MB before the first
+      // click could do anything.
+      cdnOrigin: proxy.cdnOrigin,
       // The landing query reads this instead of raw.githubusercontent.com, which the CSP
       // above has no business allowing. It also documents the version that is installed
       // rather than whatever is on main.

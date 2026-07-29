@@ -421,6 +421,7 @@ async function startEngine() {
   await engineReady;
   engineUp = true;
   $('runBtn').disabled = false;   // SQL needs the engine, not a lakehouse
+  const before = selSeq;          // a click during boot outranks everything said below
   let landingFailed = false;
   if (!$('sqlEditor').value) {
     // Fresh visit: show the README as the landing content. The stash branch in wireUi
@@ -430,6 +431,11 @@ async function startEngine() {
     $('sqlEditor').value = README_SQL;
     landingFailed = !await runQuery();
   }
+  // The user clicked something while the welcome page was still loading — which also
+  // CANCELS the welcome query, so `landingFailed` here usually just means "superseded".
+  // Their click owns the status bar and the result pane; a boot message stamped over
+  // "questions.xlsx — 34 KB" reads as the app forgetting what it was asked.
+  if (selSeq !== before || activeTableRef || activeFile) return;
   // The auth stage runs alongside this one now, so it may already have said something
   // truer — "N workspace(s)" beats "sign in to browse OneLake". Only claim the line when
   // there's no session to talk about.

@@ -254,6 +254,12 @@ try {
     !!opened && opened.kind === "table" && Number.isFinite(opened.ms) && opened.ms >= 0 &&
     opened.label === "dbo.a_table",
     opened ? `${opened.kind} ${opened.label} ${opened.ms}ms` : "no 'opened' message posted");
+  // A click during boot cancels the welcome query, and the welcome query's failure
+  // handler used to stamp its boot message over the click's own status.
+  check("...and the boot's welcome-page message never stomped the click",
+    await page.evaluate(() =>
+      !document.getElementById("status").textContent.includes("welcome page")),
+    await page.evaluate(() => document.getElementById("status").textContent));
 
   // --- where the bytes came from ---------------------------------------------
   // The extension counts the reads (the page cannot see DuckDB's) and sends the total.

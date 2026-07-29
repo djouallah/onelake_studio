@@ -25,6 +25,7 @@ const OPTS = {
   config: {
     auth: "none", host: "vscode",
     dfsOrigin: "http://127.0.0.1:1/s/dfs", tableOrigin: "http://127.0.0.1:1/s/irc",
+    cdnOrigin: "http://127.0.0.1:1/s/cdn",
     readmeUrl: "https://webview.test/README.md",
   },
   cspContent: "default-src 'none'",
@@ -78,6 +79,13 @@ test("app.js reads both of them, so the injection is not writing into a void", a
   const app = await readFile(join(root, "extension", "app", "app.js"), "utf8");
   assert.match(app, /cfg\.host === 'vscode'/, "app.js branches on the host flag");
   assert.match(app, /cfg\.readmeUrl/, "app.js takes the README URL from the config");
+});
+
+test("the engine reads cdnOrigin — the disk-cached boot path is wired, not decorative", async () => {
+  const data = await readFile(join(root, "extension", "app", "data.js"), "utf8");
+  assert.match(data, /cdnOrigin/, "data.js consumes the injected cdnOrigin");
+  const doc = await readFile(join(root, "extension", "app", "docview.js"), "utf8");
+  assert.match(doc, /cdnOrigin/, "docview.js routes its lazy imports the same way");
 });
 
 test("a page missing the config.js tag is refused rather than half-built", () => {

@@ -87,11 +87,14 @@ let token = TOKEN;
 // observable from here.
 const tokenCalls = [];
 const CACHE_DIR = await mkdtemp(join(tmpdir(), "onelake-proxy-cache-"));
+// Every hit/miss the proxy reports, for the checks that ask "did that come from disk".
+const proxyEvents = [];
 const proxy = await startProxy({
   getToken: async opts => { tokenCalls.push(opts); return opts && opts.fresh ? TOKEN : token; },
   cacheDir: CACHE_DIR,
   dfsUpstream: upBase,
   tableUpstream: `${upBase}`,
+  onLog: e => proxyEvents.push(e),
 });
 
 // =============================================================================
@@ -418,6 +421,52 @@ const TABLE_FILE = `${proxy.dfsOrigin}/ws/lh.Lakehouse/Tables/t/data_0.parquet`;
 }
 
 {
+  // Boot bytes. A webview has no persistent HTTP cache, so without this route every
+  // panel open re-downloaded the engine — ~40MB, measured at 25-30 seconds in front of
+  // the first click of every session. The /cdn route proxies ONLY allowlisted hosts,
+  // never attaches the OneLake token (a public CDN has no business seeing it), and
+  // keeps what it fetched forever with its headers — an ESM module served without its
+  // content-type is a SyntaxError, not a faster answer.
+  const BODY = "export const answer = 42;\n";
+  const cdnLog = [];
+  const cdnSrv = http.createServer((req, res) => {
+    cdnLog.push({ url: req.url, auth: req.headers.authorization || null });
+    res.writeHead(200, { "content-type": "text/javascript",
+                         "content-length": String(Buffer.byteLength(BODY)) });
+    res.end(BODY);
+  });
+  await new Promise(r => cdnSrv.listen(0, "127.0.0.1", r));
+  const CDN_DIR = await mkdtemp(join(tmpdir(), "onelake-cdn-"));
+  const p = await startProxy({
+    getToken: async () => TOKEN, cacheDir: CDN_DIR,
+    dfsUpstream: upBase, tableUpstream: upBase,
+    cdnUpstream: `http://127.0.0.1:${cdnSrv.address().port}`,
+  });
+  try {
+    const url = `${p.cdnOrigin}/cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.33.1-dev57.0/+esm`;
+    const a = await fetch(url);
+    eq(a.status, 200, "an allowlisted CDN path is proxied");
+    eq(await a.text(), BODY, "…body intact");
+    eq(a.headers.get("content-type"), "text/javascript", "…with the content-type an ESM import needs");
+    eq(cdnLog.length, 1, "…for one upstream fetch");
+    ok(cdnLog[0].auth === null, "…that carried NO authorization header — the OneLake token stays home");
+
+    await p.cacheIdle();
+    const b = await fetch(url);
+    eq(await b.text(), BODY, "the second fetch answers the same bytes");
+    eq(cdnLog.length, 1, "…from disk — boot bytes are kept forever");
+    eq(b.headers.get("content-type"), "text/javascript", "…and the content-type replays from the sidecar");
+
+    const bad = await fetch(`${p.cdnOrigin}/evil.example.com/payload.js`);
+    eq(bad.status, 404, "a host off the allowlist is refused");
+    eq(cdnLog.length, 1, "…without touching any network");
+  } finally {
+    await p.close();
+    cdnSrv.close();
+    await rm(CDN_DIR, { recursive: true, force: true }).catch(() => {});
+  }
+}
+{
   // A crash between the rename and the sidecar leaves a .bin no read can ever serve, that
   // scan() never counts and prune() never deletes — a leak with no expiry. A sidecar with
   // no .bin is the same tear from the other side. An abandoned .tmp is an interrupted
@@ -476,18 +525,27 @@ const PAGE_CSP = [
   `img-src http://127.0.0.1:${PAGE_PORT} data: blob:`,
   `font-src http://127.0.0.1:${PAGE_PORT}`,
   `style-src http://127.0.0.1:${PAGE_PORT} 'unsafe-inline'`,
-  `script-src http://127.0.0.1:${PAGE_PORT} 'nonce-${NONCE}' 'unsafe-eval' https://cdn.jsdelivr.net`,
+  // The proxy origin in script-src is what lets the engine BOOT through the proxy: the
+  // module import and the worker's importScripts are script loads. Mirrors panel.js csp().
+  `script-src http://127.0.0.1:${PAGE_PORT} 'nonce-${NONCE}' 'unsafe-eval' http://127.0.0.1:${proxy.port} https://cdn.jsdelivr.net`,
   `worker-src blob:`,
-  `connect-src http://127.0.0.1:${proxy.port} https://cdn.jsdelivr.net https://extensions.duckdb.org`,
+  `connect-src http://127.0.0.1:${proxy.port} https://cdn.jsdelivr.net https://extensions.duckdb.org https://community-extensions.duckdb.org`,
 ].join("; ");
 
+// The engine boots the way the extension's panel boots now: module, worker and wasm all
+// through the proxy's /cdn route (against the REAL jsDelivr upstream), so this is also
+// the proof that a version-pinned boot works end to end from the disk cache.
 const PAGE = `<!doctype html><meta charset=utf-8><title>working</title>
 <meta http-equiv="Content-Security-Policy" content="${PAGE_CSP}">
 <body><script type="module" nonce="${NONCE}">
-import * as duckdb from "https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.33.1-dev57.0/+esm";
+const CDN = ${JSON.stringify(proxy.cdnOrigin)};
+const withCdn = u => u.replace("https://", CDN + "/");
+const duckdb = await import(withCdn("https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.33.1-dev57.0/+esm"));
 const say = m => { document.title = m; };
 try {
   const bundle = await duckdb.selectBundle(duckdb.getJsDelivrBundles());
+  for (const k of ["mainModule", "mainWorker", "pthreadWorker"])
+    if (bundle[k]) bundle[k] = withCdn(bundle[k]);
   const workerUrl = URL.createObjectURL(
     new Blob([\`importScripts("\${bundle.mainWorker}");\`], { type: "text/javascript" }));
   const worker = new Worker(workerUrl);
@@ -544,6 +602,24 @@ try {
   // proxy handles 206 correctly, and this check turns into a nice surprise rather than a bug.
   ok(reads.every(r => !r.range), `parity with the browser build: no ranged reads issued ` +
      `(duckdb-wasm ${reads.length === 1 ? "made one whole-file GET" : "made whole-file GETs"})`);
+
+  const bootReads = proxyEvents.filter(e => e.kind === "cdn");
+  ok(bootReads.length > 0, `the engine booted THROUGH the proxy (${bootReads.length} cdn read(s))`);
+
+  // The second boot is the whole point: everything the engine needs is now on disk, and
+  // a fresh page — a new panel open, as far as the engine is concerned — must not need
+  // the CDN at all.
+  await proxy.cacheIdle();
+  const cdnAt = proxyEvents.length;
+  await page.goto(`http://127.0.0.1:${PAGE_PORT}/`);
+  await page.waitForFunction(() => ["DONE", "ERROR"].includes(document.title), { timeout: 180000 });
+  const again = await page.evaluate(() => window.ANSWER);
+  ok(!again.error && again.n === 400000,
+     `a second boot still answers${again.error ? ` — ${again.error}` : ""}`);
+  const rebootCdn = proxyEvents.slice(cdnAt).filter(e => e.kind === "cdn");
+  ok(rebootCdn.length > 0 && rebootCdn.every(e => e.cache === "hit"),
+     `…with every engine byte from disk (${rebootCdn.length} cdn read(s), ` +
+     `${rebootCdn.filter(e => e.cache === "hit").length} hit(s))`);
 } catch (e) {
   fail++; console.log("FAIL—", e.message);
 } finally {

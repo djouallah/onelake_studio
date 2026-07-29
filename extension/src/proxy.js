@@ -28,7 +28,7 @@
 const http = require('node:http');
 const https = require('node:https');
 const crypto = require('node:crypto');
-const { createCache } = require('./cache');
+const { createCache, CDN_HOSTS } = require('./cache');
 
 const DFS_UPSTREAM = 'https://onelake.dfs.fabric.microsoft.com';
 const TABLE_UPSTREAM = 'https://onelake.table.fabric.microsoft.com';
@@ -66,15 +66,31 @@ function sameSecret(given, secret) {
 }
 
 // /<secret>/dfs/<rest>?<query>  ->  { kind: 'dfs', rest: '/<rest>', query: '?<query>' }
-// Two prefixes rather than one so a workspace name can never be mistaken for a route.
+// Distinct prefixes rather than one so a workspace name can never be mistaken for a route.
 function route(reqUrl, secret) {
   const q = reqUrl.indexOf('?');
   const path = q === -1 ? reqUrl : reqUrl.slice(0, q);
   const query = q === -1 ? '' : reqUrl.slice(q);
-  const m = /^\/([^/]+)\/(dfs|irc)(\/.*)?$/.exec(path);
+  // jsDelivr's +esm bundles import their dependencies by ABSOLUTE path — /npm/… — which
+  // the browser resolves against this proxy's ROOT, below any secret. Mapping /npm/ and
+  // /gh/ straight to jsDelivr is what keeps those nested imports working. No secret on
+  // purpose: it exposes nothing but public, allowlisted CDN content, read-only — unlike
+  // every other route, there is no user data behind it to protect.
+  if (/^\/(npm|gh)\//.test(path)) {
+    return { kind: 'cdn', rest: `/cdn.jsdelivr.net${path}`, query };
+  }
+  const m = /^\/([^/]+)\/(dfs|irc|cdn)(\/.*)?$/.exec(path);
   if (!m || !sameSecret(m[1], secret)) return null;
   return { kind: m[2], rest: m[3] || '/', query };
 }
+
+// The hosts DuckDB-WASM boots from (defined beside the cache tiers — cache.js is the
+// single source). A webview has no persistent HTTP cache, so without this route every
+// panel open re-downloaded the wasm, the worker and four extensions — measured at 25-30
+// seconds that the first click of every session sat behind. Proxied, the bytes are teed
+// into the same disk cache as the data files (the URLs are version-pinned, so they are
+// immutable), and every boot after the first is local. An allowlist, not a general
+// proxy: this port must never become a way to reach arbitrary hosts from a page.
 
 // Upstream connections are kept alive and reused. Measured in the field: catalog calls
 // and first reads cost a suspiciously uniform 3–11 seconds for a few KB — the signature
@@ -158,7 +174,19 @@ async function handle(req, res, opts) {
   // Same answer for a bad secret and a bad path: nothing here confirms a guess.
   if (!r) { res.writeHead(404); return res.end('not a proxied path'); }
 
-  const upstream = (r.kind === 'dfs' ? opts.dfsUpstream : opts.tableUpstream) + r.rest + r.query;
+  // /cdn/<host>/<path> carries its destination in the path; the other routes carry
+  // theirs in configuration. Only allowlisted hosts resolve — everything else 404s the
+  // same way a bad secret does.
+  let upstream;
+  if (r.kind === 'cdn') {
+    const host = (r.rest.split('/')[1] || '').toLowerCase();
+    if (!CDN_HOSTS.has(host)) { res.writeHead(404); return res.end('not a proxied path'); }
+    // cdnUpstream is a test seam: the fake CDN still sees the host as its first path
+    // segment, so the allowlist is exercised either way.
+    upstream = (opts.cdnUpstream ? opts.cdnUpstream + r.rest : `https://${r.rest.slice(1)}`) + r.query;
+  } else {
+    upstream = (r.kind === 'dfs' ? opts.dfsUpstream : opts.tableUpstream) + r.rest + r.query;
+  }
   const range = req.headers.range || '';
 
   // "Slow" is not a diagnosis, and none of this is observable from the webview — DuckDB's
@@ -211,9 +239,23 @@ async function handle(req, res, opts) {
     }
   }
 
-  // Built fresh rather than forwarded: whatever the page sent, the token is ours.
-  const got = await fetchUpstream(upstream, opts.getToken,
-    { method: req.method, range, accept: req.headers.accept || '' });
+  // Built fresh rather than forwarded: whatever the page sent, the token is ours — and
+  // for the cdn route there is NO token at all: those are public hosts, and the bearer
+  // that reads the user's OneLake has no business appearing in a CDN's access log.
+  const got = r.kind === 'cdn'
+    ? await (async () => {
+        const out = { resp: null, tokenMs: 0, netMs: 0, error: '' };
+        const headers = {};
+        if (range) headers.range = range;
+        if (req.headers.accept) headers.accept = req.headers.accept;
+        const netAt = Date.now();
+        try { out.resp = await nodeFetch(upstream, req.method, headers); }
+        catch (e) { out.error = (e && e.message) || String(e); }
+        out.netMs = Date.now() - netAt;
+        return out;
+      })()
+    : await fetchUpstream(upstream, opts.getToken,
+        { method: req.method, range, accept: req.headers.accept || '' });
   const { tokenMs, netMs } = got;
   if (!got.resp) {
     if (got.error === 'no session') {
@@ -298,7 +340,7 @@ async function handle(req, res, opts) {
 }
 
 // Resolves to { port, secret, dfsOrigin, tableOrigin, close() }.
-function startProxy({ getToken, cacheDir, cacheMaxBytes, cacheTtlMs, onLog,
+function startProxy({ getToken, cacheDir, cacheMaxBytes, cacheTtlMs, onLog, cdnUpstream,
                       dfsUpstream = DFS_UPSTREAM, tableUpstream = TABLE_UPSTREAM } = {}) {
   if (typeof getToken !== 'function') throw new TypeError('startProxy needs a getToken() function');
 
@@ -310,7 +352,7 @@ function startProxy({ getToken, cacheDir, cacheMaxBytes, cacheTtlMs, onLog,
     // != null, not truthiness: zero is a real answer ("ask OneLake every time").
     ...(cacheTtlMs != null ? { ttlMs: cacheTtlMs } : {}),
   });
-  const opts = { getToken, dfsUpstream, tableUpstream, secret, cache, onLog };
+  const opts = { getToken, dfsUpstream, tableUpstream, secret, cache, onLog, cdnUpstream };
 
   const server = http.createServer((req, res) => {
     handle(req, res, opts).catch(e => {
@@ -331,6 +373,9 @@ function startProxy({ getToken, cacheDir, cacheMaxBytes, cacheTtlMs, onLog,
         secret,
         dfsOrigin: `${base}/dfs`,
         tableOrigin: `${base}/irc`,
+        // The engine's boot bytes — wasm, worker, extensions — proxied and disk-cached
+        // like everything else, so a panel open after the first needs no CDN at all.
+        cdnOrigin: `${base}/cdn`,
         // The bytes were read with the identity being left behind, so switching account
         // or signing out throws them away.
         clearCache: () => (cache ? cache.clear() : Promise.resolve()),

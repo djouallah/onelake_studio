@@ -28,7 +28,28 @@
 // including a build without the 'excel' extension, or with different SQL behaviour. This
 // version ships DuckDB v1.5.4 and has avro + excel; it is a dev tag by choice, since the
 // stable line lags. Bump it deliberately and re-run the format probe when you do.
-import * as duckdb from "https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.33.1-dev57.0/+esm";
+const DUCKDB_ESM = "https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.33.1-dev57.0/+esm";
+
+// In the extension every boot fetch — this module, the worker, the wasm, the extension
+// binaries — goes through the loopback proxy's /cdn route and its disk cache, because a
+// webview has no persistent HTTP cache and re-downloading ~40MB of engine on every panel
+// open put 25-30 seconds in front of the first click of every session. cdnOrigin is that
+// route; absent (the browser build, where Chrome's own cache does this job), every URL
+// passes through untouched.
+const CDN_ORIGIN = (typeof window !== "undefined" &&
+  (window.ONELAKE_STUDIO_CONFIG || {}).cdnOrigin) || "";
+const withCdn = url => (CDN_ORIGIN ? url.replace(/^https:\/\//, CDN_ORIGIN + "/") : url);
+
+// Dynamic, because a static import cannot be rerouted. Falls back to the CDN directly if
+// the proxied load fails — a broken proxy must degrade to the browser build's behaviour,
+// not to no engine at all.
+let duckdb;
+try { duckdb = await import(withCdn(DUCKDB_ESM)); }
+catch (e) {
+  if (!CDN_ORIGIN) throw e;
+  console.warn("[engine] proxied duckdb import failed, falling back to the CDN:", e.message);
+  duckdb = await import(DUCKDB_ESM);
+}
 
 // dfsBase/dfsUrl/toHttps come in under `…At` names and are re-bound to this engine's origin
 // inside createEngine — see the note there. Import them under their plain names anywhere in
@@ -288,6 +309,11 @@ export function createEngine(auth, {
     //          pthreadWorker: DIST+"duckdb-browser-coi.pthread.worker.js" }
     // (each worker URL wrapped in a same-origin blob importScripts shim).
     const bundle = await duckdb.selectBundle(duckdb.getJsDelivrBundles());
+    // Through the proxy's disk cache, like the module import above: the worker fetches
+    // the wasm itself, so its URLs have to be rewritten before the worker sees them.
+    for (const k of ["mainModule", "mainWorker", "pthreadWorker"]) {
+      if (bundle[k]) bundle[k] = withCdn(bundle[k]);
+    }
     const workerUrl = URL.createObjectURL(
       new Blob([`importScripts("${bundle.mainWorker}");`], { type: "text/javascript" })
     );
@@ -314,24 +340,29 @@ export function createEngine(auth, {
         catch (e) { console.warn(`[engine] ${ext} extension unavailable:`, e.message); return false; }
       }
     };
+    // INSTALL fetches over the network; through the proxy those fetches land in the
+    // same disk cache as the wasm, so extension loads after the first boot are local.
+    // The URL shape is preserved by passthrough — <repo>/<duckdb-ver>/<platform>/<ext>.
+    const coreRepo = CDN_ORIGIN ? `'${CDN_ORIGIN}/extensions.duckdb.org'` : "";
+    const commRepo = CDN_ORIGIN ? `'${CDN_ORIGIN}/community-extensions.duckdb.org'` : "community";
     // read_avro() (used to parse Iceberg manifests) comes from the 'avro' extension.
     // duckdb-wasm autoloads it on first use; preloading up front just makes the first
     // manifest read fast — the autoload on the first read_avro() call is the real mechanism.
-    await tryLoadExt("avro");
+    await tryLoadExt("avro", coreRepo);
     // read_xlsx() comes from 'excel'. Unlike avro this answer is remembered: the extension
     // is fetched over the network, so it can fail for reasons the pinned version doesn't
     // control, and offering an .xlsx that then fails to open is worse than not offering it.
-    canXlsx = await tryLoadExt("excel");
+    canXlsx = await tryLoadExt("excel", coreRepo);
     // h3_* (hexagonal spatial indexing) lives in the COMMUNITY repository — a plain
     // INSTALL looks in extensions.duckdb.org and 404s, hence FROM community. Loaded at
     // init because the editor's read-only guard blocks INSTALL/LOAD; once loaded,
     // SELECT h3_latlng_to_cell(...) just works. No capability flag: nothing in the UI
     // gates on h3, and a failure costs only the h3_* functions (warned by tryLoadExt).
-    if (await tryLoadExt("h3", "community")) console.log("[engine] h3 community extension loaded");
+    if (await tryLoadExt("h3", commRepo)) console.log("[engine] h3 community extension loaded");
     // zipfs (also community) is remembered like excel: it gates whether .zip files are
     // offered in the Files tree, and offering a zip that then fails to open is worse
     // than not offering it.
-    canZip = await tryLoadExt("zipfs", "community");
+    canZip = await tryLoadExt("zipfs", commRepo);
     // `threads` is the proof, not the bundle name: >1 means the coi build actually got
     // its SharedArrayBuffer and the isolation work is paying for itself.
     let threads = "?";
@@ -836,8 +867,8 @@ export function createEngine(auth, {
   // so the qualifier is two-part). BLOBs don't survive the JSON hop and are nulled with
   // a warning rather than silently mangled.
   const SQLJS_VERSION = "1.13.0";
-  const SQLJS_ESM = `https://cdn.jsdelivr.net/npm/sql.js@${SQLJS_VERSION}/+esm`;
-  const SQLJS_DIST = `https://cdn.jsdelivr.net/npm/sql.js@${SQLJS_VERSION}/dist/`;
+  const SQLJS_ESM = withCdn(`https://cdn.jsdelivr.net/npm/sql.js@${SQLJS_VERSION}/+esm`);
+  const SQLJS_DIST = withCdn(`https://cdn.jsdelivr.net/npm/sql.js@${SQLJS_VERSION}/dist/`);
   const SQLITE_MAX_BYTES = 200e6;
   let _sqljs = null;
 

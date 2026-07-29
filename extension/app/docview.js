@@ -13,8 +13,15 @@
 // =============================================================================
 import { docKind, escapeHtml } from './paths.js';
 
-const MARKED_ESM = 'https://cdn.jsdelivr.net/npm/marked@18.0.7/+esm';
-const DOMPURIFY_ESM = 'https://cdn.jsdelivr.net/npm/dompurify@3.4.12/+esm';
+// Routed through the extension's loopback proxy when its config names a cdnOrigin —
+// same disk-cached boot path as duckdb itself in data.js, so the first markdown render
+// of a session does not stall on a CDN fetch the webview cannot cache.
+const CDN_ORIGIN = (typeof window !== 'undefined' &&
+  (window.ONELAKE_STUDIO_CONFIG || {}).cdnOrigin) || '';
+const withCdn = url => (CDN_ORIGIN ? url.replace(/^https:\/\//, CDN_ORIGIN + '/') : url);
+
+const MARKED_ESM = withCdn('https://cdn.jsdelivr.net/npm/marked@18.0.7/+esm');
+const DOMPURIFY_ESM = withCdn('https://cdn.jsdelivr.net/npm/dompurify@3.4.12/+esm');
 
 let _md = null;   // { marked, purify } once loaded
 
