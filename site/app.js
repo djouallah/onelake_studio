@@ -1031,6 +1031,14 @@ async function selectTable(row, t) {
     // The buttons are left to setBusy(false) in the finally — one owner for that state.
     $('sqlEditor').value = previewSql(identOf(t), false);
     setStatus(engine.describeLoad(info));
+    // The Data tab's rows, started NOW rather than when asked for. Selecting a table is
+    // the strongest signal there is that its data is about to be looked at, and the peek
+    // is two small manifests plus one file — the spend the Data tab was about to make
+    // anyway, just early enough to be done by the click. Floating on purpose: quiet (its
+    // progress must not write over the stats the user is reading), gen-guarded inside
+    // the engine (a click elsewhere kills it), joined rather than repeated by
+    // peekIntoView through the peek memo, and its failure is the Data tab's to report.
+    if (info.stage !== 'loaded') engine.peekTable(lakehouse, t, { quiet: true }).catch(() => {});
   } catch (e) {
     if (my !== selSeq) return;
     reportTableError(e, row);

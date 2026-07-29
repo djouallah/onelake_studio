@@ -1511,19 +1511,36 @@ export function createEngine(auth, {
   // The manifest walk (small avro) plus one parquet footer and one row group. No view is
   // created and the other N-1 files are never touched — this is the cheapest honest way
   // to answer "what does the data look like".
-  async function peekTable(lh, t) {
+  // Built once, then simply there. The same table's peek is the same snapshot
+  // (resolvedC pins the resolve for the session), the same first file, the same
+  // hundred rows — re-reading them through the worker on every visit was pure spend.
+  // Plain JS rows, no DuckDB state: a worker restart keeps this, which is exactly
+  // when it matters — coming back to a table after a cancel renders instantly while
+  // the new worker is still waking up. reset() clears it with its siblings.
+  //
+  // The memo holds the PROMISE, not the value, so it is also single-flight: the
+  // prefetch that starts when a table is selected and the Data tab that asks a moment
+  // later share one walk — without this, the second call's cancelLoad() would kill the
+  // first mid-read and start over. A peek that fails or is cancelled un-memoises
+  // itself; only an answer is worth keeping.
+  //
+  // `quiet` is for the prefetch: its progress writing over the stats view's status —
+  // and then leaving "Reading the first of…" on screen after silently finishing —
+  // read as the app being stuck.
+  function peekTable(lh, t, { quiet = false } = {}) {
     const key = tableKey(lh, t);
-    // Built once, then simply there. The same table's peek is the same snapshot
-    // (resolvedC pins the resolve for the session), the same first file, the same
-    // hundred rows — re-reading them through the worker on every visit was pure spend.
-    // Plain JS rows, no DuckDB state: a worker restart keeps this, which is exactly
-    // when it matters — coming back to a table after a cancel renders instantly while
-    // the new worker is still waking up. reset() clears it with its siblings.
     if (peekC.has(key)) return peekC.get(key);
+    const p = doPeek(lh, t, key, quiet);
+    peekC.set(key, p);
+    p.catch(() => { if (peekC.get(key) === p) peekC.delete(key); });
+    return p;
+  }
+
+  async function doPeek(lh, t, key, quiet) {
     await cancelLoad();
     const gen = loadGen;
     const check = () => { if (gen !== loadGen) throw cancelledError(); };
-    const status = statusFor(gen);
+    const status = quiet ? () => {} : statusFor(gen);
     const label = labelFor(t);
     const ws = lh.workspace;
 
@@ -1549,9 +1566,7 @@ export function createEngine(auth, {
     const out = await materialize(
       `SELECT * FROM read_parquet([${sqlStr(reg)}]) LIMIT ${QUICK_PEEK_ROWS}`);
     check();
-    const result = { ...aliasOutput(out, resolved.nameMapping), fileCount: files.length };
-    peekC.set(key, result);
-    return result;
+    return { ...aliasOutput(out, resolved.nameMapping), fileCount: files.length };
   }
 
   // A Warehouse's physical column names are GUIDs; give a raw file read the same logical
