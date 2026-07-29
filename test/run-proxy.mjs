@@ -11,8 +11,9 @@
 //
 // Run: node test/run-proxy.mjs
 import http from "node:http";
-import { readFile, writeFile, stat, mkdir } from "node:fs/promises";
+import { readFile, writeFile, stat, mkdir, mkdtemp, rm } from "node:fs/promises";
 import { execFileSync } from "node:child_process";
+import { tmpdir } from "node:os";
 import { join, extname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
@@ -82,8 +83,13 @@ await new Promise(r => upstream.listen(0, "127.0.0.1", r));
 const upBase = `http://127.0.0.1:${upstream.address().port}`;
 
 let token = TOKEN;
+// Every call the proxy makes, with the options it passed — the retry path is only
+// observable from here.
+const tokenCalls = [];
+const CACHE_DIR = await mkdtemp(join(tmpdir(), "onelake-proxy-cache-"));
 const proxy = await startProxy({
-  getToken: async () => token,
+  getToken: async opts => { tokenCalls.push(opts); return opts && opts.fresh ? TOKEN : token; },
+  cacheDir: CACHE_DIR,
   dfsUpstream: upBase,
   tableUpstream: `${upBase}`,
 });
@@ -138,6 +144,75 @@ console.log("--- proxy behaviour ---");
   token = null;
   eq((await fetch(`${proxy.dfsOrigin}/ws/f.parquet`)).status, 401, "no session -> 401, not a hang");
   token = TOKEN;
+}
+// The caller caches the token — it has to, or every range read costs a lookup in the
+// account provider, which is what made the panel slower than the browser build. So an
+// expiry now surfaces HERE, as a 401 from upstream, and the proxy has to ask again with
+// `fresh` rather than hand the failure back.
+{
+  const before = tokenCalls.length;
+  token = "stale-token";
+  const r = await fetch(`${proxy.dfsOrigin}/ws/f.parquet`, { headers: { range: "bytes=0-15" } });
+  eq(r.status, 206, "a stale cached token is retried, not reported");
+  eq(tokenCalls.slice(before).some(c => c && c.fresh === true), true,
+     "...and the retry asked for a fresh one, which is the only thing that could help");
+  token = TOKEN;
+}
+{
+  const before = tokenCalls.length;
+  token = TOKEN;
+  await fetch(`${proxy.dfsOrigin}/ws/f.parquet`, { headers: { range: "bytes=0-15" } });
+  eq(tokenCalls.slice(before).length, 1, "a read that works asks for the token exactly once");
+}
+
+// --- the data cache: sw.js's rules, on disk, for the webview -----------------------------
+// The browser build has kept immutable Iceberg objects since sw.js started caching them,
+// and the panel had nothing — which is why opening the same table twice was slower here
+// than on the website. The rules are copied, so what must NOT be cached is as much of the
+// test as what must.
+const TABLE_FILE = `${proxy.dfsOrigin}/ws/lh.Lakehouse/Tables/t/data_0.parquet`;
+{
+  const before = log.length;
+  const a = await fetch(TABLE_FILE, { headers: { Range: "bytes=0-99" } });
+  const aBody = Buffer.from(await a.arrayBuffer());
+  eq(log.length, before + 1, "a first read of a data file goes upstream");
+
+  // The write lands after the body has been streamed; give the 'end' handler its turn.
+  await new Promise(r => setTimeout(r, 150));
+
+  const hitAt = log.length;
+  const b = await fetch(TABLE_FILE, { headers: { Range: "bytes=0-99" } });
+  const bBody = Buffer.from(await b.arrayBuffer());
+  eq(log.length, hitAt, "the second one does not");
+  eq(b.status, 206, "…and is still a 206");
+  eq(b.headers.get("content-range"), `bytes 0-99/${parquet.length}`, "…with the range it asked for");
+  ok(aBody.equals(bBody), "…and byte-for-byte the same answer");
+
+  const other = log.length;
+  await fetch(TABLE_FILE, { headers: { Range: "bytes=200-299" } });
+  eq(log.length, other + 1, "a different range is a different object, and is fetched");
+}
+{
+  // Files/ is overwritten by users, a listing carries a query string, and metadata.json is
+  // rewritten by conversion. Caching any of them would serve a stale answer that no
+  // invalidation here could ever catch.
+  for (const [what, url] of [
+    ["a file under Files/", `${proxy.dfsOrigin}/ws/lh.Lakehouse/Files/data.parquet`],
+    ["a listing", `${proxy.dfsOrigin}/ws/lh.Lakehouse/Tables/t/data_0.parquet?resource=filesystem`],
+    ["table metadata", `${proxy.dfsOrigin}/ws/lh.Lakehouse/Tables/t/metadata/v1.metadata.json`],
+  ]) {
+    await fetch(url, { headers: { Range: "bytes=0-31" } });
+    await new Promise(r => setTimeout(r, 100));
+    const before = log.length;
+    await fetch(url, { headers: { Range: "bytes=0-31" } });
+    eq(log.length, before + 1, `${what} is never cached`);
+  }
+}
+{
+  await proxy.clearCache();
+  const before = log.length;
+  await fetch(TABLE_FILE, { headers: { Range: "bytes=0-99" } });
+  eq(log.length, before + 1, "clearing the cache really lets go of the bytes");
 }
 
 // =============================================================================
@@ -231,6 +306,7 @@ try {
   pageServer.close();
   await proxy.close();
   upstream.close();
+  await rm(CACHE_DIR, { recursive: true, force: true }).catch(() => {});
 }
 
 console.log(`\nRESULT: ${fail ? "FAILED" : "OK"} — ${pass}/${pass + fail} checks passed`);

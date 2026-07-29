@@ -1759,19 +1759,17 @@ if (HOST_VSCODE) {
     await selectTable(detachedRow(), { schema: m.schema || '', table: m.table });
   }
 
-  // The tree knows the path but not whether this build of DuckDB can read it — `queryable`
-  // depends on which extensions loaded, which is this side's business. So the entry is
-  // taken from the engine's own listing of the containing directory rather than rebuilt
-  // from the message.
+  // The message carries everything a listing would have: the tree just read this
+  // directory. Re-listing it here to recover the entry cost a DFS round trip before every
+  // file open, which is exactly the kind of thing that makes an editor feel slower than a
+  // web page. The one flag not sent is `queryable` — whether a reader exists depends on
+  // which DuckDB extensions loaded — and it is not needed: loadFile decides that itself
+  // and says so, which is a better answer than refusing up front.
   async function openFile(m) {
     await goToLakehouse(m.workspace, m.item);
-    const rel = String(m.path).replace(/^.*?\/Files\/?/, '');
-    const dir = rel.includes('/') ? rel.slice(0, rel.lastIndexOf('/')) : '';
-    const entry = (await engine.listFiles(lakehouse, dir)).find(e => e.path === m.path);
-    if (!entry) { setStatus(`${basename(m.path)} is no longer there.`, 'warn'); return; }
-    if (entry.queryable) await selectFile(detachedRow(), entry);
-    else if (IMAGE_EXTS.has(fileExt(entry.name))) await selectImage(detachedRow(), entry);
-    else setStatus(`No reader for ${entry.name}.`, 'warn');
+    const entry = { name: basename(m.path), path: m.path, isDir: false, bytes: m.bytes || 0 };
+    if (IMAGE_EXTS.has(fileExt(entry.name))) await selectImage(detachedRow(), entry);
+    else await selectFile(detachedRow(), entry);
   }
 
   window.addEventListener('message', async e => {

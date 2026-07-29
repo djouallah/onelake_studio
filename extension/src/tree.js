@@ -45,7 +45,8 @@ class LakehouseTree {
 
   getTreeItem(n) {
     const C = vscode.TreeItemCollapsibleState;
-    const item = new vscode.TreeItem(n.label, n.leaf ? C.None : C.Collapsed);
+    const item = new vscode.TreeItem(n.label,
+      n.leaf ? C.None : n.expanded ? C.Expanded : C.Collapsed);
     item.contextValue = n.kind;
     switch (n.kind) {
       case 'workspace':
@@ -56,6 +57,9 @@ class LakehouseTree {
         // The suffix OneLake names the directory with is Fabric's internal type; kindLabel
         // turns the few that read badly ("SQLDbNative") into what the portal calls them.
         item.description = n.kindLabel;
+        break;
+      case 'tables':
+        item.iconPath = new vscode.ThemeIcon('list-tree');
         break;
       case 'schema':
         item.iconPath = new vscode.ThemeIcon('symbol-namespace');
@@ -117,26 +121,29 @@ class LakehouseTree {
         : [node('empty', 'Nothing here holds tables', { leaf: true })];
     }
 
+    // An item's two halves, named the way OneLake names them. Tables comes first and opens
+    // expanded, so the grouping costs no extra click on the way to the thing people
+    // actually came for; Files stays shut, because listing it is a request.
     if (n.kind === 'item') {
       const lh = { workspace: n.workspace, item: n.item };
-      const tables = await this.catalog.listTables(lh);
-      const kids = [];
-      // Only a lakehouse has a Files/ area, and the suffix already says which — no request
-      // is needed to find that out. It goes first: it is one row, and burying it under a
-      // few hundred tables would make it unreachable without scrolling.
+      const kids = [node('tables', 'Tables', { ...lh, expanded: true })];
+      // Only a lakehouse has a Files/ area, and the item's suffix already says which — no
+      // request is needed to find that out.
       if (hasFilesArea(n.item)) kids.push(node('dir', 'Files', { ...lh, dir: '' }));
+      return kids;
+    }
 
+    if (n.kind === 'tables') {
+      const lh = { workspace: n.workspace, item: n.item };
+      const tables = await this.catalog.listTables(lh);
+      if (!tables.length) return [node('empty', 'No tables', { leaf: true })];
       const schemas = [...new Set(tables.map(t => t.schema || ''))];
       // OneLake gives schema-less items a synthetic single namespace. Rendering "dbo" as a
-      // level of its own would be one click between the item and every table in it, for a
+      // level of its own would be one click between here and every table in it, for a
       // grouping that isn't real.
-      if (schemas.length <= 1) {
-        kids.push(...tables.map(t => this._table(lh, t)));
-      } else {
-        kids.push(...schemas.sort().map(s => node('schema', s || '(no schema)', { ...lh, schema: s })));
-      }
-      if (!kids.length) kids.push(node('empty', 'No tables', { leaf: true }));
-      return kids;
+      return schemas.length <= 1
+        ? tables.map(t => this._table(lh, t))
+        : schemas.sort().map(s => node('schema', s || '(no schema)', { ...lh, schema: s }));
     }
 
     if (n.kind === 'schema') {
@@ -153,7 +160,9 @@ class LakehouseTree {
         // `path` is workspace-relative (…/Files/a/b); the child directory is what follows
         // Files/, which is what listFiles takes.
         ? node('dir', e.name, { ...lh, dir: strip(e.path.replace(/^.*?\/Files\/?/, '')) })
-        : node('file', e.name, { ...lh, leaf: true, path: e.path, size: fmtBytes(e.bytes) }));
+        // bytes travels with it so the panel can open the file without re-listing the
+        // directory it already knows everything about.
+        : node('file', e.name, { ...lh, leaf: true, path: e.path, bytes: e.bytes, size: fmtBytes(e.bytes) }));
     }
 
     return [];

@@ -15,6 +15,7 @@
 // =============================================================================
 
 const vscode = require('vscode');
+const { join } = require('node:path');
 const { startProxy } = require('./proxy');
 const { openPanel, closePanel, postToPanel } = require('./panel');
 const { createCatalog } = require('./catalog');
@@ -40,11 +41,37 @@ function getToken(options) {
     .then(s => (s && s.accessToken) || null, () => null);
 }
 
+// getSession is an RPC into the account provider, and the proxy was making one PER READ.
+// Opening a table is dozens of range reads, so that lookup — not OneLake, not DuckDB —
+// was most of the wait, and it is the whole reason the panel felt slower than the browser
+// build, where the service worker holds the token in memory and adds nothing.
+//
+// Cached with a short life rather than for the token's own hour: the point is to collapse
+// a burst, and a stale one costs a single retry (proxy.js asks again with `fresh` when a
+// read comes back 401). Anything that can change the answer clears it outright.
+const TOKEN_TTL_MS = 60_000;
+let cachedToken = null;   // { token, at }
+
+function forgetToken() { cachedToken = null; }
+
+async function proxyToken({ fresh = false } = {}) {
+  if (!fresh && cachedToken && Date.now() - cachedToken.at < TOKEN_TTL_MS) return cachedToken.token;
+  const token = await getToken({ createIfNone: false });
+  cachedToken = token ? { token, at: Date.now() } : null;
+  return token;
+}
+
 let proxy = null;
 
 async function ensureProxy(context) {
   if (!proxy) {
-    proxy = await startProxy({ getToken: () => getToken({ createIfNone: false }) });
+    proxy = await startProxy({
+      getToken: proxyToken,
+      // The same half-gigabyte of immutable Iceberg files sw.js keeps for the browser
+      // build. Without it the panel re-downloaded every parquet footer and row group on
+      // every open, which the website has not done since the worker started caching them.
+      cacheDir: join(context.globalStorageUri.fsPath, 'onelake-data'),
+    });
     context.subscriptions.push({ dispose: () => proxy && proxy.close() });
   }
   return proxy;
@@ -75,7 +102,9 @@ async function activate(context) {
   // Listing goes straight to OneLake on the VS Code token — the proxy is for DuckDB's
   // range reads, which run in the webview and cannot set a header of their own.
   const catalog = createCatalog({
-    getToken: () => getToken({ createIfNone: false }),
+    // Same cache as the proxy's: expanding one item is a handful of calls, and they have
+    // no more business asking the account provider once each than a range read does.
+    getToken: proxyToken,
     siteFsPath: site.fsPath,
   });
   const tree = new LakehouseTree({ catalog, isSignedIn: () => signedIn });
@@ -103,7 +132,7 @@ async function activate(context) {
     })),
 
     vscode.commands.registerCommand('onelakeStudio.openFile', n => openInPanel({
-      type: 'open-file', workspace: n.workspace, item: n.item, path: n.path,
+      type: 'open-file', workspace: n.workspace, item: n.item, path: n.path, bytes: n.bytes,
     })),
 
     vscode.commands.registerCommand('onelakeStudio.open', async () => {
@@ -137,6 +166,8 @@ async function activate(context) {
         // the previous one, and its cached tables should not survive the switch. The tree
         // holds the same kind of stale answer, so it is emptied on the way out too.
         closePanel();
+        forgetToken();                              // the cached one belongs to the account being left
+        if (proxy) await proxy.clearCache();        // ...and so do the bytes it read
         tree.refresh();
         await show(context, { createIfNone: true, clearSessionPreference: true });
         await setSignedIn(!!await getToken({ createIfNone: false }));
@@ -151,11 +182,13 @@ async function activate(context) {
     // this only exists to make the failure a sentence instead of a wall of 401s.
     vscode.authentication.onDidChangeSessions(async e => {
       if (e.provider.id !== 'microsoft') return;
+      forgetToken();
       const live = !!await getToken({ createIfNone: false });
       await setSignedIn(live);
       tree.refresh();
       if (!live && proxy) {
         closePanel();
+        await proxy.clearCache();
         vscode.window.showInformationMessage(
           'OneLake Studio signed out — the Microsoft account is no longer available.');
       }

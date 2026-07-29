@@ -20,13 +20,15 @@
 // manifest reader.
 //
 // No `vscode` import anywhere in this file: the token arrives as an injected async
-// function. That is what lets test/run-proxy.mjs drive it against a fake OneLake
-// with no editor running.
+// function, `getToken({ fresh })`. That is what lets test/run-proxy.mjs drive it against
+// a fake OneLake with no editor running. The caller is expected to cache what it returns
+// — see extension.js — and `fresh` is how this file says "that one just 401'd".
 // =============================================================================
 
 const http = require('node:http');
 const crypto = require('node:crypto');
 const { Readable } = require('node:stream');
+const { createCache, cacheable, MAX_ENTRY_BYTES } = require('./cache');
 
 const DFS_UPSTREAM = 'https://onelake.dfs.fabric.microsoft.com';
 const TABLE_UPSTREAM = 'https://onelake.table.fabric.microsoft.com';
@@ -85,19 +87,48 @@ async function handle(req, res, opts) {
   // Same answer for a bad secret and a bad path: nothing here confirms a guess.
   if (!r) { res.writeHead(404); return res.end('not a proxied path'); }
 
-  let token = null;
-  try { token = await opts.getToken(); } catch (_) { /* treated as no session */ }
-  if (!token) { res.writeHead(401); return res.end('no Microsoft account session'); }
-
   const upstream = (r.kind === 'dfs' ? opts.dfsUpstream : opts.tableUpstream) + r.rest + r.query;
+  const range = req.headers.range || '';
+
+  // A hit answers without a token and without touching the network — the bytes are
+  // already on this machine, and they belong to an object that cannot change. HEAD is
+  // left alone: it is asking for a length, not for bytes.
+  if (opts.cache && req.method === 'GET') {
+    const hit = await opts.cache.get(upstream, range);
+    if (hit) {
+      res.writeHead(hit.contentRange ? 206 : 200, {
+        'content-type': 'application/octet-stream',
+        'content-length': String(hit.body.length),
+        'accept-ranges': 'bytes',
+        ...(hit.contentRange ? { 'content-range': hit.contentRange } : {}),
+      });
+      return res.end(hit.body);
+    }
+  }
+
   // Built fresh rather than forwarded: whatever the page sent, the token is ours.
-  const headers = { authorization: 'Bearer ' + token };
-  if (req.headers.range) headers.range = req.headers.range;
-  if (req.headers.accept) headers.accept = req.headers.accept;
+  const send = token => {
+    const headers = { authorization: 'Bearer ' + token };
+    if (req.headers.range) headers.range = req.headers.range;
+    if (req.headers.accept) headers.accept = req.headers.accept;
+    return fetch(upstream, { method: req.method, headers, redirect: 'follow' });
+  };
 
   let up;
   try {
-    up = await fetch(upstream, { method: req.method, headers, redirect: 'follow' });
+    let token = await opts.getToken();
+    if (!token) { res.writeHead(401); return res.end('no Microsoft account session'); }
+    up = await send(token);
+    // The token the caller handed over is cached — it has to be, or every one of DuckDB's
+    // range reads pays a round trip to the account provider — so this is where an expiry
+    // is discovered. Asking for a fresh one and retrying keeps the self-healing that
+    // fetching per request used to give for free, at one wasted request per hour rather
+    // than one lookup per read. Only 401: a 403 means this identity may not read that
+    // path, and a new token will not change its mind.
+    if (up.status === 401) {
+      const fresh = await opts.getToken({ fresh: true });
+      if (fresh && fresh !== token) up = await send(fresh);
+    }
   } catch (e) {
     res.writeHead(502);
     return res.end(`proxy could not reach OneLake: ${(e && e.message) || e}`);
@@ -112,15 +143,46 @@ async function handle(req, res, opts) {
   // the engine reads and turns into its own diagnosis.
   res.writeHead(up.status, out);
   if (req.method === 'HEAD' || !up.body) return res.end();
-  Readable.fromWeb(up.body).pipe(res);
+
+  // Streamed to DuckDB either way; when it is worth keeping, the chunks are also collected
+  // and written afterwards. The read never waits on the write, and a write that fails
+  // costs a future cache miss and nothing else.
+  //
+  // `cacheable` is checked here rather than left to put(): otherwise every whole-file read
+  // of something that will never be stored — a CSV under Files/, a listing — would be held
+  // in memory on its way past for nothing.
+  const body = Readable.fromWeb(up.body);
+  const keep = opts.cache && req.method === 'GET' &&
+    (up.status === 200 || up.status === 206) && cacheable(upstream);
+  if (!keep) return void body.pipe(res);
+
+  let chunks = [];
+  let size = 0;
+  body.on('data', c => {
+    if (!chunks) return;
+    size += c.length;
+    // Past the cap this would be a copy of something that is not going to be stored.
+    if (size > MAX_ENTRY_BYTES) { chunks = null; return; }
+    chunks.push(c);
+  });
+  body.on('end', () => {
+    if (chunks) {
+      opts.cache.put(upstream, range, up.status, out['content-range'] || '', Buffer.concat(chunks, size));
+    }
+  });
+  body.pipe(res);
 }
 
 // Resolves to { port, secret, dfsOrigin, tableOrigin, close() }.
-function startProxy({ getToken, dfsUpstream = DFS_UPSTREAM, tableUpstream = TABLE_UPSTREAM } = {}) {
+function startProxy({ getToken, cacheDir,
+                      dfsUpstream = DFS_UPSTREAM, tableUpstream = TABLE_UPSTREAM } = {}) {
   if (typeof getToken !== 'function') throw new TypeError('startProxy needs a getToken() function');
 
   const secret = crypto.randomBytes(24).toString('hex');
-  const opts = { getToken, dfsUpstream, tableUpstream, secret };
+  // Absent cacheDir means no cache — every read goes upstream, which is what the proxy
+  // did before and is still a correct proxy.
+  const cache = createCache(cacheDir);
+  const opts = { getToken, dfsUpstream, tableUpstream, secret, cache };
 
   const server = http.createServer((req, res) => {
     handle(req, res, opts).catch(e => {
@@ -141,6 +203,9 @@ function startProxy({ getToken, dfsUpstream = DFS_UPSTREAM, tableUpstream = TABL
         secret,
         dfsOrigin: `${base}/dfs`,
         tableOrigin: `${base}/irc`,
+        // The bytes were read with the identity being left behind, so switching account
+        // or signing out throws them away.
+        clearCache: () => (cache ? cache.clear() : Promise.resolve()),
         close: () => new Promise(done => server.close(done)),
       });
     });
