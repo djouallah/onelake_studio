@@ -844,6 +844,7 @@ let selSeq = 0;
 
 async function selectFile(row, file) {
   const my = ++selSeq;
+  engine.cancelLoad();   // same verdict as selectTable: the last thing is no longer waited for
   document.querySelectorAll('.fileItem.active').forEach(el => el.classList.remove('active'));
   row.classList.add('active');
   $('activeTable').textContent = file.name;
@@ -988,6 +989,13 @@ async function selectTable(row, t) {
     return;
   }
   const my = ++selSeq;
+  // A click on a table is also a verdict on whatever is still running: the user has
+  // stopped waiting for it. Cancel it NOW — the superseded walk stands down at its next
+  // checkpoint, a statement mid-flight is cancelled, and a worker wedged in a
+  // synchronous bind is terminated by the watchdog. Without this, the click queued
+  // behind ALL of it — measured as "Reading the first of 1 file(s)… " hanging for many
+  // seconds while every byte it needed was already on disk.
+  engine.cancelLoad();
   document.querySelectorAll('.tableItem.active').forEach(el => el.classList.remove('active'));
   row.classList.add('active');
   $('activeTable').textContent = t.schema ? `${t.schema}.${t.table}` : t.table;
@@ -1023,6 +1031,14 @@ async function selectTable(row, t) {
     // The buttons are left to setBusy(false) in the finally — one owner for that state.
     $('sqlEditor').value = previewSql(identOf(t), false);
     setStatus(engine.describeLoad(info));
+    // The Data tab's rows, started NOW rather than when asked for. Selecting a table is
+    // the strongest signal there is that its data is about to be looked at, and the peek
+    // is two small manifests plus one file — the spend the Data tab was about to make
+    // anyway, just early enough to be done by the click. Floating on purpose: quiet (its
+    // progress must not write over the stats the user is reading), gen-guarded inside
+    // the engine (a click elsewhere kills it), joined rather than repeated by
+    // peekIntoView through the peek memo, and its failure is the Data tab's to report.
+    if (info.stage !== 'loaded') engine.peekTable(lakehouse, t, { quiet: true }).catch(() => {});
   } catch (e) {
     if (my !== selSeq) return;
     reportTableError(e, row);
@@ -1674,11 +1690,13 @@ $('byoLink').onclick = () => showByoForm();
 $('gateClose').onclick = () => { $('authGate').style.display = 'none'; };
 initSidebarToggle();
 initSidebarResize();
-// The stamp answers "which build did the cache give me", which is a browser's question.
-// An installed extension has one copy of the app and VS Code owns its version, so the
-// stamp says nothing and the poller asks a server that isn't there.
+// The staleness poller is a browser question — GitHub Pages caches for ten minutes, and
+// a webview has no server to ask. But WHICH build is running is everyone's question: a
+// Marketplace install, a sideloaded vsix and an F5 checkout look identical from inside,
+// and "is it even running my fix?" once cost an hour of chasing a bug in code that was
+// not there. The stamp shows everywhere — "dev" from a checkout, a commit otherwise.
+showVersion();
 if (!HOST_VSCODE) {
-  showVersion();
   checkForNewBuild();
   setInterval(checkForNewBuild, VERSION_RECHECK_MS);
 }
@@ -1790,24 +1808,30 @@ if (HOST_VSCODE) {
     el.hidden = false;
     el.className = '';
     const fromNet = m.misses + m.skips;
+    // Background fills: downloads the extension started so the NEXT read is local. Real
+    // network spend, so "local" is never claimed while one is in the burst — the ⇣ says
+    // the bytes served locally were bought in the background.
+    const filled = m.storeBytes || 0;
+    const dl = filled ? ` · ⇣ ${bytes(filled)}` : '';
     if (m.cacheOff) {
       el.textContent = '☁ no cache';
       el.className = 'nocache';
     } else if (!fromNet) {
-      el.textContent = '▤ local';
+      el.textContent = `▤ local${dl}`;
       el.className = 'local';
     } else if (m.hits) {
-      el.textContent = `▤ ${m.hits} · ☁ ${fromNet} · ${bytes(m.netBytes)}`;
+      el.textContent = `▤ ${m.hits} · ☁ ${fromNet} · ${bytes(m.netBytes)}${dl}`;
     } else {
-      el.textContent = `☁ network · ${bytes(m.netBytes)}`;
+      el.textContent = `☁ network · ${bytes(m.netBytes)}${dl}`;
     }
     el.title = [
       `${m.reads} read(s) behind the last thing you waited for.`,
       m.hits ? `${m.hits} from this machine (${bytes(m.cacheBytes)}).` : 'None came from this machine.',
       fromNet ? `${fromNet} from OneLake (${bytes(m.netBytes)}, ${(m.netMs / 1000).toFixed(1)}s).` : '',
-      // A skip is not a miss: those objects are ones the cache is not allowed to hold, so
-      // they will cost the network every time and no amount of waiting changes that.
-      m.skips ? `${m.skips} of those can never be cached — they are not immutable objects.` : '',
+      // A skip is not a miss: nothing of it was kept, so it will cost the network again.
+      m.skips ? `${m.skips} of those were not kept, and will cost the network again.` : '',
+      m.stores ? `${m.stores} background download(s) filled the cache (${bytes(filled)}) ` +
+                 `so the next read is local.` : '',
       m.cacheOff ? `Cache is OFF: ${m.cacheOff}` : `Cache holds ${bytes(m.cacheStored)} of ${bytes(m.cacheMax)}.`,
       'Click for the full read log.',
     ].filter(Boolean).join('\n');

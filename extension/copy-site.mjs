@@ -1,6 +1,7 @@
-// vsce packages the extension directory and nothing above it, so site/ — which lives at
-// the repo root and is shared with the web app — has to be copied in before packaging.
-// Copied, not forked: extension/site/ is gitignored and rebuilt from the one source.
+// extension/app/ is the extension's own TRACKED fork of the web app — site/ at the repo
+// root is the deployed website and is never touched by extension work, by the owner's
+// explicit rule. This script turns app/ into the packaged site/ artifact: extension/site/
+// is gitignored and rebuilt from app/ on every package.
 //
 // README.md goes in with it: the panel's landing page is a query result, and in the
 // webview that query reads the README from inside the extension rather than from GitHub.
@@ -13,7 +14,7 @@ import { rm, cp, writeFile } from "node:fs/promises";
 import { execSync } from "node:child_process";
 
 const here = new URL("./", import.meta.url);
-const src = new URL("../site/", here);
+const src = new URL("./app/", here);
 const dst = new URL("./site/", here);
 
 await rm(dst, { recursive: true, force: true });

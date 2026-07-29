@@ -1,10 +1,10 @@
-// Tests for extension/src/html.js against the REAL site/index.html.
+// Tests for extension/src/html.js against the REAL extension/app/index.html — the
+// extension's own tracked fork of the app, the one the panel actually serves.
 //
-// The point is the coupling: index.html belongs to the web app and gets edited without
-// this extension in mind. Every rewrite below is a regex, and the dangerous failure is
-// the quiet one — if the config.js tag stops matching, the panel comes up looking fine
-// but running the web app's config, which points DuckDB straight at OneLake with no
-// token and no proxy. That is a wall of 401s traced back to a tag rename days later.
+// The point is the coupling: every rewrite below is a regex, and the dangerous failure
+// is the quiet one — if the config.js tag stops matching, the panel comes up looking
+// fine but running the app's default config, which points DuckDB straight at OneLake
+// with no token and no proxy. That is a wall of 401s traced back to a tag rename later.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -17,7 +17,7 @@ const require = createRequire(import.meta.url);
 const { rewriteHtml } = require("../extension/src/html.js");
 
 const root = join(fileURLToPath(new URL(".", import.meta.url)), "..");
-const INDEX = await readFile(join(root, "site", "index.html"), "utf8");
+const INDEX = await readFile(join(root, "extension", "app", "index.html"), "utf8");
 
 const OPTS = {
   assetUrl: name => `https://webview.test/${name}`,
@@ -75,7 +75,7 @@ test("the webview's own config keys survive the injection", () => {
 });
 
 test("app.js reads both of them, so the injection is not writing into a void", async () => {
-  const app = await readFile(join(root, "site", "app.js"), "utf8");
+  const app = await readFile(join(root, "extension", "app", "app.js"), "utf8");
   assert.match(app, /cfg\.host === 'vscode'/, "app.js branches on the host flag");
   assert.match(app, /cfg\.readmeUrl/, "app.js takes the README URL from the config");
 });

@@ -100,6 +100,7 @@ export function createEngine(auth, {
   // state, so a worker restart keeps them — only a lakehouse switch clears them.
   const resolvedC = new Map();      // cache key -> the resolved Iceberg metadata document
   const filesC = new Map();         // cache key -> { files[], posDeletes[], eqDeletes[] }
+  const peekC = new Map();          // cache key -> the peek's rows, built once per snapshot
 
   // Opening a big table is not one slow request, it is hundreds of small ones — the
   // manifest walk, then a registration per data file — and until there was a way out of
@@ -621,6 +622,7 @@ export function createEngine(auth, {
     viewNames.clear();
     resolvedC.clear();
     filesC.clear();
+    peekC.clear();
   }
 
   // A DuckDB identifier for this key that no other key already owns. sanitizeIdent is
@@ -1509,12 +1511,36 @@ export function createEngine(auth, {
   // The manifest walk (small avro) plus one parquet footer and one row group. No view is
   // created and the other N-1 files are never touched — this is the cheapest honest way
   // to answer "what does the data look like".
-  async function peekTable(lh, t) {
-    await cancelLoad();
+  // Built once, then simply there. The same table's peek is the same snapshot
+  // (resolvedC pins the resolve for the session), the same first file, the same
+  // hundred rows — re-reading them through the worker on every visit was pure spend.
+  // Plain JS rows, no DuckDB state: a worker restart keeps this, which is exactly
+  // when it matters — coming back to a table after a cancel renders instantly while
+  // the new worker is still waking up. reset() clears it with its siblings.
+  //
+  // The memo holds the PROMISE, not the value, so it is also single-flight: the
+  // prefetch that starts when a table is selected and the Data tab that asks a moment
+  // later share one walk — without this, the second call's cancelLoad() would kill the
+  // first mid-read and start over. A peek that fails or is cancelled un-memoises
+  // itself; only an answer is worth keeping.
+  //
+  // `quiet` is for the prefetch: its progress writing over the stats view's status —
+  // and then leaving "Reading the first of…" on screen after silently finishing —
+  // read as the app being stuck.
+  function peekTable(lh, t, { quiet = false } = {}) {
     const key = tableKey(lh, t);
+    if (peekC.has(key)) return peekC.get(key);
+    const p = doPeek(lh, t, key, quiet);
+    peekC.set(key, p);
+    p.catch(() => { if (peekC.get(key) === p) peekC.delete(key); });
+    return p;
+  }
+
+  async function doPeek(lh, t, key, quiet) {
+    await cancelLoad();
     const gen = loadGen;
     const check = () => { if (gen !== loadGen) throw cancelledError(); };
-    const status = statusFor(gen);
+    const status = quiet ? () => {} : statusFor(gen);
     const label = labelFor(t);
     const ws = lh.workspace;
 
@@ -1528,6 +1554,15 @@ export function createEngine(auth, {
     if (posDeletes.length) return { suppressed: true, fileCount: files.length };
 
     status(`Reading the first of ${files.length} file(s) in ${label}…`);
+    // Warm the object through the PAGE's fetch, never the worker's: the worker pulling
+    // an uncached file is one synchronous stretch nothing can interrupt, and a click
+    // landing during it forces the watchdog to terminate and rebuild the whole engine —
+    // ten seconds of reboot to serve a 4ms cache hit. The page fetch is interruptible,
+    // fills the same cache through the proxy (sw.js in the browser build), and once it
+    // lands the worker's own read is local and over in milliseconds. If it fails, the
+    // worker's read simply pays the network the old way.
+    try { await (await fetch(toHttps(ws, files[0]))).arrayBuffer(); } catch (_) {}
+    check();
     const res = track(key);
     res.gen = gen;
     const reg = `peek_${++_seq}.parquet`;

@@ -19,7 +19,7 @@ const require = createRequire(import.meta.url);
 const { createCatalog } = require("../extension/src/catalog.js");
 
 const root = join(fileURLToPath(new URL(".", import.meta.url)), "..");
-const SITE = join(root, "site");
+const SITE = join(root, "extension", "app");   // the fork the real catalog imports from
 
 // A fetch stub. `answers` maps a matcher to a response; every request is recorded so a
 // test can assert on the URLs that went out, which is half of what is being tested.

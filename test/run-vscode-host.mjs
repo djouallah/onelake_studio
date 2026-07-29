@@ -19,10 +19,12 @@ const MIME = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; cha
 
 // README.md lives at the repo root; copy-site.mjs is what puts it inside site/ for the
 // real extension, so serve it from where it actually is rather than requiring a build.
+// The app itself comes from extension/app/ — the extension's tracked fork, the code the
+// panel really runs — never from site/, which belongs to the website.
 const server = http.createServer(async (req, res) => {
   const path = new URL(req.url, "http://x").pathname;
   const file = path === "/README.md" ? join(root, "README.md")
-             : join(root, "site", path === "/" ? "index.html" : path.slice(1));
+             : join(root, "extension", "app", path === "/" ? "index.html" : path.slice(1));
   try {
     const body = await readFile(file);
     res.writeHead(200, {

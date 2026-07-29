@@ -4,6 +4,10 @@ copy-site.mjs
 make-icon.mjs
 **/*.vsix
 
+# The tracked source of the app. What ships is site/ — the stamped artifact copy-site.mjs
+# builds from it — so packaging app/ too would ship every file twice.
+app/**
+
 # The GitHub Pages custom-domain marker. Meaningless inside a .vsix, and misleading there.
 site/CNAME
 
