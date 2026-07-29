@@ -1554,6 +1554,15 @@ export function createEngine(auth, {
     if (posDeletes.length) return { suppressed: true, fileCount: files.length };
 
     status(`Reading the first of ${files.length} file(s) in ${label}…`);
+    // Warm the object through the PAGE's fetch, never the worker's: the worker pulling
+    // an uncached file is one synchronous stretch nothing can interrupt, and a click
+    // landing during it forces the watchdog to terminate and rebuild the whole engine —
+    // ten seconds of reboot to serve a 4ms cache hit. The page fetch is interruptible,
+    // fills the same cache through the proxy (sw.js in the browser build), and once it
+    // lands the worker's own read is local and over in milliseconds. If it fails, the
+    // worker's read simply pays the network the old way.
+    try { await (await fetch(toHttps(ws, files[0]))).arrayBuffer(); } catch (_) {}
+    check();
     const res = track(key);
     res.gen = gen;
     const reg = `peek_${++_seq}.parquet`;
