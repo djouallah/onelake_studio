@@ -20,14 +20,23 @@ const CDN_ORIGIN = (typeof window !== 'undefined' &&
   (window.ONELAKE_STUDIO_CONFIG || {}).cdnOrigin) || '';
 const withCdn = url => (CDN_ORIGIN ? url.replace(/^https:\/\//, CDN_ORIGIN + '/') : url);
 
-const MARKED_ESM = withCdn('https://cdn.jsdelivr.net/npm/marked@18.0.7/+esm');
-const DOMPURIFY_ESM = withCdn('https://cdn.jsdelivr.net/npm/dompurify@3.4.12/+esm');
+const MARKED_ESM = 'https://cdn.jsdelivr.net/npm/marked@18.0.7/+esm';
+const DOMPURIFY_ESM = 'https://cdn.jsdelivr.net/npm/dompurify@3.4.12/+esm';
 
 let _md = null;   // { marked, purify } once loaded
 
+// Proxied first, direct CDN if the route fails — a markdown render must degrade to
+// slower, never to broken.
+const importDoc = async url => {
+  if (CDN_ORIGIN) {
+    try { return await import(withCdn(url)); } catch (_) { /* fall through */ }
+  }
+  return import(url);
+};
+
 export async function renderMarkdown(text) {
   if (!_md) {
-    const [m, d] = await Promise.all([import(MARKED_ESM), import(DOMPURIFY_ESM)]);
+    const [m, d] = await Promise.all([importDoc(MARKED_ESM), importDoc(DOMPURIFY_ESM)]);
     const purify = (d.default || d)(window);
     // read_text() renders files the user did not author, and this page holds
     // OneLake tokens — marked's output is never inserted unsanitized, and no

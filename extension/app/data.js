@@ -36,18 +36,22 @@ const DUCKDB_ESM = "https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.33.1-dev5
 // open put 25-30 seconds in front of the first click of every session. cdnOrigin is that
 // route; absent (the browser build, where Chrome's own cache does this job), every URL
 // passes through untouched.
-const CDN_ORIGIN = (typeof window !== "undefined" &&
+// Mutable on purpose: the module import below is the canary. If the proxied route
+// cannot serve IT, it cannot serve the worker, the wasm or the extensions either — and a
+// worker whose importScripts 404s does not fail, it hangs the boot at "Loading
+// DuckDB-WASM…" forever. One failure downgrades EVERYTHING to the direct CDN, which is
+// the browser build's behaviour: slower, but it boots.
+let cdnBase = (typeof window !== "undefined" &&
   (window.ONELAKE_STUDIO_CONFIG || {}).cdnOrigin) || "";
-const withCdn = url => (CDN_ORIGIN ? url.replace(/^https:\/\//, CDN_ORIGIN + "/") : url);
+const withCdn = url => (cdnBase ? url.replace(/^https:\/\//, cdnBase + "/") : url);
 
-// Dynamic, because a static import cannot be rerouted. Falls back to the CDN directly if
-// the proxied load fails — a broken proxy must degrade to the browser build's behaviour,
-// not to no engine at all.
+// Dynamic, because a static import cannot be rerouted.
 let duckdb;
 try { duckdb = await import(withCdn(DUCKDB_ESM)); }
 catch (e) {
-  if (!CDN_ORIGIN) throw e;
-  console.warn("[engine] proxied duckdb import failed, falling back to the CDN:", e.message);
+  if (!cdnBase) throw e;
+  console.warn("[engine] proxied duckdb import failed, booting from the CDN directly:", e.message);
+  cdnBase = "";
   duckdb = await import(DUCKDB_ESM);
 }
 
@@ -343,8 +347,8 @@ export function createEngine(auth, {
     // INSTALL fetches over the network; through the proxy those fetches land in the
     // same disk cache as the wasm, so extension loads after the first boot are local.
     // The URL shape is preserved by passthrough — <repo>/<duckdb-ver>/<platform>/<ext>.
-    const coreRepo = CDN_ORIGIN ? `'${CDN_ORIGIN}/extensions.duckdb.org'` : "";
-    const commRepo = CDN_ORIGIN ? `'${CDN_ORIGIN}/community-extensions.duckdb.org'` : "community";
+    const coreRepo = cdnBase ? `'${cdnBase}/extensions.duckdb.org'` : "";
+    const commRepo = cdnBase ? `'${cdnBase}/community-extensions.duckdb.org'` : "community";
     // read_avro() (used to parse Iceberg manifests) comes from the 'avro' extension.
     // duckdb-wasm autoloads it on first use; preloading up front just makes the first
     // manifest read fast — the autoload on the first read_avro() call is the real mechanism.
