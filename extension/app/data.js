@@ -318,6 +318,10 @@ export function createEngine(auth, {
     for (const k of ["mainModule", "mainWorker", "pthreadWorker"]) {
       if (bundle[k]) bundle[k] = withCdn(bundle[k]);
     }
+    // Each stage names itself. A boot that sticks used to stick on "Loading
+    // DuckDB-WASM…" whatever was actually wrong; the stage on screen when it stops IS
+    // the diagnosis — worker/wasm, or the engine coming up, or the extensions.
+    if (!quiet) onStatus("Starting the DuckDB worker…");
     const workerUrl = URL.createObjectURL(
       new Blob([`importScripts("${bundle.mainWorker}");`], { type: "text/javascript" })
     );
@@ -325,6 +329,7 @@ export function createEngine(auth, {
     db = new duckdb.AsyncDuckDB(new duckdb.ConsoleLogger(), worker);
     await db.instantiate(bundle.mainModule, bundle.pthreadWorker);
     URL.revokeObjectURL(workerUrl);
+    if (!quiet) onStatus("Loading DuckDB extensions…");
     conn = await db.connect();
     await conn.query("SET preserve_insertion_order = false;");
     // In-session caches: parquet footers/metadata objects survive across queries instead
