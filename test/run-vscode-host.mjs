@@ -297,8 +297,8 @@ try {
   const skipped = await indicator({
     reads: 6, hits: 0, misses: 0, skips: 6, cacheBytes: 0, netBytes: 12e6, netMs: 900,
     cacheStored: 0, cacheMax: 20e9 });
-  check("a skip is explained as never-cacheable",
-    /can never be cached/.test(skipped.title), skipped.title.replace(/\n/g, " | "));
+  check("a skip is explained as not kept",
+    /were not kept/.test(skipped.title), skipped.title.replace(/\n/g, " | "));
 
   const off = await indicator({
     reads: 3, hits: 0, misses: 0, skips: 3, cacheBytes: 0, netBytes: 1e6, netMs: 400,

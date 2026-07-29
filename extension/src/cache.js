@@ -8,12 +8,12 @@
 // equivalent, which is most of why the panel felt slower than the website on anything
 // already looked at once.
 //
-// The rules are not re-decided here, they are copied: only objects that are IMMUTABLE BY
-// DESIGN are stored — data files and Avro manifests under Tables/, where a new snapshot
-// always means new files, so a hit can never be stale. Listings (they carry a query
-// string), metadata.json (rewritten by conversion) and everything under Files/ (users
-// overwrite those) are never cached, and there is therefore no invalidation problem to
-// solve. If sw.js's predicate changes, this one has to change with it.
+// Two tiers, one directory. Objects that are IMMUTABLE BY DESIGN — data files and Avro
+// manifests under Tables/, where a new snapshot always means new files — are kept until
+// evicted, and a hit can never be stale. EVERYTHING ELSE the proxy carries (Iceberg
+// catalog answers, listings, metadata.json, Files/) is kept for a short TTL: mutable,
+// so it can be briefly stale, and that trade was made deliberately — the catalog was
+// measured charging 2–10 seconds per 3KB answer on every single table open.
 //
 // ONE entry per URL, holding the whole object; any byte range is answered by slicing it.
 // The first version keyed entries by (url, range) instead, and that is what made the
@@ -58,14 +58,24 @@ const SIDE_V = 2;
 // globalStorage is shared between windows — so age, not existence, is what convicts it.
 const TMP_MAX_AGE_MS = 60 * 60 * 1000;
 
-// Immutable OneLake objects, and nothing else. `search` excludes every DFS listing call.
-function cacheable(urlStr) {
+// What may be kept, and for how long.
+//   'immutable' — data files and Avro manifests under Tables/: a new snapshot always
+//                 means new files, so these are kept until evicted and can never be stale.
+//   'ttl'       — everything else the proxy carries: catalog answers, listings,
+//                 metadata.json, Files/. Mutable, so kept briefly — measured in the
+//                 field, the second ask for the same 3KB catalog answer lands seconds
+//                 after the first and OneLake charges 2–10 seconds each time. Five
+//                 minutes of possible staleness was chosen, explicitly, over that.
+const DEFAULT_TTL_MS = 5 * 60 * 1000;
+function tierOf(urlStr) {
   let u;
   try { u = new URL(urlStr); } catch (_) { return false; }
-  if (u.search) return false;
-  return /\/Tables\/[^?]*\.parquet$/i.test(u.pathname) ||
-         /\/Tables\/[^?]*\/metadata\/[^?]*\.avro$/i.test(u.pathname);
+  const immutable = !u.search &&
+    (/\/Tables\/[^?]*\.parquet$/i.test(u.pathname) ||
+     /\/Tables\/[^?]*\/metadata\/[^?]*\.avro$/i.test(u.pathname));
+  return immutable ? 'immutable' : 'ttl';
 }
+const cacheable = urlStr => tierOf(urlStr) === 'immutable';
 
 const keyOf = url => createHash('sha256').update(url).digest('hex');
 
@@ -89,7 +99,7 @@ function parseRange(header, size) {
   return { start, end };
 }
 
-function createCache(dir, { maxBytes = DEFAULT_MAX_BYTES } = {}) {
+function createCache(dir, { maxBytes = DEFAULT_MAX_BYTES, ttlMs = DEFAULT_TTL_MS } = {}) {
   if (!dir) return null;
   let tmpSeq = 0;
 
@@ -137,26 +147,33 @@ function createCache(dir, { maxBytes = DEFAULT_MAX_BYTES } = {}) {
   // own length even if no HEAD was ever proxied for it — and a range is a
   // createReadStream slice of the one stored .bin.
   async function open(url, rangeHeader, method = 'GET') {
-    if (!cacheable(url)) return null;
+    if (!tierOf(url)) return null;
     try {
       await ensure();
       const k = keyOf(url);
       const meta = JSON.parse(await fs.readFile(join(dir, `${k}.json`), 'utf8'));
       if (meta.v !== SIDE_V) return null;          // a pre-slicing entry; the sweep owns it
+      // A TTL entry past its time is a miss, not an error: the refetch replaces it.
+      if (meta.exp && Date.now() > meta.exp) return null;
       const size = Number(meta.bytes) || 0;
-      if (method === 'HEAD') return { status: 200, length: size, contentRange: '', stream: null };
+      const hdr = meta.hdr || null;
+      if (method === 'HEAD') return { status: 200, length: size, contentRange: '', stream: null, headers: hdr };
       if (meta.head) return null;                  // a length only; the bytes are not here
       const bin = join(dir, `${k}.bin`);
       const r = parseRange(rangeHeader, size);
       if (r === 'invalid') return null;
       if (r === 'unsatisfiable') {
-        return { status: 416, length: 0, contentRange: `bytes */${size}`, stream: null };
+        return { status: 416, length: 0, contentRange: `bytes */${size}`, stream: null, headers: hdr };
       }
-      if (!r) return { status: 200, length: size, contentRange: '', stream: fsSync.createReadStream(bin) };
+      if (!r) {
+        return { status: 200, length: size, contentRange: '', stream: fsSync.createReadStream(bin),
+                 headers: hdr };
+      }
       return {
         status: 206, length: r.end - r.start + 1,
         contentRange: `bytes ${r.start}-${r.end}/${size}`,
         stream: fsSync.createReadStream(bin, { start: r.start, end: r.end }),
+        headers: hdr,
       };
     } catch (_) { return null; }
   }
@@ -178,7 +195,7 @@ function createCache(dir, { maxBytes = DEFAULT_MAX_BYTES } = {}) {
   // temp name and renamed on completion, so a half-written entry can never be served:
   // rename is atomic, whereas reading a .bin that is still being appended to returns a
   // truncated file and DuckDB blames the data.
-  function startFill(k) {
+  function startFill(k, extra = {}) {
     const tmp = join(dir, `${k}.${process.pid}.${++tmpSeq}.tmp`);
     let stream;
     try { stream = fsSync.createWriteStream(tmp); } catch (_) { return null; }
@@ -198,7 +215,7 @@ function createCache(dir, { maxBytes = DEFAULT_MAX_BYTES } = {}) {
           if (!bytes) { await fs.rm(tmp, { force: true }); return resolve({ stored: false, bytes: 0 }); }
           await fs.rename(tmp, join(dir, `${k}.bin`));
           await fs.writeFile(join(dir, `${k}.json`),
-            JSON.stringify({ bytes, at: Date.now(), v: SIDE_V }));
+            JSON.stringify({ bytes, at: Date.now(), v: SIDE_V, ...extra }));
           total += bytes;
           if (total > maxBytes) await prune();
           resolve({ stored: true, bytes });
@@ -216,11 +233,26 @@ function createCache(dir, { maxBytes = DEFAULT_MAX_BYTES } = {}) {
   // Returns a writable to tee a COMPLETE 200 body into, or null when this is not worth
   // storing — including when the object is already stored or already being stored. The
   // caller pipes the body to it alongside the client; nothing waits on it.
-  function beginPutFull(url) {
-    if (!usable || !cacheable(url)) return null;
+  //
+  // `headers` are kept for TTL entries and replayed on a hit: a listing's
+  // x-ms-continuation or a catalog answer's content-type is part of the answer, and a
+  // hit that dropped them would be a different response, not a faster one.
+  function beginPutFull(url, { headers } = {}) {
+    const tier = tierOf(url);
+    if (!usable || !tier) return null;
     const k = keyOf(url);
-    if (fills.has(k) || fsSync.existsSync(join(dir, `${k}.bin`))) return null;
-    const entry = startFill(k);
+    if (fills.has(k)) return null;
+    if (fsSync.existsSync(join(dir, `${k}.bin`))) {
+      // An immutable entry never needs rewriting. A TTL entry does, once it has expired
+      // — the rename at the end replaces the old bytes atomically.
+      if (tier === 'immutable') return null;
+      try {
+        const m = JSON.parse(fsSync.readFileSync(join(dir, `${k}.json`), 'utf8'));
+        if (!m.exp || Date.now() <= m.exp) return null;
+      } catch (_) {}
+    }
+    const extra = tier === 'ttl' ? { exp: Date.now() + ttlMs, hdr: headers || {} } : {};
+    const entry = startFill(k, extra);
     if (!entry) return null;
     fills.set(k, entry.done);
     entry.done.finally(() => fills.delete(k));
@@ -247,6 +279,8 @@ function createCache(dir, { maxBytes = DEFAULT_MAX_BYTES } = {}) {
   const FAIL_TTL_MS = 60 * 1000;
   function ensureFull(url, fetchFull, { totalBytes } = {}) {
     const skip = reason => ({ started: false, done: Promise.resolve({ stored: false, bytes: 0, reason }) });
+    // Immutable objects only: a background download of something mutable would spend
+    // network on bytes that may be wrong by the time they are asked for.
     if (!usable || !cacheable(url)) return skip('not cacheable');
     const k = keyOf(url);
     if (fills.has(k)) return { started: false, done: fills.get(k) };
@@ -336,7 +370,8 @@ function createCache(dir, { maxBytes = DEFAULT_MAX_BYTES } = {}) {
       try {
         const m = JSON.parse(await fs.readFile(join(dir, `${k}.json`), 'utf8'));
         const torn = !m.head && !bins.has(k);
-        if (m.v !== SIDE_V || torn) {
+        const expired = m.exp && Date.now() > m.exp;
+        if (m.v !== SIDE_V || torn || expired) {
           await fs.rm(join(dir, `${k}.json`), { force: true });
           await fs.rm(join(dir, `${k}.bin`), { force: true }).catch(() => {});
           continue;
@@ -414,4 +449,4 @@ function createCache(dir, { maxBytes = DEFAULT_MAX_BYTES } = {}) {
            status: () => ({ usable, problem, dir, maxBytes, storedBytes: total }) };
 }
 
-module.exports = { createCache, cacheable, parseRange, DEFAULT_MAX_BYTES };
+module.exports = { createCache, cacheable, tierOf, parseRange, DEFAULT_MAX_BYTES };

@@ -154,8 +154,12 @@ async function handle(req, res, opts) {
         log({ cache: 'hit', status: 416, bytes: 0, lookupMs });
         return res.end();
       }
+      // Stored headers (TTL entries keep them) replay first: a listing's
+      // x-ms-continuation or a catalog answer's content-type is part of the answer.
+      // Length and range are ours — the slice being served decides them, not upstream.
       res.writeHead(hit.status, {
         'content-type': 'application/octet-stream',
+        ...(hit.headers || {}),
         'content-length': String(hit.length),
         'accept-ranges': 'bytes',
         ...(hit.contentRange ? { 'content-range': hit.contentRange } : {}),
@@ -239,7 +243,7 @@ async function handle(req, res, opts) {
   // the same slice twice.
   const body = Readable.fromWeb(up.body);
   const entry = (opts.cache && up.status === 200 && !out['content-range'])
-    ? opts.cache.beginPutFull(upstream) : null;
+    ? opts.cache.beginPutFull(upstream, { headers: out }) : null;
 
   let size = 0;
   body.on('data', c => { size += c.length; });
@@ -256,14 +260,17 @@ async function handle(req, res, opts) {
 }
 
 // Resolves to { port, secret, dfsOrigin, tableOrigin, close() }.
-function startProxy({ getToken, cacheDir, cacheMaxBytes, onLog,
+function startProxy({ getToken, cacheDir, cacheMaxBytes, cacheTtlMs, onLog,
                       dfsUpstream = DFS_UPSTREAM, tableUpstream = TABLE_UPSTREAM } = {}) {
   if (typeof getToken !== 'function') throw new TypeError('startProxy needs a getToken() function');
 
   const secret = crypto.randomBytes(24).toString('hex');
   // Absent cacheDir means no cache — every read goes upstream, which is what the proxy
   // did before and is still a correct proxy.
-  const cache = createCache(cacheDir, cacheMaxBytes ? { maxBytes: cacheMaxBytes } : {});
+  const cache = createCache(cacheDir, {
+    ...(cacheMaxBytes ? { maxBytes: cacheMaxBytes } : {}),
+    ...(cacheTtlMs ? { ttlMs: cacheTtlMs } : {}),
+  });
   const opts = { getToken, dfsUpstream, tableUpstream, secret, cache, onLog };
 
   const server = http.createServer((req, res) => {

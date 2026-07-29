@@ -1812,9 +1812,8 @@ if (HOST_VSCODE) {
       `${m.reads} read(s) behind the last thing you waited for.`,
       m.hits ? `${m.hits} from this machine (${bytes(m.cacheBytes)}).` : 'None came from this machine.',
       fromNet ? `${fromNet} from OneLake (${bytes(m.netBytes)}, ${(m.netMs / 1000).toFixed(1)}s).` : '',
-      // A skip is not a miss: those objects are ones the cache is not allowed to hold, so
-      // they will cost the network every time and no amount of waiting changes that.
-      m.skips ? `${m.skips} of those can never be cached — they are not immutable objects.` : '',
+      // A skip is not a miss: nothing of it was kept, so it will cost the network again.
+      m.skips ? `${m.skips} of those were not kept, and will cost the network again.` : '',
       m.stores ? `${m.stores} background download(s) filled the cache (${bytes(filled)}) ` +
                  `so the next read is local.` : '',
       m.cacheOff ? `Cache is OFF: ${m.cacheOff}` : `Cache holds ${bytes(m.cacheStored)} of ${bytes(m.cacheMax)}.`,

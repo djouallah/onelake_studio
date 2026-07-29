@@ -191,8 +191,8 @@ async function ensureProxy(context) {
       out.appendLine(
         'columns: total | method | status | verdict | bytes | where the time went | range | path');
       out.appendLine(
-        '  hit  = served from disk    miss = fetched, and KEPT for next time' +
-        '    skip = fetched, never stored (not an immutable object)');
+        '  hit  = served from disk    miss = fetched, and KEPT — immutable objects forever,' +
+        ' catalog/listings for 5 minutes    skip = fetched, not kept');
       out.appendLine(
         '  STORE ok = a background download kept the whole object, so its next read is local');
     }

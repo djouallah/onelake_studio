@@ -278,19 +278,66 @@ const TABLE_FILE = `${proxy.dfsOrigin}/ws/lh.Lakehouse/Tables/t/data_0.parquet`;
   eq(b.headers.get("content-length"), String(parquet.length), "…and reports the same length");
 }
 {
-  // Files/ is overwritten by users, a listing carries a query string, and metadata.json is
-  // rewritten by conversion. Caching any of them would serve a stale answer that no
-  // invalidation here could ever catch.
+  // Files/ is overwritten by users, a listing carries a query string, metadata.json is
+  // rewritten by conversion, and a catalog answer changes with every snapshot. They are
+  // all kept anyway — for a short TTL, because in the field the second ask for the same
+  // 3KB catalog answer landed seconds after the first and OneLake charged 2-10 seconds
+  // each time. Five minutes of possible staleness was chosen, explicitly, over that.
   for (const [what, url] of [
     ["a file under Files/", `${proxy.dfsOrigin}/ws/lh.Lakehouse/Files/data.parquet`],
     ["a listing", `${proxy.dfsOrigin}/ws/lh.Lakehouse/Tables/t/data_0.parquet?resource=filesystem`],
     ["table metadata", `${proxy.dfsOrigin}/ws/lh.Lakehouse/Tables/t/metadata/v1.metadata.json`],
+    ["an Iceberg catalog answer", `${proxy.tableOrigin}/iceberg/v1/config`],
   ]) {
-    await fetch(url, { headers: { Range: "bytes=0-31" } });
+    await (await fetch(url)).arrayBuffer();
     await proxy.cacheIdle();
     const before = log.length;
-    await fetch(url, { headers: { Range: "bytes=0-31" } });
-    eq(log.length, before + 1, `${what} is never cached`);
+    await (await fetch(url)).arrayBuffer();
+    eq(log.length, before, `${what} is served from disk inside the TTL`);
+  }
+}
+{
+  // A cached listing must replay the headers that make it a listing: pagination rides on
+  // x-ms-continuation, and a hit that dropped it would silently truncate a directory.
+  const url = `${proxy.dfsOrigin}/paged?page=two`;
+  const a = await fetch(url);
+  eq(a.headers.get("x-ms-continuation"), "next-page", "a listing arrives with its continuation");
+  await proxy.cacheIdle();
+  const before = log.length;
+  const b = await fetch(url);
+  eq(log.length, before, "the same listing inside the TTL is served from disk");
+  eq(b.headers.get("x-ms-continuation"), "next-page", "…and keeps the continuation header a pager needs");
+  eq(b.headers.get("content-type"), "application/json", "…and the content-type it answered with");
+}
+{
+  // The TTL is real: past it, the same URL is asked again, and the fresh answer replaces
+  // the stale one on disk. Its own proxy, so the clock can be short.
+  const TTL_DIR = await mkdtemp(join(tmpdir(), "onelake-ttl-"));
+  const short = await startProxy({
+    getToken: async () => TOKEN,
+    cacheDir: TTL_DIR, cacheTtlMs: 250,
+    dfsUpstream: upBase, tableUpstream: upBase,
+  });
+  const url = `${short.dfsOrigin}/ws/lh.Lakehouse/Tables/t/metadata/v1.metadata.json`;
+  try {
+    await (await fetch(url)).arrayBuffer();
+    await short.cacheIdle();
+    let before = log.length;
+    await (await fetch(url)).arrayBuffer();
+    eq(log.length, before, "inside the TTL the answer comes from disk");
+
+    await new Promise(r => setTimeout(r, 400));   // real time: the TTL is a clock, not an event
+    before = log.length;
+    await (await fetch(url)).arrayBuffer();
+    eq(log.length, before + 1, "past the TTL the same URL is asked again");
+    await short.cacheIdle();
+
+    before = log.length;
+    await (await fetch(url)).arrayBuffer();
+    eq(log.length, before, "…and the fresh answer took the stale one's place on disk");
+  } finally {
+    await short.close();
+    await rm(TTL_DIR, { recursive: true, force: true }).catch(() => {});
   }
 }
 {
