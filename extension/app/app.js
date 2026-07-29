@@ -360,9 +360,17 @@ const PENDING_SQL_KEY = 'onelake-studio-pending-sql';
 // The VS Code host overrides the URL with the copy packaged inside the extension: a
 // webview's CSP has no reason to allow GitHub, the packaged file is the one that
 // documents the installed version, and it needs no network.
+//
+// What it sends is a PATH, not a webview URL. The engine used to be wasm running in this
+// page, where a vscode-resource URL is an ordinary fetch; it is now native DuckDB in the
+// extension host, which has never heard of that origin and answered every boot with
+// "IO Error: URL using bad/illegal format ... HTTP HEAD to https://file+.vscode-resource".
+// The host reads the file off its own disk instead.
 const README_URL = cfg.readmeUrl ||
   'https://raw.githubusercontent.com/djouallah/onelake_studio/refs/heads/main/README.md';
-const README_SQL = `select content from read_text('${README_URL}')`;
+// A Windows path needs no escaping in a DuckDB string literal, but an apostrophe in it —
+// C:\Users\O'Brien\... — would end the literal and turn the rest of the path into SQL.
+const README_SQL = `select content from read_text('${README_URL.replace(/'/g, "''")}')`;
 
 // Every handler, wired before anything is awaited. It used to happen after engine.init(),
 // which was also what kept connect()/runQuery() off a null engine; that guarantee now

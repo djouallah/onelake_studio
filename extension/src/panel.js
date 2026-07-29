@@ -131,7 +131,13 @@ async function openPanel(context, proxy, { onOpened, onBoot, engine } = {}) {
       // The landing query reads this instead of raw.githubusercontent.com, which the CSP
       // above has no business allowing. It also documents the version that is installed
       // rather than whatever is on main.
-      readmeUrl: panel.webview.asWebviewUri(readmeUri).toString(),
+      //
+      // A filesystem path, NOT asWebviewUri(): the query runs in the extension host now,
+      // where DuckDB is, and a vscode-resource URL only means something inside the page.
+      // Passing the webview URL made every panel open answer the landing query with
+      // "IO Error: URL using bad/illegal format" — the one visible piece of the wasm
+      // engine left after it was retired.
+      readmeUrl: readmeUri.fsPath,
     }, `http://127.0.0.1:${proxy.port}`);
   } catch (e) {
     panel.dispose();
