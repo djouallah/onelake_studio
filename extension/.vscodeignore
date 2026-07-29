@@ -10,6 +10,7 @@ node_modules/**
 # .d.ts files ship too. ~200KB of text against a 36MB library; not worth a build step.)
 !node_modules/@duckdb/**
 copy-site.mjs
+fetch-binding.mjs
 make-icon.mjs
 vendor.mjs
 **/*.vsix

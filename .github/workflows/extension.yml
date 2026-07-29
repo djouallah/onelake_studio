@@ -1,8 +1,31 @@
 # Publishes the VS Code extension to the Marketplace when an ext-v* tag is pushed.
 #
 # Release:
-#   bump "version" in extension/package.json, commit, then
-#   git tag ext-v0.1.1 && git push origin ext-v0.1.1
+#   bump "version" in extension/package.json, refresh extension/package-lock.json
+#   (cd extension && npm install --package-lock-only), commit, then
+#   git tag ext-v0.1.2 && git push origin ext-v0.1.2
+#
+# PLATFORM-SPECIFIC, and it has to be. DuckDB runs natively in the extension host now:
+# @duckdb/node-bindings loads a 37MB platform library, and npm only ever installs the binding
+# matching the machine doing the install. One universal vsix would therefore carry ONE
+# platform's library while claiming to serve all of them — silent at package time, total at
+# run time. So every supported platform gets its own vsix, all cross-packaged on ubuntu by
+# fetching that platform's binding tarball straight from the registry:
+#
+#   test  ->  package (one leg per target)  ->  publish (every vsix in ONE call)
+#
+# linux-armhf and web are deliberately absent: DuckDB publishes no binding for either, and an
+# extension that installs and then cannot start is worse than one that is not offered. Those
+# users keep the last universal release, which is the right answer. alpine-* is absent for a
+# weaker reason — nothing here can test musl — and adding it needs one more thing: duckdb.js
+# picks musl vs glibc through require('detect-libc') inside a try/catch that ANSWERS GLIBC
+# when the require fails, so `!node_modules/detect-libc/**` would have to join .vscodeignore
+# or an Alpine install would load a binding that is not in the package.
+#
+# The fan-in matters. Publishing from each leg would make six independent Marketplace calls,
+# and leg five failing would leave a version half-published — four platforms live, two
+# missing, and the version number already spent. Here, one failing leg means the publish job
+# never runs and nothing goes out.
 #
 # NO TOKEN. Authentication is GitHub's OIDC exchanged for an Entra token, so there is nothing
 # stored here that can leak or expire. That is not only hygiene: the Marketplace PAT has to be
@@ -20,6 +43,8 @@
 #      has NO Azure role assignments at all — vsce only ever wants a token for the Azure
 #      DevOps resource, never a subscription.
 #   4. vsce --azure-credential picks the session up through DefaultAzureCredential.
+# Only the publish job holds any of this. The build legs get no environment and no id-token,
+# because packaging needs no identity.
 #
 # The app registration ("onelake-studio-marketplace-publish", client
 # 066502f5-c8c9-4ecc-8a91-05889062b1f9) holds no client secret. Its Marketplace identity is
@@ -28,8 +53,9 @@
 # produces "You need to be logged in with your corporate credentials" at the publish step
 # after everything else has already succeeded.
 #
-# Every run packages and uploads the .vsix as an artifact, so workflow_dispatch is a real dry
-# run — it builds and attaches the file, and only a tag reaches the publish step.
+# Every run packages and uploads every .vsix as an artifact, so workflow_dispatch is still a
+# real dry run — it builds and attaches all of them, proves the OIDC identity, and only a tag
+# reaches the publish step.
 #
 # Independent of pages.yml, which deploys the web app on every commit to main: that one only
 # ever copies site/, so extension/ never reaches Pages and this never touches it.
@@ -43,37 +69,142 @@ on:
 permissions:
   contents: read
 
+# A publish is not atomic — vsce uploads the packages one at a time. Two runs doing that at
+# once, or a cancellation halfway through, is exactly how a version ends up live on some
+# platforms and missing on others. Queue instead, and never cancel.
+concurrency:
+  group: extension-publish
+  cancel-in-progress: false
+
 jobs:
-  publish:
+  # The same suite Pages gates on, once rather than once per platform: it reads only tracked
+  # sources, so its answer cannot differ between legs. panel-html.test.js is the one that
+  # matters here — it runs the webview's HTML rewriting against the real app/index.html, and
+  # a silent failure there ships a panel that reads OneLake with no token. Ahead of the
+  # matrix, so a red test costs no build minutes.
+  test:
     runs-on: ubuntu-latest
-    environment: azure
-    permissions:
-      contents: read
-      id-token: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-
-      # The same suite Pages gates on. panel-html.test.js is the one that matters here: it
-      # runs the webview's HTML rewriting against the real site/index.html, and a silent
-      # failure there ships a panel that reads OneLake with no token.
       - run: npm test
+
+  package:
+    needs: test
+    runs-on: ubuntu-latest
+    strategy:
+      # Every leg's failure is worth seeing in the same run; the publish job is gated on ALL
+      # of them anyway, so cancelling early protects nothing.
+      fail-fast: false
+      matrix:
+        target:
+          - win32-x64
+          - win32-arm64
+          - darwin-x64
+          - darwin-arm64
+          - linux-x64
+          - linux-arm64
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: extension/package-lock.json
+
+      # vendor.mjs (run by vscode:prepublish, below) downloads sql.js and the markdown
+      # renderer from jsDelivr. Six legs is six chances for a CDN hiccup to fail one, and one
+      # failed leg cancels the whole release. vendor.mjs skips anything already on disk, so a
+      # restored cache makes it a no-op with no network at all.
+      - uses: actions/cache@v4
+        with:
+          path: extension/vendor
+          key: vendor-${{ hashFiles('extension/vendor.mjs') }}
+
+      # NOT a plain `npm ci`. The eight platform bindings are optionalDependencies gated on
+      # os/cpu, so a plain install drops 37MB of the RUNNER's platform into node_modules — and
+      # vsce packages whatever the dependency walk reports, whatever --target says. Install
+      # none of them, then fetch exactly one: every leg starts from the same empty state,
+      # including the linux one that would otherwise be special.
+      - name: Install the extension's dependencies, minus every binding
+        working-directory: extension
+        run: npm ci --omit=optional --no-audit --no-fund
+
+      # Puts THIS target's binding, and only this target's, into node_modules. The script
+      # prunes siblings, drops npm's hidden lockfile so the dependency walk reads the real
+      # tree, and refuses to succeed unless `npm list` — the exact command vsce runs — reports
+      # the directory it just wrote.
+      - name: Fetch the DuckDB binding for ${{ matrix.target }}
+        id: binding
+        working-directory: extension
+        run: node fetch-binding.mjs ${{ matrix.target }}
 
       # vsce packages the extension directory and nothing above it, so site/ and the LICENSE
       # have to be copied in. `vscode:prepublish` does this too; running it here means a
       # failure in the copy shows up as its own step.
       - run: node extension/copy-site.mjs
 
+      # --target stamps TargetPlatform into the manifest AND names the file
+      # onelake-studio-<target>-<version>.vsix, which is the name worth having on the
+      # artifact. The major is pinned: an unpinned npx would let a future vsce 4 change how a
+      # release is built without anyone choosing that.
       - name: Package
         working-directory: extension
-        run: npx --yes @vscode/vsce package --out onelake-studio.vsix
+        run: npx --yes @vscode/vsce@3 package --target ${{ matrix.target }}
 
+      # The only check that cannot lie. Everything above is a claim about node_modules; this
+      # reads the artifact that actually ships. A vsix carrying two bindings is 37MB of waste,
+      # and one carrying the wrong binding — or none — is an extension that installs and
+      # cannot start.
+      - name: The vsix must contain exactly one binding, and it must be this one
+        working-directory: extension
+        run: |
+          set -euo pipefail
+          vsix=$(ls *.vsix)
+          echo "checking $vsix"
+          unzip -p "$vsix" extension.vsixmanifest | grep -q 'TargetPlatform="${{ matrix.target }}"' \
+            || { echo "manifest does not claim ${{ matrix.target }}"; exit 1; }
+          dirs=$(unzip -Z1 "$vsix" \
+                 | sed -n 's|^extension/node_modules/@duckdb/\(node-bindings-[^/]*\)/.*|\1|p' \
+                 | sort -u | tr '\n' ' ' | sed 's/ $//')
+          [ "$dirs" = "${{ steps.binding.outputs.binding }}" ] \
+            || { echo "expected exactly ${{ steps.binding.outputs.binding }}, found: $dirs"; exit 1; }
+          unzip -Z1 "$vsix" | grep -qE '^extension/node_modules/@duckdb/node-bindings-[^/]+/.*\.(node|dll|so|dylib)$' \
+            || { echo "no native library in the vsix"; exit 1; }
+          echo "ok — $vsix carries $dirs and nothing else"
+
+      # upload-artifact v4 refuses two jobs writing the same name, so the target is part of
+      # it. overwrite lets "re-run failed jobs" replace a leg's output instead of failing on a
+      # name a previous attempt already claimed.
       - uses: actions/upload-artifact@v4
         with:
-          name: onelake-studio-vsix
-          path: extension/onelake-studio.vsix
+          name: vsix-${{ matrix.target }}
+          path: extension/*.vsix
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 14
+
+  publish:
+    needs: package
+    runs-on: ubuntu-latest
+    environment: azure
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      # No checkout and no install: `vsce publish --packagePath` reads the manifest out of
+      # each vsix and never runs vscode:prepublish. What goes out is exactly what was
+      # packaged, checked and uploaded above — not a second build.
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: vsix-*
+          merge-multiple: true
+          path: vsix
+
+      - name: What is about to go out
+        run: ls -l vsix
 
       - name: Sign in to Azure
         uses: azure/login@v2
@@ -92,9 +223,11 @@ jobs:
           az rest -u https://app.vssps.visualstudio.com/_apis/profile/profiles/me \
                   --resource 499b84ac-1321-427f-aa17-267ca6975798 --query id -o tsv
 
-      # Only a tag publishes. The exact file that was packaged and uploaded above is the one
-      # that goes out — --packagePath rather than a second build.
+      # Only a tag publishes. One call for every platform: --packagePath is variadic, and vsce
+      # takes each package's target from its own manifest. --skip-duplicate is the recovery
+      # path — vsce uploads the packages one at a time with no rollback, so if the fifth
+      # fails, re-running this job re-sends only what did not land. The price is that
+      # re-pushing an already-published tag becomes a no-op instead of an error.
       - name: Publish
         if: startsWith(github.ref, 'refs/tags/ext-v')
-        working-directory: extension
-        run: npx --yes @vscode/vsce publish --azure-credential --packagePath onelake-studio.vsix
+        run: npx --yes @vscode/vsce@3 publish --azure-credential --skip-duplicate --packagePath vsix/*.vsix
