@@ -19,14 +19,6 @@ const DOCS = 'https://github.com/djouallah/onelake_studio';
 // resolveConfig. An empty clientId here is the ordinary first run, not a broken deploy.
 const cfg = resolveConfig(window.ONELAKE_STUDIO_CONFIG || {});
 
-// Running inside the VS Code extension's webview rather than a browser tab. The two hosts
-// share every line of this file; what differs is chrome that belongs to a browser (a sign-in
-// gate, a sign-out link, a build stamp, a link out to GitHub), browsing — which the editor's
-// own sidebar owns — and how OneLake reads get signed: a service worker in a tab, the
-// extension's loopback proxy here. Each of those reads this flag and nothing else.
-const HOST_VSCODE = cfg.host === 'vscode';
-if (HOST_VSCODE) document.body.classList.add('host-vscode');
-
 // Cap on rendered rows only. The CSV exports everything the engine materialised, which is
 // itself capped — runQuery says so when the two differ.
 const MAX_DOM_ROWS = 2000;
@@ -126,17 +118,11 @@ function explainRead(message) {
   }
   const swc = !!(navigator.serviceWorker && navigator.serviceWorker.controller);
   const stale = f && !recent;
-  // In the webview there is no service worker and no page-side token by design — the
-  // extension's loopback proxy signs DuckDB's reads. Reporting the browser's facts here
-  // told users to reload a page that was never going to grow a worker, which is worse
-  // than saying nothing: it is a confident wrong answer.
-  const signer = HOST_VSCODE
-    ? "the extension's loopback proxy signs DuckDB's reads"
-    : (swc ? 'the service worker is controlling this page'
-           : 'the service worker is NOT controlling this page, so DuckDB reads go out unsigned — reload the page');
-  out += ` [build ${(window.ONELAKE_STUDIO_VERSION || {}).commit || 'dev'}; ` + signer +
+  out += ` [build ${(window.ONELAKE_STUDIO_VERSION || {}).commit || 'dev'}; ` +
+    (swc ? 'the service worker is controlling this page'
+         : 'the service worker is NOT controlling this page, so DuckDB reads go out unsigned — reload the page') +
     `; crossOriginIsolated ${!!self.crossOriginIsolated}` +
-    (HOST_VSCODE ? '' : `; page-side token ${Object.keys(auth.getHeaders()).length ? 'held' : 'absent'}`) +
+    `; page-side token ${Object.keys(auth.getHeaders()).length ? 'held' : 'absent'}` +
     (recent ? '' :
      stale ? `; last read failure the worker reported: HTTP ${f.status} for ${f.pathname}, ${Math.round((Date.now() - f.at) / 1000)}s ago${f.signed === false ? ', sent unsigned' : ''}`
      : swc ? '; the worker reported no failed OneLake read — the open failed before any request went out'
@@ -149,11 +135,6 @@ function explainRead(message) {
 // browser's own account UI, and this app gets screen-shared and screenshotted; a UPN in
 // the header is a needless leak. auth.getUserId() is still there for console debugging.
 function showSignedIn() {
-  // VS Code owns the identity: the Accounts menu signs in and out, and the extension's
-  // Switch Microsoft Account command changes which one is used. A second, half-working
-  // set of controls in here — the sign-out below navigates the page, which a webview has
-  // nowhere to navigate to — is worse than none.
-  if (HOST_VSCODE) return;
   const box = $('userBox');
   box.textContent = '';
   const label = document.createElement('span');
@@ -176,7 +157,6 @@ function showSignedIn() {
 // The signed-out header affordance. Signing in is an upgrade, not a precondition: the
 // engine and the SQL editor already work, this only unlocks browsing OneLake.
 function showSignedOut() {
-  if (HOST_VSCODE) return;   // see showSignedIn
   const box = $('userBox');
   box.textContent = '';
   const btn = document.createElement('button');
@@ -347,13 +327,8 @@ const PENDING_SQL_KEY = 'onelake-studio-pending-sql';
 // The landing page is a query result: on a fresh boot the app reads its own README
 // through the engine and the Pretty view renders it. The docs demonstrate the tool
 // by being served by it.
-//
-// The VS Code host overrides the URL with the copy packaged inside the extension: a
-// webview's CSP has no reason to allow GitHub, the packaged file is the one that
-// documents the installed version, and it needs no network.
-const README_URL = cfg.readmeUrl ||
-  'https://raw.githubusercontent.com/djouallah/onelake_studio/refs/heads/main/README.md';
-const README_SQL = `select content from read_text('${README_URL}')`;
+const README_SQL =
+  "select content from read_text('https://raw.githubusercontent.com/djouallah/onelake_studio/refs/heads/main/README.md')";
 
 // Every handler, wired before anything is awaited. It used to happen after engine.init(),
 // which was also what kept connect()/runQuery() off a null engine; that guarantee now
@@ -418,31 +393,18 @@ async function startEngine() {
   await engineReady;
   engineUp = true;
   $('runBtn').disabled = false;   // SQL needs the engine, not a lakehouse
-  let landingFailed = false;
   if (!$('sqlEditor').value) {
     // Fresh visit: show the README as the landing content. The stash branch in wireUi
     // means a sign-in round trip never loses the user's SQL to this. Offline or
     // blocked, runQuery reports its error — the boot message below replaces it,
     // because a failed docs fetch must not read as a broken app.
     $('sqlEditor').value = README_SQL;
-    landingFailed = !await runQuery();
+    await runQuery();
   }
   // The auth stage runs alongside this one now, so it may already have said something
   // truer — "N workspace(s)" beats "sign in to browse OneLake". Only claim the line when
   // there's no session to talk about.
-  //
-  // ...unless the landing query left a red error on the bar. That claim was only ever
-  // true for the browser, where a signed-in session means the auth stage spoke; in the
-  // webview the session is implicit and always present, so nothing overwrote the docs
-  // fetch's failure and "Query error" was the first thing a new user saw. A failed
-  // README is not a broken app, and must not be reported as one in either host.
-  if (!signedIn || landingFailed) {
-    const where = HOST_VSCODE ? 'pick a table in the OneLake sidebar'
-                              : 'sign in to browse OneLake';
-    setStatus(`DuckDB ready — run SQL now, or ${where}.` +
-      (landingFailed ? ' (The welcome page could not be read — the engine itself is fine.)' : ''),
-      landingFailed ? 'warn' : 'ok');
-  }
+  if (!signedIn) setStatus('DuckDB ready — run SQL now, or sign in to browse OneLake.', 'ok');
 }
 
 // After a OneLake session exists (silent on boot, or interactive): unlock browsing.
@@ -450,10 +412,6 @@ async function afterSignIn() {
   signedIn = true;
   $('authGate').style.display = 'none';
   showSignedIn();
-  // In the editor the sidebar tree owns browsing and lists OneLake itself. A second
-  // account-wide workspace listing here would be a slow round trip on every panel open,
-  // to fill a picker that is not on screen.
-  if (HOST_VSCODE) return;
   $('wsSelect').placeholder = 'Loading workspaces…';
   if (!lakehouse)
     $('tableList').innerHTML = '<div class="hint">Pick a workspace, then an item to browse.</div>';
@@ -681,20 +639,6 @@ async function onWorkspaceChange() {
 // `force` is what the Reload button passes. Without it, re-listing a lakehouse you are
 // already on left every table served from cache, so "Reload" showed the same snapshot it
 // showed before and there was no way to pick up a table that had changed underneath.
-// Views, registered files and helper tables from the previous lakehouse are dead the moment
-// we point somewhere else, and they cost WASM memory for as long as the page lives. Cache
-// entries are keyed per lakehouse so a stale one can't be served, but the DuckDB objects
-// behind them still have to be given back. Returns the teardown promise rather than awaiting
-// it — every caller has something to overlap it with, and none may leave it unobserved.
-function leaveLakehouse() {
-  activeIdent = null;
-  setActiveStats(null);
-  activeTableRef = null; tableStage = 'none';
-  lastResult = null;
-  $('activeTable').textContent = 'No table selected';
-  return engine.reset();
-}
-
 async function connect({ force = false } = {}) {
   const my = ++catSeq;
   const workspace = canonicalWs($('wsSelect').value), item = $('itemSelect').value;
@@ -707,12 +651,20 @@ async function connect({ force = false } = {}) {
   // lives. Cache entries are keyed per lakehouse so a stale one can't be served, but the
   // DuckDB objects behind them still have to be given back.
   const moved = lakehouse && (lakehouse.workspace !== workspace || lakehouse.item !== item);
-  // Teardown drains serialized DROPs for every open table before; the listing is pure
-  // fetch and never touches the worker or its queue, so the two overlap. The Promise.all
-  // below keeps the old invariant: the sidebar is never painted (no table is clickable)
-  // until the teardown has finished, and either failure lands in the same catch with
-  // nothing left unobserved.
-  const resetP = (force || moved) ? leaveLakehouse() : null;
+  let resetP = null;
+  if (force || moved) {
+    activeIdent = null;
+    setActiveStats(null);
+    activeTableRef = null; tableStage = 'none';
+    lastResult = null;
+    $('activeTable').textContent = 'No table selected';
+    // Teardown drains serialized DROPs for every open table before; the listing is pure
+    // fetch and never touches the worker or its queue, so the two overlap. The
+    // Promise.all below keeps the old invariant: the sidebar is never painted (no table
+    // is clickable) until the teardown has finished, and either failure lands in the
+    // same catch with nothing left unobserved.
+    resetP = engine.reset();
+  }
   lakehouse = { workspace, item };
   setPaneTabs(item);   // before the pane is rendered below: it can move `pane` off Files
 
@@ -974,12 +926,7 @@ async function selectTable(row, t) {
   // of failing on the first footer read with a message that blames the file. The two
   // ways a page ends up here: DevTools with "Bypass for network" checked, and a hard
   // reload (which bypasses the worker for that one page load).
-  // Not in the webview, where there is no service worker by design and the extension's
-  // loopback proxy signs the reads instead. This passes there today only because
-  // `navigator.serviceWorker` happens to be undefined — one VS Code release exposing a
-  // dormant container would make every table refuse to open with a paragraph about
-  // DevTools.
-  if (!HOST_VSCODE && 'serviceWorker' in navigator && !navigator.serviceWorker.controller) {
+  if ('serviceWorker' in navigator && !navigator.serviceWorker.controller) {
     setStatus(
       'Cannot open tables: the service worker is not controlling this page, so OneLake ' +
       'reads would go out unsigned and fail. Do a normal reload (F5) to fix it. If DevTools ' +
@@ -1674,14 +1621,9 @@ $('byoLink').onclick = () => showByoForm();
 $('gateClose').onclick = () => { $('authGate').style.display = 'none'; };
 initSidebarToggle();
 initSidebarResize();
-// The stamp answers "which build did the cache give me", which is a browser's question.
-// An installed extension has one copy of the app and VS Code owns its version, so the
-// stamp says nothing and the poller asks a server that isn't there.
-if (!HOST_VSCODE) {
-  showVersion();
-  checkForNewBuild();
-  setInterval(checkForNewBuild, VERSION_RECHECK_MS);
-}
+showVersion();
+checkForNewBuild();
+setInterval(checkForNewBuild, VERSION_RECHECK_MS);
 wireUi();
 // Painted before either stage starts. If the silent check turns out to find a session,
 // afterSignIn swaps this for "Signed in" — and closes the gate, if it was opened in the
@@ -1722,115 +1664,3 @@ engineReady = engine.init();
     showAuthFailure(e);
   }
 })();
-
-// ---------------------------------------------------------------------------
-// The editor's sidebar, driving this panel
-// ---------------------------------------------------------------------------
-// Browsing lives in the VS Code tree; this is the other end of that. A click over there
-// arrives here as one message and is handed to exactly the same selectTable/selectFile
-// the panel's own sidebar calls, so a table opened from the tree costs the same three
-// tiers, takes the same ticket, and reports the same way. No second code path for the
-// same act, and nothing here is reachable from a browser tab.
-if (HOST_VSCODE) {
-  // Only the webview defines this. The guard is what lets the same page be driven in a
-  // plain browser for testing — without it the whole block throws on load.
-  const vs = typeof acquireVsCodeApi === 'function' ? acquireVsCodeApi() : { postMessage() {} };
-
-  // selectTable/selectFile take the row they were clicked on so they can mark it. Nothing
-  // in the tree has a row on this side, and a detached element satisfies them without
-  // pretending the hidden list is what was clicked.
-  const detachedRow = () => document.createElement('div');
-
-  // The panel follows the tree rather than leading it, so this is a plain state change:
-  // no listing, no picker to update. The teardown is the part that matters — the previous
-  // lakehouse's views and registrations have to be handed back before another one's
-  // tables are opened.
-  async function goToLakehouse(workspace, item) {
-    await engineReady;
-    if (lakehouse && lakehouse.workspace === workspace && lakehouse.item === item) return;
-    const resetP = lakehouse ? leaveLakehouse() : null;
-    lakehouse = { workspace, item };
-    setPaneTabs(item);
-    if (resetP) await resetP;
-  }
-
-  async function openTable(m) {
-    await goToLakehouse(m.workspace, m.item);
-    await selectTable(detachedRow(), { schema: m.schema || '', table: m.table });
-  }
-
-  // The message carries everything a listing would have: the tree just read this
-  // directory. Re-listing it here to recover the entry cost a DFS round trip before every
-  // file open, which is exactly the kind of thing that makes an editor feel slower than a
-  // web page. The one flag not sent is `queryable` — whether a reader exists depends on
-  // which DuckDB extensions loaded — and it is not needed: loadFile decides that itself
-  // and says so, which is a better answer than refusing up front.
-  async function openFile(m) {
-    await goToLakehouse(m.workspace, m.item);
-    const entry = { name: basename(m.path), path: m.path, isDir: false, bytes: m.bytes || 0 };
-    if (IMAGE_EXTS.has(fileExt(entry.name))) await selectImage(detachedRow(), entry);
-    else await selectFile(detachedRow(), entry);
-  }
-
-  // Where the bytes came from. DuckDB's reads never pass through this page — it cannot see
-  // how many there were or how long OneLake took — so the extension counts them and sends
-  // the total. Deliberately NOT written through setStatus: that does `el.className = type`
-  // and would drop any class parked on it, and this is a standing fact rather than a
-  // message about what just happened.
-  // A round number is a round number: "20.0 GB" and "210.0 MB" read like a measurement
-  // taken to a precision nobody asked for. And zero is nothing, not "1 KB".
-  const trim = s => s.replace(/\.0$/, '');
-  const bytes = n => !n ? 'nothing'
-                   : n >= 1e9 ? `${trim((n / 1e9).toFixed(1))} GB`
-                   : n >= 1e6 ? `${trim((n / 1e6).toFixed(1))} MB`
-                   : `${Math.max(1, Math.round(n / 1e3))} KB`;
-
-  function showReads(m) {
-    const el = $('readSrc');
-    el.hidden = false;
-    el.className = '';
-    const fromNet = m.misses + m.skips;
-    if (m.cacheOff) {
-      el.textContent = '☁ no cache';
-      el.className = 'nocache';
-    } else if (!fromNet) {
-      el.textContent = '▤ local';
-      el.className = 'local';
-    } else if (m.hits) {
-      el.textContent = `▤ ${m.hits} · ☁ ${fromNet} · ${bytes(m.netBytes)}`;
-    } else {
-      el.textContent = `☁ network · ${bytes(m.netBytes)}`;
-    }
-    el.title = [
-      `${m.reads} read(s) behind the last thing you waited for.`,
-      m.hits ? `${m.hits} from this machine (${bytes(m.cacheBytes)}).` : 'None came from this machine.',
-      fromNet ? `${fromNet} from OneLake (${bytes(m.netBytes)}, ${(m.netMs / 1000).toFixed(1)}s).` : '',
-      // A skip is not a miss: those objects are ones the cache is not allowed to hold, so
-      // they will cost the network every time and no amount of waiting changes that.
-      m.skips ? `${m.skips} of those can never be cached — they are not immutable objects.` : '',
-      m.cacheOff ? `Cache is OFF: ${m.cacheOff}` : `Cache holds ${bytes(m.cacheStored)} of ${bytes(m.cacheMax)}.`,
-      'Click for the full read log.',
-    ].filter(Boolean).join('\n');
-  }
-
-  $('readSrc').onclick = () => vs.postMessage({ type: 'show-log' });
-
-  window.addEventListener('message', async e => {
-    const m = e.data || {};
-    try {
-      if (m.type === 'open-table') await openTable(m);
-      else if (m.type === 'open-file') await openFile(m);
-      // The tree was refreshed, so what this side holds about the old listing is suspect.
-      else if (m.type === 'reset') { await engineReady; await leaveLakehouse(); lakehouse = null; }
-      else if (m.type === 'reads') showReads(m);
-    } catch (err) {
-      setStatus('Could not open that: ' + explainRead(err.message), 'error');
-      console.error(err);
-    }
-  });
-
-  // Said once the engine is up, because that is when a message can actually be acted on.
-  // Until then the extension holds the last click rather than dropping it — booting DuckDB
-  // takes seconds, and a click in that window is the most likely one there is.
-  engineReady.then(() => vs.postMessage({ type: 'ready' }), () => {});
-}
