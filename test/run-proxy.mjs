@@ -246,6 +246,65 @@ const TABLE_FILE = `${proxy.dfsOrigin}/ws/lh.Lakehouse/Tables/t/data_0.parquet`;
   await fetch(TABLE_FILE, { headers: { Range: "bytes=0-99" } });
   eq(log.length, before + 1, "clearing the cache really lets go of the bytes");
 }
+// Eviction, on its own proxy with a cap small enough to cross. The default is twenty
+// gigabytes precisely so this never runs in practice — which is why it needs proving here
+// rather than in the field.
+{
+  const PRUNE_DIR = await mkdtemp(join(tmpdir(), "onelake-prune-"));
+  // The fixture is 5.2MB, so two files overflow an 8MB cap and one does not.
+  const CAP = 8 * 1024 * 1024;
+  const small = await startProxy({
+    getToken: async () => TOKEN,
+    cacheDir: PRUNE_DIR, cacheMaxBytes: CAP,
+    dfsUpstream: upBase, tableUpstream: upBase,
+  });
+  const url = n => `${small.dfsOrigin}/ws/lh.Lakehouse/Tables/t/data_${n}.parquet`;
+  const settle = () => new Promise(r => setTimeout(r, 600));
+  try {
+    await (await fetch(url(1))).arrayBuffer();
+    await settle();
+    ok(await small.cacheSize() > 0, "a first file is kept");
+
+    await (await fetch(url(2))).arrayBuffer();
+    await settle();
+    const size = await small.cacheSize();
+    ok(size <= CAP, `the cap is honoured (${(size / 1e6).toFixed(1)}MB)`);
+
+    // Oldest-first: the one read second survives, the one read first does not.
+    let before = log.length;
+    await (await fetch(url(2))).arrayBuffer();
+    eq(log.length, before, "…and the newest entry is the one still there");
+
+    before = log.length;
+    await (await fetch(url(1))).arrayBuffer();
+    eq(log.length, before + 1, "…while the oldest was the one evicted");
+  } finally {
+    await small.close();
+    await rm(PRUNE_DIR, { recursive: true, force: true }).catch(() => {});
+  }
+}
+{
+  // A cap below a single object's size used to mean caching nothing at all: the entry was
+  // written, counted, and immediately evicted for being over the limit. Keeping one thing
+  // and sitting over the cap beats being reliably useless.
+  const TINY_DIR = await mkdtemp(join(tmpdir(), "onelake-tiny-"));
+  const tiny = await startProxy({
+    getToken: async () => TOKEN,
+    cacheDir: TINY_DIR, cacheMaxBytes: 1024,
+    dfsUpstream: upBase, tableUpstream: upBase,
+  });
+  const url = `${tiny.dfsOrigin}/ws/lh.Lakehouse/Tables/t/data_9.parquet`;
+  try {
+    await (await fetch(url)).arrayBuffer();
+    await new Promise(r => setTimeout(r, 600));
+    const before = log.length;
+    await (await fetch(url)).arrayBuffer();
+    eq(log.length, before, "a file bigger than the whole cap is still kept");
+  } finally {
+    await tiny.close();
+    await rm(TINY_DIR, { recursive: true, force: true }).catch(() => {});
+  }
+}
 
 // =============================================================================
 // Part 2 — DuckDB-WASM range-reading through it, in real Chrome

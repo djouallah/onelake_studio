@@ -81,14 +81,32 @@ function logRead(e) {
     (e.error ? `  !! ${e.error}` : ''));
 }
 
+const GB = 1024 * 1024 * 1024;
+function cacheMaxBytes() {
+  const gb = vscode.workspace.getConfiguration('onelakeStudio').get('dataCacheGB', 20);
+  // 0 means "do not cache", which is a real answer for a machine short on disk — and
+  // Number.MAX_SAFE_INTEGER is not one, so a negative or nonsense value falls back.
+  return Number.isFinite(gb) && gb >= 0 ? Math.round(gb * GB) : 20 * GB;
+}
+
+const fmtBytes = n => n >= GB ? `${(n / GB).toFixed(1)} GB`
+                   : n >= 1024 * 1024 ? `${Math.round(n / 1024 / 1024)} MB`
+                   : `${Math.round(n / 1024)} KB`;
+
 async function ensureProxy(context) {
   if (!proxy) {
+    const max = cacheMaxBytes();
     proxy = await startProxy({
       getToken: proxyToken,
-      // The same half-gigabyte of immutable Iceberg files sw.js keeps for the browser
-      // build. Without it the panel re-downloaded every parquet footer and row group on
-      // every open, which the website has not done since the worker started caching them.
-      cacheDir: join(context.globalStorageUri.fsPath, 'onelake-data'),
+      // The immutable Iceberg files sw.js keeps for the browser build. Without it the
+      // panel re-downloaded every parquet footer and row group on every open, which the
+      // website has not done since the worker started caching them. Far larger than the
+      // browser's copy, because the browser's limit is a storage quota and this is a
+      // directory: bytes here cost disk, and fetching them again costs seconds.
+      // A limit of zero is a real answer for a machine short on disk, and it means no
+      // cache at all rather than a cache that evicts everything it writes.
+      cacheDir: max > 0 ? join(context.globalStorageUri.fsPath, 'onelake-data') : null,
+      cacheMaxBytes: max,
       onLog: logRead,
     });
     context.subscriptions.push({ dispose: () => proxy && proxy.close() });
@@ -151,10 +169,17 @@ async function activate(context) {
     vscode.commands.registerCommand('onelakeStudio.showLog', () => out.show(true)),
 
     // Reading the same table twice should be quick, and if it is not, this is how to
-    // prove the cache is the reason rather than assume it.
+    // prove the cache is the reason rather than assume it. It also answers "what is this
+    // costing me on disk", which is the fair question to ask of a twenty-gigabyte default.
     vscode.commands.registerCommand('onelakeStudio.clearCache', async () => {
-      if (proxy) await proxy.clearCache();
-      vscode.window.showInformationMessage('OneLake Studio: cached OneLake data cleared.');
+      if (!proxy) {
+        vscode.window.showInformationMessage('OneLake Studio: nothing cached yet.');
+        return;
+      }
+      const was = await proxy.cacheSize();
+      await proxy.clearCache();
+      vscode.window.showInformationMessage(
+        `OneLake Studio: cleared ${fmtBytes(was)} of cached OneLake data.`);
     }),
 
     vscode.commands.registerCommand('onelakeStudio.openTable', n => openInPanel({

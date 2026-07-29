@@ -203,14 +203,14 @@ async function handle(req, res, opts) {
 }
 
 // Resolves to { port, secret, dfsOrigin, tableOrigin, close() }.
-function startProxy({ getToken, cacheDir, onLog,
+function startProxy({ getToken, cacheDir, cacheMaxBytes, onLog,
                       dfsUpstream = DFS_UPSTREAM, tableUpstream = TABLE_UPSTREAM } = {}) {
   if (typeof getToken !== 'function') throw new TypeError('startProxy needs a getToken() function');
 
   const secret = crypto.randomBytes(24).toString('hex');
   // Absent cacheDir means no cache — every read goes upstream, which is what the proxy
   // did before and is still a correct proxy.
-  const cache = createCache(cacheDir);
+  const cache = createCache(cacheDir, cacheMaxBytes ? { maxBytes: cacheMaxBytes } : {});
   const opts = { getToken, dfsUpstream, tableUpstream, secret, cache, onLog };
 
   const server = http.createServer((req, res) => {
@@ -235,6 +235,7 @@ function startProxy({ getToken, cacheDir, onLog,
         // The bytes were read with the identity being left behind, so switching account
         // or signing out throws them away.
         clearCache: () => (cache ? cache.clear() : Promise.resolve()),
+        cacheSize: () => (cache ? cache.size() : Promise.resolve(0)),
         close: () => new Promise(done => server.close(done)),
       });
     });

@@ -102,6 +102,12 @@
           "type": "string",
           "default": "",
           "markdownDescription": "Directory (tenant) GUID to sign in against. Leave empty for your home tenant; set it to reach a tenant you are a guest in."
+        },
+        "onelakeStudio.dataCacheGB": {
+          "type": "number",
+          "default": 20,
+          "minimum": 0,
+          "markdownDescription": "Disk to spend caching OneLake data, in GB. Only Iceberg data files and manifests are cached — objects a new snapshot replaces rather than rewrites, so a cached one can never be stale. Reading a table you have opened before comes off disk instead of the network. Set to `0` to cache nothing; `OneLake Studio: Clear Cached OneLake Data` empties it and reports what it freed."
         }
       }
     }
