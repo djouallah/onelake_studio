@@ -32,7 +32,6 @@ const fs = require('node:fs/promises');
 const fsSync = require('node:fs');
 const { createHash } = require('node:crypto');
 const { join } = require('node:path');
-const { Readable } = require('node:stream');
 
 // sw.js caps its cache at half a gigabyte, and that number is not a policy — it is what
 // a browser's storage quota will tolerate before it starts evicting on its own. None of
@@ -151,7 +150,11 @@ function createCache(dir, { maxBytes = DEFAULT_MAX_BYTES, ttlMs = DEFAULT_TTL_MS
     try {
       await ensure();
       const k = keyOf(url);
-      const meta = JSON.parse(await fs.readFile(join(dir, `${k}.json`), 'utf8'));
+      // Read synchronously, deliberately: fs/promises rides libuv's 4-thread pool, the
+      // same pool dns.lookup uses, and a hit was measured waiting NINE SECONDS behind
+      // wedged lookups for a 40-byte file. A sync read of a tiny local file costs
+      // microseconds and can never queue behind the network's problems.
+      const meta = JSON.parse(fsSync.readFileSync(join(dir, `${k}.json`), 'utf8'));
       if (meta.v !== SIDE_V) return null;          // a pre-slicing entry; the sweep owns it
       // A TTL entry past its time is a miss, not an error: the refetch replaces it.
       if (meta.exp && Date.now() > meta.exp) return null;
@@ -240,6 +243,9 @@ function createCache(dir, { maxBytes = DEFAULT_MAX_BYTES, ttlMs = DEFAULT_TTL_MS
   function beginPutFull(url, { headers } = {}) {
     const tier = tierOf(url);
     if (!usable || !tier) return null;
+    // A zero TTL means "ask OneLake every time" — storing an entry that is born expired
+    // would be disk spent on nothing.
+    if (tier === 'ttl' && ttlMs <= 0) return null;
     const k = keyOf(url);
     if (fills.has(k)) return null;
     if (fsSync.existsSync(join(dir, `${k}.bin`))) {
@@ -293,13 +299,14 @@ function createCache(dir, { maxBytes = DEFAULT_MAX_BYTES, ttlMs = DEFAULT_TTL_MS
       let entry = null;
       try {
         const resp = await fetchFull();
-        if (!resp || resp.status !== 200 || !resp.body) {
+        if (!resp || resp.status !== 200 || !resp.stream) {
+          if (resp && resp.stream) resp.stream.resume();   // free the keep-alive socket
           failedAt.set(k, Date.now());
           return { stored: false, bytes: 0, reason: `upstream ${resp ? resp.status : 'unreachable'}` };
         }
         entry = startFill(k);
-        if (!entry) return { stored: false, bytes: 0, reason: 'no write stream' };
-        const body = Readable.fromWeb(resp.body);
+        if (!entry) { resp.stream.resume(); return { stored: false, bytes: 0, reason: 'no write stream' }; }
+        const body = resp.stream;
         body.on('error', () => entry.abort());
         body.pipe(entry.stream);
         const out = await entry.done;

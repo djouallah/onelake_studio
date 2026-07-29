@@ -158,6 +158,14 @@ function cacheMaxBytes() {
   return Number.isFinite(gb) && gb >= 0 ? Math.round(gb * GB) : 20 * GB;
 }
 
+// How long a catalog answer is served from disk with no network check at all. The user's
+// number, because it IS the trade: bigger means table opens skip the catalog's
+// seconds-per-call for longer, and a new snapshot takes that much longer to show up.
+function catalogTtlMs() {
+  const min = vscode.workspace.getConfiguration('onelakeStudio').get('catalogTtlMinutes', 5);
+  return Number.isFinite(min) && min >= 0 ? Math.round(min * 60 * 1000) : 5 * 60 * 1000;
+}
+
 const fmtBytes = n => n >= GB ? `${(n / GB).toFixed(1)} GB`
                    : n >= 1024 * 1024 ? `${Math.round(n / 1024 / 1024)} MB`
                    : `${Math.round(n / 1024)} KB`;
@@ -176,6 +184,7 @@ async function ensureProxy(context) {
       // cache at all rather than a cache that evicts everything it writes.
       cacheDir: max > 0 ? join(context.globalStorageUri.fsPath, 'onelake-data') : null,
       cacheMaxBytes: max,
+      cacheTtlMs: catalogTtlMs(),
       onLog: logRead,
     });
     context.subscriptions.push({ dispose: () => proxy && proxy.close() });

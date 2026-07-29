@@ -26,8 +26,8 @@
 // =============================================================================
 
 const http = require('node:http');
+const https = require('node:https');
 const crypto = require('node:crypto');
-const { Readable } = require('node:stream');
 const { createCache } = require('./cache');
 
 const DFS_UPSTREAM = 'https://onelake.dfs.fabric.microsoft.com';
@@ -76,6 +76,42 @@ function route(reqUrl, secret) {
   return { kind: m[2], rest: m[3] || '/', query };
 }
 
+// Upstream connections are kept alive and reused. Measured in the field: catalog calls
+// and first reads cost a suspiciously uniform 3–11 seconds for a few KB — the signature
+// of a FRESH CONNECTION being stood up each time (a slow resolver, or IPv6 tried first
+// and left to time out), not of a slow server. fetch() gave no control over any of it.
+// Plain node http(s) with a keep-alive agent does: one lookup, then warm sockets —
+// autoSelectFamily settles the v4/v6 race in 300ms instead of a protocol timeout, and
+// fewer dns.lookup calls also stops the 4-thread libuv pool from wedging, which is what
+// once made a CACHE HIT take nine seconds. accept-encoding is pinned to identity because
+// unlike fetch, nothing here decompresses — the bytes are passed through and teed as-is.
+const AGENT_OPTS = {
+  keepAlive: true, maxSockets: 16, scheduling: 'lifo',
+  autoSelectFamily: true, autoSelectFamilyAttemptTimeout: 300,
+};
+const agents = { 'https:': new https.Agent(AGENT_OPTS), 'http:': new http.Agent(AGENT_OPTS) };
+
+// GET/HEAD only, redirects followed. Resolves { status, headers, stream } — node shapes,
+// lowercase header keys, stream is the response Readable.
+function nodeFetch(urlStr, method, headers, hops = 3) {
+  return new Promise((resolve, reject) => {
+    let u;
+    try { u = new URL(urlStr); } catch (e) { return reject(e); }
+    const req = (u.protocol === 'https:' ? https : http).request(u, {
+      method, headers: { ...headers, 'accept-encoding': 'identity' }, agent: agents[u.protocol],
+    }, res => {
+      const loc = res.headers.location;
+      if (loc && [301, 302, 303, 307, 308].includes(res.statusCode) && hops > 0) {
+        res.resume();   // drain, so the keep-alive socket is reusable
+        return resolve(nodeFetch(new URL(loc, u).href, method, headers, hops - 1));
+      }
+      resolve({ status: res.statusCode, headers: res.headers, stream: res });
+    });
+    req.on('error', reject);
+    req.end();
+  });
+}
+
 // One authenticated upstream round trip, with the 401-retry a cached token makes
 // necessary: the caller caches what getToken returns, so an expiry is discovered here as
 // a 401, and asking for a fresh token and retrying is the only thing that could help.
@@ -94,12 +130,13 @@ async function fetchUpstream(upstream, getToken, { method = 'GET', range = '', a
     if (range) headers.range = range;
     if (accept) headers.accept = accept;
     const netAt = Date.now();
-    let resp = await fetch(upstream, { method, headers, redirect: 'follow' });
+    let resp = await nodeFetch(upstream, method, headers);
     if (resp.status === 401) {
       const fresh = await getToken({ fresh: true });
       if (fresh && fresh !== token) {
+        resp.stream.resume();   // drain the 401 so its socket goes back in the pool
         headers.authorization = 'Bearer ' + fresh;
-        resp = await fetch(upstream, { method, headers, redirect: 'follow' });
+        resp = await nodeFetch(upstream, method, headers);
       }
     }
     out.netMs = Date.now() - netAt;
@@ -192,17 +229,18 @@ async function handle(req, res, opts) {
 
   const out = {};
   for (const h of PASS_THROUGH) {
-    const v = up.headers.get(h);
-    if (v !== null) out[h] = v;
+    const v = up.headers[h];
+    if (v != null) out[h] = v;
   }
   // Upstream's status is passed through untouched — 206, and 401/403/404, all of which
   // the engine reads and turns into its own diagnosis.
   res.writeHead(up.status, out);
-  if (req.method === 'HEAD' || !up.body) {
+  if (req.method === 'HEAD') {
+    up.stream.resume();   // no body is coming, but the socket must go back to the pool
     // An immutable file's length is as immutable as its bytes, and DuckDB asks for it
     // before every open. Storing it turns a round trip to OneLake into a local read.
     let stored = false;
-    if (req.method === 'HEAD' && up.status === 200 && opts.cache) {
+    if (up.status === 200 && opts.cache) {
       stored = opts.cache.putHead(upstream, out['content-length']);
     }
     log({ cache: stored ? 'miss' : 'skip', status: up.status, tokenMs, netMs,
@@ -241,7 +279,7 @@ async function handle(req, res, opts) {
   // Only a COMPLETE 200 body is teed: it is the object itself. A 206 is a slice, and
   // storing slices keyed by range was the old design's disease — nothing ever asked for
   // the same slice twice.
-  const body = Readable.fromWeb(up.body);
+  const body = up.stream;
   const entry = (opts.cache && up.status === 200 && !out['content-range'])
     ? opts.cache.beginPutFull(upstream, { headers: out }) : null;
 
@@ -269,7 +307,8 @@ function startProxy({ getToken, cacheDir, cacheMaxBytes, cacheTtlMs, onLog,
   // did before and is still a correct proxy.
   const cache = createCache(cacheDir, {
     ...(cacheMaxBytes ? { maxBytes: cacheMaxBytes } : {}),
-    ...(cacheTtlMs ? { ttlMs: cacheTtlMs } : {}),
+    // != null, not truthiness: zero is a real answer ("ask OneLake every time").
+    ...(cacheTtlMs != null ? { ttlMs: cacheTtlMs } : {}),
   });
   const opts = { getToken, dfsUpstream, tableUpstream, secret, cache, onLog };
 
