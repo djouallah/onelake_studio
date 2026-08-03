@@ -29,17 +29,21 @@ class LakehouseTree {
    * @param {import('./catalog').createCatalog} deps.catalog
    * @param {() => boolean} deps.isSignedIn
    */
-  constructor({ catalog, isSignedIn }) {
+  constructor({ catalog, isSignedIn, log = () => {} }) {
     this.catalog = catalog;
     this.isSignedIn = isSignedIn;
+    this.log = log;
     this._emitter = new vscode.EventEmitter();
     this.onDidChangeTreeData = this._emitter.event;
   }
 
   // `n` undefined refreshes the whole tree; a node refreshes that subtree only, which is
-  // what the per-item refresh in the context menu wants.
+  // what the per-item refresh in the context menu wants. The catalog's memos are cleared
+  // either way: a per-node refresh that re-renders from the same cached listing is a
+  // refresh button that does nothing, and the tables listing is exactly the memo the
+  // per-node button exists to bust.
   refresh(n) {
-    if (!n) this.catalog.reset();
+    this.catalog.reset();
     this._emitter.fire(n);
   }
 
@@ -48,6 +52,14 @@ class LakehouseTree {
     const item = new vscode.TreeItem(n.label,
       n.leaf ? C.None : n.expanded ? C.Expanded : C.Collapsed);
     item.contextValue = n.kind;
+    // A stable identity, so expansion state survives a refresh keyed on WHAT the node is
+    // rather than on its label — labels repeat freely across workspaces. Only the domain
+    // nodes get one: two error nodes under different parents can carry the same message,
+    // and duplicate ids are worse than generated ones.
+    if (n.kind !== 'error' && n.kind !== 'empty') {
+      item.id = [n.kind, n.workspace, n.item, n.schema, n.table, n.dir, n.path]
+        .map(v => (v == null ? '' : String(v))).join('|');
+    }
     switch (n.kind) {
       case 'workspace':
         item.iconPath = new vscode.ThemeIcon('folder');
@@ -96,6 +108,8 @@ class LakehouseTree {
     try {
       return await this._children(n);
     } catch (e) {
+      // The node carries the sentence; the log carries the stack.
+      this.log(`tree: listing ${n ? `${n.kind} ${n.label}` : 'workspaces'} failed — ${(e && e.stack) || e}`);
       const detail = (e && e.message) || String(e);
       return [node('error', detail.length > 90 ? detail.slice(0, 87) + '…' : detail,
         { leaf: true, detail })];

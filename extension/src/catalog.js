@@ -23,6 +23,11 @@ const { pathToFileURL } = require('node:url');
 const DFS_ORIGIN = 'https://onelake.dfs.fabric.microsoft.com';
 const TABLE_ORIGIN = 'https://onelake.table.fabric.microsoft.com';
 const MAX_PARALLEL = 8;
+// A hung listing left the tree's spinner up forever — there is no cancel path through
+// getChildren — and a server that re-echoes its own continuation token would page for
+// ever. Both bounds are far past anything a real tenant produces.
+const FETCH_TIMEOUT_MS = 60_000;
+const MAX_PAGES = 500;
 
 // paths.js is ESM and this file is CJS, so it arrives through a dynamic import — resolved
 // from the site directory the caller found, which differs between a packaged extension and
@@ -72,11 +77,15 @@ function createCatalog({ getToken, siteFsPath, dfsOrigin = DFS_ORIGIN, tableOrig
       e.status = 401;
       throw e;
     }
-    let r = await fetch(url, { headers: { authorization: `Bearer ${token}` } });
+    const opts = headers => ({ headers, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
+    let r = await fetch(url, opts({ authorization: `Bearer ${token}` }));
     if (r.status === 401) {
-      const fresh = await getToken();
+      // { fresh: true } or the retry is theatre: the injected getToken is the extension's
+      // 60-second token cache, and asking it plainly returns the very string that just
+      // 401'd — `fresh !== token` was false every single time.
+      const fresh = await getToken({ fresh: true });
       if (fresh && fresh !== token) {
-        r = await fetch(url, { headers: { authorization: `Bearer ${fresh}` } });
+        r = await fetch(url, opts({ authorization: `Bearer ${fresh}` }));
       }
     }
     return r;
@@ -97,8 +106,10 @@ function createCatalog({ getToken, siteFsPath, dfsOrigin = DFS_ORIGIN, tableOrig
   // the storage token the data reads already use — no Fabric REST API, no second scope.
   async function listWorkspaces() {
     const out = [];
-    let cont = '';
+    let cont = '', pages = 0;
     do {
+      if (++pages > MAX_PAGES) throw new Error(
+        `Listing workspaces did not finish after ${MAX_PAGES} pages — giving up`);
       const u = new URL(`${dfsOrigin}/`);
       u.searchParams.set('resource', 'account');
       if (cont) u.searchParams.set('continuation', cont);
@@ -145,6 +156,8 @@ function createCatalog({ getToken, siteFsPath, dfsOrigin = DFS_ORIGIN, tableOrig
       }
       cont = r.headers.get('x-ms-continuation') || '';
       page++;
+      if (page > MAX_PAGES) throw new Error(
+        `Listing of ${strip(directory) || ws} did not finish after ${MAX_PAGES} pages — giving up`);
     } while (cont);
     return out;
   }
@@ -215,6 +228,10 @@ function createCatalog({ getToken, siteFsPath, dfsOrigin = DFS_ORIGIN, tableOrig
     return tables.sort((a, b) =>
       (a.schema || '').localeCompare(b.schema || '') || a.table.localeCompare(b.table));
   }
+
+  // One table's metadata document is NOT fetched here. The webview's own resolver in
+  // app/data.js owns that call — it goes through the loopback proxy, so it gets the disk
+  // cache and the read log for free, neither of which a host-side fetch would have.
 
   // One level of Files/. `dir` is relative to Files/. Unlike the panel's version this
   // carries no `queryable` flag: whether a file can be opened depends on which DuckDB
