@@ -1903,5 +1903,11 @@ if (HOST_VSCODE) {
   // Said once the engine is up, because that is when a message can actually be acted on.
   // Until then the extension holds the last click rather than dropping it — booting DuckDB
   // takes seconds, and a click in that window is the most likely one there is.
-  engineReady.then(() => vs.postMessage({ type: 'ready' }), () => {});
+  //
+  // A boot that FAILS is said too: `ready` is never coming, so the click the extension is
+  // holding would otherwise wait forever behind a spinner. boot-failed lets the panel drop
+  // it and put the reason in front of the user instead.
+  engineReady.then(
+    () => vs.postMessage({ type: 'ready' }),
+    e => vs.postMessage({ type: 'boot-failed', message: (e && e.message) || String(e) }));
 }

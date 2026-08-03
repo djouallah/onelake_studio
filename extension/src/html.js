@@ -21,8 +21,12 @@
 // with the default OneLake origins, i.e. unsigned reads.
 function injectConfig(html, nonce, config) {
   const re = /<script src="config\.js"><\/script>/;
+  // `<` is escaped so no config value can ever close this script tag from inside the
+  // JSON. Every value is extension-controlled today; this is what keeps that sentence
+  // from having to stay true forever.
+  const json = JSON.stringify(config).replace(/</g, '\\u003c');
   return {
-    html: html.replace(re, `<script nonce="${nonce}">window.ONELAKE_STUDIO_CONFIG = ${JSON.stringify(config)};</script>`),
+    html: html.replace(re, `<script nonce="${nonce}">window.ONELAKE_STUDIO_CONFIG = ${json};</script>`),
     ok: re.test(html),
   };
 }
@@ -39,10 +43,12 @@ function rewriteAssets(html, assetUrl) {
   return { html: out, ok: n > 0, count: n };
 }
 
-// The preconnects name OneLake, which nothing in the webview talks to directly — the
-// proxy does. `default-src 'none'` would refuse them and log an error per load.
+// The preconnects name OneLake and jsDelivr, and nothing in the webview talks to either
+// directly — the proxy signs the former and serves the latter from the vendor directory.
+// `default-src 'none'` would refuse them and log an error per load.
 function dropOneLakePreconnect(html) {
-  return html.replace(/\s*<link rel="preconnect" href="https:\/\/onelake\.[^"]*"[^>]*>/g, '');
+  return html.replace(
+    /\s*<link rel="preconnect" href="https:\/\/(onelake\.|cdn\.jsdelivr\.net)[^"]*"[^>]*>/g, '');
 }
 
 function addCsp(html, cspContent) {

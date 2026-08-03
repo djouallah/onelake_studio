@@ -30,7 +30,7 @@ const https = require('node:https');
 const crypto = require('node:crypto');
 const fs = require('node:fs/promises');
 const fsSync = require('node:fs');
-const { join } = require('node:path');
+const { join, relative, isAbsolute } = require('node:path');
 const { createCache, CDN_HOSTS } = require('./cache');
 
 const DFS_UPSTREAM = 'https://onelake.dfs.fabric.microsoft.com';
@@ -64,8 +64,19 @@ function isPartial(contentRange) {
   return !coversWholeObject(contentRange);
 }
 
-function cors(res) {
-  res.setHeader('access-control-allow-origin', '*');
+// The only pages that may READ responses cross-origin: the VS Code webview this
+// extension created, and the loopback harnesses under test/. Anything else that finds
+// the port — a tab on some website spraying localhost ports — gets no CORS grant, so
+// even the unsecreted /npm route is unreadable from a foreign origin. DuckDB's own
+// reads (httpfs, node http) send no Origin header and never needed the grant.
+const ALLOWED_ORIGIN = /^vscode-webview:\/\/|^https?:\/\/(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$/;
+
+function cors(req, res) {
+  // The answer depends on who asked, so caches must key on it.
+  res.setHeader('vary', 'origin');
+  const origin = req.headers.origin || '';
+  if (!ALLOWED_ORIGIN.test(origin)) return;
+  res.setHeader('access-control-allow-origin', origin);
   res.setHeader('access-control-allow-methods', 'GET, HEAD, OPTIONS');
   // Range is not a CORS-safelisted request header, so the webview sends a preflight
   // ahead of every ranged read and this has to answer it.
@@ -179,7 +190,16 @@ function nodeFetch(urlStr, method, headers, hops = 3) {
       const loc = res.headers.location;
       if (loc && [301, 302, 303, 307, 308].includes(res.statusCode) && hops > 0) {
         res.resume();   // drain, so the keep-alive socket is reusable
-        return resolve(nodeFetch(new URL(loc, u).href, method, headers, hops - 1));
+        const next = new URL(loc, u);
+        // The bearer authorises one host. A redirect that leaves it must not carry the
+        // token along — whatever the new host is, the user's OneLake credential is not
+        // its business.
+        let nextHeaders = headers;
+        if (next.origin !== u.origin) {
+          nextHeaders = { ...headers };
+          delete nextHeaders.authorization;
+        }
+        return resolve(nodeFetch(next.href, method, nextHeaders, hops - 1));
       }
       resolve({ status: res.statusCode, headers: res.headers, stream: res });
     });
@@ -195,7 +215,16 @@ function nodeFetch(urlStr, method, headers, hops = 3) {
 // predates. Path segments of '.' and '..' are dropped outright, so a request can name
 // nothing outside the vendor directory.
 async function serveVendor(req, res, vendorDir, rest, log) {
-  const file = join(vendorDir, ...rest.split('/').filter(s => s && s !== '.' && s !== '..'));
+  // Splitting on '/' alone is not containment on Windows: join() also treats '\' as a
+  // separator, so a raw backslash inside one segment could climb out of vendorDir — and
+  // this is reachable through the unsecreted /npm route. Segments carrying either a
+  // backslash or a drive colon are refused outright, and the joined path is verified to
+  // still be inside the vendor directory before anything touches the disk.
+  const segs = rest.split('/').filter(s => s && s !== '.' && s !== '..');
+  if (segs.some(s => s.includes('\\') || s.includes(':'))) return false;
+  const file = join(vendorDir, ...segs);
+  const rel = relative(vendorDir, file);
+  if (!rel || rel.startsWith('..') || isAbsolute(rel)) return false;
   let st;
   try { st = await fs.stat(file); } catch (_) { return false; }
   if (!st.isFile()) return false;
@@ -262,7 +291,7 @@ async function fetchUpstream(upstream, getToken, { method = 'GET', range = '', a
 }
 
 async function handle(req, res, opts) {
-  cors(res);
+  cors(req, res);
   // Answered before anything else and never logged: a preflight touches no token, no
   // cache and no network, and one per file would bury the reads that do.
   if (req.method === 'OPTIONS') { res.writeHead(204); return res.end(); }

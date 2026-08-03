@@ -28,14 +28,20 @@ const { siteRoot } = require('./site');
 //                      /cdn route, which serves them from the vendor directory.
 //   connect-src      — the proxy (every OneLake read is signed there) and cspSource, which
 //                      is how the landing query reads the packaged README.
+//
+// No https://cdn.jsdelivr.net anywhere: vendor.mjs ships those files inside the extension
+// and the /cdn route serves them, so the allowance bought nothing — while a compromised
+// CDN script in a page wired to an engine that runs arbitrary SQL with local filesystem
+// access would have been a complete machine. docview.js's direct-CDN fallback import is
+// the one thing this refuses, and it degrades to an error message, not a broken page.
 function csp(webview, nonce, proxyOrigin) {
   return [
     `default-src 'none'`,
     `img-src ${webview.cspSource} data: blob:`,
     `font-src ${webview.cspSource}`,
     `style-src ${webview.cspSource} 'unsafe-inline'`,
-    `script-src ${webview.cspSource} 'nonce-${nonce}' ${proxyOrigin} https://cdn.jsdelivr.net`,
-    `connect-src ${webview.cspSource} ${proxyOrigin} https://cdn.jsdelivr.net`,
+    `script-src ${webview.cspSource} 'nonce-${nonce}' ${proxyOrigin}`,
+    `connect-src ${webview.cspSource} ${proxyOrigin}`,
   ].join('; ');
 }
 
@@ -83,14 +89,18 @@ function postLive(msg) {
 // promise never settles is a boot that hangs at "Starting DuckDB…" with nothing said,
 // and that failure mode has already cost this project a day once.
 function wireEngine(panel, engine) {
+  // postMessage THROWS once the panel is disposed, and an engine call can settle after
+  // exactly that — a query still streaming when the tab is closed. Nobody is listening;
+  // the result is simply dropped rather than becoming an unhandled rejection.
+  const post = msg => { try { panel.webview.postMessage(msg); } catch (_) {} };
   return async msg => {
     const { id, method, args } = msg;
     try {
       const value = await engine.call(method, args || [],
-        batch => panel.webview.postMessage({ type: 'engine-batch', id, batch }));
-      panel.webview.postMessage({ type: 'engine-result', id, value });
+        batch => post({ type: 'engine-batch', id, batch }));
+      post({ type: 'engine-result', id, value });
     } catch (e) {
-      panel.webview.postMessage({
+      post({
         type: 'engine-error', id,
         message: (e && e.message) || String(e),
         cancelled: !!(e && e.cancelled),
@@ -99,9 +109,20 @@ function wireEngine(panel, engine) {
   };
 }
 
-async function openPanel(context, proxy, { onOpened, onBoot, engine } = {}) {
-  if (current) { current.reveal(vscode.ViewColumn.Active); return current; }
+// Single-flight: two near-simultaneous opens (a tree click racing the Open command) must
+// not create two panels — the check on `current` alone has an await between it and the
+// assignment, and the loser of that race was orphaned holding an engine bridge forever.
+let opening = null;
 
+function openPanel(context, proxy, opts = {}) {
+  if (current) { current.reveal(vscode.ViewColumn.Active); return Promise.resolve(current); }
+  if (!opening) {
+    opening = openPanelUncontended(context, proxy, opts).finally(() => { opening = null; });
+  }
+  return opening;
+}
+
+async function openPanelUncontended(context, proxy, { onOpened, onBoot, onBootFailed, engine } = {}) {
   const { site: siteUri, readme: readmeUri } = await siteRoot(context.extensionUri,
     { dev: context.extensionMode === vscode.ExtensionMode.Development });
   const panel = vscode.window.createWebviewPanel(
@@ -114,6 +135,8 @@ async function openPanel(context, proxy, { onOpened, onBoot, engine } = {}) {
       // under F5 — listing both costs nothing and keeps the fallback readable.
       localResourceRoots: [siteUri, vscode.Uri.joinPath(readmeUri, '..')],
     });
+  // The activity bar already has this icon; the editor tab was getting the generic one.
+  panel.iconPath = vscode.Uri.joinPath(context.extensionUri, 'media', 'onelake.svg');
 
   try {
     panel.webview.html = await buildHtml(panel.webview, siteUri, {
@@ -155,6 +178,12 @@ async function openPanel(context, proxy, { onOpened, onBoot, engine } = {}) {
     } else if (msg.type === 'ready') {
       ready = true;
       if (pending) { panel.webview.postMessage(pending); pending = null; }
+    } else if (msg.type === 'boot-failed') {
+      // The engine did not come up, so `ready` never will — a click parked in `pending`
+      // is not going to be delivered, and holding it silently was this failure's old
+      // shape: a spinner that never moves and a message that never comes.
+      pending = null;
+      if (onBootFailed) onBootFailed(String(msg.message || 'the engine failed to start'));
     } else if (msg.type === 'show-log') {
       // The read indicator in the panel's status bar is clickable, and this is what it
       // does: the breakdown it summarises lives in the output channel.

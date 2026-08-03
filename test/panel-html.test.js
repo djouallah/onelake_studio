@@ -55,14 +55,15 @@ test("local scripts become webview URLs and CDN ones are left alone", () => {
   assert.ok(out.includes('type="module"'), "app.js keeps being a module");
 });
 
-test("the CSP lands inside head, and the OneLake preconnects are dropped", () => {
+test("the CSP lands inside head, and the external preconnects are dropped", () => {
   const out = rewriteHtml(INDEX, OPTS);
   assert.ok(/<meta http-equiv="Content-Security-Policy"[^>]*>\s*<\/head>/.test(out),
     "the CSP meta is in head");
   assert.ok(!/preconnect[^>]*onelake\./.test(out),
     "the OneLake preconnects are gone — default-src 'none' would refuse them anyway");
-  // jsDelivr is still preconnected: DuckDB-WASM really is fetched from there.
-  assert.ok(out.includes("cdn.jsdelivr.net"), "the jsDelivr preconnect survives");
+  // jsDelivr's goes too: the panel's CSP no longer admits the CDN at all — its files ship
+  // in the vendor directory and load through the proxy's /cdn route.
+  assert.ok(!/preconnect[^>]*jsdelivr/.test(out), "the jsDelivr preconnect is gone");
 });
 
 // Both keys are load-bearing and neither fails loudly. Without `host` the page keeps its

@@ -115,7 +115,10 @@ console.log("--- proxy behaviour ---");
   eq((await r.arrayBuffer()).byteLength, 100, "and the body is just that range");
 }
 {
-  const r = await fetch(`${proxy.dfsOrigin}/paged?resource=filesystem`);
+  // CORS headers are only granted to origins that can legitimately host the page — the
+  // requests below say who they are, the way the webview's fetches do.
+  const r = await fetch(`${proxy.dfsOrigin}/paged?resource=filesystem`,
+                        { headers: { origin: "vscode-webview://harness" } });
   eq(r.headers.get("x-ms-continuation"), "next-page",
      "x-ms-continuation survives (listPaths pages on it)");
   const exposed = r.headers.get("access-control-expose-headers") || "";
@@ -128,7 +131,8 @@ console.log("--- proxy behaviour ---");
   eq((await r.json()).from, "table-endpoint", "the irc route reaches the table endpoint");
 }
 {
-  const r = await fetch(`${proxy.dfsOrigin}/ws/f.parquet`, { method: "OPTIONS" });
+  const r = await fetch(`${proxy.dfsOrigin}/ws/f.parquet`,
+                        { method: "OPTIONS", headers: { origin: "vscode-webview://harness" } });
   eq(r.status, 204, "the preflight is answered");
   ok((r.headers.get("access-control-allow-headers") || "").includes("range"),
      "…and it allows Range, which is what makes it a preflight at all");
