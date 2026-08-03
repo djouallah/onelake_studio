@@ -1,19 +1,19 @@
 // =============================================================================
-// data.js — OneLake Iceberg engine on DuckDB-WASM
+// data.js — OneLake data engine, on native DuckDB in the extension host
 // =============================================================================
-// Given an AuthProvider (auth.js) and a lakehouse path, this module:
-//   1. brings up DuckDB-WASM,
+// Given a lakehouse path, this module:
+//   1. connects to the native engine over the panel's message bridge (duckdb-native.js),
 //   2. lists the lakehouse's tables through OneLake's Iceberg REST catalog by friendly
 //      name (workspace/lakehouse.Lakehouse) — no GUIDs, storage token only. DFS is still
-//      how Files/ and the workspace/item pickers are listed, and how every BYTE is read;
-//      table LISTING is the catalog's alone,
-//   3. for a chosen table, asks the catalog for its metadata document -> snapshot ->
-//      manifest-list, reads the Avro manifests with DuckDB's read_avro to get the
-//      data-file (parquet) paths,
-//   4. registers those parquet files as URLs so DuckDB range-reads them itself, and
-//      exposes the table as a read-only VIEW you can run SQL against. Nothing is
-//      downloaded whole: sw.js signs DuckDB's requests, so a query pulls only the
-//      row groups and columns it touches.
+//      how Files/ and the workspace/item pickers are listed; table LISTING is the
+//      catalog's alone,
+//   3. for a chosen table, asks the catalog for its metadata document — that is the
+//      Stats card and the lazy-conversion wait — and has the host ATTACH the item as an
+//      Iceberg catalog (db.openTable), after which DuckDB itself does snapshot
+//      resolution, manifest reading, deletes and column mapping,
+//   4. exposes the table as a read-only VIEW you can run SQL against. Nothing is
+//      downloaded whole: reads go through the extension's loopback proxy, which signs
+//      them, so a query pulls only the row groups and columns it touches.
 //
 // The pure half — path and URI handling, SQL text, cache keys, version selection — lives
 // in paths.js and is covered by test/paths.test.js. Anything here that can be written as
@@ -41,12 +41,11 @@
 // fresh every session.
 //
 // Everything below this line is unchanged by that: this engine's whole dependency on
-// DuckDB is eight calls, and duckdb-native.js answers them from the host. See
-// extension/src/engine-host.js.
-//
-// DuckDBDataProtocol survives only as a shape — registerFileURL's protocol argument, which
-// the native side ignores because it reads the URL directly.
-const duckdb = { DuckDBDataProtocol: { HTTP: "http" } };
+// DuckDB is a handful of calls, and duckdb-native.js answers them from the host. See
+// extension/src/engine-host.js. Native DuckDB reads URLs and paths spliced directly into
+// the SQL — the wasm build's virtual file registry (registerFileURL) is gone; only
+// registerFileBuffer survives, for bytes that have no URL, and it answers with the temp
+// path the host wrote so this side can say exactly what it means.
 
 // sql.js and the markdown renderer still load in the page, and still come through the
 // proxy's /cdn route and its vendor directory. cdnOrigin is that route; absent, the URLs
@@ -60,7 +59,7 @@ const withCdn = url => (cdnBase ? url.replace(/^https:\/\//, cdnBase + "/") : ur
 // this file and the reads go straight to OneLake, unsigned, under a proxied origin.
 import {
   DFS_ORIGIN, strip, basename, dfsBase as dfsBaseAt, dfsUrl as dfsUrlAt,
-  toHttps as toHttpsAt, pathKey, PATH_KEY_SQL,
+  toHttps as toHttpsAt,
   parseLakehouse, itemKind, holdsTables,
   fileExt, readerFor, PARQUET_EXTS, DB_EXTS, ZIP_EXTS, isSqliteHeader, isTextExt,
   sqlStr, quoteIdent, prepareReadOnlySql,
@@ -268,7 +267,6 @@ export function createEngine(auth, {
       try { if (worker) worker.terminate(); } catch (_) {}
       worker = db = conn = null;      // synchronously: nothing can post to the old worker
       loaded.clear(); resources.clear(); viewNames.clear();
-      regLog.clear(); dropLog.clear();          // the registry they describe died with it
       const rej = epochReject;
       resetEpoch();                             // BEFORE rejecting: retriers race the new epoch
       initPromise = _init({ quiet: true });     // BEFORE rejecting: retriers await the NEW init
@@ -501,9 +499,9 @@ export function createEngine(auth, {
   // Files/ browsing — the unmanaged half of a lakehouse.
   // ---------------------------------------------------------------------------
   // Nothing Iceberg here: Files/ is just a directory tree, so it is listed one level at a
-  // time (lazily, on expand) and a recognised data file is opened as a view the same way
-  // table data files are — registerFileURL, then whichever reader the extension names.
-  // The reader table itself lives in paths.js.
+  // time (lazily, on expand) and a recognised data file is opened as a view — its proxied
+  // URL spliced straight into whichever reader the extension names. The reader table
+  // itself lives in paths.js.
   const isQueryable = name => {
     const ext = fileExt(name);
     if (DB_EXTS.has(ext)) return true;      // ATTACHed read-only, not read through a reader
@@ -535,43 +533,21 @@ export function createEngine(auth, {
   // deleted row, for as long as the tab stayed open.
   function track(key) {
     let r = resources.get(key);
-    if (!r) { r = { ident: null, regs: [], tables: [], attachments: [], schemas: [] }; resources.set(key, r); }
+    if (!r) { r = { ident: null, tables: [], attachments: [], schemas: [] }; resources.set(key, r); }
     return r;
-  }
-
-  // Every registration and every drop, with who did it and when. A load that finds its
-  // file missing from the registry can then answer the only question that matters —
-  // which code path took it — instead of leaving a race, a token and the wasm equally
-  // suspect. Session-bounded: one small entry per registered name.
-  const regLog = new Map();    // registered name -> ms timestamp
-  const dropLog = new Map();   // registered name -> { why, at }
-  async function drop(n, why) {
-    try { await guarded(() => db.dropFile(n)); } catch (_) {}
-    dropLog.set(n, { why, at: Date.now() });
   }
 
   // A load that is torn down must clean up after ITSELF and nothing else.
   //
   // resources are keyed by table and track(key) hands every load of that table the SAME
   // record, which was harmless while a load could only end by finishing or failing
-  // outright. Cancellation broke it: open a table, open it again before the first finishes,
-  // and the first load's release(key) pulled the file registrations out from under the
-  // second — surfacing as "Failed to open file: data_3.parquet" while the SECOND load was
-  // creating its view, blaming a file that was fine.
-  //
-  // So: full teardown only while this load still owns the key; otherwise drop just the
-  // files this load registered and leave the successor's alone. The superseded branch
-  // knowingly leaves this load's __del_/__map_ tables and delete-file registrations in
-  // the shared record — the next full release reclaims them; threading them through
-  // here would widen exactly the surface being kept race-safe.
-  async function releaseOwned(key, regs, gen) {
+  // outright. Cancellation broke it: open a table, open it again before the first
+  // finishes, and the first load's release(key) pulled state out from under the second.
+  // So: full teardown only while this load still owns the key; a superseded load walks
+  // away and lets the successor's eventual full release reclaim everything.
+  async function releaseOwned(key, gen) {
     const r = resources.get(key);
-    if (!r || r.gen === gen) { await release(key); return; }
-    for (const n of regs) {
-      await drop(n, `teardown of a superseded load of ${key} (gen ${gen}, owner gen ${r.gen})`);
-      const i = r.regs.indexOf(n);
-      if (i >= 0) r.regs.splice(i, 1);
-    }
+    if (!r || r.gen === gen) await release(key);
   }
 
   async function release(key) {
@@ -580,20 +556,18 @@ export function createEngine(auth, {
       // Snapshots, taken before the first await. The record is shared per table key and
       // a successor load appends to these arrays while the drops below wait their turn
       // on the serial queue — iterating the live arrays here is how a superseded load
-      // dropped the files its successor had just registered.
+      // once dropped state its successor had just created.
       const gen = r.gen, ident = r.ident;
       const views = [...(r.views || [])], tables = [...r.tables];
       const schemas = [...(r.schemas || [])], attachments = [...(r.attachments || [])];
-      const regs = [...r.regs];
       if (ident) { try { await q(`DROP VIEW IF EXISTS ${ident}`); } catch (_) {} }
       // Zip archives create one view per readable entry; ident is just the first.
       for (const v of views) { try { await q(`DROP VIEW IF EXISTS ${v}`); } catch (_) {} }
       for (const t of tables) { try { await q(`DROP TABLE IF EXISTS ${t}`); } catch (_) {} }
       // Schemas holding copied-in database tables: CASCADE takes the tables with them.
       for (const s of schemas) { try { await q(`DROP SCHEMA IF EXISTS ${quoteIdent(s)} CASCADE`); } catch (_) {} }
-      // Attached database files: DETACH before dropping the file registration under them.
+      // Attached database files: DETACH releases the underlying URL handle.
       for (const a of attachments) { try { await q(`DETACH ${quoteIdent(a)}`); } catch (_) {} }
-      for (const n of regs) { await drop(n, `full release of ${key} (snapshot gen ${gen})`); }
       // A successor may have claimed the key while the drops above were queued; the
       // record, the cache entry and the view names are then ITS state, not this
       // teardown's to delete.
@@ -671,16 +645,15 @@ export function createEngine(auth, {
 
     const res = track(key);
     res.gen = gen;
-    const reg = `file_${++_seq}.${ext}`;
-    await guarded(() => db.registerFileURL(reg, dfsUrl(lh.workspace, file.path), duckdb.DuckDBDataProtocol.HTTP, false));
-    regLog.set(reg, Date.now());
-    res.regs.push(reg);
+    // The proxied URL goes straight into the SQL — native DuckDB reads it itself, and
+    // the proxy signs it on the way past. Nothing to register, nothing to drop.
+    const url = dfsUrl(lh.workspace, file.path);
 
     const ident = quoteIdent(uniqueView(key, file.path.replace(/^.*?\/Files\//, "")));
     try {
       // stream(): a non-parquet reader pulls the file WHOLE inside this one statement,
       // and Stop must be able to kill it.
-      await stream(`CREATE OR REPLACE VIEW ${ident} AS SELECT * FROM ${reader(sqlStr(reg))}`);
+      await stream(`CREATE OR REPLACE VIEW ${ident} AS SELECT * FROM ${reader(sqlStr(url))}`);
       res.ident = ident;
       const columns = await describe(ident);
       const info = { label, ident, columns, fileCount: 1, posDeletes: 0, eqDeletes: 0,
@@ -689,32 +662,29 @@ export function createEngine(auth, {
       status(describeLoad(info));
       return info;
     } catch (e) {
-      await releaseOwned(key, [reg], gen);
+      await releaseOwned(key, gen);
       if (e.cancelled) throw e;
       throw new Error(`Could not read ${file.name}: ${e.message}`);
     }
   }
 
-  // Zip archives: registered as an HTTP URL like every other file — the zipfs extension
-  // range-reads the central directory from the archive's tail and inflates only the
-  // entries actually queried, so a large archive costs what you read from it (verified
-  // over a registered HTTP URL in test/extensions.html). Each entry with a known reader
-  // becomes its own view; the archive itself has no rows to show.
+  // Zip archives: the proxied URL goes into zip_contents() and zip:// directly — the
+  // zipfs extension range-reads the central directory from the archive's tail and
+  // inflates only the entries actually queried, so a large archive costs what you read
+  // from it (probed against native DuckDB: both forms accept an http URL). Each entry
+  // with a known reader becomes its own view; the archive itself has no rows to show.
   const ZIP_MAX_VIEWS = 50;
   async function loadZipFile(lh, file, key, gen, check) {
     if (!canZip)
-      throw new Error(`${file.name}: this DuckDB-WASM build couldn't load the 'zipfs' extension, so zip archives can't be read.`);
+      throw new Error(`${file.name}: this DuckDB build couldn't load the 'zipfs' extension, so zip archives can't be read.`);
     const status = statusFor(gen);
     const res = track(key);
     res.gen = gen;
     res.views = [];
-    const reg = `zipfile_${++_seq}.zip`;
-    await guarded(() => db.registerFileURL(reg, dfsUrl(lh.workspace, file.path), duckdb.DuckDBDataProtocol.HTTP, false));
-    regLog.set(reg, Date.now());
-    res.regs.push(reg);
+    const url = dfsUrl(lh.workspace, file.path);
     try {
       const entries = (await q(
-        `SELECT file_name AS n FROM zip_contents(${sqlStr(reg)})
+        `SELECT file_name AS n FROM zip_contents(${sqlStr(url)})
          WHERE NOT is_directory ORDER BY file_name`)).toArray().map(r => r.toJSON());
       let readable = entries.filter(e => {
         const x = fileExt(e.n);
@@ -735,7 +705,7 @@ export function createEngine(auth, {
         // must get distinct views, and uniqueView only dedupes across distinct owners.
         const ident = quoteIdent(uniqueView(`${key}::${e.n}`, e.n));
         try {
-          await stream(`CREATE OR REPLACE VIEW ${ident} AS SELECT * FROM ${reader(sqlStr(`zip://${reg}/${e.n}`))}`);
+          await stream(`CREATE OR REPLACE VIEW ${ident} AS SELECT * FROM ${reader(sqlStr(`zip://${url}/${e.n}`))}`);
           views.push(ident);
           res.views.push(ident);
         } catch (err) {
@@ -755,7 +725,7 @@ export function createEngine(auth, {
       status(describeLoad(info));
       return info;
     } catch (e) {
-      await releaseOwned(key, [reg], gen);
+      await releaseOwned(key, gen);
       if (e.cancelled) throw e;
       throw new Error(`Could not read ${file.name}: ${e.message}`);
     }
@@ -790,13 +760,10 @@ export function createEngine(auth, {
     const alias = uniqueView(key, basename(file.name).replace(/\.[^.]+$/, ""));
     if (sqlite) return loadSqliteFile(file, key, url, alias, gen, check);
 
-    const reg = `dbfile_${++_seq}.${ext}`;
-    await guarded(() => db.registerFileURL(reg, url, duckdb.DuckDBDataProtocol.HTTP, false));
-    regLog.set(reg, Date.now());
-    res.regs.push(reg);
     try {
       // READ_ONLY is not optional: the file lives in OneLake and the app never writes.
-      await q(`ATTACH ${sqlStr(reg)} AS ${quoteIdent(alias)} (READ_ONLY)`);
+      // The proxied URL is attached directly; httpfs block-reads it on demand.
+      await q(`ATTACH ${sqlStr(url)} AS ${quoteIdent(alias)} (READ_ONLY)`);
       res.attachments.push(alias);
 
       // Tables AND views — a database file that only exposes views is still queryable.
@@ -824,7 +791,7 @@ export function createEngine(auth, {
       status(describeLoad(info));
       return info;
     } catch (e) {
-      await releaseOwned(key, [reg], gen);
+      await releaseOwned(key, gen);
       if (e.cancelled) throw e;
       throw new Error(`Could not attach ${file.name}: ${e.message}`);
     }
@@ -894,11 +861,13 @@ export function createEngine(auth, {
           })))).join("\n");
         if (blobs) warnings.push(`${t}: BLOB values are not carried over and read as NULL`);
 
+        // The host writes the bytes to a temp file and answers with its path — the one
+        // registry-shaped call left, because a buffer has no URL to splice in.
         const jn = `sqjson_${++_seq}.json`;
-        await guarded(() => db.registerFileBuffer(jn, new TextEncoder().encode(lines)));
+        const path = await guarded(() => db.registerFileBuffer(jn, new TextEncoder().encode(lines)));
         try {
           await q(`CREATE OR REPLACE TABLE ${ident} AS
-                            SELECT * FROM read_json(${sqlStr(jn)}, format='newline_delimited')`);
+                            SELECT * FROM read_json(${sqlStr(path)}, format='newline_delimited')`);
         } finally { try { await guarded(() => db.dropFile(jn)); } catch (_) {} }
         tables.push(ident);
       }
@@ -913,7 +882,7 @@ export function createEngine(auth, {
       status(describeLoad(info));
       return info;
     } catch (e) {
-      await releaseOwned(key, [], gen);
+      await releaseOwned(key, gen);
       if (e.cancelled) throw e;
       throw new Error(`Could not read ${file.name}: ${e.message}`);
     } finally {
@@ -1057,158 +1026,54 @@ export function createEngine(auth, {
     const curId = meta["current-snapshot-id"];
     if (curId == null)
       throw new Error(`${source} has no current-snapshot-id — the metadata is incomplete`);
-    const snap = (meta.snapshots || []).find(s => String(s["snapshot-id"]) === String(curId));
-    if (!snap)
-      throw new Error(`${source} names snapshot ${curId}, which is not in its snapshot list`);
-    if (!snap["manifest-list"]) throw new Error(`${source}: the current snapshot has no manifest-list`);
+    const snapshots = meta.snapshots || [];
+    const snap = snapshots.find(s => String(s["snapshot-id"]) === String(curId));
 
     const schema = (meta.schemas || []).find(s => s["schema-id"] === meta["current-schema-id"])
                 || (meta.schemas || [])[0];
 
+    // A table the catalog LISTS that has never been written: current-snapshot-id is -1,
+    // the snapshot array is empty, and there is no directory on DFS at all (probed on a
+    // real one). This used to throw "names snapshot -1, which is not in its snapshot
+    // list" — reporting an empty table as a broken one. DuckDB opens it and returns no
+    // rows against the right schema, so say that instead.
+    if (!snap || String(curId) === "-1" || !snapshots.length) {
+      return { empty: true, schemaFields: icebergFields(schema), totalRecords: 0, stats: null };
+    }
+
     return {
-      manifestList: snap["manifest-list"],
-      // Column names of the table's CURRENT schema, used below to spot a physical/logical
-      // mismatch once the parquet files are unioned.
-      schemaColumns: schema ? (schema.fields || []).map(f => f.name) : null,
-      // Physical parquet name -> readable name, when the writer used column mapping.
-      nameMapping: readNameMapping(meta, schema),
+      empty: false,
       // The table's columns as the METADATA states them — name and Iceberg type. This is
       // what the Stats tier shows instead of a DESCRIBE, so a table's schema is on screen
       // before a single parquet footer has been read.
       schemaFields: icebergFields(schema),
-      // More than one schema in the log means the table evolved and its data files can
-      // disagree — only then is union_by_name worth its price (see createView).
-      evolved: (meta.schemas || []).length > 1,
       totalRecords: Number((snap.summary || {})["total-records"]) || null,
       stats: snapshotStats(meta, snap),
     };
   }
 
-  // alias -> current column name, from the table's `schema.name-mapping.default`.
+  // NOTE ON WHAT IS NOT HERE ANY MORE.
   //
-  // Fabric Warehouse writes column-mapped Delta, so the field names in its parquet files
-  // are GUIDs (`col-81f65814-…`) and the readable names live only in metadata. Nothing in
-  // the footers bridges the two: field_id is absent on every column (probed on a real
-  // Warehouse file — created_by "parquet-cpp-arrow Microsoft Fabric 14.0.2"). Iceberg's
-  // answer for exactly that case is a name mapping, and Fabric publishes one: each entry
-  // carries a field ID and every name that has meant it, physical GUID included.
+  // This file used to carry the whole Iceberg read path: the manifest-list walk, the
+  // per-manifest content 0/1/2 split, the position-delete anti-join, and the Warehouse
+  // name mapping that turned a grid of GUID column headers into readable names. All of
+  // it existed for one reason, stated in the comment that used to sit below: DuckDB's
+  // own iceberg extension needs the azure filesystem to resolve the absolute abfss://
+  // URIs Fabric writes, and azure had no WASM build.
   //
-  // Returns null when the table has no mapping — every Lakehouse table, since delta-rs
-  // writes readable names — which is the signal to leave the columns alone.
-  function readNameMapping(meta, schema) {
-    const raw = (meta.properties || {})["schema.name-mapping.default"];
-    if (!raw) return null;
-    let entries;
-    // It is a JSON document inside a JSON string. Malformed means no mapping, not a
-    // failure to open: a GUID header is bad, a table that won't open is worse.
-    try { entries = typeof raw === "string" ? JSON.parse(raw) : raw; } catch (_) { return null; }
-    if (!Array.isArray(entries)) return null;
-
-    const byId = new Map(((schema || {}).fields || [])
-      .filter(f => f.id != null).map(f => [String(f.id), f.name]));
-    const out = new Map();
-    for (const e of entries) {
-      // The current schema decides what a field is called NOW; names[0] is only a
-      // fallback for an ID the schema no longer lists.
-      const current = byId.get(String(e["field-id"])) || (e.names || [])[0];
-      if (!current) continue;
-      for (const n of (e.names || []))
-        // A name that maps to two different fields is not one worth trusting.
-        out.set(n, out.has(n) && out.get(n) !== current ? null : current);
-    }
-    return out.size ? out : null;
-  }
-
-  // ---------------------------------------------------------------------------
-  // Manifest layer — read Avro manifest-list + manifests with DuckDB's read_avro.
-  // Manifests are fetched to local buffers (WASM httpfs truncates larger avro files)
-  // and each live entry (status != 2 DELETED) with content = 0 yields a parquet path.
-  // ---------------------------------------------------------------------------
-  async function withAvroBuffer(bytes, run) {
-    const name = `meta_${++_seq}.avro`;
-    await guarded(() => db.registerFileBuffer(name, bytes));
-    try {
-      const t = await run(name);
-      return t.toArray().map(r => r.toJSON());
-    } finally { try { await guarded(() => db.dropFile(name)); } catch (_) {} }
-  }
-
-  async function readAvroRows(ws, url, columnsSql) {
-    return withAvroBuffer(await fetchAuthed(toHttps(ws, url)), name =>
-      q(`SELECT ${columnsSql} FROM read_avro('${name}')`));
-  }
-
-  // Returns { dataFiles, posDeletes, eqDeletes } for one manifest.
-  //
-  // `content` distinguishes what a manifest entry points at: 0 = data, 1 = position
-  // deletes, 2 = equality deletes. Filtering on it is not cosmetic — a delete file is a
-  // parquet whose schema is nothing like the table's (position deletes are file_path +
-  // pos), so feeding its path to read_parquet() alongside the data files either fails
-  // schema unification or yields junk rows. Format-version 1 manifests have no `content`
-  // field at all and are data-only, hence the fallback query.
-  async function readManifest(bytes) {
-    let rows;
-    try {
-      rows = await withAvroBuffer(bytes, name => q(
-        `SELECT status, data_file.content AS content, data_file.file_path AS fp
-         FROM read_avro('${name}')`));
-    } catch (_) {
-      rows = await withAvroBuffer(bytes, name => q(
-        `SELECT status, 0 AS content, data_file.file_path AS fp
-         FROM read_avro('${name}')`));
-    }
-    const live = rows.filter(r => Number(r.status) !== 2);   // drop DELETED entries
-    // String() is defensive normalization: these paths become registerFileURL() keys that
-    // have to compare equal to the SQL literals built from them, so don't let an Arrow
-    // value type reach either side.
-    const of = k => live.filter(r => Number(r.content || 0) === k).map(r => String(r.fp));
-    return { dataFiles: of(0), posDeletes: of(1), eqDeletes: of(2) };
-  }
-
-  async function listDataFiles(ws, manifestList, check = () => {}) {
-    const manifests = (await readAvroRows(ws, manifestList, "manifest_path"))
-      .map(r => String(r.manifest_path));
-
-    const files = [], posDeletes = [], eqDeletes = [];
-    // Fetch a batch in parallel — the network is the slow half — then parse it serially,
-    // because there is one connection. Batching rather than fetching everything up front
-    // keeps at most MAX_PARALLEL manifest buffers alive at a time.
-    for (let i = 0; i < manifests.length; i += MAX_PARALLEL) {
-      // Per batch, not per manifest: a batch is already in flight together, and stopping
-      // between batches bounds the wait at one round trip.
-      check();
-      const buffers = await mapPool(manifests.slice(i, i + MAX_PARALLEL),
-                                    m => fetchAuthed(toHttps(ws, m)));
-      for (const bytes of buffers) {
-        const r = await readManifest(bytes);
-        files.push(...r.dataFiles);
-        posDeletes.push(...r.posDeletes);
-        eqDeletes.push(...r.eqDeletes);
-      }
-    }
-    return { files, posDeletes, eqDeletes };
-  }
+  // The engine is native now, so it does. openTable() hands the work to DuckDB, which
+  // does snapshot resolution, manifest filtering, deletes and column mapping itself —
+  // verified against a real Lakehouse, a column-mapped Warehouse and a merge-on-read
+  // table. See extension/src/engine-host.js for the ATTACH, and note that
+  // ACCESS_DELEGATION_MODE is the one part of it that cannot be left to a default.
 
   // ---------------------------------------------------------------------------
   // Load a table -> read-only VIEW.
   // ---------------------------------------------------------------------------
-  // One reader: walk the manifests, then let DuckDB range-read the parquet files. Nothing
-  // is downloaded whole — waiting minutes for a table to transfer isn't a usable product,
-  // so if range reads fail the app says so rather than quietly grinding.
-  //
-  // DuckDB's own `iceberg` extension DOES load in WASM (it is published for wasm_eh and
-  // wasm_mvp), but it still cannot be used here. Fabric writes ABSOLUTE abfss:// URIs into
-  // the metadata; resolving those needs the `azure` filesystem, and `azure` has no WASM
-  // build — Microsoft's own DuckDB sample for OneLake Iceberg loads `azure` + `httpfs` for
-  // exactly this reason. `allow_moved_paths` doesn't rescue it either; it refuses absolute
-  // URIs. The only bridge is to pre-register every abfss:// path as a virtual file aliased
-  // to its https URL, and enumerating those paths IS the manifest walk below — so the
-  // extension would add a dependency without removing any work. (Measured against a real
-  // Fabric table it also answered SELECT count(*) as 0, trusting a manifest record_count
-  // of 0.) Revisit if OneLake ever writes relative paths, or `azure` ships for WASM.
-  //
-  // Delete files are handled here instead: position deletes via an anti-join in
-  // createView(). Equality deletes are not applied, and say so.
+  // db.openTable() ATTACHes the item as an Iceberg REST catalog in the host and DuckDB
+  // does the rest — snapshot resolution, manifests, position AND equality deletes, the
+  // Warehouse column mapping. Nothing is downloaded whole: a query range-reads only the
+  // row groups and columns it touches, through the signed proxy.
   //
   // Idempotent: a table already loaded is returned from cache.
   // ---------------------------------------------------------------------------
@@ -1256,188 +1121,18 @@ export function createEngine(auth, {
     return out;
   }
 
-  // Data files are registered under generated `data_N.parquet` names, so read_parquet's
-  // `filename` is that generated name — not the path an Iceberg delete file refers to.
-  // `mapTable` bridges the two (reg -> normalized original path).
+  // Opening a table is now two steps: ATTACH the item as an Iceberg REST catalog in the
+  // extension host, then point a view at the table inside it. Everything that used to sit
+  // between those steps lives in DuckDB now — registering each data file under a
+  // generated name, unioning them, `union_by_name` when the schema had evolved,
+  // anti-joining position deletes on file_row_number, projecting a Warehouse's physical
+  // GUID columns back to their logical names, and bisecting the file list with LIMIT 0
+  // binds to name the culprit when one of them failed to open.
   //
-  // Registering them under their original abfs:// path instead would remove the need for
-  // that mapping, and DuckDB-WASM's file registry does resolve such aliases — but only
-  // sometimes: it works in isolation and fails inside this engine's real sequence, after
-  // the Avro manifests have been read through registered buffers. Generated names have no
-  // such problem, so the mapping table is the cheap price of a reader that always works.
-  //
-  // union_by_name only when the metadata says the schema EVOLVED. It is what lets files
-  // with added columns scan together (without it DuckDB errors on the first mismatched
-  // file) — but it makes bind read the footer of EVERY file up front, and on a
-  // many-hundred-file table that is hundreds of HTTPS range reads before a
-  // `LIMIT 100` preview produces its first row. A never-evolved table (one schema in
-  // the log, the overwhelmingly common case) binds off the first footer and touches
-  // other files only when the scan actually reaches them.
-  //
-  // `aliases` (physical -> logical pairs, in table order) replaces the star with an
-  // explicit projection. It arrives only for a column-mapped table, and only once every
-  // column resolved — see aliasByFieldId().
-  async function createView(ident, regs, delTable, mapTable, unionByName, aliases) {
-    const list = regs.map(sqlStr).join(", ");
-    const union = unionByName ? ", union_by_name = true" : "";
-    const proj = aliases &&
-      aliases.map(([phys, log]) => `${quoteIdent(phys)} AS ${quoteIdent(log)}`).join(", ");
-    // stream(), not q(): under union_by_name this bind reads the footer of EVERY file —
-    // hundreds of HTTPS round trips inside one statement — and a conn.query() cannot be
-    // cancelled, so Stop (and everything queued behind, including reset()) hung on it.
-    // conn.send() runs DDL fine (verified against the pinned build) and dies on
-    // cancelSent().
-    if (!delTable) {
-      await stream(
-        `CREATE OR REPLACE VIEW ${ident} AS
-         SELECT ${proj || "*"} FROM read_parquet([${list}]${union})`);
-      return;
-    }
-    // EXCLUDE keeps the two bookkeeping columns out of the table's visible schema. An
-    // explicit projection already names only real columns, so it needs no EXCLUDE.
-    await stream(
-      `CREATE OR REPLACE VIEW ${ident} AS
-       SELECT ${proj || "* EXCLUDE (filename, file_row_number)"}
-       FROM read_parquet([${list}]${union},
-                         filename = true, file_row_number = true) x
-       WHERE NOT EXISTS (
-         SELECT 1 FROM ${delTable} d JOIN ${mapTable} m ON m.pk = d.pk
-         WHERE m.reg = x.filename AND d.pos = x.file_row_number)`);
-  }
-
-  // The projection that turns the scanned names into the readable ones, or null to leave
-  // the view as it is.
-  //
-  // All or nothing. A partial mapping would leave a table half-readable and half-GUID
-  // while implying both names are real, so a single unresolved column means no aliasing
-  // at all — the physical names stand and the caller warns. Null also comes back when
-  // nothing would change, which is every table whose names were already readable.
-  function aliasFor(columns, mapping) {
-    if (!mapping) return null;
-    const pairs = [], used = new Set();
-    let changed = false;
-    for (const c of columns) {
-      const name = mapping.get(c.name);
-      if (!name || used.has(name)) return null;
-      used.add(name);
-      if (name !== c.name) changed = true;
-      pairs.push([c.name, name]);
-    }
-    return changed ? pairs : null;
-  }
-
-  // reg name -> normalized original path, so the anti-join can match a delete file's
-  // `file_path` against the data file it refers to. Both sides go through pathKey():
-  // Iceberg does not promise the two strings are byte-identical — abfs vs abfss alone
-  // differs between writers — and an exact match that finds nothing silently resurrects
-  // every deleted row while still reporting the deletes as applied.
-  async function createMap(key, pairs) {
-    const name = `__map_${++_seq}`;
-    const values = pairs.map(([reg, orig]) => `(${sqlStr(reg)}, ${sqlStr(pathKey(orig))})`).join(", ");
-    await q(
-      `CREATE OR REPLACE TABLE ${name} AS SELECT * FROM (VALUES ${values}) v(reg, pk)`);
-    track(key).tables.push(name);
-    return name;
-  }
-
-  // Materialize the position-delete files into one small table, keyed the same way.
-  async function loadPositionDeletes(key, ws, paths) {
-    const res = track(key);
-    const regs = [];
-    for (const p of paths) {
-      const reg = `del_${++_seq}.parquet`;
-      await guarded(() => db.registerFileURL(reg, toHttps(ws, p), duckdb.DuckDBDataProtocol.HTTP, false));
-      res.regs.push(reg);
-      regs.push(reg);
-    }
-    const name = `__del_${++_seq}`;
-    // stream() for the same reason as createView: this reads the delete files over HTTP
-    // inside one statement, and it must die on Stop.
-    await stream(
-      `CREATE OR REPLACE TABLE ${name} AS
-       SELECT ${PATH_KEY_SQL("file_path")} AS pk, pos
-       FROM read_parquet([${regs.map(sqlStr).join(", ")}], union_by_name = true)`);
-    res.tables.push(name);
-    return name;
-  }
-
-  // After a failure inside the multi-file scan, find out which file caused it. LIMIT 0
-  // probes bind footers without reading data, and halving converges in log steps. If
-  // even SELECT 1 fails, the engine itself trapped and nothing more can be learned.
-  async function diagnoseOpenFailure(regs, pairs, unionByName, ws) {
-    try { await q("SELECT 1"); }
-    catch (_) { return " — the SQL engine crashed on this table; reload the page before opening another"; }
-
-    let budget = 24;                    // probes, not files — log-bounded either way
-    const union = unionByName ? ", union_by_name = true" : "";
-    const probe = async subset => {
-      if (budget-- <= 0) return [];     // give up quietly rather than probing forever
-      try {
-        // stream(): probes bind footers over HTTP too, and a diagnosis must not be the
-        // thing that can't be stopped.
-        await stream(`SELECT * FROM read_parquet([${subset.map(sqlStr).join(", ")}]${union}) LIMIT 0`);
-        return [];
-      } catch (e) {
-        // A cancelled probe is not a bad file — stop diagnosing, report nothing.
-        if (e && e.cancelled) throw e;
-        if (subset.length === 1) return subset;
-        const mid = subset.length >> 1;
-        return [...await probe(subset.slice(0, mid)), ...await probe(subset.slice(mid))];
-      }
-    };
-    onStatus("Narrowing down which data file fails…");
-    const bad = await probe(regs);
-    // The same list binding cleanly a moment later IS the diagnosis: the failure was
-    // transient — a read that went out unsigned or against a just-expired token and
-    // has since been retried with a live one. Nothing is wrong with the table.
-    if (!bad.length)
-      return " — yet the same file list binds cleanly when re-probed just now: the " +
-             "failure was transient (most likely an unsigned or expired-token read), so try again";
-    const orig = new Map(pairs);
-    const names = bad.slice(0, 3).map(r => basename(orig.get(r) || r));
-    const scope = regs.length < 2 ? "" :
-      ` — narrowed to data file(s): ${names.join(", ")}` +
-      (bad.length > 3 ? ` and ${bad.length - 3} more` : "");
-    return scope + await diagnoseOneFile(bad[0], orig.get(bad[0]), ws);
-  }
-
-  // Two checks that tell apart the ways an open can fail with identical wording: a name
-  // gone from DuckDB's file registry never touched the network (another load dropped
-  // it), while a dead token or a deleted object answers a page-signed read with its
-  // status. Both facts are reported; either alone can mislead.
-  async function diagnoseOneFile(reg, path, ws) {
-    const facts = [];
-    try {
-      const hits = await guarded(() => db.globFiles(reg));
-      if (!hits || !hits.length) {
-        const d = dropLog.get(reg), at = regLog.get(reg);
-        facts.push(d
-          ? `${reg} is missing from DuckDB's file registry — dropped ${Math.round((Date.now() - d.at) / 1000)}s ago by ${d.why}`
-          : `${reg} is missing from DuckDB's file registry, yet no code path dropped it` +
-            (at ? ` (registered ${Math.round((Date.now() - at) / 1000)}s ago)` : " (and no registration was recorded either)"));
-      }
-    } catch (_) { /* this duckdb-wasm has no globFiles — nothing to check */ }
-    if (path && ws) {
-      try {
-        const r = await fetch(toHttps(ws, path), { headers: { ...auth.getHeaders(), Range: "bytes=0-7" } });
-        facts.push(r.ok
-          ? "a page-signed range read of the object succeeds, so the file and the page's token are fine"
-          : `a page-signed range read of the object answers HTTP ${r.status}`);
-      } catch (e) {
-        facts.push(`a page-signed range read of the object failed outright (${e.message})`);
-      }
-    }
-    return facts.length ? ` — ${facts.join("; ")}` : "";
-  }
-
-  // How many delete records point at a data file the map doesn't know about? Anything but
-  // zero means the anti-join is removing fewer rows than the snapshot says it should, and
-  // reporting "N delete file(s) applied" would be a lie.
-  async function countUnmatchedDeletes(delTable, mapTable) {
-    const r = await q(
-      `SELECT count(*) AS n FROM ${delTable} d
-       WHERE NOT EXISTS (SELECT 1 FROM ${mapTable} m WHERE m.pk = d.pk)`);
-    return Number(r.toArray()[0].toJSON().n) || 0;
+  // The view exists so the editor can say `dbo.sales` rather than `ol_3."dbo"."sales"`,
+  // and so release() still has a single name to drop.
+  async function createView(ident, source) {
+    await stream(`CREATE OR REPLACE VIEW ${ident} AS SELECT * FROM ${source}`);
   }
 
   // ---------------------------------------------------------------------------
@@ -1495,7 +1190,8 @@ export function createEngine(auth, {
     const info = {
       label, ident: null, stage: "stats",
       columns: resolved.schemaFields || [],
-      // From the snapshot summary, not from a manifest walk — the walk is tier 2.
+      // From the snapshot summary. It is the file count DuckDB will read at tier 2/3, but
+      // nothing here has read one.
       fileCount: stats.totalDataFiles,
       posDeletes: 0, eqDeletes: 0,
       totalRecords: resolved.totalRecords, stats, warnings: [],
@@ -1505,27 +1201,25 @@ export function createEngine(auth, {
   }
 
   // ---------------------------------------------------------------------------
-  // Tier 2: rows from the FIRST data file, and no others.
+  // Tier 2: the first hundred rows, and no view.
   // ---------------------------------------------------------------------------
-  // The manifest walk (small avro) plus one parquet footer and one row group. No view is
-  // created and the other N-1 files are never touched — this is the cheapest honest way
-  // to answer "what does the data look like".
-  // Built once, then simply there. The same table's peek is the same snapshot
-  // (resolvedC pins the resolve for the session), the same first file, the same
-  // hundred rows — re-reading them through the worker on every visit was pure spend.
-  // Plain JS rows, no DuckDB state: a worker restart keeps this, which is exactly
-  // when it matters — coming back to a table after a cancel renders instantly while
-  // the new worker is still waking up. reset() clears it with its siblings.
+  // One ATTACH (per ITEM, so a second table in the same lakehouse is free) and a
+  // LIMIT 100 that DuckDB pushes down into the Iceberg scan. It used to be a manifest
+  // walk plus a raw read of the first data file, which had to be SUPPRESSED on a
+  // merge-on-read table: reading one file raw bypasses the delete anti-join, so deleted
+  // rows showed as live and the only honest answer was to refuse. DuckDB applies the
+  // deletes, so there is nothing left to suppress and every table can be peeked.
   //
-  // The memo holds the PROMISE, not the value, so it is also single-flight: the
-  // prefetch that starts when a table is selected and the Data tab that asks a moment
-  // later share one walk — without this, the second call's cancelLoad() would kill the
-  // first mid-read and start over. A peek that fails or is cancelled un-memoises
-  // itself; only an answer is worth keeping.
+  // Built once, then simply there. Plain JS rows, no DuckDB state, so a restart keeps
+  // them — coming back to a table after a cancel renders instantly. reset() clears it.
   //
-  // `quiet` is for the prefetch: its progress writing over the stats view's status —
-  // and then leaving "Reading the first of…" on screen after silently finishing —
-  // read as the app being stuck.
+  // The memo holds the PROMISE, not the value, so it is also single-flight: the prefetch
+  // that starts when a table is selected and the Data tab that asks a moment later share
+  // one read — without this, the second call's cancelLoad() would kill the first
+  // mid-read and start over. A peek that fails or is cancelled un-memoises itself.
+  //
+  // `quiet` is for the prefetch: its progress writing over the stats view's status read
+  // as the app being stuck.
   function peekTable(lh, t, { quiet = false } = {}) {
     const key = tableKey(lh, t);
     if (peekC.has(key)) return peekC.get(key);
@@ -1541,75 +1235,37 @@ export function createEngine(auth, {
     const check = () => { if (gen !== loadGen) throw cancelledError(); };
     const status = quiet ? () => {} : statusFor(gen);
     const label = labelFor(t);
-    const ws = lh.workspace;
 
     const resolved = await resolveTable(lh, t, label, status, check);
     check();
-    const { files, posDeletes } = await fileListFor(key, ws, resolved, check, label, status);
-    if (!files.length) throw new Error(`${label}: current snapshot has no data files`);
-    // Reading one file raw bypasses the delete anti-join, so deleted rows would show as
-    // live. There is no cheap HONEST peek at a merge-on-read table: say so and let the
-    // caller decide to pay for the real open.
-    if (posDeletes.length) return { suppressed: true, fileCount: files.length };
+    // An empty table has a schema and no rows. Reading it is not an error and not worth
+    // an ATTACH — the metadata already said everything there is to say.
+    // Same shape materialize() returns, because renderResults() reads `types` alongside
+    // `fields` — here they come from the Iceberg schema rather than from a scan, which is
+    // the only source there is when no data file exists to scan.
+    if (resolved.empty) {
+      const cols = resolved.schemaFields || [];
+      return { fields: cols.map(f => f.name), types: cols.map(f => f.type), rows: [],
+               numRows: 0, truncated: false, limit: MAX_ROWS, fileCount: 0 };
+    }
 
-    status(`Reading the first of ${files.length} file(s) in ${label}…`);
-    // Warm the object through the PAGE's fetch, never the worker's: the worker pulling
-    // an uncached file is one synchronous stretch nothing can interrupt, and a click
-    // landing during it forces the watchdog to terminate and rebuild the whole engine —
-    // ten seconds of reboot to serve a 4ms cache hit. The page fetch is interruptible,
-    // fills the same cache through the proxy (sw.js in the browser build), and once it
-    // lands the worker's own read is local and over in milliseconds. If it fails, the
-    // worker's read simply pays the network the old way.
-    //
-    // DRAINED, never buffered. arrayBuffer() materialised the whole file in the
-    // renderer's memory, and a big first file crashed the webview outright — seen in the
-    // field as a flicker and a full engine reboot on every table click. The bytes are
-    // not wanted here; the proxy tees them to disk as they stream past.
-    try {
-      const r = await fetch(toHttps(ws, files[0]));
-      if (r.body && r.body.getReader) {
-        const reader = r.body.getReader();
-        while (!(await reader.read()).done) { /* discard */ }
-      } else {
-        await r.arrayBuffer();   // no streams API — small responses only in practice
-      }
-    } catch (_) {}
-    check();
-    const res = track(key);
-    res.gen = gen;
-    const reg = `peek_${++_seq}.parquet`;
-    await guarded(() => db.registerFileURL(reg, toHttps(ws, files[0]),
-                                           duckdb.DuckDBDataProtocol.HTTP, false));
-    regLog.set(reg, Date.now());
-    res.regs.push(reg);
+    status(`Reading the first ${QUICK_PEEK_ROWS} rows of ${label}…`);
+    const source = await attachedIdent(lh, t);
     check();
     // materialize(), never a bare conn.send() — see the silent-truncation note on stream().
-    const out = await materialize(
-      `SELECT * FROM read_parquet([${sqlStr(reg)}]) LIMIT ${QUICK_PEEK_ROWS}`);
+    const out = await materialize(`SELECT * FROM ${source} LIMIT ${QUICK_PEEK_ROWS}`);
     check();
-    return { ...aliasOutput(out, resolved.nameMapping), fileCount: files.length };
+    return { ...out, fileCount: (resolved.stats || {}).totalDataFiles };
   }
 
-  // A Warehouse's physical column names are GUIDs; give a raw file read the same logical
-  // names the real view gets, off its own field list. All-or-nothing, like the view.
-  function aliasOutput(out, nameMapping) {
-    const aliases = aliasFor(out.fields.map(name => ({ name })), nameMapping);
-    if (!aliases) return out;
-    const logical = new Map(aliases);
-    const fields = out.fields.map(f => logical.get(f) || f);
-    const rows = out.rows.map(r =>
-      Object.fromEntries(out.fields.map((f, i) => [fields[i], r[f]])));
-    return { ...out, fields, rows };
-  }
-
-  // The manifest walk, once per table. Tier 2 pays for it and tier 3 inherits it — which
-  // is the difference between peeking-then-opening costing one walk or two.
-  async function fileListFor(key, ws, resolved, check, label, status) {
-    if (filesC.has(key)) return filesC.get(key);
-    status(`Reading manifests for ${label}…`);
-    const r = await listDataFiles(ws, resolved.manifestList, check);
-    filesC.set(key, r);
-    return r;
+  // The table, as DuckDB can name it: `ol_<n>."schema"."table"` inside an ATTACHed
+  // Iceberg catalog. Cached per item in the host, so this is one message and no I/O once
+  // the item has been opened.
+  async function attachedIdent(lh, t) {
+    const { ident } = await guarded(() => db.openTable({
+      workspace: lh.workspace, item: lh.item, schema: t.schema, table: t.table,
+    }));
+    return ident;
   }
 
   // ---------------------------------------------------------------------------
@@ -1621,35 +1277,24 @@ export function createEngine(auth, {
     const key = tableKey(lh, t);
     // Supersede whatever came before — even on a cache hit, because the click means
     // "show me THIS" and the in-flight load must stand down rather than repaint the
-    // screen later. A previous load stands down at its next check(), and a previous
-    // query dies in the worker — without this, picking a second table simply queued
-    // behind the first one's preview and looked like a frozen app, which is the bug
-    // 54229d3 claimed to fix and didn't: nothing ever bumped the counter except the
-    // Stop button.
+    // screen later.
     await cancelLoad();
     if (loaded.has(key)) return loaded.get(key);
     const gen = loadGen;
     const check = () => { if (gen !== loadGen) throw cancelledError(); };
     const status = statusFor(gen);
 
-    const ws = lh.workspace;
     const label = labelFor(t);
     const warnings = [];
 
     status(`Resolving ${label}…`);
     // Free on the normal path: the Stats tier already resolved and cached this.
     const resolved = await resolveTable(lh, t, label, status, check);
+    check();
 
     const ident = t.schema
       ? `${quoteIdent(t.schema)}.${quoteIdent(t.table)}`
       : quoteIdent(t.table);
-    if (t.schema) await q(`CREATE SCHEMA IF NOT EXISTS ${quoteIdent(t.schema)}`);
-
-    check();
-    // Also free after a peek: the walk is cached per table.
-    const { files: paths, posDeletes, eqDeletes } =
-      await fileListFor(key, ws, resolved, check, label, status);
-    if (!paths.length) throw new Error(`${label}: current snapshot has no data files`);
 
     const res = track(key);
     res.gen = gen;          // whoever set this last owns the teardown; see releaseOwned()
@@ -1657,113 +1302,55 @@ export function createEngine(auth, {
     // Claimed only once there is a record for release() to guard: a claim made before
     // track() is state a concurrent release(key) sweeps with nothing to check against.
     viewNames.set(ident, key);
+
     let columns;
-    status(`Opening ${label} — ${paths.length} file(s)…`);
-
-    // Quick peek: rows from the FIRST data file, on screen while the rest of the open
-    // runs. Registrations go through guarded() only, so the serial queue is idle for the
-    // whole loop below — a statement issued after the first registration is guaranteed to
-    // run ahead of createView's footer-heavy bind (FIFO on serial()), binds one footer,
-    // and paints early. Best-effort by design: it must go through materialize()/stream()
-    // (a bare conn.send() is the measured silent-truncation hazard), a superseded or
-    // failed peek says nothing (the real open reports its own errors), and it is
-    // suppressed when position deletes exist — a raw first-file read bypasses the
-    // anti-join and would show deleted rows as live.
-    const quickPeek = reg => {
-      if (!onPeek || posDeletes.length) return;
-      materialize(`SELECT * FROM read_parquet([${sqlStr(reg)}]) LIMIT ${QUICK_PEEK_ROWS}`)
-        .then(out => { if (gen === loadGen) onPeek(aliasOutput(out, resolved.nameMapping), paths.length); })
-        .catch(() => {});
-    };
-
-    const regs = [], pairs = [];
-    // Hoisted: the column-mapping pass below rebuilds the view and has to preserve the
-    // delete anti-join it was first built with.
-    let delTable = null, mapTable = null;
-    let stage = "registering data files";
     try {
-      // Map each data file to a generated name pointing at its https URL, so DuckDB
-      // range-reads it instead of us downloading it whole.
-      for (const p of paths) {
-        // The hundreds-of-round-trips loop, and so the one that most needs a way out.
+      if (t.schema) await q(`CREATE SCHEMA IF NOT EXISTS ${quoteIdent(t.schema)}`);
+      check();
+
+      if (resolved.empty) {
+        // The catalog lists it, it has a schema, nothing has ever been written to it.
+        // DuckDB opens it and returns no rows, so the view is real and simply empty —
+        // which beats the error this used to raise about snapshot -1.
+        status(`Opening ${label}…`);
+        await createView(ident, await attachedIdent(lh, t));
+      } else {
+        status(`Opening ${label}…`);
+        const source = await attachedIdent(lh, t);
         check();
-        const reg = `data_${++_seq}.parquet`;
-        await guarded(() => db.registerFileURL(reg, toHttps(ws, p), duckdb.DuckDBDataProtocol.HTTP, false));
-        regLog.set(reg, Date.now());
-        res.regs.push(reg);
-        regs.push(reg);
-        pairs.push([reg, p]);
-        if (regs.length === 1) quickPeek(reg);
-      }
-      stage = "reading delete files";
-      delTable = posDeletes.length ? await loadPositionDeletes(key, ws, posDeletes) : null;
-      mapTable = delTable ? await createMap(key, pairs) : null;
-      stage = "creating the view";
-      await createView(ident, regs, delTable, mapTable, resolved.evolved);
-      stage = "reading the parquet footers";
-      columns = await describe(ident);   // forces a real footer read — this is the probe
 
-      stage = "checking deletes";
-      if (delTable) {
-        const unmatched = await countUnmatchedDeletes(delTable, mapTable);
-        if (unmatched)
-          warnings.push(`${unmatched} delete record(s) point at data files that aren't in this ` +
-                        `snapshot and could not be applied — some deleted rows may still appear`);
-      }
-    } catch (e) {
-      // A stop is not a failure and has no culprit file to bisect for. Release what was
-      // registered and report it as itself.
-      if (e.cancelled) { await releaseOwned(key, regs, gen); throw e; }
-      // Superseded while failing: the error belongs to a load nobody is waiting on, and
-      // some of the ways it can fail here ARE the supersession — its files dropped out
-      // from under it. The current load's own errors still have gen === loadGen.
-      if (gen !== loadGen) { await releaseOwned(key, regs, gen); throw cancelledError(); }
-      // Which FILE did it? An error like "table index is out of bounds" (a wasm trap on
-      // some parquet feature this build mishandles) names nothing, and a several-hundred
-      // file table gives the user nothing to report. Bisect with LIMIT 0 binds — the
-      // object cache makes re-binds cheap — before the registrations are released.
-      let detail = "";
-      try { detail = await diagnoseOpenFailure(regs, pairs, resolved.evolved, ws); } catch (_) {}
-      // Ownership-aware for the same reason a cancel is: a superseded load that fails must
-      // not take the load that replaced it down with it.
-      await releaseOwned(key, regs, gen);
-      // Deliberately no whole-file download tier: on a big table that means minutes of
-      // waiting and the table in browser memory. Report the cause — and only the cause.
-      // This used to append a guess about the service worker to every failure here,
-      // including schema mismatches and expired tokens, and sent people off reloading.
-      throw new Error(`Could not open ${label} while ${stage}: ${e.message}${detail}`);
-    }
-
-    // read_parquet matches columns by NAME, and a column the current schema doesn't have
-    // means one of two very different things. Either the writer is column-mapped and the
-    // name is physical (a Warehouse GUID) — the name mapping fixes that, below. Or the
-    // table was renamed: an Iceberg rename is metadata-only, so the old name survives in
-    // older files and there is nothing to map it to. Only the second is worth warning
-    // about, and this used to report every Warehouse column as the second.
-    if (resolved.schemaColumns) {
-      const known = new Set(resolved.schemaColumns);
-      let extra = columns.map(c => c.name).filter(n => !known.has(n));
-      // Best-effort throughout: a table that opened is not worth losing over a cosmetic
-      // rename, and CREATE OR REPLACE leaves the working view standing if it fails.
-      if (extra.length) try {
-        const aliases = aliasFor(columns, resolved.nameMapping);
-        if (aliases) {
-          await createView(ident, regs, delTable, mapTable, resolved.evolved, aliases);
-          columns = await describe(ident);
-          extra = columns.map(c => c.name).filter(n => !known.has(n));
+        // Rows on screen while the rest of the open runs. Cheap now: the same LIMIT 100
+        // the Data tab would ask for, pushed down into the Iceberg scan. It used to be
+        // suppressed on merge-on-read tables because a raw first-file read showed
+        // deleted rows as live; DuckDB applies the deletes, so it fires for every table.
+        // Best-effort by design — a superseded or failed peek says nothing, and the real
+        // open reports its own errors.
+        if (onPeek) {
+          materialize(`SELECT * FROM ${source} LIMIT ${QUICK_PEEK_ROWS}`)
+            .then(out => { if (gen === loadGen) onPeek(out, (resolved.stats || {}).totalDataFiles); })
+            .catch(() => {});
         }
-      } catch (_) { /* keep the physical names and warn below */ }
-      if (extra.length)
-        warnings.push(`column(s) ${extra.join(", ")} are in the data files but not in the table's ` +
-                      `current schema — it was renamed or had columns dropped, so values may be ` +
-                      `split across the old and new names`);
-    }
-    if (eqDeletes.length)
-      warnings.push(`${eqDeletes.length} equality-delete file(s) are NOT applied — deleted rows may still appear`);
 
-    const info = { label, ident, columns, fileCount: paths.length, stage: "loaded",
-                   posDeletes: posDeletes.length, eqDeletes: eqDeletes.length,
-                   totalRecords: resolved.totalRecords, stats: resolved.stats, warnings };
+        await createView(ident, source);
+      }
+      check();
+      columns = await describe(ident);
+    } catch (e) {
+      // A stop is not a failure. Superseded while failing is also not this load's
+      // problem — and some of the ways it can fail here ARE the supersession.
+      if (e.cancelled) { await releaseOwned(key, [], gen); throw e; }
+      if (gen !== loadGen) { await releaseOwned(key, [], gen); throw cancelledError(); }
+      await releaseOwned(key, [], gen);
+      // No bisector any more, and none is needed: the old one existed because a failure
+      // inside a several-hundred-file read_parquet() named nothing, and the file list was
+      // ours to halve. DuckDB owns the file list now and its errors name the file.
+      throw new Error(`Could not open ${label}: ${e.message}`);
+    }
+
+    const stats = resolved.stats || {};
+    const info = { label, ident, columns, fileCount: stats.totalDataFiles, stage: "loaded",
+                   posDeletes: stats.totalDeleteFiles || 0, eqDeletes: 0,
+                   totalRecords: resolved.totalRecords, stats, warnings };
 
     loaded.set(key, info);
     status(describeLoad(info));

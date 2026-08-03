@@ -77,14 +77,14 @@ export function connectNative() {
   }
 
   const db = {
-    // Native DuckDB reads the URL itself; the host records the mapping and substitutes it
-    // into the SQL. The protocol argument the wasm build needed is accepted and ignored.
-    registerFileURL: (name, url) => call("registerFileURL", [name, url]),
-    // Bytes cross as a plain array — a Uint8Array does not survive VS Code's JSON message
-    // serialisation, and these are manifest-sized, not data-file-sized.
+    // ATTACH the item as an Iceberg REST catalog in the host and hand back the identifier
+    // its table is reachable under. This is the call that replaced the manifest walk.
+    openTable: target => call("openTable", [target]),
+    // Bytes with no URL land in a host temp file, and the PATH comes back — data.js
+    // splices it into its SQL directly, the same way it now splices URLs. Bytes cross as
+    // a plain array: a Uint8Array does not survive VS Code's JSON message serialisation.
     registerFileBuffer: (name, bytes) => call("registerFileBuffer", [name, Array.from(bytes)]),
     dropFile: name => call("dropFile", [name]),
-    globFiles: name => call("globFiles", [name]),
     getVersion: () => call("getVersion"),
     capabilities: () => call("capabilities"),
   };

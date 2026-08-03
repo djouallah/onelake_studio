@@ -1,10 +1,11 @@
 // The native engine, and the bridge that carries it into the page.
 //
 // Two halves:
-//   Part 1 — engine-host.js on its own, in Node. The eight calls data.js makes, plus the
-//            registered-name substitution that replaces duckdb-wasm's virtual file
-//            registry. That substitution is the one genuinely new idea in the port, so it
-//            is tested for what it must NOT touch as much as for what it must.
+//   Part 1 — engine-host.js on its own, in Node. The calls data.js makes, the buffer
+//            temp-file round trip that replaced duckdb-wasm's virtual file registry, and
+//            the guards on the bridge's dispatch. The registry itself is GONE — URLs and
+//            paths are spliced into the SQL by the caller — so what is tested is that
+//            nothing rewrites a literal any more, in either direction.
 //   Part 2 — the REAL extension/app page in real Chrome, with the panel's message bridge
 //            wired to a real engine-host. data.js runs unchanged; only what is underneath
 //            it changed, and this is what proves the seam holds.
@@ -84,31 +85,63 @@ console.log("--- engine-host ---");
   eq(streamed, 45000, "streaming yields every row");
   ok(batches > 1, `…in more than one batch (${batches}) so a big result paints as it arrives`);
 
-  // ---- the registered-name substitution, which replaces the wasm virtual registry ----
+  // ---- the registry is gone: SQL says what it means, and nothing rewrites it ----
+  //
+  // The caller splices real paths and URLs into its SQL now. Two properties matter: a
+  // spliced path actually reads (there is no registry to translate it), and a literal
+  // that LOOKS like the old synthetic names comes back exactly as written — the editor
+  // bug the substitution era shipped (`SELECT 'data_3.parquet'` answering a OneLake URL)
+  // must stay dead.
   await writeFile(join(TMP, "real.csv"), "a,b\n1,2\n3,4\n");
-  await h.call("registerFileURL", ["data_1.parquet", join(TMP, "real.csv").replace(/\\/g, "/")]);
-  const viaName = await h.call("query", ["SELECT * FROM read_csv('data_1.parquet')"]);
-  eq(viaName.numRows, 2, "a registered name resolves to what it was registered as");
+  const direct = await h.call("query",
+    [`SELECT * FROM read_csv('${join(TMP, "real.csv").replace(/\\/g, "/")}')`]);
+  eq(direct.numRows, 2, "a path spliced into the SQL reads directly — no registry needed");
 
-  // The safety property. Registered names are synthetic and counter-generated, so they
-  // cannot collide with a user's identifiers — but a literal that was never registered
-  // must survive untouched, or every string in every query is a substitution hazard.
-  const untouched = await h.call("query", ["SELECT 'data_99.parquet' AS s, 'data_1' AS t"]);
-  eq(untouched.rows[0].s, "data_99.parquet", "an UNregistered literal is left alone");
-  eq(untouched.rows[0].t, "data_1", "…and a partial match of a registered name is not a match");
+  const userSql = await h.call("query", ["SELECT 'data_1.parquet' AS s"]);
+  eq(userSql.rows[0].s, "data_1.parquet",
+     "a literal that looks like a registered name is a plain literal, nothing rewrites it");
 
-  await h.call("registerFileBuffer", ["m.csv", Buffer.from("x\n9\n")]);
-  const buf = await h.call("query", ["SELECT * FROM read_csv('m.csv')"]);
-  eq(buf.rows[0].x, 9, "a registered BUFFER is readable (this is how avro manifests arrive)");
-
-  eq((await h.call("globFiles", ["m.csv"])).length, 1, "globFiles sees a registered name");
+  // The one registry-shaped survivor: bytes with no URL. The temp path comes BACK and the
+  // caller splices it — same discipline as URLs — and dropFile is how the disk is repaid.
+  const bufPath = await h.call("registerFileBuffer", ["m.csv", Buffer.from("x\n9\n")]);
+  ok(typeof bufPath === "string" && bufPath.includes("buf_"),
+     `registerFileBuffer answers with the temp path (${bufPath})`);
+  const buf = await h.call("query", [`SELECT * FROM read_csv('${bufPath}')`]);
+  eq(buf.rows[0].x, 9, "…and the path reads");
   await h.call("dropFile", ["m.csv"]);
-  eq((await h.call("globFiles", ["m.csv"])).length, 0, "…and stops seeing it once dropped");
   let gone = false;
-  try { await h.call("query", ["SELECT * FROM read_csv('m.csv')"]); }
+  try { await h.call("query", [`SELECT * FROM read_csv('${bufPath}')`]); }
   catch (_) { gone = true; }
-  ok(gone, "…and the name no longer resolves, so a dropped file really is gone");
+  ok(gone, "…and after dropFile the temp file really is gone");
 
+  let streamed2 = 0;
+  await h.call("stream", ["SELECT 1 AS n"], () => { streamed2++; });
+  eq(streamed2, 1, "stream() delivers batches through call()'s appended emit");
+
+  // The dispatch guards: method names arrive from the webview.
+  let protoRejected = false;
+  try { await h.call("constructor", []); } catch (_) { protoRejected = true; }
+  ok(protoRejected, "an inherited property is not an engine method");
+  let argsRejected = false;
+  try { await h.call("query", "SELECT 1"); } catch (_) { argsRejected = true; }
+  ok(argsRejected, "non-array args are refused, not spread");
+
+  // openTable without a credential: the two failure shapes a harness can reach.
+  let noSource = "";
+  try { await h.call("openTable", [{ workspace: "w", item: "i", schema: "dbo", table: "t" }]); }
+  catch (e) { noSource = e.message; }
+  ok(/token source/.test(noSource), `openTable without a token source says so — "${noSource}"`);
+
+  await h.close();
+}
+
+{
+  // An engine WITH a token source that answers null: the signed-out shape.
+  const h = createEngineHost({ extensionDir: EXT_DIR, getToken: async () => null });
+  let signedOut = "";
+  try { await h.call("openTable", [{ workspace: "w", item: "i", schema: "dbo", table: "t" }]); }
+  catch (e) { signedOut = e.message; }
+  ok(/Not signed in/.test(signedOut), `openTable while signed out says so — "${signedOut}"`);
   await h.close();
 }
 
@@ -172,10 +205,9 @@ console.log("\n--- native DuckDB reading through the signed proxy ---");
       // is classified 'ttl', never filled, and every read would pay the network — which
       // is what this test found when it used one.
       const url = `${proxy.dfsOrigin}/ws/MyLh.Lakehouse/Tables/dbo/trips/data_0.parquet`;
-      // Registered exactly as data.js registers a data file, then read through the same
-      // read_parquet() shape loadTable builds.
-      await h2.call("registerFileURL", ["data_1.parquet", url]);
-      const r = await h2.call("query", ["SELECT count(*) AS n FROM read_parquet('data_1.parquet')"]);
+      // The URL spliced straight into the SQL, exactly as data.js builds its readers now.
+      const r = await h2.call("query",
+        [`SELECT count(*) AS n FROM read_parquet('${url}')`]);
       eq(Number(r.rows[0].n), 400000, "native DuckDB read a parquet file through the proxy");
       ok(seen.length > 0 && seen.every(s => s.auth === `Bearer ${TOKEN}`),
          `…and every upstream read was signed (${seen.length} request(s), none unauthenticated)`);
@@ -189,7 +221,7 @@ console.log("\n--- native DuckDB reading through the signed proxy ---");
 
       const before = seen.length;
       const again = await h2.call("query",
-        ["SELECT count(*) AS n FROM read_parquet('data_1.parquet') WHERE id < 10"]);
+        [`SELECT count(*) AS n FROM read_parquet('${url}') WHERE id < 10`]);
       eq(Number(again.rows[0].n), 10, "a second read answers correctly");
       eq(seen.length, before, "…entirely from the disk cache — the network was not touched again");
       ok(events.some(e => e.cache === "hit"), "…and the proxy logged it as a hit");
