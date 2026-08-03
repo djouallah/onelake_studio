@@ -9,6 +9,10 @@
     "type": "git",
     "url": "https://github.com/djouallah/onelake_studio.git"
   },
+  "homepage": "https://github.com/djouallah/onelake_studio#readme",
+  "bugs": {
+    "url": "https://github.com/djouallah/onelake_studio/issues"
+  },
   "icon": "media/icon.png",
   "engines": {
     "vscode": "^1.90.0"
@@ -27,6 +31,13 @@
   ],
   "main": "./src/extension.js",
   "activationEvents": [],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": true,
+      "description": "OneLake Studio never reads or executes workspace files; everything it touches lives in OneLake and its own storage."
+    },
+    "virtualWorkspaces": true
+  },
   "contributes": {
     "commands": [
       {
@@ -60,6 +71,16 @@
       {
         "command": "onelakeStudio.clearCache",
         "title": "Clear Cached OneLake Data",
+        "category": "OneLake Studio"
+      },
+      {
+        "command": "onelakeStudio.openTable",
+        "title": "Open Table",
+        "category": "OneLake Studio"
+      },
+      {
+        "command": "onelakeStudio.openFile",
+        "title": "Open File",
         "category": "OneLake Studio"
       }
     ],
@@ -108,8 +129,26 @@
       "view/item/context": [
         {
           "command": "onelakeStudio.refresh",
-          "when": "view == onelakeStudio.explorer && viewItem =~ /^(workspace|item|dir)$/",
+          "when": "view == onelakeStudio.explorer && viewItem =~ /^(workspace|item|dir|tables|error)$/",
           "group": "inline"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "onelakeStudio.openTable",
+          "when": "false"
+        },
+        {
+          "command": "onelakeStudio.openFile",
+          "when": "false"
+        },
+        {
+          "command": "onelakeStudio.signIn",
+          "when": "!onelakeStudio.signedIn"
+        },
+        {
+          "command": "onelakeStudio.refresh",
+          "when": "onelakeStudio.signedIn"
         }
       ]
     },
@@ -119,25 +158,30 @@
         "onelakeStudio.tenantId": {
           "type": "string",
           "default": "",
-          "markdownDescription": "Directory (tenant) GUID to sign in against. Leave empty for your home tenant; set it to reach a tenant you are a guest in."
+          "scope": "machine",
+          "pattern": "^$|^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+          "patternErrorMessage": "A directory (tenant) ID is a GUID, e.g. 72f988bf-86f1-41af-91ab-2d7cd011db47.",
+          "markdownDescription": "Directory (tenant) GUID to sign in against. Leave empty for your home tenant; set it to reach a tenant you are a guest in. Machine-scoped on purpose: a setting that steers *authentication* must not be overridable by a workspace's own `.vscode/settings.json`."
         },
         "onelakeStudio.dataCacheGB": {
           "type": "number",
           "default": 20,
           "minimum": 0,
-          "markdownDescription": "Disk to spend caching OneLake data, in GB. Iceberg data files and manifests are kept until evicted — a new snapshot writes new files, so a cached one can never be stale. Reading a table you have opened before comes off disk instead of the network. Set to `0` to cache nothing; `OneLake Studio: Clear Cached OneLake Data` empties it and reports what it freed."
+          "scope": "machine",
+          "markdownDescription": "Disk to spend caching OneLake data, in GB. Iceberg data files and manifests are kept until evicted — a new snapshot writes new files, so a cached one can never be stale. Reading a table you have opened before comes off disk instead of the network. Set to `0` to cache nothing; `OneLake Studio: Clear Cached OneLake Data` empties it and reports what it freed. Applies after the window is reloaded."
         },
         "onelakeStudio.catalogTtlMinutes": {
           "type": "number",
           "default": 5,
           "minimum": 0,
-          "markdownDescription": "How old a catalog answer, listing or other mutable object may be before it is refreshed. The last-known answer is ALWAYS served instantly from disk — a table you have ever opened opens without waiting on the catalog; once the answer is older than this, a background refresh fetches the current one, so a new snapshot shows up one click later. `0` disables the caching and asks OneLake every time."
+          "scope": "machine",
+          "markdownDescription": "How old a catalog answer, listing or other mutable object may be before it is refreshed. The last-known answer is ALWAYS served instantly from disk — a table you have ever opened opens without waiting on the catalog; once the answer is older than this, a background refresh fetches the current one, so a new snapshot shows up one click later. `0` disables the caching and asks OneLake every time. Applies after the window is reloaded."
         }
       }
     }
   },
   "scripts": {
-    "vscode:prepublish": "node ./copy-site.mjs && node ./vendor.mjs"
+    "vscode:prepublish": "node ./check-binding.mjs && node ./copy-site.mjs && node ./vendor.mjs"
   },
   "devDependencies": {
     "@types/vscode": "^1.90.0"

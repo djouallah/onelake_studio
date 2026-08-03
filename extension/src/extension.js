@@ -62,6 +62,7 @@ async function proxyToken({ fresh = false } = {}) {
 }
 
 let proxy = null;
+let proxyStarting = null;   // in-flight startProxy, so two callers cannot start two servers
 
 // Nothing about a slow read is visible from the webview: DuckDB's requests never pass
 // through the page, so it cannot see how many there were, how big, how long OneLake took,
@@ -69,6 +70,17 @@ let proxy = null;
 // "OneLake Studio" in the Output panel is where it says so. Idle by default — an output
 // channel costs nothing until somebody opens it.
 let out = null;
+let statusItem = null;
+
+// Errors worth a toast are worth their diagnosis: every one of these has a longer story
+// in the output channel, and 'Show Log' is the difference between a user who can say what
+// happened and one who can only say it failed.
+function showError(msg) {
+  vscode.window.showErrorMessage(msg, 'Show Log').then(pick => {
+    if (pick === 'Show Log' && out) out.show(true);
+  });
+}
+
 function logRead(e) {
   tally(e);
   if (!out) return;
@@ -116,6 +128,12 @@ function logBoot(m) {
     (m.quiet ? ' (worker restart)' : ''));
   for (const s of stages) {
     out.appendLine(`${String(Number(s.ms) || 0).padStart(6)}ms       ${s.stage}`);
+  }
+  // Which optional formats this session has is decided at boot and nowhere visible
+  // after it — this line is the answer to "why is .xlsx greyed out".
+  if (m.capabilities) {
+    const missing = Object.entries(m.capabilities).filter(([, v]) => !v).map(([k]) => k);
+    if (missing.length) out.appendLine(`        formats unavailable this session: ${missing.join(', ')}`);
   }
 }
 
@@ -184,6 +202,17 @@ function postReads() {
     cacheStored: c ? c.storedBytes : 0,
     cacheMax: c ? c.maxBytes : 0,
   });
+  // The same burst, in the editor's own status bar — the panel's indicator is invisible
+  // the moment its tab is hidden, which is exactly when a long-running query is being
+  // waited on from somewhere else.
+  if (statusItem) {
+    statusItem.text = `$(database) OneLake ${fmtBytes(burst.cacheBytes)} cache · ${fmtBytes(burst.netBytes)} net`;
+    statusItem.tooltip = `OneLake Studio — last burst: ${burst.reads} read(s), ` +
+      `${burst.hits} from disk, ${burst.misses + burst.skips} from the network` +
+      (c && c.storedBytes ? `; ${fmtBytes(c.storedBytes)} cached on disk` : '') +
+      `. Click for the read log.`;
+    statusItem.show();
+  }
 }
 
 const GB = 1024 * 1024 * 1024;
@@ -207,43 +236,52 @@ const fmtBytes = n => n >= GB ? `${(n / GB).toFixed(1)} GB`
                    : `${Math.round(n / 1024)} KB`;
 
 async function ensureProxy(context) {
-  if (!proxy) {
-    const max = cacheMaxBytes();
-    proxy = await startProxy({
-      getToken: proxyToken,
-      // The immutable Iceberg files sw.js keeps for the browser build. Without it the
-      // panel re-downloaded every parquet footer and row group on every open, which the
-      // website has not done since the worker started caching them. Far larger than the
-      // browser's copy, because the browser's limit is a storage quota and this is a
-      // directory: bytes here cost disk, and fetching them again costs seconds.
-      // A limit of zero is a real answer for a machine short on disk, and it means no
-      // cache at all rather than a cache that evicts everything it writes.
-      cacheDir: max > 0 ? join(context.globalStorageUri.fsPath, 'onelake-data') : null,
-      cacheMaxBytes: max,
-      cacheTtlMs: catalogTtlMs(),
-      // The engine ships inside the extension (vendor.mjs at package time); the proxy
-      // serves it from here before cache or network, so boot needs no CDN at all.
-      vendorDir: join(context.extensionUri.fsPath, 'vendor'),
-      onLog: logRead,
-    });
-    context.subscriptions.push({ dispose: () => proxy && proxy.close() });
+  if (proxy) return proxy;
+  // Single-flight: the `if` above has an await between it and the assignment below, and
+  // two near-simultaneous callers (a tree click racing the Open command) used to start
+  // two servers — the loser leaked, listening with a live secret until the window closed.
+  if (!proxyStarting) {
+    proxyStarting = startProxyOnce(context).finally(() => { proxyStarting = null; });
+  }
+  return proxyStarting;
+}
 
-    // Said once, at the top of the log, because every question about speed starts here.
-    // A cache that could not make its directory looks exactly like one that is working
-    // and never hitting: both are just "slow".
-    const c = proxy.cacheStatus();
-    if (out) {
-      out.appendLine(c.usable
-        ? `cache: ${fmtBytes(c.maxBytes)} max in ${c.dir} (currently ${fmtBytes(await proxy.cacheSize())})`
-        : `cache: OFF — ${c.problem}${c.dir ? ` (${c.dir})` : ''}`);
-      out.appendLine(
-        'columns: total | method | status | verdict | bytes | where the time went | range | path');
-      out.appendLine(
-        '  hit  = served from disk (a stale catalog answer is served instantly and refreshed' +
-        ' behind)    miss = fetched, and KEPT    skip = fetched, not kept');
-      out.appendLine(
-        '  STORE ok = a background download kept the whole object, so its next read is local');
-    }
+async function startProxyOnce(context) {
+  const max = cacheMaxBytes();
+  proxy = await startProxy({
+    getToken: proxyToken,
+    // The immutable Iceberg files sw.js keeps for the browser build. Without it the
+    // panel re-downloaded every parquet footer and row group on every open, which the
+    // website has not done since the worker started caching them. Far larger than the
+    // browser's copy, because the browser's limit is a storage quota and this is a
+    // directory: bytes here cost disk, and fetching them again costs seconds.
+    // A limit of zero is a real answer for a machine short on disk, and it means no
+    // cache at all rather than a cache that evicts everything it writes.
+    cacheDir: max > 0 ? join(context.globalStorageUri.fsPath, 'onelake-data') : null,
+    cacheMaxBytes: max,
+    cacheTtlMs: catalogTtlMs(),
+    // The engine ships inside the extension (vendor.mjs at package time); the proxy
+    // serves it from here before cache or network, so boot needs no CDN at all.
+    vendorDir: join(context.extensionUri.fsPath, 'vendor'),
+    onLog: logRead,
+  });
+  context.subscriptions.push({ dispose: () => proxy && proxy.close() });
+
+  // Said once, at the top of the log, because every question about speed starts here.
+  // A cache that could not make its directory looks exactly like one that is working
+  // and never hitting: both are just "slow".
+  const c = proxy.cacheStatus();
+  if (out) {
+    out.appendLine(c.usable
+      ? `cache: ${fmtBytes(c.maxBytes)} max in ${c.dir} (currently ${fmtBytes(await proxy.cacheSize())})`
+      : `cache: OFF — ${c.problem}${c.dir ? ` (${c.dir})` : ''}`);
+    out.appendLine(
+      'columns: total | method | status | verdict | bytes | where the time went | range | path');
+    out.appendLine(
+      '  hit  = served from disk (a stale catalog answer is served instantly and refreshed' +
+      ' behind)    miss = fetched, and KEPT    skip = fetched, not kept');
+    out.appendLine(
+      '  STORE ok = a background download kept the whole object, so its next read is local');
   }
   return proxy;
 }
@@ -265,15 +303,33 @@ function ensureEngine(context) {
       // rather than once per session — and never into the user's own ~/.duckdb, where
       // they would outlive the extension that fetched them.
       extensionDir: join(context.globalStorageUri.fsPath, 'duckdb-extensions'),
-      onLog: b => logBoot({ ...b, native: true }),
+      onLog: logBoot,
+      // A failed optional extension is worth a line where someone will find it.
+      onWarn: w => out && out.appendLine(w),
+      // DuckDB talks to OneLake itself now, so it needs the bearer the proxy used to
+      // attach on its behalf. Same cached, silent token — reads must never prompt.
+      // Options pass through so the engine's auth retry can say { fresh: true } and
+      // actually get PAST this cache — asking it again inside the 60s window returns
+      // the very token that just expired, and the retry becomes a no-op.
+      getToken: opts => proxyToken(opts),
     });
   } catch (e) {
     out && out.appendLine(`native DuckDB unavailable: ${e.message}`);
-    vscode.window.showErrorMessage(
+    showError(
       `OneLake Studio could not load DuckDB for this platform (${process.platform}-${process.arch}): ${e.message}`);
     engine = null;
   }
   return engine;
+}
+
+// Closing the engine is what revokes its credentials: the azure secret and every ATTACH
+// hold the access token BY VALUE, so an engine that outlives the sign-out keeps reading
+// OneLake for as long as the token lasts. Cheap to rebuild — ensureEngine does it lazily
+// on the next open, and a warm boot is ~300ms.
+async function resetEngine() {
+  const e = engine;
+  engine = null;
+  if (e) await e.close().catch(() => {});
 }
 
 async function show(context, options) {
@@ -288,8 +344,12 @@ async function show(context, options) {
   // that boots to a spinner and never moves.
   const eng = ensureEngine(context);
   if (!eng) return false;
-  await openPanel(context, await ensureProxy(context),
-    { onOpened: logOpened, onBoot: logBoot, engine: eng });
+  await openPanel(context, await ensureProxy(context), {
+    onOpened: logOpened, onBoot: logBoot, engine: eng,
+    // The page could not bring the engine up. Everything it buffered is already gone;
+    // this is the toast that stops the failure being a spinner that never moves.
+    onBootFailed: m => showError(`OneLake Studio's engine failed to start: ${m}`),
+  });
   return true;
 }
 
@@ -302,10 +362,73 @@ async function setSignedIn(value) {
   await vscode.commands.executeCommand('setContext', 'onelakeStudio.signedIn', value);
 }
 
+// The exact commit this window is running. Installed build: the stamp copy-site.mjs wrote
+// into site/version.js at package time (already '+dirty'-labelled when the tree was).
+// Dev: ask git directly, and label a dirty tree the same way — HEAD alone would name a
+// commit that does not contain the edits actually running.
+function buildCommit(context, dev) {
+  if (dev) {
+    try {
+      const { execSync } = require('node:child_process');
+      const opts = { encoding: 'utf8', cwd: context.extensionUri.fsPath };
+      let commit = execSync('git rev-parse HEAD', opts).trim().slice(0, 7);
+      if (execSync('git status --porcelain', opts).trim()) commit += '+dirty';
+      return commit;
+    } catch (_) { return 'dev'; }
+  }
+  try {
+    const stamp = require('node:fs').readFileSync(
+      join(context.extensionUri.fsPath, 'site', 'version.js'), 'utf8');
+    const m = /commit:\s*"([^"]+)"/.exec(stamp);
+    if (m) return m[1];
+  } catch (_) {}
+  return 'unknown';
+}
+
 async function activate(context) {
   out = vscode.window.createOutputChannel('OneLake Studio');
   context.subscriptions.push(out);
 
+  // The read indicator, visible even when the panel's tab is not. Hidden until the first
+  // burst — a status bar item with nothing to say is noise.
+  statusItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
+  statusItem.name = 'OneLake Studio';
+  statusItem.command = 'onelakeStudio.showLog';
+  context.subscriptions.push(statusItem);
+
+  // Which build is this window actually running? Bottom left, always visible: version,
+  // EXACT commit, and 'dev' when it is the F5 checkout rather than an installed vsix.
+  // Exists because "I clicked X and nothing is there" is unanswerable until both sides
+  // know they are looking at the same build. Same stamp discipline as copy-site.mjs:
+  // '+dirty' whenever the code running is not exactly the commit named.
+  const version = (context.extension && context.extension.packageJSON &&
+                   context.extension.packageJSON.version) || '?';
+  const dev = context.extensionMode === vscode.ExtensionMode.Development;
+  const commit = buildCommit(context, dev);
+  const buildItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 10000);
+  buildItem.name = 'OneLake Studio build';
+  buildItem.text = `$(database) OneLake ${version} · ${commit}${dev ? ' · dev' : ''}`;
+  buildItem.tooltip = dev
+    ? `OneLake Studio ${version} at commit ${commit}, running from the checkout (F5) — the panel serves extension/app/`
+    : `OneLake Studio ${version}, packaged at commit ${commit}`;
+  buildItem.command = 'onelakeStudio.showLog';
+  buildItem.show();
+  context.subscriptions.push(buildItem);
+
+  // A failure past this point used to be INVISIBLE: activation dies half-way, the view
+  // renders as an empty pane — no tree, no welcome content, no message anywhere. The
+  // rest of activate is guarded so that shape can never be silent again.
+  try {
+    await activateInner(context);
+    out.appendLine(`activated ${version} ${commit}${dev ? ' (dev)' : ''} — signed in: ${signedIn}`);
+  } catch (e) {
+    out.appendLine(`ACTIVATION FAILED: ${(e && e.stack) || e}`);
+    showError(`OneLake Studio failed to activate: ${(e && e.message) || e}`);
+    throw e;
+  }
+}
+
+async function activateInner(context) {
   const { site } = await siteRoot(context.extensionUri,
     { dev: context.extensionMode === vscode.ExtensionMode.Development });
   // Listing goes straight to OneLake on the VS Code token — the proxy is for DuckDB's
@@ -316,14 +439,24 @@ async function activate(context) {
     getToken: proxyToken,
     siteFsPath: site.fsPath,
   });
-  const tree = new LakehouseTree({ catalog, isSignedIn: () => signedIn });
+  const tree = new LakehouseTree({
+    catalog,
+    isSignedIn: () => signedIn,
+    // A listing failure becomes an error NODE, but the stack behind it goes here.
+    log: m => out && out.appendLine(m),
+  });
 
   await setSignedIn(!!await getToken({ createIfNone: false }));
 
   // Opening a table means: make sure a panel exists, then tell it what to show. The panel
-  // buffers the message if DuckDB is still booting.
+  // buffers the message if DuckDB is still booting. Boot is multi-second work with no
+  // editor-side sign of life until now — withProgress is that sign.
+  const showWithProgress = options => vscode.window.withProgress(
+    { location: vscode.ProgressLocation.Window, title: 'Opening OneLake Studio…' },
+    () => show(context, options));
+
   async function openInPanel(msg) {
-    if (!await show(context, { createIfNone: true })) return;
+    if (!await showWithProgress({ createIfNone: true })) return;
     postToPanel(msg);
   }
 
@@ -342,10 +475,24 @@ async function activate(context) {
     // costing me on disk", which is the fair question to ask of a twenty-gigabyte default.
     vscode.commands.registerCommand('onelakeStudio.clearCache', async () => {
       if (!proxy) {
-        vscode.window.showInformationMessage('OneLake Studio: nothing cached yet.');
+        // Honest about what "nothing" means: the cache directory may well be full from a
+        // previous session — it just has no proxy over it yet to measure or clear it.
+        vscode.window.showInformationMessage(
+          'OneLake Studio: the cache has not been opened in this session yet — ' +
+          'open OneLake Studio first, then clear it.');
         return;
       }
       const was = await proxy.cacheSize();
+      if (!was) {
+        vscode.window.showInformationMessage('OneLake Studio: the cache is empty.');
+        return;
+      }
+      // Up to twenty gigabytes on one keypress deserves a question first — everything
+      // deleted here is re-downloaded from OneLake at network speed.
+      const pick = await vscode.window.showWarningMessage(
+        `Delete ${fmtBytes(was)} of cached OneLake data? Tables read again will be re-downloaded.`,
+        { modal: true }, 'Delete');
+      if (pick !== 'Delete') return;
       await proxy.clearCache();
       vscode.window.showInformationMessage(
         `OneLake Studio: cleared ${fmtBytes(was)} of cached OneLake data.`);
@@ -362,11 +509,11 @@ async function activate(context) {
 
     vscode.commands.registerCommand('onelakeStudio.open', async () => {
       try {
-        await show(context, { createIfNone: true });
+        await showWithProgress({ createIfNone: true });
         await setSignedIn(!!await getToken({ createIfNone: false }));
         tree.refresh();
       } catch (e) {
-        vscode.window.showErrorMessage(`OneLake Studio could not start: ${(e && e.message) || e}`);
+        showError(`OneLake Studio could not start: ${(e && e.message) || e}`);
       }
     }),
 
@@ -378,7 +525,7 @@ async function activate(context) {
         await setSignedIn(!!await getToken({ createIfNone: false }));
         tree.refresh();
       } catch (e) {
-        vscode.window.showErrorMessage(`Could not sign in: ${(e && e.message) || e}`);
+        showError(`Could not sign in: ${(e && e.message) || e}`);
       }
     }),
 
@@ -387,41 +534,67 @@ async function activate(context) {
     // choice, which is what someone with two tenants actually wants.
     vscode.commands.registerCommand('onelakeStudio.switchAccount', async () => {
       try {
-        // Closed before asking: whichever account is picked, the panel on screen belongs to
-        // the previous one, and its cached tables should not survive the switch. The tree
-        // holds the same kind of stale answer, so it is emptied on the way out too.
+        // Ask FIRST. Tearing down before the picker meant that cancelling it still cost
+        // the panel, the engine and up to twenty gigabytes of cache — for a switch that
+        // never happened.
+        const picked = await getToken({ createIfNone: true, clearSessionPreference: true });
+        if (!picked) return;
+        // Now the teardown is FOR something: the panel on screen, the engine's secrets
+        // and the cached bytes all belong to the account being left.
         closePanel();
-        forgetToken();                              // the cached one belongs to the account being left
-        if (proxy) await proxy.clearCache();        // ...and so do the bytes it read
+        forgetToken();
+        await resetEngine();
+        if (proxy) await proxy.clearCache();
         tree.refresh();
-        await show(context, { createIfNone: true, clearSessionPreference: true });
+        await showWithProgress({ createIfNone: true });
         await setSignedIn(!!await getToken({ createIfNone: false }));
         tree.refresh();
       } catch (e) {
-        vscode.window.showErrorMessage(`Could not switch account: ${(e && e.message) || e}`);
+        showError(`Could not switch account: ${(e && e.message) || e}`);
       }
     }),
 
     // Covers the other direction: signing out from the Accounts menu, or a token revoked
-    // elsewhere. The proxy picks up whatever is current on its next request by itself, so
-    // this only exists to make the failure a sentence instead of a wall of 401s.
+    // elsewhere. The proxy signs per request and recovers by itself; the ENGINE does not —
+    // its azure secret and ATTACHes hold the token by value, so it is closed here, or a
+    // signed-out window keeps reading OneLake for as long as the old token lasts.
     vscode.authentication.onDidChangeSessions(async e => {
       if (e.provider.id !== 'microsoft') return;
       forgetToken();
       const live = !!await getToken({ createIfNone: false });
       await setSignedIn(live);
       tree.refresh();
-      if (!live && proxy) {
+      if (!live) {
         closePanel();
-        await proxy.clearCache();
+        await resetEngine();
+        if (proxy) await proxy.clearCache();
         vscode.window.showInformationMessage(
           'OneLake Studio signed out — the Microsoft account is no longer available.');
+      }
+    }),
+
+    // Settings are read where they are used, but two of them configure things that are
+    // already built by then. Saying so beats silently applying at the next window reload.
+    vscode.workspace.onDidChangeConfiguration(e => {
+      if (e.affectsConfiguration('onelakeStudio.tenantId')) {
+        // The cached token belongs to the tenant being left; without this it keeps
+        // signing requests for up to a minute after the setting changed.
+        forgetToken();
+        tree.refresh();
+      }
+      if (proxy && (e.affectsConfiguration('onelakeStudio.dataCacheGB') ||
+                    e.affectsConfiguration('onelakeStudio.catalogTtlMinutes'))) {
+        vscode.window.showInformationMessage(
+          'OneLake Studio: cache settings apply after the window is reloaded.');
       }
     }),
   );
 }
 
 function deactivate() {
+  // The burst timers hold the process open if they are live at shutdown.
+  clearTimeout(postTimer);
+  clearTimeout(idleTimer);
   // The engine holds a native database handle and a temp directory; closing it is what
   // releases both. Settled together so a slow engine shutdown cannot strand the proxy's.
   return Promise.all([

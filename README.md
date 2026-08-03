@@ -23,9 +23,10 @@ the Marketplace is the same engine in a VS Code panel, and it needs no app regis
 Microsoft account provider is a first-party application, so `getSession` returns the OneLake token
 directly. Install it, then run **OneLake Studio: Open**.
 
-It loads [`site/`](site/) rather than forking it — the extension replaces two things: the sign-in
-(VS Code's account) and the service worker, which a webview does not have. `extension/src/proxy.js`
-signs OneLake reads from the extension host instead, so the token never enters the page at all.
+The panel runs [`extension/app/`](extension/app/), the extension's own tracked fork of the web app —
+`site/` stays the deployed website, and the fork is where the panel diverges: sign-in is VS Code's
+account, the engine is native DuckDB in the extension host, and `extension/src/proxy.js` signs
+OneLake reads from the host instead of a service worker, so the token never enters the page at all.
 
 ## Signing in
 
