@@ -94,7 +94,7 @@ const check = (name, ok, detail = "") => {
 let browser;
 try {
   browser = await chromium.launch({
-    executablePath: "C:/Program Files/Google/Chrome/Application/chrome.exe", headless: true });
+    executablePath: process.env.CHROME_PATH || (process.platform === "win32" ? "C:/Program Files/Google/Chrome/Application/chrome.exe" : "/usr/bin/google-chrome"), headless: true });
   const ctx = await browser.newContext({ serviceWorkers: "block" });
 
   // What extension/src/html.js injects in place of the config.js tag. The proxy origins

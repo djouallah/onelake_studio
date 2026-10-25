@@ -54,6 +54,14 @@ test("toHttps carries an already-escaped URI path across untouched", () => {
   assert.ok(!toHttps("ignored", uri).includes("%2520"));
 });
 
+test("toHttps refuses an abfss authority that is not OneLake", () => {
+  assert.throws(() => toHttps("WS", "abfss://c@acct.dfs.core.windows.net/x/f.parquet"),
+                e => e.code === "NOT_ONELAKE");
+  // A regional OneLake endpoint is still OneLake.
+  assert.equal(toHttps("WS", "abfss://W@westus-onelake.dfs.fabric.microsoft.com/I/f.parquet"),
+               "https://onelake.dfs.fabric.microsoft.com/W/I/f.parquet");
+});
+
 test("toHttps accepts both abfs:// and abfss://", () => {
   const one = "abfs://WS@onelake.dfs.fabric.microsoft.com/ITEM/Tables/t/f.parquet";
   const two = "abfss://WS@onelake.dfs.fabric.microsoft.com/ITEM/Tables/t/f.parquet";

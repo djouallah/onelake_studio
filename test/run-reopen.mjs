@@ -95,7 +95,7 @@ const PAGE = `<!doctype html><meta charset=utf-8><title>booting</title>
   `connect-src http://127.0.0.1:${proxy.port} https://cdn.jsdelivr.net https://extensions.duckdb.org`,
 ].join("; ")}">
 <body><script type="module" nonce="${NONCE}">
-import * as duckdb from "https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.33.1-dev57.0/+esm";
+import * as duckdb from "https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.33.1-dev110.0/+esm";
 const URL_UNDER_TEST = ${JSON.stringify(URL_UNDER_TEST)};
 try {
   const bundle = await duckdb.selectBundle(duckdb.getJsDelivrBundles());
@@ -149,7 +149,7 @@ const ok = (cond, name) => { console.log(`${cond ? "ok " : "FAIL"} — ${name}`)
 let browser;
 try {
   browser = await chromium.launch({
-    executablePath: "C:/Program Files/Google/Chrome/Application/chrome.exe", headless: true });
+    executablePath: process.env.CHROME_PATH || (process.platform === "win32" ? "C:/Program Files/Google/Chrome/Application/chrome.exe" : "/usr/bin/google-chrome"), headless: true });
   const page = await browser.newPage();
   page.on("console", m => { if (m.type() === "error") console.log("   [page]", m.text()); });
   await page.goto(`http://127.0.0.1:${PAGE_PORT}/`);

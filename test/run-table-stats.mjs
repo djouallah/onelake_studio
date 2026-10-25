@@ -94,7 +94,7 @@ let ctx = null;
 const fails = [];
 const check = (ok, name) => { console.log(`${ok ? "ok " : "FAIL"} — ${name}`); if (!ok) fails.push(name); };
 const browser = await chromium.launch({
-  executablePath: "C:/Program Files/Google/Chrome/Application/chrome.exe", headless: true });
+  executablePath: process.env.CHROME_PATH || (process.platform === "win32" ? "C:/Program Files/Google/Chrome/Application/chrome.exe" : "/usr/bin/google-chrome"), headless: true });
 try {
   ctx = await browser.newContext({ serviceWorkers: "block" });
   await ctx.addInitScript(() => {

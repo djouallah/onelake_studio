@@ -79,7 +79,7 @@ const check = (name, ok, detail = "") => {
 
 let code = 1;
 const browser = await chromium.launch({
-  executablePath: "C:/Program Files/Google/Chrome/Application/chrome.exe", headless: true });
+  executablePath: process.env.CHROME_PATH || (process.platform === "win32" ? "C:/Program Files/Google/Chrome/Application/chrome.exe" : "/usr/bin/google-chrome"), headless: true });
 try {
   const ctx = await browser.newContext({ serviceWorkers: "block", viewport: { width: 1400, height: 900 } });
   const page = await ctx.newPage();

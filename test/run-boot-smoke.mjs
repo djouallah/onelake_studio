@@ -24,7 +24,7 @@ await new Promise(r => server.listen(PORT, "127.0.0.1", r));
 
 let code = 1;
 const browser = await chromium.launch({
-  executablePath: "C:/Program Files/Google/Chrome/Application/chrome.exe", headless: true });
+  executablePath: process.env.CHROME_PATH || (process.platform === "win32" ? "C:/Program Files/Google/Chrome/Application/chrome.exe" : "/usr/bin/google-chrome"), headless: true });
 try {
   const ctx = await browser.newContext({ serviceWorkers: "block" });
   const page = await ctx.newPage();

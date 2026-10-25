@@ -29,6 +29,7 @@
 
 const ONELAKE_HOST = 'onelake.dfs.fabric.microsoft.com';
 const TOKEN_WAIT_MS = 3000;
+const TOKEN_RENEW_WAIT_MS = 15000;
 const TOKEN_CACHE = 'onelake-token';
 const TOKEN_KEY = '/__onelake_token';
 
@@ -39,18 +40,30 @@ const TOKEN_KEY = '/__onelake_token';
 // Listings, version-hint, metadata.json (rewritten by conversion) and anything under
 // Files/ (users overwrite those) are never cached. Cleared on sign-out, alongside the
 // token; pruned oldest-first past the cap.
-const DATA_CACHE = 'onelake-data-v1';
+//
+// One cache PER IDENTITY: a hit is answered with no token at all, so a single shared cache
+// served the last account's table bytes to whoever signed in next. auth.js names the
+// identity (a hash, `cacheId`) alongside the token; with no live identity there is no
+// cache to read or write. The v1 cache, shared by everyone, is deleted on activation.
+const DATA_CACHE_PREFIX = 'onelake-data-v2-';
+const LEGACY_DATA_CACHE = 'onelake-data-v1';
 const DATA_CACHE_MAX_BYTES = 512 * 1024 * 1024;
 const PRUNE_EVERY_PUTS = 32;
 let putsSincePrune = 0;
 
 let coepCredentialless = false;
+let cacheId = '';            // whose data cache — set with the token, cleared with it
 let token = null;
 let tokenExpiresAt = 0;      // 0 = unknown; a known-expired token is never used
 let waiting = null;          // { promise, resolve } while asking clients for a token
 
+const dataCacheName = () => (cacheId ? DATA_CACHE_PREFIX + cacheId : '');
+
 self.addEventListener('install', () => self.skipWaiting());
-self.addEventListener('activate', e => e.waitUntil(self.clients.claim()));
+self.addEventListener('activate', e => e.waitUntil(Promise.all([
+  self.clients.claim(),
+  caches.delete(LEGACY_DATA_CACHE).catch(() => {}),
+])));
 
 self.addEventListener('message', e => {
   const d = e.data || {};
@@ -59,9 +72,11 @@ self.addEventListener('message', e => {
   } else if (d.type === 'onelake-token') {
     token = d.token || null;
     tokenExpiresAt = Number(d.expiresAt) || 0;
+    cacheId = token ? String(d.cacheId || '') : '';
     if (waiting) { waiting.resolve(token); waiting = null; }
   } else if (d.type === 'clear-data-cache') {
-    caches.delete(DATA_CACHE).catch(() => {});
+    caches.keys().then(ks => Promise.all(ks.filter(k => k.startsWith('onelake-data-'))
+      .map(k => caches.delete(k)))).catch(() => {});
   } else if (d.type === 'deregister') {
     self.registration.unregister()
       .then(() => self.clients.matchAll())
@@ -84,24 +99,30 @@ async function readTokenFromCache() {
     const exp = Number(r.headers.get('x-onelake-expires-at')) || 0;
     if (exp > 0 && Date.now() >= exp) return null;
     tokenExpiresAt = exp;
+    cacheId = r.headers.get('x-onelake-cache-id') || '';
     return t;
   } catch (_) { return null; }
 }
 
 // Last resort: ask every open page. Coalesced, so concurrent misses share one round
 // trip, and it resolves null on timeout so a request never hangs.
-function askClientsForToken() {
+//
+// `rejected` is the token OneLake just refused. The page renews PAST it (MSAL's cache would
+// otherwise return the very same string), which is a network round trip — so that case
+// waits longer.
+function askClientsForToken(rejected = null) {
   if (waiting) return waiting.promise;
   let resolve;
   const promise = new Promise(r => { resolve = r; });
   const mine = { promise, resolve };
   waiting = mine;
   self.clients.matchAll({ includeUncontrolled: true })
-    .then(cs => cs.forEach(c => c.postMessage({ type: 'need-token' })));
+    .then(cs => cs.forEach(c => c.postMessage({ type: 'need-token', ...(rejected ? { rejected } : {}) })));
   // Compare identity, not truthiness. This timer belongs to `mine`; if `mine` was already
   // answered and a LATER waiter is now in the slot, firing here would resolve that one
   // with null after a fraction of its own wait, and its request would go out unsigned.
-  setTimeout(() => { if (waiting === mine) { mine.resolve(null); waiting = null; } }, TOKEN_WAIT_MS);
+  setTimeout(() => { if (waiting === mine) { mine.resolve(null); waiting = null; } },
+             rejected ? TOKEN_RENEW_WAIT_MS : TOKEN_WAIT_MS);
   return promise;
 }
 
@@ -154,7 +175,7 @@ function reportReadFailure(url, status, signed) {
 // under Tables/ — a new snapshot writes NEW files, so a cached one can never be stale.
 // The !search guard excludes every DFS listing call.
 function cacheableDataUrl(u) {
-  if (u.host !== ONELAKE_HOST || u.search) return false;
+  if (!cacheId || u.host !== ONELAKE_HOST || u.search) return false;
   return /\/Tables\/[^?]*\.parquet$/i.test(u.pathname) ||
          /\/Tables\/[^?]*\/metadata\/[^?]*\.avro$/i.test(u.pathname);
 }
@@ -166,7 +187,9 @@ const dataKey = (href, range) => href + '?__range=' + encodeURIComponent(range |
 
 async function fromDataCache(request, url) {
   try {
-    const c = await caches.open(DATA_CACHE);
+    const name = dataCacheName();
+    if (!name) return null;
+    const c = await caches.open(name);
     const hit = await c.match(dataKey(url.href, request.headers.get('Range')));
     if (!hit) return null;
     // Cache.put refuses 206s, so entries are stored as 200 + the original Content-Range
@@ -181,8 +204,13 @@ async function fromDataCache(request, url) {
 async function toDataCache(request, url, res) {
   try {
     if (res.status !== 200 && res.status !== 206) return;
+    // Too big to hold in a worker's memory, and bigger than the whole cap anyway.
+    const len = Number(res.headers.get('Content-Length')) || 0;
+    if (len > DATA_CACHE_MAX_BYTES / 8) return;
+    const name = dataCacheName();
+    if (!name) return;
     const buf = await res.clone().arrayBuffer();
-    const c = await caches.open(DATA_CACHE);
+    const c = await caches.open(name);
     await c.put(dataKey(url.href, request.headers.get('Range')), new Response(buf, {
       status: 200,
       headers: {
@@ -251,11 +279,13 @@ async function signedFetch(request, event) {
     throw e;
   }
   if (res.status === 401 && ours) {
-    // Forget what we used, ask the page for a fresh one (it renews on demand), try once more.
+    // Forget what we used and ask the PAGE, naming the token that failed. Asking
+    // currentToken() read the same dead token straight back out of Cache Storage, so
+    // `fresh === used` and this retry never ran.
     const used = token;
     token = null;
     tokenExpiresAt = 0;
-    const fresh = await currentToken();
+    const fresh = await askClientsForToken(used);
     if (fresh && fresh !== used) {
       const headers = new Headers(request.headers);
       headers.set('Authorization', 'Bearer ' + fresh);
@@ -283,9 +313,20 @@ function isolate(response) {
   return new Response(body, { status: response.status, statusText: response.statusText, headers });
 }
 
+// The VS Code bridge (auth.js): OneLake reads addressed to the extension on loopback. They
+// carry no token and need none from here, and they are left entirely to the browser — a
+// worker re-issuing them would be a second requester for Chrome's local-network permission,
+// which a service worker cannot ask for itself. The extension sends CORS and CORP headers,
+// so the page's isolation is unaffected.
+const LOOPBACK = /^(127\.0\.0\.1|localhost|\[::1\])$/;
+
 self.addEventListener('fetch', event => {
   const req = event.request;
   if (req.cache === 'only-if-cached' && req.mode !== 'same-origin') return;
+  try {
+    const u = new URL(req.url);
+    if (LOOPBACK.test(u.hostname) && u.origin !== self.location.origin) return;
+  } catch (_) { /* unparseable — let the normal path deal with it */ }
   const base = coepCredentialless && req.mode === 'no-cors'
     ? new Request(req, { credentials: 'omit' })
     : req;

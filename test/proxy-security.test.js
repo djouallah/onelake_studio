@@ -248,6 +248,10 @@ test("proxy security properties", async t => {
   await t.test("the bridge serves only dfs and irc", async () => {
     const r = await rawGet(bridge.port, "/pair", { origin: SITE });
     const secret = new URL(JSON.parse(r.body).dfsOrigin).pathname.split("/")[1];
+    const still = await rawGet(bridge.port, `/pair?probe&s=${secret}`, { origin: SITE });
+    assert.equal(JSON.parse(still.body).valid, true, "a probe confirms origins this tab already holds");
+    const stale = await rawGet(bridge.port, `/pair?probe&s=${"0".repeat(48)}`, { origin: SITE });
+    assert.equal(JSON.parse(stale.body).valid, false, "…and says when they are stale");
     assert.equal((await rawGet(bridge.port, `/${secret}/cdn/cdn.jsdelivr.net${LIB}`)).status, 404,
       "no /cdn on the bridge");
     assert.equal((await rawGet(bridge.port, LIB)).status, 404, "no /npm on the bridge");

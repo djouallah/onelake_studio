@@ -32,6 +32,20 @@ jobs:
       # site/paths.js is plain ESM with no dependencies, so the suite runs straight off a
       # checkout with no npm install. A red suite must not reach Pages.
       - run: npm test
+      # The site in a real browser before it goes live: DuckDB-WASM boots off the pinned CDN
+      # build and answers the README landing query; the sign-in gate behaves (no silent
+      # registration switch from a link, no VS Code probe without a reason); and signing in
+      # with VS Code works end to end against the extension's real proxy and bridge.
+      # playwright-core only — the runner's own Chrome is what drives the pages.
+      - name: Browser checks
+        env:
+          CHROME_PATH: /usr/bin/google-chrome
+        run: |
+          npm install --no-save --no-package-lock --no-audit --no-fund \
+            --registry https://registry.npmjs.org playwright-core@1
+          node test/run-boot-smoke.mjs
+          node test/run-byo-gate.mjs
+          node test/run-bridge-smoke.mjs
       - run: npm run build
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3

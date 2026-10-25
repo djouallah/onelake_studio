@@ -24,6 +24,12 @@ const server = http.createServer(async (req, res) => {
 });
 await new Promise(r => server.listen(PORT, "127.0.0.1", r));
 
+// Something listening where the site would look for VS Code, so a stray probe is SEEN
+// rather than just failing to connect.
+const bridgeAsked = [];
+const fakeBridge = http.createServer((req, res) => { bridgeAsked.push(req.url); res.writeHead(404).end(); });
+await new Promise(r => fakeBridge.listen(47731, "127.0.0.1", r)).catch(() => {});
+
 const checks = [];
 const check = (name, ok, detail = "") => {
   checks.push({ name, ok });
@@ -36,7 +42,7 @@ const FAKE_CLIENT = "11111111-2222-3333-4444-555555555555";
 const FAKE_TENANT = "66666666-7777-8888-9999-000000000000";
 
 const browser = await chromium.launch({
-  executablePath: "C:/Program Files/Google/Chrome/Application/chrome.exe", headless: true });
+  executablePath: process.env.CHROME_PATH || (process.platform === "win32" ? "C:/Program Files/Google/Chrome/Application/chrome.exe" : "/usr/bin/google-chrome"), headless: true });
 try {
   const ctx = await browser.newContext({ serviceWorkers: "block" });
   const page = await ctx.newPage();
@@ -90,11 +96,30 @@ try {
 
   // --- ?clientId= in the address bar still wins ----------------------------
   const OTHER = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+  // A link proposes a registration; it must not switch one silently. The gate asks, with
+  // the GUIDs on screen, and nothing is saved until "Use it".
   await page.goto(`http://127.0.0.1:${PORT}/?clientId=${OTHER}&tenantId=${FAKE_TENANT}`);
+  await page.waitForSelector("#byoConfirm", { timeout: 30000 });
+  check("a ?clientId= link asks before switching", await page.isVisible("#byoConfirm"));
+  check("…naming the registration it proposes",
+    (await page.locator("#byoConfirm").innerText()).includes(OTHER));
+  check("…and has saved nothing yet", await page.evaluate(
+    () => JSON.parse(localStorage.getItem("onelake-studio-registration") || "{}").clientId
+  ) === FAKE_CLIENT);
+  check("the proposal is taken out of the address bar",
+    !(await page.evaluate(() => location.search)).includes("clientId"));
+  await page.click("#byoConfirmUse");
   await page.waitForFunction(() => !document.getElementById("runBtn").disabled, { timeout: 120000 });
-  check("URL parameter overrides the saved registration", await page.evaluate(
+  check("confirming the link switches the registration", await page.evaluate(
     () => JSON.parse(localStorage.getItem("onelake-studio-registration") || "{}").clientId
   ) === OTHER);
+
+  // A visitor who never came from VS Code must never be probed for it: the first loopback
+  // fetch from a public page is a browser permission prompt.
+  check("no VS Code probe without a reason", !bridgeAsked.length, bridgeAsked.join(", "));
+  check("the gate offers signing in with VS Code",
+    await page.evaluate(() => { document.querySelector("#userBox button")?.click(); return true; }) &&
+    await page.waitForSelector("#vscodeBtn", { timeout: 5000 }).then(() => true, () => false));
 
   check("no uncaught page errors throughout", errors.length === 0, errors.join(" | "));
 } catch (e) {
@@ -104,5 +129,6 @@ try {
   console.log(`RESULT: ${failed ? "FAILED" : "OK"} — ${checks.length - failed}/${checks.length} checks passed`);
   await browser.close().catch(() => {});
   server.close();
+  fakeBridge.close();
   process.exit(failed ? 1 : 0);
 }

@@ -22,7 +22,7 @@ const pass = m => log("PASS " + m);
 window.addEventListener("error", e => log("WINERR " + e.message));
 window.addEventListener("unhandledrejection", e => log("UNHANDLED " + (e.reason && e.reason.message)));
 
-const V = new URLSearchParams(location.search).get("v") || "1.33.1-dev57.0"; // app pin
+const V = new URLSearchParams(location.search).get("v") || "1.33.1-dev110.0"; // app pin
 const results = { package: V, engine: null, platform: null, bundle: null, extensions: [] };
 
 try {

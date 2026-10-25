@@ -2,7 +2,7 @@
 // app.js — wire auth (auth.js) + Iceberg engine (data.js) to the DOM.
 // =============================================================================
 import {
-  createAuth, describeAuthError, isConsentError,
+  createAuth, describeAuthError, isConsentError, describeBridgeFailure,
   resolveConfig, saveOverride, clearOverride, appRedirectUri,
 } from './auth.js';
 import { createEngine } from './data.js';
@@ -70,7 +70,15 @@ function setStatus(msg, type = '') {
 // ---------------------------------------------------------------------------
 // Auth gate
 // ---------------------------------------------------------------------------
-const auth = createAuth(cfg, { onStatus: setStatus, onExpired: showExpired });
+// `onOrigins` is how signing in with VS Code takes effect: every OneLake read moves onto the
+// extension's loopback port (null puts them back on OneLake). The engine exists by the time
+// any sign-in can complete — both are started below, in that order, before anything awaits.
+const auth = createAuth(cfg, {
+  onStatus: setStatus,
+  onExpired: showExpired,
+  onOrigins: async o => { if (engine) await engine.setOrigins(o || {}); },
+});
+const EXTENSION_URL = 'https://marketplace.visualstudio.com/items?itemName=djouallah.onelake-studio';
 
 // ---------------------------------------------------------------------------
 // What the service worker saw
@@ -88,10 +96,10 @@ try {
     const d = e.data || {};
     if (d.type !== 'onelake-read-failed') return;
     lastReadFailure = { status: d.status, pathname: d.pathname, signed: d.signed, at: Date.now() };
-    // Nothing else can renew on DuckDB's behalf: data.js retries its own 401s, but it
-    // never issued this request. refresh() is single-flight, so a burst costs one round
-    // trip, and it re-gates the UI if the session is genuinely over.
-    if (d.status === 401) auth.refresh().catch(() => {});
+    // A 401 here has already been retried: the worker asks the page for a renewal past the
+    // token that failed (auth.js answers its `need-token`), so this is the read that STILL
+    // failed after that. Calling refresh() again here used to drop a token that had just
+    // been renewed.
   });
   // Without startMessages() a container using addEventListener never delivers.
   navigator.serviceWorker.startMessages();
@@ -116,6 +124,13 @@ function explainRead(message) {
               : '';
     out += `. OneLake ${what} for ${f.pathname}${f.signed === false ? ' (the request went out unsigned)' : ''}${why}`;
   }
+  // Through VS Code the worker is not in the path at all; the extension is, and the usual
+  // reason for a failed open is that VS Code went away (closed, restarted, signed out).
+  if (auth.viaVsCode) {
+    return out + ` [build ${(window.ONELAKE_STUDIO_VERSION || {}).commit || 'dev'}; ` +
+      'reading through VS Code — if it was closed or restarted, reload this page; ' +
+      'OneLake Studio → Show Read Log in VS Code has the status of every read]';
+  }
   const swc = !!(navigator.serviceWorker && navigator.serviceWorker.controller);
   const stale = f && !recent;
   out += ` [build ${(window.ONELAKE_STUDIO_VERSION || {}).commit || 'dev'}; ` +
@@ -138,17 +153,21 @@ function showSignedIn() {
   const box = $('userBox');
   box.textContent = '';
   const label = document.createElement('span');
-  label.textContent = 'Signed in';
+  // Which sign-in is in use is worth saying — it decides what "sign out" can do. Through
+  // VS Code the page holds no session of its own; it can only stop using that one.
+  const viaVsCode = !!auth.viaVsCode;
+  label.textContent = viaVsCode ? 'Signed in via VS Code' : 'Signed in';
+  label.title = viaVsCode
+    ? 'OneLake reads go through the OneLake Studio extension, signed with VS Code\'s Microsoft account. No token is held by this page.'
+    : '';
   const out = document.createElement('a');
-  out.textContent = 'Sign out';
+  out.textContent = viaVsCode ? 'Disconnect' : 'Sign out';
   out.className = 'signout';
   // There was no way to end a session from inside the app, which also meant no way to get
   // rid of the bearer token Cache Storage had written to disk on this machine.
   out.onclick = async () => {
-    out.textContent = 'Signing out…';
-    // Guarded: signOut ships with the token-lifecycle change to auth.js; until then the
-    // button just reloads back to the gate.
-    try { if (auth.signOut) await auth.signOut(); } catch (e) { console.error(e); }
+    out.textContent = viaVsCode ? 'Disconnecting…' : 'Signing out…';
+    try { await auth.signOut(); } catch (e) { console.error(e); }
     window.location.replace(appRedirectUri());
   };
   box.append(label, out);
@@ -176,15 +195,62 @@ function gateMsg(text, isError = false) {
   el.classList.toggle('err', isError);
 }
 
+// Signing in with VS Code: the OneLake Studio extension lends this page its Microsoft
+// sign-in, so no app registration is needed. First in the gate, because when it works it
+// is the shorter path; the registration stays right under it for when it does not.
+function showVsCodeOption(onDone) {
+  if (!auth.bridgeAvailable || EMBEDDED) return;
+  let box = $('vscodeBox');
+  if (!box) {
+    box = document.createElement('div');
+    box.id = 'vscodeBox';
+    box.className = 'vscodeBox';
+    const btn = document.createElement('button');
+    btn.id = 'vscodeBtn';
+    btn.className = 'primary';
+    btn.textContent = 'Sign in with VS Code';
+    const note = document.createElement('div');
+    note.className = 'gateFoot';
+    note.append('Uses the ');
+    const a = document.createElement('a');
+    a.href = EXTENSION_URL; a.target = '_blank'; a.rel = 'noopener';
+    a.textContent = 'OneLake Studio extension';
+    note.append(a, '\'s sign-in — no app registration needed.');
+    box.append(btn, note);
+    $('authActions').prepend(box);
+  }
+  const btn = $('vscodeBtn');
+  btn.disabled = false;
+  btn.textContent = 'Sign in with VS Code';
+  btn.onclick = async () => {
+    btn.disabled = true;
+    btn.textContent = 'Looking for VS Code…';
+    const r = await auth.connectVsCode();
+    if (r.ok) {
+      $('authGate').style.display = 'none';
+      setStatus('Signed in through VS Code.', 'ok');
+      await onDone();
+      return;
+    }
+    btn.disabled = false;
+    btn.textContent = 'Sign in with VS Code';
+    gateMsg(describeBridgeFailure(r.reason), true);
+  };
+}
+
 function showSignIn(onDone, msg = 'Sign in with your Microsoft work or school account.') {
   const gate = $('authGate');
   gate.style.display = '';
+  for (const el of gate.children) el.hidden = el.id === 'openInTabCard';
+  showVsCodeOption(onDone);
   // No registration named yet: a Sign-in button here could only throw, so ask for the one
   // thing that's missing instead. `onDone` is dropped on purpose — saving a registration
   // reloads the page (MSAL caches state per clientId), so nothing here survives to run it;
   // the reloaded gate starts over with a clientId in hand.
   if (!cfg.clientId) {
-    gateMsg('OneLake Studio signs in through an Entra app registration in your own tenant. Name one to continue.');
+    gateMsg(auth.bridgeAvailable && !EMBEDDED
+      ? 'Sign in with VS Code, or through an Entra app registration in your own tenant.'
+      : 'OneLake Studio signs in through an Entra app registration in your own tenant. Name one to continue.');
     showByoForm();
     return;
   }
@@ -294,26 +360,84 @@ function showByoBanner() {
 
 // Silent token renewal failed mid-session (refresh token expired). DuckDB and the loaded
 // tables stay as they are — put the gate back up so one click restores the token.
+//
+// Through VS Code "expired" means VS Code stopped answering — closed, restarted, or signed
+// out — and the reads are back on this page's own sign-in until someone reconnects.
 function showExpired() {
   $('authGate').style.display = '';
+  showSignedOut();
   showSignIn(
     async () => { showSignedIn(); },
-    'Your OneLake session expired. Sign in again to keep querying.'
+    auth.bridgeAvailable && !auth.viaVsCode && !cfg.clientId
+      ? 'VS Code is no longer answering (closed, restarted or signed out). Reconnect to keep querying.'
+      : 'Your OneLake session expired. Sign in again to keep querying.'
   );
 }
 
+// A link with ?clientId= proposes a registration; it is used only once someone says so.
+// Asked in the gate, with the GUIDs shown, before anything is saved or signed into.
+function confirmRegistration(p) {
+  const gate = $('authGate');
+  gate.style.display = '';
+  gateMsg('This link asks OneLake Studio to sign you in through a specific app registration. Use it only if you trust whoever sent the link: that registration decides what your sign-in can be used for.');
+  const box = document.createElement('div');
+  box.id = 'byoConfirm';
+  box.className = 'gateBox';
+  const h = document.createElement('h4');
+  h.textContent = 'Use this app registration?';
+  const ids = document.createElement('div');
+  const c1 = document.createElement('code'); c1.textContent = p.clientId;
+  const c2 = document.createElement('code'); c2.textContent = p.authority;
+  ids.append('Application ', c1, ' in directory ', c2, '.');
+  const row = document.createElement('div');
+  row.className = 'byoRow';
+  const use = document.createElement('button');
+  use.id = 'byoConfirmUse'; use.className = 'primary'; use.textContent = 'Use it';
+  const no = document.createElement('button');
+  no.id = 'byoConfirmIgnore'; no.textContent = 'Ignore';
+  row.append(use, no);
+  box.append(h, ids, row);
+  $('authActions').prepend(box);
+  use.onclick = () => {
+    saveOverride(p.clientId, p.authority);
+    window.location.replace(appRedirectUri());
+  };
+  no.onclick = () => { box.remove(); gate.style.display = 'none'; };
+}
+
+// Built from DOM nodes, in its own card: it used to REPLACE the gate's markup — which took
+// #authActions and #authGateMsg with it, so any later showSignIn crashed on a null — and it
+// put the page URL into innerHTML unescaped.
 function showOpenInTab() {
   const gate = $('authGate');
-  gate.innerHTML = `
-    <div class="gateCard">
-      <div class="gateBrand">Open in a separate window</div>
-      <div id="authGateMsg">This app signs you in to OneLake, which an embedded frame blocks. Open it in its own browser tab to continue.</div>
-      <a class="primary" style="padding:0.7rem 1.5rem;border-radius:6px;text-decoration:none;color:#fff;align-self:center"
-         href="${window.location.href}" target="_blank" rel="noopener">Open in new tab ↗</a>
-      <div class="gateFoot"><a id="gateClose">← Continue without signing in</a></div>
-    </div>`;
+  let card = $('openInTabCard');
+  if (!card) {
+    card = document.createElement('div');
+    card.id = 'openInTabCard';
+    card.className = 'gateCard';
+    const brand = document.createElement('div');
+    brand.className = 'gateBrand';
+    brand.textContent = 'Open in a separate window';
+    const msg = document.createElement('div');
+    msg.textContent = 'This app signs you in to OneLake, which an embedded frame blocks. Open it in its own browser tab to continue.';
+    const a = document.createElement('a');
+    a.className = 'primary';
+    a.style.cssText = 'padding:0.7rem 1.5rem;border-radius:6px;text-decoration:none;color:#fff;align-self:center';
+    a.href = window.location.href;
+    a.target = '_blank';
+    a.rel = 'noopener';
+    a.textContent = 'Open in new tab ↗';
+    const foot = document.createElement('div');
+    foot.className = 'gateFoot';
+    const close = document.createElement('a');
+    close.textContent = '← Continue without signing in';
+    close.onclick = () => { gate.style.display = 'none'; };
+    foot.append(close);
+    card.append(brand, msg, a, foot);
+    gate.append(card);
+  }
+  for (const el of gate.children) el.hidden = el !== card;
   gate.style.display = '';
-  $('gateClose').onclick = () => { gate.style.display = 'none'; };
 }
 
 // ---------------------------------------------------------------------------
@@ -926,7 +1050,7 @@ async function selectTable(row, t) {
   // of failing on the first footer read with a message that blames the file. The two
   // ways a page ends up here: DevTools with "Bypass for network" checked, and a hard
   // reload (which bypasses the worker for that one page load).
-  if ('serviceWorker' in navigator && !navigator.serviceWorker.controller) {
+  if (!auth.viaVsCode && 'serviceWorker' in navigator && !navigator.serviceWorker.controller) {
     setStatus(
       'Cannot open tables: the service worker is not controlling this page, so OneLake ' +
       'reads would go out unsigned and fail. Do a normal reload (F5) to fix it. If DevTools ' +
@@ -1656,6 +1780,7 @@ engineReady = engine.init();
     // Silent only: restores a returning user's session (and completes a sign-in
     // redirect landing back here) without ever prompting a new visitor. No session ->
     // the button showSignedOut already painted is the right one, so there's nothing to do.
+    if (cfg.pendingRegistration) { confirmRegistration(cfg.pendingRegistration); return; }
     if (await auth.ensureSession(false)) await afterSignIn();
   } catch (e) {
     // A redirect coming back with a consent failure lands here, not in the button

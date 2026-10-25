@@ -26,9 +26,11 @@
 // Pinned, not @latest: this is a CDN import with no lockfile behind it, so an unpinned
 // URL means every user's browser can pick up a new DuckDB the moment one is published —
 // including a build without the 'excel' extension, or with different SQL behaviour. This
-// version ships DuckDB v1.5.4 and has avro + excel; it is a dev tag by choice, since the
-// stable line lags. Bump it deliberately and re-run the format probe when you do.
-import * as duckdb from "https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.33.1-dev57.0/+esm";
+// version ships DuckDB v2.0.0 (the package's `next` tag; its version number still says
+// 1.33.1-devN) — the same DuckDB as the extension's native engine. Extensions come from
+// extensions.duckdb.org/v2.0.0/wasm_eh (avro, excel) and the community repo (h3, zipfs).
+// Bump it deliberately and re-run the format probe (test/extensions.html) when you do.
+import * as duckdb from "https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.33.1-dev110.0/+esm";
 
 // dfsBase/dfsUrl/toHttps come in under `…At` names and are re-bound to this engine's origin
 // inside createEngine — see the note there. Import them under their plain names anywhere in
@@ -74,11 +76,17 @@ const TABLE_ORIGIN = "https://onelake.table.fabric.microsoft.com";
 // leaves them alone. The VS Code extension sets both to a loopback proxy that attaches the
 // bearer token, because a webview has no service worker — the thing that signs DuckDB's
 // range reads in the browser — and DuckDB's file API cannot set a header itself.
+//
+// They can also change AFTER the engine exists: the website boots DuckDB while it is still
+// deciding how to sign in, and signing in through VS Code (auth.js, the bridge) moves every
+// OneLake read onto the extension's loopback port. setOrigins() is that switch.
 export function createEngine(auth, {
   onStatus = () => {},
-  dfsOrigin = DFS_ORIGIN,
-  tableOrigin = TABLE_ORIGIN,
+  dfsOrigin: dfsOriginAtStart = DFS_ORIGIN,
+  tableOrigin: tableOriginAtStart = TABLE_ORIGIN,
 } = {}) {
+  let dfsOrigin = dfsOriginAtStart;
+  let tableOrigin = tableOriginAtStart;
   // Re-bound to this engine's origin so the ~10 call sites below need no argument, and so a
   // call site added later is redirected too rather than quietly reaching past the proxy.
   const dfsBase = ws => dfsBaseAt(ws, dfsOrigin);
@@ -190,8 +198,10 @@ export function createEngine(auth, {
   // The watchdog is the enforcement. A cancel the worker never processes (blocked in a
   // sync bind, see above) used to leave the app hung and the abandoned load burning
   // network until it finished on its own; now an unanswered ping terminates the worker.
+  let cancelCount = 0;   // see stream(): how a cancelled statement is told from a failed one
   function cancelLoad() {
     loadGen++;
+    cancelCount++;
     try { if (conn) conn.cancelSent().catch(() => {}); } catch (_) { /* nothing was pending */ }
     armWatchdog();
   }
@@ -275,17 +285,17 @@ export function createEngine(auth, {
 
   async function _init({ quiet = false } = {}) {
     if (!quiet) onStatus("Loading DuckDB-WASM…");
-    // SINGLE-THREADED (eh) BY MEASUREMENT, NOT OVERSIGHT. The threaded coi bundle exists
-    // on the CDN at this pin and DOES run — measured in headless Chrome behind the
-    // service worker: crossOriginIsolated=true, platform=wasm_threads, threads=4. But
-    // the wasm_threads extension binaries on extensions.duckdb.org are incompatible with
-    // this build: LOAD avro fails with "did not contain the expected entrypoint
-    // 'avro_duckdb_cpp_init'" (excel likewise), and read_avro IS the Iceberg manifest
-    // reader — threads at the cost of tables is no trade. Recheck with
-    // test/sql-integration.html when bumping the pin; the coi bundle map is:
-    //   coi: { mainModule: DIST+"duckdb-coi.wasm", mainWorker: DIST+"duckdb-browser-coi.worker.js",
-    //          pthreadWorker: DIST+"duckdb-browser-coi.pthread.worker.js" }
-    // (each worker URL wrapped in a same-origin blob importScripts shim).
+    // SINGLE-THREADED (`base`) BY CHOICE. DuckDB-Wasm 2.0 ships two bundles: `base` (needs
+    // wasm exception handling) and `threads` (also SIMD, threads and crossOriginIsolated),
+    // and getJsDelivrBundles() offers only `base` — threads is the package's own opt-in,
+    // marked experimental. Under 1.x the threaded build's extension binaries would not
+    // LOAD (avro: "did not contain the expected entrypoint"), and read_avro IS the Iceberg
+    // manifest reader, so threads at the cost of tables was no trade. To try it, add
+    //   threads: { mainModule: DIST+"duckdb-threads.wasm",
+    //              mainWorker: DIST+"duckdb-browser-threads.worker.js",
+    //              pthreadWorker: DIST+"duckdb-browser-threads.pthread.worker.js" }
+    // (each worker URL wrapped in a same-origin blob importScripts shim) and check avro
+    // and excel still load with test/extensions.html.
     const bundle = await duckdb.selectBundle(duckdb.getJsDelivrBundles());
     const workerUrl = URL.createObjectURL(
       new Blob([`importScripts("${bundle.mainWorker}");`], { type: "text/javascript" })
@@ -295,7 +305,8 @@ export function createEngine(auth, {
     await db.instantiate(bundle.mainModule, bundle.pthreadWorker);
     URL.revokeObjectURL(workerUrl);
     conn = await db.connect();
-    await conn.query("SET preserve_insertion_order = false;");
+    // preserve_insertion_order stays ON (DuckDB's default): turning it off buys a little
+    // scan speed and costs previews of CSVs and sheets whose rows come back scrambled.
     // In-session caches: parquet footers/metadata objects survive across queries instead
     // of being re-fetched and re-parsed per statement. Guarded — losing them costs
     // repeat reads, not correctness. (Cross-session caching of the immutable data files
@@ -378,15 +389,27 @@ export function createEngine(auth, {
   // which a new token will not fix — and treating it as expiry was actively harmful:
   // refreshing drops the token first, including the copy the service worker is using for
   // the tables the user CAN read. auth.refresh() coalesces concurrent callers itself.
+  //
+  // The bearer goes ONLY to OneLake's own origins (or whatever this engine was pointed at
+  // instead). Manifest and data paths come out of table metadata, and anyone who can write
+  // a table's metadata could otherwise name `https://their-host/x.avro` and collect a
+  // storage token that reads every account the user can.
+  function mayCarryToken(url) {
+    let origin;
+    try { origin = new URL(url).origin; } catch (_) { return false; }
+    return origin === new URL(dfsOrigin).origin || origin === new URL(tableOrigin).origin;
+  }
+  const headersFor = (url, extra) => ({ ...(mayCarryToken(url) ? auth.getHeaders() : {}), ...extra });
+
   async function authedFetch(url, extraHeaders) {
-    const headers = { ...auth.getHeaders(), ...extraHeaders };
+    const headers = headersFor(url, extraHeaders);
     const r = await fetch(url, { headers });
-    if (r.status !== 401) return r;
+    if (r.status !== 401 || !mayCarryToken(url)) return r;
     // Hand back the credential that actually failed. Requests go out in parallel, so a
     // 401 raised against an old token can land after someone else already renewed, and
     // refresh() needs to be able to tell that apart from "the current token is dead".
     return (await auth.refresh(headers.Authorization))
-      ? fetch(url, { headers: { ...auth.getHeaders(), ...extraHeaders } })
+      ? fetch(url, { headers: headersFor(url, extraHeaders) })
       : r;
   }
 
@@ -945,7 +968,8 @@ export function createEngine(auth, {
   // never clear. The walk also never worked for warehouses, which have no metadata/
   // directory at all. So a catalog failure is now FATAL and LOUD, because a silent
   // downgrade to one-listing-per-table is how a slow sidebar hides a broken catalog.
-  const TABLE_API = `${tableOrigin}/iceberg`;
+  // A getter, not a constant: setOrigins() can move it.
+  const tableApi = () => `${tableOrigin}/iceberg`;
 
   const ircPrefixes = new Map();  // warehouse -> the `prefix` the config call hands back
 
@@ -956,7 +980,7 @@ export function createEngine(auth, {
   // already parse. The path goes in the message too: with the per-namespace /tables calls
   // fanned out below, WHICH namespace failed is the first thing worth knowing.
   async function ircGet(path) {
-    const r = await authedFetch(TABLE_API + path);
+    const r = await authedFetch(tableApi() + path);
     if (!r.ok) {
       const said = await oneLakeMessage(r);
       const e = new Error(`Iceberg catalog HTTP ${r.status} for ${path}` + (said ? ` — ${said}` : ""));
@@ -1151,7 +1175,10 @@ export function createEngine(auth, {
       rows = await withAvroBuffer(bytes, name => q(
         `SELECT status, data_file.content AS content, data_file.file_path AS fp
          FROM read_avro('${name}')`));
-    } catch (_) {
+    } catch (e) {
+      // Only a SCHEMA miss earns the v1 fallback. A Stop, or a worker restart, is not a
+      // reason to run another statement on an engine that is being torn down.
+      if (e && (e.cancelled || e.workerRestart)) throw e;
       rows = await withAvroBuffer(bytes, name => q(
         `SELECT status, 0 AS content, data_file.file_path AS fp
          FROM read_avro('${name}')`));
@@ -1228,6 +1255,7 @@ export function createEngine(auth, {
   // always where the fields come from.
   async function stream(sql, onBatch = () => {}) {
     return serial(async () => {
+      const cancelsBefore = cancelCount;
       try {
         const reader = await conn.send(sql);
         let schema = null;
@@ -1237,8 +1265,10 @@ export function createEngine(auth, {
         }
         return schema;
       } catch (e) {
-        // DuckDB reports a cancelled query as an error. It is not one.
-        if (/cancel/i.test(e.message || "")) throw cancelledError();
+        // DuckDB reports a cancelled query as an error. It is not one — but only when a
+        // cancel actually happened while this statement ran. Matching the text alone turned
+        // a binder error about a column named `cancellations` into a silent "stopped".
+        if (cancelCount !== cancelsBefore && /cancel|interrupt/i.test(e.message || "")) throw cancelledError();
         throw e;
       }
     });
@@ -1418,7 +1448,7 @@ export function createEngine(auth, {
     } catch (_) { /* this duckdb-wasm has no globFiles — nothing to check */ }
     if (path && ws) {
       try {
-        const r = await fetch(toHttps(ws, path), { headers: { ...auth.getHeaders(), Range: "bytes=0-7" } });
+        const r = await fetch(toHttps(ws, path), { headers: headersFor(toHttps(ws, path), { Range: "bytes=0-7" }) });
         facts.push(r.ok
           ? "a page-signed range read of the object succeeds, so the file and the page's token are fine"
           : `a page-signed range read of the object answers HTTP ${r.status}`);
@@ -1813,7 +1843,19 @@ export function createEngine(auth, {
     return fetchAuthed(dfsUrl(lh.workspace, file.path));
   }
 
-  return { init, reset, parseLakehouse, listWorkspaces, listItems, listTables,
+  // Re-point every OneLake read — signing in through VS Code moves them onto the
+  // extension's loopback port, and signing out of it moves them back. Everything resolved
+  // or registered under the old origins goes with it: those URLs name a door that is no
+  // longer the one this session uses.
+  async function setOrigins({ dfsOrigin: dfs = DFS_ORIGIN, tableOrigin: table = TABLE_ORIGIN } = {}) {
+    if (dfs === dfsOrigin && table === tableOrigin) return;
+    await reset();
+    ircPrefixes.clear();
+    dfsOrigin = dfs;
+    tableOrigin = table;
+  }
+
+  return { init, reset, setOrigins, parseLakehouse, listWorkspaces, listItems, listTables,
            statTable, peekTable, loadTable,
            listFiles, loadFile, readFileBytes, runSql, describeLoad, fmtBytes, cancelLoad };
 }

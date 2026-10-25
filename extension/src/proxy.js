@@ -337,7 +337,14 @@ async function handlePair(req, res, opts, listener) {
   // `?probe` is the page asking "is VS Code here at all?" — answered at once, with no
   // prompt, so a short timeout can tell a running bridge from no bridge. The real pairing
   // waits on a person clicking in VS Code and is asked for separately.
-  if (/[?&]probe(=|&|$)/.test(req.url)) return sendJson(res, 200, { v: 1, signedIn: !!token });
+  // `&s=<secret>` asks whether origins this tab was handed earlier still work — they stop
+  // the moment VS Code restarts or the account changes, and a page that reused them would
+  // see only "not a proxied path" 404s from DuckDB. Constant-time, and only ever answered
+  // to an allowed origin; it confirms a secret the asker already holds, nothing more.
+  if (/[?&]probe(=|&|$)/.test(req.url)) {
+    const s = /[?&]s=([0-9a-f]+)(&|$)/.exec(req.url);
+    return sendJson(res, 200, { v: 1, signedIn: !!token, ...(s ? { valid: sameSecret(s[1], listener.secret) } : {}) });
+  }
   if (!token) return sendJson(res, 401, { signedIn: false });
   let verdict;
   try { verdict = await listener.pair(origin); }

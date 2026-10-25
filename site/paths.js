@@ -50,10 +50,23 @@ export const dfsUrl = (ws, name, origin = DFS_ORIGIN) => `${dfsBase(ws, origin)}
 // The input is a URI, so its path is ALREADY percent-encoded and is carried across
 // untouched. Re-encoding it here is what produced %2520 for any table whose partition
 // values or file names contain a space or a literal %.
+//
+// An abfs(s) authority on any host but OneLake's is refused by name. It used to be rewritten
+// onto OneLake regardless — `abfss://c@acct.dfs.core.windows.net/…` became workspace `c` —
+// which answered a path into someone's storage account with a baffling 404 from OneLake.
+const ONELAKE_AUTHORITY = /^([a-z0-9-]+-)?onelake\.(dfs|blob)\.fabric\.microsoft\.com$/i;
+
 export function toHttps(ws, u, origin = DFS_ORIGIN) {
   const s = String(u);
-  const ab = /^abfss?:\/\/([^@/]+)@[^/]+\/(.*)$/i.exec(s);
-  if (ab) return `${origin}/${ab[1]}/${strip(ab[2])}`;
+  const ab = /^abfss?:\/\/([^@/]+)@([^/]+)\/(.*)$/i.exec(s);
+  if (ab) {
+    if (!ONELAKE_AUTHORITY.test(ab[2])) {
+      const e = new Error(`${s} is not on OneLake (host ${ab[2]}), and this app reads OneLake only.`);
+      e.code = "NOT_ONELAKE";
+      throw e;
+    }
+    return `${origin}/${ab[1]}/${strip(ab[3])}`;
+  }
   // An absolute URL that already names OneLake is re-pointed at `origin` — with the default
   // that rewrite is the identity, but under an override it is the difference between a read
   // the proxy signs and one that goes straight to OneLake and comes back 401. Anything on
