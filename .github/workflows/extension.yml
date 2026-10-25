@@ -113,7 +113,15 @@ jobs:
           cache-dependency-path: extension/package-lock.json
       - working-directory: extension
         run: npm ci --no-audit --no-fund
+      # The same bundle a linux-x64 vsix ships, so the test LOADs extensions by path the way
+      # an installed extension does.
+      - working-directory: extension
+        run: node fetch-extensions.mjs linux-x64
       - run: node --test test/engine-host.test.js
+      # The loopback proxy end to end against a fake OneLake: signing, the whole-object
+      # cache, ranges, TTL tier, serve-stale, sweep — everything proxy-security.test.js does
+      # not cover.
+      - run: node test/run-proxy.mjs
 
   package:
     needs: [test, engine]
@@ -165,6 +173,12 @@ jobs:
         working-directory: extension
         run: node fetch-binding.mjs ${{ matrix.target }}
 
+      # And this platform's DuckDB extensions (iceberg, azure, httpfs, avro + the optional
+      # ones), so a first run offline or behind a proxy DuckDB cannot use still opens tables.
+      - name: Bundle the DuckDB extensions for ${{ matrix.target }}
+        working-directory: extension
+        run: node fetch-extensions.mjs ${{ matrix.target }}
+
       # vsce packages the extension directory and nothing above it, so site/ and the LICENSE
       # have to be copied in. `vscode:prepublish` does this too; running it here means a
       # failure in the copy shows up as its own step.
@@ -197,7 +211,10 @@ jobs:
             || { echo "expected exactly ${{ steps.binding.outputs.binding }}, found: $dirs"; exit 1; }
           unzip -Z1 "$vsix" | grep -qE '^extension/node_modules/@duckdb/node-bindings-[^/]+/.*\.(node|dll|so|dylib)$' \
             || { echo "no native library in the vsix"; exit 1; }
-          echo "ok — $vsix carries $dirs and nothing else"
+          for e in iceberg azure httpfs avro; do
+            unzip -Z1 "$vsix" | grep -qx "extension/duckdb-extensions/$e.duckdb_extension"               || { echo "the vsix does not bundle the $e extension"; exit 1; }
+          done
+          echo "ok — $vsix carries $dirs and nothing else, and bundles its DuckDB extensions"
 
       # upload-artifact v4 refuses two jobs writing the same name, so the target is part of
       # it. overwrite lets "re-run failed jobs" replace a leg's output instead of failing on a

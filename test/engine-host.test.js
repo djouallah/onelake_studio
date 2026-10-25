@@ -5,18 +5,26 @@
 // Run: node --test test/engine-host.test.js
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createRequire } from "node:module";
+import { fileURLToPath } from "node:url";
 
 const require = createRequire(import.meta.url);
 const { createEngineHost } = require("../extension/src/engine-host.js");
 
+// What fetch-extensions.mjs put next to the extension, when CI ran it for this platform.
+const BUNDLED = join(fileURLToPath(new URL(".", import.meta.url)), "..", "extension", "duckdb-extensions");
+
 test("native engine host", async t => {
   const extDir = await mkdtemp(join(tmpdir(), "onelake-ext-"));
+  const outside = await mkdtemp(join(tmpdir(), "onelake-outside-"));
+  await writeFile(join(outside, "secret.csv"), "a\n1\n");
   const warnings = [];
-  const engine = createEngineHost({ extensionDir: extDir, onWarn: w => warnings.push(w) });
+  const engine = createEngineHost({ extensionDir: extDir, onWarn: w => warnings.push(w),
+                                    bundledExtensions: existsSync(BUNDLED) ? BUNDLED : null });
   t.after(async () => {
     await engine.close();
     await rm(extDir, { recursive: true, force: true }).catch(() => {});
@@ -79,6 +87,36 @@ test("native engine host", async t => {
       assert.match(e.message, /<token>/);
       return true;
     });
+  });
+
+  await t.test("bundled extensions load from the package, not the network", async () => {
+    if (!existsSync(BUNDLED)) return t.skip("no bundled extensions (run fetch-extensions.mjs)");
+    const fromRepo = warnings.filter(w => /bundled '.*' would not load/.test(w));
+    assert.deepEqual(fromRepo, [], fromRepo.join(" | "));
+    const r = await engine.call("query", [
+      "SELECT extension_name AS n, install_path AS p FROM duckdb_extensions() WHERE loaded AND extension_name IN ('iceberg','azure','httpfs','avro')"]);
+    assert.equal(r.rows.length, 4, JSON.stringify(r.rows));
+  });
+
+  await t.test("the lockdown: no local file outside the engine's own directories", async () => {
+    const p = join(outside, "secret.csv").replace(/\\/g, "/");
+    await assert.rejects(engine.call("query", [`SELECT * FROM read_csv('${p}')`]), /Permission|disabled by configuration/i,
+      "reading a file the page has no business with is refused");
+    await assert.rejects(engine.call("query", [`COPY (SELECT 1) TO '${join(outside, "out.csv").replace(/\\/g, "/")}'`]),
+      /Permission|disabled by configuration/i, "and so is writing one");
+    await assert.rejects(engine.call("query", [`SELECT * FROM read_csv('${join(outside, "..", "x.csv").replace(/\\/g, "/")}')`]),
+      /Permission|disabled by configuration|No files found/i, "dot-dot does not climb out");
+  });
+
+  await t.test("the lockdown cannot be turned off from SQL", async () => {
+    await assert.rejects(engine.call("query", ["SET enable_external_access = true"]), /lock/i);
+    await assert.rejects(engine.call("query", ["SET allowed_directories = ['/']"]), /lock/i);
+  });
+
+  await t.test("what the page legitimately reads still reads", async () => {
+    const path = await engine.call("registerFileBuffer", ["n.csv", Array.from(Buffer.from("a\n40\n2\n"))]);
+    const r = await engine.call("query", [`SELECT sum(a) AS s FROM read_csv('${path}')`]);
+    assert.equal(r.rows[0].s, 42, "a buffer the page handed over (the engine's temp directory)");
   });
 
   await t.test("a closed engine stays closed", async () => {

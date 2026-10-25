@@ -104,8 +104,42 @@ function defaultMemoryLimit() {
   return `${Math.max(512, Math.floor(os.totalmem() / 4 / 2 ** 20))}MB`;
 }
 
+// The certificate authorities DuckDB's HTTP client may trust, as one PEM file. Needed by the
+// lockdown below: with file access restricted, httpfs refuses to go looking for the
+// system's CA bundle (it says so, and names Linux paths a Windows or macOS machine does not
+// have). Node's own list plus — where this Node can read it — the operating system's store,
+// so a corporate TLS-inspecting proxy whose root is installed on the machine still works,
+// plus NODE_EXTRA_CA_CERTS for the setups that use that instead.
+async function writeCaBundle(dir) {
+  const tls = require('node:tls');
+  const certs = new Set(tls.rootCertificates);
+  try { if (tls.getCACertificates) for (const c of tls.getCACertificates('system')) certs.add(c); } catch (_) {}
+  try {
+    if (process.env.NODE_EXTRA_CA_CERTS) certs.add(await fsp.readFile(process.env.NODE_EXTRA_CA_CERTS, 'utf8'));
+  } catch (_) {}
+  const file = join(dir, 'ca-bundle.pem');
+  await fsp.writeFile(file, [...certs].join('\n'));
+  return file.replace(/\\/g, '/');
+}
+
+// What VS Code's own HTTP proxy setting says, in the form DuckDB's http_proxy wants
+// (host:port, credentials apart). DuckDB ignores the editor's proxy otherwise, so behind a
+// corporate proxy every read failed while VS Code itself worked.
+function proxySettings(proxyUrl) {
+  if (!proxyUrl) return null;
+  try {
+    const u = new URL(proxyUrl);
+    return {
+      host: `${u.hostname}${u.port ? `:${u.port}` : ''}`,
+      user: decodeURIComponent(u.username || ''),
+      password: decodeURIComponent(u.password || ''),
+    };
+  } catch (_) { return null; }
+}
+
 function createEngineHost({ extensionDir, onLog = () => {}, onWarn = () => {}, getToken = null,
-                            memoryLimit = '' } = {}) {
+                            memoryLimit = '', allowedPaths = [], lockdown = true,
+                            httpProxy = '', bundledExtensions = null } = {}) {
   let instance = null;
   // The connection for the host's OWN statements — secrets, ATTACH, extension loading.
   // Page queries never run on it: each gets a connection of its own (see withConn), so a
@@ -200,6 +234,14 @@ function createEngineHost({ extensionDir, onLog = () => {}, onWarn = () => {}, g
       // preserve_insertion_order is left ON. Turning it off buys a little scan speed and
       // costs a preview of a CSV or a sheet that shows its rows in a scrambled order.
       //
+      // The editor's proxy, before anything is downloaded.
+      const proxy = proxySettings(httpProxy);
+      if (proxy) {
+        await conn.run(`SET http_proxy = ${sqlStr(proxy.host)};`);
+        if (proxy.user) await conn.run(`SET http_proxy_username = ${sqlStr(proxy.user)};`);
+        if (proxy.password) await conn.run(`SET http_proxy_password = ${sqlStr(proxy.password)};`);
+      }
+      //
       // REQUIRED, and treated differently from the rest: `iceberg` and `azure` are how a
       // table is read at all now, and `httpfs` is how the Files tab reads through the
       // loopback proxy. An optional extension that will not load costs one file format;
@@ -209,11 +251,42 @@ function createEngineHost({ extensionDir, onLog = () => {}, onWarn = () => {}, g
       for (const ext of ['avro', 'excel']) await load(ext, '');
       for (const ext of ['h3', 'zipfs']) await load(ext, 'community');
       mark('extensions');
+      // azure has an HTTP client of its own, with its own proxy settings.
+      if (proxy) {
+        try {
+          await conn.run(`SET azure_http_proxy = ${sqlStr(proxy.host)};`);
+          if (proxy.user) await conn.run(`SET azure_proxy_user_name = ${sqlStr(proxy.user)};`);
+          if (proxy.password) await conn.run(`SET azure_proxy_password = ${sqlStr(proxy.password)};`);
+        } catch (e) { onWarn(`could not hand the proxy to DuckDB's azure extension — ${e.message}`); }
+      }
 
       // An :memory: database has no spill path unless one is named, so a query bigger
       // than RAM was an extension-host OOM — and this process is shared with every other
       // extension. The temp dir is this session's own and is deleted on close.
-      await conn.run(`SET temp_directory = ${sqlStr(tmpDir.replace(/\\/g, '/'))};`);
+      const tmp = tmpDir.replace(/\\/g, '/');
+      await conn.run(`SET temp_directory = ${sqlStr(tmp)};`);
+
+      // THE LOCKDOWN. This engine runs SQL that a webview sends it, with the user's files
+      // and the user's OneLake token within reach — so whatever the page says, DuckDB may
+      // touch the local disk only in its own temp directory, its extension directory, and
+      // the few files named here (the packaged README the landing query reads, the CA
+      // bundle). The network stays open — the page reads public URLs, OneLake (abfss:// and
+      // https), and the loopback proxy — but `read_text('~/.ssh/id_rsa')` and `COPY … TO`
+      // anywhere outside the temp directory are refused, and the configuration is locked so
+      // no statement can turn this back off. Verified against DuckDB 2.0: allowed paths
+      // still read, others raise Permission Error, `..` cannot climb out, abfss and the
+      // Iceberg catalog still work once ca_cert_file names an allowed bundle.
+      if (lockdown) {
+        const ca = await writeCaBundle(tmpDir);
+        await conn.run(`SET ca_cert_file = ${sqlStr(ca)};`);
+        const dirs = [`${tmp}/`, 'https://', 'http://', 'abfss://', 'abfs://', 'az://', 'azure://'];
+        if (extensionDir) dirs.push(`${extensionDir.replace(/\\/g, '/')}/`);
+        const paths = [ca, ...allowedPaths.filter(Boolean).map(p => String(p).replace(/\\/g, '/'))];
+        await conn.run(`SET allowed_directories = [${dirs.map(sqlStr).join(', ')}];`);
+        await conn.run(`SET allowed_paths = [${paths.map(sqlStr).join(', ')}];`);
+        await conn.run('SET enable_external_access = false;');
+        await conn.run('SET lock_configuration = true;');
+      }
 
       const totalMs = stages.reduce((n, s) => n + s.ms, 0);
       // capabilities rides along so the boot line can say which optional formats this
@@ -248,9 +321,19 @@ function createEngineHost({ extensionDir, onLog = () => {}, onWarn = () => {}, g
   // reason to refuse to start — the same judgement data.js makes. A required one is a
   // different thing entirely, so it throws, naming the platform: that is the message a
   // user on an architecture we have no binary for needs to see.
+  //
+  // A binary shipped inside the vsix (bundledExtensions, fetched per platform at package
+  // time) is loaded first and by path: no download, so a first run offline or behind a
+  // proxy DuckDB cannot use still has its extensions.
   async function load(ext, repo, required = false) {
     try {
-      try { await conn.run(`LOAD ${ext};`); }
+      const shipped = bundledExtensions && join(bundledExtensions, `${ext}.duckdb_extension`);
+      let loaded = false;
+      if (shipped && fs.existsSync(shipped)) {
+        try { await conn.run(`LOAD ${sqlStr(shipped.replace(/\\/g, '/'))};`); loaded = true; }
+        catch (e) { onWarn(`bundled '${ext}' would not load (${e.message}); trying the repository`); }
+      }
+      if (!loaded) try { await conn.run(`LOAD ${ext};`); }
       catch (_) {
         await conn.run(`INSTALL ${ext}${repo ? ` FROM ${repo}` : ''};`);
         await conn.run(`LOAD ${ext};`);
@@ -346,7 +429,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onWarn = () => {}, g
     const promise = admin(() => conn.run(
       `ATTACH OR REPLACE ${sqlStr(key)} AS ${alias} (
          TYPE iceberg,
-         ENDPOINT ${sqlStr(IRC_ENDPOINT)},
+         URI ${sqlStr(IRC_ENDPOINT)},
          TOKEN ${sqlStr(token)},
          ACCESS_DELEGATION_MODE 'none',
          STAGE_CREATE_TABLES false,

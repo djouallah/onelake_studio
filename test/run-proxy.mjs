@@ -34,9 +34,17 @@ async function fixture() {
   try { const s = await stat(FIXTURE); if (s.size > 1_000_000) return; } catch (_) {}
   await mkdir(join(root, "test", "fixtures"), { recursive: true });
   console.log("generating test/fixtures/sample.parquet ...");
-  execFileSync("duckdb", ["-c",
-    `COPY (SELECT i AS id, i * 2 AS d, 'row ' || i AS s FROM range(400000) t(i))` +
-    ` TO '${FIXTURE.replace(/\\/g, "/")}' (FORMAT PARQUET)`], { stdio: "inherit" });
+  const sql = `COPY (SELECT i AS id, i * 2 AS d, 'row ' || i AS s FROM range(400000) t(i))` +
+              ` TO '${FIXTURE.replace(/\\/g, "/")}' (FORMAT PARQUET)`;
+  // The DuckDB CLI where there is one; otherwise the extension's own node binding — which
+  // is what CI has, so this harness runs there with no extra install.
+  try { execFileSync("duckdb", ["-c", sql], { stdio: "inherit" }); return; } catch (_) {}
+  const { createRequire } = await import("node:module");
+  const { DuckDBInstance } = createRequire(import.meta.url)("../extension/node_modules/@duckdb/node-api");
+  const db = await DuckDBInstance.create(":memory:");
+  const c = await db.connect();
+  await c.run(sql);
+  c.closeSync(); db.closeSync();
 }
 
 // --- fake OneLake: demands the bearer token, serves ranges, and keeps a log ------------

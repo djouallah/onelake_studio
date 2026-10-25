@@ -11,6 +11,7 @@ node_modules/**
 !node_modules/@duckdb/**
 copy-site.mjs
 fetch-binding.mjs
+fetch-extensions.mjs
 check-binding.mjs
 make-icon.mjs
 vendor.mjs

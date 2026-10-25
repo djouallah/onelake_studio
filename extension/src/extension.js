@@ -432,11 +432,26 @@ async function pairPrompt(context, origin) {
 // built for another architecture — surfaces when the panel opens, with a message, rather
 // than taking activation down with it.
 let engine = null;
-function ensureEngine(context) {
+// The editor's proxy, for DuckDB's own downloads and reads: VS Code's `http.proxy` setting
+// first, then the environment variables the editor itself would honour.
+function editorProxy() {
+  const configured = vscode.workspace.getConfiguration('http').get('proxy', '');
+  return configured || process.env.HTTPS_PROXY || process.env.https_proxy ||
+         process.env.HTTP_PROXY || process.env.http_proxy || '';
+}
+
+// `readme` is the one file outside DuckDB's own directories the engine may read (the
+// landing query) — see the lockdown in engine-host.js.
+function ensureEngine(context, { readme } = {}) {
   if (engine) return engine;
   try {
     const { createEngineHost } = require('./engine-host');
     engine = createEngineHost({
+      allowedPaths: readme ? [readme] : [],
+      httpProxy: editorProxy(),
+      // Fetched for this vsix's platform at package time (fetch-extensions.mjs); a first
+      // run offline, or behind a proxy DuckDB cannot use, still has its extensions.
+      bundledExtensions: join(context.extensionUri.fsPath, 'duckdb-extensions'),
       // Beside the data cache, so the four extensions are downloaded once per install
       // rather than once per session — and never into the user's own ~/.duckdb, where
       // they would outlive the extension that fetched them.
@@ -483,7 +498,9 @@ async function show(context, options) {
   // The engine is not optional any more — there is no wasm fallback to degrade to — so a
   // platform whose binding will not load is told plainly instead of being handed a panel
   // that boots to a spinner and never moves.
-  const eng = ensureEngine(context);
+  const { readme } = await siteRoot(context.extensionUri,
+    { dev: context.extensionMode === vscode.ExtensionMode.Development });
+  const eng = ensureEngine(context, { readme: readme.fsPath });
   if (!eng) return false;
   await openPanel(context, await ensureProxy(context), {
     onOpened: logOpened, onBoot: logBoot, engine: eng,
