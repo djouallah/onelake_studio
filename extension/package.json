@@ -2,7 +2,7 @@
   "name": "onelake-studio",
   "displayName": "OneLake Studio",
   "description": "Browse and query Microsoft Fabric OneLake Iceberg tables with DuckDB, signed in with your VS Code Microsoft account.",
-  "version": "0.1.3",
+  "version": "0.2.0",
   "publisher": "djouallah",
   "license": "MIT",
   "repository": {
@@ -30,7 +30,9 @@
     "lakehouse"
   ],
   "main": "./src/extension.js",
-  "activationEvents": [],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
   "capabilities": {
     "untrustedWorkspaces": {
       "supported": true,
@@ -82,6 +84,17 @@
         "command": "onelakeStudio.openFile",
         "title": "Open File",
         "category": "OneLake Studio"
+      },
+      {
+        "command": "onelakeStudio.openInBrowser",
+        "title": "Open the Website, Signed In with VS Code",
+        "category": "OneLake Studio",
+        "icon": "$(globe)"
+      },
+      {
+        "command": "onelakeStudio.forgetTrustedSites",
+        "title": "Forget Websites Allowed to Use the VS Code Sign-in",
+        "category": "OneLake Studio"
       }
     ],
     "viewsContainers": {
@@ -124,6 +137,11 @@
           "command": "onelakeStudio.switchAccount",
           "when": "view == onelakeStudio.explorer",
           "group": "1_account"
+        },
+        {
+          "command": "onelakeStudio.openInBrowser",
+          "when": "view == onelakeStudio.explorer && onelakeStudio.signedIn",
+          "group": "navigation@5"
         }
       ],
       "view/item/context": [
@@ -168,7 +186,7 @@
           "default": 20,
           "minimum": 0,
           "scope": "machine",
-          "markdownDescription": "Disk to spend caching OneLake data, in GB. Iceberg data files and manifests are kept until evicted — a new snapshot writes new files, so a cached one can never be stale. Reading a table you have opened before comes off disk instead of the network. Set to `0` to cache nothing; `OneLake Studio: Clear Cached OneLake Data` empties it and reports what it freed. Applies after the window is reloaded."
+          "markdownDescription": "Disk to spend caching OneLake data, in GB. Holds what passes through the extension's local proxy: catalog answers, listings, Files/ reads, and every table read the **website** makes through the VS Code sign-in. Iceberg data files and manifests are kept until evicted — a new snapshot writes new files, so a cached one can never be stale. Each Microsoft account gets its own cache. Tables opened in the panel are read by native DuckDB directly and do not pass through it. Set to `0` to cache nothing; `OneLake Studio: Clear Cached OneLake Data` empties it and reports what it freed. Applies after the window is reloaded."
         },
         "onelakeStudio.catalogTtlMinutes": {
           "type": "number",
@@ -176,6 +194,40 @@
           "minimum": 0,
           "scope": "machine",
           "markdownDescription": "How old a catalog answer, listing or other mutable object may be before it is refreshed. The last-known answer is ALWAYS served instantly from disk — a table you have ever opened opens without waiting on the catalog; once the answer is older than this, a background refresh fetches the current one, so a new snapshot shows up one click later. `0` disables the caching and asks OneLake every time. Applies after the window is reloaded."
+        },
+        "onelakeStudio.engineMemoryLimit": {
+          "type": "string",
+          "default": "",
+          "scope": "machine",
+          "pattern": "^$|^d+(.d+)?s*(KB|MB|GB|TB|KiB|MiB|GiB|TiB)$",
+          "patternErrorMessage": "A DuckDB memory size, e.g. 4GB or 512MB.",
+          "markdownDescription": "Most memory DuckDB may use, e.g. `4GB`. Empty means a quarter of this machine's RAM — DuckDB's own default is 80%, which is too much for the extension host every other extension shares. Bigger queries spill to a temp directory instead of failing. Applies the next time the engine starts."
+        },
+        "onelakeStudio.bridge.enabled": {
+          "type": "boolean",
+          "default": true,
+          "scope": "machine",
+          "markdownDescription": "Let the OneLake Studio **website** use this VS Code window's Microsoft sign-in, so it needs no app registration of its own. VS Code listens on `127.0.0.1` only, answers only the origins in `#onelakeStudio.bridge.origins#`, and asks you before any website may use it. The token never leaves VS Code. Applies after the window is reloaded."
+        },
+        "onelakeStudio.bridge.port": {
+          "type": "integer",
+          "default": 47731,
+          "minimum": 1024,
+          "maximum": 65535,
+          "scope": "machine",
+          "markdownDescription": "The local port the website looks for VS Code on. Only one VS Code window can hold it; the others leave the website to that one. Must match the website's `bridgePort` if you change it. Applies after the window is reloaded."
+        },
+        "onelakeStudio.bridge.origins": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^https?://[^/]+$"
+          },
+          "default": [
+            "https://studio.projectscontrols.com"
+          ],
+          "scope": "machine",
+          "markdownDescription": "Exact website origins (scheme + host + port, no path) that may ask to use the VS Code sign-in. Add your own deployment here, e.g. `https://onelake.example.com`, or `http://localhost:5173` for local development. Applies after the window is reloaded."
         }
       }
     }
@@ -187,6 +239,6 @@
     "@types/vscode": "^1.90.0"
   },
   "dependencies": {
-    "@duckdb/node-api": "^1.5.4-r.1"
+    "@duckdb/node-api": "2.0.0-r.1"
   }
 }

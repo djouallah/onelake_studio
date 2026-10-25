@@ -1,0 +1,52 @@
+# Regenerates extension/package-lock.json against the PUBLIC npm registry and commits it.
+#
+# Exists because the lockfile cannot always be made where the code is written: a machine
+# behind a corporate npm mirror resolves whatever that mirror happens to have (which lagged
+# @duckdb/node-api 2.0 by days) and writes the mirror's URLs into `resolved`, which a
+# runner then has no credentials for. Here the answer is registry.npmjs.org, sha512, every
+# time.
+#
+# Run it from the Actions tab (or `gh workflow run lockfile.yml`) after changing a
+# dependency in extension/package.json.
+name: Refresh extension lockfile
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: lockfile
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      # From scratch, not on top of the old file: an unchanged entry would otherwise keep
+      # its old `resolved` URL. --package-lock-only resolves without installing anything.
+      - name: Resolve
+        working-directory: extension
+        run: |
+          rm -f package-lock.json
+          npm install --package-lock-only --ignore-scripts --no-audit --no-fund \
+            --registry https://registry.npmjs.org
+          grep -q '"resolved": "https://registry.npmjs.org/' package-lock.json
+          ! grep -q 'pkgs.visualstudio.com\|packagefeedproxy' package-lock.json
+
+      - name: Commit, if anything changed
+        run: |
+          if git diff --quiet -- extension/package-lock.json; then
+            echo "lockfile already current"; exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898283+github-actions[bot]@users.noreply.github.com"
+          git add extension/package-lock.json
+          git commit -m "Lockfile resolved against the public registry"
+          git push

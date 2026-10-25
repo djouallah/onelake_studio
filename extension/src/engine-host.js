@@ -78,10 +78,44 @@ function jsonSafe(v) {
   return v;
 }
 
-function createEngineHost({ extensionDir, onLog = () => {}, onWarn = () => {}, getToken = null } = {}) {
+// The most rows of one result the host turns into JS and posts to the page. data.js stops
+// keeping rows at the same number; past it the host only COUNTS, so "stopped at N of M"
+// still has a truthful M without M rows crossing postMessage into a shared process.
+const MAX_ROWS = 200_000;
+
+// A bearer token has no business in an error message the page displays, a log line, or a
+// bug report pasted from either. DuckDB echoes the statement it failed on, and two of ours
+// carry a token by value.
+const JWT = /eyJ[\w-]{8,}\.[\w-]{8,}\.[\w-]{8,}/g;
+function scrub(e, token) {
+  if (!e || typeof e.message !== 'string') return e;
+  let m = e.message.replace(JWT, '<token>');
+  if (token) m = m.split(token).join('<token>');
+  if (m !== e.message) {
+    try { e.message = m; } catch (_) { const c = new Error(m); c.cancelled = e.cancelled; return c; }
+  }
+  return e;
+}
+
+// 25% of RAM unless told otherwise. DuckDB's own default is 80%, which is a fine answer
+// for a process that owns the machine and a bad one for the extension host, which every
+// other extension in the window shares.
+function defaultMemoryLimit() {
+  return `${Math.max(512, Math.floor(os.totalmem() / 4 / 2 ** 20))}MB`;
+}
+
+function createEngineHost({ extensionDir, onLog = () => {}, onWarn = () => {}, getToken = null,
+                            memoryLimit = '' } = {}) {
   let instance = null;
+  // The connection for the host's OWN statements — secrets, ATTACH, extension loading.
+  // Page queries never run on it: each gets a connection of its own (see withConn), so a
+  // cancel aimed at the page's query cannot land on an ATTACH half way through, and an
+  // ATTACH cannot interleave with a stream that is still draining.
   let conn = null;
   let ready = null;
+  // Set by close(), and final: a late call must not quietly rebuild a DuckDB that nobody
+  // owns, holding the token of the account that was just signed out of.
+  let closed = false;
 
   // The token the storage secret and every ATTACH were built from. Both hold a token
   // BY VALUE — a DuckDB secret is a stored string, and ATTACH copies the catalog token
@@ -89,9 +123,43 @@ function createEngineHost({ extensionDir, onLog = () => {}, onWarn = () => {}, g
   // reissued. The proxy never had this problem because it signed each request as it
   // went; this is the price of DuckDB talking to OneLake itself.
   let authToken = null;
-  // "workspace/item" -> the alias it is ATTACHed as.
-  const attached = new Map();
+  // "workspace/item" -> the alias it is ATTACHed as. Never cleared while the engine lives:
+  // the page's views name the alias, so re-attaching under a NEW one after a token change
+  // left every view already open pointing at an attachment that still held the old token.
+  const aliases = new Map();
+  // "workspace/item" -> the token its current ATTACH was made with.
+  const attachedWith = new Map();
+  // "workspace/item" -> the ATTACH in flight, so two opens of one lakehouse pay ~5s once.
+  const attaching = new Map();
   let aliasSeq = 0;
+
+  // The host's own statements run one at a time: CREATE SECRET racing an ATTACH that
+  // reads it is not a race worth having.
+  let adminChain = Promise.resolve();
+  function admin(fn) {
+    const run = adminChain.then(fn, fn);
+    adminChain = run.catch(() => {});
+    return run;
+  }
+
+  // Connections running a page query right now, so cancel() interrupts exactly those.
+  const live = new Set();
+  // Connections cancel() reached. Their failure is a stop, not an error, and says so with
+  // a flag the page reads — DuckDB's text for it ("Interrupted!") never said "cancel".
+  const interrupted = new WeakSet();
+  async function withConn(fn) {
+    const c = await instance.connect();
+    live.add(c);
+    try { return await fn(c); }
+    catch (e) {
+      if (interrupted.has(c) && e && typeof e === 'object') { try { e.cancelled = true; } catch (_) {} }
+      throw e;
+    }
+    finally {
+      live.delete(c);
+      try { c.closeSync(); } catch (_) {}
+    }
+  }
 
   // Buffer name -> temp file on disk, so dropFile can delete it rather than leaking one
   // buffer-sized file per document opened this session.
@@ -100,6 +168,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onWarn = () => {}, g
   let tmpDir = null;
 
   async function init() {
+    if (closed) throw new Error('the engine was closed');
     if (ready) return ready;
     ready = (async () => {
       const stages = [];
@@ -118,13 +187,19 @@ function createEngineHost({ extensionDir, onLog = () => {}, onWarn = () => {}, g
         // out-match ours and decide what the extension reads; measured, it fails as
         // `AuthenticationFailed` from a filesystem we thought we had configured.
         allow_persistent_secrets: 'false',
+        memory_limit: memoryLimit || defaultMemoryLimit(),
       };
       if (extensionDir) config.extension_directory = extensionDir;
       instance = await DuckDBInstance.create(':memory:', config);
       conn = await instance.connect();
       mark('instance+connect');
+      // close() may have run while DuckDB was starting. The instance is torn down by the
+      // catch below, which is the same path a failed boot takes.
+      if (closed) throw new Error('the engine was closed');
 
-      await conn.run('SET preserve_insertion_order = false;');
+      // preserve_insertion_order is left ON. Turning it off buys a little scan speed and
+      // costs a preview of a CSV or a sheet that shows its rows in a scrambled order.
+      //
       // REQUIRED, and treated differently from the rest: `iceberg` and `azure` are how a
       // table is read at all now, and `httpfs` is how the Files tab reads through the
       // loopback proxy. An optional extension that will not load costs one file format;
@@ -234,24 +309,41 @@ function createEngineHost({ extensionDir, onLog = () => {}, onWarn = () => {}, g
   // `fresh` reaches the token source. Without it the retry below asked the same
   // 60-second cache that had just handed out the expired token, got the identical
   // string back, and concluded — wrongly — that no better token existed.
+  //
+  // A changed token also re-ATTACHes every item already open, under the SAME alias: the
+  // catalog token was copied into each attachment, and the views the page holds name those
+  // aliases. Without this every table opened before the hourly rotation started failing
+  // the moment it came — the retry only ever refreshed the storage secret.
   async function ensureAuth(fresh = false) {
     if (!getToken) return null;
     const token = await getToken(fresh ? { fresh: true } : {});
     if (!token) return null;
     if (token === authToken) return token;
-    await conn.run(
-      `CREATE OR REPLACE SECRET onelake_storage (
-         TYPE azure, PROVIDER access_token, ACCESS_TOKEN ${sqlStr(token)})`);
-    authToken = token;
-    attached.clear();
+    await admin(async () => {
+      if (token === authToken) return;
+      await conn.run(
+        `CREATE OR REPLACE SECRET onelake_storage (
+           TYPE azure, PROVIDER access_token, ACCESS_TOKEN ${sqlStr(token)})`);
+      authToken = token;
+    });
+    const stale = [...aliases.keys()].filter(k => attachedWith.get(k) !== token);
+    // Each failure is the item's own: one lakehouse the account lost access to must not
+    // stop the others from coming back, and its next open will say what is wrong.
+    await Promise.all(stale.map(k => attachKey(k).catch(e =>
+      onWarn(`re-attach of ${k} after token change failed — ${scrub(e, token).message}`))));
     return token;
   }
 
-  async function attachItem(workspace, item, token) {
-    const key = `${workspace}/${item}`;
-    if (attached.has(key)) return attached.get(key);
-    const alias = `ol_${++aliasSeq}`;
-    await conn.run(
+  // Single-flight per item, and keyed to the token: an attachment made with the current
+  // token is reused, one made with an older token is replaced in place.
+  function attachKey(key) {
+    if (aliases.has(key) && attachedWith.get(key) === authToken) return Promise.resolve(aliases.get(key));
+    const inflight = attaching.get(key);
+    if (inflight && inflight.token === authToken) return inflight.promise;
+    const token = authToken;
+    if (!aliases.has(key)) aliases.set(key, `ol_${++aliasSeq}`);
+    const alias = aliases.get(key);
+    const promise = admin(() => conn.run(
       `ATTACH OR REPLACE ${sqlStr(key)} AS ${alias} (
          TYPE iceberg,
          ENDPOINT ${sqlStr(IRC_ENDPOINT)},
@@ -259,9 +351,11 @@ function createEngineHost({ extensionDir, onLog = () => {}, onWarn = () => {}, g
          ACCESS_DELEGATION_MODE 'none',
          STAGE_CREATE_TABLES false,
          SKIP_CREATE_TABLE_METADATA_UPDATES true,
-         DEFAULT_SCHEMA dbo)`);
-    attached.set(key, alias);
-    return alias;
+         DEFAULT_SCHEMA dbo)`))
+      .then(() => { attachedWith.set(key, token); return alias; })
+      .finally(() => { if (attaching.get(key) && attaching.get(key).promise === promise) attaching.delete(key); });
+    attaching.set(key, { token, promise });
+    return promise;
   }
 
   // A token that expired mid-session shows up as a storage or catalog failure, never as
@@ -277,9 +371,10 @@ function createEngineHost({ extensionDir, onLog = () => {}, onWarn = () => {}, g
     } catch (e) {
       if (!AUTH_FAILURE.test(String(e && e.message))) throw e;
       const stale = authToken;
-      authToken = null;                       // force a reissue rather than a cache hit
-      const fresh = await ensureAuth(true);   // and PAST the caller's token cache too
+      const fresh = await ensureAuth(true);   // PAST the caller's token cache
       if (!fresh || fresh === stale) throw e;  // same token, same answer — do not loop
+      // `run` reads the engine's state when it runs, never a token captured before the
+      // failure — the retry used to ATTACH again with the very token that had just expired.
       return run();
     }
   }
@@ -288,9 +383,8 @@ function createEngineHost({ extensionDir, onLog = () => {}, onWarn = () => {}, g
   // ATTACH costs (~5s) and what it covers; a second table in the same lakehouse is free.
   async function openTable({ workspace, item, schema, table }) {
     await init();
-    const token = await currentToken();
-    await ensureAuth();
-    const alias = await withAuthRetry(() => attachItem(workspace, item, token));
+    await currentToken();
+    const alias = await withAuthRetry(() => attachKey(`${workspace}/${item}`));
     // DEFAULT_SCHEMA is dbo, but naming the schema explicitly is right for every other
     // one — and OneLake gives schema-less items a synthetic "dbo" anyway.
     const ident = schema
@@ -299,50 +393,56 @@ function createEngineHost({ extensionDir, onLog = () => {}, onWarn = () => {}, g
     return { ident, alias };
   }
 
-  // One result batch, in the shape data.js reads off conn.send(): a schema carried on the
-  // batch itself (the wasm reader had none) and rows as plain objects.
-  function batchOf(reader, from, to) {
-    const names = reader.deduplicatedColumnNames();
-    const types = reader.columnTypes().map(t => String(t));
-    const rows = [];
-    for (let i = from; i < to; i++) {
-      const row = {};
-      for (let c = 0; c < names.length; c++) row[names[c]] = jsonSafe(reader.value(c, i));
-      rows.push(row);
-    }
-    // `type` is the DuckDB type NAME, not an Arrow type object. data.js's arrowTypeName()
-    // exists only to reconstruct that name from Arrow's metadata; here it is already the
-    // real answer, so it is passed through as one.
-    return { fields: names.map((n, i) => ({ name: n, type: types[i] })), rows, numRows: rows.length };
-  }
-
-  // Every statement, streamed. `onBatch` is called per chunk; the caller decides whether
-  // to keep them. Cancellation is conn.interrupt(), which is real — no worker to terminate,
-  // no watchdog, none of the machinery the single-threaded wasm build needed.
-  async function runStreaming(sql, onBatch) {
-    const reader = await conn.streamAndRead(sql);
-    let sent = 0;
+  // Every statement, streamed chunk by chunk off its own connection. `onBatch` gets one
+  // batch per ~BATCH_ROWS rows in the shape data.js reads off conn.send(): a schema carried
+  // on the batch itself and rows as plain objects. `type` is the DuckDB type NAME, which
+  // data.js's arrowTypeName() passes through verbatim.
+  //
+  // Past MAX_ROWS the chunks are only COUNTED — sent as row-less batches carrying numRows —
+  // so the page still learns the true total without the host converting, holding or
+  // posting rows nobody will see. streamAndRead() used to keep every chunk it had read,
+  // which made `SELECT *` on a big table an out-of-memory in the shared extension host.
+  async function runStreaming(c, sql, onBatch) {
+    const result = await c.stream(sql);
+    const names = result.deduplicatedColumnNames();
+    const fields = names.map((n, i) => ({ name: n, type: String(result.columnType(i)) }));
+    let rows = [], kept = 0, counted = 0, total = 0;
+    const flush = () => {
+      if (!rows.length && !counted) return;
+      onBatch({ fields, rows, numRows: rows.length + counted });
+      rows = []; counted = 0;
+    };
+    let sentAny = false;
     for (;;) {
-      const before = sent;
-      await reader.readUntil(sent + BATCH_ROWS);
-      const have = reader.currentRowCount;
-      if (have > sent) { onBatch(batchOf(reader, sent, have)); sent = have; }
-      if (reader.done) break;
-      // No progress and not done: readUntil has nothing further to give, and looping
-      // again would spin. Compared against the cursor as it was BEFORE this pass —
-      // comparing it after the update is the same expression as `have === have`, which
-      // ended every stream at the first chunk.
-      if (have === before) break;
+      const chunk = await result.fetchChunk();
+      if (!chunk || chunk.rowCount === 0) break;
+      const n = chunk.rowCount;
+      total += n;
+      const room = Math.max(0, MAX_ROWS - kept);
+      if (room > 0) {
+        const objs = chunk.getRowObjects(names);
+        const take = Math.min(room, n);
+        for (let i = 0; i < take; i++) {
+          const o = objs[i];
+          for (const k of names) o[k] = jsonSafe(o[k]);
+          rows.push(o);
+        }
+        kept += take;
+        counted += n - take;
+      } else {
+        counted += n;
+      }
+      if (rows.length + counted >= BATCH_ROWS) { flush(); sentAny = true; }
     }
-    // An empty result must still yield one batch — data.js reads the schema off the first
-    // one, and there is always exactly one in the wasm build.
-    if (sent === 0) onBatch(batchOf(reader, 0, 0));
-    return sent;
+    if (rows.length || counted) { flush(); sentAny = true; }
+    // An empty result must still yield one batch — data.js reads the schema off the first.
+    if (!sentAny) onBatch({ fields, rows: [], numRows: 0 });
+    return total;
   }
 
   async function runAll(sql) {
     const batches = [];
-    await runStreaming(sql, b => batches.push(b));
+    await withConn(c => runStreaming(c, sql, b => batches.push(b)));
     if (batches.length === 1) return batches[0];
     return {
       fields: batches[0].fields,
@@ -365,7 +465,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onWarn = () => {}, g
       // late failure arrives, and running it again would deliver them twice. The token
       // is still refreshed up front, which is what covers the ordinary expiry case.
       await ensureAuth();
-      const numRows = await runStreaming(sql, b => emit(b));
+      const numRows = await withConn(c => runStreaming(c, sql, b => emit(b)));
       return { done: true, numRows };
     },
 
@@ -375,8 +475,9 @@ function createEngineHost({ extensionDir, onLog = () => {}, onWarn = () => {}, g
     async cancel() {
       // Native interrupt, not a worker terminate. The wasm build could only be stopped by
       // killing the worker (it blocked in synchronous XHR and processed no messages), and
-      // rebuilding it cost ~10 seconds.
-      try { if (conn) conn.interrupt(); } catch (_) {}
+      // rebuilding it cost ~10 seconds. Only the PAGE's queries are interrupted: an ATTACH
+      // or a secret being issued on the host's own connection is left to finish.
+      for (const c of live) { interrupted.add(c); try { c.interrupt(); } catch (_) {} }
       return true;
     },
 
@@ -410,14 +511,25 @@ function createEngineHost({ extensionDir, onLog = () => {}, onWarn = () => {}, g
     // anything that is not an array, with a worse message than this one.
     if (!Object.hasOwn(methods, method)) throw new Error(`unknown engine method: ${method}`);
     if (!Array.isArray(args)) throw new Error(`engine method ${method}: args must be an array`);
-    return methods[method](...args, emit);
+    const token = authToken;
+    try { return await methods[method](...args, emit); }
+    catch (e) { throw scrub(e, authToken || token); }
   }
 
   async function close() {
+    closed = true;
+    // Whatever is running is stopped first: closing an instance under a live query is
+    // the native binding's problem to survive, and there is no reason to make it one.
+    for (const c of live) { try { c.interrupt(); } catch (_) {} }
+    // A boot still in flight finishes (or fails) before its handles are released.
+    if (ready) await ready.catch(() => {});
+    await adminChain.catch(() => {});
+    for (const c of live) { try { c.closeSync(); } catch (_) {} }
+    live.clear();
     try { if (conn) conn.closeSync(); } catch (_) {}
     try { if (instance) instance.closeSync(); } catch (_) {}
     conn = instance = null; ready = null;
-    temps.clear(); attached.clear();
+    temps.clear(); aliases.clear(); attachedWith.clear(); attaching.clear();
     authToken = null;
     if (tmpDir) await fsp.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
   }

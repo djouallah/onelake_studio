@@ -482,7 +482,7 @@ const TABLE_FILE = `${proxy.dfsOrigin}/ws/lh.Lakehouse/Tables/t/data_0.parquet`;
     cdnUpstream: `http://127.0.0.1:${cdnSrv.address().port}`,
   });
   try {
-    const url = `${p.cdnOrigin}/cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.33.1-dev57.0/+esm`;
+    const url = `${p.cdnOrigin}/cdn.jsdelivr.net/npm/sql.js@1.13.0/+esm`;
     const a = await fetch(url);
     eq(a.status, 200, "an allowlisted CDN path is proxied");
     eq(await a.text(), BODY, "…body intact");
@@ -512,8 +512,8 @@ const TABLE_FILE = `${proxy.dfsOrigin}/ws/lh.Lakehouse/Tables/t/data_0.parquet`;
   const MOD = "export const packaged = true;\n";
   await mkdir(join(VENDOR_TMP, "cdn.jsdelivr.net", "npm", "pkg@1.0.0"), { recursive: true });
   await writeFile(join(VENDOR_TMP, "cdn.jsdelivr.net", "npm", "pkg@1.0.0", "+esm"), MOD);
-  await mkdir(join(VENDOR_TMP, "extensions.duckdb.org", "v1.5.4", "wasm_eh"), { recursive: true });
-  await writeFile(join(VENDOR_TMP, "extensions.duckdb.org", "v1.5.4", "wasm_eh", "x.duckdb_extension.wasm"),
+  await mkdir(join(VENDOR_TMP, "cdn.jsdelivr.net", "npm", "pkg@1.0.0", "dist"), { recursive: true });
+  await writeFile(join(VENDOR_TMP, "cdn.jsdelivr.net", "npm", "pkg@1.0.0", "dist", "x.wasm"),
                   Buffer.from([0, 97, 115, 109]));
   await writeFile(join(tmpdir(), "onelake-vendor-outside.txt", ), "secret").catch(() => {});
   const V_DIR = await mkdtemp(join(tmpdir(), "onelake-vcache-"));
@@ -530,7 +530,7 @@ const TABLE_FILE = `${proxy.dfsOrigin}/ws/lh.Lakehouse/Tables/t/data_0.parquet`;
     eq(a.headers.get("content-type"), "text/javascript", "…as a module, extension-less '+esm' included");
     eq(cdnLog.length, before, "…with no network at all");
 
-    const w = await fetch(`${pv.cdnOrigin}/extensions.duckdb.org/v1.5.4/wasm_eh/x.duckdb_extension.wasm`);
+    const w = await fetch(`${pv.cdnOrigin}/cdn.jsdelivr.net/npm/pkg@1.0.0/dist/x.wasm`);
     eq(w.headers.get("content-type"), "application/wasm", "a packaged wasm binary says it is wasm");
     eq((await w.arrayBuffer()).byteLength, 4, "…byte for byte");
     eq(cdnLog.length, before, "…still no network");
@@ -546,7 +546,7 @@ const TABLE_FILE = `${proxy.dfsOrigin}/ws/lh.Lakehouse/Tables/t/data_0.parquet`;
     ok(w.headers.get("last-modified"), "…and a last-modified");
 
     const wEtag = w.headers.get("etag");
-    const w304 = await fetch(`${pv.cdnOrigin}/extensions.duckdb.org/v1.5.4/wasm_eh/x.duckdb_extension.wasm`,
+    const w304 = await fetch(`${pv.cdnOrigin}/cdn.jsdelivr.net/npm/pkg@1.0.0/dist/x.wasm`,
                              { headers: { "if-none-match": wEtag } });
     eq(w304.status, 304, "…and revalidates to a 304, which is how Chromium KEEPS the compiled module");
     eq((await w304.arrayBuffer()).byteLength, 0, "…with no body");

@@ -26,7 +26,9 @@ function injectConfig(html, nonce, config) {
   // from having to stay true forever.
   const json = JSON.stringify(config).replace(/</g, '\\u003c');
   return {
-    html: html.replace(re, `<script nonce="${nonce}">window.ONELAKE_STUDIO_CONFIG = ${json};</script>`),
+    // A function replacer: with a string one, `$&` or `$'` anywhere in the config — a
+    // README path is user-shaped — would be expanded by replace() and corrupt the page.
+    html: html.replace(re, () => `<script nonce="${nonce}">window.ONELAKE_STUDIO_CONFIG = ${json};</script>`),
     ok: re.test(html),
   };
 }
@@ -54,7 +56,7 @@ function dropOneLakePreconnect(html) {
 function addCsp(html, cspContent) {
   const re = /<\/head>/;
   return {
-    html: html.replace(re, `  <meta http-equiv="Content-Security-Policy" content="${cspContent}" />\n</head>`),
+    html: html.replace(re, () => `  <meta http-equiv="Content-Security-Policy" content="${cspContent}" />\n</head>`),
     ok: re.test(html),
   };
 }

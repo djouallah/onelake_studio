@@ -67,12 +67,12 @@ const TMP_MAX_AGE_MS = 60 * 60 * 1000;
 //                 minutes of possible staleness was chosen, explicitly, over that.
 const DEFAULT_TTL_MS = 5 * 60 * 1000;
 
-// The hosts the engine boots from. Their URLs are version-pinned (a jsDelivr path
-// carries its @version, an extension path its duckdb version), so like the data files
-// they are immutable — kept forever, with their response headers, because an ESM module
-// served without its content-type is not a faster answer but a SyntaxError.
-const CDN_HOSTS = new Set(['cdn.jsdelivr.net', 'extensions.duckdb.org',
-                           'community-extensions.duckdb.org']);
+// The host the webview's libraries come from (sql.js, the markdown renderer). Its URLs
+// are version-pinned (a jsDelivr path carries its @version), so like the data files they
+// are immutable — kept forever, with their response headers, because an ESM module served
+// without its content-type is not a faster answer but a SyntaxError. DuckDB's own
+// extension hosts used to be here too; native DuckDB downloads its extensions itself.
+const CDN_HOSTS = new Set(['cdn.jsdelivr.net']);
 
 //   'cdn'       — boot bytes from the allowlisted CDN hosts: immutable, headers kept.
 //                 Recognised by hostname, or by first path segment for the proxy's

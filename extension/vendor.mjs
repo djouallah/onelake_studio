@@ -21,6 +21,11 @@
 import { mkdir, writeFile, readFile, stat } from "node:fs/promises";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { createRequire } from "node:module";
+
+// The pins live in src/vendored.js, beside the proxy route and the CSP that must agree.
+const { VENDORED } = createRequire(import.meta.url)("./src/vendored.js");
+const pin = name => VENDORED.find(p => p.name === name).version;
 
 const here = dirname(fileURLToPath(import.meta.url));
 const VENDOR = join(here, "vendor");
@@ -75,10 +80,10 @@ console.log(`vendoring webview assets into ${VENDOR} ...`);
 // between "works offline" and "mostly works offline". These genuinely run IN the page:
 // sql.js because duckdb-wasm's sqlite VFS could never open an app-supplied file, and
 // marked/dompurify because rendering a document is the webview's own job.
-const SQLJS = "1.13.0";
+const SQLJS = pin("sql.js");
 await grabEsmClosure(`/npm/sql.js@${SQLJS}/+esm`);
 await grab("cdn.jsdelivr.net", `/npm/sql.js@${SQLJS}/dist/sql-wasm.wasm`, { optional: true });
-await grabEsmClosure("/npm/marked@18.0.7/+esm");
-await grabEsmClosure("/npm/dompurify@3.4.12/+esm");
+await grabEsmClosure(`/npm/marked@${pin("marked")}/+esm`);
+await grabEsmClosure(`/npm/dompurify@${pin("dompurify")}/+esm`);
 
 console.log(`vendored ${fetched.size} URL(s), ${(bytes / 1e6).toFixed(1)}MB new`);

@@ -2,8 +2,9 @@
 #
 # Release:
 #   bump "version" in extension/package.json, refresh extension/package-lock.json
-#   (cd extension && npm install --package-lock-only), commit, then
-#   git tag ext-v0.1.2 && git push origin ext-v0.1.2
+#   (the "Refresh extension lockfile" workflow does it against the public registry), commit,
+#   then  git tag ext-v<that version> && git push origin ext-v<that version>
+#   A tag that does not match package.json fails the run before anything is built.
 #
 # PLATFORM-SPECIFIC, and it has to be. DuckDB runs natively in the extension host now:
 # @duckdb/node-bindings loads a 37MB platform library, and npm only ever installs the binding
@@ -89,10 +90,33 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
+      # --skip-duplicate makes a mismatched tag a SILENT no-op: tagging ext-v0.2.0 while
+      # package.json still says 0.1.3 would "publish" by re-sending 0.1.3 and report success.
+      - name: The tag must name the version being released
+        if: startsWith(github.ref, 'refs/tags/ext-v')
+        run: |
+          want="ext-v$(node -p "require('./extension/package.json').version")"
+          [ "$GITHUB_REF_NAME" = "$want" ] || { echo "tag $GITHUB_REF_NAME, but extension/package.json says $want"; exit 1; }
       - run: npm test
 
+  # The native engine itself, on the DuckDB that ships: real @duckdb/node-api, its linux
+  # binding, and the extensions DuckDB installs on first use. npm test cannot cover this —
+  # it runs without extension/node_modules — and it is where a DuckDB major bump breaks.
+  engine:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: extension/package-lock.json
+      - working-directory: extension
+        run: npm ci --no-audit --no-fund
+      - run: node --test test/engine-host.test.js
+
   package:
-    needs: test
+    needs: [test, engine]
     runs-on: ubuntu-latest
     strategy:
       # Every leg's failure is worth seeing in the same run; the publish job is gated on ALL

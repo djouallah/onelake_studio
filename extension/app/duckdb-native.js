@@ -46,8 +46,12 @@ function tableOf(batch) {
 }
 
 let seq = 0;
+// One bridge per page. data.js's restart() asks again, and each call used to add another
+// window message listener — every result was then dispatched once per restart ever made.
+let shared = null;
 
 export function connectNative() {
+  if (shared) return shared;
   const vs = vscodeApi();
   const pending = new Map();   // id -> { resolve, reject, onBatch }
 
@@ -123,5 +127,6 @@ export function connectNative() {
     cancelSent: async () => { await call("cancel"); return true; },
   };
 
-  return { db, conn };
+  shared = { db, conn };
+  return shared;
 }

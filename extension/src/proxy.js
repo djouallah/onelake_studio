@@ -32,6 +32,7 @@ const fs = require('node:fs/promises');
 const fsSync = require('node:fs');
 const { join, relative, isAbsolute } = require('node:path');
 const { createCache, CDN_HOSTS } = require('./cache');
+const { VENDORED_PREFIXES } = require('./vendored');
 
 const DFS_UPSTREAM = 'https://onelake.dfs.fabric.microsoft.com';
 const TABLE_UPSTREAM = 'https://onelake.table.fabric.microsoft.com';
@@ -64,18 +65,21 @@ function isPartial(contentRange) {
   return !coversWholeObject(contentRange);
 }
 
-// The only pages that may READ responses cross-origin: the VS Code webview this
-// extension created, and the loopback harnesses under test/. Anything else that finds
-// the port — a tab on some website spraying localhost ports — gets no CORS grant, so
-// even the unsecreted /npm route is unreadable from a foreign origin. DuckDB's own
-// reads (httpfs, node http) send no Origin header and never needed the grant.
-const ALLOWED_ORIGIN = /^vscode-webview:\/\/|^https?:\/\/(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$/;
+// The pages that may READ the PANEL listener's responses cross-origin: the VS Code
+// webview this extension created, and the loopback harnesses under test/. Anything else
+// that finds the port — a tab on some website spraying localhost ports — gets no CORS
+// grant, so even the unsecreted /npm route is unreadable from a foreign origin. DuckDB's
+// own reads (httpfs, node http) send no Origin header and never needed the grant.
+//
+// The BRIDGE listener (startBridge below) has its own, narrower answer: an exact list of
+// website origins, and nothing else — not even the webview.
+const PANEL_ORIGIN = /^vscode-webview:\/\/|^https?:\/\/(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$/;
 
-function cors(req, res) {
+function cors(req, res, listener) {
   // The answer depends on who asked, so caches must key on it.
   res.setHeader('vary', 'origin');
   const origin = req.headers.origin || '';
-  if (!ALLOWED_ORIGIN.test(origin)) return;
+  if (!origin || !listener.allowOrigin(origin)) return;
   res.setHeader('access-control-allow-origin', origin);
   res.setHeader('access-control-allow-methods', 'GET, HEAD, OPTIONS');
   // Range is not a CORS-safelisted request header, so the webview sends a preflight
@@ -84,6 +88,24 @@ function cors(req, res) {
     'range, accept, content-type, if-none-match, if-modified-since');
   res.setHeader('access-control-expose-headers', PASS_THROUGH.join(', '));
   res.setHeader('access-control-max-age', '86400');
+  // A public https page reaching loopback is Chrome's Local Network Access. Current Chrome
+  // gates it behind a permission prompt and needs nothing from the server; the older
+  // Private Network Access preflight asked for this opt-in, and answering it costs nothing.
+  if (req.headers['access-control-request-private-network'] === 'true') {
+    res.setHeader('access-control-allow-private-network', 'true');
+  }
+  // A crossOriginIsolated page (the website's service worker sets COEP) refuses a no-cors
+  // subresource without this. CORS-mode reads already pass; this is for everything else.
+  res.setHeader('cross-origin-resource-policy', 'cross-origin');
+}
+
+// DNS rebinding turns a foreign page into a SAME-origin caller — evil.example resolving to
+// 127.0.0.1 needs no CORS grant to read its own origin. The Host header is what it cannot
+// fake: the browser sends the name it resolved. So anything not addressed to this port by
+// a loopback name is refused before any route, secret or token is looked at.
+function hostOk(req, port) {
+  const host = String(req.headers.host || '').toLowerCase();
+  return host === `127.0.0.1:${port}` || host === `localhost:${port}` || host === `[::1]:${port}`;
 }
 
 // -----------------------------------------------------------------------------
@@ -138,20 +160,22 @@ function sameSecret(given, secret) {
 
 // /<secret>/dfs/<rest>?<query>  ->  { kind: 'dfs', rest: '/<rest>', query: '?<query>' }
 // Distinct prefixes rather than one so a workspace name can never be mistaken for a route.
-function route(reqUrl, secret) {
+// `listener.routes` is the set of kinds this listener serves at all.
+function route(reqUrl, listener) {
   const q = reqUrl.indexOf('?');
   const path = q === -1 ? reqUrl : reqUrl.slice(0, q);
   const query = q === -1 ? '' : reqUrl.slice(q);
   // jsDelivr's +esm bundles import their dependencies by ABSOLUTE path — /npm/… — which
-  // the browser resolves against this proxy's ROOT, below any secret. Mapping /npm/ and
-  // /gh/ straight to jsDelivr is what keeps those nested imports working. No secret on
-  // purpose: it exposes nothing but public, allowlisted CDN content, read-only — unlike
-  // every other route, there is no user data behind it to protect.
-  if (/^\/(npm|gh)\//.test(path)) {
-    return { kind: 'cdn', rest: `/cdn.jsdelivr.net${path}`, query };
+  // the browser resolves against this proxy's ROOT, below any secret. Mapping /npm/
+  // straight to jsDelivr is what keeps those nested imports working. No secret on
+  // purpose, so it is held to exactly the packages vendor.mjs ships: anything else under
+  // /npm would be an arbitrary script source for the panel's CSP.
+  if (path.startsWith('/npm/')) {
+    if (!listener.routes.has('cdn') || !VENDORED_PREFIXES.some(p => path.startsWith(p))) return null;
+    return { kind: 'cdn', rest: `/cdn.jsdelivr.net${path}`, query, unsecreted: true };
   }
   const m = /^\/([^/]+)\/(dfs|irc|cdn)(\/.*)?$/.exec(path);
-  if (!m || !sameSecret(m[1], secret)) return null;
+  if (!m || !listener.routes.has(m[2]) || !sameSecret(m[1], listener.secret)) return null;
   return { kind: m[2], rest: m[3] || '/', query };
 }
 
@@ -177,6 +201,10 @@ const AGENT_OPTS = {
   autoSelectFamily: true, autoSelectFamilyAttemptTimeout: 300,
 };
 const agents = { 'https:': new https.Agent(AGENT_OPTS), 'http:': new http.Agent(AGENT_OPTS) };
+// Idle, not total: a 2GB parquet streaming steadily is fine, a socket that went silent is
+// not. Without it a stalled upstream held its pool slot forever, and sixteen of those
+// (maxSockets) queued every later read behind them.
+const UPSTREAM_IDLE_MS = 60_000;
 
 // GET/HEAD only, redirects followed. Resolves { status, headers, stream } — node shapes,
 // lowercase header keys, stream is the response Readable.
@@ -186,6 +214,7 @@ function nodeFetch(urlStr, method, headers, hops = 3) {
     try { u = new URL(urlStr); } catch (e) { return reject(e); }
     const req = (u.protocol === 'https:' ? https : http).request(u, {
       method, headers: { ...headers, 'accept-encoding': 'identity' }, agent: agents[u.protocol],
+      timeout: UPSTREAM_IDLE_MS,
     }, res => {
       const loc = res.headers.location;
       if (loc && [301, 302, 303, 307, 308].includes(res.statusCode) && hops > 0) {
@@ -203,6 +232,7 @@ function nodeFetch(urlStr, method, headers, hops = 3) {
       }
       resolve({ status: res.statusCode, headers: res.headers, stream: res });
     });
+    req.on('timeout', () => req.destroy(new Error(`upstream silent for ${UPSTREAM_IDLE_MS / 1000}s`)));
     req.on('error', reject);
     req.end();
   });
@@ -290,8 +320,38 @@ async function fetchUpstream(upstream, getToken, { method = 'GET', range = '', a
   return out;
 }
 
-async function handle(req, res, opts) {
-  cors(req, res);
+function sendJson(res, status, body) {
+  res.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+  res.end(JSON.stringify(body));
+}
+
+// How the website finds out it may use this window's VS Code sign-in. Only on the bridge
+// listener, only for an origin on its exact list, and only after the user said yes in VS
+// Code (listener.pair asks; "always" is remembered there, not here). The answer is the
+// pair of signed origins — the secret is in them — which is all the page ever holds: the
+// token itself never leaves this process.
+async function handlePair(req, res, opts, listener) {
+  const origin = req.headers.origin || '';
+  if (!origin || !listener.allowOrigin(origin)) return sendJson(res, 403, { error: 'origin not allowed' });
+  const token = await Promise.resolve(opts.getToken()).catch(() => null);
+  // `?probe` is the page asking "is VS Code here at all?" — answered at once, with no
+  // prompt, so a short timeout can tell a running bridge from no bridge. The real pairing
+  // waits on a person clicking in VS Code and is asked for separately.
+  if (/[?&]probe(=|&|$)/.test(req.url)) return sendJson(res, 200, { v: 1, signedIn: !!token });
+  if (!token) return sendJson(res, 401, { signedIn: false });
+  let verdict;
+  try { verdict = await listener.pair(origin); }
+  catch (e) { return sendJson(res, 500, { error: (e && e.message) || String(e) }); }
+  if (!verdict || !verdict.allowed) return sendJson(res, 403, { denied: true });
+  const base = `http://127.0.0.1:${listener.port}/${listener.secret}`;
+  return sendJson(res, 200, {
+    v: 1, dfsOrigin: `${base}/dfs`, tableOrigin: `${base}/irc`, account: verdict.account || '',
+  });
+}
+
+async function handle(req, res, opts, listener) {
+  if (!hostOk(req, listener.port)) { res.writeHead(421); return res.end('misdirected request'); }
+  cors(req, res, listener);
   // Answered before anything else and never logged: a preflight touches no token, no
   // cache and no network, and one per file would bury the reads that do.
   if (req.method === 'OPTIONS') { res.writeHead(204); return res.end(); }
@@ -299,7 +359,11 @@ async function handle(req, res, opts) {
     res.writeHead(405); return res.end('proxy serves GET and HEAD only');
   }
 
-  const r = route(req.url, opts.secret);
+  if (listener.pair && (req.url === '/pair' || req.url.startsWith('/pair?'))) {
+    return handlePair(req, res, opts, listener);
+  }
+
+  const r = route(req.url, listener);
   // Same answer for a bad secret and a bad path: nothing here confirms a guess.
   if (!r) { res.writeHead(404); return res.end('not a proxied path'); }
 
@@ -327,7 +391,7 @@ async function handle(req, res, opts) {
     if (!opts.onLog) return;
     opts.onLog({
       method: req.method, kind: r.kind, path: r.rest, range,
-      ms: Date.now() - t0, ...extra,
+      ms: Date.now() - t0, listener: listener.name, ...extra,
     });
   };
 
@@ -408,6 +472,8 @@ async function handle(req, res, opts) {
       // the .bin is gone. Killing the response makes DuckDB retry — and the retry misses
       // and goes upstream — where a hung socket would just be a hang.
       hit.stream.on('error', () => res.destroy());
+      // A reader that hung up mid-file leaves the file handle open unless told.
+      res.on('close', () => { if (!res.writableFinished) hit.stream.destroy(); });
       return hit.stream.pipe(res);
     }
   }
@@ -441,6 +507,9 @@ async function handle(req, res, opts) {
     return res.end(`proxy could not reach OneLake: ${got.error}`);
   }
   const up = got.resp;
+  // The unsecreted /npm route is reachable by anything that can reach the port, so it
+  // must not be a way to write to the user's disk: it is served, never stored.
+  const mayStore = !!opts.cache && !r.unsecreted;
 
   const out = {};
   for (const h of PASS_THROUGH) {
@@ -460,7 +529,7 @@ async function handle(req, res, opts) {
     // An immutable file's length is as immutable as its bytes, and DuckDB asks for it
     // before every open. Storing it turns a round trip to OneLake into a local read.
     let stored = false;
-    if (up.status === 200 && opts.cache) {
+    if (up.status === 200 && mayStore) {
       stored = opts.cache.putHead(upstream, out['content-length']);
     }
     log({ cache: stored ? 'miss' : 'skip', status: up.status, tokenMs, netMs,
@@ -474,7 +543,7 @@ async function handle(req, res, opts) {
   // file is a local slice. The fill is fire-and-forget on this request's path; its
   // outcome surfaces as its own STORE log line, once per download, not once per read
   // that overlapped it.
-  if (opts.cache && req.method === 'GET' && up.status === 206) {
+  if (mayStore && req.method === 'GET' && up.status === 206) {
     const m = /\/(\d+)\s*$/.exec(out['content-range'] || '');
     const fillAt = Date.now();
     const fill = opts.cache.ensureFull(upstream, async () => {
@@ -520,7 +589,7 @@ async function handle(req, res, opts) {
     delete storedHeaders['content-range'];
     if (total) storedHeaders['content-length'] = total[1];
   }
-  const entry = (opts.cache && (up.status === 200 || wholeViaRange) && !isPartial(out['content-range']))
+  const entry = (mayStore && (up.status === 200 || wholeViaRange) && !isPartial(out['content-range']))
     ? opts.cache.beginPutFull(upstream, { headers: storedHeaders }) : null;
 
   let size = 0;
@@ -535,14 +604,22 @@ async function handle(req, res, opts) {
   });
   if (entry) body.pipe(entry.stream);
   body.pipe(res);
+  // A reader that hung up (DuckDB cancelling, a panel closed mid-scan) must give the
+  // upstream socket back. With a cache copy in flight the download is worth finishing —
+  // pipe() unhooks the dead response by itself and the tee keeps flowing; with none, a
+  // paused upstream would hold its keep-alive slot until the process exits.
+  res.on('close', () => { if (!res.writableFinished && !entry) body.destroy(); });
 }
 
-// Resolves to { port, secret, dfsOrigin, tableOrigin, close() }.
+// Resolves to { port, secret, dfsOrigin, tableOrigin, cdnOrigin, startBridge(), close(), … }.
+//
+// One core — token source, cache, single-flight maps — behind any number of listeners,
+// each with its own port, secret, origins and routes. Two caches over one directory would
+// race each other's fills, so a second listener shares this core rather than building one.
 function startProxy({ getToken, cacheDir, cacheMaxBytes, cacheTtlMs, onLog, cdnUpstream, vendorDir,
                       dfsUpstream = DFS_UPSTREAM, tableUpstream = TABLE_UPSTREAM } = {}) {
   if (typeof getToken !== 'function') throw new TypeError('startProxy needs a getToken() function');
 
-  const secret = crypto.randomBytes(24).toString('hex');
   // Absent cacheDir means no cache — every read goes upstream, which is what the proxy
   // did before and is still a correct proxy.
   const cache = createCache(cacheDir, {
@@ -550,43 +627,88 @@ function startProxy({ getToken, cacheDir, cacheMaxBytes, cacheTtlMs, onLog, cdnU
     // != null, not truthiness: zero is a real answer ("ask OneLake every time").
     ...(cacheTtlMs != null ? { ttlMs: cacheTtlMs } : {}),
   });
-  const opts = { getToken, dfsUpstream, tableUpstream, secret, cache, onLog, cdnUpstream, vendorDir,
+  const opts = { getToken, dfsUpstream, tableUpstream, cache, onLog, cdnUpstream, vendorDir,
                  refreshing: new Set() };
+  const servers = new Set();
 
-  const server = http.createServer((req, res) => {
-    handle(req, res, opts).catch(e => {
-      if (!res.headersSent) res.writeHead(500);
-      res.end(String((e && e.message) || e));
-    });
-  });
-
-  return new Promise((resolve, reject) => {
-    server.on('error', reject);
-    // 127.0.0.1 explicitly, never 0.0.0.0 — this port hands out the user's OneLake to
-    // anything that can reach it, and the secret is the only other lock.
-    server.listen(0, '127.0.0.1', () => {
-      const { port } = server.address();
-      const base = `http://127.0.0.1:${port}/${secret}`;
-      resolve({
-        port,
-        secret,
-        dfsOrigin: `${base}/dfs`,
-        tableOrigin: `${base}/irc`,
-        // The engine's boot bytes — wasm, worker, extensions — proxied and disk-cached
-        // like everything else, so a panel open after the first needs no CDN at all.
-        cdnOrigin: `${base}/cdn`,
-        // The bytes were read with the identity being left behind, so switching account
-        // or signing out throws them away.
-        clearCache: () => (cache ? cache.clear() : Promise.resolve()),
-        cacheSize: () => (cache ? cache.size() : Promise.resolve(0)),
-        // Settled when the start-up sweep is done and no write is in flight — what a
-        // test awaits instead of guessing a duration.
-        cacheIdle: () => (cache ? cache.idle() : Promise.resolve()),
-        cacheStatus: () => (cache ? cache.status()
-          : { usable: false, problem: 'caching is off', dir: null, maxBytes: 0, storedBytes: 0 }),
-        close: () => new Promise(done => server.close(done)),
+  function listen(listener, port) {
+    const server = http.createServer((req, res) => {
+      handle(req, res, opts, listener).catch(e => {
+        if (!res.headersSent) res.writeHead(500);
+        res.end(String((e && e.message) || e));
       });
     });
+    return new Promise((resolve, reject) => {
+      server.once('error', reject);
+      // 127.0.0.1 explicitly, never 0.0.0.0 — this port hands out the user's OneLake to
+      // anything that can reach it, and the secret is the only other lock.
+      server.listen(port, '127.0.0.1', () => {
+        server.off('error', reject);
+        listener.port = server.address().port;
+        servers.add(server);
+        resolve(server);
+      });
+    });
+  }
+
+  // The keep-alive sockets a browser holds open would make close() wait for them to time
+  // out — long enough for VS Code to give up on deactivate.
+  const shut = server => new Promise(done => {
+    servers.delete(server);
+    server.close(() => done());
+    if (server.closeAllConnections) server.closeAllConnections();
+  });
+
+  // The WEBSITE's way in (see README, "Signing in with VS Code"): a FIXED port, so a page
+  // can find it; its own secret; an exact origin list; the two OneLake routes and /pair,
+  // and nothing else — no /cdn, no /npm. Rejects with EADDRINUSE when another VS Code
+  // window already holds the port, which the caller treats as "that window is the bridge",
+  // never as a failure of this one. `onPair(origin)` resolves { allowed, account }.
+  async function startBridge({ port, origins = [], onPair } = {}) {
+    // 0 (any free port) is for the tests; the extension always passes its configured one.
+    if (!Number.isInteger(port) || port < 0 || port > 65535) throw new TypeError('startBridge needs a port');
+    if (typeof onPair !== 'function') throw new TypeError('startBridge needs an onPair(origin) function');
+    const allowed = new Set(origins.map(o => String(o).trim().replace(/\/+$/, '').toLowerCase()));
+    const bridge = {
+      name: 'bridge', secret: crypto.randomBytes(24).toString('hex'), port: 0,
+      routes: new Set(['dfs', 'irc']),
+      allowOrigin: o => allowed.has(String(o).toLowerCase()),
+      pair: onPair,
+    };
+    const server = await listen(bridge, port);
+    return { port: bridge.port, close: () => shut(server) };
+  }
+
+  const panel = {
+    name: 'panel', secret: crypto.randomBytes(24).toString('hex'), port: 0,
+    routes: new Set(['dfs', 'irc', 'cdn']),
+    allowOrigin: o => PANEL_ORIGIN.test(o),
+    pair: null,
+  };
+
+  return listen(panel, 0).then(() => {
+    const { port, secret } = panel;
+    const base = `http://127.0.0.1:${port}/${secret}`;
+    return {
+      port,
+      secret,
+      dfsOrigin: `${base}/dfs`,
+      tableOrigin: `${base}/irc`,
+      // The webview's vendored libraries (sql.js, the markdown renderer), served from the
+      // extension's own vendor directory before any network.
+      cdnOrigin: `${base}/cdn`,
+      startBridge,
+      // The bytes were read with the identity being left behind, so signing out throws
+      // them away.
+      clearCache: () => (cache ? cache.clear() : Promise.resolve()),
+      cacheSize: () => (cache ? cache.size() : Promise.resolve(0)),
+      // Settled when the start-up sweep is done and no write is in flight — what a
+      // test awaits instead of guessing a duration.
+      cacheIdle: () => (cache ? cache.idle() : Promise.resolve()),
+      cacheStatus: () => (cache ? cache.status()
+        : { usable: false, problem: 'caching is off', dir: null, maxBytes: 0, storedBytes: 0 }),
+      close: () => Promise.all([...servers].map(shut)).then(() => undefined),
+    };
   });
 }
 

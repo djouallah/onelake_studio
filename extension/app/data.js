@@ -1103,8 +1103,10 @@ export function createEngine(auth, {
         }
         return schema;
       } catch (e) {
-        // DuckDB reports a cancelled query as an error. It is not one.
-        if (/cancel/i.test(e.message || "")) throw cancelledError();
+        // DuckDB reports a cancelled query as an error. It is not one. The host marks the
+        // calls its cancel reached; matching "cancel" in the text instead turned a binder
+        // error about a column called `cancellations` into a silent "stopped".
+        if (e.cancelled) throw cancelledError();
         throw e;
       }
     });

@@ -14,6 +14,7 @@ const crypto = require('node:crypto');
 const { TextDecoder } = require('node:util');
 const { rewriteHtml } = require('./html');
 const { siteRoot } = require('./site');
+const { VENDORED_PREFIXES } = require('./vendored');
 
 // A webview is a sandboxed iframe with no CSP of its own, so this is the only thing
 // between the page and the network.
@@ -25,7 +26,10 @@ const { siteRoot } = require('./site');
 // extension host now, so the page compiles nothing and spawns nothing.
 //
 //   script-src proxy — sql.js and the markdown renderer still load through the proxy's
-//                      /cdn route, which serves them from the vendor directory.
+//                      /cdn route, which serves them from the vendor directory. PATH-scoped
+//                      to exactly the vendored packages: the whole proxy origin would let
+//                      any HTML injection load any script jsDelivr has, and a script in
+//                      this page can send SQL to a native engine.
 //   connect-src      — the proxy (every OneLake read is signed there) and cspSource, which
 //                      is how the landing query reads the packaged README.
 //
@@ -34,14 +38,22 @@ const { siteRoot } = require('./site');
 // CDN script in a page wired to an engine that runs arbitrary SQL with local filesystem
 // access would have been a complete machine. docview.js's direct-CDN fallback import is
 // the one thing this refuses, and it degrades to an error message, not a broken page.
-function csp(webview, nonce, proxyOrigin) {
+function csp(webview, nonce, proxyOrigin, cdnOrigin) {
+  const scripts = VENDORED_PREFIXES.flatMap(p => [
+    `${cdnOrigin}/cdn.jsdelivr.net${p}`,   // the imports data.js and docview.js make
+    `${proxyOrigin}${p}`,                  // the absolute /npm/ imports inside +esm files
+  ]);
   return [
     `default-src 'none'`,
     `img-src ${webview.cspSource} data: blob:`,
     `font-src ${webview.cspSource}`,
     `style-src ${webview.cspSource} 'unsafe-inline'`,
-    `script-src ${webview.cspSource} 'nonce-${nonce}' ${proxyOrigin}`,
+    `script-src ${webview.cspSource} 'nonce-${nonce}' ${scripts.join(' ')}`,
     `connect-src ${webview.cspSource} ${proxyOrigin}`,
+    // Neither is covered by default-src. A <base> would re-point every relative script
+    // URL; a form could post page content anywhere.
+    `base-uri 'none'`,
+    `form-action 'none'`,
   ].join('; ');
 }
 
@@ -52,7 +64,7 @@ async function buildHtml(webview, siteUri, cfg, proxyOrigin) {
     assetUrl: name => webview.asWebviewUri(vscode.Uri.joinPath(siteUri, name)).toString(),
     nonce,
     config: cfg,
-    cspContent: csp(webview, nonce, proxyOrigin),
+    cspContent: csp(webview, nonce, proxyOrigin, cfg.cdnOrigin),
   });
 }
 
@@ -168,6 +180,9 @@ async function openPanelUncontended(context, proxy, { onOpened, onBoot, onBootFa
   }
 
   const onEngineCall = engine ? wireEngine(panel, engine) : null;
+  // The panel's own listeners die with the panel. Pushed onto context.subscriptions they
+  // piled up — one more pair per panel ever opened in the window.
+  const disposables = [];
 
   panel.webview.onDidReceiveMessage(msg => {
     if (!msg) return;
@@ -199,9 +214,15 @@ async function openPanelUncontended(context, proxy, { onOpened, onBoot, onBootFa
       // everything between the reads: the worker, the catalog, the rendering.
       onOpened(msg);
     }
-  }, null, context.subscriptions);
+  }, null, disposables);
 
-  panel.onDidDispose(() => { current = null; ready = false; }, null, context.subscriptions);
+  panel.onDidDispose(() => {
+    current = null; ready = false;
+    // A query still scanning for a tab that no longer exists is pure cost — CPU, and a
+    // OneLake read that nobody will see.
+    if (engine) engine.call('cancel').catch(() => {});
+    for (const d of disposables.splice(0)) { try { d.dispose(); } catch (_) {} }
+  }, null, disposables);
   current = panel;
   return panel;
 }
