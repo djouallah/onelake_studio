@@ -45,6 +45,15 @@ function tableOf(batch) {
   };
 }
 
+// btoa wants a binary string; building it in slices keeps String.fromCharCode's argument
+// list far below the engine's limit for a multi-megabyte file.
+function toBase64(bytes) {
+  const u8 = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+  let s = "";
+  for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000));
+  return btoa(s);
+}
+
 let seq = 0;
 // One bridge per page. data.js's restart() asks again, and each call used to add another
 // window message listener — every result was then dispatched once per restart ever made.
@@ -85,9 +94,10 @@ export function connectNative() {
     // its table is reachable under. This is the call that replaced the manifest walk.
     openTable: target => call("openTable", [target]),
     // Bytes with no URL land in a host temp file, and the PATH comes back — data.js
-    // splices it into its SQL directly, the same way it now splices URLs. Bytes cross as
-    // a plain array: a Uint8Array does not survive VS Code's JSON message serialisation.
-    registerFileBuffer: (name, bytes) => call("registerFileBuffer", [name, Array.from(bytes)]),
+    // splices it into its SQL directly, the same way it now splices URLs. A Uint8Array does
+    // not survive VS Code's JSON message serialisation, so the bytes cross as base64: about
+    // 1.33x their size, where the plain number array this used to send was nearer 4x.
+    registerFileBuffer: (name, bytes) => call("registerFileBuffer", [name, { base64: toBase64(bytes) }]),
     dropFile: name => call("dropFile", [name]),
     getVersion: () => call("getVersion"),
     capabilities: () => call("capabilities"),

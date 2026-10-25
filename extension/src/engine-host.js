@@ -571,7 +571,11 @@ function createEngineHost({ extensionDir, onLog = () => {}, onWarn = () => {}, g
     async registerFileBuffer(name, bytes) {
       await init();
       const file = join(tmpDir, `buf_${++tmpSeq}_${name.replace(/[^\w.-]/g, '_')}`);
-      await fsp.writeFile(file, Buffer.from(bytes));
+      // { base64 } from the panel (duckdb-native.js); a plain array from older callers and
+      // the harnesses.
+      const buf = bytes && typeof bytes.base64 === 'string' ? Buffer.from(bytes.base64, 'base64')
+                                                             : Buffer.from(bytes);
+      await fsp.writeFile(file, buf);
       const path = file.replace(/\\/g, '/');
       temps.set(name, file);
       return path;

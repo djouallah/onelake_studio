@@ -71,10 +71,10 @@ async function buildHtml(webview, siteUri, cfg, proxyOrigin) {
 // One panel; invoking the command again reveals it rather than booting a second DuckDB.
 let current = null;
 
-// The page cannot be told to open a table until it exists, and it does not exist for
-// several seconds — DuckDB is a wasm bundle plus four extensions off a CDN. A click in the
-// tree that lands in that window must not be dropped, so it waits here until app.js says
-// it is listening. Only the last one is kept: they are all "show me this", and replaying a
+// The page cannot be told to open a table until it exists and its engine is up — on a
+// first run that includes DuckDB loading its extensions. A click in the tree that lands in
+// that window must not be dropped, so it waits here until app.js says it is listening.
+// Only the last one is kept: they are all "show me this", and replaying a
 // queue of them would open four tables in a row to arrive where one click asked for.
 let pending = null;
 let ready = false;
@@ -159,9 +159,8 @@ async function openPanelUncontended(context, proxy, { onOpened, onBoot, onBootFa
       host: 'vscode',
       dfsOrigin: proxy.dfsOrigin,
       tableOrigin: proxy.tableOrigin,
-      // Boot bytes come off the disk cache through this: the wasm, the worker, the
-      // extensions. Without it every panel open re-downloaded ~40MB before the first
-      // click could do anything.
+      // The webview's own libraries (sql.js, the markdown renderer) come from the vsix's
+      // vendor directory through this, so the panel needs no CDN.
       cdnOrigin: proxy.cdnOrigin,
       // The landing query reads this instead of raw.githubusercontent.com, which the CSP
       // above has no business allowing. It also documents the version that is installed

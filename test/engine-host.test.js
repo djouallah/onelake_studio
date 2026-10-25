@@ -117,6 +117,11 @@ test("native engine host", async t => {
     const path = await engine.call("registerFileBuffer", ["n.csv", Array.from(Buffer.from("a\n40\n2\n"))]);
     const r = await engine.call("query", [`SELECT sum(a) AS s FROM read_csv('${path}')`]);
     assert.equal(r.rows[0].s, 42, "a buffer the page handed over (the engine's temp directory)");
+    // ...in the shape the panel actually sends (duckdb-native.js).
+    const p64 = await engine.call("registerFileBuffer",
+      ["m.csv", { base64: Buffer.from("a\n1\n2\n").toString("base64") }]);
+    const r64 = await engine.call("query", [`SELECT sum(a) AS s FROM read_csv('${p64}')`]);
+    assert.equal(r64.rows[0].s, 3, "base64 bytes arrive intact");
   });
 
   await t.test("a closed engine stays closed", async () => {

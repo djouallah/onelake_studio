@@ -14,10 +14,9 @@
 // The token never enters the webview at all, which is strictly better than the
 // browser build, where the page holds it.
 //
-// The other half of sw.js — COOP/COEP for crossOriginIsolated — is not replaced and
-// is not missed: the engine runs the single-threaded `eh` bundle either way, because
-// the wasm_threads build of the avro extension is broken and read_avro is the Iceberg
-// manifest reader.
+// (The engine itself is native DuckDB in this process — engine-host.js — and reads
+// tables straight from OneLake; what still comes through here is the Files tab, the
+// page's catalog calls, the webview's vendored libraries, and the website's bridge.)
 //
 // No `vscode` import anywhere in this file: the token arrives as an injected async
 // function, `getToken({ fresh })`. That is what lets test/run-proxy.mjs drive it against
@@ -109,17 +108,15 @@ function hostOk(req, port) {
 }
 
 // -----------------------------------------------------------------------------
-// Making the engine cacheable to Chromium
+// Making the webview's libraries cacheable to Chromium
 // -----------------------------------------------------------------------------
-// Chromium stores a COMPILED WebAssembly module beside the resource's HTTP cache entry.
-// A response it declines to cache therefore has no code cache entry either, and 35MB of
-// duckdb-eh.wasm is recompiled from scratch on every panel open — seconds, after the
-// bytes have already arrived, which is why the read log could show `1ms hit packaged`
-// on a boot that still felt broken.
+// Chromium stores a COMPILED WebAssembly module (sql.js's) and its parsed scripts beside
+// the resource's HTTP cache entry. A response it declines to cache has neither, so every
+// panel open would pay again — measured in the duckdb-wasm days as seconds of recompiling
+// a 35MB module whose bytes had arrived in 1ms.
 //
-// That was the entire difference from the website: jsDelivr sends
-// `cache-control: immutable` plus an ETag, so Chrome caches the bytes AND the compiled
-// module, and every later visit compiles nothing. Serving the same bytes from here with
+// jsDelivr sends `cache-control: immutable` plus an ETag, so Chrome caches the bytes AND
+// the compiled module, and every later visit compiles nothing. Serving the same bytes with
 // only content-type/content-length/accept-ranges opted us out of both.
 //
 // `immutable` is honest for these: engine bytes ship inside the extension and change
@@ -179,13 +176,12 @@ function route(reqUrl, listener) {
   return { kind: m[2], rest: m[3] || '/', query };
 }
 
-// The hosts DuckDB-WASM boots from (defined beside the cache tiers — cache.js is the
-// single source). A webview has no persistent HTTP cache, so without this route every
-// panel open re-downloaded the wasm, the worker and four extensions — measured at 25-30
-// seconds that the first click of every session sat behind. Proxied, the bytes are teed
-// into the same disk cache as the data files (the URLs are version-pinned, so they are
-// immutable), and every boot after the first is local. An allowlist, not a general
-// proxy: this port must never become a way to reach arbitrary hosts from a page.
+// The CDN host the webview's libraries come from (cache.js is the single source). A
+// webview has no persistent HTTP cache, so without this route every panel open would
+// download them again. Proxied, anything not already in the vendor directory is teed into
+// the same disk cache as the data files (the URLs are version-pinned, so immutable). An
+// allowlist, not a general proxy: this port must never become a way to reach arbitrary
+// hosts from a page.
 
 // Upstream connections are kept alive and reused. Measured in the field: catalog calls
 // and first reads cost a suspiciously uniform 3–11 seconds for a few KB — the signature
@@ -525,10 +521,8 @@ async function handle(req, res, opts, listener) {
   }
   // Upstream's status is passed through untouched — 206, and 401/403/404, all of which
   // the engine reads and turns into its own diagnosis.
-  // The cdn route adds the caching contract on the way past, so a FIRST boot — the one
-  // that has no vendor file and no cache entry yet — still leaves Chromium holding the
-  // compiled wasm. Without it the very install that pays to download 35MB gets nothing
-  // back for it.
+  // The cdn route adds the caching contract on the way past, so a FIRST load — no vendor
+  // file and no cache entry yet — still leaves Chromium holding the compiled module.
   if (r.kind === 'cdn' && up.status === 200) out['cache-control'] = IMMUTABLE;
   res.writeHead(up.status, out);
   if (req.method === 'HEAD') {

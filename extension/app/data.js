@@ -304,10 +304,7 @@ export function createEngine(auth, {
   }
 
   async function _init({ quiet = false } = {}) {
-    // Stage clock. `instantiate` is the one that matters: it is where the 35MB wasm is
-    // compiled, and whether Chromium hands back a cached compilation or recompiles from
-    // scratch is the whole difference between this and the browser build. Everything
-    // else is here so that number can be read in context rather than assumed.
+    // Stage clock: the page's half of the boot, reported beside the engine host's own.
     const stages = [];
     let markAt = (typeof performance !== "undefined" ? performance.now() : Date.now());
     const mark = name => {
@@ -637,7 +634,7 @@ export function createEngine(auth, {
     if (ZIP_EXTS.has(ext)) return loadZipFile(lh, file, key, gen, check);
     const reader = readerFor(ext);
     if (ext === "xlsx" && !canXlsx)
-      throw new Error(`${file.name}: this DuckDB-WASM build has no 'excel' extension, so .xlsx can't be read.`);
+      throw new Error(`${file.name}: DuckDB's 'excel' extension is not available in this session, so .xlsx can't be read — OneLake Studio → Show Read Log says why.`);
     if (!reader)
       throw new Error(`${file.name}: unsupported file type — parquet, csv/tsv/txt, json/jsonl/ndjson, ` +
                       `avro, xlsx, zip, database files (.duckdb/.db/.sqlite) and plain text ` +

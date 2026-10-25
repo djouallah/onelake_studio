@@ -2,9 +2,9 @@
 // =============================================================================
 // catalog.js — listing OneLake from the extension host, for the tree
 // =============================================================================
-// The same four calls site/data.js makes, reimplemented here because data.js cannot be
-// loaded in Node: its first statement imports duckdb-wasm from a CDN, and this side has
-// no business booting an engine to draw a tree.
+// The same four calls site/data.js makes, reimplemented here because data.js is a browser
+// module (it needs the page's engine and window), and this side has no business booting an
+// engine to draw a tree.
 //
 // What is NOT reimplemented is the classification — which item names hold tables, what
 // kind a name means, which items have a Files/ area. Those rules are about Fabric's
