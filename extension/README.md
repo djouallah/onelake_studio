@@ -5,8 +5,9 @@ inside VS Code. Open it from the OneLake Studio icon in the activity bar, or run
 **OneLake Studio: Open** from the command palette.
 
 Sign-in is the VS Code Microsoft account you already use — there is nothing to register.
-The web version needs an Entra app registration in your own tenant, because a browser has
-no other way to get a OneLake token; VS Code does, so this does not ask.
+The extension can also **lend that sign-in to the website**, so the browser version needs
+no app registration either while VS Code is running (see *The website, signed in with VS
+Code* below).
 
 The panel is the same app that runs at
 [studio.projectscontrols.com](https://studio.projectscontrols.com/), packaged into the
@@ -22,6 +23,8 @@ extension so it works with no CDN.
 | **OneLake Studio: Refresh** | Re-reads a workspace, item or folder from OneLake instead of serving the cached listing. |
 | **OneLake Studio: Show Read Log** | Every OneLake request the extension made, with sizes and timings. |
 | **OneLake Studio: Clear Cached OneLake Data** | Empties the on-disk data cache and reports what it freed. |
+| **OneLake Studio: Open the Website, Signed In with VS Code** | Opens the website in your browser, already pointed at this window's sign-in. |
+| **OneLake Studio: Forget Websites Allowed to Use the VS Code Sign-in** | Takes back every *Always Allow*, and invalidates what an open page was handed. |
 
 ## Settings
 
@@ -30,11 +33,33 @@ extension so it works with no CDN.
 | `onelakeStudio.tenantId` | Directory (tenant) GUID to sign in against. Leave empty for your home tenant; set it to reach a tenant you are a guest in. |
 | `onelakeStudio.dataCacheGB` | Disk to spend caching OneLake data files, in GB (default 20). A new snapshot writes new files, so a cached one can never be stale. `0` caches nothing. |
 | `onelakeStudio.catalogTtlMinutes` | How old a catalog answer may be before it is refreshed (default 5). The last known answer is always served instantly and refreshed behind you, so a table you have opened before opens without waiting. |
+| `onelakeStudio.engineMemoryLimit` | Most memory DuckDB may use, e.g. `4GB`. Empty means a quarter of the machine's RAM. |
+| `onelakeStudio.bridge.enabled` | Let the website use this window's sign-in (default on). |
+| `onelakeStudio.bridge.port` | The loopback port the website looks for VS Code on (default 47731). |
+| `onelakeStudio.bridge.origins` | Exact website origins that may ask (default the demo site). Add your own deployment, or `http://localhost:5173` for development. |
+
+## The website, signed in with VS Code
+
+While this extension is running, it listens on `127.0.0.1:47731` for the OneLake Studio
+website. When the site asks — from **Sign in with VS Code** on its sign-in screen, or after
+**Open the Website, Signed In with VS Code** — VS Code shows which site wants to read
+OneLake as which account, and you allow it once or always. The site then sends its OneLake
+reads to the extension, which signs and forwards them. The token never leaves VS Code; the
+page only gets loopback URLs carrying a secret that changes whenever VS Code restarts or the
+account changes.
+
+The listener answers only the origins in `onelakeStudio.bridge.origins` and refuses any
+request not addressed to the loopback port by name (no DNS rebinding). It serves only
+OneLake reads. If another VS Code window already holds the port, that window serves the
+website and this one does not. Chrome, Edge and Firefox can reach it; Safari cannot, so the
+website falls back to its own app-registration sign-in there.
 
 ## How it works
 
-The query engine is **DuckDB running natively in the extension host** — a real DuckDB, not
-a WebAssembly build in the page. It reads Iceberg tables straight out of OneLake.
+The query engine is **DuckDB 2.0 running natively in the extension host** — a real DuckDB,
+not a WebAssembly build in the page. It reads Iceberg tables straight out of OneLake. Each
+query runs on its own connection, so Stop interrupts exactly that query, and a result past
+200,000 rows is counted rather than carried into the panel.
 
 DuckDB's HTTP reads cannot set an Authorization header, so something has to attach the
 bearer token. In the browser that is a service worker. A webview has no service worker —
@@ -43,7 +68,8 @@ bearer token. In the browser that is a service worker. A webview has no service 
 
 The token stays in the extension host and never enters the webview, which is one better
 than the browser version, where the page holds it. The port is bound to loopback only and
-every request must carry a random per-session secret in its path.
+every request must carry a random per-session secret in its path. The on-disk cache is kept
+per Microsoft account, so switching accounts never serves one account's data to another.
 
 Requires desktop VS Code on x64 or arm64 Windows, macOS or Linux: the engine is a native
 library, so this does not run on vscode.dev.

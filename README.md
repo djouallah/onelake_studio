@@ -19,9 +19,10 @@ and query its tables and files.
 ## In VS Code
 
 [**OneLake Studio**](https://marketplace.visualstudio.com/items?itemName=djouallah.onelake-studio) on
-the Marketplace is the same engine in a VS Code panel, and it needs no app registration: VS Code's own
-Microsoft account provider is a first-party application, so `getSession` returns the OneLake token
-directly. Install it, then run **OneLake Studio: Open**.
+the Marketplace is the same app in a VS Code panel, on the same DuckDB (2.0), and it needs no app
+registration: VS Code's own Microsoft account provider is a first-party application, so `getSession`
+returns the OneLake token directly. Install it, then run **OneLake Studio: Open**. It also lends that
+sign-in to the website — see [With VS Code](#with-vs-code-no-app-registration).
 
 The panel runs [`extension/app/`](extension/app/), the extension's own tracked fork of the web app —
 `site/` stays the deployed website, and the fork is where the panel diverges: sign-in is VS Code's
@@ -30,10 +31,36 @@ OneLake reads from the host instead of a service worker, so the token never ente
 
 ## Signing in
 
-Signing in is only needed to reach OneLake — the editor and engine run without it.
+Signing in is only needed to reach OneLake — the editor and engine run without it. There are two ways,
+and the first needs no setup at all.
 
-The app signs in through an Entra app registration in **your own tenant**. Create one, paste its two
-GUIDs into the sign-in screen, and this browser remembers them — a one-off. They also go in the URL:
+### With VS Code (no app registration)
+
+With the [extension](https://marketplace.visualstudio.com/items?itemName=djouallah.onelake-studio)
+installed and signed in, run **OneLake Studio: Open the Website, Signed In with VS Code** — or click
+**Sign in with VS Code** on the website's sign-in screen. VS Code asks once whether the site may use
+its sign-in (*Always Allow* remembers the answer), and from then on the website reads OneLake through
+VS Code:
+
+- The extension listens on `127.0.0.1:47731` only (`onelakeStudio.bridge.port`), answers only the
+  origins in `onelakeStudio.bridge.origins` (the demo site by default — add your own deployment), and
+  serves only OneLake reads. It asks before any website may use it.
+- **The token never reaches the page.** Pairing hands the site a pair of loopback URLs with a secret in
+  them; the extension attaches the token to each read itself. The secret changes whenever VS Code
+  restarts or the account changes.
+- The site only looks for VS Code when it has a reason to — the extension's link, a previous pairing,
+  or the button — because the first request from a website to `127.0.0.1` is a browser permission
+  prompt (*Local network access*), and a visitor who has never used the extension should not get one.
+- Chrome, Edge and Firefox can reach VS Code this way. Safari blocks `http://127.0.0.1` from an https
+  page, so Safari uses an app registration. **OneLake Studio: Forget Websites Allowed to Use the VS Code
+  Sign-in** takes every approval back.
+
+### With your own app registration
+
+When VS Code isn't there, the app signs in through an Entra app registration in **your own tenant**.
+Create one, paste its two GUIDs into the sign-in screen, and this browser remembers them — a one-off.
+They also go in the URL — and the page asks before using a registration a link proposes, because whoever
+owns a registration decides what your sign-in may be used for:
 
 ```
 https://studio.projectscontrols.com/?clientId=<application-id>&tenantId=<directory-id>
