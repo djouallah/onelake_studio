@@ -23,14 +23,12 @@
 // DOM-free: progress is reported through the injected `onStatus` callback.
 // =============================================================================
 
-// Pinned, not @latest: this is a CDN import with no lockfile behind it, so an unpinned
-// URL means every user's browser can pick up a new DuckDB the moment one is published —
-// including a build without the 'excel' extension, or with different SQL behaviour. This
-// version ships DuckDB v2.0.0 (the package's `next` tag; its version number still says
-// 1.33.1-devN) — the same DuckDB as the extension's native engine. Extensions come from
-// extensions.duckdb.org/v2.0.0/wasm_eh (avro, excel) and the community repo (h3, zipfs).
-// Bump it deliberately and re-run the format probe (test/extensions.html) when you do.
-import * as duckdb from "https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.33.1-dev110.0/+esm";
+// DuckDB-WASM is pinned in cdn.js (DuckDB v2.0.0 — the same core as the extension's native
+// engine) and imported when the engine boots, from the deployed site's own vendored copy or
+// from jsDelivr when run straight from site/. Bump it deliberately and re-run the format
+// probe (test/extensions.html) when you do.
+import { PINS, npmModule, npmFile, extensionRepos } from "./cdn.js";
+let duckdb = null;   // the module, once _init has imported it
 
 // dfsBase/dfsUrl/toHttps come in under `…At` names and are re-bound to this engine's origin
 // inside createEngine — see the note there. Import them under their plain names anywhere in
@@ -283,6 +281,38 @@ export function createEngine(auth, {
     return initPromise;
   }
 
+  // ---------------------------------------------------------------------------
+  // DuckDB extensions
+  // ---------------------------------------------------------------------------
+  // Never throws: an extension that won't load costs one format, not the engine. LOAD alone
+  // succeeds when the build already has it; otherwise INSTALL from the deployed site's own
+  // copy (cdn.js) when there is one, then from DuckDB's repository.
+  const extLoads = new Map();   // name -> Promise<boolean>, per worker
+  async function loadExtNow(ext, repo = "") {
+    try { await conn.query(`LOAD ${ext};`); return true; } catch (_) {}
+    const own = extensionRepos();
+    const sources = [own ? sqlStr(repo === "community" ? own.community : own.core) : null,
+                     repo || null, ""].filter(s => s !== null);
+    let last = null;
+    for (const from of [...new Set(sources)]) {
+      try {
+        await conn.query(`INSTALL ${ext}${from ? ` FROM ${from}` : ""}; LOAD ${ext};`);
+        return true;
+      } catch (e) { last = e; }
+    }
+    console.warn(`[engine] ${ext} extension unavailable:`, last && last.message);
+    return false;
+  }
+  function ensureExt(ext, repo = "") {
+    if (!extLoads.has(ext)) {
+      extLoads.set(ext, (async () => {
+        if (initPromise) await initPromise;
+        return serial(() => loadExtNow(ext, repo));
+      })());
+    }
+    return extLoads.get(ext);
+  }
+
   async function _init({ quiet = false } = {}) {
     if (!quiet) onStatus("Loading DuckDB-WASM…");
     // SINGLE-THREADED (`base`) BY CHOICE. DuckDB-Wasm 2.0 ships two bundles: `base` (needs
@@ -296,7 +326,13 @@ export function createEngine(auth, {
     //              pthreadWorker: DIST+"duckdb-browser-threads.pthread.worker.js" }
     // (each worker URL wrapped in a same-origin blob importScripts shim) and check avro
     // and excel still load with test/extensions.html.
-    const bundle = await duckdb.selectBundle(duckdb.getJsDelivrBundles());
+    if (!duckdb) duckdb = await import(npmModule(PINS.duckdbWasm));
+    // getJsDelivrBundles() hard-codes jsDelivr; the same two files, from wherever cdn.js
+    // says the package lives.
+    const bundle = await duckdb.selectBundle({ base: {
+      mainModule: npmFile(PINS.duckdbWasm, "dist/duckdb-base.wasm"),
+      mainWorker: npmFile(PINS.duckdbWasm, "dist/duckdb-browser-base.worker.js"),
+    } });
     const workerUrl = URL.createObjectURL(
       new Blob([`importScripts("${bundle.mainWorker}");`], { type: "text/javascript" })
     );
@@ -314,42 +350,21 @@ export function createEngine(auth, {
     for (const s of ["SET enable_http_metadata_cache = true", "SET enable_object_cache = true"]) {
       try { await conn.query(s); } catch (e) { console.warn(`[engine] ${s}: ${e.message}`); }
     }
-    // Never throws: an optional extension that won't load costs one file format, which is
-    // not a reason to refuse to start. LOAD alone succeeds when the wasm build already has
-    // the extension; INSTALL+LOAD is the fetch-from-the-repo fallback.
-    const tryLoadExt = async (ext, repo = "") => {
-      try { await conn.query(`LOAD ${ext};`); return true; }
-      catch (_) {
-        try { await conn.query(`INSTALL ${ext}${repo ? ` FROM ${repo}` : ""}; LOAD ${ext};`); return true; }
-        catch (e) { console.warn(`[engine] ${ext} extension unavailable:`, e.message); return false; }
-      }
-    };
-    // read_avro() (used to parse Iceberg manifests) comes from the 'avro' extension.
-    // duckdb-wasm autoloads it on first use; preloading up front just makes the first
-    // manifest read fast — the autoload on the first read_avro() call is the real mechanism.
-    await tryLoadExt("avro");
-    // read_xlsx() comes from 'excel'. Unlike avro this answer is remembered: the extension
-    // is fetched over the network, so it can fail for reasons the pinned version doesn't
-    // control, and offering an .xlsx that then fails to open is worse than not offering it.
-    canXlsx = await tryLoadExt("excel");
-    // h3_* (hexagonal spatial indexing) lives in the COMMUNITY repository — a plain
-    // INSTALL looks in extensions.duckdb.org and 404s, hence FROM community. Loaded at
-    // init because the editor's read-only guard blocks INSTALL/LOAD; once loaded,
-    // SELECT h3_latlng_to_cell(...) just works. No capability flag: nothing in the UI
-    // gates on h3, and a failure costs only the h3_* functions (warned by tryLoadExt).
-    if (await tryLoadExt("h3", "community")) console.log("[engine] h3 community extension loaded");
-    // zipfs (also community) is remembered like excel: it gates whether .zip files are
-    // offered in the Files tree, and offering a zip that then fails to open is worse
-    // than not offering it.
-    canZip = await tryLoadExt("zipfs", "community");
-    // `threads` is the proof, not the bundle name: >1 means the coi build actually got
-    // its SharedArrayBuffer and the isolation work is paying for itself.
-    let threads = "?";
+    // A new worker has none of the old one's extensions.
+    extLoads.clear();
+    canXlsx = canZip = null;
+    // read_avro() is the Iceberg manifest reader, so 'avro' is the one extension worth
+    // its download at boot. Everything else loads the first time it is needed (ensureExt):
+    // excel, h3 and zipfs were three network fetches every boot waited on, for formats most
+    // sessions never open.
+    await loadExtNow("avro");
+    // Which DuckDB actually answered, in the console — the pin says what was asked for.
+    let threads = "?", version = "?";
     try {
-      threads = (await conn.query(`SELECT current_setting('threads') AS t`)).toArray()[0].toJSON().t;
+      const r = (await conn.query(`SELECT current_setting('threads') AS t, version() AS v`)).toArray()[0].toJSON();
+      threads = r.t; version = r.v;
     } catch (_) {}
-    console.log(`[engine] DuckDB ready — bundle=${basename(bundle.mainModule)}, ` +
-                `crossOriginIsolated=${self.crossOriginIsolated}, threads=${threads}`);
+    console.log(`[engine] DuckDB ${version} ready — bundle=${basename(bundle.mainModule)}, threads=${threads}`);
     engineAlive = true;   // only now may the watchdog terminate this worker
     return { db, conn };
   }
@@ -527,12 +542,14 @@ export function createEngine(auth, {
   // time (lazily, on expand) and a recognised data file is opened as a view the same way
   // table data files are — registerFileURL, then whichever reader the extension names.
   // The reader table itself lives in paths.js.
+  // canXlsx / canZip are null until the extension has been tried: an untried format is
+  // offered, and the first open loads it (or says why it could not).
   const isQueryable = name => {
     const ext = fileExt(name);
     if (DB_EXTS.has(ext)) return true;      // ATTACHed read-only, not read through a reader
-    if (ZIP_EXTS.has(ext)) return canZip;   // entries opened as views, not the archive itself
+    if (ZIP_EXTS.has(ext)) return canZip !== false;   // entries opened as views
     if (!readerFor(ext)) return false;
-    return ext === "xlsx" ? canXlsx : true;
+    return ext === "xlsx" ? canXlsx !== false : true;
   };
 
   // One level of Files/ (or a subdirectory of it). `dir` is relative to Files/.
@@ -684,8 +701,8 @@ export function createEngine(auth, {
     if (DB_EXTS.has(ext)) return loadDatabaseFile(lh, file, key, gen, check);
     if (ZIP_EXTS.has(ext)) return loadZipFile(lh, file, key, gen, check);
     const reader = readerFor(ext);
-    if (ext === "xlsx" && !canXlsx)
-      throw new Error(`${file.name}: this DuckDB-WASM build has no 'excel' extension, so .xlsx can't be read.`);
+    if (ext === "xlsx" && !(canXlsx = await ensureExt("excel")))
+      throw new Error(`${file.name}: DuckDB's 'excel' extension could not be loaded, so .xlsx can't be read.`);
     if (!reader)
       throw new Error(`${file.name}: unsupported file type — parquet, csv/tsv/txt, json/jsonl/ndjson, ` +
                       `avro, xlsx, zip, database files (.duckdb/.db/.sqlite) and plain text ` +
@@ -724,8 +741,8 @@ export function createEngine(auth, {
   // becomes its own view; the archive itself has no rows to show.
   const ZIP_MAX_VIEWS = 50;
   async function loadZipFile(lh, file, key, gen, check) {
-    if (!canZip)
-      throw new Error(`${file.name}: this DuckDB-WASM build couldn't load the 'zipfs' extension, so zip archives can't be read.`);
+    if (!(canZip = await ensureExt("zipfs", "community")))
+      throw new Error(`${file.name}: DuckDB's 'zipfs' extension could not be loaded, so zip archives can't be read.`);
     const status = statusFor(gen);
     const res = track(key);
     res.gen = gen;
@@ -740,7 +757,7 @@ export function createEngine(auth, {
          WHERE NOT is_directory ORDER BY file_name`)).toArray().map(r => r.toJSON());
       let readable = entries.filter(e => {
         const x = fileExt(e.n);
-        return readerFor(x) && (x !== "xlsx" || canXlsx);
+        return readerFor(x) && (x !== "xlsx" || canXlsx !== false);
       });
       const warnings = [];
       if (readable.length > ZIP_MAX_VIEWS) {
@@ -856,9 +873,8 @@ export function createEngine(auth, {
   // dependency. Each table lands as <alias>.<table> (a schema, not an attached database,
   // so the qualifier is two-part). BLOBs don't survive the JSON hop and are nulled with
   // a warning rather than silently mangled.
-  const SQLJS_VERSION = "1.13.0";
-  const SQLJS_ESM = `https://cdn.jsdelivr.net/npm/sql.js@${SQLJS_VERSION}/+esm`;
-  const SQLJS_DIST = `https://cdn.jsdelivr.net/npm/sql.js@${SQLJS_VERSION}/dist/`;
+  const SQLJS_ESM = npmModule(PINS.sqljs);
+  const SQLJS_DIST = npmFile(PINS.sqljs, "dist/");
   const SQLITE_MAX_BYTES = 200e6;
   let _sqljs = null;
 
@@ -1667,16 +1683,30 @@ export function createEngine(auth, {
     try {
       // Map each data file to a generated name pointing at its https URL, so DuckDB
       // range-reads it instead of us downloading it whole.
-      for (const p of paths) {
-        // The hundreds-of-round-trips loop, and so the one that most needs a way out.
+      //
+      // In batches. One awaited registration per file was hundreds of worker round trips
+      // in a row on a large table; the worker handles its messages in order, so a batch in
+      // flight together costs about one. The first file goes alone, so the quick peek can
+      // start painting while the rest register. A failure in a batch still records every
+      // registration that DID land, so release() can drop them.
+      const REG_BATCH = 64;
+      for (let i = 0; i < paths.length; ) {
         check();
-        const reg = `data_${++_seq}.parquet`;
-        await guarded(() => db.registerFileURL(reg, toHttps(ws, p), duckdb.DuckDBDataProtocol.HTTP, false));
-        regLog.set(reg, Date.now());
-        res.regs.push(reg);
-        regs.push(reg);
-        pairs.push([reg, p]);
-        if (regs.length === 1) quickPeek(reg);
+        const batch = paths.slice(i, i === 0 ? 1 : i + REG_BATCH).map(p => [`data_${++_seq}.parquet`, p]);
+        i += batch.length;
+        const settled = await Promise.allSettled(batch.map(([reg, p]) =>
+          guarded(() => db.registerFileURL(reg, toHttps(ws, p), duckdb.DuckDBDataProtocol.HTTP, false))));
+        let failure = null;
+        settled.forEach((s, j) => {
+          if (s.status === "rejected") { failure = failure || s.reason; return; }
+          const [reg, p] = batch[j];
+          regLog.set(reg, Date.now());
+          res.regs.push(reg);
+          regs.push(reg);
+          pairs.push([reg, p]);
+        });
+        if (failure) throw failure;
+        if (i === 1) quickPeek(regs[0]);
       }
       stage = "reading delete files";
       delTable = posDeletes.length ? await loadPositionDeletes(key, ws, posDeletes) : null;
@@ -1799,8 +1829,14 @@ export function createEngine(auth, {
   // The parsing and the guard live in paths.js, where they are tested: doing this with a
   // pair of regexes used to eat a /* */ that was part of a string value — changing the
   // result set with no error at all — and reject a perfectly legal SELECT 'a;b'.
+  // The editor's read-only guard refuses INSTALL/LOAD, so an extension a query needs is
+  // loaded HERE, the first time its functions appear, rather than at every boot.
   async function runSql(sql) {
-    return materialize(prepareReadOnlySql(sql));
+    const clean = prepareReadOnlySql(sql);
+    if (/\bh3_\w+\s*\(/i.test(clean)) await ensureExt("h3", "community");
+    if (/\bread_xlsx\s*\(/i.test(clean)) canXlsx = await ensureExt("excel");
+    if (/\bzip_contents\s*\(|'zip:\/\//i.test(clean)) canZip = await ensureExt("zipfs", "community");
+    return materialize(clean);
   }
 
   // A statement's whole result as plain JS, in the shape the results grid renders.

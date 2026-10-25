@@ -12,9 +12,10 @@
 // msal (auth.js).
 // =============================================================================
 import { docKind, escapeHtml } from './paths.js';
+import { PINS, npmModule } from './cdn.js';
 
-const MARKED_ESM = 'https://cdn.jsdelivr.net/npm/marked@18.0.7/+esm';
-const DOMPURIFY_ESM = 'https://cdn.jsdelivr.net/npm/dompurify@3.4.12/+esm';
+const MARKED_ESM = npmModule(PINS.marked);
+const DOMPURIFY_ESM = npmModule(PINS.dompurify);
 
 let _md = null;   // { marked, purify } once loaded
 

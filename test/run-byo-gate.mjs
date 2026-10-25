@@ -12,11 +12,12 @@ import { chromium } from "playwright-core";
 const root = join(fileURLToPath(new URL(".", import.meta.url)), "..");
 const PORT = 5199;
 const MIME = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8",
-               ".css": "text/css", ".json": "application/json" };
+               ".css": "text/css", ".json": "application/json", ".wasm": "application/wasm",
+               ".mjs": "text/javascript; charset=utf-8", ".md": "text/markdown; charset=utf-8" };
 const server = http.createServer(async (req, res) => {
   const path = new URL(req.url, "http://x").pathname;
   try {
-    const file = join(root, "site", path === "/" ? "index.html" : path.slice(1));
+    const file = join(root, process.env.SITE_DIR || "site", path === "/" ? "index.html" : path.slice(1));
     const body = await readFile(file);
     res.writeHead(200, { "content-type": MIME[extname(file)] || "application/octet-stream" });
     res.end(body);
@@ -48,6 +49,8 @@ try {
   const page = await ctx.newPage();
   const errors = [];
   page.on("pageerror", e => errors.push(e.message));
+  // A Content-Security-Policy refusal is logged, not thrown, and breaks the page quietly.
+  page.on("console", m => { if (/Content.Security.Policy/i.test(m.text())) errors.push("CSP: " + m.text()); });
 
   // --- First run: config.js ships an empty clientId ------------------------
   await page.goto(`http://127.0.0.1:${PORT}/`);

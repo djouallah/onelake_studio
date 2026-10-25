@@ -1,7 +1,8 @@
 # Publish the app to GitHub Pages on every push to main.
 #
-# "Build" is just build.mjs copying site/ -> dist/ — the app is plain HTML/JS and loads
-# DuckDB-WASM and MSAL from a CDN, so there is no bundler and nothing to install. The
+# "Build" is build.mjs copying site/ -> dist/ and vendoring every pinned package (DuckDB-WASM,
+# MSAL, sql.js, the markdown renderer) and DuckDB extension into it — the deployed page loads
+# no executable code from a third party. No bundler. The
 # artifact is served at https://studio.projectscontrols.com/ (site/CNAME rides along in
 # the copy, which is what tells Pages the custom domain).
 name: Deploy to GitHub Pages
@@ -32,21 +33,32 @@ jobs:
       # site/paths.js is plain ESM with no dependencies, so the suite runs straight off a
       # checkout with no npm install. A red suite must not reach Pages.
       - run: npm test
-      # The site in a real browser before it goes live: DuckDB-WASM boots off the pinned CDN
-      # build and answers the README landing query; the sign-in gate behaves (no silent
+      # Builds dist/ — including the vendored copy of every package and DuckDB extension —
+      # and fails if the deployed page's Content-Security-Policy could not be tightened.
+      - run: npm run build
+      - name: The deployed copy is self-contained
+        run: |
+          grep -q 'vendored: true' dist/version.js
+          ! grep -q 'script-src[^;"]*cdn.jsdelivr.net' dist/index.html
+          test -s dist/npm/@duckdb/duckdb-wasm@*/dist/duckdb-base.wasm
+          test -s dist/duckdb-extensions/core/v2.0.0/wasm_eh/avro.duckdb_extension.wasm
+          test -s dist/README.md
+      # The BUILT site in a real browser before it goes live — the exact files Pages will
+      # serve, vendored packages and strict CSP included: DuckDB-WASM boots and answers the
+      # README landing query with no CSP refusal; the sign-in gate behaves (no silent
       # registration switch from a link, no VS Code probe without a reason); and signing in
       # with VS Code works end to end against the extension's real proxy and bridge.
       # playwright-core only — the runner's own Chrome is what drives the pages.
       - name: Browser checks
         env:
           CHROME_PATH: /usr/bin/google-chrome
+          SITE_DIR: dist
         run: |
           npm install --no-save --no-package-lock --no-audit --no-fund \
             --registry https://registry.npmjs.org playwright-core@1
           node test/run-boot-smoke.mjs
           node test/run-byo-gate.mjs
           node test/run-bridge-smoke.mjs
-      - run: npm run build
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

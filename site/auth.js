@@ -16,7 +16,8 @@
 //   fetch(url, { headers: auth.getHeaders() });
 // =============================================================================
 
-const MSAL_ESM = "https://cdn.jsdelivr.net/npm/@azure/msal-browser@3.28.1/+esm";
+import { PINS, npmModule } from "./cdn.js";
+// MSAL is pinned in cdn.js and served from the deployed site's own copy when there is one.
 const OL_SCOPES = ['https://storage.azure.com/user_impersonation'];
 
 // =============================================================================
@@ -168,11 +169,12 @@ function createConfigErrorAuth(message, mode = 'error') {
 }
 
 // --- MSAL provider: Entra SPA public client, OneLake bearer token. ---
-// REDIRECT auth (not popup): the service worker sets COOP: same-origin to get
-// crossOriginIsolated for DuckDB multi-threading, which severs the popup<->opener link once the
-// popup bounces through login.microsoftonline.com — so loginPopup can't return the token after the
-// session expires. A full-page redirect is COOP-safe. Redirect throws "redirect_in_iframe" inside
-// the Fabric portal iframe, but we never auth there (app.js shows "open in tab" instead).
+// POPUP first, redirect as the fallback. The popup keeps the page — the loaded tables, the
+// query being written, DuckDB itself — where a redirect throws all of it away and boots
+// again. It was impossible while the service worker stamped COOP: same-origin on every
+// page (that severs the popup's link back once it bounces through login.microsoftonline.com);
+// that is gone (see sw.js). A blocked popup falls back to the full-page redirect. Inside the
+// Fabric portal iframe neither is attempted — app.js offers "open in a tab" instead.
 function createMsalAuth(cfg, { onExpired } = {}) {
   const MSAL_CONFIG = {
     auth: {
@@ -280,9 +282,36 @@ function createMsalAuth(cfg, { onExpired } = {}) {
   // freely) then found Cache Storage empty and had nothing to sign DuckDB's reads with,
   // and DuckDB reports that as "Failed to open file", not as an auth problem. 'pageshow'
   // is the only event that fires on a bfcache restore.
+  //
+  // ...but only when this is the LAST tab. The durable copy is shared by every tab of this
+  // origin, and the worker that signs their reads is shared too; closing one of two tabs
+  // used to delete it under the other, which then sat on the 3-second need-token round trip
+  // the next time the browser restarted the worker. Tabs count each other on a
+  // BroadcastChannel: hello on arrival, here in reply, bye on the way out.
+  const tabId = Math.random().toString(36).slice(2);
+  const otherTabs = new Set();
+  let tabs = null;
   try {
-    window.addEventListener('pagehide', () => { forgetDurableToken(); });
-    const rearm = () => { if (haveToken()) publishToken(); };
+    tabs = new BroadcastChannel('onelake-studio-tabs');
+    tabs.onmessage = e => {
+      const m = e.data || {};
+      if (!m.id || m.id === tabId) return;
+      if (m.t === 'hello') { otherTabs.add(m.id); tabs.postMessage({ t: 'here', id: tabId }); }
+      else if (m.t === 'here') otherTabs.add(m.id);
+      else if (m.t === 'bye') otherTabs.delete(m.id);
+    };
+    tabs.postMessage({ t: 'hello', id: tabId });
+  } catch (_) { /* no BroadcastChannel — behave as the only tab */ }
+  try {
+    window.addEventListener('pagehide', () => {
+      try { if (tabs) tabs.postMessage({ t: 'bye', id: tabId }); } catch (_) {}
+      if (!otherTabs.size) forgetDurableToken();
+    });
+    const rearm = () => {
+      // Back from the bfcache: the others were told this tab left, so say hello again.
+      try { if (tabs) tabs.postMessage({ t: 'hello', id: tabId }); } catch (_) {}
+      if (haveToken()) publishToken();
+    };
     window.addEventListener('pageshow', rearm);
     // Belt and braces for the other way a worker can die under a live page: the tab sat in
     // the background long enough to be frozen. Cheap — publishToken is a no-op write when
@@ -341,7 +370,7 @@ function createMsalAuth(cfg, { onExpired } = {}) {
   // deploy never fetches it.
   async function initMsal() {
     if (_msalApp) return;
-    const msal = await import(MSAL_ESM);
+    const msal = await import(npmModule(PINS.msal));
     _msalApp = new msal.PublicClientApplication(MSAL_CONFIG);
     await _msalApp.initialize();
     // Process a redirect response if we're returning from acquireTokenRedirect.
@@ -401,6 +430,17 @@ function createMsalAuth(cfg, { onExpired } = {}) {
       return true;
     } catch (e) { /* no usable session -> need interaction */ }
     if (!interactive) return false;
+    try {
+      const r = await _msalApp.acquireTokenPopup({ scopes: OL_SCOPES });
+      _msalApp.setActiveAccount(r.account);
+      await keep(r);
+      return true;
+    } catch (e) {
+      // Closing the popup is an answer, not a reason to navigate the page away.
+      if (/user_cancelled/.test(authErrorText(e))) return false;
+      // A blocked or unopenable popup is not; the redirect still works.
+      if (!/popup_window_error|empty_window_error|popup_window|block_nested_popups/i.test(authErrorText(e))) throw e;
+    }
     await _msalApp.acquireTokenRedirect({ scopes: OL_SCOPES });   // navigates away
     return false;
   }
@@ -468,15 +508,25 @@ function createMsalAuth(cfg, { onExpired } = {}) {
 // Does this failure mean "nobody has consented to this registration's Azure Storage
 // permission"? That case gets an actionable block on the gate (the registration form)
 // rather than a sentence, so app.js needs to recognise it.
+//
+// MSAL 5 moved its own error texts out of the bundle: `message` is now just a link to the
+// docs. What says what happened is `errorCode` (stable across versions), `subError`, and
+// `errorMessage` — which, for an answer from Entra, carries Entra's own AADSTS sentence.
+export function authErrorText(e) {
+  if (!e) return '';
+  if (typeof e !== 'object') return String(e);
+  return [e.errorCode, e.subError, e.errorMessage, e.message].filter(Boolean).join(' — ');
+}
+
 export function isConsentError(e) {
-  const msg = (e && e.message) || String(e);
+  const msg = authErrorText(e);
   return /AADSTS65001|AADSTS90094|AADSTS900941|consent_required|interaction_required/.test(msg);
 }
 
 // Turn an MSAL/Entra failure into something that names the fix. These are the setup
 // mistakes this app can actually produce; anything else falls through unchanged.
 export function describeAuthError(e) {
-  const msg = (e && e.message) || String(e);
+  const msg = authErrorText(e);
   const uri = appRedirectUri();
   if (/AADSTS9002326/.test(msg))
     return `This app's redirect URI is registered under the wrong platform in Entra. It must be added under "Single-page application", not "Web" or "Mobile & desktop applications". (${uri})`;

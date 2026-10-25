@@ -136,7 +136,7 @@ function explainRead(message) {
   out += ` [build ${(window.ONELAKE_STUDIO_VERSION || {}).commit || 'dev'}; ` +
     (swc ? 'the service worker is controlling this page'
          : 'the service worker is NOT controlling this page, so DuckDB reads go out unsigned — reload the page') +
-    `; crossOriginIsolated ${!!self.crossOriginIsolated}` +
+    `; packages ${(window.ONELAKE_STUDIO_VERSION || {}).vendored ? "from this site" : "from jsDelivr"}` +
     `; page-side token ${Object.keys(auth.getHeaders()).length ? 'held' : 'absent'}` +
     (recent ? '' :
      stale ? `; last read failure the worker reported: HTTP ${f.status} for ${f.pathname}, ${Math.round((Date.now() - f.at) / 1000)}s ago${f.signed === false ? ', sent unsigned' : ''}`
@@ -451,8 +451,14 @@ const PENDING_SQL_KEY = 'onelake-studio-pending-sql';
 // The landing page is a query result: on a fresh boot the app reads its own README
 // through the engine and the Pretty view renders it. The docs demonstrate the tool
 // by being served by it.
-const README_SQL =
-  "select content from read_text('https://raw.githubusercontent.com/djouallah/onelake_studio/refs/heads/main/README.md')";
+//
+// A deployed build carries its own copy (build.mjs), so the docs come from this origin and
+// describe the build that is running; run straight from site/, there is no copy and the
+// repository's is read instead.
+const README_URL = (window.ONELAKE_STUDIO_VERSION || {}).builtAt
+  ? new URL('README.md', document.baseURI).href
+  : 'https://raw.githubusercontent.com/djouallah/onelake_studio/refs/heads/main/README.md';
+const README_SQL = `select content from read_text('${README_URL.replace(/'/g, "''")}')`;
 
 // Every handler, wired before anything is awaited. It used to happen after engine.init(),
 // which was also what kept connect()/runQuery() off a null engine; that guarantee now
@@ -1741,6 +1747,14 @@ function setBusy(b, { stoppable = false } = {}) {
 // listItems are plain authed fetches, and the two calls that do need the engine —
 // connect() and runQuery() — await engineReady themselves.
 const EMBEDDED = window.self !== window.top;   // inside an embedding iframe?
+
+// This page is also MSAL's redirect bridge (msal-return.js): a sign-in popup or a silent
+// renewal iframe lands HERE with the answer in its URL, hands it to the window that asked,
+// and closes. In that role the app must not boot at all — no DuckDB download, no sign-in
+// attempt of its own inside a popup that is about to close.
+if (!window.ONELAKE_MSAL_BRIDGE) boot();
+
+function boot() {
 $('byoLink').onclick = () => showByoForm();
 $('gateClose').onclick = () => { $('authGate').style.display = 'none'; };
 initSidebarToggle();
@@ -1789,3 +1803,4 @@ engineReady = engine.init();
     showAuthFailure(e);
   }
 })();
+}
