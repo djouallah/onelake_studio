@@ -15,3 +15,4 @@ extension/vendor/
 # DuckDB extension binaries for one platform, fetched by extension/fetch-extensions.mjs at
 # package time.
 extension/duckdb-extensions/
+test-shots/

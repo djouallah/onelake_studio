@@ -6,7 +6,7 @@
 // CI runs it against dist/ (SITE_DIR=dist), where the compiler is the vendored copy and the
 // Content-Security-Policy refuses anything else. Run: node test/run-semantic-smoke.mjs
 import http from "node:http";
-import { readFile } from "node:fs/promises";
+import { readFile, mkdir } from "node:fs/promises";
 import { join, extname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
@@ -127,6 +127,8 @@ try {
       sample: m.sample, rewrite: semantic.rewrite, run, setStatus: () => {} });
   }, BIM);
 
+  await mkdir("test-shots", { recursive: true });
+  await page.screenshot({ path: "test-shots/model.png", fullPage: true });
   // Model: a card per table, a line per relationship.
   const cards = await page.locator("#modelView .m-card").count();
   const rels = await page.locator("#modelView .m-rel").count();
@@ -153,8 +155,23 @@ try {
   await page.waitForFunction(() => /rows?$|Error/.test(document.querySelector("#modelView .ex-info").textContent), { timeout: 60000 });
   const exInfo = await page.locator("#modelView .ex-info").innerText();
   const canvas = await page.locator("#modelView .ex-chart canvas").count();
-  console.log(`explore page: ${exInfo}, ${canvas} canvas`);
+  // A canvas is not a chart: count the pixels in the first series' colour (#3987e5), after
+  // ECharts' entry animation, and say how big the canvas is.
+  await page.waitForTimeout(1500);
+  const drawn = await page.evaluate(() => {
+    const c = document.querySelector("#modelView .ex-chart canvas");
+    const box = document.querySelector("#modelView .ex-chart").getBoundingClientRect();
+    if (!c) return { box: [box.width, box.height] };
+    const d = c.getContext("2d").getImageData(0, 0, c.width, c.height).data;
+    let bar = 0;
+    for (let i = 0; i < d.length; i += 4)
+      if (Math.abs(d[i] - 0x39) < 24 && Math.abs(d[i + 1] - 0x87) < 24 && Math.abs(d[i + 2] - 0xe5) < 24 && d[i + 3] > 128) bar++;
+    return { box: [box.width, box.height], canvas: [c.width, c.height], bar };
+  });
+  await page.screenshot({ path: "test-shots/explore.png", fullPage: true });
+  console.log(`explore page: ${exInfo}, ${canvas} canvas, ${JSON.stringify(drawn)}`);
   if (!/^2 rows$/.test(exInfo) || !canvas) throw new Error(`Explore: ${exInfo}, ${canvas} canvas`);
+  if (!(drawn.bar > 200)) throw new Error(`Explore drew no bars: ${JSON.stringify(drawn)}`);
 
   if (csp.length) throw new Error(`Content-Security-Policy refused something: ${csp.join(" | ")}`);
   if (process.env.SITE_DIR === "dist" && thirdParty.length)

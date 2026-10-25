@@ -62,6 +62,13 @@ jobs:
           node test/run-byo-gate.mjs
           node test/run-bridge-smoke.mjs
           node test/run-semantic-smoke.mjs
+      - name: Screenshots of the model view
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: model-view-shots
+          path: test-shots/
+          if-no-files-found: ignore
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
