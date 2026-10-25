@@ -1,7 +1,8 @@
 # OneLake Studio
 
 > **A personal project, built for learning.** It is not a Microsoft product, is not supported by
-> Microsoft, and the views and choices in it are my own.
+> Microsoft, the views and choices in it are my own, and there is no guarantee that DAX compiled to
+> SQL here gives the same results as Power BI.
 
 A static web app — a folder of HTML and JavaScript with no backend — so it runs from anywhere that
 serves files: GitHub Pages, a blob container, a company intranet, or `npx serve` on your own machine.
