@@ -20,6 +20,13 @@ export const PINS = {
   duckdbWasm: "@duckdb/duckdb-wasm@1.33.1-dev110.0",
   // The DuckDB core version above — the path DuckDB's extension repositories use.
   duckdbCore: "v2.0.0",
+  // ...and the path this BUILD asks for. The package is compiled from the v2.0.0 tag's
+  // commit, but from an untagged checkout, so it calls itself v2.0.0-dev88614 and requests
+  // extensions under the commit id — a path no DuckDB repository has. Measured: every
+  // extension 404'd there and the site booted with no avro, i.e. no Iceberg manifests.
+  // The binaries under v2.0.0 ARE built from this commit; data.js loads them by full URL
+  // (with the version-string check relaxed) and build.mjs vendors them under this id.
+  duckdbSourceId: "d54cbbe3df",
   // MSAL 5: every sign-in answer comes back through a redirect bridge — msal-return.js.
   msal: "@azure/msal-browser@5.26.0",
   sqljs: "sql.js@1.13.0",
@@ -75,6 +82,16 @@ export function npmFile(pkg, path) {
 export function extensionRepos() {
   const v = vendoredBase();
   return v ? { core: `${v}/duckdb-extensions/core`, community: `${v}/duckdb-extensions/community` } : null;
+}
+
+// The release binary of one extension, by full URL — what data.js falls back to when no
+// repository has the path this build asks for (see duckdbSourceId).
+export const EXTENSION_HOSTS = {
+  core: "https://extensions.duckdb.org",
+  community: "https://community-extensions.duckdb.org",
+};
+export function extensionUrl(name, repo = "core") {
+  return `${EXTENSION_HOSTS[repo]}/${PINS.duckdbCore}/wasm_eh/${name}.duckdb_extension.wasm`;
 }
 
 export const isVendored = () => !!vendoredBase();

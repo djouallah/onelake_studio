@@ -46,6 +46,27 @@ try {
   console.log("status:", status);
   for (const l of engineLines) console.log(l);
   if (csp.length) throw new Error(`Content-Security-Policy refused something: ${csp.join(" | ")}`);
+
+  // A query through the app's own SQL path; the status line says how it went.
+  const run = async sql => {
+    await page.fill("#sqlEditor", sql);
+    await page.evaluate(() => { document.getElementById("status").textContent = "(running)"; });
+    await page.click("#runBtn");
+    await page.waitForFunction(() => /row\(s\) in|error/i.test(document.getElementById("status").innerText),
+                               { timeout: 90000 });
+    return { status: await page.locator("#status").innerText(),
+             table: await page.locator("#resultsTable").innerText().catch(() => "") };
+  };
+  // avro IS the Iceberg manifest reader: without it no table opens, while the README and
+  // plain SQL still work — exactly how a broken extension path once shipped unnoticed.
+  const avro = await run("SELECT count(*) AS loaded FROM duckdb_extensions() WHERE loaded AND extension_name = 'avro'");
+  if (!/^1 row/.test(avro.status) || !/\b1\b/.test(avro.table))
+    throw new Error(`the avro extension is not loaded (${avro.status}): ${engineLines.join(" | ")}`);
+  console.log("avro: loaded");
+  // h3 is a COMMUNITY extension loaded on first use — the lazy path and the other repository.
+  const h3 = await run("SELECT h3_latlng_to_cell(37.77, -122.41, 5) AS cell");
+  if (!/^1 row/.test(h3.status)) throw new Error(`h3 did not load on first use: ${h3.status}`);
+  console.log("h3: loaded on first use");
   const version = await page.evaluate(async () => {
     // The engine's own answer to which DuckDB this is, through the app's SQL path.
     return (window.ONELAKE_STUDIO_VERSION || {});

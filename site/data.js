@@ -27,7 +27,7 @@
 // engine) and imported when the engine boots, from the deployed site's own vendored copy or
 // from jsDelivr when run straight from site/. Bump it deliberately and re-run the format
 // probe (test/extensions.html) when you do.
-import { PINS, npmModule, npmFile, extensionRepos } from "./cdn.js";
+import { PINS, npmModule, npmFile, extensionRepos, extensionUrl } from "./cdn.js";
 let duckdb = null;   // the module, once _init has imported it
 
 // dfsBase/dfsUrl/toHttps come in under `…At` names and are re-bound to this engine's origin
@@ -287,20 +287,36 @@ export function createEngine(auth, {
   // Never throws: an extension that won't load costs one format, not the engine. LOAD alone
   // succeeds when the build already has it; otherwise INSTALL from the deployed site's own
   // copy (cdn.js) when there is one, then from DuckDB's repository.
+  //
+  // The pinned build calls itself a dev build and asks repositories for a path none of them
+  // has (cdn.js, duckdbSourceId) — so the attempts run in this order, and the first that
+  // loads wins: the deployed site's own copy (vendored under the path the build asks for),
+  // the v2.0.0 release binary by full URL, then DuckDB's own repository as named.
+  // allow_extensions_metadata_mismatch lets a binary built from this exact commit but
+  // stamped "v2.0.0" load into an engine stamped "dev"; the signature is still checked.
   const extLoads = new Map();   // name -> Promise<boolean>, per worker
+  let mismatchAllowed = false;
   async function loadExtNow(ext, repo = "") {
     try { await conn.query(`LOAD ${ext};`); return true; } catch (_) {}
-    const own = extensionRepos();
-    const sources = [own ? sqlStr(repo === "community" ? own.community : own.core) : null,
-                     repo || null, ""].filter(s => s !== null);
-    let last = null;
-    for (const from of [...new Set(sources)]) {
-      try {
-        await conn.query(`INSTALL ${ext}${from ? ` FROM ${from}` : ""}; LOAD ${ext};`);
-        return true;
-      } catch (e) { last = e; }
+    if (!mismatchAllowed) {
+      try { await conn.query("SET allow_extensions_metadata_mismatch = true;"); } catch (_) {}
+      mismatchAllowed = true;
     }
-    console.warn(`[engine] ${ext} extension unavailable:`, last && last.message);
+    const kind = repo === "community" ? "community" : "core";
+    const own = extensionRepos();
+    const url = extensionUrl(ext, kind);
+    const attempts = [
+      own && `INSTALL ${ext} FROM ${sqlStr(own[kind])}; LOAD ${ext};`,
+      `LOAD ${sqlStr(url)};`,
+      `INSTALL ${sqlStr(url)}; LOAD ${ext};`,
+      `INSTALL ${ext}${repo ? ` FROM ${repo}` : ""}; LOAD ${ext};`,
+    ].filter(Boolean);
+    const errors = [];
+    for (const sql of attempts) {
+      try { await conn.query(sql); return true; }
+      catch (e) { errors.push(e && e.message); }
+    }
+    console.warn(`[engine] ${ext} extension unavailable:`, errors.join(" | "));
     return false;
   }
   function ensureExt(ext, repo = "") {
