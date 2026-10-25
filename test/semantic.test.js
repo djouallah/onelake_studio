@@ -5,7 +5,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { modelName, directLakeTables, registerModel, rewrite } from "../site/semantic.js";
+import { modelName, directLakeTables, registerModel, rewrite, tablesFor } from "../site/semantic.js";
 
 const WS = "11111111-2222-3333-4444-555555555555";
 const LH = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
@@ -71,6 +71,12 @@ test("a query that names the model is compiled, and opens only the tables it rea
   const two = rewrite('SELECT AGG(x) FROM "nem"');
   assert.equal(two.sql, 'SELECT * FROM "mart_aaaaaaaa"."fact_sales" JOIN "Imported"');
   assert.deepEqual(two.tables.map(x => x.t), [{ schema: "mart", table: "fact_sales" }]);
+});
+
+test("tablesFor: the Direct Lake tables a compiled SQL reads, once each", () => {
+  const sql = 'SELECT * FROM "dbo_aaaaaaaa"."Region" r JOIN "dbo_aaaaaaaa"."Region" s USING (Name)';
+  assert.deepEqual(tablesFor(sql).map(x => x.t), [{ schema: "dbo", table: "Region" }]);
+  assert.deepEqual(tablesFor("SELECT 1"), []);
 });
 
 test("every other query is left alone", () => {

@@ -143,19 +143,29 @@ conversion; resolution retries with a backoff sized to the documented 5s–2min 
 status line, and Stop works throughout. If the catalog refuses, the app shows what it said rather than
 guessing.
 
-**On the website, a `.bim` under `Files/` is a semantic model you can query.** Opening one draws its diagram and also
-registers it under the file's name (`nem.bim` is `nem`), with a query of it in the editor:
+**On the website, a `.bim` under `Files/` opens as its semantic model**, in place of the editor, on
+three pages:
 
-```sql
-SELECT dim_region.Region, AGG("Registered MW") AS mw FROM nem GROUP BY ALL
-```
+- **Model**: its tables as a star, dimensions in the middle and facts around them, with its
+  relationships. Click a table for its columns, measures (with their DAX) and relationships.
+- **SQL**: SQL in which `SELECT … FROM <model>` asks the model. `AGG(m)` is measure `m`, computed
+  with DAX's semantics by [dax-sql](https://github.com/djouallah/dax-sql), which compiles the
+  query to plain SQL in the tab:
 
-`AGG(m)` is measure `m`, computed with DAX's semantics by [dax-sql](https://github.com/djouallah/dax-sql),
-which compiles the query to plain SQL in the tab. A model query can also be a subquery or CTE inside
-SQL of your own. `DESCRIBE nem` lists the model's columns and measures. A Direct Lake table is read
-from the lakehouse its model names, through the same Iceberg catalog, whichever item is selected, and
-only when a query actually reads it. The model comes from the file, so export it once with Fabric's
-`getDefinition` (TMSL); the app itself never calls the Fabric API.
+  ```sql
+  SELECT dim_region.Region, AGG("Registered MW") AS mw FROM nem GROUP BY ALL
+  ```
+
+  A model query can also be a subquery or CTE inside SQL of your own. Preview, Show plan and
+  Download CSV.
+- **Explore**: drag the model's columns onto Rows, Columns and Filters, and its measures onto
+  Values, to get a pivot table or a chart.
+
+The model is named after its file (`nem.bim` is `nem`), and the main editor can query it too, as
+can `DESCRIBE nem`. A Direct Lake table is read from the lakehouse its model names, through the
+same Iceberg catalog, whichever item is selected, and only when a query actually reads it. The
+model comes from the file, so export it once with Fabric's `getDefinition` (TMSL); the app itself
+never calls the Fabric API.
 
 ## Limitations
 
@@ -215,5 +225,5 @@ site/index.html   UI shell + sign-in gate      site/data.js   Iceberg engine on 
 site/app.js       DOM wiring                   site/paths.js  pure logic (paths, SQL, cache keys)
 site/auth.js      MSAL provider                site/sw.js     COOP/COEP + token injection
 site/config.js    clientId + authority         test/          node --test suite for paths.js
-site/semantic.js  .bim models -> dax-sql       site/bimview.js the .bim diagram
+site/semantic.js  .bim models -> dax-sql       site/analyze/  a .bim's view: Model, SQL, Explore
 ```

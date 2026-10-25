@@ -1,7 +1,7 @@
 // =============================================================================
 // semantic.js — a Power BI semantic model (.bim) as something SQL can query
 // =============================================================================
-// Opening a .bim under Files/ draws its diagram (bimview.js) and also registers it here
+// Opening a .bim under Files/ opens its model view (analyze/view.js) and registers it here
 // as a MODEL, named after the file: `nem.bim` is `nem`. A query that names it is compiled
 // by dax-sql before it runs: `SELECT dim_region.Region, AGG("Registered MW") FROM nem
 // GROUP BY ALL` becomes the SQL that computes the measure over the model's tables, with
@@ -79,19 +79,39 @@ export async function registerModel(fileName, text, modules = null) {
   try { bim = JSON.parse(String(text).replace(/^﻿/, "")); }
   catch (e) { throw new Error(`${basename(fileName)} is not a TMSL model: ${e.message}`); }
   const lake = directLakeTables(bim);
-  const compiler = createCompiler(tmslToModel(bim), {
-    // A Direct Lake table is the view the engine opens for it; any other is the model's
-    // own source name, as dax-sql reads it by default.
-    tableSource: t => {
-      const l = lake.get(lc(t.name));
-      if (l) return l.ident;
-      const s = t.source;
-      return s.schema ? `${quoteIdent(s.schema)}.${quoteIdent(s.entity)}` : quoteIdent(s.entity);
+  // A Direct Lake table is the view the engine opens for it; any other is the model's own
+  // source name, as dax-sql reads it by default.
+  const tableSource = t => {
+    const l = lake.get(lc(t.name));
+    if (l) return l.ident;
+    const s = t.source;
+    return s.schema ? `${quoteIdent(s.schema)}.${quoteIdent(s.entity)}` : quoteIdent(s.entity);
+  };
+  const compiler = createCompiler(tmslToModel(bim), { tableSource });
+  // Explore's (analyze/query.js): its rows go straight to the page, so a date comes back as
+  // text, a whole number as INTEGER and any other number as DOUBLE — what JS can hold.
+  const exploreCompiler = createCompiler(tmslToModel(bim), {
+    tableSource,
+    castOutput: {
+      int: s => `CAST(${s} AS INTEGER)`,
+      double: s => `CAST(${s} AS DOUBLE)`,
+      decimal: s => `CAST(${s} AS DOUBLE)`,
+      datetime: s => `CAST(CAST(${s} AS DATE) AS VARCHAR)`,
     },
   });
   const m = { name: modelName(fileName), file: basename(fileName), compiler, lake };
   models.set(lc(m.name), m);
-  return { name: m.name, sample: sampleQuery(m), directLake: lake.size };
+  return { name: m.name, file: m.file, sample: sampleQuery(m), directLake: lake.size, bim, exploreCompiler };
+}
+
+// The Direct Lake tables a compiled SQL reads, of every model registered, and only those:
+// a query about one fact does not open the other five.
+export function tablesFor(sql) {
+  const out = [];
+  for (const m of models.values())
+    for (const l of m.lake.values())
+      if (sql.includes(l.ident) && !out.some(x => x.ident === l.ident)) out.push(l);
+  return out;
 }
 
 // What the editor offers once a model is open: one measure by one column it can slice by,
@@ -146,11 +166,5 @@ export function rewrite(sql) {
   }
   let out = String(sql);
   for (const m of named) out = m.compiler.compileStatement(out, m.name).sql;
-  // The tables the compiled SQL reads, and only those: a query about one fact does not
-  // open the other five.
-  const tables = [];
-  for (const m of named)
-    for (const l of m.lake.values())
-      if (out.includes(l.ident) && !tables.some(x => x.ident === l.ident)) tables.push(l);
-  return { sql: out, tables };
+  return { sql: out, tables: tablesFor(out) };
 }

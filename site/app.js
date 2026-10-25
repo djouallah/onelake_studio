@@ -13,6 +13,9 @@ import { isDocResult, textLinesDoc, fileExt, isTextExt, escapeHtml, basename,
 import { renderDocument } from './docview.js';
 // Static too, and as cheap: the DAX compiler it runs is imported on the first .bim only.
 import * as semantic from './semantic.js';
+// A .bim's model view. Small: Explore's chart library is imported when Explore first opens.
+import { mountAnalyze } from './analyze/view.js';
+import { tmslOf } from './analyze/model.js';
 
 const $ = id => document.getElementById(id);
 const DOCS = 'https://github.com/djouallah/onelake_studio';
@@ -785,6 +788,7 @@ async function connect({ force = false } = {}) {
   const moved = lakehouse && (lakehouse.workspace !== workspace || lakehouse.item !== item);
   let resetP = null;
   if (force || moved) {
+    closeModelView();
     activeIdent = null;
     setActiveStats(null);
     activeTableRef = null; tableStage = 'none';
@@ -927,6 +931,8 @@ async function expandDir(host, dir, depth) {
 let selSeq = 0;
 
 async function selectFile(row, file) {
+  if (fileExt(file.name) === 'bim') return openModelView(row, file);
+  closeModelView();
   const my = ++selSeq;
   document.querySelectorAll('.fileItem.active').forEach(el => el.classList.remove('active'));
   row.classList.add('active');
@@ -954,7 +960,6 @@ async function selectFile(row, file) {
       $('previewBtn').disabled = false;
       $('runBtn').disabled = false;
       reportLoad(info, await runQuery({ doc: activeDocEligible, ext: activeDocExt }));
-      if (activeDocExt === 'bim') await openModel(file, my);
     } else {
       reportLoad(info, true);
     }
@@ -976,22 +981,67 @@ async function selectFile(row, file) {
   }
 }
 
-// A .bim is a semantic model as well as a diagram: register it (semantic.js) and put a
-// query of it in the editor. Best-effort — the diagram is already on screen, and a model
-// the compiler cannot read is said so in the status line, not thrown.
-async function openModel(file, my) {
+// A .bim is a semantic model, not a document: it opens as its model view (analyze/view.js)
+// in place of the editor and the results — Model, SQL, Explore — and is registered
+// (semantic.js) so SQL anywhere, the main editor's included, can name it.
+let modelView = null;
+function closeModelView() {
+  if (!modelView) return;
+  modelView.destroy();
+  modelView = null;
+  $('modelView').hidden = true;
+  $('modelView').closest('section').classList.remove('modelOpen');
+}
+async function openModelView(row, file) {
+  closeModelView();
+  const my = ++selSeq;
+  document.querySelectorAll('.fileItem.active').forEach(el => el.classList.remove('active'));
+  row.classList.add('active');
+  $('activeTable').textContent = file.name;
+  activeFile = file;
+  activeIdent = null;
+  activeDocExt = 'bim'; activeDocEligible = false;
+  setActiveStats(null);
+  activeTableRef = null; tableStage = 'none';
+  clearResults();
+  setBusy(true, { stoppable: true });
+  setStatus(`Reading ${file.name}…`);
   try {
+    await engineReady;
     const bytes = await engine.readFileBytes(lakehouse, file);
     const m = await semantic.registerModel(file.name, new TextDecoder().decode(bytes));
     if (my !== selSeq) return;
-    $('sqlEditor').value = m.sample;
+    $('modelView').closest('section').classList.add('modelOpen');
+    $('modelView').hidden = false;
+    modelView = mountAnalyze($('modelView'), {
+      name: m.name, file: m.file, tmsl: tmslOf(m.bim), exploreCompiler: m.exploreCompiler, sample: m.sample,
+      rewrite: semantic.rewrite,
+      run: runModelSql,
+      setStatus,
+    });
     setStatus(`${file.name} is the semantic model ${m.name}` +
               (m.directLake ? ` — ${m.directLake} Direct Lake table(s), opened from OneLake as a query needs them` : '') +
-              `. Run queries it.`, 'ok');
+              '. SQL anywhere can name it.', 'ok');
   } catch (e) {
     if (my !== selSeq) return;
-    setStatus(`${file.name}: diagram only — it does not compile as a semantic model: ${e.message}`, 'warn');
-    console.warn(e);
+    setStatus(`${file.name} does not open as a semantic model: ${explainRead(e.message)}`, 'error');
+    console.error(e);
+  } finally {
+    if (my === selSeq) setBusy(false);
+  }
+}
+
+// A compiled SQL of a model, run: the Direct Lake tables it reads opened first (each in its
+// own schema, semantic.js), then the SQL through the engine's read-only path. Stoppable.
+async function runModelSql(sql) {
+  setBusy(true, { stoppable: true });
+  try {
+    await engineReady;
+    for (const x of semantic.tablesFor(sql))
+      await engine.loadTable(x.lh, x.t, { viewSchema: x.viewSchema });
+    return await engine.runSql(sql);
+  } finally {
+    setBusy(false);
   }
 }
 
@@ -1003,6 +1053,7 @@ let imageUrl = null;
 // blob URL. A plain <img src="https://onelake.dfs…"> would go out as a no-cors request,
 // which the service worker refuses to sign, so it would 401.
 async function selectImage(row, file) {
+  closeModelView();
   const my = ++selSeq;
   document.querySelectorAll('.fileItem.active').forEach(el => el.classList.remove('active'));
   row.classList.add('active');
@@ -1086,6 +1137,7 @@ async function selectTable(row, t) {
       'Workers; a hard reload (Ctrl+Shift+R) also causes this for one page load.', 'error');
     return;
   }
+  closeModelView();
   const my = ++selSeq;
   document.querySelectorAll('.tableItem.active').forEach(el => el.classList.remove('active'));
   row.classList.add('active');
@@ -1416,22 +1468,18 @@ const DOC_KIND_TITLE = {
   json: 'Rendered as indented JSON',
   markdown: 'Rendered as markdown',
   text: 'Shown as plain text, exactly as stored',
-  bim: 'Rendered as semantic model diagram',
 };
 
 async function showDoc(text) {
   const seq = ++docSeq;
   try {
-    const { html, kind, mount } = await renderDocument(text, docSourceExt);
+    const { html, kind } = await renderDocument(text, docSourceExt);
     if (seq !== docSeq || docMode !== 'pretty') return;
     $('docView').innerHTML = html;
     // Only prose gets the reading measure; code keeps the full width (see index.html).
     $('docView').classList.toggle('prose', kind === 'markdown');
     $('docView').hidden = false;
     $('resultsTable').hidden = true;
-    // After unhiding, never before: a mounting renderer (the .bim diagram) measures
-    // its elements, and everything inside a hidden ancestor measures 0×0.
-    if (mount) mount($('docView'));
     $('docPretty').title = DOC_KIND_TITLE[kind] || '';
     setDocTabs();
   } catch (e) {

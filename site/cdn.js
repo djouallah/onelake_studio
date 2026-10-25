@@ -31,6 +31,8 @@ export const PINS = {
   sqljs: "sql.js@1.13.0",
   marked: "marked@18.0.7",
   dompurify: "dompurify@3.4.12",
+  // Explore's charts (analyze/view.js), imported when Explore first opens.
+  echarts: "echarts@5.5.1",
   // The DAX-to-SQL compiler behind semantic-model queries (semantic.js). Not on npm: plain
   // ES modules straight from its GitHub repository, at a commit.
   daxSql: "djouallah/dax-sql@8683334f4e2a82d32630db2e382dd2c54ce0a8f1",
@@ -39,7 +41,8 @@ export const PINS = {
 // What build.mjs vendors: ESM entry points (each with its whole import closure) and the
 // plain files those entry points fetch at run time.
 export const VENDOR = {
-  esm: [PINS.duckdbWasm, PINS.msal, `${PINS.msal}/redirect-bridge`, PINS.sqljs, PINS.marked, PINS.dompurify],
+  esm: [PINS.duckdbWasm, PINS.msal, `${PINS.msal}/redirect-bridge`, PINS.sqljs, PINS.marked, PINS.dompurify,
+        PINS.echarts],
   files: [
     `${PINS.duckdbWasm}/${PINS.duckdbBundle.wasm}`,
     `${PINS.duckdbWasm}/${PINS.duckdbBundle.worker}`,

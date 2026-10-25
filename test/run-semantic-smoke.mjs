@@ -94,10 +94,71 @@ try {
   const p = await run("SELECT 'shop_x' AS s");
   if (!/^1 row/.test(p.status)) throw new Error(`plain SQL: ${p.status}`);
 
+  // The model view, as a .bim opens it: the real view, compiler and chart library, run on a
+  // DuckDB of the test's own that holds the model's tables (the app's engine is read-only).
+  await page.evaluate(async bim => {
+    const at = p => new URL(p, document.baseURI).href;
+    const cdn = await import(at("cdn.js"));
+    const duckdb = await import(cdn.npmModule(cdn.PINS.duckdbWasm));
+    const single = { mainModule: cdn.npmFile(cdn.PINS.duckdbWasm, cdn.PINS.duckdbBundle.wasm),
+                     mainWorker: cdn.npmFile(cdn.PINS.duckdbWasm, cdn.PINS.duckdbBundle.worker) };
+    const bundle = await duckdb.selectBundle({ eh: single, mvp: single, base: single });
+    const worker = new Worker(URL.createObjectURL(new Blob([`importScripts("${bundle.mainWorker}");`], { type: "text/javascript" })));
+    const db = new duckdb.AsyncDuckDB(new duckdb.ConsoleLogger(), worker);
+    await db.instantiate(bundle.mainModule, bundle.pthreadWorker);
+    const conn = await db.connect();
+    await conn.query(`CREATE TABLE "Sales" AS SELECT * FROM (VALUES (1, 10.0), (2, 5.0), (1, 2.5)) t("ProductKey", "Amount")`);
+    await conn.query(`CREATE TABLE "Product" AS SELECT * FROM (VALUES (1, 'red'), (2, 'blue')) t("ProductKey", "Color")`);
+    const plain = v => typeof v === "bigint" ? Number(v) : v;
+    const run = async sql => {
+      const t = await conn.query(sql);
+      const fields = t.schema.fields.map(f => f.name);
+      return { fields, rows: t.toArray().map(r => Object.fromEntries(fields.map(f => [f, plain(r[f])]))), truncated: false };
+    };
+    const semantic = await import(at("semantic.js"));
+    const { mountAnalyze } = await import(at("analyze/view.js"));
+    const { tmslOf } = await import(at("analyze/model.js"));
+    const m = await semantic.registerModel("shop.bim", bim);
+    const box = document.getElementById("modelView");
+    box.closest("section").classList.add("modelOpen");
+    box.hidden = false;
+    mountAnalyze(box, { name: m.name, file: m.file, tmsl: tmslOf(m.bim), exploreCompiler: m.exploreCompiler,
+      sample: m.sample, rewrite: semantic.rewrite, run, setStatus: () => {} });
+  }, BIM);
+
+  // Model: a card per table, a line per relationship.
+  const cards = await page.locator("#modelView .m-card").count();
+  const rels = await page.locator("#modelView .m-rel").count();
+  console.log(`model page: ${cards} cards, ${rels} relationship(s)`);
+  if (cards !== 2 || rels !== 1) throw new Error(`model page drew ${cards} cards and ${rels} relationships`);
+  if (!await page.locator("#sqlEditor").isHidden()) throw new Error("the editor is still on screen under the model view");
+
+  // SQL: the model's query, previewed.
+  await page.click('#modelView .subtab[data-apage="sql"]');
+  await page.fill("#modelView textarea", "SELECT Product.Color, AGG(Total) AS total FROM shop GROUP BY ALL ORDER BY Color");
+  await page.click("#modelView .btn-analyze.primary");
+  await page.waitForFunction(() => /rows|Error/.test(document.querySelector("#modelView .analyze-info").textContent), { timeout: 60000 });
+  const sqlInfo = await page.locator("#modelView .analyze-info").innerText();
+  const sqlRows = (await page.locator("#modelView .analyze-table").innerText()).replace(/\s+/g, " ");
+  console.log("sql page:", sqlInfo, "|", sqlRows);
+  if (!/^2 rows/.test(sqlInfo) || !/blue 5(\.0)? red 12\.5/.test(sqlRows)) throw new Error(`SQL preview: ${sqlInfo} ${sqlRows}`);
+
+  // Explore: a column and a measure, one click each, drawn as a chart.
+  await page.click('#modelView .subtab[data-apage="explore"]');
+  await page.locator("#modelView .ex-field", { hasText: "Color" }).click({ timeout: 60000 });
+  // A fact table's fields start folded; its measure is inside.
+  await page.locator("#modelView .ex-table-group summary", { hasText: "Sales" }).click();
+  await page.locator("#modelView .ex-field", { hasText: "Total" }).click();
+  await page.waitForFunction(() => /rows?$|Error/.test(document.querySelector("#modelView .ex-info").textContent), { timeout: 60000 });
+  const exInfo = await page.locator("#modelView .ex-info").innerText();
+  const canvas = await page.locator("#modelView .ex-chart canvas").count();
+  console.log(`explore page: ${exInfo}, ${canvas} canvas`);
+  if (!/^2 rows$/.test(exInfo) || !canvas) throw new Error(`Explore: ${exInfo}, ${canvas} canvas`);
+
   if (csp.length) throw new Error(`Content-Security-Policy refused something: ${csp.join(" | ")}`);
   if (process.env.SITE_DIR === "dist" && thirdParty.length)
     throw new Error(`the built site loaded the compiler from jsDelivr: ${thirdParty[0]}`);
-  console.log("RESULT: OK — the compiler loaded, a model query compiled and ran, DESCRIBE listed the model");
+  console.log("RESULT: OK — model queries ran from the editor, and the model view drew its Model, SQL and Explore pages");
   code = 0;
 } catch (e) {
   console.log("RESULT: FAILED —", e.message);
