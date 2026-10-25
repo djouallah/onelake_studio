@@ -41,12 +41,14 @@ export const PINS = {
 // What build.mjs vendors: ESM entry points (each with its whole import closure) and the
 // plain files those entry points fetch at run time.
 export const VENDOR = {
-  esm: [PINS.duckdbWasm, PINS.msal, `${PINS.msal}/redirect-bridge`, PINS.sqljs, PINS.marked, PINS.dompurify,
-        PINS.echarts],
+  esm: [PINS.duckdbWasm, PINS.msal, `${PINS.msal}/redirect-bridge`, PINS.sqljs, PINS.marked, PINS.dompurify],
   files: [
     `${PINS.duckdbWasm}/${PINS.duckdbBundle.wasm}`,
     `${PINS.duckdbWasm}/${PINS.duckdbBundle.worker}`,
     `${PINS.sqljs}/dist/sql-wasm.wasm`,
+    // ECharts as its own minified build, a classic script: jsDelivr's +esm repackaging of
+    // it draws an empty canvas (measured: no bars, no axes, no error).
+    `${PINS.echarts}/dist/echarts.min.js`,
   ],
   // GitHub repositories, by the files of each that the page imports: the compiler and its
   // TMSL reader, which import each other by relative path and nothing else.

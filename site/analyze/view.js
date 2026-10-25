@@ -12,7 +12,7 @@
 // `run` opens the tables a compiled SQL reads and runs it, returning the engine's result.
 // =============================================================================
 
-import { PINS, npmModule } from '../cdn.js';
+import { PINS, npmFile } from '../cdn.js';
 import { escapeHtml } from '../paths.js';
 import { renderModel } from './model.js';
 import { createExplorer } from './explore.js';
@@ -23,8 +23,17 @@ const PREVIEW_ROWS = 500;
 // Series colours, on a dark card (the dashboard's palette).
 const PALETTE = ['#3987e5', '#d95926', '#199e70', '#c98500', '#d55181', '#4f9a3a', '#9085e9', '#e66767', '#5aa7b8', '#b0762f', '#a86bc4', '#7f8a9c'];
 
+// ECharts' own minified build, as a classic script (window.echarts): the build the dashboard
+// this is ported from runs. jsDelivr's +esm repackaging of it draws an empty canvas.
 let echartsP = null;
-const loadEcharts = () => (echartsP ??= import(npmModule(PINS.echarts)).catch(e => { echartsP = null; throw e; }));
+const loadEcharts = () => (echartsP ??= new Promise((resolve, reject) => {
+  if (window.echarts) return resolve(window.echarts);
+  const s = document.createElement('script');
+  s.src = npmFile(PINS.echarts, 'dist/echarts.min.js');
+  s.onload = () => window.echarts ? resolve(window.echarts) : reject(new Error('echarts.min.js defined no echarts'));
+  s.onerror = () => reject(new Error(`could not load ${s.src}`));
+  document.head.append(s);
+}).catch(e => { echartsP = null; throw e; }));
 
 // `ctx`:
 //   name, file       the model's name (what SQL calls it) and its file's

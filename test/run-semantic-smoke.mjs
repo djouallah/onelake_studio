@@ -53,6 +53,7 @@ try {
   const ctx = await browser.newContext({ serviceWorkers: "block" });
   const page = await ctx.newPage();
   page.on("pageerror", e => console.log("[pageerror]", e.message));
+  page.on("console", m => { if (m.type() === "error" || m.type() === "warning" || /echarts/i.test(m.text())) console.log(`[console.${m.type()}]`, m.text()); });
   const csp = [];
   page.on("console", m => { if (/Content.Security.Policy/i.test(m.text())) csp.push(m.text()); });
   const thirdParty = [];
