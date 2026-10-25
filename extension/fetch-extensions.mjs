@@ -12,8 +12,7 @@
 //
 // The DuckDB version is read from the installed @duckdb/node-api — the same rule
 // fetch-binding.mjs follows — so a dependency bump moves these with it. Required ones fail
-// the package; community ones that have no build for a platform (h3 and zipfs are missing
-// on some) are skipped and logged, as the engine treats them as optional anyway.
+// the package; an optional one with no build for a platform is skipped and logged.
 // =============================================================================
 import { mkdir, rm, writeFile, readFile } from "node:fs/promises";
 import { join, dirname } from "node:path";
@@ -34,8 +33,9 @@ const EXTENSIONS = [
   { name: "httpfs", repo: "https://extensions.duckdb.org", required: true },
   { name: "avro", repo: "https://extensions.duckdb.org", required: true },
   { name: "excel", repo: "https://extensions.duckdb.org", required: false },
-  { name: "h3", repo: "https://community-extensions.duckdb.org", required: false },
-  { name: "zipfs", repo: "https://community-extensions.duckdb.org", required: false },
+  // Not h3 or zipfs: they are COMMUNITY extensions, and a LOAD by path verifies against the
+  // core signing keys only (DuckDB 2.0 refuses them as unsigned). They keep downloading
+  // from the community repository on first use, signature checked as before.
 ];
 
 const target = process.argv[2];
