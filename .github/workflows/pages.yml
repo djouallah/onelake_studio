@@ -40,7 +40,7 @@ jobs:
         run: |
           grep -q 'vendored: true' dist/version.js
           ! grep -q 'script-src[^;"]*cdn.jsdelivr.net' dist/index.html
-          test -s dist/npm/@duckdb/duckdb-wasm@*/dist/duckdb-base.wasm
+          test -s dist/npm/@duckdb/duckdb-wasm@*/dist/duckdb-eh.wasm
           test -s dist/duckdb-extensions/core/*/wasm_eh/avro.duckdb_extension.wasm
           test -s dist/README.md
       # The BUILT site in a real browser before it goes live — the exact files Pages will

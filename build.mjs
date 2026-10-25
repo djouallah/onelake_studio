@@ -78,8 +78,6 @@ async function esmClosure(npmPath) {
 }
 
 // --- 2. DuckDB extensions -------------------------------------------------------------------
-// Fetched from the release path (v2.0.0) and stored under the path the pinned build asks
-// for (its source id) — see duckdbSourceId in cdn.js for why those differ.
 const EXT_HOSTS = { core: "https://extensions.duckdb.org", community: "https://community-extensions.duckdb.org" };
 
 let vendored = true;
@@ -88,9 +86,8 @@ try {
   for (const f of VENDOR.files) await save(`npm/${f}`, await get(`${JSDELIVR}/npm/${f}`));
   for (const [repo, names] of Object.entries(VENDOR.extensions)) {
     for (const name of names) {
-      const file = `wasm_eh/${name}.duckdb_extension.wasm`;
-      await save(`duckdb-extensions/${repo}/${PINS.duckdbSourceId}/${file}`,
-                 await get(`${EXT_HOSTS[repo]}/${PINS.duckdbCore}/${file}`));
+      const rel = `${PINS.duckdbCore}/wasm_eh/${name}.duckdb_extension.wasm`;
+      await save(`duckdb-extensions/${repo}/${rel}`, await get(`${EXT_HOSTS[repo]}/${rel}`));
     }
   }
 } catch (e) {

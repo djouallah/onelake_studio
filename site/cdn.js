@@ -16,17 +16,16 @@
 // =============================================================================
 
 export const PINS = {
-  // DuckDB v2.0.0 (the package's `next` tag; its own version number still says 1.33.1-devN).
-  duckdbWasm: "@duckdb/duckdb-wasm@1.33.1-dev110.0",
+  // DuckDB v1.5.4 — the last DuckDB-WASM whose extensions load. The DuckDB 2.0 preview
+  // build (1.33.1-dev110.0, the `next` tag) is compiled from an untagged checkout: it calls
+  // itself a dev build, asks for extensions under its commit id, and refuses the v2.0.0
+  // binaries for not matching that string — measured, the site booted without avro, i.e.
+  // without Iceberg. Move to 2.0 when the official DuckDB-Wasm 2.0 release is published.
+  duckdbWasm: "@duckdb/duckdb-wasm@1.33.1-dev57.0",
   // The DuckDB core version above — the path DuckDB's extension repositories use.
-  duckdbCore: "v2.0.0",
-  // ...and the path this BUILD asks for. The package is compiled from the v2.0.0 tag's
-  // commit, but from an untagged checkout, so it calls itself v2.0.0-dev88614 and requests
-  // extensions under the commit id — a path no DuckDB repository has. Measured: every
-  // extension 404'd there and the site booted with no avro, i.e. no Iceberg manifests.
-  // The binaries under v2.0.0 ARE built from this commit; data.js loads them by full URL
-  // (with the version-string check relaxed) and build.mjs vendors them under this id.
-  duckdbSourceId: "d54cbbe3df",
+  duckdbCore: "v1.5.4",
+  // The single-threaded bundle's two files, which the 2.0 packages renamed (eh -> base).
+  duckdbBundle: { wasm: "dist/duckdb-eh.wasm", worker: "dist/duckdb-browser-eh.worker.js" },
   // MSAL 5: every sign-in answer comes back through a redirect bridge — msal-return.js.
   msal: "@azure/msal-browser@5.26.0",
   sqljs: "sql.js@1.13.0",
@@ -39,12 +38,12 @@ export const PINS = {
 export const VENDOR = {
   esm: [PINS.duckdbWasm, PINS.msal, `${PINS.msal}/redirect-bridge`, PINS.sqljs, PINS.marked, PINS.dompurify],
   files: [
-    `${PINS.duckdbWasm}/dist/duckdb-base.wasm`,
-    `${PINS.duckdbWasm}/dist/duckdb-browser-base.worker.js`,
+    `${PINS.duckdbWasm}/${PINS.duckdbBundle.wasm}`,
+    `${PINS.duckdbWasm}/${PINS.duckdbBundle.worker}`,
     `${PINS.sqljs}/dist/sql-wasm.wasm`,
   ],
   // DuckDB extensions the engine loads, by repository. wasm_eh is the platform of the
-  // `base` bundle.
+  // single-threaded bundle.
   extensions: {
     core: ["avro", "excel"],
     community: ["h3", "zipfs"],
@@ -82,16 +81,6 @@ export function npmFile(pkg, path) {
 export function extensionRepos() {
   const v = vendoredBase();
   return v ? { core: `${v}/duckdb-extensions/core`, community: `${v}/duckdb-extensions/community` } : null;
-}
-
-// The release binary of one extension, by full URL — what data.js falls back to when no
-// repository has the path this build asks for (see duckdbSourceId).
-export const EXTENSION_HOSTS = {
-  core: "https://extensions.duckdb.org",
-  community: "https://community-extensions.duckdb.org",
-};
-export function extensionUrl(name, repo = "core") {
-  return `${EXTENSION_HOSTS[repo]}/${PINS.duckdbCore}/wasm_eh/${name}.duckdb_extension.wasm`;
 }
 
 export const isVendored = () => !!vendoredBase();

@@ -19,7 +19,7 @@ and query its tables and files.
 ## In VS Code
 
 [**OneLake Studio**](https://marketplace.visualstudio.com/items?itemName=djouallah.onelake-studio) on
-the Marketplace is the same app in a VS Code panel, on the same DuckDB (2.0), and it needs no app
+the Marketplace is the same app in a VS Code panel, on native DuckDB 2.0, and it needs no app
 registration: VS Code's own Microsoft account provider is a first-party application, so `getSession`
 returns the OneLake token directly. Install it, then run **OneLake Studio: Open**. It also lends that
 sign-in to the website — see [With VS Code](#with-vs-code-no-app-registration).

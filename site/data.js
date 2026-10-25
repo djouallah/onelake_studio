@@ -23,11 +23,11 @@
 // DOM-free: progress is reported through the injected `onStatus` callback.
 // =============================================================================
 
-// DuckDB-WASM is pinned in cdn.js (DuckDB v2.0.0 — the same core as the extension's native
-// engine) and imported when the engine boots, from the deployed site's own vendored copy or
+// DuckDB-WASM is pinned in cdn.js (DuckDB v1.5.4 until the official DuckDB-Wasm 2.0 release
+// lands) and imported when the engine boots, from the deployed site's own vendored copy or
 // from jsDelivr when run straight from site/. Bump it deliberately and re-run the format
 // probe (test/extensions.html) when you do.
-import { PINS, npmModule, npmFile, extensionRepos, extensionUrl } from "./cdn.js";
+import { PINS, npmModule, npmFile, extensionRepos } from "./cdn.js";
 let duckdb = null;   // the module, once _init has imported it
 
 // dfsBase/dfsUrl/toHttps come in under `…At` names and are re-bound to this engine's origin
@@ -287,28 +287,13 @@ export function createEngine(auth, {
   // Never throws: an extension that won't load costs one format, not the engine. LOAD alone
   // succeeds when the build already has it; otherwise INSTALL from the deployed site's own
   // copy (cdn.js) when there is one, then from DuckDB's repository.
-  //
-  // The pinned build calls itself a dev build and asks repositories for a path none of them
-  // has (cdn.js, duckdbSourceId) — so the attempts run in this order, and the first that
-  // loads wins: the deployed site's own copy (vendored under the path the build asks for),
-  // the v2.0.0 release binary by full URL, then DuckDB's own repository as named.
-  // allow_extensions_metadata_mismatch lets a binary built from this exact commit but
-  // stamped "v2.0.0" load into an engine stamped "dev"; the signature is still checked.
   const extLoads = new Map();   // name -> Promise<boolean>, per worker
-  let mismatchAllowed = false;
   async function loadExtNow(ext, repo = "") {
     try { await conn.query(`LOAD ${ext};`); return true; } catch (_) {}
-    if (!mismatchAllowed) {
-      try { await conn.query("SET allow_extensions_metadata_mismatch = true;"); } catch (_) {}
-      mismatchAllowed = true;
-    }
     const kind = repo === "community" ? "community" : "core";
     const own = extensionRepos();
-    const url = extensionUrl(ext, kind);
     const attempts = [
       own && `INSTALL ${ext} FROM ${sqlStr(own[kind])}; LOAD ${ext};`,
-      `LOAD ${sqlStr(url)};`,
-      `INSTALL ${sqlStr(url)}; LOAD ${ext};`,
       `INSTALL ${ext}${repo ? ` FROM ${repo}` : ""}; LOAD ${ext};`,
     ].filter(Boolean);
     const errors = [];
@@ -331,24 +316,21 @@ export function createEngine(auth, {
 
   async function _init({ quiet = false } = {}) {
     if (!quiet) onStatus("Loading DuckDB-WASM…");
-    // SINGLE-THREADED (`base`) BY CHOICE. DuckDB-Wasm 2.0 ships two bundles: `base` (needs
-    // wasm exception handling) and `threads` (also SIMD, threads and crossOriginIsolated),
-    // and getJsDelivrBundles() offers only `base` — threads is the package's own opt-in,
-    // marked experimental. Under 1.x the threaded build's extension binaries would not
-    // LOAD (avro: "did not contain the expected entrypoint"), and read_avro IS the Iceberg
-    // manifest reader, so threads at the cost of tables was no trade. To try it, add
-    //   threads: { mainModule: DIST+"duckdb-threads.wasm",
-    //              mainWorker: DIST+"duckdb-browser-threads.worker.js",
-    //              pthreadWorker: DIST+"duckdb-browser-threads.pthread.worker.js" }
-    // (each worker URL wrapped in a same-origin blob importScripts shim) and check avro
-    // and excel still load with test/extensions.html.
+    // SINGLE-THREADED BY MEASUREMENT. The threaded build's extension binaries would not
+    // LOAD (avro: "did not contain the expected entrypoint 'avro_duckdb_cpp_init'"), and
+    // read_avro IS the Iceberg manifest reader — threads at the cost of tables is no trade.
+    // (DuckDB-Wasm 2.0 renames the bundles: `base` for this one, `threads` opt-in.) Recheck
+    // with test/extensions.html when bumping the pin.
     if (!duckdb) duckdb = await import(npmModule(PINS.duckdbWasm));
     // getJsDelivrBundles() hard-codes jsDelivr; the same two files, from wherever cdn.js
     // says the package lives.
-    const bundle = await duckdb.selectBundle({ base: {
-      mainModule: npmFile(PINS.duckdbWasm, "dist/duckdb-base.wasm"),
-      mainWorker: npmFile(PINS.duckdbWasm, "dist/duckdb-browser-base.worker.js"),
-    } });
+    // The single-threaded bundle, from wherever cdn.js says the package lives. Named `eh`
+    // AND `base` so the same map selects it on 1.x (which looks for eh) and on 2.0 (base).
+    const single = {
+      mainModule: npmFile(PINS.duckdbWasm, PINS.duckdbBundle.wasm),
+      mainWorker: npmFile(PINS.duckdbWasm, PINS.duckdbBundle.worker),
+    };
+    const bundle = await duckdb.selectBundle({ eh: single, mvp: single, base: single });
     const workerUrl = URL.createObjectURL(
       new Blob([`importScripts("${bundle.mainWorker}");`], { type: "text/javascript" })
     );

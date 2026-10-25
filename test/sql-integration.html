@@ -24,7 +24,7 @@ try {
   const { pathKey, PATH_KEY_SQL, sqlStr, prepareReadOnlySql } = paths;
   log("paths.js loaded");
 
-  const duckdb = await import("https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.33.1-dev110.0/+esm");
+  const duckdb = await import("https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.33.1-dev57.0/+esm");
   log("duckdb module loaded");
   const bundle = await duckdb.selectBundle(duckdb.getJsDelivrBundles());
   log("bundle: " + bundle.mainModule.split("/").pop());
