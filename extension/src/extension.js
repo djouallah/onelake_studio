@@ -19,18 +19,23 @@ const { join } = require('node:path');
 const { startProxy } = require('./proxy');
 const { openPanel, closePanel, postToPanel, postLive } = require('./panel');
 const { createCatalog } = require('./catalog');
+const { createFabric, exportPath, EXPORT_DIR } = require('./fabric');
 const { LakehouseTree } = require('./tree');
 const { siteRoot } = require('./site');
 
 // The same scope site/auth.js asks MSAL for. OneLake accepts tokens in the storage
-// audience only, and this one covers both the data reads and the Iceberg catalog.
+// audience only, and this one covers both the data reads and the Iceberg catalog. It is
+// the only scope sign-in asks for; the Fabric API's (below) is asked for separately, and
+// only once someone expands a workspace's semantic models.
 const SCOPES = ['https://storage.azure.com/user_impersonation', 'offline_access'];
 
-function scopesFor() {
+function withTenant(scopes) {
   const tenant = vscode.workspace.getConfiguration('onelakeStudio').get('tenantId', '').trim();
   // A guest in someone else's tenant has to say so; the home tenant is the default.
-  return tenant ? [...SCOPES, `VSCODE_TENANT:${tenant}`] : SCOPES;
+  return tenant ? [...scopes, `VSCODE_TENANT:${tenant}`] : scopes;
 }
+
+function scopesFor() { return withTenant(SCOPES); }
 
 // `options` is passed straight through: the command handler asks with createIfNone (and,
 // for a switch, clearSessionPreference), while the proxy's per-request calls ask for
@@ -74,13 +79,53 @@ function accountKey(session) {
 const TOKEN_TTL_MS = 60_000;
 let cachedToken = null;   // { token, at }
 
-function forgetToken() { cachedToken = null; }
+function forgetToken() { cachedToken = null; cachedFabric = null; fabricAudience = null; }
 
 async function proxyToken({ fresh = false } = {}) {
   if (!fresh && cachedToken && Date.now() - cachedToken.at < TOKEN_TTL_MS) return cachedToken.token;
   const token = await getToken({ createIfNone: false });
   cachedToken = token ? { token, at: Date.now() } : null;
   return token;
+}
+
+// The Fabric REST API — semantic models live there, not in OneLake. It takes a token in
+// its own audience, or in Power BI's, which it also accepts; whichever VS Code's account
+// provider will issue is remembered for the session. Asked for the SAME account the
+// storage session belongs to, so the tree can never list one user's models and write into
+// another user's lakehouse.
+const FABRIC_AUDIENCES = [
+  'https://api.fabric.microsoft.com/.default',
+  'https://analysis.windows.net/powerbi/api/.default',
+];
+let fabricAudience = null;
+let cachedFabric = null;   // { token, at }
+
+const isCancel = e => /cancel|did not consent/i.test(String((e && e.message) || e));
+
+async function fabricToken({ fresh = false, createIfNone = false } = {}) {
+  if (!fresh && !createIfNone && cachedFabric && Date.now() - cachedFabric.at < TOKEN_TTL_MS) {
+    return cachedFabric.token;
+  }
+  const storage = await getSession({ createIfNone: false }).catch(() => null);
+  if (!storage) return null;
+  let lastErr = null;
+  for (const aud of fabricAudience ? [fabricAudience] : FABRIC_AUDIENCES) {
+    try {
+      const s = await vscode.authentication.getSession('microsoft',
+        withTenant([aud, 'offline_access']), { createIfNone, account: storage.account });
+      if (s) {
+        fabricAudience = aud;
+        cachedFabric = { token: s.accessToken, at: Date.now() };
+        return s.accessToken;
+      }
+    } catch (e) {
+      lastErr = e;
+      if (out) out.appendLine(`fabric sign-in (${aud}) failed: ${(e && e.message) || e}`);
+      if (isCancel(e)) return null;   // said no once; do not ask again for the other audience
+    }
+  }
+  if (lastErr) throw lastErr;
+  return null;
 }
 
 let proxy = null;
@@ -604,8 +649,13 @@ async function activateInner(context) {
     getToken: proxyToken,
     siteFsPath: site.fsPath,
   });
+  // Semantic models and the .bim export: Fabric's token for the model, the storage one
+  // (the same cache the catalog uses) for the one file the export writes.
+  const fabric = createFabric({ getFabricToken: fabricToken, getStorageToken: proxyToken });
   const tree = new LakehouseTree({
     catalog,
+    fabric,
+    hasFabric: async () => !!await fabricToken().catch(() => null),
     isSignedIn: () => signedIn,
     // A listing failure becomes an error NODE, but the stack behind it goes here.
     log: m => out && out.appendLine(m),
@@ -623,6 +673,55 @@ async function activateInner(context) {
   async function openInPanel(msg) {
     if (!await showWithProgress({ createIfNone: true })) return;
     postToPanel(msg);
+  }
+
+  // A semantic model's definition, exported to the one place the extension writes:
+  // <lakehouse>/Files/semantic_models/<model>.bim, in a lakehouse of the model's own
+  // workspace. Then opened, which is the point — the panel reads a .bim as its model.
+  async function exportBim(n) {
+    if (!n || n.kind !== 'semanticModel') {
+      vscode.window.showInformationMessage(
+        'OneLake Studio: pick a semantic model under a workspace\'s "Semantic models" in the OneLake tree.');
+      return;
+    }
+    try {
+      const { hasFilesArea } = await catalog.paths();
+      const lakehouses = (await catalog.listItems(n.workspace)).filter(it => hasFilesArea(it.name));
+      if (!lakehouses.length) {
+        showError(`${n.workspace} has no lakehouse to export ${n.model} into — the .bim goes to ` +
+                  `a lakehouse's Files/${EXPORT_DIR}/ in the model's own workspace.`);
+        return;
+      }
+      let item = lakehouses[0].name;
+      if (lakehouses.length > 1) {
+        const pick = await vscode.window.showQuickPick(
+          lakehouses.map(l => ({ label: l.name.replace(/\.[^.]+$/, ''), description: 'Lakehouse', item: l.name })),
+          { placeHolder: `Export ${n.model} into which lakehouse's Files/${EXPORT_DIR}/?` });
+        if (!pick) return;
+        item = pick.item;
+      }
+      const rel = exportPath(item, n.model);
+      if (await fabric.exists(n.workspace, rel)) {
+        const ok = await vscode.window.showWarningMessage(
+          `${rel} already exists. Replace it with ${n.model}'s current definition?`, { modal: true }, 'Replace');
+        if (ok !== 'Replace') return;
+      }
+      const bytes = await vscode.window.withProgress(
+        { location: vscode.ProgressLocation.Notification, title: `Exporting ${n.model}` },
+        async progress => {
+          progress.report({ message: 'reading its definition from Fabric…' });
+          const b = await fabric.getBim(n.workspace, n.modelId);
+          progress.report({ message: `writing ${rel}…` });
+          await fabric.writeExport(n.workspace, rel, b);
+          return b;
+        });
+      if (out) out.appendLine(`exported ${n.model} -> ${n.workspace}/${rel} (${fmtBytes(bytes.length)})`);
+      tree.refresh();
+      await openInPanel({ type: 'open-file', workspace: n.workspace, item, path: rel, bytes: bytes.length });
+    } catch (e) {
+      if (out) out.appendLine(`export of ${n.model} failed — ${(e && e.stack) || e}`);
+      showError(`Could not export ${n.model}: ${(e && e.message) || e}`);
+    }
   }
 
   context.subscriptions.push(
@@ -671,6 +770,18 @@ async function activateInner(context) {
     vscode.commands.registerCommand('onelakeStudio.openFile', n => openInPanel({
       type: 'open-file', workspace: n.workspace, item: n.item, path: n.path, bytes: n.bytes,
     })),
+
+    // The tree's "Sign in to list semantic models" node. A command of its own, because the
+    // Fabric API's consent is a separate prompt and must only ever follow a click.
+    vscode.commands.registerCommand('onelakeStudio.signInFabric', async () => {
+      try {
+        if (await fabricToken({ createIfNone: true })) tree.refresh();
+      } catch (e) {
+        showError(`Could not sign in to the Fabric API: ${(e && e.message) || e}`);
+      }
+    }),
+
+    vscode.commands.registerCommand('onelakeStudio.exportBim', n => exportBim(n)),
 
     vscode.commands.registerCommand('onelakeStudio.open', async () => {
       try {

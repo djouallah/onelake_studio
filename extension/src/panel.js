@@ -14,7 +14,7 @@ const crypto = require('node:crypto');
 const { TextDecoder } = require('node:util');
 const { rewriteHtml } = require('./html');
 const { siteRoot } = require('./site');
-const { VENDORED_PREFIXES } = require('./vendored');
+const { VENDORED_PREFIXES, VENDORED_GH_PREFIXES } = require('./vendored');
 
 // A webview is a sandboxed iframe with no CSP of its own, so this is the only thing
 // between the page and the network.
@@ -42,7 +42,9 @@ function csp(webview, nonce, proxyOrigin, cdnOrigin) {
   const scripts = VENDORED_PREFIXES.flatMap(p => [
     `${cdnOrigin}/cdn.jsdelivr.net${p}`,   // the imports data.js and docview.js make
     `${proxyOrigin}${p}`,                  // the absolute /npm/ imports inside +esm files
-  ]);
+  ]).concat(
+    // dax-sql's modules import each other relatively, so only the /cdn route is needed.
+    VENDORED_GH_PREFIXES.map(p => `${cdnOrigin}/cdn.jsdelivr.net${p}`));
   return [
     `default-src 'none'`,
     `img-src ${webview.cspSource} data: blob:`,

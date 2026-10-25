@@ -89,6 +89,44 @@ test("the engine reads cdnOrigin — the disk-cached boot path is wired, not dec
   assert.match(doc, /cdnOrigin/, "docview.js routes its lazy imports the same way");
 });
 
+// A relative <link href> resolves against the vscode-webview: document, not the site
+// directory — the semantic model view would come up unstyled with nothing in the console
+// but a 404.
+test("local stylesheets become webview URLs too", () => {
+  const out = rewriteHtml(INDEX, OPTS);
+  assert.ok(out.includes(`href="https://webview.test/analyze/analyze.css"`), "analyze.css was rewritten");
+  assert.ok(!/<link[^>]*rel="stylesheet"[^>]*\shref="(?!https?:)/.test(out), "no relative stylesheet is left");
+});
+
+// The panel's fork used to lag the website here: a .bim opened as the old diagram, with no
+// SQL and no Explore. These are the seams the port has to keep.
+test("a .bim opens as the semantic model view, as on the website", async () => {
+  const app = await readFile(join(root, "extension", "app", "app.js"), "utf8");
+  assert.match(app, /from '\.\/semantic\.js'/, "app.js registers models");
+  assert.match(app, /from '\.\/analyze\/view\.js'/, "and mounts the model view");
+  assert.match(app, /fileExt\(file\.name\) === 'bim'\) return openModelView/, "a .bim is diverted to it");
+  assert.match(app, /semantic\.rewrite\(sql\)/, "the main editor compiles model queries too");
+  assert.ok(INDEX.includes('id="modelView"'), "index.html has the view's container");
+  const doc = await readFile(join(root, "extension", "app", "docview.js"), "utf8");
+  assert.ok(!/bimview/.test(app + doc + INDEX), "the old diagram is gone");
+  const data = await readFile(join(root, "extension", "app", "data.js"), "utf8");
+  assert.match(data, /viewSchema/, "loadTable can put a model's tables in a schema of their own");
+});
+
+// cdn.js (the page) and vendored.js (vendor.mjs, the proxy, the CSP) pin the same packages
+// separately. A mismatch is a refused script in the panel and nothing in the tests.
+test("the page's pins and the vendored pins agree", async () => {
+  const { PINS, ghFile, npmFile } = await import("../extension/app/cdn.js");
+  const { VENDORED, VENDORED_GH } = require("../extension/src/vendored.js");
+  const echarts = VENDORED.find(p => p.name === "echarts");
+  assert.equal(PINS.echarts, `echarts@${echarts.version}`);
+  assert.ok(VENDORED_GH.some(g => g.repo === PINS.daxSql), "dax-sql is vendored at the page's commit");
+  assert.ok(VENDORED_GH.every(g => g.include.test("/src/index.js") && g.include.test("/formats/tmsl.js")),
+    "and the files semantic.js imports are among those vendored");
+  assert.match(ghFile(PINS.daxSql, "src/index.js"), /^https:\/\/cdn\.jsdelivr\.net\/gh\//);
+  assert.match(npmFile(PINS.echarts, "dist/echarts.min.js"), /^https:\/\/cdn\.jsdelivr\.net\/npm\/echarts@/);
+});
+
 test("a page missing the config.js tag is refused rather than half-built", () => {
   const broken = INDEX.replace(/<script src="config\.js"><\/script>/, "");
   assert.throws(() => rewriteHtml(broken, OPTS), /config\.js/,

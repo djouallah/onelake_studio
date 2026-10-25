@@ -9,6 +9,11 @@ The extension can also **lend that sign-in to the website**, so the browser vers
 no app registration either while VS Code is running (see *The website, signed in with VS
 Code* below).
 
+It also lists each workspace's **Power BI semantic models**. Export one to a lakehouse's
+`Files/semantic_models/` and it opens as its model: the tables and relationships, SQL that asks the
+model with `AGG(measure)` (compiled from DAX by [dax-sql](https://github.com/djouallah/dax-sql)), and
+Explore for pivots and charts. Any `.bim` already in `Files/` opens the same way.
+
 The panel is the same app that runs at
 [studio.projectscontrols.com](https://studio.projectscontrols.com/), packaged into the
 extension so it works with no CDN.
@@ -25,6 +30,7 @@ extension so it works with no CDN.
 | **OneLake Studio: Clear Cached OneLake Data** | Empties the on-disk data cache and reports what it freed. |
 | **OneLake Studio: Open the Website, Signed In with VS Code** | Opens the website in your browser, already pointed at this window's sign-in. |
 | **OneLake Studio: Forget Websites Allowed to Use the VS Code Sign-in** | Takes back every *Always Allow*, and invalidates what an open page was handed. |
+| **Export .bim to Lakehouse Files and Open** | On a semantic model in the explorer (right-click, or the inline button). Reads its TMSL definition from the Fabric API, writes it to `Files/semantic_models/<model>.bim` in a lakehouse of the model's workspace — asking which, if there are several, and before replacing an existing file — and opens it in the panel. |
 
 ## Settings
 
@@ -53,6 +59,19 @@ request not addressed to the loopback port by name (no DNS rebinding). It serves
 OneLake reads. If another VS Code window already holds the port, that window serves the
 website and this one does not. Chrome, Edge and Firefox can reach it; Safari cannot, so the
 website falls back to its own app-registration sign-in there.
+
+## Semantic models
+
+A workspace's **Semantic models** node lists its Power BI models from the Fabric REST API, not from
+OneLake, so it needs a token in the Fabric API's audience. That is a separate sign-in, asked for only
+when you click *Sign in to list semantic models* — never at startup — and for the same account the rest
+of the extension uses. Exporting needs permission to read the model's definition (Contributor or above
+on the workspace, or write on the model), and permission to write the lakehouse's `Files/`.
+
+The export is the one thing the extension ever writes: a single `.bim` file under
+`<lakehouse>/Files/semantic_models/`, on the command, and nowhere else — any other path is refused
+before a request is sent. The write goes from the extension host straight to OneLake; the panel's
+proxy still serves reads only.
 
 ## How it works
 

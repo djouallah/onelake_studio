@@ -1,8 +1,8 @@
 {
   "name": "onelake-studio",
   "displayName": "OneLake Studio",
-  "description": "Browse and query Microsoft Fabric OneLake Iceberg tables with DuckDB, signed in with your VS Code Microsoft account.",
-  "version": "0.2.1",
+  "description": "Browse and query Microsoft Fabric OneLake Iceberg tables with DuckDB, and open Power BI semantic models, signed in with your VS Code Microsoft account.",
+  "version": "0.3.0",
   "publisher": "djouallah",
   "license": "MIT",
   "repository": {
@@ -27,7 +27,9 @@
     "onelake",
     "iceberg",
     "duckdb",
-    "lakehouse"
+    "lakehouse",
+    "power bi",
+    "semantic model"
   ],
   "main": "./src/extension.js",
   "activationEvents": [
@@ -95,6 +97,17 @@
         "command": "onelakeStudio.forgetTrustedSites",
         "title": "Forget Websites Allowed to Use the VS Code Sign-in",
         "category": "OneLake Studio"
+      },
+      {
+        "command": "onelakeStudio.exportBim",
+        "title": "Export .bim to Lakehouse Files and Open",
+        "category": "OneLake Studio",
+        "icon": "$(cloud-download)"
+      },
+      {
+        "command": "onelakeStudio.signInFabric",
+        "title": "Sign in to the Fabric API",
+        "category": "OneLake Studio"
       }
     ],
     "viewsContainers": {
@@ -147,8 +160,18 @@
       "view/item/context": [
         {
           "command": "onelakeStudio.refresh",
-          "when": "view == onelakeStudio.explorer && viewItem =~ /^(workspace|item|dir|tables|error)$/",
+          "when": "view == onelakeStudio.explorer && viewItem =~ /^(workspace|item|dir|tables|models|error)$/",
           "group": "inline"
+        },
+        {
+          "command": "onelakeStudio.exportBim",
+          "when": "view == onelakeStudio.explorer && viewItem == semanticModel",
+          "group": "inline"
+        },
+        {
+          "command": "onelakeStudio.exportBim",
+          "when": "view == onelakeStudio.explorer && viewItem == semanticModel",
+          "group": "1_export"
         }
       ],
       "commandPalette": [
@@ -167,6 +190,14 @@
         {
           "command": "onelakeStudio.refresh",
           "when": "onelakeStudio.signedIn"
+        },
+        {
+          "command": "onelakeStudio.exportBim",
+          "when": "false"
+        },
+        {
+          "command": "onelakeStudio.signInFabric",
+          "when": "false"
         }
       ]
     },

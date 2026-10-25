@@ -1270,10 +1270,13 @@ export function createEngine(auth, {
   // ---------------------------------------------------------------------------
   // Tier 3: every data file registered, a real queryable view.
   // ---------------------------------------------------------------------------
-  async function loadTable(lh, t, { onPeek } = {}) {
+  // `viewSchema` puts the view in a schema other than the table's own: a semantic model's
+  // tables come from whichever items it names, and their views must not take the name of
+  // the selected lakehouse's own dbo.sales (semantic.js).
+  async function loadTable(lh, t, { onPeek, viewSchema = null } = {}) {
     // Keyed per lakehouse: the engine outlives the user's choice of one, and two
     // lakehouses can both hold a dbo.sales.
-    const key = tableKey(lh, t);
+    const key = tableKey(lh, t) + (viewSchema ? `@${viewSchema}` : "");
     // Supersede whatever came before — even on a cache hit, because the click means
     // "show me THIS" and the in-flight load must stand down rather than repaint the
     // screen later.
@@ -1291,8 +1294,9 @@ export function createEngine(auth, {
     const resolved = await resolveTable(lh, t, label, status, check);
     check();
 
-    const ident = t.schema
-      ? `${quoteIdent(t.schema)}.${quoteIdent(t.table)}`
+    const schema = viewSchema || t.schema;
+    const ident = schema
+      ? `${quoteIdent(schema)}.${quoteIdent(t.table)}`
       : quoteIdent(t.table);
 
     const res = track(key);
@@ -1304,7 +1308,7 @@ export function createEngine(auth, {
 
     let columns;
     try {
-      if (t.schema) await q(`CREATE SCHEMA IF NOT EXISTS ${quoteIdent(t.schema)}`);
+      if (schema) await q(`CREATE SCHEMA IF NOT EXISTS ${quoteIdent(schema)}`);
       check();
 
       if (resolved.empty) {

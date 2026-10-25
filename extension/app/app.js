@@ -11,6 +11,11 @@ import { isDocResult, textLinesDoc, fileExt, isTextExt, escapeHtml, basename,
 // Static import is safe: docview.js itself is tiny — the CDN fetch of the markdown
 // parser only happens inside renderMarkdown(), and only for a document that IS markdown.
 import { renderDocument } from './docview.js';
+// Static too, and as cheap: the DAX compiler it runs is imported on the first .bim only.
+import * as semantic from './semantic.js';
+// A .bim's model view. Small: Explore's chart library is imported when Explore first opens.
+import { mountAnalyze } from './analyze/view.js';
+import { tmslOf } from './analyze/model.js';
 import { vscodeApi } from './vscode-api.js';
 
 const $ = id => document.getElementById(id);
@@ -710,6 +715,7 @@ async function onWorkspaceChange() {
 // behind them still have to be given back. Returns the teardown promise rather than awaiting
 // it — every caller has something to overlap it with, and none may leave it unobserved.
 function leaveLakehouse() {
+  closeModelView();
   activeIdent = null;
   setActiveStats(null);
   activeTableRef = null; tableStage = 'none';
@@ -866,6 +872,8 @@ async function expandDir(host, dir, depth) {
 let selSeq = 0;
 
 async function selectFile(row, file) {
+  if (fileExt(file.name) === 'bim') return openModelView(row, file);
+  closeModelView();
   const my = ++selSeq;
   engine.cancelLoad();   // same verdict as selectTable: the last thing is no longer waited for
   document.querySelectorAll('.fileItem.active').forEach(el => el.classList.remove('active'));
@@ -915,6 +923,71 @@ async function selectFile(row, file) {
   }
 }
 
+// A .bim is a semantic model, not a document: it opens as its model view (analyze/view.js)
+// in place of the editor and the results — Model, SQL, Explore — and is registered
+// (semantic.js) so SQL anywhere, the main editor's included, can name it.
+let modelView = null;
+function closeModelView() {
+  if (!modelView) return;
+  modelView.destroy();
+  modelView = null;
+  $('modelView').hidden = true;
+  $('modelView').closest('section').classList.remove('modelOpen');
+}
+async function openModelView(row, file) {
+  closeModelView();
+  const my = ++selSeq;
+  engine.cancelLoad();   // same verdict as selectFile: the last thing is no longer waited for
+  document.querySelectorAll('.fileItem.active').forEach(el => el.classList.remove('active'));
+  row.classList.add('active');
+  $('activeTable').textContent = file.name;
+  activeFile = file;
+  activeIdent = null;
+  activeDocExt = 'bim'; activeDocEligible = false;
+  setActiveStats(null);
+  activeTableRef = null; tableStage = 'none';
+  clearResults();
+  setBusy(true, { stoppable: true });
+  setStatus(`Reading ${file.name}…`);
+  try {
+    await engineReady;
+    const bytes = await engine.readFileBytes(lakehouse, file);
+    const m = await semantic.registerModel(file.name, new TextDecoder().decode(bytes));
+    if (my !== selSeq) return;
+    $('modelView').closest('section').classList.add('modelOpen');
+    $('modelView').hidden = false;
+    modelView = mountAnalyze($('modelView'), {
+      name: m.name, file: m.file, tmsl: tmslOf(m.bim), exploreCompiler: m.exploreCompiler, sample: m.sample,
+      rewrite: semantic.rewrite,
+      run: runModelSql,
+      setStatus,
+    });
+    setStatus(`${file.name} is the semantic model ${m.name}` +
+              (m.directLake ? ` — ${m.directLake} Direct Lake table(s), opened from OneLake as a query needs them` : '') +
+              '. SQL anywhere can name it.', 'ok');
+  } catch (e) {
+    if (my !== selSeq) return;
+    setStatus(`${file.name} does not open as a semantic model: ${explainRead(e.message)}`, 'error');
+    console.error(e);
+  } finally {
+    if (my === selSeq) setBusy(false);
+  }
+}
+
+// A compiled SQL of a model, run: the Direct Lake tables it reads opened first (each in its
+// own schema, semantic.js), then the SQL through the engine's read-only path. Stoppable.
+async function runModelSql(sql) {
+  setBusy(true, { stoppable: true });
+  try {
+    await engineReady;
+    for (const x of semantic.tablesFor(sql))
+      await engine.loadTable(x.lh, x.t, { viewSchema: x.viewSchema });
+    return await engine.runSql(sql);
+  } finally {
+    setBusy(false);
+  }
+}
+
 // The image on screen holds one object URL. clearResults() is the only place the <img>
 // leaves the DOM, so it is the only place the URL is revoked.
 let imageUrl = null;
@@ -923,6 +996,7 @@ let imageUrl = null;
 // blob URL. A plain <img src="https://onelake.dfs…"> would go out as a no-cors request,
 // which the service worker refuses to sign, so it would 401.
 async function selectImage(row, file) {
+  closeModelView();
   const my = ++selSeq;
   document.querySelectorAll('.fileItem.active').forEach(el => el.classList.remove('active'));
   row.classList.add('active');
@@ -993,6 +1067,7 @@ function renderTableList(tables) {
 // Select a table -> load -> schema bar + preview
 // ---------------------------------------------------------------------------
 async function selectTable(row, t) {
+  closeModelView();
   // Without the service worker controlling the page, DuckDB's OneLake reads go out
   // unsigned and every one 401s — the load cannot succeed, so say why up front instead
   // of failing on the first footer read with a message that blames the file. The two
@@ -1218,8 +1293,14 @@ async function runQuery({ doc = true, ext = '' } = {}) {
   let t0 = performance.now();
   try {
     await engineReady;   // Ctrl+Enter is live before the engine is
+    // A query of a semantic model runs as the SQL dax-sql compiles it to, once the tables
+    // that SQL reads are open; every other query is null here and runs as written.
+    const model = semantic.rewrite(sql);
+    if (model) docAllowed = false;   // its answer is a table, even with one cell
+    for (const x of model ? model.tables : [])
+      await engine.loadTable(x.lh, x.t, { viewSchema: x.viewSchema });
     t0 = performance.now();   // ...and waiting for it is not query time
-    const res = await engine.runSql(sql);
+    const res = await engine.runSql(model ? model.sql : sql);
     renderResults(res);
     lastResult = res;
     const ms = Math.round(performance.now() - t0);
@@ -1352,22 +1433,18 @@ const DOC_KIND_TITLE = {
   json: 'Rendered as indented JSON',
   markdown: 'Rendered as markdown',
   text: 'Shown as plain text, exactly as stored',
-  bim: 'Rendered as semantic model diagram',
 };
 
 async function showDoc(text) {
   const seq = ++docSeq;
   try {
-    const { html, kind, mount } = await renderDocument(text, docSourceExt);
+    const { html, kind } = await renderDocument(text, docSourceExt);
     if (seq !== docSeq || docMode !== 'pretty') return;
     $('docView').innerHTML = html;
     // Only prose gets the reading measure; code keeps the full width (see index.html).
     $('docView').classList.toggle('prose', kind === 'markdown');
     $('docView').hidden = false;
     $('resultsTable').hidden = true;
-    // After unhiding, never before: a mounting renderer (the .bim diagram) measures
-    // its elements, and everything inside a hidden ancestor measures 0×0.
-    if (mount) mount($('docView'));
     $('docPretty').title = DOC_KIND_TITLE[kind] || '';
     setDocTabs();
   } catch (e) {

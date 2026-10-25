@@ -33,15 +33,19 @@ function injectConfig(html, nonce, config) {
   };
 }
 
-// Rewrites every local script src to a webview URI. app.js's own relative imports
-// (./paths.js, ./data.js) resolve against its module URL, which lands in the same
-// directory, so they need nothing.
+// Rewrites every local script src — and every local stylesheet href — to a webview URI.
+// app.js's own relative imports (./paths.js, ./data.js) resolve against its module URL,
+// which lands in the same directory, so they need nothing. A <link href> resolves against
+// the document instead, which in a webview is not the site directory, so it does.
 function rewriteAssets(html, assetUrl) {
   let n = 0;
-  const out = html.replace(/<script(\s[^>]*?)?\ssrc="(?!https?:)([^"]+)"/g, (m, attrs, src) => {
-    n++;
-    return `<script${attrs || ''} src="${assetUrl(src)}"`;
-  });
+  const out = html
+    .replace(/<script(\s[^>]*?)?\ssrc="(?!https?:)([^"]+)"/g, (m, attrs, src) => {
+      n++;
+      return `<script${attrs || ''} src="${assetUrl(src)}"`;
+    })
+    .replace(/<link(\s[^>]*?rel="stylesheet"[^>]*?)\shref="(?!https?:)([^"]+)"/g,
+      (m, attrs, href) => `<link${attrs} href="${assetUrl(href)}"`);
   return { html: out, ok: n > 0, count: n };
 }
 

@@ -1,8 +1,8 @@
 // =============================================================================
 // vendor.mjs — put the engine INSIDE the extension
 // =============================================================================
-// Downloads what the WEBVIEW still fetches — sql.js (the .db/.sqlite reader) and the
-// markdown renderer — into extension/vendor/<host>/<path>, mirroring the CDN's own
+// Downloads what the WEBVIEW still fetches — sql.js (the .db/.sqlite reader), the
+// markdown renderer, ECharts and the dax-sql compiler — into extension/vendor/<host>/<path>, mirroring the CDN's own
 // layout. The proxy's /cdn route serves these files first and only falls back to the
 // network for anything missing, so an installed extension boots with no CDN at all.
 //
@@ -24,7 +24,7 @@ import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 
 // The pins live in src/vendored.js, beside the proxy route and the CSP that must agree.
-const { VENDORED } = createRequire(import.meta.url)("./src/vendored.js");
+const { VENDORED, VENDORED_GH } = createRequire(import.meta.url)("./src/vendored.js");
 const pin = name => VENDORED.find(p => p.name === name).version;
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -85,5 +85,20 @@ await grabEsmClosure(`/npm/sql.js@${SQLJS}/+esm`);
 await grab("cdn.jsdelivr.net", `/npm/sql.js@${SQLJS}/dist/sql-wasm.wasm`, { optional: true });
 await grabEsmClosure(`/npm/marked@${pin("marked")}/+esm`);
 await grabEsmClosure(`/npm/dompurify@${pin("dompurify")}/+esm`);
+
+// Explore's charts, as ECharts' own minified build: a classic script, loaded by
+// analyze/view.js. jsDelivr's +esm repackaging of it draws an empty canvas.
+await grab("cdn.jsdelivr.net", `/npm/echarts@${pin("echarts")}/dist/echarts.min.js`);
+
+// The DAX-to-SQL compiler behind semantic models — plain ES modules from a GitHub commit.
+// A repository has no import closure to follow from one entry point the way +esm does, so
+// its files come from jsDelivr's listing of the commit, filtered (as build.mjs does).
+for (const { repo, include } of VENDORED_GH) {
+  const r = await fetch(`https://data.jsdelivr.com/v1/packages/gh/${repo}?structure=flat`);
+  if (!r.ok) throw new Error(`gh/${repo} listing: ${r.status}`);
+  const names = ((await r.json()).files || []).map(f => f.name).filter(n => include.test(n));
+  if (!names.length) throw new Error(`gh/${repo}: the listing has none of the files to vendor`);
+  for (const n of names) await grab("cdn.jsdelivr.net", `/gh/${repo}${n}`);
+}
 
 console.log(`vendored ${fetched.size} URL(s), ${(bytes / 1e6).toFixed(1)}MB new`);

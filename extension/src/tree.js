@@ -27,10 +27,14 @@ class LakehouseTree {
   /**
    * @param {object} deps
    * @param {import('./catalog').createCatalog} deps.catalog
+   * @param {import('./fabric').createFabric} [deps.fabric]  semantic models (Fabric REST)
+   * @param {() => Promise<boolean>} [deps.hasFabric]        a Fabric token, without a prompt?
    * @param {() => boolean} deps.isSignedIn
    */
-  constructor({ catalog, isSignedIn, log = () => {} }) {
+  constructor({ catalog, fabric = null, hasFabric = async () => false, isSignedIn, log = () => {} }) {
     this.catalog = catalog;
+    this.fabric = fabric;
+    this.hasFabric = hasFabric;
     this.isSignedIn = isSignedIn;
     this.log = log;
     this._emitter = new vscode.EventEmitter();
@@ -44,6 +48,7 @@ class LakehouseTree {
   // per-node button exists to bust.
   refresh(n) {
     this.catalog.reset();
+    if (this.fabric) this.fabric.reset();
     this._emitter.fire(n);
   }
 
@@ -58,7 +63,7 @@ class LakehouseTree {
     // and duplicate ids are worse than generated ones.
     if (n.kind !== 'error' && n.kind !== 'empty') {
       item.id = [n.kind, n.workspace, n.item, n.schema, n.table, n.dir, n.path]
-        .map(v => (v == null ? '' : String(v))).join('|');
+        .map(v => (v == null ? '' : String(v))).join('|') + (n.modelId ? `|${n.modelId}` : '');
     }
     switch (n.kind) {
       case 'workspace':
@@ -83,6 +88,20 @@ class LakehouseTree {
         break;
       case 'dir':
         item.iconPath = new vscode.ThemeIcon('folder');
+        break;
+      // A workspace's Power BI semantic models — from the Fabric API, not OneLake.
+      case 'models':
+        item.iconPath = new vscode.ThemeIcon('graph');
+        break;
+      case 'semanticModel':
+        item.iconPath = new vscode.ThemeIcon('symbol-structure');
+        item.tooltip = (n.description ? `${n.description}\n\n` : '') +
+          "Export its .bim to a lakehouse's Files/semantic_models/ to open it as a model.";
+        break;
+      case 'fabricSignIn':
+        item.iconPath = new vscode.ThemeIcon('sign-in');
+        item.command = { command: 'onelakeStudio.signInFabric', title: 'Sign in to the Fabric API' };
+        item.tooltip = 'Semantic models come from the Fabric REST API, which needs its own sign-in.';
         break;
       case 'file':
         item.iconPath = new vscode.ThemeIcon('file');
@@ -128,11 +147,26 @@ class LakehouseTree {
 
     if (n.kind === 'workspace') {
       const items = await this.catalog.listItems(n.workspace);
-      return items.length
+      const kids = items.length
         ? items.map(it => node('item', it.name.replace(/\.[^.]+$/, ''), {
             workspace: n.workspace, item: it.name, kindLabel: kindLabel(it.kind),
           }))
         : [node('empty', 'Nothing here holds tables', { leaf: true })];
+      // Last, and closed: listing it is a Fabric API call, on a token sign-in never asked for.
+      if (this.fabric) kids.push(node('models', 'Semantic models', { workspace: n.workspace }));
+      return kids;
+    }
+
+    if (n.kind === 'models') {
+      if (!await this.hasFabric()) {
+        return [node('fabricSignIn', 'Sign in to list semantic models', { leaf: true, workspace: n.workspace })];
+      }
+      const models = await this.fabric.listSemanticModels(n.workspace);
+      return models.length
+        ? models.map(m => node('semanticModel', m.name, {
+            workspace: n.workspace, model: m.name, modelId: m.id, description: m.description, leaf: true,
+          }))
+        : [node('empty', 'No semantic models', { leaf: true })];
     }
 
     // An item's two halves, named the way OneLake names them. Tables comes first and opens

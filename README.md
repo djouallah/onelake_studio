@@ -33,6 +33,14 @@ The panel runs [`extension/app/`](extension/app/), the extension's own tracked f
 account, the engine is native DuckDB in the extension host, and `extension/src/proxy.js` signs
 OneLake reads from the host instead of a service worker, so the token never enters the page at all.
 
+The extension also lists each workspace's **Power BI semantic models** in its tree, and
+**Export .bim to Lakehouse Files and Open** turns one into a file the app can open: it reads the
+model's TMSL definition with the Fabric REST API's `getDefinition`, writes it to
+`Files/semantic_models/<model>.bim` in a lakehouse of the model's own workspace, and opens it as its
+model (below). That needs a second token, in the Fabric API's audience, which VS Code asks for only when
+you first expand *Semantic models*; and it is the extension's one write — that file, on that command,
+nothing else. The website does neither: it stays read-only on its single Storage scope.
+
 ## Signing in
 
 Signing in is only needed to reach OneLake — the editor and engine run without it. There are two ways,
@@ -147,7 +155,7 @@ conversion; resolution retries with a backoff sized to the documented 5s–2min 
 status line, and Stop works throughout. If the catalog refuses, the app shows what it said rather than
 guessing.
 
-**On the website, a `.bim` under `Files/` opens as its semantic model**, in place of the editor, on
+**A `.bim` under `Files/` opens as its semantic model** — on the website and in VS Code — in place of the editor, on
 three pages:
 
 - **Model**: its tables as a star, dimensions in the middle and facts around them, with its
@@ -168,8 +176,8 @@ three pages:
 The model is named after its file (`nem.bim` is `nem`), and the main editor can query it too, as
 can `DESCRIBE nem`. A Direct Lake table is read from the lakehouse its model names, through the
 same Iceberg catalog, whichever item is selected, and only when a query actually reads it. The
-model comes from the file, so export it once with Fabric's `getDefinition` (TMSL); the app itself
-never calls the Fabric API.
+model comes from the file: in VS Code, export it from the tree (above); for the website, export it once
+with Fabric's `getDefinition` (TMSL) — the website itself never calls the Fabric API.
 
 ## Limitations
 
