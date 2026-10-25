@@ -143,6 +143,20 @@ conversion; resolution retries with a backoff sized to the documented 5s–2min 
 status line, and Stop works throughout. If the catalog refuses, the app shows what it said rather than
 guessing.
 
+**On the website, a `.bim` under `Files/` is a semantic model you can query.** Opening one draws its diagram and also
+registers it under the file's name (`nem.bim` is `nem`), with a query of it in the editor:
+
+```sql
+SELECT dim_region.Region, AGG("Registered MW") AS mw FROM nem GROUP BY ALL
+```
+
+`AGG(m)` is measure `m`, computed with DAX's semantics by [dax-sql](https://github.com/djouallah/dax-sql),
+which compiles the query to plain SQL in the tab. A model query can also be a subquery or CTE inside
+SQL of your own. `DESCRIBE nem` lists the model's columns and measures. A Direct Lake table is read
+from the lakehouse its model names, through the same Iceberg catalog, whichever item is selected, and
+only when a query actually reads it. The model comes from the file, so export it once with Fabric's
+`getDefinition` (TMSL); the app itself never calls the Fabric API.
+
 ## Limitations
 
 - **A lakehouse with no schemas of its own lists its tables under `dbo`.** That's the synthetic
@@ -201,4 +215,5 @@ site/index.html   UI shell + sign-in gate      site/data.js   Iceberg engine on 
 site/app.js       DOM wiring                   site/paths.js  pure logic (paths, SQL, cache keys)
 site/auth.js      MSAL provider                site/sw.js     COOP/COEP + token injection
 site/config.js    clientId + authority         test/          node --test suite for paths.js
+site/semantic.js  .bim models -> dax-sql       site/bimview.js the .bim diagram
 ```

@@ -1,7 +1,7 @@
 // Static "build": publish site/ to dist/, which GitHub Pages serves. No bundler — the app is
 // plain HTML + ES modules — so most of this is a copy. Three things are generated:
 //
-// 1. dist/npm/ — every third-party package the page runs (cdn.js pins them), with its whole
+// 1. dist/npm/ and dist/gh/ — every third-party package the page runs (cdn.js pins them), with its whole
 //    import closure, mirroring jsDelivr's layout. The deployed site then loads no executable
 //    code from a third party: no CDN can change what runs on the origin that holds a OneLake
 //    token. Each file's own `/npm/…` imports are rewritten to RELATIVE paths, so the copy
@@ -84,6 +84,14 @@ let vendored = true;
 try {
   for (const pkg of VENDOR.esm) await esmClosure(`/npm/${pkg}/+esm`);
   for (const f of VENDOR.files) await save(`npm/${f}`, await get(`${JSDELIVR}/npm/${f}`));
+  // A GitHub repository has no import closure to follow from one entry point the way +esm
+  // does, so its files come from jsDelivr's listing of the commit, filtered.
+  for (const { repo, include } of VENDOR.gh) {
+    const listing = JSON.parse((await get(`https://data.jsdelivr.com/v1/packages/gh/${repo}?structure=flat`)).toString("utf8"));
+    const names = (listing.files || []).map(f => f.name).filter(n => include.test(n));
+    if (!names.length) throw new Error(`gh/${repo}: the listing has none of the files to vendor`);
+    for (const n of names) await save(`gh/${repo}${n}`, await get(`${JSDELIVR}/gh/${repo}${n}`));
+  }
   for (const [repo, names] of Object.entries(VENDOR.extensions)) {
     for (const name of names) {
       const rel = `${PINS.duckdbCore}/wasm_eh/${name}.duckdb_extension.wasm`;
@@ -94,6 +102,7 @@ try {
   vendored = false;
   console.warn(`!! vendoring failed, the deployed page will load packages from jsDelivr: ${e.message}`);
   await rm(distPath("npm"), { recursive: true, force: true });
+  await rm(distPath("gh"), { recursive: true, force: true });
   await rm(distPath("duckdb-extensions"), { recursive: true, force: true });
 }
 

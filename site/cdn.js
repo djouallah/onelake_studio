@@ -31,6 +31,9 @@ export const PINS = {
   sqljs: "sql.js@1.13.0",
   marked: "marked@18.0.7",
   dompurify: "dompurify@3.4.12",
+  // The DAX-to-SQL compiler behind semantic-model queries (semantic.js). Not on npm: plain
+  // ES modules straight from its GitHub repository, at a commit.
+  daxSql: "djouallah/dax-sql@8683334f4e2a82d32630db2e382dd2c54ce0a8f1",
 };
 
 // What build.mjs vendors: ESM entry points (each with its whole import closure) and the
@@ -42,6 +45,9 @@ export const VENDOR = {
     `${PINS.duckdbWasm}/${PINS.duckdbBundle.worker}`,
     `${PINS.sqljs}/dist/sql-wasm.wasm`,
   ],
+  // GitHub repositories, by the files of each that the page imports: the compiler and its
+  // TMSL reader, which import each other by relative path and nothing else.
+  gh: [{ repo: PINS.daxSql, include: /^\/(src\/.*\.js|formats\/tmsl\.js)$/ }],
   // DuckDB extensions the engine loads, by repository. wasm_eh is the platform of the
   // single-threaded bundle.
   extensions: {
@@ -73,6 +79,13 @@ export function npmModule(pkg) {
 export function npmFile(pkg, path) {
   const v = vendoredBase();
   return `${v || JSDELIVR}/npm/${pkg}/${path}`;
+}
+
+// A file of a pinned GitHub repository: `ghFile(PINS.daxSql, "src/index.js")`. jsDelivr
+// serves it as written, so its relative imports resolve beside it — vendored or not.
+export function ghFile(repo, path) {
+  const v = vendoredBase();
+  return `${v || JSDELIVR}/gh/${repo}/${path}`;
 }
 
 // Where DuckDB should INSTALL its extensions from, or null for its own defaults.

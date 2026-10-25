@@ -352,10 +352,10 @@ self.addEventListener('fetch', event => {
   // every file for 10 minutes on its own clock, so a page opened minutes after a deploy
   // came up as a MIX of builds — new app.js over old data.js — and a just-shipped fix
   // was provably absent from the very page reporting on it. An ETag 304 costs one round
-  // trip and buys a page that is one build. Vendored packages carry their version in the
-  // path, so they are immutable and keep the plain cache.
+  // trip and buys a page that is one build. Vendored packages carry their version (or
+  // commit) in the path, so they are immutable and keep the plain cache.
   if (url.origin === self.location.origin) {
-    if (req.method !== 'GET' || /\/npm\/|\/duckdb-extensions\//.test(url.pathname)) return;
+    if (req.method !== 'GET' || /\/npm\/|\/gh\/|\/duckdb-extensions\//.test(url.pathname)) return;
     // A navigation answered with a REDIRECTED response renders the target's body under the
     // original URL, so every relative URL resolves against the wrong base. Hand back a real
     // redirect and let the browser ask again for the final URL.

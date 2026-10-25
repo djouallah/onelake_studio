@@ -11,6 +11,8 @@ import { isDocResult, textLinesDoc, fileExt, isTextExt, escapeHtml, basename,
 // Static import is safe: docview.js itself is tiny — the CDN fetch of the markdown
 // parser only happens inside renderMarkdown(), and only for a document that IS markdown.
 import { renderDocument } from './docview.js';
+// Static too, and as cheap: the DAX compiler it runs is imported on the first .bim only.
+import * as semantic from './semantic.js';
 
 const $ = id => document.getElementById(id);
 const DOCS = 'https://github.com/djouallah/onelake_studio';
@@ -952,6 +954,7 @@ async function selectFile(row, file) {
       $('previewBtn').disabled = false;
       $('runBtn').disabled = false;
       reportLoad(info, await runQuery({ doc: activeDocEligible, ext: activeDocExt }));
+      if (activeDocExt === 'bim') await openModel(file, my);
     } else {
       reportLoad(info, true);
     }
@@ -970,6 +973,25 @@ async function selectFile(row, file) {
     // A stale selection's teardown must not flip the busy state out from under the
     // newer selection's own load.
     if (my === selSeq) setBusy(false);
+  }
+}
+
+// A .bim is a semantic model as well as a diagram: register it (semantic.js) and put a
+// query of it in the editor. Best-effort — the diagram is already on screen, and a model
+// the compiler cannot read is said so in the status line, not thrown.
+async function openModel(file, my) {
+  try {
+    const bytes = await engine.readFileBytes(lakehouse, file);
+    const m = await semantic.registerModel(file.name, new TextDecoder().decode(bytes));
+    if (my !== selSeq) return;
+    $('sqlEditor').value = m.sample;
+    setStatus(`${file.name} is the semantic model ${m.name}` +
+              (m.directLake ? ` — ${m.directLake} Direct Lake table(s), opened from OneLake as a query needs them` : '') +
+              `. Run queries it.`, 'ok');
+  } catch (e) {
+    if (my !== selSeq) return;
+    setStatus(`${file.name}: diagram only — it does not compile as a semantic model: ${e.message}`, 'warn');
+    console.warn(e);
   }
 }
 
@@ -1254,8 +1276,14 @@ async function runQuery({ doc = true, ext = '' } = {}) {
   let t0 = performance.now();
   try {
     await engineReady;   // Ctrl+Enter is live before the engine is
+    // A query of a semantic model runs as the SQL dax-sql compiles it to, once the tables
+    // that SQL reads are open; every other query is null here and runs as written.
+    const model = semantic.rewrite(sql);
+    if (model) docAllowed = false;   // its answer is a table, even with one cell
+    for (const x of model ? model.tables : [])
+      await engine.loadTable(x.lh, x.t, { viewSchema: x.viewSchema });
     t0 = performance.now();   // ...and waiting for it is not query time
-    const res = await engine.runSql(sql);
+    const res = await engine.runSql(model ? model.sql : sql);
     renderResults(res);
     lastResult = res;
     const ms = Math.round(performance.now() - t0);
