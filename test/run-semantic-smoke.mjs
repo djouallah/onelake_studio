@@ -62,7 +62,8 @@ try {
 
   const m = await page.evaluate(async bim => {
     const s = await import(new URL("semantic.js", document.baseURI).href);
-    return s.registerModel("shop.bim", bim);
+    const { name, sample, directLake } = await s.registerModel("shop.bim", bim);
+    return { name, sample, directLake };
   }, BIM);
   console.log("registered:", JSON.stringify(m));
   if (m.name !== "shop") throw new Error(`model name ${m.name}`);
