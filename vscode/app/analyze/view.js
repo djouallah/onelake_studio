@@ -182,11 +182,14 @@ export function mountAnalyze(root, ctx) {
     info.textContent = '';
     const my = ++outSeq;
     return busy(planBtn, 'Planning…', async () => {
-      const res = await run(`EXPLAIN ${compiled(base)}`);
+      const sql = compiled(base);
+      const res = await run(`EXPLAIN ${sql}`);
       if (my !== outSeq) return;
       const text = res.rows.map(r => r.explain_value ?? Object.values(r).join('  ')).join('\n');
       out.innerHTML = `<tbody><tr><td><pre class="sm-plan">${escapeHtml(text)}</pre></td></tr></tbody>`;
       info.textContent = 'Query plan (EXPLAIN)';
+      // The plan replaces the rows on screen, so it is what the screen file holds.
+      ctx.onScreen?.({ sql: base, compiled: sql, plan: text });
       ctx.setStatus(`${ctx.name}: query plan.`, 'ok');
     });
   }

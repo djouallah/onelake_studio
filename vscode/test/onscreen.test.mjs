@@ -42,6 +42,28 @@ test("an open replaces what described the previous one; model parts merge", asyn
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
 
+test("a query plan on screen is kept whole, in place of rows", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "onscreen-"));
+  try {
+    const s = createOnScreen({ dir, pid: 4243 });
+    const plan = "╭─ Hash Group By ─╮\n" + "│ x │\n".repeat(400);
+    await s.update({ open: { kind: "model", name: "sales", file: "sales.bim" } });
+    await s.update({ model: { page: "sql", sql: { sql: "SELECT 1" } } });
+    await s.update({ model: { sql: "SELECT 1", compiled: "WITH f3 AS (SELECT 1) SELECT * FROM f3", plan } });
+    let f = await read(s);
+    assert.equal(f.model.sql.plan, plan, "not cut to a sample value's length");
+    assert.match(f.model.sql.compiled, /WITH f3/);
+    assert.equal(f.model.sql.sample, undefined);
+
+    // EXPLAIN typed into the main editor: its explain_value rows are the plan.
+    await s.update({ query: { sql: "EXPLAIN SELECT 1", rows: 1, fields: ["explain_key", "explain_value"],
+                              sample: [{ explain_key: "physical_plan", explain_value: plan }] } });
+    f = await read(s);
+    assert.equal(f.query.plan, plan);
+    assert.equal(f.query.sample, undefined);
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
 test("a window that died leaves no file behind once another starts", async () => {
   const dir = await mkdtemp(join(tmpdir(), "onscreen-"));
   try {

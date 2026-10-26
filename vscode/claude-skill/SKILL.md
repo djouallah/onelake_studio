@@ -35,7 +35,9 @@ Options: `--limit N` (rows printed, default 100), `--csv`, `--fresh` (re-read in
 
 When the user says *this*, *here*, *open*, *on screen*, *what I'm looking at*, *these numbers*, or
 names nothing, run `screen` first: it prints what is open, the SQL or DAX last run, and the rows on
-screen as a table. When it says only the first rows were saved and the question needs all of them
+screen as a table — or, when the user pressed Show plan or ran an EXPLAIN, the query plan on
+screen and the SQL it compiled to: analyse that plan as saved, never re-run EXPLAIN to get it.
+When it says only the first rows were saved and the question needs all of them
 (totals, gaps, a check across the whole result), run `screen --rerun`.
 
 `screen` reads `{{panel}}/panel-*.json` (one per VS Code window, the most recently `updated`); read
@@ -46,7 +48,8 @@ those files directly only to pick a window other than the newest.
 - `query`: the last SQL the main editor ran, its row count, and `sample` — the first rows on
   screen. Answer from `sample` when it is enough; re-run through `sql` when it is not.
 - `model`: for a semantic model, which page is in front (`model`, `sql`, `explore`), the SQL
-  page's last query and Explore's last DAX, each with its first rows.
+  page's last query and Explore's last DAX, each with its first rows; `plan` (and `compiled`)
+  instead of rows when a query plan is what is on screen.
 
 The panel's SQL names a table as the panel does (`"schema"."table"`); through `sql --in`, it is
 `<item>_<schema>.<table>` (`open.cli.sql` shows it). No file means the panel is closed: ask.

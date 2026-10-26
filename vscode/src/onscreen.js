@@ -8,8 +8,8 @@
 // rows of the result on screen. Anything more, Claude asks for through cli.mjs.
 //
 //   open    what the panel has open: a table, a file, or a semantic model
-//   query   the last SQL the main editor ran, and its first rows
-//   model   the model view: which page is in front, its SQL page's last query, Explore's DAX
+//   query   the last SQL the main editor ran, and its first rows (or its plan, for an EXPLAIN)
+//   model   the model view: which page is in front, its SQL page's last query or plan, Explore's DAX
 //
 // A new `open` drops the `query` and `model` that described the previous one. The file is
 // deleted when the panel closes, and a window that died without saying so (its pid gone) has
@@ -74,8 +74,18 @@ function sampleOf(x) {
   return { fields, sample };
 }
 
+// A query plan on screen, whole: cut to MAX_VALUE it is useless. Either the Show plan button's
+// text, or the rows of an EXPLAIN typed into an editor, which are the plan.
+const MAX_PLAN = 200_000;
+function planOf(x) {
+  if (x.plan != null) return String(x.plan).slice(0, MAX_PLAN);
+  if (!Array.isArray(x.fields) || !x.fields.includes('explain_value') || !Array.isArray(x.sample)) return undefined;
+  return x.sample.map(r => r && r.explain_value).filter(v => v != null).join('\n').slice(0, MAX_PLAN);
+}
+const shownOf = x => { const plan = planOf(x); return plan != null ? { plan } : sampleOf(x); };
+
 const queryOf = x => (x && typeof x === 'object'
-  ? { sql: str(x.sql), ident: str(x.ident), rows: num(x.rows), ms: num(x.ms), error: str(x.error), ...sampleOf(x),
+  ? { sql: str(x.sql), ident: str(x.ident), rows: num(x.rows), ms: num(x.ms), error: str(x.error), ...shownOf(x),
       at: new Date().toISOString() }
   : null);
 
@@ -84,7 +94,7 @@ function modelPart(x) {
   const at = new Date().toISOString();
   const part = {};
   if (x.page) part.page = str(x.page);
-  if (x.sql != null) part.sql = { sql: str(x.sql), rows: num(x.rows), error: str(x.error), ...sampleOf(x), at };
+  if (x.sql != null) part.sql = { sql: str(x.sql), compiled: str(x.compiled), rows: num(x.rows), error: str(x.error), ...shownOf(x), at };
   if (x.explore) {
     const e = x.explore;
     part.explore = { dax: str(e.dax), rows: num(e.rows), error: str(e.error), ...sampleOf(e), at };

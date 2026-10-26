@@ -167,6 +167,11 @@ function createAgent({ onelake, fabric, engine, bimPath, appDir, vendorDir, daxS
 
   // A sample as a table, and how much of the result it is.
   function sampleOut(x, out) {
+    if (x && x.plan != null) {
+      if (x.compiled) out(`Compiled to:\n\n${fence('sql', x.compiled)}\n`);
+      out(`Query plan on screen (EXPLAIN, not run):\n\n${fence('', x.plan)}`);
+      return;
+    }
     if (!x || !Array.isArray(x.fields) || !Array.isArray(x.sample)) return;
     out(mdTable(x.fields, x.sample.map(r => x.fields.map(f => r[f]))));
     const n = x.rows != null ? x.rows : x.sample.length;
