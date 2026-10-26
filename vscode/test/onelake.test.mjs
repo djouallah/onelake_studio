@@ -163,3 +163,74 @@ test("a changed listing is reported as WHICH listing, and survives a store swap"
   await new Promise(r => setTimeout(r, 20));
   assert.equal(seen.length, 2);
 });
+
+test("a workspace's semantic models are a cached listing: Fabric is asked once", async () => {
+  let asked = 0;
+  const fabric = { listSemanticModels: async ws => { asked++; return [{ id: "m1", name: `model of ${ws}` }]; } };
+  const onelake = createOneLake({ catalog: fakeCatalog(), store: createStore({ dir: null }), fabric });
+  assert.deepEqual(await onelake.models("ws"), [{ id: "m1", name: "model of ws" }]);
+  await onelake.models("ws");
+  assert.equal(asked, 1, "the second expand is served from the store");
+  await onelake.models("ws", { fresh: true });
+  assert.equal(asked, 2, "and a Refresh asks again");
+});
+
+test("a Files/ object's bytes are kept under the version its listing gave", async () => {
+  const { mkdtemp, rm } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const dir = await mkdtemp(join(tmpdir(), "onelake-bytes-"));
+  try {
+    const catalog = fakeCatalog();
+    let version = "v1", reads = 0;
+    catalog.listFiles = async () => [{ name: "a.png", path: "lh.Lakehouse/Files/img/a.png", isDir: false, bytes: 3, version }];
+    catalog.readBytes = async (ws, path, { range } = {}) => { reads++; return range ? new Uint8Array([1]) : new Uint8Array([1, 2, 3]); };
+    const hits = [];
+    const onelake = createOneLake({ catalog, store: createStore({ dir }), onHit: e => hits.push(e) });
+    const path = "lh.Lakehouse/Files/img/a.png";
+
+    // No listing cached: no version to key on, so read live, every time.
+    await onelake.readBytes("ws", path);
+    await onelake.readBytes("ws", path);
+    assert.equal(reads, 2);
+
+    await onelake.files(lh, "img");
+    assert.deepEqual([...await onelake.readBytes("ws", path)], [1, 2, 3]);
+    assert.equal(reads, 3, "the first read under a version goes to OneLake");
+    assert.deepEqual([...await onelake.readBytes("ws", path)], [1, 2, 3]);
+    assert.deepEqual([...await onelake.readBytes("ws", path, { range: "bytes=1-1" })], [2],
+      "a range of a kept file is a slice of it");
+    assert.equal(reads, 3, "and every read after it is from disk");
+    assert.ok(hits.some(h => h.path === `ws/${path}`), "a kept read is reported as a hit");
+
+    // The file is rewritten: its listing gives a new version, and the bytes are read again.
+    version = "v2";
+    await onelake.files(lh, "img", { fresh: true });
+    await onelake.readBytes("ws", path);
+    assert.equal(reads, 4);
+    assert.ok(await onelake.size() > 0);
+    await onelake.clear();
+    await onelake.files(lh, "img");
+    await onelake.readBytes("ws", path);
+    assert.equal(reads, 5, "Clear Cache takes the bytes with it");
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
+test("switching store does not leave tables marked as queued for prefetch", async () => {
+  const catalog = fakeCatalog();
+  let gate;
+  const held = new Promise(r => { gate = r; });
+  catalog.loadTable = async (l, t) => { catalog.calls.push(`load ${t.table}`); await held;
+    return { metadata: metadata(), metadataLocation: LOC }; };
+  const onelake = createOneLake({ catalog, store: createStore({ dir: null }) });
+  const tables = [{ schema: "dbo", table: "a" }, { schema: "dbo", table: "b" },
+                  { schema: "dbo", table: "c" }, { schema: "dbo", table: "d" }];
+  onelake.prefetch(lh, tables);           // two run, two wait in the queue
+  onelake.useStore(createStore({ dir: null }));
+  gate();
+  await new Promise(r => setTimeout(r, 20));
+  catalog.calls.length = 0;
+  onelake.prefetch(lh, tables);
+  await new Promise(r => setTimeout(r, 20));
+  for (const t of ["c", "d"]) assert.ok(catalog.calls.includes(`load ${t}`), `${t} was prefetched after the switch`);
+});

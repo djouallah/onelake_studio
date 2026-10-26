@@ -111,6 +111,26 @@ export function mountAnalyze(root, ctx) {
   const typed = () => ta.value.trim().replace(/;+\s*$/, '');
   // What the box says as the SQL that runs: a model's SELECTs compiled in place.
   const compiled = text => ctx.rewrite(text)?.sql ?? text;
+  // Results, kept for the life of this view by the SQL that produced them: the model is read
+  // only, so the same SQL is the same rows — a Preview run twice, a count, Explore toggling
+  // Totals or swapping back, are answered here. Only answers are kept, never a failure or
+  // a Stop; the CSV export runs fresh (its rows are many and it is asked for once).
+  const results = new Map();   // sql -> result, oldest first
+  async function run(sql) {
+    if (results.has(sql)) {
+      const hit = results.get(sql);
+      results.delete(sql);
+      results.set(sql, hit);
+      return hit;
+    }
+    const res = await ctx.run(sql);
+    results.set(sql, res);
+    if (results.size > 40) results.delete(results.keys().next().value);
+    return res;
+  }
+  // Ctrl+Enter reaches preview() while a Preview or a Plan is still running; only the
+  // latest may write the result pane.
+  let outSeq = 0;
   async function busy(button, label, work) {
     const was = button.textContent;
     for (const b of [previewBtn, planBtn, csvBtn]) b.disabled = true;
@@ -131,17 +151,20 @@ export function mountAnalyze(root, ctx) {
     if (!base) { info.textContent = 'Enter a SQL query.'; return; }
     out.innerHTML = '';
     info.textContent = '';
+    const my = ++outSeq;
     return busy(previewBtn, 'Loading…', async () => {
       const sql = compiled(base);
       // Every column as DuckDB prints it: a DATE, TIMESTAMP or DECIMAL read through Arrow
       // would show as its raw number.
-      const res = await ctx.run(`SELECT COLUMNS(*)::VARCHAR FROM (\n${sql}\n) LIMIT ${PREVIEW_ROWS}`);
+      const res = await run(`SELECT COLUMNS(*)::VARCHAR FROM (\n${sql}\n) LIMIT ${PREVIEW_ROWS}`);
+      if (my !== outSeq) return;
       if (!res.rows.length) { info.textContent = 'No rows.'; ctx.setStatus('No rows.', 'ok'); return; }
       out.innerHTML = '<thead><tr>' + res.fields.map(c => `<th>${escapeHtml(c)}</th>`).join('') + '</tr></thead><tbody>' +
         res.rows.map(r => '<tr>' + res.fields.map(c => `<td>${escapeHtml(r[c] ?? '')}</td>`).join('') + '</tr>').join('') + '</tbody>';
       // The count runs the query again: only when the preview is cut at its limit.
       const total = res.rows.length < PREVIEW_ROWS ? res.rows.length
-        : Number((await ctx.run(`SELECT COUNT(*) AS cnt FROM (\n${sql}\n)`)).rows[0]?.cnt ?? res.rows.length);
+        : Number((await run(`SELECT COUNT(*) AS cnt FROM (\n${sql}\n)`)).rows[0]?.cnt ?? res.rows.length);
+      if (my !== outSeq) return;
       info.textContent = res.rows.length < total
         ? `Showing ${res.rows.length} of ${total.toLocaleString()} rows` : `${total.toLocaleString()} rows`;
       ctx.setStatus(`${ctx.name}: ${info.textContent}.`, 'ok');
@@ -152,8 +175,10 @@ export function mountAnalyze(root, ctx) {
     if (!base) { info.textContent = 'Enter a SQL query.'; return; }
     out.innerHTML = '';
     info.textContent = '';
+    const my = ++outSeq;
     return busy(planBtn, 'Planning…', async () => {
-      const res = await ctx.run(`EXPLAIN ${compiled(base)}`);
+      const res = await run(`EXPLAIN ${compiled(base)}`);
+      if (my !== outSeq) return;
       const text = res.rows.map(r => r.explain_value ?? Object.values(r).join('  ')).join('\n');
       out.innerHTML = `<tbody><tr><td><pre class="sm-plan">${escapeHtml(text)}</pre></td></tr></tbody>`;
       info.textContent = 'Query plan (EXPLAIN)';
@@ -217,7 +242,7 @@ export function mountAnalyze(root, ctx) {
     explorer = createExplorer(explorePage, {
       model: async () => ctx.tmsl,
       toDax: q => mq.toDax(q),
-      run: async q => (await ctx.run(sqlOf(q))).rows,
+      run: async q => (await run(sqlOf(q))).rows,
       csv: q => csvOf(sqlOf(q), `${ctx.name}-explore.csv`),
       chart: box => {
         if (!charts.has(box)) { charts.set(box, echarts.init(box, 'studio')); resized.observe(box); }
@@ -234,6 +259,8 @@ export function mountAnalyze(root, ctx) {
   return {
     destroy() {
       destroyed = true;
+      explorer?.destroy();
+      results.clear();
       resized.disconnect();
       for (const c of charts.values()) c.dispose();
       charts.clear();

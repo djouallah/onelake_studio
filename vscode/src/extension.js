@@ -347,6 +347,10 @@ async function resetEngine() {
   if (e) await e.close().catch(() => {});
 }
 
+// Points the store and the engine's disk cache at the account now signed in; a no-op when
+// it has not moved. Set by activateInner, which owns the store.
+let rebindStore = async () => {};
+
 async function show(context, options) {
   if (revealPanel()) return true;
   const token = await getToken(options);
@@ -357,6 +361,10 @@ async function show(context, options) {
       `OneLake Studio needs a Microsoft account to reach OneLake. ${why}`);
     return false;
   }
+  // BEFORE the engine is built: a window that activated signed out and signs in right here
+  // used to build its engine with no disk cache (fileCacheAccount still null) for the whole
+  // session, and serve the panel from the signed-out store.
+  await rebindStore();
   // A platform whose native binding will not load is told plainly, instead of being
   // handed a panel that boots to a spinner and never moves.
   const { readme } = await webviewRoot(context.extensionUri,
@@ -501,15 +509,17 @@ async function activateInner(context) {
     onHit: logRead,
     prefetchEnabled: () => vscode.workspace.getConfiguration('onelakeStudio').get('prefetchMetadata', true),
     tableTtlMs: tableTtlMs(),
+    // A workspace's semantic models are a listing too, kept in the same store.
+    fabric,
   });
   // Called wherever the identity may have moved; a no-op when it has not.
-  async function rebindStore() {
+  rebindStore = async function rebindStore() {
     const key = accountKey(await getSession({ createIfNone: false }).catch(() => null));
     if (key === storeAccount) return;
     storeAccount = key;
     fileCacheAccount = key;   // the engine picks it up when it is next built
     onelake.useStore(storeFor(key));
-  }
+  };
   context.subscriptions.push({ dispose: onelake.onRefreshFailed((what, e) => {
     // The cached answer stays on screen; why it could not be refreshed goes here.
     if (out) out.appendLine(`refresh of ${what.kind} ${[what.workspace, what.item, what.schema, what.table]
@@ -610,7 +620,11 @@ async function activateInner(context) {
     // The panel keeps table metadata across lakehouse switches now, so the refresh button
     // is what tells it to forget: a refresh exists to ask OneLake again, there too.
     vscode.commands.registerCommand('onelakeStudio.refresh', n => {
-      onelake.refreshTables({ workspace: n && n.workspace, item: n && n.item });
+      // An error node names nothing itself: its Refresh is the listing that failed. Without
+      // this it refreshed every lakehouse's table metadata and redrew nothing.
+      if (n && n.kind === 'error') n = n.parent;
+      // A model list is the Fabric API's; it says nothing about any table's metadata.
+      if (!n || n.kind !== 'models') onelake.refreshTables({ workspace: n && n.workspace, item: n && n.item });
       tree.refresh(n);
       postLive({ type: 'reset' });
     }),
@@ -642,7 +656,7 @@ async function activateInner(context) {
       // Everything deleted here is re-read from OneLake at OneLake's speed, which is the
       // whole reason the cache exists — so it is asked first.
       const pick = await vscode.window.showWarningMessage(
-        `Delete ${fmtBytes(size)} of cached OneLake listings, table metadata, first rows and table data? They will be read from OneLake again.`,
+        `Delete ${fmtBytes(size)} of cached OneLake listings, table metadata, first rows, files and table data? They will be read from OneLake again.`,
         { modal: true }, 'Delete');
       if (pick !== 'Delete') return;
       await onelake.clear();
@@ -736,6 +750,11 @@ async function activateInner(context) {
     // closed here, or a signed-out window keeps reading OneLake for as long as the old
     // token lasts.
     //
+    // The account's cache is NOT deleted: it is that account's own directory (a hashed id),
+    // never served to anyone else, and signing back in finds it warm. It used to be wiped
+    // here — and a token refresh that failed while offline looks exactly like a sign-out,
+    // so a flaky network could cost the whole disk cache. Clear Cached OneLake Data deletes it.
+    //
     // A DIFFERENT account — chosen from the Accounts menu rather than Switch Account — is
     // the same teardown as a switch. It used to change nothing: the session was still
     // "live", so the panel, the engine and the cache carried on as the previous user.
@@ -744,16 +763,12 @@ async function activateInner(context) {
       forgetToken();
       const session = await getSession({ createIfNone: false }).catch(() => null);
       await setSignedIn(!!session);
-      // Signed out: what was cached for that account is not left behind on disk.
-      if (!session) await onelake.clear().catch(() => {});
       const before = storeAccount;
       await rebindStore();
       tree.redraw();
       if (!session) {
         closePanel();
         await resetEngine();
-        // Its table data too, once the engine reading it is closed.
-        await removeDir(fileCacheDirFor(before));
         vscode.window.showInformationMessage(
           'OneLake Studio signed out — the Microsoft account is no longer available.');
       } else if (engine && storeAccount !== before) {

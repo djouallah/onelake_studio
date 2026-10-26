@@ -61,6 +61,7 @@ class LakehouseTree {
     const id = c.kind === 'items' ? `workspace|${c.workspace}`
              : c.kind === 'tables' ? `tables|${c.workspace}|${c.item}`
              : c.kind === 'files' ? `dir|${c.workspace}|${c.item}|${c.dir || ''}`
+             : c.kind === 'models' ? `models|${c.workspace}`
              : null;
     const n = id && this._nodes.get(id);
     if (n) this._emitter.fire(n);
@@ -84,13 +85,14 @@ class LakehouseTree {
     if (this.fabric) this.fabric.reset();
     if (!n) return this._emitter.fire(undefined);
     const on = this._nodes.get(this._idOf(n));
-    if (on || !['workspace', 'tables', 'dir'].includes(n.kind)) this._emitter.fire(on || n);
+    if (on || !['workspace', 'tables', 'dir', 'models'].includes(n.kind)) this._emitter.fire(on || n);
   }
 
   _idOf(n) {
     return n.kind === 'workspace' ? `workspace|${n.workspace}`
          : n.kind === 'tables' ? `tables|${n.workspace}|${n.item}`
          : n.kind === 'dir' ? `dir|${n.workspace}|${n.item}|${n.dir || ''}`
+         : n.kind === 'models' ? `models|${n.workspace}`
          : n.kind === 'semanticModel' ? `model|${n.workspace}|${n.modelId}`
          : null;
   }
@@ -213,8 +215,9 @@ class LakehouseTree {
       // The node carries the sentence; the log carries the stack.
       this.log(`tree: listing ${n ? `${n.kind} ${n.label}` : 'workspaces'} failed — ${(e && e.stack) || e}`);
       const detail = (e && e.message) || String(e);
+      // `parent` is what its Refresh button refreshes: the error node itself names nothing.
       return [node('error', detail.length > 90 ? detail.slice(0, 87) + '…' : detail,
-        { leaf: true, detail })];
+        { leaf: true, detail, parent: n })];
     }
   }
 
@@ -257,7 +260,7 @@ class LakehouseTree {
           }))
         : [node('empty', 'Nothing here holds tables', { leaf: true })];
       // Last, and closed: listing it is a Fabric API call, on a token sign-in never asked for.
-      if (this.fabric) kids.push(node('models', 'Semantic models', { workspace: n.workspace }));
+      if (this.fabric) kids.push(this._track(node('models', 'Semantic models', { workspace: n.workspace })));
       return kids;
     }
 
@@ -265,7 +268,9 @@ class LakehouseTree {
       if (!await this.hasFabric()) {
         return [node('fabricSignIn', 'Sign in to list semantic models', { leaf: true, workspace: n.workspace })];
       }
-      const models = await this.fabric.listSemanticModels(n.workspace);
+      // Cached like every other listing (onelake.js): drawn from disk, refreshed behind.
+      const models = await this.onelake.models(n.workspace,
+        { fresh: this._isFresh(`models|${n.workspace}`, n.workspace) });
       return models.length
         ? models.map(m => this._track(node('semanticModel', m.name, {
             workspace: n.workspace, model: m.name, modelId: m.id, description: m.description, leaf: true,

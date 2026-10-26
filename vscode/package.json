@@ -254,7 +254,7 @@
           "type": "string",
           "default": "",
           "scope": "machine",
-          "pattern": "^$|^d+(.d+)?s*(KB|MB|GB|TB|KiB|MiB|GiB|TiB)$",
+          "pattern": "^$|^\\d+(\\.\\d+)?\\s*(KB|MB|GB|TB|KiB|MiB|GiB|TiB)$",
           "patternErrorMessage": "A DuckDB memory size, e.g. 4GB or 512MB.",
           "markdownDescription": "Most memory DuckDB may use, e.g. `4GB`. Empty means a quarter of this machine's RAM — DuckDB's own default is 80%, which is too much for the extension host every other extension shares. Bigger queries spill to a temp directory instead of failing. Applies the next time the engine starts."
         },
@@ -276,7 +276,7 @@
   },
   "scripts": {
     "vscode:prepublish": "node ./check-binding.mjs && node ./stage-webview.mjs && node ./vendor.mjs",
-    "test": "node --test test/app-paths.test.mjs test/catalog.test.mjs test/fabric.test.mjs test/host.test.mjs test/names.test.mjs test/onelake.test.mjs test/panel-html.test.mjs test/store.test.mjs"
+    "test": "node --test test/app-paths.test.mjs test/catalog.test.mjs test/fabric.test.mjs test/host.test.mjs test/names.test.mjs test/onelake.test.mjs test/panel-html.test.mjs test/sql.test.mjs test/store.test.mjs"
   },
   "devDependencies": {
     "@types/vscode": "^1.90.0"

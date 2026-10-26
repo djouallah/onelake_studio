@@ -153,13 +153,17 @@ async function goToLakehouse(workspace, item) {
   if (resetP) await resetP;
 }
 
+// What was on screen belonged to the lakehouse being left: a file kept on screen with no
+// lakehouse behind it offered a Save that could only fail.
 function leaveLakehouse(opts) {
   closeModelView();
   activeIdent = null;
+  activeFile = null;
   setActiveStats(null);
   activeTableRef = null; tableStage = 'none';
-  lastResult = null;
+  clearResults();
   $('activeTable').textContent = 'No table selected';
+  setBusy(false);
   return engine.reset(opts);
 }
 
@@ -842,9 +846,9 @@ window.addEventListener('message', async e => {
   }
 });
 
-// Said once the engine is up, because that is when a message can be acted on. Until then
-// the extension holds the last click rather than dropping it. A boot that FAILS is said
-// too, so the held click is dropped and the reason shown instead of a spinner.
-engineReady.then(
-  () => vs.postMessage({ type: 'ready' }),
-  e => vs.postMessage({ type: 'boot-failed', message: (e && e.message) || String(e) }));
+// Said as soon as the listener above exists: until then the extension holds the last click
+// rather than dropping it. Not held for the engine — every handler waits for engineReady
+// itself, and a semantic model handed over as text needs no engine to be drawn. A boot
+// that FAILS is said too, so the extension can offer a reload instead of a spinner.
+vs.postMessage({ type: 'ready' });
+engineReady.catch(e => vs.postMessage({ type: 'boot-failed', message: (e && e.message) || String(e) }));

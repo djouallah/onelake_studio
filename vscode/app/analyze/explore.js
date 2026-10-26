@@ -13,6 +13,10 @@
 // =============================================================================
 
 import { formatValue, shade, extent, stackedGrids, shiftDate } from './draw.js';
+import { escapeHtml } from '../paths.js';
+
+// A tooltip formatter's string is rendered as HTML: anything from the data goes in escaped.
+const esc = v => escapeHtml(v == null ? '' : String(v));
 
 const CAP = 5000;             // rows asked for at most
 const SERIES_CAP = 24;        // series a chart draws at most
@@ -180,6 +184,10 @@ const label = a => a.length ? a.map(v => v == null ? '(blank)' : String(v)).join
 //   saveState(s)     keep the shelves for the next visit
 export function createExplorer(root, ctx) {
   let fields = null, state = load(), drag = null, seq = 0, timer = null, result = null, pop = null;
+  let popTimer = null, destroyed = false;
+  // A column's values, as a filter lists them to tick: the same query whatever else is on
+  // the shelves, and the model is read only — asked once per field for the explorer's life.
+  const valueLists = new Map();   // field id -> values
 
   function load() {
     try {
@@ -373,14 +381,20 @@ export function createExplorer(root, ctx) {
   }
 
   // --- The popups: a filter's editor, a summarised column's summary ---
-  function closePop() { pop?.remove(); pop = null; document.removeEventListener('pointerdown', outside, true); }
+  // The outside-click listener is added a tick late (so the click that opened the popup does
+  // not close it); a close inside that tick must cancel it, or it is added for good.
+  function closePop() {
+    clearTimeout(popTimer);
+    pop?.remove(); pop = null;
+    document.removeEventListener('pointerdown', outside, true);
+  }
   function outside(e) { if (pop && !pop.contains(e.target)) closePop(); }
   function showPop(anchor) {
     document.body.append(pop);
     const r = anchor.getBoundingClientRect();
     pop.style.left = `${Math.max(8, Math.min(r.left, innerWidth - pop.offsetWidth - 8))}px`;
     pop.style.top = `${r.bottom + 6}px`;
-    setTimeout(() => document.addEventListener('pointerdown', outside, true));
+    popTimer = setTimeout(() => document.addEventListener('pointerdown', outside, true));
   }
 
   // Sum, average and median for a number; any column can be counted, or its min and max.
@@ -451,9 +465,18 @@ export function createExplorer(root, ctx) {
       }
       // A list of the column's values to tick.
       detail.replaceChildren(el('div', { class: 'ex-hint' }, 'Reading values…'));
+      const mine = pop;
+      // While the list was read, the popup may have closed or the mode moved on to Range or
+      // Blank — whose inputs this list must not replace.
+      const stale = () => pop !== mine || (draft.op !== 'in' && draft.op !== 'notIn');
       try {
-        values ??= (await ctx.run({ select: { v: fd.id }, orderBy: ['v'], top: 1000 })).map(r => r.v);
-      } catch (e) { detail.replaceChildren(el('div', { class: 'ex-error' }, e.message)); return; }
+        if (!values) {
+          values = valueLists.get(fd.id) ??
+            (await ctx.run({ select: { v: fd.id }, orderBy: ['v'], top: 1000 })).map(r => r.v);
+          valueLists.set(fd.id, values);
+        }
+      } catch (e) { if (!stale()) detail.replaceChildren(el('div', { class: 'ex-error' }, e.message)); return; }
+      if (stale()) return;
       const picked = new Set(draft.values);
       const find = el('input', { type: 'search', placeholder: 'Search values' });
       const boxes = el('div', { class: 'ex-values' });
@@ -548,6 +571,8 @@ export function createExplorer(root, ctx) {
 
   // --- Drawing ---
   function draw() {
+    // A query that settles after the view is gone must not build a chart nobody disposes.
+    if (destroyed) return;
     if (!result) {
       chartBox.hidden = true;
       table.hidden = false;
@@ -655,7 +680,7 @@ export function createExplorer(root, ctx) {
       const [lo, hi] = extent(cells.map(c => c[2]));
       return {
         title: { text: nameOf(m) + cut, left: 4, top: 0, textStyle: { fontSize: 12, fontWeight: 600 } },
-        tooltip: { position: 'top', formatter: p => `${label(piv.rowKeys[p.value[1]])} · ${label(piv.colKeys[p.value[0]])}<br><b>${fmt(m, p.value[2])}</b>` },
+        tooltip: { position: 'top', formatter: p => `${esc(label(piv.rowKeys[p.value[1]]))} · ${esc(label(piv.colKeys[p.value[0]]))}<br><b>${esc(fmt(m, p.value[2]))}</b>` },
         grid: { left: 4, right: 16, top: 28, bottom: 44, containLabel: true },
         xAxis: { type: 'category', data: piv.colKeys.map(label), splitArea: { show: true } },
         yAxis: { type: 'category', data: piv.rowKeys.map(label), inverse: true, splitArea: { show: true } },
@@ -668,7 +693,7 @@ export function createExplorer(root, ctx) {
       if (s.values.length < 2) return 'A scatter needs two measures on Values: the first across, the second up.';
       const [mx, my] = s.values, [nx, ny] = [nameOf(mx), nameOf(my)];
       return {
-        tooltip: { trigger: 'item', formatter: p => `${p.data.name}<br>${nameOf(mx)}: <b>${fmt(mx, p.data.value[0])}</b><br>${nameOf(my)}: <b>${fmt(my, p.data.value[1])}</b>` },
+        tooltip: { trigger: 'item', formatter: p => `${esc(p.data.name)}<br>${esc(nameOf(mx))}: <b>${esc(fmt(mx, p.data.value[0]))}</b><br>${esc(nameOf(my))}: <b>${esc(fmt(my, p.data.value[1]))}</b>` },
         legend: shown.length > 1 ? { type: 'scroll', top: 0 } : undefined,
         grid: { left: 4, right: 16, top: shown.length > 1 ? 56 : 32, bottom: 24, containLabel: true },
         xAxis: { type: 'value', name: nameOf(mx) + cut, nameLocation: 'middle', nameGap: 26, scale: true, axisLabel: { formatter: v => fmt(mx, v) } },
@@ -691,9 +716,9 @@ export function createExplorer(root, ctx) {
       axisLabel: { formatter: v => fmt(m, v), hideOverlap: true }, splitNumber: ms.length > 2 ? 2 : 4 });
     return {
       tooltip: { trigger: 'axis', confine: true, axisPointer: { type: mark === 'line' || mark === 'area' ? 'line' : 'shadow' },
-        formatter: ps => [ps[0]?.axisValueLabel, ...ps.filter(p => p.value != null).map(p => {
+        formatter: ps => [esc(ps[0]?.axisValueLabel), ...ps.filter(p => p.value != null).map(p => {
           const m = ms[Math.floor(p.seriesIndex / shown.length)];
-          return `${p.marker}${shown.length > 1 ? `${p.seriesName} · ` : ''}${nameOf(m)}: <b>${fmt(m, p.value)}</b>`;
+          return `${p.marker}${shown.length > 1 ? `${esc(p.seriesName)} · ` : ''}${esc(nameOf(m))}: <b>${esc(fmt(m, p.value))}</b>`;
         })].join('<br>') },
       legend: legend ? { type: 'scroll', top: 0, data: shown.map(label) } : undefined,
       title: ms.map((m, i) => ({ text: i ? nameOf(m) : nameOf(m) + cut, top: grids[i].title, left: 4, textStyle: { fontSize: 12, fontWeight: 600 } })),
@@ -727,5 +752,14 @@ export function createExplorer(root, ctx) {
     ready,
     // The theme changed: the chart is drawn again in the new one.
     redraw: () => { if (fields) draw(); },
+    // The view is going: its timers stop, its popup goes, and a query still running finds
+    // its sequence moved on and draws nothing.
+    destroy() {
+      destroyed = true;
+      seq++;
+      clearTimeout(timer);
+      clearInterval(ticker);
+      closePop();
+    },
   };
 }

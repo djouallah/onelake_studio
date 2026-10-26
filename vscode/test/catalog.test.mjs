@@ -148,50 +148,49 @@ test("the warehouse is one query parameter, so its slash IS encoded", async () =
   } finally { restore(); }
 });
 
-test("a table listing is fetched once per item, however many schemas the tree draws", async () => {
+// Answers are cached by the store (onelake.js), not here: a memo in the catalog meant the
+// store's refresh after its TTL got the session's first listing back, for ever. What the
+// catalog does keep is each item's prefix — its config call is seconds of work per item.
+test("a table listing goes to the catalog each time; the item's prefix is asked once", async () => {
   const { catalog, calls, restore } = catalogWith([
     [/\/v1\/config/, () => res(200, {})],
     [/\/namespaces$/, () => res(200, { namespaces: [["dbo"], ["sales"]] })],
     [/\/tables$/, () => res(200, { identifiers: [{ name: "t" }] })],
   ]);
+  const configs = () => calls.filter(u => u.includes("/v1/config")).length;
   try {
     const lh = { workspace: "ws", item: "lh.Lakehouse" };
     await catalog.listTables(lh);
     const first = calls.length;
     await catalog.listTables(lh);
-    await catalog.listTables(lh);
-    assert.equal(calls.length, first, "the repeat calls cost nothing");
+    assert.ok(calls.length > first, "a second listing is a real listing — the store decides when");
+    assert.equal(configs(), 1, "but the prefix was asked for once");
     catalog.reset();
     await catalog.listTables(lh);
-    assert.ok(calls.length > first, "and a refresh really does go back out");
+    assert.equal(configs(), 2, "and a refresh asks for it again");
   } finally { restore(); }
 });
 
-test("refreshing one item re-fetches that item only; the others stay cached", async () => {
+test("refreshing one item forgets that item's prefix only", async () => {
   const { catalog, calls, restore } = catalogWith([
     [/\/v1\/config/, () => res(200, {})],
     [/\/namespaces$/, () => res(200, { namespaces: [["dbo"]] })],
     [/\/tables$/, () => res(200, { identifiers: [{ name: "t" }] })],
   ]);
+  const configsFor = item => calls.filter(u => u.includes("/v1/config") && u.includes(item)).length;
   try {
     const a = { workspace: "ws", item: "a.Lakehouse" }, b = { workspace: "ws", item: "b.Lakehouse" };
-    await catalog.listTables(a);
-    await catalog.listTables(b);
-    catalog.reset(a);
-    const before = calls.length;
-    await catalog.listTables(b);
-    assert.equal(calls.length, before, "the other item's listing was kept");
-    await catalog.listTables(a);
-    assert.ok(calls.length > before, "the refreshed item went back out");
-    // A workspace-level refresh reaches every item under it, and only those.
     const other = { workspace: "ws2", item: "c.Lakehouse" };
-    await catalog.listTables(other);
+    for (const lh of [a, b, other]) await catalog.listTables(lh);
+    catalog.reset(a);
+    for (const lh of [a, b, other]) await catalog.listTables(lh);
+    assert.equal(configsFor("a.Lakehouse"), 2, "the refreshed item asked again");
+    assert.equal(configsFor("b.Lakehouse"), 1, "the other item's prefix was kept");
+    // A workspace-level refresh reaches every item under it, and only those.
     catalog.reset({ workspace: "ws" });
-    const mid = calls.length;
-    await catalog.listTables(other);
-    assert.equal(calls.length, mid, "another workspace's listing was kept");
-    await catalog.listTables(b);
-    assert.ok(calls.length > mid, "items under the refreshed workspace went back out");
+    for (const lh of [a, b, other]) await catalog.listTables(lh);
+    assert.equal(configsFor("b.Lakehouse"), 2, "items under the refreshed workspace asked again");
+    assert.equal(configsFor("c.Lakehouse"), 1, "another workspace's prefix was kept");
   } finally { restore(); }
 });
 

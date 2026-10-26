@@ -582,14 +582,29 @@ export function createEngine({
   // `viewSchema` puts the view in a schema other than the table's own: a semantic model's
   // tables come from whichever items it names, and their views must not take the name of
   // the selected lakehouse's own dbo.sales (semantic.js).
-  async function loadTable(lh, t, { onPeek, viewSchema = null } = {}) {
+  // A model's tables are opened by its QUERIES, several of which can be running at once (an
+  // Explore pivot and a filter's value list). Those loads supersede nothing — a cancelLoad()
+  // here interrupted every query on the host, so opening a filter during a long pivot
+  // stopped the pivot — and two queries needing the same table share one open.
+  const modelLoads = new Map();     // cache key -> Promise<info>
+  function loadTable(lh, t, opts = {}) {
+    if (!opts.viewSchema) return openTableView(lh, t, opts);
+    const key = tableKey(lh, t) + `@${opts.viewSchema}`;
+    if (loaded.has(key)) return Promise.resolve(loaded.get(key));
+    if (!modelLoads.has(key)) {
+      modelLoads.set(key, openTableView(lh, t, opts).finally(() => modelLoads.delete(key)));
+    }
+    return modelLoads.get(key);
+  }
+
+  async function openTableView(lh, t, { onPeek, viewSchema = null } = {}) {
     // Keyed per lakehouse: the engine outlives the user's choice of one, and two
     // lakehouses can both hold a dbo.sales.
     const key = tableKey(lh, t) + (viewSchema ? `@${viewSchema}` : "");
-    // Supersede whatever came before — even on a cache hit, because the click means
-    // "show me THIS" and the in-flight load must stand down rather than repaint the
-    // screen later.
-    await cancelLoad();
+    // A selection supersedes whatever came before — even on a cache hit, because the click
+    // means "show me THIS" and the in-flight load must stand down rather than repaint the
+    // screen later. A model's query does not (loadTable, above).
+    if (!viewSchema) await cancelLoad();
     if (loaded.has(key)) return loaded.get(key);
     const gen = loadGen;
     const check = () => { if (gen !== loadGen) throw cancelledError(); };

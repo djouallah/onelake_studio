@@ -1,5 +1,11 @@
 # OneLake Studio for VS Code — architecture
 
+- **Read only.** Nothing is ever written to Fabric or OneLake — not by the host, not by DuckDB,
+  not by SQL the page sends: the host refuses any statement that could write.
+- **Cache as much as possible.** Every answer OneLake or Fabric gave is kept on this machine and
+  served from there first; the network is asked only when nothing is cached, or the cached
+  answer is past its window.
+
 The extension host in [`src/`](src/) does sign-in, every OneLake read (cache first) and the query
 engine; its panel, [`app/`](app/), is only a view.
 
@@ -27,9 +33,18 @@ one, the secret is reissued. The page holds no credential and makes no
 OneLake request: it reaches the host through one message channel, and only through `query`, `stream`,
 `cancel`, `info` and the host's OneLake reads ([`src/host.js`](src/host.js)).
 File access is locked down to the temp directory, `https://`, `abfss://` and `zip://` over a remote
-archive. Listings, table metadata and first rows are served cache-first from disk
-([`src/onelake.js`](src/onelake.js)) and refreshed behind you; the cache is kept per
-Microsoft account, so switching accounts never serves one account's data to another.
+archive, and the page's SQL is checked in the host ([`src/sql.js`](src/sql.js)): one statement,
+a read, or the page's own views, schemas and `READ_ONLY` attaches — never `COPY`, `INSERT`,
+`EXPORT` or anything else that writes.
+
+Listings (workspaces, items, tables, `Files/`, semantic models), table metadata and first rows
+are served cache-first from disk ([`src/onelake.js`](src/onelake.js)) and refreshed behind you.
+The bytes of a `Files/` object (an image, a `.bim`, a SQLite copy, a saved file) are kept under
+the etag its cached listing gave, so a rewritten file is read again and an unchanged one never
+is. Table data — Iceberg files never change once written — is kept by DuckDB's disk cache
+(cache_httpfs). The cache is kept per Microsoft account, so switching accounts never serves
+one account's data to another; it survives a sign-out (signing back in finds it warm), and only
+**Clear Cached OneLake Data** deletes it.
 
 The extension also lists each workspace's **Power BI semantic models** in its tree. Clicking one
 downloads its TMSL definition (the Fabric REST API's `getDefinition`) to a `.bim` on this machine —

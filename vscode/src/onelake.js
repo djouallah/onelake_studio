@@ -10,7 +10,9 @@
 //
 // A table's first rows are kept too, under the table's metadata-location: a snapshot is
 // immutable, so rows read from it can never be stale, and a table opened once opens
-// again — even after a restart — without a single request to OneLake.
+// again — even after a restart — without a single request to OneLake. A Files/ object's
+// bytes are kept the same way, under the version its cached listing gave (readBytes).
+// A workspace's semantic models (Fabric's API, not OneLake) are a listing like the others.
 //
 // No `vscode` import: catalog.js does the HTTP, store.js the disk, and the tests drive
 // this with fakes of both.
@@ -53,9 +55,10 @@ function summarize(metadata, metadataLocation) {
  * @param {ReturnType<import('./catalog').createCatalog>} o.catalog
  * @param {ReturnType<import('./store').createStore>} o.store
  * @param {() => boolean} [o.prefetchEnabled]
+ * @param {{ listSemanticModels(ws: string): Promise<object[]> }} [o.fabric]
  */
 function createOneLake({ catalog, store, prefetchEnabled = () => true, onHit = () => {},
-                         tableTtlMs = undefined }) {
+                         tableTtlMs = undefined, fabric = null }) {
   // The store is the account's: a different sign-in swaps it (useStore) and every listener
   // follows, so nothing above this module has to know an account changed.
   const subs = [];   // { ev, fn, off }
@@ -67,7 +70,9 @@ function createOneLake({ catalog, store, prefetchEnabled = () => true, onHit = (
   function useStore(next) {
     for (const sub of subs) { sub.off(); sub.off = next.on(sub.ev, sub.fn); }
     store = next;
+    // The queued keys go with the queue: left in `queued`, they were never prefetched again.
     queue.length = 0;
+    queued.clear();
     catalog.reset();
     usePrefixStore();
   }
@@ -88,6 +93,8 @@ function createOneLake({ catalog, store, prefetchEnabled = () => true, onHit = (
     files: (lh, dir) => `files\u0000${lh.workspace}\u0000${lh.item}\u0000${dir || ''}`,
     table: (lh, t) => `table\u0000${lh.workspace}\u0000${lh.item}\u0000${t.schema || ''}\u0000${t.table}`,
     peek: loc => `peek\u0000${loc}`,
+    models: ws => `models\u0000${ws}`,
+    bytes: (ws, path, version) => `bytes\u0000${ws}\u0000${path}\u0000${version}`,
   };
 
   // The store's raw key, turned back into what changed — so a listener can refresh the
@@ -99,6 +106,7 @@ function createOneLake({ catalog, store, prefetchEnabled = () => true, onHit = (
     if (kind === 'tables') return { kind, workspace: a, item: b };
     if (kind === 'files') return { kind, workspace: a, item: b, dir: c };
     if (kind === 'table') return { kind, workspace: a, item: b, schema: c, table: d };
+    if (kind === 'models') return { kind, workspace: a };
     return { kind };
   }
 
@@ -120,6 +128,45 @@ function createOneLake({ catalog, store, prefetchEnabled = () => true, onHit = (
     return get(keys.tables(lh), () => catalog.listTables(lh), o).then(value);
   };
   const files = (lh, dir = '', o = {}) => get(keys.files(lh, dir), () => catalog.listFiles(lh, dir), o).then(value);
+  const models = (ws, o = {}) => {
+    if (!fabric) return Promise.reject(new Error('semantic models are not available here'));
+    return get(keys.models(ws), () => fabric.listSemanticModels(ws), o).then(value);
+  };
+
+  /**
+   * A file's bytes — whole, or the `range` asked for. A Files/ object whose directory
+   * listing is cached is kept under the version (etag) that listing gave it, so it is read
+   * from OneLake once per version: an unchanged file never again, a rewritten one as soon
+   * as its listing has moved, which the listing's own TTL decides. The version comes from
+   * the host's listing, never from the page. Anything else is read live.
+   */
+  async function readBytes(ws, path, { range } = {}) {
+    const version = await versionOf(ws, path);
+    if (!version) return catalog.readBytes(ws, path, { range });
+    const k = keys.bytes(ws, path, version);
+    const t0 = Date.now();
+    let bytes = await store.getBlob(k);
+    if (bytes) {
+      try { onHit({ cache: 'hit', ms: Date.now() - t0, path: `${ws}/${path}`, bytes: bytes.length }); } catch (_) {}
+    } else {
+      // A header sniff of a file not kept yet stays a range read: the whole file is not
+      // worth pulling to answer 16 bytes.
+      if (range) return catalog.readBytes(ws, path, { range });
+      bytes = await catalog.readBytes(ws, path);
+      await store.putBlob(k, bytes);
+    }
+    return range ? sliceRange(bytes, range) : bytes;
+  }
+
+  // `item/Files/a/b.png` -> the version of b.png in the cached listing of Files/a.
+  async function versionOf(ws, path) {
+    const p = names.strip(path);
+    const m = /^([^/]+)\/Files\/(?:(.*)\/)?[^/]+$/.exec(p);
+    if (!m) return '';
+    const listing = await store.peek(keys.files({ workspace: ws, item: m[1] }, m[2] || ''));
+    const entry = (Array.isArray(listing) ? listing : []).find(e => !e.isDir && names.strip(e.path) === p);
+    return (entry && entry.version) || '';
+  }
 
   /**
    * A table's metadata, summarised: { empty, schemaFields, totalRecords, stats,
@@ -214,13 +261,20 @@ function createOneLake({ catalog, store, prefetchEnabled = () => true, onHit = (
 
   return {
     workspaces, items, tables, files, table, peek, prefetch, refreshTables,
-    readBytes: (ws, path, o) => catalog.readBytes(ws, path, o),
+    models, readBytes,
     onChanged: fn => listen('changed', key => fn(decode(key))),
     onRefreshFailed: fn => listen('refresh-failed', (key, e) => fn(decode(key), e)),
     useStore,
     clear: () => { catalog.reset(); return store.clear(); },
     size: () => store.size(),
   };
+}
+
+// `bytes=a-b` or `bytes=a-` (host.js admits only those), over bytes already in hand.
+function sliceRange(bytes, range) {
+  const [, a, b] = /^bytes=(\d+)-(\d*)$/.exec(range) || [];
+  if (a == null) return bytes;
+  return bytes.subarray(Number(a), b === '' ? bytes.length : Number(b) + 1);
 }
 
 module.exports = { createOneLake, summarize };

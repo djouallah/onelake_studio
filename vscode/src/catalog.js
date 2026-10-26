@@ -18,6 +18,9 @@ const MAX_PARALLEL = 8;
 // ever. Both bounds are far past anything a real tenant produces.
 const FETCH_TIMEOUT_MS = 60_000;
 const MAX_PAGES = 500;
+// The timeout covers the body too, and a file's bytes (a SQLite copy, a saved file) can be
+// hundreds of megabytes on a slow link — a listing's 60s would abort them part way.
+const READ_TIMEOUT_MS = 10 * 60_000;
 
 const byName = (a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' });
 
@@ -84,14 +87,14 @@ function createCatalog({ getToken, dfsOrigin = DFS_ORIGIN, tableOrigin = TABLE_O
   };
   // Same bargain as data.js's authedFetch: retry once on 401 and only on 401. A 403 means
   // this identity may not read that path, and a fresh token will not change its mind.
-  async function authedFetch(url, extraHeaders = {}) {
+  async function authedFetch(url, extraHeaders = {}, timeoutMs = FETCH_TIMEOUT_MS) {
     let token = await getToken();
     if (!token) {
       const e = new Error('Not signed in to a Microsoft account.');
       e.status = 401;
       throw e;
     }
-    const opts = headers => ({ headers, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
+    const opts = headers => ({ headers, signal: AbortSignal.timeout(timeoutMs) });
     const signed = async t => {
       const t0 = Date.now();
       try {
@@ -173,6 +176,11 @@ function createCatalog({ getToken, dfsOrigin = DFS_ORIGIN, tableOrigin = TABLE_O
           // OneLake sends this as the string "true", not a boolean.
           isDir: p.isDirectory === true || p.isDirectory === 'true',
           bytes: Number(p.contentLength || 0),
+          // Which version of the file this is: its etag, or failing that when it was last
+          // written and how big it is. A file's bytes are cached under it (onelake.js), so
+          // a rewritten file is a new key and is read again.
+          version: p.etag ? String(p.etag)
+                 : p.lastModified ? `${p.lastModified}|${p.contentLength || 0}` : '',
         });
       }
       cont = r.headers.get('x-ms-continuation') || '';
@@ -244,18 +252,10 @@ function createCatalog({ getToken, dfsOrigin = DFS_ORIGIN, tableOrigin = TABLE_O
   // namespace is an array of levels; OneLake returns exactly one, and a synthetic "dbo"
   // for items that have no schemas of their own.
   //
-  // Memoised per item, and deliberately by promise: the tree asks for this once to decide
-  // whether an item has schemas and again for each schema it draws, and without the cache
-  // opening a five-schema warehouse would cost six full catalog listings. Refresh is what
-  // clears it, which is also the only thing that should.
-  const tablesC = new Map();
-  function listTables(lh) {
-    const key = `${lh.workspace}/${lh.item}`;
-    if (!tablesC.has(key)) {
-      tablesC.set(key, listTablesUncached(lh).catch(e => { tablesC.delete(key); throw e; }));
-    }
-    return tablesC.get(key);
-  }
+  // Not memoised here: the store (onelake.js) already holds the answer, in memory and on
+  // disk, and single-flights the request — a memo here only meant the store's refresh after
+  // its TTL got the session's first answer back, so a new table never showed up.
+  const listTables = lh => listTablesUncached(lh);
 
   async function listTablesUncached(lh) {
     let prefix = await ircPrefixFor(lh);
@@ -327,18 +327,17 @@ function createCatalog({ getToken, dfsOrigin = DFS_ORIGIN, tableOrigin = TABLE_O
       path: e.name,           // workspace-relative, the form the panel expects
       isDir: e.isDir,
       bytes: e.bytes,
+      version: e.version,
     })).sort((a, b) => (b.isDir - a.isDir) || byName(a.name, b.name));
   }
 
-  // A change of identity, or a refresh of the whole tree, invalidates everything held
-  // across calls. A refresh of one node invalidates only what lies under it: clearing
-  // every item's table listing to refresh one meant the next expand of any OTHER item
-  // paid the catalog's seconds again for an answer nobody asked to refresh.
+  // A change of identity, or a refresh of the whole tree, forgets every item's catalog
+  // prefix held in memory; a refresh of one node only the prefixes under it.
   function reset(scope) {
-    if (!scope || !scope.workspace) { ircPrefixes.clear(); tablesC.clear(); return; }
+    if (!scope || !scope.workspace) { ircPrefixes.clear(); return; }
     const under = scope.item ? k => k === `${scope.workspace}/${scope.item}`
                              : k => k.startsWith(`${scope.workspace}/`);
-    for (const m of [ircPrefixes, tablesC]) for (const k of [...m.keys()]) if (under(k)) m.delete(k);
+    for (const k of [...ircPrefixes.keys()]) if (under(k)) ircPrefixes.delete(k);
   }
 
 
@@ -347,7 +346,7 @@ function createCatalog({ getToken, dfsOrigin = DFS_ORIGIN, tableOrigin = TABLE_O
   // needs the bytes rather than a query.
   async function readBytes(ws, path, { range } = {}) {
     const r = await authedFetch(`${dfsOrigin}/${encodeURIComponent(ws)}/${encPath(path)}`,
-      range ? { range } : {});
+      range ? { range } : {}, READ_TIMEOUT_MS);
     if (!r.ok) {
       const said = await oneLakeMessage(r);
       const e = new Error(`Reading ${path} failed (HTTP ${r.status})` + (said ? ` — ${said}` : ''));

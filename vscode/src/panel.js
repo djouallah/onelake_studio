@@ -51,9 +51,10 @@ async function buildHtml(webview, siteUri, cfg) {
 // One panel; invoking the command again reveals it rather than booting a second DuckDB.
 let current = null;
 
-// The page cannot be told to open a table until it exists and its engine is up — on a
-// first run that includes DuckDB loading its extensions. A click in the tree that lands in
-// that window must not be dropped, so it waits here until app.js says it is listening.
+// The page cannot be told to open anything until its script is listening. A click in the
+// tree that lands before that must not be dropped, so it waits here until app.js says it
+// is. Listening is not booted: each of the page's handlers waits for the engine itself, so
+// a semantic model handed over as text is drawn while DuckDB is still starting.
 // Only the last one is kept: they are all "show me this", and replaying a
 // queue of them would open four tables in a row to arrive where one click asked for.
 let pending = null;
@@ -175,9 +176,9 @@ async function openPanelUncontended(context, { onOpened, onBoot, onBootFailed, e
   return panel;
 }
 
-// Disposing the panel is how switching account takes effect: the engine's resolved-metadata
-// and manifest caches, and Cache Storage, all live in the webview, so the old identity's data
-// goes with it. Rebinding the token alone would leave the previous account's tables on screen.
+// Disposing the panel is how switching account takes effect: the page's views, its rows and
+// its memo of each table's metadata belong to the old identity and go with it. Rebinding the
+// token alone would leave the previous account's tables on screen.
 function closePanel() {
   pending = null;
   if (current) current.dispose();   // onDidDispose nulls `current` and clears `ready`

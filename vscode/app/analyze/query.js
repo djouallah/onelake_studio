@@ -62,12 +62,16 @@ export function createModelQuery(model, compiler) {
     switch (op) {
       case '=': case '<>': case '<': case '<=': case '>': case '>=': return [`${d} ${op} ${val(v[0])}`];
       case 'between': return [`${d} >= ${val(v[0])}`, `${d} <= ${val(v[1])}`];
-      case 'in':
-        if (!Array.isArray(v[0]) || !v[0].length) throw new Error(`query: ${f} in needs a list of values`);
-        return [`${d} IN {${v[0].map(val).join(', ')}}`];
-      case 'notIn':
-        if (!Array.isArray(v[0]) || !v[0].length) throw new Error(`query: ${f} notIn needs a list of values`);
-        return [`NOT (${d} IN {${v[0].map(val).join(', ')}})`];
+      // A list may hold null — the "(blank)" a filter offers to tick — which is ISBLANK, not
+      // a value IN can name.
+      case 'in': case 'notIn': {
+        if (!Array.isArray(v[0]) || !v[0].length) throw new Error(`query: ${f} ${op} needs a list of values`);
+        const some = v[0].filter(x => x != null);
+        const parts = [...(some.length < v[0].length ? [`ISBLANK(${d})`] : []),
+                       ...(some.length ? [`${d} IN {${some.map(val).join(', ')}}`] : [])];
+        const any = parts.length > 1 ? `(${parts.join(' || ')})` : parts[0];
+        return [op === 'in' ? any : `NOT ${parts.length > 1 ? any : `(${any})`}`];
+      }
       case 'blank': return [`ISBLANK(${d})`];
       case 'notBlank': return [`NOT ISBLANK(${d})`];
     }

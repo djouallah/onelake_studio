@@ -23,7 +23,7 @@ The panel loads nothing from the network: its few libraries ship inside the exte
 | **OneLake Studio: Switch Microsoft Account** | Asks which account to use instead of reusing the remembered one, and reopens the panel so the previous account's tables do not survive the switch. To sign out altogether, use the Accounts menu in the bottom left — that is VS Code's to own, not an extension's. |
 | **OneLake Studio: Refresh** | Re-reads a workspace, item or folder from OneLake in the foreground. Everything else is served from the cache first and refreshed behind you. |
 | **OneLake Studio: Show Read Log** | Every OneLake request the extension made, with sizes and timings. |
-| **OneLake Studio: Clear Cached OneLake Data** | Empties the on-disk cache (listings, table metadata, first rows) and reports what it freed. |
+| **OneLake Studio: Clear Cached OneLake Data** | Empties the on-disk cache (listings, table metadata, first rows, files, table data) and reports what it freed. It is the only thing that does: the cache survives a sign-out. |
 
 ## Settings
 
@@ -64,19 +64,22 @@ goes over one message channel to the host, and its few libraries ship inside the
   so Stop interrupts exactly that query, and a result past 200,000 rows is counted rather
   than carried into the panel. A lockdown keeps it off the local disk outside its own temp
   directory.
-- **OneLake is cache first.** Workspaces, items, tables, Files/ listings, each table's
-  metadata and its first 100 rows are kept on disk, per Microsoft account, and served from
+- **OneLake is cache first.** Workspaces, items, tables, Files/ listings, semantic-model
+  lists, each table's metadata and its first 100 rows are kept on disk, per Microsoft account, and served from
   there at once — then refreshed behind you once they are older than
   `onelakeStudio.catalogTtlMinutes` (listings) or `onelakeStudio.tableMetadataTtlHours` (a
   table's metadata, a day by default). A table you have opened before opens without a single
   request, even after a restart; first rows are kept per snapshot, so they are never stale.
   Each item's Iceberg catalog prefix is kept there too, so a restart does not pay the
-  catalog's config call again. **Refresh** re-reads in the foreground.
+  catalog's config call again. A `Files/` object opened as bytes — an image, a `.bim`, a
+  SQLite file, a saved file — is kept under the etag its listing gave, so an unchanged file
+  is never read twice and a rewritten one is read again. **Refresh** re-reads in the
+  foreground.
 - **What DuckDB reads is cached on disk.** Data files, manifests and metadata read from
   OneLake are kept per account by the `cache_httpfs` extension, so a table read once is read
   from this machine afterwards, restart or not, without asking OneLake. Tables only: an
-  Iceberg table's files never change once written, while `Files/` objects can, so those are
-  always read live. The vsix carries a build of `cache_httpfs` with a Windows fix that is not
+  Iceberg table's files never change once written, while `Files/` objects can, so a query
+  reads those live. The vsix carries a build of `cache_httpfs` with a Windows fix that is not
   released upstream yet (it caches nothing on disk on Windows without it), which DuckDB loads
   as an unsigned extension until the fix ships.
 

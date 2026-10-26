@@ -23,6 +23,7 @@ const { EventEmitter } = require('node:events');
 
 const DEFAULT_TTL_MS = 5 * 60 * 1000;
 const DEFAULT_MAX_BYTES = 256 * 1024 * 1024;
+const DEFAULT_BLOB_MAX_BYTES = 1024 * 1024 * 1024;
 const MEMO_MAX = 2000;       // hot entries kept in memory, so a re-render reads no disk
 
 /**
@@ -30,9 +31,11 @@ const MEMO_MAX = 2000;       // hot entries kept in memory, so a re-render reads
  * @param {string|null} o.dir    where entries live; null keeps everything in memory only
  * @param {number} [o.ttlMs]     how old an answer may be before it is refreshed behind
  * @param {number} [o.maxBytes]  disk budget; the oldest entries go first past it
+ * @param {number} [o.blobMaxBytes]  the same, for the file bytes kept by getBlob/putBlob
  * @param {() => number} [o.now]
  */
-function createStore({ dir, ttlMs = DEFAULT_TTL_MS, maxBytes = DEFAULT_MAX_BYTES, now = Date.now } = {}) {
+function createStore({ dir, ttlMs = DEFAULT_TTL_MS, maxBytes = DEFAULT_MAX_BYTES,
+                       blobMaxBytes = DEFAULT_BLOB_MAX_BYTES, now = Date.now } = {}) {
   const events = new EventEmitter();
   // 'error' is special to EventEmitter — emitted with no listener it throws. Background
   // refresh failures are reported under their own name so nobody has to remember that.
@@ -46,6 +49,9 @@ function createStore({ dir, ttlMs = DEFAULT_TTL_MS, maxBytes = DEFAULT_MAX_BYTES
     : Promise.resolve(false);
 
   const fileOf = key => join(dir, createHash('sha256').update(key).digest('hex') + '.json');
+  const blobDir = dir ? join(dir, 'blobs') : null;
+  const blobOf = key => join(blobDir, createHash('sha256').update(key).digest('hex') + '.bin');
+  let blobTotal = null;         // bytes of blobs on disk, counted on the first write
 
   function remember(key, ent) {
     memo.delete(key);
@@ -144,12 +150,12 @@ function createStore({ dir, ttlMs = DEFAULT_TTL_MS, maxBytes = DEFAULT_MAX_BYTES
   // ---------------------------------------------------------------------------
   // Disk budget
   // ---------------------------------------------------------------------------
-  async function entries() {
+  async function entries(where = dir, ext = '.json') {
     const out = [];
     let names = [];
-    try { names = await fs.readdir(dir); } catch (_) { return out; }
+    try { names = await fs.readdir(where); } catch (_) { return out; }
     for (const n of names) {
-      const p = join(dir, n);
+      const p = join(where, n);
       try {
         const st = await fs.stat(p);
         // A tmp left by a crashed write is garbage once it is a minute old.
@@ -157,7 +163,7 @@ function createStore({ dir, ttlMs = DEFAULT_TTL_MS, maxBytes = DEFAULT_MAX_BYTES
           if (now() - st.mtimeMs > 60_000) await fs.rm(p, { force: true }).catch(() => {});
           continue;
         }
-        if (n.endsWith('.json')) out.push({ p, bytes: st.size, at: st.mtimeMs });
+        if (n.endsWith(ext)) out.push({ p, bytes: st.size, at: st.mtimeMs });
       } catch (_) {}
     }
     return out;
@@ -170,33 +176,77 @@ function createStore({ dir, ttlMs = DEFAULT_TTL_MS, maxBytes = DEFAULT_MAX_BYTES
   }
 
   // Oldest first, down to 80% — so the next write does not land straight back here.
-  async function prune(list) {
-    list = list || await entries();
+  async function trim(list, budget) {
     list.sort((a, b) => a.at - b.at);
-    total = list.reduce((n, e) => n + e.bytes, 0);
+    let n = list.reduce((sum, e) => sum + e.bytes, 0);
     for (const e of list) {
-      if (total <= maxBytes * 0.8) break;
+      if (n <= budget * 0.8) break;
       await fs.rm(e.p, { force: true }).catch(() => {});
-      total -= e.bytes;
+      n -= e.bytes;
+    }
+    return n;
+  }
+  async function prune(list) {
+    total = await trim(list || await entries(), maxBytes);
+  }
+
+  // ---------------------------------------------------------------------------
+  // File bytes (blobs)
+  // ---------------------------------------------------------------------------
+  // A Files/ object's bytes, as they were: one .bin per key under blobs/, written whole
+  // and renamed into place like an entry. The caller puts the file's version in the key
+  // (onelake.js), so nothing here can go stale — it can only go unused, and the oldest
+  // unused goes first past the budget. A read touches the file, so "oldest" is "least
+  // recently read".
+  async function getBlob(key) {
+    if (!blobDir || !await usable) return null;
+    try {
+      const p = blobOf(key);
+      const buf = await fs.readFile(p);
+      const t = new Date(now());
+      fs.utimes(p, t, t).catch(() => {});
+      return new Uint8Array(buf.buffer, buf.byteOffset, buf.length);
+    } catch (_) {
+      return null;
     }
   }
+
+  async function putBlob(key, bytes) {
+    if (!blobDir || !await usable || !(bytes.length <= blobMaxBytes * 0.5)) return;
+    const file = blobOf(key);
+    const tmp = `${file}.${process.pid}.${++tmpSeq}.tmp`;
+    try {
+      await fs.mkdir(blobDir, { recursive: true });
+      if (blobTotal == null) blobTotal = (await entries(blobDir, '.bin')).reduce((n, e) => n + e.bytes, 0);
+      await fs.writeFile(tmp, bytes);
+      await fs.rename(tmp, file);
+      blobTotal += bytes.length;
+      if (blobTotal > blobMaxBytes) blobTotal = await trim(await entries(blobDir, '.bin'), blobMaxBytes);
+    } catch (_) {
+      // Not kept is not a failure: the caller already has the bytes.
+      fs.rm(tmp, { force: true }).catch(() => {});
+    }
+  }
+
+  const everything = async () => [...await entries(), ...(blobDir ? await entries(blobDir, '.bin') : [])];
 
   async function clear() {
     memo.clear();
     if (!await usable) return 0;
-    const list = await entries();
+    const list = await everything();
     for (const e of list) await fs.rm(e.p, { force: true }).catch(() => {});
     total = 0;
+    blobTotal = 0;
     return list.reduce((n, e) => n + e.bytes, 0);
   }
 
   async function size() {
     if (!await usable) return 0;
-    return (await entries()).reduce((n, e) => n + e.bytes, 0);
+    return (await everything()).reduce((n, e) => n + e.bytes, 0);
   }
 
   return {
-    get, put, peek, clear, size,
+    get, put, peek, clear, size, getBlob, putBlob,
     on: (ev, fn) => { events.on(ev, fn); return () => events.off(ev, fn); },
     ready: () => usable,
   };

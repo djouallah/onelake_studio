@@ -103,7 +103,7 @@ test("native engine host", async t => {
     await assert.rejects(engine.call("query", [`SELECT * FROM read_csv('${p}')`]), /Permission|disabled by configuration/i,
       "reading a file the page has no business with is refused");
     await assert.rejects(engine.call("query", [`COPY (SELECT 1) TO '${join(outside, "out.csv").replace(/\\/g, "/")}'`]),
-      /Permission|disabled by configuration/i, "and so is writing one");
+      /Read only|Permission|disabled by configuration/i, "and so is writing one");
     await assert.rejects(engine.call("query", [`SELECT * FROM read_csv('${join(outside, "..", "x.csv").replace(/\\/g, "/")}')`]),
       /Permission|disabled by configuration|No files found/i, "dot-dot does not climb out");
   });
@@ -115,8 +115,8 @@ test("native engine host", async t => {
   });
 
   await t.test("the lockdown cannot be turned off from SQL", async () => {
-    await assert.rejects(engine.call("query", ["SET enable_external_access = true"]), /lock/i);
-    await assert.rejects(engine.call("query", ["SET allowed_directories = ['/']"]), /lock/i);
+    await assert.rejects(engine.call("query", ["SET enable_external_access = true"]), /Read only|lock/i);
+    await assert.rejects(engine.call("query", ["SET allowed_directories = ['/']"]), /Read only|lock/i);
   });
 
   await t.test("a file the host copied in reads, from the engine's temp directory", async () => {

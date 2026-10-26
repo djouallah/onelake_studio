@@ -25,7 +25,7 @@ const fs = require('node:fs');
 const fsp = require('node:fs/promises');
 const { join } = require('node:path');
 const os = require('node:os');
-const { sqlStr } = require('./sql');
+const { sqlStr, assertReadOnly } = require('./sql');
 
 
 // Rows are read in chunks so a large result starts painting before it has all arrived,
@@ -283,9 +283,8 @@ function createEngineHost({ extensionDir, onLog = () => {}, onWarn = () => {}, g
       // The bytes DuckDB reads from OneLake (data files, manifests) are kept in memory by
       // its external file cache, and dropped when memory runs short. Spilled instead, to
       // this session's temp directory: a block evicted is read back from local disk rather
-      // than fetched from OneLake again. Gone with the session — DuckDB has no cache that
-      // outlives the process (cache_httpfs would, but supports neither Windows nor, on
-      // DuckDB 2.0, the azure filesystem).
+      // than fetched from OneLake again. This is the in-session layer; the disk cache
+      // (cache_httpfs, enableFileCache below) is the one that outlives the process.
       try { await conn.run('SET external_file_cache_spill = true;'); }
       catch (e) { onWarn(`could not let DuckDB's file cache spill to disk — ${e.message}`); }
 
@@ -552,12 +551,15 @@ function createEngineHost({ extensionDir, onLog = () => {}, onWarn = () => {}, g
   // What the page may call, and nothing else. call() appends `emit` after the caller's
   // arguments; only stream() reads it.
   const methods = {
+    // Both check the statement first: the page's SQL may read, never write (sql.js).
     async query(sql) {
+      assertReadOnly(sql);
       await init();
       return withAuthRetry(() => runAll(sql));
     },
 
     async stream(sql, emit) {
+      assertReadOnly(sql);
       await init();
       // Not through withAuthRetry: a stream has already emitted batches by the time a
       // late failure arrives, and running it again would deliver them twice. The token

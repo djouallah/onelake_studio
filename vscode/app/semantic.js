@@ -89,11 +89,13 @@ export async function registerModel(fileName, text, modules = null) {
   };
   const compiler = createCompiler(tmslToModel(bim), { tableSource });
   // Explore's (analyze/query.js): its rows go straight to the page, so a date comes back as
-  // text, a whole number as INTEGER and any other number as DOUBLE — what JS can hold.
+  // text, a whole number as BIGINT and any other number as DOUBLE — what JS can hold. Not
+  // INTEGER: that is 32-bit, and a SUM or a key past 2^31 failed as an overflow. The host
+  // hands a BIGINT over as a Number whenever it fits in one.
   const exploreCompiler = createCompiler(tmslToModel(bim), {
     tableSource,
     castOutput: {
-      int: s => `CAST(${s} AS INTEGER)`,
+      int: s => `CAST(${s} AS BIGINT)`,
       double: s => `CAST(${s} AS DOUBLE)`,
       decimal: s => `CAST(${s} AS DOUBLE)`,
       datetime: s => `CAST(CAST(${s} AS DATE) AS VARCHAR)`,
