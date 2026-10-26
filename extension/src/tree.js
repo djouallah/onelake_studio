@@ -32,9 +32,12 @@ class LakehouseTree {
    * @param {import('./fabric').createFabric} [deps.fabric]  semantic models (Fabric REST)
    * @param {() => Promise<boolean>} [deps.hasFabric]        a Fabric token, without a prompt?
    * @param {() => boolean} deps.isSignedIn
+   * @param {{ get: () => string[] }} [deps.favorites]   pinned workspace names, persisted
    */
-  constructor({ onelake, fabric = null, hasFabric = async () => false, isSignedIn, log = () => {} }) {
+  constructor({ onelake, fabric = null, hasFabric = async () => false, isSignedIn, log = () => {},
+                favorites = { get: () => [] } }) {
     this.onelake = onelake;
+    this.favorites = favorites;
     this.fabric = fabric;
     this.hasFabric = hasFabric;
     this.isSignedIn = isSignedIn;
@@ -111,18 +114,24 @@ class LakehouseTree {
     const C = vscode.TreeItemCollapsibleState;
     const item = new vscode.TreeItem(n.label,
       n.leaf ? C.None : n.expanded ? C.Expanded : C.Collapsed);
-    item.contextValue = n.kind;
+    // A pinned workspace offers Unpin, an unpinned one Pin (package.json menus).
+    item.contextValue = n.kind === 'workspace' && n.pinned ? 'workspacePinned' : n.kind;
     // A stable identity, so expansion state survives a refresh keyed on WHAT the node is
     // rather than on its label — labels repeat freely across workspaces. Only the domain
     // nodes get one: two error nodes under different parents can carry the same message,
     // and duplicate ids are worse than generated ones.
     if (n.kind !== 'error' && n.kind !== 'empty') {
-      item.id = [n.kind, n.workspace, n.item, n.schema, n.table, n.dir, n.path]
+      item.id = [n.kind, n.group, n.workspace, n.item, n.schema, n.table, n.dir, n.path]
         .map(v => (v == null ? '' : String(v))).join('|') + (n.modelId ? `|${n.modelId}` : '');
     }
     switch (n.kind) {
+      // The two top-level groups: the workspaces someone pinned, and everything else.
+      case 'group':
+        item.iconPath = new vscode.ThemeIcon(n.group === 'favorites' ? 'star-full' : 'folder-library');
+        item.description = n.count != null ? String(n.count) : '';
+        break;
       case 'workspace':
-        item.iconPath = new vscode.ThemeIcon('folder');
+        item.iconPath = new vscode.ThemeIcon(n.pinned ? 'star-full' : 'folder');
         break;
       case 'item':
         item.iconPath = new vscode.ThemeIcon('database');
@@ -192,11 +201,32 @@ class LakehouseTree {
 
   async _children(n) {
 
+    // A tenant can have hundreds of workspaces, so the top level is two groups: the ones
+    // pinned as favorites (open), and all the others (closed once anything is pinned).
+    // Pins are names; one whose workspace is gone (or belongs to another tenant) is simply
+    // not shown.
     if (!n) {
       const names = await this.onelake.workspaces({ fresh: this._isFresh('root', undefined, undefined) });
-      return names.length
-        ? names.map(name => this._track(node('workspace', name, { workspace: name })))
-        : [node('empty', 'No workspaces — is this the right tenant?', { leaf: true })];
+      if (!names.length) return [node('empty', 'No workspaces — is this the right tenant?', { leaf: true })];
+      const pinned = new Set(this.favorites.get());
+      const favs = names.filter(w => pinned.has(w));
+      return [
+        node('group', 'Favorites', { group: 'favorites', expanded: true, count: favs.length }),
+        node('group', favs.length ? 'Other workspaces' : 'Workspaces',
+             { group: 'others', expanded: !favs.length, count: names.length - favs.length }),
+      ];
+    }
+
+    if (n.kind === 'group') {
+      const names = await this.onelake.workspaces();
+      const pinned = new Set(this.favorites.get());
+      const mine = names.filter(w => (n.group === 'favorites') === pinned.has(w));
+      if (!mine.length) {
+        return [node('empty', n.group === 'favorites'
+          ? 'Pin a workspace with its ☆ button to keep it here'
+          : 'Every workspace is pinned', { leaf: true })];
+      }
+      return mine.map(name => this._track(node('workspace', name, { workspace: name, pinned: pinned.has(name) })));
     }
 
     if (n.kind === 'workspace') {

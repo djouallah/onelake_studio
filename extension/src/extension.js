@@ -480,8 +480,17 @@ async function activateInner(context) {
       .filter(Boolean).join('/')} failed — ${(e && e.message) || e}`);
   }) });
 
+  // Pinned workspaces, per Microsoft account, in VS Code's own storage: they survive
+  // restarts and updates, and one account's pins never show up under another.
+  const favKey = () => `onelakeStudio.favorites.${storeAccount || 'signed-out'}`;
+  const favorites = {
+    get: () => context.globalState.get(favKey(), []),
+    set: list => context.globalState.update(favKey(), [...new Set(list)].sort((a, b) => a.localeCompare(b))),
+  };
+
   const tree = new LakehouseTree({
     onelake,
+    favorites,
     fabric,
     hasFabric: async () => !!await fabricToken().catch(() => null),
     isSignedIn: () => signedIn,
@@ -565,6 +574,17 @@ async function activateInner(context) {
     }),
 
     vscode.commands.registerCommand('onelakeStudio.showLog', () => out.show(true)),
+
+    vscode.commands.registerCommand('onelakeStudio.pinWorkspace', async n => {
+      if (!n || !n.workspace) return;
+      await favorites.set([...favorites.get(), n.workspace]);
+      tree.redraw();
+    }),
+    vscode.commands.registerCommand('onelakeStudio.unpinWorkspace', async n => {
+      if (!n || !n.workspace) return;
+      await favorites.set(favorites.get().filter(w => w !== n.workspace));
+      tree.redraw();
+    }),
 
     // Reading the same table twice should be quick, and if it is not, this is how to
     // prove the cache is the reason rather than assume it. It also answers "what is this

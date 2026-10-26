@@ -97,6 +97,18 @@
         "command": "onelakeStudio.signInFabric",
         "title": "Sign in to the Fabric API",
         "category": "OneLake Studio"
+      },
+      {
+        "command": "onelakeStudio.pinWorkspace",
+        "title": "Pin to Favorites",
+        "category": "OneLake Studio",
+        "icon": "$(star-empty)"
+      },
+      {
+        "command": "onelakeStudio.unpinWorkspace",
+        "title": "Unpin from Favorites",
+        "category": "OneLake Studio",
+        "icon": "$(star-full)"
       }
     ],
     "viewsContainers": {
@@ -144,7 +156,7 @@
       "view/item/context": [
         {
           "command": "onelakeStudio.refresh",
-          "when": "view == onelakeStudio.explorer && viewItem =~ /^(workspace|item|dir|tables|models|error)$/",
+          "when": "view == onelakeStudio.explorer && viewItem =~ /^(workspace|workspacePinned|item|dir|tables|models|error)$/",
           "group": "inline"
         },
         {
@@ -156,6 +168,16 @@
           "command": "onelakeStudio.exportBim",
           "when": "view == onelakeStudio.explorer && viewItem == semanticModel",
           "group": "1_export"
+        },
+        {
+          "command": "onelakeStudio.pinWorkspace",
+          "when": "view == onelakeStudio.explorer && viewItem == workspace",
+          "group": "inline@0"
+        },
+        {
+          "command": "onelakeStudio.unpinWorkspace",
+          "when": "view == onelakeStudio.explorer && viewItem == workspacePinned",
+          "group": "inline@0"
         }
       ],
       "commandPalette": [
@@ -181,6 +203,14 @@
         },
         {
           "command": "onelakeStudio.signInFabric",
+          "when": "false"
+        },
+        {
+          "command": "onelakeStudio.pinWorkspace",
+          "when": "false"
+        },
+        {
+          "command": "onelakeStudio.unpinWorkspace",
           "when": "false"
         }
       ]
