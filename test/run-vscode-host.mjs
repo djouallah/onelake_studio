@@ -148,14 +148,14 @@ try {
       document.head.appendChild(s);
     });
     // The webview's own bridge to the extension host. What the page posts is recorded so
-    // the checks below can read it back — and `engine-call` is answered by the REAL host
+    // the checks below can read it back — and `call` is answered by the REAL host
     // methods and engine (panel-host.mjs), because a page with nothing answering it never
     // finishes booting.
     window.__posted = [];
     window.acquireVsCodeApi = () => ({
       postMessage: m => {
         window.__posted.push(m);
-        if (m && m.type === "engine-call") {
+        if (m && m.type === "call") {
           window.__hostCall(m).then(r => window.postMessage(r, "*"));
         }
       },

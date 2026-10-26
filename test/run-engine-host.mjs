@@ -50,8 +50,8 @@ console.log("--- engine-host ---");
   const h = createEngineHost({ extensionDir: EXT_DIR, onLog: b => { boot = b; },
                                allowedPaths: [join(TMP, "real.csv")] });
 
-  const caps = await h.call("capabilities");
-  ok(caps.httpfs, "httpfs loaded — this is what reads the loopback proxy");
+  const { capabilities: caps } = await h.call("info");
+  ok(caps.httpfs, "httpfs loaded — the https the Iceberg catalog and public URLs need");
   ok(caps.avro, "avro loaded — read_avro is the Iceberg manifest reader");
   ok(caps.excel, "excel loaded — gates whether .xlsx is offered");
   ok(caps.zipfs, "zipfs loaded — gates whether .zip is offered");
@@ -104,19 +104,6 @@ console.log("--- engine-host ---");
   eq(userSql.rows[0].s, "data_1.parquet",
      "a literal that looks like a registered name is a plain literal, nothing rewrites it");
 
-  // The one registry-shaped survivor: bytes with no URL. The temp path comes BACK and the
-  // caller splices it — same discipline as URLs — and dropFile is how the disk is repaid.
-  const bufPath = await h.call("registerFileBuffer", ["m.csv", Buffer.from("x\n9\n")]);
-  ok(typeof bufPath === "string" && bufPath.includes("buf_"),
-     `registerFileBuffer answers with the temp path (${bufPath})`);
-  const buf = await h.call("query", [`SELECT * FROM read_csv('${bufPath}')`]);
-  eq(buf.rows[0].x, 9, "…and the path reads");
-  await h.call("dropFile", ["m.csv"]);
-  let gone = false;
-  try { await h.call("query", [`SELECT * FROM read_csv('${bufPath}')`]); }
-  catch (_) { gone = true; }
-  ok(gone, "…and after dropFile the temp file really is gone");
-
   let streamed2 = 0;
   await h.call("stream", ["SELECT 1 AS n"], () => { streamed2++; });
   eq(streamed2, 1, "stream() delivers batches through call()'s appended emit");
@@ -131,7 +118,7 @@ console.log("--- engine-host ---");
 
   // openTable without a credential: the two failure shapes a harness can reach.
   let noSource = "";
-  try { await h.call("openTable", [{ workspace: "w", item: "i", schema: "dbo", table: "t" }]); }
+  try { await h.openTable({ workspace: "w", item: "i", schema: "dbo", table: "t" }); }
   catch (e) { noSource = e.message; }
   ok(/token source/.test(noSource), `openTable without a token source says so — "${noSource}"`);
 
@@ -142,7 +129,7 @@ console.log("--- engine-host ---");
   // An engine WITH a token source that answers null: the signed-out shape.
   const h = createEngineHost({ extensionDir: EXT_DIR, getToken: async () => null });
   let signedOut = "";
-  try { await h.call("openTable", [{ workspace: "w", item: "i", schema: "dbo", table: "t" }]); }
+  try { await h.openTable({ workspace: "w", item: "i", schema: "dbo", table: "t" }); }
   catch (e) { signedOut = e.message; }
   ok(/Not signed in/.test(signedOut), `openTable while signed out says so — "${signedOut}"`);
   await h.close();
@@ -205,7 +192,7 @@ try {
   await page.addInitScript(() => {
     window.acquireVsCodeApi = () => ({
       postMessage(m) {
-        if (m && m.type === "engine-call") {
+        if (m && m.type === "call") {
           window.__hostCall(m).then(r => window.postMessage(r, "*"));
         }
       },
@@ -243,12 +230,13 @@ try {
     eq(JSON.stringify(cells.slice(0, 2)), JSON.stringify([["1", "x"], ["2", "y"]]),
        "…with the right values in the right order");
 
-    // Types reach the UI as DuckDB's names. This is the path arrowTypeName() short-circuits.
+    // Types reach the UI as DuckDB's own names.
     await page.fill("#sqlEditor", "SELECT 1::BIGINT AS n");
     await page.click("#runBtn");
+    // The previous result also has a "1" in it, so wait for THIS result's header.
     await page.waitForFunction(
-      () => (document.getElementById("resultsTable").textContent || "").includes("1"), { timeout: 30000 })
-      .catch(() => {});
+      () => /n/.test((document.querySelector("#resultsTable thead") || {}).textContent || ""),
+      { timeout: 30000 }).catch(() => {});
     const head = await page.evaluate(() =>
       (document.querySelector("#resultsTable thead") || {}).textContent || "");
     ok(/BIGINT/i.test(head), `…and column types are DuckDB's own — header said ${JSON.stringify(head.trim())}`);

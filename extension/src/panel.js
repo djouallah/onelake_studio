@@ -130,16 +130,16 @@ async function openPanelUncontended(context, { onOpened, onBoot, onBootFailed, e
     throw e;
   }
 
-  const onEngineCall = engine ? wireEngine(panel, engine, host) : null;
+  const onCall = engine ? wireEngine(panel, engine, host) : null;
   // The panel's own listeners die with the panel. Pushed onto context.subscriptions they
   // piled up — one more pair per panel ever opened in the window.
   const disposables = [];
 
   panel.webview.onDidReceiveMessage(msg => {
     if (!msg) return;
-    if (msg.type === 'engine-call') {
-      if (onEngineCall) onEngineCall(msg);
-      else panel.webview.postMessage({ type: 'engine-error', id: msg.id,
+    if (msg.type === 'call') {
+      if (onCall) onCall(msg);
+      else panel.webview.postMessage({ type: 'error', id: msg.id,
         message: 'the native engine is not available in this build' });
     } else if (msg.type === 'ready') {
       ready = true;

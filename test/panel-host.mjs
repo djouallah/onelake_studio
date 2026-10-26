@@ -29,13 +29,13 @@ export function panelHost({ dfsOrigin, tableOrigin, engineOptions = {} } = {}) {
   const statuses = [];
   const methods = createHostMethods({ onelake, engine, onStatus: m => statuses.push(m) });
 
-  // window.__hostCall(msg) answers one engine-call: batches are posted into the page as
+  // window.__hostCall(msg) answers one `call`: batches are posted into the page as
   // they come, and the closing result (or error) is what the call resolves to.
   async function install(page) {
     await page.exposeBinding("__hostCall", async ({ page: p }, msg) => {
       let last = null;
       await answer({ methods, engine }, msg, m => {
-        if (m.type === "engine-batch") p.evaluate(x => window.postMessage(x, "*"), m).catch(() => {});
+        if (m.type === "batch") p.evaluate(x => window.postMessage(x, "*"), m).catch(() => {});
         else last = m;
       });
       return last;

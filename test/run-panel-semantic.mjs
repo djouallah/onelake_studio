@@ -116,7 +116,7 @@ try {
   await page.addInitScript(() => {
     window.acquireVsCodeApi = () => ({
       postMessage(m) {
-        if (m && m.type === "engine-call") window.__hostCall(m).then(r => window.postMessage(r, "*"));
+        if (m && m.type === "call") window.__hostCall(m).then(r => window.postMessage(r, "*"));
       },
     });
   });

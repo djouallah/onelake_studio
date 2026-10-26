@@ -1810,7 +1810,7 @@ showSignedOut();
 // Both origins are normally absent, and createEngine's defaults address OneLake directly.
 // The VS Code extension supplies a loopback proxy for each, because a webview has no
 // service worker to sign DuckDB's range reads with.
-engine = createEngine(auth, {
+engine = createEngine({
   onStatus: setStatus,
   // Sent to the host, where it prints beside the read log. The read log times the proxy;
   // this times what happens after the bytes land, which is where a boot that looks

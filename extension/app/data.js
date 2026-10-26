@@ -1,52 +1,19 @@
 // =============================================================================
-// data.js — OneLake data engine, on native DuckDB in the extension host
+// data.js — what the panel does with tables and files, on DuckDB in the extension host
 // =============================================================================
-// Given a lakehouse path, this module:
-//   1. connects to the native engine over the panel's message bridge (duckdb-native.js),
-//   2. lists the lakehouse's tables through OneLake's Iceberg REST catalog by friendly
-//      name (workspace/lakehouse.Lakehouse) — no GUIDs, storage token only. DFS is still
-//      how Files/ and the workspace/item pickers are listed; table LISTING is the
-//      catalog's alone,
-//   3. for a chosen table, asks the catalog for its metadata document — that is the
-//      Stats card and the lazy-conversion wait — and has the host ATTACH the item as an
-//      Iceberg catalog (db.openTable), after which DuckDB itself does snapshot
-//      resolution, manifest reading, deletes and column mapping,
-//   4. exposes the table as a read-only VIEW you can run SQL against. Nothing is
-//      downloaded whole: reads go through the extension's loopback proxy, which signs
-//      them, so a query pulls only the row groups and columns it touches.
+// Given a lakehouse the tree named, this module:
+//   1. shows a table's statistics from its Iceberg metadata — no data read,
+//   2. shows its first rows (kept by the host per snapshot),
+//   3. opens it as a read-only VIEW to run SQL against, read with iceberg_scan,
+//   4. opens a Files/ object — parquet, CSV, JSON, avro, xlsx, text, a zip's entries, a
+//      DuckDB or SQLite database — as views the same way.
 //
-// The pure half — path and URI handling, SQL text, cache keys, version selection — lives
-// in paths.js and is covered by test/paths.test.js. Anything here that can be written as
-// a function of strings belongs there instead: that is where the mistakes that silently
-// return the wrong rows were hiding, and clicking around does not find them.
+// Every statement and every OneLake read is a call to the host (host.js); DuckDB runs
+// there, natively, and reads OneLake itself. This file decides WHAT to ask; the pure half
+// — paths, SQL text, cache keys — lives in paths.js, where it is tested.
 //
 // DOM-free: progress is reported through the injected `onStatus` callback.
 // =============================================================================
-
-// THE ENGINE IS NATIVE DuckDB, IN THE EXTENSION HOST — there is no WebAssembly in this
-// page any more. A VS Code extension host is Node, so it runs the real thing. Measured,
-// boot to a usable engine:
-//
-//                      duckdb-wasm                @duckdb/node-api
-//   engine + connect   ~760ms                     17ms
-//   four extensions    ~1187ms warm               263ms warm
-//   engine ready       ~2000ms warm, 6.6s cold    284ms
-//   threads            1                          8
-//
-// The wasm side never improved with caching, and could not: duckdb-wasm pipes the wasm
-// response through a TransformStream (it wants progress events) and hands
-// instantiateStreaming a SYNTHETIC Response, while Chromium can only attach a compiled
-// module to a real HTTP cache entry. So the 35MB compile was paid on every panel open no
-// matter what the proxy sent, and the four extensions were four more modules compiled
-// fresh every session.
-//
-// Everything below this line is unchanged by that: this engine's whole dependency on
-// DuckDB is a handful of calls, and duckdb-native.js answers them from the host. See
-// extension/src/engine-host.js. Native DuckDB reads URLs and paths spliced directly into
-// the SQL — the wasm build's virtual file registry (registerFileURL) is gone; only
-// registerFileBuffer survives, for bytes that have no URL, and it answers with the temp
-// path the host wrote so this side can say exactly what it means.
-
 
 // The page reads nothing from OneLake itself. Listings and bytes come from the extension
 // host (its cache-first store, its signed reads); DuckDB, also in the host, reads tables
@@ -60,187 +27,40 @@ import {
   normalizeValue, fmtBytes,
 } from "./paths.js";
 
-// Materialising a result costs one JS object per row on top of DuckDB's Arrow batches, so
-// an unbounded SELECT * is how you take the tab down. Cap it and say so.
+// Materialising a result costs one JS object per row, so an unbounded SELECT * is how you
+// take the tab down. Cap it and say so (the host caps at the same number).
 const MAX_ROWS = 200_000;
 
-// Quick peek during a table open: rows from the first data file, painted while the
-// remaining registrations and the footer-heavy view bind still run. Fires for any file
-// count — even a one-file table paints faster from a LIMIT than from the full bind,
-// and a peek the real open outruns is repainted over harmlessly (FIFO on serial()).
+// The first rows of a table, painted while the view is still being opened.
 const QUICK_PEEK_ROWS = 100;
 
-export function createEngine(auth, {
+export function createEngine({
   onStatus = () => {},
-  // Called once per boot with a per-stage millisecond breakdown. It exists because the
-  // read log measures the proxy — request in, response out — and the expensive part of
-  // booting happens AFTER the last byte is delivered, inside the worker, where nothing
-  // was watching. A boot that served 35MB of wasm in 1ms and still took half a minute
-  // was indistinguishable from a fast one in the only instrument we had.
+  // Called once per boot with a per-stage millisecond breakdown, printed beside the
+  // engine host's own in the read log.
   onBoot = () => {},
 } = {}) {
-  let db = null, conn = null, worker = null;
+  let host = null;                  // the channel to the extension host, set by init()
   let _seq = 0;
-  let canXlsx = false;              // set by init(); see the 'excel' preload there
-  let canZip = false;               // set by init(); see the 'zipfs' preload there
+  let canXlsx = false;              // which optional formats the host's DuckDB loaded
+  let canZip = false;
 
   const loaded = new Map();         // cache key -> info
-  const resources = new Map();      // cache key -> { ident, regs[], tables[] }, for release()
+  const resources = new Map();      // cache key -> { ident, views[], tables[], ... }, for release()
   const viewNames = new Map();      // view identifier -> the cache key that owns it
-  // Reading a table is billed by the byte, so it happens in three deliberate tiers and
-  // each one's answer is kept: statTable (metadata only) -> peekTable (ONE parquet) ->
-  // loadTable (every file, a real view). These two caches are what stop a later tier
-  // from paying again for what an earlier one already fetched. Neither holds DuckDB
-  // state, so a worker restart keeps them — only a refresh clears them (see reset()).
-  const resolvedC = new Map();      // cache key -> the resolved Iceberg metadata document
-  const filesC = new Map();         // cache key -> { files[], posDeletes[], eqDeletes[] }
-  const peekC = new Map();          // cache key -> the peek's rows, built once per snapshot
+  // A table is read in tiers and each one's answer is kept: statTable (metadata only) ->
+  // peekTable (first rows) -> loadTable (a real view). These hold no DuckDB state, so
+  // only a refresh clears them (see reset()).
+  const resolvedC = new Map();      // cache key -> the table's metadata summary
+  const peekC = new Map();          // cache key -> the first rows, once per snapshot
 
-  // Opening a big table is not one slow request, it is hundreds of small ones — the
-  // manifest walk, then a registration per data file — and until there was a way out of
-  // it every button stayed disabled for the duration with only a page reload to escape.
-  //
-  // A generation counter is the whole mechanism: cancelLoad() bumps it, and the load
-  // checks between steps whether the number still matches. That gives up at the next
-  // boundary rather than mid-request, because interrupting a fetch already in flight
-  // would mean an AbortController threaded through every call and would not end the load
-  // meaningfully sooner — what takes the time is the count of requests, not any one of
-  // them. It also makes a superseded load (click another table while one is running)
-  // stand down on its own.
-  // Bumping the counter only stops the JS walk. The other half of a stuck app is a query
-  // already running inside the worker — one worker, one query at a time, so a preview of
-  // a 186-file table holds up everything behind it. cancelSent() reaches that; see
-  // stream() for why it only works for queries issued with send().
-  // conn.query() was serialised by the worker for free — statements queued and each saw
-  // the whole result. conn.send() is not, and losing that guarantee is not a small thing:
-  // MEASURED, starting a second query while a stream was draining truncated the first
-  // SILENTLY — 4,000,000 rows came back as 22,528 with no error at all — which the app
-  // then renders as a short or torn grid indistinguishable from real data. Streaming buys
-  // cancellability at the price of serialising by hand, so every statement goes through
-  // here and a stream holds the queue for its whole drain.
-  //
-  // cancelSent() deliberately does NOT queue: its entire job is to interrupt whatever is
-  // holding it, and waiting its turn would mean waiting for the thing it is cancelling.
-  let queue = Promise.resolve();
-  function serial(fn) {
-    const run = queue.then(() => guarded(fn), () => guarded(fn));
-    queue = run.then(() => {}, () => {});
-    return run;
-  }
-  const q = sql => serial(() => conn.query(sql));
-
-  // cancelSent() only works while the worker is PROCESSING MESSAGES — the chunk-polled
-  // execution phase. The bind phase of a statement over many registered HTTP files is one
-  // long synchronous stretch (footer reads are sync XHR inside the worker), and a worker
-  // blocked there processes nothing: not the cancel, not the successor load's first
-  // registration, nothing. That is the whole failure mode this epoch machinery exists
-  // for: the ONLY thing that can interrupt a worker stuck in sync XHR is terminate().
-  //
-  // A terminated worker's pending promises never settle, so every worker-bound call is
-  // raced against the epoch's abort promise — otherwise whoever was awaiting the blocked
-  // call would hang forever on a promise whose worker no longer exists.
-  let workerEpoch = 0;          // bumped only by restart()
-  let epochAbort, epochReject;  // rejects (e.workerRestart = true) when the worker dies
-  let initPromise = null;       // the current epoch's init — the ready barrier
-  let restarting = null;        // single-flight restart
-  let engineAlive = false;      // set at the end of _init(); the watchdog no-ops until then
-  function resetEpoch() {
-    epochAbort = new Promise((_, rej) => { epochReject = rej; });
-    epochAbort.catch(() => {}); // an epoch that ends with no racer must not log unhandled
-  }
-  resetEpoch();
-
-  // Every worker-bound call goes through here. On a restart-abort, ownership decides the
-  // outcome: a call belonging to a superseded load dies as a cancel, but a call belonging
-  // to the CURRENT load — the one the user just clicked, parked behind the very statement
-  // being killed — retries once against the fresh engine. That retry is provably safe:
-  // worker messages are FIFO and the watchdog ping is posted synchronously inside
-  // cancelLoad(), before the successor posts anything, so an unanswered ping means no
-  // message after the cancel was ever processed — the parked call had zero side effects.
-  // Every statement is also idempotent (CREATE OR REPLACE, IF NOT EXISTS,
-  // register-overwrites), so running it again is running it for the first time.
-  async function guarded(fn) {
-    const myGen = loadGen, myEpoch = workerEpoch;
-    if (initPromise) await initPromise;    // never run against a null or half-built conn
-    // Chained before a restart AND no longer wanted: die before touching the new engine.
-    // Chained before a restart but still current-gen (a successor's queued statement, a
-    // teardown DROP): proceed — the new engine is exactly where it should run.
-    if (myEpoch !== workerEpoch && myGen !== loadGen) throw cancelledError();
-    try {
-      return await Promise.race([fn(), epochAbort]);
-    } catch (e) {
-      if (!e || !e.workerRestart) throw e;             // fn's own failure, not the terminate
-      if (myGen !== loadGen) throw cancelledError();   // the doomed load's own call
-      await initPromise;                               // module-let: the NEW epoch's init
-      return Promise.race([fn(), epochAbort]);         // once; a second restart rejects
-    }
-  }
-
+  // A click supersedes whatever was loading. cancelLoad() bumps the generation — a load
+  // checks it between steps and stands down — and interrupts the host's running
+  // statements, so a previous table's scan stops spending.
   let loadGen = 0;
-  // Fire-and-forget ON PURPOSE. Awaiting the acknowledgement here parked the NEXT load
-  // behind the very statement being cancelled, before it could even write "Resolving…".
-  // Message order does the correctness work: the cancel is queued ahead of anything
-  // the successor sends, so it can only ever kill the predecessor's statement.
-  //
-  // The watchdog is the enforcement. A cancel the worker never processes (blocked in a
-  // sync bind, see above) used to leave the app hung and the abandoned load burning
-  // network until it finished on its own; now an unanswered ping terminates the worker.
   function cancelLoad() {
     loadGen++;
-    try { if (conn) conn.cancelSent().catch(() => {}); } catch (_) { /* nothing was pending */ }
-    armWatchdog();
-  }
-
-  // Did the worker actually hear the cancel? getVersion() is a pure message round trip —
-  // it touches no connection state, so it cannot interleave with a draining stream. A
-  // healthy worker answers in milliseconds even mid-query (execution is chunk-polled);
-  // only a worker stuck in a synchronous stretch lets the timer win. The ping is posted
-  // HERE, synchronously after the cancel, so it precedes anything the successor sends —
-  // that FIFO ordering is what makes guarded()'s retry safe.
-  const WATCHDOG_MS = 2000;
-  let watchdogArmed = false;
-  function armWatchdog() {
-    if (watchdogArmed || restarting || !engineAlive || !db) return;
-    watchdogArmed = true;
-    const myEpoch = workerEpoch;
-    // A ping that cannot be sent must not break the cancel it rides on.
-    let ping;
-    try { ping = db.getVersion(); } catch (_) { ping = new Promise(() => {}); }
-    Promise.race([
-      ping.then(() => "ok", () => "ok"),   // any settle = messages are flowing
-      sleep(WATCHDOG_MS).then(() => "stuck"),
-    ]).then(r => {
-      watchdogArmed = false;
-      if (r === "stuck" && myEpoch === workerEpoch && !restarting)
-        restart(`cancel not honoured within ${WATCHDOG_MS}ms — worker blocked in a synchronous bind`);
-    });
-  }
-
-  // The hard way out, for a worker no message can reach. Everything the worker held —
-  // views, registered files, caches — dies with it, so the caches of what died are
-  // cleared too; a table clicked again reloads from scratch, which is also the honest
-  // answer. `queue` is deliberately NOT reset: a second chain running beside statements
-  // already chained on the first is exactly the measured silent-truncation hazard the
-  // hand-serialisation exists to prevent — the epoch rejection drains the one chain
-  // instead. loadGen survives so ownership checks keep meaning what they meant.
-  function restart(reason) {
-    if (restarting) return restarting;
-    restarting = (async () => {
-      engineAlive = false;
-      workerEpoch++;
-      try { if (worker) worker.terminate(); } catch (_) {}
-      worker = db = conn = null;      // synchronously: nothing can post to the old worker
-      loaded.clear(); resources.clear(); viewNames.clear();
-      const rej = epochReject;
-      resetEpoch();                             // BEFORE rejecting: retriers race the new epoch
-      initPromise = _init({ quiet: true });     // BEFORE rejecting: retriers await the NEW init
-      const e = cancelledError();
-      e.workerRestart = true;
-      rej(e);                                   // releases every parked worker-bound promise
-      console.info(`[engine] worker restarted: ${reason}`);
-      await initPromise;
-    })().finally(() => { restarting = null; });
-    return restarting;
+    if (host) host.call("cancel").catch(() => {});
   }
   // Distinguishable so the UI can say "stopped" rather than reporting a failure.
   function cancelledError() {
@@ -248,64 +68,50 @@ export function createEngine(auth, {
     e.cancelled = true;
     return e;
   }
-  // A superseded load gets one last resume between its awaits before check() throws,
-  // and a progress message written there lands ON TOP of the successor's status —
-  // "Opening <old table> — 72 file(s)…" over a screen showing the new one. Every load
-  // writes status through this guard, so a load that is no longer current says nothing.
+  // A superseded load says nothing: its progress must not land on top of the successor's.
   const statusFor = gen => m => { if (gen === loadGen) onStatus(m); };
 
   // ---------------------------------------------------------------------------
-  // DuckDB bootstrap
+  // The host
   // ---------------------------------------------------------------------------
-  // init() is also the ready barrier guarded() awaits, so the app's engineReady and the
-  // engine's own gate are one promise — a statement can never run against a null conn.
-  // restart() calls _init({quiet:true}) directly: the restart happens under a successor
-  // load's own status line, and "Loading DuckDB-WASM…" stamped over "Resolving <table>…"
-  // would report the mechanism instead of the work.
-  function init(opts) {
-    initPromise = _init(opts);
+  // init() is also the ready barrier: every call waits for it, so the app's engineReady
+  // and the engine's own gate are one promise.
+  let initPromise = null;
+  function init() {
+    initPromise = _init();
     return initPromise;
   }
 
-  async function _init({ quiet = false } = {}) {
-    // Stage clock: the page's half of the boot, reported beside the engine host's own.
-    const stages = [];
-    let markAt = (typeof performance !== "undefined" ? performance.now() : Date.now());
-    const mark = name => {
-      const now = (typeof performance !== "undefined" ? performance.now() : Date.now());
-      stages.push({ stage: name, ms: Math.round(now - markAt) });
-      markAt = now;
-    };
-    // The native engine already exists in the host — extensions and all — so there is no
-    // bundle to select, no worker to start and no wasm to compile. It reports its own boot
-    // stages through the same onBoot channel so the two engines are comparable in the
-    // output channel rather than only in argument.
-    if (!quiet) onStatus("Starting DuckDB…");
-    const { connectNative } = await import("./duckdb-native.js");
-    const nat = connectNative();
-    db = nat.db;
-    conn = nat.conn;
-    // The host owns extension loading, so it owns the answer to what can be opened.
-    // Guarded: a capability probe that fails must not stop the engine coming up — a
-    // missing 'excel' costs .xlsx, not the session.
+  async function _init() {
+    const t0 = Date.now();
+    onStatus("Starting DuckDB…");
+    const { connectHost } = await import("./host.js");
+    host = connectHost();
+    // The host owns extension loading, so it owns the answer to what can be opened. A
+    // probe that fails must not stop the engine coming up — a missing 'excel' costs .xlsx.
     try {
-      const caps = await db.capabilities();
+      const { capabilities: caps } = await host.call("info");
       canXlsx = !!(caps && caps.excel);
       canZip = !!(caps && caps.zipfs);
     } catch (e) { console.warn("[engine] capability probe failed:", e.message); }
-    mark("native engine");
-    const totalMs = stages.reduce((n, s) => n + s.ms, 0);
-    console.log("[engine] DuckDB ready — native (extension host), " +
-                stages.map(s => `${s.stage} ${s.ms}ms`).join(", "));
-    try { onBoot({ stages, totalMs, quiet, native: true }); } catch (_) {}
-    engineAlive = true;
-    return { db, conn };
+    const ms = Date.now() - t0;
+    console.log(`[engine] DuckDB ready — native (extension host), ${ms}ms`);
+    try { onBoot({ stages: [{ stage: "native engine", ms }], totalMs: ms, native: true }); } catch (_) {}
   }
 
-  // ---------------------------------------------------------------------------
-  // Small helpers
-  // ---------------------------------------------------------------------------
-  const sleep = ms => new Promise(r => setTimeout(r, ms));
+  // One call to the host. A Stop comes back as e.cancelled and is re-raised as one.
+  async function callHost(method, args = [], onBatch) {
+    if (initPromise) await initPromise;
+    try { return await host.call(method, args, onBatch); }
+    catch (e) { if (e && e.cancelled) throw cancelledError(); throw e; }
+  }
+
+  // The whole result of a statement: { fields: [{ name, type }], rows, numRows }.
+  const q = sql => callHost("query", [sql]);
+
+  // A statement whose rows arrive in batches — anything that can be slow, because Stop
+  // must be able to interrupt it mid-scan.
+  const stream = (sql, onBatch = () => {}) => callHost("stream", [sql], onBatch);
 
   // ---------------------------------------------------------------------------
   // OneLake, through the host
@@ -321,7 +127,7 @@ export function createEngine(auth, {
   }
 
   async function hostBytes(ws, path, range) {
-    const r = await guarded(() => db.readBytes({ workspace: ws, path, range }));
+    const r = await callHost("onelake.readBytes", [{ workspace: ws, path, range }]);
     return fromBase64(r && r.base64);
   }
 
@@ -343,7 +149,7 @@ export function createEngine(auth, {
   // One level of Files/ (or a subdirectory of it). `dir` is relative to Files/. The same
   // cached listing the tree draws, so the pane and the tree never disagree.
   async function listFiles({ workspace, item }, dir = "") {
-    const entries = await guarded(() => db.listFiles({ workspace, item, dir: strip(dir) }));
+    const entries = await callHost("onelake.files", [{ workspace, item, dir: strip(dir) }]);
     return (entries || []).map(e => ({ ...e, queryable: !e.isDir && isQueryable(e.name) }));
   }
 
@@ -421,7 +227,6 @@ export function createEngine(auth, {
     loaded.clear();
     resources.clear();
     viewNames.clear();
-    filesC.clear();
     if (forget) { resolvedC.clear(); peekC.clear(); }
   }
 
@@ -512,7 +317,7 @@ export function createEngine(auth, {
     try {
       const entries = (await q(
         `SELECT file_name AS n FROM zip_contents(${sqlStr(url)})
-         WHERE NOT is_directory ORDER BY file_name`)).toArray().map(r => r.toJSON());
+         WHERE NOT is_directory ORDER BY file_name`)).rows;
       let readable = entries.filter(e => {
         const x = fileExt(e.n);
         return readerFor(x) && (x !== "xlsx" || canXlsx);
@@ -588,7 +393,7 @@ export function createEngine(auth, {
       // READ_ONLY is not optional: the file lives in OneLake and the app never writes.
       if (sqlite) {
         statusFor(gen)(`Copying ${file.name} (${fmtBytes(file.bytes)}) — SQLite is read from a local copy…`);
-        const local = await guarded(() => db.localCopy({ workspace: lh.workspace, path: file.path }));
+        const local = await callHost("onelake.localCopy", [{ workspace: lh.workspace, path: file.path }]);
         check();
         await q(`ATTACH ${sqlStr(local)} AS ${quoteIdent(alias)} (TYPE sqlite, READ_ONLY)`);
       } else {
@@ -603,7 +408,7 @@ export function createEngine(auth, {
          UNION ALL
          SELECT schema_name, view_name
            FROM duckdb_views() WHERE database_name = ${sqlStr(alias)} AND NOT internal
-         ORDER BY 1, 2`)).toArray().map(r => r.toJSON());
+         ORDER BY 1, 2`)).rows;
       const tables = rows.map(r => `${quoteIdent(alias)}.${quoteIdent(r.s)}.${quoteIdent(r.t)}`);
 
       // Describe the first table — this is the probe that forces real block reads, so an
@@ -629,87 +434,25 @@ export function createEngine(auth, {
 
   const SQLITE_MAX_BYTES = 200e6;
 
-  // NOTE ON WHAT IS NOT HERE ANY MORE.
-  //
-  // This file used to carry the whole Iceberg read path: the manifest-list walk, the
-  // per-manifest content 0/1/2 split, the position-delete anti-join, and the Warehouse
-  // name mapping that turned a grid of GUID column headers into readable names. All of
-  // it existed for one reason, stated in the comment that used to sit below: DuckDB's
-  // own iceberg extension needs the azure filesystem to resolve the absolute abfss://
-  // URIs Fabric writes, and azure had no WASM build.
-  //
-  // The engine is native now, so it does. openTable() hands the work to DuckDB, which
-  // does snapshot resolution, manifest filtering, deletes and column mapping itself —
-  // verified against a real Lakehouse, a column-mapped Warehouse and a merge-on-read
-  // table. See extension/src/engine-host.js for the ATTACH, and note that
-  // ACCESS_DELEGATION_MODE is the one part of it that cannot be left to a default.
-
   // ---------------------------------------------------------------------------
   // Load a table -> read-only VIEW.
   // ---------------------------------------------------------------------------
-  // db.openTable() ATTACHes the item as an Iceberg REST catalog in the host and DuckDB
-  // does the rest — snapshot resolution, manifests, position AND equality deletes, the
-  // Warehouse column mapping. Nothing is downloaded whole: a query range-reads only the
-  // row groups and columns it touches, through the signed proxy.
+  // The host names the table (iceberg_scan over its metadata file, from the host's own
+  // cache) and DuckDB does the rest — snapshot resolution, manifests, position AND
+  // equality deletes, the Warehouse column mapping. Nothing is downloaded whole: a query
+  // range-reads only the row groups and columns it touches.
   //
   // Idempotent: a table already loaded is returned from cache.
   // ---------------------------------------------------------------------------
   const labelFor = t => t.schema ? `${t.schema}.${t.table}` : t.table;
 
-  // Every query that can be slow goes through here rather than conn.query().
-  //
-  // conn.query() is the worker's RUN_QUERY: it runs to completion inside the worker and
-  // cancelSent() answers false. Measured on the pinned build — a 35s scan ignored the
-  // cancel and ran the full 35s — and that is precisely what left a click on another
-  // table queued behind the first table's preview with nothing able to interrupt it.
-  // conn.send() is the pending-query path, polled in chunks, and cancelSent() kills it
-  // mid-scan: same scan, dead 1.0s in, connection usable 8ms later, a new table's DDL
-  // running 7ms after that.
-  //
-  // The reader carries no schema of its own (checked: reader.schema is undefined). The
-  // first batch does, and an empty result still yields one batch, so the first batch is
-  // always where the fields come from.
-  async function stream(sql, onBatch = () => {}) {
-    return serial(async () => {
-      try {
-        const reader = await conn.send(sql);
-        let schema = null;
-        for await (const batch of reader) {
-          if (!schema) schema = batch.schema;
-          onBatch(batch, schema);
-        }
-        return schema;
-      } catch (e) {
-        // DuckDB reports a cancelled query as an error. It is not one. The host marks the
-        // calls its cancel reached; matching "cancel" in the text instead turned a binder
-        // error about a column called `cancellations` into a silent "stopped".
-        if (e.cancelled) throw cancelledError();
-        throw e;
-      }
-    });
-  }
-
   async function describe(ident) {
-    const out = [];
-    await stream(`DESCRIBE ${ident}`, batch => {
-      for (const r of batch) {
-        const j = r.toJSON();
-        out.push({ name: j.column_name, type: j.column_type });
-      }
-    });
-    return out;
+    const r = await q(`DESCRIBE ${ident}`);
+    return r.rows.map(j => ({ name: j.column_name, type: j.column_type }));
   }
 
-  // Opening a table is now two steps: ATTACH the item as an Iceberg REST catalog in the
-  // extension host, then point a view at the table inside it. Everything that used to sit
-  // between those steps lives in DuckDB now — registering each data file under a
-  // generated name, unioning them, `union_by_name` when the schema had evolved,
-  // anti-joining position deletes on file_row_number, projecting a Warehouse's physical
-  // GUID columns back to their logical names, and bisecting the file list with LIMIT 0
-  // binds to name the culprit when one of them failed to open.
-  //
-  // The view exists so the editor can say `dbo.sales` rather than `ol_3."dbo"."sales"`,
-  // and so release() still has a single name to drop.
+  // The view exists so the editor can say `dbo.sales` rather than an iceberg_scan(…), and
+  // so release() has a single name to drop.
   async function createView(ident, source) {
     await stream(`CREATE OR REPLACE VIEW ${ident} AS SELECT * FROM ${source}`);
   }
@@ -729,9 +472,9 @@ export function createEngine(auth, {
       // a table opened before — in this session or any earlier one — resolves without a
       // request to OneLake. Its "waiting for conversion" progress arrives as a 'status'
       // message of its own.
-      const r = await guarded(() => db.resolveTable({
+      const r = await callHost("onelake.table", [{
         workspace: lh.workspace, item: lh.item, schema: t.schema || "", table: t.table,
-      }));
+      }]);
       check();
       resolved = {
         empty: !!r.empty, schemaFields: r.schemaFields || [], totalRecords: r.totalRecords,
@@ -793,15 +536,9 @@ export function createEngine(auth, {
   // ---------------------------------------------------------------------------
   // Tier 2: the first hundred rows, and no view.
   // ---------------------------------------------------------------------------
-  // One ATTACH (per ITEM, so a second table in the same lakehouse is free) and a
-  // LIMIT 100 that DuckDB pushes down into the Iceberg scan. It used to be a manifest
-  // walk plus a raw read of the first data file, which had to be SUPPRESSED on a
-  // merge-on-read table: reading one file raw bypasses the delete anti-join, so deleted
-  // rows showed as live and the only honest answer was to refuse. DuckDB applies the
-  // deletes, so there is nothing left to suppress and every table can be peeked.
-  //
-  // Built once, then simply there. Plain JS rows, no DuckDB state, so a restart keeps
-  // them — coming back to a table after a cancel renders instantly. reset() clears it.
+  // A LIMIT 100 that DuckDB pushes down into the Iceberg scan, deletes applied, run by the
+  // host and kept there per snapshot — a table opened before shows its rows without a
+  // request to OneLake. Kept here too, so coming back to a table renders instantly.
   //
   // The memo holds the PROMISE, not the value, so it is also single-flight: the prefetch
   // that starts when a table is selected and the Data tab that asks a moment later share
@@ -842,30 +579,28 @@ export function createEngine(auth, {
     status(`Reading the first ${QUICK_PEEK_ROWS} rows of ${label}…`);
     // Kept by the host per snapshot: a snapshot never changes, so rows read from it once
     // are the rows, and a table opened before shows them without touching OneLake.
-    const res = await guarded(() => db.peekTable({
+    const res = await callHost("onelake.peek", [{
       workspace: lh.workspace, item: lh.item, schema: t.schema || "", table: t.table,
-    }));
+    }]);
     check();
     const fields = (res.fields || []).map(f => f.name);
-    const types = (res.fields || []).map(f => arrowTypeName({ duckdbName: f.type }));
+    const types = (res.fields || []).map(f => f.type);
     const rows = (res.rows || []).slice(0, MAX_ROWS).map(r => normalizeRow(r, fields));
     return { fields, types, rows, numRows: res.numRows || rows.length, truncated: false,
              limit: MAX_ROWS, fileCount: (resolved.stats || {}).totalDataFiles };
   }
 
-  // The table, as DuckDB can name it: `ol_<n>."schema"."table"` inside an ATTACHed
-  // Iceberg catalog. Cached per item in the host, so this is one message and no I/O once
-  // the item has been opened.
-  async function attachedIdent(lh, t, resolved) {
-    const { ident } = await guarded(() => db.openTable({
-      workspace: lh.workspace, item: lh.item, schema: t.schema, table: t.table,
-      metadataLocation: (resolved && resolved.metadataLocation) || null,
-    }));
+  // The table, as DuckDB can select from it — iceberg_scan over the metadata file the
+  // host's store holds. The page names the table; the location never comes from here.
+  async function attachedIdent(lh, t) {
+    const { ident } = await callHost("onelake.openTable", [{
+      workspace: lh.workspace, item: lh.item, schema: t.schema || "", table: t.table,
+    }]);
     return ident;
   }
 
   // ---------------------------------------------------------------------------
-  // Tier 3: every data file registered, a real queryable view.
+  // Tier 3: a real queryable view.
   // ---------------------------------------------------------------------------
   // `viewSchema` puts the view in a schema other than the table's own: a semantic model's
   // tables come from whichever items it names, and their views must not take the name of
@@ -913,10 +648,10 @@ export function createEngine(auth, {
         // DuckDB opens it and returns no rows, so the view is real and simply empty —
         // which beats the error this used to raise about snapshot -1.
         status(`Opening ${label}…`);
-        await createView(ident, await attachedIdent(lh, t, resolved));
+        await createView(ident, await attachedIdent(lh, t));
       } else {
         status(`Opening ${label}…`);
-        const source = await attachedIdent(lh, t, resolved);
+        const source = await attachedIdent(lh, t);
         check();
 
         // Rows on screen while the rest of the open runs. Cheap now: the same LIMIT 100
@@ -1019,15 +754,15 @@ export function createEngine(auth, {
     // — works off this array, so an uncapped SELECT * on a large table takes the tab out.
     // The batches keep being drained past the cap: numRows is the size of the whole
     // result, and the message that says "stopped at N of M" needs a truthful M.
-    await stream(clean, (batch, schema) => {
+    await stream(clean, batch => {
       if (!fields) {
-        fields = schema.fields.map(f => f.name);
-        types = schema.fields.map(f => arrowTypeName(f.type));
+        fields = batch.fields.map(f => f.name);
+        types = batch.fields.map(f => f.type);
       }
       numRows += batch.numRows;
-      for (const r of batch) {
+      for (const r of batch.rows) {
         if (rows.length >= MAX_ROWS) { truncated = true; break; }
-        rows.push(normalizeRow(r.toJSON(), fields));
+        rows.push(normalizeRow(r, fields));
       }
     });
     return { fields: fields || [], types: types || [], rows, numRows, truncated, limit: MAX_ROWS };
@@ -1050,37 +785,4 @@ export function createEngine(auth, {
   return { init, reset, parseLakehouse,
            statTable, peekTable, loadTable,
            listFiles, loadFile, readFileBytes, runSql, describeLoad, fmtBytes, cancelLoad };
-}
-
-// -----------------------------------------------------------------------------
-// Results come back as Arrow, so the column types are Arrow's, not DuckDB's. Name them
-// the way DuckDB does — those are the names the user wrote the query against, and the
-// ones DESCRIBE would have shown. Module-scope and exported: it is pure, and the
-// integration harness uses it to prove real Arrow types reach isDocResult.
-// -----------------------------------------------------------------------------
-const ARROW_NAME = { 1: "NULL", 4: "BLOB", 5: "VARCHAR", 6: "BOOLEAN", 8: "DATE",
-                     11: "INTERVAL", 13: "STRUCT", 14: "UNION", 15: "BLOB",
-                     17: "MAP", 19: "BLOB", 20: "VARCHAR" };
-const INT_NAME = { 8: "TINYINT", 16: "SMALLINT", 32: "INTEGER", 64: "BIGINT", 128: "HUGEINT" };
-
-export function arrowTypeName(t) {
-  if (!t) return "";
-  // The native engine sends DuckDB's own type name, which is what everything below is
-  // trying to reconstruct from Arrow metadata. When it is already the answer, use it —
-  // no DECIMAL precision to re-derive, no signedness to infer, no TIMESTAMPTZ to guess
-  // from a timezone field.
-  if (typeof t.duckdbName === "string") return t.duckdbName;
-  switch (t.typeId) {
-    case 2: {   // Int — width and signedness live on the type
-      const n = INT_NAME[t.bitWidth] || "INTEGER";
-      return t.isSigned === false ? "U" + n : n;
-    }
-    case 3: return t.precision === 2 ? "DOUBLE" : "FLOAT";   // Precision: HALF/SINGLE/DOUBLE
-    case 7: return `DECIMAL(${t.precision},${t.scale})`;
-    case 9: return "TIME";
-    case 10: return t.timezone ? "TIMESTAMPTZ" : "TIMESTAMP";
-    case 12: case 16: return arrowTypeName(t.children && t.children[0] && t.children[0].type) + "[]";
-    case 18: return "INTERVAL";
-    default: return ARROW_NAME[t.typeId] || String(t).toUpperCase();
-  }
 }

@@ -1,41 +1,23 @@
 'use strict';
 // =============================================================================
-// engine-host.js — real DuckDB, in the extension host, behind the wasm's surface
+// engine-host.js — real DuckDB, in the extension host
 // =============================================================================
-// A VS Code extension host is Node, so there is no reason to run a WebAssembly build of
-// DuckDB in a webview. Measured on this machine, boot to a usable engine:
+// A VS Code extension host is Node, so DuckDB runs here natively — 284ms from nothing to
+// a usable engine, eight threads — and reads OneLake itself through its `iceberg` and
+// `azure` extensions: snapshot resolution, manifest filtering, position and equality
+// deletes, schema evolution and the Warehouse column mapping are all DuckDB's.
 //
-//                        duckdb-wasm            @duckdb/node-api
-//   engine + connect     ~760ms                 17ms
-//   four extensions      ~1187ms (warm)         263ms (warm)
-//   engine ready         ~2000ms warm, 6.6s cold   284ms
-//   threads              1                      8
+// WHAT THE PAGE MAY CALL (call(), from host.js), and nothing else:
 //
-// And the wasm numbers do not improve with caching. Chromium attaches a compiled module
-// to a real HTTP cache entry; duckdb-wasm hands instantiateStreaming a SYNTHETIC Response
-// built from a TransformStream (it wants progress events), which has no such entry — so
-// the 35MB compile is paid on every single panel open and no proxy header can change it.
-// The four extensions are four more wasm modules, compiled fresh every session.
+//   query(sql)    the whole result: { fields: [{ name, type }], rows, numRows }
+//   stream(sql)   the same, as batches of ~10k rows, then { numRows }
+//   cancel()      interrupt the page's running statements
+//   info()        { capabilities } — which optional formats loaded
 //
-// WHAT IT IMPLEMENTS. data.js's dependency on DuckDB is this surface:
-//
-//   conn.query / conn.send / conn.cancelSent
-//   db.openTable / db.registerFileBuffer / db.dropFile / db.getVersion / db.capabilities
-//
-// `openTable` is the one that matters: DuckDB reads OneLake tables itself, through its
-// `iceberg` and `azure` extensions, and the manifest walk data.js used to perform in the
-// page is gone. The reason it could not before was that `azure` had no WASM build —
-// which stopped being true the moment the engine moved into this process. What DuckDB
-// does for free, and what the page used to hand-roll: snapshot resolution, manifest
-// filtering, position AND equality deletes, schema evolution, and the Warehouse column
-// mapping that turned a grid of GUIDs into readable names.
-//
-// duckdb-wasm's virtual file registry (registerFileURL and friends) is gone with it:
-// native DuckDB reads a URL or a path spliced directly into the SQL, so data.js now says
-// what it means instead of registering a synthetic name for the host to substitute back.
-// The one shape that still needs help is a BUFFER — bytes with no URL, which the wasm
-// build kept in its virtual filesystem. Those land in a temp file here, and
-// registerFileBuffer answers with the path to put in the SQL; dropFile deletes it.
+// The rest is the HOST's: openTable() — the identifier a table is selected from, given
+// the metadata location the host's own cache holds — and copyToTemp(), a file the host
+// fetched written where the lockdown lets DuckDB open it. Neither takes a path or a
+// location from the page.
 // =============================================================================
 
 const { DuckDBInstance } = require('@duckdb/node-api');
@@ -48,9 +30,7 @@ const { sqlStr, quoteIdent } = require('./sql');
 const IRC_ENDPOINT = 'https://onelake.table.fabric.microsoft.com/iceberg';
 
 // Rows are read in chunks so a large result starts painting before it has all arrived,
-// and so no single postMessage carries a whole 200k-row grid. data.js already treats a
-// result as a sequence of batches — that is what conn.send() gave it — so this is the
-// shape it wants anyway.
+// and so no single postMessage carries a whole 200k-row grid.
 const BATCH_ROWS = 10_000;
 
 // BigInt does not survive the trip to the webview: VS Code serialises panel messages as
@@ -97,9 +77,9 @@ function scrub(e, token) {
   return e;
 }
 
-// The page sends this string and it is spliced into SQL, so only the one shape the
-// catalog actually returns is accepted: a OneLake abfss URI ending in a metadata.json.
-// Anything else falls back to the ATTACH, which never takes a path from the page.
+// This string came from the catalog (via the host's store) and is spliced into SQL, so
+// only the one shape the catalog actually returns is accepted: a OneLake abfss URI ending
+// in a metadata.json. Anything else falls back to the ATTACH.
 const ONELAKE_METADATA = /^abfss:\/\/[^@/\s]+@onelake\.dfs\.fabric\.microsoft\.com\/[^\s]+\.metadata\.json$/i;
 const isOneLakeMetadata = s => typeof s === 'string' && ONELAKE_METADATA.test(s);
 
@@ -201,9 +181,6 @@ function createEngineHost({ extensionDir, onLog = () => {}, onWarn = () => {}, g
     }
   }
 
-  // Buffer name -> temp file on disk, so dropFile can delete it rather than leaking one
-  // buffer-sized file per document opened this session.
-  const temps = new Map();
   let tmpSeq = 0;
   let tmpDir = null;
 
@@ -482,8 +459,8 @@ function createEngineHost({ extensionDir, onLog = () => {}, onWarn = () => {}, g
 
   // A table, ready to be selected from.
   //
-  // With the metadata location the page already holds (the catalog's loadTable answer,
-  // disk-cached by the proxy), the table is read with iceberg_scan and the catalog is not
+  // With the metadata location the host's store holds (the catalog's loadTable answer,
+  // cached on disk), the table is read with iceberg_scan and the catalog is not
   // asked again. That matters more than it looks: an ATTACHed table goes back to the REST
   // catalog on EVERY query that names it, and measured against a real tenant that catalog
   // answered a loadTable in 5s, 12s and 114s. The scan path reads the same metadata.json
@@ -491,7 +468,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onWarn = () => {}, g
   // mapping (checked on a Warehouse table: readable names), and pins the snapshot the
   // Stats card showed.
   //
-  // Without one — an older page, a missing field — it falls back to the ATTACH, whose
+  // Without one — a location that is not a OneLake metadata.json — it falls back to the ATTACH, whose
   // alias is per ITEM because that is what an ATTACH costs (~5s) and what it covers.
   async function openTable({ workspace, item, schema, table, metadataLocation }) {
     await init();
@@ -510,9 +487,8 @@ function createEngineHost({ extensionDir, onLog = () => {}, onWarn = () => {}, g
   }
 
   // Every statement, streamed chunk by chunk off its own connection. `onBatch` gets one
-  // batch per ~BATCH_ROWS rows in the shape data.js reads off conn.send(): a schema carried
-  // on the batch itself and rows as plain objects. `type` is the DuckDB type NAME, which
-  // data.js's arrowTypeName() passes through verbatim.
+  // batch per ~BATCH_ROWS rows: the columns (DuckDB's own type names) on every batch, and
+  // rows as plain JSON-safe objects.
   //
   // Past MAX_ROWS the chunks are only COUNTED — sent as row-less batches carrying numRows —
   // so the page still learns the true total without the host converting, holding or
@@ -567,8 +543,8 @@ function createEngineHost({ extensionDir, onLog = () => {}, onWarn = () => {}, g
     };
   }
 
-  // What data.js calls, and nothing else. call() appends `emit` after the caller's
-  // arguments; only stream() reads it, the rest simply never look at the extra argument.
+  // What the page may call, and nothing else. call() appends `emit` after the caller's
+  // arguments; only stream() reads it.
   const methods = {
     async query(sql) {
       await init();
@@ -585,44 +561,15 @@ function createEngineHost({ extensionDir, onLog = () => {}, onWarn = () => {}, g
       return { done: true, numRows };
     },
 
-    // Attach the item this table lives in and hand back the identifier to select from.
-    async openTable(target) { return openTable(target); },
-
     async cancel() {
-      // Native interrupt, not a worker terminate. The wasm build could only be stopped by
-      // killing the worker (it blocked in synchronous XHR and processed no messages), and
-      // rebuilding it cost ~10 seconds. Only the PAGE's queries are interrupted: an ATTACH
-      // or a secret being issued on the host's own connection is left to finish.
+      // A native interrupt. Only the PAGE's queries are interrupted: an ATTACH or a
+      // secret being issued on the host's own connection is left to finish.
       for (const c of live) { interrupted.add(c); try { c.interrupt(); } catch (_) {} }
       return true;
     },
 
-    // Bytes with no URL — the one shape the wasm registry still had a point for. They
-    // land in a temp file and the PATH comes back, ready for sqlStr() on the other side;
-    // dropFile is how the caller gives the disk back. The counter is monotonic, never a
-    // live count: a count shrinks on drop, and two live buffers then collide on a name.
-    async registerFileBuffer(name, bytes) {
-      await init();
-      const file = join(tmpDir, `buf_${++tmpSeq}_${name.replace(/[^\w.-]/g, '_')}`);
-      // { base64 } from the panel (duckdb-native.js); a plain array from older callers and
-      // the harnesses.
-      const buf = bytes && typeof bytes.base64 === 'string' ? Buffer.from(bytes.base64, 'base64')
-                                                             : Buffer.from(bytes);
-      await fsp.writeFile(file, buf);
-      const path = file.replace(/\\/g, '/');
-      temps.set(name, file);
-      return path;
-    },
-
-    async dropFile(name) {
-      const f = temps.get(name);
-      if (f) { temps.delete(name); await fsp.rm(f, { force: true }).catch(() => {}); }
-      return true;
-    },
-
-    async getVersion() { await init(); return 'native'; },
-
-    async capabilities() { await init(); return capabilities; },
+    // Which optional formats this session has — the page greys out what it cannot read.
+    async info() { await init(); return { capabilities: { ...capabilities } }; },
   };
 
   async function call(method, args = [], emit = () => {}) {
@@ -649,7 +596,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onWarn = () => {}, g
     try { if (conn) conn.closeSync(); } catch (_) {}
     try { if (instance) instance.closeSync(); } catch (_) {}
     conn = instance = null; ready = null;
-    temps.clear(); copies.clear(); aliases.clear(); attachedWith.clear(); attaching.clear();
+    copies.clear(); aliases.clear(); attachedWith.clear(); attaching.clear();
     authToken = null;
     if (tmpDir) await fsp.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
   }
@@ -669,7 +616,13 @@ function createEngineHost({ extensionDir, onLog = () => {}, onWarn = () => {}, g
     return path;
   }
 
-  return { init, call, close, copyToTemp, get capabilities() { return capabilities; } };
+  // Scrubbed like call(): an ATTACH failure names the statement, which carries a token.
+  async function openTableScrubbed(target) {
+    try { return await openTable(target); } catch (e) { throw scrub(e, authToken); }
+  }
+
+  return { init, call, close, openTable: openTableScrubbed, copyToTemp,
+           get capabilities() { return capabilities; } };
 }
 
 module.exports = { createEngineHost, jsonSafe, isOneLakeMetadata };

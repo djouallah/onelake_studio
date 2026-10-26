@@ -39,7 +39,7 @@ test("native engine host", async t => {
   await t.test("boots on DuckDB 2.0 with the required extensions", async () => {
     const r = await engine.call("query", ["SELECT version() AS v"]);
     assert.match(r.rows[0].v, /^v2\./, `running ${r.rows[0].v}`);
-    const caps = await engine.call("capabilities");
+    const { capabilities: caps } = await engine.call("info");
     for (const ext of ["iceberg", "azure", "httpfs"]) assert.ok(caps[ext], `${ext} loaded`);
   });
 
@@ -119,15 +119,18 @@ test("native engine host", async t => {
     await assert.rejects(engine.call("query", ["SET allowed_directories = ['/']"]), /lock/i);
   });
 
-  await t.test("what the page legitimately reads still reads", async () => {
-    const path = await engine.call("registerFileBuffer", ["n.csv", Array.from(Buffer.from("a\n40\n2\n"))]);
+  await t.test("a file the host copied in reads, from the engine's temp directory", async () => {
+    const path = await engine.copyToTemp("ws/lh/Files/n.csv", Buffer.from("a\n40\n2\n"));
     const r = await engine.call("query", [`SELECT sum(a) AS s FROM read_csv('${path}')`]);
-    assert.equal(r.rows[0].s, 42, "a buffer the page handed over (the engine's temp directory)");
-    // ...in the shape the panel actually sends (duckdb-native.js).
-    const p64 = await engine.call("registerFileBuffer",
-      ["m.csv", { base64: Buffer.from("a\n1\n2\n").toString("base64") }]);
-    const r64 = await engine.call("query", [`SELECT sum(a) AS s FROM read_csv('${p64}')`]);
-    assert.equal(r64.rows[0].s, 3, "base64 bytes arrive intact");
+    assert.equal(r.rows[0].s, 42);
+    assert.equal(await engine.copyToTemp("ws/lh/Files/n.csv", Buffer.from("ignored")), path,
+      "one copy per file per session");
+  });
+
+  await t.test("the page reaches only query, stream, cancel and info", async () => {
+    for (const m of ["openTable", "copyToTemp", "registerFileBuffer", "constructor", "__proto__"]) {
+      await assert.rejects(engine.call(m, []), /unknown engine method/, `${m} is not a page method`);
+    }
   });
 
   await t.test("a closed engine stays closed", async () => {
