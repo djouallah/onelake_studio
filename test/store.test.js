@@ -18,6 +18,15 @@ async function tempDir(t) {
 }
 
 const settle = () => new Promise(r => setTimeout(r, 20));
+// A background refresh finishes when its disk write does, which is not a fixed time on a
+// busy machine — so wait for what it produces, with a generous ceiling.
+async function until(cond, ms = 5_000) {
+  const end = Date.now() + ms;
+  while (!cond()) {
+    if (Date.now() > end) throw new Error("timed out waiting");
+    await new Promise(r => setTimeout(r, 5));
+  }
+}
 
 test("a miss fetches; a hit is served without fetching", async t => {
   const store = createStore({ dir: await tempDir(t) });
@@ -50,6 +59,7 @@ test("an old answer is served at once and refreshed behind; 'changed' fires once
   const r = await store.get("k", async () => "v2");
   assert.equal(r.value, "v1", "the caller did not wait for OneLake");
   assert.equal(r.stale, true);
+  await until(() => changes.length > 0);
   await settle();
   assert.deepEqual(changes, [["k", "v2"]]);
   assert.equal((await store.get("k", async () => "v3")).value, "v2", "the refreshed answer is now the cached one");
@@ -59,11 +69,12 @@ test("a refresh that brings back the same answer is not a change", async t => {
   let clock = 1_000;
   const store = createStore({ dir: await tempDir(t), ttlMs: 100, now: () => clock });
   await store.get("k", async () => ({ a: 1 }));
-  let changed = 0;
+  let changed = 0, refreshed = false;
   store.on("changed", () => changed++);
   clock += 500;
-  await store.get("k", async () => ({ a: 1 }));
-  await settle();
+  await store.get("k", async () => { refreshed = true; return { a: 1 }; });
+  await until(() => refreshed);
+  await new Promise(r => setTimeout(r, 100));
   assert.equal(changed, 0);
 });
 
@@ -76,7 +87,7 @@ test("a failed background refresh keeps the cached answer and says so", async t 
   clock += 500;
   const r = await store.get("k", async () => { throw new Error("HTTP 429"); });
   assert.equal(r.value, "good");
-  await settle();
+  await until(() => failures.length > 0);
   assert.deepEqual(failures, ["HTTP 429"]);
   assert.equal((await store.get("k", async () => "x")).value, "good", "the failure did not replace it");
 });

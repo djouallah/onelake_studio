@@ -88,17 +88,6 @@
         "category": "OneLake Studio"
       },
       {
-        "command": "onelakeStudio.openInBrowser",
-        "title": "Open the Website, Signed In with VS Code",
-        "category": "OneLake Studio",
-        "icon": "$(globe)"
-      },
-      {
-        "command": "onelakeStudio.forgetTrustedSites",
-        "title": "Forget Websites Allowed to Use the VS Code Sign-in",
-        "category": "OneLake Studio"
-      },
-      {
         "command": "onelakeStudio.exportBim",
         "title": "Export .bim to Lakehouse Files and Open",
         "category": "OneLake Studio",
@@ -150,11 +139,6 @@
           "command": "onelakeStudio.switchAccount",
           "when": "view == onelakeStudio.explorer",
           "group": "1_account"
-        },
-        {
-          "command": "onelakeStudio.openInBrowser",
-          "when": "view == onelakeStudio.explorer && onelakeStudio.signedIn",
-          "group": "navigation@5"
         }
       ],
       "view/item/context": [
@@ -217,7 +201,7 @@
           "default": 20,
           "minimum": 0,
           "scope": "machine",
-          "markdownDescription": "Disk to spend caching OneLake data, in GB. Holds what passes through the extension's local proxy: catalog answers, listings, Files/ reads, and every table read the **website** makes through the VS Code sign-in. Iceberg data files and manifests are kept until evicted — a new snapshot writes new files, so a cached one can never be stale. Each Microsoft account gets its own cache. Tables opened in the panel are read by native DuckDB directly and do not pass through it. Set to `0` to cache nothing; `OneLake Studio: Clear Cached OneLake Data` empties it and reports what it freed. Applies after the window is reloaded."
+          "markdownDescription": "Disk to spend caching OneLake Files/ reads that pass through the extension's local proxy, in GB. Each Microsoft account gets its own cache. Tables are read by native DuckDB directly and do not pass through it; listings and table metadata live in a separate, small store. Set to `0` to cache nothing; `OneLake Studio: Clear Cached OneLake Data` empties both and reports what it freed. Applies after the window is reloaded."
         },
         "onelakeStudio.catalogTtlMinutes": {
           "type": "number",
@@ -239,32 +223,6 @@
           "pattern": "^$|^d+(.d+)?s*(KB|MB|GB|TB|KiB|MiB|GiB|TiB)$",
           "patternErrorMessage": "A DuckDB memory size, e.g. 4GB or 512MB.",
           "markdownDescription": "Most memory DuckDB may use, e.g. `4GB`. Empty means a quarter of this machine's RAM — DuckDB's own default is 80%, which is too much for the extension host every other extension shares. Bigger queries spill to a temp directory instead of failing. Applies the next time the engine starts."
-        },
-        "onelakeStudio.bridge.enabled": {
-          "type": "boolean",
-          "default": true,
-          "scope": "machine",
-          "markdownDescription": "Let the OneLake Studio **website** use this VS Code window's Microsoft sign-in, so it needs no app registration of its own. VS Code listens on `127.0.0.1` only, answers only the origins in `#onelakeStudio.bridge.origins#`, and asks you before any website may use it. The token never leaves VS Code. Applies after the window is reloaded."
-        },
-        "onelakeStudio.bridge.port": {
-          "type": "integer",
-          "default": 47731,
-          "minimum": 1024,
-          "maximum": 65535,
-          "scope": "machine",
-          "markdownDescription": "The local port the website looks for VS Code on. Only one VS Code window can hold it; the others leave the website to that one. Must match the website's `bridgePort` if you change it. Applies after the window is reloaded."
-        },
-        "onelakeStudio.bridge.origins": {
-          "type": "array",
-          "items": {
-            "type": "string",
-            "pattern": "^https?://[^/]+$"
-          },
-          "default": [
-            "https://studio.projectscontrols.com"
-          ],
-          "scope": "machine",
-          "markdownDescription": "Exact website origins (scheme + host + port, no path) that may ask to use the VS Code sign-in. Add your own deployment here, e.g. `https://onelake.example.com`, or `http://localhost:5173` for local development. Applies after the window is reloaded."
         }
       }
     }

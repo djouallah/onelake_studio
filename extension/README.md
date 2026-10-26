@@ -5,9 +5,6 @@ inside VS Code. Open it from the OneLake Studio icon in the activity bar, or run
 **OneLake Studio: Open** from the command palette.
 
 Sign-in is the VS Code Microsoft account you already use — there is nothing to register.
-The extension can also **lend that sign-in to the website**, so the browser version needs
-no app registration either while VS Code is running (see *The website, signed in with VS
-Code* below).
 
 It also lists each workspace's **Power BI semantic models**. Export one to a lakehouse's
 `Files/semantic_models/` and it opens as its model: the tables and relationships, SQL that asks the
@@ -25,11 +22,9 @@ extension so it works with no CDN.
 | **OneLake Studio: Open** | Opens the panel, signing in if needed. |
 | **OneLake Studio: Sign in to OneLake** | Signs in and fills the explorer, without opening the panel. |
 | **OneLake Studio: Switch Microsoft Account** | Asks which account to use instead of reusing the remembered one, and reopens the panel so the previous account's tables do not survive the switch. To sign out altogether, use the Accounts menu in the bottom left — that is VS Code's to own, not an extension's. |
-| **OneLake Studio: Refresh** | Re-reads a workspace, item or folder from OneLake instead of serving the cached listing. |
+| **OneLake Studio: Refresh** | Re-reads a workspace, item or folder from OneLake in the foreground. Everything else is served from the cache first and refreshed behind you. |
 | **OneLake Studio: Show Read Log** | Every OneLake request the extension made, with sizes and timings. |
-| **OneLake Studio: Clear Cached OneLake Data** | Empties the on-disk data cache and reports what it freed. |
-| **OneLake Studio: Open the Website, Signed In with VS Code** | Opens the website in your browser, already pointed at this window's sign-in. |
-| **OneLake Studio: Forget Websites Allowed to Use the VS Code Sign-in** | Takes back every *Always Allow*, and invalidates what an open page was handed. |
+| **OneLake Studio: Clear Cached OneLake Data** | Empties the on-disk caches (listings, table metadata, first rows, Files/ reads) and reports what it freed. |
 | **Export .bim to Lakehouse Files and Open** | On a semantic model in the explorer (right-click, or the inline button). Reads its TMSL definition from the Fabric API, writes it to `Files/semantic_models/<model>.bim` in a lakehouse of the model's workspace — asking which, if there are several, and before replacing an existing file — and opens it in the panel. |
 
 ## Settings
@@ -37,28 +32,10 @@ extension so it works with no CDN.
 | Setting | What it does |
 | --- | --- |
 | `onelakeStudio.tenantId` | Directory (tenant) GUID to sign in against. Leave empty for your home tenant; set it to reach a tenant you are a guest in. |
-| `onelakeStudio.dataCacheGB` | Disk to spend caching OneLake data files, in GB (default 20). A new snapshot writes new files, so a cached one can never be stale. `0` caches nothing. |
-| `onelakeStudio.catalogTtlMinutes` | How old a catalog answer may be before it is refreshed (default 5). The last known answer is always served instantly and refreshed behind you, so a table you have opened before opens without waiting. |
+| `onelakeStudio.dataCacheGB` | Disk to spend caching Files/ reads, in GB (default 20). `0` caches nothing. |
+| `onelakeStudio.catalogTtlMinutes` | How old a listing or a table's metadata may be before it is refreshed (default 5). The last known answer is always served instantly from disk and refreshed behind you, so a table you have opened before opens without waiting — even after a restart. |
+| `onelakeStudio.prefetchMetadata` | Read every table's metadata in the background once a lakehouse's Tables node is opened, so the first click is a disk read (default on). |
 | `onelakeStudio.engineMemoryLimit` | Most memory DuckDB may use, e.g. `4GB`. Empty means a quarter of the machine's RAM. |
-| `onelakeStudio.bridge.enabled` | Let the website use this window's sign-in (default on). |
-| `onelakeStudio.bridge.port` | The loopback port the website looks for VS Code on (default 47731). |
-| `onelakeStudio.bridge.origins` | Exact website origins that may ask (default the demo site). Add your own deployment, or `http://localhost:5173` for development. |
-
-## The website, signed in with VS Code
-
-While this extension is running, it listens on `127.0.0.1:47731` for the OneLake Studio
-website. When the site asks — from **Sign in with VS Code** on its sign-in screen, or after
-**Open the Website, Signed In with VS Code** — VS Code shows which site wants to read
-OneLake as which account, and you allow it once or always. The site then sends its OneLake
-reads to the extension, which signs and forwards them. The token never leaves VS Code; the
-page only gets loopback URLs carrying a secret that changes whenever VS Code restarts or the
-account changes.
-
-The listener answers only the origins in `onelakeStudio.bridge.origins` and refuses any
-request not addressed to the loopback port by name (no DNS rebinding). It serves only
-OneLake reads. If another VS Code window already holds the port, that window serves the
-website and this one does not. Chrome, Edge and Firefox can reach it; Safari cannot, so the
-website falls back to its own app-registration sign-in there.
 
 ## Semantic models
 

@@ -61,7 +61,7 @@ function getToken(options) {
     });
 }
 
-// Which identity the cache, the engine and the bridge currently belong to. Hashed, so the
+// Which identity the cache and the engine currently belong to. Hashed, so the
 // directory name says nothing about who the user is.
 function accountKey(session) {
   if (!session || !session.account) return null;
@@ -173,10 +173,8 @@ function logRead(e) {
   // failed to keep it both said just "net Xms", and a user reading the log concluded —
   // reasonably — that nothing was being cached at all.
   const verdict = e.cache === 'store-failed' ? 'FAIL ' : (e.cache || '').padEnd(5);
-  // Reads the website made through the VS Code sign-in, told apart from the panel's.
-  const who = e.listener === 'bridge' ? 'web ' : '';
   out.appendLine(
-    `${String(e.ms).padStart(6)}ms  ${who}${e.method.padEnd(4)} ${status.padEnd(3)} ${verdict}` +
+    `${String(e.ms).padStart(6)}ms  ${e.method.padEnd(4)} ${status.padEnd(3)} ${verdict}` +
     `${size.padStart(9)}  ${where.padEnd(24)} ${e.range || ''} ${path}` +
     (e.error ? `  !! ${e.error}` : ''));
 }
@@ -337,11 +335,9 @@ async function startProxyOnce(context) {
   }
   proxy = await startProxy({
     getToken: proxyToken,
-    // The immutable Iceberg files sw.js keeps for the browser build, plus whatever the
-    // website reads through the bridge. Far larger than the browser's copy, because the
-    // browser's limit is a storage quota and this is a directory: bytes here cost disk,
-    // and fetching them again costs seconds. A limit of zero is a real answer for a
-    // machine short on disk, and it means no cache at all.
+    // Files/ reads that pass through the proxy. Bytes here cost disk, and fetching them
+    // again costs seconds. A limit of zero is a real answer for a machine short on disk,
+    // and it means no cache at all.
     cacheDir: max > 0 ? join(root, proxyAccount || 'signed-out') : null,
     cacheMaxBytes: max,
     cacheTtlMs: catalogTtlMs(),
@@ -377,97 +373,13 @@ async function startProxyOnce(context) {
   return proxy;
 }
 
-// A new identity gets a new proxy: a cache of its own, and new secrets for the panel and
-// the bridge — origins handed to a page under the old account stop working at once.
-async function restartProxy(context) {
-  await stopBridge();
+// A new identity gets a new proxy: a cache of its own, and a new secret for the panel.
+async function restartProxy() {
   if (proxyStarting) await proxyStarting.catch(() => {});
   const p = proxy;
   proxy = null;
   proxyAccount = null;
   if (p) await p.close().catch(() => {});
-  if (bridgeWanted()) ensureBridge(context).catch(() => {});
-}
-
-// ---------------------------------------------------------------------------
-// The bridge: the website, signed in with this window's VS Code account
-// ---------------------------------------------------------------------------
-// The website needs an Entra app registration to sign in by itself. When VS Code is
-// running it does not have to: it can read OneLake through a second listener on the
-// proxy — a fixed port it can find, an exact origin list, the two OneLake routes and
-// /pair — and the token stays here. MSAL remains the website's fallback.
-const DEFAULT_SITE = 'https://studio.projectscontrols.com';
-const TRUSTED_KEY = 'onelakeStudio.bridge.trustedOrigins';
-
-let bridge = null;
-let bridgeStarting = null;
-
-const bridgeConfig = () => {
-  const c = vscode.workspace.getConfiguration('onelakeStudio');
-  const origins = (c.get('bridge.origins', [DEFAULT_SITE]) || [])
-    .map(o => String(o).trim().replace(/\/+$/, '')).filter(o => /^https?:\/\/[^/]+$/i.test(o));
-  return { enabled: c.get('bridge.enabled', true), port: c.get('bridge.port', 47731), origins };
-};
-const bridgeWanted = () => { const b = bridgeConfig(); return b.enabled && b.origins.length > 0; };
-
-function ensureBridge(context) {
-  if (bridge) return Promise.resolve(bridge);
-  if (!bridgeWanted()) return Promise.resolve(null);
-  if (!bridgeStarting) {
-    bridgeStarting = (async () => {
-      const { port, origins } = bridgeConfig();
-      const p = await ensureProxy(context);
-      try {
-        bridge = await p.startBridge({ port, origins, onPair: origin => pairPrompt(context, origin) });
-        if (out) out.appendLine(`bridge: http://127.0.0.1:${bridge.port} for ${origins.join(', ')}`);
-      } catch (e) {
-        bridge = null;
-        if (out) out.appendLine(e && e.code === 'EADDRINUSE'
-          ? `bridge: port ${port} is taken — another VS Code window is probably serving the website; this one will not.`
-          : `bridge: could not start — ${(e && e.message) || e}`);
-      }
-      return bridge;
-    })().finally(() => { bridgeStarting = null; });
-  }
-  return bridgeStarting;
-}
-
-async function stopBridge() {
-  if (bridgeStarting) await bridgeStarting.catch(() => {});
-  const b = bridge;
-  bridge = null;
-  if (b) await b.close().catch(() => {});
-}
-
-// One question per origin at a time: a page that retries must not stack modals.
-const pairing = new Map();
-
-async function pairPrompt(context, origin) {
-  const session = await getSession({ createIfNone: false }).catch(() => null);
-  if (!session) return { allowed: false };
-  const account = session.account.label;
-  const trusted = context.globalState.get(TRUSTED_KEY, []);
-  if (trusted.includes(origin)) return { allowed: true, account };
-  if (pairing.has(origin)) return pairing.get(origin);
-  const ask = (async () => {
-    const pick = await vscode.window.showWarningMessage(
-      `Allow ${origin} to read OneLake as ${account}?`,
-      {
-        modal: true,
-        detail: 'The website will read OneLake with this VS Code window\'s Microsoft sign-in, ' +
-          'through a port on 127.0.0.1. The token itself never leaves VS Code. ' +
-          'Allow only a site you opened yourself. ' +
-          '"OneLake Studio: Forget Websites Allowed to Use the VS Code Sign-in" takes it back.',
-      },
-      'Allow Once', 'Always Allow');
-    if (pick === 'Always Allow') {
-      await context.globalState.update(TRUSTED_KEY, [...new Set([...trusted, origin])]);
-    }
-    if (out) out.appendLine(`bridge: ${origin} ${pick ? `allowed (${pick.toLowerCase()})` : 'refused'}`);
-    return { allowed: !!pick, account };
-  })().finally(() => pairing.delete(origin));
-  pairing.set(origin, ask);
-  return ask;
 }
 
 // Real DuckDB, in this process. Built once and kept for the window's lifetime: an engine
@@ -785,7 +697,7 @@ async function activateInner(context) {
     // costing me on disk", which is the fair question to ask of a twenty-gigabyte default.
     vscode.commands.registerCommand('onelakeStudio.clearCache', async () => {
       // Two caches: the listings and table metadata the tree and panel are served from,
-      // and — when the website bridge has run — the data files it read.
+      // and the Files/ reads that passed through the proxy.
       const meta = await onelake.size();
       const data = proxy ? await proxy.cacheSize() : 0;
       if (!meta && !data) {
@@ -867,7 +779,7 @@ async function activateInner(context) {
         closePanel();
         forgetToken();
         await resetEngine();
-        await restartProxy(context);
+        await restartProxy();
         await rebindStore();
         tree.redraw();
         await showWithProgress({ createIfNone: true });
@@ -899,13 +811,13 @@ async function activateInner(context) {
         closePanel();
         await resetEngine();
         if (proxy) await proxy.clearCache();
-        if (proxy) await restartProxy(context);
+        if (proxy) await restartProxy();
         vscode.window.showInformationMessage(
           'OneLake Studio signed out — the Microsoft account is no longer available.');
       } else if (proxy && accountKey(session) !== proxyAccount) {
         closePanel();
         await resetEngine();
-        await restartProxy(context);
+        await restartProxy();
         vscode.window.showInformationMessage(
           `OneLake Studio is now using ${session.account.label}.`);
       }
@@ -915,59 +827,25 @@ async function activateInner(context) {
     // already built by then. Saying so beats silently applying at the next window reload.
     vscode.workspace.onDidChangeConfiguration(async e => {
       if (e.affectsConfiguration('onelakeStudio.tenantId')) {
-        // The cached token, the engine's secrets, the cache and the bridge's origins all
-        // belong to the tenant being left.
+        // The cached token, the engine's secrets and the cache all belong to the tenant
+        // being left.
         forgetToken();
         await rebindStore();
         tree.redraw();
         if (proxy) {
           closePanel();
           await resetEngine();
-          await restartProxy(context);
+          await restartProxy();
         }
       }
       if (proxy && (e.affectsConfiguration('onelakeStudio.dataCacheGB') ||
-                    e.affectsConfiguration('onelakeStudio.catalogTtlMinutes') ||
-                    e.affectsConfiguration('onelakeStudio.bridge'))) {
+                    e.affectsConfiguration('onelakeStudio.catalogTtlMinutes'))) {
         vscode.window.showInformationMessage(
-          'OneLake Studio: cache and website-bridge settings apply after the window is reloaded.');
+          'OneLake Studio: cache settings apply after the window is reloaded.');
       }
-    }),
-
-    // The website, opened already pointed at this window: the `#vscode` fragment tells it
-    // to look for the bridge straight away rather than offer its own sign-in first.
-    vscode.commands.registerCommand('onelakeStudio.openInBrowser', async () => {
-      const { origins, enabled } = bridgeConfig();
-      if (!enabled || !origins.length) {
-        const pick = await vscode.window.showWarningMessage(
-          'The website bridge is turned off (onelakeStudio.bridge.enabled).', 'Open Settings');
-        if (pick) vscode.commands.executeCommand('workbench.action.openSettings', 'onelakeStudio.bridge');
-        return;
-      }
-      if (!await getToken({ createIfNone: true })) return;
-      await setSignedIn(true);
-      await ensureBridge(context);
-      const origin = origins.length === 1 ? origins[0]
-        : await vscode.window.showQuickPick(origins, { placeHolder: 'Which website?' });
-      if (origin) vscode.env.openExternal(vscode.Uri.parse(`${origin}/#vscode`));
-    }),
-
-    vscode.commands.registerCommand('onelakeStudio.forgetTrustedSites', async () => {
-      const trusted = context.globalState.get(TRUSTED_KEY, []);
-      await context.globalState.update(TRUSTED_KEY, []);
-      // A page that already paired holds origins with the bridge's secret in them; a new
-      // proxy makes those dead now rather than at the next reload.
-      if (proxy) { closePanel(); await restartProxy(context); }
-      vscode.window.showInformationMessage(trusted.length
-        ? `OneLake Studio: forgot ${trusted.join(', ')}. They will ask again next time.`
-        : 'OneLake Studio: no website was allowed to use the VS Code sign-in.');
     }),
   );
 
-  // Listening from startup, so the website finds VS Code without anyone opening the
-  // panel first. Never prompts: a page's /pair only asks once someone is signed in, and
-  // a busy port (another window) just means that window is the bridge.
-  if (bridgeWanted()) ensureBridge(context).catch(() => {});
 }
 
 function deactivate() {
@@ -977,7 +855,7 @@ function deactivate() {
   // The engine holds a native database handle and a temp directory; closing it is what
   // releases both. Settled together so a slow engine shutdown cannot strand the proxy's.
   return Promise.all([
-    proxy ? proxy.close() : undefined,   // closes the bridge listener with it
+    proxy ? proxy.close() : undefined,
     engine ? engine.close() : undefined,
   ]);
 }

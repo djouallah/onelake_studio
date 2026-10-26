@@ -16,7 +16,7 @@
 //
 // (The engine itself is native DuckDB in this process — engine-host.js — and reads
 // tables straight from OneLake; what still comes through here is the Files tab, the
-// page's catalog calls, the webview's vendored libraries, and the website's bridge.)
+// page's catalog calls, and the webview's vendored libraries.)
 //
 // No `vscode` import anywhere in this file: the token arrives as an injected async
 // function, `getToken({ fresh })`. That is what lets test/run-proxy.mjs drive it against
@@ -69,9 +69,6 @@ function isPartial(contentRange) {
 // that finds the port — a tab on some website spraying localhost ports — gets no CORS
 // grant, so even the unsecreted /npm route is unreadable from a foreign origin. DuckDB's
 // own reads (httpfs, node http) send no Origin header and never needed the grant.
-//
-// The BRIDGE listener (startBridge below) has its own, narrower answer: an exact list of
-// website origins, and nothing else — not even the webview.
 const PANEL_ORIGIN = /^vscode-webview:\/\/|^https?:\/\/(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$/;
 
 function cors(req, res, listener) {
@@ -87,15 +84,6 @@ function cors(req, res, listener) {
     'range, accept, content-type, if-none-match, if-modified-since');
   res.setHeader('access-control-expose-headers', PASS_THROUGH.join(', '));
   res.setHeader('access-control-max-age', '86400');
-  // A public https page reaching loopback is Chrome's Local Network Access. Current Chrome
-  // gates it behind a permission prompt and needs nothing from the server; the older
-  // Private Network Access preflight asked for this opt-in, and answering it costs nothing.
-  if (req.headers['access-control-request-private-network'] === 'true') {
-    res.setHeader('access-control-allow-private-network', 'true');
-  }
-  // A crossOriginIsolated page (the website's service worker sets COEP) refuses a no-cors
-  // subresource without this. CORS-mode reads already pass; this is for everything else.
-  res.setHeader('cross-origin-resource-policy', 'cross-origin');
 }
 
 // DNS rebinding turns a foreign page into a SAME-origin caller — evil.example resolving to
@@ -316,42 +304,6 @@ async function fetchUpstream(upstream, getToken, { method = 'GET', range = '', a
   return out;
 }
 
-function sendJson(res, status, body) {
-  res.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store' });
-  res.end(JSON.stringify(body));
-}
-
-// How the website finds out it may use this window's VS Code sign-in. Only on the bridge
-// listener, only for an origin on its exact list, and only after the user said yes in VS
-// Code (listener.pair asks; "always" is remembered there, not here). The answer is the
-// pair of signed origins — the secret is in them — which is all the page ever holds: the
-// token itself never leaves this process.
-async function handlePair(req, res, opts, listener) {
-  const origin = req.headers.origin || '';
-  if (!origin || !listener.allowOrigin(origin)) return sendJson(res, 403, { error: 'origin not allowed' });
-  const token = await Promise.resolve(opts.getToken()).catch(() => null);
-  // `?probe` is the page asking "is VS Code here at all?" — answered at once, with no
-  // prompt, so a short timeout can tell a running bridge from no bridge. The real pairing
-  // waits on a person clicking in VS Code and is asked for separately.
-  // `&s=<secret>` asks whether origins this tab was handed earlier still work — they stop
-  // the moment VS Code restarts or the account changes, and a page that reused them would
-  // see only "not a proxied path" 404s from DuckDB. Constant-time, and only ever answered
-  // to an allowed origin; it confirms a secret the asker already holds, nothing more.
-  if (/[?&]probe(=|&|$)/.test(req.url)) {
-    const s = /[?&]s=([0-9a-f]+)(&|$)/.exec(req.url);
-    return sendJson(res, 200, { v: 1, signedIn: !!token, ...(s ? { valid: sameSecret(s[1], listener.secret) } : {}) });
-  }
-  if (!token) return sendJson(res, 401, { signedIn: false });
-  let verdict;
-  try { verdict = await listener.pair(origin); }
-  catch (e) { return sendJson(res, 500, { error: (e && e.message) || String(e) }); }
-  if (!verdict || !verdict.allowed) return sendJson(res, 403, { denied: true });
-  const base = `http://127.0.0.1:${listener.port}/${listener.secret}`;
-  return sendJson(res, 200, {
-    v: 1, dfsOrigin: `${base}/dfs`, tableOrigin: `${base}/irc`, account: verdict.account || '',
-  });
-}
-
 async function handle(req, res, opts, listener) {
   if (!hostOk(req, listener.port)) { res.writeHead(421); return res.end('misdirected request'); }
   cors(req, res, listener);
@@ -360,10 +312,6 @@ async function handle(req, res, opts, listener) {
   if (req.method === 'OPTIONS') { res.writeHead(204); return res.end(); }
   if (req.method !== 'GET' && req.method !== 'HEAD') {
     res.writeHead(405); return res.end('proxy serves GET and HEAD only');
-  }
-
-  if (listener.pair && (req.url === '/pair' || req.url.startsWith('/pair?'))) {
-    return handlePair(req, res, opts, listener);
   }
 
   const r = route(req.url, listener);
@@ -612,11 +560,7 @@ async function handle(req, res, opts, listener) {
   res.on('close', () => { if (!res.writableFinished && !entry) body.destroy(); });
 }
 
-// Resolves to { port, secret, dfsOrigin, tableOrigin, cdnOrigin, startBridge(), close(), … }.
-//
-// One core — token source, cache, single-flight maps — behind any number of listeners,
-// each with its own port, secret, origins and routes. Two caches over one directory would
-// race each other's fills, so a second listener shares this core rather than building one.
+// Resolves to { port, secret, dfsOrigin, tableOrigin, cdnOrigin, close(), … }.
 function startProxy({ getToken, cacheDir, cacheMaxBytes, cacheTtlMs, onLog, cdnUpstream, vendorDir,
                       dfsUpstream = DFS_UPSTREAM, tableUpstream = TABLE_UPSTREAM } = {}) {
   if (typeof getToken !== 'function') throw new TypeError('startProxy needs a getToken() function');
@@ -660,31 +604,10 @@ function startProxy({ getToken, cacheDir, cacheMaxBytes, cacheTtlMs, onLog, cdnU
     if (server.closeAllConnections) server.closeAllConnections();
   });
 
-  // The WEBSITE's way in (see README, "Signing in with VS Code"): a FIXED port, so a page
-  // can find it; its own secret; an exact origin list; the two OneLake routes and /pair,
-  // and nothing else — no /cdn, no /npm. Rejects with EADDRINUSE when another VS Code
-  // window already holds the port, which the caller treats as "that window is the bridge",
-  // never as a failure of this one. `onPair(origin)` resolves { allowed, account }.
-  async function startBridge({ port, origins = [], onPair } = {}) {
-    // 0 (any free port) is for the tests; the extension always passes its configured one.
-    if (!Number.isInteger(port) || port < 0 || port > 65535) throw new TypeError('startBridge needs a port');
-    if (typeof onPair !== 'function') throw new TypeError('startBridge needs an onPair(origin) function');
-    const allowed = new Set(origins.map(o => String(o).trim().replace(/\/+$/, '').toLowerCase()));
-    const bridge = {
-      name: 'bridge', secret: crypto.randomBytes(24).toString('hex'), port: 0,
-      routes: new Set(['dfs', 'irc']),
-      allowOrigin: o => allowed.has(String(o).toLowerCase()),
-      pair: onPair,
-    };
-    const server = await listen(bridge, port);
-    return { port: bridge.port, close: () => shut(server) };
-  }
-
   const panel = {
     name: 'panel', secret: crypto.randomBytes(24).toString('hex'), port: 0,
     routes: new Set(['dfs', 'irc', 'cdn']),
     allowOrigin: o => PANEL_ORIGIN.test(o),
-    pair: null,
   };
 
   return listen(panel, 0).then(() => {
@@ -698,7 +621,6 @@ function startProxy({ getToken, cacheDir, cacheMaxBytes, cacheTtlMs, onLog, cdnU
       // The webview's vendored libraries (sql.js, the markdown renderer), served from the
       // extension's own vendor directory before any network.
       cdnOrigin: `${base}/cdn`,
-      startBridge,
       // The bytes were read with the identity being left behind, so signing out throws
       // them away.
       clearCache: () => (cache ? cache.clear() : Promise.resolve()),
