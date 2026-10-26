@@ -108,6 +108,12 @@
         "command": "onelakeStudio.openSemanticModel",
         "title": "Open Semantic Model",
         "category": "OneLake Studio"
+      },
+      {
+        "command": "onelakeStudio.redownloadSemanticModel",
+        "title": "Download Again",
+        "category": "OneLake Studio",
+        "icon": "$(cloud-download)"
       }
     ],
     "viewsContainers": {
@@ -167,6 +173,11 @@
           "command": "onelakeStudio.unpinWorkspace",
           "when": "view == onelakeStudio.explorer && viewItem == workspacePinned",
           "group": "inline@0"
+        },
+        {
+          "command": "onelakeStudio.redownloadSemanticModel",
+          "when": "view == onelakeStudio.explorer && viewItem == semanticModel",
+          "group": "inline"
         }
       ],
       "commandPalette": [
@@ -200,6 +211,10 @@
         },
         {
           "command": "onelakeStudio.openSemanticModel",
+          "when": "false"
+        },
+        {
+          "command": "onelakeStudio.redownloadSemanticModel",
           "when": "false"
         }
       ]
@@ -240,7 +255,7 @@
           "type": "string",
           "default": "",
           "scope": "machine",
-          "markdownDescription": "Where a semantic model's `.bim` is downloaded when you double-click it in the tree: `<folder>/<workspace>/<model>.bim`. Empty means `OneLakeStudio/semantic-models` in your home directory. The extension writes nothing to Fabric or OneLake."
+          "markdownDescription": "Where a semantic model's `.bim` is downloaded the first time you click it in the tree: `<folder>/<workspace>/<model>.bim`. After that it opens from this file (the tree marks it *cached*); **Download Again** fetches it fresh. Empty means `OneLakeStudio/semantic-models` in your home directory. The extension writes nothing to Fabric or OneLake."
         }
       }
     }

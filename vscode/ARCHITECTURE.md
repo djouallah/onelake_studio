@@ -31,10 +31,11 @@ archive. Listings, table metadata and first rows are served cache-first from dis
 ([`src/onelake.js`](src/onelake.js)) and refreshed behind you; the cache is kept per
 Microsoft account, so switching accounts never serves one account's data to another.
 
-The extension also lists each workspace's **Power BI semantic models** in its tree. Double-clicking
-one downloads its TMSL definition (the Fabric REST API's `getDefinition`) to a `.bim` on this machine —
+The extension also lists each workspace's **Power BI semantic models** in its tree. Clicking one
+downloads its TMSL definition (the Fabric REST API's `getDefinition`) to a `.bim` on this machine —
 `~/OneLakeStudio/semantic-models/<workspace>/<model>.bim`, or `onelakeStudio.semanticModelsFolder` —
-and opens it as its model (below). That needs a second token, in the Fabric API's audience, which VS
+and opens it as its model (below). That file is the cache: later clicks open it without asking Fabric,
+the tree marks the model *cached*, and **Download Again** fetches it fresh. That needs a second token, in the Fabric API's audience, which VS
 Code asks for only when you first expand *Semantic models*. The extension is read only by design: it
 writes nothing to Fabric or OneLake.
 
@@ -63,7 +64,7 @@ this does not run on vscode.dev.
 The model is named after its file (`nem.bim` is `nem`), and the main editor can query it too, as
 can `DESCRIBE nem`. A Direct Lake table is read from the lakehouse its model names, through the
 same Iceberg catalog, whichever item is selected, and only when a query actually reads it. The
-model comes from the file: double-click it in the tree (above), or open any `.bim` under `Files/`.
+model comes from the file: click it in the tree (above), or open any `.bim` under `Files/`.
 
 There is no guarantee that DAX compiled to SQL here gives the same results as Power BI.
 

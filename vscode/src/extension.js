@@ -10,6 +10,7 @@
 
 const vscode = require('vscode');
 const { join } = require('node:path');
+const { existsSync } = require('node:fs');
 const { openPanel, closePanel, revealPanel, postToPanel, postLive } = require('./panel');
 const { createCatalog } = require('./catalog');
 const { createStore } = require('./store');
@@ -494,6 +495,7 @@ async function activateInner(context) {
     fabric,
     hasFabric: async () => !!await fabricToken().catch(() => null),
     isSignedIn: () => signedIn,
+    cachedModel: n => cachedModel(n),
     // A listing failure becomes an error NODE, but the stack behind it goes here.
     log: m => out && out.appendLine(m),
   });
@@ -520,37 +522,48 @@ async function activateInner(context) {
     return set || join(require('node:os').homedir(), 'OneLakeStudio', 'semantic-models');
   }
 
-  async function downloadModel(n) {
+  const bimPath = n => join(modelsFolder(), bimFileName(n.workspace).replace(/\.bim$/, ''), bimFileName(n.model));
+  // The tree's check mark: the .bim already on this machine, or null.
+  const cachedModel = n => (existsSync(bimPath(n)) ? bimPath(n) : null);
+
+  // The downloaded .bim is the cache: getDefinition is a long-running export, so a model is
+  // fetched from Fabric once and opened from its file after that. Download Again is `fresh`.
+  async function download(n) {
+    const file = vscode.Uri.file(bimPath(n));
+    const bytes = await vscode.window.withProgress(
+      { location: vscode.ProgressLocation.Notification, title: `Downloading ${n.model}` },
+      async progress => {
+        progress.report({ message: 'reading its definition from Fabric…' });
+        return fabric.getBim(n.workspace, n.modelId);
+      });
+    await vscode.workspace.fs.writeFile(file, bytes);
+    if (out) out.appendLine(`downloaded ${n.workspace}/${n.model} -> ${file.fsPath} (${fmtBytes(bytes.length)})`);
+    tree.modelChanged(n);
+    return bytes;
+  }
+
+  // Clicks on a model whose download is still running wait on that one, not a second export.
+  const downloading = new Map();   // `${workspace}|${modelId}` -> Promise<bytes>
+  async function openModel(n, { fresh = false } = {}) {
+    if (!n || n.kind !== 'semanticModel') return;
+    const path = bimPath(n);
     try {
-      const file = vscode.Uri.file(join(modelsFolder(), bimFileName(n.workspace).replace(/\.bim$/, ''),
-                                        bimFileName(n.model)));
-      const bytes = await vscode.window.withProgress(
-        { location: vscode.ProgressLocation.Notification, title: `Downloading ${n.model}` },
-        async progress => {
-          progress.report({ message: 'reading its definition from Fabric…' });
-          return fabric.getBim(n.workspace, n.modelId);
-        });
-      await vscode.workspace.fs.writeFile(file, bytes);
-      if (out) out.appendLine(`downloaded ${n.workspace}/${n.model} -> ${file.fsPath} (${fmtBytes(bytes.length)})`);
-      await openInPanel({ type: 'open-model', name: bimFileName(n.model), path: file.fsPath,
+      let bytes = null;
+      if (!fresh) {
+        bytes = await vscode.workspace.fs.readFile(vscode.Uri.file(path)).catch(() => null);
+        if (bytes && out) out.appendLine(`opened ${n.workspace}/${n.model} from ${path} (cached)`);
+      }
+      if (!bytes) {
+        const id = `${n.workspace}|${n.modelId}`;
+        if (!downloading.has(id)) downloading.set(id, download(n).finally(() => downloading.delete(id)));
+        bytes = await downloading.get(id);
+      }
+      await openInPanel({ type: 'open-model', name: bimFileName(n.model), path,
                           text: Buffer.from(bytes).toString('utf8') });
     } catch (e) {
       if (out) out.appendLine(`download of ${n.model} failed — ${(e && e.stack) || e}`);
       showError(`Could not download ${n.model}: ${(e && e.message) || e}`);
     }
-  }
-
-  // A tree item has one command and it fires on every click; a second click on the same
-  // model within this window is the double-click that downloads it.
-  const DOUBLE_CLICK_MS = 500;
-  let lastModelClick = null;   // { id, at }
-  function onModelClick(n) {
-    if (!n || n.kind !== 'semanticModel') return;
-    const id = `${n.workspace}|${n.modelId}`;
-    const now = Date.now();
-    const twice = lastModelClick && lastModelClick.id === id && now - lastModelClick.at < DOUBLE_CLICK_MS;
-    lastModelClick = twice ? null : { id, at: now };
-    if (twice) downloadModel(n);
   }
 
   context.subscriptions.push(
@@ -620,7 +633,8 @@ async function activateInner(context) {
       }
     }),
 
-    vscode.commands.registerCommand('onelakeStudio.openSemanticModel', n => onModelClick(n)),
+    vscode.commands.registerCommand('onelakeStudio.openSemanticModel', n => openModel(n)),
+    vscode.commands.registerCommand('onelakeStudio.redownloadSemanticModel', n => openModel(n, { fresh: true })),
 
     vscode.commands.registerCommand('onelakeStudio.open', async () => {
       try {

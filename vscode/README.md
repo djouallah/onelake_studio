@@ -6,8 +6,8 @@ inside VS Code. Open it from the OneLake Studio icon in the activity bar, or run
 
 Sign-in is the VS Code Microsoft account you already use — there is nothing to register.
 
-It also lists each workspace's **Power BI semantic models**. Double-click one and its `.bim` is
-downloaded to this machine and opened as its model: the tables and relationships, SQL that asks the
+It also lists each workspace's **Power BI semantic models**. Click one and its `.bim` is
+downloaded to this machine, once, and opened as its model: the tables and relationships, SQL that asks the
 model with `AGG(measure)` (compiled from DAX by [dax-sql](https://github.com/djouallah/dax-sql)), and
 Explore for pivots and charts. Any `.bim` already in `Files/` opens the same way.
 
@@ -32,7 +32,7 @@ The panel loads nothing from the network: its few libraries ship inside the exte
 | `onelakeStudio.tenantId` | Directory (tenant) GUID to sign in against. Leave empty for your home tenant; set it to reach a tenant you are a guest in. |
 | `onelakeStudio.catalogTtlMinutes` | How old a listing or a table's metadata may be before it is refreshed (default 5). The last known answer is always served instantly from disk and refreshed behind you, so a table you have opened before opens without waiting — even after a restart. |
 | `onelakeStudio.prefetchMetadata` | Read every table's metadata in the background once a lakehouse's Tables node is opened, so the first click is a disk read (default on). |
-| `onelakeStudio.semanticModelsFolder` | Where a double-clicked semantic model's `.bim` is downloaded (`<folder>/<workspace>/<model>.bim`). Empty means `OneLakeStudio/semantic-models` in your home directory. |
+| `onelakeStudio.semanticModelsFolder` | Where a semantic model's `.bim` is downloaded (`<folder>/<workspace>/<model>.bim`) and opened from after that. Empty means `OneLakeStudio/semantic-models` in your home directory. |
 | `onelakeStudio.engineMemoryLimit` | Most memory DuckDB may use, e.g. `4GB`. Empty means a quarter of the machine's RAM. |
 
 ## Semantic models
@@ -45,6 +45,10 @@ above on the workspace, or write on the model).
 
 The extension is **read only by design**: it writes nothing to Fabric or OneLake. A model's `.bim` goes
 to a folder on this machine, and is opened from there.
+
+That file is the cache. The first click on a model downloads it (Fabric's `getDefinition`, which takes
+seconds); every click after that opens the file at once, and the tree marks the model with a check and
+*cached*. Its **Download Again** button fetches the current definition from Fabric and overwrites it.
 
 ## How it works
 

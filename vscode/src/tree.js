@@ -33,10 +33,12 @@ class LakehouseTree {
    * @param {() => Promise<boolean>} [deps.hasFabric]        a Fabric token, without a prompt?
    * @param {() => boolean} deps.isSignedIn
    * @param {{ get: () => string[] }} [deps.favorites]   pinned workspace names, persisted
+   * @param {(n: object) => string|null} [deps.cachedModel]  a model's .bim on this machine, if any
    */
   constructor({ onelake, fabric = null, hasFabric = async () => false, isSignedIn, log = () => {},
-                favorites = { get: () => [] } }) {
+                favorites = { get: () => [] }, cachedModel = () => null }) {
     this.onelake = onelake;
+    this.cachedModel = cachedModel;
     this.favorites = favorites;
     this.fabric = fabric;
     this.hasFabric = hasFabric;
@@ -89,7 +91,15 @@ class LakehouseTree {
     return n.kind === 'workspace' ? `workspace|${n.workspace}`
          : n.kind === 'tables' ? `tables|${n.workspace}|${n.item}`
          : n.kind === 'dir' ? `dir|${n.workspace}|${n.item}|${n.dir || ''}`
+         : n.kind === 'semanticModel' ? `model|${n.workspace}|${n.modelId}`
          : null;
+  }
+
+  // A model's .bim was just downloaded: redraw that one node, so its icon says so. Not the
+  // whole tree — that would list every open workspace's models from Fabric again.
+  modelChanged(n) {
+    const on = this._nodes.get(`model|${n.workspace}|${n.modelId}`);
+    if (on) this._emitter.fire(on);
   }
 
   // Draw again from what is cached — after a sign-in, an export, an account switch. Not a
@@ -157,13 +167,20 @@ class LakehouseTree {
       case 'models':
         item.iconPath = new vscode.ThemeIcon('graph');
         break;
-      case 'semanticModel':
-        item.iconPath = new vscode.ThemeIcon('symbol-structure');
-        // Every click reaches the command; it acts on the second one (a double-click).
+      // One click opens it. The first downloads its .bim to this machine; after that it opens
+      // from that file, and the icon says which: a cloud until then, a check once it is here.
+      case 'semanticModel': {
+        const local = this.cachedModel(n);
+        item.iconPath = local
+          ? new vscode.ThemeIcon('pass-filled', new vscode.ThemeColor('testing.iconPassed'))
+          : new vscode.ThemeIcon('cloud');
+        if (local) item.description = 'cached';
         item.command = { command: 'onelakeStudio.openSemanticModel', title: 'Open semantic model', arguments: [n] };
-        item.tooltip = (n.description ? `${n.description}\n\n` : '') +
-          'Double-click to download its .bim to this machine and open it as a model.';
+        item.tooltip = (n.description ? `${n.description}\n\n` : '') + (local
+          ? `Cached at ${local}. Click to open it; Download Again fetches it fresh from Fabric.`
+          : 'Click to download its .bim to this machine and open it as a model.');
         break;
+      }
       case 'fabricSignIn':
         item.iconPath = new vscode.ThemeIcon('sign-in');
         item.command = { command: 'onelakeStudio.signInFabric', title: 'Sign in to the Fabric API' };
@@ -250,9 +267,9 @@ class LakehouseTree {
       }
       const models = await this.fabric.listSemanticModels(n.workspace);
       return models.length
-        ? models.map(m => node('semanticModel', m.name, {
+        ? models.map(m => this._track(node('semanticModel', m.name, {
             workspace: n.workspace, model: m.name, modelId: m.id, description: m.description, leaf: true,
-          }))
+          })))
         : [node('empty', 'No semantic models', { leaf: true })];
     }
 

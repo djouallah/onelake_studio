@@ -124,7 +124,7 @@ try {
     .catch(() => { throw new Error("ECharts never loaded for Explore"); });
 
   // A model the extension downloaded to this machine arrives as text (open-model), not as
-  // a OneLake path — the double-click in the tree.
+  // a OneLake path — the click in the tree.
   await page.evaluate(text => window.postMessage({
     type: "open-model", name: "Local Model.bim", path: "C:/models/ws/Local Model.bim", text,
   }, "*"), BIM);
