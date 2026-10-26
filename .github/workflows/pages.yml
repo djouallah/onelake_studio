@@ -1,15 +1,20 @@
 # Publish the app to GitHub Pages on every push to main.
 #
-# "Build" is build.mjs copying site/ -> dist/ and vendoring every pinned package (DuckDB-WASM,
+# "Build" is web/build.mjs copying web/app/ -> web/dist/ and vendoring every pinned package (DuckDB-WASM,
 # MSAL, sql.js, the markdown renderer) and DuckDB extension into it — the deployed page loads
 # no executable code from a third party. No bundler. The
-# artifact is served at https://studio.projectscontrols.com/ (site/CNAME rides along in
+# artifact is served at https://studio.projectscontrols.com/ (web/app/CNAME rides along in
 # the copy, which is what tells Pages the custom domain).
 name: Deploy to GitHub Pages
 
+# Only the web app's own files trigger it: the VS Code extension under vscode/ shares no
+# code with it, so an extension-only commit has nothing to redeploy.
 on:
   push:
     branches: [main]
+    paths:
+      - "web/**"
+      - ".github/workflows/pages.yml"
   workflow_dispatch:
 
 permissions:
@@ -25,12 +30,15 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-      # site/paths.js is plain ESM with no dependencies, so the suite runs straight off a
+      # app/paths.js is plain ESM with no dependencies, so the suite runs straight off a
       # checkout with no npm install. A red suite must not reach Pages.
       - run: npm test
       # Builds dist/ — including the vendored copy of every package and DuckDB extension —
@@ -65,12 +73,12 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: model-view-shots
-          path: test-shots/
+          path: web/test-shots/
           if-no-files-found: ignore
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: dist
+          path: web/dist
 
   deploy:
     needs: build

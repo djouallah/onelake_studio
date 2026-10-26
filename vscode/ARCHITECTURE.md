@@ -1,0 +1,93 @@
+# OneLake Studio for VS Code — architecture
+
+The extension host in [`src/`](src/) does sign-in, every OneLake read (cache first) and the query
+engine; its panel, [`app/`](app/), is only a view.
+
+This app shares no code with the web app in [`../web/`](../web/): `app/` keeps its own copy of
+everything it needs, and nothing here is imported from outside `vscode/`.
+
+## Sign-in, the engine and the cache
+
+[**OneLake Studio**](https://marketplace.visualstudio.com/items?itemName=djouallah.onelake-studio) needs
+no app registration: VS Code's own Microsoft account provider is a first-party application, so
+`getSession` returns the OneLake token directly. Commands and settings are listed in
+[`README.md`](README.md), which is also the Marketplace page.
+
+The query engine is **DuckDB 2.0 running natively in the extension host**
+([`src/engine-host.js`](src/engine-host.js)) — a real DuckDB, not a WebAssembly
+build in the page. It reads OneLake itself through its `iceberg` and `azure` extensions: a table is
+read with `iceberg_scan` on the metadata file the host's cache holds — the catalog is never asked at
+query time — and `Files/` objects are read as `abfss://` URLs. DuckDB therefore does the Iceberg
+work itself — snapshot resolution, manifest filtering, position and equality deletes,
+schema evolution. Each query runs on its own connection, so Stop interrupts exactly that query, and a
+result past 200,000 rows is counted rather than carried into the panel.
+
+The token lives only in the extension host, in a DuckDB storage secret; when VS Code hands back a new
+one, the secret is reissued. The page holds no credential and makes no
+OneLake request: it reaches the host through one message channel, and only through `query`, `stream`,
+`cancel`, `info` and the host's OneLake reads ([`src/host.js`](src/host.js)).
+File access is locked down to the temp directory, `https://`, `abfss://` and `zip://` over a remote
+archive. Listings, table metadata and first rows are served cache-first from disk
+([`src/onelake.js`](src/onelake.js)) and refreshed behind you; the cache is kept per
+Microsoft account, so switching accounts never serves one account's data to another.
+
+The extension also lists each workspace's **Power BI semantic models** in its tree. Double-clicking
+one downloads its TMSL definition (the Fabric REST API's `getDefinition`) to a `.bim` on this machine —
+`~/OneLakeStudio/semantic-models/<workspace>/<model>.bim`, or `onelakeStudio.semanticModelsFolder` —
+and opens it as its model (below). That needs a second token, in the Fabric API's audience, which VS
+Code asks for only when you first expand *Semantic models*. The extension is read only by design: it
+writes nothing to Fabric or OneLake.
+
+Requires desktop VS Code on x64 or arm64 Windows, macOS or Linux: the engine is a native library, so
+this does not run on vscode.dev.
+
+## Semantic models
+
+**A `.bim` under `Files/` opens as its semantic model**, in place of the editor, on three pages:
+
+- **Model**: its tables as a star, dimensions in the middle and facts around them, with its
+  relationships. Click a table for its columns, measures (with their DAX) and relationships.
+- **SQL**: SQL in which `SELECT … FROM <model>` asks the model. `AGG(m)` is measure `m`, computed
+  with DAX's semantics by [dax-sql](https://github.com/djouallah/dax-sql), which compiles the
+  query to plain SQL:
+
+  ```sql
+  SELECT dim_region.Region, AGG("Registered MW") AS mw FROM nem GROUP BY ALL
+  ```
+
+  A model query can also be a subquery or CTE inside SQL of your own. Preview, Show plan and
+  Download CSV.
+- **Explore**: drag the model's columns onto Rows, Columns and Filters, and its measures onto
+  Values, to get a pivot table or a chart.
+
+The model is named after its file (`nem.bim` is `nem`), and the main editor can query it too, as
+can `DESCRIBE nem`. A Direct Lake table is read from the lakehouse its model names, through the
+same Iceberg catalog, whichever item is selected, and only when a query actually reads it. The
+model comes from the file: double-click it in the tree (above), or open any `.bim` under `Files/`.
+
+There is no guarantee that DAX compiled to SQL here gives the same results as Power BI.
+
+## Limitations
+
+- **A lakehouse with no schemas of its own lists its tables under `dbo`.** That's the synthetic
+  namespace OneLake's catalog reports for those items, so generated SQL reads `FROM "dbo"."sales"`.
+- **An item its catalog can't serve shows an error rather than a table list.** There is no DFS
+  fallback; re-picking the item tries again.
+- **A database file under `Files/` is opened by sniffing its header**, never its extension (`.duckdb`,
+  `.ddb`, `.db`, `.sqlite`). A DuckDB file is ATTACHed read-only and block-read on demand — tables
+  queryable as `<name>.<schema>.<table>`. A SQLite file is copied by the host into the engine's temp
+  directory and DuckDB's sqlite extension attaches it read-only (`<name>.main.<table>`, capped at
+  200 MB). CSV, JSON, avro, xlsx and plain text have no block structure, so DuckDB pulls those whole. A
+  `.zip` under `Files/` is listed via its central directory (a range read at the tail — the archive is not
+  downloaded) and every readable entry becomes a view; entries decompress when queried.
+- **A result past 200,000 rows is counted rather than carried into the panel.**
+
+## Layout
+
+```
+src/      extension host: sign-in, cache-first OneLake, tree, native DuckDB, Fabric API
+app/      the panel: a view over the host (its own page, no sign-in, no network)
+media/    icons
+test/     node --test suite (npm test) and the browser runners
+*.mjs     packaging: stage-webview, vendor, fetch-extensions, check-binding, fetch-binding, make-icon
+```

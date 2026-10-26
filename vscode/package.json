@@ -1,0 +1,258 @@
+{
+  "name": "onelake-studio",
+  "displayName": "OneLake Studio",
+  "description": "Browse and query Microsoft Fabric OneLake Iceberg tables with DuckDB, and open Power BI semantic models, signed in with your VS Code Microsoft account.",
+  "version": "0.3.0",
+  "publisher": "djouallah",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/djouallah/onelake_studio.git"
+  },
+  "homepage": "https://github.com/djouallah/onelake_studio/tree/main/vscode#readme",
+  "bugs": {
+    "url": "https://github.com/djouallah/onelake_studio/issues"
+  },
+  "icon": "media/icon.png",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Data Science",
+    "Visualization",
+    "Other"
+  ],
+  "keywords": [
+    "fabric",
+    "onelake",
+    "iceberg",
+    "duckdb",
+    "lakehouse",
+    "power bi",
+    "semantic model"
+  ],
+  "main": "./src/extension.js",
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": true,
+      "description": "OneLake Studio never reads or executes workspace files; everything it touches lives in OneLake and its own storage."
+    },
+    "virtualWorkspaces": true
+  },
+  "contributes": {
+    "commands": [
+      {
+        "command": "onelakeStudio.open",
+        "title": "Open OneLake Studio",
+        "category": "OneLake Studio",
+        "icon": "$(window)"
+      },
+      {
+        "command": "onelakeStudio.switchAccount",
+        "title": "Switch Microsoft Account",
+        "category": "OneLake Studio",
+        "icon": "$(account)"
+      },
+      {
+        "command": "onelakeStudio.signIn",
+        "title": "Sign in to OneLake",
+        "category": "OneLake Studio"
+      },
+      {
+        "command": "onelakeStudio.refresh",
+        "title": "Refresh",
+        "category": "OneLake Studio",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "onelakeStudio.showLog",
+        "title": "Show Read Log",
+        "category": "OneLake Studio"
+      },
+      {
+        "command": "onelakeStudio.clearCache",
+        "title": "Clear Cached OneLake Data",
+        "category": "OneLake Studio"
+      },
+      {
+        "command": "onelakeStudio.openTable",
+        "title": "Open Table",
+        "category": "OneLake Studio"
+      },
+      {
+        "command": "onelakeStudio.openFile",
+        "title": "Open File",
+        "category": "OneLake Studio"
+      },
+      {
+        "command": "onelakeStudio.signInFabric",
+        "title": "Sign in to the Fabric API",
+        "category": "OneLake Studio"
+      },
+      {
+        "command": "onelakeStudio.pinWorkspace",
+        "title": "Pin to Favorites",
+        "category": "OneLake Studio",
+        "icon": "$(star-empty)"
+      },
+      {
+        "command": "onelakeStudio.unpinWorkspace",
+        "title": "Unpin from Favorites",
+        "category": "OneLake Studio",
+        "icon": "$(star-full)"
+      },
+      {
+        "command": "onelakeStudio.openSemanticModel",
+        "title": "Open Semantic Model",
+        "category": "OneLake Studio"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "onelakeStudio",
+          "title": "OneLake Studio",
+          "icon": "media/onelake.svg"
+        }
+      ]
+    },
+    "views": {
+      "onelakeStudio": [
+        {
+          "id": "onelakeStudio.explorer",
+          "name": "OneLake"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "onelakeStudio.explorer",
+        "when": "!onelakeStudio.signedIn",
+        "contents": "Browse and query OneLake Iceberg tables with DuckDB, signed in with the Microsoft account VS Code already holds — you register nothing.\n[Sign in to OneLake](command:onelakeStudio.signIn)"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "onelakeStudio.refresh",
+          "when": "view == onelakeStudio.explorer && onelakeStudio.signedIn",
+          "group": "navigation@1"
+        },
+        {
+          "command": "onelakeStudio.open",
+          "when": "view == onelakeStudio.explorer",
+          "group": "navigation@2"
+        },
+        {
+          "command": "onelakeStudio.switchAccount",
+          "when": "view == onelakeStudio.explorer",
+          "group": "1_account"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "onelakeStudio.refresh",
+          "when": "view == onelakeStudio.explorer && viewItem =~ /^(workspace|workspacePinned|item|dir|tables|models|error)$/",
+          "group": "inline"
+        },
+        {
+          "command": "onelakeStudio.pinWorkspace",
+          "when": "view == onelakeStudio.explorer && viewItem == workspace",
+          "group": "inline@0"
+        },
+        {
+          "command": "onelakeStudio.unpinWorkspace",
+          "when": "view == onelakeStudio.explorer && viewItem == workspacePinned",
+          "group": "inline@0"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "onelakeStudio.openTable",
+          "when": "false"
+        },
+        {
+          "command": "onelakeStudio.openFile",
+          "when": "false"
+        },
+        {
+          "command": "onelakeStudio.signIn",
+          "when": "!onelakeStudio.signedIn"
+        },
+        {
+          "command": "onelakeStudio.refresh",
+          "when": "onelakeStudio.signedIn"
+        },
+        {
+          "command": "onelakeStudio.signInFabric",
+          "when": "false"
+        },
+        {
+          "command": "onelakeStudio.pinWorkspace",
+          "when": "false"
+        },
+        {
+          "command": "onelakeStudio.unpinWorkspace",
+          "when": "false"
+        },
+        {
+          "command": "onelakeStudio.openSemanticModel",
+          "when": "false"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "OneLake Studio",
+      "properties": {
+        "onelakeStudio.tenantId": {
+          "type": "string",
+          "default": "",
+          "scope": "machine",
+          "pattern": "^$|^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+          "patternErrorMessage": "A directory (tenant) ID is a GUID, e.g. 72f988bf-86f1-41af-91ab-2d7cd011db47.",
+          "markdownDescription": "Directory (tenant) GUID to sign in against. Leave empty for your home tenant; set it to reach a tenant you are a guest in. Machine-scoped on purpose: a setting that steers *authentication* must not be overridable by a workspace's own `.vscode/settings.json`."
+        },
+        "onelakeStudio.catalogTtlMinutes": {
+          "type": "number",
+          "default": 5,
+          "minimum": 0,
+          "scope": "machine",
+          "markdownDescription": "How old a listing or a table's metadata may be before it is refreshed. The last-known answer is ALWAYS served instantly from disk — a workspace you have browsed or a table you have ever opened shows without waiting on OneLake; once the answer is older than this, a background refresh fetches the current one and the tree redraws if it changed, so a new snapshot shows up one click later. `0` refreshes behind every read. **Refresh** in the tree re-reads in the foreground. Applies after the window is reloaded."
+        },
+        "onelakeStudio.prefetchMetadata": {
+          "type": "boolean",
+          "default": true,
+          "scope": "machine",
+          "markdownDescription": "When a lakehouse's **Tables** node is opened, read each table's Iceberg metadata in the background (two at a time, skipping what is already cached), so the first click on a table is a disk read rather than a wait on the Iceberg catalog — which can take seconds per table. Turn off to read a table's metadata only when it is clicked."
+        },
+        "onelakeStudio.engineMemoryLimit": {
+          "type": "string",
+          "default": "",
+          "scope": "machine",
+          "pattern": "^$|^d+(.d+)?s*(KB|MB|GB|TB|KiB|MiB|GiB|TiB)$",
+          "patternErrorMessage": "A DuckDB memory size, e.g. 4GB or 512MB.",
+          "markdownDescription": "Most memory DuckDB may use, e.g. `4GB`. Empty means a quarter of this machine's RAM — DuckDB's own default is 80%, which is too much for the extension host every other extension shares. Bigger queries spill to a temp directory instead of failing. Applies the next time the engine starts."
+        },
+        "onelakeStudio.semanticModelsFolder": {
+          "type": "string",
+          "default": "",
+          "scope": "machine",
+          "markdownDescription": "Where a semantic model's `.bim` is downloaded when you double-click it in the tree: `<folder>/<workspace>/<model>.bim`. Empty means `OneLakeStudio/semantic-models` in your home directory. The extension writes nothing to Fabric or OneLake."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "node ./check-binding.mjs && node ./stage-webview.mjs && node ./vendor.mjs",
+    "test": "node --test test/app-paths.test.mjs test/catalog.test.mjs test/fabric.test.mjs test/host.test.mjs test/names.test.mjs test/onelake.test.mjs test/panel-html.test.mjs test/store.test.mjs"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.90.0"
+  },
+  "dependencies": {
+    "@duckdb/node-api": "2.0.0-r.1"
+  }
+}
