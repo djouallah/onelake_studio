@@ -108,6 +108,12 @@ test("native engine host", async t => {
       /Permission|disabled by configuration|No files found/i, "dot-dot does not climb out");
   });
 
+  await t.test("zip:// reaches remote archives only, never a local one", async () => {
+    const zip = join(outside, "local.zip").replace(/\\/g, "/");
+    await assert.rejects(engine.call("query", [`SELECT * FROM read_csv('zip://${zip}/x.csv')`]),
+      /Permission|disabled by configuration/i);
+  });
+
   await t.test("the lockdown cannot be turned off from SQL", async () => {
     await assert.rejects(engine.call("query", ["SET enable_external_access = true"]), /lock/i);
     await assert.rejects(engine.call("query", ["SET allowed_directories = ['/']"]), /lock/i);

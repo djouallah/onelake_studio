@@ -292,7 +292,12 @@ function createEngineHost({ extensionDir, onLog = () => {}, onWarn = () => {}, g
       if (lockdown) {
         const ca = await writeCaBundle(tmpDir);
         await conn.run(`SET ca_cert_file = ${sqlStr(ca)};`);
-        const dirs = [`${tmp}/`, 'https://', 'abfss://', 'abfs://', 'az://', 'azure://'];
+        // zip:// only over a remote archive: an entry of a Files/ zip is read as
+        // zip://abfss://…, and a bare 'zip://' would open any local archive. Checked
+        // against DuckDB 2.0: zip://abfss:// reads, zip://C:/… is refused, and a `..`
+        // after abfss:// stays on the azure filesystem.
+        const dirs = [`${tmp}/`, 'https://', 'abfss://', 'abfs://', 'az://', 'azure://',
+                      'zip://abfss://', 'zip://https://'];
         if (extensionDir) dirs.push(`${extensionDir.replace(/\\/g, '/')}/`);
         const paths = [ca, ...allowedPaths.filter(Boolean).map(p => String(p).replace(/\\/g, '/'))];
         await conn.run(`SET allowed_directories = [${dirs.map(sqlStr).join(', ')}];`);
