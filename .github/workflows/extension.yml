@@ -1,4 +1,8 @@
-# Publishes the VS Code extension to the Marketplace when an ext-v* tag is pushed.
+# CI for the VS Code extension, and its Marketplace release.
+#
+# Every push to main and every pull request runs test -> engine -> package, so a change is
+# packaged for every platform and checked exactly as a release would be. Only an ext-v* tag
+# reaches the publish job.
 #
 # Release:
 #   bump "version" in package.json, refresh package-lock.json
@@ -54,14 +58,16 @@
 # produces "You need to be logged in with your corporate credentials" at the publish step
 # after everything else has already succeeded.
 #
-# Every run packages and uploads every .vsix as an artifact, so workflow_dispatch is still a
-# real dry run — it builds and attaches all of them, proves the OIDC identity, and only a tag
-# reaches the publish step.
-name: Publish VS Code extension
+# Every run packages and uploads every .vsix as an artifact. The publish JOB is gated on the
+# tag, not just its last step: a push, a pull request or a workflow_dispatch never signs in
+# to Azure and never comes near the Marketplace.
+name: Extension
 
 on:
   push:
+    branches: [main]
     tags: ["ext-v*"]
+  pull_request:
   workflow_dispatch:
 
 permissions:
@@ -69,10 +75,11 @@ permissions:
 
 # A publish is not atomic — vsce uploads the packages one at a time. Two runs doing that at
 # once, or a cancellation halfway through, is exactly how a version ends up live on some
-# platforms and missing on others. Queue instead, and never cancel.
+# platforms and missing on others. Tag runs queue in one group and are never cancelled;
+# branch runs get a group of their own, so a push can never displace a queued release.
 concurrency:
-  group: extension-publish
-  cancel-in-progress: false
+  group: ${{ startsWith(github.ref, 'refs/tags/ext-v') && 'extension-publish' || format('extension-{0}', github.ref) }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/ext-v') }}
 
 jobs:
   # The extension's own suite (test/), once rather than once per platform: it reads only tracked
@@ -215,6 +222,7 @@ jobs:
 
   publish:
     needs: package
+    if: startsWith(github.ref, 'refs/tags/ext-v')
     runs-on: ubuntu-latest
     environment: azure
     permissions:
@@ -240,7 +248,7 @@ jobs:
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
           allow-no-subscriptions: true
 
-      # Runs on every build, tag or not, and costs one request. It prints the identity the
+      # Costs one request. It prints the identity the
       # Marketplace will actually see, which is the one fact worth having in the log: if a
       # publish ever fails on permissions, comparing this id against the publisher's member
       # list answers "wrong identity" vs "wrong role" immediately, instead of by guesswork.
