@@ -1,6 +1,6 @@
 ---
 name: onelake
-description: Answer questions about Microsoft Fabric OneLake data and Power BI semantic models — list workspaces, lakehouses, warehouses, tables and semantic models, read a model's measures and their DAX, compute measures by any column, or run read-only SQL over lakehouse tables. Use whenever the user asks about OneLake, a Fabric workspace/lakehouse/warehouse, a semantic model, a measure, or "what is X by Y" over their Fabric data — and whenever they ask about what is on their screen or open in VS Code: "can you see this", "what am I looking at", "this table", "these rows", "this model", "this chart" — the OneLake Studio panel writes what it shows to a file this skill reads; never answer that you cannot see the screen before reading it.
+description: Answer questions about Microsoft Fabric OneLake data and Power BI semantic models — list workspaces, lakehouses, warehouses, tables and semantic models, read a model's measures and their DAX, compute measures by any column, or run read-only SQL over lakehouse tables. Use whenever the user asks about OneLake, a Fabric workspace/lakehouse/warehouse, a semantic model, a measure, or "what is X by Y" over their Fabric data.
 ---
 
 <!-- Installed by the OneLake Studio extension, which rewrites this file when it updates. -->
@@ -17,8 +17,6 @@ node --no-warnings "{{cli}}" <command>
 
 | command | answers |
 |---|---|
-| `screen` | what the panel shows: what is open, the SQL or DAX it ran, the rows on screen |
-| `screen --rerun` | runs that same query again and prints the whole result, not the saved first rows |
 | `ls` | workspaces |
 | `ls <ws>` | its lakehouses/warehouses, and its semantic models (marked *downloaded* if local) |
 | `ls <ws> <item>` | its tables, and their names in `sql --in` (`<item>_<schema>.<table>`); `<item>` may omit its `.Lakehouse` suffix |
@@ -26,33 +24,10 @@ node --no-warnings "{{cli}}" <command>
 | `model <ws> <model>` | relationships, columns, measures with their DAX, and an example query; downloads the `.bim` once |
 | `sql "<sql>"` | read-only SQL. Every semantic view is a table: `AGG("measure")` is the measure; and `CREATE / DROP / SHOW SEMANTIC VIEW` (below) |
 | `sql "<sql>" --in <ws>/<item>` | the lakehouse's tables, as `<item>_<schema>.<table>` — e.g. `data_mart.dim_duid` — and its files as `'Files/…'`: `read_parquet('Files/log.parquet')` |
-| `dax "EVALUATE …"` | a DAX query against the model on screen (or `--model <name>`) — Explore's DAX runs as is |
+| `dax "EVALUATE …" --model <name>` | a DAX query against a semantic view (`--model` may be left out when only one is defined) |
 
 Options: `--limit N` (rows printed, default 100), `--csv`, `--fresh` (re-read instead of the cache),
 `--show-sql` (print the SQL a model query or DAX compiles to — the answer to "is this SQL right?").
-
-## What the user has on screen
-
-When the user says *this*, *here*, *open*, *on screen*, *what I'm looking at*, *these numbers*, or
-names nothing, run `screen` first: it prints what is open, the SQL or DAX last run, and the rows on
-screen as a table — or, when the user pressed Show plan or ran an EXPLAIN, the query plan on
-screen and the SQL it compiled to: analyse that plan as saved, never re-run EXPLAIN to get it.
-When it says only the first rows were saved and the question needs all of them
-(totals, gaps, a check across the whole result), run `screen --rerun`.
-
-`screen` reads `{{panel}}/panel-*.json` (one per VS Code window, the most recently `updated`); read
-those files directly only to pick a window other than the newest.
-
-- `open`: the table, file or semantic model in the OneLake Studio panel. A table or model
-  carries `cli`: the commands that reach it — run those rather than guessing names.
-- `query`: the last SQL the main editor ran, its row count, and `sample` — the first rows on
-  screen. Answer from `sample` when it is enough; re-run through `sql` when it is not.
-- `model`: for a semantic model, which page is in front (`model`, `sql`, `explore`), the SQL
-  page's last query and Explore's last DAX, each with its first rows; `plan` (and `compiled`)
-  instead of rows when a query plan is what is on screen.
-
-The panel's SQL names a table as the panel does (`"schema"."table"`); through `sql --in`, it is
-`<item>_<schema>.<table>` (`open.cli.sql` shows it). No file means the panel is closed: ask.
 
 ## Answering a semantic-model question
 

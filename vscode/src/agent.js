@@ -8,7 +8,6 @@
 // .bim files, the DAX compiler — so there is one sign-in and one cache, not a second copy
 // for the command line. Read only: every statement goes through the engine's guard.
 //
-//   screen [--rerun]                 what the panel shows (onscreen.js's files); --rerun runs it again
 //   ls [<ws> [<item>]]               workspaces / items + semantic models / tables
 //   table <ws> <item> <schema.table> metadata only
 //   model <ws> <model>               relationships, columns, measures with DAX
@@ -40,8 +39,6 @@ const sqlSchema = (lh, t) =>
   `${lh.item.replace(/\.[^.]+$/, '')}_${t.schema || 'main'}`.replace(/[^A-Za-z0-9_]/g, '_');
 
 const DFS_HOST = 'onelake.dfs.fabric.microsoft.com';
-const sqlLit = s => `'${String(s).replace(/'/g, "''")}'`;
-const quoteId = s => `"${String(s).replace(/"/g, '""')}"`;
 const fence = (lang, text) => '```' + lang + '\n' + String(text).trim() + '\n```';
 
 // 'Files/x.parquet' in SQL run --in a lakehouse is that lakehouse's file, by its abfss:// name:
@@ -50,24 +47,6 @@ function filesToAbfss(sql, lh) {
   const ws = String(lh.workspace).replace(/'/g, "''");
   const item = String(lh.item).replace(/'/g, "''");
   return String(sql).replace(/'\/?(Files\/(?:[^']|'')*)'/g, (_, p) => `'abfss://${ws}@${DFS_HOST}/${item}/${p}'`);
-}
-
-// `sql` with `ident` bound to `body` for this one statement — a CTE, merged into the
-// statement's own WITH when it has one — so a panel view can be re-read with no view made.
-function withView(sql, ident, body) {
-  const text = String(sql).trim().replace(/;\s*$/, '');
-  const cte = `${ident} AS (${body})`;
-  const m = /^WITH(\s+RECURSIVE)?\s+/i.exec(text);
-  return m ? `${m[0]}${cte}, ${text.slice(m[0].length)}` : `WITH ${cte}\n${text}`;
-}
-
-// The panel's SQL names a table "schema"."table"; the command line's --in names it
-// item_schema.table. Both spellings, quoted or bare, are rewritten.
-function panelToAgentSql(sql, lh, t) {
-  const to = `${sqlSchema(lh, t)}.${quoteId(t.table)}`;
-  const esc = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const s = esc(t.schema || 'dbo'), n = esc(t.table);
-  return String(sql).replace(new RegExp(`(^|[^\\w"])"?${s}"?\\s*\\.\\s*"?${n}"?(?![\\w"])`, 'gi'), (_, pre) => pre + to);
 }
 
 /**
@@ -80,7 +59,7 @@ function panelToAgentSql(sql, lh, t) {
  * @param {string} o.vendorDir               the vendored DAX compiler
  * @param {ReturnType<import('./semviews').createSemViews>} o.semviews  the views this machine keeps
  */
-function createAgent({ onelake, fabric, engine, bimPath, appDir, vendorDir, daxSqlPin, semviews, screenDir = null }) {
+function createAgent({ onelake, fabric, engine, bimPath, appDir, vendorDir, daxSqlPin, semviews }) {
   let mods = null;
   async function modules() {
     if (mods) return mods;
@@ -142,105 +121,21 @@ function createAgent({ onelake, fabric, engine, bimPath, appDir, vendorDir, daxS
     await eng.agentQuery(`CREATE OR REPLACE VIEW ${ident} AS ${body}`);
   }
 
-  // What the panel shows (onscreen.js), from every window's file: the newest one.
-  async function screenState() {
-    if (!screenDir) return null;
-    let best = null;
-    for (const name of await fsp.readdir(screenDir).catch(() => [])) {
-      if (!/^panel-\d+\.json$/.test(name)) continue;
-      try {
-        const s = JSON.parse(await fsp.readFile(join(screenDir, name), 'utf8'));
-        if (!best || String(s.updated) > String(best.updated)) best = s;
-      } catch (_) { /* half-written or gone: the next one */ }
-    }
-    return best;
-  }
-
-  // Which view a DAX query is about: --model, else the model on screen, else the only one.
-  async function viewFor(opts) {
+  // Which view a DAX query is about: --model, else the only one.
+  function viewFor(opts) {
     if (opts.model) return opts.model;
-    const s = await screenState();
-    if (s && s.open && s.open.kind === 'model' && s.open.name) return s.open.name;
     if (defined.size === 1) return [...defined][0];
     throw new Error('which model? — add --model <name> (`sql "SHOW SEMANTIC VIEWS"` lists them)');
   }
 
-  // A sample as a table, and how much of the result it is.
-  function sampleOut(x, out) {
-    if (x && x.plan != null) {
-      if (x.compiled) out(`Compiled to:\n\n${fence('sql', x.compiled)}\n`);
-      out(`Query plan on screen (EXPLAIN, not run):\n\n${fence('', x.plan)}`);
-      return;
-    }
-    if (!x || !Array.isArray(x.fields) || !Array.isArray(x.sample)) return;
-    out(mdTable(x.fields, x.sample.map(r => x.fields.map(f => r[f]))));
-    const n = x.rows != null ? x.rows : x.sample.length;
-    out(`\n${Number(n).toLocaleString('en')} row(s)` +
-        (n > x.sample.length ? `, first ${x.sample.length} saved — \`screen --rerun\` reads them all` : ''));
-  }
-
   // ---------------------------------------------------------------------------
   const commands = {
-    // What the panel shows, read from its file, and with --rerun the whole result of it.
-    async screen(_, opts, out, note) {
-      const s = await screenState();
-      if (!s || !s.open) { out('Nothing is open in the OneLake Studio panel.'); return; }
-      const o = s.open;
-      const where = o.kind === 'table' ? `table ${o.workspace}/${o.item} ${o.schema ? `${o.schema}.` : ''}${o.table}`
-        : o.kind === 'file' ? `file ${o.workspace}/${o.path}`
-        : `semantic model ${o.name}` + (o.workspace ? ` (${o.workspace}/${o.model})` : '');
-      const m = s.model || {};
-      const front = o.kind !== 'model' ? 'query' : m.page === 'explore' ? 'explore' : m.page === 'sql' ? 'sql' : null;
-      if (opts.rerun) {
-        if (front === 'explore' && m.explore && m.explore.dax) {
-          note(`re-running Explore's DAX on ${o.name}`);
-          return commands.dax([m.explore.dax], { ...opts, model: o.name }, out, note);
-        }
-        if (front === 'sql' && m.sql && m.sql.sql) return commands.sql([m.sql.sql], opts, out, note);
-        const q = s.query;
-        if (front !== 'query' || !q || !q.sql) throw new Error(`nothing to re-run: the ${front || 'model'} page has run nothing`);
-        const { semantic, compiler, paths } = await modules();
-        await syncViews(note);
-        if (await semantic.statement(q.sql, compiler)) return commands.sql([q.sql], opts, out, note);
-        if (o.kind === 'table') {
-          const lh = { workspace: o.workspace, item: o.item };
-          const t = { schema: o.schema, table: o.table };
-          return commands.sql([panelToAgentSql(q.sql, lh, t)], { ...opts, in: `${o.workspace}/${o.item}` }, out, note);
-        }
-        const reader = paths.readerFor(paths.fileExt(o.path));
-        if (!q.ident || !reader) throw new Error(`${o.path}: only a tabular file's query can be re-run here`);
-        const url = paths.abfssUrl(o.workspace, o.path);
-        return commands.sql([withView(paths.stripComments(q.sql), q.ident, `SELECT * FROM ${reader(sqlLit(url))}`)], opts, out, note);
-      }
-      out(`# On screen: ${where}\n`);
-      if (o.cli) out(`Reach it with: ${Object.values(o.cli).map(c => `\`${c}\``).join(', ')}\n`);
-      if (o.kind === 'model') {
-        out(`Page in front: ${m.page || 'model'}\n`);
-        if (m.explore && m.explore.dax) {
-          out(`## Explore${front === 'explore' ? ' (in front)' : ''}\n\n${fence('dax', m.explore.dax)}\n`);
-          if (m.explore.error) out(`error: ${m.explore.error}\n`);
-          sampleOut(m.explore, out);
-          out('');
-        }
-        if (m.sql && m.sql.sql) {
-          out(`## SQL page${front === 'sql' ? ' (in front)' : ''}\n\n${fence('sql', m.sql.sql)}\n`);
-          if (m.sql.error) out(`error: ${m.sql.error}\n`);
-          sampleOut(m.sql, out);
-        }
-        return;
-      }
-      if (!s.query) { out('No query has run on it yet.'); return; }
-      out(`## Last query${s.query.ms != null ? ` (${s.query.ms} ms)` : ''}\n\n${fence('sql', s.query.sql || '')}\n`);
-      if (s.query.error) { out(`error: ${s.query.error}`); return; }
-      sampleOut(s.query, out);
-    },
-
     // A DAX query, as Explore runs one: compiled by dax-sql against a semantic view.
     async dax([text], opts, out, note) {
       if (!text) throw new Error('usage: dax "EVALUATE …" [--model <name>]');
       const { semantic } = await modules();
       await syncViews(note);
-      const name = await viewFor(opts);
+      const name = viewFor(opts);
       const t0 = Date.now();
       const c = semantic.compileDax(name, text);
       if (opts.showSql) out(`${fence('sql', c.sql)}\n`);
@@ -402,12 +297,12 @@ function createAgent({ onelake, fabric, engine, bimPath, appDir, vendorDir, daxS
     const note = s => errLines.push(String(s));
     const [name, ...rest] = Array.isArray(args) ? args.map(String) : [];
     const cmd = Object.hasOwn(commands, name) ? commands[name] : null;
-    if (!cmd) return { out: '', err: `unknown command: ${name || '(none)'} — screen, ls, table, model, sql or dax`, code: 1 };
+    if (!cmd) return { out: '', err: `unknown command: ${name || '(none)'} — ls, table, model, sql or dax`, code: 1 };
     try {
       await cmd(rest, {
         fresh: !!opts.fresh, csv: !!opts.csv, in: opts.in ? String(opts.in) : '',
         limit: Number(opts.limit) > 0 ? Number(opts.limit) : 100,
-        showSql: !!opts.showSql, rerun: !!opts.rerun, model: opts.model ? String(opts.model) : '',
+        showSql: !!opts.showSql, model: opts.model ? String(opts.model) : '',
       }, out, note);
       return { out: outLines.join('\n'), err: errLines.join('\n'), code: 0 };
     } catch (e) {
@@ -419,4 +314,4 @@ function createAgent({ onelake, fabric, engine, bimPath, appDir, vendorDir, daxS
   return { run };
 }
 
-module.exports = { createAgent, sqlSchema, filesToAbfss, withView, panelToAgentSql };
+module.exports = { createAgent, sqlSchema, filesToAbfss };

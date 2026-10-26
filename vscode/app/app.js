@@ -61,10 +61,6 @@ let freshLoad = null;        // info from an escalation that still owes the user
 // The extension's read log prints these beside its own lines.
 const reportBoot = b => vs.postMessage({ type: 'boot', ...b });
 const reportOpened = (kind, label, ms) => vs.postMessage({ type: 'opened', kind, label, ms });
-// ...and what is on screen, for Claude Code (src/onscreen.js): what is open, the SQL last run
-// and the first rows it showed.
-const onScreen = part => vs.postMessage({ type: 'onscreen', ...part });
-const shownOf = res => ({ rows: res.numRows ?? res.rows.length, fields: res.fields, sample: res.rows.slice(0, 50) });
 
 function setStatus(msg, type = '') {
   const el = $('status');
@@ -130,7 +126,7 @@ async function startEngine() {
   let landingFailed = false;
   if (README_SQL && !$('sqlEditor').value) {
     $('sqlEditor').value = README_SQL;
-    landingFailed = !await runQuery({ report: false });
+    landingFailed = !await runQuery();
   }
   // A click while the welcome page was loading owns the status bar (and cancelled it).
   if (selSeq !== before || activeTableRef || activeFile) return;
@@ -166,7 +162,6 @@ function leaveLakehouse(opts) {
   setActiveStats(null);
   activeTableRef = null; tableStage = 'none';
   clearResults();
-  onScreen({ open: null });
   $('activeTable').textContent = 'No table selected';
   setBusy(false);
   return engine.reset(opts);
@@ -195,7 +190,6 @@ async function selectFile(file) {
   // Only plain-text formats are read as a document (one row per line). Every other
   // reader produces a TABLE, and a table with one cell in it is still a table.
   activeFile = file;
-  if (lakehouse) onScreen({ open: { kind: 'file', ...lakehouse, path: file.path } });
   activeDocExt = fileExt(file.name);
   activeDocEligible = isTextExt(activeDocExt);
   setActiveStats(null);          // a file is not a table; no snapshot behind it
@@ -245,7 +239,7 @@ function closeModelView() {
 
 // A .bim from Files/ (read through the host), or one the extension downloaded from Fabric
 // and hands over as text (open-model): the same view either way.
-async function openModelView(file, text = null, from = {}) {
+async function openModelView(file, text = null) {
   closeModelView();
   const my = ++selSeq;
   engine.cancelLoad();
@@ -264,9 +258,6 @@ async function openModelView(file, text = null, from = {}) {
     if (text == null) await engineReady;
     const bim = text != null ? text : new TextDecoder().decode(await engine.readFileBytes(lakehouse, file));
     const m = await semantic.registerModel(file.name, bim);
-    if (my === selSeq) onScreen({ open: { kind: 'model', name: m.name, file: file.name,
-      path: text != null ? file.path : abfssUrl(lakehouse.workspace, file.path),
-      workspace: from.workspace || (lakehouse && lakehouse.workspace), model: from.model } });
     // Kept by the host as a semantic view too, so it is there after a restart and the
     // command line can name it. Best effort: the view on screen does not depend on it.
     engine.semanticCreate(m.name, text != null ? file.path : abfssUrl(lakehouse.workspace, file.path))
@@ -282,7 +273,6 @@ async function openModelView(file, text = null, from = {}) {
       saveText: (name, text) => engine.saveText(name, text),
       loadState: viewState.get,
       saveState: viewState.set,
-      onScreen: part => onScreen({ model: part }),
     });
     setStatus(`${file.name} is the semantic model ${m.name}` +
               (m.directLake ? ` — ${m.directLake} Direct Lake table(s), opened from OneLake as a query needs them` : '') +
@@ -353,7 +343,6 @@ async function selectImage(file) {
   const my = ++selSeq;
   $('activeTable').textContent = file.name;
   activeFile = file;
-  if (lakehouse) onScreen({ open: { kind: 'file', ...lakehouse, path: file.path } });
   activeIdent = null;            // no table behind this: Preview/Run stay disabled
   setActiveStats(null);
   activeTableRef = null; tableStage = 'none';
@@ -397,7 +386,6 @@ async function selectTable(t) {
   activeIdent = null;           // no view exists yet — nothing is bound until asked for
   activeTableRef = t;
   tableStage = 'none';
-  onScreen({ open: { kind: 'table', ...lakehouse, schema: t.schema, table: t.table } });
   // The previous table's rows must not sit on screen under the new table's name.
   clearResults(`(no rows read yet — open the Data tab)`);
   setActiveStats(null);
@@ -454,7 +442,6 @@ async function peekIntoView() {
     tableStage = 'peek';
     docAllowed = false;             // a peek is a table, whatever shape it comes back
     renderResults(out);             // this lands the pane in the Data view by itself
-    onScreen({ query: { sql: previewSql(identOf(activeTableRef), false), ...shownOf(out) } });
     reportOpened('rows', $('activeTable').textContent, Date.now() - t0);
     setStatus(`The first ${out.rows.length} row(s). Run a query to read the whole table.`);
   } catch (e) {
@@ -521,8 +508,7 @@ const previewSql = (ident, whole) => `SELECT * FROM ${ident}` + (whole ? '' : ' 
 
 // `doc` says whether a document view may be offered for this result at all. Returns
 // whether the query succeeded, so a caller with its own message can keep quiet.
-// `report: false` keeps a query off Claude Code's note (src/onscreen.js): the landing page.
-async function runQuery({ doc = true, ext = '', report = true } = {}) {
+async function runQuery({ doc = true, ext = '' } = {}) {
   const sql = $('sqlEditor').value;
   setBusy(true, { stoppable: true });
   docAllowed = doc;
@@ -548,8 +534,6 @@ async function runQuery({ doc = true, ext = '', report = true } = {}) {
     renderResults(res);
     lastResult = res;
     const ms = Math.round(performance.now() - t0);
-    // ident: the open file's view, so the command line can read the same file again.
-    if (report) onScreen({ query: { sql, ident: activeFile ? activeIdent : undefined, ms, ...shownOf(res) } });
     const shown = Math.min(res.rows.length, MAX_DOM_ROWS);
     // Two caps: MAX_DOM_ROWS only limits what is drawn; res.truncated means the engine
     // stopped materialising, so the CSV is short too.
@@ -572,7 +556,6 @@ async function runQuery({ doc = true, ext = '', report = true } = {}) {
     }
     clearResults('(no result — the query failed)');
     setStatus('Query error: ' + e.message, 'error');
-    if (report) onScreen({ query: { sql, error: e.message } });
     console.error(e);
     return false;
   } finally {
@@ -894,8 +877,7 @@ window.addEventListener('message', async e => {
     // A semantic model the extension downloaded to this machine, handed over as text.
     else if (m.type === 'open-model') {
       const t0 = Date.now();
-      await openModelView({ name: String(m.name || 'model.bim'), path: String(m.path || '') }, String(m.text || ''),
-                          { workspace: m.workspace, model: m.model });
+      await openModelView({ name: String(m.name || 'model.bim'), path: String(m.path || '') }, String(m.text || ''));
       reportOpened('file', String(m.name || 'model.bim'), Date.now() - t0);
     }
     else if (m.type === 'reset') { await engineReady; await leaveLakehouse(); lakehouse = null; }

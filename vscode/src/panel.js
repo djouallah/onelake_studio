@@ -95,7 +95,7 @@ function openPanel(context, opts = {}) {
   return opening;
 }
 
-async function openPanelUncontended(context, { onOpened, onBoot, onBootFailed, onScreen, engine, host, build } = {}) {
+async function openPanelUncontended(context, { onOpened, onBoot, onBootFailed, engine, host, build } = {}) {
   const { page: siteUri, readme: readmeUri } = await webviewRoot(context.extensionUri,
     { dev: context.extensionMode === vscode.ExtensionMode.Development });
   const vendorUri = vscode.Uri.joinPath(context.extensionUri, 'vendor');
@@ -162,10 +162,6 @@ async function openPanelUncontended(context, { onOpened, onBoot, onBootFailed, o
       // the one number the per-read lines cannot add up to, because the wait includes
       // everything between the reads: the worker, the catalog, the rendering.
       onOpened(msg);
-    } else if (msg.type === 'onscreen' && onScreen) {
-      // What is on screen now — a table, a model and its page, the SQL last run — written
-      // down for Claude Code, which cannot see this webview (onscreen.js).
-      onScreen(msg);
     }
   }, null, disposables);
 
@@ -174,7 +170,6 @@ async function openPanelUncontended(context, { onOpened, onBoot, onBootFailed, o
     // A query still scanning for a tab that no longer exists is pure cost — CPU, and a
     // OneLake read that nobody will see.
     if (engine) engine.call('cancel').catch(() => {});
-    if (onScreen) onScreen(null);
     for (const d of disposables.splice(0)) { try { d.dispose(); } catch (_) {} }
   }, null, disposables);
   current = panel;

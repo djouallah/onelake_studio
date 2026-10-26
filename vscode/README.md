@@ -24,22 +24,20 @@ The panel loads nothing from the network: its few libraries ship inside the exte
 | **OneLake Studio: Refresh** | Re-reads a workspace, item or folder from OneLake in the foreground. Everything else is served from the cache first and refreshed behind you. |
 | **OneLake Studio: Show Read Log** | Every OneLake request the extension made, with sizes and timings. |
 | **OneLake Studio: Clear Cached OneLake Data** | Empties the on-disk cache (listings, table metadata, first rows, files, table data) and reports what it freed. It is the only thing that does: the cache survives a sign-out. |
-| **OneLake Studio: Install Skill for Claude Code** | Lets Claude Code answer questions about your OneLake data and semantic models — "what is sales by region in my model" — by running this extension's read-only command line (see below). |
+| **OneLake Studio: Install Agent Skill (Claude Code, GitHub Copilot)** | Lets Claude Code or GitHub Copilot answer questions about your OneLake data and semantic models — "what is sales by region in my model" — by running this extension's read-only command line (see below). |
 
-## Ask Claude Code about your data
+## Ask Claude Code or GitHub Copilot about your data
 
-**Install Skill for Claude Code** writes a skill to `~/.claude/skills/onelake/`. Claude Code then
+**Install Agent Skill** writes a skill to `~/.claude/skills/onelake/`, where both Claude Code and
+GitHub Copilot in VS Code (agent mode) look for personal skills. Either then
 answers questions about OneLake and Power BI semantic models itself: it lists workspaces,
 lakehouses and models, reads a model's measures and their DAX, and computes measures by any
 column — `SELECT dim_customer.Region, AGG("Total Sales") FROM sales_model GROUP BY ALL` — on the
 same sign-in, cache, DuckDB and DAX compiler as the panel, read only. The skill runs the
 extension's `cli.mjs` with Node.js, which only hands the question to the extension running in
 VS Code and prints its answer — so VS Code has to be open, signed in. The skill follows the
-extension through updates.
-
-It also sees what the panel shows: ask "are these numbers right?" and Claude reads the open
-table, file or model, the SQL or DAX you last ran and its rows — and can run that same query
-again in full, print the SQL a DAX query compiles to, or check a measure against its raw table.
+extension through updates. It can also run a DAX query against a model, print the SQL a
+model query or DAX compiles to, and check a measure against its raw table.
 
 ## Settings
 

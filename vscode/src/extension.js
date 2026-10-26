@@ -23,7 +23,6 @@ const { hasFilesArea } = require('./names');
 const { createAgent } = require('./agent');
 const { createSemViews } = require('./semviews');
 const { serveBridge } = require('./bridge');
-const { createOnScreen } = require('./onscreen');
 const { PINS } = require('./vendored');
 
 // OneLake accepts tokens in the storage
@@ -357,8 +356,6 @@ async function resetEngine() {
 let rebindStore = async () => {};
 // The semantic views this machine keeps (semviews.js), per account; set by activateInner.
 let semviews = null;
-// What the panel shows, written to a file Claude Code reads (onscreen.js); set at activation.
-let onScreen = null;
 
 async function show(context, options) {
   if (revealPanel()) return true;
@@ -382,7 +379,6 @@ async function show(context, options) {
   if (!eng) return false;
   await openPanel(context, {
     onOpened: logOpened, onBoot: logBoot, engine: eng, build: buildInfo,
-    onScreen: m => { if (onScreen) (m ? onScreen.update(m) : onScreen.close()); },
     host: createHostMethods({
       onelake, engine: eng, onStatus: message => postLive({ type: 'status', message }),
       saveFile, semviews,
@@ -451,10 +447,11 @@ function buildCommit(context, dev) {
 }
 
 // ---------------------------------------------------------------------------
-// The Claude Code skill
+// The agent skill (Claude Code, GitHub Copilot)
 // ---------------------------------------------------------------------------
-// cli.mjs is this extension's modules from a shell; claude-skill/SKILL.md tells Claude Code
-// when and how to run it. Installing writes the skill to ~/.claude/skills/onelake/ with the
+// cli.mjs is this extension's modules from a shell; claude-skill/SKILL.md tells an agent
+// when and how to run it. Installing writes the skill to ~/.claude/skills/onelake/ — read by
+// Claude Code and by GitHub Copilot in VS Code, so one copy serves both — with the
 // path of THIS install's cli.mjs filled in — a path that changes with every update, so a skill
 // this extension wrote (it carries the marker) is rewritten at each activation. One the user
 // wrote themselves, without the marker, is never touched unless they ask.
@@ -465,9 +462,7 @@ async function writeSkill(context) {
   const fsp = require('node:fs/promises');
   const template = await fsp.readFile(join(context.extensionUri.fsPath, 'claude-skill', 'SKILL.md'), 'utf8');
   const cli = join(context.extensionUri.fsPath, 'cli.mjs').replace(/\\/g, '/');
-  // Where onscreen.js writes what each window's panel shows.
-  const panel = context.globalStorageUri.fsPath.replace(/\\/g, '/');
-  const text = template.split('{{cli}}').join(cli).split('{{panel}}').join(panel);
+  const text = template.split('{{cli}}').join(cli);
   const file = skillFile();
   const before = await fsp.readFile(file, 'utf8').catch(() => null);
   if (before === text) return false;
@@ -479,7 +474,7 @@ async function writeSkill(context) {
 async function refreshSkill(context) {
   const before = await require('node:fs/promises').readFile(skillFile(), 'utf8').catch(() => null);
   if (before && before.includes(SKILL_MARKER) && await writeSkill(context)) {
-    if (out) out.appendLine(`Claude Code skill updated at ${skillFile()}`);
+    if (out) out.appendLine(`agent skill updated at ${skillFile()}`);
   }
 }
 
@@ -492,7 +487,7 @@ async function installSkill(context) {
   }
   await writeSkill(context);
   vscode.window.showInformationMessage(
-    'OneLake Studio: Claude Code can now answer questions about your OneLake data and semantic models, ' +
+    'OneLake Studio: Claude Code and GitHub Copilot can now answer questions about your OneLake data and semantic models, ' +
     'through this extension while VS Code is open. It needs Node.js on PATH.',
     'Open Skill').then(pick => {
     if (pick === 'Open Skill') vscode.window.showTextDocument(vscode.Uri.file(skillFile()));
@@ -502,15 +497,6 @@ async function installSkill(context) {
 async function activate(context) {
   out = vscode.window.createOutputChannel('OneLake Studio');
   context.subscriptions.push(out);
-
-  // One file per window, named by this extension host's pid; the skill reads them all.
-  onScreen = createOnScreen({
-    dir: context.globalStorageUri.fsPath,
-    window: { workspace: vscode.workspace.name || null,
-              folder: ((vscode.workspace.workspaceFolders || [])[0] || {}).uri?.fsPath || null },
-    log: m => out.appendLine(m),
-  });
-  onScreen.sweep().catch(() => {});
 
   // The read indicator, visible even when the panel's tab is not. Hidden until the first
   // burst — a status bar item with nothing to say is noise.
@@ -546,7 +532,7 @@ async function activate(context) {
     await activateInner(context);
     // After an update the skill still names the previous install's cli.mjs. Not awaited:
     // nothing on screen depends on it.
-    refreshSkill(context).catch(e => out.appendLine(`Claude Code skill not refreshed: ${e.message}`));
+    refreshSkill(context).catch(e => out.appendLine(`agent skill not refreshed: ${e.message}`));
     out.appendLine(`activated ${version} ${commit}${dev ? ' (dev)' : ''} — signed in: ${signedIn}`);
   } catch (e) {
     out.appendLine(`ACTIVATION FAILED: ${(e && e.stack) || e}`);
@@ -679,7 +665,6 @@ async function activateInner(context) {
     appDir: (await webviewRoot(context.extensionUri, { dev })).page.fsPath,
     vendorDir: join(context.extensionUri.fsPath, 'vendor'),
     daxSqlPin: PINS.daxSql,
-    screenDir: context.globalStorageUri.fsPath,
   });
   context.subscriptions.push(serveBridge({
     handle: req => {
@@ -723,7 +708,6 @@ async function activateInner(context) {
         bytes = await downloading.get(id);
       }
       await openInPanel({ type: 'open-model', name: bimFileName(n.model), path,
-                          workspace: n.workspace, model: n.model,
                           text: Buffer.from(bytes).toString('utf8') });
     } catch (e) {
       if (out) out.appendLine(`download of ${n.model} failed — ${(e && e.stack) || e}`);
@@ -753,7 +737,7 @@ async function activateInner(context) {
 
     vscode.commands.registerCommand('onelakeStudio.installClaudeSkill', async () => {
       try { await installSkill(context); }
-      catch (e) { showError(`Could not install the Claude Code skill: ${(e && e.message) || e}`); }
+      catch (e) { showError(`Could not install the agent skill: ${(e && e.message) || e}`); }
     }),
 
     vscode.commands.registerCommand('onelakeStudio.pinWorkspace', async n => {
@@ -932,8 +916,6 @@ function deactivate() {
   // The burst timers hold the process open if they are live at shutdown.
   clearTimeout(postTimer);
   clearTimeout(idleTimer);
-  // A window closing with its panel open: nothing will be on its screen any more.
-  if (onScreen) onScreen.closeSync();
   // The engine holds a native database handle and a temp directory; closing it is what
   // releases both.
   return engine ? engine.close() : undefined;

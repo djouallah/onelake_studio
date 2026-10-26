@@ -7,7 +7,6 @@
 // (src/agent.js), and this prints the answer — markdown on stdout, notes on stderr.
 // Written for an agent to run. Read only. Needs VS Code open with the extension signed in.
 //
-//   node cli.mjs screen [--rerun]                     what the panel shows; --rerun reads all of it
 //   node cli.mjs ls                                   workspaces
 //   node cli.mjs ls <ws>                              its lakehouses/warehouses and semantic models
 //   node cli.mjs ls <ws> <item>                       its tables, and their names for --in
@@ -23,9 +22,6 @@ const { askBridge } = require("./src/bridge.js");
 
 const HELP = `onelake — ask OneLake Studio (VS Code must be open, signed in). Read only.
 
-  screen                              what the OneLake Studio panel shows: what is open, the
-                                        SQL or DAX it ran, the rows on screen
-    --rerun                           run that again and print the whole result
   ls                                  workspaces
   ls <ws>                             its lakehouses/warehouses and semantic models
   ls <ws> <item>                      its tables, and their names for sql --in
@@ -37,7 +33,7 @@ const HELP = `onelake — ask OneLake Studio (VS Code must be open, signed in). 
                                         and its files as 'Files/…' (read_parquet('Files/x.parquet'))
     --show-sql                        print the SQL a model query compiles to
   dax "EVALUATE …"                    a DAX query against a model (Explore's DAX runs as is)
-    --model <name>                    which model (default: the one on screen)
+    --model <name>                    which model (needed when more than one is defined)
   --limit N  --csv
   --fresh                             re-read from OneLake/Fabric instead of the cache`;
 
@@ -50,7 +46,6 @@ for (let i = 0; i < argv.length; i++) {
   else if (a === "--in") opts.in = argv[++i];
   else if (a === "--limit") opts.limit = Number(argv[++i]);
   else if (a === "--show-sql") opts.showSql = true;
-  else if (a === "--rerun") opts.rerun = true;
   else if (a === "--model") opts.model = argv[++i];
   else args.push(a);
 }
