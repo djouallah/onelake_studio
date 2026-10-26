@@ -6,8 +6,8 @@
   served from there first; the network is asked only when nothing is cached, or the cached
   answer is past its window.
 
-The extension host in [`src/`](src/) does sign-in, every OneLake read (cache first) and the query
-engine; its panel, [`app/`](app/), is only a view.
+The extension host in [`src/`](../src/) does sign-in, every OneLake read (cache first) and the query
+engine; its panel, [`app/`](../app/), is only a view.
 
 ## Commands
 
@@ -56,7 +56,7 @@ no app registration: VS Code's own Microsoft account provider is a first-party a
 `getSession` returns the OneLake token directly.
 
 The query engine is **DuckDB 2.0 running natively in the extension host**
-([`src/engine-host.js`](src/engine-host.js)) — a real DuckDB, not a WebAssembly
+([`src/engine-host.js`](../src/engine-host.js)) — a real DuckDB, not a WebAssembly
 build in the page. It reads OneLake itself through its `iceberg` and `azure` extensions: a table is
 read with `iceberg_scan` on the metadata file the host's cache holds — the catalog is never asked at
 query time — and `Files/` objects are read as `abfss://` URLs. DuckDB therefore does the Iceberg
@@ -67,14 +67,14 @@ result past 200,000 rows is counted rather than carried into the panel.
 The token lives only in the extension host, in a DuckDB storage secret; when VS Code hands back a new
 one, the secret is reissued. The page holds no credential and makes no
 OneLake request: it reaches the host through one message channel, and only through `query`, `stream`,
-`cancel`, `info` and the host's OneLake reads ([`src/host.js`](src/host.js)).
+`cancel`, `info` and the host's OneLake reads ([`src/host.js`](../src/host.js)).
 File access is locked down to the temp directory, `https://`, `abfss://` and `zip://` over a remote
-archive, and the page's SQL is checked in the host ([`src/sql.js`](src/sql.js)): one statement,
+archive, and the page's SQL is checked in the host ([`src/sql.js`](../src/sql.js)): one statement,
 a read, or the page's own views, schemas and `READ_ONLY` attaches — never `COPY`, `INSERT`,
 `EXPORT` or anything else that writes.
 
 Listings (workspaces, items, tables, `Files/`, semantic models), table metadata and first rows
-are served cache-first from disk ([`src/onelake.js`](src/onelake.js)) and refreshed behind you.
+are served cache-first from disk ([`src/onelake.js`](../src/onelake.js)) and refreshed behind you.
 The bytes of a `Files/` object (an image, a `.bim`, a SQLite copy, a saved file) are kept under
 the etag its cached listing gave, so a rewritten file is read again and an unchanged one never
 is. Table data — Iceberg files never change once written — is kept by DuckDB's disk cache
@@ -103,7 +103,7 @@ this does not run on vscode.dev.
 So does an [Apache Ossie](https://github.com/apache/ossie) model whose metrics are DAX: a `.yaml`
 or `.yml` whose top level has `version:` and `datasets:` (any other YAML is a document).
 dax-sql's `formats/ossie.js` turns it into the `.bim` it stands for, with the vendored `yaml`
-parser, and from there the two are one ([`app/semantic.js`](app/semantic.js)). The pages:
+parser, and from there the two are one ([`app/semantic.js`](../app/semantic.js)). The pages:
 
 - **Model**: its tables as a star, dimensions in the middle and facts around them, with its
   relationships. Click a table for its columns, measures (with their DAX) and relationships.
@@ -125,7 +125,7 @@ parser, and from there the two are one ([`app/semantic.js`](app/semantic.js)). T
 
 A model is a **semantic view**, and SQL names it — in the main editor, the model's SQL tab and
 the command line alike. The statements are dax-sql's (`createViews()`, vendored at the pin in
-[`src/vendored.js`](src/vendored.js)); nothing here re-implements them:
+[`src/vendored.js`](../src/vendored.js)); nothing here re-implements them:
 
 ```sql
 CREATE [OR REPLACE] SEMANTIC VIEW [IF NOT EXISTS] sales FROM '<a .bim or Ossie .yaml: local, abfss://… or Files/…>';
@@ -138,7 +138,7 @@ SELECT * FROM (SHOW SEMANTIC METRICS IN sales) WHERE ...;
 ```
 
 A model opened from the tree or from `Files/` becomes the view named after its file (`nem.bim`
-is `nem`). Views are kept by the extension ([`src/semviews.js`](src/semviews.js)) as pointers —
+is `nem`). Views are kept by the extension ([`src/semviews.js`](../src/semviews.js)) as pointers —
 name, model file path, when — in one file per Microsoft account in its own storage, so they
 survive a restart; the file stays where it is. Creating one writes nothing to Fabric or OneLake. A
 Direct Lake table is read from the lakehouse its model names, through the same Iceberg catalog,
@@ -170,6 +170,7 @@ src/      extension host: sign-in, cache-first OneLake, tree, native DuckDB, Fab
 app/      the panel: a view over the host (its own page, no sign-in, no network)
 media/    icons
 test/     node --test suite (npm test) and the browser runners
+docs/     this file, the changelog and a summary of both
 cli.mjs   the command line: hands ls, table, model, sql to the running extension (bridge.js -> agent.js)
 claude-skill/  the agent skill (Claude Code, GitHub Copilot) that runs cli.mjs, installed by Install Agent Skill
 *.mjs     packaging: stage-webview, vendor, fetch-extensions, check-binding, fetch-binding, make-icon

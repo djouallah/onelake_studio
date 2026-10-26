@@ -11,7 +11,7 @@ VS Code already uses. Open it from the OneLake Studio icon in the activity bar, 
 - **Install Agent Skill** lets Claude Code or GitHub Copilot answer questions about your data.
 - Everything is cached on this machine; nothing is ever written to Fabric or OneLake.
 
-Commands, settings and how it works: [ARCHITECTURE.md](https://github.com/djouallah/onelake_studio/blob/main/ARCHITECTURE.md).
+Commands, settings, how it works and release notes: [docs/](https://github.com/djouallah/onelake_studio/tree/main/docs).
 
 > A personal learning project — not a Microsoft product or supported by Microsoft, and DAX compiled
 > to SQL here is not guaranteed to match Power BI.

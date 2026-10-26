@@ -174,9 +174,10 @@ jobs:
       # --target stamps TargetPlatform into the manifest AND names the file
       # onelake-studio-<target>-<version>.vsix, which is the name worth having on the
       # artifact. The major is pinned: an unpinned npx would let a future vsce 4 change how a
-      # release is built without anyone choosing that.
+      # release is built without anyone choosing that. --changelog-path because vsce looks
+      # for CHANGELOG.md beside package.json, and it lives in docs/.
       - name: Package
-        run: npx --yes @vscode/vsce@3 package --target ${{ matrix.target }}
+        run: npx --yes @vscode/vsce@3 package --target ${{ matrix.target }} --changelog-path docs/CHANGELOG.md
 
       # The only check that cannot lie. Everything above is a claim about node_modules; this
       # reads the artifact that actually ships. A vsix carrying two bindings is 37MB of waste,
