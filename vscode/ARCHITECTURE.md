@@ -108,7 +108,7 @@ src/      extension host: sign-in, cache-first OneLake, tree, native DuckDB, Fab
 app/      the panel: a view over the host (its own page, no sign-in, no network)
 media/    icons
 test/     node --test suite (npm test) and the browser runners
-cli.mjs   the same modules from a shell, signed in with `az`: ls, table, model, sql (read only)
+cli.mjs   the command line: hands ls, table, model, sql to the running extension (bridge.js -> agent.js)
 claude-skill/  the Claude Code skill that runs cli.mjs, installed by Install Skill for Claude Code
 *.mjs     packaging: stage-webview, vendor, fetch-extensions, check-binding, fetch-binding, make-icon
 ```

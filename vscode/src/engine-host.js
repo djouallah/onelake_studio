@@ -180,19 +180,21 @@ function createEngineHost({ extensionDir, onLog = () => {}, onWarn = () => {}, g
 
   // Connections running a page query right now, so cancel() interrupts exactly those.
   const live = new Set();
+  // ...and the command line's (agent.js), which a click in the panel must not stop.
+  const agentLive = new Set();
   // Connections cancel() reached. Their failure is a stop, not an error, and says so with
   // a flag the page reads — DuckDB's text for it ("Interrupted!") never said "cancel".
   const interrupted = new WeakSet();
-  async function withConn(fn) {
+  async function withConn(fn, owner = live) {
     const c = await instance.connect();
-    live.add(c);
+    owner.add(c);
     try { return await fn(c); }
     catch (e) {
       if (interrupted.has(c) && e && typeof e === 'object') { try { e.cancelled = true; } catch (_) {} }
       throw e;
     }
     finally {
-      live.delete(c);
+      owner.delete(c);
       try { c.closeSync(); } catch (_) {}
     }
   }
@@ -537,9 +539,9 @@ function createEngineHost({ extensionDir, onLog = () => {}, onWarn = () => {}, g
     return total;
   }
 
-  async function runAll(sql) {
+  async function runAll(sql, owner) {
     const batches = [];
-    await withConn(c => runStreaming(c, sql, b => batches.push(b)));
+    await withConn(c => runStreaming(c, sql, b => batches.push(b)), owner);
     if (batches.length === 1) return batches[0];
     return {
       fields: batches[0].fields,
@@ -591,16 +593,28 @@ function createEngineHost({ extensionDir, onLog = () => {}, onWarn = () => {}, g
     catch (e) { throw scrub(e, authToken || token); }
   }
 
+  // The command line's query (agent.js): the same guard and the same engine as the page's,
+  // on connections the page's Stop does not reach. Not a page method.
+  async function agentQuery(sql) {
+    const token = authToken;
+    try {
+      assertReadOnly(sql);
+      await init();
+      return await withAuthRetry(() => runAll(sql, agentLive));
+    } catch (e) { throw scrub(e, authToken || token); }
+  }
+
   async function close() {
     closed = true;
     // Whatever is running is stopped first: closing an instance under a live query is
     // the native binding's problem to survive, and there is no reason to make it one.
-    for (const c of live) { try { c.interrupt(); } catch (_) {} }
+    for (const c of [...live, ...agentLive]) { try { c.interrupt(); } catch (_) {} }
     // A boot still in flight finishes (or fails) before its handles are released.
     if (ready) await ready.catch(() => {});
     await adminChain.catch(() => {});
-    for (const c of live) { try { c.closeSync(); } catch (_) {} }
+    for (const c of [...live, ...agentLive]) { try { c.closeSync(); } catch (_) {} }
     live.clear();
+    agentLive.clear();
     try { if (conn) conn.closeSync(); } catch (_) {}
     try { if (instance) instance.closeSync(); } catch (_) {}
     conn = instance = null; ready = null;
@@ -629,7 +643,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onWarn = () => {}, g
     try { return await openTable(target); } catch (e) { throw scrub(e, authToken); }
   }
 
-  return { init, call, close, openTable: openTableScrubbed, copyToTemp,
+  return { init, call, close, openTable: openTableScrubbed, copyToTemp, agentQuery,
            get capabilities() { return capabilities; } };
 }
 

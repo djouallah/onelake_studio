@@ -281,7 +281,7 @@
   },
   "scripts": {
     "vscode:prepublish": "node ./check-binding.mjs && node ./stage-webview.mjs && node ./vendor.mjs",
-    "test": "node --test test/app-paths.test.mjs test/catalog.test.mjs test/fabric.test.mjs test/host.test.mjs test/names.test.mjs test/onelake.test.mjs test/panel-html.test.mjs test/sql.test.mjs test/store.test.mjs"
+    "test": "node --test test/app-paths.test.mjs test/catalog.test.mjs test/fabric.test.mjs test/host.test.mjs test/names.test.mjs test/onelake.test.mjs test/panel-html.test.mjs test/sql.test.mjs test/store.test.mjs test/bridge.test.mjs"
   },
   "devDependencies": {
     "@types/vscode": "^1.90.0"

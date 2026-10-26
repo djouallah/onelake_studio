@@ -32,9 +32,10 @@ The panel loads nothing from the network: its few libraries ship inside the exte
 answers questions about OneLake and Power BI semantic models itself: it lists workspaces,
 lakehouses and models, reads a model's measures and their DAX, and computes measures by any
 column — `SELECT dim_customer.Region, AGG("Total Sales") FROM sales_model GROUP BY ALL` — on the
-same cache, DuckDB and DAX compiler as the panel, read only. It runs the extension's `cli.mjs`
-with Node.js and signs in with the Azure CLI, so it needs `az login` once and Node.js 20+ on
-PATH; VS Code does not have to be open. The skill follows the extension through updates.
+same sign-in, cache, DuckDB and DAX compiler as the panel, read only. The skill runs the
+extension's `cli.mjs` with Node.js, which only hands the question to the extension running in
+VS Code and prints its answer — so VS Code has to be open, signed in. The skill follows the
+extension through updates.
 
 ## Settings
 

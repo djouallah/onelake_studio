@@ -20,6 +20,9 @@ const { createFabric, bimFileName } = require('./fabric');
 const { LakehouseTree } = require('./tree');
 const { webviewRoot } = require('./webview');
 const { hasFilesArea } = require('./names');
+const { createAgent } = require('./agent');
+const { serveBridge } = require('./bridge');
+const { PINS } = require('./vendored');
 
 // OneLake accepts tokens in the storage
 // audience only, and this one covers both the data reads and the Iceberg catalog. It is
@@ -480,8 +483,8 @@ async function installSkill(context) {
   }
   await writeSkill(context);
   vscode.window.showInformationMessage(
-    'OneLake Studio: Claude Code can now answer questions about your OneLake data and semantic models. ' +
-    'It signs in with the Azure CLI (run `az login` once) and needs Node.js on PATH.',
+    'OneLake Studio: Claude Code can now answer questions about your OneLake data and semantic models, ' +
+    'through this extension while VS Code is open. It needs Node.js on PATH.',
     'Open Skill').then(pick => {
     if (pick === 'Open Skill') vscode.window.showTextDocument(vscode.Uri.file(skillFile()));
   });
@@ -620,6 +623,32 @@ async function activateInner(context) {
   const bimPath = n => join(modelsFolder(), bimFileName(n.workspace).replace(/\.bim$/, ''), bimFileName(n.model));
   // The tree's check mark: the .bim already on this machine, or null.
   const cachedModel = n => (existsSync(bimPath(n)) ? bimPath(n) : null);
+
+  // The command line (cli.mjs) rings here: its questions are answered by THIS extension —
+  // its sign-in, its cache, its engine — so an agent in a terminal reads what the tree and
+  // the panel read, with no second sign-in and no second cache.
+  const dev = context.extensionMode === vscode.ExtensionMode.Development;
+  const agent = createAgent({
+    onelake, fabric, modelsFolder,
+    bimPath: (ws, model) => bimPath({ workspace: ws, model }),
+    engine: async () => {
+      const { readme } = await webviewRoot(context.extensionUri, { dev });
+      const eng = ensureEngine(context, { readme: readme.fsPath });
+      if (!eng) throw new Error('DuckDB could not be loaded on this platform — see OneLake Studio: Show Read Log');
+      return eng;
+    },
+    appDir: (await webviewRoot(context.extensionUri, { dev })).page.fsPath,
+    vendorDir: join(context.extensionUri.fsPath, 'vendor'),
+    daxSqlPin: PINS.daxSql,
+  });
+  context.subscriptions.push(serveBridge({
+    handle: req => {
+      if (out) out.appendLine(`command line: ${(req && req.args || []).join(' ').slice(0, 120)}`);
+      if (!signedIn) return { out: '', err: 'OneLake Studio is not signed in — sign in from its view in VS Code.', code: 1 };
+      return agent.run(req);
+    },
+    log: m => out && out.appendLine(m),
+  }));
 
   // The downloaded .bim is the cache: getDefinition is a long-running export, so a model is
   // fetched from Fabric once and opened from its file after that. Download Again is `fresh`.
