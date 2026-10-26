@@ -59,7 +59,11 @@ this does not run on vscode.dev.
 
 ## Semantic models
 
-**A `.bim` under `Files/` opens as its semantic model**, in place of the editor, on three pages:
+**A `.bim` under `Files/` opens as its semantic model**, in place of the editor, on three pages.
+So does an [Apache Ossie](https://github.com/apache/ossie) model whose metrics are DAX: a `.yaml`
+or `.yml` whose top level has `version:` and `datasets:` (any other YAML is a document).
+dax-sql's `formats/ossie.js` turns it into the `.bim` it stands for, with the vendored `yaml`
+parser, and from there the two are one ([`app/semantic.js`](app/semantic.js)). The pages:
 
 - **Model**: its tables as a star, dimensions in the middle and facts around them, with its
   relationships. Click a table for its columns, measures (with their DAX) and relationships.
@@ -84,7 +88,7 @@ the command line alike. The statements are dax-sql's (`createViews()`, vendored 
 [`src/vendored.js`](src/vendored.js)); nothing here re-implements them:
 
 ```sql
-CREATE [OR REPLACE] SEMANTIC VIEW [IF NOT EXISTS] sales FROM '<a .bim: local, abfss://… or Files/…>';
+CREATE [OR REPLACE] SEMANTIC VIEW [IF NOT EXISTS] sales FROM '<a .bim or Ossie .yaml: local, abfss://… or Files/…>';
 DROP SEMANTIC VIEW [IF EXISTS] sales;
 SHOW SEMANTIC VIEWS;
 SHOW SEMANTIC DIMENSIONS IN sales [FOR METRIC m];
@@ -95,8 +99,8 @@ SELECT * FROM (SHOW SEMANTIC METRICS IN sales) WHERE ...;
 
 A model opened from the tree or from `Files/` becomes the view named after its file (`nem.bim`
 is `nem`). Views are kept by the extension ([`src/semviews.js`](src/semviews.js)) as pointers —
-name, `.bim` path, when — in one file per Microsoft account in its own storage, so they survive
-a restart; the `.bim` stays where it is. Creating one writes nothing to Fabric or OneLake. A
+name, model file path, when — in one file per Microsoft account in its own storage, so they
+survive a restart; the file stays where it is. Creating one writes nothing to Fabric or OneLake. A
 Direct Lake table is read from the lakehouse its model names, through the same Iceberg catalog,
 whichever item is selected, and only when a query actually reads it.
 

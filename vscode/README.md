@@ -9,7 +9,8 @@ Sign-in is the VS Code Microsoft account you already use — there is nothing to
 It also lists each workspace's **Power BI semantic models**. Click one and its `.bim` is
 downloaded to this machine, once, and opened as its model: the tables and relationships, SQL that asks the
 model with `AGG(measure)` (compiled from DAX by [dax-sql](https://github.com/djouallah/dax-sql)), and
-Explore for pivots and charts. Any `.bim` already in `Files/` opens the same way.
+Explore for pivots and charts. Any `.bim` already in `Files/` opens the same way, and so does an
+[Apache Ossie](https://github.com/apache/ossie) model whose metrics are DAX (a `.yaml` or `.yml`).
 
 Saving a result as CSV, or a file from `Files/`, goes through VS Code's own save dialog.
 The panel loads nothing from the network: its few libraries ship inside the extension.

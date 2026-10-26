@@ -2,7 +2,8 @@
 // on a real native engine-host through the panel's message bridge, under a CSP of the
 // panel's shape. A .bim is "opened from the tree" — an open-file message, as extension.js
 // posts after an export — and its bytes are read by the real host methods from a fake
-// OneLake this server stands in for (panel-host.mjs). The compiler and the chart library
+// OneLake this server stands in for (panel-host.mjs); then the same model as an Apache Ossie
+// .yaml, which must draw and answer the same. The compiler and the chart library
 // come from vscode/vendor/ (vendor.mjs), as the panel serves them — nothing from a CDN.
 //
 // No editor, no credentials, no lakehouse. Run: node test/run-panel-semantic.mjs
@@ -10,7 +11,7 @@ import http from "node:http";
 import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, extname } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { createRequire } from "node:module";
 import { chromium } from "playwright-core";
 
@@ -43,6 +44,12 @@ const BIM = JSON.stringify({
   },
 });
 const BIM_PATH = "/ws/shop.Lakehouse/Files/semantic_models/shop.bim";
+// The same model as an Apache Ossie YAML, made by the vendored dax-sql and yaml themselves.
+const { PINS } = require("../src/vendored.js");
+const { tmslToOssie } = await import(pathToFileURL(join(VENDOR, "gh", PINS.daxSql, "formats", "ossie.js")).href);
+const { stringify } = await import(pathToFileURL(join(VENDOR, "npm", PINS.yaml, "+esm.js")).href);
+const OSSIE = stringify(tmslToOssie(JSON.parse(BIM), "shop"));
+const OSSIE_PATH = "/ws/shop.Lakehouse/Files/semantic_models/shop_ossie.yaml";
 const TABLES = `WITH "Sales" AS (SELECT * FROM (VALUES (1, 10.0), (2, 5.0), (1, 2.5)) t("ProductKey", "Amount")),
 "Product" AS (SELECT * FROM (VALUES (1, 'red'), (2, 'blue')) t("ProductKey", "Color"))
 `;
@@ -53,6 +60,10 @@ const server = http.createServer(async (req, res) => {
   if (path === BIM_PATH) {
     res.writeHead(200, { "content-type": "application/octet-stream" });
     return res.end(BIM);
+  }
+  if (path === OSSIE_PATH) {
+    res.writeHead(200, { "content-type": "application/octet-stream" });
+    return res.end(OSSIE);
   }
   if (!await servePanel(req, res, ORIGIN, { nonce: NONCE })) res.writeHead(404).end();
 });
@@ -135,8 +146,28 @@ try {
   if (localCards !== 2) throw new Error(`the downloaded model drew ${localCards} cards`);
   console.log("downloaded model: opened from text, 2 cards");
 
+  // An Ossie .yaml in Files/ opens as the same model, and its view answers the same query.
+  await page.evaluate(path => window.postMessage({
+    type: "open-file", workspace: "ws", item: "shop.Lakehouse", path, bytes: 1,
+  }, "*"), OSSIE_PATH.slice(1).replace(/^ws\//, ""));
+  await page.waitForFunction(() => document.getElementById("activeTable").textContent === "shop_ossie.yaml" &&
+    !document.getElementById("modelView").hidden, { timeout: 60000 })
+    .catch(async () => { throw new Error(`the Ossie model never opened — status: ${await page.locator("#status").innerText()}`); });
+  const ossieCards = await page.locator("#modelView .m-card").count();
+  const ossieRels = await page.locator("#modelView .m-rel").count();
+  if (ossieCards !== 2 || ossieRels !== 1) throw new Error(`the Ossie model drew ${ossieCards} cards and ${ossieRels} relationships`);
+  await page.click('#modelView .subtab[data-apage="sql"]');
+  await page.fill("#modelView textarea",
+    `${TABLES}SELECT * FROM (SELECT Product.Color, AGG(Total) AS total FROM shop_ossie GROUP BY ALL) ORDER BY Color`);
+  await page.click("#modelView .btn-analyze.primary");
+  await page.waitForFunction(() => /rows|Error/.test(document.querySelector("#modelView .analyze-info").textContent), { timeout: 60000 });
+  const ossieInfo = await page.locator("#modelView .analyze-info").innerText();
+  const ossieRows = (await page.locator("#modelView .analyze-table").innerText()).replace(/\s+/g, " ");
+  console.log("ossie model:", ossieInfo, "|", ossieRows);
+  if (!/^2 rows/.test(ossieInfo) || !/blue 5(\.0)? red 12\.5/.test(ossieRows)) throw new Error(`Ossie SQL page: ${ossieInfo} ${ossieRows}`);
+
   if (csp.length) throw new Error(`Content-Security-Policy refused something: ${csp.join(" | ")}`);
-  console.log("RESULT: OK — a .bim opened in the panel as its model, and a model query ran on the native engine");
+  console.log("RESULT: OK — a .bim and an Ossie .yaml opened in the panel as their model, and model queries ran on the native engine");
   code = 0;
 } catch (e) {
   console.log("RESULT: FAILED —", e.message);

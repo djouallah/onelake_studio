@@ -32,6 +32,11 @@ test("a view is a pointer, kept per account, and its .bim is read where it is", 
     assert.deepEqual(reads, [["ws", "lh.Lakehouse/Files/m/nem.bim"]]);
     assert.throws(() => v.resolve("Files/x.bim", null), /relative to a lakehouse/);
     await assert.rejects(v.put("bad", join(dir, "model.json")), /\.bim file/);
+    // An Apache Ossie model is a model file too; semantic.js reads its YAML.
+    const ossie = join(dir, "ossie.yaml");
+    await writeFile(ossie, "version: 0.2.0.dev0\ndatasets: []\n");
+    assert.equal((await v.put("ossie", ossie)).text, "version: 0.2.0.dev0\ndatasets: []\n");
+    await v.remove("ossie");
 
     const texts = await v.texts();
     assert.deepEqual(texts.map(t => t.name).sort(), ["Sales", "nem"]);

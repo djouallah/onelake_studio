@@ -1,23 +1,25 @@
 // =============================================================================
-// semantic.js — semantic views: Power BI models (.bim) that SQL can name
+// semantic.js — semantic views: Power BI models (.bim, or Ossie .yaml) that SQL can name
 // =============================================================================
 // The statements and the compiling are dax-sql's, vendored at the pin in src/vendored.js —
 // its createViews() is the one implementation of
 //
-//   CREATE [OR REPLACE] SEMANTIC VIEW [IF NOT EXISTS] sales FROM '<path to .bim>'
+//   CREATE [OR REPLACE] SEMANTIC VIEW [IF NOT EXISTS] sales FROM '<path to .bim or .yaml>'
 //   DROP SEMANTIC VIEW [IF EXISTS] sales
 //   SHOW SEMANTIC VIEWS | SHOW SEMANTIC DIMENSIONS IN sales [FOR METRIC m] | SHOW SEMANTIC METRICS IN sales
 //   DESCRIBE sales
 //   SELECT dim.Region, AGG("Sales") FROM sales GROUP BY ALL    (AGG(m) is measure m)
 //
-// and nothing here re-implements any of it. What is this extension's: reading a Direct Lake
+// and nothing here re-implements any of it. A model is TMSL (a .bim) or an Apache Ossie model
+// whose metrics are DAX (a .yaml or .yml): dax-sql's formats/ossie.js turns the latter into the
+// .bim it stands for, and from there the two are one. What is this extension's: reading a Direct Lake
 // model's tables from OneLake — each table's expression names a workspace and an item by GUID,
 // and the engine opens it through the same Iceberg catalog as any other, in a schema of its
 // own ("dbo_1a2b3c4d") so two lakehouses' dbo.x never collide — and where views are kept
 // (the extension host, per account: src/semviews.js). This module is shared by the panel and
 // the host's command line (src/agent.js); `modules` lets the host hand in the compiler.
 // =============================================================================
-import { PINS, ghFile } from "./cdn.js";
+import { PINS, ghFile, npmEsm } from "./cdn.js";
 import { quoteIdent, basename } from "./paths.js";
 
 const lc = s => String(s).toLowerCase();
@@ -27,7 +29,12 @@ function compilerModules() {
   modulesP = modulesP || Promise.all([
     import(ghFile(PINS.daxSql, "src/index.js")),
     import(ghFile(PINS.daxSql, "formats/tmsl.js")),
-  ]).then(([c, t]) => ({ createCompiler: c.createCompiler, createViews: c.createViews, tmslToModel: t.tmslToModel }))
+    import(ghFile(PINS.daxSql, "formats/ossie.js")),
+    import(npmEsm(PINS.yaml)),
+  ]).then(([c, t, o, y]) => ({
+    createCompiler: c.createCompiler, createViews: c.createViews, tmslToModel: t.tmslToModel,
+    ossieToTmsl: o.ossieToTmsl, parseYaml: y.parse,
+  }))
     .catch(e => { modulesP = null; throw new Error(`Could not load the DAX compiler: ${e.message}`); });
   return modulesP;
 }
@@ -80,16 +87,38 @@ export function directLakeTables(bim) {
   return tables;
 }
 
+// Whether a file of this name is an Ossie model rather than a .bim.
+export const isOssiePath = path => /\.ya?ml$/i.test(String(path));
+
+// Whether a YAML file's text is an Ossie model: its top level has the datasets and the spec's
+// version. A dbt schema.yml, a pipeline's config, has neither, and stays a document.
+export const isOssie = text =>
+  /^datasets:/m.test(String(text)) && /^version:/m.test(String(text));
+
+// The TMSL a model file's text is: a .bim as it is, an Ossie model as the .bim it stands for.
+function bimOf(path, text, mods) {
+  const body = String(text).replace(/^﻿/, "");
+  if (isOssiePath(path)) {
+    let doc;
+    try { doc = mods.parseYaml(body); }
+    catch (e) { throw new Error(`${basename(path)} is not YAML: ${e.message}`); }
+    if (!doc || typeof doc !== "object" || !Array.isArray(doc.datasets))
+      throw new Error(`${basename(path)} is not an Ossie model: it has no datasets`);
+    return mods.ossieToTmsl(doc);
+  }
+  try { return JSON.parse(body); }
+  catch (e) { throw new Error(`${basename(path)} is not a TMSL model: ${e.message}`); }
+}
+
 /**
- * A semantic view of a .bim's text, under `name`. `mode`: 'create', 'replace' or
- * 'if_not_exists' (dax-sql's). Returns what the model view draws:
+ * A semantic view of a model file's text (a .bim, or an Ossie .yaml), under `name`. `mode`:
+ * 'create', 'replace' or 'if_not_exists' (dax-sql's). Returns what the model view draws:
  * { name, file, sample, directLake, bim, exploreCompiler }.
  */
 export async function defineView(name, path, text, mode = "replace", modules = null) {
-  const { createCompiler, tmslToModel } = await ready(modules);
-  let bim;
-  try { bim = JSON.parse(String(text).replace(/^﻿/, "")); }
-  catch (e) { throw new Error(`${basename(path)} is not a TMSL model: ${e.message}`); }
+  const mods = await ready(modules);
+  const { createCompiler, tmslToModel } = mods;
+  const bim = bimOf(path, text, mods);
   const lake = directLakeTables(bim);
   // A Direct Lake table is the view the engine opens for it; any other is the model's own
   // source name, as dax-sql reads it by default.
@@ -121,7 +150,7 @@ export async function defineView(name, path, text, mode = "replace", modules = n
   return { name: v.name, file: basename(path), sample: sampleQuery(v), directLake: lake.size, bim, exploreCompiler, done };
 }
 
-// A model opened from a file, under the file's name: the view `nem` for nem.bim.
+// A model opened from a file, under the file's name: the view `nem` for nem.bim or nem.yaml.
 export const registerModel = (fileName, text, modules = null) =>
   defineView(modelName(fileName), fileName, text, "replace", modules);
 

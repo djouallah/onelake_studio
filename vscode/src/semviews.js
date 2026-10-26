@@ -8,8 +8,9 @@
 // account, in the extension's own storage; its .bim stays where it is and is read from
 // there. Nothing is ever written to Fabric or OneLake.
 //
-// A path is a local .bim, an abfss:// URL of a .bim in OneLake, or Files/….bim relative to
-// a lakehouse (stored as its abfss:// URL).
+// A path is a local model file, an abfss:// URL of one in OneLake, or Files/… relative to a
+// lakehouse (stored as its abfss:// URL). A model file is a .bim (TMSL) or an Apache Ossie
+// model (.yaml or .yml); app/semantic.js reads either.
 // =============================================================================
 
 const fsp = require('node:fs/promises');
@@ -53,7 +54,9 @@ function createSemViews({ dir, onelake }) {
   }
 
   async function readBim(path) {
-    if (!/\.bim$/i.test(path)) throw new Error(`${path}: a semantic view is read from a .bim file (TMSL)`);
+    if (!/\.(bim|ya?ml)$/i.test(path)) {
+      throw new Error(`${path}: a semantic view is read from a .bim file (TMSL) or an Ossie .yaml file`);
+    }
     const m = ABFSS.exec(path);
     const bytes = m ? await onelake.readBytes(m[1], m[2]) : await fsp.readFile(path);
     return Buffer.from(bytes).toString('utf8');

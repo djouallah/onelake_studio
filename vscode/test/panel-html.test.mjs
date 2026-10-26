@@ -91,11 +91,13 @@ test("the page's libraries are exactly what vendor.mjs ships", async () => {
   globalThis.window = { ONELAKE_STUDIO_CONFIG: { vendorBase: "https://webview.test/vendor/", pins: PINS } };
   const cdn = await import("../app/cdn.js");
   delete globalThis.window;
-  for (const key of ["echarts", "daxSql", "marked", "dompurify"]) assert.ok(PINS[key], `${key} is pinned`);
+  for (const key of ["echarts", "daxSql", "marked", "dompurify", "yaml"]) assert.ok(PINS[key], `${key} is pinned`);
   assert.ok(VENDOR.esm.includes(PINS.marked) && VENDOR.esm.includes(PINS.dompurify), "the markdown renderer is vendored");
+  assert.ok(VENDOR.esm.includes(PINS.yaml), "the YAML reader for Ossie models is vendored");
   assert.ok(VENDOR.files.includes(`${PINS.echarts}/dist/echarts.min.js`), "ECharts' build is vendored");
   const gh = VENDOR.gh.find(g => g.repo === PINS.daxSql);
-  assert.ok(gh && gh.include.test("/src/index.js") && gh.include.test("/formats/tmsl.js"),
+  assert.ok(gh && gh.include.test("/src/index.js") && gh.include.test("/formats/tmsl.js") &&
+    gh.include.test("/formats/ossie.js"),
     "dax-sql is vendored at the page's commit, with the files semantic.js imports");
   assert.equal(cdn.npmEsm(PINS.marked), `https://webview.test/vendor/npm/${PINS.marked}/+esm.js`);
   assert.equal(cdn.ghFile(PINS.daxSql, "src/index.js"), `https://webview.test/vendor/gh/${PINS.daxSql}/src/index.js`);

@@ -3,9 +3,9 @@
 // =============================================================================
 // A view, driven by the extension: the OneLake tree in the editor's sidebar says what to
 // open (open-table / open-file), and this page shows it — a table's statistics, its first
-// rows, a SQL editor over it, a file as a table or a document, a .bim as its semantic
-// model. Every statement and every OneLake read goes to the extension host (data.js ->
-// host.js); this file only decides what to show.
+// rows, a SQL editor over it, a file as a table or a document, a .bim (or an Ossie .yaml)
+// as its semantic model. Every statement and every OneLake read goes to the extension host
+// (data.js -> host.js); this file only decides what to show.
 // =============================================================================
 import { createEngine } from './data.js';
 import { isDocResult, textLinesDoc, fileExt, isTextExt, escapeHtml, basename,
@@ -13,7 +13,7 @@ import { isDocResult, textLinesDoc, fileExt, isTextExt, escapeHtml, basename,
 // Static import is safe: docview.js is tiny — the markdown renderer it uses is imported
 // only inside renderMarkdown(), and only for a document that IS markdown.
 import { renderDocument } from './docview.js';
-// Static too, and as cheap: the DAX compiler it runs is imported on the first .bim only.
+// Static too, and as cheap: the DAX compiler it runs is imported on the first model only.
 import * as semantic from './semantic.js';
 // A .bim's model view. Explore's chart library is imported when Explore first opens.
 import { mountAnalyze } from './analyze/view.js';
@@ -183,6 +183,13 @@ async function openFile(m) {
 
 async function selectFile(file) {
   if (fileExt(file.name) === 'bim') return openModelView(file);
+  // A .yaml is an Apache Ossie model when its text says so; any other is a document.
+  if (['yaml', 'yml'].includes(fileExt(file.name))) {
+    const my = ++selSeq;
+    const text = await ossieText(file);
+    if (my !== selSeq) return;
+    if (text != null) return openModelView(file, text, { fromOneLake: true });
+  }
   closeModelView();
   const my = ++selSeq;
   engine.cancelLoad();
@@ -225,9 +232,21 @@ async function selectFile(file) {
   }
 }
 
-// A .bim is a semantic model, not a document: it opens as its model view (analyze/view.js)
-// in place of the editor and the results — Model, SQL, Explore — and is registered
-// (semantic.js) so SQL anywhere, the main editor's included, can name it.
+// The text of a YAML file in Files/ that is an Ossie model, or null: it opens as a document.
+async function ossieText(file) {
+  try {
+    await engineReady;
+    const text = new TextDecoder().decode(await engine.readFileBytes(lakehouse, file));
+    return semantic.isOssie(text) ? text : null;
+  } catch (e) {
+    console.warn(`[ossie] ${file.name}: ${e.message}`);
+    return null;
+  }
+}
+
+// A .bim (or an Ossie .yaml) is a semantic model, not a document: it opens as its model view
+// (analyze/view.js) in place of the editor and the results — Model, SQL, Explore — and is
+// registered (semantic.js) so SQL anywhere, the main editor's included, can name it.
 let modelView = null;
 function closeModelView() {
   if (!modelView) return;
@@ -238,13 +257,14 @@ function closeModelView() {
 }
 
 // A .bim from Files/ (read through the host), or one the extension downloaded from Fabric
-// and hands over as text (open-model): the same view either way.
-async function openModelView(file, text = null) {
+// and hands over as text (open-model): the same view either way. An Ossie .yaml from Files/
+// comes with its text already read (selectFile looked), and is still a OneLake file.
+async function openModelView(file, text = null, { fromOneLake = text == null } = {}) {
   closeModelView();
   const my = ++selSeq;
   engine.cancelLoad();
   $('activeTable').textContent = file.name;
-  activeFile = text == null ? file : null;   // only a OneLake file can be saved as itself
+  activeFile = fromOneLake ? file : null;   // only a OneLake file can be saved as itself
   activeIdent = null;
   activeDocExt = 'bim'; activeDocEligible = false;
   setActiveStats(null);
@@ -255,12 +275,12 @@ async function openModelView(file, text = null) {
   try {
     // A model handed over as text (the tree's click) is drawn without waiting on the
     // engine's boot: only its queries need DuckDB, and runModelSql waits for it.
-    if (text == null) await engineReady;
+    if (fromOneLake) await engineReady;
     const bim = text != null ? text : new TextDecoder().decode(await engine.readFileBytes(lakehouse, file));
     const m = await semantic.registerModel(file.name, bim);
     // Kept by the host as a semantic view too, so it is there after a restart and the
     // command line can name it. Best effort: the view on screen does not depend on it.
-    engine.semanticCreate(m.name, text != null ? file.path : abfssUrl(lakehouse.workspace, file.path))
+    engine.semanticCreate(m.name, fromOneLake ? abfssUrl(lakehouse.workspace, file.path) : file.path)
       .catch(e => console.warn(`[views] ${m.name} not kept: ${e.message}`));
     if (my !== selSeq) return;
     $('modelView').closest('section').classList.add('modelOpen');

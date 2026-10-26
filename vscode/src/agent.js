@@ -62,21 +62,24 @@ function filesToAbfss(sql, lh) {
  * @param {() => Promise<object>} o.engine   the extension's engine (engine-host.js)
  * @param {(ws: string, model: string) => string} o.bimPath  where a model's .bim is downloaded
  * @param {string} o.appDir                  the panel's modules (semantic.js, paths.js)
- * @param {string} o.vendorDir               the vendored DAX compiler
+ * @param {string} o.vendorDir               the vendored DAX compiler and YAML reader
  * @param {ReturnType<import('./semviews').createSemViews>} o.semviews  the views this machine keeps
  */
-function createAgent({ onelake, fabric, engine, bimPath, appDir, vendorDir, daxSqlPin, semviews }) {
+function createAgent({ onelake, fabric, engine, bimPath, appDir, vendorDir, daxSqlPin, yamlPin, semviews }) {
   let mods = null;
   async function modules() {
     if (mods) return mods;
     const load = p => import(pathToFileURL(p).href);
-    const [paths, semantic, c, t] = await Promise.all([
+    const [paths, semantic, c, t, o, y] = await Promise.all([
       load(join(appDir, 'paths.js')), load(join(appDir, 'semantic.js')),
       load(join(vendorDir, 'gh', daxSqlPin, 'src', 'index.js')),
       load(join(vendorDir, 'gh', daxSqlPin, 'formats', 'tmsl.js')),
+      load(join(vendorDir, 'gh', daxSqlPin, 'formats', 'ossie.js')),
+      load(join(vendorDir, 'npm', yamlPin, '+esm.js')),
     ]);
     mods = { paths, semantic,
-             compiler: { createCompiler: c.createCompiler, createViews: c.createViews, tmslToModel: t.tmslToModel } };
+             compiler: { createCompiler: c.createCompiler, createViews: c.createViews, tmslToModel: t.tmslToModel,
+                         ossieToTmsl: o.ossieToTmsl, parseYaml: y.parse } };
     return mods;
   }
 

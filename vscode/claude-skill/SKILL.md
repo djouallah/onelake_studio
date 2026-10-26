@@ -59,7 +59,8 @@ sql "CREATE SEMANTIC VIEW sales FROM 'Files/models/sales.bim'" --in <ws>/<item>
 sql "DROP SEMANTIC VIEW sales"
 ```
 
-A `.bim` path is local, `abfss://…`, or `Files/…` with `--in`. Views are kept by the extension
+A model file is a `.bim` (TMSL) or an Apache Ossie `.yaml`/`.yml` whose metrics are DAX; its path
+is local, `abfss://…`, or `Files/…` with `--in`. Views are kept by the extension
 (shared with the VS Code panel) and survive restarts; nothing is written to Fabric or OneLake.
 
 ## Things to know
