@@ -393,6 +393,12 @@ function createEngineHost({ extensionDir, onLog = () => {}, onWarn = () => {}, g
     try {
       await conn.run(`SET cache_httpfs_type = 'on_disk';`);
       await conn.run(`SET cache_httpfs_cache_directory = ${sqlStr(dir.replace(/\\/g, '/'))};`);
+      // Its default spawns a private thread pool per read, fanning one read out into up to
+      // 1000 threads. In the extension host a cold full-table scan crashed the process that
+      // way (a terminate inside cache_httpfs). DuckDB's own scheduler and a bounded fan-out
+      // keep its parallelism inside DuckDB's.
+      await conn.run(`SET cache_httpfs_parallel_read_mode = 'duckdb_task_scheduler';`);
+      await conn.run('SET cache_httpfs_max_fanout_subrequest = 16;');
       for (const name of ['AzureDfsStorageFileSystem', 'AzureBlobStorageFileSystem']) {
         // Released builds run a constant call twice and throw on the second although the
         // wrap worked: what is registered afterwards is the answer, not the error.
