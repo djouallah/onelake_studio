@@ -78,6 +78,24 @@ test("listings and table metadata are fetched once, then served from the store",
   assert.deepEqual(catalog.calls, ["workspaces", "tables lh.Lakehouse", "load a"]);
 });
 
+test("a table's metadata keeps its own window, and a Refresh of its lakehouse re-reads it once", async () => {
+  const catalog = fakeCatalog();
+  // Listings go stale at once; a table's metadata lasts a day.
+  const ol = createOneLake({ catalog, store: createStore({ dir: null, ttlMs: 0 }), tableTtlMs: 24 * 3600e3 });
+  const a = { schema: "dbo", table: "a" };
+  await ol.table(lh, a);
+  assert.equal((await ol.table(lh, a)).cached, true);
+  await new Promise(r => setTimeout(r, 20));
+  assert.deepEqual(catalog.calls, ["load a"], "past the listing TTL, a table is not re-read");
+
+  ol.refreshTables({ workspace: "other" });            // another workspace's Refresh
+  assert.equal((await ol.table(lh, a)).cached, true);
+  ol.refreshTables({ workspace: "ws", item: "lh.Lakehouse" });
+  assert.equal((await ol.table(lh, a)).cached, false, "a Refresh of its lakehouse goes to the catalog");
+  assert.equal((await ol.table(lh, a)).cached, true, "…once");
+  assert.deepEqual(catalog.calls, ["load a", "load a"]);
+});
+
 test("a forced table listing also clears the catalog's own memo for that item", async () => {
   const catalog = fakeCatalog();
   const ol = createOneLake({ catalog, store: createStore({ dir: null }) });

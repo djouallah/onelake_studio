@@ -235,7 +235,14 @@
           "default": 5,
           "minimum": 0,
           "scope": "machine",
-          "markdownDescription": "How old a listing or a table's metadata may be before it is refreshed. The last-known answer is ALWAYS served instantly from disk — a workspace you have browsed or a table you have ever opened shows without waiting on OneLake; once the answer is older than this, a background refresh fetches the current one and the tree redraws if it changed, so a new snapshot shows up one click later. `0` refreshes behind every read. **Refresh** in the tree re-reads in the foreground. Applies after the window is reloaded."
+          "markdownDescription": "How old a listing (workspaces, items, tables, Files/) may be before it is refreshed. The last-known answer is ALWAYS served instantly from disk; once it is older than this, a background refresh fetches the current one and the tree redraws if it changed. `0` refreshes behind every read. **Refresh** in the tree re-reads in the foreground. A table's own metadata has its own window, `tableMetadataTtlHours`. Applies after the window is reloaded."
+        },
+        "onelakeStudio.tableMetadataTtlHours": {
+          "type": "number",
+          "default": 24,
+          "minimum": 0,
+          "scope": "machine",
+          "markdownDescription": "How old a table's Iceberg metadata (its snapshot, schema and stats, from the catalog's slowest call) may be before it is refreshed, in hours. A table you have opened before opens from disk without asking the catalog; past this age it is refreshed behind you and a new snapshot shows one open later. **Refresh** on its lakehouse (or the whole tree) re-reads it at once. Applies after the window is reloaded."
         },
         "onelakeStudio.prefetchMetadata": {
           "type": "boolean",

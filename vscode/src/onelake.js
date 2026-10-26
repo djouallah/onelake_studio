@@ -54,7 +54,8 @@ function summarize(metadata, metadataLocation) {
  * @param {ReturnType<import('./store').createStore>} o.store
  * @param {() => boolean} [o.prefetchEnabled]
  */
-function createOneLake({ catalog, store, prefetchEnabled = () => true, onHit = () => {} }) {
+function createOneLake({ catalog, store, prefetchEnabled = () => true, onHit = () => {},
+                         tableTtlMs = undefined }) {
   // The store is the account's: a different sign-in swaps it (useStore) and every listener
   // follows, so nothing above this module has to know an account changed.
   const subs = [];   // { ev, fn, off }
@@ -124,12 +125,33 @@ function createOneLake({ catalog, store, prefetchEnabled = () => true, onHit = (
    * A table's metadata, summarised: { empty, schemaFields, totalRecords, stats,
    * metadataLocation }, plus `at` (when OneLake said so) and `cached`.
    */
+  //
+  // A table's metadata is kept far longer than a listing (`tableTtlMs`, a day by default):
+  // the catalog's loadTable is the slow call, and a new snapshot can wait for a Refresh.
+  // A Refresh over the table's lakehouse (refreshTables) has its next read go to the
+  // catalog in the foreground, once.
   async function table(lh, t, { fresh = false, onWait } = {}) {
-    const r = await get(keys.table(lh, t), async () => {
+    const load = f => get(keys.table(lh, t), async () => {
       const { metadata, metadataLocation } = await catalog.loadTable(lh, t, { onWait });
       return summarize(metadata, metadataLocation);
-    }, { fresh });
+    }, { fresh: f, ...(tableTtlMs != null ? { ttl: tableTtlMs } : {}) });
+    let r = await load(fresh);
+    if (r.cached && r.at < refreshedSince(lh)) r = await load(true);
     return { ...r.value, at: r.at, cached: r.cached };
+  }
+
+  // When a Refresh last covered a lakehouse: everything, a workspace, or one item.
+  const refreshes = new Map();   // `${workspace}\0${item}` ('' for all) -> ms
+  function refreshTables({ workspace, item } = {}) {
+    refreshes.set(`${workspace || ''}\u0000${(workspace && item) || ''}`, Date.now());
+  }
+  function refreshedSince(lh) {
+    let at = 0;
+    for (const [k, ms] of refreshes) {
+      const [w, i] = k.split('\u0000');
+      if ((!w || w === lh.workspace) && (!i || i === lh.item)) at = Math.max(at, ms);
+    }
+    return at;
   }
 
   /**
@@ -191,7 +213,7 @@ function createOneLake({ catalog, store, prefetchEnabled = () => true, onHit = (
   }
 
   return {
-    workspaces, items, tables, files, table, peek, prefetch,
+    workspaces, items, tables, files, table, peek, prefetch, refreshTables,
     readBytes: (ws, path, o) => catalog.readBytes(ws, path, o),
     onChanged: fn => listen('changed', key => fn(decode(key))),
     onRefreshFailed: fn => listen('refresh-failed', (key, e) => fn(decode(key), e)),

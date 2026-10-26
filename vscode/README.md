@@ -30,7 +30,8 @@ The panel loads nothing from the network: its few libraries ship inside the exte
 | Setting | What it does |
 | --- | --- |
 | `onelakeStudio.tenantId` | Directory (tenant) GUID to sign in against. Leave empty for your home tenant; set it to reach a tenant you are a guest in. |
-| `onelakeStudio.catalogTtlMinutes` | How old a listing or a table's metadata may be before it is refreshed (default 5). The last known answer is always served instantly from disk and refreshed behind you, so a table you have opened before opens without waiting — even after a restart. |
+| `onelakeStudio.catalogTtlMinutes` | How old a listing may be before it is refreshed (default 5). The last known answer is always served instantly from disk and refreshed behind you. |
+| `onelakeStudio.tableMetadataTtlHours` | How old a table's Iceberg metadata may be before it is refreshed (default 24), so a table you have opened before opens without asking the catalog — even after a restart. **Refresh** on its lakehouse re-reads it at once. |
 | `onelakeStudio.prefetchMetadata` | Read every table's metadata in the background once a lakehouse's Tables node is opened, so the first click is a disk read (default on). |
 | `onelakeStudio.semanticModelsFolder` | Where a semantic model's `.bim` is downloaded (`<folder>/<workspace>/<model>.bim`) and opened from after that. Empty means `OneLakeStudio/semantic-models` in your home directory. |
 | `onelakeStudio.diskCacheMaxGB` | How much table data read from OneLake is kept on disk, per account, so it is read from this machine afterwards, even after a restart (default 10). |
@@ -66,7 +67,8 @@ goes over one message channel to the host, and its few libraries ship inside the
 - **OneLake is cache first.** Workspaces, items, tables, Files/ listings, each table's
   metadata and its first 100 rows are kept on disk, per Microsoft account, and served from
   there at once — then refreshed behind you once they are older than
-  `onelakeStudio.catalogTtlMinutes`. A table you have opened before opens without a single
+  `onelakeStudio.catalogTtlMinutes` (listings) or `onelakeStudio.tableMetadataTtlHours` (a
+  table's metadata, a day by default). A table you have opened before opens without a single
   request, even after a restart; first rows are kept per snapshot, so they are never stale.
   Each item's Iceberg catalog prefix is kept there too, so a restart does not pay the
   catalog's config call again. **Refresh** re-reads in the foreground.

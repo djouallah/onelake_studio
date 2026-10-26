@@ -250,6 +250,13 @@ function catalogTtlMs() {
   return Number.isFinite(min) && min >= 0 ? Math.round(min * 60 * 1000) : 5 * 60 * 1000;
 }
 
+// The same, for a table's metadata (the catalog's loadTable — the slow call): a day by
+// default. A new snapshot shows after that, or at once after a Refresh of its lakehouse.
+function tableTtlMs() {
+  const h = vscode.workspace.getConfiguration('onelakeStudio').get('tableMetadataTtlHours', 24);
+  return Number.isFinite(h) && h >= 0 ? Math.round(h * 3600 * 1000) : 24 * 3600 * 1000;
+}
+
 const fmtBytes = n => n >= GB ? `${(n / GB).toFixed(1)} GB`
                    : n >= 1024 * 1024 ? `${Math.round(n / 1024 / 1024)} MB`
                    : `${Math.round(n / 1024)} KB`;
@@ -493,6 +500,7 @@ async function activateInner(context) {
     store: storeFor(storeAccount),
     onHit: logRead,
     prefetchEnabled: () => vscode.workspace.getConfiguration('onelakeStudio').get('prefetchMetadata', true),
+    tableTtlMs: tableTtlMs(),
   });
   // Called wherever the identity may have moved; a no-op when it has not.
   async function rebindStore() {
@@ -602,6 +610,7 @@ async function activateInner(context) {
     // The panel keeps table metadata across lakehouse switches now, so the refresh button
     // is what tells it to forget: a refresh exists to ask OneLake again, there too.
     vscode.commands.registerCommand('onelakeStudio.refresh', n => {
+      onelake.refreshTables({ workspace: n && n.workspace, item: n && n.item });
       tree.refresh(n);
       postLive({ type: 'reset' });
     }),
@@ -769,7 +778,8 @@ async function activateInner(context) {
           await resetEngine();
         }
       }
-      if (e.affectsConfiguration('onelakeStudio.catalogTtlMinutes')) {
+      if (e.affectsConfiguration('onelakeStudio.catalogTtlMinutes') ||
+          e.affectsConfiguration('onelakeStudio.tableMetadataTtlHours')) {
         vscode.window.showInformationMessage(
           'OneLake Studio: the cache setting applies after the window is reloaded.');
       }
