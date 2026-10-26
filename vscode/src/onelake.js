@@ -266,6 +266,7 @@ function createOneLake({ catalog, store, prefetchEnabled = () => true, onHit = (
     workspaces: () => store.known(keys.workspaces()),
     items: ws => store.known(keys.items(ws)),
     tables: lh => store.known(keys.tables(lh)),
+    files: (lh, dir = '') => store.known(keys.files(lh, dir)),
     models: ws => store.known(keys.models(ws)),
     table: (lh, t) => store.known(keys.table(lh, t)),
   };

@@ -20,8 +20,10 @@ node --no-warnings "{{cli}}" <command>
 | `ls` | workspaces |
 | `ls <ws>` | its lakehouses/warehouses, and its semantic models (marked *downloaded* if local) |
 | `models [<ws>]` | every semantic model in every workspace (or one), with description and *downloaded*, and how many — for "how many models", "which workspace has X" |
+| `find <text>` | every cached name containing it — items, tables, columns, semantic models, and a downloaded model's tables, columns and measures — for "which table has customer_id", "where is the Sales model" |
+| `files <ws> <item> [<dir>]` | a lakehouse's Files/ listing, with sizes |
 | `items [<ws>]` | every lakehouse and warehouse in every workspace (or one), counted by kind |
-| `ls <ws> <item>` | its tables, and their names in `sql --in` (`<item>_<schema>.<table>`); `<item>` may omit its `.Lakehouse` suffix |
+| `ls <ws> <item>` | its tables with rows, size, files and last write, and their names in `sql --in` (`<item>_<schema>.<table>`); `<item>` may omit its `.Lakehouse` suffix |
 | `table <ws> <item> <schema.table>` | rows, files, size, last write, columns — metadata only, no scan |
 | `model <ws> <model>` | relationships, columns, measures with their DAX, and an example query; downloads the `.bim` once |
 | `sql "<sql>"` | read-only SQL. Every semantic view is a table: `AGG("measure")` is the measure; and `CREATE / DROP / SHOW SEMANTIC VIEW` (below) |

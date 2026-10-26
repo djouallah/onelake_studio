@@ -87,7 +87,7 @@ test("models and items: every cached workspace, counted, and nothing fetched", a
   assert.match(r.out, /3 item\(s\): 2 Lakehouse, 1 Warehouse; 1 workspace\(s\) not cached$/);
 
   r = await agent.run({ args: ["models"], opts: { csv: true } });
-  assert.equal(r.out.split("\n")[0], "workspace,semantic model,,description");
+  assert.equal(r.out.split("\n")[0], "workspace,semantic model,,tables,measures,description");
 
   assert.deepEqual(onelake.calls, [], "no OneLake or Fabric call without --fresh");
 });
@@ -114,4 +114,87 @@ test("a listing or metadata not cached says so; --fresh is what reads it", async
   r = await agent.run({ args: ["ls"], opts: { fresh: true } });
   assert.equal(r.code, 0, r.err);
   assert.deepEqual(onelake.calls, [["workspaces"]], "--fresh asks OneLake");
+});
+
+// A fuller cache: one lakehouse with two tables (one with metadata), a Files/ folder, a
+// warehouse, and one downloaded model on disk.
+async function richAgent() {
+  const { mkdtemp, writeFile } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const dir = await mkdtemp(join(tmpdir(), "agent-"));
+  const bim = join(dir, "Sales.bim");
+  await writeFile(bim, JSON.stringify({ model: { tables: [
+    { name: "dim_customer", columns: [{ name: "customer_id" }, { name: "Region" }] },
+    { name: "fct_sales", columns: [{ name: "amount" }], measures: [{ name: "Total Sales" }, { name: "Customer Count" }] },
+  ] } }));
+  const at = Date.now() - 10 * 60 * 1000;
+  const lh = "ws\u0000data.Lakehouse";
+  const known = {
+    workspaces: ["ws"],
+    "items ws": [{ name: "data.Lakehouse", kind: "Lakehouse" }, { name: "dw.Warehouse", kind: "Warehouse" }],
+    "models ws": [{ name: "Sales", description: "" }, { name: "Ops", description: "" }],
+    [`tables ${lh}`]: [{ schema: "", table: "customers" }, { schema: "", table: "orders" }],
+    [`table ${lh}\u0000\u0000customers`]: { totalRecords: 1200, schemaFields: [{ name: "customer_id", type: "long" }],
+      stats: { totalFilesSize: 2_500_000, totalDataFiles: 3, snapshotTs: Date.UTC(2026, 9, 1, 8, 30),
+               codec: "zstd", snapshotCount: 4, operation: "append", formatVersion: 2 } },
+    [`files ${lh}\u0000raw`]: [{ name: "2026", isDir: true }, { name: "a.parquet", isDir: false, bytes: 1_000_000 }],
+  };
+  const hit = k => (k in known ? { value: known[k], at } : null);
+  const calls = [];
+  const remote = name => async () => { calls.push(name); return []; };
+  const onelake = {
+    workspaces: remote("workspaces"), items: remote("items"), models: remote("models"),
+    tables: remote("tables"), table: remote("table"), files: remote("files"),
+    cached: {
+      workspaces: async () => hit("workspaces"),
+      items: async ws => hit(`items ${ws}`),
+      models: async ws => hit(`models ${ws}`),
+      tables: async l => hit(`tables ${l.workspace}\u0000${l.item}`),
+      table: async (l, t) => hit(`table ${l.workspace}\u0000${l.item}\u0000${t.schema || ""}\u0000${t.table}`),
+      files: async (l, d) => hit(`files ${l.workspace}\u0000${l.item}\u0000${d}`),
+    },
+  };
+  const { createAgent } = require("../src/agent.js");
+  return { agent: createAgent({ onelake, bimPath: (ws, m) => (m === "Sales" ? bim : join(dir, "none.bim")) }), calls, dir };
+}
+
+test("free from the cache: table sizes, more table fields, files, find, model counts", async () => {
+  const { rm } = await import("node:fs/promises");
+  const { agent, calls, dir } = await richAgent();
+  try {
+    let r = await agent.run({ args: ["ls", "ws", "data"] });
+    assert.equal(r.code, 0, r.err);
+    assert.match(r.out, /\| customers \| data_main\.customers \| 1,200 \| 2\.5 MB \| 3 \| 2026-10-01 08:30 \|/);
+    assert.match(r.out, /\| orders \| data_main\.orders \| — \| — \| — \| — \|/);
+    assert.match(r.out, /2 table\(s\), 1 with metadata cached/);
+
+    r = await agent.run({ args: ["table", "ws", "data", "customers"] });
+    assert.equal(r.code, 0, r.err);   // a bare name: found in the schema-less listing, not guessed as dbo
+    assert.match(r.out, /\| compression \| zstd \|/);
+    assert.match(r.out, /\| snapshots \| 4 \|/);
+    assert.match(r.out, /\| Iceberg format \| v2 \|/);
+
+    r = await agent.run({ args: ["files", "ws", "data", "Files/raw"] });
+    assert.equal(r.code, 0, r.err);
+    assert.match(r.out, /\| 2026 \| folder \|/);
+    assert.match(r.out, /1 file\(s\), 1 folder\(s\), 1\.0 MB in Files\/raw/);
+    r = await agent.run({ args: ["files", "ws", "dw"] });
+    assert.match(r.err, /has no Files area/);
+    r = await agent.run({ args: ["files", "ws", "data", "other"] });
+    assert.match(r.err, /Files\/other is not cached yet/);
+
+    r = await agent.run({ args: ["find", "custom"] });
+    assert.equal(r.code, 0, r.err);
+    for (const re of [/\| table \| ws\/data\.Lakehouse \| customers \|/, /\| column \| ws\/data\.Lakehouse customers \| customer_id \(long\) \|/,
+                      /\| model table \| ws\/Sales \| dim_customer \|/, /\| measure \| ws\/Sales \| \[Customer Count\] in fct_sales \|/]) {
+      assert.match(r.out, re);
+    }
+
+    r = await agent.run({ args: ["models"] });
+    assert.match(r.out, /\| ws \| Sales \| downloaded \| 2 \| 2 \|/);
+    assert.match(r.out, /\| ws \| Ops \|  \|  \|  \|/);
+
+    assert.deepEqual(calls, [], "nothing fetched");
+  } finally { await rm(dir, { recursive: true, force: true }); }
 });
