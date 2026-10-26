@@ -409,6 +409,28 @@ export function icebergTypeName(t) {
   return kind;
 }
 
+// An Iceberg primitive type, in DuckDB's name for it. Anything nested or unknown is
+// VARCHAR — this is only ever used to give a table with no rows its columns.
+const ICEBERG_DUCK = { boolean: "BOOLEAN", int: "INTEGER", long: "BIGINT", float: "FLOAT",
+  double: "DOUBLE", date: "DATE", time: "TIME", timestamp: "TIMESTAMP",
+  timestamptz: "TIMESTAMPTZ", timestamp_ns: "TIMESTAMP_NS", timestamptz_ns: "TIMESTAMPTZ",
+  string: "VARCHAR", uuid: "UUID", binary: "BLOB" };
+export function icebergToDuckType(t) {
+  const s = String(t || "").toLowerCase();
+  const dec = /^decimal\((\d+),\s*(\d+)\)$/.exec(s);
+  if (dec) return `DECIMAL(${dec[1]},${dec[2]})`;
+  if (/^fixed\[\d+\]$/.test(s)) return "BLOB";
+  return ICEBERG_DUCK[s] || "VARCHAR";
+}
+
+// A table the catalog lists but nothing has ever been written to: no snapshot, no data
+// file, nothing to scan. Its columns are in the metadata, so its view is an empty SELECT
+// of typed NULLs — no read at all.
+export function emptyTableSql(fields) {
+  const cols = (fields || []).map(f => `CAST(NULL AS ${icebergToDuckType(f.type)}) AS ${quoteIdent(f.name)}`);
+  return `SELECT ${cols.length ? cols.join(", ") : "NULL AS empty"} WHERE false`;
+}
+
 export const icebergFields = schema =>
   ((schema || {}).fields || []).map(f => ({ name: f.name, type: icebergTypeName(f.type) }));
 

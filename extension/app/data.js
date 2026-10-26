@@ -23,7 +23,7 @@ import {
   parseLakehouse,
   fileExt, readerFor, PARQUET_EXTS, DB_EXTS, ZIP_EXTS, isSqliteHeader, isTextExt,
   sqlStr, quoteIdent, prepareReadOnlySql,
-  tableKey, fileKey, sanitizeIdent,
+  tableKey, fileKey, sanitizeIdent, emptyTableSql,
   normalizeValue, fmtBytes,
 } from "./paths.js";
 
@@ -644,11 +644,9 @@ export function createEngine({
       check();
 
       if (resolved.empty) {
-        // The catalog lists it, it has a schema, nothing has ever been written to it.
-        // DuckDB opens it and returns no rows, so the view is real and simply empty —
-        // which beats the error this used to raise about snapshot -1.
-        status(`Opening ${label}…`);
-        await createView(ident, await attachedIdent(lh, t));
+        // The catalog lists it, it has a schema, nothing has ever been written to it:
+        // the view is real, typed from the metadata, and simply empty.
+        await q(`CREATE OR REPLACE VIEW ${ident} AS ${emptyTableSql(resolved.schemaFields)}`);
       } else {
         status(`Opening ${label}…`);
         const source = await attachedIdent(lh, t);

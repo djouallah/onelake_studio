@@ -25,9 +25,8 @@ const fs = require('node:fs');
 const fsp = require('node:fs/promises');
 const { join } = require('node:path');
 const os = require('node:os');
-const { sqlStr, quoteIdent } = require('./sql');
+const { sqlStr } = require('./sql');
 
-const IRC_ENDPOINT = 'https://onelake.table.fabric.microsoft.com/iceberg';
 
 // Rows are read in chunks so a large result starts painting before it has all arrived,
 // and so no single postMessage carries a whole 200k-row grid.
@@ -79,7 +78,7 @@ function scrub(e, token) {
 
 // This string came from the catalog (via the host's store) and is spliced into SQL, so
 // only the one shape the catalog actually returns is accepted: a OneLake abfss URI ending
-// in a metadata.json. Anything else falls back to the ATTACH.
+// in a metadata.json.
 const ONELAKE_METADATA = /^abfss:\/\/[^@/\s]+@onelake\.dfs\.fabric\.microsoft\.com\/[^\s]+\.metadata\.json$/i;
 const isOneLakeMetadata = s => typeof s === 'string' && ONELAKE_METADATA.test(s);
 
@@ -127,34 +126,21 @@ function createEngineHost({ extensionDir, onLog = () => {}, onWarn = () => {}, g
                             memoryLimit = '', allowedPaths = [], lockdown = true,
                             httpProxy = '', bundledExtensions = null } = {}) {
   let instance = null;
-  // The connection for the host's OWN statements — secrets, ATTACH, extension loading.
-  // Page queries never run on it: each gets a connection of its own (see withConn), so a
-  // cancel aimed at the page's query cannot land on an ATTACH half way through, and an
-  // ATTACH cannot interleave with a stream that is still draining.
+  // The connection for the host's OWN statements — the secret, extension loading. Page
+  // queries never run on it: each gets a connection of its own (see withConn), so a cancel
+  // aimed at the page's query cannot land on the host's work.
   let conn = null;
   let ready = null;
   // Set by close(), and final: a late call must not quietly rebuild a DuckDB that nobody
   // owns, holding the token of the account that was just signed out of.
   let closed = false;
 
-  // The token the storage secret and every ATTACH were built from. Both hold a token
-  // BY VALUE — a DuckDB secret is a stored string, and ATTACH copies the catalog token
-  // into the attachment — so when VS Code hands back a different one, both have to be
-  // reissued. The proxy never had this problem because it signed each request as it
-  // went; this is the price of DuckDB talking to OneLake itself.
+  // The token the storage secret was built from. A DuckDB secret holds its token BY
+  // VALUE, so when VS Code hands back a different one the secret is reissued.
   let authToken = null;
-  // "workspace/item" -> the alias it is ATTACHed as. Never cleared while the engine lives:
-  // the page's views name the alias, so re-attaching under a NEW one after a token change
-  // left every view already open pointing at an attachment that still held the old token.
-  const aliases = new Map();
-  // "workspace/item" -> the token its current ATTACH was made with.
-  const attachedWith = new Map();
-  // "workspace/item" -> the ATTACH in flight, so two opens of one lakehouse pay ~5s once.
-  const attaching = new Map();
-  let aliasSeq = 0;
 
-  // The host's own statements run one at a time: CREATE SECRET racing an ATTACH that
-  // reads it is not a race worth having.
+  // The host's own statements run one at a time: two CREATE SECRETs racing is not a race
+  // worth having.
   let adminChain = Promise.resolve();
   function admin(fn) {
     const run = adminChain.then(fn, fn);
@@ -349,22 +335,10 @@ function createEngineHost({ extensionDir, onLog = () => {}, onWarn = () => {}, g
   // ---------------------------------------------------------------------------
   // OneLake, spoken by DuckDB itself
   // ---------------------------------------------------------------------------
-  // The recipe is the owner's, from djouallah/testing-iceberg-rest-catalog catalogs.py,
-  // and every part of it is load-bearing:
-  //
-  //   ACCESS_DELEGATION_MODE 'none'   DuckDB defaults to 'vended_credentials', and
-  //     against Fabric that FAILS every read with AuthenticationFailed. OneLake does
-  //     vend a real SAS, but scoped to the GUID spelling of the path
-  //     (https://onelake.dfs…/<ws-guid>/<item-guid>/Tables/…) while the metadata in the
-  //     same response points at the friendly spelling
-  //     (abfss://<ws>@onelake.dfs…/<item>/Tables/…). The credential matches nothing that
-  //     is read. 'none' falls back to our own secret, which does match.
-  //   TOKEN on the ATTACH authenticates the CATALOG API only — the storage secret below
-  //     is separate and not optional.
-  //   STAGE_CREATE_TABLES / SKIP_CREATE_TABLE_METADATA_UPDATES keep DuckDB from ever
-  //     trying to write catalog metadata. This extension is a reader.
-  //
-  // Measured: ATTACH ~4.8-5.2s per item, so it is cached per item and not per table.
+  // DuckDB reads OneLake with one azure secret holding the VS Code token: tables with
+  // iceberg_scan on their metadata file, Files/ objects by their abfss:// names. No
+  // catalog is ever asked at query time — the host's store already holds each table's
+  // metadata location.
 
   // Strict: for the paths that cannot do anything useful without a credential.
   async function currentToken() {
@@ -378,20 +352,14 @@ function createEngineHost({ extensionDir, onLog = () => {}, onWarn = () => {}, g
     return token;
   }
 
-  // Lenient: reissues the storage secret when the token has changed, and drops the
-  // attachment cache with it — an ATTACH copied the old token in, so it is stale too.
-  // Returns null rather than throwing when there is no credential to be had, because
+  // Lenient: reissues the storage secret when the token has changed. Returns null rather
+  // than throwing when there is no credential to be had, because
   // most statements never touch OneLake: `SELECT 42` must not need a Microsoft account,
   // and the harnesses build this engine with no token source at all.
   //
   // `fresh` reaches the token source. Without it the retry below asked the same
   // 60-second cache that had just handed out the expired token, got the identical
   // string back, and concluded — wrongly — that no better token existed.
-  //
-  // A changed token also re-ATTACHes every item already open, under the SAME alias: the
-  // catalog token was copied into each attachment, and the views the page holds name those
-  // aliases. Without this every table opened before the hourly rotation started failing
-  // the moment it came — the retry only ever refreshed the storage secret.
   async function ensureAuth(fresh = false) {
     if (!getToken) return null;
     const token = await getToken(fresh ? { fresh: true } : {});
@@ -404,39 +372,10 @@ function createEngineHost({ extensionDir, onLog = () => {}, onWarn = () => {}, g
            TYPE azure, PROVIDER access_token, ACCESS_TOKEN ${sqlStr(token)})`);
       authToken = token;
     });
-    const stale = [...aliases.keys()].filter(k => attachedWith.get(k) !== token);
-    // Each failure is the item's own: one lakehouse the account lost access to must not
-    // stop the others from coming back, and its next open will say what is wrong.
-    await Promise.all(stale.map(k => attachKey(k).catch(e =>
-      onWarn(`re-attach of ${k} after token change failed — ${scrub(e, token).message}`))));
     return token;
   }
 
-  // Single-flight per item, and keyed to the token: an attachment made with the current
-  // token is reused, one made with an older token is replaced in place.
-  function attachKey(key) {
-    if (aliases.has(key) && attachedWith.get(key) === authToken) return Promise.resolve(aliases.get(key));
-    const inflight = attaching.get(key);
-    if (inflight && inflight.token === authToken) return inflight.promise;
-    const token = authToken;
-    if (!aliases.has(key)) aliases.set(key, `ol_${++aliasSeq}`);
-    const alias = aliases.get(key);
-    const promise = admin(() => conn.run(
-      `ATTACH OR REPLACE ${sqlStr(key)} AS ${alias} (
-         TYPE iceberg,
-         URI ${sqlStr(IRC_ENDPOINT)},
-         TOKEN ${sqlStr(token)},
-         ACCESS_DELEGATION_MODE 'none',
-         STAGE_CREATE_TABLES false,
-         SKIP_CREATE_TABLE_METADATA_UPDATES true,
-         DEFAULT_SCHEMA dbo)`))
-      .then(() => { attachedWith.set(key, token); return alias; })
-      .finally(() => { if (attaching.get(key) && attaching.get(key).promise === promise) attaching.delete(key); });
-    attaching.set(key, { token, promise });
-    return promise;
-  }
-
-  // A token that expired mid-session shows up as a storage or catalog failure, never as
+  // A token that expired mid-session shows up as a storage failure, never as
   // anything structured, so it is recognised by text. Retried ONCE and only after the
   // token actually changed — a 403 is a permission answer and a fresh token will not
   // change its mind, which is the same bargain catalog.js makes.
@@ -451,39 +390,24 @@ function createEngineHost({ extensionDir, onLog = () => {}, onWarn = () => {}, g
       const stale = authToken;
       const fresh = await ensureAuth(true);   // PAST the caller's token cache
       if (!fresh || fresh === stale) throw e;  // same token, same answer — do not loop
-      // `run` reads the engine's state when it runs, never a token captured before the
-      // failure — the retry used to ATTACH again with the very token that had just expired.
       return run();
     }
   }
 
-  // A table, ready to be selected from.
-  //
-  // With the metadata location the host's store holds (the catalog's loadTable answer,
-  // cached on disk), the table is read with iceberg_scan and the catalog is not
-  // asked again. That matters more than it looks: an ATTACHed table goes back to the REST
-  // catalog on EVERY query that names it, and measured against a real tenant that catalog
-  // answered a loadTable in 5s, 12s and 114s. The scan path reads the same metadata.json
-  // and manifests from storage, applies the same deletes and the Warehouse field-id
-  // mapping (checked on a Warehouse table: readable names), and pins the snapshot the
-  // Stats card showed.
-  //
-  // Without one — a location that is not a OneLake metadata.json — it falls back to the ATTACH, whose
-  // alias is per ITEM because that is what an ATTACH costs (~5s) and what it covers.
-  async function openTable({ workspace, item, schema, table, metadataLocation }) {
+  // A table, ready to be selected from: iceberg_scan on its metadata file, whose location
+  // the host's store holds (the catalog's loadTable answer, cached on disk). The catalog
+  // is never asked again at query time — it answered a loadTable in 5s, 12s and 114s on
+  // a real tenant. DuckDB applies deletes and the Warehouse field-id mapping (checked on a
+  // Warehouse table: readable names), and the snapshot is the one the Stats card showed.
+  async function openTable({ metadataLocation }) {
     await init();
     await currentToken();
-    if (isOneLakeMetadata(metadataLocation)) {
-      await ensureAuth();
-      return { ident: `iceberg_scan(${sqlStr(metadataLocation)})`, alias: null };
+    if (!isOneLakeMetadata(metadataLocation)) {
+      throw new Error('OneLake gave this table no readable metadata location' +
+        (metadataLocation ? ` (${String(metadataLocation).slice(0, 120)})` : ''));
     }
-    const alias = await withAuthRetry(() => attachKey(`${workspace}/${item}`));
-    // DEFAULT_SCHEMA is dbo, but naming the schema explicitly is right for every other
-    // one — and OneLake gives schema-less items a synthetic "dbo" anyway.
-    const ident = schema
-      ? `${alias}.${quoteIdent(schema)}.${quoteIdent(table)}`
-      : `${alias}.${quoteIdent(table)}`;
-    return { ident, alias };
+    await ensureAuth();
+    return { ident: `iceberg_scan(${sqlStr(metadataLocation)})` };
   }
 
   // Every statement, streamed chunk by chunk off its own connection. `onBatch` gets one
@@ -562,8 +486,8 @@ function createEngineHost({ extensionDir, onLog = () => {}, onWarn = () => {}, g
     },
 
     async cancel() {
-      // A native interrupt. Only the PAGE's queries are interrupted: an ATTACH or a
-      // secret being issued on the host's own connection is left to finish.
+      // A native interrupt. Only the PAGE's queries are interrupted: a secret being
+      // issued on the host's own connection is left to finish.
       for (const c of live) { interrupted.add(c); try { c.interrupt(); } catch (_) {} }
       return true;
     },
@@ -596,7 +520,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onWarn = () => {}, g
     try { if (conn) conn.closeSync(); } catch (_) {}
     try { if (instance) instance.closeSync(); } catch (_) {}
     conn = instance = null; ready = null;
-    copies.clear(); aliases.clear(); attachedWith.clear(); attaching.clear();
+    copies.clear();
     authToken = null;
     if (tmpDir) await fsp.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
   }
@@ -616,7 +540,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onWarn = () => {}, g
     return path;
   }
 
-  // Scrubbed like call(): an ATTACH failure names the statement, which carries a token.
+  // Scrubbed like call(): a failure may name a statement that carries a token.
   async function openTableScrubbed(target) {
     try { return await openTable(target); } catch (e) { throw scrub(e, authToken); }
   }

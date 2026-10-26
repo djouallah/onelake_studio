@@ -24,14 +24,14 @@ no app registration: VS Code's own Microsoft account provider is a first-party a
 The query engine is **DuckDB 2.0 running natively in the extension host**
 ([`extension/src/engine-host.js`](extension/src/engine-host.js)) — a real DuckDB, not a WebAssembly
 build in the page. It reads OneLake itself through its `iceberg` and `azure` extensions: a table is
-read with `iceberg_scan` on the metadata file the host's cache holds (an ATTACH of the item as an
-Iceberg REST catalog is only the fallback), and `Files/` objects are read as `abfss://` URLs. DuckDB therefore does what the
+read with `iceberg_scan` on the metadata file the host's cache holds — the catalog is never asked at
+query time — and `Files/` objects are read as `abfss://` URLs. DuckDB therefore does what the
 website's reader hand-rolls — snapshot resolution, manifest filtering, position and equality deletes,
 schema evolution. Each query runs on its own connection, so Stop interrupts exactly that query, and a
 result past 200,000 rows is counted rather than carried into the panel.
 
-The token lives only in the extension host, in a DuckDB storage secret (and an ATTACH, when one was
-needed); when VS Code hands back a new one, both are reissued. The page holds no credential and makes no
+The token lives only in the extension host, in a DuckDB storage secret; when VS Code hands back a new
+one, the secret is reissued. The page holds no credential and makes no
 OneLake request: it reaches the host through one message channel, and only through `query`, `stream`,
 `cancel`, `info` and the host's OneLake reads ([`extension/src/host.js`](extension/src/host.js)).
 File access is locked down to the temp directory, `https://`, `abfss://` and `zip://` over a remote
