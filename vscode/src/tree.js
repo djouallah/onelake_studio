@@ -18,7 +18,7 @@
 // =============================================================================
 
 const vscode = require('vscode');
-const { fmtBytes, hasFilesArea, kindLabel, strip } = require('./names');
+const { fmtBytes, hasFilesArea, kindLabel, kindLabelPlural, strip } = require('./names');
 
 // A node is a plain object; getTreeItem turns it into what VS Code renders. Keeping the
 // domain data on the node (rather than encoding it into a label) is what lets a click hand
@@ -34,10 +34,12 @@ class LakehouseTree {
    * @param {() => boolean} deps.isSignedIn
    * @param {{ get: () => string[] }} [deps.favorites]   pinned workspace names, persisted
    * @param {(n: object) => string|null} [deps.cachedModel]  a model's .bim on this machine, if any
+   * @param {() => boolean} [deps.groupByType]  a workspace's items under one heading per type
    */
   constructor({ onelake, fabric = null, hasFabric = async () => false, isSignedIn, log = () => {},
-                favorites = { get: () => [] }, cachedModel = () => null }) {
+                favorites = { get: () => [] }, cachedModel = () => null, groupByType = () => false }) {
     this.onelake = onelake;
+    this.groupByType = groupByType;
     this.cachedModel = cachedModel;
     this.favorites = favorites;
     this.fabric = fabric;
@@ -144,6 +146,11 @@ class LakehouseTree {
         break;
       case 'workspace':
         item.iconPath = new vscode.ThemeIcon(n.pinned ? 'star-full' : 'folder');
+        break;
+      // A workspace's items of one type, when the tree is grouped by type.
+      case 'kindGroup':
+        item.iconPath = new vscode.ThemeIcon('folder-library');
+        item.description = String(n.count);
         break;
       case 'item':
         item.iconPath = new vscode.ThemeIcon('database');
@@ -254,14 +261,18 @@ class LakehouseTree {
     if (n.kind === 'workspace') {
       const items = await this.onelake.items(n.workspace,
         { fresh: this._isFresh(`items|${n.workspace}`, n.workspace) });
-      const kids = items.length
-        ? items.map(it => node('item', it.name.replace(/\.[^.]+$/, ''), {
-            workspace: n.workspace, item: it.name, kindLabel: kindLabel(it.kind),
-          }))
-        : [node('empty', 'Nothing here holds tables', { leaf: true })];
+      // Grouped: one heading per type, open, so the items are still one level down.
+      const kids = !items.length ? [node('empty', 'Nothing here holds tables', { leaf: true })]
+        : this.groupByType() ? this._kindGroups(n.workspace, items)
+        : items.map(it => this._item(n.workspace, it, true));
       // Last, and closed: listing it is a Fabric API call, on a token sign-in never asked for.
       if (this.fabric) kids.push(this._track(node('models', 'Semantic models', { workspace: n.workspace })));
       return kids;
+    }
+
+    if (n.kind === 'kindGroup') {
+      const items = await this.onelake.items(n.workspace);   // the parent's listing, from the store
+      return items.filter(it => it.kind === n.group).map(it => this._item(n.workspace, it, false));
     }
 
     if (n.kind === 'models') {
@@ -332,6 +343,24 @@ class LakehouseTree {
 
   _table(lh, t) {
     return node('table', t.table, { ...lh, leaf: true, schema: t.schema || '', table: t.table });
+  }
+
+  // An item, named without its suffix. Its type is said beside it only where no heading
+  // above already says it. The node is the same grouped or not, so its expansion survives
+  // the toggle.
+  _item(workspace, it, withKind) {
+    return node('item', it.name.replace(/\.[^.]+$/, ''), {
+      workspace, item: it.name, kindLabel: withKind ? kindLabel(it.kind) : '',
+    });
+  }
+
+  // One heading per type in the workspace — "Lakehouses 3", "Warehouses 1" — in name order.
+  _kindGroups(workspace, items) {
+    const counts = new Map();
+    for (const it of items) counts.set(it.kind, (counts.get(it.kind) || 0) + 1);
+    return [...counts]
+      .map(([kind, count]) => node('kindGroup', kindLabelPlural(kind), { workspace, group: kind, count, expanded: true }))
+      .sort((a, b) => a.label.localeCompare(b.label));
   }
 }
 

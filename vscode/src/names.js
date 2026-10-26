@@ -79,6 +79,11 @@ const kindLabel = kind => {
   const k = String(kind || "");
   return KIND_LABELS[k.toLowerCase()] || k;
 };
+// ...and as a heading over several of them: "Lakehouses", "SQL databases".
+const kindLabelPlural = kind => {
+  const l = kindLabel(kind) || "Other";
+  return /s$/i.test(l) ? l : `${l}s`;
+};
 
 function icebergTypeName(t) {
   if (t == null) return "";
@@ -144,7 +149,7 @@ function fmtBytes(n) {
 
 module.exports = {
   strip, basename, encPath,
-  itemKind, holdsTables, hasFilesArea, kindLabel,
+  itemKind, holdsTables, hasFilesArea, kindLabel, kindLabelPlural,
   icebergTypeName, icebergFields, snapshotStats,
   fmtBytes,
 };

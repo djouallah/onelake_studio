@@ -612,9 +612,20 @@ async function activateInner(context) {
     set: list => context.globalState.update(favKey(), [...new Set(list)].sort((a, b) => a.localeCompare(b))),
   };
 
+  // Items grouped under one heading per type, or flat: the explorer's title-bar toggle,
+  // remembered across windows and restarts. The context key picks which button shows.
+  const GROUP_KEY = 'onelakeStudio.groupByType';
+  const groupByType = () => context.globalState.get(GROUP_KEY, false);
+  const setGrouped = async on => {
+    await context.globalState.update(GROUP_KEY, on);
+    await vscode.commands.executeCommand('setContext', 'onelakeStudio.groupedByType', on);
+  };
+  await vscode.commands.executeCommand('setContext', 'onelakeStudio.groupedByType', groupByType());
+
   const tree = new LakehouseTree({
     onelake,
     favorites,
+    groupByType,
     fabric,
     hasFabric: async () => !!await fabricToken().catch(() => null),
     isSignedIn: () => signedIn,
@@ -734,6 +745,9 @@ async function activateInner(context) {
     }),
 
     vscode.commands.registerCommand('onelakeStudio.showLog', () => out.show(true)),
+
+    vscode.commands.registerCommand('onelakeStudio.groupByType', async () => { await setGrouped(true); tree.redraw(); }),
+    vscode.commands.registerCommand('onelakeStudio.ungroupByType', async () => { await setGrouped(false); tree.redraw(); }),
 
     vscode.commands.registerCommand('onelakeStudio.installClaudeSkill', async () => {
       try { await installSkill(context); }
