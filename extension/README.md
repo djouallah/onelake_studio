@@ -11,9 +11,8 @@ It also lists each workspace's **Power BI semantic models**. Export one to a lak
 model with `AGG(measure)` (compiled from DAX by [dax-sql](https://github.com/djouallah/dax-sql)), and
 Explore for pivots and charts. Any `.bim` already in `Files/` opens the same way.
 
-The panel is the same app that runs at
-[studio.projectscontrols.com](https://studio.projectscontrols.com/), packaged into the
-extension so it works with no CDN.
+Saving a result as CSV, or a file from `Files/`, goes through VS Code's own save dialog.
+The panel loads nothing from the network: its few libraries ship inside the extension.
 
 ## Commands
 

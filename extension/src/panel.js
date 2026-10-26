@@ -13,7 +13,7 @@ const crypto = require('node:crypto');
 const { TextDecoder } = require('node:util');
 const { renderPage } = require('./html');
 const { answer } = require('./host');
-const { siteRoot } = require('./site');
+const { webviewRoot } = require('./webview');
 const { PINS } = require('./vendored');
 
 // A webview is a sandboxed iframe with no CSP of its own, so this is the only thing
@@ -95,7 +95,7 @@ function openPanel(context, opts = {}) {
 }
 
 async function openPanelUncontended(context, { onOpened, onBoot, onBootFailed, engine, host, build } = {}) {
-  const { site: siteUri, readme: readmeUri } = await siteRoot(context.extensionUri,
+  const { page: siteUri, readme: readmeUri } = await webviewRoot(context.extensionUri,
     { dev: context.extensionMode === vscode.ExtensionMode.Development });
   const vendorUri = vscode.Uri.joinPath(context.extensionUri, 'vendor');
   const panel = vscode.window.createWebviewPanel(
@@ -153,9 +153,8 @@ async function openPanelUncontended(context, { onOpened, onBoot, onBootFailed, e
       // does: the breakdown it summarises lives in the output channel.
       vscode.commands.executeCommand('onelakeStudio.showLog');
     } else if (msg.type === 'boot' && onBoot) {
-      // The engine timing itself. Its stages happen inside the webview and the worker,
-      // where the proxy's log cannot see them — which is how a boot spending half a
-      // minute compiling wasm produced a read log of nothing but 1ms hits.
+      // The engine's own boot timing, printed beside the read log — a boot whose reads
+      // are all fast and whose total is slow says where the time went.
       onBoot(msg);
     } else if (msg.type === 'opened' && onOpened) {
       // The page timed a click from arrival to rendered and is reporting the total —

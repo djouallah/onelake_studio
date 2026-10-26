@@ -189,8 +189,8 @@ export const READ_START =
   /^\s*(with|select|describe|show|explain|summarize|pragma|values|from|table|pivot|unpivot)\b/i;
 
 // One statement, and it must start with a read keyword. Throws with the message the UI
-// shows. The ';' rule is load-bearing — duckdb-wasm's query() will happily run several
-// statements separated by one — but a ';' inside a literal is not a separator.
+// shows. The ';' rule is load-bearing — DuckDB will happily run several statements
+// separated by one — but a ';' inside a literal is not a separator.
 export function prepareReadOnlySql(raw) {
   const { text, seps } = scan(String(raw));
   if (!text.trim()) throw new Error("Empty query.");

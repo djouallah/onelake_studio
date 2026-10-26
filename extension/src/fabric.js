@@ -10,7 +10,7 @@
 // assertExportPath is what keeps it that narrow — every other path is refused before a
 // request goes out.
 //
-// Host-side only. The webview's proxy stays GET/HEAD and never sees a Fabric token.
+// Host-side only. The panel never sees a Fabric token.
 // =============================================================================
 
 const { DFS_ORIGIN } = require('./catalog');

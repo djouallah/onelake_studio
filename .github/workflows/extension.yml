@@ -175,10 +175,10 @@ jobs:
         working-directory: extension
         run: node fetch-extensions.mjs ${{ matrix.target }}
 
-      # vsce packages the extension directory and nothing above it, so site/ and the LICENSE
-      # have to be copied in. `vscode:prepublish` does this too; running it here means a
-      # failure in the copy shows up as its own step.
-      - run: node extension/copy-site.mjs
+      # vsce packages the extension directory and nothing above it, so the staged page, the
+      # README and the LICENSE have to be copied in. `vscode:prepublish` does this too;
+      # running it here means a failure shows up as its own step.
+      - run: node extension/stage-webview.mjs
 
       # --target stamps TargetPlatform into the manifest AND names the file
       # onelake-studio-<target>-<version>.vsix, which is the name worth having on the

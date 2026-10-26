@@ -2,15 +2,9 @@
 // =============================================================================
 // extension.js — activation, and the reason this extension exists
 // =============================================================================
-// The web app cannot sign a user in without them first registering an Entra SPA
-// application in their own tenant, and there is no way around that in a browser:
-// Entra only sends CORS headers for auth-code+PKCE against an `spa`-typed redirect
-// URI, so device code flow is not available to a page either.
-//
-// In VS Code none of that applies. getSession('microsoft', …) goes through VS Code's
-// own first-party application, which can impersonate for Azure resources — so the
-// user signs in with the same prompt they already use for GitHub, and registers
-// nothing. `offline_access` is what makes the session survive a reload; without it
+// Sign-in is VS Code's: getSession('microsoft', …) goes through VS Code's own
+// first-party application, which can impersonate for Azure resources — so the user signs
+// in with the prompt they already use for GitHub, and registers nothing. `offline_access` is what makes the session survive a reload; without it
 // the refresh token is not issued and every restart is a fresh sign-in.
 // =============================================================================
 
@@ -23,7 +17,7 @@ const { createOneLake } = require('./onelake');
 const { createHostMethods } = require('./host');
 const { createFabric, exportPath, EXPORT_DIR } = require('./fabric');
 const { LakehouseTree } = require('./tree');
-const { siteRoot } = require('./site');
+const { webviewRoot } = require('./webview');
 const { hasFilesArea } = require('./names');
 
 // OneLake accepts tokens in the storage
@@ -260,8 +254,8 @@ const fmtBytes = n => n >= GB ? `${(n / GB).toFixed(1)} GB`
                    : `${Math.round(n / 1024)} KB`;
 
 // Real DuckDB, in this process. Built once and kept for the window's lifetime: an engine
-// costs ~17ms to create but its four extensions are downloaded on first use, and doing
-// that per panel open is the mistake the wasm build could not avoid.
+// costs ~17ms to create but its extensions are loaded on first use, and doing that per
+// panel open would be paying it again for nothing.
 //
 // Loaded lazily so a failure to load the native binding — an unsupported platform, a vsix
 // built for another architecture — surfaces when the panel opens, with a message, rather
@@ -331,10 +325,9 @@ async function show(context, options) {
       `OneLake Studio needs a Microsoft account to reach OneLake. ${why}`);
     return false;
   }
-  // The engine is not optional any more — there is no wasm fallback to degrade to — so a
-  // platform whose binding will not load is told plainly instead of being handed a panel
-  // that boots to a spinner and never moves.
-  const { readme } = await siteRoot(context.extensionUri,
+  // A platform whose native binding will not load is told plainly, instead of being
+  // handed a panel that boots to a spinner and never moves.
+  const { readme } = await webviewRoot(context.extensionUri,
     { dev: context.extensionMode === vscode.ExtensionMode.Development });
   const eng = ensureEngine(context, { readme: readme.fsPath });
   if (!eng) return false;
@@ -385,8 +378,8 @@ async function setSignedIn(value) {
   await vscode.commands.executeCommand('setContext', 'onelakeStudio.signedIn', value);
 }
 
-// The exact commit this window is running. Installed build: the stamp copy-site.mjs wrote
-// into site/version.js at package time (already '+dirty'-labelled when the tree was).
+// The exact commit this window is running. Installed build: the stamp stage-webview.mjs
+// wrote into webview/build.json at package time (already '+dirty'-labelled when the tree was).
 // Dev: ask git directly, and label a dirty tree the same way — HEAD alone would name a
 // commit that does not contain the edits actually running.
 function buildCommit(context, dev) {
@@ -400,10 +393,9 @@ function buildCommit(context, dev) {
     } catch (_) { return 'dev'; }
   }
   try {
-    const stamp = require('node:fs').readFileSync(
-      join(context.extensionUri.fsPath, 'site', 'version.js'), 'utf8');
-    const m = /commit:\s*"([^"]+)"/.exec(stamp);
-    if (m) return m[1];
+    const stamp = JSON.parse(require('node:fs').readFileSync(
+      join(context.extensionUri.fsPath, 'webview', 'build.json'), 'utf8'));
+    if (stamp && stamp.commit) return String(stamp.commit);
   } catch (_) {}
   return 'unknown';
 }
@@ -422,7 +414,7 @@ async function activate(context) {
   // Which build is this window actually running? Bottom left, always visible: version,
   // EXACT commit, and 'dev' when it is the F5 checkout rather than an installed vsix.
   // Exists because "I clicked X and nothing is there" is unanswerable until both sides
-  // know they are looking at the same build. Same stamp discipline as copy-site.mjs:
+  // know they are looking at the same build. Same stamp discipline as stage-webview.mjs:
   // '+dirty' whenever the code running is not exactly the commit named.
   const version = (context.extension && context.extension.packageJSON &&
                    context.extension.packageJSON.version) || '?';
