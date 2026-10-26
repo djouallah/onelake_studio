@@ -714,14 +714,14 @@ async function onWorkspaceChange() {
 // entries are keyed per lakehouse so a stale one can't be served, but the DuckDB objects
 // behind them still have to be given back. Returns the teardown promise rather than awaiting
 // it — every caller has something to overlap it with, and none may leave it unobserved.
-function leaveLakehouse() {
+function leaveLakehouse(opts) {
   closeModelView();
   activeIdent = null;
   setActiveStats(null);
   activeTableRef = null; tableStage = 'none';
   lastResult = null;
   $('activeTable').textContent = 'No table selected';
-  return engine.reset();
+  return engine.reset(opts);
 }
 
 async function connect({ force = false } = {}) {
@@ -1878,7 +1878,7 @@ if (HOST_VSCODE) {
   async function goToLakehouse(workspace, item) {
     await engineReady;
     if (lakehouse && lakehouse.workspace === workspace && lakehouse.item === item) return;
-    const resetP = lakehouse ? leaveLakehouse() : null;
+    const resetP = lakehouse ? leaveLakehouse({ forget: false }) : null;
     lakehouse = { workspace, item };
     setPaneTabs(item);
     if (resetP) await resetP;

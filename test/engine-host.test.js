@@ -13,7 +13,7 @@ import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 
 const require = createRequire(import.meta.url);
-const { createEngineHost } = require("../extension/src/engine-host.js");
+const { createEngineHost, isOneLakeMetadata } = require("../extension/src/engine-host.js");
 
 // What fetch-extensions.mjs put next to the extension, when CI ran it for this platform.
 const BUNDLED = join(fileURLToPath(new URL(".", import.meta.url)), "..", "extension", "duckdb-extensions");
@@ -130,4 +130,19 @@ test("native engine host", async t => {
     await other.close();
     await assert.rejects(other.call("query", ["SELECT 1"]), /closed/);
   });
+});
+
+// The metadata location arrives from the page and is spliced into iceberg_scan(...), so
+// only the shape the catalog returns may pass; everything else takes the ATTACH path.
+test("only a OneLake metadata.json is read with iceberg_scan", () => {
+  assert.ok(isOneLakeMetadata(
+    "abfss://ws@onelake.dfs.fabric.microsoft.com/lh.Lakehouse/Tables/dbo/t/metadata/00001-ab.metadata.json"));
+  for (const bad of [
+    null, "", 42,
+    "file:///etc/passwd.metadata.json",
+    "https://onelake.dfs.fabric.microsoft.com/ws/lh.Lakehouse/Tables/t/metadata/v1.metadata.json",
+    "abfss://ws@evil.example.com/x/v1.metadata.json",
+    "abfss://ws@onelake.dfs.fabric.microsoft.com/lh/Tables/t/metadata/v1.metadata.json') ; DROP TABLE x; --",
+    "abfss://ws@onelake.dfs.fabric.microsoft.com/lh/Tables/t/data/part.parquet",
+  ]) assert.equal(isOneLakeMetadata(bad), false, String(bad));
 });

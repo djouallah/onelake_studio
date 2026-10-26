@@ -97,6 +97,12 @@ function scrub(e, token) {
   return e;
 }
 
+// The page sends this string and it is spliced into SQL, so only the one shape the
+// catalog actually returns is accepted: a OneLake abfss URI ending in a metadata.json.
+// Anything else falls back to the ATTACH, which never takes a path from the page.
+const ONELAKE_METADATA = /^abfss:\/\/[^@/\s]+@onelake\.dfs\.fabric\.microsoft\.com\/[^\s]+\.metadata\.json$/i;
+const isOneLakeMetadata = s => typeof s === 'string' && ONELAKE_METADATA.test(s);
+
 // 25% of RAM unless told otherwise. DuckDB's own default is 80%, which is a fine answer
 // for a process that owns the machine and a bad one for the extension host, which every
 // other extension in the window shares.
@@ -265,6 +271,13 @@ function createEngineHost({ extensionDir, onLog = () => {}, onWarn = () => {}, g
       // extension. The temp dir is this session's own and is deleted on close.
       const tmp = tmpDir.replace(/\\/g, '/');
       await conn.run(`SET temp_directory = ${sqlStr(tmp)};`);
+
+      // Parquet footers, kept between queries: a Data tab, a Preview and the user's own
+      // SELECT over one table each re-read every footer otherwise. Entries are checked
+      // against the file's last-modified time, so a Files/ parquet rewritten in place is
+      // read again. Set before the lockdown, which freezes the configuration.
+      try { await conn.run('SET parquet_metadata_cache = true;'); }
+      catch (e) { onWarn(`could not enable DuckDB's parquet metadata cache — ${e.message}`); }
 
       // THE LOCKDOWN. This engine runs SQL that a webview sends it, with the user's files
       // and the user's OneLake token within reach — so whatever the page says, DuckDB may
@@ -462,11 +475,26 @@ function createEngineHost({ extensionDir, onLog = () => {}, onWarn = () => {}, g
     }
   }
 
-  // A table, ready to be selected from. The alias is per ITEM because that is what an
-  // ATTACH costs (~5s) and what it covers; a second table in the same lakehouse is free.
-  async function openTable({ workspace, item, schema, table }) {
+  // A table, ready to be selected from.
+  //
+  // With the metadata location the page already holds (the catalog's loadTable answer,
+  // disk-cached by the proxy), the table is read with iceberg_scan and the catalog is not
+  // asked again. That matters more than it looks: an ATTACHed table goes back to the REST
+  // catalog on EVERY query that names it, and measured against a real tenant that catalog
+  // answered a loadTable in 5s, 12s and 114s. The scan path reads the same metadata.json
+  // and manifests from storage, applies the same deletes and the Warehouse field-id
+  // mapping (checked on a Warehouse table: readable names), and pins the snapshot the
+  // Stats card showed.
+  //
+  // Without one — an older page, a missing field — it falls back to the ATTACH, whose
+  // alias is per ITEM because that is what an ATTACH costs (~5s) and what it covers.
+  async function openTable({ workspace, item, schema, table, metadataLocation }) {
     await init();
     await currentToken();
+    if (isOneLakeMetadata(metadataLocation)) {
+      await ensureAuth();
+      return { ident: `iceberg_scan(${sqlStr(metadataLocation)})`, alias: null };
+    }
     const alias = await withAuthRetry(() => attachKey(`${workspace}/${item}`));
     // DEFAULT_SCHEMA is dbo, but naming the schema explicitly is right for every other
     // one — and OneLake gives schema-less items a synthetic "dbo" anyway.
@@ -624,4 +652,4 @@ function createEngineHost({ extensionDir, onLog = () => {}, onWarn = () => {}, g
   return { init, call, close, get capabilities() { return capabilities; } };
 }
 
-module.exports = { createEngineHost, jsonSafe };
+module.exports = { createEngineHost, jsonSafe, isOneLakeMetadata };

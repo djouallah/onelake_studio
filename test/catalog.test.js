@@ -171,6 +171,34 @@ test("a table listing is fetched once per item, however many schemas the tree dr
   } finally { restore(); }
 });
 
+test("refreshing one item re-fetches that item only; the others stay cached", async () => {
+  const { catalog, calls, restore } = catalogWith([
+    [/\/v1\/config/, () => res(200, {})],
+    [/\/namespaces$/, () => res(200, { namespaces: [["dbo"]] })],
+    [/\/tables$/, () => res(200, { identifiers: [{ name: "t" }] })],
+  ]);
+  try {
+    const a = { workspace: "ws", item: "a.Lakehouse" }, b = { workspace: "ws", item: "b.Lakehouse" };
+    await catalog.listTables(a);
+    await catalog.listTables(b);
+    catalog.reset(a);
+    const before = calls.length;
+    await catalog.listTables(b);
+    assert.equal(calls.length, before, "the other item's listing was kept");
+    await catalog.listTables(a);
+    assert.ok(calls.length > before, "the refreshed item went back out");
+    // A workspace-level refresh reaches every item under it, and only those.
+    const other = { workspace: "ws2", item: "c.Lakehouse" };
+    await catalog.listTables(other);
+    catalog.reset({ workspace: "ws" });
+    const mid = calls.length;
+    await catalog.listTables(other);
+    assert.equal(calls.length, mid, "another workspace's listing was kept");
+    await catalog.listTables(b);
+    assert.ok(calls.length > mid, "items under the refreshed workspace went back out");
+  } finally { restore(); }
+});
+
 test("a failed listing is not remembered as an answer", async () => {
   let fail = true;
   const { catalog, restore } = catalogWith([

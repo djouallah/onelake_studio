@@ -17,7 +17,7 @@
 const vscode = require('vscode');
 const { join } = require('node:path');
 const { startProxy } = require('./proxy');
-const { openPanel, closePanel, postToPanel, postLive } = require('./panel');
+const { openPanel, closePanel, revealPanel, postToPanel, postLive } = require('./panel');
 const { createCatalog } = require('./catalog');
 const { createFabric, exportPath, EXPORT_DIR } = require('./fabric');
 const { LakehouseTree } = require('./tree');
@@ -527,6 +527,7 @@ async function resetEngine() {
 }
 
 async function show(context, options) {
+  if (revealPanel()) return true;
   const token = await getToken(options);
   if (!token) {
     const why = lastAuthError ? `Sign-in failed: ${lastAuthError.message || lastAuthError}`
@@ -730,7 +731,12 @@ async function activateInner(context) {
       showCollapseAll: true,
     }),
 
-    vscode.commands.registerCommand('onelakeStudio.refresh', n => tree.refresh(n)),
+    // The panel keeps table metadata across lakehouse switches now, so the refresh button
+    // is what tells it to forget: a refresh exists to ask OneLake again, there too.
+    vscode.commands.registerCommand('onelakeStudio.refresh', n => {
+      tree.refresh(n);
+      postLive({ type: 'reset' });
+    }),
 
     vscode.commands.registerCommand('onelakeStudio.showLog', () => out.show(true)),
 

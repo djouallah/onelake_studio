@@ -247,8 +247,16 @@ function createCatalog({ getToken, siteFsPath, dfsOrigin = DFS_ORIGIN, tableOrig
     })).sort((a, b) => (b.isDir - a.isDir) || byName(a.name, b.name));
   }
 
-  // A refresh, or a change of identity, invalidates everything held across calls.
-  function reset() { ircPrefixes.clear(); tablesC.clear(); }
+  // A change of identity, or a refresh of the whole tree, invalidates everything held
+  // across calls. A refresh of one node invalidates only what lies under it: clearing
+  // every item's table listing to refresh one meant the next expand of any OTHER item
+  // paid the catalog's seconds again for an answer nobody asked to refresh.
+  function reset(scope) {
+    if (!scope || !scope.workspace) { ircPrefixes.clear(); tablesC.clear(); return; }
+    const under = scope.item ? k => k === `${scope.workspace}/${scope.item}`
+                             : k => k.startsWith(`${scope.workspace}/`);
+    for (const m of [ircPrefixes, tablesC]) for (const k of [...m.keys()]) if (under(k)) m.delete(k);
+  }
 
   // The classification rules, for callers that need to render with them (a Files/ area,
   // an item kind's label, a byte count). Same module instance this file uses, so the tree

@@ -42,12 +42,12 @@ class LakehouseTree {
   }
 
   // `n` undefined refreshes the whole tree; a node refreshes that subtree only, which is
-  // what the per-item refresh in the context menu wants. The catalog's memos are cleared
-  // either way: a per-node refresh that re-renders from the same cached listing is a
-  // refresh button that does nothing, and the tables listing is exactly the memo the
-  // per-node button exists to bust.
+  // what the per-item refresh in the context menu wants. The catalog's memos under the
+  // node are cleared: a per-node refresh that re-renders from the same cached listing is
+  // a refresh button that does nothing, and the tables listing is exactly the memo the
+  // per-node button exists to bust. Memos for the rest of the tree are kept.
   refresh(n) {
-    this.catalog.reset();
+    this.catalog.reset(n ? { workspace: n.workspace, item: n.item } : undefined);
     if (this.fabric) this.fabric.reset();
     this._emitter.fire(n);
   }

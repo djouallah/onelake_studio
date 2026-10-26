@@ -127,7 +127,7 @@ export function createEngine(auth, {
   // each one's answer is kept: statTable (metadata only) -> peekTable (ONE parquet) ->
   // loadTable (every file, a real view). These two caches are what stop a later tier
   // from paying again for what an earlier one already fetched. Neither holds DuckDB
-  // state, so a worker restart keeps them — only a lakehouse switch clears them.
+  // state, so a worker restart keeps them — only a refresh clears them (see reset()).
   const resolvedC = new Map();      // cache key -> the resolved Iceberg metadata document
   const filesC = new Map();         // cache key -> { files[], posDeletes[], eqDeletes[] }
   const peekC = new Map();          // cache key -> the peek's rows, built once per snapshot
@@ -581,7 +581,12 @@ export function createEngine(auth, {
   // Called when the user switches lakehouse. Cache entries are keyed per lakehouse so a
   // stale one can no longer be served, but the DuckDB objects behind them are still there
   // and still cost memory, so give those back too.
-  async function reset() {
+  //
+  // `forget: false` is a plain switch: the metadata and peek caches hold no DuckDB state
+  // and are keyed per lakehouse, so they are kept — going back to a lakehouse then costs
+  // nothing, where clearing them meant another round of the catalog's seconds-per-call.
+  // A refresh forgets them, because a refresh exists to ask OneLake again.
+  async function reset({ forget = true } = {}) {
     // Switching lakehouse supersedes whatever is loading: the in-flight load stands
     // down at its next check() as a cancel instead of finding its files gone and
     // reporting "Failed to open file" against a table the user has already left.
@@ -590,9 +595,8 @@ export function createEngine(auth, {
     loaded.clear();
     resources.clear();
     viewNames.clear();
-    resolvedC.clear();
     filesC.clear();
-    peekC.clear();
+    if (forget) { resolvedC.clear(); peekC.clear(); }
   }
 
   // A DuckDB identifier for this key that no other key already owns. sanitizeIdent is
@@ -993,7 +997,9 @@ export function createEngine(auth, {
         // is: a 200 carrying no metadata document is a broken answer, not an unfinished
         // conversion.
         if (!doc || !doc.metadata) throw new Error(`${label}: the catalog returned no metadata document`);
-        return readMetadataDoc(doc.metadata, label);
+        // metadata-location rides along: it is what lets the host read the table with
+        // iceberg_scan instead of an ATTACH that asks this same catalog again per query.
+        return readMetadataDoc(doc.metadata, label, doc["metadata-location"]);
       } catch (e) {
         if (e.cancelled) throw e;
         const notYet = e.status === 400 || e.status === 404;
@@ -1016,7 +1022,7 @@ export function createEngine(auth, {
   // The parts of an Iceberg metadata document this reader needs. Shared, because the same
   // document arrives two ways: fetched from metadata/ over DFS, or handed over inline by
   // the REST catalog's Get table. The validation belongs in one place either way.
-  function readMetadataDoc(meta, source) {
+  function readMetadataDoc(meta, source, metadataLocation = null) {
     // Guessing is worse than failing here. Falling back to the last element of the
     // snapshots array, as an earlier version did, opens the table against a snapshot that
     // is not defined to be the current one and says nothing about having done so.
@@ -1035,7 +1041,8 @@ export function createEngine(auth, {
     // list" — reporting an empty table as a broken one. DuckDB opens it and returns no
     // rows against the right schema, so say that instead.
     if (!snap || String(curId) === "-1" || !snapshots.length) {
-      return { empty: true, schemaFields: icebergFields(schema), totalRecords: 0, stats: null };
+      return { empty: true, schemaFields: icebergFields(schema), totalRecords: 0, stats: null,
+               metadataLocation };
     }
 
     return {
@@ -1046,6 +1053,7 @@ export function createEngine(auth, {
       schemaFields: icebergFields(schema),
       totalRecords: Number((snap.summary || {})["total-records"]) || null,
       stats: snapshotStats(meta, snap),
+      metadataLocation,
     };
   }
 
@@ -1249,7 +1257,7 @@ export function createEngine(auth, {
     }
 
     status(`Reading the first ${QUICK_PEEK_ROWS} rows of ${label}…`);
-    const source = await attachedIdent(lh, t);
+    const source = await attachedIdent(lh, t, resolved);
     check();
     // materialize(), never a bare conn.send() — see the silent-truncation note on stream().
     const out = await materialize(`SELECT * FROM ${source} LIMIT ${QUICK_PEEK_ROWS}`);
@@ -1260,9 +1268,10 @@ export function createEngine(auth, {
   // The table, as DuckDB can name it: `ol_<n>."schema"."table"` inside an ATTACHed
   // Iceberg catalog. Cached per item in the host, so this is one message and no I/O once
   // the item has been opened.
-  async function attachedIdent(lh, t) {
+  async function attachedIdent(lh, t, resolved) {
     const { ident } = await guarded(() => db.openTable({
       workspace: lh.workspace, item: lh.item, schema: t.schema, table: t.table,
+      metadataLocation: (resolved && resolved.metadataLocation) || null,
     }));
     return ident;
   }
@@ -1316,10 +1325,10 @@ export function createEngine(auth, {
         // DuckDB opens it and returns no rows, so the view is real and simply empty —
         // which beats the error this used to raise about snapshot -1.
         status(`Opening ${label}…`);
-        await createView(ident, await attachedIdent(lh, t));
+        await createView(ident, await attachedIdent(lh, t, resolved));
       } else {
         status(`Opening ${label}…`);
-        const source = await attachedIdent(lh, t);
+        const source = await attachedIdent(lh, t, resolved);
         check();
 
         // Rows on screen while the rest of the open runs. Cheap now: the same LIMIT 100
@@ -1341,9 +1350,9 @@ export function createEngine(auth, {
     } catch (e) {
       // A stop is not a failure. Superseded while failing is also not this load's
       // problem — and some of the ways it can fail here ARE the supersession.
-      if (e.cancelled) { await releaseOwned(key, [], gen); throw e; }
-      if (gen !== loadGen) { await releaseOwned(key, [], gen); throw cancelledError(); }
-      await releaseOwned(key, [], gen);
+      if (e.cancelled) { await releaseOwned(key, gen); throw e; }
+      if (gen !== loadGen) { await releaseOwned(key, gen); throw cancelledError(); }
+      await releaseOwned(key, gen);
       // No bisector any more, and none is needed: the old one existed because a failure
       // inside a several-hundred-file read_parquet() named nothing, and the file list was
       // ours to halve. DuckDB owns the file list now and its errors name the file.

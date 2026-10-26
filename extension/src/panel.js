@@ -236,4 +236,14 @@ function closePanel() {
   if (current) current.dispose();   // onDidDispose nulls `current` and clears `ready`
 }
 
-module.exports = { openPanel, closePanel, postToPanel, postLive };
+// The panel already on screen, brought forward — and nothing else. A tree click on a
+// second table used to repeat the whole open: an account-provider RPC, the README lookup,
+// the engine check. None of it can have changed while the panel lives (a sign-out or an
+// account switch closes it), so a click on a live panel is a reveal and a message.
+function revealPanel() {
+  if (!current) return false;
+  current.reveal(vscode.ViewColumn.Active);
+  return true;
+}
+
+module.exports = { openPanel, closePanel, revealPanel, postToPanel, postLive };
