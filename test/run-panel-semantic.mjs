@@ -2,9 +2,8 @@
 // on a real native engine-host through the panel's message bridge, under a CSP of the
 // panel's shape. A .bim is "opened from the tree" — an open-file message, as extension.js
 // posts after an export — and its bytes are read by the real host methods from a fake
-// OneLake this server stands in for (panel-host.mjs). The
-// compiler and the chart library come through a /cdn route, as the proxy serves them:
-// extension/vendor/ first (vendor.mjs), jsDelivr behind it.
+// OneLake this server stands in for (panel-host.mjs). The compiler and the chart library
+// come from extension/vendor/ (vendor.mjs), as the panel serves them — nothing from a CDN.
 //
 // No editor, no credentials, no lakehouse. Run: node test/run-panel-semantic.mjs
 import http from "node:http";
@@ -19,6 +18,7 @@ import { panelHost, README } from "./panel-host.mjs";
 
 const require = createRequire(import.meta.url);
 const { rewriteHtml } = require("../extension/src/html.js");
+const { PINS } = require("../extension/src/vendored.js");
 
 const root = join(fileURLToPath(new URL(".", import.meta.url)), "..");
 const APP = join(root, "extension", "app");
@@ -62,7 +62,6 @@ const MIME = { ".js": "text/javascript", ".html": "text/html; charset=utf-8",
                ".css": "text/css", ".json": "application/json", ".md": "text/markdown" };
 
 const INDEX = await readFile(join(APP, "index.html"), "utf8");
-const fromCdn = [];
 const server = http.createServer(async (req, res) => {
   const path = decodeURIComponent(new URL(req.url, "http://x").pathname);
   try {
@@ -70,7 +69,7 @@ const server = http.createServer(async (req, res) => {
       const html = rewriteHtml(INDEX, {
         assetUrl: name => `${ORIGIN}/${name}`,
         nonce: NONCE,
-        config: { auth: "none", host: "vscode", cdnOrigin: `${ORIGIN}/cdn`, readmeUrl: README },
+        config: { auth: "none", host: "vscode", vendorBase: `${ORIGIN}/vendor`, pins: PINS, readmeUrl: README },
         cspContent: CSP,
       });
       res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
@@ -80,17 +79,10 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(200, { "content-type": "application/octet-stream" });
       return res.end(BIM);
     }
-    if (path.startsWith("/cdn/cdn.jsdelivr.net/")) {
-      const rest = path.slice("/cdn/".length);
-      let body;
-      try { body = await readFile(join(VENDOR, ...rest.split("/"))); }
-      catch {
-        const r = await fetch(`https://${rest}`);
-        if (!r.ok) { res.writeHead(r.status); return res.end(); }
-        body = Buffer.from(await r.arrayBuffer());
-        fromCdn.push(rest);
-      }
-      res.writeHead(200, { "content-type": MIME[extname(rest)] || "text/javascript" });
+    if (path.startsWith("/vendor/")) {
+      const rest = path.slice("/vendor/".length);
+      const body = await readFile(join(VENDOR, ...rest.split("/")));
+      res.writeHead(200, { "content-type": MIME[extname(rest)] || "application/octet-stream" });
       return res.end(body);
     }
     const file = path === "/README.md" ? join(root, "README.md") : join(APP, path.slice(1));
@@ -158,13 +150,12 @@ try {
   console.log("sql page:", info, "|", rows);
   if (!/^2 rows/.test(info) || !/blue 5(\.0)? red 12\.5/.test(rows)) throw new Error(`SQL page: ${info} ${rows}`);
 
-  // Explore loads ECharts as a classic script through the /cdn route — the CSP must admit it.
+  // Explore loads ECharts as a classic script from the vendored tree — the CSP must admit it.
   await page.click('#modelView .subtab[data-apage="explore"]');
   await page.waitForFunction(() => !!window.echarts, { timeout: 60000 })
     .catch(() => { throw new Error("ECharts never loaded for Explore"); });
 
   if (csp.length) throw new Error(`Content-Security-Policy refused something: ${csp.join(" | ")}`);
-  if (fromCdn.length) console.log(`(not vendored yet, fetched from jsDelivr: ${fromCdn.length} file(s) — run extension/vendor.mjs)`);
   console.log("RESULT: OK — a .bim opened in the panel as its model, and a model query ran on the native engine");
   code = 0;
 } catch (e) {

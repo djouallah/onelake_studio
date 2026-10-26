@@ -196,13 +196,6 @@
           "patternErrorMessage": "A directory (tenant) ID is a GUID, e.g. 72f988bf-86f1-41af-91ab-2d7cd011db47.",
           "markdownDescription": "Directory (tenant) GUID to sign in against. Leave empty for your home tenant; set it to reach a tenant you are a guest in. Machine-scoped on purpose: a setting that steers *authentication* must not be overridable by a workspace's own `.vscode/settings.json`."
         },
-        "onelakeStudio.dataCacheGB": {
-          "type": "number",
-          "default": 20,
-          "minimum": 0,
-          "scope": "machine",
-          "markdownDescription": "Disk to spend caching OneLake Files/ reads that pass through the extension's local proxy, in GB. Each Microsoft account gets its own cache. Tables are read by native DuckDB directly and do not pass through it; listings and table metadata live in a separate, small store. Set to `0` to cache nothing; `OneLake Studio: Clear Cached OneLake Data` empties both and reports what it freed. Applies after the window is reloaded."
-        },
         "onelakeStudio.catalogTtlMinutes": {
           "type": "number",
           "default": 5,

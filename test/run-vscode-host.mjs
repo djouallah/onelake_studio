@@ -7,12 +7,16 @@
 //
 // Run: node test/run-vscode-host.mjs
 import http from "node:http";
-import { readFile } from "node:fs/promises";
+import { readFile, mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { DatabaseSync } from "node:sqlite";
 import { join, extname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
 
 import { panelHost, README } from "./panel-host.mjs";
+import { createRequire } from "node:module";
+const { PINS } = createRequire(import.meta.url)("../extension/src/vendored.js");
 
 const root = join(fileURLToPath(new URL(".", import.meta.url)), "..");
 const PORT = 5199;
@@ -27,6 +31,17 @@ const MIME = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; cha
 const ircCalls = [];
 const dfsCalls = [];
 
+// A SQLite database under Files/, served by the fake OneLake: the host copies it into the
+// engine's temp directory and DuckDB's sqlite extension attaches it read-only.
+const SQLITE_PATH = "A.Lakehouse/Files/shop.sqlite";
+const sqliteFile = join(await mkdtemp(join(tmpdir(), "onelake-sqlite-")), "shop.sqlite");
+{
+  const db = new DatabaseSync(sqliteFile);
+  db.exec("CREATE TABLE orders (id INTEGER, amount REAL); INSERT INTO orders VALUES (1, 2.5), (2, 4.0);");
+  db.close();
+}
+const SQLITE_BYTES = await readFile(sqliteFile);
+
 const server = http.createServer(async (req, res) => {
   const u = new URL(req.url, "http://x");
   const path = u.pathname;
@@ -35,6 +50,10 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(404, { "content-type": "application/json" });
     return res.end(JSON.stringify({ error: { message: "no fixtures here" } }));
   }
+  if (path === `/dfs/ws1/${SQLITE_PATH}`) {
+    res.writeHead(200, { "content-type": "application/octet-stream" });
+    return res.end(SQLITE_BYTES);
+  }
   if (path.startsWith("/dfs/")) {
     dfsCalls.push(u.searchParams.get("resource") === "account"
       ? "account" : `dir:${u.searchParams.get("directory") ?? ""}`);
@@ -42,7 +61,10 @@ const server = http.createServer(async (req, res) => {
     return res.end(JSON.stringify(u.searchParams.get("resource") === "account"
       ? { fileSystems: [{ name: "ws1" }] } : { paths: [] }));
   }
-  const file = join(root, "extension", "app", path === "/" ? "index.html" : path.slice(1));
+  // The vendored libraries, as panel.js serves them (vendor.mjs fills extension/vendor/).
+  const file = path.startsWith("/vendor/")
+    ? join(root, "extension", "vendor", ...decodeURIComponent(path.slice("/vendor/".length)).split("/"))
+    : join(root, "extension", "app", path === "/" ? "index.html" : path.slice(1));
   try {
     const body = await readFile(file);
     res.writeHead(200, {
@@ -106,6 +128,7 @@ try {
     contentType: "text/javascript",
     body: `window.ONELAKE_STUDIO_CONFIG = ${JSON.stringify({
       auth: "none", host: "vscode", readmeUrl: README,
+      vendorBase: `http://127.0.0.1:${PORT}/vendor`, pins: PINS,
     })};`,
   }));
 
@@ -270,10 +293,23 @@ try {
       !document.getElementById("status").textContent.includes("welcome page")),
     await page.evaluate(() => document.getElementById("status").textContent));
 
-  // --- where the bytes came from ---------------------------------------------
-  // The extension counts the reads (the page cannot see DuckDB's) and sends the total.
-  // Each of these is a state someone will actually be looking at when they wonder why
-  // something took as long as it did.
+  // --- a SQLite file from Files/ -----------------------------------------------
+  await page.evaluate(path => window.postMessage(
+    { type: "open-file", workspace: "ws1", item: "A.Lakehouse", path, bytes: 1 }, "*"), SQLITE_PATH);
+  await page.waitForFunction(
+    () => /orders/.test(document.getElementById("activeTable").textContent || ""), { timeout: 60000 })
+    .catch(() => {});
+  await page.fill("#sqlEditor", "select sum(amount) as total from shop.main.orders");
+  await page.click("#runBtn");
+  const sqliteOk = await page.waitForFunction(
+    () => /\b6\.5\b/.test(document.getElementById("resultsTable").innerText || ""), { timeout: 60000 })
+    .then(() => true, () => false);
+  check("a SQLite file opens, read by the host's DuckDB", sqliteOk,
+    await page.evaluate(() => document.getElementById("status").textContent));
+
+  // --- where the answers came from -------------------------------------------
+  // The extension counts the host's OneLake answers (the page cannot see them) and sends
+  // the total, from the cache or from OneLake.
   const indicator = async msg => {
     await page.evaluate(m => window.postMessage(m, "*"), { type: "reads", ...msg });
     await page.waitForFunction(() => !document.getElementById("readSrc").hidden, { timeout: 5000 })
@@ -284,53 +320,20 @@ try {
     });
   };
 
-  const allLocal = await indicator({
-    reads: 14, hits: 14, misses: 0, skips: 0, cacheBytes: 31e6, netBytes: 0, netMs: 0,
-    cacheStored: 2.1e9, cacheMax: 20e9 });
-  check("all-from-disk reads say so", allLocal.text === "▤ local" && allLocal.cls === "local",
+  const allLocal = await indicator({ reads: 14, hits: 14, misses: 0, netMs: 0 });
+  check("all-from-cache answers say so", allLocal.text === "▤ cache" && allLocal.cls === "local",
     `${allLocal.text} / ${allLocal.cls}`);
 
-  const mixed = await indicator({
-    reads: 12, hits: 9, misses: 3, skips: 0, cacheBytes: 31e6, netBytes: 4.2e6, netMs: 1800,
-    cacheStored: 2.1e9, cacheMax: 20e9 });
-  check("a mixed read reports both sides", /▤ 9/.test(mixed.text) && /☁ 3/.test(mixed.text),
+  const mixed = await indicator({ reads: 12, hits: 9, misses: 3, netMs: 1800 });
+  check("a mixed burst reports both sides", /▤ 9/.test(mixed.text) && /☁ 3/.test(mixed.text),
     mixed.text);
   check("...and the tooltip has the breakdown",
-    /9 from this machine/.test(mixed.title) && /3 from OneLake/.test(mixed.title) &&
-    /2\.1 GB of 20 GB/.test(mixed.title), mixed.title.replace(/\n/g, " | "));
+    /9 from this machine/.test(mixed.title) && /3 from OneLake \(1\.8s\)/.test(mixed.title),
+    mixed.title.replace(/\n/g, " | "));
 
-  const remote = await indicator({
-    reads: 4, hits: 0, misses: 4, skips: 0, cacheBytes: 0, netBytes: 210e6, netMs: 9000,
-    cacheStored: 0, cacheMax: 20e9 });
-  check("nothing cached reads as network", /☁ network/.test(remote.text) && /210 MB/.test(remote.text),
+  const remote = await indicator({ reads: 4, hits: 0, misses: 4, netMs: 9000 });
+  check("nothing cached reads as OneLake, with its time", /☁ OneLake/.test(remote.text) && /9\.0s/.test(remote.text),
     remote.text);
-
-  // A background fill is network spend the user did not wait for. The reads were local,
-  // and saying only "local" while a download runs would be a lie by omission — the ⇣
-  // discloses it, and the tooltip explains what it bought.
-  const filling = await indicator({
-    reads: 2, hits: 2, misses: 0, skips: 0, stores: 1, cacheBytes: 1e6, netBytes: 0,
-    storeBytes: 150e6, netMs: 0, cacheStored: 2.1e9, cacheMax: 20e9 });
-  check("a background fill is disclosed next to local reads",
-    /▤ local/.test(filling.text) && /⇣ 150 MB/.test(filling.text), filling.text);
-  check("...and the tooltip says what it bought",
-    /background download/.test(filling.title) && /150 MB/.test(filling.title),
-    filling.title.replace(/\n/g, " | "));
-
-  // A skip is not a miss, and the difference is the whole diagnosis: those objects will
-  // cost the network every time however long you wait.
-  const skipped = await indicator({
-    reads: 6, hits: 0, misses: 0, skips: 6, cacheBytes: 0, netBytes: 12e6, netMs: 900,
-    cacheStored: 0, cacheMax: 20e9 });
-  check("a skip is explained as not kept",
-    /were not kept/.test(skipped.title), skipped.title.replace(/\n/g, " | "));
-
-  const off = await indicator({
-    reads: 3, hits: 0, misses: 0, skips: 3, cacheBytes: 0, netBytes: 1e6, netMs: 400,
-    cacheOff: "EPERM: operation not permitted, mkdir", cacheStored: 0, cacheMax: 0 });
-  check("a cache that could not start says so", off.text === "☁ no cache" && off.cls === "nocache",
-    `${off.text} / ${off.cls}`);
-  check("...and names the reason", /EPERM/.test(off.title), off.title.replace(/\n/g, " | "));
 
   await page.click("#readSrc");
   check("clicking it asks the extension for the log",

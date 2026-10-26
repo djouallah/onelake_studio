@@ -33,6 +33,9 @@ const EXTENSIONS = [
   { name: "httpfs", repo: "https://extensions.duckdb.org", required: true },
   { name: "avro", repo: "https://extensions.duckdb.org", required: true },
   { name: "excel", repo: "https://extensions.duckdb.org", required: false },
+  // SQLite files under Files/: the host copies one to the engine's temp directory and
+  // ATTACHes it read-only.
+  { name: "sqlite_scanner", repo: "https://extensions.duckdb.org", required: false },
   // Not h3 or zipfs: they are COMMUNITY extensions, and a LOAD by path verifies against the
   // core signing keys only (DuckDB 2.0 refuses them as unsigned). They keep downloading
   // from the community repository on first use, signature checked as before.

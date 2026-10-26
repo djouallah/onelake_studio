@@ -35,6 +35,14 @@ function createHostMethods({ onelake, engine, onStatus = () => {} }) {
       const bytes = await onelake.readBytes(String(x.workspace), String(x.path), { range });
       return { base64: Buffer.from(bytes).toString('base64') };
     },
+    // A Files/ object the engine must open as a LOCAL file (a SQLite database: DuckDB's
+    // sqlite extension reads only local paths). The host reads it and writes it into the
+    // engine's temp directory; the page gets the path, never the bytes.
+    'onelake.localCopy': async x => {
+      const ws = String(x.workspace), path = String(x.path);
+      if (typeof engine.copyToTemp !== 'function') throw new Error('this engine cannot take a local copy');
+      return engine.copyToTemp(`${ws}/${path}`, await onelake.readBytes(ws, path));
+    },
   };
 }
 

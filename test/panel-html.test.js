@@ -24,8 +24,8 @@ const OPTS = {
   nonce: "N0NCE",
   config: {
     auth: "none", host: "vscode",
-    dfsOrigin: "http://127.0.0.1:1/s/dfs", tableOrigin: "http://127.0.0.1:1/s/irc",
-    cdnOrigin: "http://127.0.0.1:1/s/cdn",
+    vendorBase: "https://webview.test/vendor",
+    pins: { echarts: "echarts@1", daxSql: "o/r@sha", marked: "marked@1", dompurify: "dompurify@1" },
     readmeUrl: "https://webview.test/README.md",
   },
   cspContent: "default-src 'none'",
@@ -61,8 +61,8 @@ test("the CSP lands inside head, and the external preconnects are dropped", () =
     "the CSP meta is in head");
   assert.ok(!/preconnect[^>]*onelake\./.test(out),
     "the OneLake preconnects are gone — default-src 'none' would refuse them anyway");
-  // jsDelivr's goes too: the panel's CSP no longer admits the CDN at all — its files ship
-  // in the vendor directory and load through the proxy's /cdn route.
+  // jsDelivr's goes too: the panel's CSP admits no CDN at all — its libraries ship in the
+  // extension's vendor directory and load as webview resources.
   assert.ok(!/preconnect[^>]*jsdelivr/.test(out), "the jsDelivr preconnect is gone");
 });
 
@@ -82,11 +82,13 @@ test("app.js reads both of them, so the injection is not writing into a void", a
   assert.match(app, /cfg\.readmeUrl/, "app.js takes the README URL from the config");
 });
 
-test("the engine reads cdnOrigin — the disk-cached boot path is wired, not decorative", async () => {
-  const data = await readFile(join(root, "extension", "app", "data.js"), "utf8");
-  assert.match(data, /cdnOrigin/, "data.js consumes the injected cdnOrigin");
-  const doc = await readFile(join(root, "extension", "app", "docview.js"), "utf8");
-  assert.match(doc, /cdnOrigin/, "docview.js routes its lazy imports the same way");
+test("nothing in the page reaches a CDN: every library URL is built from vendorBase", async () => {
+  const read = f => readFile(join(root, "extension", "app", f), "utf8");
+  for (const f of ["data.js", "docview.js", "cdn.js", "semantic.js", "analyze/view.js"]) {
+    const src = await read(f);
+    assert.ok(!/cdn\.jsdelivr\.net|cdnOrigin/.test(src), `${f} names no CDN`);
+  }
+  assert.match(await read("cdn.js"), /vendorBase/, "cdn.js builds URLs from the injected vendorBase");
 });
 
 // A relative <link href> resolves against the vscode-webview: document, not the site
@@ -113,18 +115,24 @@ test("a .bim opens as the semantic model view, as on the website", async () => {
   assert.match(data, /viewSchema/, "loadTable can put a model's tables in a schema of their own");
 });
 
-// cdn.js (the page) and vendored.js (vendor.mjs, the proxy, the CSP) pin the same packages
-// separately. A mismatch is a refused script in the panel and nothing in the tests.
-test("the page's pins and the vendored pins agree", async () => {
-  const { PINS, ghFile, npmFile } = await import("../extension/app/cdn.js");
-  const { VENDORED, VENDORED_GH } = require("../extension/src/vendored.js");
-  const echarts = VENDORED.find(p => p.name === "echarts");
-  assert.equal(PINS.echarts, `echarts@${echarts.version}`);
-  assert.ok(VENDORED_GH.some(g => g.repo === PINS.daxSql), "dax-sql is vendored at the page's commit");
-  assert.ok(VENDORED_GH.every(g => g.include.test("/src/index.js") && g.include.test("/formats/tmsl.js")),
-    "and the files semantic.js imports are among those vendored");
-  assert.match(ghFile(PINS.daxSql, "src/index.js"), /^https:\/\/cdn\.jsdelivr\.net\/gh\//);
-  assert.match(npmFile(PINS.echarts, "dist/echarts.min.js"), /^https:\/\/cdn\.jsdelivr\.net\/npm\/echarts@/);
+// One pin list (src/vendored.js): vendor.mjs downloads it, panel.js injects it, cdn.js
+// builds URLs from it. What can still drift is a name the page asks for that the list
+// lacks, or a file the page imports that the vendoring does not fetch.
+test("the page's libraries are exactly what vendor.mjs ships", async () => {
+  const { PINS, VENDOR } = require("../extension/src/vendored.js");
+  globalThis.window = { ONELAKE_STUDIO_CONFIG: { vendorBase: "https://webview.test/vendor/", pins: PINS } };
+  const cdn = await import("../extension/app/cdn.js");
+  delete globalThis.window;
+  for (const key of ["echarts", "daxSql", "marked", "dompurify"]) assert.ok(PINS[key], `${key} is pinned`);
+  assert.ok(VENDOR.esm.includes(PINS.marked) && VENDOR.esm.includes(PINS.dompurify), "the markdown renderer is vendored");
+  assert.ok(VENDOR.files.includes(`${PINS.echarts}/dist/echarts.min.js`), "ECharts' build is vendored");
+  const gh = VENDOR.gh.find(g => g.repo === PINS.daxSql);
+  assert.ok(gh && gh.include.test("/src/index.js") && gh.include.test("/formats/tmsl.js"),
+    "dax-sql is vendored at the page's commit, with the files semantic.js imports");
+  assert.equal(cdn.npmEsm(PINS.marked), `https://webview.test/vendor/npm/${PINS.marked}/+esm.js`);
+  assert.equal(cdn.npmFile(PINS.echarts, "dist/echarts.min.js"),
+    `https://webview.test/vendor/npm/${PINS.echarts}/dist/echarts.min.js`);
+  assert.equal(cdn.ghFile(PINS.daxSql, "src/index.js"), `https://webview.test/vendor/gh/${PINS.daxSql}/src/index.js`);
 });
 
 test("a page missing the config.js tag is refused rather than half-built", () => {

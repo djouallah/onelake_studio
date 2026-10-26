@@ -6,37 +6,18 @@
 //   text     -> escaped into a <pre>, byte for byte
 //   markdown -> marked + DOMPurify
 //
-// Only the markdown branch needs the parser, so both dependencies are lazily imported
-// from the CDN on the first markdown render — a .sql macro or a JSON blob renders with
-// no network at all. Pinned ESM from jsDelivr, same pattern as sql.js (data.js) and
-// msal (auth.js).
+// Only the markdown branch needs the parser, so both libraries are imported on the first
+// markdown render — a .sql macro or a JSON blob renders with nothing loaded at all. They
+// ship inside the extension (cdn.js).
 // =============================================================================
 import { docKind, escapeHtml } from './paths.js';
-
-// Routed through the extension's loopback proxy when its config names a cdnOrigin —
-// same disk-cached boot path as duckdb itself in data.js, so the first markdown render
-// of a session does not stall on a CDN fetch the webview cannot cache.
-const CDN_ORIGIN = (typeof window !== 'undefined' &&
-  (window.ONELAKE_STUDIO_CONFIG || {}).cdnOrigin) || '';
-const withCdn = url => (CDN_ORIGIN ? url.replace(/^https:\/\//, CDN_ORIGIN + '/') : url);
-
-const MARKED_ESM = 'https://cdn.jsdelivr.net/npm/marked@18.0.7/+esm';
-const DOMPURIFY_ESM = 'https://cdn.jsdelivr.net/npm/dompurify@3.4.12/+esm';
+import { PINS, npmEsm } from './cdn.js';
 
 let _md = null;   // { marked, purify } once loaded
 
-// Proxied first, direct CDN if the route fails — a markdown render must degrade to
-// slower, never to broken.
-const importDoc = async url => {
-  if (CDN_ORIGIN) {
-    try { return await import(withCdn(url)); } catch (_) { /* fall through */ }
-  }
-  return import(url);
-};
-
 export async function renderMarkdown(text) {
   if (!_md) {
-    const [m, d] = await Promise.all([importDoc(MARKED_ESM), importDoc(DOMPURIFY_ESM)]);
+    const [m, d] = await Promise.all([import(npmEsm(PINS.marked)), import(npmEsm(PINS.dompurify))]);
     const purify = (d.default || d)(window);
     // read_text() renders files the user did not author, and this page holds
     // OneLake tokens — marked's output is never inserted unsanitized, and no

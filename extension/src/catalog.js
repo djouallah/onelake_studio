@@ -89,8 +89,19 @@ async function oneLakeMessage(r) {
  * @param {string} opts.siteFsPath                    directory holding paths.js
  */
 function createCatalog({ getToken, siteFsPath, dfsOrigin = DFS_ORIGIN, tableOrigin = TABLE_ORIGIN,
-                         backoffMs = RESOLVE_BACKOFF_MS }) {
+                         backoffMs = RESOLVE_BACKOFF_MS, onRequest = () => {} }) {
   const gate = limiter(MAX_IN_FLIGHT);
+
+  // Every request, for the read log: how long OneLake took, what it said, how much came
+  // back. The path only — the origin is always OneLake and the query string is noise.
+  const report = (url, r, t0, error) => {
+    let path = String(url);
+    try { const u = new URL(url); path = decodeURIComponent(u.pathname) + (u.searchParams.get('directory') ? `?dir=${u.searchParams.get('directory')}` : ''); } catch (_) {}
+    try {
+      onRequest({ cache: 'miss', ms: Date.now() - t0, status: r ? r.status : 0, path,
+                  bytes: r ? Number(r.headers.get('content-length')) || 0 : 0, error });
+    } catch (_) {}
+  };
   // Same bargain as data.js's authedFetch: retry once on 401 and only on 401. A 403 means
   // this identity may not read that path, and a fresh token will not change its mind.
   async function authedFetch(url, extraHeaders = {}) {
@@ -101,14 +112,22 @@ function createCatalog({ getToken, siteFsPath, dfsOrigin = DFS_ORIGIN, tableOrig
       throw e;
     }
     const opts = headers => ({ headers, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
-    let r = await gate(() => fetch(url, opts({ ...extraHeaders, authorization: `Bearer ${token}` })));
+    const signed = async t => {
+      const t0 = Date.now();
+      try {
+        const r = await gate(() => fetch(url, opts({ ...extraHeaders, authorization: `Bearer ${t}` })));
+        report(url, r, t0);
+        return r;
+      } catch (e) { report(url, null, t0, (e && e.message) || String(e)); throw e; }
+    };
+    let r = await signed(token);
     if (r.status === 401) {
       // { fresh: true } or the retry is theatre: the injected getToken is the extension's
       // 60-second token cache, and asking it plainly returns the very string that just
       // 401'd — `fresh !== token` was false every single time.
       const fresh = await getToken({ fresh: true });
       if (fresh && fresh !== token) {
-        r = await gate(() => fetch(url, opts({ ...extraHeaders, authorization: `Bearer ${fresh}` })));
+        r = await signed(fresh);
       }
     }
     return r;

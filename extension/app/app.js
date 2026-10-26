@@ -1900,49 +1900,28 @@ if (HOST_VSCODE) {
     else await selectFile(detachedRow(), entry);
   }
 
-  // Where the bytes came from. DuckDB's reads never pass through this page — it cannot see
-  // how many there were or how long OneLake took — so the extension counts them and sends
-  // the total. Deliberately NOT written through setStatus: that does `el.className = type`
-  // and would drop any class parked on it, and this is a standing fact rather than a
-  // message about what just happened.
-  // A round number is a round number: "20.0 GB" and "210.0 MB" read like a measurement
-  // taken to a precision nobody asked for. And zero is nothing, not "1 KB".
-  const trim = s => s.replace(/\.0$/, '');
-  const bytes = n => !n ? 'nothing'
-                   : n >= 1e9 ? `${trim((n / 1e9).toFixed(1))} GB`
-                   : n >= 1e6 ? `${trim((n / 1e6).toFixed(1))} MB`
-                   : `${Math.max(1, Math.round(n / 1e3))} KB`;
-
+  // Where the last answers came from: the extension's disk cache, or OneLake. Every
+  // OneLake request is the host's, so the page cannot see them — the extension counts a
+  // burst and sends the total. Deliberately NOT written through setStatus: that does
+  // `el.className = type` and would drop any class parked on it, and this is a standing
+  // fact rather than a message about what just happened.
   function showReads(m) {
     const el = $('readSrc');
     el.hidden = false;
     el.className = '';
-    const fromNet = m.misses + m.skips;
-    // Background fills: downloads the extension started so the NEXT read is local. Real
-    // network spend, so "local" is never claimed while one is in the burst — the ⇣ says
-    // the bytes served locally were bought in the background.
-    const filled = m.storeBytes || 0;
-    const dl = filled ? ` · ⇣ ${bytes(filled)}` : '';
-    if (m.cacheOff) {
-      el.textContent = '☁ no cache';
-      el.className = 'nocache';
-    } else if (!fromNet) {
-      el.textContent = `▤ local${dl}`;
+    const secs = ((m.netMs || 0) / 1000).toFixed(1);
+    if (!m.misses) {
+      el.textContent = '▤ cache';
       el.className = 'local';
     } else if (m.hits) {
-      el.textContent = `▤ ${m.hits} · ☁ ${fromNet} · ${bytes(m.netBytes)}${dl}`;
+      el.textContent = `▤ ${m.hits} · ☁ ${m.misses} · ${secs}s`;
     } else {
-      el.textContent = `☁ network · ${bytes(m.netBytes)}${dl}`;
+      el.textContent = `☁ OneLake · ${secs}s`;
     }
     el.title = [
-      `${m.reads} read(s) behind the last thing you waited for.`,
-      m.hits ? `${m.hits} from this machine (${bytes(m.cacheBytes)}).` : 'None came from this machine.',
-      fromNet ? `${fromNet} from OneLake (${bytes(m.netBytes)}, ${(m.netMs / 1000).toFixed(1)}s).` : '',
-      // A skip is not a miss: nothing of it was kept, so it will cost the network again.
-      m.skips ? `${m.skips} of those were not kept, and will cost the network again.` : '',
-      m.stores ? `${m.stores} background download(s) filled the cache (${bytes(filled)}) ` +
-                 `so the next read is local.` : '',
-      m.cacheOff ? `Cache is OFF: ${m.cacheOff}` : `Cache holds ${bytes(m.cacheStored)} of ${bytes(m.cacheMax)}.`,
+      `${m.reads} answer(s) behind the last thing you waited for.`,
+      m.hits ? `${m.hits} from this machine's cache.` : 'None came from the cache.',
+      m.misses ? `${m.misses} from OneLake (${secs}s).` : '',
       'Click for the full read log.',
     ].filter(Boolean).join('\n');
   }

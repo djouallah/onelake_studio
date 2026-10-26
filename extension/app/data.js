@@ -47,12 +47,6 @@
 // registerFileBuffer survives, for bytes that have no URL, and it answers with the temp
 // path the host wrote so this side can say exactly what it means.
 
-// sql.js and the markdown renderer still load in the page, and still come through the
-// proxy's /cdn route and its vendor directory. cdnOrigin is that route; absent, the URLs
-// pass through untouched.
-const cdnBase = (typeof window !== "undefined" &&
-  (window.ONELAKE_STUDIO_CONFIG || {}).cdnOrigin) || "";
-const withCdn = url => (cdnBase ? url.replace(/^https:\/\//, cdnBase + "/") : url);
 
 // The page reads nothing from OneLake itself. Listings and bytes come from the extension
 // host (its cache-first store, its signed reads); DuckDB, also in the host, reads tables
@@ -566,16 +560,12 @@ export function createEngine(auth, {
 
   // A database file's ENGINE is decided by sniffing the first 16 bytes, never by
   // extension (people store DuckDB databases as .db, and .db is also SQLite's usual
-  // name):
-  //   - DuckDB file  -> registered as an HTTP URL and ATTACHed read-only; block-read on
-  //     demand like parquet. Its tables are queryable as alias.schema.table.
-  //   - SQLite file  -> opened with sql.js and COPIED into DuckDB tables under a schema
-  //     named after the file. Not a shortcut: DuckDB's sqlite extension loads in this
-  //     WASM build but its VFS cannot open ANY file the app can supply — registered
-  //     buffer, registered HTTP URL, or a direct URL through httpfs were all measured to
-  //     fail with SQLITE_CANTOPEN — so the official SQLite build does the reading and
-  //     DuckDB gets a copy. SQLite files are the xlsx of databases: page-based, usually
-  //     small, meant to be local; the copy is capped rather than unbounded.
+  // name). Either way it is ATTACHed read-only and its tables are queryable as
+  // alias.schema.table:
+  //   - DuckDB file  -> attached by its abfss:// name, block-read on demand like parquet.
+  //   - SQLite file  -> DuckDB's sqlite extension reads only local files, so the host
+  //     copies it into the engine's temp directory first (capped: SQLite files are the
+  //     xlsx of databases — page-based, usually small, meant to be local).
   async function loadDatabaseFile(lh, file, key, gen, check) {
     const status = statusFor(gen);
     const res = track(key);
@@ -590,12 +580,20 @@ export function createEngine(auth, {
     // The alias is how the user names the database in SQL, so derive it from the file
     // name; uniqueView guards it against colliding with an existing view or alias.
     const alias = uniqueView(key, basename(file.name).replace(/\.[^.]+$/, ""));
-    if (sqlite) return loadSqliteFile(lh, file, key, alias, gen, check);
+    if (sqlite && file.bytes > SQLITE_MAX_BYTES)
+      throw new Error(`${file.name} is ${fmtBytes(file.bytes)} — over the ${fmtBytes(SQLITE_MAX_BYTES)} ` +
+                      `cap for copying a SQLite file to this machine.`);
 
     try {
       // READ_ONLY is not optional: the file lives in OneLake and the app never writes.
-      // The abfss:// name is attached directly and block-read on demand.
-      await q(`ATTACH ${sqlStr(url)} AS ${quoteIdent(alias)} (READ_ONLY)`);
+      if (sqlite) {
+        statusFor(gen)(`Copying ${file.name} (${fmtBytes(file.bytes)}) — SQLite is read from a local copy…`);
+        const local = await guarded(() => db.localCopy({ workspace: lh.workspace, path: file.path }));
+        check();
+        await q(`ATTACH ${sqlStr(local)} AS ${quoteIdent(alias)} (TYPE sqlite, READ_ONLY)`);
+      } else {
+        await q(`ATTACH ${sqlStr(url)} AS ${quoteIdent(alias)} (READ_ONLY)`);
+      }
       res.attachments.push(alias);
 
       // Tables AND views — a database file that only exposes views is still queryable.
@@ -615,7 +613,7 @@ export function createEngine(auth, {
 
       const info = { label: file.name, ident: first, columns, fileCount: 1,
                      posDeletes: 0, eqDeletes: 0, file: true, bytes: file.bytes, ext,
-                     db: true, dbAlias: alias, dbTables: tables, dbEngine: "DuckDB",
+                     db: true, dbAlias: alias, dbTables: tables, dbEngine: sqlite ? "SQLite" : "DuckDB",
                      warnings: [] };
       if (!first)
         info.warnings.push(`${alias} attached but contains no tables or views`);
@@ -629,98 +627,7 @@ export function createEngine(auth, {
     }
   }
 
-  // SQLite path: sql.js reads the file, DuckDB gets a copy. Pinned like every other CDN
-  // dependency. Each table lands as <alias>.<table> (a schema, not an attached database,
-  // so the qualifier is two-part). BLOBs don't survive the JSON hop and are nulled with
-  // a warning rather than silently mangled.
-  const SQLJS_VERSION = "1.13.0";
-  const SQLJS_ESM = withCdn(`https://cdn.jsdelivr.net/npm/sql.js@${SQLJS_VERSION}/+esm`);
-  const SQLJS_DIST = withCdn(`https://cdn.jsdelivr.net/npm/sql.js@${SQLJS_VERSION}/dist/`);
   const SQLITE_MAX_BYTES = 200e6;
-  let _sqljs = null;
-
-  const sqliteQuote = s => '"' + String(s).replace(/"/g, '""') + '"';
-
-  async function loadSqliteFile(lh, file, key, alias, gen, check) {
-    if (file.bytes > SQLITE_MAX_BYTES)
-      throw new Error(`${file.name} is ${fmtBytes(file.bytes)} — over the ${fmtBytes(SQLITE_MAX_BYTES)} ` +
-                      `cap for copying a SQLite file into the browser.`);
-    const status = statusFor(gen);
-    status(`Fetching ${file.name} (${fmtBytes(file.bytes)}) — SQLite is read in full…`);
-    const bytes = await readFileBytes(lh, file);
-
-    if (!_sqljs) {
-      const mod = await import(SQLJS_ESM);
-      const initSqlJs = mod.default || mod;
-      _sqljs = await initSqlJs({ locateFile: f => SQLJS_DIST + f });
-    }
-    const sdb = new _sqljs.Database(bytes);
-    const res = track(key);
-    res.gen = gen;
-    const warnings = [];
-    try {
-      const master = sdb.exec(
-        `SELECT name FROM sqlite_master WHERE type IN ('table','view')
-         AND name NOT LIKE 'sqlite_%' ORDER BY name`);
-      const names = (master[0] ? master[0].values : []).map(v => String(v[0]));
-
-      await q(`CREATE SCHEMA IF NOT EXISTS ${quoteIdent(alias)}`);
-      res.schemas.push(alias);
-
-      const tables = [];
-      status(`Copying ${names.length} table(s) from ${file.name} into DuckDB…`);
-      for (const t of names) {
-        // One copied table per iteration — the loop a big SQLite file spends its time in.
-        check();
-        const ident = `${quoteIdent(alias)}.${quoteIdent(t)}`;
-        const data = sdb.exec(`SELECT * FROM ${sqliteQuote(t)}`);
-        if (!data.length) {
-          // No rows: keep the shape anyway, from the SQLite schema.
-          const pragma = sdb.exec(`PRAGMA table_info(${sqliteQuote(t)})`);
-          const cols = (pragma[0] ? pragma[0].values : []).map(v => `${quoteIdent(String(v[1]))} VARCHAR`);
-          if (!cols.length) continue;
-          await q(`CREATE OR REPLACE TABLE ${ident} (${cols.join(", ")})`);
-          tables.push(ident);
-          continue;
-        }
-        const { columns, values } = data[0];
-        let blobs = false;
-        const lines = values.map(row => JSON.stringify(Object.fromEntries(
-          columns.map((c, i) => {
-            let v = row[i];
-            if (v instanceof Uint8Array) { blobs = true; v = null; }
-            return [c, v];
-          })))).join("\n");
-        if (blobs) warnings.push(`${t}: BLOB values are not carried over and read as NULL`);
-
-        // The host writes the bytes to a temp file and answers with its path — the one
-        // registry-shaped call left, because a buffer has no URL to splice in.
-        const jn = `sqjson_${++_seq}.json`;
-        const path = await guarded(() => db.registerFileBuffer(jn, new TextEncoder().encode(lines)));
-        try {
-          await q(`CREATE OR REPLACE TABLE ${ident} AS
-                            SELECT * FROM read_json(${sqlStr(path)}, format='newline_delimited')`);
-        } finally { try { await guarded(() => db.dropFile(jn)); } catch (_) {} }
-        tables.push(ident);
-      }
-
-      const first = tables[0] || null;
-      const columns = first ? await describe(first) : [];
-      const info = { label: file.name, ident: first, columns, fileCount: 1,
-                     posDeletes: 0, eqDeletes: 0, file: true, bytes: file.bytes, ext: fileExt(file.name),
-                     db: true, dbAlias: alias, dbTables: tables, dbEngine: "SQLite", warnings };
-      if (!first) info.warnings.push(`${alias}: the SQLite file has no tables`);
-      loaded.set(key, info);
-      status(describeLoad(info));
-      return info;
-    } catch (e) {
-      await releaseOwned(key, gen);
-      if (e.cancelled) throw e;
-      throw new Error(`Could not read ${file.name}: ${e.message}`);
-    } finally {
-      try { sdb.close(); } catch (_) {}
-    }
-  }
 
   // NOTE ON WHAT IS NOT HERE ANY MORE.
   //

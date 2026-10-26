@@ -118,10 +118,6 @@ jobs:
       - working-directory: extension
         run: node fetch-extensions.mjs linux-x64
       - run: node --test test/engine-host.test.js
-      # The loopback proxy end to end against a fake OneLake: signing, the whole-object
-      # cache, ranges, TTL tier, serve-stale, sweep — everything proxy-security.test.js does
-      # not cover.
-      - run: node test/run-proxy.mjs
 
   package:
     needs: [test, engine]
@@ -146,14 +142,14 @@ jobs:
           cache: npm
           cache-dependency-path: extension/package-lock.json
 
-      # vendor.mjs (run by vscode:prepublish, below) downloads sql.js and the markdown
-      # renderer from jsDelivr. Six legs is six chances for a CDN hiccup to fail one, and one
-      # failed leg cancels the whole release. vendor.mjs skips anything already on disk, so a
-      # restored cache makes it a no-op with no network at all.
+      # vendor.mjs (run by vscode:prepublish, below) downloads the webview's libraries from
+      # jsDelivr. Six legs is six chances for a CDN hiccup to fail one, and one failed leg
+      # cancels the whole release. A vendor/ tree built from the same pins is reused as it
+      # is, so a restored cache makes it a no-op with no network at all.
       - uses: actions/cache@v4
         with:
           path: extension/vendor
-          key: vendor-${{ hashFiles('extension/vendor.mjs') }}
+          key: vendor-${{ hashFiles('extension/vendor.mjs', 'extension/src/vendored.js') }}
 
       # NOT a plain `npm ci`. The eight platform bindings are optionalDependencies gated on
       # os/cpu, so a plain install drops 37MB of the RUNNER's platform into node_modules — and

@@ -53,7 +53,7 @@ function summarize(paths, metadata, metadataLocation) {
  * @param {ReturnType<import('./store').createStore>} o.store
  * @param {() => boolean} [o.prefetchEnabled]
  */
-function createOneLake({ catalog, store, prefetchEnabled = () => true }) {
+function createOneLake({ catalog, store, prefetchEnabled = () => true, onHit = () => {} }) {
   // The store is the account's: a different sign-in swaps it (useStore) and every listener
   // follows, so nothing above this module has to know an account changed.
   const subs = [];   // { ev, fn, off }
@@ -90,16 +90,24 @@ function createOneLake({ catalog, store, prefetchEnabled = () => true }) {
     return { kind };
   }
 
+  // Read through the store, and tell the read log when the answer came off disk — the
+  // other half of what a click cost, beside the requests catalog.js reports.
+  async function get(key, fetcher, o) {
+    const t0 = Date.now();
+    const r = await store.get(key, fetcher, o);
+    if (r.cached) { try { onHit({ cache: 'hit', ms: Date.now() - t0, path: key.split('\u0000').join(' ') }); } catch (_) {} }
+    return r;
+  }
   const value = r => r.value;
 
-  const workspaces = (o = {}) => store.get(keys.workspaces(), () => catalog.listWorkspaces(), o).then(value);
-  const items = (ws, o = {}) => store.get(keys.items(ws), () => catalog.listItems(ws), o).then(value);
+  const workspaces = (o = {}) => get(keys.workspaces(), () => catalog.listWorkspaces(), o).then(value);
+  const items = (ws, o = {}) => get(keys.items(ws), () => catalog.listItems(ws), o).then(value);
   const tables = (lh, o = {}) => {
     // A forced refresh of the listing must reach the catalog's own per-item memo too.
     if (o.fresh) catalog.reset(lh);
-    return store.get(keys.tables(lh), () => catalog.listTables(lh), o).then(value);
+    return get(keys.tables(lh), () => catalog.listTables(lh), o).then(value);
   };
-  const files = (lh, dir = '', o = {}) => store.get(keys.files(lh, dir), () => catalog.listFiles(lh, dir), o).then(value);
+  const files = (lh, dir = '', o = {}) => get(keys.files(lh, dir), () => catalog.listFiles(lh, dir), o).then(value);
 
   /**
    * A table's metadata, summarised: { empty, schemaFields, totalRecords, stats,
@@ -107,7 +115,7 @@ function createOneLake({ catalog, store, prefetchEnabled = () => true }) {
    */
   async function table(lh, t, { fresh = false, onWait } = {}) {
     const paths = await catalog.paths();
-    const r = await store.get(keys.table(lh, t), async () => {
+    const r = await get(keys.table(lh, t), async () => {
       const { metadata, metadataLocation } = await catalog.loadTable(lh, t, { onWait });
       return summarize(paths, metadata, metadataLocation);
     }, { fresh });

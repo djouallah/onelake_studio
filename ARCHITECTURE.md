@@ -138,7 +138,8 @@ The first two apply to both hosts; the rest are the website's reader — in VS C
   ATTACHed read-only and block-read on demand — tables queryable as `<name>.<schema>.<table>`. On the
   website, a SQLite file is read by sql.js and **copied** into DuckDB tables (`<name>.<table>`, capped at
   200 MB, BLOBs come through as NULL) — DuckDB's own sqlite extension cannot open any browser-supplied
-  file in WASM. CSV, JSON, avro, xlsx and plain text have no block structure either, so DuckDB pulls those
+  file in WASM. In VS Code the host copies it into the engine's temp directory and DuckDB's sqlite
+  extension attaches it read-only (`<name>.main.<table>`, same 200 MB cap). CSV, JSON, avro, xlsx and plain text have no block structure either, so DuckDB pulls those
   whole; the status line says so rather than claiming "read on demand". A `.zip` under `Files/` is listed
   via its central directory (a range read at the tail — the archive is not downloaded) and every readable
   entry becomes a view; entries decompress when queried.

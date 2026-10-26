@@ -2,11 +2,10 @@
 // =============================================================================
 // panel.js — the webview that hosts the app
 // =============================================================================
-// site/index.html is loaded as-is, not forked. Only three things are done to it, all in
-// html.js: asset paths become webview URIs, config.js is replaced by an injected object
-// (that is the whole adapter — `auth: 'none'` plus the proxy's two origins), and a CSP is
-// added. Everything else — app.js, data.js, paths.js, the .bim view, the Stats card — is
-// the same code the web app runs, which is the point of the exercise.
+// The page is a view and nothing else. It holds no credential, opens no connection and
+// loads nothing from the network: every DuckDB statement and every OneLake read goes over
+// one message channel to the host (host.js), and its few libraries ship inside the
+// extension (vendor/, served as webview resources).
 // =============================================================================
 
 const vscode = require('vscode');
@@ -15,44 +14,22 @@ const { TextDecoder } = require('node:util');
 const { rewriteHtml } = require('./html');
 const { answer } = require('./host');
 const { siteRoot } = require('./site');
-const { VENDORED_PREFIXES, VENDORED_GH_PREFIXES } = require('./vendored');
+const { PINS } = require('./vendored');
 
 // A webview is a sandboxed iframe with no CSP of its own, so this is the only thing
-// between the page and the network.
-//
-// 'unsafe-eval' and worker-src blob: are GONE, and that is a real tightening rather than
-// tidying. They existed solely because DuckDB ran as WebAssembly in this page: instantiate
-// is refused without 'unsafe-eval' (and `wasm-unsafe-eval` alone does not work in a VS
-// Code webview), and duckdb-wasm built its worker from a Blob. The engine is native in the
-// extension host now, so the page compiles nothing and spawns nothing.
-//
-//   script-src proxy — sql.js and the markdown renderer still load through the proxy's
-//                      /cdn route, which serves them from the vendor directory. PATH-scoped
-//                      to exactly the vendored packages: the whole proxy origin would let
-//                      any HTML injection load any script jsDelivr has, and a script in
-//                      this page can send SQL to a native engine.
-//   connect-src      — the proxy (every OneLake read is signed there) and cspSource, which
-//                      is how the landing query reads the packaged README.
-//
-// No https://cdn.jsdelivr.net anywhere: vendor.mjs ships those files inside the extension
-// and the /cdn route serves them, so the allowance bought nothing — while a compromised
-// CDN script in a page wired to an engine that runs arbitrary SQL with local filesystem
-// access would have been a complete machine. docview.js's direct-CDN fallback import is
-// the one thing this refuses, and it degrades to an error message, not a broken page.
-function csp(webview, nonce, proxyOrigin, cdnOrigin) {
-  const scripts = VENDORED_PREFIXES.flatMap(p => [
-    `${cdnOrigin}/cdn.jsdelivr.net${p}`,   // the imports data.js and docview.js make
-    `${proxyOrigin}${p}`,                  // the absolute /npm/ imports inside +esm files
-  ]).concat(
-    // dax-sql's modules import each other relatively, so only the /cdn route is needed.
-    VENDORED_GH_PREFIXES.map(p => `${cdnOrigin}/cdn.jsdelivr.net${p}`));
+// between the page and the network — and the page needs none. Its scripts are its own and
+// the vendored libraries, both webview resources (cspSource); it connects to nothing.
+// No 'unsafe-eval', no wasm, no worker: the engine is native in the host. A script in
+// this page can send SQL to that engine, so a CDN — or any origin — that could put a
+// script here would be a complete machine; there is none to put one.
+function csp(webview, nonce) {
   return [
     `default-src 'none'`,
     `img-src ${webview.cspSource} data: blob:`,
     `font-src ${webview.cspSource}`,
     `style-src ${webview.cspSource} 'unsafe-inline'`,
-    `script-src ${webview.cspSource} 'nonce-${nonce}' ${scripts.join(' ')}`,
-    `connect-src ${webview.cspSource} ${proxyOrigin}`,
+    `script-src ${webview.cspSource} 'nonce-${nonce}'`,
+    `connect-src ${webview.cspSource}`,
     // Neither is covered by default-src. A <base> would re-point every relative script
     // URL; a form could post page content anywhere.
     `base-uri 'none'`,
@@ -60,14 +37,14 @@ function csp(webview, nonce, proxyOrigin, cdnOrigin) {
   ].join('; ');
 }
 
-async function buildHtml(webview, siteUri, cfg, proxyOrigin) {
+async function buildHtml(webview, siteUri, cfg) {
   const bytes = await vscode.workspace.fs.readFile(vscode.Uri.joinPath(siteUri, 'index.html'));
   const nonce = crypto.randomBytes(16).toString('base64');
   return rewriteHtml(new TextDecoder('utf-8').decode(bytes), {
     assetUrl: name => webview.asWebviewUri(vscode.Uri.joinPath(siteUri, name)).toString(),
     nonce,
     config: cfg,
-    cspContent: csp(webview, nonce, proxyOrigin, cfg.cdnOrigin),
+    cspContent: csp(webview, nonce),
   });
 }
 
@@ -109,51 +86,45 @@ function wireEngine(panel, engine, methods = {}) {
 // assignment, and the loser of that race was orphaned holding an engine bridge forever.
 let opening = null;
 
-function openPanel(context, proxy, opts = {}) {
+function openPanel(context, opts = {}) {
   if (current) { current.reveal(vscode.ViewColumn.Active); return Promise.resolve(current); }
   if (!opening) {
-    opening = openPanelUncontended(context, proxy, opts).finally(() => { opening = null; });
+    opening = openPanelUncontended(context, opts).finally(() => { opening = null; });
   }
   return opening;
 }
 
-async function openPanelUncontended(context, proxy, { onOpened, onBoot, onBootFailed, engine, host } = {}) {
+async function openPanelUncontended(context, { onOpened, onBoot, onBootFailed, engine, host } = {}) {
   const { site: siteUri, readme: readmeUri } = await siteRoot(context.extensionUri,
     { dev: context.extensionMode === vscode.ExtensionMode.Development });
+  const vendorUri = vscode.Uri.joinPath(context.extensionUri, 'vendor');
   const panel = vscode.window.createWebviewPanel(
     'onelakeStudio', 'OneLake Studio', vscode.ViewColumn.Active, {
       enableScripts: true,
       // DuckDB spends real time and network booting; tearing it down whenever the tab
       // loses focus would make the extension feel broken.
       retainContextWhenHidden: true,
-      // The README's directory is the site directory when packaged, and the repo root
-      // under F5 — listing both costs nothing and keeps the fallback readable.
-      localResourceRoots: [siteUri, vscode.Uri.joinPath(readmeUri, '..')],
+      // The page, and the vendored libraries it imports. Nothing else on disk.
+      localResourceRoots: [siteUri, vendorUri],
     });
   // The activity bar already has this icon; the editor tab was getting the generic one.
   panel.iconPath = vscode.Uri.joinPath(context.extensionUri, 'media', 'onelake.svg');
 
   try {
     panel.webview.html = await buildHtml(panel.webview, siteUri, {
-      // The proxy attaches the bearer token, so the page needs no credential of its own
-      // and never holds one — strictly better than the browser build, where it does.
+      // The host reads OneLake for the page, which holds no credential of its own.
       auth: 'none',
       // Everything the app does differently in here hangs off this one word.
       host: 'vscode',
-      // The webview's own libraries (sql.js, the markdown renderer) come from the vsix's
-      // vendor directory through this, so the panel needs no CDN.
-      cdnOrigin: proxy.cdnOrigin,
-      // The landing query reads this instead of raw.githubusercontent.com, which the CSP
-      // above has no business allowing. It also documents the version that is installed
-      // rather than whatever is on main.
-      //
-      // A filesystem path, NOT asWebviewUri(): the query runs in the extension host now,
-      // where DuckDB is, and a vscode-resource URL only means something inside the page.
-      // Passing the webview URL made every panel open answer the landing query with
-      // "IO Error: URL using bad/illegal format" — the one visible piece of the wasm
-      // engine left after it was retired.
+      // Where the vendored libraries are (cdn.js builds every URL from it), and which
+      // versions — src/vendored.js, the same list vendor.mjs shipped.
+      vendorBase: panel.webview.asWebviewUri(vendorUri).toString(),
+      pins: PINS,
+      // The landing query reads the packaged README. A filesystem path, not a webview
+      // URI: the query runs in the host, where DuckDB is, and the engine's lockdown lets
+      // it read exactly this file.
       readmeUrl: readmeUri.fsPath,
-    }, `http://127.0.0.1:${proxy.port}`);
+    });
   } catch (e) {
     panel.dispose();
     throw e;

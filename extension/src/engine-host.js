@@ -254,7 +254,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onWarn = () => {}, g
       // these three failing means the extension cannot do its job, and saying so beats
       // a later "Failed to open file" that names nothing.
       for (const ext of ['iceberg', 'azure', 'httpfs']) await load(ext, '', true);
-      for (const ext of ['avro', 'excel']) await load(ext, '');
+      for (const ext of ['avro', 'excel', 'sqlite_scanner']) await load(ext, '');
       for (const ext of ['h3', 'zipfs']) await load(ext, 'community');
       mark('extensions');
       // azure has an HTTP client of its own, with its own proxy settings.
@@ -331,7 +331,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onWarn = () => {}, g
   }
 
   const capabilities = {
-    excel: false, zipfs: false, h3: false, avro: false, httpfs: false,
+    excel: false, zipfs: false, h3: false, avro: false, httpfs: false, sqlite_scanner: false,
     iceberg: false, azure: false,
   };
 
@@ -462,7 +462,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onWarn = () => {}, g
   // A token that expired mid-session shows up as a storage or catalog failure, never as
   // anything structured, so it is recognised by text. Retried ONCE and only after the
   // token actually changed — a 403 is a permission answer and a fresh token will not
-  // change its mind, which is the same bargain proxy.js makes.
+  // change its mind, which is the same bargain catalog.js makes.
   const AUTH_FAILURE = /AuthenticationFailed|401|Unauthorized|token.*expired|ExpiredAuthenticationToken/i;
 
   async function withAuthRetry(run) {
@@ -649,12 +649,27 @@ function createEngineHost({ extensionDir, onLog = () => {}, onWarn = () => {}, g
     try { if (conn) conn.closeSync(); } catch (_) {}
     try { if (instance) instance.closeSync(); } catch (_) {}
     conn = instance = null; ready = null;
-    temps.clear(); aliases.clear(); attachedWith.clear(); attaching.clear();
+    temps.clear(); copies.clear(); aliases.clear(); attachedWith.clear(); attaching.clear();
     authToken = null;
     if (tmpDir) await fsp.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
   }
 
-  return { init, call, close, get capabilities() { return capabilities; } };
+  // A file the HOST fetched (a SQLite database from Files/), written into this engine's
+  // temp directory — the one place the lockdown lets DuckDB open a local file — and its
+  // path handed back. Not a page method: the page names a OneLake path, the host reads
+  // it, and the bytes never cross the message channel. One copy per key per session.
+  const copies = new Map();
+  async function copyToTemp(key, bytes) {
+    await init();
+    if (copies.has(key)) return copies.get(key);
+    const file = join(tmpDir, `copy_${++tmpSeq}_${String(key).replace(/[^\w.-]/g, '_').slice(-80)}`);
+    await fsp.writeFile(file, bytes);
+    const path = file.replace(/\\/g, '/');
+    copies.set(key, path);
+    return path;
+  }
+
+  return { init, call, close, copyToTemp, get capabilities() { return capabilities; } };
 }
 
 module.exports = { createEngineHost, jsonSafe, isOneLakeMetadata };
