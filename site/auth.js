@@ -732,14 +732,14 @@ function createSiteAuth(cfg, { onExpired } = {}) {
     // cfg.clientId, so this message is only a backstop for a path that reaches the provider.
     return createConfigErrorAuth(
       'This app has no Entra registration of its own. Point it at one in your tenant to reach ' +
-      'OneLake — the sign-in screen asks for it, and README.md has the two-minute recipe.',
+      'OneLake — the sign-in screen asks for it, and ARCHITECTURE.md has the two-minute recipe.',
       'unconfigured'
     );
   }
   if (!(cfg.authority || cfg.tenantId)) {
     return createConfigErrorAuth(
       'A clientId is set but the authority is missing, so this app cannot get a OneLake token. ' +
-      'See "Signing in" in README.md.'
+      'See "Signing in" in ARCHITECTURE.md.'
     );
   }
   return createMsalAuth(cfg, { onExpired });

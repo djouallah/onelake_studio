@@ -12,12 +12,12 @@
 //
 // Nothing in this file is a secret. The clientId of an Entra SPA public client is public the
 // moment anyone loads the page (MSAL puts it in every sign-in URL), and SPA + PKCE uses no
-// client secret. See "Signing in" in README.md for the registration recipe.
+// client secret. See "Signing in" in ARCHITECTURE.md for the registration recipe.
 window.ONELAKE_STUDIO_CONFIG = {
   // 'msal' = Entra sign-in + OneLake bearer token. 'none' = no auth (public data only).
   auth: "msal",
 
-  // No built-in registration: the user supplies one. See README.md.
+  // No built-in registration: the user supplies one. See ARCHITECTURE.md.
   clientId: "",
   // Default authority when only a clientId is given. 'organizations' = sign in against your
   // own work/school directory; a tenant GUID here instead pins the app to one directory.
