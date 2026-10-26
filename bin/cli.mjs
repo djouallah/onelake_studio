@@ -1,28 +1,28 @@
 #!/usr/bin/env node
 // =============================================================================
-// cli.mjs — ask the running OneLake Studio extension, from a shell
+// bin/cli.mjs — ask the running OneLake Studio extension, from a shell
 // =============================================================================
 // A doorbell, nothing more: the arguments go to the extension over a local pipe
 // (src/bridge.js), the extension answers with its own sign-in, cache and engine
 // (src/agent.js), and this prints the answer — markdown on stdout, notes on stderr.
 // Written for an agent to run. Read only. Needs VS Code open with the extension signed in.
 //
-//   node cli.mjs ls                                   workspaces
-//   node cli.mjs ls <ws>                              its lakehouses/warehouses and semantic models
-//   node cli.mjs ls <ws> <item>                       its tables, and their names for --in
-//   node cli.mjs models [<ws>]                        semantic models in every workspace, counted
-//   node cli.mjs items [<ws>]                         lakehouses and warehouses in every workspace, counted
-//   node cli.mjs files <ws> <item> [<dir>]            a lakehouse's Files/ listing
-//   node cli.mjs find <text>                          every cached name that contains it
-//   node cli.mjs table <ws> <item> <schema.table>     columns and stats (metadata only)
-//   node cli.mjs model <ws> <model> [--fresh]         relationships, columns, measures + DAX
-//   node cli.mjs sql "<sql>" [--in <ws>/<item>] [--limit N] [--csv] [--show-sql]
-//   node cli.mjs dax "EVALUATE …" [--model <name>] [--show-sql]
+//   node bin/cli.mjs ls                                   workspaces
+//   node bin/cli.mjs ls <ws>                              its lakehouses/warehouses and semantic models
+//   node bin/cli.mjs ls <ws> <item>                       its tables, and their names for --in
+//   node bin/cli.mjs models [<ws>]                        semantic models in every workspace, counted
+//   node bin/cli.mjs items [<ws>]                         lakehouses and warehouses in every workspace, counted
+//   node bin/cli.mjs files <ws> <item> [<dir>]            a lakehouse's Files/ listing
+//   node bin/cli.mjs find <text>                          every cached name that contains it
+//   node bin/cli.mjs table <ws> <item> <schema.table>     columns and stats (metadata only)
+//   node bin/cli.mjs model <ws> <model> [--fresh]         relationships, columns, measures + DAX
+//   node bin/cli.mjs sql "<sql>" [--in <ws>/<item>] [--limit N] [--csv] [--show-sql]
+//   node bin/cli.mjs dax "EVALUATE …" [--model <name>] [--show-sql]
 // =============================================================================
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { askBridge } = require("./src/bridge.js");
+const { askBridge } = require("../src/bridge.js");
 
 const HELP = `onelake — ask OneLake Studio (VS Code must be open, signed in). Read only.
 

@@ -449,7 +449,7 @@ function buildCommit(context, dev) {
 // ---------------------------------------------------------------------------
 // The agent skill (Claude Code, GitHub Copilot)
 // ---------------------------------------------------------------------------
-// cli.mjs is this extension's modules from a shell; claude-skill/SKILL.md tells an agent
+// bin/cli.mjs is this extension's modules from a shell; claude-skill/SKILL.md tells an agent
 // when and how to run it. Installing writes the skill to ~/.claude/skills/onelake/ — read by
 // Claude Code and by GitHub Copilot in VS Code, so one copy serves both — with the
 // path of THIS install's cli.mjs filled in — a path that changes with every update, so a skill
@@ -461,7 +461,7 @@ const skillFile = () => join(require('node:os').homedir(), '.claude', 'skills', 
 async function writeSkill(context) {
   const fsp = require('node:fs/promises');
   const template = await fsp.readFile(join(context.extensionUri.fsPath, 'claude-skill', 'SKILL.md'), 'utf8');
-  const cli = join(context.extensionUri.fsPath, 'cli.mjs').replace(/\\/g, '/');
+  const cli = join(context.extensionUri.fsPath, 'bin', 'cli.mjs').replace(/\\/g, '/');
   const text = template.split('{{cli}}').join(cli);
   const file = skillFile();
   const before = await fsp.readFile(file, 'utf8').catch(() => null);
