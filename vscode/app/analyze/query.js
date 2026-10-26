@@ -17,6 +17,9 @@
 const TYPES = { string: 'string', int64: 'int', double: 'double', decimal: 'double', dateTime: 'date', boolean: 'bool',
   binary: 'string', variant: 'string' };
 
+// A column's summaries, by the word a query uses for each. COUNTA counts a column of any type.
+const AGG_DAX = { sum: 'SUM', avg: 'AVERAGE', median: 'MEDIAN', min: 'MIN', max: 'MAX', count: 'COUNTA', distinct: 'DISTINCTCOUNT' };
+
 const tableRef = t => `'${String(t).replace(/'/g, "''")}'`;
 const bracket = n => `[${String(n).replace(/]/g, ']]')}]`;
 const text = s => `"${String(s).replace(/"/g, '""')}"`;
@@ -81,9 +84,10 @@ export function createModelQuery(model, compiler) {
         if (!MEASURES.has(f)) throw new Error(`query: the model has no measure ${f}`);
         return bracket(f);
       }
+      // A column summarised, as Power BI does a column dropped on Values: { sum: 'T.c' }.
       const [fn, c] = Object.entries(f ?? {})[0] ?? [];
-      if ((fn !== 'min' && fn !== 'max') || Object.keys(f).length !== 1) throw new Error(`query: ${JSON.stringify(f)} is not a field`);
-      return `${fn.toUpperCase()}(${field(c).dax})`;
+      if (!AGG_DAX[fn] || Object.keys(f).length !== 1) throw new Error(`query: ${JSON.stringify(f)} is not a field`);
+      return `${AGG_DAX[fn]}(${field(c).dax})`;
     };
     const cols = entries.filter(([, f]) => isCol(f)).map(([n, f]) => [n, field(f)]);
     const values = entries.filter(([, f]) => !isCol(f));

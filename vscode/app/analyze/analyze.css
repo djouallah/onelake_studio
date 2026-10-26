@@ -158,6 +158,11 @@ section.modelOpen #previewBtn, section.modelOpen #runBtn, section.modelOpen #csv
 .ex-pop .ex-row { flex-direction: row; align-items: center; }
 .ex-row .btn-analyze, .ex-pop-foot .btn-analyze { padding: 0.25rem 0.7rem; font-size: 0.74rem; }
 .ex-pop-foot { display: flex; justify-content: flex-end; gap: 0.4rem; }
+/* A summarised column's summaries: one button each, the current one lit. */
+.ex-aggs { display: flex; flex-direction: column; gap: 0.1rem; }
+.ex-agg { text-align: left; font: inherit; color: var(--text); background: none; border: none; border-radius: var(--radius-sm); padding: 0.32rem 0.55rem; cursor: pointer; }
+.ex-agg:hover, .ex-agg:focus-visible { background: var(--hover); outline: none; }
+.ex-agg.active { color: var(--on-accent); background: var(--accent); }
 
 @media (max-width: 900px) {
   .model-page, .ex { grid-template-columns: 1fr; }

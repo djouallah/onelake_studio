@@ -23,6 +23,15 @@ const ICONS = { text: 'Abc', number: '#', date: '▦', bool: '◐', measure: 'Σ
 const MARKS = [['auto', 'Automatic'], ['table', 'Table'], ['highlight', 'Highlight'], ['bar', 'Bar'], ['stacked', 'Stacked'],
   ['line', 'Line'], ['area', 'Area'], ['heatmap', 'Heatmap'], ['scatter', 'Scatter']];
 const SHELVES = [['rows', 'Rows'], ['cols', 'Columns'], ['values', 'Values'], ['filters', 'Filters']];
+// A column on Values is summarised, as Power BI does it: a number summed, anything else
+// counted; its chip changes the summary. On the shelf it is "\0sum\0Table.Column".
+const AGGS = [['sum', 'Sum'], ['avg', 'Average'], ['median', 'Median'], ['min', 'Min'], ['max', 'Max'],
+  ['count', 'Count'], ['distinct', 'Count (distinct)']];
+const AGG_LABEL = Object.fromEntries(AGGS);
+const NUMBERS_ONLY = new Set(['sum', 'avg', 'median']);
+const aggId = (agg, col) => `\u0000${agg}\u0000${col}`;
+export const aggOf = id => { const m = /^\u0000(\w+)\u0000([\s\S]+)$/.exec(id); return m ? { agg: m[1], col: m[2] } : null; };
+const defaultAgg = f => f.type === 'number' ? 'sum' : 'count';
 // Totals are off until asked for. `v` 2: shelves saved before that kept totals on by
 // default, so their `totals` is not read back.
 const EMPTY = () => ({ v: 2, rows: [], cols: [], values: [], filters: [], mark: 'auto', totals: false, sort: 'fields' });
@@ -52,7 +61,11 @@ export function modelFields(model) {
 // time). An id it does not know, a chip saved for a field the model has since dropped, is
 // read as Table.Column.
 let NAMES = new Map();
-const nameOf = id => NAMES.get(id) ?? (id.includes('.') ? id.slice(id.indexOf('.') + 1) : id);
+const nameOf = id => {
+  const a = aggOf(id);
+  if (a) return `${AGG_LABEL[a.agg] ?? a.agg} of ${nameOf(a.col)}`;
+  return NAMES.get(id) ?? (id.includes('.') ? id.slice(id.indexOf('.') + 1) : id);
+};
 
 // A filter as conditions of the query's `where`. "Last n days" ends today, as Tableau's
 // relative dates do (a calendar may run into the future, so not its newest date).
@@ -78,7 +91,8 @@ export function buildQuery(s, { cap = CAP, today = localToday() } = {}) {
   for (const id of [...dims, ...s.values]) {
     const name = nameOf(id);
     if (name in select) throw new Error(`two fields are named ${name}: keep one of them`);
-    select[name] = id;
+    const a = aggOf(id);
+    select[name] = a ? { [a.agg]: a.col } : id;
   }
   const q = { select };
   const where = s.filters.flatMap(f => conditions(f, today));
@@ -214,11 +228,21 @@ export function createExplorer(root, ctx) {
       onclick: () => { state.mark = k; save(); renderControls(); draw(); } }, m));
   }
 
+  // A field of the shelves: the model's, or a column summarised on Values, which acts as a
+  // measure of the view's own.
+  function fieldOf(id) {
+    const a = aggOf(id);
+    if (!a) return fields?.byId.get(id);
+    const c = fields?.byId.get(a.col);
+    return c && { id, kind: 'measure', type: 'measure', name: nameOf(id), agg: a.agg, column: c,
+      format: a.agg === 'count' || a.agg === 'distinct' ? '#,0' : c.format };
+  }
+
   // --- Drag and drop: a field onto a shelf, a chip along or between shelves, or off them ---
-  const accepts = (shelf, f) => f && (shelf === 'values' ? f.kind === 'measure' : f.kind === 'column');
+  const accepts = (shelf, f) => f && (shelf === 'values' || f.kind === 'column');
   for (const [k, box] of Object.entries(shelfEls)) {
     box.addEventListener('dragover', e => {
-      const f = drag && fields.byId.get(drag.id);
+      const f = drag && fieldOf(drag.id);
       if (!accepts(k, f) && !(f?.kind === 'measure' && k !== 'filters')) return;
       e.preventDefault();
       box.classList.add('ex-over');
@@ -228,7 +252,8 @@ export function createExplorer(root, ctx) {
       e.preventDefault();
       box.classList.remove('ex-over');
       if (!drag) return;
-      const f = fields.byId.get(drag.id);
+      const f = fieldOf(drag.id);
+      if (!f) return;
       const to = f.kind === 'measure' ? 'values' : k;   // a measure dropped on Rows goes to Values
       const chip = e.target.closest('.ex-chip');
       const at = chip && to === k ? Number(chip.dataset.index) : null;
@@ -249,6 +274,9 @@ export function createExplorer(root, ctx) {
       if (from === to) item = moved;
       else if (from === 'filters') item = moved.field;
     }
+    // A column put on Values goes there summarised.
+    const col = to === 'values' && fields.byId.get(item);
+    if (col && col.kind === 'column') item = aggId(defaultAgg(col), item);
     if (to !== 'filters') {
       const already = state[to].indexOf(item);
       if (already >= 0) state[to].splice(already, 1);
@@ -312,17 +340,23 @@ export function createExplorer(root, ctx) {
     for (const [k, box] of Object.entries(shelfEls)) {
       const items = state[k];
       box.replaceChildren(...items.map((_, i) => {
-        const f = fields?.byId.get(entry(k, i));
+        const f = fieldOf(entry(k, i));
+        const summed = k === 'values' && f?.agg;
         const chip = el('span', { class: `ex-chip${f?.kind === 'measure' ? ' ex-measure' : ''}${f ? '' : ' ex-missing'}`,
-          draggable: 'true', 'data-index': i, title: f ? entry(k, i) : `${entry(k, i)}: not in the model` },
-          el('button', { type: 'button', class: 'ex-chip-name', onclick: e => k === 'filters' && editFilter(i, e.currentTarget.parentNode) }, chipText(k, i)),
+          draggable: 'true', 'data-index': i,
+          title: !f ? `${nameOf(entry(k, i))}: not in the model`
+            : summed ? `${f.column.id}: click to change how it is summarised` : entry(k, i) },
+          el('button', { type: 'button', class: 'ex-chip-name', onclick: e => {
+            if (k === 'filters') editFilter(i, e.currentTarget.parentNode);
+            else if (summed) editAgg(i, e.currentTarget.parentNode);
+          } }, chipText(k, i), summed ? ' ▾' : null),
           el('button', { type: 'button', class: 'ex-x', 'aria-label': `Remove ${chipText(k, i)}`, onclick: () => removeAt(k, i) }, '×'));
         chip.addEventListener('dragstart', e => { drag = { id: entry(k, i), from: k, index: i }; e.dataTransfer.setData('text/plain', entry(k, i)); });
         chip.addEventListener('dragend', () => { drag = null; });
         return chip;
       }));
       if (!items.length) box.append(el('span', { class: 'ex-hint' },
-        k === 'values' ? 'Drop measures here' : k === 'filters' ? 'Drop a column to filter on it' : 'Drop columns here'));
+        k === 'values' ? 'Drop measures, or columns to summarise, here' : k === 'filters' ? 'Drop a column to filter on it' : 'Drop columns here'));
     }
   }
   function renderControls() {
@@ -337,9 +371,40 @@ export function createExplorer(root, ctx) {
     }
   }
 
-  // --- The filter editor ---
+  // --- The popups: a filter's editor, a summarised column's summary ---
   function closePop() { pop?.remove(); pop = null; document.removeEventListener('pointerdown', outside, true); }
   function outside(e) { if (pop && !pop.contains(e.target)) closePop(); }
+  function showPop(anchor) {
+    document.body.append(pop);
+    const r = anchor.getBoundingClientRect();
+    pop.style.left = `${Math.max(8, Math.min(r.left, innerWidth - pop.offsetWidth - 8))}px`;
+    pop.style.top = `${r.bottom + 6}px`;
+    setTimeout(() => document.addEventListener('pointerdown', outside, true));
+  }
+
+  // Sum, average and median for a number; any column can be counted, or its min and max.
+  function editAgg(i, anchor) {
+    closePop();
+    const a = aggOf(state.values[i]), col = a && fields.byId.get(a.col);
+    if (!col) return;
+    const pick = agg => {
+      const id = aggId(agg, a.col);
+      // Already on Values in that summary: this chip goes rather than becoming a second one.
+      if (state.values.includes(id) && state.values[i] !== id) state.values.splice(i, 1);
+      else state.values[i] = id;
+      closePop();
+      changed();
+    };
+    const opts = AGGS.filter(([k]) => col.type === 'number' || !NUMBERS_ONLY.has(k));
+    pop = el('div', { class: 'ex-pop', role: 'dialog', 'aria-label': `Summarise ${col.name}` },
+      el('div', { class: 'ex-pop-head' }, `Summarise ${col.name}`),
+      el('div', { class: 'ex-aggs', role: 'radiogroup' }, opts.map(([k, t]) =>
+        el('button', { type: 'button', role: 'radio', 'aria-checked': String(k === a.agg),
+          class: `ex-agg${k === a.agg ? ' active' : ''}`, onclick: () => pick(k) }, t))));
+    pop.addEventListener('keydown', e => { if (e.key === 'Escape') closePop(); });
+    showPop(anchor);
+    pop.querySelector('.ex-agg.active')?.focus();
+  }
   async function editFilter(i, anchor) {
     closePop();
     const f = state.filters[i], fd = fields.byId.get(f.field);
@@ -353,11 +418,7 @@ export function createExplorer(root, ctx) {
         el('button', { type: 'button', class: 'btn-analyze', onclick: closePop }, 'Cancel'),
         el('button', { type: 'button', class: 'btn-analyze primary', onclick: apply }, 'Apply')));
     pop.addEventListener('keydown', e => { if (e.key === 'Escape') closePop(); if (e.key === 'Enter' && e.target.tagName === 'INPUT' && e.target.type !== 'checkbox') apply(); });
-    document.body.append(pop);
-    const r = anchor.getBoundingClientRect();
-    pop.style.left = `${Math.max(8, Math.min(r.left, innerWidth - pop.offsetWidth - 8))}px`;
-    pop.style.top = `${r.bottom + 6}px`;
-    setTimeout(() => document.addEventListener('pointerdown', outside, true));
+    showPop(anchor);
 
     const modes = fd.type === 'text' || fd.type === 'bool'
       ? [['in', 'Keep only'], ['notIn', 'Exclude'], ['blank', 'Blank'], ['notBlank', 'Not blank']]
@@ -515,7 +576,7 @@ export function createExplorer(root, ctx) {
     chart.resize();
   }
 
-  const fmt = (id, v) => formatValue(v, fields.byId.get(id)?.format);
+  const fmt = (id, v) => formatValue(v, fieldOf(id)?.format);
   function drawTable(s, piv, highlight) {
     const measures = s.values, rowNames = s.rows.map(nameOf);
     const colKeys = [...piv.colKeys, ...(s.cols.length && piv.hasColTotal ? [null] : [])];
@@ -539,7 +600,7 @@ export function createExplorer(root, ctx) {
       const tr = el('tr');
       rowNames.forEach(n => tr.append(lead(n)));
       if (!rowNames.length && s.cols.length) tr.append(lead(''));
-      for (const b of s.cols.length ? colKeys : [[]]) for (const m of measures) tr.append(el('th', { class: 'ex-num' }, m));
+      for (const b of s.cols.length ? colKeys : [[]]) for (const m of measures) tr.append(el('th', { class: 'ex-num' }, nameOf(m)));
       head.append(tr);
     }
     const body = el('tbody');
@@ -592,7 +653,7 @@ export function createExplorer(root, ctx) {
       piv.rowKeys.forEach((a, y) => piv.colKeys.forEach((b, x) => { const v = piv.cell(a, b)?.[n]; if (v != null) cells.push([x, y, v]); }));
       const [lo, hi] = extent(cells.map(c => c[2]));
       return {
-        title: { text: m + cut, left: 4, top: 0, textStyle: { fontSize: 12, fontWeight: 600 } },
+        title: { text: nameOf(m) + cut, left: 4, top: 0, textStyle: { fontSize: 12, fontWeight: 600 } },
         tooltip: { position: 'top', formatter: p => `${label(piv.rowKeys[p.value[1]])} · ${label(piv.colKeys[p.value[0]])}<br><b>${fmt(m, p.value[2])}</b>` },
         grid: { left: 4, right: 16, top: 28, bottom: 44, containLabel: true },
         xAxis: { type: 'category', data: piv.colKeys.map(label), splitArea: { show: true } },
@@ -606,11 +667,11 @@ export function createExplorer(root, ctx) {
       if (s.values.length < 2) return 'A scatter needs two measures on Values: the first across, the second up.';
       const [mx, my] = s.values, [nx, ny] = [nameOf(mx), nameOf(my)];
       return {
-        tooltip: { trigger: 'item', formatter: p => `${p.data.name}<br>${mx}: <b>${fmt(mx, p.data.value[0])}</b><br>${my}: <b>${fmt(my, p.data.value[1])}</b>` },
+        tooltip: { trigger: 'item', formatter: p => `${p.data.name}<br>${nameOf(mx)}: <b>${fmt(mx, p.data.value[0])}</b><br>${nameOf(my)}: <b>${fmt(my, p.data.value[1])}</b>` },
         legend: shown.length > 1 ? { type: 'scroll', top: 0 } : undefined,
         grid: { left: 4, right: 16, top: shown.length > 1 ? 56 : 32, bottom: 24, containLabel: true },
-        xAxis: { type: 'value', name: mx + cut, nameLocation: 'middle', nameGap: 26, scale: true, axisLabel: { formatter: v => fmt(mx, v) } },
-        yAxis: { type: 'value', name: my, scale: true, axisLabel: { formatter: v => fmt(my, v) } },
+        xAxis: { type: 'value', name: nameOf(mx) + cut, nameLocation: 'middle', nameGap: 26, scale: true, axisLabel: { formatter: v => fmt(mx, v) } },
+        yAxis: { type: 'value', name: nameOf(my), scale: true, axisLabel: { formatter: v => fmt(my, v) } },
         series: shown.map((b, i) => ({
           type: 'scatter', name: label(b), symbolSize: 8, itemStyle: { color: color(i), opacity: 0.8 },
           data: cats.map(a => { const r = at(a, b); return r?.[nx] != null && r?.[ny] != null ? { name: label(a), value: [r[nx], r[ny]] } : null; }).filter(Boolean),
@@ -631,10 +692,10 @@ export function createExplorer(root, ctx) {
       tooltip: { trigger: 'axis', confine: true, axisPointer: { type: mark === 'line' || mark === 'area' ? 'line' : 'shadow' },
         formatter: ps => [ps[0]?.axisValueLabel, ...ps.filter(p => p.value != null).map(p => {
           const m = ms[Math.floor(p.seriesIndex / shown.length)];
-          return `${p.marker}${shown.length > 1 ? `${p.seriesName} · ` : ''}${m}: <b>${fmt(m, p.value)}</b>`;
+          return `${p.marker}${shown.length > 1 ? `${p.seriesName} · ` : ''}${nameOf(m)}: <b>${fmt(m, p.value)}</b>`;
         })].join('<br>') },
       legend: legend ? { type: 'scroll', top: 0, data: shown.map(label) } : undefined,
-      title: ms.map((m, i) => ({ text: i ? m : m + cut, top: grids[i].title, left: 4, textStyle: { fontSize: 12, fontWeight: 600 } })),
+      title: ms.map((m, i) => ({ text: i ? nameOf(m) : nameOf(m) + cut, top: grids[i].title, left: 4, textStyle: { fontSize: 12, fontWeight: 600 } })),
       grid: grids.map(g => g.grid),
       dataZoom: !flat && cats.length > 60 ? [{ type: 'inside', xAxisIndex: ms.map((_, i) => i) }] : [],
       xAxis: ms.map((m, i) => flat ? valAxis(i, m) : catAxis(i, { boundaryGap: mark === 'bar' || mark === 'stacked' })),

@@ -49,7 +49,9 @@ this does not run on vscode.dev.
 - **Model**: its tables as a star, dimensions in the middle and facts around them, with its
   relationships. Click a table for its columns, measures (with their DAX) and relationships.
 - **Explore**: drag the model's columns onto Rows, Columns and Filters, and its measures onto
-  Values, to get a pivot table or a chart. Totals are off until you tick them, and a view cut at
+  Values, to get a pivot table or a chart. A column dropped on Values is summarised, as in Power
+  BI: a number is summed and anything else counted, and its chip switches to average, median,
+  min, max, count or distinct count. Totals are off until you tick them, and a view cut at
   5,000 rows leaves them out.
 - **SQL**: SQL in which `SELECT … FROM <model>` asks the model. `AGG(m)` is measure `m`, computed
   with DAX's semantics by [dax-sql](https://github.com/djouallah/dax-sql), which compiles the
