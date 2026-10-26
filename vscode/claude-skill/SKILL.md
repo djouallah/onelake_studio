@@ -17,21 +17,29 @@ node --no-warnings "{{cli}}" <command>
 
 | command | answers |
 |---|---|
+| `screen` | what the panel shows: what is open, the SQL or DAX it ran, the rows on screen |
+| `screen --rerun` | runs that same query again and prints the whole result, not the saved first rows |
 | `ls` | workspaces |
 | `ls <ws>` | its lakehouses/warehouses, and its semantic models (marked *downloaded* if local) |
 | `ls <ws> <item>` | its tables, and their names in `sql --in` (`<item>_<schema>.<table>`); `<item>` may omit its `.Lakehouse` suffix |
 | `table <ws> <item> <schema.table>` | rows, files, size, last write, columns — metadata only, no scan |
 | `model <ws> <model>` | relationships, columns, measures with their DAX, and an example query; downloads the `.bim` once |
 | `sql "<sql>"` | read-only SQL. Every semantic view is a table: `AGG("measure")` is the measure; and `CREATE / DROP / SHOW SEMANTIC VIEW` (below) |
-| `sql "<sql>" --in <ws>/<item>` | the lakehouse's tables, as `<item>_<schema>.<table>` — e.g. `data_mart.dim_duid` |
+| `sql "<sql>" --in <ws>/<item>` | the lakehouse's tables, as `<item>_<schema>.<table>` — e.g. `data_mart.dim_duid` — and its files as `'Files/…'`: `read_parquet('Files/log.parquet')` |
+| `dax "EVALUATE …"` | a DAX query against the model on screen (or `--model <name>`) — Explore's DAX runs as is |
 
-Options: `--limit N` (rows printed, default 100), `--csv`, `--fresh` (re-read instead of the cache).
+Options: `--limit N` (rows printed, default 100), `--csv`, `--fresh` (re-read instead of the cache),
+`--show-sql` (print the SQL a model query or DAX compiles to — the answer to "is this SQL right?").
 
 ## What the user has on screen
 
-When the user says *this*, *here*, *open*, *on screen*, *what I'm looking at*, or names nothing,
-read the newest `{{panel}}/panel-*.json` first (one per VS Code window; if there are several,
-pick the one whose `window.workspace` matches the user's, else the most recently `updated`).
+When the user says *this*, *here*, *open*, *on screen*, *what I'm looking at*, *these numbers*, or
+names nothing, run `screen` first: it prints what is open, the SQL or DAX last run, and the rows on
+screen as a table. When it says only the first rows were saved and the question needs all of them
+(totals, gaps, a check across the whole result), run `screen --rerun`.
+
+`screen` reads `{{panel}}/panel-*.json` (one per VS Code window, the most recently `updated`); read
+those files directly only to pick a window other than the newest.
 
 - `open`: the table, file or semantic model in the OneLake Studio panel. A table or model
   carries `cli`: the commands that reach it — run those rather than guessing names.
@@ -75,6 +83,9 @@ A `.bim` path is local, `abfss://…`, or `Files/…` with `--in`. Views are kep
 ## Things to know
 
 - Results are DAX compiled to SQL by dax-sql — say so if exactness against Power BI matters.
+- To check a measure against its raw data, `model` lists each table as the engine names it
+  (`"mart_1a2b3c4d"."fct_summary"`); plain SQL naming that reads the table as stored — no `--in`.
+- Notes and timings go to stderr: keep `2>&1` off a `--csv` you mean to parse.
 - Everything is cached on disk (listings, metadata, the table data DuckDB reads), so a first
   query over a big table can take a minute or two and the next is seconds. Use `--fresh` only
   when the user says the data just changed.

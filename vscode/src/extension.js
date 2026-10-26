@@ -679,6 +679,7 @@ async function activateInner(context) {
     appDir: (await webviewRoot(context.extensionUri, { dev })).page.fsPath,
     vendorDir: join(context.extensionUri.fsPath, 'vendor'),
     daxSqlPin: PINS.daxSql,
+    screenDir: context.globalStorageUri.fsPath,
   });
   context.subscriptions.push(serveBridge({
     handle: req => {

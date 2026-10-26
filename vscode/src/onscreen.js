@@ -75,7 +75,7 @@ function sampleOf(x) {
 }
 
 const queryOf = x => (x && typeof x === 'object'
-  ? { sql: str(x.sql), rows: num(x.rows), ms: num(x.ms), error: str(x.error), ...sampleOf(x),
+  ? { sql: str(x.sql), ident: str(x.ident), rows: num(x.rows), ms: num(x.ms), error: str(x.error), ...sampleOf(x),
       at: new Date().toISOString() }
   : null);
 

@@ -37,6 +37,10 @@ extension's `cli.mjs` with Node.js, which only hands the question to the extensi
 VS Code and prints its answer — so VS Code has to be open, signed in. The skill follows the
 extension through updates.
 
+It also sees what the panel shows: ask "are these numbers right?" and Claude reads the open
+table, file or model, the SQL or DAX you last ran and its rows — and can run that same query
+again in full, print the SQL a DAX query compiles to, or check a measure against its raw table.
+
 ## Settings
 
 | Setting | What it does |

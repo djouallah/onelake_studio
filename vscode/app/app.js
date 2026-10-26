@@ -548,7 +548,8 @@ async function runQuery({ doc = true, ext = '', report = true } = {}) {
     renderResults(res);
     lastResult = res;
     const ms = Math.round(performance.now() - t0);
-    if (report) onScreen({ query: { sql, ms, ...shownOf(res) } });
+    // ident: the open file's view, so the command line can read the same file again.
+    if (report) onScreen({ query: { sql, ident: activeFile ? activeIdent : undefined, ms, ...shownOf(res) } });
     const shown = Math.min(res.rows.length, MAX_DOM_ROWS);
     // Two caps: MAX_DOM_ROWS only limits what is drawn; res.truncated means the engine
     // stopped materialising, so the CSV is short too.
