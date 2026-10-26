@@ -11,7 +11,8 @@
 //   ls [<ws> [<item>]]               workspaces / items + semantic models / tables
 //   table <ws> <item> <schema.table> metadata only
 //   model <ws> <model>               relationships, columns, measures with DAX
-//   sql "<sql>" [--in <ws>/<item>]   a downloaded model is a table; AGG("m") is measure m
+//   sql "<sql>" [--in <ws>/<item>]   a semantic view is a table, AGG("m") its measure m; and
+//                                    CREATE / DROP / SHOW SEMANTIC VIEW (dax-sql's statements)
 //
 // No `vscode` import: the extension passes in what it owns.
 // =============================================================================
@@ -36,12 +37,12 @@ const csvOf = (cols, rows) => [cols, ...rows].map(r => r.map(v => {
  * @param {ReturnType<import('./onelake').createOneLake>} o.onelake
  * @param {{ getBim(ws: string, id: string): Promise<Uint8Array> }} o.fabric
  * @param {() => Promise<object>} o.engine   the extension's engine (engine-host.js)
- * @param {() => string} o.modelsFolder      where .bim files are downloaded
- * @param {(ws: string, model: string) => string} o.bimPath
+ * @param {(ws: string, model: string) => string} o.bimPath  where a model's .bim is downloaded
  * @param {string} o.appDir                  the panel's modules (semantic.js, paths.js)
  * @param {string} o.vendorDir               the vendored DAX compiler
+ * @param {ReturnType<import('./semviews').createSemViews>} o.semviews  the views this machine keeps
  */
-function createAgent({ onelake, fabric, engine, modelsFolder, bimPath, appDir, vendorDir, daxSqlPin }) {
+function createAgent({ onelake, fabric, engine, bimPath, appDir, vendorDir, daxSqlPin, semviews }) {
   let mods = null;
   async function modules() {
     if (mods) return mods;
@@ -51,7 +52,8 @@ function createAgent({ onelake, fabric, engine, modelsFolder, bimPath, appDir, v
       load(join(vendorDir, 'gh', daxSqlPin, 'src', 'index.js')),
       load(join(vendorDir, 'gh', daxSqlPin, 'formats', 'tmsl.js')),
     ]);
-    mods = { paths, semantic, compiler: { createCompiler: c.createCompiler, tmslToModel: t.tmslToModel } };
+    mods = { paths, semantic,
+             compiler: { createCompiler: c.createCompiler, createViews: c.createViews, tmslToModel: t.tmslToModel } };
     return mods;
   }
 
@@ -72,21 +74,21 @@ function createAgent({ onelake, fabric, engine, modelsFolder, bimPath, appDir, v
     return hit;
   }
 
-  // Every downloaded .bim, registered so SQL can name its model.
-  async function registerAll(note) {
+  // The views the extension keeps (semviews.js), defined in dax-sql's registry — the same
+  // list the panel has, so a view made in either is named in both.
+  const defined = new Set();
+  async function syncViews(note) {
     const { semantic, compiler } = await modules();
-    const root = modelsFolder();
-    const seen = new Map();
-    for (const ws of await fsp.readdir(root).catch(() => [])) {
-      for (const f of await fsp.readdir(join(root, ws)).catch(() => [])) {
-        if (!f.toLowerCase().endsWith('.bim')) continue;
-        try {
-          const m = await semantic.registerModel(f, await fsp.readFile(join(root, ws, f), 'utf8'), compiler);
-          if (seen.has(m.name)) note(`model ${m.name} is in both ${seen.get(m.name)} and ${ws}; ${ws}'s is used`);
-          seen.set(m.name, ws);
-        } catch (e) { note(`skipped ${ws}/${f}: ${e.message}`); }
-      }
+    const kept = await semviews.texts();
+    for (const v of kept) {
+      try {
+        if (v.error) throw new Error(v.error);
+        await semantic.defineView(v.name, v.path, v.text, 'replace', compiler);
+        defined.add(v.name.toLowerCase());
+      } catch (e) { note(`semantic view ${v.name} skipped: ${e.message}`); }
     }
+    const names = new Set(kept.map(v => v.name.toLowerCase()));
+    for (const n of [...defined]) if (!names.has(n)) { semantic.dropView(n); defined.delete(n); }
   }
 
   // A lakehouse table's schema in agent SQL: data.Lakehouse's mart.x is data_mart.x.
@@ -162,32 +164,64 @@ function createAgent({ onelake, fabric, engine, modelsFolder, bimPath, appDir, v
         await fsp.writeFile(path, bytes);
       }
       const { semantic, compiler } = await modules();
-      await registerAll(note);
+      await syncViews(note);
       const text = await fsp.readFile(path, 'utf8');
       const bim = JSON.parse(text.replace(/^﻿/, ''));
       const m = await semantic.registerModel(path.split(/[\\/]/).pop(), text, compiler);
-      out(`# ${m.name} — semantic model (${ws}), from ${path}\n`);
+      // Kept as a semantic view, as the panel keeps a model it opens.
+      await semviews.put(m.name, path);
+      defined.add(m.name.toLowerCase());
+      out(`# ${m.name} — semantic view of ${ws}/${name}, from ${path}\n`);
       out(`Query it as \`FROM ${m.name}\`; a measure is \`AGG("name")\`. Direct Lake tables: ${m.directLake}.\n`);
       const rels = ((bim.model && bim.model.relationships) || []).map(r =>
         [`${r.fromTable}[${r.fromColumn}]`, `${r.toTable}[${r.toColumn}]`, r.isActive === false ? 'inactive' : '']);
       if (rels.length) out(mdTable(['from (many)', 'to (one)', ''], rels) + '\n');
-      result(await (await engine()).agentQuery(semantic.rewrite(`DESCRIBE ${m.name}`).sql), { limit: 1e6 }, out);
+      // dax-sql's own listings, trimmed to what reads well.
+      const eng = await engine();
+      const show = async (q, cols) => {
+        const res = await eng.agentQuery((await semantic.statement(q, compiler)).sql);
+        result({ ...res, fields: res.fields.filter(f => cols.includes(f.name)) }, { limit: 1e6 }, out);
+      };
+      out('## Dimensions\n');
+      await show(`SHOW SEMANTIC DIMENSIONS IN ${m.name}`, ['table_name', 'name', 'data_type', 'hidden']);
+      out('\n## Metrics\n');
+      await show(`SHOW SEMANTIC METRICS IN ${m.name}`, ['table_name', 'name', 'data_type', 'expression', 'format_string']);
       out(`\nExample:\n\n${m.sample}`);
     },
 
     async sql([text], opts, out, note) {
       if (!text) throw new Error('usage: sql "<query>"');
-      const { semantic, paths } = await modules();
-      await registerAll(note);
+      const { semantic, paths, compiler } = await modules();
+      await syncViews(note);
       const t0 = Date.now();
-      const rewritten = semantic.rewrite(text);
-      const run = rewritten ? rewritten.sql : text;
-      for (const x of rewritten ? rewritten.tables : []) await openView(x.lh, x.t, x.ident, note);
+      const lhIn = opts.in ? await itemOf(...String(opts.in).split('/')) : null;
+      const st = await semantic.statement(text, compiler);
+      // CREATE / DROP SEMANTIC VIEW: dax-sql has checked it; the extension keeps the view.
+      if (st && st.drop) {
+        const had = semantic.hasView(st.drop.name);
+        await semviews.remove(st.drop.name);
+        semantic.dropView(st.drop.name);
+        defined.delete(st.drop.name.toLowerCase());
+        out(had ? `Semantic view ${st.drop.name} dropped.` : `No semantic view ${st.drop.name}.`);
+        return;
+      }
+      if (st && st.create) {
+        if (st.create.mode === 'if_not_exists' && semantic.hasView(st.create.name)) {
+          out(`Semantic view ${st.create.name} already exists.`);
+          return;
+        }
+        const v = await semviews.put(st.create.name, semviews.resolve(st.create.path, lhIn));
+        const m = await semantic.defineView(v.name, v.path, v.text, 'replace', compiler);
+        defined.add(v.name.toLowerCase());
+        out(`Semantic view ${m.name} created from ${v.path}. \`SHOW SEMANTIC METRICS IN ${m.name}\` lists its measures.`);
+        return;
+      }
+      const run = st ? st.sql : text;
+      for (const x of st ? st.tables : []) await openView(x.lh, x.t, x.ident, note);
       // --in: the lakehouse's tables, as <item>_<schema>.<table> (`ls <ws> <item>` prints
       // them) — a schema of their own, so they never repoint a view the panel made.
-      if (opts.in) {
-        const [ws, item] = String(opts.in).split('/');
-        const lh = await itemOf(ws, item);
+      if (lhIn) {
+        const lh = lhIn;
         const lc = text.toLowerCase();
         for (const t of await onelake.tables(lh)) {
           const schema = sqlSchema(lh, t);

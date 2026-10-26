@@ -22,7 +22,7 @@ node --no-warnings "{{cli}}" <command>
 | `ls <ws> <item>` | its tables, and their names in `sql --in` (`<item>_<schema>.<table>`); `<item>` may omit its `.Lakehouse` suffix |
 | `table <ws> <item> <schema.table>` | rows, files, size, last write, columns — metadata only, no scan |
 | `model <ws> <model>` | relationships, columns, measures with their DAX, and an example query; downloads the `.bim` once |
-| `sql "<sql>"` | read-only SQL. Every downloaded model is a table: `AGG("measure")` is the measure |
+| `sql "<sql>"` | read-only SQL. Every semantic view is a table: `AGG("measure")` is the measure; and `CREATE / DROP / SHOW SEMANTIC VIEW` (below) |
 | `sql "<sql>" --in <ws>/<item>` | the lakehouse's tables, as `<item>_<schema>.<table>` — e.g. `data_mart.dim_duid` |
 
 Options: `--limit N` (rows printed, default 100), `--csv`, `--fresh` (re-read instead of the cache).
@@ -37,9 +37,24 @@ Options: `--limit N` (rows printed, default 100), `--csv`, `--fresh` (re-read in
    sql 'SELECT dim_customer.Region, AGG("Total Sales") AS sales FROM sales_model GROUP BY ALL ORDER BY 1'
    ```
 
-   The model is named after its file (`sales_model.bim` is `sales_model`); `model` prints a
-   ready-made example for it. Columns are `table.column`; quote names with spaces:
-   `AGG("Avg Price")`. Filters go in WHERE as usual. `DESCRIBE <model>` also works inside `sql`.
+   A model is a semantic view named after its file (`sales_model.bim` is `sales_model`); `model`
+   prints a ready-made example for it. Columns are `table.column`; quote names with spaces:
+   `AGG("Avg Price")`. Filters go in WHERE as usual.
+
+## Semantic views
+
+`sql` also takes dax-sql's semantic-view statements:
+
+```
+sql "SHOW SEMANTIC VIEWS"
+sql "SHOW SEMANTIC METRICS IN sales_model"            measures, with their DAX
+sql "SHOW SEMANTIC DIMENSIONS IN sales_model FOR METRIC \"Total Sales\""   what can slice it
+sql "CREATE SEMANTIC VIEW sales FROM 'Files/models/sales.bim'" --in <ws>/<item>
+sql "DROP SEMANTIC VIEW sales"
+```
+
+A `.bim` path is local, `abfss://…`, or `Files/…` with `--in`. Views are kept by the extension
+(shared with the VS Code panel) and survive restarts; nothing is written to Fabric or OneLake.
 
 ## Things to know
 

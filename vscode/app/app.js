@@ -9,7 +9,7 @@
 // =============================================================================
 import { createEngine } from './data.js';
 import { isDocResult, textLinesDoc, fileExt, isTextExt, escapeHtml, basename,
-         IMAGE_EXTS, sqlNeedsTable, quoteIdent } from './paths.js';
+         IMAGE_EXTS, sqlNeedsTable, quoteIdent, abfssUrl } from './paths.js';
 // Static import is safe: docview.js is tiny — the markdown renderer it uses is imported
 // only inside renderMarkdown(), and only for a document that IS markdown.
 import { renderDocument } from './docview.js';
@@ -258,6 +258,10 @@ async function openModelView(file, text = null) {
     if (text == null) await engineReady;
     const bim = text != null ? text : new TextDecoder().decode(await engine.readFileBytes(lakehouse, file));
     const m = await semantic.registerModel(file.name, bim);
+    // Kept by the host as a semantic view too, so it is there after a restart and the
+    // command line can name it. Best effort: the view on screen does not depend on it.
+    engine.semanticCreate(m.name, text != null ? file.path : abfssUrl(lakehouse.workspace, file.path))
+      .catch(e => console.warn(`[views] ${m.name} not kept: ${e.message}`));
     if (my !== selSeq) return;
     $('modelView').closest('section').classList.add('modelOpen');
     $('modelView').hidden = false;
@@ -280,6 +284,38 @@ async function openModelView(file, text = null) {
   } finally {
     if (my === selSeq) setBusy(false);
   }
+}
+
+// Semantic views the host keeps (src/semviews.js), defined once the engine is up so SQL can
+// name them; every query waits for this. One that no longer reads is skipped, and says so.
+let viewsReady = Promise.resolve();
+async function loadViews() {
+  await engineReady;
+  let list = [];
+  try { list = await engine.semanticViews(); } catch (e) { console.warn('[views]', e.message); return; }
+  for (const v of list) {
+    try {
+      if (v.error) throw new Error(v.error);
+      await semantic.defineView(v.name, v.path, v.text, 'replace');
+    } catch (e) { console.warn(`[views] ${v.name}: ${e.message}`); }
+  }
+}
+
+// CREATE or DROP SEMANTIC VIEW, carried out: the host reads the .bim and keeps the pointer,
+// and the page defines (or forgets) the view. Returns what the status bar says.
+async function semanticDdl({ create, drop }) {
+  if (drop) {
+    await engine.semanticDrop(drop.name);
+    const had = semantic.hasView(drop.name);
+    semantic.dropView(drop.name);
+    return had ? `Semantic view ${drop.name} dropped.` : `No semantic view ${drop.name}.`;
+  }
+  if (create.mode === 'if_not_exists' && semantic.hasView(create.name))
+    return `Semantic view ${create.name} already exists.`;
+  const v = await engine.semanticCreate(create.name, create.path, lakehouse);
+  const m = await semantic.defineView(v.name, v.path, v.text, create.mode === 'create' ? 'create' : 'replace');
+  return `Semantic view ${m.name} created from ${v.path}` +
+         (m.directLake ? ` — ${m.directLake} Direct Lake table(s), read from OneLake as a query needs them` : '') + '.';
 }
 
 // A compiled SQL of a model, run: the Direct Lake tables it reads opened first (each in its
@@ -482,7 +518,14 @@ async function runQuery({ doc = true, ext = '' } = {}) {
     await engineReady;   // Ctrl+Enter is live before the engine is
     // A query of a semantic model runs as the SQL dax-sql compiles it to, once the tables
     // that SQL reads are open; every other query runs as written.
-    const model = semantic.rewrite(sql);
+    await viewsReady;
+    const model = await semantic.statement(sql);
+    // CREATE / DROP SEMANTIC VIEW: dax-sql has checked it; the host keeps the view.
+    if (model && (model.create || model.drop)) {
+      clearResults();
+      setStatus(await semanticDdl(model), 'ok');
+      return true;
+    }
     if (model) docAllowed = false;
     for (const x of model ? model.tables : [])
       await engine.loadTable(x.lh, x.t, { viewSchema: x.viewSchema });
@@ -810,6 +853,7 @@ showVersion();
 wireUi();
 engine = createEngine({ onStatus: setStatus, onBoot: reportBoot });
 engineReady = engine.init();
+viewsReady = loadViews().catch(e => console.warn('[views]', e.message));
 
 startEngine().catch(e => {
   setStatus('Engine failed to start: ' + e.message, 'error');

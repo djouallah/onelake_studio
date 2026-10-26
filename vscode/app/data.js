@@ -778,6 +778,14 @@ export function createEngine({
   const saveOneLakeFile = (lh, file) =>
     callHost("host.saveFile", [{ name: file.name, workspace: lh.workspace, path: file.path }]);
 
+  // Semantic views, kept by the host (src/semviews.js): every one with its .bim text, and
+  // CREATE / DROP carried out there. `lh` resolves a Files/… path.
+  const semanticViews = () => callHost("semantic.views", [{}]);
+  const semanticCreate = (name, path, lh) =>
+    callHost("semantic.create", [{ name, path, workspace: lh && lh.workspace, item: lh && lh.item }]);
+  const semanticDrop = name => callHost("semantic.drop", [{ name }]);
+
   return { init, reset, statTable, peekTable, loadTable,
-           loadFile, readFileBytes, saveText, saveOneLakeFile, runSql, describeLoad, fmtBytes, cancelLoad };
+           loadFile, readFileBytes, saveText, saveOneLakeFile, runSql, describeLoad, fmtBytes, cancelLoad,
+           semanticViews, semanticCreate, semanticDrop };
 }

@@ -11,7 +11,7 @@ const PINS = {
   // Explore's charts — a classic script (dist/echarts.min.js), not a +esm closure.
   echarts: 'echarts@5.5.1',
   // The DAX-to-SQL compiler behind semantic models (semantic.js), at a commit.
-  daxSql: 'djouallah/dax-sql@8683334f4e2a82d32630db2e382dd2c54ce0a8f1',
+  daxSql: 'djouallah/dax-sql@de799e0bb75559ac0d7cfbc62661339bcc93a417',
 };
 
 // What vendor.mjs fetches for each pin.

@@ -21,6 +21,7 @@ const { LakehouseTree } = require('./tree');
 const { webviewRoot } = require('./webview');
 const { hasFilesArea } = require('./names');
 const { createAgent } = require('./agent');
+const { createSemViews } = require('./semviews');
 const { serveBridge } = require('./bridge');
 const { PINS } = require('./vendored');
 
@@ -353,6 +354,8 @@ async function resetEngine() {
 // Points the store and the engine's disk cache at the account now signed in; a no-op when
 // it has not moved. Set by activateInner, which owns the store.
 let rebindStore = async () => {};
+// The semantic views this machine keeps (semviews.js), per account; set by activateInner.
+let semviews = null;
 
 async function show(context, options) {
   if (revealPanel()) return true;
@@ -378,7 +381,7 @@ async function show(context, options) {
     onOpened: logOpened, onBoot: logBoot, engine: eng, build: buildInfo,
     host: createHostMethods({
       onelake, engine: eng, onStatus: message => postLive({ type: 'status', message }),
-      saveFile,
+      saveFile, semviews,
     }),
     // The page could not bring the engine up. Everything it buffered is already gone;
     // this is the toast that stops the failure being a spinner that never moves.
@@ -565,6 +568,25 @@ async function activateInner(context) {
     // A workspace's semantic models are a listing too, kept in the same store.
     fabric,
   });
+  // Semantic views: pointers to .bim files, kept per account in the extension's storage.
+  semviews = createSemViews({ dir: join(context.globalStorageUri.fsPath, 'semantic-views'), onelake });
+  semviews.useAccount(storeAccount);
+  // An account's first time: the models already downloaded become its views, as SQL could
+  // name them before views were kept.
+  async function seedViews() {
+    const found = [];
+    const fsp = require('node:fs/promises');
+    for (const ws of await fsp.readdir(modelsFolder()).catch(() => [])) {
+      for (const f of await fsp.readdir(join(modelsFolder(), ws)).catch(() => [])) {
+        if (!/\.bim$/i.test(f)) continue;
+        const name = f.replace(/\..*$/, '').replace(/[^A-Za-z0-9_]/g, '_').replace(/^(\d)/, '_$1') || 'model';
+        if (!found.some(x => x.name.toLowerCase() === name.toLowerCase())) found.push({ name, path: join(modelsFolder(), ws, f) });
+      }
+    }
+    await semviews.seed(found).catch(e => out && out.appendLine(`semantic views not seeded: ${e.message}`));
+  }
+  await seedViews();
+
   // Called wherever the identity may have moved; a no-op when it has not.
   rebindStore = async function rebindStore() {
     const key = accountKey(await getSession({ createIfNone: false }).catch(() => null));
@@ -572,6 +594,8 @@ async function activateInner(context) {
     storeAccount = key;
     fileCacheAccount = key;   // the engine picks it up when it is next built
     onelake.useStore(storeFor(key));
+    semviews.useAccount(key);
+    await seedViews();
   };
   context.subscriptions.push({ dispose: onelake.onRefreshFailed((what, e) => {
     // The cached answer stays on screen; why it could not be refreshed goes here.
@@ -629,7 +653,7 @@ async function activateInner(context) {
   // the panel read, with no second sign-in and no second cache.
   const dev = context.extensionMode === vscode.ExtensionMode.Development;
   const agent = createAgent({
-    onelake, fabric, modelsFolder,
+    onelake, fabric, semviews,
     bimPath: (ws, model) => bimPath({ workspace: ws, model }),
     engine: async () => {
       const { readme } = await webviewRoot(context.extensionUri, { dev });

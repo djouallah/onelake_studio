@@ -36,8 +36,18 @@ const ENGINE_METHODS = new Set(['query', 'stream', 'cancel', 'info']);
  * @param {(name: string, bytes: Uint8Array) => Promise<string|null>} [o.saveFile]
  *        ask where to save, write it, answer the path (null: dismissed)
  */
-function createHostMethods({ onelake, engine, onStatus = () => {}, saveFile = null }) {
+function createHostMethods({ onelake, engine, onStatus = () => {}, saveFile = null, semviews = null }) {
+  const views = () => { if (!semviews) throw new Error('semantic views are not available here'); return semviews; };
   return {
+    // Semantic views (semviews.js): the ones this machine keeps, with their .bim text, and
+    // CREATE / DROP SEMANTIC VIEW carried out — dax-sql (in the page) has already checked
+    // the statement. `Files/…` is relative to the lakehouse the page has open.
+    'semantic.views': () => views().texts(),
+    'semantic.create': async x => {
+      const lh = x.workspace && x.item ? lhOf(x) : null;
+      return views().put(String(x.name), views().resolve(String(x.path), lh));
+    },
+    'semantic.drop': async x => { await views().remove(String(x.name)); return true; },
     'onelake.table': x => onelake.table(lhOf(x), tableOf(x), { onWait: onStatus }),
     'onelake.peek': x => onelake.peek(lhOf(x), tableOf(x), sql => engine.call('query', [sql])),
     // The identifier to select a table from. The page names the table; the metadata

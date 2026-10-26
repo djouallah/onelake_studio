@@ -79,10 +79,28 @@ this does not run on vscode.dev.
   A model query can also be a subquery or CTE inside SQL of your own. Preview, Show plan and
   Download CSV.
 
-The model is named after its file (`nem.bim` is `nem`), and the main editor can query it too, as
-can `DESCRIBE nem`. A Direct Lake table is read from the lakehouse its model names, through the
-same Iceberg catalog, whichever item is selected, and only when a query actually reads it. The
-model comes from the file: click it in the tree (above), or open any `.bim` under `Files/`.
+A model is a **semantic view**, and SQL names it — in the main editor, the model's SQL tab and
+the command line alike. The statements are dax-sql's (`createViews()`, vendored at the pin in
+[`src/vendored.js`](src/vendored.js)); nothing here re-implements them:
+
+```sql
+CREATE [OR REPLACE] SEMANTIC VIEW [IF NOT EXISTS] sales FROM '<a .bim: local, abfss://… or Files/…>';
+DROP SEMANTIC VIEW [IF EXISTS] sales;
+SHOW SEMANTIC VIEWS;
+SHOW SEMANTIC DIMENSIONS IN sales [FOR METRIC m];
+SHOW SEMANTIC METRICS IN sales;
+DESCRIBE sales;
+SELECT * FROM (SHOW SEMANTIC METRICS IN sales) WHERE ...;
+```
+
+A model opened from the tree or from `Files/` becomes the view named after its file (`nem.bim`
+is `nem`). Views are kept by the extension ([`src/semviews.js`](src/semviews.js)) as pointers —
+name, `.bim` path, when — in one file per Microsoft account in its own storage, so they survive
+a restart; the `.bim` stays where it is. Creating one writes nothing to Fabric or OneLake. A
+Direct Lake table is read from the lakehouse its model names, through the same Iceberg catalog,
+whichever item is selected, and only when a query actually reads it.
+
+To change the syntax, change dax-sql and move the pin: the extension carries no copy of it.
 
 There is no guarantee that DAX compiled to SQL here gives the same results as Power BI.
 
