@@ -349,7 +349,8 @@ export function createExplorer(root, ctx) {
           el('button', { type: 'button', class: 'ex-chip-name', onclick: e => {
             if (k === 'filters') editFilter(i, e.currentTarget.parentNode);
             else if (summed) editAgg(i, e.currentTarget.parentNode);
-          } }, chipText(k, i), summed ? ' ▾' : null),
+          } }, f?.kind === 'measure' ? el('span', { class: 'ex-chip-icon', 'aria-hidden': 'true' }, ICONS.measure) : null,
+            chipText(k, i), summed ? ' ▾' : null),
           el('button', { type: 'button', class: 'ex-x', 'aria-label': `Remove ${chipText(k, i)}`, onclick: () => removeAt(k, i) }, '×'));
         chip.addEventListener('dragstart', e => { drag = { id: entry(k, i), from: k, index: i }; e.dataTransfer.setData('text/plain', entry(k, i)); });
         chip.addEventListener('dragend', () => { drag = null; });
