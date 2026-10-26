@@ -1,7 +1,7 @@
 # Publishes the VS Code extension to the Marketplace when an ext-v* tag is pushed.
 #
 # Release:
-#   bump "version" in vscode/package.json, refresh vscode/package-lock.json
+#   bump "version" in package.json, refresh package-lock.json
 #   (the "Refresh extension lockfile" workflow does it against the public registry), commit,
 #   then  git tag ext-v<that version> && git push origin ext-v<that version>
 #   A tag that does not match package.json fails the run before anything is built.
@@ -57,9 +57,6 @@
 # Every run packages and uploads every .vsix as an artifact, so workflow_dispatch is still a
 # real dry run — it builds and attaches all of them, proves the OIDC identity, and only a tag
 # reaches the publish step.
-#
-# Independent of pages.yml, which deploys the web app on every commit to main: that one only
-# ever copies web/, so vscode/ never reaches Pages and this never touches it.
 name: Publish VS Code extension
 
 on:
@@ -78,7 +75,7 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # The extension's own suite (vscode/test), once rather than once per platform: it reads only tracked
+  # The extension's own suite (test/), once rather than once per platform: it reads only tracked
   # sources, so its answer cannot differ between legs. panel-html.test.mjs is the one that
   # matters here — it runs the webview's HTML rewriting against the real app/index.html, and
   # a silent failure there ships a panel that reads OneLake with no token. Ahead of the
@@ -95,14 +92,13 @@ jobs:
       - name: The tag must name the version being released
         if: startsWith(github.ref, 'refs/tags/ext-v')
         run: |
-          want="ext-v$(node -p "require('./vscode/package.json').version")"
-          [ "$GITHUB_REF_NAME" = "$want" ] || { echo "tag $GITHUB_REF_NAME, but vscode/package.json says $want"; exit 1; }
-      - working-directory: vscode
-        run: npm test
+          want="ext-v$(node -p "require('./package.json').version")"
+          [ "$GITHUB_REF_NAME" = "$want" ] || { echo "tag $GITHUB_REF_NAME, but package.json says $want"; exit 1; }
+      - run: npm test
 
   # The native engine itself, on the DuckDB that ships: real @duckdb/node-api, its linux
   # binding, and the extensions DuckDB installs on first use. npm test cannot cover this —
-  # it runs without vscode/node_modules — and it is where a DuckDB major bump breaks.
+  # it runs without node_modules — and it is where a DuckDB major bump breaks.
   engine:
     runs-on: ubuntu-latest
     steps:
@@ -111,15 +107,12 @@ jobs:
         with:
           node-version: 20
           cache: npm
-          cache-dependency-path: vscode/package-lock.json
-      - working-directory: vscode
-        run: npm ci --no-audit --no-fund
+          cache-dependency-path: package-lock.json
+      - run: npm ci --no-audit --no-fund
       # The same bundle a linux-x64 vsix ships, so the test LOADs extensions by path the way
       # an installed extension does.
-      - working-directory: vscode
-        run: node fetch-extensions.mjs linux-x64
-      - working-directory: vscode
-        run: node --test test/engine-host.test.mjs
+      - run: node fetch-extensions.mjs linux-x64
+      - run: node --test test/engine-host.test.mjs
 
   package:
     needs: [test, engine]
@@ -142,7 +135,7 @@ jobs:
         with:
           node-version: 20
           cache: npm
-          cache-dependency-path: vscode/package-lock.json
+          cache-dependency-path: package-lock.json
 
       # vendor.mjs (run by vscode:prepublish, below) downloads the webview's libraries from
       # jsDelivr. Six legs is six chances for a CDN hiccup to fail one, and one failed leg
@@ -150,8 +143,8 @@ jobs:
       # is, so a restored cache makes it a no-op with no network at all.
       - uses: actions/cache@v4
         with:
-          path: vscode/vendor
-          key: vendor-${{ hashFiles('vscode/vendor.mjs', 'vscode/src/vendored.js') }}
+          path: vendor
+          key: vendor-${{ hashFiles('vendor.mjs', 'src/vendored.js') }}
 
       # NOT a plain `npm ci`. The eight platform bindings are optionalDependencies gated on
       # os/cpu, so a plain install drops 37MB of the RUNNER's platform into node_modules — and
@@ -159,7 +152,6 @@ jobs:
       # none of them, then fetch exactly one: every leg starts from the same empty state,
       # including the linux one that would otherwise be special.
       - name: Install the extension's dependencies, minus every binding
-        working-directory: vscode
         run: npm ci --omit=optional --no-audit --no-fund
 
       # Puts THIS target's binding, and only this target's, into node_modules. The script
@@ -168,26 +160,22 @@ jobs:
       # the directory it just wrote.
       - name: Fetch the DuckDB binding for ${{ matrix.target }}
         id: binding
-        working-directory: vscode
         run: node fetch-binding.mjs ${{ matrix.target }}
 
       # And this platform's DuckDB extensions (iceberg, azure, httpfs, avro + the optional
       # ones), so a first run offline or behind a proxy DuckDB cannot use still opens tables.
       - name: Bundle the DuckDB extensions for ${{ matrix.target }}
-        working-directory: vscode
         run: node fetch-extensions.mjs ${{ matrix.target }}
 
-      # vsce packages the extension directory and nothing above it, so the staged page, the
-      # README and the LICENSE have to be copied in. `vscode:prepublish` does this too;
-      # running it here means a failure shows up as its own step.
-      - run: node vscode/stage-webview.mjs
+      # The staged page carries the README and a build stamp. `vscode:prepublish` does this
+      # too; running it here means a failure shows up as its own step.
+      - run: node stage-webview.mjs
 
       # --target stamps TargetPlatform into the manifest AND names the file
       # onelake-studio-<target>-<version>.vsix, which is the name worth having on the
       # artifact. The major is pinned: an unpinned npx would let a future vsce 4 change how a
       # release is built without anyone choosing that.
       - name: Package
-        working-directory: vscode
         run: npx --yes @vscode/vsce@3 package --target ${{ matrix.target }}
 
       # The only check that cannot lie. Everything above is a claim about node_modules; this
@@ -195,7 +183,6 @@ jobs:
       # and one carrying the wrong binding — or none — is an extension that installs and
       # cannot start.
       - name: The vsix must contain exactly one binding, and it must be this one
-        working-directory: vscode
         run: |
           set -euo pipefail
           vsix=$(ls *.vsix)
@@ -220,7 +207,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: vsix-${{ matrix.target }}
-          path: vscode/*.vsix
+          path: "*.vsix"
           if-no-files-found: error
           overwrite: true
           retention-days: 14

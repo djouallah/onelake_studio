@@ -1,18 +1,12 @@
 node_modules/
-web/dist/
 *.log
 .DS_Store
 *.duckdb
-web/test/fixtures/*.db
-web/test/fixtures/*.zip
-web/test/fixtures/*.parquet
-vscode/webview/
-vscode/LICENSE
-vscode/*.vsix
-# The engine, downloaded by vscode/vendor.mjs at package time (and once per checkout
+webview/
+*.vsix
+# The engine, downloaded by vendor.mjs at package time (and once per checkout
 # for F5). Pinned, reproducible artifacts — ~40MB that has no business in git history.
-vscode/vendor/
-# DuckDB extension binaries for one platform, fetched by vscode/fetch-extensions.mjs at
+vendor/
+# DuckDB extension binaries for one platform, fetched by fetch-extensions.mjs at
 # package time.
-vscode/duckdb-extensions/
-test-shots/
+duckdb-extensions/
