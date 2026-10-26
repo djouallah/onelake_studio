@@ -1,199 +1,21 @@
 // =============================================================================
-// paths.js — the pure half of the engine: paths, URIs, SQL text, cache keys.
+// paths.js — the panel's pure half: file kinds, SQL text, cache keys, value shapes.
 // =============================================================================
-// Everything here is a plain function over strings and plain objects: no DOM, no
-// network, no DuckDB. That is the point — this is where the bugs that silently
-// return the WRONG DATA live (cache keys that collide, comment stripping that eats
-// string literals, URI escaping applied twice), and none of them are reachable by
-// clicking around. Keeping them here means test/paths.test.js can cover them under
-// `node --test` with no browser and no lakehouse.
-//
-// Plain ESM with no imports, so the same file loads in the browser and in Node.
+// Plain functions over strings and plain objects: no DOM, no network, no DuckDB. This is
+// where the bugs that silently return the WRONG DATA live (cache keys that collide,
+// comment stripping that eats string literals), and none of them are reachable by
+// clicking around. What OneLake's names and metadata MEAN is the host's (src/names.js).
 // =============================================================================
 
 export const DFS_HOST = "onelake.dfs.fabric.microsoft.com";
 
-// Where OneLake data reads are addressed. Every URL below is built from this rather than
-// from DFS_HOST alone, so one value redirects the lot: the VS Code extension signs DuckDB's
-// range reads through a loopback proxy (a webview has no service worker to do it with), and
-// hands the engine `http://127.0.0.1:<port>/<secret>/dfs`. An override is therefore a URL
-// PREFIX, not just an authority — it may carry a path, and never a trailing slash.
-export const DFS_ORIGIN = `https://${DFS_HOST}`;
-
-// The dots are escaped: unescaped they are `any character`, so a look-alike host would match.
-const DFS_PREFIX = new RegExp(`^https?://${DFS_HOST.replace(/\./g, "\\.")}/`, "i");
-
-// -----------------------------------------------------------------------------
-// Path basics
-// -----------------------------------------------------------------------------
 export const strip = s => String(s).replace(/^\/+|\/+$/g, "");
 export const basename = p => strip(p).split("/").pop();
-
-// Percent-encode a RAW path — one whose segments are literal names, not URI escapes.
-// This is only correct for paths that came out of a DFS listing (`.name`), where a
-// space is a space. Applying it to a path taken from Iceberg metadata would turn an
-// existing %20 into %2520; see toHttps for that side.
-export const encPath = p => strip(p).split("/").map(encodeURIComponent).join("/");
 
 // How native DuckDB names a OneLake object: the workspace is the container, read with the
 // host's azure secret. Workspace names with spaces and parentheses work as they are
 // (checked against DuckDB 2.0); the result only ever goes into SQL through sqlStr().
 export const abfssUrl = (ws, path) => `abfss://${ws}@${DFS_HOST}/${strip(path)}`;
-
-export const dfsBase = (ws, origin = DFS_ORIGIN) => `${origin}/${encodeURIComponent(ws)}`;
-
-// A DFS "list" entry .name is already relative to the filesystem (workspace) root,
-// and is raw, so it gets encoded.
-export const dfsUrl = (ws, name, origin = DFS_ORIGIN) => `${dfsBase(ws, origin)}/${encPath(name)}`;
-
-// Normalize a path out of Iceberg metadata to an authed https URL.
-//
-// Fabric writes `abfs://<workspace-guid>@onelake.dfs.fabric.microsoft.com/<item-guid>/Tables/…`
-// — note the single s, and GUIDs rather than the friendly names the user typed. The
-// filesystem component becomes the first path segment.
-//
-// The input is a URI, so its path is ALREADY percent-encoded and is carried across
-// untouched. Re-encoding it here is what produced %2520 for any table whose partition
-// values or file names contain a space or a literal %.
-export function toHttps(ws, u, origin = DFS_ORIGIN) {
-  const s = String(u);
-  const ab = /^abfss?:\/\/([^@/]+)@[^/]+\/(.*)$/i.exec(s);
-  if (ab) return `${origin}/${ab[1]}/${strip(ab[2])}`;
-  // An absolute URL that already names OneLake is re-pointed at `origin` — with the default
-  // that rewrite is the identity, but under an override it is the difference between a read
-  // the proxy signs and one that goes straight to OneLake and comes back 401. Anything on
-  // another host belongs to someone else and is left alone.
-  if (/^https?:\/\//i.test(s)) return DFS_PREFIX.test(s) ? `${origin}/${s.replace(DFS_PREFIX, "")}` : s;
-  // A relative reference, still a URI reference — only the workspace we prepend is raw.
-  return `${dfsBase(ws, origin)}/${strip(s)}`;
-}
-
-// Reduce any of the forms a data-file path can take to one comparable key:
-// the workspace-relative path, with an abfs authority folded in as the first segment.
-//
-//   abfs://WS@host/item/Tables/t/f.parquet  -> WS/item/Tables/t/f.parquet
-//   abfss://WS@host/item/Tables/t/f.parquet -> WS/item/Tables/t/f.parquet
-//   https://host/WS/item/Tables/t/f.parquet -> WS/item/Tables/t/f.parquet
-//
-// Iceberg does not promise that a delete file's `file_path` is byte-identical to the
-// manifest's `data_file.file_path` — the abfs/abfss spelling alone differs between
-// Fabric writers. An exact-string anti-join that silently matches nothing means deleted
-// rows come back as live, so both sides go through this first.
-export function pathKey(u) {
-  const s = String(u);
-  const ab = /^abfss?:\/\/([^@/]+)@[^/]+\/(.*)$/i.exec(s);
-  if (ab) return `${ab[1]}/${strip(ab[2])}`;
-  const https = /^https?:\/\/[^/]+\/(.*)$/i.exec(s);
-  if (https) return strip(https[1]);
-  return strip(s);
-}
-
-// The same reduction as pathKey(), as a DuckDB expression, so the delete table can be
-// normalized in SQL. Kept next to pathKey so the two cannot drift apart unnoticed.
-export const PATH_KEY_SQL = col =>
-  `CASE WHEN regexp_matches(${col}, '^abfss?://[^@/]+@')
-        THEN regexp_replace(${col}, '^abfss?://([^@/]+)@[^/]+/', '\\1/')
-        ELSE regexp_replace(${col}, '^https?://[^/]+/', '')
-   END`;
-
-// "workspace/lakehouse.Lakehouse" (or a full https/abfss URL) -> { workspace, item }.
-//
-// In an abfs(s) URL the workspace is the AUTHORITY, not the first path segment
-// (abfss://ws@host/lh.Lakehouse) — dropping it along with the scheme, as an earlier
-// version did, left one segment and a "path must be workspace/lakehouse" error for a
-// URL that named both.
-export function parseLakehouse(input) {
-  const raw = String(input || "").trim();
-  if (!raw) throw new Error("Enter a lakehouse path, e.g.  myworkspace/mylakehouse.Lakehouse");
-
-  let workspace = null, rest = raw, fromUri = false;
-  const ab = /^abfss?:\/\/([^@/]+)@[^/]+\/?(.*)$/i.exec(raw);
-  if (ab) {
-    workspace = ab[1];
-    rest = ab[2];
-    fromUri = true;
-  } else {
-    const https = /^https?:\/\/[^/]+\/?(.*)$/i.exec(raw);
-    if (https) { rest = https[1]; fromUri = true; }
-  }
-
-  // Segments of a URL are escaped; segments the user typed are literal.
-  const unesc = v => {
-    if (!fromUri) return v;
-    try { return decodeURIComponent(v); } catch (_) { return v; }
-  };
-
-  const parts = strip(rest).split("/").filter(Boolean).map(unesc);
-  if (workspace == null) workspace = parts.shift();
-  else workspace = unesc(workspace);
-  const item = parts.shift();
-  if (!workspace || !item)
-    throw new Error(`Path must be  workspace/lakehouse.Lakehouse  (got "${input}")`);
-
-  return { workspace, item: /\.lakehouse$/i.test(item) ? item : item + ".Lakehouse" };
-}
-
-// -----------------------------------------------------------------------------
-// Workspace items — which ones hold OneLake tables, and what to call them
-// -----------------------------------------------------------------------------
-// A workspace root is mostly notebooks, pipelines, reports and environments. The ones
-// worth listing are the items whose directory has a Tables/ under it, and a OneLake
-// directory names its own kind: "sales.Lakehouse", "aemo.Warehouse".
-export const itemKind = name => {
-  const m = /\.([^.]+)$/.exec(basename(name || ""));
-  return m ? m[1] : "";
-};
-
-// These names came from listing 49 real workspaces over the DFS API, not from the portal
-// or the Fabric REST API — OneLake names an item directory after Fabric's INTERNAL type,
-// and the three disagree constantly. Guessing the REST spelling is why a workspace full
-// of Databricks catalogs came up empty:
-//
-//   portal "SQL database"                       ->  <name>.SQLDbNative
-//   portal "Mirrored Azure Databricks catalog"  ->  <name>.DatabricksCatalog
-//   portal "KQL database" / "Eventhouse"        ->  .KustoDatabase / .KustoEventHouse
-//   portal "Notebook"                           ->  <name>.SynapseNotebook
-//
-// What belongs here is narrower than "has a Tables/": it is the items that write Delta
-// INTO OneLake, which is what OneLake then serves as Iceberg. Confirmed by finding
-// _delta_log and metadata/ side by side under a table of each:
-//
-//   Lakehouse, Warehouse, SQLDbNative   -> Tables/<schema>/<t>/{_delta_log, metadata}
-//   DatabricksCatalog                   -> Tables/<schema>/<t> is a SHORTCUT: no files in
-//                                          OneLake, so nothing to convert. Listing through
-//                                          it is refused outright ("Stored connections with
-//                                          authentication type 'Key' are not supported for
-//                                          shortcuts of type 'DatabricksCatalog'"), and the
-//                                          Iceberg catalog names the tables but 400s on
-//                                          every one. There is nothing here to read.
-//   KustoDatabase                       -> Tables/ existed but was empty on every KQL
-//                                          database probed; nothing to confirm.
-const TABLE_ITEM_KINDS = new Set(["Lakehouse", "Warehouse", "SQLDbNative"]);
-
-// Fabric mirroring (Snowflake, Azure SQL, Cosmos) does land Delta in OneLake, so it
-// belongs — but that tenant has no such item, so the internal suffix is UNVERIFIED and
-// this prefix is the one guess left in the file. If it is wrong the item is absent from
-// the picker, and the item names listItems logs are what identifies the real one.
-export const holdsTables = name => {
-  const kind = itemKind(name);
-  return TABLE_ITEM_KINDS.has(kind) || /^Mirrored/i.test(kind);
-};
-
-// Files/ is the unmanaged half of a LAKEHOUSE. Everything else here stores its tables
-// in OneLake and nothing else, so browsing Files/ on one listed the item's internal
-// storage directories — GUIDs nobody asked to see.
-export const hasFilesArea = name => /^lakehouse$/i.test(itemKind(name));
-
-// The kind as the picker should say it: what the person sees in Fabric, not the internal
-// type. Anything unlisted names itself, which is still better than being invisible.
-const KIND_LABELS = {
-  sqldbnative: "SQL database",
-  mirroreddatabase: "Mirrored database",
-};
-export const kindLabel = kind => {
-  const k = String(kind || "");
-  return KIND_LABELS[k.toLowerCase()] || k;
-};
 
 // -----------------------------------------------------------------------------
 // File formats
@@ -395,20 +217,6 @@ export function sqlNeedsTable(sql, table) {
   return new RegExp(`(^|[^\\w"])"?${esc}"?($|[^\\w"])`, "i").test(stripComments(String(sql)));
 }
 
-// An Iceberg schema's columns as {name, type} — deliberately the same shape DESCRIBE
-// returns, so a schema read from metadata alone and one read from the parquet footers
-// render through identical code. A nested type arrives as an object rather than a string;
-// name it by its kind, because dumping the JSON into a type column helps nobody.
-export function icebergTypeName(t) {
-  if (t == null) return "";
-  if (typeof t === "string") return t;
-  const kind = t.type || "";
-  if (kind === "list") return `list<${icebergTypeName(t.element)}>`;
-  if (kind === "map") return `map<${icebergTypeName(t.key)}, ${icebergTypeName(t.value)}>`;
-  if (kind === "struct") return `struct<${(t.fields || []).map(f => f.name).join(", ")}>`;
-  return kind;
-}
-
 // An Iceberg primitive type, in DuckDB's name for it. Anything nested or unknown is
 // VARCHAR — this is only ever used to give a table with no rows its columns.
 const ICEBERG_DUCK = { boolean: "BOOLEAN", int: "INTEGER", long: "BIGINT", float: "FLOAT",
@@ -431,48 +239,6 @@ export function emptyTableSql(fields) {
   return `SELECT ${cols.length ? cols.join(", ") : "NULL AS empty"} WHERE false`;
 }
 
-export const icebergFields = schema =>
-  ((schema || {}).fields || []).map(f => ({ name: f.name, type: icebergTypeName(f.type) }));
-
-// Table-level statistics out of an Iceberg metadata document and its current snapshot —
-// the fields the Fabric conversion fills from the source table's own statistics. Only
-// the snapshot summary is trustworthy here: Fabric writes zeroed PER-FILE manifest
-// statistics (measured — see readManifest's caller), so nothing below reads manifests.
-export function snapshotStats(meta, snap) {
-  meta = meta || {}; snap = snap || {};
-  const summary = snap.summary || {};
-  const num = v => Number(v) || null;
-
-  // Partition fields of the CURRENT spec. `default-spec-id` can legitimately be 0, so
-  // only fall back to the first spec when the id is absent or unmatched.
-  const specs = meta["partition-specs"] || [];
-  const spec = specs.find(s => s["spec-id"] === meta["default-spec-id"]) || specs[0];
-  const partitionColumns = ((spec || {}).fields || []).map(f =>
-    f.transform && f.transform !== "identity" ? `${f.name} (${f.transform})` : f.name);
-
-  // Probed 2026-07-28 on a real Lakehouse (DFS) and Warehouse (IRC): Fabric's conversion
-  // (Apache XTable) does NOT mirror `delta.parquet.vorder.enabled` into the Iceberg
-  // properties — so this stays null in practice and the UI must render nothing, not "no".
-  // It is read anyway because it is free and lights up if the conversion ever starts
-  // writing it. The compression codec, by contrast, IS there on both probed items.
-  const props = meta.properties || {};
-  const vorderRaw = props["delta.parquet.vorder.enabled"];
-  const vorderProp = vorderRaw == null ? null
-    : String(vorderRaw).trim().toLowerCase() === "true";
-
-  return {
-    codec: props["write.parquet.compression-codec"] || null,
-    totalFilesSize: num(summary["total-files-size"]),
-    totalDataFiles: num(summary["total-data-files"]),
-    totalDeleteFiles: num(summary["total-delete-files"]),
-    operation: summary.operation || null,
-    snapshotTs: num(snap["timestamp-ms"]),
-    snapshotCount: (meta.snapshots || []).length,
-    formatVersion: meta["format-version"] != null ? Number(meta["format-version"]) : null,
-    partitionColumns,
-    vorderProp,
-  };
-}
 
 // -----------------------------------------------------------------------------
 // Cache keys

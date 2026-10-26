@@ -3,16 +3,12 @@
 // what is kept, and what a table's metadata is reduced to before it is stored.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { join } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
 const { createStore } = require("../extension/src/store.js");
 const { createOneLake, summarize } = require("../extension/src/onelake.js");
 
-const root = join(fileURLToPath(new URL(".", import.meta.url)), "..");
-const paths = await import(pathToFileURL(join(root, "extension", "app", "paths.js")).href);
 
 const LOC = "abfss://ws@onelake.dfs.fabric.microsoft.com/lh.Lakehouse/Tables/dbo/t/metadata/00002-x.metadata.json";
 
@@ -32,7 +28,6 @@ function fakeCatalog() {
   const calls = [];
   return {
     calls,
-    paths: async () => paths,
     reset: () => calls.push("reset"),
     listWorkspaces: async () => { calls.push("workspaces"); return ["ws"]; },
     listItems: async ws => { calls.push(`items ${ws}`); return [{ name: "lh.Lakehouse", kind: "Lakehouse" }]; },
@@ -51,7 +46,7 @@ function fakeCatalog() {
 const lh = { workspace: "ws", item: "lh.Lakehouse" };
 
 test("a table's metadata is reduced to what the panel shows, with its location", () => {
-  const s = summarize(paths, metadata(), LOC);
+  const s = summarize(metadata(), LOC);
   assert.equal(s.empty, false);
   assert.equal(s.totalRecords, 7, "the CURRENT snapshot's count, not the last one listed");
   assert.equal(s.metadataLocation, LOC);
@@ -60,7 +55,7 @@ test("a table's metadata is reduced to what the panel shows, with its location",
 });
 
 test("a table that was listed but never written is empty, not broken", () => {
-  const s = summarize(paths, metadata({ "current-snapshot-id": -1, snapshots: [] }), LOC);
+  const s = summarize(metadata({ "current-snapshot-id": -1, snapshots: [] }), LOC);
   assert.equal(s.empty, true);
   assert.equal(s.totalRecords, 0);
 });
@@ -68,7 +63,7 @@ test("a table that was listed but never written is empty, not broken", () => {
 test("metadata with no current snapshot is refused rather than guessed", () => {
   const m = metadata();
   delete m["current-snapshot-id"];
-  assert.throws(() => summarize(paths, m, LOC), /current-snapshot-id/);
+  assert.throws(() => summarize(m, LOC), /current-snapshot-id/);
 });
 
 test("listings and table metadata are fetched once, then served from the store", async () => {

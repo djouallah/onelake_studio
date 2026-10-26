@@ -17,13 +17,14 @@
 // =============================================================================
 
 const { sqlStr } = require('./sql');
+const names = require('./names');
 
 const PEEK_ROWS = 100;
 const PREFETCH_WORKERS = 2;
 
 // The parts of an Iceberg metadata document the panel shows, worked out once here so a
 // multi-megabyte document with a long snapshot history is not what gets stored or posted.
-function summarize(paths, metadata, metadataLocation) {
+function summarize(metadata, metadataLocation) {
   const curId = metadata['current-snapshot-id'];
   // Guessing is worse than failing: the last element of the snapshot list is not defined
   // to be the current one.
@@ -35,14 +36,14 @@ function summarize(paths, metadata, metadataLocation) {
   // Listed by the catalog but never written: snapshot -1, no snapshots, no files. DuckDB
   // opens it as an empty table against the right schema.
   if (!snap || String(curId) === '-1' || !snapshots.length) {
-    return { empty: true, schemaFields: paths.icebergFields(schema), totalRecords: 0, stats: null,
+    return { empty: true, schemaFields: names.icebergFields(schema), totalRecords: 0, stats: null,
              metadataLocation };
   }
   return {
     empty: false,
-    schemaFields: paths.icebergFields(schema),
+    schemaFields: names.icebergFields(schema),
     totalRecords: Number((snap.summary || {})['total-records']) || null,
-    stats: paths.snapshotStats(metadata, snap),
+    stats: names.snapshotStats(metadata, snap),
     metadataLocation,
   };
 }
@@ -114,10 +115,9 @@ function createOneLake({ catalog, store, prefetchEnabled = () => true, onHit = (
    * metadataLocation }, plus `at` (when OneLake said so) and `cached`.
    */
   async function table(lh, t, { fresh = false, onWait } = {}) {
-    const paths = await catalog.paths();
     const r = await get(keys.table(lh, t), async () => {
       const { metadata, metadataLocation } = await catalog.loadTable(lh, t, { onWait });
-      return summarize(paths, metadata, metadataLocation);
+      return summarize(metadata, metadataLocation);
     }, { fresh });
     return { ...r.value, at: r.at, cached: r.cached };
   }
@@ -183,7 +183,6 @@ function createOneLake({ catalog, store, prefetchEnabled = () => true, onHit = (
   return {
     workspaces, items, tables, files, table, peek, prefetch,
     readBytes: (ws, path, o) => catalog.readBytes(ws, path, o),
-    paths: () => catalog.paths(),
     onChanged: fn => listen('changed', key => fn(decode(key))),
     onRefreshFailed: fn => listen('refresh-failed', (key, e) => fn(decode(key), e)),
     useStore,

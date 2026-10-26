@@ -24,8 +24,9 @@ const { createHostMethods } = require('./host');
 const { createFabric, exportPath, EXPORT_DIR } = require('./fabric');
 const { LakehouseTree } = require('./tree');
 const { siteRoot } = require('./site');
+const { hasFilesArea } = require('./names');
 
-// The same scope site/auth.js asks MSAL for. OneLake accepts tokens in the storage
+// OneLake accepts tokens in the storage
 // audience only, and this one covers both the data reads and the Iceberg catalog. It is
 // the only scope sign-in asks for; the Fabric API's (below) is asked for separately, and
 // only once someone expands a workspace's semantic models.
@@ -440,13 +441,10 @@ async function activate(context) {
 }
 
 async function activateInner(context) {
-  const { site } = await siteRoot(context.extensionUri,
-    { dev: context.extensionMode === vscode.ExtensionMode.Development });
   // Every OneLake request the extension makes goes through here, on the VS Code token,
   // and each one is a line in the read log.
   const catalog = createCatalog({
     getToken: hostToken,
-    siteFsPath: site.fsPath,
     onRequest: logRead,
   });
   // Semantic models and the .bim export: Fabric's token for the model, the storage one
@@ -511,7 +509,6 @@ async function activateInner(context) {
       return;
     }
     try {
-      const { hasFilesArea } = await catalog.paths();
       const lakehouses = (await catalog.listItems(n.workspace)).filter(it => hasFilesArea(it.name));
       if (!lakehouses.length) {
         showError(`${n.workspace} has no lakehouse to export ${n.model} into — the .bim goes to ` +

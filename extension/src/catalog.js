@@ -1,24 +1,14 @@
 'use strict';
 // =============================================================================
-// catalog.js — listing OneLake from the extension host, for the tree
+// catalog.js — every OneLake request the extension makes
 // =============================================================================
-// The same four calls site/data.js makes, reimplemented here because data.js is a browser
-// module (it needs the page's engine and window), and this side has no business booting an
-// engine to draw a tree.
-//
-// What is NOT reimplemented is the classification — which item names hold tables, what
-// kind a name means, which items have a Files/ area. Those rules are about Fabric's
-// internal type names rather than the portal's, they have cost real bugs, and they live
-// in site/paths.js under test. This module imports them from there; if that file and this
-// one ever disagree about what a `.SQLDbNative` is, the tree and the panel disagree about
-// what a workspace contains.
-//
-// Listing goes straight to OneLake with the VS Code token attached. The loopback proxy
-// exists for DuckDB's range reads — code running here can set an Authorization header
-// itself, and routing through the proxy would only add a hop and a second failure mode.
+// Workspaces, items, Iceberg tables, Files/ listings, a table's metadata, a file's bytes:
+// straight to OneLake with the VS Code token, at most four requests in flight, one retry
+// after a 401 and backoff on Fabric's lazy conversion. What the names mean (which items
+// hold tables, what a kind is called) is names.js; caching the answers is onelake.js.
 // =============================================================================
 
-const { pathToFileURL } = require('node:url');
+const { strip, basename, encPath, holdsTables, itemKind } = require('./names');
 
 const DFS_ORIGIN = 'https://onelake.dfs.fabric.microsoft.com';
 const TABLE_ORIGIN = 'https://onelake.table.fabric.microsoft.com';
@@ -28,15 +18,6 @@ const MAX_PARALLEL = 8;
 // ever. Both bounds are far past anything a real tenant produces.
 const FETCH_TIMEOUT_MS = 60_000;
 const MAX_PAGES = 500;
-
-// paths.js is ESM and this file is CJS, so it arrives through a dynamic import — resolved
-// from the site directory the caller found, which differs between a packaged extension and
-// F5 from a checkout. Loaded once.
-let pathsP = null;
-function loadPaths(siteFsPath) {
-  if (!pathsP) pathsP = import(pathToFileURL(`${siteFsPath}/paths.js`).href);
-  return pathsP;
-}
 
 const byName = (a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' });
 
@@ -86,9 +67,8 @@ async function oneLakeMessage(r) {
 /**
  * @param {object} opts
  * @param {() => Promise<string|null>} opts.getToken  current access token, or null
- * @param {string} opts.siteFsPath                    directory holding paths.js
  */
-function createCatalog({ getToken, siteFsPath, dfsOrigin = DFS_ORIGIN, tableOrigin = TABLE_ORIGIN,
+function createCatalog({ getToken, dfsOrigin = DFS_ORIGIN, tableOrigin = TABLE_ORIGIN,
                          backoffMs = RESOLVE_BACKOFF_MS, onRequest = () => {} }) {
   const gate = limiter(MAX_IN_FLIGHT);
 
@@ -167,7 +147,6 @@ function createCatalog({ getToken, siteFsPath, dfsOrigin = DFS_ORIGIN, tableOrig
   // means the directory changed under us, and returning what was gathered so far would
   // report a truncated listing as a complete one.
   async function listPaths(ws, directory) {
-    const { strip } = await loadPaths(siteFsPath);
     const out = [];
     let cont = '', page = 0;
     do {
@@ -205,7 +184,6 @@ function createCatalog({ getToken, siteFsPath, dfsOrigin = DFS_ORIGIN, tableOrig
   }
 
   async function listItems(ws) {
-    const { basename, holdsTables, itemKind } = await loadPaths(siteFsPath);
     const entries = await listPaths(ws, '');
     const items = [];
     for (const e of entries) {
@@ -306,7 +284,6 @@ function createCatalog({ getToken, siteFsPath, dfsOrigin = DFS_ORIGIN, tableOrig
   // carries no `queryable` flag: whether a file can be opened depends on which DuckDB
   // extensions loaded, which is the webview's business and not knowable from here.
   async function listFiles({ workspace, item }, dir = '') {
-    const { basename, strip } = await loadPaths(siteFsPath);
     const entries = await listPaths(workspace, `${item}/Files${dir ? '/' + strip(dir) : ''}`);
     return entries.map(e => ({
       name: basename(e.name),
@@ -327,16 +304,11 @@ function createCatalog({ getToken, siteFsPath, dfsOrigin = DFS_ORIGIN, tableOrig
     for (const m of [ircPrefixes, tablesC]) for (const k of [...m.keys()]) if (under(k)) m.delete(k);
   }
 
-  // The classification rules, for callers that need to render with them (a Files/ area,
-  // an item kind's label, a byte count). Same module instance this file uses, so the tree
-  // and the listing can never disagree about what an item is.
-  const paths = () => loadPaths(siteFsPath);
 
   // A file's bytes — whole, or the `range` asked for (`bytes=0-15` to sniff a header).
   // For the panel's image and .bim previews, its SQLite copies, and anything else that
   // needs the bytes rather than a query.
   async function readBytes(ws, path, { range } = {}) {
-    const { encPath } = await loadPaths(siteFsPath);
     const r = await authedFetch(`${dfsOrigin}/${encodeURIComponent(ws)}/${encPath(path)}`,
       range ? { range } : {});
     if (!r.ok) {
@@ -348,7 +320,7 @@ function createCatalog({ getToken, siteFsPath, dfsOrigin = DFS_ORIGIN, tableOrig
     return new Uint8Array(await r.arrayBuffer());
   }
 
-  return { listWorkspaces, listItems, listTables, listFiles, loadTable, readBytes, reset, paths };
+  return { listWorkspaces, listItems, listTables, listFiles, loadTable, readBytes, reset };
 }
 
 module.exports = { createCatalog, DFS_ORIGIN, TABLE_ORIGIN };

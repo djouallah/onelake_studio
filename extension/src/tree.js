@@ -18,6 +18,7 @@
 // =============================================================================
 
 const vscode = require('vscode');
+const { fmtBytes, hasFilesArea, kindLabel, strip } = require('./names');
 
 // A node is a plain object; getTreeItem turns it into what VS Code renders. Keeping the
 // domain data on the node (rather than encoding it into a label) is what lets a click hand
@@ -190,7 +191,6 @@ class LakehouseTree {
   }
 
   async _children(n) {
-    const { fmtBytes, hasFilesArea, kindLabel, strip } = await this.onelake.paths();
 
     if (!n) {
       const names = await this.onelake.workspaces({ fresh: this._isFresh('root', undefined, undefined) });

@@ -23,7 +23,7 @@ export const README = join(root, "README.md");
 export function panelHost({ dfsOrigin, tableOrigin, engineOptions = {} } = {}) {
   const engine = createEngineHost({ allowedPaths: [README], ...engineOptions });
   const catalog = createCatalog({
-    getToken: async () => "test-token", siteFsPath: APP, dfsOrigin, tableOrigin, backoffMs: [],
+    getToken: async () => "test-token", dfsOrigin, tableOrigin, backoffMs: [],
   });
   const onelake = createOneLake({ catalog, store: createStore({ dir: null }), prefetchEnabled: () => false });
   const statuses = [];

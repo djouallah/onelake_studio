@@ -11,15 +11,11 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
 const { createCatalog } = require("../extension/src/catalog.js");
 
-const root = join(fileURLToPath(new URL(".", import.meta.url)), "..");
-const SITE = join(root, "extension", "app");   // the fork the real catalog imports from
 
 // A fetch stub. `answers` maps a matcher to a response; every request is recorded so a
 // test can assert on the URLs that went out, which is half of what is being tested.
@@ -47,7 +43,7 @@ function catalogWith(answers, { getToken = async () => "tok" } = {}) {
   const f = fakeFetch(answers);
   const saved = globalThis.fetch;
   globalThis.fetch = f.fetch;
-  const catalog = createCatalog({ getToken, siteFsPath: SITE });
+  const catalog = createCatalog({ getToken });
   return { catalog, calls: f.calls, restore: () => { globalThis.fetch = saved; } };
 }
 
@@ -85,7 +81,7 @@ test("a 404 part way through pagination is refused, not silently truncated", asy
   } finally { restore(); }
 });
 
-test("only the item kinds that hold tables are listed, using paths.js's rules", async () => {
+test("only the item kinds that hold tables are listed, using names.js's rules", async () => {
   const { catalog, restore } = catalogWith([
     [/resource=filesystem/, () => res(200, {
       paths: [

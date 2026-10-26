@@ -2,17 +2,17 @@
 
 OneLake Studio is one app with two hosts:
 
-- **The VS Code extension** — the main product. Its panel runs [`extension/app/`](extension/app/), the
-  extension's own tracked fork of the web app, with the extension host in [`extension/src/`](extension/src/)
-  doing sign-in, every OneLake read, and the query engine.
+- **The VS Code extension** — the main product. The extension host in [`extension/src/`](extension/src/)
+  does sign-in, every OneLake read (cache first) and the query engine; its panel,
+  [`extension/app/`](extension/app/), is only a view.
 - **The website** — [`site/`](site/), a static web app (a folder of HTML and JavaScript with no backend),
   so it runs from anywhere that serves files: GitHub Pages, a blob container, a company intranet, or
   `npx serve` on your own machine. [**studio.projectscontrols.com**](https://studio.projectscontrols.com/)
   is just a demo instance to try it on; host your own and it behaves identically.
 
-`site/` stays the deployed website, and the fork is where the panel diverges: sign-in is VS Code's
-account, the engine is native DuckDB in the extension host, and the host does every OneLake read, so
-the token never enters the page at all.
+The two share ideas, not code: `site/` is the deployed website and keeps its own copy of what it
+needs. In the extension, sign-in is VS Code's account, the engine is native DuckDB in the extension
+host, and the host does every OneLake read, so the token never enters the page at all.
 
 ## The VS Code extension
 
@@ -241,8 +241,8 @@ established one — a brand-new domain has no reputation either.
 ## Layout
 
 ```
-extension/src/    extension host: sign-in, tree, native DuckDB, Fabric API
-extension/app/    the panel's fork of the web app
+extension/src/    extension host: sign-in, cache-first OneLake, tree, native DuckDB, Fabric API
+extension/app/    the panel: a view over the host (its own page, no sign-in, no network)
 site/index.html   UI shell + sign-in gate      site/data.js   Iceberg engine on DuckDB-WASM
 site/app.js       DOM wiring                   site/paths.js  pure logic (paths, SQL, cache keys)
 site/auth.js      MSAL provider                site/sw.js     COOP/COEP + token injection
