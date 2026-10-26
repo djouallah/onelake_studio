@@ -249,7 +249,9 @@ async function openModelView(file, text = null) {
   setBusy(true, { stoppable: true });
   setStatus(`Reading ${file.name}…`);
   try {
-    await engineReady;
+    // A model handed over as text (the tree's click) is drawn without waiting on the
+    // engine's boot: only its queries need DuckDB, and runModelSql waits for it.
+    if (text == null) await engineReady;
     const bim = text != null ? text : new TextDecoder().decode(await engine.readFileBytes(lakehouse, file));
     const m = await semantic.registerModel(file.name, bim);
     if (my !== selSeq) return;
@@ -827,7 +829,6 @@ window.addEventListener('message', async e => {
     // A semantic model the extension downloaded to this machine, handed over as text.
     else if (m.type === 'open-model') {
       const t0 = Date.now();
-      await engineReady;
       await openModelView({ name: String(m.name || 'model.bim'), path: String(m.path || '') }, String(m.text || ''));
       reportOpened('file', String(m.name || 'model.bim'), Date.now() - t0);
     }
