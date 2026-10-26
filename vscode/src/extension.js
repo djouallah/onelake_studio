@@ -440,6 +440,53 @@ function buildCommit(context, dev) {
   return 'unknown';
 }
 
+// ---------------------------------------------------------------------------
+// The Claude Code skill
+// ---------------------------------------------------------------------------
+// cli.mjs is this extension's modules from a shell; claude-skill/SKILL.md tells Claude Code
+// when and how to run it. Installing writes the skill to ~/.claude/skills/onelake/ with the
+// path of THIS install's cli.mjs filled in — a path that changes with every update, so a skill
+// this extension wrote (it carries the marker) is rewritten at each activation. One the user
+// wrote themselves, without the marker, is never touched unless they ask.
+const SKILL_MARKER = 'Installed by the OneLake Studio extension';
+const skillFile = () => join(require('node:os').homedir(), '.claude', 'skills', 'onelake', 'SKILL.md');
+
+async function writeSkill(context) {
+  const fsp = require('node:fs/promises');
+  const template = await fsp.readFile(join(context.extensionUri.fsPath, 'claude-skill', 'SKILL.md'), 'utf8');
+  const cli = join(context.extensionUri.fsPath, 'cli.mjs').replace(/\\/g, '/');
+  const text = template.split('{{cli}}').join(cli);
+  const file = skillFile();
+  const before = await fsp.readFile(file, 'utf8').catch(() => null);
+  if (before === text) return false;
+  await fsp.mkdir(require('node:path').dirname(file), { recursive: true });
+  await fsp.writeFile(file, text);
+  return true;
+}
+
+async function refreshSkill(context) {
+  const before = await require('node:fs/promises').readFile(skillFile(), 'utf8').catch(() => null);
+  if (before && before.includes(SKILL_MARKER) && await writeSkill(context)) {
+    if (out) out.appendLine(`Claude Code skill updated at ${skillFile()}`);
+  }
+}
+
+async function installSkill(context) {
+  const existing = await require('node:fs/promises').readFile(skillFile(), 'utf8').catch(() => null);
+  if (existing && !existing.includes(SKILL_MARKER)) {
+    const pick = await vscode.window.showWarningMessage(
+      `${skillFile()} exists and was not written by OneLake Studio. Replace it?`, { modal: true }, 'Replace');
+    if (pick !== 'Replace') return;
+  }
+  await writeSkill(context);
+  vscode.window.showInformationMessage(
+    'OneLake Studio: Claude Code can now answer questions about your OneLake data and semantic models. ' +
+    'It signs in with the Azure CLI (run `az login` once) and needs Node.js on PATH.',
+    'Open Skill').then(pick => {
+    if (pick === 'Open Skill') vscode.window.showTextDocument(vscode.Uri.file(skillFile()));
+  });
+}
+
 async function activate(context) {
   out = vscode.window.createOutputChannel('OneLake Studio');
   context.subscriptions.push(out);
@@ -476,6 +523,9 @@ async function activate(context) {
   // rest of activate is guarded so that shape can never be silent again.
   try {
     await activateInner(context);
+    // After an update the skill still names the previous install's cli.mjs. Not awaited:
+    // nothing on screen depends on it.
+    refreshSkill(context).catch(e => out.appendLine(`Claude Code skill not refreshed: ${e.message}`));
     out.appendLine(`activated ${version} ${commit}${dev ? ' (dev)' : ''} — signed in: ${signedIn}`);
   } catch (e) {
     out.appendLine(`ACTIVATION FAILED: ${(e && e.stack) || e}`);
@@ -630,6 +680,11 @@ async function activateInner(context) {
     }),
 
     vscode.commands.registerCommand('onelakeStudio.showLog', () => out.show(true)),
+
+    vscode.commands.registerCommand('onelakeStudio.installClaudeSkill', async () => {
+      try { await installSkill(context); }
+      catch (e) { showError(`Could not install the Claude Code skill: ${(e && e.message) || e}`); }
+    }),
 
     vscode.commands.registerCommand('onelakeStudio.pinWorkspace', async n => {
       if (!n || !n.workspace) return;

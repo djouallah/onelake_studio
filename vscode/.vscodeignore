@@ -24,5 +24,3 @@ app/**
 # The extension's tests: run from the checkout, never shipped.
 test/**
 
-# The command-line twin (cli.mjs): run from the checkout by an agent, never shipped.
-cli.mjs

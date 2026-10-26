@@ -73,6 +73,11 @@
         "category": "OneLake Studio"
       },
       {
+        "command": "onelakeStudio.installClaudeSkill",
+        "title": "Install Skill for Claude Code",
+        "category": "OneLake Studio"
+      },
+      {
         "command": "onelakeStudio.clearCache",
         "title": "Clear Cached OneLake Data",
         "category": "OneLake Studio"

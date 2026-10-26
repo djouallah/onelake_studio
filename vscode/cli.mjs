@@ -29,6 +29,7 @@ import { homedir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { readFile, writeFile, readdir, mkdir, stat } from "node:fs/promises";
+import { existsSync } from "node:fs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);
@@ -38,8 +39,11 @@ const { createOneLake } = require("./src/onelake.js");
 const { createEngineHost } = require("./src/engine-host.js");
 const { createFabric, bimFileName } = require("./src/fabric.js");
 const { PINS } = require("./src/vendored.js");
-const { quoteIdent, sqlNeedsTable, emptyTableSql } = await import("./app/paths.js");
-const semantic = await import("./app/semantic.js");
+// The panel's modules: app/ in a checkout, its staged copy webview/ in an installed vsix.
+const APP = existsSync(join(here, "app", "semantic.js")) ? "app" : "webview";
+const appModule = f => import(pathToFileURL(join(here, APP, f)).href);
+const { quoteIdent, sqlNeedsTable, emptyTableSql } = await appModule("paths.js");
+const semantic = await appModule("semantic.js");
 
 const HOME = join(homedir(), ".onelake-studio");
 const MODELS = process.env.ONELAKE_MODELS || join(homedir(), "OneLakeStudio", "semantic-models");
