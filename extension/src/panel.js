@@ -11,7 +11,7 @@
 const vscode = require('vscode');
 const crypto = require('node:crypto');
 const { TextDecoder } = require('node:util');
-const { rewriteHtml } = require('./html');
+const { renderPage } = require('./html');
 const { answer } = require('./host');
 const { siteRoot } = require('./site');
 const { PINS } = require('./vendored');
@@ -40,11 +40,11 @@ function csp(webview, nonce) {
 async function buildHtml(webview, siteUri, cfg) {
   const bytes = await vscode.workspace.fs.readFile(vscode.Uri.joinPath(siteUri, 'index.html'));
   const nonce = crypto.randomBytes(16).toString('base64');
-  return rewriteHtml(new TextDecoder('utf-8').decode(bytes), {
-    assetUrl: name => webview.asWebviewUri(vscode.Uri.joinPath(siteUri, name)).toString(),
+  return renderPage(new TextDecoder('utf-8').decode(bytes), {
+    base: webview.asWebviewUri(siteUri).toString(),
     nonce,
+    csp: csp(webview, nonce),
     config: cfg,
-    cspContent: csp(webview, nonce),
   });
 }
 
@@ -94,7 +94,7 @@ function openPanel(context, opts = {}) {
   return opening;
 }
 
-async function openPanelUncontended(context, { onOpened, onBoot, onBootFailed, engine, host } = {}) {
+async function openPanelUncontended(context, { onOpened, onBoot, onBootFailed, engine, host, build } = {}) {
   const { site: siteUri, readme: readmeUri } = await siteRoot(context.extensionUri,
     { dev: context.extensionMode === vscode.ExtensionMode.Development });
   const vendorUri = vscode.Uri.joinPath(context.extensionUri, 'vendor');
@@ -112,10 +112,8 @@ async function openPanelUncontended(context, { onOpened, onBoot, onBootFailed, e
 
   try {
     panel.webview.html = await buildHtml(panel.webview, siteUri, {
-      // The host reads OneLake for the page, which holds no credential of its own.
-      auth: 'none',
-      // Everything the app does differently in here hangs off this one word.
-      host: 'vscode',
+      // Which build this is ({ version, commit, dev }), for the page's status bar.
+      build: build || {},
       // Where the vendored libraries are (cdn.js builds every URL from it), and which
       // versions — src/vendored.js, the same list vendor.mjs shipped.
       vendorBase: panel.webview.asWebviewUri(vendorUri).toString(),

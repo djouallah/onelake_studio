@@ -338,7 +338,7 @@ async function show(context, options) {
   const eng = ensureEngine(context, { readme: readme.fsPath });
   if (!eng) return false;
   await openPanel(context, {
-    onOpened: logOpened, onBoot: logBoot, engine: eng,
+    onOpened: logOpened, onBoot: logBoot, engine: eng, build: buildInfo,
     host: createHostMethods({
       onelake, engine: eng, onStatus: message => postLive({ type: 'status', message }),
     }),
@@ -365,6 +365,8 @@ async function show(context, options) {
 // while this is false. Kept in a context key rather than asked for on every render, so a
 // collapsed tree costs no token lookups.
 let signedIn = false;
+// Which build this window runs, for the panel's status bar: set at activation.
+let buildInfo = {};
 async function setSignedIn(value) {
   signedIn = value;
   await vscode.commands.executeCommand('setContext', 'onelakeStudio.signedIn', value);
@@ -413,6 +415,7 @@ async function activate(context) {
                    context.extension.packageJSON.version) || '?';
   const dev = context.extensionMode === vscode.ExtensionMode.Development;
   const commit = buildCommit(context, dev);
+  buildInfo = { version, commit, dev };
   const buildItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 10000);
   buildItem.name = 'OneLake Studio build';
   buildItem.text = `$(database) OneLake ${version} · ${commit}${dev ? ' · dev' : ''}`;

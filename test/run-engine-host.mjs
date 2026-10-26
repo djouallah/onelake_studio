@@ -20,11 +20,10 @@ import { join, extname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 import { chromium } from "playwright-core";
-import { panelHost, README } from "./panel-host.mjs";
+import { panelHost, servePanel } from "./panel-host.mjs";
 
 const require = createRequire(import.meta.url);
 const { createEngineHost } = require("../extension/src/engine-host.js");
-const { rewriteHtml } = require("../extension/src/html.js");
 
 const root = join(fileURLToPath(new URL(".", import.meta.url)), "..");
 const APP = join(root, "extension", "app");
@@ -144,37 +143,9 @@ const host = panelHost({ dfsOrigin: `http://127.0.0.1:${PORT}`, tableOrigin: `ht
                          engineOptions: { extensionDir: EXT_DIR } });
 const ORIGIN = `http://127.0.0.1:${PORT}`;
 const NONCE = "enginehost";
-const CSP = [
-  `default-src 'none'`,
-  `img-src ${ORIGIN} data: blob:`,
-  `font-src ${ORIGIN}`,
-  `style-src ${ORIGIN} 'unsafe-inline'`,
-  `script-src ${ORIGIN} 'nonce-${NONCE}'`,
-  `connect-src ${ORIGIN}`,
-].join("; ");
-
-const MIME = { ".js": "text/javascript", ".html": "text/html; charset=utf-8",
-               ".css": "text/css", ".json": "application/json", ".md": "text/markdown" };
-
-const INDEX = await readFile(join(APP, "index.html"), "utf8");
+// The page as panel.js renders it (panel-host.mjs).
 const server = http.createServer(async (req, res) => {
-  const path = new URL(req.url, "http://x").pathname;
-  try {
-    if (path === "/") {
-      const html = rewriteHtml(INDEX, {
-        assetUrl: name => `${ORIGIN}/${name}`,
-        nonce: NONCE,
-        config: { auth: "none", host: "vscode", readmeUrl: README },
-        cspContent: CSP,
-      });
-      res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-      return res.end(html);
-    }
-    const file = path === "/README.md" ? join(root, "README.md") : join(APP, path.slice(1));
-    const body = await readFile(file);
-    res.writeHead(200, { "content-type": MIME[extname(file)] || "application/octet-stream" });
-    res.end(body);
-  } catch { res.writeHead(404).end(); }
+  if (!await servePanel(req, res, ORIGIN, { nonce: NONCE })) res.writeHead(404).end();
 });
 await new Promise(r => server.listen(PORT, "127.0.0.1", r));
 

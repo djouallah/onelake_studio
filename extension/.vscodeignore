@@ -20,10 +20,3 @@ vendor.mjs
 # The tracked source of the app. What ships is site/ — the stamped artifact copy-site.mjs
 # builds from it — so packaging app/ too would ship every file twice.
 app/**
-
-# The GitHub Pages custom-domain marker. Meaningless inside a .vsix, and misleading there.
-site/CNAME
-
-# sw.js is deliberately KEPT: sw-register.js still ships and asks for it. It early-returns
-# in a webview (navigator.serviceWorker is undefined), so it is never fetched — but if that
-# ever changes, a 404 would be a silent failure rather than a loud one.

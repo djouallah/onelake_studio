@@ -14,11 +14,9 @@ import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 import { chromium } from "playwright-core";
 
-import { panelHost, README } from "./panel-host.mjs";
+import { panelHost, servePanel } from "./panel-host.mjs";
 
 const require = createRequire(import.meta.url);
-const { rewriteHtml } = require("../extension/src/html.js");
-const { PINS } = require("../extension/src/vendored.js");
 
 const root = join(fileURLToPath(new URL(".", import.meta.url)), "..");
 const APP = join(root, "extension", "app");
@@ -49,47 +47,14 @@ const TABLES = `WITH "Sales" AS (SELECT * FROM (VALUES (1, 10.0), (2, 5.0), (1, 
 "Product" AS (SELECT * FROM (VALUES (1, 'red'), (2, 'blue')) t("ProductKey", "Color"))
 `;
 
-// The panel's CSP, with this server standing in for both the webview and the proxy.
-const CSP = [
-  `default-src 'none'`,
-  `img-src ${ORIGIN} data: blob:`,
-  `font-src ${ORIGIN}`,
-  `style-src ${ORIGIN} 'unsafe-inline'`,
-  `script-src ${ORIGIN} 'nonce-${NONCE}'`,
-  `connect-src ${ORIGIN}`,
-].join("; ");
-const MIME = { ".js": "text/javascript", ".html": "text/html; charset=utf-8",
-               ".css": "text/css", ".json": "application/json", ".md": "text/markdown" };
-
-const INDEX = await readFile(join(APP, "index.html"), "utf8");
+// The page as panel.js renders it (panel-host.mjs), plus the .bim at the fake OneLake.
 const server = http.createServer(async (req, res) => {
   const path = decodeURIComponent(new URL(req.url, "http://x").pathname);
-  try {
-    if (path === "/") {
-      const html = rewriteHtml(INDEX, {
-        assetUrl: name => `${ORIGIN}/${name}`,
-        nonce: NONCE,
-        config: { auth: "none", host: "vscode", vendorBase: `${ORIGIN}/vendor`, pins: PINS, readmeUrl: README },
-        cspContent: CSP,
-      });
-      res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-      return res.end(html);
-    }
-    if (path === BIM_PATH) {
-      res.writeHead(200, { "content-type": "application/octet-stream" });
-      return res.end(BIM);
-    }
-    if (path.startsWith("/vendor/")) {
-      const rest = path.slice("/vendor/".length);
-      const body = await readFile(join(VENDOR, ...rest.split("/")));
-      res.writeHead(200, { "content-type": MIME[extname(rest)] || "application/octet-stream" });
-      return res.end(body);
-    }
-    const file = path === "/README.md" ? join(root, "README.md") : join(APP, path.slice(1));
-    const body = await readFile(file);
-    res.writeHead(200, { "content-type": MIME[extname(file)] || "application/octet-stream" });
-    res.end(body);
-  } catch { res.writeHead(404).end(); }
+  if (path === BIM_PATH) {
+    res.writeHead(200, { "content-type": "application/octet-stream" });
+    return res.end(BIM);
+  }
+  if (!await servePanel(req, res, ORIGIN, { nonce: NONCE })) res.writeHead(404).end();
 });
 await new Promise(r => server.listen(PORT, "127.0.0.1", r));
 

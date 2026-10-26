@@ -2,40 +2,19 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy" content="{{csp}}" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>OneLake Studio</title>
-  <link rel="stylesheet" href="analyze/analyze.css" />
-  <link rel="preconnect" href="https://onelake.dfs.fabric.microsoft.com" crossorigin />
-  <link rel="preconnect" href="https://onelake.table.fabric.microsoft.com" crossorigin />
-  <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin />
+  <link rel="stylesheet" href="{{base}}/analyze/analyze.css" />
   <style>
+    /* The editor's theme IS the palette: a webview gets every --vscode-* colour on :root,
+       and names its theme kind on <body>. Every rule below uses these names, so the panel
+       follows a light, dark or high-contrast theme — including one switched while open. */
     :root {
-      /* Native popups (the lakehouse <select>, scrollbars, the caret) are drawn by the OS,
-         not by these variables — without this they come up white on a dark page. */
-      color-scheme: dark;
-      --bg: #0d1117; --panel: #161b22; --panel2: #0b0f14; --border: #30363d;
-      --text: #e6edf3; --muted: #9da5b4; --accent: #2563eb; --accent2: #58a6ff;
-      --ok: #3fb950; --warn: #d29922; --err: #ff7b72;
-      /* Row states and the grid's zebra stripe. Variables rather than the literals they
-         used to be, because a theme that maps the palette but not these gets a themed app
-         with GitHub-blue selection in it. */
-      --hover: #1c2330; --sel: #1c2330; --stripe: #10151c;
-    }
-
-    /* ---------------------------------------------------------------------------
-       Running inside the VS Code extension's webview.
-       ---------------------------------------------------------------------------
-       A webview gets the whole --vscode-* palette defined on :root and its theme kind
-       named as a class on <body>; app.js adds .host-vscode when the injected config says
-       so. Redefining this app's own variables under that class is the entire theming
-       story — every rule further down keeps using --bg/--panel/--text and follows the
-       editor's theme, light, dark or high contrast, including one switched while the
-       panel is open. Nothing here applies in a browser tab. */
-    body.host-vscode {
       --bg:      var(--vscode-editor-background);
-      --panel:   var(--vscode-sideBar-background);
-      --panel2:  var(--vscode-editorGroupHeader-tabsBackground);
-      --border:  var(--vscode-panel-border, var(--vscode-editorWidget-border));
+      --panel:   var(--vscode-sideBar-background, var(--vscode-editor-background));
+      --panel2:  var(--vscode-editorGroupHeader-tabsBackground, var(--vscode-editor-background));
+      --border:  var(--vscode-panel-border, var(--vscode-editorWidget-border, rgba(128,128,128,0.35)));
       --text:    var(--vscode-foreground);
       --muted:   var(--vscode-descriptionForeground);
       --accent:  var(--vscode-button-background);
@@ -46,11 +25,7 @@
       --hover:   var(--vscode-list-hoverBackground);
       --sel:     var(--vscode-list-activeSelectionBackground);
       --stripe:  var(--vscode-tree-tableOddRowsBackground, transparent);
-      font-family: var(--vscode-font-family);
-      font-size: var(--vscode-font-size);
-      /* analyze/analyze.css's own tokens (the semantic model view). It defines them on
-         :root with dark literals, and :root resolves its var(--panel) against :root's
-         palette, not this one — so every one of them is restated here. */
+      /* analyze/analyze.css's own tokens (the semantic model view). */
       --card:      var(--panel);
       --input-bg:  var(--vscode-input-background, var(--panel2));
       --raised:    var(--vscode-list-hoverBackground);
@@ -63,192 +38,52 @@
       --bad:       var(--err);
       --shadow:    0 6px 18px var(--vscode-widget-shadow, rgba(0,0,0,0.35));
     }
-    /* The one thing the palette variables cannot carry: OS-drawn parts (the <select>
-       popup, scrollbars, the caret) read `color-scheme`, not colours, and the browser
-       build forces dark above. VS Code names the kind on <body>, so hand it straight
-       over — a light theme with a dark scrollbar is the tell that survives everything
-       else being right. */
-    body.host-vscode.vscode-light, body.host-vscode.vscode-high-contrast-light { color-scheme: light; }
-    body.host-vscode.vscode-dark, body.host-vscode.vscode-high-contrast { color-scheme: dark; }
-    /* VS Code's own controls are square-cornered and use a separate input palette; 6px
-       pills in a settings-shaped surface are the single biggest tell that this is a web
-       page in a frame. */
-    body.host-vscode button, body.host-vscode input, body.host-vscode select {
-      border-radius: 2px;
-      background: var(--vscode-input-background);
-      color: var(--vscode-input-foreground, var(--vscode-foreground));
-      border-color: var(--vscode-input-border, var(--vscode-contrastBorder, transparent));
-    }
-    body.host-vscode button.primary {
-      background: var(--vscode-button-background); color: var(--vscode-button-foreground);
-      border-color: var(--vscode-button-border, var(--vscode-contrastBorder, transparent));
-    }
-    body.host-vscode button.primary:hover:not(:disabled) { background: var(--vscode-button-hoverBackground); }
-    body.host-vscode button:hover:not(:disabled) { border-color: var(--vscode-focusBorder); }
-    body.host-vscode :focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
-    /* The SQL box is an editor; it should be the editor's font at the editor's size. */
-    body.host-vscode #sqlEditor {
-      background: var(--vscode-editor-background);
-      font-family: var(--vscode-editor-font-family);
-      font-size: var(--vscode-editor-font-size);
-    }
-    body.host-vscode .comboMenu {
-      background: var(--vscode-quickInput-background, var(--panel));
-      box-shadow: 0 2px 8px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.36));
-    }
-    body.host-vscode .comboMenu div:hover, body.host-vscode .comboMenu div.on {
-      background: var(--vscode-list-activeSelectionBackground);
-      color: var(--vscode-list-activeSelectionForeground);
-    }
-    body.host-vscode table.results th { background: var(--vscode-keybindingTable-headerBackground, var(--panel)); }
-    body.host-vscode .docView pre, body.host-vscode .docView code {
-      background: var(--vscode-textCodeBlock-background, var(--panel2));
-    }
-
-    /* Chrome that belongs to a browser tab. The link out to GitHub, the account box (whose
-       sign-out navigates the page — a webview has nowhere to go) and the registration
-       gate answer questions the editor already answers. The build stamp is NOT hidden:
-       a Marketplace install, a sideloaded vsix and an F5 checkout all look identical
-       from inside, and the stamp is what tells them apart on sight. app.js sets
-       .host-vscode; none of this applies in a tab. */
-    body.host-vscode .ghLink,
-    body.host-vscode #userBox,
-    body.host-vscode #authGate { display: none !important; }
-
-    /* Browsing moved to the editor's own sidebar, which keeps its expansion state, filters
-       when you type, and stays on screen while this tab shows a result. A second tree
-       inside the tab — with its own workspace picker and item dropdown — would be the same
-       job done worse, and two of them disagreeing is a bug waiting to be filed. The markup
-       stays: connect() still writes #tableList, it is simply never looked at. */
-    body.host-vscode > header,
-    body.host-vscode #sidebar,
-    body.host-vscode #sidebarToggle { display: none !important; }
+    /* OS-drawn parts (scrollbars, the caret) read `color-scheme`, not colours. */
+    body.vscode-light, body.vscode-high-contrast-light { color-scheme: light; }
+    body.vscode-dark, body.vscode-high-contrast { color-scheme: dark; }
 
     * { box-sizing: border-box; }
     /* The UA's own `[hidden] { display: none }` is a plain attribute selector, so ANY class
-       rule with a display of its own silently outranks it. That is not a style nit: el.hidden
-       = true is how this app takes things off screen, and .docBar/.tabs both set display, so
-       the Pretty|Raw bar could never be hidden — it survived onto every later result, and
-       clicking Pretty rendered the first cell of whatever grid was showing. */
+       rule with a display of its own silently outranks it — and el.hidden is how this page
+       takes things off screen. */
     [hidden] { display: none !important; }
     html, body { height: 100%; }
     body {
       margin: 0; background: var(--bg); color: var(--text);
-      font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      font-family: var(--vscode-font-family); font-size: var(--vscode-font-size); line-height: 1.5;
       display: flex; flex-direction: column;
     }
     a { color: var(--accent2); }
-    button, input, select {
-      font: inherit; color: var(--text); background: var(--panel);
-      border: 1px solid var(--border); border-radius: 6px; padding: 0.45rem 0.7rem;
+    button {
+      font: inherit; cursor: pointer; padding: 0.3rem 0.7rem; border-radius: 2px;
+      background: var(--vscode-button-secondaryBackground, var(--vscode-input-background));
+      color: var(--vscode-button-secondaryForeground, var(--text));
+      border: 1px solid var(--vscode-button-border, var(--vscode-contrastBorder, transparent));
     }
-    select:disabled { opacity: 0.5; }
-    button { cursor: pointer; }
-    button:hover:not(:disabled) { border-color: var(--accent2); }
+    button:hover:not(:disabled) { background: var(--vscode-button-secondaryHoverBackground, var(--hover)); }
     button:disabled { opacity: 0.5; cursor: default; }
-    button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
-    input { min-width: 0; }
+    button.primary { background: var(--vscode-button-background); color: var(--vscode-button-foreground); }
+    button.primary:hover:not(:disabled) { background: var(--vscode-button-hoverBackground); }
+    :focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
 
-    /* Header */
-    header {
-      display: flex; align-items: center; gap: 0.6rem; padding: 0.55rem 0.9rem;
-      border-bottom: 1px solid var(--border); background: var(--panel2); flex-wrap: wrap;
-    }
-    header .brand { font-weight: 700; letter-spacing: 0.2px; white-space: nowrap; }
-    header .brand small { color: var(--muted); font-weight: 400; }
-    #wsCombo { position: relative; flex: 1 1 260px; max-width: 380px; }
-    #wsSelect { width: 100%; }
-    .comboMenu {
-      position: absolute; z-index: 20; top: calc(100% + 4px); left: 0; right: 0;
-      max-height: 340px; overflow-y: auto; padding: 0.25rem;
-      background: var(--panel); border: 1px solid var(--border); border-radius: 6px;
-      box-shadow: 0 10px 28px rgba(0, 0, 0, 0.55);
-    }
-    .comboMenu div {
-      padding: 0.35rem 0.55rem; border-radius: 4px; cursor: pointer;
-      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-    }
-    .comboMenu div:hover, .comboMenu div.on { background: var(--accent); color: #fff; }
-    .comboMenu .none { color: var(--muted); cursor: default; }
-    .comboMenu .none:hover { background: none; color: var(--muted); }
-    #itemSelect { flex: 1 1 220px; max-width: 320px; }
-    header .spacer { flex: 1; }
-    #userBox { color: var(--muted); font-size: 0.85rem; white-space: nowrap; display: flex; gap: 0.6rem; align-items: center; }
-    #userBox .signout { cursor: pointer; }
-    header .ghLink { color: var(--muted); font-size: 0.85rem; text-decoration: none; white-space: nowrap; }
-    header .ghLink:hover { color: var(--accent2); }
-
-    /* Layout */
-    main { flex: 1; display: flex; min-height: 0; }
-    aside {
-      width: var(--sidebarW, 280px); min-width: 200px; border-right: 1px solid var(--border);
-      background: var(--panel); display: flex; flex-direction: column; overflow: hidden;
-      position: relative;
-    }
-    /* A GUID-named Iceberg data file is longer than any width that would be a sane
-       default, so the right edge is draggable and the width is remembered. */
-    #sidebarResizer { position: absolute; top: 0; right: 0; bottom: 0; width: 5px; cursor: col-resize; z-index: 5; }
-    #sidebarResizer:hover, body.resizing #sidebarResizer { background: var(--accent2); }
-    aside.collapsed #sidebarResizer { display: none; }
-    body.resizing { cursor: col-resize; user-select: none; }
-    /* Collapsed: width 0 rather than display:none, so the sidebar keeps its scroll
-       position and expanding costs no re-render. */
-    aside.collapsed { width: 0; min-width: 0; border-right: 0; }
-    aside .head {
-      padding: 0.5rem 0.75rem; border-bottom: 1px solid var(--border);
-      color: var(--muted); font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.5px;
-      display: flex; justify-content: space-between; align-items: center;
-    }
-    #tableList { overflow: auto; flex: 1; }
-    .schemaGroup > .schemaName {
-      padding: 0.4rem 0.75rem; color: var(--muted); font-size: 0.78rem; font-weight: 600;
-      text-transform: uppercase; letter-spacing: 0.4px; position: sticky; top: 0; background: var(--panel);
-    }
-    .tableItem {
-      padding: 0.4rem 0.75rem 0.4rem 1.1rem; cursor: pointer; display: flex; align-items: center; gap: 0.4rem;
-      border-left: 2px solid transparent; white-space: nowrap; overflow: hidden;
-    }
-    /* text-overflow does nothing on the flex row itself — the name that overflows is the
-       span, so the ellipsis has to live there or the name is cut mid-glyph with no sign. */
-    .tableItem .name, .fileItem .name { overflow: hidden; text-overflow: ellipsis; }
-    .tableItem:hover { background: var(--hover); }
-    .tableItem.active { background: var(--sel); border-left-color: var(--accent2); }
-
-    /* Tables / Files switch */
+    /* Two-state switches: Stats | Data for a table, Pretty | Raw for a document. */
     .tabs { display: inline-flex; }
     button.tab {
-      border-radius: 0; border: 1px solid var(--border); padding: 0.15rem 0.6rem;
-      font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.5px; color: var(--muted);
+      padding: 0.15rem 0.6rem; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.5px;
+      color: var(--muted); background: transparent; border: 1px solid var(--border);
     }
-    button.tab:first-child { border-radius: 5px 0 0 5px; }
-    button.tab:last-child { border-radius: 0 5px 5px 0; border-left: 0; }
-    /* Warehouses have no Files/ pane, so Tables is the only button left — a half-rounded
-       pill with two square corners reads as a switch with its other half missing. */
-    .tabs.solo button.tab { border-radius: 5px; }
+    button.tab + button.tab { border-left: 0; }
     button.tab.active { color: var(--text); background: var(--sel); border-color: var(--accent2); }
 
-    /* Files tree */
-    .fileItem {
-      padding: 0.35rem 0.75rem; cursor: pointer; display: flex; align-items: center; gap: 0.4rem;
-      border-left: 2px solid transparent; white-space: nowrap; overflow: hidden;
-    }
-    .fileItem:hover { background: var(--hover); }
-    .fileItem.active { background: var(--sel); border-left-color: var(--accent2); }
-    .fileItem.plain { color: var(--muted); cursor: default; }
-    .fileItem .size { margin-left: auto; flex: none; font-size: 0.7rem; color: var(--muted); padding-left: 0.5rem; }
-    .fileItem .caret { width: 0.7rem; flex: none; display: inline-block; color: var(--muted); }
-
     /* Content */
-    section { flex: 1; display: flex; flex-direction: column; min-width: 0; overflow: hidden; }
+    section { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; }
     .toolbar { display: flex; gap: 0.5rem; align-items: center; padding: 0.5rem 0.75rem; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
     .toolbar .title { font-weight: 600; }
     .toolbar .spacer { flex: 1; }
-    .iconBtn { padding: 0.3rem 0.55rem; line-height: 1; color: var(--muted); }
-    .iconBtn:hover:not(:disabled) { color: var(--text); }
     #sqlEditor {
       width: 100%; min-height: 96px; max-height: 40vh; resize: vertical; padding: 0.6rem 0.75rem;
-      border: 0; border-bottom: 1px solid var(--border); background: var(--panel2); color: var(--text);
-      font-family: ui-monospace, "SFMono-Regular", Consolas, "Liberation Mono", monospace; font-size: 13px;
+      border: 0; border-bottom: 1px solid var(--border); background: var(--vscode-editor-background); color: var(--text);
+      font-family: var(--vscode-editor-font-family); font-size: var(--vscode-editor-font-size);
     }
     .resultsWrap { flex: 1; overflow: auto; }
     table.results { border-collapse: collapse; width: 100%; font-size: 13px; }
@@ -256,38 +91,34 @@
       border: 1px solid var(--border); padding: 0.3rem 0.55rem; text-align: left; white-space: nowrap;
       max-width: 420px; overflow: hidden; text-overflow: ellipsis;
     }
-    table.results th { position: sticky; top: 0; background: var(--panel); z-index: 1; vertical-align: bottom; }
-    /* The column type rides under its name in the header — no separate schema strip to
-       keep in sync with what the grid is actually showing. */
-    table.results th .cname { display: block; }
-    table.results th .ctype {
-      display: block; font-weight: 400; font-size: 0.72rem; color: var(--accent2);
-      letter-spacing: 0.2px;
+    table.results th {
+      position: sticky; top: 0; z-index: 1; vertical-align: bottom;
+      background: var(--vscode-keybindingTable-headerBackground, var(--panel));
     }
+    /* The column type rides under its name in the header. */
+    table.results th .cname { display: block; }
+    table.results th .ctype { display: block; font-weight: 400; font-size: 0.72rem; color: var(--accent2); letter-spacing: 0.2px; }
     table.results th.num { text-align: right; }
     table.results td.num { text-align: right; font-variant-numeric: tabular-nums; }
     table.results tr:nth-child(even) td { background: var(--stripe); }
 
-    /* Document view — a 1×1 multiline VARCHAR result rendered as markdown. The bar
-       reuses the sidebar's .tabs look; z-index sits above the sticky grid header. */
+    /* Document view — a text result rendered as itself (docview.js). */
     .docBar { position: sticky; top: 0; z-index: 2; display: block; padding: 0.45rem 0.75rem; background: var(--bg); }
-    /* The 860px measure is for PROSE. A document that is code gets the full width, so the
-       clamp lives on the markdown case only. */
     .docView { padding: 0.25rem 1.5rem 2rem; line-height: 1.6; }
     .docView.prose { max-width: 860px; }
     .docView h1, .docView h2 { border-bottom: 1px solid var(--border); padding-bottom: 0.3rem; }
-    .docView pre { background: var(--panel2); border: 1px solid var(--border); border-radius: 6px; padding: 0.75rem 1rem; overflow: auto; }
-    /* A whole document that IS code (a dbt macro, a JSON blob, a log) rather than a code
-       block inside prose: no prose measure, no wrapping — a long line scrolls in its own
-       box instead of being reflowed into something that is no longer the file. */
+    .docView pre {
+      background: var(--vscode-textCodeBlock-background, var(--panel2)); border: 1px solid var(--border);
+      border-radius: 4px; padding: 0.75rem 1rem; overflow: auto;
+    }
+    /* A whole document that IS code keeps its lines: no prose measure, no wrapping. */
     .docView pre.doc {
-      font-family: ui-monospace, "SFMono-Regular", Consolas, "Liberation Mono", monospace;
-      font-size: 0.86rem; line-height: 1.45; white-space: pre; overflow-x: auto;
-      margin: 0; tab-size: 4;
+      font-family: var(--vscode-editor-font-family); font-size: 0.86rem; line-height: 1.45;
+      white-space: pre; overflow-x: auto; margin: 0; tab-size: 4;
     }
     .docView code {
-      background: var(--panel2); border-radius: 4px; padding: 0.1rem 0.35rem;
-      font-family: ui-monospace, "SFMono-Regular", Consolas, "Liberation Mono", monospace; font-size: 0.9em;
+      background: var(--vscode-textCodeBlock-background, var(--panel2)); border-radius: 3px; padding: 0.1rem 0.35rem;
+      font-family: var(--vscode-editor-font-family); font-size: 0.9em;
     }
     .docView pre code { background: none; padding: 0; }
     .docView blockquote { margin: 0; padding: 0 1rem; border-left: 3px solid var(--border); color: var(--muted); }
@@ -295,195 +126,65 @@
     .docView table { border-collapse: collapse; }
     .docView th, .docView td { border: 1px solid var(--border); padding: 0.3rem 0.6rem; }
 
-    /* Stats card (#statsView, Data|Stats bar) — metadata key/value rows. */
+    /* Stats card — metadata key/value rows. */
     #statsView th { text-align: left; font-weight: 500; color: var(--muted); }
     #statsView td { font-variant-numeric: tabular-nums; }
     .statsNote { color: var(--muted); font-size: 0.85rem; }
 
-    /* Status bar: the message on the left, the build stamp pinned on the right. The stamp
-       lives HERE because a signed-in session never sees the gate — the bottom bar is the
-       one place the running version is always on screen. */
+    /* Status bar: the message, where the last answers came from, and the build. */
     .statusBar {
       display: flex; justify-content: space-between; align-items: center; gap: 1rem;
-      padding: 0.4rem 0.9rem; border-top: 1px solid var(--border); background: var(--panel2);
-      font-size: 0.82rem;
+      padding: 0.3rem 0.9rem; border-top: 1px solid var(--border); background: var(--panel2); font-size: 0.82rem;
     }
     #status { color: var(--muted); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     #status.clickable { cursor: pointer; }
-    /* Clicked open: the whole message, wrapped, capped so it can never swallow the app. */
     #status.expanded { white-space: pre-wrap; overflow: auto; max-height: 8rem; text-overflow: clip; }
     #status.error { color: var(--err); }
     #status.ok { color: var(--ok); }
-    /* A load that came with caveats — skipped equality deletes, a truncated result — is
-       not a success, and must not be shown in the success colour. */
     #status.warn { color: var(--warn); }
-    /* Read provenance. Sits between the message and the build stamp; #status is still the
-       only element that grows, so a long status keeps ellipsising rather than shoving this
-       off the bar. Same three colours the message uses — muted for a plain fact, ok when
-       everything came off disk, warn when there is no cache to come off. */
-    #readSrc {
-      color: var(--muted); white-space: nowrap; flex: none; cursor: pointer;
-      font-variant-numeric: tabular-nums;
-    }
+    #readSrc { color: var(--muted); white-space: nowrap; flex: none; cursor: pointer; font-variant-numeric: tabular-nums; }
     #readSrc:hover { color: var(--text); }
     #readSrc.local { color: var(--ok); }
-    #statusVer { color: var(--muted); text-decoration: none; white-space: nowrap; }
-    #statusVer:hover { color: var(--accent2); }
-    /* This tab is running an older build than the server has. */
-    #statusVer.stale { color: var(--warn); cursor: pointer; }
+    #statusVer { color: var(--muted); white-space: nowrap; flex: none; }
     .hint { color: var(--muted); padding: 1.2rem; }
-
-    /* Auth gate */
-    #authGate {
-      position: fixed; inset: 0; background: rgba(13,17,23,0.97); z-index: 10;
-      display: flex; align-items: center; justify-content: center; padding: 1.5rem; overflow: auto;
-    }
-    .gateCard {
-      max-width: 560px; width: 100%; display: flex; flex-direction: column; gap: 0.9rem;
-      text-align: center; margin: auto;
-    }
-    .gateBrand { font-size: 1.6rem; font-weight: 700; letter-spacing: 0.2px; }
-    .gateTag { color: var(--muted); }
-    #authGateMsg { color: var(--muted); }
-    #authGate .err { color: var(--err); }
-    #authActions { display: flex; flex-direction: column; align-items: center; gap: 0.8rem; }
-    #signinBtn { padding: 0.7rem 1.6rem; font-size: 1rem; }
-
-    /* Trust claims, compressed to chips — the long version lives in ARCHITECTURE.md. Last row
-       of the card: they're reassurance, not something to read before signing in. */
-    .chips { display: flex; flex-wrap: wrap; gap: 0.4rem; justify-content: center; margin-top: 0.3rem; }
-    .chips span {
-      border: 1px solid var(--border); border-radius: 999px; padding: 0.15rem 0.65rem;
-      color: var(--muted); font-size: 0.78rem;
-    }
-
-    /* Consent / bring-your-own-registration blocks */
-    .gateBox {
-      text-align: left; background: var(--panel); border: 1px solid var(--border);
-      border-radius: 8px; padding: 0.9rem 1.1rem; font-size: 0.86rem; color: var(--muted);
-      display: grid; gap: 0.6rem; width: 100%;
-    }
-    .gateBox h4 { margin: 0; color: var(--text); font-size: 0.92rem; }
-    .copyRow { display: flex; gap: 0.4rem; }
-    .copyRow input {
-      flex: 1; font-family: ui-monospace, Consolas, monospace; font-size: 0.76rem;
-      background: var(--panel2); color: var(--muted);
-    }
-    .byoRow { display: flex; gap: 0.4rem; flex-wrap: wrap; }
-    .byoRow input { flex: 1 1 200px; font-family: ui-monospace, Consolas, monospace; font-size: 0.78rem; }
-    .gateFoot { color: var(--muted); font-size: 0.82rem; }
-    .gateFoot a { cursor: pointer; }
-    .gateOpts { display: grid; gap: 0.45rem; justify-items: center; }
   </style>
 </head>
 <body>
-  <header>
-    <div class="brand">OneLake&nbsp;Studio</div>
-    <!-- A search box, not a <select>: tenants have hundreds of workspaces, and a dropdown
-         you can't type into doesn't scale past a dozen. The suggestions under it are our
-         own list — a <datalist> is one line of HTML but its popup is drawn by the OS,
-         white and squat in the middle of a dark app. -->
-    <div class="combo" id="wsCombo">
-      <input id="wsSelect" title="Workspace — type to search"
-             placeholder="Sign in to browse OneLake" autocomplete="off" spellcheck="false" disabled />
-      <div id="wsMenu" class="comboMenu" hidden></div>
+  <section>
+    <div class="toolbar">
+      <span class="title" id="activeTable">No table selected</span>
+      <div class="spacer"></div>
+      <button id="previewBtn" disabled>Preview</button>
+      <!-- Only on screen while something can be stopped. -->
+      <button id="stopBtn" hidden title="Stop">Stop ■</button>
+      <button id="runBtn" class="primary" disabled>Run ▶</button>
+      <button id="csvBtn" disabled>Save CSV</button>
     </div>
-    <select id="itemSelect" title="Lakehouse / Warehouse" disabled><option value="">Select a workspace first</option></select>
-    <button id="connectBtn" title="Reload tables">Reload</button>
-    <div class="spacer"></div>
-    <a class="ghLink" href="https://github.com/djouallah/onelake_studio" target="_blank" rel="noopener"
-       title="Source on GitHub">GitHub ↗</a>
-    <div id="userBox"></div>
-  </header>
-
-  <main>
-    <aside id="sidebar">
-      <div class="head">
-        <span class="tabs" id="paneTabs">
-          <button id="tabTables" class="tab active">Tables</button><button id="tabFiles" class="tab">Files</button>
-        </span>
-        <span id="tableCount"></span>
+    <!-- A .bim's semantic model view (analyze/view.js), in place of the editor and results. -->
+    <div id="modelView" hidden></div>
+    <textarea id="sqlEditor" spellcheck="false" placeholder="Read-only SQL. Pick a table in the OneLake sidebar, or try: SELECT 42"></textarea>
+    <div class="resultsWrap">
+      <!-- While a TABLE is selected: Stats leads, because statistics cost nothing. -->
+      <div class="docBar tabs" id="viewBar" hidden>
+        <button id="viewStats" class="tab active">Stats</button><button id="viewData" class="tab">Data</button>
       </div>
-      <div id="tableList"><div class="hint">Sign in to OneLake to browse tables and files.</div></div>
-      <div id="sidebarResizer" title="Drag to resize · double-click to fit the longest name"></div>
-    </aside>
-
-    <section>
-      <div class="toolbar">
-        <button id="sidebarToggle" class="iconBtn" title="Hide sidebar (Ctrl+B)"
-                aria-controls="sidebar" aria-expanded="true">«</button>
-        <span class="title" id="activeTable">No table selected</span>
-        <div class="spacer"></div>
-        <button id="previewBtn" disabled>Preview</button>
-        <!-- Only on screen while a load is in flight, which is the only time anything can
-             be stopped. A permanently visible Stop that is disabled 99% of the time reads
-             as broken. -->
-        <button id="stopBtn" hidden title="Stop loading this table">Stop ■</button>
-        <button id="runBtn" class="primary" disabled>Run ▶</button>
-        <button id="csvBtn" disabled>Download CSV</button>
+      <article id="statsView" class="docView" hidden></article>
+      <div class="docBar tabs" id="docBar" hidden>
+        <button id="docPretty" class="tab active">Pretty</button><button id="docRaw" class="tab">Raw</button>
       </div>
-      <!-- A .bim's semantic model view (analyze/view.js): in place of the editor and the
-           results while a .bim is selected. -->
-      <div id="modelView" hidden></div>
-      <textarea id="sqlEditor" spellcheck="false" placeholder="Write read-only SQL here — no sign-in needed. Try: SELECT 42"></textarea>
-      <div class="resultsWrap">
-        <!-- Only while a TABLE is selected, and Stats leads because it is where a
-             selection lands: statistics cost nothing, the preview costs one file.
-             Distinct from #docBar below, which belongs to a document-shaped RESULT. -->
-        <div class="docBar tabs" id="viewBar" hidden>
-          <button id="viewStats" class="tab active">Stats</button><button id="viewData" class="tab">Data</button>
-        </div>
-        <article id="statsView" class="docView" hidden></article>
-        <div class="docBar tabs" id="docBar" hidden>
-          <button id="docPretty" class="tab active">Pretty</button><button id="docRaw" class="tab">Raw</button>
-        </div>
-        <div class="hint" id="resultsHint">Query results appear here.</div>
-        <article id="docView" class="docView" hidden></article>
-        <table class="results" id="resultsTable" hidden></table>
-      </div>
-    </section>
-  </main>
+      <div class="hint" id="resultsHint">Query results appear here.</div>
+      <article id="docView" class="docView" hidden></article>
+      <table class="results" id="resultsTable" hidden></table>
+    </div>
+  </section>
 
   <div class="statusBar">
     <div id="status">Ready.</div>
-    <!-- Where the bytes behind the last thing you waited for came from. Only the VS Code
-         host fills this in: a browser tab reads OneLake directly, with no proxy in front
-         of it and nothing on disk, so there is no answer to give. -->
     <span id="readSrc" hidden></span>
-    <a id="statusVer" target="_blank" rel="noopener"></a>
+    <span id="statusVer"></span>
   </div>
 
-  <!-- Hidden by default: the app is usable without OneLake — this shows on demand when
-       the user asks to sign in (or a restored session needs re-auth). -->
-  <div id="authGate" style="display:none">
-    <div class="gateCard">
-      <div class="gateBrand">OneLake&nbsp;Studio</div>
-      <div class="gateTag">Read your OneLake. Fully local — your data never leaves this browser.</div>
-      <div id="authGateMsg">Sign in with your Microsoft work or school account.</div>
-      <!-- Sign-in button, and the app-registration block — which is the whole gate on a
-           first run, since nothing can be signed into until a registration is named. -->
-      <div id="authActions"></div>
-      <!-- The ways past this screen, one per line and unexplained: prose about each only
-           matters once you pick one, and each block says its own piece then. A link hides
-           itself while the block it opens is on screen. -->
-      <div class="gateFoot gateOpts">
-        <a id="byoLink">Use a different app registration</a>
-        <a id="gateClose">← Continue without signing in</a>
-      </div>
-      <div class="chips"><span>No backend</span><span>Nothing copied</span><span>Read-only</span><span>No telemetry</span></div>
-    </div>
-  </div>
-
-  <!-- Service worker: COOP/COEP shim (DuckDB multithreading) + OneLake token injection
-       on DuckDB's own range requests. See sw.js. -->
-  <script src="sw-register.js"></script>
-  <!-- config.js: tracked in git; ships an empty clientId on purpose — the user names an
-       Entra SPA registration from their own tenant, and the gate asks for it. A fork can
-       set one here (public identifier, no secret) to skip that. -->
-  <script src="config.js"></script>
-  <!-- version.js: build.mjs stamps the commit + build time into the deployed copy; the
-       tracked file says "dev". Shown in the header and the sign-in gate. -->
-  <script src="version.js"></script>
-  <script type="module" src="app.js"></script>
+  <script nonce="{{nonce}}">window.ONELAKE_STUDIO_CONFIG = {{config}};</script>
+  <script type="module" nonce="{{nonce}}" src="{{base}}/app.js"></script>
 </body>
 </html>

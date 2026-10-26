@@ -20,7 +20,6 @@
 // and Files/ objects by their abfss:// names with the host's own credential.
 import {
   strip, basename, abfssUrl,
-  parseLakehouse,
   fileExt, readerFor, PARQUET_EXTS, DB_EXTS, ZIP_EXTS, isSqliteHeader, isTextExt,
   sqlStr, quoteIdent, prepareReadOnlySql,
   tableKey, fileKey, sanitizeIdent, emptyTableSql,
@@ -129,28 +128,6 @@ export function createEngine({
   async function hostBytes(ws, path, range) {
     const r = await callHost("onelake.readBytes", [{ workspace: ws, path, range }]);
     return fromBase64(r && r.base64);
-  }
-
-  // ---------------------------------------------------------------------------
-  // Files/ browsing — the unmanaged half of a lakehouse.
-  // ---------------------------------------------------------------------------
-  // Nothing Iceberg here: Files/ is just a directory tree, so it is listed one level at a
-  // time (lazily, on expand) and a recognised data file is opened as a view — its proxied
-  // URL spliced straight into whichever reader the extension names. The reader table
-  // itself lives in paths.js.
-  const isQueryable = name => {
-    const ext = fileExt(name);
-    if (DB_EXTS.has(ext)) return true;      // ATTACHed read-only, not read through a reader
-    if (ZIP_EXTS.has(ext)) return canZip;   // entries opened as views, not the archive itself
-    if (!readerFor(ext)) return false;
-    return ext === "xlsx" ? canXlsx : true;
-  };
-
-  // One level of Files/ (or a subdirectory of it). `dir` is relative to Files/. The same
-  // cached listing the tree draws, so the pane and the tree never disagree.
-  async function listFiles({ workspace, item }, dir = "") {
-    const entries = await callHost("onelake.files", [{ workspace, item, dir: strip(dir) }]);
-    return (entries || []).map(e => ({ ...e, queryable: !e.isDir && isQueryable(e.name) }));
   }
 
   // ---------------------------------------------------------------------------
@@ -780,7 +757,6 @@ export function createEngine({
     return hostBytes(lh.workspace, file.path);
   }
 
-  return { init, reset, parseLakehouse,
-           statTable, peekTable, loadTable,
-           listFiles, loadFile, readFileBytes, runSql, describeLoad, fmtBytes, cancelLoad };
+  return { init, reset, statTable, peekTable, loadTable,
+           loadFile, readFileBytes, runSql, describeLoad, fmtBytes, cancelLoad };
 }

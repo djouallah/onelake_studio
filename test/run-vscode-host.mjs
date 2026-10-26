@@ -1,7 +1,7 @@
-// The webview build of the app, driven in a real browser with no VS Code and no
-// credentials. What it can prove without an extension host: the injected `host: 'vscode'`
-// flag reaches the page, the landing query reads the README the extension packages
-// instead of GitHub, browser-only chrome is gone, and the palette resolves — every
+// The panel's page, driven in a real browser with no VS Code and no credentials, answered
+// by the real host methods and engine. What it proves: the landing query reads the README
+// the extension packages, the page never reaches OneLake itself, a table and a SQLite file
+// open from the tree's messages, and the palette resolves — every
 // --vscode-* token the stylesheet names is faked here, so a colour left unmapped shows up
 // as a var() that resolves to nothing rather than passing quietly.
 //
@@ -10,18 +10,15 @@ import http from "node:http";
 import { readFile, mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { DatabaseSync } from "node:sqlite";
-import { join, extname } from "node:path";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
 
-import { panelHost, README } from "./panel-host.mjs";
-import { createRequire } from "node:module";
-const { PINS } = createRequire(import.meta.url)("../extension/src/vendored.js");
+import { panelHost, servePanel } from "./panel-host.mjs";
 
 const root = join(fileURLToPath(new URL(".", import.meta.url)), "..");
 const PORT = 5199;
-const MIME = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8",
-               ".css": "text/css", ".json": "application/json", ".md": "text/markdown; charset=utf-8" };
+const ORIGIN = `http://127.0.0.1:${PORT}`;
 
 // The app comes from extension/app/ — the code the panel really runs. The README the
 // landing query reads is a file path, read by native DuckDB in the host, as packaged.
@@ -61,19 +58,7 @@ const server = http.createServer(async (req, res) => {
     return res.end(JSON.stringify(u.searchParams.get("resource") === "account"
       ? { fileSystems: [{ name: "ws1" }] } : { paths: [] }));
   }
-  // The vendored libraries, as panel.js serves them (vendor.mjs fills extension/vendor/).
-  const file = path.startsWith("/vendor/")
-    ? join(root, "extension", "vendor", ...decodeURIComponent(path.slice("/vendor/".length)).split("/"))
-    : join(root, "extension", "app", path === "/" ? "index.html" : path.slice(1));
-  try {
-    const body = await readFile(file);
-    res.writeHead(200, {
-      "content-type": MIME[extname(file)] || "application/octet-stream",
-      // DuckDB's httpfs sizes a file from HEAD and then range-reads it.
-      "accept-ranges": "bytes",
-    });
-    res.end(body);
-  } catch { res.writeHead(404).end(); }
+  if (!await servePanel(req, res, ORIGIN)) res.writeHead(404).end();
 });
 await new Promise(r => server.listen(PORT, "127.0.0.1", r));
 
@@ -123,15 +108,6 @@ try {
     executablePath: process.env.CHROME_PATH || (process.platform === "win32" ? "C:/Program Files/Google/Chrome/Application/chrome.exe" : "/usr/bin/google-chrome"), headless: true });
   const ctx = await browser.newContext({ serviceWorkers: "block" });
 
-  // What extension/src/html.js injects in place of the config.js tag.
-  await ctx.route("**/config.js", r => r.fulfill({
-    contentType: "text/javascript",
-    body: `window.ONELAKE_STUDIO_CONFIG = ${JSON.stringify({
-      auth: "none", host: "vscode", readmeUrl: README,
-      vendorBase: `http://127.0.0.1:${PORT}/vendor`, pins: PINS,
-    })};`,
-  }));
-
   // Anything the PAGE sends toward OneLake is a leak: the host does every read.
   const pageOneLake = [];
 
@@ -174,9 +150,6 @@ try {
   await page.goto(`http://127.0.0.1:${PORT}/`);
   await page.waitForFunction(() => !document.getElementById("runBtn").disabled, { timeout: 120000 });
 
-  check("the host flag reaches the page",
-    await page.evaluate(() => document.body.classList.contains("host-vscode")));
-
   // --- the landing query -----------------------------------------------------
   await page.waitForFunction(() => {
     const d = document.getElementById("docView");
@@ -197,24 +170,13 @@ try {
   });
   check("the status bar is not left red", status.cls !== "error", status.text);
 
-  // --- browser-only chrome ---------------------------------------------------
-  for (const [label, sel] of [["the GitHub link", ".ghLink"], ["the account box", "#userBox"],
-                              ["the auth gate", "#authGate"]]) {
-    const shown = await page.evaluate(s => {
-      const el = document.querySelector(s);
-      return !!el && getComputedStyle(el).display !== "none";
-    }, sel);
-    check(`${label} is gone`, !shown);
-  }
-
-  // The build stamp is NOT browser-only chrome: a Marketplace install, a sideloaded vsix
-  // and an F5 checkout look identical from inside the panel, and the stamp is the one
-  // thing that says which of them is running. It cost an hour once.
+  // A Marketplace install, a sideloaded vsix and an F5 checkout look identical from inside
+  // the panel; the stamp is the one thing that says which of them is running.
   const stamp = await page.evaluate(() => {
     const el = document.getElementById("statusVer");
     return { shown: !!el && getComputedStyle(el).display !== "none", text: el ? el.textContent : "" };
   });
-  check("the build stamp stays, and names a build", stamp.shown && /^build \S+/.test(stamp.text),
+  check("the build stamp names a build", stamp.shown && /^build \S+/.test(stamp.text),
     stamp.text || "(empty)");
 
   // --- the palette resolved --------------------------------------------------
@@ -245,14 +207,6 @@ try {
   check("SQL still runs", true);
 
   // --- browsing belongs to the editor's sidebar ------------------------------
-  for (const [label, sel] of [["the header", "header"], ["the in-panel sidebar", "#sidebar"],
-                              ["the sidebar toggle", "#sidebarToggle"]]) {
-    const shown = await page.evaluate(s => {
-      const el = document.querySelector(s);
-      return !!el && getComputedStyle(el).display !== "none";
-    }, sel);
-    check(`${label} is gone`, !shown);
-  }
   check("the panel does not list workspaces itself", !dfsCalls.includes("account"),
     dfsCalls.join(", ") || "no DFS calls at all");
   check("the page itself never reaches OneLake", pageOneLake.length === 0, pageOneLake.join(", "));
