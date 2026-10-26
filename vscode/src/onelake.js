@@ -68,7 +68,17 @@ function createOneLake({ catalog, store, prefetchEnabled = () => true, onHit = (
     store = next;
     queue.length = 0;
     catalog.reset();
+    usePrefixStore();
   }
+  // Each item's Iceberg catalog prefix (catalog.js), kept with the rest of the account's
+  // answers. No TTL: it is the item's GUIDs, and a stale one is noticed on use.
+  function usePrefixStore() {
+    if (catalog.usePrefixStore) catalog.usePrefixStore({
+      get: w => store.peek(`irc\u0000${w}`),
+      set: (w, prefix) => store.put(`irc\u0000${w}`, prefix),
+    });
+  }
+  usePrefixStore();
 
   const keys = {
     workspaces: () => 'workspaces',

@@ -218,3 +218,46 @@ test("no token is a 401 that says so, not a request sent unsigned", async () => 
     assert.equal(calls.length, 0, "nothing went out");
   } finally { restore(); }
 });
+
+// The config call is seconds of work and its answer lasts as long as the item, so it is kept
+// on disk (onelake.js passes the account's store): a restart does not ask for it again.
+test("the Iceberg prefix kept on disk is used across restarts, not asked again", async () => {
+  const disk = new Map();
+  const prefixes = { get: w => disk.get(w), set: (w, p) => { disk.set(w, p); } };
+  const lh = { workspace: "ws", item: "lh.Lakehouse" };
+  const answers = [
+    [/\/v1\/config/, () => res(200, { overrides: { prefix: "guid-a/guid-b" } })],
+    [/\/namespaces$/, () => res(200, { namespaces: [] })],
+  ];
+  const first = catalogWith(answers);
+  try {
+    first.catalog.usePrefixStore(prefixes);
+    await first.catalog.listTables(lh);
+    assert.equal(disk.get("ws/lh.Lakehouse"), "guid-a/guid-b");
+  } finally { first.restore(); }
+  const second = catalogWith(answers);
+  try {
+    second.catalog.usePrefixStore(prefixes);
+    await second.catalog.listTables(lh);
+    assert.ok(!second.calls.some(u => u.includes("/v1/config")), second.calls.join("\n"));
+    assert.ok(second.calls.some(u => u.includes("/v1/guid-a/guid-b/namespaces")), second.calls.join("\n"));
+  } finally { second.restore(); }
+});
+
+// An item deleted and made again under its name has new GUIDs: the kept prefix 404s, and
+// that is asked of the config at once — not waited out as an Iceberg conversion.
+test("a kept prefix that 404s is replaced from the config, and the call made again", async () => {
+  const disk = new Map([["ws/lh.Lakehouse", "old-a/old-b"]]);
+  const { catalog, calls, restore } = catalogWith([
+    [/\/v1\/config/, () => res(200, { overrides: { prefix: "new-a/new-b" } })],
+    [/\/v1\/old-a\//, () => res(404, {})],
+    [/new-b\/namespaces\/dbo\/tables\/t$/, () => res(200, { "metadata-location": "abfss://x/m.json", metadata: { "format-version": 2 } })],
+  ]);
+  try {
+    catalog.usePrefixStore({ get: w => disk.get(w), set: (w, p) => { disk.set(w, p); } });
+    const r = await catalog.loadTable({ workspace: "ws", item: "lh.Lakehouse" }, { schema: "dbo", table: "t" });
+    assert.equal(r.metadataLocation, "abfss://x/m.json");
+    assert.equal(disk.get("ws/lh.Lakehouse"), "new-a/new-b");
+    assert.equal(calls.filter(u => u.includes("/v1/config")).length, 1, calls.join("\n"));
+  } finally { restore(); }
+});

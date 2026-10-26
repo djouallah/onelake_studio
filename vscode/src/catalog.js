@@ -200,9 +200,22 @@ function createCatalog({ getToken, dfsOrigin = DFS_ORIGIN, tableOrigin = TABLE_O
   const ircPrefixes = new Map();
   const ircSeg = s => String(s).split('/').map(encodeURIComponent).join('/');
 
-  async function ircPrefixFor(lh) {
+  // The config call costs seconds and its answer — the item's GUIDs — lasts as long as the
+  // item, so it is also kept on disk (onelake.js hands over the account's store), and a
+  // restart does not pay it again. `kept` holds the warehouses whose prefix came from there.
+  let prefixStore = null;   // { get(warehouse), set(warehouse, prefix) }
+  const kept = new Set();
+  function usePrefixStore(s) { prefixStore = s; ircPrefixes.clear(); kept.clear(); }
+
+  async function ircPrefixFor(lh, { pastDisk = false } = {}) {
     const warehouse = `${lh.workspace}/${lh.item}`;
     if (ircPrefixes.has(warehouse)) return ircPrefixes.get(warehouse);
+    const onDisk = !pastDisk && prefixStore && await Promise.resolve(prefixStore.get(warehouse)).catch(() => undefined);
+    if (onDisk) {
+      ircPrefixes.set(warehouse, onDisk);
+      kept.add(warehouse);
+      return onDisk;
+    }
     const { json } = await getJson(
       `${tableOrigin}/iceberg/v1/config?warehouse=${encodeURIComponent(warehouse)}`,
       `Iceberg catalog config for ${warehouse}`);
@@ -210,7 +223,21 @@ function createCatalog({ getToken, dfsOrigin = DFS_ORIGIN, tableOrigin = TABLE_O
     // is why it is spliced in raw and only the segments after it are encoded.
     const prefix = (json.overrides && json.overrides.prefix) || warehouse;
     ircPrefixes.set(warehouse, prefix);
+    kept.delete(warehouse);
+    if (prefixStore) Promise.resolve(prefixStore.set(warehouse, prefix)).catch(() => {});
     return prefix;
+  }
+
+  // A prefix from disk may be an item's that was deleted and made again under the same
+  // name. A 400 or 404 on one asks the config again before anything is concluded; true
+  // when that gave a different prefix, i.e. the call is worth making again.
+  async function stalePrefix(lh, e) {
+    const warehouse = `${lh.workspace}/${lh.item}`;
+    if (!(e.status === 400 || e.status === 404) || !kept.has(warehouse)) return false;
+    const was = ircPrefixes.get(warehouse);
+    kept.delete(warehouse);
+    ircPrefixes.delete(warehouse);
+    return (await ircPrefixFor(lh, { pastDisk: true })) !== was;
   }
 
   // Returns [{ schema, table }] — the same shape the panel's own listing produces. A
@@ -231,9 +258,16 @@ function createCatalog({ getToken, dfsOrigin = DFS_ORIGIN, tableOrigin = TABLE_O
   }
 
   async function listTablesUncached(lh) {
-    const prefix = await ircPrefixFor(lh);
-    const { json: ns } = await getJson(`${tableOrigin}/iceberg/v1/${prefix}/namespaces`,
+    let prefix = await ircPrefixFor(lh);
+    const listSchemas = () => getJson(`${tableOrigin}/iceberg/v1/${prefix}/namespaces`,
       `Listing schemas in ${lh.item}`);
+    let ns;
+    try { ({ json: ns } = await listSchemas()); }
+    catch (e) {
+      if (!await stalePrefix(lh, e)) throw e;
+      prefix = await ircPrefixFor(lh);
+      ({ json: ns } = await listSchemas());
+    }
     const names = (ns.namespaces || []).map(n => (Array.isArray(n) ? n.join('.') : String(n)));
     if (!names.length) return [];
 
@@ -254,15 +288,18 @@ function createCatalog({ getToken, dfsOrigin = DFS_ORIGIN, tableOrigin = TABLE_O
   // `onWait` hears why a call is taking long (conversion pending, catalog busy), so the
   // panel can say so instead of showing a spinner with no story.
   async function loadTable(lh, t, { onWait = () => {} } = {}) {
-    const prefix = await ircPrefixFor(lh);
     const label = t.schema ? `${t.schema}.${t.table}` : t.table;
-    const url = `${tableOrigin}/iceberg/v1/${prefix}/namespaces/${ircSeg(t.schema || 'dbo')}/tables/${ircSeg(t.table)}`;
+    const urlOf = prefix => `${tableOrigin}/iceberg/v1/${prefix}/namespaces/${ircSeg(t.schema || 'dbo')}/tables/${ircSeg(t.table)}`;
+    let url = urlOf(await ircPrefixFor(lh));
     for (let attempt = 0; ; attempt++) {
       try {
         const { json } = await getJson(url, `Reading ${label} from the Iceberg catalog`);
         if (!json || !json.metadata) throw new Error(`${label}: the catalog returned no metadata document`);
         return { metadataLocation: json['metadata-location'] || null, metadata: json.metadata };
       } catch (e) {
+        // A prefix from disk that no longer holds: asked again at once, not waited out as a
+        // conversion in progress.
+        if (await stalePrefix(lh, e)) { url = urlOf(await ircPrefixFor(lh)); attempt--; continue; }
         const notYet = e.status === 400 || e.status === 404;
         const busy = e.status === 429 || e.status >= 500;
         if (!(notYet || busy) || attempt >= backoffMs.length) {
@@ -320,7 +357,7 @@ function createCatalog({ getToken, dfsOrigin = DFS_ORIGIN, tableOrigin = TABLE_O
     return new Uint8Array(await r.arrayBuffer());
   }
 
-  return { listWorkspaces, listItems, listTables, listFiles, loadTable, readBytes, reset };
+  return { listWorkspaces, listItems, listTables, listFiles, loadTable, readBytes, reset, usePrefixStore };
 }
 
 module.exports = { createCatalog, DFS_ORIGIN, TABLE_ORIGIN };

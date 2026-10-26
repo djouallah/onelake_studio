@@ -67,7 +67,12 @@ goes over one message channel to the host, and its few libraries ship inside the
   there at once — then refreshed behind you once they are older than
   `onelakeStudio.catalogTtlMinutes`. A table you have opened before opens without a single
   request, even after a restart; first rows are kept per snapshot, so they are never stale.
-  **Refresh** re-reads in the foreground.
+  Each item's Iceberg catalog prefix is kept there too, so a restart does not pay the
+  catalog's config call again. **Refresh** re-reads in the foreground.
+- **What DuckDB reads is cached for the session.** Parquet footers, and the bytes of data and
+  manifest files, stay in DuckDB's file cache; blocks evicted under memory pressure spill to
+  the session's temp directory rather than being fetched again. Nothing of the data outlives
+  the session: DuckDB 2.0 has no persistent file cache that works on Windows or with OneLake.
 
 Requires desktop VS Code on x64 or arm64 Windows, macOS or Linux: the engine is a native
 library, so this does not run on vscode.dev.

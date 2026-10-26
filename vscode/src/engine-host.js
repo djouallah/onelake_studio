@@ -242,6 +242,15 @@ function createEngineHost({ extensionDir, onLog = () => {}, onWarn = () => {}, g
       try { await conn.run('SET parquet_metadata_cache = true;'); }
       catch (e) { onWarn(`could not enable DuckDB's parquet metadata cache — ${e.message}`); }
 
+      // The bytes DuckDB reads from OneLake (data files, manifests) are kept in memory by
+      // its external file cache, and dropped when memory runs short. Spilled instead, to
+      // this session's temp directory: a block evicted is read back from local disk rather
+      // than fetched from OneLake again. Gone with the session — DuckDB has no cache that
+      // outlives the process (cache_httpfs would, but supports neither Windows nor, on
+      // DuckDB 2.0, the azure filesystem).
+      try { await conn.run('SET external_file_cache_spill = true;'); }
+      catch (e) { onWarn(`could not let DuckDB's file cache spill to disk — ${e.message}`); }
+
       // THE LOCKDOWN. This engine runs SQL that a webview sends it, with the user's files
       // and the user's OneLake token within reach — so whatever the page says, DuckDB may
       // touch the local disk only in its own temp directory, its extension directory, and
