@@ -2,7 +2,7 @@
   "name": "onelake-studio",
   "displayName": "OneLake Studio",
   "description": "Browse and query Microsoft Fabric OneLake Iceberg tables with DuckDB, and open Power BI semantic models, signed in with your VS Code Microsoft account.",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "publisher": "djouallah",
   "license": "MIT",
   "repository": {
