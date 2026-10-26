@@ -48,6 +48,9 @@ this does not run on vscode.dev.
 
 - **Model**: its tables as a star, dimensions in the middle and facts around them, with its
   relationships. Click a table for its columns, measures (with their DAX) and relationships.
+- **Explore**: drag the model's columns onto Rows, Columns and Filters, and its measures onto
+  Values, to get a pivot table or a chart. Totals are off until you tick them, and a view cut at
+  5,000 rows leaves them out.
 - **SQL**: SQL in which `SELECT … FROM <model>` asks the model. `AGG(m)` is measure `m`, computed
   with DAX's semantics by [dax-sql](https://github.com/djouallah/dax-sql), which compiles the
   query to plain SQL:
@@ -58,8 +61,6 @@ this does not run on vscode.dev.
 
   A model query can also be a subquery or CTE inside SQL of your own. Preview, Show plan and
   Download CSV.
-- **Explore**: drag the model's columns onto Rows, Columns and Filters, and its measures onto
-  Values, to get a pivot table or a chart.
 
 The model is named after its file (`nem.bim` is `nem`), and the main editor can query it too, as
 can `DESCRIBE nem`. A Direct Lake table is read from the lakehouse its model names, through the

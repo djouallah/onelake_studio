@@ -3,10 +3,10 @@
 // =============================================================================
 //   Model     the star of its tables and relationships, and what the model says of the
 //             table picked (model.js)
-//   SQL       a box of SQL in which a SELECT ... FROM <model> asks the model (its columns,
-//             and its measures as AGG("name")); Preview, Show plan, Download CSV
 //   Explore   the model's fields dragged onto shelves, drawn as a pivot or a chart
 //             (explore.js, ECharts)
+//   SQL       a box of SQL in which a SELECT ... FROM <model> asks the model (its columns,
+//             and its measures as AGG("name")); Preview, Show plan, Download CSV
 // Ported from the Analyze tab of analytics-as-code's dashboard. The host (app.js) says how
 // a model's SQL is compiled and run: `rewrite` compiles what the user typed (semantic.js),
 // `run` opens the tables a compiled SQL reads and runs it, returning the engine's result.
@@ -18,7 +18,7 @@ import { renderModel } from './model.js';
 import { createExplorer } from './explore.js';
 import { createModelQuery } from './query.js';
 
-const PAGES = [['model', 'Model'], ['sql', 'SQL'], ['explore', 'Explore']];
+const PAGES = [['model', 'Model'], ['explore', 'Explore'], ['sql', 'SQL']];
 const PREVIEW_ROWS = 500;
 // Series colours, on a dark card (the dashboard's palette).
 const PALETTE = ['#3987e5', '#d95926', '#199e70', '#c98500', '#d55181', '#4f9a3a', '#9085e9', '#e66767', '#5aa7b8', '#b0762f', '#a86bc4', '#7f8a9c'];
@@ -79,7 +79,7 @@ export function mountAnalyze(root, ctx) {
     el('div', { class: 'subtab-bar' },
       el('div', { class: 'subtabs', role: 'tablist', 'aria-label': 'Semantic model pages' }, tabs),
       el('span', { class: 'sm-title' }, `${ctx.file} · semantic model `, el('code', {}, ctx.name))),
-    modelPage, sqlPage, explorePage);
+    modelPage, explorePage, sqlPage);
   ta.value = ctx.sample;
   ta.addEventListener('keydown', e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); preview(); } });
 

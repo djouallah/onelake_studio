@@ -23,7 +23,9 @@ const ICONS = { text: 'Abc', number: '#', date: '▦', bool: '◐', measure: 'Σ
 const MARKS = [['auto', 'Automatic'], ['table', 'Table'], ['highlight', 'Highlight'], ['bar', 'Bar'], ['stacked', 'Stacked'],
   ['line', 'Line'], ['area', 'Area'], ['heatmap', 'Heatmap'], ['scatter', 'Scatter']];
 const SHELVES = [['rows', 'Rows'], ['cols', 'Columns'], ['values', 'Values'], ['filters', 'Filters']];
-const EMPTY = () => ({ rows: [], cols: [], values: [], filters: [], mark: 'auto', totals: true, sort: 'fields' });
+// Totals are off until asked for. `v` 2: shelves saved before that kept totals on by
+// default, so their `totals` is not read back.
+const EMPTY = () => ({ v: 2, rows: [], cols: [], values: [], filters: [], mark: 'auto', totals: false, sort: 'fields' });
 
 // =============================================================================
 // The model's fields, the query, the pivot: no DOM
@@ -166,7 +168,11 @@ export function createExplorer(root, ctx) {
   let fields = null, state = load(), drag = null, seq = 0, timer = null, result = null, pop = null;
 
   function load() {
-    try { return { ...EMPTY(), ...(ctx.loadState() || {}) }; } catch { return EMPTY(); }
+    try {
+      const saved = ctx.loadState() || {};
+      if (saved.v !== 2) delete saved.totals;
+      return { ...EMPTY(), ...saved, v: 2 };
+    } catch { return EMPTY(); }
   }
   function save() { try { ctx.saveState(JSON.parse(JSON.stringify(state))); } catch {} }
 
@@ -190,7 +196,12 @@ export function createExplorer(root, ctx) {
     el('button', { type: 'button', class: 'btn-analyze', onclick: download }, 'CSV'), info);
   const table = el('div', { class: 'ex-table' });
   const chartBox = el('div', { class: 'ex-chart' });
-  const out = el('div', { class: 'ex-out' }, table, chartBox);
+  // Over the view while a query runs: a model query reads OneLake and can take a while,
+  // and a small "Running…" beside the controls read as a page that had stopped.
+  const busyText = el('span');
+  const busy = el('div', { class: 'ex-busy', hidden: true, role: 'status', 'aria-live': 'polite' },
+    el('span', { class: 'ex-spinner', 'aria-hidden': 'true' }), busyText);
+  const out = el('div', { class: 'ex-out' }, table, chartBox, busy);
   const daxText = el('pre');
   const dax = el('details', { class: 'ex-dax' }, el('summary', {}, 'DAX'), daxText);
   root.replaceChildren(el('div', { class: 'ex' }, pane, el('div', { class: 'ex-main' }, shelves, tools, out, dax)));
@@ -409,29 +420,60 @@ export function createExplorer(root, ctx) {
     clearTimeout(timer);
     timer = setTimeout(run, 150);
   }
+  let ticker = null;
+  function running(on) {
+    clearInterval(ticker);
+    busy.hidden = !on;
+    out.classList.toggle('ex-running', on);
+    if (!on) return;
+    const t0 = Date.now();
+    const tick = () => {
+      const s = Math.floor((Date.now() - t0) / 1000);
+      busyText.textContent = s ? `Running the query… ${s}s` : 'Running the query…';
+      info.textContent = busyText.textContent;
+    };
+    tick();
+    ticker = setInterval(tick, 1000);
+  }
   async function run() {
     const my = ++seq;
     let q;
     try {
       q = buildQuery(state);
-    } catch (e) { result = null; info.textContent = e.message; info.className = 'ex-info ex-error'; draw(); return; }
-    if (!q) { result = null; daxText.textContent = ''; info.textContent = ''; draw(); return; }
+    } catch (e) { running(false); result = null; info.textContent = e.message; info.className = 'ex-info ex-error'; draw(); return; }
+    if (!q) { running(false); result = null; daxText.textContent = ''; info.textContent = ''; draw(); return; }
     daxText.textContent = ctx.toDax(q);
     info.className = 'ex-info';
-    info.textContent = 'Running…';
+    running(true);
     try {
-      const rows = await ctx.run(q);
+      let rows = await ctx.run(q);
       if (my !== seq) return;
-      result = { state: structuredClone(state), rows };
+      // The cap counts the total rows too, and they sort first (their keys are blank), so a
+      // capped pivot can be all totals and no detail. Totals of a view that shows only part
+      // of the rows mean little anyway: when the cap is hit they are dropped.
+      let note = '';
+      if (rows.length >= CAP && q.totals) {
+        q = buildQuery({ ...state, totals: false });
+        daxText.textContent = ctx.toDax(q);
+        rows = await ctx.run(q);
+        if (my !== seq) return;
+        note = ' — totals left out';
+      }
+      const shown = { ...structuredClone(state), totals: !!q.totals };
+      result = { state: shown, rows };
       const n = rows.filter(r => !r[ROW_TOTAL] && !r[COL_TOTAL]).length;
-      info.textContent = rows.length >= CAP ? `${n.toLocaleString()} rows (the first ${CAP.toLocaleString()}: add a filter for all of them)`
+      running(false);
+      info.textContent = rows.length >= CAP
+        ? `First ${n.toLocaleString()} rows: add a filter for all of them${note}`
         : `${n.toLocaleString()} row${n === 1 ? '' : 's'}`;
       draw();
     } catch (e) {
       if (my !== seq) return;
+      running(false);
       result = null;
       info.className = 'ex-info ex-error';
-      info.textContent = e.message?.includes('Out of Memory') ? 'Out of memory: add a filter.' : `Error: ${e.message}`;
+      info.textContent = e.cancelled ? 'Stopped.'
+        : e.message?.includes('Out of Memory') ? 'Out of memory: add a filter.' : `Error: ${e.message}`;
       draw();
     }
   }
