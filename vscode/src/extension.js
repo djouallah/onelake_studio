@@ -612,8 +612,9 @@ async function activateInner(context) {
     set: list => context.globalState.update(favKey(), [...new Set(list)].sort((a, b) => a.localeCompare(b))),
   };
 
-  // Items grouped under one heading per type, or flat: the explorer's title-bar toggle,
-  // remembered across windows and restarts. The context key picks which button shows.
+  // The explorer's top level: workspaces, or one heading per item type across them (tree.js
+  // _byType) — the title-bar toggle, remembered across windows and restarts. The context key
+  // picks which button shows.
   const GROUP_KEY = 'onelakeStudio.groupByType';
   const groupByType = () => context.globalState.get(GROUP_KEY, false);
   const setGrouped = async on => {

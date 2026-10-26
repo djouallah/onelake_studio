@@ -74,13 +74,13 @@
       },
       {
         "command": "onelakeStudio.groupByType",
-        "title": "Group Items by Type",
+        "title": "Group by Type",
         "category": "OneLake Studio",
         "icon": "$(list-tree)"
       },
       {
         "command": "onelakeStudio.ungroupByType",
-        "title": "Show Items Ungrouped",
+        "title": "Group by Workspace",
         "category": "OneLake Studio",
         "icon": "$(list-flat)"
       },

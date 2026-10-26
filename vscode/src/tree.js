@@ -25,6 +25,24 @@ const { fmtBytes, hasFilesArea, kindLabel, kindLabelPlural, strip } = require('.
 // the panel a { workspace, item, schema, table } with nothing to parse back out.
 const node = (kind, label, extra) => ({ kind, label, ...extra });
 
+// `fn` over every workspace, four at a time; the ones that failed come back by name.
+async function eachOf(names, fn) {
+  const failed = [];
+  let next = 0;
+  const worker = async () => {
+    while (next < names.length) {
+      const ws = names[next++];
+      try { await fn(ws); } catch (e) { failed.push({ ws, e }); }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(4, names.length) }, worker));
+  return failed;
+}
+// ...and those, as one node rather than a tree that silently shows less.
+const unlisted = failed => node('error', `${failed.length} workspace(s) could not be listed`, {
+  leaf: true, detail: failed.map(f => `${f.ws}: ${(f.e && f.e.message) || f.e}`).join('\n'),
+});
+
 class LakehouseTree {
   /**
    * @param {object} deps
@@ -60,6 +78,13 @@ class LakehouseTree {
 
   _changed(c) {
     if (c.kind === 'workspaces') return this._emitter.fire(undefined);
+    // Grouped by type, a workspace's items are spread over the top-level headings, and its
+    // models sit under the one Semantic models heading.
+    if (this.groupByType() && c.kind === 'items') return this._emitter.fire(undefined);
+    if (this.groupByType() && c.kind === 'models') {
+      const all = this._nodes.get('allModels');
+      return all ? this._emitter.fire(all) : undefined;
+    }
     const id = c.kind === 'items' ? `workspace|${c.workspace}`
              : c.kind === 'tables' ? `tables|${c.workspace}|${c.item}`
              : c.kind === 'files' ? `dir|${c.workspace}|${c.item}|${c.dir || ''}`
@@ -96,6 +121,7 @@ class LakehouseTree {
          : n.kind === 'dir' ? `dir|${n.workspace}|${n.item}|${n.dir || ''}`
          : n.kind === 'models' ? `models|${n.workspace}`
          : n.kind === 'semanticModel' ? `model|${n.workspace}|${n.modelId}`
+         : n.kind === 'allModels' ? 'allModels'
          : null;
   }
 
@@ -147,7 +173,10 @@ class LakehouseTree {
       case 'workspace':
         item.iconPath = new vscode.ThemeIcon(n.pinned ? 'star-full' : 'folder');
         break;
-      // A workspace's items of one type, when the tree is grouped by type.
+      // Grouped by type: every item of one type across workspaces, and every semantic model.
+      case 'allModels':
+        item.iconPath = new vscode.ThemeIcon('graph');
+        break;
       case 'kindGroup':
         item.iconPath = new vscode.ThemeIcon('folder-library');
         item.description = String(n.count);
@@ -156,7 +185,7 @@ class LakehouseTree {
         item.iconPath = new vscode.ThemeIcon('database');
         // The suffix OneLake names the directory with is Fabric's internal type; kindLabel
         // turns the few that read badly ("SQLDbNative") into what the portal calls them.
-        item.description = n.kindLabel;
+        item.description = n.showWorkspace ? n.workspace : n.kindLabel;
         break;
       case 'tables':
         item.iconPath = new vscode.ThemeIcon('list-tree');
@@ -183,7 +212,7 @@ class LakehouseTree {
         item.iconPath = local
           ? new vscode.ThemeIcon('pass-filled', new vscode.ThemeColor('testing.iconPassed'))
           : new vscode.ThemeIcon('cloud');
-        if (local) item.description = 'cached';
+        item.description = [n.showWorkspace ? n.workspace : '', local ? 'cached' : ''].filter(Boolean).join(' · ');
         item.command = { command: 'onelakeStudio.openSemanticModel', title: 'Open semantic model', arguments: [n] };
         item.tooltip = (n.description ? `${n.description}\n\n` : '') + (local
           ? `Cached at ${local}. Click to open it; Download Again fetches it fresh from Fabric.`
@@ -237,6 +266,7 @@ class LakehouseTree {
     if (!n) {
       const names = await this.onelake.workspaces({ fresh: this._isFresh('root', undefined, undefined) });
       if (!names.length) return [node('empty', 'No workspaces — is this the right tenant?', { leaf: true })];
+      if (this.groupByType()) return this._byType(names);
       const pinned = new Set(this.favorites.get());
       const favs = names.filter(w => pinned.has(w));
       return [
@@ -261,18 +291,34 @@ class LakehouseTree {
     if (n.kind === 'workspace') {
       const items = await this.onelake.items(n.workspace,
         { fresh: this._isFresh(`items|${n.workspace}`, n.workspace) });
-      // Grouped: one heading per type, open, so the items are still one level down.
-      const kids = !items.length ? [node('empty', 'Nothing here holds tables', { leaf: true })]
-        : this.groupByType() ? this._kindGroups(n.workspace, items)
-        : items.map(it => this._item(n.workspace, it, true));
+      const kids = items.length
+        ? items.map(it => this._item(n.workspace, it))
+        : [node('empty', 'Nothing here holds tables', { leaf: true })];
       // Last, and closed: listing it is a Fabric API call, on a token sign-in never asked for.
       if (this.fabric) kids.push(this._track(node('models', 'Semantic models', { workspace: n.workspace })));
       return kids;
     }
 
+    // Grouped by type: the heading already holds its items, gathered by _byType.
     if (n.kind === 'kindGroup') {
-      const items = await this.onelake.items(n.workspace);   // the parent's listing, from the store
-      return items.filter(it => it.kind === n.group).map(it => this._item(n.workspace, it, false));
+      return n.entries.map(({ workspace, it }) => this._item(workspace, it, { showWorkspace: true }));
+    }
+
+    // Grouped by type: every workspace's semantic models, a few workspaces at a time.
+    if (n.kind === 'allModels') {
+      if (!await this.hasFabric()) return [node('fabricSignIn', 'Sign in to list semantic models', { leaf: true })];
+      const names = await this.onelake.workspaces();
+      const rows = [];
+      const failed = await eachOf(names, async ws => {
+        const models = await this.onelake.models(ws, { fresh: this._isFresh(`models|${ws}`, ws) });
+        for (const m of models) rows.push({ ws, m });
+      });
+      rows.sort((a, b) => a.m.name.localeCompare(b.m.name) || a.ws.localeCompare(b.ws));
+      const kids = rows.map(({ ws, m }) => this._track(node('semanticModel', m.name, {
+        workspace: ws, model: m.name, modelId: m.id, description: m.description, leaf: true, showWorkspace: true,
+      })));
+      if (failed.length) kids.push(unlisted(failed));
+      return kids.length ? kids : [node('empty', 'No semantic models', { leaf: true })];
     }
 
     if (n.kind === 'models') {
@@ -345,22 +391,35 @@ class LakehouseTree {
     return node('table', t.table, { ...lh, leaf: true, schema: t.schema || '', table: t.table });
   }
 
-  // An item, named without its suffix. Its type is said beside it only where no heading
-  // above already says it. The node is the same grouped or not, so its expansion survives
-  // the toggle.
-  _item(workspace, it, withKind) {
+  // An item, named without its suffix: its type beside it under a workspace, its workspace
+  // beside it under a type heading. The node is the same either way, so its expansion
+  // survives the toggle.
+  _item(workspace, it, { showWorkspace = false } = {}) {
     return node('item', it.name.replace(/\.[^.]+$/, ''), {
-      workspace, item: it.name, kindLabel: withKind ? kindLabel(it.kind) : '',
+      workspace, item: it.name, kindLabel: kindLabel(it.kind), showWorkspace,
     });
   }
 
-  // One heading per type in the workspace — "Lakehouses 3", "Warehouses 1" — in name order.
-  _kindGroups(workspace, items) {
-    const counts = new Map();
-    for (const it of items) counts.set(it.kind, (counts.get(it.kind) || 0) + 1);
-    return [...counts]
-      .map(([kind, count]) => node('kindGroup', kindLabelPlural(kind), { workspace, group: kind, count, expanded: true }))
-      .sort((a, b) => a.label.localeCompare(b.label));
+  // Grouped by type: the top level is one heading per type — "Lakehouses 7", "Warehouses 2" —
+  // over every workspace's items, then the semantic models. The one place the tree reads
+  // across workspaces: the first time, each workspace's item listing once (cache-first, a
+  // few at a time); after that it is drawn from disk like everything else.
+  async _byType(names) {
+    const byKind = new Map();   // kind -> [{ workspace, it }]
+    const failed = await eachOf(names, async ws => {
+      const items = await this.onelake.items(ws, { fresh: this._isFresh(`items|${ws}`, ws) });
+      for (const it of items) {
+        if (!byKind.has(it.kind)) byKind.set(it.kind, []);
+        byKind.get(it.kind).push({ workspace: ws, it });
+      }
+    });
+    const heads = [...byKind].map(([kind, entries]) => node('kindGroup', kindLabelPlural(kind), {
+      group: kind, count: entries.length, expanded: true,
+      entries: entries.sort((x, y) => x.it.name.localeCompare(y.it.name) || x.workspace.localeCompare(y.workspace)),
+    })).sort((x, y) => x.label.localeCompare(y.label));
+    if (this.fabric) heads.push(this._track(node('allModels', 'Semantic models', {})));
+    if (failed.length) heads.push(unlisted(failed));
+    return heads.length ? heads : [node('empty', 'Nothing here holds tables', { leaf: true })];
   }
 }
 
