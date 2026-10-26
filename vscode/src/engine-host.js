@@ -78,8 +78,10 @@ function scrub(e, token) {
 
 // This string came from the catalog (via the host's store) and is spliced into SQL, so
 // only the one shape the catalog actually returns is accepted: a OneLake abfss URI ending
-// in a metadata.json.
-const ONELAKE_METADATA = /^abfss:\/\/[^@/\s]+@onelake\.dfs\.fabric\.microsoft\.com\/[^\s]+\.metadata\.json$/i;
+// in a metadata.json. Spaces are allowed — a workspace named "ANZ Retail Demo" gets name-based
+// paths with them, and DuckDB reads those fine; sqlStr quotes the string either way. Line
+// breaks and NULs are not.
+const ONELAKE_METADATA = /^abfss:\/\/[^@/\r\n\0]+@onelake\.dfs\.fabric\.microsoft\.com\/[^\r\n\0]+\.metadata\.json$/i;
 const isOneLakeMetadata = s => typeof s === 'string' && ONELAKE_METADATA.test(s);
 
 // 25% of RAM unless told otherwise. DuckDB's own default is 80%, which is a fine answer
@@ -122,9 +124,37 @@ function proxySettings(proxyUrl) {
   } catch (_) { return null; }
 }
 
+// The disk cache's directory, made, and held under its budget before DuckDB opens anything
+// in it: oldest first — cache_httpfs touches a file each time it serves it, so the oldest is
+// the least recently used — down to 80%.
+async function prepareFileCache(dir, maxBytes, onWarn) {
+  try {
+    await fsp.mkdir(dir, { recursive: true });
+    if (!(maxBytes > 0)) return;
+    const files = [];
+    for (const name of await fsp.readdir(dir)) {
+      try {
+        const st = await fsp.stat(join(dir, name));
+        if (st.isFile()) files.push({ p: join(dir, name), bytes: st.size, at: st.mtimeMs });
+      } catch (_) {}
+    }
+    let total = files.reduce((n, f) => n + f.bytes, 0);
+    if (total <= maxBytes) return;
+    files.sort((a, b) => a.at - b.at);
+    for (const f of files) {
+      if (total <= maxBytes * 0.8) break;
+      await fsp.rm(f.p, { force: true }).catch(() => {});
+      total -= f.bytes;
+    }
+  } catch (e) {
+    onWarn(`could not prepare the disk cache in ${dir} — ${e.message}`);
+  }
+}
+
 function createEngineHost({ extensionDir, onLog = () => {}, onWarn = () => {}, getToken = null,
                             memoryLimit = '', allowedPaths = [], lockdown = true,
-                            httpProxy = '', bundledExtensions = null } = {}) {
+                            httpProxy = '', bundledExtensions = null,
+                            fileCacheDir = null, fileCacheMaxBytes = 0 } = {}) {
   let instance = null;
   // The connection for the host's OWN statements — the secret, extension loading. Page
   // queries never run on it: each gets a connection of its own (see withConn), so a cancel
@@ -193,6 +223,13 @@ function createEngineHost({ extensionDir, onLog = () => {}, onWarn = () => {}, g
         memory_limit: memoryLimit || defaultMemoryLimit(),
       };
       if (extensionDir) config.extension_directory = extensionDir;
+      // The disk cache (cache_httpfs) ships in the vsix as our own build of it, with the
+      // Windows fix that is not released upstream yet — and our build is not signed by
+      // DuckDB. Loading it needs unsigned extensions allowed; the lockdown below then
+      // refuses every LOAD, so nothing the page sends can load anything else.
+      const cacheBuild = fileCacheDir && bundledExtensions && join(bundledExtensions, 'cache_httpfs.duckdb_extension');
+      if (cacheBuild && fs.existsSync(cacheBuild)) config.allow_unsigned_extensions = 'true';
+      if (fileCacheDir) await prepareFileCache(fileCacheDir, fileCacheMaxBytes, onWarn);
       instance = await DuckDBInstance.create(':memory:', config);
       conn = await instance.connect();
       mark('instance+connect');
@@ -219,6 +256,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onWarn = () => {}, g
       for (const ext of ['iceberg', 'azure', 'httpfs']) await load(ext, '', true);
       for (const ext of ['avro', 'excel', 'sqlite_scanner']) await load(ext, '');
       for (const ext of ['h3', 'zipfs']) await load(ext, 'community');
+      if (fileCacheDir) await enableFileCache(fileCacheDir);
       mark('extensions');
       // azure has an HTTP client of its own, with its own proxy settings.
       if (proxy) {
@@ -271,6 +309,8 @@ function createEngineHost({ extensionDir, onLog = () => {}, onWarn = () => {}, g
         const dirs = [`${tmp}/`, 'https://', 'abfss://', 'abfs://', 'az://', 'azure://',
                       'zip://abfss://', 'zip://https://'];
         if (extensionDir) dirs.push(`${extensionDir.replace(/\\/g, '/')}/`);
+        // cache_httpfs checks each cache file against these before it reads or writes it.
+        if (capabilities.fileCache) dirs.push(`${fileCacheDir.replace(/\\/g, '/')}/`);
         const paths = [ca, ...allowedPaths.filter(Boolean).map(p => String(p).replace(/\\/g, '/'))];
         await conn.run(`SET allowed_directories = [${dirs.map(sqlStr).join(', ')}];`);
         await conn.run(`SET allowed_paths = [${paths.map(sqlStr).join(', ')}];`);
@@ -304,7 +344,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onWarn = () => {}, g
 
   const capabilities = {
     excel: false, zipfs: false, h3: false, avro: false, httpfs: false, sqlite_scanner: false,
-    iceberg: false, azure: false,
+    iceberg: false, azure: false, cache_httpfs: false, fileCache: false,
   };
 
   // An optional extension that will not load costs one file format, which is not a
@@ -338,6 +378,33 @@ function createEngineHost({ extensionDir, onLog = () => {}, onWarn = () => {}, g
       // Through onWarn, not console.warn: the extension-host devtools console is where
       // nobody looks, and "why can't I open this .xlsx" deserves a findable answer.
       onWarn(`DuckDB extension '${ext}' unavailable — ${e.message}`);
+    }
+  }
+
+  // The bytes DuckDB reads from OneLake — data files, manifests, metadata.json — kept on
+  // disk across sessions by cache_httpfs, around the azure filesystem: read once, read from
+  // here after, restart or not. Not validated against OneLake: that is a request per file
+  // opened, and an Iceberg table's files are never rewritten under the same name, so a
+  // cached copy cannot go stale. Files/ objects can be, so they are not cached at all.
+  // Optional: without it, reads go to OneLake as they always did.
+  async function enableFileCache(dir) {
+    await load('cache_httpfs', 'community');
+    if (!capabilities.cache_httpfs) return;
+    try {
+      await conn.run(`SET cache_httpfs_type = 'on_disk';`);
+      await conn.run(`SET cache_httpfs_cache_directory = ${sqlStr(dir.replace(/\\/g, '/'))};`);
+      for (const name of ['AzureDfsStorageFileSystem', 'AzureBlobStorageFileSystem']) {
+        // Released builds run a constant call twice and throw on the second although the
+        // wrap worked: what is registered afterwards is the answer, not the error.
+        try { await conn.run(`SELECT cache_httpfs_wrap_cache_filesystem(${sqlStr(name)});`); } catch (_) {}
+      }
+      await conn.run(`SELECT cache_httpfs_add_exclusion_regex('.*/Files/.*');`);
+      const r = await conn.runAndReadAll(`SELECT count(*)::INTEGER AS n FROM cache_httpfs_list_registered_filesystems()
+        WHERE registered_filesystems = 'cache_httpfs_AzureDfsStorageFileSystem'`);
+      capabilities.fileCache = r.getRowObjects()[0].n === 1;
+      if (!capabilities.fileCache) onWarn('cache_httpfs could not wrap the azure filesystem — OneLake reads are not cached on disk');
+    } catch (e) {
+      onWarn(`disk cache unavailable — ${e.message}`);
     }
   }
 

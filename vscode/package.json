@@ -251,6 +251,13 @@
           "patternErrorMessage": "A DuckDB memory size, e.g. 4GB or 512MB.",
           "markdownDescription": "Most memory DuckDB may use, e.g. `4GB`. Empty means a quarter of this machine's RAM — DuckDB's own default is 80%, which is too much for the extension host every other extension shares. Bigger queries spill to a temp directory instead of failing. Applies the next time the engine starts."
         },
+        "onelakeStudio.diskCacheMaxGB": {
+          "type": "number",
+          "default": 10,
+          "minimum": 0,
+          "scope": "machine",
+          "markdownDescription": "How much of what DuckDB reads from OneLake (table data, manifests, metadata) is kept on disk, in GB, so a table read once is read from this machine afterwards — even after a restart, with no request to OneLake. Tables only: an Iceberg table's files never change once written, while `Files/` objects can, so those are always read live. Kept per Microsoft account; the oldest is dropped past this size when the engine starts. **Clear Cached OneLake Data** empties it. Applies the next time the engine starts."
+        },
         "onelakeStudio.semanticModelsFolder": {
           "type": "string",
           "default": "",

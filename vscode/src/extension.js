@@ -262,6 +262,27 @@ const fmtBytes = n => n >= GB ? `${(n / GB).toFixed(1)} GB`
 // built for another architecture — surfaces when the panel opens, with a message, rather
 // than taking activation down with it.
 let engine = null;
+
+// The engine's disk cache of what it reads from OneLake (engine-host.js, cache_httpfs): one
+// directory per account, like the store. Cached bytes are served without OneLake being
+// asked, so they must never be served to a different account. Set at activation and
+// whenever the account moves; null when signed out, which runs the engine without it.
+let fileCacheRoot = null;
+let fileCacheAccount = null;
+const fileCacheDirFor = key => (fileCacheRoot && key ? join(fileCacheRoot, key) : null);
+
+// The size of a directory's files, and their removal — for the disk cache.
+async function dirBytes(dir) {
+  if (!dir) return 0;
+  const fsp = require('node:fs/promises');
+  let n = 0;
+  for (const name of await fsp.readdir(dir).catch(() => [])) {
+    const st = await fsp.stat(join(dir, name)).catch(() => null);
+    if (st && st.isFile()) n += st.size;
+  }
+  return n;
+}
+const removeDir = dir => (dir ? require('node:fs/promises').rm(dir, { recursive: true, force: true }).catch(() => {}) : Promise.resolve());
 // The editor's proxy, for DuckDB's own downloads and reads: VS Code's `http.proxy` setting
 // first, then the environment variables the editor itself would honour.
 function editorProxy() {
@@ -296,6 +317,9 @@ function ensureEngine(context, { readme } = {}) {
       // the very token that just expired, and the retry becomes a no-op.
       getToken: opts => hostToken(opts),
       memoryLimit: vscode.workspace.getConfiguration('onelakeStudio').get('engineMemoryLimit', '').trim(),
+      fileCacheDir: fileCacheDirFor(fileCacheAccount),
+      fileCacheMaxBytes: Math.max(0, Number(vscode.workspace.getConfiguration('onelakeStudio')
+        .get('diskCacheMaxGB', 10)) || 0) * 1024 ** 3,
     });
   } catch (e) {
     out && out.appendLine(`native DuckDB unavailable: ${e.message}`);
@@ -462,6 +486,8 @@ async function activateInner(context) {
   const storeRoot = join(context.globalStorageUri.fsPath, 'onelake-store-v1');
   const storeFor = key => createStore({ dir: join(storeRoot, key || 'signed-out'), ttlMs: catalogTtlMs() });
   let storeAccount = accountKey(await getSession({ createIfNone: false }).catch(() => null));
+  fileCacheRoot = join(context.globalStorageUri.fsPath, 'file-cache-v1');
+  fileCacheAccount = storeAccount;
   onelake = createOneLake({
     catalog,
     store: storeFor(storeAccount),
@@ -473,6 +499,7 @@ async function activateInner(context) {
     const key = accountKey(await getSession({ createIfNone: false }).catch(() => null));
     if (key === storeAccount) return;
     storeAccount = key;
+    fileCacheAccount = key;   // the engine picks it up when it is next built
     onelake.useStore(storeFor(key));
   }
   context.subscriptions.push({ dispose: onelake.onRefreshFailed((what, e) => {
@@ -596,7 +623,9 @@ async function activateInner(context) {
     // prove the cache is the reason rather than assume it. It also answers "what is this
     // costing me on disk".
     vscode.commands.registerCommand('onelakeStudio.clearCache', async () => {
-      const size = await onelake.size();
+      const fileCacheDir = fileCacheDirFor(storeAccount);
+      const fileBytes = await dirBytes(fileCacheDir);
+      const size = await onelake.size() + fileBytes;
       if (!size) {
         vscode.window.showInformationMessage('OneLake Studio: the cache is empty.');
         return;
@@ -604,10 +633,17 @@ async function activateInner(context) {
       // Everything deleted here is re-read from OneLake at OneLake's speed, which is the
       // whole reason the cache exists — so it is asked first.
       const pick = await vscode.window.showWarningMessage(
-        `Delete ${fmtBytes(size)} of cached OneLake listings, table metadata and first rows? They will be read from OneLake again.`,
+        `Delete ${fmtBytes(size)} of cached OneLake listings, table metadata, first rows and table data? They will be read from OneLake again.`,
         { modal: true }, 'Delete');
       if (pick !== 'Delete') return;
       await onelake.clear();
+      // The engine has the disk cache's files open: it goes first, and is rebuilt on the
+      // next open. The panel's tables live in that engine, so the panel goes with it.
+      if (fileBytes) {
+        closePanel();
+        await resetEngine();
+        await removeDir(fileCacheDir);
+      }
       postLive({ type: 'reset' });
       tree.redraw();
       vscode.window.showInformationMessage(
@@ -707,6 +743,8 @@ async function activateInner(context) {
       if (!session) {
         closePanel();
         await resetEngine();
+        // Its table data too, once the engine reading it is closed.
+        await removeDir(fileCacheDirFor(before));
         vscode.window.showInformationMessage(
           'OneLake Studio signed out — the Microsoft account is no longer available.');
       } else if (engine && storeAccount !== before) {

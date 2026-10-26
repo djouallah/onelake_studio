@@ -39,6 +39,13 @@ const EXTENSIONS = [
   // Not h3 or zipfs: they are COMMUNITY extensions, and a LOAD by path verifies against the
   // core signing keys only (DuckDB 2.0 refuses them as unsigned). They keep downloading
   // from the community repository on first use, signature checked as before.
+  //
+  // cache_httpfs, the disk cache, is OUR build of it (djouallah/duck-read-cache-fs, branch
+  // fix/windows-long-path-xattr): the released one caches nothing on disk on Windows. It is
+  // unsigned, and engine-host.js allows that for it. Back to the community build once the
+  // fix is released upstream.
+  { name: "cache_httpfs", required: false,
+    url: (duckdb, platform) => `https://github.com/djouallah/duck-read-cache-fs/releases/download/onelake-${duckdb}-1/cache_httpfs.${platform}.duckdb_extension` },
 ];
 
 const target = process.argv[2];
@@ -67,14 +74,15 @@ async function get(url) {
 
 let bytes = 0;
 for (const ext of EXTENSIONS) {
-  const url = `${ext.repo}/${duckdb}/${platform}/${ext.name}.duckdb_extension.gz`;
+  // A repository serves gzipped binaries; a release asset (ext.url) is the binary itself.
+  const url = ext.url ? ext.url(duckdb, platform) : `${ext.repo}/${duckdb}/${platform}/${ext.name}.duckdb_extension.gz`;
   const got = await get(url);
   if (!Buffer.isBuffer(got)) {
     if (ext.required) throw new Error(`${ext.name} for ${platform} (${duckdb}): HTTP ${got.status} from ${url}`);
     console.log(`  skip  ${ext.name} — no ${platform} build (${got.status})`);
     continue;
   }
-  const bin = gunzipSync(got);
+  const bin = ext.url ? got : gunzipSync(got);
   await writeFile(join(OUT, `${ext.name}.duckdb_extension`), bin);
   bytes += bin.length;
   console.log(`  got   ${ext.name} (${(bin.length / 1e6).toFixed(1)}MB)`);

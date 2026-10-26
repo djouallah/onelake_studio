@@ -146,7 +146,11 @@ test("native engine host", async t => {
 test("only a OneLake metadata.json is read with iceberg_scan", () => {
   assert.ok(isOneLakeMetadata(
     "abfss://ws@onelake.dfs.fabric.microsoft.com/lh.Lakehouse/Tables/dbo/t/metadata/00001-ab.metadata.json"));
+  // A workspace named with spaces gets name-based paths with them, and they read fine.
+  assert.ok(isOneLakeMetadata(
+    "abfss://ANZ Retail Demo@onelake.dfs.fabric.microsoft.com/lh_contoso.Lakehouse/Tables/dbo/date/metadata/v3.metadata.json"));
   for (const bad of [
+    "abfss://ws@onelake.dfs.fabric.microsoft.com/lh/Tables/t/metadata/v1.metadata.json\nATTACH 'x'; --.metadata.json",
     null, "", 42,
     "file:///etc/passwd.metadata.json",
     "https://onelake.dfs.fabric.microsoft.com/ws/lh.Lakehouse/Tables/t/metadata/v1.metadata.json",

@@ -33,6 +33,7 @@ The panel loads nothing from the network: its few libraries ship inside the exte
 | `onelakeStudio.catalogTtlMinutes` | How old a listing or a table's metadata may be before it is refreshed (default 5). The last known answer is always served instantly from disk and refreshed behind you, so a table you have opened before opens without waiting — even after a restart. |
 | `onelakeStudio.prefetchMetadata` | Read every table's metadata in the background once a lakehouse's Tables node is opened, so the first click is a disk read (default on). |
 | `onelakeStudio.semanticModelsFolder` | Where a semantic model's `.bim` is downloaded (`<folder>/<workspace>/<model>.bim`) and opened from after that. Empty means `OneLakeStudio/semantic-models` in your home directory. |
+| `onelakeStudio.diskCacheMaxGB` | How much table data read from OneLake is kept on disk, per account, so it is read from this machine afterwards, even after a restart (default 10). |
 | `onelakeStudio.engineMemoryLimit` | Most memory DuckDB may use, e.g. `4GB`. Empty means a quarter of the machine's RAM. |
 
 ## Semantic models
@@ -69,10 +70,13 @@ goes over one message channel to the host, and its few libraries ship inside the
   request, even after a restart; first rows are kept per snapshot, so they are never stale.
   Each item's Iceberg catalog prefix is kept there too, so a restart does not pay the
   catalog's config call again. **Refresh** re-reads in the foreground.
-- **What DuckDB reads is cached for the session.** Parquet footers, and the bytes of data and
-  manifest files, stay in DuckDB's file cache; blocks evicted under memory pressure spill to
-  the session's temp directory rather than being fetched again. Nothing of the data outlives
-  the session: DuckDB 2.0 has no persistent file cache that works on Windows or with OneLake.
+- **What DuckDB reads is cached on disk.** Data files, manifests and metadata read from
+  OneLake are kept per account by the `cache_httpfs` extension, so a table read once is read
+  from this machine afterwards, restart or not, without asking OneLake. Tables only: an
+  Iceberg table's files never change once written, while `Files/` objects can, so those are
+  always read live. The vsix carries a build of `cache_httpfs` with a Windows fix that is not
+  released upstream yet (it caches nothing on disk on Windows without it), which DuckDB loads
+  as an unsigned extension until the fix ships.
 
 Requires desktop VS Code on x64 or arm64 Windows, macOS or Linux: the engine is a native
 library, so this does not run on vscode.dev.
