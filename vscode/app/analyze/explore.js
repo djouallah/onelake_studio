@@ -321,7 +321,7 @@ export function createExplorer(root, ctx) {
       return el('details', { class: 'ex-table-group', open: term || t.dimension ? true : null },
         el('summary', {}, t.name, el('span', { class: 'ex-kind' }, t.dimension ? 'dimension' : 'fact')),
         cols.map(item), ms.map(item));
-    }));
+    }).filter(Boolean));   // a table with nothing matching the search draws nothing, not "null"
   }
   function chipText(shelf, i) {
     if (shelf !== 'filters') return nameOf(state[shelf][i]);
