@@ -167,7 +167,14 @@ section.modelOpen #previewBtn, section.modelOpen #runBtn, section.modelOpen #csv
 .ex-agg:hover, .ex-agg:focus-visible { background: var(--hover); outline: none; }
 .ex-agg.active { color: var(--on-accent); background: var(--accent); }
 
+/* A narrow panel (Claude open beside it) keeps the fields beside the view, in a slimmer
+   column; only a very narrow one stacks them, and then the list is given a height of its
+   own — stacked with none, its flex: 1 1 0 collapsed it to the search box. */
 @media (max-width: 900px) {
-  .model-page, .ex { grid-template-columns: 1fr; }
-  .ex-fields { max-height: 40vh; }
+  .model-page { grid-template-columns: 1fr; }
+  .ex { grid-template-columns: 190px minmax(0, 1fr); }
+}
+@media (max-width: 560px) {
+  .ex { grid-template-columns: 1fr; min-height: 0; }
+  .ex-fields { height: 40vh; }
 }

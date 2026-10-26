@@ -182,6 +182,7 @@ const label = a => a.length ? a.map(v => v == null ? '(blank)' : String(v)).join
 //   css(name)        a CSS token's value (the chart's tints)
 //   loadState()      the shelves kept from the last visit (or null)
 //   saveState(s)     keep the shelves for the next visit
+//   onRun(r)         optional: each settled query — { dax, rows, fields, sample } or { dax, error }
 export function createExplorer(root, ctx) {
   let fields = null, state = load(), drag = null, seq = 0, timer = null, result = null, pop = null;
   let popTimer = null, destroyed = false;
@@ -551,6 +552,7 @@ export function createExplorer(root, ctx) {
       info.textContent = rows.length >= CAP
         ? `First ${n.toLocaleString()} rows: add a filter for all of them${note}`
         : `${n.toLocaleString()} row${n === 1 ? '' : 's'}`;
+      ctx.onRun?.({ dax: daxText.textContent, rows: n, fields: rows.length ? Object.keys(rows[0]) : [], sample: rows.slice(0, 50) });
       draw();
     } catch (e) {
       if (my !== seq) return;
@@ -559,6 +561,7 @@ export function createExplorer(root, ctx) {
       info.className = 'ex-info ex-error';
       info.textContent = e.cancelled ? 'Stopped.'
         : e.message?.includes('Out of Memory') ? 'Out of memory: add a filter.' : `Error: ${e.message}`;
+      if (!e.cancelled) ctx.onRun?.({ dax: daxText.textContent, error: e.message });
       draw();
     }
   }

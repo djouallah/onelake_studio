@@ -32,6 +32,10 @@ const csvOf = (cols, rows) => [cols, ...rows].map(r => r.map(v => {
   return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }).join(',')).join('\n');
 
+// A lakehouse table's schema in agent SQL: data.Lakehouse's mart.x is data_mart.x.
+const sqlSchema = (lh, t) =>
+  `${lh.item.replace(/\.[^.]+$/, '')}_${t.schema || 'main'}`.replace(/[^A-Za-z0-9_]/g, '_');
+
 /**
  * @param {object} o
  * @param {ReturnType<import('./onelake').createOneLake>} o.onelake
@@ -90,10 +94,6 @@ function createAgent({ onelake, fabric, engine, bimPath, appDir, vendorDir, daxS
     const names = new Set(kept.map(v => v.name.toLowerCase()));
     for (const n of [...defined]) if (!names.has(n)) { semantic.dropView(n); defined.delete(n); }
   }
-
-  // A lakehouse table's schema in agent SQL: data.Lakehouse's mart.x is data_mart.x.
-  const sqlSchema = (lh, t) =>
-    `${lh.item.replace(/\.[^.]+$/, '')}_${t.schema || 'main'}`.replace(/[^A-Za-z0-9_]/g, '_');
 
   // A table as a view, exactly as the panel opens one (data.js openTableView): iceberg_scan
   // over the metadata file the cache holds.
@@ -267,4 +267,4 @@ function createAgent({ onelake, fabric, engine, bimPath, appDir, vendorDir, daxS
   return { run };
 }
 
-module.exports = { createAgent };
+module.exports = { createAgent, sqlSchema };

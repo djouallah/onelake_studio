@@ -43,6 +43,8 @@ const loadEcharts = () => (echartsP ??= new Promise((resolve, reject) => {
 //   rewrite(text)    { sql } — what the user typed, compiled — or null when it names no model
 //   run(sql)         the engine's result of a compiled SQL: { fields, rows, truncated, ... }
 //   setStatus(text, kind)
+//   onScreen(part)   optional: what this view shows — { page }, { sql, rows, … }, { explore } —
+//                    for Claude Code's note of the screen (src/onscreen.js)
 // Returns { destroy }.
 export function mountAnalyze(root, ctx) {
   const el = (tag, attrs = {}, ...kids) => {
@@ -101,6 +103,7 @@ export function mountAnalyze(root, ctx) {
     modelPage.hidden = page !== 'model';
     sqlPage.hidden = page !== 'sql';
     explorePage.hidden = page !== 'explore';
+    ctx.onScreen?.({ page });
     if (page === 'explore') openExplorer();
   }
 
@@ -138,6 +141,7 @@ export function mountAnalyze(root, ctx) {
     try { return await work(); }
     catch (e) {
       if (e.cancelled) { info.textContent = 'Stopped.'; return; }
+      if (button === previewBtn) ctx.onScreen?.({ sql: typed(), error: e.message });
       info.textContent = 'Error: ' + e.message;
       ctx.setStatus('Query error: ' + e.message, 'error');
       console.error('[model view]', e);
@@ -167,6 +171,7 @@ export function mountAnalyze(root, ctx) {
       if (my !== outSeq) return;
       info.textContent = res.rows.length < total
         ? `Showing ${res.rows.length} of ${total.toLocaleString()} rows` : `${total.toLocaleString()} rows`;
+      ctx.onScreen?.({ sql: base, rows: total, fields: res.fields, sample: res.rows.slice(0, 50) });
       ctx.setStatus(`${ctx.name}: ${info.textContent}.`, 'ok');
     });
   }
@@ -252,6 +257,7 @@ export function mountAnalyze(root, ctx) {
       css,
       loadState: () => ctx.loadState(`explore.${ctx.name}`),
       saveState: s => ctx.saveState(`explore.${ctx.name}`, s),
+      onRun: r => ctx.onScreen?.({ explore: r }),
     });
   }
 

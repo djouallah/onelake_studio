@@ -23,6 +23,7 @@ const { hasFilesArea } = require('./names');
 const { createAgent } = require('./agent');
 const { createSemViews } = require('./semviews');
 const { serveBridge } = require('./bridge');
+const { createOnScreen } = require('./onscreen');
 const { PINS } = require('./vendored');
 
 // OneLake accepts tokens in the storage
@@ -356,6 +357,8 @@ async function resetEngine() {
 let rebindStore = async () => {};
 // The semantic views this machine keeps (semviews.js), per account; set by activateInner.
 let semviews = null;
+// What the panel shows, written to a file Claude Code reads (onscreen.js); set at activation.
+let onScreen = null;
 
 async function show(context, options) {
   if (revealPanel()) return true;
@@ -379,6 +382,7 @@ async function show(context, options) {
   if (!eng) return false;
   await openPanel(context, {
     onOpened: logOpened, onBoot: logBoot, engine: eng, build: buildInfo,
+    onScreen: m => { if (onScreen) (m ? onScreen.update(m) : onScreen.close()); },
     host: createHostMethods({
       onelake, engine: eng, onStatus: message => postLive({ type: 'status', message }),
       saveFile, semviews,
@@ -461,7 +465,9 @@ async function writeSkill(context) {
   const fsp = require('node:fs/promises');
   const template = await fsp.readFile(join(context.extensionUri.fsPath, 'claude-skill', 'SKILL.md'), 'utf8');
   const cli = join(context.extensionUri.fsPath, 'cli.mjs').replace(/\\/g, '/');
-  const text = template.split('{{cli}}').join(cli);
+  // Where onscreen.js writes what each window's panel shows.
+  const panel = context.globalStorageUri.fsPath.replace(/\\/g, '/');
+  const text = template.split('{{cli}}').join(cli).split('{{panel}}').join(panel);
   const file = skillFile();
   const before = await fsp.readFile(file, 'utf8').catch(() => null);
   if (before === text) return false;
@@ -496,6 +502,15 @@ async function installSkill(context) {
 async function activate(context) {
   out = vscode.window.createOutputChannel('OneLake Studio');
   context.subscriptions.push(out);
+
+  // One file per window, named by this extension host's pid; the skill reads them all.
+  onScreen = createOnScreen({
+    dir: context.globalStorageUri.fsPath,
+    window: { workspace: vscode.workspace.name || null,
+              folder: ((vscode.workspace.workspaceFolders || [])[0] || {}).uri?.fsPath || null },
+    log: m => out.appendLine(m),
+  });
+  onScreen.sweep().catch(() => {});
 
   // The read indicator, visible even when the panel's tab is not. Hidden until the first
   // burst — a status bar item with nothing to say is noise.
@@ -707,6 +722,7 @@ async function activateInner(context) {
         bytes = await downloading.get(id);
       }
       await openInPanel({ type: 'open-model', name: bimFileName(n.model), path,
+                          workspace: n.workspace, model: n.model,
                           text: Buffer.from(bytes).toString('utf8') });
     } catch (e) {
       if (out) out.appendLine(`download of ${n.model} failed — ${(e && e.stack) || e}`);
@@ -915,6 +931,8 @@ function deactivate() {
   // The burst timers hold the process open if they are live at shutdown.
   clearTimeout(postTimer);
   clearTimeout(idleTimer);
+  // A window closing with its panel open: nothing will be on its screen any more.
+  if (onScreen) onScreen.closeSync();
   // The engine holds a native database handle and a temp directory; closing it is what
   // releases both.
   return engine ? engine.close() : undefined;

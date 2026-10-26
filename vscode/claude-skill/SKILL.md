@@ -1,6 +1,6 @@
 ---
 name: onelake
-description: Answer questions about Microsoft Fabric OneLake data and Power BI semantic models — list workspaces, lakehouses, warehouses, tables and semantic models, read a model's measures and their DAX, compute measures by any column, or run read-only SQL over lakehouse tables. Use whenever the user asks about OneLake, a Fabric workspace/lakehouse/warehouse, a semantic model, a measure, or "what is X by Y" over their Fabric data.
+description: Answer questions about Microsoft Fabric OneLake data and Power BI semantic models — list workspaces, lakehouses, warehouses, tables and semantic models, read a model's measures and their DAX, compute measures by any column, or run read-only SQL over lakehouse tables. Use whenever the user asks about OneLake, a Fabric workspace/lakehouse/warehouse, a semantic model, a measure, or "what is X by Y" over their Fabric data — and whenever they ask about what is on their screen or open in VS Code: "can you see this", "what am I looking at", "this table", "these rows", "this model", "this chart" — the OneLake Studio panel writes what it shows to a file this skill reads; never answer that you cannot see the screen before reading it.
 ---
 
 <!-- Installed by the OneLake Studio extension, which rewrites this file when it updates. -->
@@ -26,6 +26,22 @@ node --no-warnings "{{cli}}" <command>
 | `sql "<sql>" --in <ws>/<item>` | the lakehouse's tables, as `<item>_<schema>.<table>` — e.g. `data_mart.dim_duid` |
 
 Options: `--limit N` (rows printed, default 100), `--csv`, `--fresh` (re-read instead of the cache).
+
+## What the user has on screen
+
+When the user says *this*, *here*, *open*, *on screen*, *what I'm looking at*, or names nothing,
+read the newest `{{panel}}/panel-*.json` first (one per VS Code window; if there are several,
+pick the one whose `window.workspace` matches the user's, else the most recently `updated`).
+
+- `open`: the table, file or semantic model in the OneLake Studio panel. A table or model
+  carries `cli`: the commands that reach it — run those rather than guessing names.
+- `query`: the last SQL the main editor ran, its row count, and `sample` — the first rows on
+  screen. Answer from `sample` when it is enough; re-run through `sql` when it is not.
+- `model`: for a semantic model, which page is in front (`model`, `sql`, `explore`), the SQL
+  page's last query and Explore's last DAX, each with its first rows.
+
+The panel's SQL names a table as the panel does (`"schema"."table"`); through `sql --in`, it is
+`<item>_<schema>.<table>` (`open.cli.sql` shows it). No file means the panel is closed: ask.
 
 ## Answering a semantic-model question
 
