@@ -21,9 +21,9 @@ import { join, dirname, posix } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 
-const { VENDOR } = createRequire(import.meta.url)("./src/vendored.js");
+const { VENDOR } = createRequire(import.meta.url)("../src/vendored.js");
 
-const here = dirname(fileURLToPath(import.meta.url));
+const here = join(dirname(fileURLToPath(import.meta.url)), "..");   // the extension root
 const OUT = join(here, "vendor");
 const JSDELIVR = "https://cdn.jsdelivr.net";
 

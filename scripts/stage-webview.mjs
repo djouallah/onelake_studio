@@ -10,7 +10,7 @@
 import { rm, cp, writeFile } from "node:fs/promises";
 import { execSync } from "node:child_process";
 
-const here = new URL("./", import.meta.url);
+const here = new URL("../", import.meta.url);   // the extension root
 const dst = new URL("./webview/", here);
 
 await rm(dst, { recursive: true, force: true });

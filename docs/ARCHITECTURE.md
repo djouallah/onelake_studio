@@ -173,5 +173,5 @@ test/     node --test suite (npm test) and the browser runners
 docs/     this file, the changelog, a summary of both and a screenshot
 bin/      cli.mjs, the command line: hands ls, table, model, sql to the running extension (bridge.js -> agent.js)
 claude-skill/  the agent skill (Claude Code, GitHub Copilot) that runs cli.mjs, installed by Install Agent Skill
-*.mjs     packaging: stage-webview, vendor, fetch-extensions, check-binding, fetch-binding, make-icon
+scripts/  packaging: stage-webview, vendor, fetch-extensions, check-binding, fetch-binding, make-icon
 ```

@@ -25,6 +25,11 @@ export async function renderMarkdown(text) {
     // allowed on purpose: this is a docs viewer and README badges are the point;
     // the remote-fetch exposure is accepted.
     purify.addHook('afterSanitizeAttributes', node => {
+      // A relative image (the README's screenshot) has nothing to resolve against in
+      // this page, which has no <base>: hidden rather than drawn as a broken icon.
+      if (node.tagName === 'IMG' && !/^[a-z][a-z0-9+.-]*:/i.test(node.getAttribute('src') || '')) {
+        node.setAttribute('hidden', '');
+      }
       if (node.tagName === 'A') {
         node.setAttribute('target', '_blank');
         node.setAttribute('rel', 'noopener noreferrer');

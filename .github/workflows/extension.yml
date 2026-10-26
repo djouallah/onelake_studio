@@ -111,7 +111,7 @@ jobs:
       - run: npm ci --no-audit --no-fund
       # The same bundle a linux-x64 vsix ships, so the test LOADs extensions by path the way
       # an installed extension does.
-      - run: node fetch-extensions.mjs linux-x64
+      - run: node scripts/fetch-extensions.mjs linux-x64
       - run: node --test test/engine-host.test.mjs
 
   package:
@@ -144,7 +144,7 @@ jobs:
       - uses: actions/cache@v4
         with:
           path: vendor
-          key: vendor-${{ hashFiles('vendor.mjs', 'src/vendored.js') }}
+          key: vendor-${{ hashFiles('scripts/vendor.mjs', 'src/vendored.js') }}
 
       # NOT a plain `npm ci`. The eight platform bindings are optionalDependencies gated on
       # os/cpu, so a plain install drops 37MB of the RUNNER's platform into node_modules — and
@@ -160,16 +160,16 @@ jobs:
       # the directory it just wrote.
       - name: Fetch the DuckDB binding for ${{ matrix.target }}
         id: binding
-        run: node fetch-binding.mjs ${{ matrix.target }}
+        run: node scripts/fetch-binding.mjs ${{ matrix.target }}
 
       # And this platform's DuckDB extensions (iceberg, azure, httpfs, avro + the optional
       # ones), so a first run offline or behind a proxy DuckDB cannot use still opens tables.
       - name: Bundle the DuckDB extensions for ${{ matrix.target }}
-        run: node fetch-extensions.mjs ${{ matrix.target }}
+        run: node scripts/fetch-extensions.mjs ${{ matrix.target }}
 
       # The staged page carries the README and a build stamp. `vscode:prepublish` does this
       # too; running it here means a failure shows up as its own step.
-      - run: node stage-webview.mjs
+      - run: node scripts/stage-webview.mjs
 
       # --target stamps TargetPlatform into the manifest AND names the file
       # onelake-studio-<target>-<version>.vsix, which is the name worth having on the

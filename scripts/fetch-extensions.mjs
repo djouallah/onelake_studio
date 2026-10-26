@@ -1,7 +1,7 @@
 // =============================================================================
 // fetch-extensions.mjs — DuckDB's extensions, inside the vsix
 // =============================================================================
-// Usage: node fetch-extensions.mjs <vscode-target>      e.g. win32-x64
+// Usage: node scripts/fetch-extensions.mjs <vscode-target>      e.g. win32-x64
 //
 // The engine needs iceberg, azure and httpfs to read a single table, and on first use
 // DuckDB downloads them from extensions.duckdb.org. Offline, or behind a proxy DuckDB
@@ -19,7 +19,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { gunzipSync } from "node:zlib";
 
-const here = dirname(fileURLToPath(import.meta.url));
+const here = join(dirname(fileURLToPath(import.meta.url)), "..");   // the extension root
 const OUT = join(here, "duckdb-extensions");
 
 const PLATFORM = {
@@ -51,7 +51,7 @@ const EXTENSIONS = [
 const target = process.argv[2];
 const platform = PLATFORM[target];
 if (!platform) {
-  console.error(`usage: node fetch-extensions.mjs <${Object.keys(PLATFORM).join("|")}>`);
+  console.error(`usage: node scripts/fetch-extensions.mjs <${Object.keys(PLATFORM).join("|")}>`);
   process.exit(2);
 }
 

@@ -12,16 +12,12 @@ node_modules/**
 # (A negation is final in vsce — a later exclude cannot narrow it again, so the binding's
 # .d.ts files ship too. ~200KB of text against a 36MB library; not worth a build step.)
 !node_modules/@duckdb/**
-stage-webview.mjs
-fetch-binding.mjs
-fetch-extensions.mjs
-check-binding.mjs
-make-icon.mjs
-vendor.mjs
+# Packaging scripts, run from the checkout.
+scripts/**
 **/*.vsix
 
 # The tracked source of the panel. What ships is webview/ — the staged copy
-# stage-webview.mjs builds from it — so packaging app/ too would ship every file twice.
+# scripts/stage-webview.mjs builds from it — so packaging app/ too would ship every file twice.
 app/**
 
 # The extension's tests: run from the checkout, never shipped.

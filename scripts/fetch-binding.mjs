@@ -12,7 +12,7 @@
 // exactly reproducible: the version is read from the installed @duckdb/node-bindings, so
 // the binding can never drift from the API package that loads it.
 //
-//   node fetch-binding.mjs <vscode-target>
+//   node scripts/fetch-binding.mjs <vscode-target>
 //
 // Run per matrix leg in CI, before `vsce package --target <the same target>`.
 import { mkdir, rm, appendFile, readFile, cp, readdir } from "node:fs/promises";
@@ -21,7 +21,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
 
-const here = dirname(fileURLToPath(import.meta.url));
+const here = join(dirname(fileURLToPath(import.meta.url)), "..");   // the extension root
 const MODULES = join(here, "node_modules", "@duckdb");
 
 // VS Code's target names are not DuckDB's. The mapping is the whole point of this file.

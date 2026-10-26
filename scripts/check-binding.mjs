@@ -16,7 +16,7 @@ import { access, readdir } from "node:fs/promises";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const here = dirname(fileURLToPath(import.meta.url));
+const here = join(dirname(fileURLToPath(import.meta.url)), "..");   // the extension root
 
 const npmRecord = join(here, "node_modules", ".package-lock.json");
 const shaped = await access(npmRecord).then(() => false, () => true);
@@ -32,7 +32,7 @@ if (!shaped || bindings.length !== 1) {
       ? `  present: ${bindings[0]} (installed by npm for THIS machine, not for a --target)\n`
       : `  present: ${bindings.join(", ") || "(none)"}\n`) +
     "  a vsix must be platform-specific — run:\n" +
-    "    node fetch-binding.mjs <target>\n" +
+    "    node scripts/fetch-binding.mjs <target>\n" +
     "    npx @vscode/vsce@3 package --target <the same target>\n" +
     "  (CI does exactly this, one leg per platform.)");
   process.exit(1);

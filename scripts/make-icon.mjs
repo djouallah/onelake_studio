@@ -3,7 +3,7 @@
 //
 // Written by hand rather than pulled from a package: node has zlib, a PNG is a CRC'd
 // header plus one deflate stream, and this repo has no runtime dependencies anywhere
-// else either. Run: node make-icon.mjs
+// else either. Run: node scripts/make-icon.mjs
 import { deflateSync } from "node:zlib";
 import { writeFile, mkdir } from "node:fs/promises";
 
@@ -95,7 +95,7 @@ const png = Buffer.concat([
   chunk("IEND", Buffer.alloc(0)),
 ]);
 
-const out = new URL("./media/", import.meta.url);
+const out = new URL("../media/", import.meta.url);
 await mkdir(out, { recursive: true });
 await writeFile(new URL("./icon.png", out), png);
 console.log(`wrote media/icon.png (${SIZE}x${SIZE}, ${png.length} bytes)`);
