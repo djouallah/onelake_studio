@@ -7,10 +7,10 @@
        site/ without the build's vendored copy — jsDelivr; build.mjs takes jsDelivr out of
        the deployed copy (see cdn.js). wasm-unsafe-eval compiles DuckDB; blob: is the
        worker shim data.js builds. connect-src stays https: because SQL may read any public
-       URL, plus loopback for VS Code. frame-src: MSAL's silent-renewal iframe goes to
+       URL. frame-src: MSAL's silent-renewal iframe goes to
        Microsoft and comes back here. A <meta> cannot set frame-ancestors; nothing here
        needs it. -->
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval' blob: https://cdn.jsdelivr.net; worker-src 'self' blob:; connect-src 'self' https: http://127.0.0.1:* http://localhost:* blob: data:; img-src 'self' data: blob: https:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; frame-src 'self' https://login.microsoftonline.com; object-src 'none'; base-uri 'none'; form-action 'none'" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval' blob: https://cdn.jsdelivr.net; worker-src 'self' blob:; connect-src 'self' https: blob: data:; img-src 'self' data: blob: https:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; frame-src 'self' https://login.microsoftonline.com; object-src 'none'; base-uri 'none'; form-action 'none'" />
   <title>OneLake Studio</title>
   <link rel="stylesheet" href="analyze/analyze.css" />
   <link rel="preconnect" href="https://onelake.dfs.fabric.microsoft.com" crossorigin />
@@ -256,7 +256,6 @@
       display: grid; gap: 0.6rem; width: 100%;
     }
     .gateBox h4 { margin: 0; color: var(--text); font-size: 0.92rem; }
-    .vscodeBox { display: flex; flex-direction: column; align-items: center; gap: 0.35rem; }
     .copyRow { display: flex; gap: 0.4rem; }
     .copyRow input {
       flex: 1; font-family: ui-monospace, Consolas, monospace; font-size: 0.76rem;

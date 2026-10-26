@@ -7,11 +7,11 @@
 //   'error'  -> config is broken; every call fails with a message that says why,
 //               instead of silently degrading to 'none' and 401-ing on every fetch
 //
-// DOM-free: progress is reported through the injected `onStatus` callback so this
-// module never touches the page. app.js owns all UI, including the sign-in gate —
+// DOM-free: a lost session is reported through the injected `onExpired` callback so
+// this module never touches the page. app.js owns all UI, including the sign-in gate —
 // it just calls ensureSession()/getHeaders() here.
 //
-//   const auth = createAuth(cfg, { onStatus, onExpired });
+//   const auth = createAuth(cfg, { onExpired });
 //   if (await auth.ensureSession(false)) { /* have what we need to fetch data */ }
 //   fetch(url, { headers: auth.getHeaders() });
 // =============================================================================
@@ -196,7 +196,7 @@ function createMsalAuth(cfg, { onExpired } = {}) {
   let _publishChain = Promise.resolve();   // serialises the Cache Storage writes
   let _cacheId = '';        // hash of the signed-in identity: see publishToken
 
-  // --- Token bridge to the service worker (sw.js) ---------------------------
+  // --- Handing the token to the service worker (sw.js) ----------------------
   // DuckDB range-reads parquet straight from OneLake URLs, and its API can't set
   // headers, so sw.js signs those requests instead. It only ever holds the token in
   // memory, so push it on every change and answer 'need-token' if the worker was
@@ -543,187 +543,11 @@ export function describeAuthError(e) {
   return msg;
 }
 
-// =============================================================================
-// Signing in with VS Code
-// =============================================================================
-// When the OneLake Studio VS Code extension is running, this page can read OneLake with
-// VS Code's Microsoft sign-in instead of its own: the extension listens on a fixed
-// loopback port, and every OneLake read goes to it and is signed THERE. No app
-// registration, no MSAL, and no token in this page at all — what pairing hands back is a
-// pair of origins with a secret in them. MSAL is the fallback for when VS Code is not
-// there (or the browser cannot reach it — Safari blocks http://127.0.0.1 from https).
-//
-// The page only looks when it has a reason to, because the first fetch to loopback from a
-// public origin is a browser permission prompt ("Local network access"), and a visitor
-// who has never heard of the extension should not get one:
-//   - the URL ends in #vscode (the extension's "Open the Website" command adds it),
-//   - VS Code worked here before (BRIDGE_SEEN, localStorage),
-//   - or the user clicks "Sign in with VS Code".
-const BRIDGE_PORT = 47731;   // onelakeStudio.bridge.port's default — keep them in step
-const BRIDGE_SEEN = 'onelake-studio-bridge';
-const BRIDGE_PAIRING = 'onelake-studio-bridge-pairing';
-const PROBE_MS = 1500;
-const PAIR_MS = 120_000;     // a person is clicking a VS Code modal
-
-const store = (s, k, v) => { try { v == null ? s.removeItem(k) : s.setItem(k, v); } catch (_) {} };
-const load = (s, k) => { try { return s.getItem(k); } catch (_) { return null; } };
-
-// Read once, at module load, and taken out of the address bar: a bookmark or a shared link
-// should not carry the instruction along.
-const BRIDGE_HINT = (() => {
-  try {
-    if (window.location.hash !== '#vscode') return false;
-    history.replaceState(null, '', window.location.pathname + window.location.search);
-    return true;
-  } catch (_) { return false; }
-})();
-
-export function bridgeHinted() {
-  return BRIDGE_HINT || load(localStorage, BRIDGE_SEEN) === '1';
-}
-
-const secretOf = origin => { try { return new URL(origin).pathname.split('/')[1] || ''; } catch (_) { return ''; } };
-
-function createBridgeAuth(cfg, { onStatus = () => {}, onOrigins = async () => {} } = {}) {
-  const base = `http://127.0.0.1:${Number(cfg.bridgePort) || BRIDGE_PORT}`;
-  let pairing = null;
-  try { pairing = JSON.parse(load(sessionStorage, BRIDGE_PAIRING) || 'null'); } catch (_) {}
-  let connected = false;
-  let inflight = null;
-
-  async function call(path, ms) {
-    try {
-      const r = await fetch(base + path, {
-        cache: 'no-store', signal: AbortSignal.timeout(ms),
-        // Chrome's Local Network Access: names the address space so the request is allowed
-        // to ask. Harmless where unknown.
-        targetAddressSpace: 'loopback',
-      });
-      let body = null;
-      try { body = await r.json(); } catch (_) {}
-      return { status: r.status, body: body || {} };
-    } catch (_) { return null; }   // nothing listening, blocked, or timed out
-  }
-
-  // { ok } or { ok:false, reason: 'absent' | 'signed-out' | 'denied' | 'error' }
-  async function connectOnce() {
-    const s = pairing ? secretOf(pairing.dfsOrigin) : '';
-    const probe = await call(`/pair?probe${s ? `&s=${encodeURIComponent(s)}` : ''}`, PROBE_MS);
-    if (!probe || probe.status !== 200) return { ok: false, reason: probe ? 'error' : 'absent' };
-    if (!probe.body.signedIn) return { ok: false, reason: 'signed-out' };
-    // Same VS Code session as last time in this tab: the origins still work, ask nobody.
-    if (!(pairing && probe.body.valid === true)) {
-      onStatus('Waiting for VS Code — approve OneLake Studio\'s request there…');
-      const r = await call('/pair', PAIR_MS);
-      if (!r) return { ok: false, reason: 'absent' };
-      if (r.status === 401) return { ok: false, reason: 'signed-out' };
-      if (r.status === 403) return { ok: false, reason: 'denied' };
-      if (r.status !== 200 || !r.body.dfsOrigin || !r.body.tableOrigin) return { ok: false, reason: 'error' };
-      pairing = { dfsOrigin: r.body.dfsOrigin, tableOrigin: r.body.tableOrigin, account: r.body.account || '' };
-      store(sessionStorage, BRIDGE_PAIRING, JSON.stringify(pairing));
-    }
-    await onOrigins({ dfsOrigin: pairing.dfsOrigin, tableOrigin: pairing.tableOrigin });
-    store(localStorage, BRIDGE_SEEN, '1');
-    connected = true;
-    return { ok: true };
-  }
-
-  function connect() {
-    if (!inflight) inflight = connectOnce().finally(() => { inflight = null; });
-    return inflight;
-  }
-
-  async function disconnect({ forget = false } = {}) {
-    connected = false;
-    pairing = null;
-    store(sessionStorage, BRIDGE_PAIRING, null);
-    if (forget) store(localStorage, BRIDGE_SEEN, null);
-    await onOrigins(null);
-  }
-
-  return {
-    mode: 'bridge',
-    connect,
-    disconnect,
-    get connected() { return connected; },
-    ensureSession() { return connected ? Promise.resolve(true) : connect().then(r => r.ok); },
-    // Nothing to attach: the extension signs every read, and this page never holds a token.
-    getHeaders() { return {}; },
-    getUserId() { return (pairing && pairing.account) || null; },
-    forgetDurableToken: async () => {},
-  };
-}
-
-// What the page tells someone whose "Sign in with VS Code" did not work.
-export function describeBridgeFailure(reason) {
-  switch (reason) {
-    case 'signed-out':
-      return 'VS Code is running, but not signed in to a Microsoft account. Sign in there (OneLake Studio → Sign in to OneLake), then try again.';
-    case 'denied':
-      return 'VS Code declined the request. Try again and choose Allow in the VS Code dialog.';
-    case 'error':
-      return 'VS Code answered, but not the way this page expected — the extension and this site may be different versions. Update the OneLake Studio extension.';
-    default:
-      return 'Could not reach VS Code. It needs the OneLake Studio extension installed and a window open; ' +
-        'if your browser asked to allow "local network access", allow it. Safari cannot reach VS Code at all — use an app registration there.';
-  }
-}
-
-// MSAL (or the reason it cannot run), with VS Code's sign-in in front of it when it is
-// there. Every call goes to whichever is active; the bridge becomes active only by
-// connecting, and stops being active when VS Code goes away — at which point the page
-// is back on its own sign-in, exactly as if the bridge had never existed.
-function createSmartAuth(cfg, fallback, opts) {
-  const { onExpired } = opts;
-  const bridge = createBridgeAuth(cfg, opts);
-  const cur = () => (bridge.connected ? bridge : fallback);
-  let refreshing = null;
-  return {
-    get mode() { return cur().mode; },
-    get viaVsCode() { return bridge.connected; },
-    bridgeAvailable: true,
-    // The gate's "Sign in with VS Code" button.
-    connectVsCode() { return bridge.connect(); },
-    async ensureSession(interactive = false) {
-      if (bridge.connected) return true;
-      if (bridgeHinted()) {
-        const r = await bridge.connect();
-        if (r.ok) return true;
-      }
-      return fallback.ensureSession(interactive);
-    },
-    getHeaders() { return cur().getHeaders(); },
-    getUserId() { return cur().getUserId(); },
-    // Through the bridge a 401 means VS Code answered without a session (signed out, or
-    // switched account); a re-pair either finds the new session or ends the bridge.
-    refresh(staleToken) {
-      if (!bridge.connected) return fallback.refresh(staleToken);
-      if (refreshing) return refreshing;
-      refreshing = (async () => {
-        await bridge.disconnect();
-        const r = await bridge.connect();
-        if (!r.ok && onExpired) { try { onExpired(); } catch (_) {} }
-        return r.ok;
-      })().finally(() => { refreshing = null; });
-      return refreshing;
-    },
-    async signOut() {
-      // Disconnecting forgets that VS Code was here, or the next load would reconnect.
-      if (bridge.connected) return bridge.disconnect({ forget: true });
-      return fallback.signOut();
-    },
-    forgetDurableToken() { return fallback.forgetDurableToken(); },
-  };
-}
-
 // Pick the provider. 'none' must be explicit — no clientId is not a request for anonymous
-// access, it just means nobody has named a registration yet. `bridge: false` in config
-// turns signing in with VS Code off for a deployment that does not want it.
+// access, it just means nobody has named a registration yet.
 export function createAuth(cfg = {}, opts = {}) {
   if (cfg.auth === 'none') return createNoAuth();
-  const fallback = createSiteAuth(cfg, opts);
-  if (cfg.bridge === false) return fallback;
-  return createSmartAuth(cfg, fallback, opts);
+  return createSiteAuth(cfg, opts);
 }
 
 function createSiteAuth(cfg, { onExpired } = {}) {

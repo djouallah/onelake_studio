@@ -337,11 +337,6 @@ async function oneLakeFetch(request, url, event) {
   return res;
 }
 
-// The VS Code bridge (auth.js): OneLake reads addressed to the extension on loopback. They
-// carry no token and need none from here, and they are left entirely to the browser — a
-// worker re-issuing them would be a second requester for Chrome's local-network permission,
-// which a service worker cannot ask for itself. Like every other request this worker has
-// no business with, they are simply not intercepted.
 self.addEventListener('fetch', event => {
   const req = event.request;
   if (req.cache === 'only-if-cached' && req.mode !== 'same-origin') return;

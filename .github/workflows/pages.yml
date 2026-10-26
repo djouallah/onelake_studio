@@ -48,7 +48,7 @@ jobs:
       # The BUILT site in a real browser before it goes live — the exact files Pages will
       # serve, vendored packages and strict CSP included: DuckDB-WASM boots and answers the
       # README landing query with no CSP refusal; the sign-in gate behaves (no silent
-      # registration switch from a link, no VS Code probe without a reason).
+      # registration switch from a link, no request to any local address).
       # playwright-core only — the runner's own Chrome is what drives the pages.
       - name: Browser checks
         env:

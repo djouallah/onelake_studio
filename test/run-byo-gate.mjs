@@ -1,7 +1,8 @@
 // The sign-in gate with no registration configured — the ordinary first run since the
 // project stopped shipping an app registration of its own. Asserts that the gate asks for
 // a registration instead of offering a Sign-in button that could only throw, that a saved
-// registration is picked up and named, and that boot stays quiet either way.
+// registration is picked up and named, that boot stays quiet either way, and that the page
+// never reaches for anything on this machine: an app registration is its only sign-in.
 // Not part of CI — a hand tool. Run: node test/run-byo-gate.mjs
 import http from "node:http";
 import { readFile } from "node:fs/promises";
@@ -25,11 +26,18 @@ const server = http.createServer(async (req, res) => {
 });
 await new Promise(r => server.listen(PORT, "127.0.0.1", r));
 
-// Something listening where the site would look for VS Code, so a stray probe is SEEN
-// rather than just failing to connect.
-const bridgeAsked = [];
-const fakeBridge = http.createServer((req, res) => { bridgeAsked.push(req.url); res.writeHead(404).end(); });
-await new Promise(r => fakeBridge.listen(47731, "127.0.0.1", r)).catch(() => {});
+// The page's own origin is the only local address it may contact. Anything else on this
+// machine (127.0.0.1, localhost, [::1]) is a request the site has no business making, and
+// on a public origin the first one is a browser "local network access" prompt.
+const SELF = `http://127.0.0.1:${PORT}`;
+const LOCAL_HOST = /^(127\.\d+\.\d+\.\d+|localhost|\[::1\])$/i;
+const localAsked = [];
+const watchLocal = req => {
+  try {
+    const u = new URL(req.url());
+    if (LOCAL_HOST.test(u.hostname) && u.origin !== SELF) localAsked.push(req.url());
+  } catch (_) {}
+};
 
 const checks = [];
 const check = (name, ok, detail = "") => {
@@ -46,6 +54,7 @@ const browser = await chromium.launch({
   executablePath: process.env.CHROME_PATH || (process.platform === "win32" ? "C:/Program Files/Google/Chrome/Application/chrome.exe" : "/usr/bin/google-chrome"), headless: true });
 try {
   const ctx = await browser.newContext({ serviceWorkers: "block" });
+  ctx.on("request", watchLocal);
   const page = await ctx.newPage();
   const errors = [];
   page.on("pageerror", e => errors.push(e.message));
@@ -76,6 +85,12 @@ try {
     /user_impersonation/.test(await page.locator("#byoBox").innerText()));
   check("first run offers no 'use a different one' — there is nothing to switch from",
     !(await page.locator("#byoResetBtn").count()));
+  check("the gate offers no sign-in but an app registration",
+    !/VS Code/i.test(await page.locator("#authGate").innerText()) &&
+    !(await page.locator("#vscodeBtn, #vscodeBox").count()));
+  check("the page's CSP allows no loopback address", await page.evaluate(() =>
+    !/127\.0\.0\.1|localhost/i.test(
+      document.querySelector('meta[http-equiv="Content-Security-Policy"]')?.content || "")));
 
   // --- Saving one reloads into a working MSAL config -----------------------
   await page.fill("#byoClientId", FAKE_CLIENT);
@@ -117,12 +132,19 @@ try {
     () => JSON.parse(localStorage.getItem("onelake-studio-registration") || "{}").clientId
   ) === OTHER);
 
-  // A visitor who never came from VS Code must never be probed for it: the first loopback
-  // fetch from a public page is a browser permission prompt.
-  check("no VS Code probe without a reason", !bridgeAsked.length, bridgeAsked.join(", "));
-  check("the gate offers signing in with VS Code",
-    await page.evaluate(() => { document.querySelector("#userBox button")?.click(); return true; }) &&
-    await page.waitForSelector("#vscodeBtn", { timeout: 5000 }).then(() => true, () => false));
+  // The old "#vscode" link is just a fragment now: it must not wake anything up. A fresh
+  // load, not a same-document hash change, so the page boots with the fragment in place.
+  await page.goto("about:blank");
+  await page.goto(`${SELF}/#vscode`);
+  await page.waitForFunction(() => !document.getElementById("runBtn").disabled, { timeout: 120000 });
+  await page.click("#userBox button");
+  await page.waitForSelector("#signinBtn", { timeout: 5000 });
+  check("a #vscode link opens the ordinary gate",
+    !/VS Code/i.test(await page.locator("#authGate").innerText()) &&
+    !(await page.locator("#vscodeBtn, #vscodeBox").count()));
+
+  check("the page never contacted another address on this machine",
+    !localAsked.length, localAsked.join(", "));
 
   check("no uncaught page errors throughout", errors.length === 0, errors.join(" | "));
 } catch (e) {
@@ -132,6 +154,5 @@ try {
   console.log(`RESULT: ${failed ? "FAILED" : "OK"} — ${checks.length - failed}/${checks.length} checks passed`);
   await browser.close().catch(() => {});
   server.close();
-  fakeBridge.close();
   process.exit(failed ? 1 : 0);
 }

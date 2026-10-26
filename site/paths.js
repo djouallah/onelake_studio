@@ -14,10 +14,9 @@
 export const DFS_HOST = "onelake.dfs.fabric.microsoft.com";
 
 // Where OneLake data reads are addressed. Every URL below is built from this rather than
-// from DFS_HOST alone, so one value redirects the lot: the VS Code extension signs DuckDB's
-// range reads through a loopback proxy (a webview has no service worker to do it with), and
-// hands the engine `http://127.0.0.1:<port>/<secret>/dfs`. An override is therefore a URL
-// PREFIX, not just an authority — it may carry a path, and never a trailing slash.
+// from DFS_HOST alone, so one value redirects the lot (data.js's createEngine takes an
+// override). An override is a URL PREFIX, not just an authority — it may carry a path,
+// and never a trailing slash.
 export const DFS_ORIGIN = `https://${DFS_HOST}`;
 
 // The dots are escaped: unescaped they are `any character`, so a look-alike host would match.

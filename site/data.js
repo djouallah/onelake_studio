@@ -71,20 +71,13 @@ const RESOLVE_BACKOFF_MS = [500, 1500, 3000, 6000, 10000, 15000, 20000, 30000];
 const TABLE_ORIGIN = "https://onelake.table.fabric.microsoft.com";
 
 // `dfsOrigin` / `tableOrigin` redirect every OneLake request this engine makes. The web app
-// leaves them alone. The VS Code extension sets both to a loopback proxy that attaches the
-// bearer token, because a webview has no service worker — the thing that signs DuckDB's
-// range reads in the browser — and DuckDB's file API cannot set a header itself.
-//
-// They can also change AFTER the engine exists: the website boots DuckDB while it is still
-// deciding how to sign in, and signing in through VS Code (auth.js, the bridge) moves every
-// OneLake read onto the extension's loopback port. setOrigins() is that switch.
+// leaves them alone — its service worker signs DuckDB's range reads against OneLake itself —
+// so they are only a seam for pointing the engine at another endpoint (a test server).
 export function createEngine(auth, {
   onStatus = () => {},
-  dfsOrigin: dfsOriginAtStart = DFS_ORIGIN,
-  tableOrigin: tableOriginAtStart = TABLE_ORIGIN,
+  dfsOrigin = DFS_ORIGIN,
+  tableOrigin = TABLE_ORIGIN,
 } = {}) {
-  let dfsOrigin = dfsOriginAtStart;
-  let tableOrigin = tableOriginAtStart;
   // Re-bound to this engine's origin so the ~10 call sites below need no argument, and so a
   // call site added later is redirected too rather than quietly reaching past the proxy.
   const dfsBase = ws => dfsBaseAt(ws, dfsOrigin);
@@ -982,7 +975,6 @@ export function createEngine(auth, {
   // never clear. The walk also never worked for warehouses, which have no metadata/
   // directory at all. So a catalog failure is now FATAL and LOUD, because a silent
   // downgrade to one-listing-per-table is how a slow sidebar hides a broken catalog.
-  // A getter, not a constant: setOrigins() can move it.
   const tableApi = () => `${tableOrigin}/iceberg`;
 
   const ircPrefixes = new Map();  // warehouse -> the `prefix` the config call hands back
@@ -1881,19 +1873,7 @@ export function createEngine(auth, {
     return fetchAuthed(dfsUrl(lh.workspace, file.path));
   }
 
-  // Re-point every OneLake read — signing in through VS Code moves them onto the
-  // extension's loopback port, and signing out of it moves them back. Everything resolved
-  // or registered under the old origins goes with it: those URLs name a door that is no
-  // longer the one this session uses.
-  async function setOrigins({ dfsOrigin: dfs = DFS_ORIGIN, tableOrigin: table = TABLE_ORIGIN } = {}) {
-    if (dfs === dfsOrigin && table === tableOrigin) return;
-    await reset();
-    ircPrefixes.clear();
-    dfsOrigin = dfs;
-    tableOrigin = table;
-  }
-
-  return { init, reset, setOrigins, parseLakehouse, listWorkspaces, listItems, listTables,
+  return { init, reset, parseLakehouse, listWorkspaces, listItems, listTables,
            statTable, peekTable, loadTable,
            listFiles, loadFile, readFileBytes, runSql, describeLoad, fmtBytes, cancelLoad };
 }
