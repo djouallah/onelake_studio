@@ -1971,6 +1971,9 @@ if (HOST_VSCODE) {
       // The tree was refreshed, so what this side holds about the old listing is suspect.
       else if (m.type === 'reset') { await engineReady; await leaveLakehouse(); lakehouse = null; }
       else if (m.type === 'reads') showReads(m);
+      // Why the catalog is taking long — conversion pending, catalog busy — from the host,
+      // which is where the request now waits.
+      else if (m.type === 'status' && m.message) setStatus(m.message);
     } catch (err) {
       setStatus('Could not open that: ' + explainRead(err.message), 'error');
       console.error(err);

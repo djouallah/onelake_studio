@@ -19,6 +19,8 @@ const { join } = require('node:path');
 const { startProxy } = require('./proxy');
 const { openPanel, closePanel, revealPanel, postToPanel, postLive } = require('./panel');
 const { createCatalog } = require('./catalog');
+const { createStore } = require('./store');
+const { createOneLake } = require('./onelake');
 const { createFabric, exportPath, EXPORT_DIR } = require('./fabric');
 const { LakehouseTree } = require('./tree');
 const { siteRoot } = require('./site');
@@ -127,6 +129,10 @@ async function fabricToken({ fresh = false, createIfNone = false } = {}) {
   if (lastErr) throw lastErr;
   return null;
 }
+
+// The cache-first OneLake layer (onelake.js), built at activation and shared by the tree,
+// the panel and everything else that reads OneLake.
+let onelake = null;
 
 let proxy = null;
 let proxyStarting = null;   // in-flight startProxy, so two callers cannot start two servers
@@ -543,8 +549,17 @@ async function show(context, options) {
     { dev: context.extensionMode === vscode.ExtensionMode.Development });
   const eng = ensureEngine(context, { readme: readme.fsPath });
   if (!eng) return false;
+  // A target from the page, reduced to the four strings it may carry.
+  const ref = x => ({ lh: { workspace: String(x.workspace), item: String(x.item) },
+                      t: { schema: String(x.schema || ''), table: String(x.table) } });
   await openPanel(context, await ensureProxy(context), {
     onOpened: logOpened, onBoot: logBoot, engine: eng,
+    host: {
+      'onelake.table': x => { const { lh, t } = ref(x);
+        return onelake.table(lh, t, { onWait: message => postLive({ type: 'status', message }) }); },
+      'onelake.peek': x => { const { lh, t } = ref(x);
+        return onelake.peek(lh, t, sql => eng.call('query', [sql])); },
+    },
     // The page could not bring the engine up. Everything it buffered is already gone;
     // this is the toast that stops the failure being a spinner that never moves.
     // A panel whose engine never came up answers no click again, so the toast offers the
@@ -653,8 +668,33 @@ async function activateInner(context) {
   // Semantic models and the .bim export: Fabric's token for the model, the storage one
   // (the same cache the catalog uses) for the one file the export writes.
   const fabric = createFabric({ getFabricToken: fabricToken, getStorageToken: proxyToken });
-  const tree = new LakehouseTree({
+
+  // What the extension knows about OneLake, kept on disk per account and served from there
+  // first (onelake.js). One directory per identity — a hashed account id — so nobody is
+  // ever shown another account's listings, and switching back finds its cache still warm.
+  const storeRoot = join(context.globalStorageUri.fsPath, 'onelake-store-v1');
+  const storeFor = key => createStore({ dir: join(storeRoot, key || 'signed-out'), ttlMs: catalogTtlMs() });
+  let storeAccount = accountKey(await getSession({ createIfNone: false }).catch(() => null));
+  onelake = createOneLake({
     catalog,
+    store: storeFor(storeAccount),
+    prefetchEnabled: () => vscode.workspace.getConfiguration('onelakeStudio').get('prefetchMetadata', true),
+  });
+  // Called wherever the identity may have moved; a no-op when it has not.
+  async function rebindStore() {
+    const key = accountKey(await getSession({ createIfNone: false }).catch(() => null));
+    if (key === storeAccount) return;
+    storeAccount = key;
+    onelake.useStore(storeFor(key));
+  }
+  context.subscriptions.push({ dispose: onelake.onRefreshFailed((what, e) => {
+    // The cached answer stays on screen; why it could not be refreshed goes here.
+    if (out) out.appendLine(`refresh of ${what.kind} ${[what.workspace, what.item, what.schema, what.table]
+      .filter(Boolean).join('/')} failed — ${(e && e.message) || e}`);
+  }) });
+
+  const tree = new LakehouseTree({
+    onelake,
     fabric,
     hasFabric: async () => !!await fabricToken().catch(() => null),
     isSignedIn: () => signedIn,
@@ -717,7 +757,7 @@ async function activateInner(context) {
           return b;
         });
       if (out) out.appendLine(`exported ${n.model} -> ${n.workspace}/${rel} (${fmtBytes(bytes.length)})`);
-      tree.refresh();
+      tree.refresh({ kind: 'dir', workspace: n.workspace, item, dir: '' });
       await openInPanel({ type: 'open-file', workspace: n.workspace, item, path: rel, bytes: bytes.length });
     } catch (e) {
       if (out) out.appendLine(`export of ${n.model} failed — ${(e && e.stack) || e}`);
@@ -744,28 +784,26 @@ async function activateInner(context) {
     // prove the cache is the reason rather than assume it. It also answers "what is this
     // costing me on disk", which is the fair question to ask of a twenty-gigabyte default.
     vscode.commands.registerCommand('onelakeStudio.clearCache', async () => {
-      if (!proxy) {
-        // Honest about what "nothing" means: the cache directory may well be full from a
-        // previous session — it just has no proxy over it yet to measure or clear it.
-        vscode.window.showInformationMessage(
-          'OneLake Studio: the cache has not been opened in this session yet — ' +
-          'open OneLake Studio first, then clear it.');
-        return;
-      }
-      const was = await proxy.cacheSize();
-      if (!was) {
+      // Two caches: the listings and table metadata the tree and panel are served from,
+      // and — when the website bridge has run — the data files it read.
+      const meta = await onelake.size();
+      const data = proxy ? await proxy.cacheSize() : 0;
+      if (!meta && !data) {
         vscode.window.showInformationMessage('OneLake Studio: the cache is empty.');
         return;
       }
-      // Up to twenty gigabytes on one keypress deserves a question first — everything
-      // deleted here is re-downloaded from OneLake at network speed.
+      // Everything deleted here is re-read from OneLake at OneLake's speed, which is the
+      // whole reason the cache exists — so it is asked first.
       const pick = await vscode.window.showWarningMessage(
-        `Delete ${fmtBytes(was)} of cached OneLake data? Tables read again will be re-downloaded.`,
+        `Delete ${fmtBytes(meta + data)} of cached OneLake data? Listings and tables will be read from OneLake again.`,
         { modal: true }, 'Delete');
       if (pick !== 'Delete') return;
-      await proxy.clearCache();
+      await onelake.clear();
+      if (proxy) await proxy.clearCache();
+      postLive({ type: 'reset' });
+      tree.redraw();
       vscode.window.showInformationMessage(
-        `OneLake Studio: cleared ${fmtBytes(was)} of cached OneLake data.`);
+        `OneLake Studio: cleared ${fmtBytes(meta + data)} of cached OneLake data.`);
     }),
 
     vscode.commands.registerCommand('onelakeStudio.openTable', n => openInPanel({
@@ -781,7 +819,7 @@ async function activateInner(context) {
     // Fabric API's consent is a separate prompt and must only ever follow a click.
     vscode.commands.registerCommand('onelakeStudio.signInFabric', async () => {
       try {
-        if (await fabricToken({ createIfNone: true })) tree.refresh();
+        if (await fabricToken({ createIfNone: true })) tree.redraw();
       } catch (e) {
         showError(`Could not sign in to the Fabric API: ${(e && e.message) || e}`);
       }
@@ -793,7 +831,8 @@ async function activateInner(context) {
       try {
         await showWithProgress({ createIfNone: true });
         await setSignedIn(!!await getToken({ createIfNone: false }));
-        tree.refresh();
+        await rebindStore();
+        tree.redraw();
       } catch (e) {
         showError(`OneLake Studio could not start: ${(e && e.message) || e}`);
       }
@@ -805,7 +844,8 @@ async function activateInner(context) {
       try {
         await getToken({ createIfNone: true });
         await setSignedIn(!!await getToken({ createIfNone: false }));
-        tree.refresh();
+        await rebindStore();
+        tree.redraw();
       } catch (e) {
         showError(`Could not sign in: ${(e && e.message) || e}`);
       }
@@ -828,10 +868,11 @@ async function activateInner(context) {
         forgetToken();
         await resetEngine();
         await restartProxy(context);
-        tree.refresh();
+        await rebindStore();
+        tree.redraw();
         await showWithProgress({ createIfNone: true });
         await setSignedIn(!!await getToken({ createIfNone: false }));
-        tree.refresh();
+        tree.redraw();
       } catch (e) {
         showError(`Could not switch account: ${(e && e.message) || e}`);
       }
@@ -850,7 +891,10 @@ async function activateInner(context) {
       forgetToken();
       const session = await getSession({ createIfNone: false }).catch(() => null);
       await setSignedIn(!!session);
-      tree.refresh();
+      // Signed out: what was cached for that account is not left behind on disk.
+      if (!session) await onelake.clear().catch(() => {});
+      await rebindStore();
+      tree.redraw();
       if (!session) {
         closePanel();
         await resetEngine();
@@ -874,7 +918,8 @@ async function activateInner(context) {
         // The cached token, the engine's secrets, the cache and the bridge's origins all
         // belong to the tenant being left.
         forgetToken();
-        tree.refresh();
+        await rebindStore();
+        tree.redraw();
         if (proxy) {
           closePanel();
           await resetEngine();

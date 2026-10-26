@@ -102,7 +102,11 @@ function postLive(msg) {
 // Every failure is reported as `engine-error` rather than being dropped: a call whose
 // promise never settles is a boot that hangs at "Starting DuckDB…" with nothing said,
 // and that failure mode has already cost this project a day once.
-function wireEngine(panel, engine) {
+//
+// `host` answers the calls that are not DuckDB's: a table's metadata and its first rows,
+// served cache first by onelake.js. Same channel, same id/result/error shape, so the page
+// cannot tell — and does not need to — which side of the host answered.
+function wireEngine(panel, engine, host = {}) {
   // postMessage THROWS once the panel is disposed, and an engine call can settle after
   // exactly that — a query still streaming when the tab is closed. Nobody is listening;
   // the result is simply dropped rather than becoming an unhandled rejection.
@@ -110,8 +114,10 @@ function wireEngine(panel, engine) {
   return async msg => {
     const { id, method, args } = msg;
     try {
-      const value = await engine.call(method, args || [],
-        batch => post({ type: 'engine-batch', id, batch }));
+      // hasOwn: the method name comes from the page.
+      const value = Object.hasOwn(host, method)
+        ? await host[method](...(Array.isArray(args) ? args : []))
+        : await engine.call(method, args || [], batch => post({ type: 'engine-batch', id, batch }));
       post({ type: 'engine-result', id, value });
     } catch (e) {
       post({
@@ -136,7 +142,7 @@ function openPanel(context, proxy, opts = {}) {
   return opening;
 }
 
-async function openPanelUncontended(context, proxy, { onOpened, onBoot, onBootFailed, engine } = {}) {
+async function openPanelUncontended(context, proxy, { onOpened, onBoot, onBootFailed, engine, host } = {}) {
   const { site: siteUri, readme: readmeUri } = await siteRoot(context.extensionUri,
     { dev: context.extensionMode === vscode.ExtensionMode.Development });
   const panel = vscode.window.createWebviewPanel(
@@ -180,7 +186,7 @@ async function openPanelUncontended(context, proxy, { onOpened, onBoot, onBootFa
     throw e;
   }
 
-  const onEngineCall = engine ? wireEngine(panel, engine) : null;
+  const onEngineCall = engine ? wireEngine(panel, engine, host) : null;
   // The panel's own listeners die with the panel. Pushed onto context.subscriptions they
   // piled up — one more pair per panel ever opened in the window.
   const disposables = [];

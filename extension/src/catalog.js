@@ -40,6 +40,27 @@ function loadPaths(siteFsPath) {
 
 const byName = (a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' });
 
+// How many OneLake requests this window has in flight at once, across the tree, the
+// prefetch and the panel. OneLake answers a burst with 429s and seconds of backoff, so a
+// queue here is faster than a stampede there.
+const MAX_IN_FLIGHT = 4;
+function limiter(n) {
+  let active = 0;
+  const waiting = [];
+  const next = () => { if (active < n && waiting.length) { active++; waiting.shift()(); } };
+  return async fn => {
+    await new Promise(r => { waiting.push(r); next(); });
+    try { return await fn(); } finally { active--; next(); }
+  };
+}
+
+// Fabric writes a table's Iceberg metadata lazily, so the very call that triggers the
+// conversion can lose the race to it: a 400/404 for a table the catalog just LISTED means
+// "not yet", and the schedule spans Microsoft's documented 5s-2min window. 429/5xx is the
+// catalog being busy. Anything else is a real answer and is not sat on.
+const RESOLVE_BACKOFF_MS = [500, 1500, 3000, 6000, 10000, 15000, 20000, 30000];
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
 async function mapPool(items, fn, limit = MAX_PARALLEL) {
   const out = new Array(items.length);
   let next = 0;
@@ -67,7 +88,9 @@ async function oneLakeMessage(r) {
  * @param {() => Promise<string|null>} opts.getToken  current access token, or null
  * @param {string} opts.siteFsPath                    directory holding paths.js
  */
-function createCatalog({ getToken, siteFsPath, dfsOrigin = DFS_ORIGIN, tableOrigin = TABLE_ORIGIN }) {
+function createCatalog({ getToken, siteFsPath, dfsOrigin = DFS_ORIGIN, tableOrigin = TABLE_ORIGIN,
+                         backoffMs = RESOLVE_BACKOFF_MS }) {
+  const gate = limiter(MAX_IN_FLIGHT);
   // Same bargain as data.js's authedFetch: retry once on 401 and only on 401. A 403 means
   // this identity may not read that path, and a fresh token will not change its mind.
   async function authedFetch(url) {
@@ -78,14 +101,14 @@ function createCatalog({ getToken, siteFsPath, dfsOrigin = DFS_ORIGIN, tableOrig
       throw e;
     }
     const opts = headers => ({ headers, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
-    let r = await fetch(url, opts({ authorization: `Bearer ${token}` }));
+    let r = await gate(() => fetch(url, opts({ authorization: `Bearer ${token}` })));
     if (r.status === 401) {
       // { fresh: true } or the retry is theatre: the injected getToken is the extension's
       // 60-second token cache, and asking it plainly returns the very string that just
       // 401'd — `fresh !== token` was false every single time.
       const fresh = await getToken({ fresh: true });
       if (fresh && fresh !== token) {
-        r = await fetch(url, opts({ authorization: `Bearer ${fresh}` }));
+        r = await gate(() => fetch(url, opts({ authorization: `Bearer ${fresh}` })));
       }
     }
     return r;
@@ -229,9 +252,36 @@ function createCatalog({ getToken, siteFsPath, dfsOrigin = DFS_ORIGIN, tableOrig
       (a.schema || '').localeCompare(b.schema || '') || a.table.localeCompare(b.table));
   }
 
-  // One table's metadata document is NOT fetched here. The webview's own resolver in
-  // app/data.js owns that call — it goes through the loopback proxy, so it gets the disk
-  // cache and the read log for free, neither of which a host-side fetch would have.
+  // One table's Iceberg metadata: the catalog's loadTable, which hands back the document
+  // inline along with metadata-location — the file the engine reads with iceberg_scan.
+  // `onWait` hears why a call is taking long (conversion pending, catalog busy), so the
+  // panel can say so instead of showing a spinner with no story.
+  async function loadTable(lh, t, { onWait = () => {} } = {}) {
+    const prefix = await ircPrefixFor(lh);
+    const label = t.schema ? `${t.schema}.${t.table}` : t.table;
+    const url = `${tableOrigin}/iceberg/v1/${prefix}/namespaces/${ircSeg(t.schema || 'dbo')}/tables/${ircSeg(t.table)}`;
+    for (let attempt = 0; ; attempt++) {
+      try {
+        const { json } = await getJson(url, `Reading ${label} from the Iceberg catalog`);
+        if (!json || !json.metadata) throw new Error(`${label}: the catalog returned no metadata document`);
+        return { metadataLocation: json['metadata-location'] || null, metadata: json.metadata };
+      } catch (e) {
+        const notYet = e.status === 400 || e.status === 404;
+        const busy = e.status === 429 || e.status >= 500;
+        if (!(notYet || busy) || attempt >= backoffMs.length) {
+          if (notYet) e.message += '. OneLake writes Iceberg metadata on demand and conversion can take ' +
+            'up to two minutes; if it never appears, Delta-to-Iceberg conversion is probably not ' +
+            'enabled for this tenant or workspace.';
+          throw e;
+        }
+        const waited = Math.round(backoffMs.slice(0, attempt + 1).reduce((a, b) => a + b, 0) / 1000);
+        onWait(notYet
+          ? `Waiting for Fabric to generate Iceberg metadata for ${label}… (${waited}s so far)`
+          : `The Iceberg catalog answered HTTP ${e.status} for ${label}; retrying… (${waited}s so far)`);
+        await sleep(backoffMs[attempt]);
+      }
+    }
+  }
 
   // One level of Files/. `dir` is relative to Files/. Unlike the panel's version this
   // carries no `queryable` flag: whether a file can be opened depends on which DuckDB
@@ -263,7 +313,20 @@ function createCatalog({ getToken, siteFsPath, dfsOrigin = DFS_ORIGIN, tableOrig
   // and the listing can never disagree about what an item is.
   const paths = () => loadPaths(siteFsPath);
 
-  return { listWorkspaces, listItems, listTables, listFiles, reset, paths };
+  // Whole object, for the panel's image and .bim previews and the engine's buffers.
+  async function readBytes(ws, path) {
+    const { encPath } = await loadPaths(siteFsPath);
+    const r = await authedFetch(`${dfsOrigin}/${encodeURIComponent(ws)}/${encPath(path)}`);
+    if (!r.ok) {
+      const said = await oneLakeMessage(r);
+      const e = new Error(`Reading ${path} failed (HTTP ${r.status})` + (said ? ` — ${said}` : ''));
+      e.status = r.status;
+      throw e;
+    }
+    return new Uint8Array(await r.arrayBuffer());
+  }
+
+  return { listWorkspaces, listItems, listTables, listFiles, loadTable, readBytes, reset, paths };
 }
 
 module.exports = { createCatalog, DFS_ORIGIN, TABLE_ORIGIN };

@@ -1153,7 +1153,18 @@ export function createEngine(auth, {
     if (resolvedC.has(key)) return resolvedC.get(key);
     let resolved;
     try {
-      resolved = await ircResolve(lh, t, label, status, check);
+      // The extension host holds the catalog's answers on disk and serves them first, so
+      // a table opened before — in this session or any earlier one — resolves without a
+      // request to OneLake. Its "waiting for conversion" progress arrives as a 'status'
+      // message of its own.
+      const r = await guarded(() => db.resolveTable({
+        workspace: lh.workspace, item: lh.item, schema: t.schema || "", table: t.table,
+      }));
+      check();
+      resolved = {
+        empty: !!r.empty, schemaFields: r.schemaFields || [], totalRecords: r.totalRecords,
+        stats: r.stats, metadataLocation: r.metadataLocation || null,
+      };
     } catch (e) {
       // A load the user stopped is not a failure, and app.js tells the two apart by
       // e.cancelled alone — re-dressing a Stop as a metadata error would paint it red.
@@ -1257,12 +1268,17 @@ export function createEngine(auth, {
     }
 
     status(`Reading the first ${QUICK_PEEK_ROWS} rows of ${label}…`);
-    const source = await attachedIdent(lh, t, resolved);
+    // Kept by the host per snapshot: a snapshot never changes, so rows read from it once
+    // are the rows, and a table opened before shows them without touching OneLake.
+    const res = await guarded(() => db.peekTable({
+      workspace: lh.workspace, item: lh.item, schema: t.schema || "", table: t.table,
+    }));
     check();
-    // materialize(), never a bare conn.send() — see the silent-truncation note on stream().
-    const out = await materialize(`SELECT * FROM ${source} LIMIT ${QUICK_PEEK_ROWS}`);
-    check();
-    return { ...out, fileCount: (resolved.stats || {}).totalDataFiles };
+    const fields = (res.fields || []).map(f => f.name);
+    const types = (res.fields || []).map(f => arrowTypeName({ duckdbName: f.type }));
+    const rows = (res.rows || []).slice(0, MAX_ROWS).map(r => normalizeRow(r, fields));
+    return { fields, types, rows, numRows: res.numRows || rows.length, truncated: false,
+             limit: MAX_ROWS, fileCount: (resolved.stats || {}).totalDataFiles };
   }
 
   // The table, as DuckDB can name it: `ol_<n>."schema"."table"` inside an ATTACHed

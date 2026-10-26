@@ -224,7 +224,13 @@
           "default": 5,
           "minimum": 0,
           "scope": "machine",
-          "markdownDescription": "How old a catalog answer, listing or other mutable object may be before it is refreshed. The last-known answer is ALWAYS served instantly from disk — a table you have ever opened opens without waiting on the catalog; once the answer is older than this, a background refresh fetches the current one, so a new snapshot shows up one click later. `0` disables the caching and asks OneLake every time. Applies after the window is reloaded."
+          "markdownDescription": "How old a listing or a table's metadata may be before it is refreshed. The last-known answer is ALWAYS served instantly from disk — a workspace you have browsed or a table you have ever opened shows without waiting on OneLake; once the answer is older than this, a background refresh fetches the current one and the tree redraws if it changed, so a new snapshot shows up one click later. `0` refreshes behind every read. **Refresh** in the tree re-reads in the foreground. Applies after the window is reloaded."
+        },
+        "onelakeStudio.prefetchMetadata": {
+          "type": "boolean",
+          "default": true,
+          "scope": "machine",
+          "markdownDescription": "When a lakehouse's **Tables** node is opened, read each table's Iceberg metadata in the background (two at a time, skipping what is already cached), so the first click on a table is a disk read rather than a wait on the Iceberg catalog — which can take seconds per table. Turn off to read a table's metadata only when it is clicked."
         },
         "onelakeStudio.engineMemoryLimit": {
           "type": "string",

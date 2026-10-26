@@ -7,10 +7,11 @@
 // does better: a real tree keeps its expansion state, filters when you type, and is on
 // screen while the editor tab shows a result.
 //
-// Every level is lazy. Expanding a workspace lists its items; expanding an item asks the
-// Iceberg catalog for its schemas; a Files/ directory is listed only when opened. Nothing
-// walks ahead of the user, because each of those is a network round trip against a tenant
-// that can have hundreds of workspaces.
+// Every level is lazy, and every level is cache first: a listing ever read is drawn from
+// disk at once (onelake.js) and re-read behind the user once it is old, redrawing only the
+// node whose listing actually changed. Nothing walks ahead of the user across workspaces;
+// the one read-ahead is a table's metadata once its Tables node is open, because the next
+// click is about to want it.
 //
 // Clicking a table does NOT read any data — it hands the selection to the panel, which
 // opens it the way it always has: metadata only, statistics first, rows when asked for.
@@ -26,30 +27,83 @@ const node = (kind, label, extra) => ({ kind, label, ...extra });
 class LakehouseTree {
   /**
    * @param {object} deps
-   * @param {import('./catalog').createCatalog} deps.catalog
+   * @param {ReturnType<import('./onelake').createOneLake>} deps.onelake  cache-first OneLake
    * @param {import('./fabric').createFabric} [deps.fabric]  semantic models (Fabric REST)
    * @param {() => Promise<boolean>} [deps.hasFabric]        a Fabric token, without a prompt?
    * @param {() => boolean} deps.isSignedIn
    */
-  constructor({ catalog, fabric = null, hasFabric = async () => false, isSignedIn, log = () => {} }) {
-    this.catalog = catalog;
+  constructor({ onelake, fabric = null, hasFabric = async () => false, isSignedIn, log = () => {} }) {
+    this.onelake = onelake;
     this.fabric = fabric;
     this.hasFabric = hasFabric;
     this.isSignedIn = isSignedIn;
     this.log = log;
     this._emitter = new vscode.EventEmitter();
     this.onDidChangeTreeData = this._emitter.event;
+    // The nodes on screen that a listing hangs off, so OneLake's answer changing behind the
+    // user redraws exactly that node — the store says WHICH listing moved.
+    this._nodes = new Map();
+    // What a Refresh asked to re-read: everything under `scope`, each listing once.
+    this._fresh = null;
+    this._unsub = onelake.onChanged(c => this._changed(c));
+  }
+
+  dispose() { if (this._unsub) this._unsub(); }
+
+  _changed(c) {
+    if (c.kind === 'workspaces') return this._emitter.fire(undefined);
+    const id = c.kind === 'items' ? `workspace|${c.workspace}`
+             : c.kind === 'tables' ? `tables|${c.workspace}|${c.item}`
+             : c.kind === 'files' ? `dir|${c.workspace}|${c.item}|${c.dir || ''}`
+             : null;
+    const n = id && this._nodes.get(id);
+    if (n) this._emitter.fire(n);
+  }
+
+  _track(n) {
+    const id = this._idOf(n);
+    if (id) this._nodes.set(id, n);
+    return n;
   }
 
   // `n` undefined refreshes the whole tree; a node refreshes that subtree only, which is
-  // what the per-item refresh in the context menu wants. The catalog's memos under the
-  // node are cleared: a per-node refresh that re-renders from the same cached listing is
-  // a refresh button that does nothing, and the tables listing is exactly the memo the
-  // per-node button exists to bust. Memos for the rest of the tree are kept.
+  // what the per-item refresh in the context menu wants. Every listing is otherwise served
+  // from disk first, so a Refresh is the one thing that goes to OneLake in the foreground:
+  // each listing under the node is re-read once, and the rest of the tree keeps its cache.
+  //
+  // `n` may also be a description of a node rather than the node itself (the .bim export
+  // refreshes a lakehouse's Files/ by name); it is redrawn only if it is on screen.
   refresh(n) {
-    this.catalog.reset(n ? { workspace: n.workspace, item: n.item } : undefined);
+    this._fresh = { workspace: n && n.workspace, item: n && n.item, done: new Set() };
     if (this.fabric) this.fabric.reset();
-    this._emitter.fire(n);
+    if (!n) return this._emitter.fire(undefined);
+    const on = this._nodes.get(this._idOf(n));
+    if (on || !['workspace', 'tables', 'dir'].includes(n.kind)) this._emitter.fire(on || n);
+  }
+
+  _idOf(n) {
+    return n.kind === 'workspace' ? `workspace|${n.workspace}`
+         : n.kind === 'tables' ? `tables|${n.workspace}|${n.item}`
+         : n.kind === 'dir' ? `dir|${n.workspace}|${n.item}|${n.dir || ''}`
+         : null;
+  }
+
+  // Draw again from what is cached — after a sign-in, an export, an account switch. Not a
+  // Refresh: nothing is re-read in the foreground, the store revalidates what is old.
+  redraw() {
+    this._fresh = null;
+    this._nodes.clear();
+    this._emitter.fire(undefined);
+  }
+
+  // Is this listing one the last Refresh asked to re-read, and not yet re-read?
+  _isFresh(id, ws, item) {
+    const f = this._fresh;
+    if (!f || f.done.has(id)) return false;
+    if (f.workspace && f.workspace !== ws) return false;
+    if (f.item && item && f.item !== item) return false;
+    f.done.add(id);
+    return true;
   }
 
   getTreeItem(n) {
@@ -136,17 +190,18 @@ class LakehouseTree {
   }
 
   async _children(n) {
-    const { fmtBytes, hasFilesArea, kindLabel, strip } = await this.catalog.paths();
+    const { fmtBytes, hasFilesArea, kindLabel, strip } = await this.onelake.paths();
 
     if (!n) {
-      const names = await this.catalog.listWorkspaces();
+      const names = await this.onelake.workspaces({ fresh: this._isFresh('root', undefined, undefined) });
       return names.length
-        ? names.map(name => node('workspace', name, { workspace: name }))
+        ? names.map(name => this._track(node('workspace', name, { workspace: name })))
         : [node('empty', 'No workspaces — is this the right tenant?', { leaf: true })];
     }
 
     if (n.kind === 'workspace') {
-      const items = await this.catalog.listItems(n.workspace);
+      const items = await this.onelake.items(n.workspace,
+        { fresh: this._isFresh(`items|${n.workspace}`, n.workspace) });
       const kids = items.length
         ? items.map(it => node('item', it.name.replace(/\.[^.]+$/, ''), {
             workspace: n.workspace, item: it.name, kindLabel: kindLabel(it.kind),
@@ -174,17 +229,21 @@ class LakehouseTree {
     // actually came for; Files stays shut, because listing it is a request.
     if (n.kind === 'item') {
       const lh = { workspace: n.workspace, item: n.item };
-      const kids = [node('tables', 'Tables', { ...lh, expanded: true })];
+      const kids = [this._track(node('tables', 'Tables', { ...lh, expanded: true }))];
       // Only a lakehouse has a Files/ area, and the item's suffix already says which — no
       // request is needed to find that out.
-      if (hasFilesArea(n.item)) kids.push(node('dir', 'Files', { ...lh, dir: '' }));
+      if (hasFilesArea(n.item)) kids.push(this._track(node('dir', 'Files', { ...lh, dir: '' })));
       return kids;
     }
 
     if (n.kind === 'tables') {
       const lh = { workspace: n.workspace, item: n.item };
-      const tables = await this.catalog.listTables(lh);
+      const tables = await this.onelake.tables(lh,
+        { fresh: this._isFresh(`tables|${n.workspace}|${n.item}`, n.workspace, n.item) });
       if (!tables.length) return [node('empty', 'No tables', { leaf: true })];
+      // The tables are on screen, so their metadata is what the next click will want: read
+      // it behind the user, so that click is a disk read rather than the catalog's seconds.
+      this.onelake.prefetch(lh, tables);
       const schemas = [...new Set(tables.map(t => t.schema || ''))];
       // OneLake gives schema-less items a synthetic single namespace. Rendering "dbo" as a
       // level of its own would be one click between here and every table in it, for a
@@ -196,18 +255,19 @@ class LakehouseTree {
 
     if (n.kind === 'schema') {
       const lh = { workspace: n.workspace, item: n.item };
-      const tables = await this.catalog.listTables(lh);   // cached prefix; one round trip
+      const tables = await this.onelake.tables(lh);   // the parent's listing, from the store
       return tables.filter(t => (t.schema || '') === n.schema).map(t => this._table(lh, t));
     }
 
     if (n.kind === 'dir') {
       const lh = { workspace: n.workspace, item: n.item };
-      const entries = await this.catalog.listFiles(lh, n.dir);
+      const entries = await this.onelake.files(lh, n.dir,
+        { fresh: this._isFresh(`files|${n.workspace}|${n.item}|${n.dir || ''}`, n.workspace, n.item) });
       if (!entries.length) return [node('empty', 'Empty', { leaf: true })];
       return entries.map(e => e.isDir
         // `path` is workspace-relative (…/Files/a/b); the child directory is what follows
         // Files/, which is what listFiles takes.
-        ? node('dir', e.name, { ...lh, dir: strip(e.path.replace(/^.*?\/Files\/?/, '')) })
+        ? this._track(node('dir', e.name, { ...lh, dir: strip(e.path.replace(/^.*?\/Files\/?/, '')) }))
         // bytes travels with it so the panel can open the file without re-listing the
         // directory it already knows everything about.
         : node('file', e.name, { ...lh, leaf: true, path: e.path, bytes: e.bytes, size: fmtBytes(e.bytes) }));

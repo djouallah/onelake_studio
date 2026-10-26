@@ -93,6 +93,10 @@ export function connectNative() {
     // ATTACH the item as an Iceberg REST catalog in the host and hand back the identifier
     // its table is reachable under. This is the call that replaced the manifest walk.
     openTable: target => call("openTable", [target]),
+    // A table's metadata, and its first rows, from the extension's cache-first store: on
+    // screen from disk when the table was ever opened, refreshed behind when it is old.
+    resolveTable: target => call("onelake.table", [target]),
+    peekTable: target => call("onelake.peek", [target]),
     // Bytes with no URL land in a host temp file, and the PATH comes back — data.js
     // splices it into its SQL directly, the same way it now splices URLs. A Uint8Array does
     // not survive VS Code's JSON message serialisation, so the bytes cross as base64: about
