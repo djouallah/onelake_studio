@@ -78,3 +78,19 @@ test("a failure is posted, never dropped, and a Stop says so", async () => {
   const [r] = await ask("onelake.table", [null]);
   assert.equal(r.type, "error");
 });
+
+test("saving goes through the host's save function: text as given, a OneLake file read by the host", async () => {
+  const saved = [];
+  const onelake = { readBytes: async (ws, path) => Buffer.from(`bytes of ${ws}/${path}`) };
+  const methods = createHostMethods({ onelake, engine: {},
+    saveFile: async (name, bytes) => { saved.push([name, Buffer.from(bytes).toString()]); return `/out/${name}`; } });
+  const ask = async args => { const out = []; await answer({ methods, engine: {} }, { id: 1, method: "host.saveFile", args }, m => out.push(m)); return out[0]; };
+  assert.equal((await ask([{ name: "q.csv", text: "a,b\r\n1,2" }])).value, "/out/q.csv");
+  assert.equal((await ask([{ name: "../../etc/x:y.parquet", workspace: "ws", path: "lh/Files/x.parquet" }])).value,
+    "/out/.._.._etc_x_y.parquet", "a name cannot steer the dialog's folder");
+  assert.deepEqual(saved, [["q.csv", "a,b\r\n1,2"], [".._.._etc_x_y.parquet", "bytes of ws/lh/Files/x.parquet"]]);
+  const none = createHostMethods({ onelake, engine: {} });
+  const out = [];
+  await answer({ methods: none, engine: {} }, { id: 2, method: "host.saveFile", args: [{ name: "a", text: "" }] }, m => out.push(m));
+  assert.equal(out[0].type, "error", "no save function, no save");
+});

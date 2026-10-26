@@ -64,7 +64,7 @@ export function mountAnalyze(root, ctx) {
   const info = el('div', { class: 'analyze-info' });
   const out = el('table', { class: 'analyze-table' });
   const btn = (text, onclick, primary) => el('button', { type: 'button', class: `btn-analyze${primary ? ' primary' : ''}`, onclick }, text);
-  const previewBtn = btn('Preview', preview, true), planBtn = btn('Show plan', plan), csvBtn = btn('Download CSV', download);
+  const previewBtn = btn('Preview', preview, true), planBtn = btn('Show plan', plan), csvBtn = btn('Save CSV', download);
   const sqlPage = el('div', { class: 'analyze-sql-page', hidden: '' },
     el('div', { class: 'analyze-controls' }, previewBtn, planBtn, csvBtn),
     el('div', { class: 'analyze-sql' },
@@ -170,12 +170,9 @@ export function mountAnalyze(root, ctx) {
     const res = await ctx.run(`SELECT COLUMNS(*)::VARCHAR FROM (\n${sql}\n)`);
     const cell = v => v == null ? '' : /[",\n\r]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : String(v);
     const text = [res.fields.map(cell).join(','), ...res.rows.map(r => res.fields.map(f => cell(r[f])).join(','))].join('\n') + '\n';
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(new Blob([text], { type: 'text/csv' }));
-    a.download = filename;
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(a.href), 0);
-    ctx.setStatus(`Exported ${res.rows.length.toLocaleString()} rows` +
+    const saved = await ctx.saveText(filename, text);
+    if (!saved) return;   // the save dialog was dismissed
+    ctx.setStatus(`Saved ${res.rows.length.toLocaleString()} rows to ${saved}` +
       (res.truncated ? ` — stopped at the engine's cap of ${res.limit.toLocaleString()}; add a filter for all of them` : '') + '.',
       res.truncated ? 'warn' : 'ok');
   }
@@ -228,7 +225,8 @@ export function mountAnalyze(root, ctx) {
       },
       palette: () => PALETTE,
       css,
-      storageKey: `onelake-studio.explore.${ctx.name}`,
+      loadState: () => ctx.loadState(`explore.${ctx.name}`),
+      saveState: s => ctx.saveState(`explore.${ctx.name}`, s),
     });
   }
 

@@ -128,7 +128,10 @@ try {
     // methods and engine (panel-host.mjs), because a page with nothing answering it never
     // finishes booting.
     window.__posted = [];
+    window.__state = undefined;
     window.acquireVsCodeApi = () => ({
+      getState: () => window.__state,
+      setState: v => { window.__state = v; },
       postMessage: m => {
         window.__posted.push(m);
         if (m && m.type === "call") {

@@ -342,6 +342,7 @@ async function show(context, options) {
     onOpened: logOpened, onBoot: logBoot, engine: eng, build: buildInfo,
     host: createHostMethods({
       onelake, engine: eng, onStatus: message => postLive({ type: 'status', message }),
+      saveFile,
     }),
     // The page could not bring the engine up. Everything it buffered is already gone;
     // this is the toast that stops the failure being a spinner that never moves.
@@ -360,6 +361,17 @@ async function show(context, options) {
     },
   });
   return true;
+}
+
+// Where a CSV or a OneLake file the panel saves goes: the editor's own save dialog,
+// starting in the workspace folder (or the home directory), then a plain write.
+async function saveFile(name, bytes) {
+  const folder = (vscode.workspace.workspaceFolders || [])[0];
+  const base = folder ? folder.uri : vscode.Uri.file(require('node:os').homedir());
+  const uri = await vscode.window.showSaveDialog({ defaultUri: vscode.Uri.joinPath(base, name) });
+  if (!uri) return null;
+  await vscode.workspace.fs.writeFile(uri, bytes);
+  return uri.fsPath;
 }
 
 // The tree and the welcome view are two states of one view: the welcome buttons show

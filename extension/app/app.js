@@ -21,6 +21,13 @@ import { tmslOf } from './analyze/model.js';
 import { vscodeApi } from './vscode-api.js';
 
 const $ = id => document.getElementById(id);
+
+// Per-panel UI state (Explore's shelves), kept by VS Code for this webview: it survives
+// the tab being hidden and the window reloading, with no browser storage involved.
+const viewState = {
+  get: key => (vs.getState() || {})[key],
+  set: (key, value) => vs.setState({ ...(vs.getState() || {}), [key]: value }),
+};
 const cfg = window.ONELAKE_STUDIO_CONFIG || {};
 const vs = vscodeApi();
 
@@ -251,6 +258,9 @@ async function openModelView(file) {
       rewrite: semantic.rewrite,
       run: runModelSql,
       setStatus,
+      saveText: (name, text) => engine.saveText(name, text),
+      loadState: viewState.get,
+      saveState: viewState.set,
     });
     setStatus(`${file.name} is the semantic model ${m.name}` +
               (m.directLake ? ` — ${m.directLake} Direct Lake table(s), opened from OneLake as a query needs them` : '') +
@@ -701,14 +711,16 @@ function setSaveLabel() {
   btn.title = file ? `Save ${activeFile.name} exactly as it is stored` : '';
 }
 
+// Both go through VS Code's own save dialog (the host writes the file): the bytes of a
+// OneLake file never cross into the page to be saved, and a dismissed dialog is no error.
 async function saveActive() {
-  if (!saveIsFile()) return saveCsv();
   const btn = $('csvBtn');
   btn.disabled = true;
   try {
-    const bytes = await engine.readFileBytes(lakehouse, activeFile);
-    save(new Blob([bytes], { type: 'application/octet-stream' }), activeFile.name);
-    setStatus(`Saved ${activeFile.name} (${engine.fmtBytes(bytes.length)}).`, 'ok');
+    const saved = saveIsFile()
+      ? await engine.saveOneLakeFile(lakehouse, activeFile)
+      : await saveCsv();
+    if (saved) setStatus(`Saved ${saved}.`, 'ok');
   } catch (e) {
     setStatus('Save failed: ' + e.message, 'error');
   } finally {
@@ -716,17 +728,8 @@ async function saveActive() {
   }
 }
 
-function save(blob, name) {
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = basename(name);
-  a.click();
-  setTimeout(() => URL.revokeObjectURL(url), 0);
-}
-
 function saveCsv() {
-  if (!lastResult || !lastResult.rows.length) return;
+  if (!lastResult || !lastResult.rows.length) return null;
   const { fields, rows } = lastResult;
   const q = s => {
     const t = cellText(s);
@@ -734,8 +737,8 @@ function saveCsv() {
   };
   const lines = [fields.map(q).join(',')];
   for (const r of rows) lines.push(fields.map(f => q(r[f])).join(','));
-  save(new Blob([lines.join('\r\n')], { type: 'text/csv;charset=utf-8' }),
-       ($('activeTable').textContent || 'query').replace(/[^\w.-]+/g, '_') + '.csv');
+  return engine.saveText(($('activeTable').textContent || 'query').replace(/[^\w.-]+/g, '_') + '.csv',
+                         lines.join('\r\n'));
 }
 
 // ---------------------------------------------------------------------------

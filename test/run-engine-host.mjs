@@ -161,7 +161,10 @@ try {
   // The panel's bridge, answered exactly as panel.js answers it (host.js).
   await host.install(page);
   await page.addInitScript(() => {
+    window.__state = undefined;
     window.acquireVsCodeApi = () => ({
+      getState: () => window.__state,
+      setState: v => { window.__state = v; },
       postMessage(m) {
         if (m && m.type === "call") {
           window.__hostCall(m).then(r => window.postMessage(r, "*"));

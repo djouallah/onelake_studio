@@ -757,6 +757,12 @@ export function createEngine({
     return hostBytes(lh.workspace, file.path);
   }
 
+  // Saving goes through VS Code's save dialog, in the host. Each answers the path written,
+  // or null when the dialog was dismissed.
+  const saveText = (name, text) => callHost("host.saveFile", [{ name: basename(name), text }]);
+  const saveOneLakeFile = (lh, file) =>
+    callHost("host.saveFile", [{ name: file.name, workspace: lh.workspace, path: file.path }]);
+
   return { init, reset, statTable, peekTable, loadTable,
-           loadFile, readFileBytes, runSql, describeLoad, fmtBytes, cancelLoad };
+           loadFile, readFileBytes, saveText, saveOneLakeFile, runSql, describeLoad, fmtBytes, cancelLoad };
 }

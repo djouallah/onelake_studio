@@ -33,8 +33,10 @@ const ENGINE_METHODS = new Set(['query', 'stream', 'cancel', 'info']);
  * @param {ReturnType<import('./onelake').createOneLake>} o.onelake
  * @param {ReturnType<import('./engine-host').createEngineHost>} o.engine
  * @param {(message: string) => void} [o.onStatus]  why a catalog call is taking long
+ * @param {(name: string, bytes: Uint8Array) => Promise<string|null>} [o.saveFile]
+ *        ask where to save, write it, answer the path (null: dismissed)
  */
-function createHostMethods({ onelake, engine, onStatus = () => {} }) {
+function createHostMethods({ onelake, engine, onStatus = () => {}, saveFile = null }) {
   return {
     'onelake.table': x => onelake.table(lhOf(x), tableOf(x), { onWait: onStatus }),
     'onelake.peek': x => onelake.peek(lhOf(x), tableOf(x), sql => engine.call('query', [sql])),
@@ -60,6 +62,16 @@ function createHostMethods({ onelake, engine, onStatus = () => {} }) {
     'onelake.localCopy': async x => {
       const ws = String(x.workspace), path = String(x.path);
       return engine.copyToTemp(`${ws}/${path}`, await onelake.readBytes(ws, path));
+    },
+    // Save, through the editor's save dialog: text the page made (a CSV), or a OneLake
+    // file the host reads itself — its bytes never cross into the page to be saved.
+    'host.saveFile': async x => {
+      if (!saveFile) throw new Error('saving is not available here');
+      const name = String(x.name || 'download').replace(/[\\/:*?"<>|]+/g, '_');
+      const bytes = typeof x.text === 'string'
+        ? Buffer.from(x.text, 'utf8')
+        : await onelake.readBytes(String(x.workspace), String(x.path));
+      return saveFile(name, bytes);
     },
   };
 }

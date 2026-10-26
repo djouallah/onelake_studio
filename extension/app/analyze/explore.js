@@ -160,14 +160,15 @@ const label = a => a.length ? a.map(v => v == null ? '(blank)' : String(v)).join
 //   chart(el)        an ECharts instance on el, in the page's theme
 //   palette()        the colours of series, in order
 //   css(name)        a CSS token's value (the chart's tints)
-//   storageKey       where the shelves are kept between visits (localStorage)
+//   loadState()      the shelves kept from the last visit (or null)
+//   saveState(s)     keep the shelves for the next visit
 export function createExplorer(root, ctx) {
   let fields = null, state = load(), drag = null, seq = 0, timer = null, result = null, pop = null;
 
   function load() {
-    try { return { ...EMPTY(), ...JSON.parse(localStorage.getItem(ctx.storageKey) ?? 'null') }; } catch { return EMPTY(); }
+    try { return { ...EMPTY(), ...(ctx.loadState() || {}) }; } catch { return EMPTY(); }
   }
-  function save() { try { localStorage.setItem(ctx.storageKey, JSON.stringify(state)); } catch {} }
+  function save() { try { ctx.saveState(JSON.parse(JSON.stringify(state))); } catch {} }
 
   // --- The frame ---
   const search = el('input', { type: 'search', class: 'ex-search', placeholder: 'Search fields', 'aria-label': 'Search fields' });
