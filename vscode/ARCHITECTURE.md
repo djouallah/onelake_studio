@@ -103,6 +103,9 @@ name, model file path, when — in one file per Microsoft account in its own sto
 survive a restart; the file stays where it is. Creating one writes nothing to Fabric or OneLake. A
 Direct Lake table is read from the lakehouse its model names, through the same Iceberg catalog,
 whichever item is selected, and only when a query actually reads it.
+A model not deployed yet, whose expression still holds placeholders (`…/{WS_ID}/{LH_ID}`), names
+no lakehouse: opened from `Files/` (or kept by its `abfss://` path), its tables are read from the
+lakehouse the file is in.
 
 To change the syntax, change dax-sql and move the pin: the extension carries no copy of it.
 

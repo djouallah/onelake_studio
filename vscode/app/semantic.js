@@ -58,10 +58,23 @@ export function modelName(fileName) {
   return name;
 }
 
+// The lakehouse a model file in OneLake sits in — abfss://<ws>@…/<item>/Files/… — or null.
+export function homeOf(path) {
+  const m = /^abfss:\/\/([^@/]+)@onelake\.dfs\.fabric\.microsoft\.com\/([^/]+)\//i.exec(String(path));
+  return m ? { workspace: m[1], item: m[2] } : null;
+}
+
+// An item in a view schema's name: a GUID's first 8 hex digits, a name ("nem.Lakehouse") whole.
+const itemTag = item => (/^[0-9a-f]{8}-/i.test(item)
+  ? item.replace(/-/g, "").slice(0, 8)
+  : item.replace(/\.[A-Za-z]+$/, "").replace(/[^A-Za-z0-9_]/g, "_"));
+
 // The bim's Direct Lake tables, by table name: where each one lives in OneLake. A Direct
 // Lake model's shared expression holds its lakehouse's OneLake URL, by GUIDs; each table's
-// partition names that expression, and the schema and table it reads.
-export function directLakeTables(bim) {
+// partition names that expression, and the schema and table it reads. A model not deployed
+// yet names none ("…/{WS_ID}/{LH_ID}", filled in at deploy): its tables are read from `home`,
+// the lakehouse its file is in, when there is one.
+export function directLakeTables(bim, home = null) {
   const text = e => (Array.isArray(e) ? e.join("\n") : String(e ?? ""));
   const url = /onelake\.dfs\.fabric\.microsoft\.com\/([0-9a-f-]{36})\/([0-9a-f-]{36})/i;
   const found = new Map();
@@ -72,11 +85,11 @@ export function directLakeTables(bim) {
   const tables = new Map();
   for (const t of bim?.model?.tables ?? []) {
     const s = t.partitions?.[0]?.source;
-    const lake = s?.expressionSource && found.get(s.expressionSource);
+    const lake = s?.expressionSource && (found.get(s.expressionSource) || home);
     if (!lake) continue;
     const schema = s.schemaName ?? "dbo";
     const entity = s.entityName ?? t.name;
-    const viewSchema = `${schema}_${lake.item.replace(/-/g, "").slice(0, 8)}`;
+    const viewSchema = `${schema}_${itemTag(lake.item)}`;
     tables.set(lc(t.name), {
       lh: { workspace: lake.workspace, item: lake.item },
       t: { schema, table: entity },
@@ -112,14 +125,15 @@ function bimOf(path, text, mods) {
 
 /**
  * A semantic view of a model file's text (a .bim, or an Ossie .yaml), under `name`. `mode`:
- * 'create', 'replace' or 'if_not_exists' (dax-sql's). Returns what the model view draws:
+ * 'create', 'replace' or 'if_not_exists' (dax-sql's). `home`: the lakehouse the file is in, when
+ * `path` does not say (a file opened from Files/ by name). Returns what the model view draws:
  * { name, file, sample, directLake, bim, exploreCompiler }.
  */
-export async function defineView(name, path, text, mode = "replace", modules = null) {
+export async function defineView(name, path, text, mode = "replace", modules = null, home = homeOf(path)) {
   const mods = await ready(modules);
   const { createCompiler, tmslToModel } = mods;
   const bim = bimOf(path, text, mods);
-  const lake = directLakeTables(bim);
+  const lake = directLakeTables(bim, home);
   // A Direct Lake table is the view the engine opens for it; any other is the model's own
   // source name, as dax-sql reads it by default.
   const tableSource = t => {
@@ -151,8 +165,8 @@ export async function defineView(name, path, text, mode = "replace", modules = n
 }
 
 // A model opened from a file, under the file's name: the view `nem` for nem.bim or nem.yaml.
-export const registerModel = (fileName, text, modules = null) =>
-  defineView(modelName(fileName), fileName, text, "replace", modules);
+export const registerModel = (fileName, text, modules = null, home = null) =>
+  defineView(modelName(fileName), fileName, text, "replace", modules, home);
 
 export function dropView(name) {
   if (views) views.drop(name, { ifExists: true });

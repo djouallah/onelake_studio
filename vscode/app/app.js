@@ -277,7 +277,7 @@ async function openModelView(file, text = null, { fromOneLake = text == null } =
     // engine's boot: only its queries need DuckDB, and runModelSql waits for it.
     if (fromOneLake) await engineReady;
     const bim = text != null ? text : new TextDecoder().decode(await engine.readFileBytes(lakehouse, file));
-    const m = await semantic.registerModel(file.name, bim);
+    const m = await semantic.registerModel(file.name, bim, null, fromOneLake ? lakehouse : null);
     // Kept by the host as a semantic view too, so it is there after a restart and the
     // command line can name it. Best effort: the view on screen does not depend on it.
     engine.semanticCreate(m.name, fromOneLake ? abfssUrl(lakehouse.workspace, file.path) : file.path)
