@@ -1247,6 +1247,12 @@ const previewSql = (ident, whole) => `SELECT * FROM ${ident}` + (whole ? '' : ' 
 // false, so a one-column preview of one can never be mistaken for a document.
 async function runQuery({ doc = true, ext = '' } = {}) {
   const sql = $('sqlEditor').value;
+  // A selection outranks a query already on its way — the README landing query above all,
+  // which a click during boot races. A cancel sent before the statement reaches the engine
+  // stops nothing, so the result itself stands down rather than painting over the
+  // selection's view (the README landing on top of a table's Stats).
+  const my = selSeq;
+  const stale = () => my !== selSeq;
   // Queries run through send() now, so a query is stoppable too — and the preview inside
   // selectTable is a query, which is where the wait actually was.
   setBusy(true, { stoppable: true });
@@ -1255,14 +1261,17 @@ async function runQuery({ doc = true, ext = '' } = {}) {
   let t0 = performance.now();
   try {
     await engineReady;   // Ctrl+Enter is live before the engine is
+    if (stale()) return false;
     // A query of a semantic model runs as the SQL dax-sql compiles it to, once the tables
     // that SQL reads are open; every other query is null here and runs as written.
     const model = semantic.rewrite(sql);
     if (model) docAllowed = false;   // its answer is a table, even with one cell
     for (const x of model ? model.tables : [])
       await engine.loadTable(x.lh, x.t, { viewSchema: x.viewSchema });
+    if (stale()) return false;
     t0 = performance.now();   // ...and waiting for it is not query time
     const res = await engine.runSql(model ? model.sql : sql);
+    if (stale()) return false;
     renderResults(res);
     lastResult = res;
     const ms = Math.round(performance.now() - t0);
@@ -1286,6 +1295,7 @@ async function runQuery({ doc = true, ext = '' } = {}) {
     // is how a JSON file from another lakehouse ended up on screen under a .sql file's name.
     // A stopped query clears the same way but is not an error — and when it was stopped by
     // the user picking another table, that table's own status must not be overwritten.
+    if (stale()) return false;
     if (e.cancelled) {
       clearResults('(no result — query stopped)');
       // Say so. Without this the status line kept whatever the Stop button had written
@@ -1299,7 +1309,8 @@ async function runQuery({ doc = true, ext = '' } = {}) {
     console.error(e);
     return false;
   } finally {
-    setBusy(false);
+    // The newer selection's load owns the busy state now.
+    if (!stale()) setBusy(false);
   }
 }
 

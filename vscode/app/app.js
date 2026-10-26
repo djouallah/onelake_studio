@@ -530,6 +530,12 @@ const previewSql = (ident, whole) => `SELECT * FROM ${ident}` + (whole ? '' : ' 
 // whether the query succeeded, so a caller with its own message can keep quiet.
 async function runQuery({ doc = true, ext = '' } = {}) {
   const sql = $('sqlEditor').value;
+  // A click in the tree outranks a query already on its way — the welcome page's, above
+  // all, which a click that opens the panel races. Each await below can be where that
+  // click lands, and a cancel sent before the statement reaches the host stops nothing,
+  // so the result itself has to stand down rather than paint over the click's view.
+  const my = selSeq;
+  const stale = () => my !== selSeq;
   setBusy(true, { stoppable: true });
   docAllowed = doc;
   docSourceExt = ext;
@@ -540,6 +546,7 @@ async function runQuery({ doc = true, ext = '' } = {}) {
     // that SQL reads are open; every other query runs as written.
     await viewsReady;
     const model = await semantic.statement(sql);
+    if (stale()) return false;
     // CREATE / DROP SEMANTIC VIEW: dax-sql has checked it; the host keeps the view.
     if (model && (model.create || model.drop)) {
       clearResults();
@@ -549,8 +556,10 @@ async function runQuery({ doc = true, ext = '' } = {}) {
     if (model) docAllowed = false;
     for (const x of model ? model.tables : [])
       await engine.loadTable(x.lh, x.t, { viewSchema: x.viewSchema });
+    if (stale()) return false;
     t0 = performance.now();
     const res = await engine.runSql(model ? model.sql : sql);
+    if (stale()) return false;
     renderResults(res);
     lastResult = res;
     const ms = Math.round(performance.now() - t0);
@@ -568,6 +577,8 @@ async function runQuery({ doc = true, ext = '' } = {}) {
     setSaveLabel();
     return true;
   } catch (e) {
+    // Most likely cancelled by the very click that superseded it: not this query's screen.
+    if (stale()) return false;
     // The pane is not a scratchpad of whatever last worked.
     if (e.cancelled) {
       clearResults('(no result — query stopped)');
@@ -579,7 +590,8 @@ async function runQuery({ doc = true, ext = '' } = {}) {
     console.error(e);
     return false;
   } finally {
-    setBusy(false);
+    // The newer selection's load owns the busy state now.
+    if (!stale()) setBusy(false);
   }
 }
 
