@@ -9,12 +9,51 @@
 The extension host in [`src/`](src/) does sign-in, every OneLake read (cache first) and the query
 engine; its panel, [`app/`](app/), is only a view.
 
+## Commands
+
+| Command | What it does |
+| --- | --- |
+| **OneLake Studio: Open** | Opens the panel, signing in if needed. |
+| **OneLake Studio: Sign in to OneLake** | Signs in and fills the explorer, without opening the panel. |
+| **OneLake Studio: Switch Microsoft Account** | Asks which account to use instead of reusing the remembered one, and reopens the panel so the previous account's tables do not survive the switch. To sign out altogether, use the Accounts menu in the bottom left — that is VS Code's to own, not an extension's. |
+| **OneLake Studio: Refresh** | Re-reads a workspace, item or folder from OneLake in the foreground. Everything else is served from the cache first and refreshed behind you. |
+| **OneLake Studio: Group by Type** / **Group by Workspace** | The explorer's title-bar toggle. By type, the top level is one heading per type — Lakehouses, Warehouses, SQL databases…, Semantic models — over every workspace, each item with its workspace beside it. The first time, it lists each workspace once; after that it is drawn from the cache. Remembered. |
+| **OneLake Studio: Show Read Log** | Every OneLake request the extension made, with sizes and timings. |
+| **OneLake Studio: Clear Cached OneLake Data** | Empties the on-disk cache (listings, table metadata, first rows, files, table data) and reports what it freed. It is the only thing that does: the cache survives a sign-out. |
+| **OneLake Studio: Install Agent Skill (Claude Code, GitHub Copilot)** | Lets Claude Code or GitHub Copilot answer questions about your OneLake data and semantic models (below). |
+
+Saving a result as CSV, or a file from `Files/`, goes through VS Code's own save dialog.
+
+## Settings
+
+| Setting | What it does |
+| --- | --- |
+| `onelakeStudio.tenantId` | Directory (tenant) GUID to sign in against. Leave empty for your home tenant; set it to reach a tenant you are a guest in. |
+| `onelakeStudio.catalogTtlMinutes` | How old a listing may be before it is refreshed (default 5). The last known answer is always served instantly from disk and refreshed behind you. |
+| `onelakeStudio.tableMetadataTtlHours` | How old a table's Iceberg metadata may be before it is refreshed (default 24), so a table you have opened before opens without asking the catalog — even after a restart. **Refresh** on its lakehouse re-reads it at once. |
+| `onelakeStudio.prefetchMetadata` | Read every table's metadata in the background once a lakehouse's Tables node is opened, so the first click is a disk read (default on). |
+| `onelakeStudio.semanticModelsFolder` | Where a semantic model's `.bim` is downloaded (`<folder>/<workspace>/<model>.bim`) and opened from after that. Empty means `OneLakeStudio/semantic-models` in your home directory. |
+| `onelakeStudio.diskCacheMaxGB` | How much table data read from OneLake is kept on disk, per account, so it is read from this machine afterwards, even after a restart (default 10). |
+| `onelakeStudio.engineMemoryLimit` | Most memory DuckDB may use, e.g. `4GB`. Empty means a quarter of the machine's RAM. |
+
+## Ask Claude Code or GitHub Copilot about your data
+
+**Install Agent Skill** writes a skill to `~/.claude/skills/onelake/`, where both Claude Code and
+GitHub Copilot in VS Code (agent mode) look for personal skills. Either then
+answers questions about OneLake and Power BI semantic models itself: it lists workspaces,
+lakehouses and models, reads a model's measures and their DAX, and computes measures by any
+column — `SELECT dim_customer.Region, AGG("Total Sales") FROM sales_model GROUP BY ALL` — on the
+same sign-in, cache, DuckDB and DAX compiler as the panel, read only. The skill runs the
+extension's `cli.mjs` with Node.js, which only hands the question to the extension running in
+VS Code and prints its answer — so VS Code has to be open, signed in. The skill follows the
+extension through updates. It can also run a DAX query against a model, print the SQL a
+model query or DAX compiles to, and check a measure against its raw table.
+
 ## Sign-in, the engine and the cache
 
 [**OneLake Studio**](https://marketplace.visualstudio.com/items?itemName=djouallah.onelake-studio) needs
 no app registration: VS Code's own Microsoft account provider is a first-party application, so
-`getSession` returns the OneLake token directly. Commands and settings are listed in
-[`README.md`](README.md), which is also the Marketplace page.
+`getSession` returns the OneLake token directly.
 
 The query engine is **DuckDB 2.0 running natively in the extension host**
 ([`src/engine-host.js`](src/engine-host.js)) — a real DuckDB, not a WebAssembly
@@ -39,7 +78,9 @@ are served cache-first from disk ([`src/onelake.js`](src/onelake.js)) and refres
 The bytes of a `Files/` object (an image, a `.bim`, a SQLite copy, a saved file) are kept under
 the etag its cached listing gave, so a rewritten file is read again and an unchanged one never
 is. Table data — Iceberg files never change once written — is kept by DuckDB's disk cache
-(cache_httpfs). The cache is kept per Microsoft account, so switching accounts never serves
+(cache_httpfs); the vsix carries a build of it with a Windows fix not yet released upstream
+(without it, nothing is cached on disk on Windows), which DuckDB loads as an unsigned extension
+until the fix ships. The cache is kept per Microsoft account, so switching accounts never serves
 one account's data to another; it survives a sign-out (signing back in finds it warm), and only
 **Clear Cached OneLake Data** deletes it.
 
@@ -48,7 +89,9 @@ downloads its TMSL definition (the Fabric REST API's `getDefinition`) to a `.bim
 `~/OneLakeStudio/semantic-models/<workspace>/<model>.bim`, or `onelakeStudio.semanticModelsFolder` —
 and opens it as its model (below). That file is the cache: later clicks open it without asking Fabric,
 the tree marks the model *cached*, and **Download Again** fetches it fresh. That needs a second token, in the Fabric API's audience, which VS
-Code asks for only when you first expand *Semantic models*. The extension is read only by design: it
+Code asks for only when you first expand *Semantic models*. Downloading a model needs permission to
+read its definition (Contributor or above on the workspace, or write on the model). The extension
+is read only by design: it
 writes nothing to Fabric or OneLake.
 
 Requires desktop VS Code on x64 or arm64 Windows, macOS or Linux: the engine is a native library, so
