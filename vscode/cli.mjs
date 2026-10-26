@@ -10,6 +10,8 @@
 //   node cli.mjs ls                                   workspaces
 //   node cli.mjs ls <ws>                              its lakehouses/warehouses and semantic models
 //   node cli.mjs ls <ws> <item>                       its tables, and their names for --in
+//   node cli.mjs models [<ws>]                        semantic models in every workspace, counted
+//   node cli.mjs items [<ws>]                         lakehouses and warehouses in every workspace, counted
 //   node cli.mjs table <ws> <item> <schema.table>     columns and stats (metadata only)
 //   node cli.mjs model <ws> <model> [--fresh]         relationships, columns, measures + DAX
 //   node cli.mjs sql "<sql>" [--in <ws>/<item>] [--limit N] [--csv] [--show-sql]
@@ -25,6 +27,8 @@ const HELP = `onelake — ask OneLake Studio (VS Code must be open, signed in). 
   ls                                  workspaces
   ls <ws>                             its lakehouses/warehouses and semantic models
   ls <ws> <item>                      its tables, and their names for sql --in
+  models [<ws>]                       semantic models in every workspace (or one), counted
+  items [<ws>]                        lakehouses and warehouses in every workspace (or one)
   table <ws> <item> <schema.table>    columns and stats (metadata only)
   model <ws> <model>                  relationships, columns, measures with their DAX
   sql "<sql>"                         read-only SQL; a downloaded model is a table:
@@ -35,7 +39,8 @@ const HELP = `onelake — ask OneLake Studio (VS Code must be open, signed in). 
   dax "EVALUATE …"                    a DAX query against a model (Explore's DAX runs as is)
     --model <name>                    which model (needed when more than one is defined)
   --limit N  --csv
-  --fresh                             re-read from OneLake/Fabric instead of the cache`;
+  --fresh                             ask OneLake/Fabric now: listings and metadata come only
+                                        from the cache otherwise, and say so when it has nothing`;
 
 const argv = process.argv.slice(2);
 const opts = {}, args = [];

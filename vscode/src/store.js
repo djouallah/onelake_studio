@@ -146,6 +146,8 @@ function createStore({ dir, ttlMs = DEFAULT_TTL_MS, maxBytes = DEFAULT_MAX_BYTES
   // A value the caller computed itself (a table's first rows), and its read-back.
   const put = (key, value) => write(key, value).then(() => {});
   const peek = async key => { const e = await read(key); return e ? e.value : undefined; };
+  // The same, with when it was stored: { value, at }, or null. Never fetches, never refreshes.
+  const known = async key => { const e = await read(key); return e ? { value: e.value, at: e.at } : null; };
 
   // ---------------------------------------------------------------------------
   // Disk budget
@@ -246,7 +248,7 @@ function createStore({ dir, ttlMs = DEFAULT_TTL_MS, maxBytes = DEFAULT_MAX_BYTES
   }
 
   return {
-    get, put, peek, clear, size, getBlob, putBlob,
+    get, put, peek, known, clear, size, getBlob, putBlob,
     on: (ev, fn) => { events.on(ev, fn); return () => events.off(ev, fn); },
     ready: () => usable,
   };

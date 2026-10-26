@@ -9,6 +9,8 @@
 // for the command line. Read only: every statement goes through the engine's guard.
 //
 //   ls [<ws> [<item>]]               workspaces / items + semantic models / tables
+//   models [<ws>]                    semantic models in every workspace (or one), counted
+//   items [<ws>]                     lakehouses and warehouses in every workspace (or one), counted
 //   table <ws> <item> <schema.table> metadata only
 //   model <ws> <model>               relationships, columns, measures with DAX
 //   sql "<sql>" [--in <ws>/<item>]   a semantic view is a table, AGG("m") its measure m; and
@@ -76,8 +78,44 @@ function createAgent({ onelake, fabric, engine, bimPath, appDir, vendorDir, daxS
 
   const exists = p => fsp.stat(p).then(() => true, () => false);
 
-  async function itemOf(ws, name) {
-    const items = await onelake.items(ws);
+  // ---------------------------------------------------------------------------
+  // Listings and metadata are answered from what the extension already has on disk, and
+  // never fetched: the command line does not sign anyone in, start an export, or list a
+  // workspace behind the user's back. `--fresh` is the one way to have it ask OneLake or
+  // Fabric. A query (sql, dax) reads OneLake — that is what a query is for.
+  // ---------------------------------------------------------------------------
+  const notCached = (what, how) => Object.assign(
+    new Error(`${what} is not cached yet — ${how} in the OneLake Studio tree, or add --fresh to read it now`),
+    { notCached: true });
+  const IN_TREE = {
+    workspaces: ['the workspace list', 'sign in and open the explorer'],
+    items: ws => [`${ws}'s lakehouses and warehouses`, `expand ${ws}`],
+    models: ws => [`${ws}'s semantic models`, `expand "Semantic models" under ${ws}`],
+    tables: lh => [`${lh.workspace}/${lh.item}'s tables`, `expand ${lh.item}`],
+    table: (lh, t) => [`${lh.workspace}/${lh.item} ${t.schema}.${t.table}'s metadata`, 'open the table'],
+  };
+  // One listing: from disk, or — with --fresh only — from OneLake/Fabric. `seen` collects
+  // when each answer was stored, for the "as of" note.
+  async function look(kind, args, { fresh, seen }) {
+    if (fresh) return onelake[kind](...args, { fresh: true });
+    const e = await onelake.cached[kind](...args);
+    if (!e) {
+      const [what, how] = typeof IN_TREE[kind] === 'function' ? IN_TREE[kind](...args) : IN_TREE[kind];
+      throw notCached(what, how);
+    }
+    if (seen) seen.push(e.at);
+    return e.value;
+  }
+
+  const ago = at => {
+    const min = Math.round((Date.now() - at) / 60000);
+    return min < 1 ? 'just now' : min < 120 ? `${min} min ago`
+      : min < 2 * 1440 ? `${Math.round(min / 60)} h ago` : `${Math.round(min / 1440)} days ago`;
+  };
+
+  // `items`: the workspace's listing — the cache's, for a listing command; a query passes the
+  // one it may fetch.
+  async function itemOf(ws, name, items) {
     const lc = String(name).toLowerCase();
     const hit = items.find(i => i.name.toLowerCase() === lc) ||
                 items.find(i => i.name.toLowerCase().replace(/\.[^.]+$/, '') === lc);
@@ -85,8 +123,8 @@ function createAgent({ onelake, fabric, engine, bimPath, appDir, vendorDir, daxS
     return { workspace: ws, item: hit.name };
   }
 
-  async function modelOf(ws, name) {
-    const hit = (await onelake.models(ws)).find(m => m.name.toLowerCase() === String(name).toLowerCase());
+  async function modelOf(ws, name, opts) {
+    const hit = (await look('models', [ws], opts)).find(m => m.name.toLowerCase() === String(name).toLowerCase());
     if (!hit) throw new Error(`no semantic model "${name}" in ${ws} — \`ls ${ws}\` lists them`);
     return hit;
   }
@@ -128,6 +166,43 @@ function createAgent({ onelake, fabric, engine, bimPath, appDir, vendorDir, daxS
     throw new Error('which model? — add --model <name> (`sql "SHOW SEMANTIC VIEWS"` lists them)');
   }
 
+  // `fn` for one workspace, or for every workspace the cache knows. From disk that is quick;
+  // with --fresh it is one OneLake or Fabric call per workspace, so a few run at a time. A
+  // workspace whose listing is not cached, or cannot be read, is counted and named in a
+  // note rather than ending the answer: { missing, failed }.
+  async function eachWorkspace(ws, opts, fn, note) {
+    const list = ws ? [ws] : await look('workspaces', [], opts);
+    const missing = [];
+    let next = 0, failed = 0, unauthorised = false;
+    const worker = async () => {
+      while (next < list.length) {
+        const w = list[next++];
+        try { await fn(w); }
+        catch (e) {
+          if (e.notCached) { missing.push(w); continue; }
+          failed++;
+          if (e.status === 401) unauthorised = true;
+          note(`${w}: not listed — ${e.message}`);
+        }
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(4, list.length) }, worker));
+    if (missing.length) {
+      note(`not cached yet, so not counted: ${missing.sort().join(', ')} — expand them in the OneLake Studio tree, ` +
+           'or add --fresh to read them now');
+    }
+    if (unauthorised) note('expand "Semantic models" in the OneLake tree once to sign in to Fabric');
+    return { missing: missing.length, failed };
+  }
+  const shortfall = ({ missing, failed }) =>
+    (missing ? `; ${missing} workspace(s) not cached` : '') + (failed ? `; ${failed} could not be read` : '');
+  // Workspaces answer in any order: rows are sorted by workspace, then name.
+  const byFirst = (a, b) => String(a[0]).localeCompare(String(b[0])) || String(a[1]).localeCompare(String(b[1]));
+  const grid = (cols, rows, { csv }) => {
+    const sorted = [...rows].sort(byFirst);
+    return csv ? csvOf(cols, sorted) : mdTable(cols, sorted);
+  };
+
   // ---------------------------------------------------------------------------
   const commands = {
     // A DAX query, as Explore runs one: compiled by dax-sql against a semantic view.
@@ -144,37 +219,78 @@ function createAgent({ onelake, fabric, engine, bimPath, appDir, vendorDir, daxS
       note(`${((Date.now() - t0) / 1000).toFixed(1)}s`);
     },
 
-    async ls([ws, item], { fresh }, out, note) {
+    async ls([ws, item], opts, out, note) {
       if (!ws) {
-        out(mdTable(['workspace'], (await onelake.workspaces({ fresh })).map(w => [w])));
+        out(mdTable(['workspace'], (await look('workspaces', [], opts)).map(w => [w])));
         return;
       }
       if (!item) {
-        out(mdTable(['item', 'kind'], (await onelake.items(ws, { fresh })).map(i => [i.name, i.kind])));
+        // Either half may be cached without the other: each says so on its own.
+        let shown = 0;
+        try {
+          out(mdTable(['item', 'kind'], (await look('items', [ws], opts)).map(i => [i.name, i.kind])));
+          shown++;
+        } catch (e) { if (!e.notCached) throw e; note(e.message); }
         try {
           const rows = [];
-          for (const m of await onelake.models(ws, { fresh })) {
+          for (const m of await look('models', [ws], opts)) {
             rows.push([m.name, await exists(bimPath(ws, m.name)) ? 'downloaded' : '', m.description]);
           }
-          out('\n' + (rows.length ? mdTable(['semantic model', '', 'description'], rows) : 'No semantic models.'));
+          out((shown ? '\n' : '') + (rows.length ? mdTable(['semantic model', '', 'description'], rows) : 'No semantic models.'));
+          shown++;
         } catch (e) {
-          note(`semantic models not listed: ${e.message}` +
+          if (e.notCached) note(e.message);
+          else note(`semantic models not listed: ${e.message}` +
             (e.status === 401 ? ' — expand "Semantic models" in the OneLake tree once to sign in to Fabric' : ''));
         }
+        if (!shown) throw notCached(`${ws}`, `expand ${ws}`);
         return;
       }
-      const lh = await itemOf(ws, item);
-      const tables = await onelake.tables(lh, { fresh });
+      const lh = await itemOf(ws, item, await look('items', [ws], opts));
+      const tables = await look('tables', [lh], opts);
       out(mdTable(['table', `in sql --in ${ws}/${item}`],
         tables.map(t => [t.schema ? `${t.schema}.${t.table}` : t.table, `${sqlSchema(lh, t)}.${t.table}`])));
     },
 
-    async table([ws, item, name], { fresh }, out, note) {
+    // Every workspace's semantic models, or one workspace's, counted.
+    async models([ws], opts, out, note) {
+      const rows = [];
+      const gaps = await eachWorkspace(ws, opts, async w => {
+        for (const m of await look('models', [w], opts)) {
+          rows.push([w, m.name, await exists(bimPath(w, m.name)) ? 'downloaded' : '', m.description]);
+        }
+      }, note);
+      const n = new Set(rows.map(r => r[0])).size;
+      out(rows.length ? grid(['workspace', 'semantic model', '', 'description'], rows, opts) : 'No semantic models.');
+      if (!opts.csv) out(`\n${rows.length} semantic model(s) in ${n} workspace(s)${shortfall(gaps)}`);
+    },
+
+    // Every workspace's lakehouses and warehouses, or one workspace's, counted by kind.
+    async items([ws], opts, out, note) {
+      const rows = [];
+      const gaps = await eachWorkspace(ws, opts, async w => {
+        for (const i of await look('items', [w], opts)) rows.push([w, i.name, i.kind]);
+      }, note);
+      out(rows.length ? grid(['workspace', 'item', 'kind'], rows, opts) : 'No lakehouses or warehouses.');
+      if (opts.csv) return;
+      const kinds = new Map();
+      for (const r of rows) kinds.set(r[2], (kinds.get(r[2]) || 0) + 1);
+      out(`\n${rows.length} item(s): ${[...kinds].map(([k, c]) => `${c} ${k}`).join(', ') || 'none'}${shortfall(gaps)}`);
+    },
+
+    async table([ws, item, name], opts, out, note) {
       if (!name) throw new Error('usage: table <ws> <item> <schema.table>');
-      const lh = await itemOf(ws, item);
+      const lh = await itemOf(ws, item, await look('items', [ws], opts));
       const dot = name.indexOf('.');
       const t = dot > 0 ? { schema: name.slice(0, dot), table: name.slice(dot + 1) } : { schema: 'dbo', table: name };
-      const m = await onelake.table(lh, t, { fresh, onWait: note });
+      let m;
+      if (opts.fresh) m = await onelake.table(lh, t, { fresh: true, onWait: note });
+      else {
+        const e = await onelake.cached.table(lh, t);
+        if (!e) throw notCached(...IN_TREE.table(lh, t));
+        opts.seen.push(e.at);
+        m = { ...e.value, at: e.at, cached: true };
+      }
       const s = m.stats || {};
       const n = v => (v == null ? '—' : Number(v).toLocaleString('en'));
       out(mdTable(['', ''], [
@@ -186,11 +302,17 @@ function createAgent({ onelake, fabric, engine, bimPath, appDir, vendorDir, daxS
       out('\n' + mdTable(['column', 'type'], (m.schemaFields || []).map(f => [f.name, f.type])));
     },
 
-    async model([ws, name], { fresh }, out, note) {
+    async model([ws, name], opts, out, note) {
+      const { fresh } = opts;
       if (!name) throw new Error('usage: model <ws> <model>');
       let path = bimPath(ws, name);
-      if (fresh || !await exists(path)) {
-        const m = await modelOf(ws, name);
+      // A model not downloaded yet is an export from Fabric: only when asked for.
+      if (!fresh && !await exists(path)) {
+        throw Object.assign(new Error(`${ws}/${name} is not downloaded yet — open it in the OneLake Studio tree, ` +
+          'or add --fresh to export it from Fabric now'), { notCached: true });
+      }
+      if (fresh) {
+        const m = await modelOf(ws, name, opts);
         path = bimPath(ws, m.name);
         note(`downloading ${ws}/${m.name} from Fabric…`);
         const bytes = await fabric.getBim(ws, m.id);
@@ -236,7 +358,9 @@ function createAgent({ onelake, fabric, engine, bimPath, appDir, vendorDir, daxS
       const { semantic, paths, compiler } = await modules();
       await syncViews(note);
       const t0 = Date.now();
-      const lhIn = opts.in ? await itemOf(...String(opts.in).split('/')) : null;
+      // A query: its lakehouse may be listed from OneLake when the cache does not have it.
+      const [inWs, inItem] = opts.in ? String(opts.in).split('/') : [];
+      const lhIn = opts.in ? await itemOf(inWs, inItem, await onelake.items(inWs)) : null;
       if (lhIn) text = filesToAbfss(text, lhIn);
       const st = await semantic.statement(text, compiler);
       // CREATE / DROP SEMANTIC VIEW: dax-sql has checked it; the extension keeps the view.
@@ -297,13 +421,16 @@ function createAgent({ onelake, fabric, engine, bimPath, appDir, vendorDir, daxS
     const note = s => errLines.push(String(s));
     const [name, ...rest] = Array.isArray(args) ? args.map(String) : [];
     const cmd = Object.hasOwn(commands, name) ? commands[name] : null;
-    if (!cmd) return { out: '', err: `unknown command: ${name || '(none)'} — ls, table, model, sql or dax`, code: 1 };
+    if (!cmd) return { out: '', err: `unknown command: ${name || '(none)'} — ls, models, items, table, model, sql or dax`, code: 1 };
+    const seen = [];   // when each cached answer was stored (look())
     try {
       await cmd(rest, {
         fresh: !!opts.fresh, csv: !!opts.csv, in: opts.in ? String(opts.in) : '',
         limit: Number(opts.limit) > 0 ? Number(opts.limit) : 100,
-        showSql: !!opts.showSql, model: opts.model ? String(opts.model) : '',
+        showSql: !!opts.showSql, model: opts.model ? String(opts.model) : '', seen,
       }, out, note);
+      // An answer off disk says how old it is: the oldest listing it was made of.
+      if (seen.length) note(`from the cache, as of ${ago(Math.min(...seen))} — --fresh reads OneLake/Fabric again`);
       return { out: outLines.join('\n'), err: errLines.join('\n'), code: 0 };
     } catch (e) {
       errLines.push(`error: ${(e && e.message) || e}`);

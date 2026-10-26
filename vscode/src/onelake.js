@@ -259,9 +259,20 @@ function createOneLake({ catalog, store, prefetchEnabled = () => true, onHit = (
     } finally { workers--; }
   }
 
+  // What the store already holds, read without asking OneLake or Fabric — and without the
+  // refresh a stale entry would otherwise start: { value, at }, or null. The command line's
+  // listings and metadata (agent.js) answer from this alone.
+  const cached = {
+    workspaces: () => store.known(keys.workspaces()),
+    items: ws => store.known(keys.items(ws)),
+    tables: lh => store.known(keys.tables(lh)),
+    models: ws => store.known(keys.models(ws)),
+    table: (lh, t) => store.known(keys.table(lh, t)),
+  };
+
   return {
     workspaces, items, tables, files, table, peek, prefetch, refreshTables,
-    models, readBytes,
+    models, readBytes, cached,
     onChanged: fn => listen('changed', key => fn(decode(key))),
     onRefreshFailed: fn => listen('refresh-failed', (key, e) => fn(decode(key), e)),
     useStore,
