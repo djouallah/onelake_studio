@@ -159,8 +159,10 @@ class LakehouseTree {
         break;
       case 'semanticModel':
         item.iconPath = new vscode.ThemeIcon('symbol-structure');
+        // Every click reaches the command; it acts on the second one (a double-click).
+        item.command = { command: 'onelakeStudio.openSemanticModel', title: 'Open semantic model', arguments: [n] };
         item.tooltip = (n.description ? `${n.description}\n\n` : '') +
-          "Export its .bim to a lakehouse's Files/semantic_models/ to open it as a model.";
+          'Double-click to download its .bim to this machine and open it as a model.';
         break;
       case 'fabricSignIn':
         item.iconPath = new vscode.ThemeIcon('sign-in');

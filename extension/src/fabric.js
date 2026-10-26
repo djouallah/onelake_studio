@@ -1,19 +1,15 @@
 'use strict';
 // =============================================================================
-// fabric.js — a workspace's semantic models, and exporting one's .bim into Files/
+// fabric.js — a workspace's semantic models, and a model's .bim
 // =============================================================================
-// Everything else in the extension reads OneLake on the storage token. A semantic model is
-// not in OneLake: its definition comes from the Fabric REST API, which wants a token in a
-// different audience — asked for only when someone expands "Semantic models", never at
-// sign-in. The export is the extension's one write, and it is narrow on purpose: one file,
-// `<lakehouse>/Files/semantic_models/<model>.bim`, written only on the user's command.
-// assertExportPath is what keeps it that narrow — every other path is refused before a
-// request goes out.
+// A semantic model is not in OneLake: its list and its definition come from the Fabric
+// REST API, which wants a token in a different audience — asked for only when someone
+// expands "Semantic models", never at sign-in. Read only, like everything else here: the
+// extension writes nothing to Fabric or OneLake. A model's .bim is downloaded to this
+// machine (extension.js) and opened from there.
 //
 // Host-side only. The panel never sees a Fabric token.
 // =============================================================================
-
-const { DFS_ORIGIN } = require('./catalog');
 
 const FABRIC_API = 'https://api.fabric.microsoft.com/v1';
 const FETCH_TIMEOUT_MS = 60_000;
@@ -22,40 +18,15 @@ const MAX_PAGES = 200;
 // minutes is far past anything a real one takes, and short enough that a stuck operation
 // says so instead of leaving a progress notification up for ever.
 const LRO_TIMEOUT_MS = 120_000;
-// DFS append takes far more than this per call; 4 MiB keeps each request a size that a
-// slow link finishes well inside the timeout.
-const CHUNK = 4 * 1024 * 1024;
 
 const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const byName = (a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' });
-const encPath = p => String(p).split('/').map(encodeURIComponent).join('/');
 
-// The folder an export lands in, inside a lakehouse's Files/ area.
-const EXPORT_DIR = 'semantic_models';
-
-// A model's display name as a file name: the characters Windows, OneLake or a URL would
-// choke on become `_`, and a name that is nothing but those still gets a file.
+// A model's display name as a file name: the characters Windows or a path would choke on
+// become `_`, and a name that is nothing but those still gets a file.
 function bimFileName(modelName) {
   const safe = String(modelName).replace(/[\\/:*?"<>|#%\u0000-\u001f]/g, '_').replace(/^[.\s]+|[.\s]+$/g, '');
   return `${safe || 'model'}.bim`;
-}
-
-// Workspace-relative path of a model's export: `<item>/Files/semantic_models/<name>.bim`.
-function exportPath(item, modelName) {
-  return `${item}/Files/${EXPORT_DIR}/${bimFileName(modelName)}`;
-}
-
-// The only shape of path the extension will ever write. Anything else — Tables/, another
-// item kind, a sub-directory, a `..`, a file that is not a .bim — is refused, so a bug or
-// a crafted argument further up cannot turn the export into a general-purpose writer.
-function assertExportPath(rel) {
-  const segs = String(rel).split('/');
-  const ok = segs.length === 4 &&
-    /^[^/\\]+\.Lakehouse$/.test(segs[0]) &&
-    segs[1] === 'Files' && segs[2] === EXPORT_DIR &&
-    /^[^/\\]+\.bim$/i.test(segs[3]) &&
-    !segs.some(s => s === '' || s === '.' || s === '..');
-  if (!ok) throw new Error(`Refusing to write ${rel}: exports go only to <lakehouse>/Files/${EXPORT_DIR}/<name>.bim`);
 }
 
 // What Fabric said, from its error body. Its messages name the missing permission or the
@@ -75,9 +46,8 @@ const retryAfterMs = (r, fallback) => {
 /**
  * @param {object} opts
  * @param {(o?: {fresh?: boolean}) => Promise<string|null>} opts.getFabricToken  Fabric API audience
- * @param {(o?: {fresh?: boolean}) => Promise<string|null>} opts.getStorageToken OneLake (storage) audience
  */
-function createFabric({ getFabricToken, getStorageToken, apiBase = FABRIC_API, dfsOrigin = DFS_ORIGIN,
+function createFabric({ getFabricToken, apiBase = FABRIC_API,
                         sleep = ms => new Promise(r => setTimeout(r, ms)), lroTimeoutMs = LRO_TIMEOUT_MS }) {
   // Retry once on 401 with a fresh token, as catalog.js does; and wait out a 429, which
   // the Fabric API hands out freely and always with a Retry-After.
@@ -190,49 +160,9 @@ function createFabric({ getFabricToken, getStorageToken, apiBase = FABRIC_API, d
     return Buffer.from(part.payload || '', 'base64');
   }
 
-  const dfsUrl = (workspace, rel) => `${dfsOrigin}/${encodeURIComponent(workspace)}/${encPath(rel)}`;
-
-  async function storage(url, opts, what) {
-    const r = await call(getStorageToken, url, opts);
-    if (!r.ok) {
-      const said = await fabricMessage(r);
-      const e = new Error(`${what} failed (HTTP ${r.status})` + (said ? ` — ${said}` : ''));
-      e.status = r.status;
-      throw e;
-    }
-    return r;
-  }
-
-  async function exists(workspace, rel) {
-    assertExportPath(rel);
-    const r = await call(getStorageToken, dfsUrl(workspace, rel), { method: 'HEAD' });
-    if (r.status === 404) return false;
-    if (r.ok) return true;
-    const e = new Error(`Checking ${rel} failed (HTTP ${r.status})`);
-    e.status = r.status;
-    throw e;
-  }
-
-  // ADLS Gen2's three-step write: create (replacing any file already there), append the
-  // bytes, flush at their length — nothing is visible until the flush.
-  async function writeExport(workspace, rel, bytes) {
-    assertExportPath(rel);
-    const url = dfsUrl(workspace, rel);
-    await storage(`${url}?resource=file`, { method: 'PUT' }, `Creating ${rel}`);
-    let pos = 0;
-    while (pos < bytes.length) {
-      const chunk = bytes.subarray(pos, Math.min(pos + CHUNK, bytes.length));
-      await storage(`${url}?action=append&position=${pos}`,
-        { method: 'PATCH', body: chunk, headers: { 'content-type': 'application/octet-stream' } },
-        `Writing ${rel}`);
-      pos += chunk.length;
-    }
-    await storage(`${url}?action=flush&position=${bytes.length}`, { method: 'PATCH' }, `Finishing ${rel}`);
-  }
-
   function reset() { wsIds = null; }
 
-  return { workspaceId, listSemanticModels, getBim, exists, writeExport, reset };
+  return { workspaceId, listSemanticModels, getBim, reset };
 }
 
-module.exports = { createFabric, exportPath, bimFileName, assertExportPath, EXPORT_DIR };
+module.exports = { createFabric, bimFileName };

@@ -15,7 +15,7 @@ const { createCatalog } = require('./catalog');
 const { createStore } = require('./store');
 const { createOneLake } = require('./onelake');
 const { createHostMethods } = require('./host');
-const { createFabric, exportPath, EXPORT_DIR } = require('./fabric');
+const { createFabric, bimFileName } = require('./fabric');
 const { LakehouseTree } = require('./tree');
 const { webviewRoot } = require('./webview');
 const { hasFilesArea } = require('./names');
@@ -453,7 +453,7 @@ async function activateInner(context) {
   });
   // Semantic models and the .bim export: Fabric's token for the model, the storage one
   // (the same cache the catalog uses) for the one file the export writes.
-  const fabric = createFabric({ getFabricToken: fabricToken, getStorageToken: hostToken });
+  const fabric = createFabric({ getFabricToken: fabricToken });
 
   // What the extension knows about OneLake, kept on disk per account and served from there
   // first (onelake.js). One directory per identity — a hashed account id — so nobody is
@@ -512,52 +512,45 @@ async function activateInner(context) {
     postToPanel(msg);
   }
 
-  // A semantic model's definition, exported to the one place the extension writes:
-  // <lakehouse>/Files/semantic_models/<model>.bim, in a lakehouse of the model's own
-  // workspace. Then opened, which is the point — the panel reads a .bim as its model.
-  async function exportBim(n) {
-    if (!n || n.kind !== 'semanticModel') {
-      vscode.window.showInformationMessage(
-        'OneLake Studio: pick a semantic model under a workspace\'s "Semantic models" in the OneLake tree.');
-      return;
-    }
+  // A semantic model, opened: its definition (Fabric's getDefinition, TMSL) downloaded to
+  // a .bim on this machine — <folder>/<workspace>/<model>.bim — and opened in the panel as
+  // its model. Nothing is written to Fabric or OneLake: the extension is read only.
+  function modelsFolder() {
+    const set = vscode.workspace.getConfiguration('onelakeStudio').get('semanticModelsFolder', '').trim();
+    return set || join(require('node:os').homedir(), 'OneLakeStudio', 'semantic-models');
+  }
+
+  async function downloadModel(n) {
     try {
-      const lakehouses = (await catalog.listItems(n.workspace)).filter(it => hasFilesArea(it.name));
-      if (!lakehouses.length) {
-        showError(`${n.workspace} has no lakehouse to export ${n.model} into — the .bim goes to ` +
-                  `a lakehouse's Files/${EXPORT_DIR}/ in the model's own workspace.`);
-        return;
-      }
-      let item = lakehouses[0].name;
-      if (lakehouses.length > 1) {
-        const pick = await vscode.window.showQuickPick(
-          lakehouses.map(l => ({ label: l.name.replace(/\.[^.]+$/, ''), description: 'Lakehouse', item: l.name })),
-          { placeHolder: `Export ${n.model} into which lakehouse's Files/${EXPORT_DIR}/?` });
-        if (!pick) return;
-        item = pick.item;
-      }
-      const rel = exportPath(item, n.model);
-      if (await fabric.exists(n.workspace, rel)) {
-        const ok = await vscode.window.showWarningMessage(
-          `${rel} already exists. Replace it with ${n.model}'s current definition?`, { modal: true }, 'Replace');
-        if (ok !== 'Replace') return;
-      }
+      const file = vscode.Uri.file(join(modelsFolder(), bimFileName(n.workspace).replace(/\.bim$/, ''),
+                                        bimFileName(n.model)));
       const bytes = await vscode.window.withProgress(
-        { location: vscode.ProgressLocation.Notification, title: `Exporting ${n.model}` },
+        { location: vscode.ProgressLocation.Notification, title: `Downloading ${n.model}` },
         async progress => {
           progress.report({ message: 'reading its definition from Fabric…' });
-          const b = await fabric.getBim(n.workspace, n.modelId);
-          progress.report({ message: `writing ${rel}…` });
-          await fabric.writeExport(n.workspace, rel, b);
-          return b;
+          return fabric.getBim(n.workspace, n.modelId);
         });
-      if (out) out.appendLine(`exported ${n.model} -> ${n.workspace}/${rel} (${fmtBytes(bytes.length)})`);
-      tree.refresh({ kind: 'dir', workspace: n.workspace, item, dir: '' });
-      await openInPanel({ type: 'open-file', workspace: n.workspace, item, path: rel, bytes: bytes.length });
+      await vscode.workspace.fs.writeFile(file, bytes);
+      if (out) out.appendLine(`downloaded ${n.workspace}/${n.model} -> ${file.fsPath} (${fmtBytes(bytes.length)})`);
+      await openInPanel({ type: 'open-model', name: bimFileName(n.model), path: file.fsPath,
+                          text: Buffer.from(bytes).toString('utf8') });
     } catch (e) {
-      if (out) out.appendLine(`export of ${n.model} failed — ${(e && e.stack) || e}`);
-      showError(`Could not export ${n.model}: ${(e && e.message) || e}`);
+      if (out) out.appendLine(`download of ${n.model} failed — ${(e && e.stack) || e}`);
+      showError(`Could not download ${n.model}: ${(e && e.message) || e}`);
     }
+  }
+
+  // A tree item has one command and it fires on every click; a second click on the same
+  // model within this window is the double-click that downloads it.
+  const DOUBLE_CLICK_MS = 500;
+  let lastModelClick = null;   // { id, at }
+  function onModelClick(n) {
+    if (!n || n.kind !== 'semanticModel') return;
+    const id = `${n.workspace}|${n.modelId}`;
+    const now = Date.now();
+    const twice = lastModelClick && lastModelClick.id === id && now - lastModelClick.at < DOUBLE_CLICK_MS;
+    lastModelClick = twice ? null : { id, at: now };
+    if (twice) downloadModel(n);
   }
 
   context.subscriptions.push(
@@ -627,7 +620,7 @@ async function activateInner(context) {
       }
     }),
 
-    vscode.commands.registerCommand('onelakeStudio.exportBim', n => exportBim(n)),
+    vscode.commands.registerCommand('onelakeStudio.openSemanticModel', n => onModelClick(n)),
 
     vscode.commands.registerCommand('onelakeStudio.open', async () => {
       try {

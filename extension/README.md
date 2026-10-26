@@ -6,8 +6,8 @@ inside VS Code. Open it from the OneLake Studio icon in the activity bar, or run
 
 Sign-in is the VS Code Microsoft account you already use — there is nothing to register.
 
-It also lists each workspace's **Power BI semantic models**. Export one to a lakehouse's
-`Files/semantic_models/` and it opens as its model: the tables and relationships, SQL that asks the
+It also lists each workspace's **Power BI semantic models**. Double-click one and its `.bim` is
+downloaded to this machine and opened as its model: the tables and relationships, SQL that asks the
 model with `AGG(measure)` (compiled from DAX by [dax-sql](https://github.com/djouallah/dax-sql)), and
 Explore for pivots and charts. Any `.bim` already in `Files/` opens the same way.
 
@@ -24,7 +24,6 @@ The panel loads nothing from the network: its few libraries ship inside the exte
 | **OneLake Studio: Refresh** | Re-reads a workspace, item or folder from OneLake in the foreground. Everything else is served from the cache first and refreshed behind you. |
 | **OneLake Studio: Show Read Log** | Every OneLake request the extension made, with sizes and timings. |
 | **OneLake Studio: Clear Cached OneLake Data** | Empties the on-disk cache (listings, table metadata, first rows) and reports what it freed. |
-| **Export .bim to Lakehouse Files and Open** | On a semantic model in the explorer (right-click, or the inline button). Reads its TMSL definition from the Fabric API, writes it to `Files/semantic_models/<model>.bim` in a lakehouse of the model's workspace — asking which, if there are several, and before replacing an existing file — and opens it in the panel. |
 
 ## Settings
 
@@ -33,6 +32,7 @@ The panel loads nothing from the network: its few libraries ship inside the exte
 | `onelakeStudio.tenantId` | Directory (tenant) GUID to sign in against. Leave empty for your home tenant; set it to reach a tenant you are a guest in. |
 | `onelakeStudio.catalogTtlMinutes` | How old a listing or a table's metadata may be before it is refreshed (default 5). The last known answer is always served instantly from disk and refreshed behind you, so a table you have opened before opens without waiting — even after a restart. |
 | `onelakeStudio.prefetchMetadata` | Read every table's metadata in the background once a lakehouse's Tables node is opened, so the first click is a disk read (default on). |
+| `onelakeStudio.semanticModelsFolder` | Where a double-clicked semantic model's `.bim` is downloaded (`<folder>/<workspace>/<model>.bim`). Empty means `OneLakeStudio/semantic-models` in your home directory. |
 | `onelakeStudio.engineMemoryLimit` | Most memory DuckDB may use, e.g. `4GB`. Empty means a quarter of the machine's RAM. |
 
 ## Semantic models
@@ -40,13 +40,11 @@ The panel loads nothing from the network: its few libraries ship inside the exte
 A workspace's **Semantic models** node lists its Power BI models from the Fabric REST API, not from
 OneLake, so it needs a token in the Fabric API's audience. That is a separate sign-in, asked for only
 when you click *Sign in to list semantic models* — never at startup — and for the same account the rest
-of the extension uses. Exporting needs permission to read the model's definition (Contributor or above
-on the workspace, or write on the model), and permission to write the lakehouse's `Files/`.
+of the extension uses. Downloading a model needs permission to read its definition (Contributor or
+above on the workspace, or write on the model).
 
-The export is the one thing the extension ever writes: a single `.bim` file under
-`<lakehouse>/Files/semantic_models/`, on the command, and nowhere else — any other path is refused
-before a request is sent. The write goes from the extension host straight to OneLake; the panel
-itself never writes, and never reads OneLake at all.
+The extension is **read only by design**: it writes nothing to Fabric or OneLake. A model's `.bim` goes
+to a folder on this machine, and is opened from there.
 
 ## How it works
 

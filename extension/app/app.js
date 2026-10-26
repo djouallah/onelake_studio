@@ -233,12 +233,14 @@ function closeModelView() {
   $('modelView').closest('section').classList.remove('modelOpen');
 }
 
-async function openModelView(file) {
+// A .bim from Files/ (read through the host), or one the extension downloaded from Fabric
+// and hands over as text (open-model): the same view either way.
+async function openModelView(file, text = null) {
   closeModelView();
   const my = ++selSeq;
   engine.cancelLoad();
   $('activeTable').textContent = file.name;
-  activeFile = file;
+  activeFile = text == null ? file : null;   // only a OneLake file can be saved as itself
   activeIdent = null;
   activeDocExt = 'bim'; activeDocEligible = false;
   setActiveStats(null);
@@ -248,8 +250,8 @@ async function openModelView(file) {
   setStatus(`Reading ${file.name}…`);
   try {
     await engineReady;
-    const bytes = await engine.readFileBytes(lakehouse, file);
-    const m = await semantic.registerModel(file.name, new TextDecoder().decode(bytes));
+    const bim = text != null ? text : new TextDecoder().decode(await engine.readFileBytes(lakehouse, file));
+    const m = await semantic.registerModel(file.name, bim);
     if (my !== selSeq) return;
     $('modelView').closest('section').classList.add('modelOpen');
     $('modelView').hidden = false;
@@ -822,6 +824,13 @@ window.addEventListener('message', async e => {
       reportOpened('file', basename(m.path), Date.now() - t0);
     }
     // A Refresh: what this side holds about the old listings is suspect.
+    // A semantic model the extension downloaded to this machine, handed over as text.
+    else if (m.type === 'open-model') {
+      const t0 = Date.now();
+      await engineReady;
+      await openModelView({ name: String(m.name || 'model.bim'), path: String(m.path || '') }, String(m.text || ''));
+      reportOpened('file', String(m.name || 'model.bim'), Date.now() - t0);
+    }
     else if (m.type === 'reset') { await engineReady; await leaveLakehouse(); lakehouse = null; }
     else if (m.type === 'reads') showReads(m);
     // Why the catalog is taking long — conversion pending, catalog busy.

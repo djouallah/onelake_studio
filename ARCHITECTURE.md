@@ -39,13 +39,12 @@ archive. Listings, table metadata and first rows are served cache-first from dis
 ([`extension/src/onelake.js`](extension/src/onelake.js)) and refreshed behind you; the cache is kept per
 Microsoft account, so switching accounts never serves one account's data to another.
 
-The extension also lists each workspace's **Power BI semantic models** in its tree, and
-**Export .bim to Lakehouse Files and Open** turns one into a file the app can open: it reads the model's
-TMSL definition with the Fabric REST API's `getDefinition`, writes it to
-`Files/semantic_models/<model>.bim` in a lakehouse of the model's own workspace, and opens it as its
-model (below). That needs a second token, in the Fabric API's audience, which VS Code asks for only when
-you first expand *Semantic models*; and it is the extension's one write — that file, on that command,
-nothing else. The website does neither: it stays read-only on its single Storage scope.
+The extension also lists each workspace's **Power BI semantic models** in its tree. Double-clicking
+one downloads its TMSL definition (the Fabric REST API's `getDefinition`) to a `.bim` on this machine —
+`~/OneLakeStudio/semantic-models/<workspace>/<model>.bim`, or `onelakeStudio.semanticModelsFolder` —
+and opens it as its model (below). That needs a second token, in the Fabric API's audience, which VS
+Code asks for only when you first expand *Semantic models*. The extension is read only by design: it
+writes nothing to Fabric or OneLake. The website stays read-only on its single Storage scope too.
 
 Requires desktop VS Code on x64 or arm64 Windows, macOS or Linux: the engine is a native library, so
 this does not run on vscode.dev.
@@ -113,8 +112,8 @@ editor, on three pages:
 The model is named after its file (`nem.bim` is `nem`), and the main editor can query it too, as
 can `DESCRIBE nem`. A Direct Lake table is read from the lakehouse its model names, through the
 same Iceberg catalog, whichever item is selected, and only when a query actually reads it. The
-model comes from the file: in VS Code, export it from the tree (above); for the website, export it once
-with Fabric's `getDefinition` (TMSL) — the website itself never calls the Fabric API.
+model comes from the file: in VS Code, double-click it in the tree (above); for the website, export it
+once with Fabric's `getDefinition` (TMSL) — the website itself never calls the Fabric API.
 
 There is no guarantee that DAX compiled to SQL here gives the same results as Power BI.
 

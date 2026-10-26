@@ -8,9 +8,10 @@ then run **OneLake Studio: Open**.
 
 - **Browse** workspaces, lakehouses, warehouses, tables and `Files/` from the activity bar.
 - **Query** Iceberg tables, parquet, CSV, DuckDB/SQLite files and zips with read-only SQL on native DuckDB 2.0.
-- **Semantic models**: export a Power BI model's `.bim` to `Files/` and query it with `AGG(measure)`,
-  compiled from DAX by [dax-sql](https://github.com/djouallah/dax-sql).
-- **Your token stays in the extension host.** The only write is that `.bim` export, on command.
+- **Semantic models**: double-click a Power BI model in the tree to download its `.bim` and query it
+  with `AGG(measure)`, compiled from DAX by [dax-sql](https://github.com/djouallah/dax-sql).
+- **Read only, by design.** Your token stays in the extension host, and nothing is ever written to
+  Fabric or OneLake.
 
 Requires desktop VS Code on Windows, macOS or Linux (x64/arm64). How it works, limitations, and the
 standalone web version: [ARCHITECTURE.md](https://github.com/djouallah/onelake_studio/blob/main/ARCHITECTURE.md).

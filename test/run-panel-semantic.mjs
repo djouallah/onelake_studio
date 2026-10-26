@@ -123,6 +123,18 @@ try {
   await page.waitForFunction(() => !!window.echarts, { timeout: 60000 })
     .catch(() => { throw new Error("ECharts never loaded for Explore"); });
 
+  // A model the extension downloaded to this machine arrives as text (open-model), not as
+  // a OneLake path — the double-click in the tree.
+  await page.evaluate(text => window.postMessage({
+    type: "open-model", name: "Local Model.bim", path: "C:/models/ws/Local Model.bim", text,
+  }, "*"), BIM);
+  await page.waitForFunction(() => document.getElementById("activeTable").textContent === "Local Model.bim" &&
+    !document.getElementById("modelView").hidden, { timeout: 60000 })
+    .catch(async () => { throw new Error(`a downloaded model never opened — status: ${await page.locator("#status").innerText()}`); });
+  const localCards = await page.locator("#modelView .m-card").count();
+  if (localCards !== 2) throw new Error(`the downloaded model drew ${localCards} cards`);
+  console.log("downloaded model: opened from text, 2 cards");
+
   if (csp.length) throw new Error(`Content-Security-Policy refused something: ${csp.join(" | ")}`);
   console.log("RESULT: OK — a .bim opened in the panel as its model, and a model query ran on the native engine");
   code = 0;

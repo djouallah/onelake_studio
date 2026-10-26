@@ -1,8 +1,6 @@
-// Tests for extension/src/fabric.js — a workspace's semantic models, and the one write the
-// extension makes: a model's .bim into <lakehouse>/Files/semantic_models/.
-//
-// The write path is the part that matters most. It is the only code in the extension that
-// changes anything in OneLake, so what it refuses is tested as hard as what it does.
+// Tests for extension/src/fabric.js — a workspace's semantic models and a model's .bim,
+// read from the Fabric API. Read only: there is no write path to test, and the module
+// takes no storage token at all.
 //
 // No network: `fetch` is replaced per test with a table of canned answers.
 
@@ -11,7 +9,8 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { createFabric, exportPath, bimFileName, assertExportPath } = require("../extension/src/fabric.js");
+const fabricModule = require("../extension/src/fabric.js");
+const { createFabric, bimFileName } = fabricModule;
 
 const WS_ID = "11111111-2222-3333-4444-555555555555";
 
@@ -37,7 +36,6 @@ function fabricWith(answers, opts = {}) {
   };
   const fabric = createFabric({
     getFabricToken: async () => "fab",
-    getStorageToken: async () => "sto",
     sleep: async () => {},
     ...opts,
   });
@@ -145,60 +143,17 @@ test("a long-running operation that never finishes gives up", async () => {
   finally { restore(); Date.now = realNow; }
 });
 
-test("the export path is <lakehouse>/Files/semantic_models/<safe name>.bim", () => {
-  assert.equal(exportPath("Sales.Lakehouse", "Sales Model"), "Sales.Lakehouse/Files/semantic_models/Sales Model.bim");
+test("a model's name becomes a safe local file name", () => {
+  assert.equal(bimFileName("Sales Model"), "Sales Model.bim");
   assert.equal(bimFileName('a/b\\c:d*e?"f<g>h|i'), "a_b_c_d_e__f_g_h_i.bim");
   assert.equal(bimFileName(".."), "model.bim", "nothing but dots is still a file");
   assert.equal(bimFileName("../../x"), "_.._x.bim", "slashes cannot survive into a path");
 });
 
-test("every path but an export's is refused before anything is sent", async () => {
-  for (const bad of [
-    "Sales.Lakehouse/Tables/semantic_models/m.bim",
-    "Sales.Warehouse/Files/semantic_models/m.bim",
-    "Sales.Lakehouse/Files/other/m.bim",
-    "Sales.Lakehouse/Files/semantic_models/sub/m.bim",
-    "Sales.Lakehouse/Files/semantic_models/m.parquet",
-    "Sales.Lakehouse/Files/semantic_models/..",
-    "../Sales.Lakehouse/Files/semantic_models/m.bim",
-    "Sales.Lakehouse/Files/semantic_models/",
-  ]) assert.throws(() => assertExportPath(bad), /Refusing to write/, bad);
-  assert.doesNotThrow(() => assertExportPath("Sales.Lakehouse/Files/semantic_models/m.bim"));
-
-  const { fabric, calls, restore } = fabricWith([]);
-  try {
-    await assert.rejects(fabric.writeExport("ws", "Sales.Lakehouse/Tables/x.bim", Buffer.from("x")), /Refusing/);
-    await assert.rejects(fabric.exists("ws", "Sales.Lakehouse/Files/x.bim"), /Refusing/);
-    assert.equal(calls.length, 0, "no request went out");
-  } finally { restore(); }
-});
-
-test("the write is create, append, flush — on the storage token, at the right positions", async () => {
-  const REL = "Sales.Lakehouse/Files/semantic_models/My Model.bim";
-  const { fabric, calls, restore } = fabricWith([[() => true, () => res(201, {})]]);
-  try {
-    await fabric.writeExport("My WS", REL, Buffer.from("hello"));
-    const base = "https://onelake.dfs.fabric.microsoft.com/My%20WS/Sales.Lakehouse/Files/semantic_models/My%20Model.bim";
-    assert.deepEqual(calls.map(c => `${c.method} ${c.url}`), [
-      `PUT ${base}?resource=file`,
-      `PATCH ${base}?action=append&position=0`,
-      `PATCH ${base}?action=flush&position=5`,
-    ]);
-    assert.ok(calls.every(c => c.auth === "Bearer sto"), "OneLake is written on the storage token");
-    assert.equal(Buffer.from(calls[1].body).toString(), "hello");
-  } finally { restore(); }
-});
-
-test("exists is a HEAD: 200 is there, 404 is not, anything else is an error", async () => {
-  const REL = "Sales.Lakehouse/Files/semantic_models/m.bim";
-  let status = 200;
-  const { fabric, calls, restore } = fabricWith([[() => true, () => res(status, {})]]);
-  try {
-    assert.equal(await fabric.exists("ws", REL), true);
-    status = 404; assert.equal(await fabric.exists("ws", REL), false);
-    status = 403; await assert.rejects(fabric.exists("ws", REL), /HTTP 403/);
-    assert.ok(calls.every(c => c.method === "HEAD"));
-  } finally { restore(); }
+test("the module can only read: no write, no existence check, no storage token", () => {
+  assert.deepEqual(Object.keys(fabricModule).sort(), ["bimFileName", "createFabric"]);
+  const f = createFabric({ getFabricToken: async () => "fab" });
+  assert.deepEqual(Object.keys(f).sort(), ["getBim", "listSemanticModels", "reset", "workspaceId"]);
 });
 
 test("a 401 is retried once with a fresh token", async () => {

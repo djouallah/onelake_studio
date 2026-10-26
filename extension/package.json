@@ -88,12 +88,6 @@
         "category": "OneLake Studio"
       },
       {
-        "command": "onelakeStudio.exportBim",
-        "title": "Export .bim to Lakehouse Files and Open",
-        "category": "OneLake Studio",
-        "icon": "$(cloud-download)"
-      },
-      {
         "command": "onelakeStudio.signInFabric",
         "title": "Sign in to the Fabric API",
         "category": "OneLake Studio"
@@ -109,6 +103,11 @@
         "title": "Unpin from Favorites",
         "category": "OneLake Studio",
         "icon": "$(star-full)"
+      },
+      {
+        "command": "onelakeStudio.openSemanticModel",
+        "title": "Open Semantic Model",
+        "category": "OneLake Studio"
       }
     ],
     "viewsContainers": {
@@ -160,16 +159,6 @@
           "group": "inline"
         },
         {
-          "command": "onelakeStudio.exportBim",
-          "when": "view == onelakeStudio.explorer && viewItem == semanticModel",
-          "group": "inline"
-        },
-        {
-          "command": "onelakeStudio.exportBim",
-          "when": "view == onelakeStudio.explorer && viewItem == semanticModel",
-          "group": "1_export"
-        },
-        {
           "command": "onelakeStudio.pinWorkspace",
           "when": "view == onelakeStudio.explorer && viewItem == workspace",
           "group": "inline@0"
@@ -198,10 +187,6 @@
           "when": "onelakeStudio.signedIn"
         },
         {
-          "command": "onelakeStudio.exportBim",
-          "when": "false"
-        },
-        {
           "command": "onelakeStudio.signInFabric",
           "when": "false"
         },
@@ -211,6 +196,10 @@
         },
         {
           "command": "onelakeStudio.unpinWorkspace",
+          "when": "false"
+        },
+        {
+          "command": "onelakeStudio.openSemanticModel",
           "when": "false"
         }
       ]
@@ -246,6 +235,12 @@
           "pattern": "^$|^d+(.d+)?s*(KB|MB|GB|TB|KiB|MiB|GiB|TiB)$",
           "patternErrorMessage": "A DuckDB memory size, e.g. 4GB or 512MB.",
           "markdownDescription": "Most memory DuckDB may use, e.g. `4GB`. Empty means a quarter of this machine's RAM — DuckDB's own default is 80%, which is too much for the extension host every other extension shares. Bigger queries spill to a temp directory instead of failing. Applies the next time the engine starts."
+        },
+        "onelakeStudio.semanticModelsFolder": {
+          "type": "string",
+          "default": "",
+          "scope": "machine",
+          "markdownDescription": "Where a semantic model's `.bim` is downloaded when you double-click it in the tree: `<folder>/<workspace>/<model>.bim`. Empty means `OneLakeStudio/semantic-models` in your home directory. The extension writes nothing to Fabric or OneLake."
         }
       }
     }
