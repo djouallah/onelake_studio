@@ -1816,8 +1816,6 @@ engine = createEngine(auth, {
   // this times what happens after the bytes land, which is where a boot that looks
   // instant in the log actually spends its seconds.
   onBoot: reportBoot,
-  dfsOrigin: cfg.dfsOrigin,
-  tableOrigin: cfg.tableOrigin,
 });
 engineReady = engine.init();
 

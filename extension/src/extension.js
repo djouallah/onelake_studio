@@ -21,6 +21,7 @@ const { openPanel, closePanel, revealPanel, postToPanel, postLive } = require('.
 const { createCatalog } = require('./catalog');
 const { createStore } = require('./store');
 const { createOneLake } = require('./onelake');
+const { createHostMethods } = require('./host');
 const { createFabric, exportPath, EXPORT_DIR } = require('./fabric');
 const { LakehouseTree } = require('./tree');
 const { siteRoot } = require('./site');
@@ -461,17 +462,11 @@ async function show(context, options) {
     { dev: context.extensionMode === vscode.ExtensionMode.Development });
   const eng = ensureEngine(context, { readme: readme.fsPath });
   if (!eng) return false;
-  // A target from the page, reduced to the four strings it may carry.
-  const ref = x => ({ lh: { workspace: String(x.workspace), item: String(x.item) },
-                      t: { schema: String(x.schema || ''), table: String(x.table) } });
   await openPanel(context, await ensureProxy(context), {
     onOpened: logOpened, onBoot: logBoot, engine: eng,
-    host: {
-      'onelake.table': x => { const { lh, t } = ref(x);
-        return onelake.table(lh, t, { onWait: message => postLive({ type: 'status', message }) }); },
-      'onelake.peek': x => { const { lh, t } = ref(x);
-        return onelake.peek(lh, t, sql => eng.call('query', [sql])); },
-    },
+    host: createHostMethods({
+      onelake, engine: eng, onStatus: message => postLive({ type: 'status', message }),
+    }),
     // The page could not bring the engine up. Everything it buffered is already gone;
     // this is the toast that stops the failure being a spinner that never moves.
     // A panel whose engine never came up answers no click again, so the toast offers the

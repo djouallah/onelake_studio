@@ -20,6 +20,7 @@ import { join, extname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 import { chromium } from "playwright-core";
+import { panelHost, README } from "./panel-host.mjs";
 
 const require = createRequire(import.meta.url);
 const { createEngineHost } = require("../extension/src/engine-host.js");
@@ -45,7 +46,9 @@ const TMP = await mkdtemp(join(tmpdir(), "onelake-engine-test-"));
 console.log("--- engine-host ---");
 {
   let boot = null;
-  const h = createEngineHost({ extensionDir: EXT_DIR, onLog: b => { boot = b; } });
+  // The lockdown refuses every local path it was not told about; this one is the test's.
+  const h = createEngineHost({ extensionDir: EXT_DIR, onLog: b => { boot = b; },
+                               allowedPaths: [join(TMP, "real.csv")] });
 
   const caps = await h.call("capabilities");
   ok(caps.httpfs, "httpfs loaded — this is what reads the loopback proxy");
@@ -146,100 +149,12 @@ console.log("--- engine-host ---");
 }
 
 // =============================================================================
-// Part 2 — the real read path: native DuckDB through the signed loopback proxy
-// =============================================================================
-// This is what the extension actually does with data, and it was previously covered only
-// for the wasm engine (run-proxy.mjs Part 2). Native DuckDB reads parquet over http via
-// httpfs and — unlike duckdb-wasm, which only ever made whole-file GETs — it RANGE-reads.
-// The proxy's cache already slices stored objects into 206s, so that is an improvement,
-// but it is a different code path through the proxy and it deserves its own proof:
-// the reads must be signed, and the second read must come off disk.
-console.log("\n--- native DuckDB reading through the signed proxy ---");
-{
-  const { startProxy } = require("../extension/src/proxy.js");
-  const TOKEN = "test-token-not-a-real-one";
-  const FIXTURE = join(root, "test", "fixtures", "sample.parquet");
-
-  let parquet = null;
-  try { parquet = await readFile(FIXTURE); } catch (_) {}
-  if (!parquet) {
-    console.log("   (skipped — test/fixtures/sample.parquet absent; run test/run-proxy.mjs once to generate it)");
-  } else {
-    const seen = [];
-    const upstream = http.createServer((req, res) => {
-      seen.push({ range: req.headers.range || null, auth: req.headers.authorization || null });
-      if (req.headers.authorization !== `Bearer ${TOKEN}`) {
-        res.writeHead(401).end("upstream saw no bearer token"); return;
-      }
-      const head = { "content-type": "application/octet-stream", "accept-ranges": "bytes" };
-      const m = /^bytes=(\d+)-(\d*)$/.exec(req.headers.range || "");
-      if (m) {
-        const start = Number(m[1]);
-        const end = m[2] ? Math.min(Number(m[2]), parquet.length - 1) : parquet.length - 1;
-        const slice = parquet.subarray(start, end + 1);
-        res.writeHead(206, { ...head, "content-length": String(slice.length),
-                             "content-range": `bytes ${start}-${end}/${parquet.length}` });
-        res.end(req.method === "HEAD" ? undefined : slice); return;
-      }
-      res.writeHead(200, { ...head, "content-length": String(parquet.length) });
-      res.end(req.method === "HEAD" ? undefined : parquet);
-    });
-    await new Promise(r => upstream.listen(0, "127.0.0.1", r));
-    const upBase = `http://127.0.0.1:${upstream.address().port}`;
-
-    const cacheDir = await mkdtemp(join(tmpdir(), "onelake-native-read-"));
-    const events = [];
-    const proxy = await startProxy({
-      getToken: async () => TOKEN,
-      cacheDir,
-      dfsUpstream: upBase,
-      tableUpstream: upBase,
-      onLog: e => events.push(e),
-    });
-
-    const h2 = createEngineHost({ extensionDir: EXT_DIR });
-    try {
-      // A REAL OneLake data-file path. The shape matters: cache.js tierOf() treats only
-      // `/Tables/…*.parquet` (and a table's metadata avro) as immutable, and only an
-      // immutable object gets the background whole-file fill. A flat `/ws/data.parquet`
-      // is classified 'ttl', never filled, and every read would pay the network — which
-      // is what this test found when it used one.
-      const url = `${proxy.dfsOrigin}/ws/MyLh.Lakehouse/Tables/dbo/trips/data_0.parquet`;
-      // The URL spliced straight into the SQL, exactly as data.js builds its readers now.
-      const r = await h2.call("query",
-        [`SELECT count(*) AS n FROM read_parquet('${url}')`]);
-      eq(Number(r.rows[0].n), 400000, "native DuckDB read a parquet file through the proxy");
-      ok(seen.length > 0 && seen.every(s => s.auth === `Bearer ${TOKEN}`),
-         `…and every upstream read was signed (${seen.length} request(s), none unauthenticated)`);
-      ok(seen.some(s => s.range), "…by RANGE, which duckdb-wasm never did");
-
-      // A ranged miss is served as asked and the WHOLE object is fetched behind it —
-      // "spend disk, not network", so that every later range is a local slice. Awaited,
-      // never slept on: without this the second query races the background fill and goes
-      // to the network, which is exactly what this check exists to catch.
-      await proxy.cacheIdle();
-
-      const before = seen.length;
-      const again = await h2.call("query",
-        [`SELECT count(*) AS n FROM read_parquet('${url}') WHERE id < 10`]);
-      eq(Number(again.rows[0].n), 10, "a second read answers correctly");
-      eq(seen.length, before, "…entirely from the disk cache — the network was not touched again");
-      ok(events.some(e => e.cache === "hit"), "…and the proxy logged it as a hit");
-    } finally {
-      await h2.close().catch(() => {});
-      await proxy.close();
-      upstream.close();
-      await rm(cacheDir, { recursive: true, force: true }).catch(() => {});
-    }
-  }
-}
-
-// =============================================================================
 // Part 3 — the real page, over the real bridge
 // =============================================================================
 console.log("\n--- extension/app in real Chrome, driven by the native engine ---");
 
-const engine = createEngineHost({ extensionDir: EXT_DIR });
+const host = panelHost({ dfsOrigin: `http://127.0.0.1:${PORT}`, tableOrigin: `http://127.0.0.1:${PORT}`,
+                         engineOptions: { extensionDir: EXT_DIR } });
 const ORIGIN = `http://127.0.0.1:${PORT}`;
 const NONCE = "enginehost";
 const CSP = [
@@ -262,11 +177,7 @@ const server = http.createServer(async (req, res) => {
       const html = rewriteHtml(INDEX, {
         assetUrl: name => `${ORIGIN}/${name}`,
         nonce: NONCE,
-        config: {
-          auth: "none", host: "vscode",
-          dfsOrigin: ORIGIN, tableOrigin: ORIGIN,
-          readmeUrl: `${ORIGIN}/README.md`,
-        },
+        config: { auth: "none", host: "vscode", readmeUrl: README },
         cspContent: CSP,
       });
       res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
@@ -289,18 +200,8 @@ try {
   page.on("console", m => lines.push(m.text()));
   page.on("pageerror", e => lines.push(`[pageerror] ${e.message}`));
 
-  // The panel's bridge, exactly as panel.js wires it: engine-call in, engine-batch and
-  // engine-result out. Nothing about the page knows this is not the editor.
-  await page.exposeBinding("__hostCall", async ({ page: p }, msg) => {
-    try {
-      const value = await engine.call(msg.method, msg.args || [],
-        batch => p.evaluate(m => window.postMessage(m, "*"),
-                            { type: "engine-batch", id: msg.id, batch }).catch(() => {}));
-      return { type: "engine-result", id: msg.id, value };
-    } catch (e) {
-      return { type: "engine-error", id: msg.id, message: e.message, cancelled: !!e.cancelled };
-    }
-  });
+  // The panel's bridge, answered exactly as panel.js answers it (host.js).
+  await host.install(page);
   await page.addInitScript(() => {
     window.acquireVsCodeApi = () => ({
       postMessage(m) {
@@ -357,7 +258,7 @@ try {
 } finally {
   await browser?.close().catch(() => {});
   server.close();
-  await engine.close().catch(() => {});
+  await host.close().catch(() => {});
   await rm(TMP, { recursive: true, force: true }).catch(() => {});
 }
 

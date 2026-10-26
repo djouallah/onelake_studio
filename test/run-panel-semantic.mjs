@@ -1,7 +1,8 @@
 // The panel's semantic model view, end to end: the REAL extension/app page in real Chrome,
 // on a real native engine-host through the panel's message bridge, under a CSP of the
 // panel's shape. A .bim is "opened from the tree" — an open-file message, as extension.js
-// posts after an export — and is read from a fake OneLake at the page's dfsOrigin. The
+// posts after an export — and its bytes are read by the real host methods from a fake
+// OneLake this server stands in for (panel-host.mjs). The
 // compiler and the chart library come through a /cdn route, as the proxy serves them:
 // extension/vendor/ first (vendor.mjs), jsDelivr behind it.
 //
@@ -14,8 +15,9 @@ import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 import { chromium } from "playwright-core";
 
+import { panelHost, README } from "./panel-host.mjs";
+
 const require = createRequire(import.meta.url);
-const { createEngineHost } = require("../extension/src/engine-host.js");
 const { rewriteHtml } = require("../extension/src/html.js");
 
 const root = join(fileURLToPath(new URL(".", import.meta.url)), "..");
@@ -68,8 +70,7 @@ const server = http.createServer(async (req, res) => {
       const html = rewriteHtml(INDEX, {
         assetUrl: name => `${ORIGIN}/${name}`,
         nonce: NONCE,
-        config: { auth: "none", host: "vscode", dfsOrigin: ORIGIN, tableOrigin: ORIGIN,
-                  cdnOrigin: `${ORIGIN}/cdn`, readmeUrl: `${ORIGIN}/README.md` },
+        config: { auth: "none", host: "vscode", cdnOrigin: `${ORIGIN}/cdn`, readmeUrl: README },
         cspContent: CSP,
       });
       res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
@@ -100,7 +101,10 @@ const server = http.createServer(async (req, res) => {
 });
 await new Promise(r => server.listen(PORT, "127.0.0.1", r));
 
-const engine = createEngineHost({ extensionDir: join(tmpdir(), "onelake-duckdb-extensions") });
+const host = panelHost({
+  dfsOrigin: ORIGIN, tableOrigin: ORIGIN,
+  engineOptions: { extensionDir: join(tmpdir(), "onelake-duckdb-extensions") },
+});
 let code = 1;
 let browser;
 try {
@@ -115,17 +119,8 @@ try {
     if (m.type() === "error") console.log("[console.error]", m.text());
   });
 
-  // The panel's bridge, as panel.js wires it.
-  await page.exposeBinding("__hostCall", async ({ page: p }, msg) => {
-    try {
-      const value = await engine.call(msg.method, msg.args || [],
-        batch => p.evaluate(m => window.postMessage(m, "*"),
-                            { type: "engine-batch", id: msg.id, batch }).catch(() => {}));
-      return { type: "engine-result", id: msg.id, value };
-    } catch (e) {
-      return { type: "engine-error", id: msg.id, message: e.message, cancelled: !!e.cancelled };
-    }
-  });
+  // The panel's bridge, answered as panel.js answers it.
+  await host.install(page);
   await page.addInitScript(() => {
     window.acquireVsCodeApi = () => ({
       postMessage(m) {
@@ -177,6 +172,6 @@ try {
 } finally {
   await browser?.close().catch(() => {});
   server.close();
-  await engine.close().catch(() => {});
+  await host.close().catch(() => {});
   process.exit(code);
 }

@@ -93,7 +93,7 @@ function createCatalog({ getToken, siteFsPath, dfsOrigin = DFS_ORIGIN, tableOrig
   const gate = limiter(MAX_IN_FLIGHT);
   // Same bargain as data.js's authedFetch: retry once on 401 and only on 401. A 403 means
   // this identity may not read that path, and a fresh token will not change its mind.
-  async function authedFetch(url) {
+  async function authedFetch(url, extraHeaders = {}) {
     let token = await getToken();
     if (!token) {
       const e = new Error('Not signed in to a Microsoft account.');
@@ -101,14 +101,14 @@ function createCatalog({ getToken, siteFsPath, dfsOrigin = DFS_ORIGIN, tableOrig
       throw e;
     }
     const opts = headers => ({ headers, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
-    let r = await gate(() => fetch(url, opts({ authorization: `Bearer ${token}` })));
+    let r = await gate(() => fetch(url, opts({ ...extraHeaders, authorization: `Bearer ${token}` })));
     if (r.status === 401) {
       // { fresh: true } or the retry is theatre: the injected getToken is the extension's
       // 60-second token cache, and asking it plainly returns the very string that just
       // 401'd — `fresh !== token` was false every single time.
       const fresh = await getToken({ fresh: true });
       if (fresh && fresh !== token) {
-        r = await gate(() => fetch(url, opts({ authorization: `Bearer ${fresh}` })));
+        r = await gate(() => fetch(url, opts({ ...extraHeaders, authorization: `Bearer ${fresh}` })));
       }
     }
     return r;
@@ -313,10 +313,13 @@ function createCatalog({ getToken, siteFsPath, dfsOrigin = DFS_ORIGIN, tableOrig
   // and the listing can never disagree about what an item is.
   const paths = () => loadPaths(siteFsPath);
 
-  // Whole object, for the panel's image and .bim previews and the engine's buffers.
-  async function readBytes(ws, path) {
+  // A file's bytes — whole, or the `range` asked for (`bytes=0-15` to sniff a header).
+  // For the panel's image and .bim previews, its SQLite copies, and anything else that
+  // needs the bytes rather than a query.
+  async function readBytes(ws, path, { range } = {}) {
     const { encPath } = await loadPaths(siteFsPath);
-    const r = await authedFetch(`${dfsOrigin}/${encodeURIComponent(ws)}/${encPath(path)}`);
+    const r = await authedFetch(`${dfsOrigin}/${encodeURIComponent(ws)}/${encPath(path)}`,
+      range ? { range } : {});
     if (!r.ok) {
       const said = await oneLakeMessage(r);
       const e = new Error(`Reading ${path} failed (HTTP ${r.status})` + (said ? ` — ${said}` : ''));

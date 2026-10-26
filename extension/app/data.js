@@ -54,23 +54,17 @@ const cdnBase = (typeof window !== "undefined" &&
   (window.ONELAKE_STUDIO_CONFIG || {}).cdnOrigin) || "";
 const withCdn = url => (cdnBase ? url.replace(/^https:\/\//, cdnBase + "/") : url);
 
-// dfsBase/dfsUrl/toHttps come in under `…At` names and are re-bound to this engine's origin
-// inside createEngine — see the note there. Import them under their plain names anywhere in
-// this file and the reads go straight to OneLake, unsigned, under a proxied origin.
+// The page reads nothing from OneLake itself. Listings and bytes come from the extension
+// host (its cache-first store, its signed reads); DuckDB, also in the host, reads tables
+// and Files/ objects by their abfss:// names with the host's own credential.
 import {
-  DFS_ORIGIN, strip, basename, dfsBase as dfsBaseAt, dfsUrl as dfsUrlAt,
-  toHttps as toHttpsAt,
-  parseLakehouse, itemKind, holdsTables,
+  strip, basename, abfssUrl,
+  parseLakehouse,
   fileExt, readerFor, PARQUET_EXTS, DB_EXTS, ZIP_EXTS, isSqliteHeader, isTextExt,
   sqlStr, quoteIdent, prepareReadOnlySql,
-  snapshotStats, icebergFields, tableKey, fileKey, sanitizeIdent,
+  tableKey, fileKey, sanitizeIdent,
   normalizeValue, fmtBytes,
 } from "./paths.js";
-
-// There is one DuckDB connection, so DuckDB work has to be serialised — but the network
-// does not. Listing a lakehouse used to be one round trip per table awaited in a for
-// loop: 150+ serialised calls, tens of seconds, before the sidebar rendered.
-const MAX_PARALLEL = 8;
 
 // Materialising a result costs one JS object per row on top of DuckDB's Arrow batches, so
 // an unbounded SELECT * is how you take the tab down. Cap it and say so.
@@ -82,22 +76,6 @@ const MAX_ROWS = 200_000;
 // and a peek the real open outruns is repainted over harmlessly (FIFO on serial()).
 const QUICK_PEEK_ROWS = 100;
 
-// Fabric generates Iceberg metadata lazily, and Microsoft documents the conversion as
-// taking between 5 seconds and 2 minutes. Measured against this tenant a freshly written
-// table resolved on the FIRST attempt — conversion had finished before the write call
-// returned, without the catalog being asked — so this is insurance for a cold or slower
-// case, not the common path. It costs one request per attempt and only fires on a "not
-// there yet" answer.
-const RESOLVE_BACKOFF_MS = [500, 1500, 3000, 6000, 10000, 15000, 20000, 30000];
-
-// The Iceberg REST catalog, which is a different host from the data reads and so needs its
-// own override. Same reason as DFS_ORIGIN in paths.js: no trailing slash, may carry a path.
-const TABLE_ORIGIN = "https://onelake.table.fabric.microsoft.com";
-
-// `dfsOrigin` / `tableOrigin` redirect every OneLake request this engine makes. The web app
-// leaves them alone. The VS Code extension sets both to a loopback proxy that attaches the
-// bearer token, because a webview has no service worker — the thing that signs DuckDB's
-// range reads in the browser — and DuckDB's file API cannot set a header itself.
 export function createEngine(auth, {
   onStatus = () => {},
   // Called once per boot with a per-stage millisecond breakdown. It exists because the
@@ -106,15 +84,7 @@ export function createEngine(auth, {
   // was watching. A boot that served 35MB of wasm in 1ms and still took half a minute
   // was indistinguishable from a fast one in the only instrument we had.
   onBoot = () => {},
-  dfsOrigin = DFS_ORIGIN,
-  tableOrigin = TABLE_ORIGIN,
 } = {}) {
-  // Re-bound to this engine's origin so the ~10 call sites below need no argument, and so a
-  // call site added later is redirected too rather than quietly reaching past the proxy.
-  const dfsBase = ws => dfsBaseAt(ws, dfsOrigin);
-  const dfsUrl = (ws, name) => dfsUrlAt(ws, name, dfsOrigin);
-  const toHttps = (ws, u) => toHttpsAt(ws, u, dfsOrigin);
-
   let db = null, conn = null, worker = null;
   let _seq = 0;
   let canXlsx = false;              // set by init(); see the 'excel' preload there
@@ -341,155 +311,24 @@ export function createEngine(auth, {
   // ---------------------------------------------------------------------------
   // Small helpers
   // ---------------------------------------------------------------------------
-  async function mapPool(items, fn, limit = MAX_PARALLEL) {
-    const out = new Array(items.length);
-    let next = 0;
-    await Promise.all(
-      Array.from({ length: Math.min(limit, items.length) }, async () => {
-        for (;;) {
-          const i = next++;
-          if (i >= items.length) return;
-          out[i] = await fn(items[i], i);
-        }
-      })
-    );
-    return out;
-  }
-
   const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-  // A retry that sleeps thirty seconds between attempts cannot be cancelled at the sleep
-  // boundary alone — Stop would sit there looking ignored for half a minute. Slicing it is
-  // the whole mechanism; nothing here interrupts a request already in flight, which is the
-  // same bargain the generation counter makes everywhere else in this file.
-  async function nap(ms, check = () => {}) {
-    for (let left = ms; left > 0; left -= 250) { await sleep(Math.min(250, left)); check(); }
-  }
-
   // ---------------------------------------------------------------------------
-  // Authed fetch (+ one 401 retry through a silent token refresh)
+  // OneLake, through the host
   // ---------------------------------------------------------------------------
-  // Only 401 means "your token expired". A 403 means "this identity may not read this",
-  // which a new token will not fix — and treating it as expiry was actively harmful:
-  // refreshing drops the token first, including the copy the service worker is using for
-  // the tables the user CAN read. auth.refresh() coalesces concurrent callers itself.
-  async function authedFetch(url, extraHeaders) {
-    const headers = { ...auth.getHeaders(), ...extraHeaders };
-    const r = await fetch(url, { headers });
-    if (r.status !== 401) return r;
-    // Hand back the credential that actually failed. Requests go out in parallel, so a
-    // 401 raised against an old token can land after someone else already renewed, and
-    // refresh() needs to be able to tell that apart from "the current token is dead".
-    return (await auth.refresh(headers.Authorization))
-      ? fetch(url, { headers: { ...auth.getHeaders(), ...extraHeaders } })
-      : r;
-  }
-
-  // OneLake says why it refused, in the body, and every one of those sentences was being
-  // dropped on the floor. The one that cost the most: listing a mirrored Databricks
-  // catalog's table answers 400 with "Stored connections with authentication type 'Key'
-  // are not supported for shortcuts of type 'DatabricksCatalog'" — the actual reason the
-  // table cannot be read, and the app instead spent 86 seconds waiting for an Iceberg
-  // conversion that was never going to come, then blamed the tenant's settings.
-  async function oneLakeMessage(r) {
-    try {
-      const j = JSON.parse(await r.text());
-      return (j && j.error && j.error.message) || "";
-    } catch (_) { return ""; }
-  }
-
-  async function fetchAuthed(url) {
-    const r = await authedFetch(url);
-    if (!r.ok) {
-      const said = await oneLakeMessage(r);
-      const e = new Error(`HTTP ${r.status} for …${String(url).slice(-72)}` + (said ? ` — ${said}` : ""));
-      e.status = r.status;          // callers retry on this (see ircResolve)
-      throw e;
-    }
-    return new Uint8Array(await r.arrayBuffer());
-  }
-
-  // ADLS Gen2 "List Path" over the workspace filesystem. Returns [{name,isDir,bytes,mtime}].
-  // recursive=false lists only the immediate children of `directory` (no data-file walk).
-  async function listPaths(ws, directory, recursive = false) {
-    const out = [];
-    let cont = "";
-    let page = 0;
-    do {
-      const u = new URL(dfsBase(ws));
-      u.searchParams.set("resource", "filesystem");
-      u.searchParams.set("recursive", String(recursive));
-      u.searchParams.set("directory", strip(directory));
-      if (cont) u.searchParams.set("continuation", cont);
-      const r = await authedFetch(u.toString());
-      // A 404 on the FIRST page means the directory isn't there, which is a normal answer.
-      // A 404 part way through pagination means it went away under us, and returning the
-      // rows gathered so far would report a truncated listing as a complete one.
-      if (r.status === 404) {
-        if (page === 0) return out;
-        throw new Error(`Listing of ${strip(directory)} was interrupted — it changed while being read`);
-      }
-      if (!r.ok) {
-        const said = await oneLakeMessage(r);
-        const e = new Error(`list HTTP ${r.status} for ${strip(directory)}` + (said ? ` — ${said}` : ""));
-        e.status = r.status;
-        throw e;
-      }
-      const j = await r.json().catch(() => ({}));
-      for (const p of (j.paths || [])) {
-        out.push({
-          name: p.name,
-          isDir: p.isDirectory === true || p.isDirectory === "true",
-          bytes: Number(p.contentLength || 0),
-          mtime: Date.parse(p.lastModified || "") || 0,
-        });
-      }
-      cont = r.headers.get("x-ms-continuation") || "";
-      page++;
-    } while (cont);
+  // The page holds no credential and makes no request to OneLake: the host lists (from
+  // its cache-first store) and reads (signed there), and its answers arrive over the same
+  // message channel as the engine's. Bytes cross as base64 — a webview message is JSON.
+  function fromBase64(b64) {
+    const bin = atob(b64 || "");
+    const out = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
     return out;
   }
 
-  // ---------------------------------------------------------------------------
-  // Catalog — workspaces and their data items, from the storage token alone.
-  // ---------------------------------------------------------------------------
-  // OneLake answers the ADLS Gen2 "List Filesystems" call at the account root, and each
-  // filesystem is a workspace. That means the whole catalog comes from the same
-  // storage.azure.com token the data reads use — no Fabric REST API, no extra Entra scope
-  // and no second consent prompt.
-  async function listWorkspaces() {
-    const out = [];
-    let cont = "";
-    do {
-      const u = new URL(`${dfsOrigin}/`);
-      u.searchParams.set("resource", "account");
-      if (cont) u.searchParams.set("continuation", cont);
-      const r = await authedFetch(u.toString());
-      if (!r.ok) throw new Error(`Could not list workspaces (HTTP ${r.status})`);
-      const j = await r.json().catch(() => ({}));
-      for (const f of (j.fileSystems || [])) out.push(f.name);
-      cont = r.headers.get("x-ms-continuation") || "";
-    } while (cont);
-    return out.sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
-  }
-
-  // The items that hold OneLake tables; which kinds those are is a rule about names, so it
-  // lives in paths.js under test. Everything the workspace holds is logged, because "what
-  // does OneLake actually CALL this item?" is otherwise unanswerable from inside the app —
-  // and an item type spelled differently than assumed is exactly how a workspace full of
-  // Databricks catalogs came up empty with nothing said.
-  async function listItems(ws) {
-    const entries = await listPaths(ws, "", false);
-    const items = [], skipped = [];
-    for (const e of entries) {
-      if (!e.isDir) continue;
-      const name = basename(e.name);
-      if (holdsTables(name)) items.push({ name, kind: itemKind(name) });
-      else if (itemKind(name)) skipped.push(name);
-    }
-    console.info(`[engine] ${ws}: ${items.length} item(s) with tables` +
-                 (skipped.length ? `; skipped ${skipped.length} — ${skipped.join(", ")}` : ""));
-    return items.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
+  async function hostBytes(ws, path, range) {
+    const r = await guarded(() => db.readBytes({ workspace: ws, path, range }));
+    return fromBase64(r && r.base64);
   }
 
   // ---------------------------------------------------------------------------
@@ -507,18 +346,11 @@ export function createEngine(auth, {
     return ext === "xlsx" ? canXlsx : true;
   };
 
-  // One level of Files/ (or a subdirectory of it). `dir` is relative to Files/.
+  // One level of Files/ (or a subdirectory of it). `dir` is relative to Files/. The same
+  // cached listing the tree draws, so the pane and the tree never disagree.
   async function listFiles({ workspace, item }, dir = "") {
-    const base = `${item}/Files${dir ? "/" + strip(dir) : ""}`;
-    const entries = await listPaths(workspace, base, false);
-    return entries.map(e => ({
-      name: basename(e.name),
-      path: e.name,                       // workspace-relative, ready for dfsUrl()
-      isDir: e.isDir,
-      bytes: e.bytes,
-      queryable: !e.isDir && isQueryable(e.name),
-    })).sort((a, b) =>
-      (b.isDir - a.isDir) || a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
+    const entries = await guarded(() => db.listFiles({ workspace, item, dir: strip(dir) }));
+    return (entries || []).map(e => ({ ...e, queryable: !e.isDir && isQueryable(e.name) }));
   }
 
   // ---------------------------------------------------------------------------
@@ -646,9 +478,9 @@ export function createEngine(auth, {
 
     const res = track(key);
     res.gen = gen;
-    // The proxied URL goes straight into the SQL — native DuckDB reads it itself, and
-    // the proxy signs it on the way past. Nothing to register, nothing to drop.
-    const url = dfsUrl(lh.workspace, file.path);
+    // The abfss:// name goes straight into the SQL — DuckDB reads it itself, with the
+    // host's credential. Nothing to register, nothing to drop.
+    const url = abfssUrl(lh.workspace, file.path);
 
     const ident = quoteIdent(uniqueView(key, file.path.replace(/^.*?\/Files\//, "")));
     try {
@@ -669,10 +501,10 @@ export function createEngine(auth, {
     }
   }
 
-  // Zip archives: the proxied URL goes into zip_contents() and zip:// directly — the
+  // Zip archives: the abfss:// name goes into zip_contents() and zip:// directly — the
   // zipfs extension range-reads the central directory from the archive's tail and
   // inflates only the entries actually queried, so a large archive costs what you read
-  // from it (probed against native DuckDB: both forms accept an http URL). Each entry
+  // from it (checked against DuckDB 2.0 over abfss://). Each entry
   // with a known reader becomes its own view; the archive itself has no rows to show.
   const ZIP_MAX_VIEWS = 50;
   async function loadZipFile(lh, file, key, gen, check) {
@@ -682,7 +514,7 @@ export function createEngine(auth, {
     const res = track(key);
     res.gen = gen;
     res.views = [];
-    const url = dfsUrl(lh.workspace, file.path);
+    const url = abfssUrl(lh.workspace, file.path);
     try {
       const entries = (await q(
         `SELECT file_name AS n FROM zip_contents(${sqlStr(url)})
@@ -749,21 +581,20 @@ export function createEngine(auth, {
     const res = track(key);
     res.gen = gen;
     const ext = fileExt(file.name);
-    const url = dfsUrl(lh.workspace, file.path);
+    const url = abfssUrl(lh.workspace, file.path);
 
-    const head = await authedFetch(url, { Range: "bytes=0-15" });
-    if (!head.ok) throw new Error(`Could not read ${file.name} (HTTP ${head.status})`);
+    const head = await hostBytes(lh.workspace, file.path, "bytes=0-15");
     check();
-    const sqlite = isSqliteHeader(new Uint8Array(await head.arrayBuffer()));
+    const sqlite = isSqliteHeader(head);
 
     // The alias is how the user names the database in SQL, so derive it from the file
     // name; uniqueView guards it against colliding with an existing view or alias.
     const alias = uniqueView(key, basename(file.name).replace(/\.[^.]+$/, ""));
-    if (sqlite) return loadSqliteFile(file, key, url, alias, gen, check);
+    if (sqlite) return loadSqliteFile(lh, file, key, alias, gen, check);
 
     try {
       // READ_ONLY is not optional: the file lives in OneLake and the app never writes.
-      // The proxied URL is attached directly; httpfs block-reads it on demand.
+      // The abfss:// name is attached directly and block-read on demand.
       await q(`ATTACH ${sqlStr(url)} AS ${quoteIdent(alias)} (READ_ONLY)`);
       res.attachments.push(alias);
 
@@ -810,13 +641,13 @@ export function createEngine(auth, {
 
   const sqliteQuote = s => '"' + String(s).replace(/"/g, '""') + '"';
 
-  async function loadSqliteFile(file, key, url, alias, gen, check) {
+  async function loadSqliteFile(lh, file, key, alias, gen, check) {
     if (file.bytes > SQLITE_MAX_BYTES)
       throw new Error(`${file.name} is ${fmtBytes(file.bytes)} — over the ${fmtBytes(SQLITE_MAX_BYTES)} ` +
                       `cap for copying a SQLite file into the browser.`);
     const status = statusFor(gen);
     status(`Fetching ${file.name} (${fmtBytes(file.bytes)}) — SQLite is read in full…`);
-    const bytes = await fetchAuthed(url);
+    const bytes = await readFileBytes(lh, file);
 
     if (!_sqljs) {
       const mod = await import(SQLJS_ESM);
@@ -889,172 +720,6 @@ export function createEngine(auth, {
     } finally {
       try { sdb.close(); } catch (_) {}
     }
-  }
-
-  // ---------------------------------------------------------------------------
-  // OneLake's Iceberg REST Catalog — the ONLY way tables are found and opened.
-  // ---------------------------------------------------------------------------
-  // OneLake exposes a read-only Iceberg REST Catalog (IRC), and it costs nothing extra to
-  // use: it authenticates with the SAME https://storage.azure.com token this app already
-  // holds, so there is still no second Entra scope and no second consent prompt. It also
-  // accepts the friendly `workspace/item.Lakehouse` name the user already picked, so no
-  // GUID lookups.
-  //
-  // Two things it replaces outright:
-  //   - discovery. Three requests for a whole lakehouse instead of one directory listing
-  //     per table (150+ serialised calls on a big one).
-  //   - metadata resolution. Get table returns the entire metadata document INLINE, so
-  //     there is no metadata/ listing, no version-hint.text, and no guessing which
-  //     *.metadata.json is current.
-  //
-  // There used to be a DFS directory walk behind this as an automatic fallback. It is gone,
-  // and that is a deliberate narrowing rather than a lost capability. Measured across every
-  // item kind this app will open — lakehouses, a warehouse, eight SQL databases — the
-  // catalog answered for all of them, and its table set matched the walk's everywhere
-  // except one empty leftover directory the catalog correctly does not name: a phantom that
-  // could never be opened but sat in the sidebar wearing a "converting" badge that would
-  // never clear. The walk also never worked for warehouses, which have no metadata/
-  // directory at all. So a catalog failure is now FATAL and LOUD, because a silent
-  // downgrade to one-listing-per-table is how a slow sidebar hides a broken catalog.
-  const TABLE_API = `${tableOrigin}/iceberg`;
-
-  const ircPrefixes = new Map();  // warehouse -> the `prefix` the config call hands back
-
-  // The catalog's refusal is now the WHOLE diagnosis a user gets, so its own words have to
-  // survive. "Iceberg catalog HTTP 403" covered a missing permission, conversion being
-  // disabled, and a mirrored catalog that cannot be read — and distinguished none of them.
-  // OneLake explains itself in the body, in the same {error:{message}} shape the DFS reads
-  // already parse. The path goes in the message too: with the per-namespace /tables calls
-  // fanned out below, WHICH namespace failed is the first thing worth knowing.
-  async function ircGet(path) {
-    const r = await authedFetch(TABLE_API + path);
-    if (!r.ok) {
-      const said = await oneLakeMessage(r);
-      const e = new Error(`Iceberg catalog HTTP ${r.status} for ${path}` + (said ? ` — ${said}` : ""));
-      e.status = r.status;
-      throw e;
-    }
-    return r.json();
-  }
-
-  // The warehouse identifier is the whole "workspace/item" pair; the prefix it returns is
-  // a PATH prefix, so its slash must survive into the next URL unencoded.
-  async function ircPrefixFor(lh) {
-    const warehouse = `${lh.workspace}/${lh.item}`;
-    if (ircPrefixes.has(warehouse)) return ircPrefixes.get(warehouse);
-    const cfg = await ircGet(`/v1/config?warehouse=${encodeURIComponent(warehouse)}`);
-    const prefix = (cfg.overrides && cfg.overrides.prefix) || warehouse;
-    ircPrefixes.set(warehouse, prefix);
-    return prefix;
-  }
-
-  const ircSeg = s => String(s).split("/").map(encodeURIComponent).join("/");
-
-  // Every table in the item, as {schema, table}. A failure THROWS — app.js paints it, and
-  // re-picking the item simply tries again. There is deliberately no memo of the failure:
-  // the old per-item off-switch existed to stop re-probing before the DFS walk answered,
-  // and with no walk left it could only turn one transient 429 into an item that stayed
-  // dead for the rest of the session (nothing, not even reset(), ever cleared it).
-  async function listTables(lh) {
-    const prefix = await ircPrefixFor(lh);
-    const ns = await ircGet(`/v1/${prefix}/namespaces`);
-    // A namespace is an array of levels; OneLake only ever returns one level, and uses
-    // a synthetic "dbo" for items that don't have schemas of their own.
-    const names = (ns.namespaces || []).map(n => (Array.isArray(n) ? n.join(".") : String(n)));
-    if (!names.length) return [];
-
-    // One rejected /tables rejects the whole listing, on purpose: a sidebar quietly missing
-    // a schema is indistinguishable from a lakehouse that never had one, and every
-    // expensive bug in this app has been of exactly that shape.
-    const lists = await mapPool(names, n =>
-      ircGet(`/v1/${prefix}/namespaces/${ircSeg(n)}/tables`));
-
-    const tables = [];
-    names.forEach((schema, i) => {
-      for (const id of (lists[i].identifiers || [])) tables.push({ schema, table: id.name });
-    });
-    return tables.sort((a, b) =>
-      (a.schema || "").localeCompare(b.schema || "") || a.table.localeCompare(b.table));
-  }
-
-  // Get table -> the metadata document, inline. No listing, no version guessing.
-  //
-  // Retried, and this is the only reason a retry exists here: Fabric generates a table's
-  // Iceberg metadata lazily, so the very call that triggers generation can lose the race to
-  // it. Retrying a 404 would be absurd for an arbitrary name, but this table came out of
-  // the catalog's OWN listing moments ago — "it does not exist" from a catalog that just
-  // named it means "not yet", and the schedule is sized to Microsoft's documented 5s-2min
-  // conversion window. Everything else the catalog says is a real answer (403 = this
-  // identity may not read it, 401 = the token) and must not be sat on for eighty-six
-  // seconds before the user is told.
-  async function ircResolve(lh, t, label, status, check) {
-    const prefix = await ircPrefixFor(lh);
-    const path = `/v1/${prefix}/namespaces/${ircSeg(t.schema)}/tables/${ircSeg(t.table)}`;
-    for (let attempt = 0; ; attempt++) {
-      try {
-        const doc = await ircGet(path);
-        // No .status on this one, so the predicate below treats it as permanent — which it
-        // is: a 200 carrying no metadata document is a broken answer, not an unfinished
-        // conversion.
-        if (!doc || !doc.metadata) throw new Error(`${label}: the catalog returned no metadata document`);
-        // metadata-location rides along: it is what lets the host read the table with
-        // iceberg_scan instead of an ATTACH that asks this same catalog again per query.
-        return readMetadataDoc(doc.metadata, label, doc["metadata-location"]);
-      } catch (e) {
-        if (e.cancelled) throw e;
-        const notYet = e.status === 400 || e.status === 404;
-        const busy = e.status === 429 || e.status >= 500;
-        if (!(notYet || busy) || attempt >= RESOLVE_BACKOFF_MS.length) throw e;
-        const waited = Math.round(
-          RESOLVE_BACKOFF_MS.slice(0, attempt + 1).reduce((a, b) => a + b, 0) / 1000);
-        // Two messages, because "waiting for Fabric to convert" while the truth is "the
-        // catalog is rate-limiting us" is the confidently-wrong status line this file
-        // keeps refusing to write.
-        status(notYet
-          ? `Waiting for Fabric to generate Iceberg metadata for ${label}… ` +
-            `(${waited}s so far; conversion can take up to two minutes)`
-          : `The Iceberg catalog answered HTTP ${e.status} for ${label}; retrying… (${waited}s so far)`);
-        await nap(RESOLVE_BACKOFF_MS[attempt], check);
-      }
-    }
-  }
-
-  // The parts of an Iceberg metadata document this reader needs. Shared, because the same
-  // document arrives two ways: fetched from metadata/ over DFS, or handed over inline by
-  // the REST catalog's Get table. The validation belongs in one place either way.
-  function readMetadataDoc(meta, source, metadataLocation = null) {
-    // Guessing is worse than failing here. Falling back to the last element of the
-    // snapshots array, as an earlier version did, opens the table against a snapshot that
-    // is not defined to be the current one and says nothing about having done so.
-    const curId = meta["current-snapshot-id"];
-    if (curId == null)
-      throw new Error(`${source} has no current-snapshot-id — the metadata is incomplete`);
-    const snapshots = meta.snapshots || [];
-    const snap = snapshots.find(s => String(s["snapshot-id"]) === String(curId));
-
-    const schema = (meta.schemas || []).find(s => s["schema-id"] === meta["current-schema-id"])
-                || (meta.schemas || [])[0];
-
-    // A table the catalog LISTS that has never been written: current-snapshot-id is -1,
-    // the snapshot array is empty, and there is no directory on DFS at all (probed on a
-    // real one). This used to throw "names snapshot -1, which is not in its snapshot
-    // list" — reporting an empty table as a broken one. DuckDB opens it and returns no
-    // rows against the right schema, so say that instead.
-    if (!snap || String(curId) === "-1" || !snapshots.length) {
-      return { empty: true, schemaFields: icebergFields(schema), totalRecords: 0, stats: null,
-               metadataLocation };
-    }
-
-    return {
-      empty: false,
-      // The table's columns as the METADATA states them — name and Iceberg type. This is
-      // what the Stats tier shows instead of a DESCRIBE, so a table's schema is on screen
-      // before a single parquet footer has been read.
-      schemaFields: icebergFields(schema),
-      totalRecords: Number((snap.summary || {})["total-records"]) || null,
-      stats: snapshotStats(meta, snap),
-      metadataLocation,
-    };
   }
 
   // NOTE ON WHAT IS NOT HERE ANY MORE.
@@ -1472,10 +1137,10 @@ export function createEngine(auth, {
   // copy is a plausible file rather than the one that is stored. Compressed text comes
   // back compressed, which is also what "download this file" means.
   async function readFileBytes(lh, file) {
-    return fetchAuthed(dfsUrl(lh.workspace, file.path));
+    return hostBytes(lh.workspace, file.path);
   }
 
-  return { init, reset, parseLakehouse, listWorkspaces, listItems, listTables,
+  return { init, reset, parseLakehouse,
            statTable, peekTable, loadTable,
            listFiles, loadFile, readFileBytes, runSql, describeLoad, fmtBytes, cancelLoad };
 }

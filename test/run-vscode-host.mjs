@@ -11,36 +11,38 @@ import { readFile } from "node:fs/promises";
 import { join, extname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
-import { createRequire } from "node:module";
 
-// The engine the panel really runs. Wired in below so the page can finish booting: with
-// DuckDB native in the host, a webview whose engine-calls go unanswered never gets a
-// usable Run button, and every check in this file happens after that point.
-const require = createRequire(import.meta.url);
-const { createEngineHost } = require("../extension/src/engine-host.js");
-const engine = createEngineHost();
+import { panelHost, README } from "./panel-host.mjs";
 
 const root = join(fileURLToPath(new URL(".", import.meta.url)), "..");
 const PORT = 5199;
 const MIME = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8",
                ".css": "text/css", ".json": "application/json", ".md": "text/markdown; charset=utf-8" };
 
-// README.md lives at the repo root; copy-site.mjs is what puts it inside site/ for the
-// real extension, so serve it from where it actually is rather than requiring a build.
-// The app itself comes from extension/app/ — the extension's tracked fork, the code the
-// panel really runs — never from site/, which belongs to the website.
-
-// README reads are counted HERE rather than off page.on('request'), because the landing
-// query's read no longer happens in the page at all: read_text() runs inside native DuckDB
-// in the extension host, so Chrome never sees it. Watching the server catches the read
-// wherever it is made, which is what the check actually cares about.
-const readmeServed = [];
+// The app comes from extension/app/ — the code the panel really runs. The README the
+// landing query reads is a file path, read by native DuckDB in the host, as packaged.
+//
+// The same server is the fake OneLake the HOST reads: /dfs for listings, /irc for the
+// Iceberg catalog. The page itself never reaches OneLake — that is one of the checks.
+const ircCalls = [];
+const dfsCalls = [];
 
 const server = http.createServer(async (req, res) => {
-  const path = new URL(req.url, "http://x").pathname;
-  if (path === "/README.md") readmeServed.push(path);
-  const file = path === "/README.md" ? join(root, "README.md")
-             : join(root, "extension", "app", path === "/" ? "index.html" : path.slice(1));
+  const u = new URL(req.url, "http://x");
+  const path = u.pathname;
+  if (path.startsWith("/irc/")) {
+    ircCalls.push(u.searchParams.get("warehouse") || decodeURIComponent(path));
+    res.writeHead(404, { "content-type": "application/json" });
+    return res.end(JSON.stringify({ error: { message: "no fixtures here" } }));
+  }
+  if (path.startsWith("/dfs/")) {
+    dfsCalls.push(u.searchParams.get("resource") === "account"
+      ? "account" : `dir:${u.searchParams.get("directory") ?? ""}`);
+    res.writeHead(200, { "content-type": "application/json" });
+    return res.end(JSON.stringify(u.searchParams.get("resource") === "account"
+      ? { fileSystems: [{ name: "ws1" }] } : { paths: [] }));
+  }
+  const file = join(root, "extension", "app", path === "/" ? "index.html" : path.slice(1));
   try {
     const body = await readFile(file);
     res.writeHead(200, {
@@ -53,7 +55,9 @@ const server = http.createServer(async (req, res) => {
 });
 await new Promise(r => server.listen(PORT, "127.0.0.1", r));
 
-const README_URL = `http://127.0.0.1:${PORT}/README.md`;
+const host = panelHost({
+  dfsOrigin: `http://127.0.0.1:${PORT}/dfs`, tableOrigin: `http://127.0.0.1:${PORT}/irc`,
+});
 
 // A representative slice of what VS Code defines on :root, in the shape a dark theme
 // gives it. Only the tokens index.html names are needed.
@@ -97,44 +101,20 @@ try {
     executablePath: process.env.CHROME_PATH || (process.platform === "win32" ? "C:/Program Files/Google/Chrome/Application/chrome.exe" : "/usr/bin/google-chrome"), headless: true });
   const ctx = await browser.newContext({ serviceWorkers: "block" });
 
-  // What extension/src/html.js injects in place of the config.js tag. The proxy origins
-  // are left off so the fake OneLake below can be routed on its real hostnames, the way
-  // every other harness here fakes it — which origin the reads go to is the proxy's
-  // business and is covered by run-proxy.mjs.
+  // What extension/src/html.js injects in place of the config.js tag.
   await ctx.route("**/config.js", r => r.fulfill({
     contentType: "text/javascript",
     body: `window.ONELAKE_STUDIO_CONFIG = ${JSON.stringify({
-      auth: "none", host: "vscode", readmeUrl: README_URL,
+      auth: "none", host: "vscode", readmeUrl: README,
     })};`,
   }));
 
-  const ircCalls = [];
-  await ctx.route(u => u.hostname === "onelake.table.fabric.microsoft.com", route => {
-    const u = new URL(route.request().url());
-    ircCalls.push(u.searchParams.get("warehouse") || decodeURIComponent(u.pathname));
-    return route.fulfill({
-      status: 404, contentType: "application/json",
-      headers: { "access-control-allow-origin": "*" },
-      body: JSON.stringify({ error: { message: "no fixtures here" } }),
-    });
-  });
-
-  const dfsCalls = [];
-  await ctx.route(u => u.hostname === "onelake.dfs.fabric.microsoft.com", route => {
-    const u = new URL(route.request().url());
-    dfsCalls.push(u.searchParams.get("resource") === "account"
-      ? "account" : `dir:${u.searchParams.get("directory") ?? ""}`);
-    return route.fulfill({
-      status: 200, contentType: "application/json",
-      headers: { "access-control-allow-origin": "*" },
-      body: JSON.stringify(u.searchParams.get("resource") === "account"
-        ? { fileSystems: [{ name: "ws1" }] }
-        : { paths: [] }),
-    });
-  });
+  // Anything the PAGE sends toward OneLake is a leak: the host does every read.
+  const pageOneLake = [];
 
   const page = await ctx.newPage();
   page.on("pageerror", e => console.log("[pageerror]", e.message));
+  page.on("request", r => { if (/onelake\.(dfs|table)\.fabric/.test(r.url())) pageOneLake.push(r.url()); });
   // VS Code names the theme kind on <body> and defines the palette on :root before the
   // page's own scripts run.
   await page.addInitScript(({ css }) => {
@@ -145,9 +125,9 @@ try {
       document.head.appendChild(s);
     });
     // The webview's own bridge to the extension host. What the page posts is recorded so
-    // the checks below can read it back — and `engine-call` is forwarded to a REAL
-    // engine-host, because the engine is native now and a page with nothing answering it
-    // never finishes booting.
+    // the checks below can read it back — and `engine-call` is answered by the REAL host
+    // methods and engine (panel-host.mjs), because a page with nothing answering it never
+    // finishes booting.
     window.__posted = [];
     window.acquireVsCodeApi = () => ({
       postMessage: m => {
@@ -159,16 +139,7 @@ try {
     });
   }, { css: FAKE_THEME });
 
-  await page.exposeBinding("__hostCall", async ({ page: p }, msg) => {
-    try {
-      const value = await engine.call(msg.method, msg.args || [],
-        batch => p.evaluate(m => window.postMessage(m, "*"),
-                            { type: "engine-batch", id: msg.id, batch }).catch(() => {}));
-      return { type: "engine-result", id: msg.id, value };
-    } catch (e) {
-      return { type: "engine-error", id: msg.id, message: e.message };
-    }
-  });
+  await host.install(page);
 
   // Any attempt by the PAGE to reach GitHub for the README would still show up here —
   // that half of the check is unchanged, and is the half that matters for privacy.
@@ -194,11 +165,8 @@ try {
     return !!d && !d.hidden && d.innerHTML.length > 200;
   });
   check("the landing README rendered", docRendered);
-  check("it was read from the packaged copy, not GitHub",
-    readmeServed.length > 0 && githubHits.length === 0,
-    readmeServed.length
-      ? `${readmeServed.length} local read(s), ${githubHits.length} to github`
-      : "no README read seen on the local server");
+  check("it was read from the packaged copy, not GitHub", docRendered && githubHits.length === 0,
+    `${githubHits.length} request(s) to github`);
 
   const status = await page.evaluate(() => {
     const el = document.getElementById("status");
@@ -264,6 +232,7 @@ try {
   }
   check("the panel does not list workspaces itself", !dfsCalls.includes("account"),
     dfsCalls.join(", ") || "no DFS calls at all");
+  check("the page itself never reaches OneLake", pageOneLake.length === 0, pageOneLake.join(", "));
 
   // --- the channel to the extension ------------------------------------------
   check("the page announced it is listening",
@@ -372,7 +341,7 @@ try {
   if (browser) await browser.close().catch(() => {});
   server.close();
   // Holds a native database handle and a temp directory; without this the run does not exit.
-  await engine.close().catch(() => {});
+  await host.close().catch(() => {});
 }
 
 const failed = checks.filter(c => !c.ok).length;

@@ -249,8 +249,8 @@ function createEngineHost({ extensionDir, onLog = () => {}, onWarn = () => {}, g
       }
       //
       // REQUIRED, and treated differently from the rest: `iceberg` and `azure` are how a
-      // table is read at all now, and `httpfs` is how the Files tab reads through the
-      // loopback proxy. An optional extension that will not load costs one file format;
+      // table or a Files/ object is read at all (abfss://), and `httpfs` is the https the
+      // Iceberg catalog and public URLs need. An optional extension that will not load costs one file format;
       // these three failing means the extension cannot do its job, and saying so beats
       // a later "Failed to open file" that names nothing.
       for (const ext of ['iceberg', 'azure', 'httpfs']) await load(ext, '', true);
@@ -283,8 +283,8 @@ function createEngineHost({ extensionDir, onLog = () => {}, onWarn = () => {}, g
       // and the user's OneLake token within reach — so whatever the page says, DuckDB may
       // touch the local disk only in its own temp directory, its extension directory, and
       // the few files named here (the packaged README the landing query reads, the CA
-      // bundle). The network stays open — the page reads public URLs, OneLake (abfss:// and
-      // https), and the loopback proxy — but `read_text('~/.ssh/id_rsa')` and `COPY … TO`
+      // bundle). The network stays open over https and abfss — public URLs and OneLake —
+      // but plain http, `read_text('~/.ssh/id_rsa')` and `COPY … TO`
       // anywhere outside the temp directory are refused, and the configuration is locked so
       // no statement can turn this back off. Verified against DuckDB 2.0: allowed paths
       // still read, others raise Permission Error, `..` cannot climb out, abfss and the
@@ -292,7 +292,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onWarn = () => {}, g
       if (lockdown) {
         const ca = await writeCaBundle(tmpDir);
         await conn.run(`SET ca_cert_file = ${sqlStr(ca)};`);
-        const dirs = [`${tmp}/`, 'https://', 'http://', 'abfss://', 'abfs://', 'az://', 'azure://'];
+        const dirs = [`${tmp}/`, 'https://', 'abfss://', 'abfs://', 'az://', 'azure://'];
         if (extensionDir) dirs.push(`${extensionDir.replace(/\\/g, '/')}/`);
         const paths = [ca, ...allowedPaths.filter(Boolean).map(p => String(p).replace(/\\/g, '/'))];
         await conn.run(`SET allowed_directories = [${dirs.map(sqlStr).join(', ')}];`);

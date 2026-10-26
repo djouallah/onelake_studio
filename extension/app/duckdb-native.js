@@ -97,6 +97,9 @@ export function connectNative() {
     // screen from disk when the table was ever opened, refreshed behind when it is old.
     resolveTable: target => call("onelake.table", [target]),
     peekTable: target => call("onelake.peek", [target]),
+    // Files/ listings and file bytes, read by the host — the page holds no credential.
+    listFiles: target => call("onelake.files", [target]),
+    readBytes: target => call("onelake.readBytes", [target]),
     // Bytes with no URL land in a host temp file, and the PATH comes back — data.js
     // splices it into its SQL directly, the same way it now splices URLs. A Uint8Array does
     // not survive VS Code's JSON message serialisation, so the bytes cross as base64: about

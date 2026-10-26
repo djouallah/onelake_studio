@@ -13,6 +13,7 @@ const vscode = require('vscode');
 const crypto = require('node:crypto');
 const { TextDecoder } = require('node:util');
 const { rewriteHtml } = require('./html');
+const { answer } = require('./host');
 const { siteRoot } = require('./site');
 const { VENDORED_PREFIXES, VENDORED_GH_PREFIXES } = require('./vendored');
 
@@ -94,39 +95,13 @@ function postLive(msg) {
   if (current && ready) current.webview.postMessage(msg);
 }
 
-// The engine bridge. data.js runs in the webview exactly as it always has; its eight
-// DuckDB calls arrive here and are answered by real DuckDB in this process. Streaming
-// results come back as a sequence of `engine-batch` messages under the call's own id,
-// then one `engine-result` to close it — which is the shape conn.send() had.
-//
-// Every failure is reported as `engine-error` rather than being dropped: a call whose
-// promise never settles is a boot that hangs at "Starting DuckDB…" with nothing said,
-// and that failure mode has already cost this project a day once.
-//
-// `host` answers the calls that are not DuckDB's: a table's metadata and its first rows,
-// served cache first by onelake.js. Same channel, same id/result/error shape, so the page
-// cannot tell — and does not need to — which side of the host answered.
-function wireEngine(panel, engine, host = {}) {
-  // postMessage THROWS once the panel is disposed, and an engine call can settle after
-  // exactly that — a query still streaming when the tab is closed. Nobody is listening;
-  // the result is simply dropped rather than becoming an unhandled rejection.
+// The page's one channel to the host (host.js): DuckDB statements and OneLake reads,
+// answered here. postMessage THROWS once the panel is disposed, and a call can settle after
+// exactly that — a query still streaming when the tab is closed. Nobody is listening; the
+// result is simply dropped rather than becoming an unhandled rejection.
+function wireEngine(panel, engine, methods = {}) {
   const post = msg => { try { panel.webview.postMessage(msg); } catch (_) {} };
-  return async msg => {
-    const { id, method, args } = msg;
-    try {
-      // hasOwn: the method name comes from the page.
-      const value = Object.hasOwn(host, method)
-        ? await host[method](...(Array.isArray(args) ? args : []))
-        : await engine.call(method, args || [], batch => post({ type: 'engine-batch', id, batch }));
-      post({ type: 'engine-result', id, value });
-    } catch (e) {
-      post({
-        type: 'engine-error', id,
-        message: (e && e.message) || String(e),
-        cancelled: !!(e && e.cancelled),
-      });
-    }
-  };
+  return msg => answer({ methods, engine }, msg, post);
 }
 
 // Single-flight: two near-simultaneous opens (a tree click racing the Open command) must
@@ -165,8 +140,6 @@ async function openPanelUncontended(context, proxy, { onOpened, onBoot, onBootFa
       auth: 'none',
       // Everything the app does differently in here hangs off this one word.
       host: 'vscode',
-      dfsOrigin: proxy.dfsOrigin,
-      tableOrigin: proxy.tableOrigin,
       // The webview's own libraries (sql.js, the markdown renderer) come from the vsix's
       // vendor directory through this, so the panel needs no CDN.
       cdnOrigin: proxy.cdnOrigin,

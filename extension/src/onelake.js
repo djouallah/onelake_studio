@@ -174,7 +174,7 @@ function createOneLake({ catalog, store, prefetchEnabled = () => true }) {
 
   return {
     workspaces, items, tables, files, table, peek, prefetch,
-    readBytes: (ws, path) => catalog.readBytes(ws, path),
+    readBytes: (ws, path, o) => catalog.readBytes(ws, path, o),
     paths: () => catalog.paths(),
     onChanged: fn => listen('changed', key => fn(decode(key))),
     onRefreshFailed: fn => listen('refresh-failed', (key, e) => fn(decode(key), e)),

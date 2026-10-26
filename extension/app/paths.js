@@ -35,6 +35,11 @@ export const basename = p => strip(p).split("/").pop();
 // existing %20 into %2520; see toHttps for that side.
 export const encPath = p => strip(p).split("/").map(encodeURIComponent).join("/");
 
+// How native DuckDB names a OneLake object: the workspace is the container, read with the
+// host's azure secret. Workspace names with spaces and parentheses work as they are
+// (checked against DuckDB 2.0); the result only ever goes into SQL through sqlStr().
+export const abfssUrl = (ws, path) => `abfss://${ws}@${DFS_HOST}/${strip(path)}`;
+
 export const dfsBase = (ws, origin = DFS_ORIGIN) => `${origin}/${encodeURIComponent(ws)}`;
 
 // A DFS "list" entry .name is already relative to the filesystem (workspace) root,
