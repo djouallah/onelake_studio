@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- **New: Generate Report.** Right-click an Apache Ossie model (`.yaml`) in `Files/` and choose
+  *Generate Report…*. It writes a folder to this machine with a Fabric app (Rayfin, DuckDB-WASM in
+  the browser) that reads the model's lakehouse through its OneLake Iceberg catalog. The page has
+  one chart, and an `AGENTS.md` explains how an agent can grow it from there.
+  - The template is analytics-as-code's Iceberg app, vendored at a pinned commit.
+  - Nothing is deployed for you.
+
 ## 0.2.4
 
 The first release notes for OneLake Studio. They cover every change since 0.1.0.

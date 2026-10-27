@@ -24,6 +24,31 @@ engine; its panel, [`app/`](../app/), is only a view.
 
 Saving a result as CSV, or a file from `Files/`, goes through VS Code's own save dialog.
 
+## Generate Report
+
+To start a report, right-click an Apache Ossie model (`.yaml`) in a lakehouse's `Files/` and choose
+**Generate Report…**. It writes a folder to this machine with a Fabric app you can deploy. The app
+is a Rayfin project that runs DuckDB-WASM in the browser and reads the model's tables from the
+lakehouse's OneLake Iceberg catalog. Its page has one chart: the model's first measure, by a
+column that slices it.
+
+**What you need**
+- **The model is the only input.** Its Direct Lake expression must hold
+  `https://onelake.dfs.fabric.microsoft.com/<workspace id>/<lakehouse id>`, which gives the
+  catalog the app reads.
+- A model that names no lakehouse, or names two, is refused.
+
+**Where the files come from** ([`src/report.js`](../src/report.js))
+- The template is [analytics-as-code](https://github.com/djouallah/analytics-as-code)'s
+  `dashboard/fabric_app/iceberg`, plus the generic modules of its page.
+- It is vendored at a pinned commit (`PINS.reportTemplate` in
+  [`src/vendored.js`](../src/vendored.js)), so generating needs no network.
+- The DAX compiler is the extension's own dax-sql.
+
+**Deploying**
+- Nothing is deployed for you: the folder's `npm run deploy` is yours to run.
+- The folder's `AGENTS.md` is written for an agent that grows the report from there.
+
 ## Settings
 
 | Setting | What it does |

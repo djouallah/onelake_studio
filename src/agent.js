@@ -562,7 +562,8 @@ function createAgent({ onelake, fabric, engine, bimPath, appDir, vendorDir, daxS
     }
   }
 
-  return { run };
+  // modules(): the compiler, for the extension's own uses of it too (Generate Report).
+  return { run, modules };
 }
 
 module.exports = { createAgent, sqlSchema, filesToAbfss };

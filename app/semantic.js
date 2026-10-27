@@ -61,7 +61,8 @@ export function modelName(fileName) {
 // The bim's Direct Lake tables, by table name: where each one lives in OneLake. A Direct
 // Lake model's shared expression holds its lakehouse's OneLake URL, by GUIDs; each table's
 // partition names that expression, and the schema and table it reads.
-export function directLakeTables(bim) {
+// The bim's shared expressions that name a lakehouse: expression name -> { workspace, item }.
+function lakeExpressions(bim) {
   const text = e => (Array.isArray(e) ? e.join("\n") : String(e ?? ""));
   const url = /onelake\.dfs\.fabric\.microsoft\.com\/([0-9a-f-]{36})\/([0-9a-f-]{36})/i;
   const found = new Map();
@@ -69,6 +70,19 @@ export function directLakeTables(bim) {
     const m = url.exec(text(e.expression));
     if (m) found.set(e.name, { workspace: lc(m[1]), item: lc(m[2]) });
   }
+  return found;
+}
+
+// The lakehouses a model's expressions name (by GUID), each once: the one an Ossie model's
+// Direct Lake expression holds is its Iceberg catalog (Generate Report, src/report.js).
+export function lakehousesOf(bim) {
+  const out = new Map();
+  for (const l of lakeExpressions(bim).values()) out.set(`${l.workspace}/${l.item}`, l);
+  return [...out.values()];
+}
+
+export function directLakeTables(bim) {
+  const found = lakeExpressions(bim);
   const tables = new Map();
   for (const t of bim?.model?.tables ?? []) {
     const s = t.partitions?.[0]?.source;
@@ -217,26 +231,34 @@ export function rewrite(sql) {
   return { sql: out[0].sql, tables: tablesFor(out[0].sql) };
 }
 
-// What the editor offers once a model is open: one measure by one column it can slice by,
-// or the model's field list when it has no measure.
-function sampleQuery(v) {
-  const model = v.compiler.model;
-  const name = id => (/^[A-Za-z_][A-Za-z0-9_]*$/.test(id) ? id : quoteIdent(id));
-  const head = `-- ${v.name} is a semantic view: AGG(measure) is a measure, ` +
-               `SHOW SEMANTIC METRICS IN ${v.name} lists them all.\n`;
+// A model's (dax-sql's Model) first measure, and the first text column of another table it
+// can be sliced by: { measure, column: { table, name } | null }, or null with no measure.
+// The editor's sample query and Generate Report's starter chart.
+export function starterChart(model) {
   const [measure] = model.measures.values();
-  if (!measure) return `${head}SHOW SEMANTIC DIMENSIONS IN ${v.name}`;
+  if (!measure) return null;
   let column = null;
   try {
     const state = model.state();
     for (const t of model.tables.values()) {
       if (t.hidden || t === measure.table || !model.reaches(t, measure.table, state)) continue;
-      column = t.columns.find(c => c.type === "string");
-      if (column) { column = `${name(t.name)}.${name(column.name)}`; break; }
+      const c = t.columns.find(c => c.type === "string");
+      if (c) { column = { table: t.name, name: c.name }; break; }
     }
   } catch (_) { /* no slicer, then — the measure alone is still a query */ }
-  const agg = `AGG(${name(measure.name)}) AS ${quoteIdent(measure.name)}`;
-  return column
-    ? `${head}SELECT ${column}, ${agg}\nFROM ${v.name}\nGROUP BY ALL\nORDER BY 1`
+  return { measure: measure.name, column };
+}
+
+// What the editor offers once a model is open: one measure by one column it can slice by,
+// or the model's field list when it has no measure.
+function sampleQuery(v) {
+  const name = id => (/^[A-Za-z_][A-Za-z0-9_]*$/.test(id) ? id : quoteIdent(id));
+  const head = `-- ${v.name} is a semantic view: AGG(measure) is a measure, ` +
+               `SHOW SEMANTIC METRICS IN ${v.name} lists them all.\n`;
+  const chart = starterChart(v.compiler.model);
+  if (!chart) return `${head}SHOW SEMANTIC DIMENSIONS IN ${v.name}`;
+  const agg = `AGG(${name(chart.measure)}) AS ${quoteIdent(chart.measure)}`;
+  return chart.column
+    ? `${head}SELECT ${name(chart.column.table)}.${name(chart.column.name)}, ${agg}\nFROM ${v.name}\nGROUP BY ALL\nORDER BY 1`
     : `${head}SELECT ${agg}\nFROM ${v.name}`;
 }
