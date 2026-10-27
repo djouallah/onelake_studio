@@ -3,15 +3,23 @@
 .claude/**
 .gitignore
 node_modules/**
-# ...except the engine. DuckDB runs natively in the extension host now, and its binding is
-# a Node-API addon plus a platform shared library — so this is the one dependency that has
-# to ship inside the vsix. It is also why releases are PLATFORM-SPECIFIC
+# ...except the engine's binding. DuckDB runs natively in the extension host, and its
+# binding is a Node-API addon plus a platform shared library — so it is the one dependency
+# that has to ship as files inside the vsix (@duckdb/node-api, its JavaScript, is in
+# dist/extension.js). It is also why releases are PLATFORM-SPECIFIC
 # (`vsce package --target win32-x64`): npm only installs the optional binding matching the
 # machine that packaged it, so a target-less vsix would carry one platform's binary and
 # claim to serve all of them.
 # (A negation is final in vsce — a later exclude cannot narrow it again, so the binding's
-# .d.ts files ship too. ~200KB of text against a 36MB library; not worth a build step.)
-!node_modules/@duckdb/**
+# .d.ts files ship too. A few KB against a 36MB library.)
+!node_modules/@duckdb/node-bindings/**
+!node_modules/@duckdb/node-bindings-*/**
+
+# The extension host's source: what ships is dist/extension.js, which scripts/bundle.mjs
+# builds from it. bridge.js is the exception — bin/cli.mjs requires it from outside the
+# editor, where the bundle (it needs `vscode`) cannot load.
+src/**
+!src/bridge.js
 # Packaging scripts, run from the checkout.
 scripts/**
 **/*.vsix

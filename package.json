@@ -31,7 +31,7 @@
     "power bi",
     "semantic model"
   ],
-  "main": "./src/extension.js",
+  "main": "./dist/extension.js",
   "activationEvents": [
     "onStartupFinished"
   ],
@@ -310,7 +310,7 @@
     }
   },
   "scripts": {
-    "vscode:prepublish": "node scripts/check-binding.mjs && node scripts/stage-webview.mjs && node scripts/vendor.mjs",
+    "vscode:prepublish": "node scripts/check-binding.mjs && node scripts/stage-webview.mjs && node scripts/vendor.mjs && node scripts/bundle.mjs",
     "test": "node --test test/app-paths.test.mjs test/catalog.test.mjs test/fabric.test.mjs test/host.test.mjs test/names.test.mjs test/onelake.test.mjs test/panel-html.test.mjs test/sql.test.mjs test/store.test.mjs test/bridge.test.mjs test/semviews.test.mjs test/semantic.test.mjs test/agent.test.mjs"
   },
   "devDependencies": {

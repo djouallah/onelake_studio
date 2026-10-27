@@ -10,3 +10,5 @@ vendor/
 # DuckDB extension binaries for one platform, fetched by fetch-extensions.mjs at
 # package time.
 duckdb-extensions/
+# The extension host bundled by scripts/bundle.mjs (at package time, and by F5).
+dist/

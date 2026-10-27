@@ -1,0 +1,12 @@
+{
+  // F5's preLaunchTask: the extension host runs from dist/extension.js, built from src/.
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "bundle",
+      "type": "shell",
+      "command": "node scripts/bundle.mjs",
+      "problemMatcher": []
+    }
+  ]
+}

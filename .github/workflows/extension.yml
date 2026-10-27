@@ -73,6 +73,9 @@ on:
 permissions:
   contents: read
 
+# Every job names its image (ubuntu-26.04) rather than ubuntu-latest, so the runner changes
+# when this file does, not when GitHub moves the label.
+
 # A publish is not atomic — vsce uploads the packages one at a time. Two runs doing that at
 # once, or a cancellation halfway through, is exactly how a version ends up live on some
 # platforms and missing on others. Tag runs queue in one group and are never cancelled;
@@ -88,12 +91,12 @@ jobs:
   # a silent failure there ships a panel that reads OneLake with no token. Ahead of the
   # matrix, so a red test costs no build minutes.
   test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
-          node-version: 20
+          node-version: 24
       # --skip-duplicate makes a mismatched tag a SILENT no-op: tagging ext-v0.2.0 while
       # package.json still says 0.1.3 would "publish" by re-sending 0.1.3 and report success.
       - name: The tag must name the version being released
@@ -107,12 +110,12 @@ jobs:
   # binding, and the extensions DuckDB installs on first use. npm test cannot cover this —
   # it runs without node_modules — and it is where a DuckDB major bump breaks.
   engine:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
-          node-version: 20
+          node-version: 24
           cache: npm
           cache-dependency-path: package-lock.json
       - run: npm ci --no-audit --no-fund
@@ -123,7 +126,7 @@ jobs:
 
   package:
     needs: [test, engine]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     strategy:
       # Every leg's failure is worth seeing in the same run; the publish job is gated on ALL
       # of them anyway, so cancelling early protects nothing.
@@ -137,10 +140,10 @@ jobs:
           - linux-x64
           - linux-arm64
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
-          node-version: 20
+          node-version: 24
           cache: npm
           cache-dependency-path: package-lock.json
 
@@ -148,7 +151,7 @@ jobs:
       # jsDelivr. Six legs is six chances for a CDN hiccup to fail one, and one failed leg
       # cancels the whole release. A vendor/ tree built from the same pins is reused as it
       # is, so a restored cache makes it a no-op with no network at all.
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: vendor
           key: vendor-${{ hashFiles('scripts/vendor.mjs', 'src/vendored.js') }}
@@ -177,6 +180,7 @@ jobs:
       # The staged page carries the README and a build stamp. `vscode:prepublish` does this
       # too; running it here means a failure shows up as its own step.
       - run: node scripts/stage-webview.mjs
+      - run: node scripts/bundle.mjs
 
       # --target stamps TargetPlatform into the manifest AND names the file
       # onelake-studio-<target>-<version>.vsix, which is the name worth having on the
@@ -207,12 +211,21 @@ jobs:
           for e in iceberg azure httpfs avro; do
             unzip -Z1 "$vsix" | grep -qx "extension/duckdb-extensions/$e.duckdb_extension"               || { echo "the vsix does not bundle the $e extension"; exit 1; }
           done
-          echo "ok — $vsix carries $dirs and nothing else, and bundles its DuckDB extensions"
+          # The host ships as dist/extension.js (scripts/bundle.mjs): src/ stays out but for
+          # bridge.js, which bin/cli.mjs requires, and node-api's JavaScript is in the bundle.
+          files=$(unzip -Z1 "$vsix")
+          grep -qx 'extension/dist/extension.js' <<<"$files" || { echo "no dist/extension.js in the vsix"; exit 1; }
+          grep -qx 'extension/src/bridge.js' <<<"$files" || { echo "no src/bridge.js — bin/cli.mjs needs it"; exit 1; }
+          stray=$(grep -E '^extension/src/' <<<"$files" | grep -vx 'extension/src/bridge.js' || true)
+          [ -z "$stray" ] || { echo "src/ shipped beside the bundle: $stray"; exit 1; }
+          ! grep -q '^extension/node_modules/@duckdb/node-api/' <<<"$files" \
+            || { echo "@duckdb/node-api shipped beside the bundle"; exit 1; }
+          echo "ok — $vsix carries $dirs and nothing else, bundles its DuckDB extensions, and runs from dist/extension.js"
 
       # upload-artifact v4 refuses two jobs writing the same name, so the target is part of
       # it. overwrite lets "re-run failed jobs" replace a leg's output instead of failing on a
       # name a previous attempt already claimed.
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: vsix-${{ matrix.target }}
           path: "*.vsix"
@@ -223,7 +236,7 @@ jobs:
   publish:
     needs: package
     if: startsWith(github.ref, 'refs/tags/ext-v')
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     environment: azure
     permissions:
       contents: read
@@ -232,7 +245,7 @@ jobs:
       # No checkout and no install: `vsce publish --packagePath` reads the manifest out of
       # each vsix and never runs vscode:prepublish. What goes out is exactly what was
       # packaged, checked and uploaded above — not a second build.
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: vsix-*
           merge-multiple: true
@@ -242,7 +255,7 @@ jobs:
         run: ls -l vsix
 
       - name: Sign in to Azure
-        uses: azure/login@v2
+        uses: azure/login@v3
         with:
           client-id: ${{ vars.AZURE_CLIENT_ID }}
           tenant-id: ${{ vars.AZURE_TENANT_ID }}

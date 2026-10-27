@@ -2,15 +2,17 @@
   // F5 opens an Extension Development Host with the extension loaded, then run
   // "Open OneLake Studio" from the command palette.
   //
-  // No build step and no copy: under F5 the panel serves app/ directly, so an
-  // edit to the page shows up on the next panel open.
+  // The host runs from dist/extension.js, so F5 bundles src/ first (tasks.json); the
+  // panel still serves app/ directly, so an edit to the page shows up on the next panel
+  // open with no rebuild.
   "version": "0.2.0",
   "configurations": [
     {
       "name": "Run OneLake Studio extension",
       "type": "extensionHost",
       "request": "launch",
-      "args": ["--extensionDevelopmentPath=${workspaceFolder}"]
+      "args": ["--extensionDevelopmentPath=${workspaceFolder}"],
+      "preLaunchTask": "bundle"
     }
   ]
 }
