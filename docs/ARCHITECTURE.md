@@ -17,7 +17,7 @@ engine; its panel, [`app/`](../app/), is only a view.
 | **OneLake Studio: Sign in to OneLake** | Signs in and fills the explorer, without opening the panel. |
 | **OneLake Studio: Switch Microsoft Account** | Asks which account to use instead of reusing the remembered one, and reopens the panel so the previous account's tables do not survive the switch. To sign out altogether, use the Accounts menu in the bottom left — that is VS Code's to own, not an extension's. |
 | **OneLake Studio: Refresh** | Re-reads a workspace, item or folder from OneLake in the foreground. Everything else is served from the cache first and refreshed behind you. |
-| **OneLake Studio: Group by Type** / **Group by Workspace** | The explorer's title-bar toggle. By type, the top level is one heading per type — Lakehouses, Warehouses, SQL databases…, Semantic models — over every workspace, each item with its workspace beside it. The first time, it lists each workspace once; after that it is drawn from the cache. Remembered. |
+| **OneLake Studio: Group by Type** / **Group by Workspace** | The explorer's title-bar toggle. By type, the top level is one heading per type — Lakehouses, Warehouses, SQL databases…, Semantic models, Apps — over every workspace, each item with its workspace beside it. The first time, it lists each workspace once; after that it is drawn from the cache. Remembered. |
 | **OneLake Studio: Show Read Log** | Every OneLake request the extension made, with sizes and timings. |
 | **OneLake Studio: Clear Cached OneLake Data** | Empties the on-disk cache (listings, table metadata, first rows, files, table data) and reports what it freed. It is the only thing that does: the cache survives a sign-out. |
 | **OneLake Studio: Install Agent Skill (Claude Code, GitHub Copilot)** | Lets Claude Code or GitHub Copilot answer questions about your OneLake data and semantic models (below). |
@@ -185,6 +185,11 @@ Code asks for only when you first expand *Semantic models*. Downloading a model 
 read its definition (Contributor or above on the workspace, or write on the model). The extension
 is read only by design: it
 writes nothing to Fabric or OneLake.
+
+Each workspace also has an **Apps** node: its Fabric apps (`AppBackend` items), however they were
+made, listed with the Fabric API's item listing. Each shows its URL and when it was last deployed,
+from the app's deploy status (`GET …/appBackends/<id>/__private/deploy/status`, one read per app), and
+has a button that copies the URL. Nothing is opened or changed.
 
 Requires desktop VS Code on x64 or arm64 Windows, macOS or Linux: the engine is a native library, so
 this does not run on vscode.dev.

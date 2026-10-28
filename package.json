@@ -137,6 +137,12 @@
         "title": "Generate Report…",
         "category": "OneLake Studio",
         "icon": "$(graph)"
+      },
+      {
+        "command": "onelakeStudio.copyAppUrl",
+        "title": "Copy App URL",
+        "category": "OneLake Studio",
+        "icon": "$(copy)"
       }
     ],
     "viewsContainers": {
@@ -194,7 +200,7 @@
       "view/item/context": [
         {
           "command": "onelakeStudio.refresh",
-          "when": "view == onelakeStudio.explorer && viewItem =~ /^(workspace|workspacePinned|item|dir|tables|models|error)$/",
+          "when": "view == onelakeStudio.explorer && viewItem =~ /^(workspace|workspacePinned|item|dir|tables|models|apps|error)$/",
           "group": "inline"
         },
         {
@@ -216,6 +222,11 @@
           "command": "onelakeStudio.generateReport",
           "when": "view == onelakeStudio.explorer && viewItem == yamlFile",
           "group": "navigation"
+        },
+        {
+          "command": "onelakeStudio.copyAppUrl",
+          "when": "view == onelakeStudio.explorer && viewItem == fabricAppUrl",
+          "group": "inline"
         }
       ],
       "commandPalette": [
@@ -265,6 +276,10 @@
         },
         {
           "command": "onelakeStudio.generateReport",
+          "when": "false"
+        },
+        {
+          "command": "onelakeStudio.copyAppUrl",
           "when": "false"
         }
       ]

@@ -18,6 +18,8 @@
   - **The model is never copied:** the app reads it from the lakehouse, in place, every time.
   - **It never replaces an app it didn't create** without asking.
   - **It is the one write** the extension makes to Fabric, and it happens only when you click.
+- **New: Apps in the explorer.** Each workspace has an *Apps* node listing its Fabric apps, however
+  they were made, each with its URL and last deploy, and a button to copy the URL.
 - **The app's template now lives in this repo** (`fabric_app/`), and analytics-as-code takes it
   from here. The function ships prebuilt in the vsix.
 - **New: Generate Report.** Right-click an Apache Ossie model (`.yaml`) in `Files/` and choose

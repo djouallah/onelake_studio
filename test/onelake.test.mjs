@@ -175,6 +175,17 @@ test("a workspace's semantic models are a cached listing: Fabric is asked once",
   assert.equal(asked, 2, "and a Refresh asks again");
 });
 
+test("a workspace's apps are a cached listing too", async () => {
+  let asked = 0;
+  const fabric = { listApps: async ws => { asked++; return [{ id: "a1", name: `app of ${ws}`, url: "" }]; } };
+  const onelake = createOneLake({ catalog: fakeCatalog(), store: createStore({ dir: null }), fabric });
+  assert.deepEqual(await onelake.apps("ws"), [{ id: "a1", name: "app of ws", url: "" }]);
+  await onelake.apps("ws");
+  assert.equal(asked, 1);
+  await onelake.apps("ws", { fresh: true });
+  assert.equal(asked, 2);
+});
+
 test("a Files/ object's bytes are kept under the version its listing gave", async () => {
   const { mkdtemp, rm } = await import("node:fs/promises");
   const { tmpdir } = await import("node:os");

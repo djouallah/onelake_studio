@@ -12,7 +12,7 @@
 // immutable, so rows read from it can never be stale, and a table opened once opens
 // again — even after a restart — without a single request to OneLake. A Files/ object's
 // bytes are kept the same way, under the version its cached listing gave (readBytes).
-// A workspace's semantic models (Fabric's API, not OneLake) are a listing like the others.
+// A workspace's semantic models and apps (Fabric's API, not OneLake) are listings like the others.
 //
 // No `vscode` import: catalog.js does the HTTP, store.js the disk, and the tests drive
 // this with fakes of both.
@@ -94,6 +94,7 @@ function createOneLake({ catalog, store, prefetchEnabled = () => true, onHit = (
     table: (lh, t) => `table\u0000${lh.workspace}\u0000${lh.item}\u0000${t.schema || ''}\u0000${t.table}`,
     peek: loc => `peek\u0000${loc}`,
     models: ws => `models\u0000${ws}`,
+    apps: ws => `apps\u0000${ws}`,
     bytes: (ws, path, version) => `bytes\u0000${ws}\u0000${path}\u0000${version}`,
   };
 
@@ -106,7 +107,7 @@ function createOneLake({ catalog, store, prefetchEnabled = () => true, onHit = (
     if (kind === 'tables') return { kind, workspace: a, item: b };
     if (kind === 'files') return { kind, workspace: a, item: b, dir: c };
     if (kind === 'table') return { kind, workspace: a, item: b, schema: c, table: d };
-    if (kind === 'models') return { kind, workspace: a };
+    if (kind === 'models' || kind === 'apps') return { kind, workspace: a };
     return { kind };
   }
 
@@ -131,6 +132,10 @@ function createOneLake({ catalog, store, prefetchEnabled = () => true, onHit = (
   const models = (ws, o = {}) => {
     if (!fabric) return Promise.reject(new Error('semantic models are not available here'));
     return get(keys.models(ws), () => fabric.listSemanticModels(ws), o).then(value);
+  };
+  const apps = (ws, o = {}) => {
+    if (!fabric) return Promise.reject(new Error('apps are not available here'));
+    return get(keys.apps(ws), () => fabric.listApps(ws), o).then(value);
   };
 
   /**
@@ -273,7 +278,7 @@ function createOneLake({ catalog, store, prefetchEnabled = () => true, onHit = (
 
   return {
     workspaces, items, tables, files, table, peek, prefetch, refreshTables,
-    models, readBytes, cached,
+    models, apps, readBytes, cached,
     onChanged: fn => listen('changed', key => fn(decode(key))),
     onRefreshFailed: fn => listen('refresh-failed', (key, e) => fn(decode(key), e)),
     useStore,

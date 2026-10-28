@@ -1,6 +1,6 @@
 'use strict';
 // =============================================================================
-// fabric.js — a workspace's semantic models, and a model's .bim
+// fabric.js — a workspace's semantic models and apps, and a model's .bim
 // =============================================================================
 // A semantic model is not in OneLake: its list and its definition come from the Fabric
 // REST API, which wants a token in a different audience — asked for only when someone
@@ -124,6 +124,26 @@ function createFabric({ getFabricToken, apiBase = FABRIC_API,
       .sort((a, b) => byName(a.name, b.name));
   }
 
+  // The workspace's Fabric apps (AppBackend items), however they were made, by name:
+  // [{ id, name, description, url, deployedAt }]. Shown, never opened or changed. Each app's
+  // URL and last deploy are its deploy status, one GET; an app whose status cannot be read
+  // (never deployed, no access) is still listed, without them.
+  async function listApps(workspace) {
+    const id = await workspaceId(workspace);
+    const list = await listAll(`/workspaces/${id}/items?type=AppBackend`, `Listing apps in ${workspace}`);
+    const apps = await Promise.all(list.map(async a => {
+      let status = {};
+      try {
+        const r = await call(getFabricToken, `${apiBase}/workspaces/${id}/appBackends/${encodeURIComponent(a.id)}/__private/deploy/status`,
+          { headers: { 'x-ms-workload-resource-moniker': a.id } });
+        if (r.ok) status = await r.json().catch(() => ({}));
+      } catch (_) { /* listed without its status */ }
+      return { id: a.id, name: a.displayName, description: a.description || '',
+               url: status.hostingUrl || '', deployedAt: status.lastSuccessfulDeploymentAt || '' };
+    }));
+    return apps.sort((a, b) => byName(a.name, b.name));
+  }
+
   // The model's TMSL definition — model.bim — as bytes. getDefinition answers 200 with the
   // definition, or 202 with an operation to poll; the definition is then that operation's
   // /result.
@@ -162,7 +182,7 @@ function createFabric({ getFabricToken, apiBase = FABRIC_API,
 
   function reset() { wsIds = null; }
 
-  return { workspaceId, listSemanticModels, getBim, reset };
+  return { workspaceId, listSemanticModels, listApps, getBim, reset };
 }
 
 module.exports = { createFabric, bimFileName };

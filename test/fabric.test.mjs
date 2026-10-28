@@ -1,4 +1,4 @@
-// Tests for src/fabric.js — a workspace's semantic models and a model's .bim,
+// Tests for src/fabric.js — a workspace's semantic models and apps, and a model's .bim,
 // read from the Fabric API. Read only: there is no write path to test, and the module
 // takes no storage token at all.
 //
@@ -69,6 +69,26 @@ test("semantic models are listed by name, with their ids", async () => {
       { id: "m1", name: "Alpha", description: "d" },
       { id: "m2", name: "zeta", description: "" },
     ]);
+  } finally { restore(); }
+});
+
+test("a workspace's apps are its AppBackend items, each with its URL and last deploy", async () => {
+  const { fabric, calls, restore } = fabricWith([
+    [/\/v1\/workspaces$/, () => res(200, { value: [{ id: WS_ID, displayName: "Sales" }] })],
+    [`/workspaces/${WS_ID}/items?type=AppBackend`, () => res(200, { value: [
+      { id: "a2", displayName: "zeta", type: "AppBackend" }, { id: "a1", displayName: "Alpha", type: "AppBackend", description: "d" },
+    ] })],
+    [`/appBackends/a1/__private/deploy/status`, (url, init) => init.headers["x-ms-workload-resource-moniker"] === "a1"
+      ? res(200, { hostingUrl: "https://alpha.webapp.fabricapps.net", lastSuccessfulDeploymentAt: "2026-10-28T07:32:09Z" })
+      : res(400, {})],
+    [`/appBackends/a2/__private/deploy/status`, () => res(404, { message: "never deployed" })],
+  ]);
+  try {
+    assert.deepEqual(await fabric.listApps("Sales"), [
+      { id: "a1", name: "Alpha", description: "d", url: "https://alpha.webapp.fabricapps.net", deployedAt: "2026-10-28T07:32:09Z" },
+      { id: "a2", name: "zeta", description: "", url: "", deployedAt: "" },
+    ], "an app whose status cannot be read is still listed");
+    assert.ok(calls.every(c => c.method === "GET"), "listing apps only reads");
   } finally { restore(); }
 });
 
@@ -153,7 +173,7 @@ test("a model's name becomes a safe local file name", () => {
 test("the module can only read: no write, no existence check, no storage token", () => {
   assert.deepEqual(Object.keys(fabricModule).sort(), ["bimFileName", "createFabric"]);
   const f = createFabric({ getFabricToken: async () => "fab" });
-  assert.deepEqual(Object.keys(f).sort(), ["getBim", "listSemanticModels", "reset", "workspaceId"]);
+  assert.deepEqual(Object.keys(f).sort(), ["getBim", "listApps", "listSemanticModels", "reset", "workspaceId"]);
 });
 
 test("a 401 is retried once with a fresh token", async () => {

@@ -851,6 +851,8 @@ async function activateInner(context) {
         r = await publish(true);
       }
       await context.globalState.update(key, outDir);
+      // The workspace's Apps, re-read: the app is new, or deployed again.
+      tree.refresh({ kind: 'apps', workspace });
       if (out) {
         out.appendLine(`exported ${plan.name} -> ${r.hostingUrl || '(no hosting URL)'} (item ${r.itemId}, model ${plan.modelPath}, local copy ${outDir})`);
         for (const w of plan.warnings) out.appendLine(`  warning: ${w}`);
@@ -880,8 +882,8 @@ async function activateInner(context) {
       // An error node names nothing itself: its Refresh is the listing that failed. Without
       // this it refreshed every lakehouse's table metadata and redrew nothing.
       if (n && n.kind === 'error') n = n.parent;
-      // A model list is the Fabric API's; it says nothing about any table's metadata.
-      if (!n || n.kind !== 'models') onelake.refreshTables({ workspace: n && n.workspace, item: n && n.item });
+      // A model or app list is the Fabric API's; it says nothing about any table's metadata.
+      if (!n || !['models', 'apps'].includes(n.kind)) onelake.refreshTables({ workspace: n && n.workspace, item: n && n.item });
       tree.refresh(n);
       postLive({ type: 'reset' });
     }),
@@ -960,6 +962,12 @@ async function activateInner(context) {
     }),
 
     vscode.commands.registerCommand('onelakeStudio.openSemanticModel', n => openModel(n)),
+    // An app in the tree: its URL, copied. Nothing is opened or changed.
+    vscode.commands.registerCommand('onelakeStudio.copyAppUrl', async n => {
+      if (!n || !n.url) return;
+      await vscode.env.clipboard.writeText(n.url);
+      vscode.window.setStatusBarMessage(`Copied ${n.url}`, 3000);
+    }),
     vscode.commands.registerCommand('onelakeStudio.redownloadSemanticModel', n => openModel(n, { fresh: true })),
 
     vscode.commands.registerCommand('onelakeStudio.open', async () => {

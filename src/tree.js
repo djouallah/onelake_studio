@@ -47,7 +47,7 @@ class LakehouseTree {
   /**
    * @param {object} deps
    * @param {ReturnType<import('./onelake').createOneLake>} deps.onelake  cache-first OneLake
-   * @param {import('./fabric').createFabric} [deps.fabric]  semantic models (Fabric REST)
+   * @param {import('./fabric').createFabric} [deps.fabric]  semantic models and apps (Fabric REST)
    * @param {() => Promise<boolean>} [deps.hasFabric]        a Fabric token, without a prompt?
    * @param {() => boolean} deps.isSignedIn
    * @param {{ get: () => string[] }} [deps.favorites]   pinned workspace names, persisted
@@ -81,14 +81,15 @@ class LakehouseTree {
     // Grouped by type, a workspace's items are spread over the top-level headings, and its
     // models sit under the one Semantic models heading.
     if (this.groupByType() && c.kind === 'items') return this._emitter.fire(undefined);
-    if (this.groupByType() && c.kind === 'models') {
-      const all = this._nodes.get('allModels');
+    if (this.groupByType() && (c.kind === 'models' || c.kind === 'apps')) {
+      const all = this._nodes.get(c.kind === 'models' ? 'allModels' : 'allApps');
       return all ? this._emitter.fire(all) : undefined;
     }
     const id = c.kind === 'items' ? `workspace|${c.workspace}`
              : c.kind === 'tables' ? `tables|${c.workspace}|${c.item}`
              : c.kind === 'files' ? `dir|${c.workspace}|${c.item}|${c.dir || ''}`
              : c.kind === 'models' ? `models|${c.workspace}`
+             : c.kind === 'apps' ? `apps|${c.workspace}`
              : null;
     const n = id && this._nodes.get(id);
     if (n) this._emitter.fire(n);
@@ -112,7 +113,7 @@ class LakehouseTree {
     if (this.fabric) this.fabric.reset();
     if (!n) return this._emitter.fire(undefined);
     const on = this._nodes.get(this._idOf(n));
-    if (on || !['workspace', 'tables', 'dir', 'models'].includes(n.kind)) this._emitter.fire(on || n);
+    if (on || !['workspace', 'tables', 'dir', 'models', 'apps'].includes(n.kind)) this._emitter.fire(on || n);
   }
 
   _idOf(n) {
@@ -122,6 +123,8 @@ class LakehouseTree {
          : n.kind === 'models' ? `models|${n.workspace}`
          : n.kind === 'semanticModel' ? `model|${n.workspace}|${n.modelId}`
          : n.kind === 'allModels' ? 'allModels'
+         : n.kind === 'apps' ? `apps|${n.workspace}`
+         : n.kind === 'allApps' ? 'allApps'
          : null;
   }
 
@@ -158,6 +161,7 @@ class LakehouseTree {
     // model, Generate Report (package.json menus: a when clause cannot read the name).
     item.contextValue = n.kind === 'workspace' && n.pinned ? 'workspacePinned'
       : n.kind === 'file' && /\.ya?ml$/i.test(n.path || '') ? 'yamlFile'
+      : n.kind === 'fabricApp' && n.url ? 'fabricAppUrl'
       : n.kind;
     // A stable identity, so expansion state survives a refresh keyed on WHAT the node is
     // rather than on its label — labels repeat freely across workspaces. Only the domain
@@ -165,7 +169,8 @@ class LakehouseTree {
     // and duplicate ids are worse than generated ones.
     if (n.kind !== 'error' && n.kind !== 'empty') {
       item.id = [n.kind, n.group, n.workspace, n.item, n.schema, n.table, n.dir, n.path]
-        .map(v => (v == null ? '' : String(v))).join('|') + (n.modelId ? `|${n.modelId}` : '');
+        .map(v => (v == null ? '' : String(v))).join('|') + (n.modelId ? `|${n.modelId}` : '')
+        + (n.appId ? `|${n.appId}` : '');
     }
     switch (n.kind) {
       // The two top-level groups: the workspaces someone pinned, and everything else.
@@ -220,6 +225,20 @@ class LakehouseTree {
         item.tooltip = (n.description ? `${n.description}\n\n` : '') + (local
           ? `Cached at ${local}. Click to open it; Download Again fetches it fresh from Fabric.`
           : 'Click to download its .bim to this machine and open it as a model.');
+        break;
+      }
+      // A workspace's Fabric apps (AppBackend items), however they were made — from the
+      // Fabric API. Shown only: its URL and last deploy, and a button to copy the URL.
+      case 'apps':
+      case 'allApps':
+        item.iconPath = new vscode.ThemeIcon('rocket');
+        break;
+      case 'fabricApp': {
+        item.iconPath = new vscode.ThemeIcon('globe');
+        const host = n.url ? n.url.replace(/^https?:\/\//, '') : 'not deployed';
+        item.description = [n.showWorkspace ? n.workspace : '', host].filter(Boolean).join(' · ');
+        item.tooltip = [n.url || 'No site deployed', n.deployedAt ? `Last deployed ${new Date(n.deployedAt).toLocaleString()}` : '',
+          n.description].filter(Boolean).join('\n');
         break;
       }
       case 'fabricSignIn':
@@ -298,7 +317,10 @@ class LakehouseTree {
         ? items.map(it => this._item(n.workspace, it))
         : [node('empty', 'Nothing here holds tables', { leaf: true })];
       // Last, and closed: listing it is a Fabric API call, on a token sign-in never asked for.
-      if (this.fabric) kids.push(this._track(node('models', 'Semantic models', { workspace: n.workspace })));
+      if (this.fabric) {
+        kids.push(this._track(node('models', 'Semantic models', { workspace: n.workspace })));
+        kids.push(this._track(node('apps', 'Apps', { workspace: n.workspace })));
+      }
       return kids;
     }
 
@@ -322,6 +344,32 @@ class LakehouseTree {
       })));
       if (failed.length) kids.push(unlisted(failed));
       return kids.length ? kids : [node('empty', 'No semantic models', { leaf: true })];
+    }
+
+    // Grouped by type: every workspace's apps, a few workspaces at a time.
+    if (n.kind === 'allApps') {
+      if (!await this.hasFabric()) return [node('fabricSignIn', 'Sign in to list apps', { leaf: true })];
+      const names = await this.onelake.workspaces();
+      const rows = [];
+      const failed = await eachOf(names, async ws => {
+        const apps = await this.onelake.apps(ws, { fresh: this._isFresh(`apps|${ws}`, ws) });
+        for (const a of apps) rows.push({ ws, a });
+      });
+      rows.sort((x, y) => x.a.name.localeCompare(y.a.name) || x.ws.localeCompare(y.ws));
+      const kids = rows.map(({ ws, a }) => this._app(ws, a, { showWorkspace: true }));
+      if (failed.length) kids.push(unlisted(failed));
+      return kids.length ? kids : [node('empty', 'No apps', { leaf: true })];
+    }
+
+    if (n.kind === 'apps') {
+      if (!await this.hasFabric()) {
+        return [node('fabricSignIn', 'Sign in to list apps', { leaf: true, workspace: n.workspace })];
+      }
+      const apps = await this.onelake.apps(n.workspace,
+        { fresh: this._isFresh(`apps|${n.workspace}`, n.workspace) });
+      return apps.length
+        ? apps.map(a => this._app(n.workspace, a))
+        : [node('empty', 'No apps', { leaf: true })];
     }
 
     if (n.kind === 'models') {
@@ -390,6 +438,13 @@ class LakehouseTree {
     return [];
   }
 
+  _app(workspace, a, { showWorkspace = false } = {}) {
+    return node('fabricApp', a.name, {
+      workspace, appId: a.id, url: a.url, deployedAt: a.deployedAt, description: a.description,
+      leaf: true, showWorkspace,
+    });
+  }
+
   _table(lh, t) {
     return node('table', t.table, { ...lh, leaf: true, schema: t.schema || '', table: t.table });
   }
@@ -420,7 +475,10 @@ class LakehouseTree {
       group: kind, count: entries.length, expanded: true,
       entries: entries.sort((x, y) => x.it.name.localeCompare(y.it.name) || x.workspace.localeCompare(y.workspace)),
     })).sort((x, y) => x.label.localeCompare(y.label));
-    if (this.fabric) heads.push(this._track(node('allModels', 'Semantic models', {})));
+    if (this.fabric) {
+      heads.push(this._track(node('allModels', 'Semantic models', {})));
+      heads.push(this._track(node('allApps', 'Apps', {})));
+    }
     if (failed.length) heads.push(unlisted(failed));
     return heads.length ? heads : [node('empty', 'Nothing here holds tables', { leaf: true })];
   }
