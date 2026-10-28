@@ -16,3 +16,5 @@ dist/
 # package time from the template vendor.mjs fetched, and shipped in the vsix.
 fabric-function/
 fabric_app/**/node_modules/
+# Screenshots and drafts for blog posts, kept out of the repo.
+blog/
