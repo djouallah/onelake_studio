@@ -85,7 +85,8 @@ const lit = s => `'${String(s).replace(/'/g, "''")}'`;
 //   https    the URL the page downloads it with (the SAS: the page's alone);
 //   storePath its key in the store (blockcache.js), the URL without the SAS;
 //   localName the name DuckDB reads it by, registered to localUrl, which the store answers.
-const ABFSS = /^abfss:\/\/([^@/]+)@([^/]+)\//;
+// Some writers name the same file abfs:// (no s): one file either way.
+const ABFSS = /^abfss?:\/\/([^@/]+)@([^/]+)\//;
 const https = (abfss, sas) => `${abfss.replace(ABFSS, 'https://$2/$1/')}?${sas}`;
 const storePath = abfss => abfss.replace(ABFSS, 'https://$2/$1/');
 const localName = abfss => abfss.replace(ABFSS, 'store/$1/');
@@ -249,7 +250,7 @@ export function createDataSource({ onStatus = () => {}, onProgress = () => {}, t
     if (record.deleteFiles.length)
       await perf.time('attach', `DELETES ${name} (${record.deleteFiles.length} delete files)${tag(e)}`, () => e.conn.query(
         `CREATE OR REPLACE TABLE ${ident(deletesOf(name))} AS
-         SELECT DISTINCT regexp_replace(file_path, '^abfss://([^@/]+)@([^/]+)/', 'store/\\1/') AS path, pos
+         SELECT DISTINCT regexp_replace(file_path, '^abfss?://([^@/]+)@([^/]+)/', 'store/\\1/') AS path, pos
          FROM read_parquet([${record.deleteFiles.map(f => lit(localName(f.path))).join(', ')}])`));
     const how = `${record.files.length} Parquet files${record.deleteFiles.length ? `, ${record.deleteFiles.length} delete files applied` : ''}`;
     if (small)
