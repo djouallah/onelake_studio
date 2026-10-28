@@ -792,9 +792,9 @@ async function activateInner(context) {
   // and published from there over the Fabric REST API (fabricapp.js). The function's deploy
   // package ships in the vsix (fabric-function/, scripts/function-bundle.mjs). Answers what
   // Explore's info line says; a failure is thrown back to it, and logged.
-  exportExplore = async ({ file, name, text, state }) => {
+  exportExplore = async ({ file, name, text, state, workspace, path }) => {
     try {
-      const plan = planExport(text, file, name, await agent.modules());
+      const plan = planExport(text, file, name, await agent.modules(), { workspace, path });
       const fnDir = join(context.extensionUri.fsPath, 'fabric-function');
       const [sourceZip, deployMetaData] = await Promise.all([
         fsp.readFile(join(fnDir, 'source.zip')), fsp.readFile(join(fnDir, 'deploymetadata.json'), 'utf8'),
@@ -814,30 +814,45 @@ async function activateInner(context) {
         if (!picked || !picked.length) return 'Export cancelled.';
         outDir = join(picked[0].fsPath, plan.name);
       }
-      const vendor = join(context.extensionUri.fsPath, 'vendor', 'gh');
-      const templateDir = join(vendor, PINS.exportTemplate);
-      const r = await vscode.window.withProgress(
+      const ext = context.extensionUri.fsPath;
+      const fabricAppDir = join(ext, 'fabric_app');
+      const appDir = (await webviewRoot(context.extensionUri, { dev })).page.fsPath;
+      // One publish, under a progress notification. `takeOver`: the user said an app of that
+      // name, which no export created, may be replaced.
+      const publish = takeOver => vscode.window.withProgress(
         { location: vscode.ProgressLocation.Notification, title: `Export to Fabric: ${plan.name}` },
         async progress => {
-          const say = line => { if (out) out.appendLine(line); progress.report({ message: line.replace(/^app \S+: /, '') }); };
+          const say = line => { if (out) out.appendLine(line); progress.report({ message: line.replace(/^app S+: /, '') }); };
           say(`app ${plan.name}: writing the local copy to ${outDir}`);
-          const marker = await writeExport({ plan, text, state, outDir, templateDir,
-            daxSqlDir: join(vendor, PINS.daxSql), appDir: (await webviewRoot(context.extensionUri, { dev })).page.fsPath });
-          const app = createFabricApp({ getToken: appToken, log: say });
-          const done = await app.publish({
-            workspaceId: plan.workspace, name: plan.name, tenantId: tenantOf(token), catalogUrl: plan.catalogUrl,
+          const marker = await writeExport({ plan, state, outDir, fabricAppDir, appDir,
+                                             daxSqlDir: join(ext, 'vendor', 'gh', PINS.daxSql) });
+          const done = await createFabricApp({ getToken: appToken, log: say }).publish({
+            workspaceId: plan.workspace, name: plan.name, tenantId: tenantOf(token),
+            catalogUrl: plan.catalogUrl, modelUrl: plan.modelUrl,
             site: async config => zip(await buildDist(outDir, config)),
             fn: { sourceZip, deployMetaData }, redirects: marker.redirects || [],
+            itemId: marker.itemId || null, takeOver,
           });
           await writeMarker(outDir, { ...marker, itemId: done.itemId, hostingUrl: done.hostingUrl,
                                       redirects: done.redirects, exportedAt: new Date().toISOString() });
-          const tpl = await fsp.readFile(join(templateDir, 'front_end', 'fabric_app', 'iceberg', 'rayfin', 'rayfin.yml'), 'utf8');
+          const tpl = await fsp.readFile(join(fabricAppDir, 'rayfin', 'rayfin.yml'), 'utf8');
           await fsp.writeFile(join(outDir, 'rayfin', 'rayfin.yml'), rayfinYml(tpl, plan.name, done.redirects));
           return done;
         });
+      let r;
+      try { r = await publish(false); }
+      catch (e) {
+        if (e.code !== 'NAME_TAKEN') throw e;
+        // Never replaced unasked: it may be someone's own app, as the first export's was.
+        const pick = await vscode.window.showWarningMessage(
+          `An app named "${e.item.displayName}" already exists in this workspace, and Export to Fabric did not create it. Replace it with this Explore?`,
+          { modal: true }, 'Replace It');
+        if (pick !== 'Replace It') return `Not exported: an app named ${e.item.displayName} already exists.`;
+        r = await publish(true);
+      }
       await context.globalState.update(key, outDir);
       if (out) {
-        out.appendLine(`exported ${plan.name} -> ${r.hostingUrl || '(no hosting URL)'} (item ${r.itemId}, local copy ${outDir})`);
+        out.appendLine(`exported ${plan.name} -> ${r.hostingUrl || '(no hosting URL)'} (item ${r.itemId}, model ${plan.modelPath}, local copy ${outDir})`);
         for (const w of plan.warnings) out.appendLine(`  warning: ${w}`);
       }
       const warned = plan.warnings.length ? ` ${plan.warnings.length} warning(s) in the log.` : '';

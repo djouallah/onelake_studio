@@ -15,3 +15,4 @@ dist/
 # Export to Fabric's function, as its deploy package: built by function-bundle.mjs at
 # package time from the template vendor.mjs fetched, and shipped in the vsix.
 fabric-function/
+fabric_app/**/node_modules/

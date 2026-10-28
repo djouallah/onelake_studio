@@ -2,16 +2,24 @@
 
 ## Unreleased
 
-- **New: Export to Fabric.** A button in Explore publishes that model's Explore as a Fabric app,
-  and writes a local copy of it to a folder you pick once.
+- **Explore is analytics-as-code's, and lives here now.** A semantic model opens on three
+  pages: Model, Pivot and Logs.
+  - **The Pivot asks SQL over the model** (`SELECT … FROM <model>`).
+  - **Show SQL** turns the pivot into that SQL, which you can edit and run.
+  - **Show plan** profiles the query (DuckDB's `EXPLAIN ANALYZE`: totals, a timeline, the costly
+    operators) and shows its plan.
+  - **Logs** lists the session's queries with timings.
+  - **The SQL page is gone:** the Pivot's Show SQL does its job.
+  - **Values can no longer be summarised by median**, which SQL over the model doesn't have.
+- **New: Export to Fabric.** A button on the Pivot publishes that Explore (and Logs) as a Fabric app
+  named `<model>-explore`, and writes a local copy of it to a folder you pick once.
   - **It deploys directly** over the Fabric REST API: no CLI, no Node, no GitHub access.
-  - **The site is protected**: only people who may open the app item can load it.
+  - **The site is protected**: only people who may open the app item can load it. It's black.
+  - **The model is never copied:** the app reads it from the lakehouse, in place, every time.
+  - **It never replaces an app it didn't create** without asking.
   - **It is the one write** the extension makes to Fabric, and it happens only when you click.
-- **How the exported app works.**
-  - It runs Studio's own Explore.
-  - Its data reaches the browser through analytics-as-code's Iceberg front end: Fabric sign-in,
-    the app's function returns a read-only SAS, and DuckDB-WASM reads the tables.
-  - The function ships prebuilt in the vsix.
+- **The app's template now lives in this repo** (`fabric_app/`), and analytics-as-code takes it
+  from here. The function ships prebuilt in the vsix.
 - **New: Generate Report.** Right-click an Apache Ossie model (`.yaml`) in `Files/` and choose
   *Generate Report…*. It writes a folder to this machine with a Fabric app (Rayfin, DuckDB-WASM in
   the browser) that reads the model's lakehouse through its OneLake Iceberg catalog. The page has

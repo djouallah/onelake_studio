@@ -49,45 +49,72 @@ column that slices it.
 - Nothing is deployed for you: the folder's `npm run deploy` is yours to run.
 - The folder's `AGENTS.md` is written for an agent that grows the report from there.
 
+## Explore and Logs
+
+A semantic model opens as **Explore** ([`app/explore/`](../app/explore/)), on three pages:
+- **Model:** the star of its tables and relationships.
+- **Pivot:** the model's fields dragged onto shelves, drawn as a pivot or a chart.
+  - Every view is one **SELECT … FROM <model>** in dax-sql's SQL (`modelSql`): columns,
+    `AGG("measure")`, summarised columns, and `ROLLUP` totals.
+  - **Show SQL** swaps the pivot for that SQL in a box you can edit and run.
+  - **Show plan** profiles it (`profile.js`: DuckDB's `EXPLAIN ANALYZE` as totals, a timeline and
+    the costly operators) next to its plan tree.
+- **Logs:** what the session ran, with timings (`logs.js`, `perflog.js`).
+
+These files are owned here. analytics-as-code takes its Explore and Logs from this repo, not the
+other way round; its dashboard stays its own. `view.js` is host-neutral: the host passes in the
+compiler, how to run SQL, and where ECharts comes from.
+- **The panel** runs on the native engine in the extension host (multithreaded, reading OneLake with
+  your token). The engine sets the profile's metrics before it locks its configuration.
+- **The Fabric app** runs the same files on DuckDB-WASM.
+
 ## Export to Fabric
 
-Explore's **Export to Fabric** button publishes that model's Explore, and nothing else, as a
-Fabric app (item type `AppBackend`). It also writes a local copy to a folder on this machine. The
-first export asks for the folder, and later exports of the same model reuse it and update the same
-app. VS Code and the extension are all it needs: no CLI, no Node, no GitHub.
+Explore's **Export to Fabric** button publishes that model's Explore and Logs, nothing else, as a
+Fabric app (item type `AppBackend`, named `<model>-explore`). It also writes a local copy to a
+folder on this machine. VS Code and the extension are all it needs: no CLI, no Node, no GitHub.
 
 **What you need**
-- The model must name exactly one lakehouse in its Direct Lake expression. Without that, the
-  button isn't shown.
-- Every table must name its source as `schema.table`, with a table name of letters, digits and `_`.
-- The workspace must allow OneLake user-delegated SAS tokens.
-- The site is **protected**: only people who may open the app item can load it.
+- **The model is a OneLake file** in a lakehouse's `Files/`.
+- **It names exactly one lakehouse** in its Direct Lake expression. Without that, the button isn't
+  shown.
+- **Every table names its source as `schema.table`**, with a table name of letters, digits and `_`.
+- **The workspace allows OneLake user-delegated SAS tokens.**
 
-**What the app is** ([`src/exportapp.js`](../src/exportapp.js))
-- **Explore.** The page runs Studio's own Explore (`app/explore/`): the same query-to-DAX-to-SQL
-  path (dax-sql) and the same output casts (`EXPLORE_CASTS`) as the panel.
-- **Data.** analytics-as-code's Iceberg front end, vendored at `PINS.exportTemplate`:
-  - Sign-in is Rayfin's Fabric SSO.
-  - The app's one function (`openCatalog`) returns each table's metadata location and a
-    read-only SAS.
-  - The page downloads the tables' files into the browser, and DuckDB-WASM 1.5 (from jsDelivr)
-    reads them as `v_<table>` views.
-- **What gets uploaded.** `dist/` is `site/` stamped with the build, plus `rayfin.config.json`,
-  zipped in-process.
+**How it behaves**
+- **Protected:** the site loads only for people who may open the app item.
+- **The model is read in place:** the app never holds a copy. Its function reads the model file
+  from the lakehouse at run time (its `MODEL_URL` secret), so the app shows the model as it is
+  there.
+- **No silent takeover:** a re-export updates the item the last export created (its id is kept in
+  the local copy). If an app of that name already exists and no export created it, the export
+  stops and asks before replacing it.
+
+**The template** ([`fabric_app/`](../fabric_app/), tracked here)
+- **`site/`:** the page, black always. Its data source (`storage/`) does three things:
+  - signs in with Rayfin's Fabric SSO;
+  - takes the model and the tables' locations from the app's function, with a read-only SAS;
+  - downloads the tables' files into the browser, where DuckDB-WASM 1.5 (from jsDelivr) reads them
+    as `v_<table>` views.
+- **`rayfin/`:** `rayfin.yml` and the function (`openCatalog`).
+
+[`src/exportapp.js`](../src/exportapp.js) writes the local copy from `fabric_app/`, Studio's
+`app/explore/` and dax-sql. Its `dist/` is `site/` stamped with the build, plus
+`rayfin.config.json`, zipped in-process.
 
 **Publishing** ([`src/fabricapp.js`](../src/fabricapp.js)) is the REST sequence that `rayfin up`
 runs, in the same order, using the user's Fabric-audience token:
 1. Find the item, or create it.
 2. Wait for its backend, then fetch the publishable key.
 3. Apply the runtime settings.
-4. Set the `CATALOG_URL` secret.
+4. Set the `CATALOG_URL` and `MODEL_URL` secrets.
 5. Upload the site.
 6. Deploy the function and poll it until it is done.
 7. Add the hosting URL to the sign-in redirects.
 
 The function's deploy package (an esbuild bundle plus its metadata) is built once, at package time,
-by [`scripts/function-bundle.mjs`](../scripts/function-bundle.mjs) with Rayfin's own packager. It
-ships in the vsix under `fabric-function/`.
+by [`scripts/function-bundle.mjs`](../scripts/function-bundle.mjs) with Rayfin's own packager, from
+`fabric_app/rayfin`. It ships in the vsix under `fabric-function/`.
 
 ## Settings
 

@@ -19,11 +19,6 @@ const PINS = {
   // catalog — its Rayfin project, its DuckDB-WASM data source and the page's generic modules.
   // Not the webview's: the extension copies these files into the folder it generates.
   reportTemplate: 'djouallah/analytics-as-code@34dc3b57ffd8f29a780b8e790d303737fa945d6b',
-  // Export to Fabric's runtime (exportapp.js): analytics-as-code's Iceberg Fabric app as it is
-  // now — its data source (DuckDB-WASM from jsDelivr, the tables downloaded with the
-  // function's SAS), its sign-in, and the one function, built into a deploy package at
-  // package time (scripts/function-bundle.mjs).
-  exportTemplate: 'djouallah/analytics-as-code@7adda461523f345e4fbe88c739ce7812e5742546',
 };
 
 // What vendor.mjs fetches for each pin.
@@ -36,8 +31,6 @@ const VENDOR = {
     { repo: PINS.daxSql, include: /^\/(src\/.*\.js|formats\/(tmsl|ossie)\.js)$/ },
     { repo: PINS.reportTemplate,
       include: /^\/dashboard\/(fabric_app\/iceberg\/(duckdb\.mjs|rayfin\/.*|site\/.*)|fabric_app\/common\/site\/.*|page\/(storage\/queue|frontend\/perflog|semantic\/query)\.js)$/ },
-    { repo: PINS.exportTemplate,
-      include: /^\/front_end\/(fabric_app\/iceberg\/(rayfin\/.*|site\/.*)|fabric_app\/common\/site\/.*|page\/(storage\/(queue|results)|frontend\/perflog)\.js)$/ },
   ],
 };
 

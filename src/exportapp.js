@@ -1,26 +1,25 @@
 'use strict';
 // =============================================================================
-// exportapp.js — Export to Fabric: a model's Explore, as a Fabric app of its own
+// exportapp.js — Export to Fabric: a model's Explore and Logs, as a Fabric app of its own
 // =============================================================================
-// Explore's button (app/explore/explore.js) hands the host the model's text and the shelves
-// on screen. What is written to a folder of this machine — the local copy, an agent's to grow
-// later — and what is published from its dist/ (fabricapp.js) is:
-//   site/explore/    Studio's Explore, as it runs in the panel: explore.js, query.js (the
-//                    query as DAX, the DAX as SQL), draw.js, model.js, theme.js, explore.css
-//   site/semantic/   dax-sql (PINS.daxSql) and the model, as ossie.json
-//   site/storage/    analytics-as-code's Iceberg data source (PINS.exportTemplate): the page
-//                    signs in (Rayfin's Fabric SSO), the app's function answers where each
-//                    table is and a read-only SAS, the page downloads the files into the
-//                    browser and DuckDB-WASM reads them as views v_<table>
-//   site/app.js      generated: Explore over that data source
-//   rayfin/          the template's Rayfin project — rayfin.yml says what the app is, and its
-//                    function's source is what is deployed (built at package time, by
-//                    scripts/function-bundle.mjs: nobody's machine builds it)
-//   model/           the model file, as it was
+// Explore's button (app/explore/view.js) hands the host the model's text (to check it), where
+// it lives in OneLake, and the shelves on screen. What is written to a folder of this machine
+// — the local copy, an agent's to grow later — and what is published from its dist/
+// (fabricapp.js) is:
+//   site/            fabric_app/site: the page (index.html, app.js) and its data source
+//                    (storage/: Fabric sign-in, the function's answer, DuckDB-WASM reading the
+//                    tables in the browser as views v_<table>)
+//   site/explore/    Studio's Explore and Logs (app/explore/), the same files the panel runs
+//   site/semantic/   dax-sql (PINS.daxSql): SQL over the model, as SQL over the views
+//   site/explore.json  the shelves the first view shows
+//   rayfin/          fabric_app/rayfin: what the app is (rayfin.yml) and its function's source
+//                    (built at package time, by scripts/function-bundle.mjs: nobody's machine
+//                    builds it)
 //   dist/            site/ stamped with the build, plus rayfin.config.json (the backend the
 //                    browser talks to): byte for byte what was uploaded
-// The template is generic: the model names the tables (a dataset's `source`, schema.table),
-// the lakehouse its Direct Lake expression holds is the catalog. Nothing here is AI.
+// The model is never copied: the app's function reads it from the lakehouse, in place, at
+// run time (MODEL_URL), so the app shows the model as it is there. The lakehouse its Direct
+// Lake expression holds is the catalog (CATALOG_URL). Nothing here is AI.
 // No `vscode` import: the extension passes in what it owns.
 // =============================================================================
 
@@ -31,31 +30,19 @@ const { TABLE_ORIGIN } = require('./catalog');
 const { PINS } = require('./vendored');
 
 const MARKER = '.onelake-studio-export.json';
-// What a re-export writes again; anything else in the folder is left alone.
+const DFS = 'https://onelake.dfs.fabric.microsoft.com';
+// What a re-export writes again; anything else in the folder is left alone. `model` is an
+// earlier export's copy of the model, which no export writes any more.
 const OWNED = ['site', 'dist', 'rayfin', 'model', 'AGENTS.md', '.gitignore'];
 
-// The template's files (from its root, vendor/gh/<PINS.exportTemplate>) and where each goes.
-const TEMPLATE = [
-  ['front_end/fabric_app/iceberg/site/storage', 'site/storage'],
-  ['front_end/fabric_app/common/site/storage/auth.js', 'site/storage/auth.js'],
-  ['front_end/page/storage/queue.js', 'site/storage/queue.js'],
-  ['front_end/page/storage/results.js', 'site/storage/results.js'],
-  ['front_end/page/frontend/perflog.js', 'site/frontend/perflog.js'],
-  ['front_end/fabric_app/iceberg/rayfin', 'rayfin'],
-];
-// Studio's own modules (app/, or webview/ installed), as the panel runs them.
-const STUDIO = ['explore/explore.js', 'explore/query.js', 'explore/draw.js', 'explore/model.js',
-  'explore/theme.js', 'explore/explore.css', 'paths.js'];
-
-// An app's name: lower case, letters, digits and dashes (as a Rayfin id).
-function slug(s) {
+// An app's name: lower case, letters, digits and dashes (as a Rayfin id), and -explore: its
+// own, never the name of an app someone else deployed for the same model.
+function appName(s) {
   const out = String(s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
-  return !out ? 'explore' : /^[a-z]/.test(out) ? out : `m-${out}`;
+  return `${!out ? 'model' : /^[a-z]/.test(out) ? out : `m-${out}`}-explore`;
 }
 
-const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
-
-// The model's tables as the data source reads them (the template's storage/data.js,
+// The model's tables as the data source reads them (fabric_app/site/storage/data.js,
 // modelTables): name -> schema.table. An Ossie dataset's `source`; a TMSL table's Direct Lake
 // partition.
 function sourcesOf(model) {
@@ -68,12 +55,21 @@ function sourcesOf(model) {
   return out;
 }
 
+// A OneLake file's DFS URL, from the names the tree knows it by: the workspace, and the path
+// from its item ("nem.Lakehouse/Files/semantic_model/ossie.yaml").
+const trimPath = p => String(p).replace(/^\/+/, '');
+const dfsUrl = (workspace, path) =>
+  `${DFS}/${encodeURIComponent(workspace)}/${trimPath(path).split('/').map(encodeURIComponent).join('/')}`;
+
 /**
  * What an export is, before anything is written: the app's name, its lakehouse and catalog,
- * and the model as the page reads it. Throws, saying why, when the model cannot make one.
- * `mods`: the agent's modules() — { compiler: { parseYaml, ossieToTmsl }, semantic }.
+ * the model's URL. Throws, saying why, when the model cannot make one.
+ * `mods`: the agent's modules() — { compiler: { parseYaml, ossieToTmsl }, semantic };
+ * `where`: the model file in OneLake, { workspace, path } (the path from its item).
  */
-function planExport(text, fileName, name, { compiler, semantic }) {
+function planExport(text, fileName, name, { compiler, semantic }, where) {
+  if (!where || !where.workspace || !where.path) throw new Error(`${fileName} is not a OneLake file: the app reads its model from the lakehouse`);
+  if (!/^[^/]+\/Files\//.test(trimPath(where.path))) throw new Error(`${fileName} is not in a lakehouse's Files/`);
   const body = String(text).replace(/^﻿/, '');
   let doc, bim;
   if (semantic.isOssiePath(fileName)) {
@@ -106,181 +102,58 @@ function planExport(text, fileName, name, { compiler, semantic }) {
     .map(t => `table ${t}: the model names no source for it, so the app cannot read it`);
   const title = String((doc && doc.name) || name);
   return {
-    doc, warnings, title, name: slug(title), modelName: name, fileName,
+    warnings, title, name: appName(title), modelName: name, fileName,
     workspace: lake.workspace, lakehouse: lake.item,
     catalogUrl: `${TABLE_ORIGIN}/iceberg/${lake.workspace}/${lake.item}`,
+    modelUrl: dfsUrl(where.workspace, where.path),
+    modelPath: `${where.workspace}/${trimPath(where.path)}`,
     tables: [...sources],
   };
 }
 
-// The template's rayfin.yml, for this app: its own id and name, its site PROTECTED, no build
-// command (the extension builds dist/), none of the template's own deployments' redirects.
+// fabric_app/rayfin/rayfin.yml, for this app: its own id and name, and its sign-in redirects.
 function rayfinYml(text, name, redirects = []) {
   let out = String(text);
   const swap = (re, to, what) => {
-    if (!re.test(out)) throw new Error(`the template's rayfin.yml has no ${what} — is PINS.exportTemplate a different layout?`);
+    if (!re.test(out)) throw new Error(`fabric_app/rayfin/rayfin.yml has no ${what}`);
     out = out.replace(re, to);
   };
   swap(/^id: .*$/m, `id: ${name}`, 'id');
   swap(/^name: .*$/m, `name: ${name}`, 'name');
-  swap(/^(\s*)assetAccess: .*$/m, '$1assetAccess: protected', 'assetAccess');
-  out = out.replace(/^[ \t]*buildCommand: node \S*build\.mjs[ \t]*\r?\n/m, '');
-  out = out.replace(/^[ \t]*- https:\/\/\S+\.fabricapps\.net[ \t]*\r?\n/gm, '');
   if (redirects.length) {
     swap(/^([ \t]*)allowedRedirectUris:[ \t]*\r?\n/m,
       m => m + redirects.map(r => `${/^([ \t]*)/.exec(m)[1]}  - ${r}\n`).join(''), 'allowedRedirectUris');
   }
-  return `# Written by OneLake Studio's Export to Fabric, which deploys this app over the Fabric REST\n` +
-         `# API from ../dist/. A record of what the app is: nothing reads this file to deploy.\n` + out;
+  return out;
 }
-
-const indexHtml = plan => `<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${esc(plan.title)} · Explore</title>
-<link rel="stylesheet" href="./explore/explore.css">
-<style>
-  /* explore.css's tokens, and the sign-in gate's (storage/auth.js: --bg, --muted, --accent,
-     --on-accent). Dark first, as the panel's palette is drawn; light when the browser asks. */
-  :root {
-    color-scheme: dark;
-    --bg: #0d1117; --panel: #161b22; --panel2: #1c2330; --border: #30363d; --text: #e6edf3;
-    --muted: #8d96a0; --accent: #2f81f7; --accent2: #58a6ff; --err: #f85149; --hover: rgba(255,255,255,0.07);
-  }
-  @media (prefers-color-scheme: light) {
-    :root {
-      color-scheme: light;
-      --bg: #f6f8fa; --panel: #ffffff; --panel2: #eef1f4; --border: #d0d7de; --text: #1f2328;
-      --muted: #59636e; --accent: #0969da; --accent2: #0969da; --err: #cf222e;
-      --raised: #ffffff; --row-line: #e6e9ed; --faint: #8c959f; --disabled: #afb8c1;
-      --hairline: rgba(0,0,0,0.08); --hover: rgba(0,0,0,0.05); --hover-soft: rgba(0,0,0,0.025);
-      --shadow: 0 8px 24px rgba(140,149,159,0.3); --measure: #9a6700;
-    }
-  }
-  * { box-sizing: border-box; }
-  [hidden] { display: none !important; }
-  html, body { margin: 0; min-height: 100%; }
-  body { background: var(--bg); color: var(--text); font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
-  button, input, select { font: inherit; color: inherit; }
-  input, select { background: var(--input-bg); border: 1px solid var(--border); border-radius: 6px; padding: 0.2rem 0.4rem; }
-  header { display: flex; align-items: baseline; gap: 0.8rem; flex-wrap: wrap; padding: 0.8rem var(--gutter) 0; }
-  header h1 { font-size: 1.1rem; margin: 0; }
-  header .about, #status, footer { color: var(--muted); font-size: 0.8rem; }
-  #status { margin-left: auto; }
-  footer { padding: 0 var(--gutter) 1rem; }
-</style>
-<script src="https://cdn.jsdelivr.net/npm/${PINS.echarts}/dist/echarts.min.js"></script>
-</head>
-<body>
-<header>
-  <h1>${esc(plan.title)}</h1>
-  <span class="about">Explore · semantic model ${esc(plan.modelName)}</span>
-  <span id="status" role="status" aria-live="polite">Starting…</span>
-</header>
-<main id="explore" class="explore-page"></main>
-<footer>build __BUILD__ · exported from OneLake Studio</footer>
-<script type="module">import { start } from "./app.js"; start();</script>
-</body>
-</html>
-`;
-
-const appJs = (plan, state) => `// app.js — Explore over the model, the page of this Fabric app (OneLake Studio's Export to
-// Fabric). Studio's own Explore (explore/explore.js) drives it: a query of the shelves is DAX
-// (explore/query.js), the DAX is SQL over the views v_<table> (dax-sql), and storage/data.js
-// runs it in DuckDB-WASM over the lakehouse's tables, downloaded into this browser.
-import { createDataSource } from "./storage/data.js";
-import { createExplorer } from "./explore/explore.js";
-import { createModelQuery, EXPLORE_CASTS } from "./explore/query.js";
-import { tmslOf } from "./explore/model.js";
-import { PALETTE, registerChartTheme } from "./explore/theme.js";
-import { createCompiler } from "./semantic/dax-sql/index.js";
-import { tmslToModel } from "./semantic/formats/tmsl.js";
-import { ossieToTmsl } from "./semantic/formats/ossie.js";
-
-const NAME = ${JSON.stringify(plan.modelName)};
-// The shelves Explore showed when the app was exported: the first view of a new visitor.
-const FIRST = ${JSON.stringify(state || null)};
-const KEY = \`explore.\${NAME}\`;
-const MODEL = new URL("./semantic/ossie.json" + new URL(import.meta.url).search, import.meta.url);
-
-const status = s => { document.getElementById("status").textContent = s || ""; };
-const css = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
-// An Arrow result as the rows Explore reads: plain objects keyed by the select's names.
-const rowsOf = table => table.toArray().map(r => r.toJSON());
-
-function saveCsv(table, filename) {
-  const fields = table.schema.fields.map(f => f.name);
-  const cell = v => v == null ? "" : /[",\\n\\r]/.test(String(v)) ? \`"\${String(v).replace(/"/g, '""')}"\` : String(v);
-  const text = [fields.map(cell).join(","), ...rowsOf(table).map(r => fields.map(f => cell(r[f])).join(","))].join("\\n") + "\\n";
-  const a = Object.assign(document.createElement("a"),
-    { href: URL.createObjectURL(new Blob([text], { type: "text/csv" })), download: filename });
-  document.body.append(a); a.click(); a.remove();
-  setTimeout(() => URL.revokeObjectURL(a.href), 10000);
-}
-
-export async function start() {
-  try {
-    const doc = await (await fetch(MODEL)).json();
-    const bim = Array.isArray(doc.datasets) ? ossieToTmsl(doc) : doc;
-    const tmsl = tmslOf(bim);
-    const mq = createModelQuery(tmsl, createCompiler(tmslToModel(bim), { tableSource: t => \`v_\${t.name}\`, castOutput: EXPLORE_CASTS }));
-    const data = createDataSource({ onStatus: status, onProgress: p => status(p ? (p.detail || p.label) : "") });
-    const ready = data.init().then(() => status(""));
-    ready.catch(e => { console.error(e); status(\`Error: \${e?.message || e}\`); });
-    const query = async q => { await ready; const dax = mq.toDax(q); return data.query(mq.toSQL(dax), dax); };
-    registerChartTheme(echarts, css);
-    const charts = new Map();
-    const resized = new ResizeObserver(es => { for (const e of es) charts.get(e.target)?.resize(); });
-    createExplorer(document.getElementById("explore"), {
-      model: async () => { await ready; return tmsl; },
-      toDax: q => mq.toDax(q),
-      run: async q => rowsOf(await query(q)),
-      csv: async q => saveCsv(await query(q), \`\${NAME}-explore.csv\`),
-      chart: box => {
-        if (!charts.has(box)) { charts.set(box, echarts.init(box, "studio")); resized.observe(box); }
-        return charts.get(box);
-      },
-      palette: () => PALETTE,
-      css,
-      loadState: () => { try { return JSON.parse(localStorage.getItem(KEY)) ?? FIRST; } catch { return FIRST; } },
-      saveState: s => { try { localStorage.setItem(KEY, JSON.stringify(s)); } catch {} },
-    });
-  } catch (e) {
-    console.error(e);
-    status(\`Error: \${e?.message || e}\`);
-  }
-}
-`;
 
 const agentsMd = plan => `# ${plan.title} — Explore, as a Fabric app
 
-Written by OneLake Studio's **Export to Fabric** from \`model/${plan.fileName}\`, and deployed by it over
-the Fabric REST API (item type \`AppBackend\`): no CLI. The site is **protected** — only people who may
+Written by OneLake Studio's **Export to Fabric**, and deployed by it over the Fabric REST API (item
+type \`AppBackend\`, named \`${plan.name}\`): no CLI. The site is **protected** — only people who may
 open the app item can load it.
 
-- Lakehouse: workspace \`${plan.workspace}\`, item \`${plan.lakehouse}\`
-- Iceberg catalog (the function's \`CATALOG_URL\` secret): ${plan.catalogUrl}
-- Runtime: \`${PINS.exportTemplate}\` (\`front_end/fabric_app/iceberg\`), compiler \`${PINS.daxSql}\`
+- Model: \`${plan.modelPath}\`, read **in place** by the app's function at run time (its \`MODEL_URL\`
+  secret): the app holds no copy of it, so a change to the model is in the app on its next load.
+- Lakehouse: workspace \`${plan.workspace}\`, item \`${plan.lakehouse}\` — its Iceberg catalog is the
+  function's \`CATALOG_URL\`: ${plan.catalogUrl}
 
 ## Layers
 
 | Layer | Path | |
 |---|---|---|
-| Page | \`site/index.html\`, \`site/app.js\` | generated: Explore over the data source |
-| Explore | \`site/explore/\` | OneLake Studio's Explore, as the extension runs it |
-| Compiler | \`site/semantic/dax-sql/\`, \`site/semantic/formats/\` | dax-sql: the query as DAX, the DAX as SQL over \`v_<table>\` |
-| Model | \`site/semantic/ossie.json\` | the model, as the page reads it |
+| Page | \`site/index.html\`, \`site/app.js\` | Explore and Logs over the data source |
+| Explore, Logs | \`site/explore/\` | OneLake Studio's, the same files the extension runs |
+| Compiler | \`site/semantic/dax-sql/\`, \`site/semantic/formats/\` | dax-sql (\`${PINS.daxSql}\`): SQL over the model, as SQL over \`v_<table>\` |
 | Data source | \`site/storage/\` | signs in (Rayfin Fabric SSO), asks the function, downloads the tables into the browser (OPFS), DuckDB-WASM |
-| Function | \`rayfin/functions/src/function_app.ts\` | the catalog's metadata locations and a read-only SAS on \`Tables/\` |
+| Function | \`rayfin/functions/src/function_app.ts\` | reads the model, the tables' metadata locations, a read-only SAS on \`Tables/\` |
 
 Tables the app reads (\`v_<table>\` ← \`schema.table\`):
 
 ${plan.tables.map(([n, s]) => `- \`${n}\` ← \`${s}\``).join('\n')}
 
 \`dist/\` is \`site/\` as uploaded (stamped with the build, plus \`rayfin.config.json\`). Exporting again from
-OneLake Studio rewrites \`site/\`, \`dist/\`, \`rayfin/\`, \`model/\` and this file, and updates the same app.
+OneLake Studio rewrites \`site/\`, \`dist/\`, \`rayfin/\` and this file, and updates the same app.
 
 The workspace must allow **OneLake user-delegated SAS tokens** (workspace settings → OneLake): the
 function signs one. The page needs a browser with OPFS shared access handles (Chrome or Edge 121+).
@@ -302,26 +175,25 @@ async function isEmptyOrOurs(dir) {
 }
 
 /**
- * Writes the app's folder (the local copy), then builds its dist/. Returns the marker kept in
- * the folder (an earlier export's item and redirects, when there was one).
- * `templateDir`: vendor/gh/<PINS.exportTemplate>; `daxSqlDir`: vendor/gh/<PINS.daxSql>;
- * `appDir`: Studio's page modules (app/, or webview/ installed).
+ * Writes the app's folder (the local copy). Returns the marker kept in the folder (an earlier
+ * export's item and redirects, when there was one).
+ * `fabricAppDir`: the extension's fabric_app/; `appDir`: Studio's page modules (app/, or
+ * webview/ installed); `daxSqlDir`: vendor/gh/<PINS.daxSql>.
  */
-async function writeExport({ plan, text, state, outDir, templateDir, daxSqlDir, appDir }) {
+async function writeExport({ plan, state, outDir, fabricAppDir, appDir, daxSqlDir }) {
   const { marker } = await isEmptyOrOurs(outDir);
   for (const p of OWNED) await fsp.rm(join(outDir, p), { recursive: true, force: true });
   const at = (root, p) => join(root, ...p.split('/'));
-  for (const [from, to] of TEMPLATE) await fsp.cp(at(templateDir, from), at(outDir, to), { recursive: true });
-  for (const p of STUDIO) await fsp.cp(at(appDir, p), at(outDir, `site/${p}`));
+  await fsp.cp(join(fabricAppDir, 'site'), at(outDir, 'site'), { recursive: true });
+  await fsp.cp(join(appDir, 'explore'), at(outDir, 'site/explore'), { recursive: true });
+  await fsp.cp(join(appDir, 'paths.js'), at(outDir, 'site/paths.js'));
   await fsp.cp(join(daxSqlDir, 'src'), at(outDir, 'site/semantic/dax-sql'), { recursive: true });
   for (const f of ['tmsl.js', 'ossie.js']) await fsp.cp(join(daxSqlDir, 'formats', f), at(outDir, `site/semantic/formats/${f}`));
+  await fsp.cp(join(fabricAppDir, 'rayfin'), at(outDir, 'rayfin'), { recursive: true });
   const yml = at(outDir, 'rayfin/rayfin.yml');
   await fsp.writeFile(yml, rayfinYml(await fsp.readFile(yml, 'utf8'), plan.name, (marker && marker.redirects) || []));
   const files = {
-    'site/index.html': indexHtml(plan),
-    'site/app.js': appJs(plan, state),
-    'site/semantic/ossie.json': JSON.stringify(plan.doc),
-    [`model/${plan.fileName}`]: String(text),
+    'site/explore.json': JSON.stringify(state || null),
     'AGENTS.md': agentsMd(plan),
     '.gitignore': GITIGNORE,
   };
@@ -329,7 +201,7 @@ async function writeExport({ plan, text, state, outDir, templateDir, daxSqlDir, 
     await fsp.mkdir(dirname(at(outDir, p)), { recursive: true });
     await fsp.writeFile(at(outDir, p), body);
   }
-  const next = { ...(marker || {}), name: plan.name, model: plan.modelName,
+  const next = { ...(marker || {}), name: plan.name, model: plan.modelPath,
                  workspaceId: plan.workspace, lakehouseId: plan.lakehouse };
   await writeMarker(outDir, next);
   return next;
@@ -414,4 +286,4 @@ function zip(files) {
   return Buffer.concat([...local, ...central, end]);
 }
 
-module.exports = { planExport, writeExport, buildDist, writeMarker, zip, crc32, rayfinYml, slug, MARKER };
+module.exports = { planExport, writeExport, buildDist, writeMarker, zip, crc32, rayfinYml, appName, dfsUrl, MARKER };

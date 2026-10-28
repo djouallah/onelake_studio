@@ -52,12 +52,13 @@ const happy = (over = []) => [
 const publish = (app, over = {}) => app.publish({
   workspaceId: WS, name: "sales-model", tenantId: "tid-1",
   catalogUrl: `https://onelake.table.fabric.microsoft.com/iceberg/${WS}/lh`,
+  modelUrl: "https://onelake.dfs.fabric.microsoft.com/ws/nem.Lakehouse/Files/semantic_model/ossie.yaml",
   site: async config => { publish.config = config; return Buffer.from("PK-site"); },
   fn: { sourceZip: Buffer.from("PK-fn"), deployMetaData: '{"runtime":"TypeScript"}' },
   ...over,
 });
 
-test("publish: item, backend, key, settings, secret, site, function, redirect — in the CLI's order", async () => {
+test("publish: item, backend, key, settings, secrets, site, function, redirect — in the CLI's order", async () => {
   const { app, calls } = appWith(happy());
   const r = await publish(app);
   assert.deepEqual(r, { itemId: ID, hostingUrl: HOST, created: true, redirects: [HOST] });
@@ -69,6 +70,7 @@ test("publish: item, backend, key, settings, secret, site, function, redirect �
     `GET /appBackends/${ID}/__private/extended-properties`,
     `GET /appBackends/${ID}/__private/publishable-key`,
     `POST /appBackends/${ID}/__private/projectRuntimeSettings`,
+    `POST /appBackends/${ID}/__private/secrets`,
     `POST /appBackends/${ID}/__private/secrets`,
     `POST /appBackends/${ID}/__private/webapp/deploy`,
     `POST /appBackends/${ID}/__private/functions/deploy`,
@@ -87,24 +89,25 @@ test("publish: item, backend, key, settings, secret, site, function, redirect �
   assert.deepEqual(first.auth, { enabled: true, fabric: { enabled: true }, allowedRedirectUris: [] });
   assert.equal(first.packageVersions["@microsoft/rayfin-cli"], "1.36.2");
   assert.deepEqual(JSON.parse(calls[6].body), { name: "CATALOG_URL", value: `https://onelake.table.fabric.microsoft.com/iceberg/${WS}/lh` });
-  assert.equal(calls[7].headers["content-type"], "application/zip");
-  assert.equal(String(calls[7].body), "PK-site");
-  const form = calls[8].body;
+  assert.deepEqual(JSON.parse(calls[7].body), { name: "MODEL_URL", value: "https://onelake.dfs.fabric.microsoft.com/ws/nem.Lakehouse/Files/semantic_model/ossie.yaml" });
+  assert.equal(calls[8].headers["content-type"], "application/zip");
+  assert.equal(String(calls[8].body), "PK-site");
+  const form = calls[9].body;
   assert.ok(form instanceof FormData);
   assert.equal(form.get("DeployMetaData"), '{"runtime":"TypeScript"}');
   assert.equal(form.get("isCompiledZip"), "true");
   assert.equal(form.get("SourceZipFile").name, "source.zip");
-  assert.equal(calls[8].headers["content-type"], undefined, "fetch writes the multipart boundary");
-  assert.deepEqual(JSON.parse(calls[11].body).auth.allowedRedirectUris, [HOST]);
+  assert.equal(calls[9].headers["content-type"], undefined, "fetch writes the multipart boundary");
+  assert.deepEqual(JSON.parse(calls[12].body).auth.allowedRedirectUris, [HOST]);
   assert.deepEqual(publish.config, { apiUrl: "https://baas.example", publishableKey: "pk-abc", workspaceId: WS,
     itemId: ID, portalUrl: "https://app.fabric.microsoft.com/", tenantId: "tid-1" });
 });
 
-test("publish again: the item found by name, its redirect already known — no create, no second settings", async () => {
+test("publish again: the item an earlier export created, by its id, its redirect already known — no create, no second settings", async () => {
   const { app, calls } = appWith(happy([
     ["GET", `/workspaces/${WS}/items?type=AppBackend`, () => res(200, { value: [{ id: ID, displayName: "Sales-Model" }] })],
   ]));
-  const r = await publish(app, { redirects: [HOST] });
+  const r = await publish(app, { redirects: [HOST], itemId: ID });
   assert.equal(r.created, false);
   assert.ok(!calls.some(c => c.method === "POST" && c.url.endsWith("/items")));
   assert.equal(calls.filter(c => c.url.endsWith("/projectRuntimeSettings")).length, 1);
@@ -143,7 +146,7 @@ test("a 401 is retried once with a fresh token; a not-ready deploy endpoint is r
     ["GET", `/workspaces/${WS}/items?type=AppBackend`, (init, n) => res(n === 1 ? 401 : 200, { value: [{ id: ID, displayName: "sales-model" }] })],
     ["POST", "/__private/webapp/deploy", (_, n) => n < 3 ? res(503, {}) : res(200, { success: true, hostingUrl: HOST })],
   ]), { getToken: async o => (o && o.fresh ? (fresh++, "tok2") : "tok") });
-  await publish(app);
+  await publish(app, { itemId: ID });
   assert.equal(fresh, 1);
   assert.equal(calls[1].headers.authorization, "Bearer tok2");
   assert.equal(calls.filter(c => c.url.endsWith("/webapp/deploy")).length, 3);
@@ -153,4 +156,18 @@ test("tenantOf: a token's tid", () => {
   const payload = Buffer.from(JSON.stringify({ tid: "t-1", aud: "x" })).toString("base64url");
   assert.equal(tenantOf(`h.${payload}.s`), "t-1");
   assert.equal(tenantOf("nope"), null);
+});
+
+test("an app of that name that no export created is never taken over unasked", async () => {
+  const theirs = [["GET", `/workspaces/${WS}/items?type=AppBackend`, () => res(200, { value: [{ id: "theirs", displayName: "sales-model" }] })]];
+  const refused = appWith(happy(theirs));
+  await assert.rejects(publish(refused.app), e => e.code === "NAME_TAKEN" && e.item.id === "theirs");
+  assert.equal(refused.calls.length, 1, "nothing but the listing: no settings, no upload");
+  // An id kept from an earlier export that the workspace no longer has is no licence either.
+  await assert.rejects(publish(appWith(happy(theirs)).app, { itemId: "gone" }), e => e.code === "NAME_TAKEN");
+  // Asked, and told yes.
+  const taken = appWith(happy(theirs));
+  const r = await publish(taken.app, { takeOver: true });
+  assert.equal(r.itemId, "theirs");
+  assert.ok(!taken.calls.some(c => c.method === "POST" && c.url.endsWith("/items")));
 });

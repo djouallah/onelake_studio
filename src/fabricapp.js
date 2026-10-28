@@ -6,11 +6,13 @@
 // read from @microsoft/rayfin-cli and rayfin-tools-common 1.36.2: no CLI, no npm, no Node on
 // anyone's machine but the extension's. Every call is the Fabric API's, with the user's
 // Fabric-audience token; the calls under the item name it again in a header (MONIKER).
-//   1. the item: found by name (GET items?type=AppBackend), else created (POST items)
+//   1. the item: the one an earlier export created (its id, kept in the local copy), else a new
+//      one (POST items). One of that name that no export created is never taken over unasked
+//      (NAME_TAKEN): it may be someone's own app.
 //   2. its backend: extended-properties, polled until it names BaaSEndpoint
 //   3. its publishable key (the browser SDK's)
 //   4. its runtime settings: Fabric sign-in, the function's identity, static hosting PROTECTED
-//   5. the function's one secret, CATALOG_URL
+//   5. the function's secrets: CATALOG_URL (the tables) and MODEL_URL (the model, read in place)
 //   6. the site: a zip of dist/ (with rayfin.config.json, made here) -> hostingUrl
 //   7. the function: the package built at package time (scripts/function-bundle.mjs), then
 //      its deploy status polled
@@ -96,9 +98,16 @@ function createFabricApp({ getToken, apiBase = FABRIC_API, log = () => {},
 
   // The item called `name`, or a new one. Created once: a create that answered nothing
   // usable is looked for by name, never sent again (a second POST is a name conflict).
-  async function ensureItem(ws, name) {
-    const found = (await listItems(ws)).find(byName(name));
-    if (found) { log(`app ${name}: item ${found.id} (exists)`); return { item: found, created: false }; }
+  async function ensureItem(ws, name, { itemId = null, takeOver = false } = {}) {
+    const items = await listItems(ws);
+    const mine = itemId && items.find(i => i.id === itemId);
+    if (mine) { log(`app ${name}: item ${mine.id} (exported before)`); return { item: mine, created: false }; }
+    const named = items.find(byName(name));
+    if (named && !takeOver) {
+      throw Object.assign(new Error(`an app named ${named.displayName} already exists in this workspace, and this export did not create it`),
+        { code: 'NAME_TAKEN', item: named });
+    }
+    if (named) { log(`app ${name}: item ${named.id} (taken over)`); return { item: named, created: false }; }
     let r;
     try {
       r = await call(`${apiBase}/workspaces/${ws}/items`, {
@@ -232,8 +241,9 @@ function createFabricApp({ getToken, apiBase = FABRIC_API, log = () => {},
    * Publishes the app. `site(config)` answers the site's zip, given the rayfin.config.json
    * the browser reads (it names the backend). Returns { itemId, hostingUrl, created }.
    */
-  async function publish({ workspaceId: ws, name, tenantId, catalogUrl, site, fn, redirects: known = [] }) {
-    const { item, created } = await ensureItem(ws, name);
+  async function publish({ workspaceId: ws, name, tenantId, catalogUrl, modelUrl, site, fn, redirects: known = [],
+                          itemId = null, takeOver = false }) {
+    const { item, created } = await ensureItem(ws, name, { itemId, takeOver });
     const id = item.id;
     log(`app ${name}: waiting for its backend`);
     const apiUrl = await backend(ws, id);
@@ -241,6 +251,7 @@ function createFabricApp({ getToken, apiBase = FABRIC_API, log = () => {},
     const redirects = [...new Set(known.filter(Boolean))];
     await postSettings(ws, id, redirects);
     await postSecret(ws, id, 'CATALOG_URL', catalogUrl);
+    await postSecret(ws, id, 'MODEL_URL', modelUrl);
     log(`app ${name}: uploading the site`);
     const config = { apiUrl, publishableKey: key, workspaceId: ws, itemId: id, portalUrl: PORTAL_URL, ...(tenantId ? { tenantId } : {}) };
     const hostingUrl = await deploySite(ws, id, await site(config));

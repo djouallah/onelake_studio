@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Explore</title>
+<link rel="stylesheet" href="./explore/explore.css">
+<style>
+  /* Black, always: no light theme. explore.css's tokens, and the sign-in gate's
+     (storage/auth.js: --bg, --muted, --accent, --on-accent). */
+  :root {
+    color-scheme: dark;
+    --bg: #0a0c10; --panel: #0e1116; --panel2: #12151c; --card: #12151c; --raised: #181c25; --input-bg: #0e1116;
+    --border: #262b36; --row-line: #1c212b;
+    --text: #f2f4f8; --muted: #9aa3b2; --faint: #6b7483; --disabled: #4a515e;
+    --accent: #3987e5; --accent2: #58a6ff; --on-accent: #0a0c10;
+    --hairline: rgba(255,255,255,0.07); --hover: rgba(255,255,255,0.07); --hover-soft: rgba(255,255,255,0.035);
+    --err: #f85149; --bad: #f85149; --ok: #3fb950; --warn: #d29922;
+    --shadow: 0 12px 32px rgba(0,0,0,0.5);
+    --radius: 14px; --radius-sm: 8px; --gutter: 1.5rem; --gap: 1rem;
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  html, body { margin: 0; min-height: 100%; background: var(--bg); }
+  body { color: var(--text); font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  button, input, select, textarea { font: inherit; color: inherit; }
+  input, select { background: var(--input-bg); border: 1px solid var(--border); border-radius: 6px; padding: 0.2rem 0.4rem; }
+  ::-webkit-scrollbar { width: 10px; height: 10px; background: var(--bg); }
+  ::-webkit-scrollbar-thumb { background: var(--raised); border-radius: 6px; }
+  #status { position: fixed; right: 1rem; bottom: 0.6rem; color: var(--muted); font-size: 0.78rem; }
+  #status.error { color: var(--err); }
+  footer { padding: 0.5rem var(--gutter) 1rem; color: var(--faint); font-size: 0.72rem; }
+</style>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js"></script>
+</head>
+<body>
+<main id="explore"></main>
+<div id="status" role="status" aria-live="polite">Starting…</div>
+<footer>build __BUILD__ · Explore, exported from OneLake Studio</footer>
+<script type="module">import { start } from "./app.js"; start();</script>
+</body>
+</html>

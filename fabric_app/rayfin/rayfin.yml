@@ -1,0 +1,35 @@
+# The Fabric app Export to Fabric deploys (OneLake Studio, src/exportapp.js and fabricapp.js):
+# a model's Explore and Logs, over its lakehouse's tables. The extension deploys it over the
+# Fabric REST API from the local copy's dist/, so nothing reads this file to deploy: it says
+# what the app is, for whoever grows it from the local copy. The id, the name and the sign-in
+# redirects are each app's own (written in by the export).
+id: explore
+name: explore
+version: 1.0.0
+services:
+  auth:
+    enabled: true
+    fabric:
+      enabled: true
+    allowedRedirectUris:
+      - http://localhost:5173
+      - http://127.0.0.1:5173
+  data:
+    enabled: false
+  staticHosting:
+    enabled: true
+    folder: dist
+    indexDocument: index.html
+    assetAccess: protected
+  storage:
+    enabled: false
+  functions:
+    enabled: true
+    buildCommand: npm run build
+    auth:
+      type: application
+secrets:
+  - name: CATALOG_URL
+    description: The OneLake Iceberg catalog the app reads, https://onelake.table.fabric.microsoft.com/iceberg/<workspace id>/<lakehouse id>; its tables are the ones the model names
+  - name: MODEL_URL
+    description: The semantic model the app reads in place, https://onelake.dfs.fabric.microsoft.com/<workspace>/<item>/Files/<path> (an Ossie .yaml or a TMSL .bim)

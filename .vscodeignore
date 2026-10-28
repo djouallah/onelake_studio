@@ -31,3 +31,6 @@ app/**
 # The extension's tests: run from the checkout, never shipped.
 test/**
 
+
+# Export to Fabric's template ships as source; a local npm install in its function never does.
+fabric_app/**/node_modules/**

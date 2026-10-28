@@ -33,7 +33,7 @@ const elapsed = t0 => `${((performance.now() - t0) / 1000).toFixed(1)} s`;
 //   tmsl             the model, as model.js's tmslOf reads it
 //   compiler         dax-sql's compiler over the model, with the host's tableSource and
 //                    query.js's EXPLORE_CASTS
-//   run(sql)         a compiled SQL's result: { fields, rows, numRows, truncated?, limit? }
+//   run(sql, dax)    a compiled SQL's result (`dax`: what it stands for, for a host that logs): { fields, rows, numRows, truncated?, limit? }
 //   echarts()        ECharts (a promise)
 //   saveText(name, text)  a CSV saved: answers where (or null: dismissed)
 //   loadState(key), saveState(key, s)  the shelves, between visits
@@ -46,6 +46,8 @@ const elapsed = t0 => `${((performance.now() - t0) / 1000).toFixed(1)} s`;
 //                    published as a Fabric app of this Explore (src/exportapp.js); answers
 //                    what to say when it is done
 //   logsNote         (optional) the Logs page's line
+//   hostLogs         the host logs its queries itself (perflog.js), with more than this view
+//                    knows (the Fabric app's queue and engine): this view logs none of them
 // Returns { destroy }.
 export function mountExplore(root, ctx) {
   const setStatus = ctx.setStatus || (() => {});
@@ -140,7 +142,7 @@ export function mountExplore(root, ctx) {
       results.set(sql, hit);
       return hit;
     }
-    const res = await perf.query(sql, () => ctx.run(sql), dax, { queued: false });
+    const res = ctx.hostLogs ? await ctx.run(sql, dax) : await perf.query(sql, () => ctx.run(sql, dax), dax, { queued: false });
     if (!fresh) {
       results.set(sql, res);
       if (results.size > 40) results.delete(results.keys().next().value);

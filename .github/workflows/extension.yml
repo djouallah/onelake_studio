@@ -178,13 +178,12 @@ jobs:
         run: node scripts/fetch-extensions.mjs ${{ matrix.target }}
 
       # Export to Fabric's function, as the deploy package Fabric takes (one esbuild bundle and
-      # its metadata), built from the vendored template so nobody who exports needs npm.
+      # its metadata), built from fabric_app/rayfin so nobody who exports needs npm.
       # Its own step for the same reason as the two below; a restored cache makes it a no-op.
       - uses: actions/cache@v6
         with:
           path: fabric-function
-          key: fabric-function-${{ hashFiles('scripts/function-bundle.mjs', 'src/vendored.js', 'src/fabricapp.js') }}
-      - run: node scripts/vendor.mjs
+          key: fabric-function-${{ hashFiles('scripts/function-bundle.mjs', 'src/fabricapp.js', 'fabric_app/rayfin/**') }}
       - run: node scripts/function-bundle.mjs
 
       # The staged page carries the README and a build stamp. `vscode:prepublish` does this
@@ -229,9 +228,11 @@ jobs:
           # Generate Report copies its template from vendor/ (src/report.js): it must ship.
           grep -qE '^extension/vendor/gh/djouallah/analytics-as-code@[0-9a-f]+/dashboard/fabric_app/iceberg/rayfin/rayfin\.yml$' <<<"$files" \
             || { echo "no Generate Report template in the vsix"; exit 1; }
-          # Export to Fabric writes its app from the template and deploys the prebuilt function.
-          grep -qE '^extension/vendor/gh/djouallah/analytics-as-code@[0-9a-f]+/front_end/fabric_app/iceberg/site/storage/data\.js$' <<<"$files" \
-            || { echo "no Export to Fabric template in the vsix"; exit 1; }
+          # Export to Fabric writes its app from fabric_app/ and Studio's Explore (webview/explore),
+          # and deploys the prebuilt function.
+          for f in fabric_app/site/app.js fabric_app/site/storage/data.js fabric_app/rayfin/rayfin.yml webview/explore/view.js; do
+            grep -qx "extension/$f" <<<"$files" || { echo "no $f in the vsix"; exit 1; }
+          done
           for f in source.zip deploymetadata.json; do
             grep -qx "extension/fabric-function/$f" <<<"$files" || { echo "no fabric-function/$f in the vsix"; exit 1; }
           done
