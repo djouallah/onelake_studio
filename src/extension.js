@@ -207,7 +207,21 @@ function logBoot(m) {
   }
 }
 
+// Who is waiting for the page to say a file is on screen (a semantic model's progress
+// notification, which stays up until then): { label, resolve }.
+const openedWaiters = new Set();
+function whenOpened(label, ms = 60_000) {
+  return new Promise(resolve => {
+    const w = { label, resolve };
+    openedWaiters.add(w);
+    setTimeout(() => { openedWaiters.delete(w); resolve(false); }, ms);
+  });
+}
+
 function logOpened(m) {
+  for (const w of openedWaiters) {
+    if (w.label === m.label) { openedWaiters.delete(w); w.resolve(true); }
+  }
   if (!out) return;
   const what = m.kind === 'table' ? 'metadata + stats on screen'
              : m.kind === 'rows' ? 'rows on screen'
@@ -726,20 +740,19 @@ async function activateInner(context) {
   const openFileInPanel = (where, bytes) => openInPanel({ type: 'open-file',
     workspace: where.workspace, item: where.item, path: where.path, bytes });
 
-  async function exportModel(n, known) {
-    const bim = await vscode.window.withProgress(
-      { location: vscode.ProgressLocation.Notification, title: `Opening ${n.model}` },
-      async progress => {
-        progress.report({ message: 'reading its definition from Fabric…' });
-        return fabric.getBim(n.workspace, n.modelId);
-      });
+  // One step after another under the caller's progress notification (`say`), so nothing
+  // happens off screen: the definition, its lakehouse, the write.
+  async function exportModel(n, known, say) {
+    say('reading its definition from Fabric…');
+    const bim = await fabric.getBim(n.workspace, n.modelId);
     let doc;
-    try { doc = JSON.parse(Buffer.from(bim).toString('utf8').replace(/^﻿/, '')); }
+    try { doc = JSON.parse(Buffer.from(bim).toString('utf8').replace(/^\uFEFF/, '')); }
     catch (e) { throw new Error(`its definition is not TMSL: ${e.message}`); }
     const lakes = (await agent.modules()).semantic.lakehousesOf(doc);
     if (lakes.length !== 1) {
       throw new Error(`${n.model} is not Direct Lake on one lakehouse (it names ${lakes.length}): OneLake Studio opens those only`);
     }
+    say('finding its lakehouse…');
     const lh = await fabric.itemOf(lakes[0].workspace, lakes[0].item);
     const where = { ...lh, path: `${lh.item}/Files/semantic_model/${bimFileName(n.model)}` };
     const there = await writer.stat(where.workspace, where.path);
@@ -756,6 +769,7 @@ async function activateInner(context) {
         return { where, bytes: there.bytes };
       }
     }
+    say(`writing it to ${where.item.replace(/\.[^.]+$/, '')}/Files/semantic_model…`);
     await writer.writeFile(where.workspace, where.path, bim);
     if (out) out.appendLine(`wrote ${n.workspace}/${n.model} -> ${where.workspace}/${where.path} (${fmtBytes(bim.length)})`);
     await rememberModelFile(n, where);
@@ -767,29 +781,43 @@ async function activateInner(context) {
     return { where, bytes: bim.length };
   }
 
-  // Clicks on a model whose export is still running wait on that one, not a second.
+  // Clicks on a model whose export is still running wait on that one, not a second. One
+  // progress notification from the click until the page says the model is on screen.
   const exporting = new Map();   // `${workspace}|${modelId}` -> Promise
   async function openModel(n, { fresh = false } = {}) {
     if (!n || n.kind !== 'semanticModel') return;
     try {
       const known = modelFile(n);
-      if (known && !fresh) {
-        const there = await writer.stat(known.workspace, known.path).catch(() => null);
-        if (there) {
-          if (out) out.appendLine(`opened ${n.workspace}/${n.model} from ${known.workspace}/${known.path}`);
-          return openFileInPanel(known, there.bytes);
-        }
-      }
       if (known && fresh) {
         const pick = await vscode.window.showWarningMessage(
           `Overwrite ${known.workspace}/${known.path} with ${n.model}'s current definition from Fabric?`,
           { modal: true }, 'Overwrite');
         if (pick !== 'Overwrite') return;
       }
-      const id = modelKey(n);
-      if (!exporting.has(id)) exporting.set(id, exportModel(n, known).finally(() => exporting.delete(id)));
-      const done = await exporting.get(id);
-      if (done) await openFileInPanel(done.where, done.bytes);
+      await vscode.window.withProgress(
+        { location: vscode.ProgressLocation.Notification, title: `Opening ${n.model}` },
+        async progress => {
+          const say = message => progress.report({ message });
+          let target = null;
+          if (known && !fresh) {
+            say(`from ${known.item.replace(/\.[^.]+$/, '')}/Files/semantic_model…`);
+            const there = await writer.stat(known.workspace, known.path).catch(() => null);
+            if (there) {
+              if (out) out.appendLine(`opened ${n.workspace}/${n.model} from ${known.workspace}/${known.path}`);
+              target = { where: known, bytes: there.bytes };
+            }
+          }
+          if (!target) {
+            const id = modelKey(n);
+            if (!exporting.has(id)) exporting.set(id, exportModel(n, known, say).finally(() => exporting.delete(id)));
+            target = await exporting.get(id);
+          }
+          if (!target) return;
+          say('opening it in OneLake Studio…');
+          const opened = whenOpened(require('node:path').posix.basename(target.where.path));
+          await openFileInPanel(target.where, target.bytes);
+          await opened;
+        });
     } catch (e) {
       if (out) out.appendLine(`opening ${n.model} failed — ${(e && e.stack) || e}`);
       showError(`Could not open ${n.model}: ${(e && e.message) || e}`);
