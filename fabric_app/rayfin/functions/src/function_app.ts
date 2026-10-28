@@ -188,7 +188,7 @@ udf.func(
         step = 'the setting MODEL_URL (the model)';
         model = await readModel(ctx, token);
         names = modelSources(model);
-        step = 'the model's tables';
+        step = "the model's tables";
       }
       const bad = names.filter(t => !TABLE.test(t));
       if (!names.length || bad.length) throw new Error(`expected schema.table, comma-separated; got ${bad.join(', ') || 'none'}`);
