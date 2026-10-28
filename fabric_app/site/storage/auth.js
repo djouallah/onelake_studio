@@ -35,7 +35,7 @@ function createRayfinAuth({ client = (rayfin, config) => new rayfin.RayfinClient
   // shown, even empty, before sign-in. The colours are the page's.
   const _gate = document.createElement('div');
   _gate.style.cssText = 'position:fixed;inset:0;z-index:9999;display:flex;flex-direction:column;gap:1.2rem;align-items:center;justify-content:center;background:var(--bg, #0a0c10);color:var(--muted, #9aa3b2);text-align:center;padding:2rem;font-family:system-ui,sans-serif;line-height:1.55';
-  _gate.textContent = 'Loading…';
+  _gate.textContent = 'Signing in to Fabric…';
   document.body.append(_gate);
 
   // One init, whoever asks first.

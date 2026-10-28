@@ -330,7 +330,7 @@ export function createDataSource({ onStatus = () => {}, onProgress = () => {}, t
 
   async function init() {
     await auth.signIn();
-    onStatus("Loading DuckDB WASM...");
+    onStatus("Starting the query engine (DuckDB, in this browser)…");
     // The function's answer (the model, where its tables are, the SAS), the tables' sizes and
     // their plans, while DuckDB's bundle loads: none of them needs it.
     const ready = catalog.open([]).then(async answer => {
@@ -387,7 +387,7 @@ importScripts("${bundle.mainWorker}");`], { type: "text/javascript" }));
       reject(new Error('no local store in this browser (OPFS with shared access handles, Chrome or Edge 121+)')), STORE_WAIT))]);
     logStore('at start').catch(() => {});
 
-    onStatus('Locating the tables in the catalog...');
+    onStatus('Reading the model and its tables from the lakehouse…');
     await ready;
     renewLater([...new Set([...tables.values()].map(t => t.source))]);
     // The page's CSV export runs its SQL on a connection of its own: the first engine's, with

@@ -23,6 +23,31 @@ const status = (s, kind = "") => {
   el.className = kind === "error" ? "error" : "";
 };
 
+// Until Explore is on screen: the step under way, centred, and the seconds since the page
+// opened, so a slow start (a cold function, DuckDB's first download) never looks broken.
+const t0 = performance.now();
+const boot = {
+  el: () => document.getElementById("boot"),
+  step(s) { const b = this.el(); if (b && s) b.querySelector(".step").textContent = s; },
+  tick: setInterval(() => {
+    const b = document.getElementById("boot");
+    if (b) b.querySelector(".elapsed").textContent = `${Math.round((performance.now() - t0) / 1000)} s`;
+  }, 500),
+  fail(s) { clearInterval(this.tick); const b = this.el(); if (b) { b.classList.add("error"); this.step(s); } },
+  done() { clearInterval(this.tick); this.el()?.remove(); },
+};
+
+// ECharts, off the critical path: loaded beside everything else, waited for only when a
+// chart is drawn.
+const echartsReady = new Promise((resolve, reject) => {
+  const s = Object.assign(document.createElement("script"),
+    { src: "https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js", async: true });
+  s.onload = () => resolve(window.echarts);
+  s.onerror = () => reject(new Error("the chart library could not be loaded"));
+  document.head.append(s);
+});
+echartsReady.catch(() => {});
+
 // An Arrow result as Explore reads one: the column names, the rows as plain objects.
 const resultOf = table => ({
   fields: table.schema.fields.map(f => f.name),
@@ -41,21 +66,27 @@ function download(name, text) {
 export async function start() {
   try {
     const first = await fetch(new URL("./explore.json" + v, import.meta.url)).then(r => (r.ok ? r.json() : null), () => null);
-    const data = createDataSource({ onStatus: status, onProgress: p => status(p ? (p.detail || p.label) : "") });
+    const data = createDataSource({
+      onStatus: s => { boot.step(s); status(boot.el() ? "" : s); },
+      onProgress: p => status(p ? (p.detail || p.label) : ""),
+    });
+    boot.step("Signing in to Fabric…");
     await data.init();
+    boot.step("Building Explore…");
     const doc = data.model();
     const bim = Array.isArray(doc.datasets) ? ossieToTmsl(doc) : doc;
     // What SQL calls the model: its own name when SQL can write it bare, else "model".
     const name = /^[A-Za-z_]\w*$/.test(String(doc.name ?? "")) ? doc.name : "model";
     document.title = `${doc.name || name} · Explore`;
     status("");
+    boot.done();
     mountExplore(document.getElementById("explore"), {
       name, title: String(doc.name || name), tmsl: tmslOf(bim),
       compiler: createCompiler(tmslToModel(bim), { tableSource: t => `v_${t.name}`, castOutput: EXPLORE_CASTS }),
       run: async (sql, dax) => resultOf(await data.query(sql, dax)),
       // data.js logs every query itself, with its wait and its engine.
       hostLogs: true,
-      echarts: async () => window.echarts,
+      echarts: () => echartsReady,
       saveText: download,
       loadState: key => { try { return JSON.parse(localStorage.getItem(key)) ?? first; } catch { return first; } },
       saveState: (key, s) => { try { localStorage.setItem(key, JSON.stringify(s)); } catch {} },
@@ -68,6 +99,7 @@ export async function start() {
     data.attachAgg();
   } catch (e) {
     console.error(e);
-    status(`Error: ${e?.message || e}`, "error");
+    if (boot.el()) boot.fail(`Error: ${e?.message || e}`);
+    else status(`Error: ${e?.message || e}`, "error");
   }
 }

@@ -30,12 +30,28 @@
   #status { position: fixed; right: 1rem; bottom: 0.6rem; color: var(--muted); font-size: 0.78rem; }
   #status.error { color: var(--err); }
   footer { padding: 0.5rem var(--gutter) 1rem; color: var(--faint); font-size: 0.72rem; }
+  /* What the page is doing until Explore is on screen (app.js): the step, and how long. */
+  #boot { min-height: 70vh; display: flex; flex-direction: column; gap: 0.9rem; align-items: center; justify-content: center;
+          color: var(--muted); text-align: center; padding: 2rem; }
+  #boot .spin { width: 28px; height: 28px; border: 3px solid var(--border); border-top-color: var(--accent);
+                border-radius: 50%; animation: spin 0.9s linear infinite; }
+  #boot .step { color: var(--text); font-size: 1rem; }
+  #boot .elapsed { color: var(--faint); font-size: 0.8rem; font-variant-numeric: tabular-nums; }
+  #boot.error .spin { display: none; }
+  #boot.error .step { color: var(--err); }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) { #boot .spin { animation-duration: 3s; } }
 </style>
-<script src="https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js"></script>
 </head>
 <body>
-<main id="explore"></main>
-<div id="status" role="status" aria-live="polite">Starting…</div>
+<main id="explore">
+  <div id="boot" role="status" aria-live="polite">
+    <div class="spin"></div>
+    <div class="step">Starting…</div>
+    <div class="elapsed"></div>
+  </div>
+</main>
+<div id="status" role="status" aria-live="polite"></div>
 <footer>build __BUILD__ · Explore, exported from OneLake Studio</footer>
 <script type="module">import { start } from "./app.js"; start();</script>
 </body>
