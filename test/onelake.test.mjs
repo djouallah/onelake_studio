@@ -130,6 +130,40 @@ test("a Delta table's history: one listing and a page of commits, each file read
   } finally { await done(); }
 });
 
+test("a Delta table with no crc reads the current _last_checkpoint for each new version", async () => {
+  const files = { "_last_checkpoint": JSON.stringify({ version: 10 }) };
+  const { ol, catalog, done } = await deltaFixture(files, 11);
+  const seen = [];
+  const run = async sql => { seen.push(/_delta_log\/(\d+)\.checkpoint/.exec(sql)[1]); return { rows: [] }; };
+  try {
+    const t = { schema: "dbo", table: "t" };
+    assert.equal((await ol.deltaState(lh, t, { run })).asOf, 10);
+    // A new version converts, and a new checkpoint is written.
+    files["_last_checkpoint"] = JSON.stringify({ version: 20 });
+    const xt = JSON.stringify({ sourceTableFormat: "DELTA", sourceIdentifier: "21" });
+    catalog.loadTable = async () => ({ metadata: metadata({ properties: { XTABLE_METADATA: xt } }), metadataLocation: LOC });
+    await ol.table(lh, t, { fresh: true });
+    assert.equal((await ol.deltaState(lh, t, { run })).asOf, 20);
+    assert.deepEqual(seen, [pad20(10), pad20(20)]);
+  } finally { await done(); }
+});
+
+test("a kept commit listing that names a commit since cleaned up is listed again", async () => {
+  const files = {};
+  for (let v = 0; v < 15; v++) files[`${pad20(v)}.json`] = `{"commitInfo":{"timestamp":${v},"operation":"WRITE"}}\n`;
+  const { ol, catalog, done } = await deltaFixture(files, 14);
+  try {
+    const t = { schema: "dbo", table: "t" };
+    await ol.deltaHistory(lh, t);                        // keeps the listing; reads 14..5
+    delete files[`${pad20(0)}.json`];                    // log retention removes version 0
+    catalog.calls.length = 0;
+    const h = await ol.deltaHistory(lh, t, { skip: 10 });
+    assert.equal(h.total, 14);
+    assert.deepEqual(h.entries.map(e => e.version), ["4", "3", "2", "1"]);
+    assert.equal(catalog.calls.filter(c => c.startsWith("list")).length, 1, catalog.calls.join(", "));
+  } finally { await done(); }
+});
+
 test("an Iceberg table has no Delta log to read", async () => {
   const ol = createOneLake({ catalog: fakeCatalog(), store: createStore({ dir: null }) });
   await assert.rejects(() => ol.deltaState(lh, { schema: "dbo", table: "a" }), /not written as Delta/);

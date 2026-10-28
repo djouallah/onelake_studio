@@ -116,9 +116,11 @@ async function readJson(readText, path) {
  * names (`asOf` says which version that describes). Never a walk through the commits.
  * @param {object} io
  * @param {(path: string) => Promise<string>} io.readText  an immutable log file's text
+ * @param {(path: string) => Promise<string>} [io.readFresh]  a file that is rewritten
+ *   (_last_checkpoint), read past any cache
  * @param {(paths: string[]) => Promise<{metaData: object|null, protocol: object|null}>} io.readCheckpoint
  */
-async function readDeltaState({ readText, readCheckpoint }, dir, version) {
+async function readDeltaState({ readText, readFresh = readText, readCheckpoint }, dir, version) {
   const logDir = logDirOf(dir);
   const crc = await readJson(readText, `${logDir}/${pad(version)}.crc`);
   if (crc && crc.metadata && crc.protocol) {
@@ -129,8 +131,9 @@ async function readDeltaState({ readText, readCheckpoint }, dir, version) {
     };
   }
   // No crc: the checkpoint _last_checkpoint names. It can be a few versions older than
-  // `version`, and says so; metadata rarely changes between the two.
-  const last = await readJson(readText, `${logDir}/_last_checkpoint`);
+  // `version`, and says so; metadata rarely changes between the two. Unlike every other
+  // file here it is rewritten at each checkpoint, so it is never read from a cache.
+  const last = await readJson(readFresh, `${logDir}/_last_checkpoint`);
   const cp = last && num(last.version);
   if (cp == null) {
     return { version, asOf: null, source: null, ...tableFacts(null, null),

@@ -232,7 +232,9 @@ function createOneLake({ catalog, store, prefetchEnabled = () => true, onHit = (
       if (!bytes) { bytes = await catalog.readBytes(at.workspace, path); await store.putBlob(k, bytes); }
       return new TextDecoder().decode(bytes);
     };
-    return { meta, at, readText };
+    // The one log file that is rewritten in place: _last_checkpoint.
+    const readFresh = async path => new TextDecoder().decode(await catalog.readBytes(at.workspace, path));
+    return { meta, at, readText, readFresh };
   }
 
   function checkpointReader(at, readText, run) {
@@ -266,13 +268,14 @@ function createOneLake({ catalog, store, prefetchEnabled = () => true, onHit = (
    * after: it is kept per version, and a version never changes.
    */
   async function deltaState(lh, t, { run } = {}) {
-    const { meta, at, readText } = await deltaTarget(lh, t);
+    const { meta, at, readText, readFresh } = await deltaTarget(lh, t);
     const version = meta.stats && meta.stats.deltaVersion;
     if (version == null) throw new Error('the Iceberg metadata does not say which Delta version it was converted from');
     const k = keys.deltaState(at, version);
     const kept = await store.peek(k);
     if (kept) return { ...kept, cached: true };
-    const s = await deltalog.readDeltaState({ readText, readCheckpoint: checkpointReader(at, readText, run) }, at.dir, version);
+    const s = await deltalog.readDeltaState({ readText, readFresh, readCheckpoint: checkpointReader(at, readText, run) },
+      at.dir, version);
     await store.put(k, s);
     return { ...s, cached: false };
   }
@@ -291,10 +294,20 @@ function createOneLake({ catalog, store, prefetchEnabled = () => true, onHit = (
     const newest = r.value.length ? r.value[0].version : -1;
     const behind = meta.stats && meta.stats.deltaVersion != null && newest < meta.stats.deltaVersion;
     if (r.cached && (behind || r.at < refreshedSince(lh))) r = await load(true);
+    let entries;
+    try {
+      if (!r.value.length) throw new Error('the Delta log has no commits');
+      entries = await deltalog.readHistoryPage(readText, at.dir, r.value, skip);
+    } catch (e) {
+      // A kept listing can name commits log retention has deleted since: list again, once.
+      if (!r.cached || !(e.status === 404 || /HTTP 404/.test(e.message || '') || !r.value.length)) throw e;
+      r = await load(true);
+      if (!r.value.length) throw new Error('the Delta log has no commits');
+      entries = await deltalog.readHistoryPage(readText, at.dir, r.value, skip);
+    }
     const commits = r.value;
-    if (!commits.length) throw new Error('the Delta log has no commits');
     return {
-      entries: await deltalog.readHistoryPage(readText, at.dir, commits, skip),
+      entries,
       total: commits.length,
       latest: commits[0].version,
       oldest: commits[commits.length - 1].version,

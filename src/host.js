@@ -66,7 +66,7 @@ function createHostMethods({ onelake, engine, onStatus = () => {}, saveFile = nu
     'onelake.deltaState': x => onelake.deltaState(lhOf(x), tableOf(x), { run: sql => engine.call('query', [sql]) }),
     'onelake.deltaHistory': x => onelake.deltaHistory(lhOf(x), tableOf(x),
       { skip: Number.isSafeInteger(x.skip) && x.skip > 0 ? x.skip : 0 }),
-    'onelake.peek': x =>onelake.peek(lhOf(x), tableOf(x), sql => engine.call('query', [sql])),
+    'onelake.peek': x => onelake.peek(lhOf(x), tableOf(x), sql => engine.call('query', [sql])),
     // The identifier to select a table from. The page names the table; the metadata
     // location comes from the host's own store, never from the page.
     'onelake.openTable': async x => {

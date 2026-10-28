@@ -76,6 +76,16 @@ test("without a crc the last checkpoint is read, and never the commits", async (
   assert.equal(d.id, "m1");
 });
 
+test("_last_checkpoint is rewritten at every checkpoint, so it is read fresh", async () => {
+  const { io, reads } = fakeLog({ "_last_checkpoint": JSON.stringify({ version: 20 }) });
+  const fresh = [];
+  const d = await readDeltaState({ ...io, readFresh: async path => { fresh.push(leaf(path)); return io.readText(path); } },
+    DIR, 21);
+  assert.deepEqual(fresh, ["_last_checkpoint"]);
+  assert.equal(d.asOf, 20);
+  assert.equal(reads.at(-1), `checkpoint:${pad(20)}.checkpoint.parquet`);
+});
+
 test("a multi-part checkpoint is read as all of its parts", async () => {
   const { io, reads } = fakeLog({ "_last_checkpoint": JSON.stringify({ version: 9, parts: 2 }) });
   await readDeltaState(io, DIR, 9);
