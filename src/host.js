@@ -41,12 +41,15 @@ const ENGINE_METHODS = new Set(['query', 'stream', 'cancel', 'info']);
 function createHostMethods({ onelake, engine, onStatus = () => {}, saveFile = null, semviews = null, exportExplore = null }) {
   const views = () => { if (!semviews) throw new Error('semantic views are not available here'); return semviews; };
   return {
-    // Export to Fabric (exportapp.js): the model's text, its file's name and the Explore
-    // shelves. The host asks where the local copy goes and publishes it.
+    // Export to Fabric (exportapp.js): the model's text (to check it), where it lives in
+    // OneLake (the app reads it there), its name and the Explore shelves. The host asks where
+    // the local copy goes and publishes it.
     'fabric.exportExplore': async x => {
       if (!exportExplore) throw new Error('Export to Fabric is not available here');
+      if (!x.workspace || !x.path) throw new Error('Export to Fabric needs a model that is a OneLake file');
       return exportExplore({ file: String(x.file || 'model'), name: String(x.name || 'model'),
-                             text: String(x.text ?? ''), state: x.state && typeof x.state === 'object' ? x.state : null });
+                             text: String(x.text ?? ''), workspace: String(x.workspace), path: String(x.path),
+                             state: x.state && typeof x.state === 'object' ? x.state : null });
     },
     // Semantic views (semviews.js): the ones this machine keeps, with their .bim text, and
     // CREATE / DROP SEMANTIC VIEW carried out — dax-sql (in the page) has already checked

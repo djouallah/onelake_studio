@@ -15,8 +15,9 @@ import { isDocResult, textLinesDoc, fileExt, isTextExt, escapeHtml, basename,
 import { renderDocument } from './docview.js';
 // Static too, and as cheap: the DAX compiler it runs is imported on the first model only.
 import * as semantic from './semantic.js';
-// A .bim's model view. Explore's chart library is imported when Explore first opens.
+// A .bim's model view. Explore's chart library is loaded when the Pivot first opens.
 import { mountExplore } from './explore/view.js';
+import { PINS, npmFile } from './cdn.js';
 import { tmslOf } from './explore/model.js';
 import { vscodeApi } from './vscode-api.js';
 
@@ -245,9 +246,21 @@ async function ossieText(file) {
 }
 
 // A .bim (or an Ossie .yaml) is a semantic model, not a document: it opens as its model view
-// (explore/view.js) in place of the editor and the results — Model, SQL, Explore — and is
+// (explore/view.js) in place of the editor and the results — Model, Pivot, Logs — and is
 // registered (semantic.js) so SQL anywhere, the main editor's included, can name it.
 let modelView = null;
+
+// ECharts' own minified build, as a classic script (window.echarts), from the vendored copy.
+// jsDelivr's +esm repackaging of it draws an empty canvas.
+let echartsP = null;
+const loadEcharts = () => (echartsP ??= new Promise((resolve, reject) => {
+  if (window.echarts) return resolve(window.echarts);
+  const s = document.createElement('script');
+  s.src = npmFile(PINS.echarts, 'dist/echarts.min.js');
+  s.onload = () => window.echarts ? resolve(window.echarts) : reject(new Error('echarts.min.js defined no echarts'));
+  s.onerror = () => reject(new Error(`could not load ${s.src}`));
+  document.head.append(s);
+}).catch(e => { echartsP = null; throw e; }));
 function closeModelView() {
   if (!modelView) return;
   modelView.destroy();
@@ -286,17 +299,24 @@ async function openModelView(file, text = null, { fromOneLake = text == null } =
     $('modelView').closest('section').classList.add('modelOpen');
     $('modelView').hidden = false;
     modelView = mountExplore($('modelView'), {
-      name: m.name, file: m.file, tmsl: tmslOf(m.bim), exploreCompiler: m.exploreCompiler, sample: m.sample,
-      rewrite: semantic.rewrite,
+      name: m.name, title: m.file, tmsl: tmslOf(m.bim), compiler: m.exploreCompiler,
       run: runModelSql,
+      echarts: loadEcharts,
       setStatus,
       saveText: (name, text) => engine.saveText(name, text),
       loadState: viewState.get,
       saveState: viewState.set,
-      // Explore as a Fabric app of its own (src/exportapp.js): its tables come from the one
-      // lakehouse the model names, so a model that names none, or several, has no button.
-      exportToFabric: semantic.lakehousesOf(m.bim).length === 1
-        ? state => engine.exportExplore({ file: file.name, name: m.name, text: bim, state })
+      // The native engine set the profile's metrics before it locked its configuration, and
+      // the panel's CSP runs no inline script (DuckDB's HTML plan): its text plan instead.
+      profileSet: false,
+      htmlPlan: false,
+      logsNote: 'This panel only — kept in memory, nothing is stored. The extension reads OneLake itself; its reads are in the Read Log.',
+      // Explore as a Fabric app of its own (src/exportapp.js). The app reads this file, in
+      // place, at run time, and the tables of the one lakehouse the model names: a model that
+      // is not a OneLake file, or names no lakehouse or several, has no button.
+      exportToFabric: fromOneLake && semantic.lakehousesOf(m.bim).length === 1
+        ? state => engine.exportExplore({ file: file.name, name: m.name, text: bim, state,
+                                          workspace: lakehouse.workspace, path: file.path })
         : undefined,
     });
     setStatus(`${file.name} is the semantic model ${m.name}` +

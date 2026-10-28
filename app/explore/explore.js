@@ -29,10 +29,13 @@ const MARKS = [['auto', 'Automatic'], ['table', 'Table'], ['highlight', 'Highlig
 const SHELVES = [['rows', 'Rows'], ['cols', 'Columns'], ['values', 'Values'], ['filters', 'Filters']];
 // A column on Values is summarised, as Power BI does it: a number summed, anything else
 // counted; its chip changes the summary. On the shelf it is "\0sum\0Table.Column".
-const AGGS = [['sum', 'Sum'], ['avg', 'Average'], ['median', 'Median'], ['min', 'Min'], ['max', 'Max'],
+// The summaries SQL over the model has (dax-sql's sql.js: SUM, AVG, MIN, MAX, COUNT, COUNT
+// DISTINCT), so no median.
+const AGGS = [['sum', 'Sum'], ['avg', 'Average'], ['min', 'Min'], ['max', 'Max'],
   ['count', 'Count'], ['distinct', 'Count (distinct)']];
 const AGG_LABEL = Object.fromEntries(AGGS);
-const NUMBERS_ONLY = new Set(['sum', 'avg', 'median']);
+const AGG_SQL = { sum: 'SUM', avg: 'AVG', min: 'MIN', max: 'MAX', count: 'COUNT', distinct: 'COUNT' };
+const NUMBERS_ONLY = new Set(['sum', 'avg']);
 const aggId = (agg, col) => `\u0000${agg}\u0000${col}`;
 export const aggOf = id => { const m = /^\u0000(\w+)\u0000([\s\S]+)$/.exec(id); return m ? { agg: m[1], col: m[2] } : null; };
 const defaultAgg = f => f.type === 'number' ? 'sum' : 'count';
@@ -112,6 +115,60 @@ export function buildQuery(s, { cap = CAP, today = localToday() } = {}) {
   return q;
 }
 
+// The query as a SELECT over the model, in dax-sql's SQL: the model's columns
+// ("table"."column") and its measures as AGG("name"), a summarised column as SUM(…) and its
+// kin, FROM the model, WHERE, GROUP BY ALL or ROLLUP for a total (GROUPING names it), ORDER BY,
+// FETCH FIRST n ROWS WITH TIES. What Explore runs and what Show SQL shows: the compiler builds
+// the same plan from it as from DAX. `column(id)`: the model's column of an id, { table, name },
+// or null (a measure); `from`: the model's name in SQL.
+// Ported from analytics-as-code's Explore (modelSql), with quoted names and summaries.
+const qid = s => `"${String(s).replace(/"/g, '""')}"`;
+const sqlStr = v => `'${String(v).replace(/'/g, "''")}'`;
+const sqlVal = v => v == null ? 'NULL' : typeof v === 'boolean' ? (v ? 'TRUE' : 'FALSE') : typeof v === 'number' ? String(v)
+  : /^\d{4}-\d{2}-\d{2}$/.test(v) ? `DATE ${sqlStr(v)}` : sqlStr(v);
+export function modelSql(q, column, from = 'model') {
+  const ref = id => { const c = column(id); if (!c) throw new Error(`${id} is not a column of the model`); return `${qid(c.table)}.${qid(c.name)}`; };
+  const isColumn = x => typeof x === 'string' && !!column(x);
+  const expr = x => {
+    if (isColumn(x)) return ref(x);
+    if (typeof x === 'string') return `AGG(${qid(x)})`;
+    const [agg, col] = Object.entries(x)[0];
+    return `${AGG_SQL[agg]}(${agg === 'distinct' ? 'DISTINCT ' : ''}${ref(col)})`;
+  };
+  const cond = ([col, op, ...a]) => {
+    const c = ref(col);
+    const named = vs => vs.filter(v => v != null), blank = vs => vs.some(v => v == null);
+    const list = vs => `(${vs.map(sqlVal).join(', ')})`;
+    switch (op) {
+      case 'between': return `${c} BETWEEN ${sqlVal(a[0])} AND ${sqlVal(a[1])}`;
+      case 'blank': return `${c} IS NULL`;
+      case 'notBlank': return `${c} IS NOT NULL`;
+      case 'in': {
+        const n = named(a[0]);
+        if (!blank(a[0])) return `${c} IN ${list(n)}`;
+        return n.length ? `(${c} IS NULL OR ${c} IN ${list(n)})` : `${c} IS NULL`;
+      }
+      case 'notIn': {
+        const n = named(a[0]);
+        return [...(n.length ? [`(${c} NOT IN ${list(n)} OR ${c} IS NULL)`] : []), ...(blank(a[0]) ? [`${c} IS NOT NULL`] : [])].join(' AND ');
+      }
+      default: return `${c} ${op} ${sqlVal(a[0])}`;
+    }
+  };
+  const rollup = q.totals ?? {}, rolled = Object.values(rollup).flat();
+  const items = [...Object.entries(q.select).map(([n, x]) => `${expr(x)} AS ${qid(n)}`),
+    ...Object.entries(rollup).map(([n, cols]) => `GROUPING(${ref(cols[0])}) AS ${qid(n)}`)];
+  const keys = Object.values(q.select).filter(isColumn).filter(c => !rolled.includes(c)).map(ref);
+  const group = rolled.length
+    ? `GROUP BY ${[...keys, ...Object.values(rollup).map(cols => `ROLLUP(${cols.length > 1 ? `(${cols.map(ref).join(', ')})` : ref(cols[0])})`)].join(', ')}`
+    : Object.values(q.select).some(isColumn) ? 'GROUP BY ALL' : '';
+  const order = (q.orderBy ?? []).map(o => Array.isArray(o) ? `${qid(o[0])} ${o[1].toUpperCase()}` : qid(o));
+  return [`SELECT ${items.join(', ')}`, `FROM ${from}`,
+    q.where?.length ? `WHERE ${q.where.map(cond).join('\n  AND ')}` : '', group,
+    order.length ? `ORDER BY ${order.join(', ')}` : '',
+    q.top != null ? `FETCH FIRST ${q.top} ROWS WITH TIES` : ''].filter(Boolean).join('\n');
+}
+
 // Order of the keys of an axis: numbers as numbers, text as a person sorts it.
 const compare = (a, b) => {
   for (let i = 0; i < a.length; i++) {
@@ -174,21 +231,23 @@ const label = a => a.length ? a.map(v => v == null ? '(blank)' : String(v)).join
 
 // `root`: the element the page is built in. `ctx`:
 //   model()          the model, TMSL (a promise)
-//   run(q)           the rows of a query, as objects keyed by the select's names
-//   toDax(q)         the query's DAX (shown under the view)
-//   csv(q)           a CSV of the query's rows
+//   name             the model's name in SQL (FROM <name>; 'model' in the Fabric app)
+//   run(sql, where)  the rows of a SELECT over the model (modelSql), as objects keyed by the
+//                    select's names; `where`: its conditions
 //   chart(el)        an ECharts instance on el, in the page's theme
 //   palette()        the colours of series, in order
 //   css(name)        a CSS token's value (the chart's tints)
 //   loadState()      the shelves kept from the last visit (or null)
 //   saveState(s)     keep the shelves for the next visit
-//   exportToFabric(state)  (optional) the Export to Fabric button: none when it is not given
 export function createExplorer(root, ctx) {
   let fields = null, state = load(), drag = null, seq = 0, timer = null, result = null, pop = null;
   let popTimer = null, destroyed = false;
   // A column's values, as a filter lists them to tick: the same query whatever else is on
   // the shelves, and the model is read only — asked once per field for the explorer's life.
   const valueLists = new Map();   // field id -> values
+  // A query object as the SELECT over the model that runs: a column is the model's own.
+  const columnOf = id => { const f = fields?.byId.get(id); return f && f.kind === 'column' ? { table: f.table, name: f.name } : null; };
+  const sqlOf = q => modelSql(q, columnOf, ctx.name || 'model');
 
   function load() {
     try {
@@ -211,14 +270,12 @@ export function createExplorer(root, ctx) {
   const sort = el('select', { 'aria-label': 'Sort' }, el('option', { value: 'fields' }, 'Sort by fields'),
     el('option', { value: 'desc' }, 'Sort by first value ↓'));
   const info = el('span', { class: 'ex-info' });
-  const exportBtn = ctx.exportToFabric ? el('button', { type: 'button', class: 'btn-explore',
-    title: 'Publish this Explore, on this model, as a Fabric app (a local copy is written too)', onclick: exportApp }, 'Export to Fabric') : null;
   const tools = el('div', { class: 'ex-tools' }, marks,
     el('label', { class: 'ex-check' }, totals, 'Totals'), sort,
     el('button', { type: 'button', class: 'btn-explore', title: 'Swap rows and columns', onclick: () => {
       [state.rows, state.cols] = [state.cols, state.rows]; changed(); } }, '⇄ Swap'),
     el('button', { type: 'button', class: 'btn-explore', onclick: () => { state = { ...EMPTY(), mark: state.mark }; changed(); } }, 'Clear'),
-    el('button', { type: 'button', class: 'btn-explore', onclick: download }, 'CSV'), exportBtn, info);
+    info);
   const table = el('div', { class: 'ex-table' });
   const chartBox = el('div', { class: 'ex-chart' });
   // Over the view while a query runs: a model query reads OneLake and can take a while,
@@ -227,9 +284,7 @@ export function createExplorer(root, ctx) {
   const busy = el('div', { class: 'ex-busy', hidden: true, role: 'status', 'aria-live': 'polite' },
     el('span', { class: 'ex-spinner', 'aria-hidden': 'true' }), busyText);
   const out = el('div', { class: 'ex-out' }, table, chartBox, busy);
-  const daxText = el('pre');
-  const dax = el('details', { class: 'ex-dax' }, el('summary', {}, 'DAX'), daxText);
-  root.replaceChildren(el('div', { class: 'ex' }, pane, el('div', { class: 'ex-main' }, shelves, tools, out, dax)));
+  root.replaceChildren(el('div', { class: 'ex' }, pane, el('div', { class: 'ex-main' }, shelves, tools, out)));
 
   search.addEventListener('input', renderFields);
   totals.addEventListener('change', () => { state.totals = totals.checked; changed(); });
@@ -475,7 +530,7 @@ export function createExplorer(root, ctx) {
       try {
         if (!values) {
           values = valueLists.get(fd.id) ??
-            (await ctx.run({ select: { v: fd.id }, orderBy: ['v'], top: 1000 })).map(r => r.v);
+            (await ctx.run(sqlOf({ select: { v: fd.id }, orderBy: ['v'], top: 1000 }), [])).map(r => r.v);
           valueLists.set(fd.id, values);
         }
       } catch (e) { if (!stale()) detail.replaceChildren(el('div', { class: 'ex-error' }, e.message)); return; }
@@ -529,12 +584,11 @@ export function createExplorer(root, ctx) {
     try {
       q = buildQuery(state);
     } catch (e) { running(false); result = null; info.textContent = e.message; info.className = 'ex-info ex-error'; draw(); return; }
-    if (!q) { running(false); result = null; daxText.textContent = ''; info.textContent = ''; draw(); return; }
-    daxText.textContent = ctx.toDax(q);
+    if (!q) { running(false); result = null; info.textContent = ''; draw(); return; }
     info.className = 'ex-info';
     running(true);
     try {
-      let rows = await ctx.run(q);
+      let rows = await ctx.run(sqlOf(q), q.where ?? []);
       if (my !== seq) return;
       // The cap counts the total rows too, and they sort first (their keys are blank), so a
       // capped pivot can be all totals and no detail. Totals of a view that shows only part
@@ -542,8 +596,7 @@ export function createExplorer(root, ctx) {
       let note = '';
       if (rows.length >= CAP && q.totals) {
         q = buildQuery({ ...state, totals: false });
-        daxText.textContent = ctx.toDax(q);
-        rows = await ctx.run(q);
+        rows = await ctx.run(sqlOf(q), q.where ?? []);
         if (my !== seq) return;
         note = ' — totals left out';
       }
@@ -563,28 +616,6 @@ export function createExplorer(root, ctx) {
       info.textContent = e.cancelled ? 'Stopped.'
         : e.message?.includes('Out of Memory') ? 'Out of memory: add a filter.' : `Error: ${e.message}`;
       draw();
-    }
-  }
-  async function download() {
-    try {
-      const q = buildQuery(state, { cap: 0 });
-      if (q) await ctx.csv(q);
-    } catch (e) { info.className = 'ex-info ex-error'; info.textContent = `CSV: ${e.message}`; }
-  }
-  // The host does the work (a folder, a build, the Fabric REST calls) and says how it went;
-  // the shelves on screen go with it, as the app's first view.
-  async function exportApp() {
-    exportBtn.disabled = true;
-    exportBtn.textContent = 'Exporting…';
-    try {
-      const said = await ctx.exportToFabric(JSON.parse(JSON.stringify(state)));
-      if (said) { info.className = 'ex-info'; info.textContent = said; }
-    } catch (e) {
-      info.className = 'ex-info ex-error';
-      info.textContent = `Export to Fabric: ${e.message}`;
-    } finally {
-      exportBtn.disabled = false;
-      exportBtn.textContent = 'Export to Fabric';
     }
   }
 
@@ -771,6 +802,12 @@ export function createExplorer(root, ctx) {
     ready,
     // The theme changed: the chart is drawn again in the new one.
     redraw: () => { if (fields) draw(); },
+    // The shelves as one SELECT over the model, and its conditions, or null. As the pivot runs
+    // it by default (its first CAP rows: what Show SQL fills its box with, so its text is the
+    // query the pivot ran); `cap: 0` for all its rows (Download CSV).
+    query: ({ cap = CAP } = {}) => { try { const q = fields && buildQuery(state, { cap }); return q && { sql: sqlOf(q), where: q.where ?? [] }; } catch { return null; } },
+    // The shelves as they are (Export to Fabric: the app's first view).
+    state: () => JSON.parse(JSON.stringify(state)),
     // The view is going: its timers stop, its popup goes, and a query still running finds
     // its sequence moved on and draws nothing.
     destroy() {

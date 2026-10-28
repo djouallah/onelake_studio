@@ -116,7 +116,9 @@ function assertReadOnly(sql) {
   const s = text.trim().replace(/;+\s*$/, '').trim();
   if (!s) refuse('this statement is empty');
   if (isRead(s)) return;
-  const explained = /^explain\s+(analy[sz]e\s+)?([\s\S]*)$/i.exec(s);
+  // EXPLAIN [ANALYZE] q, or EXPLAIN (ANALYZE, FORMAT json|html) q — Explore's Show plan. The
+  // option list is EXPLAIN's own words only; what follows must still be a read.
+  const explained = /^explain\s*(?:\(\s*((?:analy[sz]e|format\s+(?:json|html|text|graphviz))(?:\s*,\s*(?:analy[sz]e|format\s+(?:json|html|text|graphviz)))*)\s*\)\s*|analy[sz]e\s+)?([\s\S]*)$/i.exec(s);
   if (explained) {
     if (isRead(explained[2])) return;
     refuse('EXPLAIN runs only over a query');

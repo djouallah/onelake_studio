@@ -21,6 +21,11 @@
 // =============================================================================
 
 const { DuckDBInstance } = require('@duckdb/node-api');
+
+// The metrics Explore's profile reads (app/explore/profile.js keeps the same list).
+const PROFILE_METRICS = ['LATENCY', 'OPERATOR_TIMING', 'OPERATOR_CARDINALITY', 'OPERATOR_ROWS_SCANNED', 'OPERATOR_TYPE',
+  'OPERATOR_NAME', 'EXTRA_INFO', 'CUMULATIVE_ROWS_SCANNED', 'PLANNER', 'PHYSICAL_PLANNER', 'ALL_OPTIMIZERS',
+  'SYSTEM_PEAK_BUFFER_MEMORY'];
 const fs = require('node:fs');
 const fsp = require('node:fs/promises');
 const { join } = require('node:path');
@@ -289,6 +294,12 @@ function createEngineHost({ extensionDir, onLog = () => {}, onWarn = () => {}, g
       // (cache_httpfs, enableFileCache below) is the one that outlives the process.
       try { await conn.run('SET external_file_cache_spill = true;'); }
       catch (e) { onWarn(`could not let DuckDB's file cache spill to disk — ${e.message}`); }
+
+      // What Explore's Show plan measures (app/explore/profile.js, PROFILE_METRICS): set
+      // here, for every connection, because the lockdown below freezes the configuration and
+      // the page's EXPLAIN (ANALYZE, FORMAT json) cannot set it itself.
+      try { await conn.run(`SET GLOBAL custom_profiling_settings = ${sqlStr(JSON.stringify(Object.fromEntries(PROFILE_METRICS.map(m => [m, 'true']))))};`); }
+      catch (e) { onWarn(`could not set the profile's metrics — ${e.message}`); }
 
       // THE LOCKDOWN. This engine runs SQL that a webview sends it, with the user's files
       // and the user's OneLake token within reach — so whatever the page says, DuckDB may
@@ -647,4 +658,4 @@ function createEngineHost({ extensionDir, onLog = () => {}, onWarn = () => {}, g
            get capabilities() { return capabilities; } };
 }
 
-module.exports = { createEngineHost, jsonSafe, isOneLakeMetadata };
+module.exports = { createEngineHost, jsonSafe, isOneLakeMetadata, PROFILE_METRICS };

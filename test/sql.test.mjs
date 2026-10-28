@@ -29,6 +29,9 @@ const ALLOWED = [
   "WITH RECURSIVE x(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM x WHERE n < 3) SELECT * FROM x",
   "EXPLAIN SELECT 1",
   "EXPLAIN ANALYZE SELECT 1",
+  // Explore's Show plan: the profile and the tree.
+  "EXPLAIN (ANALYZE, FORMAT json) SELECT 1",
+  "EXPLAIN (FORMAT html) WITH x AS (SELECT 1) SELECT * FROM x",
   "DESCRIBE t",
   "SUMMARIZE t",
   "FROM t",
@@ -39,6 +42,8 @@ const ALLOWED = [
 const REFUSED = [
   "COPY (SELECT 1) TO 'abfss://ws@onelake.dfs.fabric.microsoft.com/lh.Lakehouse/Files/x.csv'",
   "EXPLAIN ANALYZE COPY (SELECT 1) TO 'abfss://ws@onelake.dfs.fabric.microsoft.com/x.csv'",
+  "EXPLAIN (ANALYZE, FORMAT json) COPY (SELECT 1) TO 'x.csv'",
+  "EXPLAIN (ANALYZE, SET x = 1) SELECT 1",
   "WITH x AS (SELECT 1) INSERT INTO t SELECT * FROM x",
   `ATTACH 'abfss://ws@onelake.dfs.fabric.microsoft.com/a.duckdb' AS "READ_ONLY"`,
   `ATTACH 'abfss://ws@onelake.dfs.fabric.microsoft.com/a.duckdb' AS a`,
