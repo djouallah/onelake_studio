@@ -11,6 +11,7 @@
 const vscode = require('vscode');
 const { join } = require('node:path');
 const { existsSync } = require('node:fs');
+const fsp = require('node:fs/promises');
 const { openPanel, closePanel, revealPanel, postToPanel, postLive } = require('./panel');
 const { createCatalog } = require('./catalog');
 const { createStore } = require('./store');
@@ -25,6 +26,8 @@ const { createSemViews } = require('./semviews');
 const { serveBridge } = require('./bridge');
 const { PINS } = require('./vendored');
 const { planReport, generateReport } = require('./report');
+const { planExport, writeExport, buildDist, writeMarker, zip, rayfinYml } = require('./exportapp');
+const { createFabricApp, tenantOf } = require('./fabricapp');
 
 // OneLake accepts tokens in the storage
 // audience only, and this one covers both the data reads and the Iceberg catalog. It is
@@ -78,7 +81,7 @@ function accountKey(session) {
 const TOKEN_TTL_MS = 60_000;
 let cachedToken = null;   // { token, at }
 
-function forgetToken() { cachedToken = null; cachedFabric = null; fabricAudience = null; }
+function forgetToken() { cachedToken = null; cachedFabric = null; fabricAudience = null; cachedApp = null; }
 
 async function hostToken({ fresh = false } = {}) {
   if (!fresh && cachedToken && Date.now() - cachedToken.at < TOKEN_TTL_MS) return cachedToken.token;
@@ -125,6 +128,20 @@ async function fabricToken({ fresh = false, createIfNone = false } = {}) {
   }
   if (lastErr) throw lastErr;
   return null;
+}
+
+// Export to Fabric's token (fabricapp.js): the Fabric API's own audience, never Power BI's —
+// the app item's workload routes are the Fabric API's. The same account as the storage
+// session, as fabricToken asks. `createIfNone` on the button's click, which may prompt.
+let cachedApp = null;   // { token, at }
+async function appToken({ fresh = false, createIfNone = false } = {}) {
+  if (!fresh && !createIfNone && cachedApp && Date.now() - cachedApp.at < TOKEN_TTL_MS) return cachedApp.token;
+  const storage = await getSession({ createIfNone: false }).catch(() => null);
+  if (!storage) return null;
+  const s = await vscode.authentication.getSession('microsoft',
+    withTenant([FABRIC_AUDIENCES[0], 'offline_access']), { createIfNone, account: storage.account });
+  cachedApp = s ? { token: s.accessToken, at: Date.now() } : null;
+  return s ? s.accessToken : null;
 }
 
 // The cache-first OneLake layer (onelake.js), built at activation and shared by the tree,
@@ -357,6 +374,9 @@ async function resetEngine() {
 let rebindStore = async () => {};
 // The semantic views this machine keeps (semviews.js), per account; set by activateInner.
 let semviews = null;
+// Export to Fabric (exportapp.js), the page's fabric.exportExplore; set by activateInner,
+// which owns the agent's modules.
+let exportExplore = null;
 
 async function show(context, options) {
   if (revealPanel()) return true;
@@ -383,6 +403,7 @@ async function show(context, options) {
     host: createHostMethods({
       onelake, engine: eng, onStatus: message => postLive({ type: 'status', message }),
       saveFile, semviews,
+      exportExplore: x => (exportExplore ? exportExplore(x) : Promise.reject(new Error('OneLake Studio is still starting'))),
     }),
     // The page could not bring the engine up. Everything it buffered is already gone;
     // this is the toast that stops the failure being a spinner that never moves.
@@ -765,6 +786,72 @@ async function activateInner(context) {
       showError(`Generate Report: ${(e && e.message) || e}`);
     }
   }
+
+  // Export to Fabric, from Explore: the model's Explore as a Fabric app (exportapp.js), its
+  // local copy written to a folder of this machine — asked for once per model, remembered —
+  // and published from there over the Fabric REST API (fabricapp.js). The function's deploy
+  // package ships in the vsix (fabric-function/, scripts/function-bundle.mjs). Answers what
+  // Explore's info line says; a failure is thrown back to it, and logged.
+  exportExplore = async ({ file, name, text, state }) => {
+    try {
+      const plan = planExport(text, file, name, await agent.modules());
+      const fnDir = join(context.extensionUri.fsPath, 'fabric-function');
+      const [sourceZip, deployMetaData] = await Promise.all([
+        fsp.readFile(join(fnDir, 'source.zip')), fsp.readFile(join(fnDir, 'deploymetadata.json'), 'utf8'),
+      ]).catch(() => { throw new Error('this build has no function package (fabric-function/): run node scripts/function-bundle.mjs'); });
+      const token = await appToken({ createIfNone: true });
+      if (!token) throw new Error('not signed in to the Fabric API');
+      const key = `exportFolder:${plan.workspace}/${plan.lakehouse}/${plan.name}`;
+      let outDir = context.globalState.get(key);
+      if (!outDir || !existsSync(outDir)) {
+        const folder = (vscode.workspace.workspaceFolders || [])[0];
+        const picked = await vscode.window.showOpenDialog({
+          canSelectFolders: true, canSelectFiles: false, canSelectMany: false,
+          defaultUri: folder ? folder.uri : vscode.Uri.file(require('node:os').homedir()),
+          openLabel: 'Export Here',
+          title: `Export to Fabric: the folder to keep the app's local copy (${plan.name}/) in`,
+        });
+        if (!picked || !picked.length) return 'Export cancelled.';
+        outDir = join(picked[0].fsPath, plan.name);
+      }
+      const vendor = join(context.extensionUri.fsPath, 'vendor', 'gh');
+      const templateDir = join(vendor, PINS.exportTemplate);
+      const r = await vscode.window.withProgress(
+        { location: vscode.ProgressLocation.Notification, title: `Export to Fabric: ${plan.name}` },
+        async progress => {
+          const say = line => { if (out) out.appendLine(line); progress.report({ message: line.replace(/^app \S+: /, '') }); };
+          say(`app ${plan.name}: writing the local copy to ${outDir}`);
+          const marker = await writeExport({ plan, text, state, outDir, templateDir,
+            daxSqlDir: join(vendor, PINS.daxSql), appDir: (await webviewRoot(context.extensionUri, { dev })).page.fsPath });
+          const app = createFabricApp({ getToken: appToken, log: say });
+          const done = await app.publish({
+            workspaceId: plan.workspace, name: plan.name, tenantId: tenantOf(token), catalogUrl: plan.catalogUrl,
+            site: async config => zip(await buildDist(outDir, config)),
+            fn: { sourceZip, deployMetaData }, redirects: marker.redirects || [],
+          });
+          await writeMarker(outDir, { ...marker, itemId: done.itemId, hostingUrl: done.hostingUrl,
+                                      redirects: done.redirects, exportedAt: new Date().toISOString() });
+          const tpl = await fsp.readFile(join(templateDir, 'front_end', 'fabric_app', 'iceberg', 'rayfin', 'rayfin.yml'), 'utf8');
+          await fsp.writeFile(join(outDir, 'rayfin', 'rayfin.yml'), rayfinYml(tpl, plan.name, done.redirects));
+          return done;
+        });
+      await context.globalState.update(key, outDir);
+      if (out) {
+        out.appendLine(`exported ${plan.name} -> ${r.hostingUrl || '(no hosting URL)'} (item ${r.itemId}, local copy ${outDir})`);
+        for (const w of plan.warnings) out.appendLine(`  warning: ${w}`);
+      }
+      const warned = plan.warnings.length ? ` ${plan.warnings.length} warning(s) in the log.` : '';
+      vscode.window.showInformationMessage(`${plan.name} is published to Fabric.${warned}`, 'Open App', 'Reveal Folder')
+        .then(pick => {
+          if (pick === 'Open App' && r.hostingUrl) vscode.env.openExternal(vscode.Uri.parse(r.hostingUrl));
+          else if (pick === 'Reveal Folder') vscode.commands.executeCommand('revealFileInOS', vscode.Uri.file(outDir));
+        });
+      return `Published to Fabric: ${r.hostingUrl || plan.name}`;
+    } catch (e) {
+      if (out) out.appendLine(`export to fabric of ${file} failed — ${(e && e.stack) || e}`);
+      throw e;
+    }
+  };
 
   context.subscriptions.push(
     vscode.window.createTreeView('onelakeStudio.explorer', {

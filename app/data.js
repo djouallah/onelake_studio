@@ -784,8 +784,11 @@ export function createEngine({
   const semanticCreate = (name, path, lh) =>
     callHost("semantic.create", [{ name, path, workspace: lh && lh.workspace, item: lh && lh.item }]);
   const semanticDrop = name => callHost("semantic.drop", [{ name }]);
+  // Export to Fabric: the model's text and the Explore shelves to the host, which writes the
+  // app's folder and publishes it (src/exportapp.js); answers what to tell the user.
+  const exportExplore = x => callHost("fabric.exportExplore", [x]);
 
   return { init, reset, statTable, peekTable, loadTable,
            loadFile, readFileBytes, saveText, saveOneLakeFile, runSql, describeLoad, fmtBytes, cancelLoad,
-           semanticViews, semanticCreate, semanticDrop };
+           semanticViews, semanticCreate, semanticDrop, exportExplore };
 }

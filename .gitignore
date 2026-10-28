@@ -12,3 +12,6 @@ vendor/
 duckdb-extensions/
 # The extension host bundled by scripts/bundle.mjs (at package time, and by F5).
 dist/
+# Export to Fabric's function, as its deploy package: built by function-bundle.mjs at
+# package time from the template vendor.mjs fetched, and shipped in the vsix.
+fabric-function/

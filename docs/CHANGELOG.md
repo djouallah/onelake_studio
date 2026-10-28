@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- **New: Export to Fabric.** A button in Explore publishes that model's Explore as a Fabric app,
+  and writes a local copy of it to a folder you pick once.
+  - **It deploys directly** over the Fabric REST API: no CLI, no Node, no GitHub access.
+  - **The site is protected**: only people who may open the app item can load it.
+  - **It is the one write** the extension makes to Fabric, and it happens only when you click.
+- **How the exported app works.**
+  - It runs Studio's own Explore.
+  - Its data reaches the browser through analytics-as-code's Iceberg front end: Fabric sign-in,
+    the app's function returns a read-only SAS, and DuckDB-WASM reads the tables.
+  - The function ships prebuilt in the vsix.
 - **New: Generate Report.** Right-click an Apache Ossie model (`.yaml`) in `Files/` and choose
   *Generate Report…*. It writes a folder to this machine with a Fabric app (Rayfin, DuckDB-WASM in
   the browser) that reads the model's lakehouse through its OneLake Iceberg catalog. The page has

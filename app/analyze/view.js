@@ -17,11 +17,10 @@ import { escapeHtml } from '../paths.js';
 import { renderModel } from './model.js';
 import { createExplorer } from './explore.js';
 import { createModelQuery } from './query.js';
+import { PALETTE, registerChartTheme } from './theme.js';
 
 const PAGES = [['model', 'Model'], ['explore', 'Explore'], ['sql', 'SQL']];
 const PREVIEW_ROWS = 500;
-// Series colours, on a dark card (the dashboard's palette).
-const PALETTE = ['#3987e5', '#d95926', '#199e70', '#c98500', '#d55181', '#4f9a3a', '#9085e9', '#e66767', '#5aa7b8', '#b0762f', '#a86bc4', '#7f8a9c'];
 
 // ECharts' own minified build, as a classic script (window.echarts): the build the dashboard
 // this is ported from runs. jsDelivr's +esm repackaging of it draws an empty canvas.
@@ -43,6 +42,9 @@ const loadEcharts = () => (echartsP ??= new Promise((resolve, reject) => {
 //   rewrite(text)    { sql } — what the user typed, compiled — or null when it names no model
 //   run(sql)         the engine's result of a compiled SQL: { fields, rows, truncated, ... }
 //   setStatus(text, kind)
+//   exportToFabric(state)  (optional) Explore's Export to Fabric button: the shelves on screen,
+//                    published as a Fabric app of this model's Explore alone
+//                    (src/exportapp.js); answers what the button says when it is done
 // Returns { destroy }.
 export function mountAnalyze(root, ctx) {
   const el = (tag, attrs = {}, ...kids) => {
@@ -207,31 +209,13 @@ export function mountAnalyze(root, ctx) {
   const resized = new ResizeObserver(entries => { for (const e of entries) charts.get(e.target)?.resize(); });
   const css = name => getComputedStyle(root).getPropertyValue(name).trim();
   let explorer = null;
-  function chartTheme(echarts) {
-    const text = css('--text'), muted = css('--muted'), line = css('--border'), split = css('--row-line');
-    const axis = { axisLine: { lineStyle: { color: line } }, axisTick: { lineStyle: { color: line } },
-      axisLabel: { color: muted, fontSize: 12 }, splitLine: { lineStyle: { color: split } }, nameTextStyle: { color: muted } };
-    echarts.registerTheme('studio', {
-      backgroundColor: 'transparent',
-      textStyle: { color: muted, fontFamily: getComputedStyle(document.body).fontFamily },
-      title: { textStyle: { color: text } },
-      legend: { icon: 'circle', itemWidth: 9, itemHeight: 9, itemGap: 14, textStyle: { color: muted, fontSize: 12 },
-        pageTextStyle: { color: muted }, pageIconColor: muted, pageIconInactiveColor: css('--disabled') },
-      tooltip: { backgroundColor: css('--raised'), borderColor: line, borderWidth: 1, padding: [8, 12],
-        textStyle: { color: text, fontSize: 12 }, extraCssText: `border-radius:10px;box-shadow:${css('--shadow')};` },
-      categoryAxis: axis, valueAxis: axis, timeAxis: axis,
-      dataZoom: { borderColor: 'transparent', backgroundColor: split, fillerColor: css('--hover'),
-        textStyle: { color: muted } },
-      visualMap: { textStyle: { color: muted }, handleStyle: { color: css('--card'), borderColor: muted } },
-    });
-  }
   async function openExplorer() {
     if (explorer) return;
     explorePage.replaceChildren(el('div', { class: 'ex-empty' }, 'Loading the chart library…'));
     let echarts;
     try {
       echarts = await loadEcharts();
-      chartTheme(echarts);
+      registerChartTheme(echarts, css);
     } catch (e) {
       explorePage.replaceChildren(el('div', { class: 'ex-error' }, `Could not load the chart library: ${e.message}`));
       return;
@@ -252,6 +236,7 @@ export function mountAnalyze(root, ctx) {
       css,
       loadState: () => ctx.loadState(`explore.${ctx.name}`),
       saveState: s => ctx.saveState(`explore.${ctx.name}`, s),
+      exportToFabric: ctx.exportToFabric,
     });
   }
 

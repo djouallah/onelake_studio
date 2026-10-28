@@ -35,10 +35,19 @@ const ENGINE_METHODS = new Set(['query', 'stream', 'cancel', 'info']);
  * @param {(message: string) => void} [o.onStatus]  why a catalog call is taking long
  * @param {(name: string, bytes: Uint8Array) => Promise<string|null>} [o.saveFile]
  *        ask where to save, write it, answer the path (null: dismissed)
+ * @param {(x: {file: string, name: string, text: string, state: object|null}) => Promise<string>} [o.exportExplore]
+ *        Export to Fabric: answers what the page says when it is done
  */
-function createHostMethods({ onelake, engine, onStatus = () => {}, saveFile = null, semviews = null }) {
+function createHostMethods({ onelake, engine, onStatus = () => {}, saveFile = null, semviews = null, exportExplore = null }) {
   const views = () => { if (!semviews) throw new Error('semantic views are not available here'); return semviews; };
   return {
+    // Export to Fabric (exportapp.js): the model's text, its file's name and the Explore
+    // shelves. The host asks where the local copy goes and publishes it.
+    'fabric.exportExplore': async x => {
+      if (!exportExplore) throw new Error('Export to Fabric is not available here');
+      return exportExplore({ file: String(x.file || 'model'), name: String(x.name || 'model'),
+                             text: String(x.text ?? ''), state: x.state && typeof x.state === 'object' ? x.state : null });
+    },
     // Semantic views (semviews.js): the ones this machine keeps, with their .bim text, and
     // CREATE / DROP SEMANTIC VIEW carried out — dax-sql (in the page) has already checked
     // the statement. `Files/…` is relative to the lakehouse the page has open.

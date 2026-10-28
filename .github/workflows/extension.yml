@@ -177,6 +177,16 @@ jobs:
       - name: Bundle the DuckDB extensions for ${{ matrix.target }}
         run: node scripts/fetch-extensions.mjs ${{ matrix.target }}
 
+      # Export to Fabric's function, as the deploy package Fabric takes (one esbuild bundle and
+      # its metadata), built from the vendored template so nobody who exports needs npm.
+      # Its own step for the same reason as the two below; a restored cache makes it a no-op.
+      - uses: actions/cache@v6
+        with:
+          path: fabric-function
+          key: fabric-function-${{ hashFiles('scripts/function-bundle.mjs', 'src/vendored.js', 'src/fabricapp.js') }}
+      - run: node scripts/vendor.mjs
+      - run: node scripts/function-bundle.mjs
+
       # The staged page carries the README and a build stamp. `vscode:prepublish` does this
       # too; running it here means a failure shows up as its own step.
       - run: node scripts/stage-webview.mjs
@@ -219,6 +229,12 @@ jobs:
           # Generate Report copies its template from vendor/ (src/report.js): it must ship.
           grep -qE '^extension/vendor/gh/djouallah/analytics-as-code@[0-9a-f]+/dashboard/fabric_app/iceberg/rayfin/rayfin\.yml$' <<<"$files" \
             || { echo "no Generate Report template in the vsix"; exit 1; }
+          # Export to Fabric writes its app from the template and deploys the prebuilt function.
+          grep -qE '^extension/vendor/gh/djouallah/analytics-as-code@[0-9a-f]+/front_end/fabric_app/iceberg/site/storage/data\.js$' <<<"$files" \
+            || { echo "no Export to Fabric template in the vsix"; exit 1; }
+          for f in source.zip deploymetadata.json; do
+            grep -qx "extension/fabric-function/$f" <<<"$files" || { echo "no fabric-function/$f in the vsix"; exit 1; }
+          done
           stray=$(grep -E '^extension/src/' <<<"$files" | grep -vx 'extension/src/bridge.js' || true)
           [ -z "$stray" ] || { echo "src/ shipped beside the bundle: $stray"; exit 1; }
           ! grep -q '^extension/node_modules/@duckdb/node-api/' <<<"$files" \

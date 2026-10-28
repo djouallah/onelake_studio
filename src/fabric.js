@@ -4,9 +4,9 @@
 // =============================================================================
 // A semantic model is not in OneLake: its list and its definition come from the Fabric
 // REST API, which wants a token in a different audience — asked for only when someone
-// expands "Semantic models", never at sign-in. Read only, like everything else here: the
-// extension writes nothing to Fabric or OneLake. A model's .bim is downloaded to this
-// machine (extension.js) and opened from there.
+// expands "Semantic models", never at sign-in. Read only: this module writes nothing to
+// Fabric or OneLake (Export to Fabric, fabricapp.js, is the one write, and only on its
+// button). A model's .bim is downloaded to this machine (extension.js) and opened from there.
 //
 // Host-side only. The panel never sees a Fabric token.
 // =============================================================================

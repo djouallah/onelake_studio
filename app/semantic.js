@@ -21,6 +21,7 @@
 // =============================================================================
 import { PINS, ghFile, npmEsm } from "./cdn.js";
 import { quoteIdent, basename } from "./paths.js";
+import { EXPLORE_CASTS } from "./analyze/query.js";
 
 const lc = s => String(s).toLowerCase();
 
@@ -147,19 +148,8 @@ export async function defineView(name, path, text, mode = "replace", modules = n
     path, mode, tableSource, tablesFrom: where.length ? `OneLake ${where.join(", ")}` : "search path",
   });
   if (done === "created") lakes.set(lc(name), lake);
-  // Explore's (analyze/query.js): its rows go straight to the page, so a date comes back as
-  // text, a whole number as BIGINT and any other number as DOUBLE — what JS can hold. Not
-  // INTEGER: that is 32-bit, and a SUM or a key past 2^31 failed as an overflow. The host
-  // hands a BIGINT over as a Number whenever it fits in one.
-  const exploreCompiler = createCompiler(tmslToModel(bim), {
-    tableSource,
-    castOutput: {
-      int: s => `CAST(${s} AS BIGINT)`,
-      double: s => `CAST(${s} AS DOUBLE)`,
-      decimal: s => `CAST(${s} AS DOUBLE)`,
-      datetime: s => `CAST(CAST(${s} AS DATE) AS VARCHAR)`,
-    },
-  });
+  // Explore's (analyze/query.js): its rows go straight to the page, cast as EXPLORE_CASTS says.
+  const exploreCompiler = createCompiler(tmslToModel(bim), { tableSource, castOutput: EXPLORE_CASTS });
   const v = views.get(name);
   return { name: v.name, file: basename(path), sample: sampleQuery(v), directLake: lake.size, bim, exploreCompiler, done };
 }

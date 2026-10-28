@@ -12,8 +12,9 @@ or run `code --install-extension djouallah.onelake-studio`. It needs desktop VS 
 
 **Use:** click the OneLake Studio icon in the activity bar and sign in. Query tables and `Files/` with SQL, and open a
 semantic model to explore it or query it with `AGG(measure)`. Right-click an Ossie model in `Files/` and choose **Generate Report…**
-to get a Fabric app (DuckDB-WASM over its lakehouse's Iceberg catalog) in a folder, ready for an agent to grow. **Install Agent Skill** lets Claude Code or GitHub
-Copilot answer questions about your data. Nothing is ever written to Fabric or OneLake.
+to get a Fabric app (DuckDB-WASM over its lakehouse's Iceberg catalog) in a folder, ready for an agent to grow. **Export to Fabric**, in Explore,
+publishes that Explore as a protected Fabric app (and keeps a local copy) — the only thing that ever writes to Fabric, and only on its click.
+**Install Agent Skill** lets Claude Code or GitHub Copilot answer questions about your data. Nothing is ever written to OneLake.
 
 Commands, settings, how it works and release notes: [docs/](https://github.com/djouallah/onelake_studio/tree/main/docs).
 

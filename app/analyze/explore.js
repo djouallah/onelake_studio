@@ -182,6 +182,7 @@ const label = a => a.length ? a.map(v => v == null ? '(blank)' : String(v)).join
 //   css(name)        a CSS token's value (the chart's tints)
 //   loadState()      the shelves kept from the last visit (or null)
 //   saveState(s)     keep the shelves for the next visit
+//   exportToFabric(state)  (optional) the Export to Fabric button: none when it is not given
 export function createExplorer(root, ctx) {
   let fields = null, state = load(), drag = null, seq = 0, timer = null, result = null, pop = null;
   let popTimer = null, destroyed = false;
@@ -210,12 +211,14 @@ export function createExplorer(root, ctx) {
   const sort = el('select', { 'aria-label': 'Sort' }, el('option', { value: 'fields' }, 'Sort by fields'),
     el('option', { value: 'desc' }, 'Sort by first value ↓'));
   const info = el('span', { class: 'ex-info' });
+  const exportBtn = ctx.exportToFabric ? el('button', { type: 'button', class: 'btn-analyze',
+    title: 'Publish this Explore, on this model, as a Fabric app (a local copy is written too)', onclick: exportApp }, 'Export to Fabric') : null;
   const tools = el('div', { class: 'ex-tools' }, marks,
     el('label', { class: 'ex-check' }, totals, 'Totals'), sort,
     el('button', { type: 'button', class: 'btn-analyze', title: 'Swap rows and columns', onclick: () => {
       [state.rows, state.cols] = [state.cols, state.rows]; changed(); } }, '⇄ Swap'),
     el('button', { type: 'button', class: 'btn-analyze', onclick: () => { state = { ...EMPTY(), mark: state.mark }; changed(); } }, 'Clear'),
-    el('button', { type: 'button', class: 'btn-analyze', onclick: download }, 'CSV'), info);
+    el('button', { type: 'button', class: 'btn-analyze', onclick: download }, 'CSV'), exportBtn, info);
   const table = el('div', { class: 'ex-table' });
   const chartBox = el('div', { class: 'ex-chart' });
   // Over the view while a query runs: a model query reads OneLake and can take a while,
@@ -567,6 +570,22 @@ export function createExplorer(root, ctx) {
       const q = buildQuery(state, { cap: 0 });
       if (q) await ctx.csv(q);
     } catch (e) { info.className = 'ex-info ex-error'; info.textContent = `CSV: ${e.message}`; }
+  }
+  // The host does the work (a folder, a build, the Fabric REST calls) and says how it went;
+  // the shelves on screen go with it, as the app's first view.
+  async function exportApp() {
+    exportBtn.disabled = true;
+    exportBtn.textContent = 'Exporting…';
+    try {
+      const said = await ctx.exportToFabric(JSON.parse(JSON.stringify(state)));
+      if (said) { info.className = 'ex-info'; info.textContent = said; }
+    } catch (e) {
+      info.className = 'ex-info ex-error';
+      info.textContent = `Export to Fabric: ${e.message}`;
+    } finally {
+      exportBtn.disabled = false;
+      exportBtn.textContent = 'Export to Fabric';
+    }
   }
 
   // --- Drawing ---

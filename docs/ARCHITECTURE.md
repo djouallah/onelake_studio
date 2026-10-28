@@ -49,6 +49,46 @@ column that slices it.
 - Nothing is deployed for you: the folder's `npm run deploy` is yours to run.
 - The folder's `AGENTS.md` is written for an agent that grows the report from there.
 
+## Export to Fabric
+
+Explore's **Export to Fabric** button publishes that model's Explore, and nothing else, as a
+Fabric app (item type `AppBackend`). It also writes a local copy to a folder on this machine. The
+first export asks for the folder, and later exports of the same model reuse it and update the same
+app. VS Code and the extension are all it needs: no CLI, no Node, no GitHub.
+
+**What you need**
+- The model must name exactly one lakehouse in its Direct Lake expression. Without that, the
+  button isn't shown.
+- Every table must name its source as `schema.table`, with a table name of letters, digits and `_`.
+- The workspace must allow OneLake user-delegated SAS tokens.
+- The site is **protected**: only people who may open the app item can load it.
+
+**What the app is** ([`src/exportapp.js`](../src/exportapp.js))
+- **Explore.** The page runs Studio's own Explore (`app/analyze/`): the same query-to-DAX-to-SQL
+  path (dax-sql) and the same output casts (`EXPLORE_CASTS`) as the panel.
+- **Data.** analytics-as-code's Iceberg front end, vendored at `PINS.exportTemplate`:
+  - Sign-in is Rayfin's Fabric SSO.
+  - The app's one function (`openCatalog`) returns each table's metadata location and a
+    read-only SAS.
+  - The page downloads the tables' files into the browser, and DuckDB-WASM 1.5 (from jsDelivr)
+    reads them as `v_<table>` views.
+- **What gets uploaded.** `dist/` is `site/` stamped with the build, plus `rayfin.config.json`,
+  zipped in-process.
+
+**Publishing** ([`src/fabricapp.js`](../src/fabricapp.js)) is the REST sequence that `rayfin up`
+runs, in the same order, using the user's Fabric-audience token:
+1. Find the item, or create it.
+2. Wait for its backend, then fetch the publishable key.
+3. Apply the runtime settings.
+4. Set the `CATALOG_URL` secret.
+5. Upload the site.
+6. Deploy the function and poll it until it is done.
+7. Add the hosting URL to the sign-in redirects.
+
+The function's deploy package (an esbuild bundle plus its metadata) is built once, at package time,
+by [`scripts/function-bundle.mjs`](../scripts/function-bundle.mjs) with Rayfin's own packager. It
+ships in the vsix under `fabric-function/`.
+
 ## Settings
 
 | Setting | What it does |

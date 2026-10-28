@@ -293,6 +293,11 @@ async function openModelView(file, text = null, { fromOneLake = text == null } =
       saveText: (name, text) => engine.saveText(name, text),
       loadState: viewState.get,
       saveState: viewState.set,
+      // Explore as a Fabric app of its own (src/exportapp.js): its tables come from the one
+      // lakehouse the model names, so a model that names none, or several, has no button.
+      exportToFabric: semantic.lakehousesOf(m.bim).length === 1
+        ? state => engine.exportExplore({ file: file.name, name: m.name, text: bim, state })
+        : undefined,
     });
     setStatus(`${file.name} is the semantic model ${m.name}` +
               (m.directLake ? ` — ${m.directLake} Direct Lake table(s), opened from OneLake as a query needs them` : '') +

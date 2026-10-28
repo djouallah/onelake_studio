@@ -17,6 +17,18 @@
 const TYPES = { string: 'string', int64: 'int', double: 'double', decimal: 'double', dateTime: 'date', boolean: 'bool',
   binary: 'string', variant: 'string' };
 
+// The compiler's output casts for Explore (dax-sql's castOutput): its rows go straight to the
+// page, so a date comes back as text, a whole number as BIGINT and any other number as
+// DOUBLE — what JS can hold. Not INTEGER: that is 32-bit, and a SUM or a key past 2^31
+// failed as an overflow. The host hands a BIGINT over as a Number whenever it fits in one;
+// DuckDB-WASM (Export to Fabric's page) is opened with castBigIntToDouble.
+export const EXPLORE_CASTS = {
+  int: s => `CAST(${s} AS BIGINT)`,
+  double: s => `CAST(${s} AS DOUBLE)`,
+  decimal: s => `CAST(${s} AS DOUBLE)`,
+  datetime: s => `CAST(CAST(${s} AS DATE) AS VARCHAR)`,
+};
+
 // A column's summaries, by the word a query uses for each. COUNTA counts a column of any type.
 const AGG_DAX = { sum: 'SUM', avg: 'AVERAGE', median: 'MEDIAN', min: 'MIN', max: 'MAX', count: 'COUNTA', distinct: 'DISTINCTCOUNT' };
 
