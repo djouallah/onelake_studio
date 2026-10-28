@@ -30,6 +30,8 @@
   #status { position: fixed; right: 1rem; bottom: 0.6rem; color: var(--muted); font-size: 0.78rem; }
   #status.error { color: var(--err); }
   footer { padding: 0.3rem var(--gutter) 0.5rem; color: var(--faint); font-size: 0.72rem; flex: none; }
+  footer a { color: var(--muted); text-decoration: none; }
+  footer a:hover { color: var(--text); text-decoration: underline; }
 
   /* The whole window. explore.css is sized for the VS Code panel (a 340px chart, tables
      capped at 60-65vh); here the page is the browser's, so each page stretches to its
@@ -72,7 +74,7 @@
   </div>
 </main>
 <div id="status" role="status" aria-live="polite"></div>
-<footer>build __BUILD__ · Explore, exported from OneLake Studio</footer>
+<footer>build __BUILD__ · Explore, exported from <a href="https://marketplace.visualstudio.com/items?itemName=djouallah.onelake-studio" target="_blank" rel="noopener">OneLake Studio</a></footer>
 <script type="module">import { start } from "./app.js"; start();</script>
 </body>
 </html>
