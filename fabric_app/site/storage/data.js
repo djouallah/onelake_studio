@@ -330,7 +330,7 @@ export function createDataSource({ onStatus = () => {}, onProgress = () => {}, t
 
   async function init() {
     await auth.signIn();
-    onStatus("Starting the query engine (DuckDB, in this browser)…");
+    onStatus("Loading the query engine…");
     // The function's answer (the model, where its tables are, the SAS), the tables' sizes and
     // their plans, while DuckDB's bundle loads: none of them needs it.
     const ready = catalog.open([]).then(async answer => {
