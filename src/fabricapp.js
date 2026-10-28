@@ -266,7 +266,20 @@ function createFabricApp({ getToken, apiBase = FABRIC_API, log = () => {},
     return { itemId: id, hostingUrl, created, redirects };
   }
 
-  return { publish, ensureItem, settings };
+  // The app's last deploy, from whatever deployed it: { hostingUrl, lastSuccessfulDeploymentAt },
+  // or null when there is no such app (404). Read only.
+  async function deployStatus(ws, id) {
+    try {
+      const j = await json(await call(`${endpoint(ws, id)}/__private/deploy/status`, {
+        headers: { [MONIKER]: id }, what: 'Reading the app\'s last deploy' }));
+      return { hostingUrl: (j && j.hostingUrl) || '', lastSuccessfulDeploymentAt: (j && j.lastSuccessfulDeploymentAt) || '' };
+    } catch (e) {
+      if (e.status === 404) return null;
+      throw e;
+    }
+  }
+
+  return { publish, ensureItem, settings, deployStatus };
 }
 
 // The tenant a token was issued in (its `tid`), for rayfin.config.json.

@@ -13,7 +13,8 @@ import { inflateRawSync } from "node:zlib";
 import { execFileSync } from "node:child_process";
 
 const require = createRequire(import.meta.url);
-const { planExport, writeExport, buildDist, zip, crc32, rayfinYml, appName, dfsUrl, MARKER } = require("../src/exportapp.js");
+const { planExport, writeExport, buildDist, zip, crc32, rayfinYml, appName, dfsUrl, MARKER,
+        readMarker, fingerprint, localChanges } = require("../src/exportapp.js");
 const semantic = await import("../app/semantic.js");
 
 const WS = "0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0";
@@ -199,6 +200,39 @@ test("the folder: fabric_app's site and function, Studio's Explore, no model; di
     await writeFile(join(other, "x.txt"), "x");
     await assert.rejects(writeExport({ plan, state, outDir: other, ...dirs }), /not written by Export to Fabric/);
     assert.deepEqual(await readdir(other), ["x.txt"]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("local changes: an edit, a new file, a removed one — never node_modules or dist/", async () => {
+  const root = await mkdtemp(join(tmpdir(), "export-"));
+  try {
+    const dirs = await fixture(root);
+    const plan = planExport(OSSIE, "sales.yaml", "sales", mods(bimOf(URL_)), WHERE);
+    const outDir = join(root, "out", plan.name);
+    assert.equal(await readMarker(outDir), null, "a folder not there yet is new");
+    await writeExport({ plan, state: null, outDir, ...dirs });
+    const files = await fingerprint(outDir);
+    assert.ok(files["site/app.js"] && files["rayfin/rayfin.yml"] && files["AGENTS.md"] && files[".gitignore"]);
+    assert.ok(!Object.keys(files).some(p => p.includes("\\")), "paths use /");
+    const marker = { ...(await readMarker(outDir)), files };
+
+    assert.deepEqual(await localChanges(outDir, marker), [], "as published");
+    assert.deepEqual(await localChanges(outDir, { ...marker, files: undefined }), [], "a marker from before the record");
+
+    // Build output and what is outside the copy's own files are not edits.
+    await mkdir(join(outDir, "rayfin", "functions", "node_modules", "x"), { recursive: true });
+    await writeFile(join(outDir, "rayfin", "functions", "node_modules", "x", "i.js"), "1");
+    await mkdir(join(outDir, "dist"), { recursive: true });
+    await writeFile(join(outDir, "dist", "app.js"), "built");
+    await writeFile(join(outDir, "notes.md"), "mine");
+    assert.deepEqual(await localChanges(outDir, marker), []);
+
+    await writeFile(join(outDir, "site", "app.js"), "// an agent's edit");
+    await writeFile(join(outDir, "site", "chart.js"), "new");
+    await rm(join(outDir, "AGENTS.md"));
+    assert.deepEqual(await localChanges(outDir, marker), ["AGENTS.md", "site/app.js", "site/chart.js"]);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

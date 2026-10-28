@@ -26,6 +26,7 @@
 const { join, dirname } = require('node:path');
 const fsp = require('node:fs/promises');
 const zlib = require('node:zlib');
+const { createHash } = require('node:crypto');
 const { TABLE_ORIGIN } = require('./catalog');
 const { PINS } = require('./vendored');
 
@@ -170,9 +171,13 @@ async function isEmptyOrOurs(dir) {
   const entries = await fsp.readdir(dir).catch(e => (e.code === 'ENOENT' ? null : Promise.reject(e)));
   if (entries == null || !entries.length) return { exists: entries != null, marker: null };
   const marker = await fsp.readFile(join(dir, MARKER), 'utf8').then(JSON.parse, () => null);
-  if (!marker) throw new Error(`${dir} is not empty and was not written by Export to Fabric`);
+  if (!marker) throw new Error(`${dir} is not empty and was not written by Export to Fabric: rename it, or open another folder`);
   return { exists: true, marker };
 }
+
+// The folder's marker: null when the folder is new or empty; throws when it holds anything
+// Export to Fabric did not write.
+const readMarker = async dir => (await isEmptyOrOurs(dir)).marker;
 
 /**
  * Writes the app's folder (the local copy). Returns the marker kept in the folder (an earlier
@@ -208,6 +213,38 @@ async function writeExport({ plan, state, outDir, fabricAppDir, appDir, daxSqlDi
 }
 
 const writeMarker = (dir, m) => fsp.writeFile(join(dir, MARKER), JSON.stringify(m, null, 2) + '\n');
+
+// --- What changed in the folder since it was published ---------------------------
+
+// The folder's own files — what an export writes and an agent edits — as { 'a/b': sha256 }.
+// node_modules and dist/ are build output, not edits.
+const FINGERPRINTED = ['site', 'rayfin', 'AGENTS.md', '.gitignore'];
+const SKIPPED = new Set(['node_modules', 'dist']);
+
+async function fingerprint(outDir) {
+  const out = {};
+  async function walk(rel) {
+    const abs = join(outDir, ...rel.split('/'));
+    const st = await fsp.stat(abs).catch(() => null);
+    if (!st) return;
+    if (st.isDirectory()) {
+      for (const e of (await fsp.readdir(abs)).sort()) if (!SKIPPED.has(e)) await walk(`${rel}/${e}`);
+    } else {
+      out[rel] = createHash('sha256').update(await fsp.readFile(abs)).digest('hex');
+    }
+  }
+  for (const p of FINGERPRINTED) await walk(p);
+  return out;
+}
+
+// The paths added, removed or changed since `marker.files` was taken; [] when nothing moved,
+// or when the marker predates the record (an earlier export's).
+async function localChanges(outDir, marker) {
+  const was = marker && marker.files;
+  if (!was) return [];
+  const now = await fingerprint(outDir);
+  return [...new Set([...Object.keys(was), ...Object.keys(now)])].filter(p => was[p] !== now[p]).sort();
+}
 
 // A build id, URL-safe (it is the ?v= cache-buster): yyyymmdd-hhmmss UTC.
 const buildId = (d = new Date()) => d.toISOString().replace(/[-:]/g, '').replace('T', '-').slice(0, 15);
@@ -286,4 +323,5 @@ function zip(files) {
   return Buffer.concat([...local, ...central, end]);
 }
 
-module.exports = { planExport, writeExport, buildDist, writeMarker, zip, crc32, rayfinYml, appName, dfsUrl, MARKER };
+module.exports = { planExport, writeExport, buildDist, writeMarker, readMarker, fingerprint, localChanges,
+                   zip, crc32, rayfinYml, appName, dfsUrl, MARKER };

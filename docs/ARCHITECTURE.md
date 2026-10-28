@@ -71,8 +71,9 @@ compiler, how to run SQL, and where ECharts comes from.
 ## Export to Fabric
 
 Explore's **Export to Fabric** button publishes that model's Explore and Logs, nothing else, as a
-Fabric app (item type `AppBackend`, named `<model>-explore`). It also writes a local copy to a
-folder on this machine. VS Code and the extension are all it needs: no CLI, no Node, no GitHub.
+Fabric app (item type `AppBackend`, named `<model>-explore`). It also writes a local copy to
+`<the folder VS Code has open>/<model>-explore/`; with no folder open, it asks for one. VS Code and
+the extension are all it needs: no CLI, no Node, no GitHub.
 
 **What you need**
 - **The model is a OneLake file** in a lakehouse's `Files/`.
@@ -89,6 +90,16 @@ folder on this machine. VS Code and the extension are all it needs: no CLI, no N
 - **No silent takeover:** a re-export updates the item the last export created (its id is kept in
   the local copy). If an app of that name already exists and no export created it, the export
   stops and asks before replacing it.
+- **Local edits are never overwritten unasked.** The local copy's marker keeps a hash of each of
+  its files as last published (`site/`, `rayfin/`, `AGENTS.md`, `.gitignore`, without
+  `node_modules` or `dist/`). If any changed, the export asks: *Overwrite Local Changes* (rewrite it
+  from this Explore), *Publish Folder As Is* (publish your changes, leave the folder alone), or
+  cancel.
+- **A newer deploy is never overwritten unasked.** The marker keeps the app's last deploy time, by
+  Fabric's clock (`__private/deploy/status`). If the app was deployed again since, from anywhere
+  else, the export asks before replacing it.
+- **A folder the export didn't write** is refused.
+- All the questions come before anything is written, locally or in Fabric.
 
 **The template** ([`fabric_app/`](../fabric_app/), tracked here)
 - **`site/`:** the page, black always. Its data source (`storage/`) does three things:

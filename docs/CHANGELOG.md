@@ -12,7 +12,9 @@
   - **The SQL page is gone:** the Pivot's Show SQL does its job.
   - **Values can no longer be summarised by median**, which SQL over the model doesn't have.
 - **New: Export to Fabric.** A button on the Pivot publishes that Explore (and Logs) as a Fabric app
-  named `<model>-explore`, and writes a local copy of it to a folder you pick once.
+  named `<model>-explore`, and writes a local copy of it to `<open folder>/<model>-explore/`.
+  - **It asks before overwriting** local edits to that copy (overwrite, or publish the folder as it
+    is), or an app deployed again from somewhere else since.
   - **It deploys directly** over the Fabric REST API: no CLI, no Node, no GitHub access.
   - **The site is protected**: only people who may open the app item can load it. It's black.
   - **The model is never copied:** the app reads it from the lakehouse, in place, every time.

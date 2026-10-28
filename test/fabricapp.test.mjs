@@ -152,6 +152,18 @@ test("a 401 is retried once with a fresh token; a not-ready deploy endpoint is r
   assert.equal(calls.filter(c => c.url.endsWith("/webapp/deploy")).length, 3);
 });
 
+test("deployStatus: the app's last deploy, named in the header; null when there is no such app", async () => {
+  const { app, calls } = appWith([
+    ["GET", `/appBackends/${ID}/__private/deploy/status`, () => res(200, { hostingUrl: HOST, lastSuccessfulDeploymentAt: "2026-10-28T07:32:09.0000000Z" })],
+    ["GET", "/appBackends/gone/__private/deploy/status", () => res(404, { message: "not found" })],
+  ]);
+  assert.deepEqual(await app.deployStatus(WS, ID), { hostingUrl: HOST, lastSuccessfulDeploymentAt: "2026-10-28T07:32:09.0000000Z" });
+  assert.equal(calls[0].headers[MONIKER], ID);
+  assert.equal(await app.deployStatus(WS, "gone"), null);
+  const denied = appWith([["GET", "/__private/deploy/status", () => res(403, { message: "no" })]]);
+  await assert.rejects(denied.app.deployStatus(WS, ID), /HTTP 403/);
+});
+
 test("tenantOf: a token's tid", () => {
   const payload = Buffer.from(JSON.stringify({ tid: "t-1", aud: "x" })).toString("base64url");
   assert.equal(tenantOf(`h.${payload}.s`), "t-1");

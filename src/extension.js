@@ -26,7 +26,7 @@ const { createSemViews } = require('./semviews');
 const { serveBridge } = require('./bridge');
 const { PINS } = require('./vendored');
 const { planReport, generateReport } = require('./report');
-const { planExport, writeExport, buildDist, writeMarker, zip, rayfinYml } = require('./exportapp');
+const { planExport, writeExport, buildDist, writeMarker, readMarker, fingerprint, localChanges, zip, rayfinYml } = require('./exportapp');
 const { createFabricApp, tenantOf } = require('./fabricapp');
 
 // OneLake accepts tokens in the storage
@@ -788,7 +788,7 @@ async function activateInner(context) {
   }
 
   // Export to Fabric, from Explore: the model's Explore as a Fabric app (exportapp.js), its
-  // local copy written to a folder of this machine — asked for once per model, remembered —
+  // local copy written to <the open folder>/<app>/ (asked for when no folder is open) —
   // and published from there over the Fabric REST API (fabricapp.js). The function's deploy
   // package ships in the vsix (fabric-function/, scripts/function-bundle.mjs). Answers what
   // Explore's info line says; a failure is thrown back to it, and logged.
@@ -801,19 +801,56 @@ async function activateInner(context) {
       ]).catch(() => { throw new Error('this build has no function package (fabric-function/): run node scripts/function-bundle.mjs'); });
       const token = await appToken({ createIfNone: true });
       if (!token) throw new Error('not signed in to the Fabric API');
+
+      // The folder: <the folder VS Code has open>/<app>/. With none open, one is asked for,
+      // and remembered for this model.
+      const open = (vscode.workspace.workspaceFolders || [])[0];
       const key = `exportFolder:${plan.workspace}/${plan.lakehouse}/${plan.name}`;
-      let outDir = context.globalState.get(key);
-      if (!outDir || !existsSync(outDir)) {
-        const folder = (vscode.workspace.workspaceFolders || [])[0];
+      let outDir = open ? join(open.uri.fsPath, plan.name) : context.globalState.get(key);
+      if (!outDir || (!open && !existsSync(outDir))) {
         const picked = await vscode.window.showOpenDialog({
           canSelectFolders: true, canSelectFiles: false, canSelectMany: false,
-          defaultUri: folder ? folder.uri : vscode.Uri.file(require('node:os').homedir()),
+          defaultUri: vscode.Uri.file(require('node:os').homedir()),
           openLabel: 'Export Here',
           title: `Export to Fabric: the folder to keep the app's local copy (${plan.name}/) in`,
         });
         if (!picked || !picked.length) return 'Export cancelled.';
         outDir = join(picked[0].fsPath, plan.name);
       }
+      // A folder Export to Fabric did not write is refused here, before anything is asked.
+      const before = await readMarker(outDir);
+      const fabricApp = createFabricApp({ getToken: appToken, log: m => out && out.appendLine(m) });
+
+      // Edited since it was last published (by you, or an agent)? Asked, never overwritten.
+      let asIs = false;
+      const changed = await localChanges(outDir, before);
+      if (changed.length) {
+        const shown = changed.slice(0, 5).join('\n') + (changed.length > 5 ? `\n…and ${changed.length - 5} more` : '');
+        const pick = await vscode.window.showWarningMessage(
+          `The local copy of ${plan.name} has changed since it was last published.`,
+          { modal: true, detail: `${outDir}\n\n${shown}\n\nOverwrite: rewrite it from this Explore, and publish that. Publish As Is: publish the folder with your changes, and leave it alone.` },
+          'Overwrite Local Changes', 'Publish Folder As Is');
+        if (!pick) return 'Not exported: the local copy has changes.';
+        asIs = pick === 'Publish Folder As Is';
+      }
+
+      // Deployed again since this folder published it (another machine, analytics-as-code,
+      // rayfin up)? Asked before it is replaced.
+      if (before && before.itemId) {
+        const live = await fabricApp.deployStatus(plan.workspace, before.itemId)
+          .catch(e => { if (out) out.appendLine(`export: the app's last deploy could not be read — ${e.message}`); return null; });
+        const ours = before.deployedAt ? Date.parse(before.deployedAt)
+          // A marker from before deployedAt was kept: this machine's clock, with slack.
+          : before.exportedAt ? Date.parse(before.exportedAt) + 5 * 60_000 : NaN;
+        const theirs = live && Date.parse(live.lastSuccessfulDeploymentAt);
+        if (theirs > ours) {
+          const pick = await vscode.window.showWarningMessage(
+            `${plan.name} was deployed again on ${new Date(theirs).toLocaleString()}, not from this folder. Overwrite it?`,
+            { modal: true, detail: live.hostingUrl || '' }, 'Overwrite It');
+          if (pick !== 'Overwrite It') return `Not exported: ${plan.name} was deployed from elsewhere since.`;
+        }
+      }
+
       const ext = context.extensionUri.fsPath;
       const fabricAppDir = join(ext, 'fabric_app');
       const appDir = (await webviewRoot(context.extensionUri, { dev })).page.fsPath;
@@ -822,10 +859,14 @@ async function activateInner(context) {
       const publish = takeOver => vscode.window.withProgress(
         { location: vscode.ProgressLocation.Notification, title: `Export to Fabric: ${plan.name}` },
         async progress => {
-          const say = line => { if (out) out.appendLine(line); progress.report({ message: line.replace(/^app S+: /, '') }); };
-          say(`app ${plan.name}: writing the local copy to ${outDir}`);
-          const marker = await writeExport({ plan, state, outDir, fabricAppDir, appDir,
-                                             daxSqlDir: join(ext, 'vendor', 'gh', PINS.daxSql) });
+          const say = line => { if (out) out.appendLine(line); progress.report({ message: line.replace(/^app \S+: /, '') }); };
+          let marker = before;
+          if (asIs) say(`app ${plan.name}: publishing ${outDir} as it is`);
+          else {
+            say(`app ${plan.name}: writing the local copy to ${outDir}`);
+            marker = await writeExport({ plan, state, outDir, fabricAppDir, appDir,
+                                         daxSqlDir: join(ext, 'vendor', 'gh', PINS.daxSql) });
+          }
           const done = await createFabricApp({ getToken: appToken, log: say }).publish({
             workspaceId: plan.workspace, name: plan.name, tenantId: tenantOf(token),
             catalogUrl: plan.catalogUrl, modelUrl: plan.modelUrl,
@@ -833,10 +874,18 @@ async function activateInner(context) {
             fn: { sourceZip, deployMetaData }, redirects: marker.redirects || [],
             itemId: marker.itemId || null, takeOver,
           });
+          // The redirects in rayfin.yml: the template's, or (as is) the folder's own.
+          const yml = join(outDir, 'rayfin', 'rayfin.yml');
+          const tpl = asIs && existsSync(yml) ? await fsp.readFile(yml, 'utf8')
+            : await fsp.readFile(join(fabricAppDir, 'rayfin', 'rayfin.yml'), 'utf8');
+          await fsp.writeFile(yml, rayfinYml(tpl, plan.name, done.redirects));
+          // What was published, to compare the next export with: the folder's files, and the
+          // deploy's time by Fabric's clock.
+          const live = await fabricApp.deployStatus(plan.workspace, done.itemId).catch(() => null);
           await writeMarker(outDir, { ...marker, itemId: done.itemId, hostingUrl: done.hostingUrl,
-                                      redirects: done.redirects, exportedAt: new Date().toISOString() });
-          const tpl = await fsp.readFile(join(fabricAppDir, 'rayfin', 'rayfin.yml'), 'utf8');
-          await fsp.writeFile(join(outDir, 'rayfin', 'rayfin.yml'), rayfinYml(tpl, plan.name, done.redirects));
+                                      redirects: done.redirects, exportedAt: new Date().toISOString(),
+                                      deployedAt: (live && live.lastSuccessfulDeploymentAt) || new Date().toISOString(),
+                                      files: await fingerprint(outDir) });
           return done;
         });
       let r;
@@ -850,7 +899,7 @@ async function activateInner(context) {
         if (pick !== 'Replace It') return `Not exported: an app named ${e.item.displayName} already exists.`;
         r = await publish(true);
       }
-      await context.globalState.update(key, outDir);
+      if (!open) await context.globalState.update(key, outDir);
       // The workspace's Apps, re-read: the app is new, or deployed again.
       tree.refresh({ kind: 'apps', workspace });
       if (out) {
@@ -863,7 +912,7 @@ async function activateInner(context) {
           if (pick === 'Open App' && r.hostingUrl) vscode.env.openExternal(vscode.Uri.parse(r.hostingUrl));
           else if (pick === 'Reveal Folder') vscode.commands.executeCommand('revealFileInOS', vscode.Uri.file(outDir));
         });
-      return `Published to Fabric: ${r.hostingUrl || plan.name}`;
+      return `Published to Fabric${asIs ? ' (the local copy, as it is)' : ''}: ${r.hostingUrl || plan.name}`;
     } catch (e) {
       if (out) out.appendLine(`export to fabric of ${file} failed — ${(e && e.stack) || e}`);
       throw e;
