@@ -233,11 +233,20 @@ class LakehouseTree {
       case 'allApps':
         item.iconPath = new vscode.ThemeIcon('rocket');
         break;
+      // Its icon says who can load its site: an orange open lock when anyone with the URL
+      // can (public), a lock when Fabric asks for a sign-in first (protected), a globe when
+      // its settings could not be read.
       case 'fabricApp': {
-        item.iconPath = new vscode.ThemeIcon('globe');
+        item.iconPath = n.access === 'public'
+          ? new vscode.ThemeIcon('unlock', new vscode.ThemeColor('list.warningForeground'))
+          : n.access === 'protected' ? new vscode.ThemeIcon('lock') : new vscode.ThemeIcon('globe');
         const host = n.url ? n.url.replace(/^https?:\/\//, '') : 'not deployed';
-        item.description = [n.showWorkspace ? n.workspace : '', host].filter(Boolean).join(' · ');
-        item.tooltip = [n.url || 'No site deployed', n.deployedAt ? `Last deployed ${new Date(n.deployedAt).toLocaleString()}` : '',
+        item.description = [n.access === 'public' ? 'public' : '', n.showWorkspace ? n.workspace : '', host]
+          .filter(Boolean).join(' · ');
+        item.tooltip = [n.url || 'No site deployed',
+          n.access === 'public' ? 'Public: anyone with the URL can load the site, without signing in.'
+            : n.access === 'protected' ? 'Protected: Fabric asks for a sign-in and permission on the app first.' : '',
+          n.deployedAt ? `Last deployed ${new Date(n.deployedAt).toLocaleString()}` : '',
           n.description].filter(Boolean).join('\n');
         break;
       }
@@ -440,7 +449,7 @@ class LakehouseTree {
 
   _app(workspace, a, { showWorkspace = false } = {}) {
     return node('fabricApp', a.name, {
-      workspace, appId: a.id, url: a.url, deployedAt: a.deployedAt, description: a.description,
+      workspace, appId: a.id, url: a.url, deployedAt: a.deployedAt, access: a.access, description: a.description,
       leaf: true, showWorkspace,
     });
   }

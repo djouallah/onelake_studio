@@ -188,8 +188,12 @@ writes nothing to Fabric or OneLake.
 
 Each workspace also has an **Apps** node: its Fabric apps (`AppBackend` items), however they were
 made, listed with the Fabric API's item listing. Each shows its URL and when it was last deployed,
-from the app's deploy status (`GET …/appBackends/<id>/__private/deploy/status`, one read per app), and
-has a button that copies the URL. Nothing is opened or changed.
+from the app's deploy status (`GET …/appBackends/<id>/__private/deploy/status`), and whether its site
+is **public** or **protected**, from its runtime settings (`GET …/__private/projectRuntimeSettings`,
+`staticHosting.anonymousAccess`; nothing else from that answer is kept). Public means anyone with the
+URL loads the site without signing in, and its icon is an orange open lock; protected means Fabric asks
+for a sign-in and permission on the app first, a lock. Two reads per app, when *Apps* is expanded, then
+cached. A button copies the URL. Nothing is opened or changed.
 
 Requires desktop VS Code on x64 or arm64 Windows, macOS or Linux: the engine is a native library, so
 this does not run on vscode.dev.

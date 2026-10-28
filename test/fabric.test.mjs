@@ -82,12 +82,17 @@ test("a workspace's apps are its AppBackend items, each with its URL and last de
       ? res(200, { hostingUrl: "https://alpha.webapp.fabricapps.net", lastSuccessfulDeploymentAt: "2026-10-28T07:32:09Z" })
       : res(400, {})],
     [`/appBackends/a2/__private/deploy/status`, () => res(404, { message: "never deployed" })],
+    [`/appBackends/a1/__private/projectRuntimeSettings`, () => res(200, { publishableKey: "pk-secret",
+      serviceSettings: { staticHosting: { enabled: true, anonymousAccess: true } } })],
+    [`/appBackends/a2/__private/projectRuntimeSettings`, () => res(403, {})],
   ]);
   try {
-    assert.deepEqual(await fabric.listApps("Sales"), [
-      { id: "a1", name: "Alpha", description: "d", url: "https://alpha.webapp.fabricapps.net", deployedAt: "2026-10-28T07:32:09Z" },
-      { id: "a2", name: "zeta", description: "", url: "", deployedAt: "" },
-    ], "an app whose status cannot be read is still listed");
+    const apps = await fabric.listApps("Sales");
+    assert.deepEqual(apps, [
+      { id: "a1", name: "Alpha", description: "d", url: "https://alpha.webapp.fabricapps.net", deployedAt: "2026-10-28T07:32:09Z", access: "public" },
+      { id: "a2", name: "zeta", description: "", url: "", deployedAt: "", access: "" },
+    ], "an app whose status or settings cannot be read is still listed");
+    assert.ok(!JSON.stringify(apps).includes("pk-secret"), "the publishable key is never kept");
     assert.ok(calls.every(c => c.method === "GET"), "listing apps only reads");
   } finally { restore(); }
 });

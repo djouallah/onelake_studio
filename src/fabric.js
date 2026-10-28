@@ -125,21 +125,30 @@ function createFabric({ getFabricToken, apiBase = FABRIC_API,
   }
 
   // The workspace's Fabric apps (AppBackend items), however they were made, by name:
-  // [{ id, name, description, url, deployedAt }]. Shown, never opened or changed. Each app's
-  // URL and last deploy are its deploy status, one GET; an app whose status cannot be read
-  // (never deployed, no access) is still listed, without them.
+  // [{ id, name, description, url, deployedAt, access }]. Shown, never opened or changed.
+  // Two GETs per app, side by side: its deploy status (URL, last deploy) and its runtime
+  // settings, of which only staticHosting.anonymousAccess is kept — 'public' means anyone
+  // with the URL loads the site without signing in, 'protected' that Fabric asks for a
+  // sign-in and permission on the app first. The settings also hold the app's publishable
+  // key, which is dropped here. An answer that cannot be read (never deployed, no access)
+  // leaves its fields empty; the app is still listed.
   async function listApps(workspace) {
     const id = await workspaceId(workspace);
     const list = await listAll(`/workspaces/${id}/items?type=AppBackend`, `Listing apps in ${workspace}`);
-    const apps = await Promise.all(list.map(async a => {
-      let status = {};
+    const read = async (appId, route) => {
       try {
-        const r = await call(getFabricToken, `${apiBase}/workspaces/${id}/appBackends/${encodeURIComponent(a.id)}/__private/deploy/status`,
-          { headers: { 'x-ms-workload-resource-moniker': a.id } });
-        if (r.ok) status = await r.json().catch(() => ({}));
-      } catch (_) { /* listed without its status */ }
+        const r = await call(getFabricToken, `${apiBase}/workspaces/${id}/appBackends/${encodeURIComponent(appId)}/__private/${route}`,
+          { headers: { 'x-ms-workload-resource-moniker': appId } });
+        return r.ok ? await r.json().catch(() => ({})) : {};
+      } catch (_) { return {}; }
+    };
+    const apps = await Promise.all(list.map(async a => {
+      const [status, settings] = await Promise.all([read(a.id, 'deploy/status'), read(a.id, 'projectRuntimeSettings')]);
+      const hosting = settings && settings.serviceSettings && settings.serviceSettings.staticHosting;
+      const anon = hosting && hosting.anonymousAccess;
       return { id: a.id, name: a.displayName, description: a.description || '',
-               url: status.hostingUrl || '', deployedAt: status.lastSuccessfulDeploymentAt || '' };
+               url: status.hostingUrl || '', deployedAt: status.lastSuccessfulDeploymentAt || '',
+               access: anon === true ? 'public' : anon === false ? 'protected' : '' };
     }));
     return apps.sort((a, b) => byName(a.name, b.name));
   }
