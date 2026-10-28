@@ -42,6 +42,18 @@ function fabricWith(answers, opts = {}) {
   return { fabric, calls, restore: () => { globalThis.fetch = saved; } };
 }
 
+test("itemOf: a Direct Lake expression's GUIDs, as the names the tree and OneLake use", async () => {
+  const LH = "99999999-8888-7777-6666-555555555555";
+  const { fabric, restore } = fabricWith([
+    [/\/v1\/workspaces$/, () => res(200, { value: [{ id: WS_ID, displayName: "Power BI" }] })],
+    [`/workspaces/${WS_ID}/items/${LH}`, () => res(200, { id: LH, displayName: "nem", type: "Lakehouse" })],
+  ]);
+  try {
+    assert.deepEqual(await fabric.itemOf(WS_ID.toUpperCase(), LH), { workspace: "Power BI", item: "nem.Lakehouse" });
+    await assert.rejects(fabric.itemOf("00000000-0000-0000-0000-000000000000", LH), /does not list the workspace/);
+  } finally { restore(); }
+});
+
 test("a workspace name maps to its GUID through one paged listing, memoised", async () => {
   const { fabric, calls, restore } = fabricWith([
     [/continuationToken=c2/, () => res(200, { value: [{ id: WS_ID, displayName: "Sales" }] })],
@@ -178,7 +190,7 @@ test("a model's name becomes a safe local file name", () => {
 test("the module can only read: no write, no existence check, no storage token", () => {
   assert.deepEqual(Object.keys(fabricModule).sort(), ["bimFileName", "createFabric"]);
   const f = createFabric({ getFabricToken: async () => "fab" });
-  assert.deepEqual(Object.keys(f).sort(), ["getBim", "listApps", "listSemanticModels", "reset", "workspaceId"]);
+  assert.deepEqual(Object.keys(f).sort(), ["getBim", "itemOf", "listApps", "listSemanticModels", "reset", "workspaceId"]);
 });
 
 test("a 401 is retried once with a fresh token", async () => {

@@ -28,6 +28,7 @@ const { PINS } = require('./vendored');
 const { planReport, generateReport } = require('./report');
 const { planExport, writeExport, buildDist, writeMarker, readMarker, fingerprint, localChanges, zip, rayfinYml } = require('./exportapp');
 const { createFabricApp, tenantOf } = require('./fabricapp');
+const { createOneLakeWriter } = require('./onelakewrite');
 
 // OneLake accepts tokens in the storage
 // audience only, and this one covers both the data reads and the Iceberg catalog. It is
@@ -671,17 +672,22 @@ async function activateInner(context) {
     postToPanel(msg);
   }
 
-  // A semantic model, opened: its definition (Fabric's getDefinition, TMSL) downloaded to
-  // a .bim on this machine — <folder>/<workspace>/<model>.bim — and opened in the panel as
-  // its model. Nothing is written to Fabric or OneLake: the extension is read only.
+  // Where the command line (agent.js) keeps the .bim files it downloads: <folder>/<workspace>/
+  // <model>.bim. The tree's clicks write a model into its lakehouse instead (openModel).
   function modelsFolder() {
-    const set = vscode.workspace.getConfiguration('onelakeStudio').get('semanticModelsFolder', '').trim();
-    return set || join(require('node:os').homedir(), 'OneLakeStudio', 'semantic-models');
+    return join(require('node:os').homedir(), 'OneLakeStudio', 'semantic-models');
   }
 
   const bimPath = n => join(modelsFolder(), bimFileName(n.workspace).replace(/\.bim$/, ''), bimFileName(n.model));
-  // The tree's check mark: the .bim already on this machine, or null.
-  const cachedModel = n => (existsSync(bimPath(n)) ? bimPath(n) : null);
+
+  // Where each semantic model was written in OneLake, per account: { workspace, item, path }.
+  // The tree's check mark, and what a click opens without asking Fabric again.
+  const modelFilesKey = () => `onelakeStudio.modelFiles.${storeAccount || 'signed-out'}`;
+  const modelKey = n => `${n.workspace}|${n.modelId}`;
+  const modelFile = n => context.globalState.get(modelFilesKey(), {})[modelKey(n)] || null;
+  const rememberModelFile = (n, where) => context.globalState.update(modelFilesKey(),
+    { ...context.globalState.get(modelFilesKey(), {}), [modelKey(n)]: where });
+  const cachedModel = n => modelFile(n);
 
   // The command line (cli.mjs) rings here: its questions are answered by THIS extension —
   // its sign-in, its cache, its engine — so an agent in a terminal reads what the tree and
@@ -710,43 +716,83 @@ async function activateInner(context) {
     log: m => out && out.appendLine(m),
   }));
 
-  // The downloaded .bim is the cache: getDefinition is a long-running export, so a model is
-  // fetched from Fabric once and opened from its file after that. Download Again is `fresh`.
-  async function download(n) {
-    const file = vscode.Uri.file(bimPath(n));
-    const bytes = await vscode.window.withProgress(
-      { location: vscode.ProgressLocation.Notification, title: `Downloading ${n.model}` },
+  // A semantic model, opened from the tree: its definition (Fabric's getDefinition, TMSL)
+  // written as a .bim into the Files/ of the lakehouse its Direct Lake expression names —
+  // <lakehouse>/Files/semantic_model/<model>.bim — and opened from there like any Files/
+  // model, so Explore can export it to Fabric. A model that is not Direct Lake on one
+  // lakehouse is refused, and nothing is written. The file, once there, is what later clicks
+  // open; Download Again (`fresh`) reads Fabric again and overwrites it, after asking.
+  const writer = createOneLakeWriter({ getToken: hostToken });
+  const openFileInPanel = (where, bytes) => openInPanel({ type: 'open-file',
+    workspace: where.workspace, item: where.item, path: where.path, bytes });
+
+  async function exportModel(n, known) {
+    const bim = await vscode.window.withProgress(
+      { location: vscode.ProgressLocation.Notification, title: `Opening ${n.model}` },
       async progress => {
         progress.report({ message: 'reading its definition from Fabric…' });
         return fabric.getBim(n.workspace, n.modelId);
       });
-    await vscode.workspace.fs.writeFile(file, bytes);
-    if (out) out.appendLine(`downloaded ${n.workspace}/${n.model} -> ${file.fsPath} (${fmtBytes(bytes.length)})`);
+    let doc;
+    try { doc = JSON.parse(Buffer.from(bim).toString('utf8').replace(/^﻿/, '')); }
+    catch (e) { throw new Error(`its definition is not TMSL: ${e.message}`); }
+    const lakes = (await agent.modules()).semantic.lakehousesOf(doc);
+    if (lakes.length !== 1) {
+      throw new Error(`${n.model} is not Direct Lake on one lakehouse (it names ${lakes.length}): OneLake Studio opens those only`);
+    }
+    const lh = await fabric.itemOf(lakes[0].workspace, lakes[0].item);
+    const where = { ...lh, path: `${lh.item}/Files/semantic_model/${bimFileName(n.model)}` };
+    const there = await writer.stat(where.workspace, where.path);
+    const ours = known && known.workspace === where.workspace && known.path === where.path;
+    if (there && !ours) {
+      const pick = await vscode.window.showWarningMessage(
+        `${where.workspace}/${where.path} already exists.`,
+        { modal: true, detail: `Replace it with ${n.model}'s current definition from Fabric, or open the file that is there?` },
+        'Replace It', 'Open Existing');
+      if (!pick) return null;
+      if (pick === 'Open Existing') {
+        await rememberModelFile(n, where);
+        tree.modelChanged(n);
+        return { where, bytes: there.bytes };
+      }
+    }
+    await writer.writeFile(where.workspace, where.path, bim);
+    if (out) out.appendLine(`wrote ${n.workspace}/${n.model} -> ${where.workspace}/${where.path} (${fmtBytes(bim.length)})`);
+    await rememberModelFile(n, where);
+    // The listing again, so the file's bytes are read by its new version, not served old.
+    const lhOf = { workspace: where.workspace, item: where.item };
+    await onelake.files(lhOf, 'semantic_model', { fresh: true }).catch(() => {});
+    tree.refresh({ kind: 'dir', ...lhOf, dir: 'semantic_model' });
     tree.modelChanged(n);
-    return bytes;
+    return { where, bytes: bim.length };
   }
 
-  // Clicks on a model whose download is still running wait on that one, not a second export.
-  const downloading = new Map();   // `${workspace}|${modelId}` -> Promise<bytes>
+  // Clicks on a model whose export is still running wait on that one, not a second.
+  const exporting = new Map();   // `${workspace}|${modelId}` -> Promise
   async function openModel(n, { fresh = false } = {}) {
     if (!n || n.kind !== 'semanticModel') return;
-    const path = bimPath(n);
     try {
-      let bytes = null;
-      if (!fresh) {
-        bytes = await vscode.workspace.fs.readFile(vscode.Uri.file(path)).catch(() => null);
-        if (bytes && out) out.appendLine(`opened ${n.workspace}/${n.model} from ${path} (cached)`);
+      const known = modelFile(n);
+      if (known && !fresh) {
+        const there = await writer.stat(known.workspace, known.path).catch(() => null);
+        if (there) {
+          if (out) out.appendLine(`opened ${n.workspace}/${n.model} from ${known.workspace}/${known.path}`);
+          return openFileInPanel(known, there.bytes);
+        }
       }
-      if (!bytes) {
-        const id = `${n.workspace}|${n.modelId}`;
-        if (!downloading.has(id)) downloading.set(id, download(n).finally(() => downloading.delete(id)));
-        bytes = await downloading.get(id);
+      if (known && fresh) {
+        const pick = await vscode.window.showWarningMessage(
+          `Overwrite ${known.workspace}/${known.path} with ${n.model}'s current definition from Fabric?`,
+          { modal: true }, 'Overwrite');
+        if (pick !== 'Overwrite') return;
       }
-      await openInPanel({ type: 'open-model', name: bimFileName(n.model), path,
-                          text: Buffer.from(bytes).toString('utf8') });
+      const id = modelKey(n);
+      if (!exporting.has(id)) exporting.set(id, exportModel(n, known).finally(() => exporting.delete(id)));
+      const done = await exporting.get(id);
+      if (done) await openFileInPanel(done.where, done.bytes);
     } catch (e) {
-      if (out) out.appendLine(`download of ${n.model} failed — ${(e && e.stack) || e}`);
-      showError(`Could not download ${n.model}: ${(e && e.message) || e}`);
+      if (out) out.appendLine(`opening ${n.model} failed — ${(e && e.stack) || e}`);
+      showError(`Could not open ${n.model}: ${(e && e.message) || e}`);
     }
   }
 

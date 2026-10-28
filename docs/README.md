@@ -7,14 +7,16 @@
 
 ## Architecture in brief
 
-- **Read only.** Nothing is ever written to Fabric or OneLake. The extension host refuses any
-  statement that could write.
+- **Read only, except two writes, each on a click:** a semantic model's `.bim` into its
+  lakehouse's `Files/`, and Export to Fabric. The extension host refuses any statement that could
+  write.
 - **The host does the work.** Sign-in, every OneLake read and the query engine run in the
   extension host ([`src/`](../src/)). The panel ([`app/`](../app/)) is only a view: it holds no
   token and makes no network request.
 - **Cache first.** Listings, table metadata, first rows, files and table data are kept on this
   machine per Microsoft account, served from there at once and refreshed in the background.
-- **Semantic models** are downloaded once as a `.bim`, then opened from disk. They are queried
+- **Semantic models** are written once as a `.bim` into their lakehouse's `Files/`, then opened
+  from there. They are queried
   with `AGG(measure)`, compiled from DAX by [dax-sql](https://github.com/djouallah/dax-sql).
 
 ## Latest release: 0.2.4

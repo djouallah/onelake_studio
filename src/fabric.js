@@ -104,16 +104,30 @@ function createFabric({ getFabricToken, apiBase = FABRIC_API,
   // The tree knows a workspace by the name OneLake's DFS listing gives it; the Fabric API
   // knows it by GUID. One listing maps every name, memoised until a refresh.
   let wsIds = null;
-  async function workspaceId(name) {
-    if (GUID.test(name)) return name;
+  function workspaces() {
     if (!wsIds) {
       wsIds = listAll('/workspaces', 'Listing Fabric workspaces')
         .then(list => new Map(list.map(w => [w.displayName, w.id])))
         .catch(e => { wsIds = null; throw e; });
     }
-    const id = (await wsIds).get(name);
+    return wsIds;
+  }
+  async function workspaceId(name) {
+    if (GUID.test(name)) return name;
+    const id = (await workspaces()).get(name);
     if (!id) throw new Error(`The Fabric API does not list a workspace named "${name}"`);
     return id;
+  }
+
+  // An item named by GUIDs (a Direct Lake expression's https://…/<workspace id>/<item id>) as
+  // the tree and OneLake's DFS listing name it: { workspace: 'Sales', item: 'nem.Lakehouse' }.
+  async function itemOf(wsId, itemId) {
+    const ws = [...await workspaces()].find(([, id]) => id.toLowerCase() === String(wsId).toLowerCase());
+    if (!ws) throw new Error(`The Fabric API does not list the workspace ${wsId}`);
+    const r = await fabricJson(`${apiBase}/workspaces/${ws[1]}/items/${encodeURIComponent(itemId)}`, 'Reading the lakehouse');
+    const it = await r.json().catch(() => ({}));
+    if (!it.displayName || !it.type) throw new Error(`The Fabric API gave no name for the item ${itemId}`);
+    return { workspace: ws[0], item: `${it.displayName}.${it.type}` };
   }
 
   // [{ id, name, description }] by name.
@@ -191,7 +205,7 @@ function createFabric({ getFabricToken, apiBase = FABRIC_API,
 
   function reset() { wsIds = null; }
 
-  return { workspaceId, listSemanticModels, listApps, getBim, reset };
+  return { workspaceId, itemOf, listSemanticModels, listApps, getBim, reset };
 }
 
 module.exports = { createFabric, bimFileName };

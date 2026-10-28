@@ -51,7 +51,7 @@ class LakehouseTree {
    * @param {() => Promise<boolean>} [deps.hasFabric]        a Fabric token, without a prompt?
    * @param {() => boolean} deps.isSignedIn
    * @param {{ get: () => string[] }} [deps.favorites]   pinned workspace names, persisted
-   * @param {(n: object) => string|null} [deps.cachedModel]  a model's .bim on this machine, if any
+   * @param {(n: object) => string|null} [deps.cachedModel]  where a model's .bim was written in OneLake, if it was
    * @param {() => boolean} [deps.groupByType]  a workspace's items under one heading per type
    */
   constructor({ onelake, fabric = null, hasFabric = async () => false, isSignedIn, log = () => {},
@@ -213,18 +213,20 @@ class LakehouseTree {
       case 'models':
         item.iconPath = new vscode.ThemeIcon('graph');
         break;
-      // One click opens it. The first downloads its .bim to this machine; after that it opens
-      // from that file, and the icon says which: a cloud until then, a check once it is here.
+      // One click opens it. The first writes its .bim into the Files/ of the lakehouse it
+      // reads; after that it opens from that file, and the icon says which: a cloud until
+      // then, a check once it is there.
       case 'semanticModel': {
-        const local = this.cachedModel(n);
-        item.iconPath = local
+        const there = this.cachedModel(n);
+        item.iconPath = there
           ? new vscode.ThemeIcon('pass-filled', new vscode.ThemeColor('testing.iconPassed'))
           : new vscode.ThemeIcon('cloud');
-        item.description = [n.showWorkspace ? n.workspace : '', local ? 'cached' : ''].filter(Boolean).join(' · ');
+        const lakehouse = there && there.item.replace(/\.[^.]+$/, '');
+        item.description = [n.showWorkspace ? n.workspace : '', there ? `in ${lakehouse}` : ''].filter(Boolean).join(' · ');
         item.command = { command: 'onelakeStudio.openSemanticModel', title: 'Open semantic model', arguments: [n] };
-        item.tooltip = (n.description ? `${n.description}\n\n` : '') + (local
-          ? `Cached at ${local}. Click to open it; Download Again fetches it fresh from Fabric.`
-          : 'Click to download its .bim to this machine and open it as a model.');
+        item.tooltip = (n.description ? `${n.description}\n\n` : '') + (there
+          ? `In ${there.workspace}/${there.path}. Click to open it; Download Again reads it from Fabric again and overwrites that file.`
+          : "Click to write its .bim into its lakehouse's Files/semantic_model/ and open it as a model.");
         break;
       }
       // A workspace's Fabric apps (AppBackend items), however they were made — from the

@@ -21,6 +21,11 @@
   - **The model is never copied:** the app reads it from the lakehouse, in place, every time.
   - **It never replaces an app it didn't create** without asking.
   - **It is the one write** the extension makes to Fabric, and it happens only when you click.
+- **A semantic model opened from the tree goes into its lakehouse.** Its `.bim` is written to
+  `<lakehouse>/Files/semantic_model/<model>.bim` and opened from there, so Export to Fabric works on
+  it. Only Direct Lake models on one lakehouse are opened; any other is refused, with nothing
+  written. *Download Again* overwrites it, after asking. The `onelakeStudio.semanticModelsFolder`
+  setting is gone.
 - **New: Apps in the explorer.** Each workspace has an *Apps* node listing its Fabric apps, however
   they were made, each with its URL and last deploy, and a button to copy the URL. An app whose site
   is public (anyone with the URL can load it, no sign-in) has an orange open lock; a protected one, a lock.

@@ -1,7 +1,9 @@
 # OneLake Studio for VS Code — architecture
 
-- **Read only.** Nothing is ever written to Fabric or OneLake — not by the host, not by DuckDB,
-  not by SQL the page sends: the host refuses any statement that could write.
+- **Read only, except two writes, each only on a click.** Opening a semantic model from the tree
+  writes its `.bim` into its lakehouse's `Files/` (below), and **Export to Fabric** publishes an
+  app. Nothing else is written to Fabric or OneLake: not by the host, not by DuckDB, not by SQL the
+  page sends. The host refuses any statement that could write.
 - **Cache as much as possible.** Every answer OneLake or Fabric gave is kept on this machine and
   served from there first; the network is asked only when nothing is cached, or the cached
   answer is past its window.
@@ -136,7 +138,6 @@ by [`scripts/function-bundle.mjs`](../scripts/function-bundle.mjs) with Rayfin's
 | `onelakeStudio.catalogTtlMinutes` | How old a listing may be before it is refreshed (default 5). The last known answer is always served instantly from disk and refreshed behind you. |
 | `onelakeStudio.tableMetadataTtlHours` | How old a table's Iceberg metadata may be before it is refreshed (default 24), so a table you have opened before opens without asking the catalog — even after a restart. **Refresh** on its lakehouse re-reads it at once. |
 | `onelakeStudio.prefetchMetadata` | Read every table's metadata in the background once a lakehouse's Tables node is opened, so the first click is a disk read (default on). |
-| `onelakeStudio.semanticModelsFolder` | Where a semantic model's `.bim` is downloaded (`<folder>/<workspace>/<model>.bim`) and opened from after that. Empty means `OneLakeStudio/semantic-models` in your home directory. |
 | `onelakeStudio.diskCacheMaxGB` | How much table data read from OneLake is kept on disk, per account, so it is read from this machine afterwards, even after a restart (default 10). |
 | `onelakeStudio.engineMemoryLimit` | Most memory DuckDB may use, e.g. `4GB`. Empty means a quarter of the machine's RAM. |
 
@@ -189,14 +190,22 @@ one account's data to another; it survives a sign-out (signing back in finds it 
 **Clear Cached OneLake Data** deletes it.
 
 The extension also lists each workspace's **Power BI semantic models** in its tree. Clicking one
-downloads its TMSL definition (the Fabric REST API's `getDefinition`) to a `.bim` on this machine —
-`~/OneLakeStudio/semantic-models/<workspace>/<model>.bim`, or `onelakeStudio.semanticModelsFolder` —
-and opens it as its model (below). That file is the cache: later clicks open it without asking Fabric,
-the tree marks the model *cached*, and **Download Again** fetches it fresh. That needs a second token, in the Fabric API's audience, which VS
-Code asks for only when you first expand *Semantic models*. Downloading a model needs permission to
-read its definition (Contributor or above on the workspace, or write on the model). The extension
-is read only by design: it
-writes nothing to Fabric or OneLake.
+reads its TMSL definition (the Fabric REST API's `getDefinition`) and writes it, as a `.bim`, into
+the `Files/` of the lakehouse its Direct Lake expression names:
+`<lakehouse>/Files/semantic_model/<model>.bim` ([`src/onelakewrite.js`](../src/onelakewrite.js), the
+one write to OneLake). It then opens from there like any `Files/` model, so **Export to Fabric**
+works on it.
+- **Only Direct Lake on one lakehouse.** Any other model is refused, and nothing is written.
+- **The file is the cache.** Later clicks open it without asking Fabric. The tree marks the model
+  *in <lakehouse>*.
+- **Download Again** reads Fabric again and overwrites the file, after asking.
+- **A file of that name that this extension didn't write** is never replaced unasked: *Replace It*
+  or *Open Existing*.
+- **What it needs:** a second token, in the Fabric API's audience, which VS Code asks for only when
+  you first expand *Semantic models*. Reading a definition needs Contributor or above on the
+  workspace, or write on the model. Writing the file needs write access to the lakehouse.
+- **The command line** (the agent skill) still downloads its own `.bim` copies to this machine, to
+  `~/OneLakeStudio/semantic-models/<workspace>/<model>.bim`.
 
 Each workspace also has an **Apps** node: its Fabric apps (`AppBackend` items), however they were
 made, listed with the Fabric API's item listing. Each shows its URL and when it was last deployed,

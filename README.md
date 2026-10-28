@@ -1,7 +1,7 @@
 # OneLake Studio for VS Code
 
 A Visual Studio Code extension to browse Microsoft Fabric OneLake: workspaces, lakehouses,
-warehouses, tables, files and Power BI semantic models, read only, signed in with the Microsoft
+warehouses, tables, files and Power BI semantic models, signed in with the Microsoft
 account VS Code already uses.
 
 ![The OneLake explorer](docs/summary.png)
@@ -14,7 +14,7 @@ or run `code --install-extension djouallah.onelake-studio`. It needs desktop VS 
 semantic model to explore it — Model, Pivot (Show SQL, Show plan with a query profile) and Logs — or query it with `AGG(measure)`. Right-click an Ossie model in `Files/` and choose **Generate Report…**
 to get a Fabric app (DuckDB-WASM over its lakehouse's Iceberg catalog) in a folder, ready for an agent to grow. **Export to Fabric**, on the Pivot,
 publishes that Explore as a protected Fabric app that reads the model and its tables from the lakehouse (and keeps a local copy) — the only thing that ever writes to Fabric, and only on its click.
-**Install Agent Skill** lets Claude Code or GitHub Copilot answer questions about your data. Nothing is ever written to OneLake.
+**Install Agent Skill** lets Claude Code or GitHub Copilot answer questions about your data. The extension is read only, except two writes, each on a click: opening a semantic model from the tree writes its `.bim` into its lakehouse's `Files/`, and Export to Fabric publishes an app.
 
 Commands, settings, how it works and release notes: [docs/](https://github.com/djouallah/onelake_studio/tree/main/docs).
 
