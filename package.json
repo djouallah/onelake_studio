@@ -1,7 +1,7 @@
 {
   "name": "onelake-studio",
   "displayName": "OneLake Studio",
-  "description": "Browse Microsoft Fabric OneLake — tables, files and Power BI semantic models — signed in with your VS Code Microsoft account. Read only, except what you click to write: a semantic model into its lakehouse, an Explore exported to Fabric.",
+  "description": "Browse and explore your Microsoft Fabric data in VS Code: OneLake tables and files, semantic models in a pivot, and one-click Fabric apps.",
   "version": "0.2.4",
   "publisher": "djouallah",
   "license": "MIT",
