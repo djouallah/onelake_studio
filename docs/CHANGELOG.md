@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.5
 
 - **Explore is analytics-as-code's, and lives here now.** A semantic model opens on three
   pages: Model, Pivot and Logs.
