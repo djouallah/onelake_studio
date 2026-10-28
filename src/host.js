@@ -61,7 +61,12 @@ function createHostMethods({ onelake, engine, onStatus = () => {}, saveFile = nu
     },
     'semantic.drop': async x => { await views().remove(String(x.name)); return true; },
     'onelake.table': x => onelake.table(lhOf(x), tableOf(x), { onWait: onStatus }),
-    'onelake.peek': x => onelake.peek(lhOf(x), tableOf(x), sql => engine.call('query', [sql])),
+    // A Delta table's own log: its state as of the converted version, and its commits a
+    // page at a time. The engine is passed for the checkpoint, the one log file that is parquet.
+    'onelake.deltaState': x => onelake.deltaState(lhOf(x), tableOf(x), { run: sql => engine.call('query', [sql]) }),
+    'onelake.deltaHistory': x => onelake.deltaHistory(lhOf(x), tableOf(x),
+      { skip: Number.isSafeInteger(x.skip) && x.skip > 0 ? x.skip : 0 }),
+    'onelake.peek': x =>onelake.peek(lhOf(x), tableOf(x), sql => engine.call('query', [sql])),
     // The identifier to select a table from. The page names the table; the metadata
     // location comes from the host's own store, never from the page.
     'onelake.openTable': async x => {

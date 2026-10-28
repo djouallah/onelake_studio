@@ -259,3 +259,47 @@ test("a kept prefix that 404s is replaced from the config, and the call made aga
     assert.equal(calls.filter(u => u.includes("/v1/config")).length, 1, calls.join("\n"));
   } finally { restore(); }
 });
+
+// A table with no Iceberg metadata says why in Fabric's own words, out of the conversion
+// log the conversion leaves beside it — not a guess about tenant settings.
+test("a table that never converts is reported with its conversion log's error", async () => {
+  const log = "Status:             Failed\nTimestamp (UTC):    2026-10-01T00:00:00Z\n" +
+    "Error Category:     USER\nError Details:      The table has more than 5000 commits\n";
+  const { fetch } = fakeFetch([
+    [/\/v1\/config/, () => res(200, { overrides: { prefix: "a/b" } })],
+    [/\/tables\/t$/, () => res(404, {})],
+    [/Tables\/dbo\/t\/metadata\/latest_conversion_log\.txt$/, () => ({ ...res(200, {}),
+      arrayBuffer: async () => new TextEncoder().encode(log).buffer })],
+  ]);
+  const saved = globalThis.fetch;
+  globalThis.fetch = fetch;
+  try {
+    const catalog = createCatalog({ getToken: async () => "tok", backoffMs: [] });
+    await assert.rejects(() => catalog.loadTable({ workspace: "ws", item: "lh.Lakehouse" }, { schema: "dbo", table: "t" }),
+      /could not convert this table.*more than 5000 commits.*table itself has to change/);
+  } finally { globalThis.fetch = saved; }
+});
+
+test("no conversion log means the conversion never ran, and the error says so", async () => {
+  const { fetch } = fakeFetch([
+    [/\/v1\/config/, () => res(200, { overrides: { prefix: "a/b" } })],
+    [/\/tables\/t$/, () => res(404, {})],
+  ]);
+  const saved = globalThis.fetch;
+  globalThis.fetch = fetch;
+  try {
+    const catalog = createCatalog({ getToken: async () => "tok", backoffMs: [] });
+    await assert.rejects(() => catalog.loadTable({ workspace: "ws", item: "lh.Lakehouse" }, { schema: "dbo", table: "t" }),
+      /no conversion log/);
+  } finally { globalThis.fetch = saved; }
+});
+
+// OneLake Studio is an app external to Fabric; a tenant can turn those off wholesale, and
+// a 403 is all that comes back.
+test("a 403 names the tenant setting that turns off access from outside Fabric", async () => {
+  const { catalog, restore } = catalogWith([[/resource=account/, () => res(403, { error: { message: "Forbidden" } })]]);
+  try {
+    await assert.rejects(() => catalog.listWorkspaces(),
+      /HTTP 403.*Users can access data stored in OneLake with apps external to Fabric/);
+  } finally { restore(); }
+});

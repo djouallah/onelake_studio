@@ -1,5 +1,26 @@
 # Changelog
 
+## Unreleased
+
+- **Mirrored databases show up.** OneLake names them `.MountedRelationalDatabase`, which the tree
+  didn't list. They now appear as *Mirrored database*, with a mirror icon.
+- **Delta and Iceberg tables have their own icons.** The icon says which format the table was
+  written in. Every table is still read through its Iceberg metadata.
+- **New: a History tab** beside Stats and Data.
+  - **A Delta table** lists its commits from `_delta_log`, newest first, 10 at a time: version,
+    time, operation, rows and files added or removed, engine, user and parameters. Nothing is read
+    until the tab is opened, and each commit file is read only once.
+  - **An Iceberg table** lists its snapshots, which are already in its metadata.
+- **A Delta table's Stats come from its Delta log.** They show reader and writer versions,
+  features, table properties (V-Order among them), partitioning and creation time. They are taken
+  from the converted version's `.crc` file, which is one request and then kept. A writer that leaves
+  no `.crc`, such as a Warehouse, has its last checkpoint read instead.
+- **A table with no Iceberg metadata says why.** The error quotes Fabric's conversion log, for
+  example a type it can't convert or too many commits. If there is no conversion log, the error
+  says Fabric never converted the table.
+- **A 403 names the tenant setting to check.** That setting is *Users can access data stored in
+  OneLake with apps external to Fabric*, which a Fabric admin can turn off for every app at once.
+
 ## 0.2.5
 
 - **Explore is analytics-as-code's, and lives here now.** A semantic model opens on three

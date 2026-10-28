@@ -51,8 +51,13 @@ let docSourceExt = '';           // ...and which file it came from, when it came
 let activeDocEligible = false;   // the same two answers for the loaded table/file, for Preview
 let activeDocExt = '';
 let activeInfo = null;       // the selected TABLE's info object — what the Stats tab renders
-let viewMode = 'data';       // Data | Stats for a selected table
-let statsPrev = null;        // hidden-flags of the data surfaces while Stats covers them
+let viewMode = 'data';       // 'data' | 'stats' | 'history' for a selected table
+let statsPrev = null;        // hidden-flags of the data surfaces while Stats/History cover them
+// A Delta table's own log, each half once its tab asks: { table, value | error | pending }
+// for Stats, { table, entries, total, oldest, pending, error } for History. `table` is the
+// activeTableRef it belongs to; another selection makes it stale.
+let deltaState = null;
+let deltaHistory = null;
 // A selection buys the cheapest thing that answers the question: 'stats' = metadata
 // only, 'peek' = the first rows, 'loaded' = a real view. Each only when asked for.
 let activeTableRef = null;   // the table object behind the selection, for escalating
@@ -113,6 +118,8 @@ function wireUi() {
   };
   $('viewData').onclick = onDataTab;
   $('viewStats').onclick = showStats;
+  $('viewHistory').onclick = showHistory;
+  $('statsView').addEventListener('click', e => { if (e.target.id === 'historyMore') loadHistory(true); });
   $('sqlEditor').addEventListener('keydown', e => {
     if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); runWithTable(); }
   });
@@ -724,42 +731,93 @@ function setDocTabs() {
 }
 
 // ---------------------------------------------------------------------------
-// Stats view: Data | Stats for a selected table. Everything on the card is metadata
-// already fetched — rendering it is synchronous and free.
+// Stats view: Stats | History | Data for a selected table. Everything on the Stats and
+// History tabs is metadata: the Iceberg snapshot already fetched, and for a table written
+// as Delta, its own log, read once when one of the two is first shown.
 // ---------------------------------------------------------------------------
 function setActiveStats(info) {
   activeInfo = (info && info.stats) ? info : null;
   $('viewBar').hidden = !activeInfo;
-  if (!activeInfo && viewMode === 'stats') showData();
+  if (!activeInfo && viewMode !== 'data') showData();
+  else if (activeInfo && viewMode !== 'data') renderMeta();
 }
 
 function setViewTabs() {
   $('viewData').classList.toggle('active', viewMode === 'data');
   $('viewStats').classList.toggle('active', viewMode === 'stats');
+  $('viewHistory').classList.toggle('active', viewMode === 'history');
 }
 
-// Stats covers the result surfaces rather than replacing them: whatever was showing is
-// put back exactly on return.
-function showStats() {
-  if (!activeInfo || viewMode === 'stats') return;
-  viewMode = 'stats';
-  statsPrev = ['resultsHint', 'docView', 'resultsTable', 'docBar']
-    .map(id => [id, $(id).hidden]);
-  for (const [id] of statsPrev) $(id).hidden = true;
-  $('statsView').innerHTML = statsCardHtml(activeInfo);
+const isDelta = info => !!(info && info.stats && info.stats.format === 'delta');
+
+// Stats and History cover the result surfaces rather than replacing them: whatever was
+// showing is put back exactly on return.
+function showMeta(mode) {
+  if (!activeInfo || viewMode === mode) return;
+  if (viewMode === 'data') {
+    statsPrev = ['resultsHint', 'docView', 'resultsTable', 'docBar']
+      .map(id => [id, $(id).hidden]);
+    for (const [id] of statsPrev) $(id).hidden = true;
+  }
+  viewMode = mode;
   $('statsView').hidden = false;
+  renderMeta();
   setViewTabs();
+  // A Delta table's log is read per tab, only once that tab is shown.
+  if (isDelta(activeInfo)) (mode === 'history' ? loadHistory : loadDeltaState)();
+}
+const showStats = () => showMeta('stats');
+const showHistory = () => showMeta('history');
+
+const mine = x => (x && x.table === activeTableRef ? x : null);
+function renderMeta() {
+  $('statsView').innerHTML = viewMode === 'history'
+    ? historyHtml(activeInfo, mine(deltaHistory))
+    : statsCardHtml(activeInfo, mine(deltaState));
+}
+
+// The table as of its converted Delta version: one request the first time, and kept by
+// the host for good — a version never changes.
+async function loadDeltaState() {
+  const t = activeTableRef;
+  if (!t || mine(deltaState)) return;
+  deltaState = { table: t, pending: true };
+  let next;
+  try { next = { table: t, value: await engine.deltaState(lakehouse, t) }; }
+  catch (e) { next = { table: t, error: (e && e.message) || String(e) }; }
+  if (activeTableRef !== t) return;
+  deltaState = next;
+  if (viewMode === 'stats') renderMeta();
+}
+
+// The commits, a page at a time: the first page when History opens, the next only when
+// asked for. `more` appends to what is on screen.
+async function loadHistory(more = false) {
+  const t = activeTableRef;
+  const had = mine(deltaHistory);
+  if (!t || (had && (had.pending || (!more && !had.error)))) return;
+  const skip = more && had && had.entries ? had.entries.length : 0;
+  deltaHistory = { ...(more ? had : {}), table: t, pending: true, error: null };
+  if (more) renderMeta();
+  let next;
+  try {
+    const page = await engine.deltaHistory(lakehouse, t, skip);
+    next = { ...page, table: t, entries: [...(more && had.entries ? had.entries : []), ...page.entries] };
+  } catch (e) { next = { ...(more ? had : {}), table: t, error: (e && e.message) || String(e) }; }
+  if (activeTableRef !== t) return;
+  deltaHistory = next;
+  if (viewMode === 'history') renderMeta();
 }
 
 // The Data tab is where the user first asks to see rows.
 function onDataTab() {
-  if (viewMode !== 'stats') return;
+  if (viewMode === 'data') return;
   if (tableStage === 'stats' && activeTableRef) { peekIntoView(); return; }
   showData();
 }
 
 function showData() {
-  if (viewMode !== 'stats') return;
+  if (viewMode === 'data') return;
   viewMode = 'data';
   $('statsView').hidden = true;
   if (statsPrev) for (const [id, h] of statsPrev) $(id).hidden = h;
@@ -767,41 +825,121 @@ function showData() {
   setViewTabs();
 }
 
-// Only what the Iceberg snapshot metadata said — a fact it doesn't carry is an em dash.
-function statsCardHtml(info) {
-  const s = info.stats || {};
-  const n = v => v == null ? '—' : Number(v).toLocaleString('en');
-  const deletes = info.posDeletes || info.eqDeletes || s.totalDeleteFiles;
-  const rows = [];
-  rows.push(['Rows', n(info.totalRecords) +
-    (deletes ? ' (physical — before delete files are applied)' : '')]);
-  rows.push(['Data files', n(info.fileCount)]);
-  if (deletes) rows.push(['Delete files', n(s.totalDeleteFiles)]);
-  rows.push(['Total size', s.totalFilesSize == null ? '—' : engine.fmtBytes(s.totalFilesSize)]);
-  if (s.totalFilesSize && info.fileCount)
-    rows.push(['Avg file size', engine.fmtBytes(s.totalFilesSize / info.fileCount)]);
-  rows.push(['Columns', n((info.columns || []).length)]);
-  rows.push(['Partitioning', (s.partitionColumns || []).length ? s.partitionColumns.join(', ') : 'none']);
-  rows.push(['Compression', s.codec || '—']);
-  rows.push(['Last write', s.snapshotTs == null ? '—' :
-    new Date(s.snapshotTs).toLocaleString('en') + (s.operation ? ` (${s.operation})` : '')]);
-  rows.push(['Snapshots', n(s.snapshotCount || null)]);
-  if (s.formatVersion != null) rows.push(['Format', `Iceberg v${s.formatVersion}`]);
-  if (s.vorderProp != null) rows.push(['V-Order', s.vorderProp ? 'enabled' : 'disabled']);
-
+const n0 = v => v == null ? '—' : Number(v).toLocaleString('en');
+const when = ms => ms == null ? '—' : new Date(ms).toLocaleString('en');
+const kvTable = rows => '<table>' + rows.map(([k, v]) =>
+  `<tr><th>${escapeHtml(k)}</th><td>${escapeHtml(String(v))}</td></tr>`).join('') + '</table>';
+const columnsHtml = info => {
   const cols = info.columns || [];
-  const colList = cols.length
+  return cols.length
     ? '<h3>Columns</h3><table>' + cols.map(c =>
         `<tr><th>${escapeHtml(c.name)}</th><td>${escapeHtml(c.type || '')}</td></tr>`).join('') +
       '</table>'
     : '';
+};
+
+// A table written as Iceberg: only what the snapshot metadata said — a fact it doesn't
+// carry is an em dash.
+function statsCardHtml(info, delta) {
+  if (isDelta(info)) return deltaCardHtml(info, delta);
+  const s = info.stats || {};
+  const deletes = info.posDeletes || info.eqDeletes || s.totalDeleteFiles;
+  const rows = [];
+  rows.push(['Rows', n0(info.totalRecords) +
+    (deletes ? ' (physical — before delete files are applied)' : '')]);
+  rows.push(['Data files', n0(info.fileCount)]);
+  if (deletes) rows.push(['Delete files', n0(s.totalDeleteFiles)]);
+  rows.push(['Total size', s.totalFilesSize == null ? '—' : engine.fmtBytes(s.totalFilesSize)]);
+  if (s.totalFilesSize && info.fileCount)
+    rows.push(['Avg file size', engine.fmtBytes(s.totalFilesSize / info.fileCount)]);
+  rows.push(['Columns', n0((info.columns || []).length)]);
+  rows.push(['Partitioning', (s.partitionColumns || []).length ? s.partitionColumns.join(', ') : 'none']);
+  rows.push(['Compression', s.codec || '—']);
+  rows.push(['Last write', s.snapshotTs == null ? '—' :
+    when(s.snapshotTs) + (s.operation ? ` (${s.operation})` : '')]);
+  rows.push(['Snapshots', n0(s.snapshotCount || null)]);
+  if (s.formatVersion != null) rows.push(['Format', `Iceberg v${s.formatVersion}`]);
+  if (s.vorderProp != null) rows.push(['V-Order', s.vorderProp ? 'enabled' : 'disabled']);
+
   const note = info.stage === 'loaded'
     ? 'From the Iceberg snapshot metadata — nothing was scanned to show this.'
     : 'From the Iceberg snapshot metadata — no data has been read yet. ' +
       'Open Data for the first rows, or Preview to query the table.';
-  return '<table>' + rows.map(([k, v]) =>
-    `<tr><th>${escapeHtml(k)}</th><td>${escapeHtml(String(v))}</td></tr>`).join('') +
-    '</table>' + colList + `<p class="statsNote">${escapeHtml(note)}</p>`;
+  return kvTable(rows) + columnsHtml(info) + `<p class="statsNote">${escapeHtml(note)}</p>`;
+}
+
+// A table written as Delta, as of the version its Iceberg metadata was converted from —
+// the same version the row count describes, so every line on the card agrees.
+function deltaCardHtml(info, state) {
+  const s = info.stats || {};
+  const d = state && state.value;
+  const rows = [];
+  rows.push(['Format', 'Delta' + (d && d.minReaderVersion != null
+    ? ` (reader v${d.minReaderVersion}, writer v${d.minWriterVersion})` : '')]);
+  if (s.deltaVersion != null) rows.push(['Version', n0(s.deltaVersion)]);
+  rows.push(['Rows', n0(info.totalRecords)]);
+  if (d && d.deletedRows) rows.push(['Deleted rows', `${n0(d.deletedRows)} (deletion vectors, not yet purged)`]);
+  rows.push(['Data files', n0(d && d.numFiles != null ? d.numFiles : info.fileCount)]);
+  const size = d && d.sizeBytes != null ? d.sizeBytes : s.totalFilesSize;
+  rows.push(['Total size', size == null ? '—' : engine.fmtBytes(size)]);
+  rows.push(['Columns', n0((info.columns || []).length)]);
+  rows.push(['Partitioning', (d ? d.partitionColumns : s.partitionColumns || []).join(', ') || 'none']);
+  rows.push(['Compression', s.codec || '—']);
+  rows.push(['Last write', s.snapshotTs == null ? '—' :
+    when(s.snapshotTs) + (s.operation ? ` (${s.operation})` : '')]);
+  if (d && d.createdTime != null) rows.push(['Created', when(d.createdTime)]);
+  if (d) rows.push(['Features', d.features.length ? d.features.join(', ') : 'none']);
+
+  const props = d ? Object.entries(d.properties || {}).sort(([a], [b]) => a.localeCompare(b)) : [];
+  const propsHtml = props.length ? '<h3>Table properties</h3>' + kvTable(props) : '';
+  const note = !state || state.pending ? 'Reading the Delta log…'
+    : state.error ? `The Delta log could not be read: ${state.error}. What is shown comes from the Iceberg metadata.`
+    : !d.source ? 'The Delta log keeps no summary of this version (no crc, no checkpoint), so only the Iceberg metadata is shown.'
+    : `From the Delta log${d.source === 'checkpoint' ? ` (its checkpoint at version ${n0(d.asOf)})` : ''} and the ` +
+      'Iceberg metadata Fabric converted from it — nothing was scanned to show this.';
+  return kvTable(rows) + propsHtml + columnsHtml(info) + `<p class="statsNote">${escapeHtml(note)}</p>`;
+}
+
+// Newest first: the Delta log's commits, or an Iceberg table's snapshots.
+function historyHtml(info, hist) {
+  const deltaTable = isDelta(info);
+  if (deltaTable && (!hist || (hist.pending && !hist.entries))) return '<p class="statsNote">Reading the Delta log…</p>';
+  if (deltaTable && hist.error && !hist.entries)
+    return `<p class="statsNote">${escapeHtml(`The Delta log could not be read: ${hist.error}`)}</p>`;
+  const list = deltaTable ? hist.entries : (info.stats.history || []);
+  if (!list.length) return '<p class="statsNote">No history recorded.</p>';
+
+  const files = h => h.filesAdded == null && h.filesRemoved == null ? '—'
+    : `+${n0(h.filesAdded || 0)} / −${n0(h.filesRemoved || 0)}`;
+  const params = h => h.parameters ? Object.entries(h.parameters)
+    .map(([k, v]) => `${k}=${typeof v === 'string' ? v : JSON.stringify(v)}`).join(', ') : '';
+  const cols = deltaTable
+    ? [['Version', h => h.version, 'num'], ['When', h => when(h.timestamp)], ['Operation', h => h.operation || '—'],
+       ['Rows added', h => n0(h.rowsAdded), 'num'], ['Rows deleted', h => n0(h.rowsRemoved), 'num'],
+       ['Rows updated', h => n0(h.rowsUpdated), 'num'], ['Files', files, 'num'],
+       ['Size added', h => h.bytesAdded == null ? '—' : engine.fmtBytes(h.bytesAdded), 'num'],
+       ['Engine', h => h.engine || '—'], ['User', h => h.user || '—'], ['Parameters', params, 'params']]
+    : [['Snapshot', h => h.version, 'num'], ['When', h => when(h.timestamp)], ['Operation', h => h.operation || '—'],
+       ['Rows added', h => n0(h.rowsAdded), 'num'], ['Rows deleted', h => n0(h.rowsRemoved), 'num'],
+       ['Files', files, 'num'], ['Size added', h => h.bytesAdded == null ? '—' : engine.fmtBytes(h.bytesAdded), 'num'],
+       ['Total rows', h => n0(h.totalRows), 'num'], ['Engine', h => h.engine || '—']];
+  // A column nobody filled (no commit carried a user) is noise, not information.
+  const shown = cols.filter(([, f], i) => i < 3 || list.some(h => !['—', ''].includes(String(f(h)))));
+  const table = '<table class="history"><tr>' + shown.map(([h]) => `<th>${escapeHtml(h)}</th>`).join('') + '</tr>' +
+    list.map(h => '<tr>' + shown.map(([, f, cls]) =>
+      `<td${cls ? ` class="${cls}"` : ''}>${escapeHtml(String(f(h)))}</td>`).join('') + '</tr>').join('') +
+    '</table>';
+  if (!deltaTable) {
+    const note = `The table's Iceberg snapshots, newest first (${n0(list.length)} of ${n0(info.stats.snapshotCount)}).`;
+    return table + `<p class="statsNote">${escapeHtml(note)}</p>`;
+  }
+  // Each page is a request per commit, so the next one is read only when asked for.
+  const more = list.length < hist.total
+    ? `<p><button id="historyMore"${hist.pending ? ' disabled' : ''}>${hist.pending ? 'Reading…' : 'Show 10 more'}</button></p>` : '';
+  const note = `The newest ${n0(list.length)} of ${n0(hist.total)} commit(s) in the Delta log` +
+    (hist.oldest > 0 ? `; versions before ${n0(hist.oldest)} were cleaned up by log retention.` : '.') +
+    (hist.error ? ` The next page could not be read: ${hist.error}` : '');
+  return table + more + `<p class="statsNote">${escapeHtml(note)}</p>`;
 }
 
 // ---------------------------------------------------------------------------

@@ -53,16 +53,27 @@ const itemKind = name => {
 //                                          every one. There is nothing here to read.
 //   KustoDatabase                       -> Tables/ existed but was empty on every KQL
 //                                          database probed; nothing to confirm.
-const TABLE_ITEM_KINDS = new Set(["Lakehouse", "Warehouse", "SQLDbNative"]);
+//   MountedRelationalDatabase           -> a MIRRORED database (Azure SQL, Snowflake, Cosmos,
+//                                          open mirroring…). None in those 49 workspaces:
+//                                          the suffix is Fabric's internal type for the
+//                                          item, the one its own definition names as the
+//                                          mirroring target (mirroring.json, `"type":
+//                                          "MountedRelationalDatabase"`) and the one
+//                                          Microsoft's semantic-link-labs lists beside
+//                                          SQLDbNative and DatabricksCatalog. Until it was
+//                                          here, the /^Mirrored/ guess below was the only
+//                                          rule, and a user's mirrored database was missing.
+const TABLE_ITEM_KINDS = new Set(["Lakehouse", "Warehouse", "SQLDbNative", "MountedRelationalDatabase"]);
 
-// Fabric mirroring (Snowflake, Azure SQL, Cosmos) does land Delta in OneLake, so it
-// belongs — but that tenant has no such item, so the internal suffix is UNVERIFIED and
-// this prefix is the one guess left in the file. If it is wrong the item is absent from
-// the picker, and the item names listItems logs are what identifies the real one.
+// The REST spelling, kept in case OneLake ever names a directory after it: harmless when
+// it never matches.
 const holdsTables = name => {
   const kind = itemKind(name);
   return TABLE_ITEM_KINDS.has(kind) || /^Mirrored/i.test(kind);
 };
+
+// A mirrored item is a copy kept in step with a database outside Fabric; the tree says so.
+const isMirrored = name => /^(MountedRelationalDatabase|Mirrored)/i.test(itemKind(name));
 
 // Files/ is the unmanaged half of a LAKEHOUSE. Everything else here stores its tables
 // in OneLake and nothing else, so browsing Files/ on one listed the item's internal
@@ -73,6 +84,7 @@ const hasFilesArea = name => /^lakehouse$/i.test(itemKind(name));
 // type. Anything unlisted names itself, which is still better than being invisible.
 const KIND_LABELS = {
   sqldbnative: "SQL database",
+  mountedrelationaldatabase: "Mirrored database",
   mirroreddatabase: "Mirrored database",
 };
 const kindLabel = kind => {
@@ -139,6 +151,55 @@ function snapshotStats(meta, snap) {
   };
 }
 
+// Which format the table is WRITTEN in. OneLake keeps both sets of metadata side by side
+// and the engine always reads the Iceberg one, but only one of them is the original: the
+// other is Fabric's conversion (Apache XTable), and the conversion signs its output.
+// Probed 2026-10-29 on a lakehouse holding both kinds:
+//
+//   written as Delta    -> Iceberg properties carry XTABLE_METADATA, sourceTableFormat DELTA
+//                          and sourceIdentifier = the Delta version it was converted from
+//   written as Iceberg  -> no XTABLE_METADATA in the Iceberg metadata (it is the original);
+//                          the _delta_log beside it is the converted one, and ITS commit
+//                          carries the XTABLE_METADATA, sourceTableFormat ICEBERG
+//
+// So a table whose Iceberg metadata was not converted from Delta is an Iceberg table.
+function sourceFormat(meta) {
+  const raw = ((meta || {}).properties || {}).XTABLE_METADATA;
+  if (raw == null) return { format: "iceberg", deltaVersion: null };
+  let x = {};
+  try { x = JSON.parse(raw) || {}; } catch (_) { /* unreadable: still converted by XTable */ }
+  const from = String(x.sourceTableFormat || "DELTA").toUpperCase();
+  if (from !== "DELTA") return { format: from.toLowerCase(), deltaVersion: null };
+  const v = Number(x.sourceIdentifier);
+  return { format: "delta", deltaVersion: Number.isFinite(v) ? v : null };
+}
+
+// An Iceberg table's history: its snapshots, newest first. Only for a table written as
+// Iceberg — a converted one's snapshots are the conversion's, not the writer's.
+const HISTORY_MAX = 100;
+function icebergHistory(meta) {
+  const num = v => (v == null || v === "" ? null : Number(v));
+  return [...((meta || {}).snapshots || [])]
+    .sort((a, b) => (b["sequence-number"] ?? b["timestamp-ms"]) - (a["sequence-number"] ?? a["timestamp-ms"]))
+    .slice(0, HISTORY_MAX)
+    .map(s => {
+      const m = s.summary || {};
+      return {
+        version: String(s["snapshot-id"]),
+        timestamp: num(s["timestamp-ms"]),
+        operation: m.operation || null,
+        rowsAdded: num(m["added-records"]),
+        rowsRemoved: num(m["deleted-records"]),
+        filesAdded: num(m["added-data-files"]),
+        filesRemoved: num(m["deleted-data-files"]),
+        bytesAdded: num(m["added-files-size"]),
+        totalRows: num(m["total-records"]),
+        engine: m["engine-name"] ? `${m["engine-name"]} ${m["engine-version"] || ""}`.trim()
+              : m["iceberg-version"] || null,
+      };
+    });
+}
+
 function fmtBytes(n) {
   if (!(n > 0)) return "unknown size";
   if (n < 1e3) return `${n} B`;
@@ -149,7 +210,7 @@ function fmtBytes(n) {
 
 module.exports = {
   strip, basename, encPath,
-  itemKind, holdsTables, hasFilesArea, kindLabel, kindLabelPlural,
-  icebergTypeName, icebergFields, snapshotStats,
+  itemKind, holdsTables, isMirrored, hasFilesArea, kindLabel, kindLabelPlural,
+  icebergTypeName, icebergFields, snapshotStats, sourceFormat, icebergHistory,
   fmtBytes,
 };

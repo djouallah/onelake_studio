@@ -67,6 +67,16 @@ async function oneLakeMessage(r) {
   } catch (_) { return ''; }
 }
 
+// OneLake Studio reads OneLake from outside Fabric, which a tenant admin can switch off
+// for every app at once. A 403 then looks exactly like one missing permission, so the
+// setting is named wherever a 403 is reported — it is the one cause the user cannot see.
+const EXTERNAL_ACCESS_HINT = ' If this happens for every workspace, the tenant setting ' +
+  '"Users can access data stored in OneLake with apps external to Fabric" is probably off: ' +
+  'a Fabric admin turns it on in the Admin portal, under Tenant settings > OneLake settings.';
+// OneLake's message, as the end of a sentence: it brings its own full stop, or gets one.
+const sentence = said => (said ? ` — ${said}${/[.!?]$/.test(said) ? '' : '.'}` : '.');
+const forbidden = status => (status === 403 ? EXTERNAL_ACCESS_HINT : '');
+
 /**
  * @param {object} opts
  * @param {() => Promise<string|null>} opts.getToken  current access token, or null
@@ -120,7 +130,7 @@ function createCatalog({ getToken, dfsOrigin = DFS_ORIGIN, tableOrigin = TABLE_O
     const r = await authedFetch(url);
     if (!r.ok) {
       const said = await oneLakeMessage(r);
-      const e = new Error(`${what} failed (HTTP ${r.status})` + (said ? ` — ${said}` : ''));
+      const e = new Error(`${what} failed (HTTP ${r.status})` + sentence(said) + forbidden(r.status));
       e.status = r.status;
       throw e;
     }
@@ -165,7 +175,7 @@ function createCatalog({ getToken, dfsOrigin = DFS_ORIGIN, tableOrigin = TABLE_O
       }
       if (!r.ok) {
         const said = await oneLakeMessage(r);
-        const e = new Error(`list HTTP ${r.status} for ${strip(directory) || ws}` + (said ? ` — ${said}` : ''));
+        const e = new Error(`list HTTP ${r.status} for ${strip(directory) || ws}` + sentence(said) + forbidden(r.status));
         e.status = r.status;
         throw e;
       }
@@ -176,6 +186,7 @@ function createCatalog({ getToken, dfsOrigin = DFS_ORIGIN, tableOrigin = TABLE_O
           // OneLake sends this as the string "true", not a boolean.
           isDir: p.isDirectory === true || p.isDirectory === 'true',
           bytes: Number(p.contentLength || 0),
+          lastModified: p.lastModified ? Date.parse(p.lastModified) || null : null,
           // Which version of the file this is: its etag, or failing that when it was last
           // written and how big it is. A file's bytes are cached under it (onelake.js), so
           // a rewritten file is a new key and is read again.
@@ -303,9 +314,7 @@ function createCatalog({ getToken, dfsOrigin = DFS_ORIGIN, tableOrigin = TABLE_O
         const notYet = e.status === 400 || e.status === 404;
         const busy = e.status === 429 || e.status >= 500;
         if (!(notYet || busy) || attempt >= backoffMs.length) {
-          if (notYet) e.message += '. OneLake writes Iceberg metadata on demand and conversion can take ' +
-            'up to two minutes; if it never appears, Delta-to-Iceberg conversion is probably not ' +
-            'enabled for this tenant or workspace.';
+          if (notYet) e.message += await conversionStory(lh, t);
           throw e;
         }
         const waited = Math.round(backoffMs.slice(0, attempt + 1).reduce((a, b) => a + b, 0) / 1000);
@@ -315,6 +324,34 @@ function createCatalog({ getToken, dfsOrigin = DFS_ORIGIN, tableOrigin = TABLE_O
         await sleep(backoffMs[attempt]);
       }
     }
+  }
+
+  // Why a table has no Iceberg metadata, in Fabric's own words where it left any: the
+  // conversion writes latest_conversion_log.txt into the table's metadata/ and says there
+  // whether it failed, and why (a type it cannot convert, more than 5,000 commits…). No log
+  // at all means it never tried.
+  async function conversionStory(lh, t) {
+    const dirs = [t.schema ? `${lh.item}/Tables/${t.schema}/${t.table}` : null, `${lh.item}/Tables/${t.table}`]
+      .filter(Boolean);
+    for (const dir of dirs) {
+      let text;
+      try { text = new TextDecoder().decode(await readBytes(lh.workspace, `${dir}/metadata/latest_conversion_log.txt`)); }
+      catch (_) { continue; }
+      // "Error Details:      <message>" — one field per line, padded to a column.
+      const field = name => {
+        const line = text.split(/\r?\n/).find(l => l.toLowerCase().startsWith(name.toLowerCase() + ':'));
+        return line ? line.slice(name.length + 1).trim() : '';
+      };
+      if (/^failed$/i.test(field('Status'))) {
+        return ` Fabric could not convert this table to Iceberg (conversion log, ${field('Timestamp (UTC)') || 'undated'}): ` +
+          `${field('Error Details') || field('Error Code') || 'no details given'}` +
+          (/^user$/i.test(field('Error Category')) ? ' — the table itself has to change before it converts.' : '.');
+      }
+      return ' Fabric converted this table before, but has not written Iceberg metadata for its ' +
+        'latest version yet; conversion runs after each commit and can take up to two minutes.';
+    }
+    return ' Fabric has not converted this table to Iceberg: there is no conversion log beside it. ' +
+      'Conversion runs after a commit to the table, so writing to it once usually starts it.';
   }
 
   // One level of Files/. `dir` is relative to Files/. Unlike the panel's version this
@@ -349,14 +386,17 @@ function createCatalog({ getToken, dfsOrigin = DFS_ORIGIN, tableOrigin = TABLE_O
       range ? { range } : {}, READ_TIMEOUT_MS);
     if (!r.ok) {
       const said = await oneLakeMessage(r);
-      const e = new Error(`Reading ${path} failed (HTTP ${r.status})` + (said ? ` — ${said}` : ''));
+      const e = new Error(`Reading ${path} failed (HTTP ${r.status})` + sentence(said) + forbidden(r.status));
       e.status = r.status;
       throw e;
     }
     return new Uint8Array(await r.arrayBuffer());
   }
 
-  return { listWorkspaces, listItems, listTables, listFiles, loadTable, readBytes, reset, usePrefixStore };
+  // One level of any directory under an item, workspace-relative: a table's _delta_log.
+  const listDir = (ws, dir) => listPaths(ws, dir);
+
+  return { listWorkspaces, listItems, listTables, listFiles, listDir, loadTable, readBytes, reset, usePrefixStore };
 }
 
 module.exports = { createCatalog, DFS_ORIGIN, TABLE_ORIGIN };

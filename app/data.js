@@ -478,6 +478,14 @@ export function createEngine({
     return resolved;
   }
 
+  // A Delta table's own log (the host reads and keeps it): its state for the Stats tab, and
+  // a page of its commits for the History tab. Each asked for only when its tab is shown.
+  const tableArg = (lh, t, extra = {}) => [{
+    workspace: lh.workspace, item: lh.item, schema: t.schema || "", table: t.table, ...extra,
+  }];
+  const deltaState = (lh, t) => callHost("onelake.deltaState", tableArg(lh, t));
+  const deltaHistory = (lh, t, skip = 0) => callHost("onelake.deltaHistory", tableArg(lh, t, { skip }));
+
   // What a table selection costs now. `columns` comes from the Iceberg schema rather than
   // a DESCRIBE, so the schema is on screen without a single footer read; `ident` is null
   // because no view exists yet, and that is what tells the caller this is tier 1.
@@ -788,7 +796,7 @@ export function createEngine({
   // app's folder and publishes it (src/exportapp.js); answers what to tell the user.
   const exportExplore = x => callHost("fabric.exportExplore", [x]);
 
-  return { init, reset, statTable, peekTable, loadTable,
+  return { init, reset, statTable, peekTable, loadTable, deltaState, deltaHistory,
            loadFile, readFileBytes, saveText, saveOneLakeFile, runSql, describeLoad, fmtBytes, cancelLoad,
            semanticViews, semanticCreate, semanticDrop, exportExplore };
 }

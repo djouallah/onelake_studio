@@ -20,6 +20,7 @@
 
 const { sqlStr } = require('./sql');
 const names = require('./names');
+const deltalog = require('./deltalog');
 
 const PEEK_ROWS = 100;
 const PREFETCH_WORKERS = 2;
@@ -35,18 +36,31 @@ function summarize(metadata, metadataLocation) {
   const schema = (metadata.schemas || []).find(s => s['schema-id'] === metadata['current-schema-id'])
               || (metadata.schemas || [])[0];
   const snap = snapshots.find(s => String(s['snapshot-id']) === String(curId));
+  // Which format the table is written in: the tree draws its icon from this, and a Delta
+  // table's Stats and History come from its own log rather than from the conversion.
+  const { format, deltaVersion } = names.sourceFormat(metadata);
   // Listed by the catalog but never written: snapshot -1, no snapshots, no files. DuckDB
   // opens it as an empty table against the right schema.
   if (!snap || String(curId) === '-1' || !snapshots.length) {
     return { empty: true, schemaFields: names.icebergFields(schema), totalRecords: 0, stats: null,
-             metadataLocation };
+             metadataLocation, format };
   }
   return {
     empty: false,
     schemaFields: names.icebergFields(schema),
     totalRecords: Number((snap.summary || {})['total-records']) || null,
-    stats: names.snapshotStats(metadata, snap),
+    stats: {
+      ...names.snapshotStats(metadata, snap),
+      format,
+      // The Delta version the Iceberg side was converted from: the Stats tab says how far
+      // behind the log it is.
+      deltaVersion,
+      // An Iceberg table's history is its snapshots. A Delta table's is in its log, read
+      // only when asked for (delta()).
+      history: format === 'iceberg' ? names.icebergHistory(metadata) : null,
+    },
     metadataLocation,
+    format,
   };
 }
 
@@ -96,6 +110,9 @@ function createOneLake({ catalog, store, prefetchEnabled = () => true, onHit = (
     models: ws => `models\u0000${ws}`,
     apps: ws => `apps\u0000${ws}`,
     bytes: (ws, path, version) => `bytes\u0000${ws}\u0000${path}\u0000${version}`,
+    deltaCommits: (lh, t) => `delta-commits\u0000${lh.workspace}\u0000${lh.item}\u0000${t.schema || ''}\u0000${t.table}`,
+    // Immutable: the table as of one Delta version, under where the table lives.
+    deltaState: (at, v) => `delta-state\u0000${at.workspace}\u0000${at.dir}\u0000${v}`,
   };
 
   // The store's raw key, turned back into what changed — so a listener can refresh the
@@ -188,8 +205,100 @@ function createOneLake({ catalog, store, prefetchEnabled = () => true, onHit = (
       return summarize(metadata, metadataLocation);
     }, { fresh: f, ...(tableTtlMs != null ? { ttl: tableTtlMs } : {}) });
     let r = await load(fresh);
-    if (r.cached && r.at < refreshedSince(lh)) r = await load(true);
+    // A summary kept before tables had a format is read again once, rather than drawn
+    // without one until its TTL runs out.
+    if (r.cached && (r.at < refreshedSince(lh) || !('format' in r.value))) r = await load(true);
+    // The store says 'changed' only when an answer it had moved; a table read for the first
+    // time (a prefetch, a click) is news too — the tree draws its format from it.
+    if (!r.cached) for (const fn of [...tableReadSubs]) { try { fn({ ...lh, ...t, value: r.value }); } catch (_) {} }
     return { ...r.value, at: r.at, cached: r.cached };
+  }
+  const tableReadSubs = new Set();
+  const onTableRead = fn => { tableReadSubs.add(fn); return () => tableReadSubs.delete(fn); };
+
+  // ---------------------------------------------------------------------------
+  // A Delta table's own log (deltalog.js), read sparingly: every file is a request.
+  // `run(sql)` is the engine's query, for the one log file that is parquet — a checkpoint.
+  // ---------------------------------------------------------------------------
+  async function deltaTarget(lh, t) {
+    const meta = await table(lh, t);
+    if (meta.format !== 'delta') throw new Error(`${t.table} is not written as Delta, so it has no Delta log to read`);
+    const at = deltalog.tableDirOf(meta.metadataLocation);
+    if (!at) throw new Error('the catalog gave this table no location to find its Delta log at');
+    // A log file never changes once written, so its text is kept for good.
+    const readText = async path => {
+      const k = keys.bytes(at.workspace, path, 'immutable');
+      let bytes = await store.getBlob(k);
+      if (!bytes) { bytes = await catalog.readBytes(at.workspace, path); await store.putBlob(k, bytes); }
+      return new TextDecoder().decode(bytes);
+    };
+    return { meta, at, readText };
+  }
+
+  function checkpointReader(at, readText, run) {
+    return async paths => {
+      const out = { metaData: null, protocol: null };
+      // A V2 checkpoint may be JSON: actions, one per line, like a commit.
+      if (paths.every(p => /\.json$/i.test(p))) {
+        for (const p of paths) {
+          const c = deltalog.parseCommit(await readText(p));
+          out.metaData = out.metaData || c.metaData;
+          out.protocol = out.protocol || c.protocol;
+        }
+        return out;
+      }
+      if (!run) throw new Error('reading a Delta checkpoint needs the engine');
+      // Two columns of one parquet file: DuckDB reads the footer and those column chunks.
+      const urls = paths.map(p => sqlStr(`abfss://${at.workspace}@onelake.dfs.fabric.microsoft.com/${p}`));
+      const res = await run(`SELECT to_json(protocol)::VARCHAR AS protocol, to_json(metaData)::VARCHAR AS metadata ` +
+        `FROM read_parquet([${urls.join(', ')}], union_by_name = true) WHERE protocol IS NOT NULL OR metaData IS NOT NULL`);
+      for (const r of res.rows || []) {
+        if (!out.protocol && r.protocol) out.protocol = JSON.parse(r.protocol);
+        if (!out.metaData && r.metadata) out.metaData = JSON.parse(r.metadata);
+      }
+      return out;
+    };
+  }
+
+  /**
+   * A Delta table as of the version its Iceberg metadata was converted from: protocol,
+   * features, properties, partitioning, size. One request the first time (the crc), none
+   * after: it is kept per version, and a version never changes.
+   */
+  async function deltaState(lh, t, { run } = {}) {
+    const { meta, at, readText } = await deltaTarget(lh, t);
+    const version = meta.stats && meta.stats.deltaVersion;
+    if (version == null) throw new Error('the Iceberg metadata does not say which Delta version it was converted from');
+    const k = keys.deltaState(at, version);
+    const kept = await store.peek(k);
+    if (kept) return { ...kept, cached: true };
+    const s = await deltalog.readDeltaState({ readText, readCheckpoint: checkpointReader(at, readText, run) }, at.dir, version);
+    await store.put(k, s);
+    return { ...s, cached: false };
+  }
+
+  /**
+   * A page of the table's commits, newest first: { entries, total, latest, oldest }. Only
+   * when the History tab asks. The listing is kept like a table's metadata and read again
+   * once it is older than the version the Iceberg side names, or after a Refresh; each
+   * commit file is read once, ever.
+   */
+  async function deltaHistory(lh, t, { skip = 0 } = {}) {
+    const { meta, at, readText } = await deltaTarget(lh, t);
+    const load = f => get(keys.deltaCommits(lh, t), () => deltalog.listCommits(d => catalog.listDir(at.workspace, d), at.dir),
+      { fresh: f, ...(tableTtlMs != null ? { ttl: tableTtlMs } : {}) });
+    let r = await load(false);
+    const newest = r.value.length ? r.value[0].version : -1;
+    const behind = meta.stats && meta.stats.deltaVersion != null && newest < meta.stats.deltaVersion;
+    if (r.cached && (behind || r.at < refreshedSince(lh))) r = await load(true);
+    const commits = r.value;
+    if (!commits.length) throw new Error('the Delta log has no commits');
+    return {
+      entries: await deltalog.readHistoryPage(readText, at.dir, commits, skip),
+      total: commits.length,
+      latest: commits[0].version,
+      oldest: commits[commits.length - 1].version,
+    };
   }
 
   // When a Refresh last covered a lakehouse: everything, a workspace, or one item.
@@ -253,7 +362,8 @@ function createOneLake({ catalog, store, prefetchEnabled = () => true, onHit = (
         try {
           // Already known: nothing to do. The store refreshes stale entries on read, so a
           // prefetch never needs to force one.
-          if (await store.peek(job.k) === undefined) await table(job.lh, job.t);
+          const kept = await store.peek(job.k);
+          if (kept === undefined || (kept && !('format' in kept))) await table(job.lh, job.t);
         } catch (_) {
           // A table that will not resolve says why when it is clicked; a prefetch that
           // failed has cost nothing the click would not have paid anyway.
@@ -277,9 +387,10 @@ function createOneLake({ catalog, store, prefetchEnabled = () => true, onHit = (
   };
 
   return {
-    workspaces, items, tables, files, table, peek, prefetch, refreshTables,
+    workspaces, items, tables, files, table, deltaState, deltaHistory, peek, prefetch, refreshTables,
     models, apps, readBytes, cached,
     onChanged: fn => listen('changed', key => fn(decode(key))),
+    onTableRead,
     onRefreshFailed: fn => listen('refresh-failed', (key, e) => fn(decode(key), e)),
     useStore,
     clear: () => { catalog.reset(); return store.clear(); },

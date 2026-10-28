@@ -130,6 +130,11 @@
     #statsView th { text-align: left; font-weight: 500; color: var(--muted); }
     #statsView td { font-variant-numeric: tabular-nums; }
     .statsNote { color: var(--muted); font-size: 0.85rem; }
+    /* History — one row per commit or snapshot, newest first. */
+    #statsView table.history th { color: var(--text); white-space: nowrap; }
+    #statsView table.history td { white-space: nowrap; }
+    #statsView table.history td.params { white-space: normal; font-family: var(--vscode-editor-font-family); font-size: 0.85em; }
+    #statsView td.num { text-align: right; }
 
     /* Status bar: the message, where the last answers came from, and the build. */
     .statusBar {
@@ -166,7 +171,7 @@
     <div class="resultsWrap">
       <!-- While a TABLE is selected: Stats leads, because statistics cost nothing. -->
       <div class="docBar tabs" id="viewBar" hidden>
-        <button id="viewStats" class="tab active">Stats</button><button id="viewData" class="tab">Data</button>
+        <button id="viewStats" class="tab active">Stats</button><button id="viewHistory" class="tab">History</button><button id="viewData" class="tab">Data</button>
       </div>
       <article id="statsView" class="docView" hidden></article>
       <div class="docBar tabs" id="docBar" hidden>

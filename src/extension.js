@@ -668,6 +668,7 @@ async function activateInner(context) {
     hasFabric: async () => !!await fabricToken().catch(() => null),
     isSignedIn: () => signedIn,
     cachedModel: n => cachedModel(n),
+    iconPath: name => vscode.Uri.joinPath(context.extensionUri, 'media', `${name}.svg`),
     // A listing failure becomes an error NODE, but the stack behind it goes here.
     log: m => out && out.appendLine(m),
   });

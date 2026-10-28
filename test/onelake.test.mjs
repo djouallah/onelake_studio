@@ -54,6 +54,88 @@ test("a table's metadata is reduced to what the panel shows, with its location",
   assert.ok(!("snapshots" in s), "the snapshot history is not what gets stored");
 });
 
+test("a table converted from Delta says so, with the Delta version it was converted from", () => {
+  const xt = JSON.stringify({ sourceTableFormat: "DELTA", sourceIdentifier: "4" });
+  const s = summarize(metadata({ properties: { XTABLE_METADATA: xt } }), LOC);
+  assert.equal(s.format, "delta");
+  assert.equal(s.stats.format, "delta");
+  assert.equal(s.stats.deltaVersion, 4);
+  assert.equal(s.stats.history, null, "a Delta table's history is its log, read on demand");
+  const i = summarize(metadata(), LOC);
+  assert.equal(i.format, "iceberg");
+  assert.deepEqual(i.stats.history.map(h => h.version), ["2", "1"]);
+});
+
+// A Delta table on a disk store (log files are kept as blobs, which a memory store does
+// not hold), with every OneLake request it makes recorded.
+async function deltaFixture(files, deltaVersion) {
+  const { mkdtemp, rm } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const dir = await mkdtemp(join(tmpdir(), "onelake-delta-"));
+  const xt = JSON.stringify({ sourceTableFormat: "DELTA", sourceIdentifier: String(deltaVersion) });
+  const catalog = fakeCatalog();
+  catalog.loadTable = async () => ({ metadata: metadata({ properties: { XTABLE_METADATA: xt } }), metadataLocation: LOC });
+  catalog.listDir = async (ws, d) => {
+    catalog.calls.push(`list ${ws} ${d}`);
+    return Object.keys(files).map(f => ({ name: `${d}/${f}`, isDir: false, lastModified: 1 }));
+  };
+  catalog.readBytes = async (ws, path) => {
+    catalog.calls.push(`read ${path.split("/").pop()}`);
+    const f = files[path.split("/").pop()];
+    if (f == null) throw Object.assign(new Error("HTTP 404"), { status: 404 });
+    return new TextEncoder().encode(f);
+  };
+  const ol = createOneLake({ catalog, store: createStore({ dir }) });
+  return { ol, catalog, done: () => rm(dir, { recursive: true, force: true }) };
+}
+const pad20 = v => String(v).padStart(20, "0");
+
+test("a Delta table's state is one request the first time, and none after", async () => {
+  const crc = JSON.stringify({ tableSizeBytes: 10, numFiles: 1,
+    metadata: { id: "x", partitionColumns: [] }, protocol: { minReaderVersion: 1, minWriterVersion: 2 } });
+  const { ol, catalog, done } = await deltaFixture({ [`${pad20(1)}.crc`]: crc }, 1);
+  try {
+    const t = { schema: "dbo", table: "t" };
+    const s = await ol.deltaState(lh, t);
+    assert.equal(s.source, "crc");
+    assert.equal(s.sizeBytes, 10);
+    assert.deepEqual(catalog.calls.filter(c => c.startsWith("read") || c.startsWith("list")), [`read ${pad20(1)}.crc`]);
+    catalog.calls.length = 0;
+    assert.equal((await ol.deltaState(lh, t)).cached, true);
+    assert.ok(!catalog.calls.some(c => c.startsWith("read") || c.startsWith("list")), catalog.calls.join(", "));
+  } finally { await done(); }
+});
+
+test("a Delta table's history: one listing and a page of commits, each file read once", async () => {
+  const files = {};
+  for (let v = 0; v < 15; v++) files[`${pad20(v)}.json`] = `{"commitInfo":{"timestamp":${v},"operation":"WRITE"}}\n`;
+  const { ol, catalog, done } = await deltaFixture(files, 14);
+  try {
+    const t = { schema: "dbo", table: "t" };
+    const h = await ol.deltaHistory(lh, t);
+    assert.equal(h.total, 15);
+    assert.equal(h.entries.length, 10);
+    assert.equal(h.entries[0].version, "14");
+    assert.ok(catalog.calls.includes("list ws lh.Lakehouse/Tables/dbo/t/_delta_log"), catalog.calls.join("\n"));
+    assert.equal(catalog.calls.filter(c => c.startsWith("read")).length, 10);
+    catalog.calls.length = 0;
+    const next = await ol.deltaHistory(lh, t, { skip: 10 });
+    assert.deepEqual(next.entries.map(e => e.version), ["4", "3", "2", "1", "0"]);
+    assert.equal(catalog.calls.filter(c => c.startsWith("read")).length, 5, "only the new page");
+    assert.ok(!catalog.calls.some(c => c.startsWith("list")), "the listing is kept");
+    catalog.calls.length = 0;
+    await ol.deltaHistory(lh, t);
+    assert.ok(!catalog.calls.some(c => c.startsWith("read") || c.startsWith("list")), catalog.calls.join(", "));
+  } finally { await done(); }
+});
+
+test("an Iceberg table has no Delta log to read", async () => {
+  const ol = createOneLake({ catalog: fakeCatalog(), store: createStore({ dir: null }) });
+  await assert.rejects(() => ol.deltaState(lh, { schema: "dbo", table: "a" }), /not written as Delta/);
+  await assert.rejects(() => ol.deltaHistory(lh, { schema: "dbo", table: "a" }), /not written as Delta/);
+});
+
 test("a table that was listed but never written is empty, not broken", () => {
   const s = summarize(metadata({ "current-snapshot-id": -1, snapshots: [] }), LOC);
   assert.equal(s.empty, true);

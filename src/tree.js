@@ -18,7 +18,14 @@
 // =============================================================================
 
 const vscode = require('vscode');
-const { fmtBytes, hasFilesArea, kindLabel, kindLabelPlural, strip } = require('./names');
+const { fmtBytes, hasFilesArea, isMirrored, kindLabel, kindLabelPlural, strip } = require('./names');
+
+// What a table's icon says about how it was written. Either way the panel reads it
+// through its Iceberg metadata; for a Delta table that metadata is Fabric's conversion.
+const FORMAT_TOOLTIP = {
+  delta: 'Delta table. Read through the Iceberg metadata Fabric converts it to; its Stats and History come from the Delta log.',
+  iceberg: 'Iceberg table.',
+};
 
 // A node is a plain object; getTreeItem turns it into what VS Code renders. Keeping the
 // domain data on the node (rather than encoding it into a label) is what lets a click hand
@@ -53,9 +60,12 @@ class LakehouseTree {
    * @param {{ get: () => string[] }} [deps.favorites]   pinned workspace names, persisted
    * @param {(n: object) => string|null} [deps.cachedModel]  where a model's .bim was written in OneLake, if it was
    * @param {() => boolean} [deps.groupByType]  a workspace's items under one heading per type
+   * @param {(name: string) => any} [deps.iconPath]  a bundled icon (media/<name>.svg), or null
    */
   constructor({ onelake, fabric = null, hasFabric = async () => false, isSignedIn, log = () => {},
-                favorites = { get: () => [] }, cachedModel = () => null, groupByType = () => false }) {
+                favorites = { get: () => [] }, cachedModel = () => null, groupByType = () => false,
+                iconPath = () => null }) {
+    this.iconPath = iconPath;
     this.onelake = onelake;
     this.groupByType = groupByType;
     this.cachedModel = cachedModel;
@@ -72,11 +82,27 @@ class LakehouseTree {
     // What a Refresh asked to re-read: everything under `scope`, each listing once.
     this._fresh = null;
     this._unsub = onelake.onChanged(c => this._changed(c));
+    // A table's format is known once its metadata is: redraw its icon then.
+    this._unsubRead = onelake.onTableRead
+      ? onelake.onTableRead(r => this._formatKnown(r, r.value && r.value.format)) : null;
   }
 
-  dispose() { if (this._unsub) this._unsub(); }
+  dispose() { if (this._unsub) this._unsub(); if (this._unsubRead) this._unsubRead(); }
+
+  _formatKnown(t, format) {
+    const n = this._nodes.get(`table|${t.workspace}|${t.item}|${t.schema || ''}|${t.table}`);
+    if (!n || !format || n.format === format) return;
+    n.format = format;
+    this._emitter.fire(n);
+  }
 
   _changed(c) {
+    if (c.kind === 'table') {
+      const lh = { workspace: c.workspace, item: c.item };
+      this.onelake.cached.table(lh, { schema: c.schema, table: c.table })
+        .then(k => this._formatKnown(c, k && k.value && k.value.format), () => {});
+      return;
+    }
     if (c.kind === 'workspaces') return this._emitter.fire(undefined);
     // Grouped by type, a workspace's items are spread over the top-level headings, and its
     // models sit under the one Semantic models heading.
@@ -125,6 +151,7 @@ class LakehouseTree {
          : n.kind === 'allModels' ? 'allModels'
          : n.kind === 'apps' ? `apps|${n.workspace}`
          : n.kind === 'allApps' ? 'allApps'
+         : n.kind === 'table' ? `table|${n.workspace}|${n.item}|${n.schema || ''}|${n.table}`
          : null;
   }
 
@@ -190,7 +217,7 @@ class LakehouseTree {
         item.description = String(n.count);
         break;
       case 'item':
-        item.iconPath = new vscode.ThemeIcon('database');
+        item.iconPath = new vscode.ThemeIcon(isMirrored(n.item) ? 'mirror' : 'database');
         // The suffix OneLake names the directory with is Fabric's internal type; kindLabel
         // turns the few that read badly ("SQLDbNative") into what the portal calls them.
         item.description = n.showWorkspace ? n.workspace : n.kindLabel;
@@ -202,9 +229,12 @@ class LakehouseTree {
         item.iconPath = new vscode.ThemeIcon('symbol-namespace');
         break;
       case 'table':
-        item.iconPath = new vscode.ThemeIcon('table');
+        // Unknown until its metadata has been read once (the prefetch does that as soon
+        // as the Tables node opens): a plain table until then.
+        item.iconPath = (FORMAT_TOOLTIP[n.format] && this.iconPath(n.format)) || new vscode.ThemeIcon('table');
         item.command = { command: 'onelakeStudio.openTable', title: 'Open table', arguments: [n] };
-        item.tooltip = n.schema ? `${n.schema}.${n.table}` : n.table;
+        item.tooltip = [n.schema ? `${n.schema}.${n.table}` : n.table, FORMAT_TOOLTIP[n.format]]
+          .filter(Boolean).join('\n');
         break;
       case 'dir':
         item.iconPath = new vscode.ThemeIcon('folder');
@@ -422,14 +452,14 @@ class LakehouseTree {
       // level of its own would be one click between here and every table in it, for a
       // grouping that isn't real.
       return schemas.length <= 1
-        ? tables.map(t => this._table(lh, t))
+        ? this._tables(lh, tables)
         : schemas.sort().map(s => node('schema', s || '(no schema)', { ...lh, schema: s }));
     }
 
     if (n.kind === 'schema') {
       const lh = { workspace: n.workspace, item: n.item };
       const tables = await this.onelake.tables(lh);   // the parent's listing, from the store
-      return tables.filter(t => (t.schema || '') === n.schema).map(t => this._table(lh, t));
+      return this._tables(lh, tables.filter(t => (t.schema || '') === n.schema));
     }
 
     if (n.kind === 'dir') {
@@ -456,8 +486,12 @@ class LakehouseTree {
     });
   }
 
-  _table(lh, t) {
-    return node('table', t.table, { ...lh, leaf: true, schema: t.schema || '', table: t.table });
+  // Each with the format its kept metadata gives — read from the store, never from OneLake.
+  async _tables(lh, list) {
+    const kept = await Promise.all(list.map(t =>
+      this.onelake.cached.table(lh, t).then(k => (k && k.value && k.value.format) || null, () => null)));
+    return list.map((t, i) => this._track(node('table', t.table,
+      { ...lh, leaf: true, schema: t.schema || '', table: t.table, format: kept[i] })));
   }
 
   // An item, named without its suffix: its type beside it under a workspace, its workspace

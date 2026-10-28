@@ -7,9 +7,11 @@ Microsoft account VS Code already uses.
 
 ## What you can do
 
-- **Browse everything in OneLake.** Workspaces, lakehouses, warehouses, SQL databases, their
-  tables and files, in one tree. Pin the workspaces you use, or group everything by type.
+- **Browse everything in OneLake.** Workspaces, lakehouses, warehouses, SQL databases, mirrored
+  databases, their tables and files, in one tree. Pin the workspaces you use, or group everything
+  by type.
 - **Look at a table in a click.** Its columns, row count and first rows, then query it with SQL.
+  Delta and Iceberg tables each show their own stats and history.
 - **Open the files in a lakehouse.** Parquet, CSV, JSON, Excel, DuckDB and SQLite files, even
   inside a zip, and query them with SQL.
 - **Explore a semantic model.** See its tables and relationships, then drag fields into a pivot:
