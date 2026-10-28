@@ -40,7 +40,7 @@
   const BLOCK = 256 * 1024;
   // Whole files of every table read, and over the cap the store starts over: the cap is well
   // above what a model's tables hold, so it has room to grow.
-  const CAP_BYTES = 8 * 1024 * 1024 * 1024;
+  const CAP_BYTES = 64 * 1024 * 1024 * 1024;
   const VERSION = 1;
   const LOCAL = 'https://store.local/';
   const ONELAKE = 'https://onelake.dfs.fabric.microsoft.com/';
