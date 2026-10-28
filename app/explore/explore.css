@@ -49,7 +49,9 @@ section.modelOpen #previewBtn, section.modelOpen #runBtn, section.modelOpen #csv
 .explore-table td { padding: 0.35rem 0.7rem; border-bottom: 1px solid var(--row-line); color: var(--text); }
 .explore-table tr:hover td { background: var(--hover-soft); }
 /* Analyze, Model: the star (an SVG, model.js) and the table picked. */
-.model-page { display: grid; grid-template-columns: minmax(0, 1fr) 380px; gap: var(--gap); padding: var(--gap) var(--gutter) 1.5rem; }
+/* As tall as the Pivot's frame (.ex), so the two pages are one size and switching between them
+   does not jump; the star sits in the middle of its box. */
+.model-page { display: grid; grid-template-columns: minmax(0, 1fr) 380px; gap: var(--gap); padding: var(--gap) var(--gutter) 1.5rem; min-height: 70vh; }
 .model-page[hidden], .explore-sql-page[hidden], .explore-page[hidden] { display: none; }
 .model-diagram, .model-panel { background: var(--card); border: 1px solid var(--hairline); border-radius: var(--radius); overflow: auto; }
 .model-diagram { padding: 0.8rem; display: flex; }
