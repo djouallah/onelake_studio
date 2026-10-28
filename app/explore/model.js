@@ -1,5 +1,5 @@
 // =============================================================================
-// analyze/model.js — the Model page: the semantic model (the .bim) as a star, and what the
+// explore/model.js — the Model page: the semantic model (the .bim) as a star, and what the
 // model says of the table picked
 // =============================================================================
 // Ported from analytics-as-code's dashboard (frontend/model.js). A dimension is a table a
@@ -148,7 +148,7 @@ export function renderModel(root, model, { title = 'Semantic model' } = {}) {
     }
 
     out.push(el('h4', {}, `Columns (${t.columns.length})`));
-    const table = el('table', { class: 'analyze-table m-cols' });
+    const table = el('table', { class: 'explore-table m-cols' });
     const hr = el('tr');
     for (const h of ['Column', 'Type', 'Format']) hr.append(el('th', {}, h));
     table.append(el('thead'), el('tbody'));

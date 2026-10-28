@@ -16,8 +16,8 @@ import { renderDocument } from './docview.js';
 // Static too, and as cheap: the DAX compiler it runs is imported on the first model only.
 import * as semantic from './semantic.js';
 // A .bim's model view. Explore's chart library is imported when Explore first opens.
-import { mountAnalyze } from './analyze/view.js';
-import { tmslOf } from './analyze/model.js';
+import { mountExplore } from './explore/view.js';
+import { tmslOf } from './explore/model.js';
 import { vscodeApi } from './vscode-api.js';
 
 const $ = id => document.getElementById(id);
@@ -245,7 +245,7 @@ async function ossieText(file) {
 }
 
 // A .bim (or an Ossie .yaml) is a semantic model, not a document: it opens as its model view
-// (analyze/view.js) in place of the editor and the results — Model, SQL, Explore — and is
+// (explore/view.js) in place of the editor and the results — Model, SQL, Explore — and is
 // registered (semantic.js) so SQL anywhere, the main editor's included, can name it.
 let modelView = null;
 function closeModelView() {
@@ -285,7 +285,7 @@ async function openModelView(file, text = null, { fromOneLake = text == null } =
     if (my !== selSeq) return;
     $('modelView').closest('section').classList.add('modelOpen');
     $('modelView').hidden = false;
-    modelView = mountAnalyze($('modelView'), {
+    modelView = mountExplore($('modelView'), {
       name: m.name, file: m.file, tmsl: tmslOf(m.bim), exploreCompiler: m.exploreCompiler, sample: m.sample,
       rewrite: semantic.rewrite,
       run: runModelSql,

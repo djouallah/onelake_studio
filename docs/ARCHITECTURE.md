@@ -64,7 +64,7 @@ app. VS Code and the extension are all it needs: no CLI, no Node, no GitHub.
 - The site is **protected**: only people who may open the app item can load it.
 
 **What the app is** ([`src/exportapp.js`](../src/exportapp.js))
-- **Explore.** The page runs Studio's own Explore (`app/analyze/`): the same query-to-DAX-to-SQL
+- **Explore.** The page runs Studio's own Explore (`app/explore/`): the same query-to-DAX-to-SQL
   path (dax-sql) and the same output casts (`EXPLORE_CASTS`) as the panel.
 - **Data.** analytics-as-code's Iceberg front end, vendored at `PINS.exportTemplate`:
   - Sign-in is Rayfin's Fabric SSO.

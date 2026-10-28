@@ -1,5 +1,5 @@
 // =============================================================================
-// analyze/query.js — Explore's queries as DAX over the semantic model, and the DAX as SQL
+// explore/query.js — Explore's queries as DAX over the semantic model, and the DAX as SQL
 // =============================================================================
 // Ported from analytics-as-code's dashboard (semantic/query.js), made a factory: one per
 // .bim, over the compiler semantic.js builds for it. Two steps, as in Power BI:

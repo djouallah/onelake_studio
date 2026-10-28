@@ -116,16 +116,16 @@ try {
   if (cards !== 2 || rels !== 1) throw new Error(`model page drew ${cards} cards and ${rels} relationships`);
   if (!await page.locator("#sqlEditor").isHidden()) throw new Error("the editor is still on screen under the model view");
   const css = await page.evaluate(() => getComputedStyle(document.querySelector("#modelView .subtabs")).borderRadius);
-  if (css !== "999px") throw new Error(`analyze.css did not load (subtabs border-radius ${css})`);
+  if (css !== "999px") throw new Error(`explore.css did not load (subtabs border-radius ${css})`);
 
   // SQL page: a model query compiled by dax-sql and run on the native engine.
   await page.click('#modelView .subtab[data-apage="sql"]');
   await page.fill("#modelView textarea",
     `${TABLES}SELECT * FROM (SELECT Product.Color, AGG(Total) AS total FROM shop GROUP BY ALL) ORDER BY Color`);
-  await page.click("#modelView .btn-analyze.primary");
-  await page.waitForFunction(() => /rows|Error/.test(document.querySelector("#modelView .analyze-info").textContent), { timeout: 60000 });
-  const info = await page.locator("#modelView .analyze-info").innerText();
-  const rows = (await page.locator("#modelView .analyze-table").innerText()).replace(/\s+/g, " ");
+  await page.click("#modelView .btn-explore.primary");
+  await page.waitForFunction(() => /rows|Error/.test(document.querySelector("#modelView .explore-info").textContent), { timeout: 60000 });
+  const info = await page.locator("#modelView .explore-info").innerText();
+  const rows = (await page.locator("#modelView .explore-table").innerText()).replace(/\s+/g, " ");
   console.log("sql page:", info, "|", rows);
   if (!/^2 rows/.test(info) || !/blue 5(\.0)? red 12\.5/.test(rows)) throw new Error(`SQL page: ${info} ${rows}`);
 
@@ -159,10 +159,10 @@ try {
   await page.click('#modelView .subtab[data-apage="sql"]');
   await page.fill("#modelView textarea",
     `${TABLES}SELECT * FROM (SELECT Product.Color, AGG(Total) AS total FROM shop_ossie GROUP BY ALL) ORDER BY Color`);
-  await page.click("#modelView .btn-analyze.primary");
-  await page.waitForFunction(() => /rows|Error/.test(document.querySelector("#modelView .analyze-info").textContent), { timeout: 60000 });
-  const ossieInfo = await page.locator("#modelView .analyze-info").innerText();
-  const ossieRows = (await page.locator("#modelView .analyze-table").innerText()).replace(/\s+/g, " ");
+  await page.click("#modelView .btn-explore.primary");
+  await page.waitForFunction(() => /rows|Error/.test(document.querySelector("#modelView .explore-info").textContent), { timeout: 60000 });
+  const ossieInfo = await page.locator("#modelView .explore-info").innerText();
+  const ossieRows = (await page.locator("#modelView .explore-table").innerText()).replace(/\s+/g, " ");
   console.log("ossie model:", ossieInfo, "|", ossieRows);
   if (!/^2 rows/.test(ossieInfo) || !/blue 5(\.0)? red 12\.5/.test(ossieRows)) throw new Error(`Ossie SQL page: ${ossieInfo} ${ossieRows}`);
 

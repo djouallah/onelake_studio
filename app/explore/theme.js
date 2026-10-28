@@ -1,5 +1,5 @@
 // =============================================================================
-// analyze/theme.js — Explore's chart theme and series colours, from the page's CSS tokens
+// explore/theme.js — Explore's chart theme and series colours, from the page's CSS tokens
 // =============================================================================
 // Pure: no CDN, no host. view.js uses it in the panel, and Export to Fabric's page
 // (src/exportapp.js) uses the same file, so a chart looks the same in both.

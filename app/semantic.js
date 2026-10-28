@@ -21,7 +21,7 @@
 // =============================================================================
 import { PINS, ghFile, npmEsm } from "./cdn.js";
 import { quoteIdent, basename } from "./paths.js";
-import { EXPLORE_CASTS } from "./analyze/query.js";
+import { EXPLORE_CASTS } from "./explore/query.js";
 
 const lc = s => String(s).toLowerCase();
 
@@ -148,7 +148,7 @@ export async function defineView(name, path, text, mode = "replace", modules = n
     path, mode, tableSource, tablesFrom: where.length ? `OneLake ${where.join(", ")}` : "search path",
   });
   if (done === "created") lakes.set(lc(name), lake);
-  // Explore's (analyze/query.js): its rows go straight to the page, cast as EXPLORE_CASTS says.
+  // Explore's (explore/query.js): its rows go straight to the page, cast as EXPLORE_CASTS says.
   const exploreCompiler = createCompiler(tmslToModel(bim), { tableSource, castOutput: EXPLORE_CASTS });
   const v = views.get(name);
   return { name: v.name, file: basename(path), sample: sampleQuery(v), directLake: lake.size, bim, exploreCompiler, done };

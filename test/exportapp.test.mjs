@@ -111,9 +111,9 @@ async function fixture(root) {
     "daxsql/src/dialects/duckdb.js": "// dialect\n",
     "daxsql/formats/tmsl.js": "// tmsl\n",
     "daxsql/formats/ossie.js": "import { tmslToModel } from './tmsl.js';\n",
-    "app/analyze/explore.js": "import { formatValue } from './draw.js';\nimport { escapeHtml } from '../paths.js';\n",
-    "app/analyze/query.js": "// query\n", "app/analyze/draw.js": "// draw\n", "app/analyze/model.js": "// model\n",
-    "app/analyze/theme.js": "// theme\n", "app/analyze/analyze.css": "/* css */\n", "app/paths.js": "// paths\n",
+    "app/explore/explore.js": "import { formatValue } from './draw.js';\nimport { escapeHtml } from '../paths.js';\n",
+    "app/explore/query.js": "// query\n", "app/explore/draw.js": "// draw\n", "app/explore/model.js": "// model\n",
+    "app/explore/theme.js": "// theme\n", "app/explore/explore.css": "/* css */\n", "app/paths.js": "// paths\n",
   };
   for (const [p, s] of Object.entries(files)) {
     await mkdir(dirname(join(root, p)), { recursive: true });
@@ -163,8 +163,8 @@ test("the folder: the template's data source, Studio's Explore, the page; dist/ 
     assert.equal(marker.workspaceId, WS);
     const read = p => readFile(join(outDir, p), "utf8");
     for (const p of ["site/storage/data.js", "site/storage/catalog.js", "site/storage/auth.js", "site/storage/queue.js",
-                     "site/storage/results.js", "site/frontend/perflog.js", "site/analyze/explore.js", "site/analyze/theme.js",
-                     "site/analyze/analyze.css", "site/paths.js", "site/semantic/dax-sql/dialects/duckdb.js",
+                     "site/storage/results.js", "site/frontend/perflog.js", "site/explore/explore.js", "site/explore/theme.js",
+                     "site/explore/explore.css", "site/paths.js", "site/semantic/dax-sql/dialects/duckdb.js",
                      "site/semantic/formats/ossie.js", "rayfin/functions/src/function_app.ts", ".gitignore", MARKER]) {
       await read(p);
     }
@@ -181,10 +181,10 @@ test("the folder: the template's data source, Studio's Explore, the page; dist/ 
     const files = await buildDist(outDir, config, "20261028-120000");
     assert.deepEqual(JSON.parse(files.get("rayfin.config.json")), config);
     assert.match(files.get("index.html").toString(), /import \{ start \} from "\.\/app\.js\?v=20261028-120000"/);
-    assert.match(files.get("index.html").toString(), /href="\.\/analyze\/analyze\.css\?v=20261028-120000"/);
+    assert.match(files.get("index.html").toString(), /href="\.\/explore\/explore\.css\?v=20261028-120000"/);
     assert.match(files.get("index.html").toString(), /build 20261028-120000/);
-    assert.match(files.get("analyze/explore.js").toString(), /from '\.\/draw\.js\?v=20261028-120000'/);
-    assert.match(files.get("analyze/explore.js").toString(), /from '\.\.\/paths\.js\?v=20261028-120000'/);
+    assert.match(files.get("explore/explore.js").toString(), /from '\.\/draw\.js\?v=20261028-120000'/);
+    assert.match(files.get("explore/explore.js").toString(), /from '\.\.\/paths\.js\?v=20261028-120000'/);
     assert.ok(!files.has("dist/index.html"), "the paths are the site's, at the zip root");
     assert.equal(await read("dist/rayfin.config.json"), files.get("rayfin.config.json").toString());
     const back = unzip(zip(files));

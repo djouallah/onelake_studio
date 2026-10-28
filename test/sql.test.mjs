@@ -1,5 +1,5 @@
 // sql.js assertReadOnly: the host's own check that nothing the page sends can write. The
-// allowed list is exactly what app/data.js, semantic.js and analyze/ send, plus user SQL that
+// allowed list is exactly what app/data.js, semantic.js and explore/ send, plus user SQL that
 // reads; the refused list is every way a write has been, or could be, dressed up as a read.
 import { test } from "node:test";
 import assert from "node:assert/strict";

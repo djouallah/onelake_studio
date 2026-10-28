@@ -35,7 +35,7 @@ test("every placeholder is filled, and nothing is left over", () => {
   assert.ok(out.includes(`content="default-src 'none'; script-src 'nonce-N0NCE'"`), "the CSP is in the page's own meta");
   assert.ok(out.includes(`<script type="module" nonce="N0NCE" src="https://webview.test/app/app.js">`),
     "app.js loads from the page's base, with the nonce");
-  assert.ok(out.includes(`href="https://webview.test/app/analyze/analyze.css"`), "and so does the stylesheet");
+  assert.ok(out.includes(`href="https://webview.test/app/explore/explore.css"`), "and so does the stylesheet");
   assert.ok(out.includes(`window.ONELAKE_STUDIO_CONFIG = ${JSON.stringify(OPTS.config)}`), "the config is inlined");
 });
 
@@ -66,7 +66,7 @@ test("the page has no website code paths left", async () => {
 });
 
 test("nothing in the page reaches a CDN: every library URL is built from vendorBase", async () => {
-  for (const f of ["data.js", "docview.js", "cdn.js", "semantic.js", "analyze/view.js"]) {
+  for (const f of ["data.js", "docview.js", "cdn.js", "semantic.js", "explore/view.js"]) {
     const src = await read(f);
     assert.ok(!/cdn\.jsdelivr\.net|cdnOrigin/.test(src), `${f} names no CDN`);
   }
@@ -77,7 +77,7 @@ test("nothing in the page reaches a CDN: every library URL is built from vendorB
 test("a .bim opens as the semantic model view", async () => {
   const app = await read("app.js");
   assert.match(app, /from '\.\/semantic\.js'/, "app.js registers models");
-  assert.match(app, /from '\.\/analyze\/view\.js'/, "and mounts the model view");
+  assert.match(app, /from '\.\/explore\/view\.js'/, "and mounts the model view");
   assert.match(app, /fileExt\(file\.name\) === 'bim'\) return openModelView/, "a .bim is diverted to it");
   assert.match(app, /semantic\.statement\(sql\)/, "the main editor compiles model queries, and runs CREATE / SHOW SEMANTIC VIEW");
   assert.ok(INDEX.includes('id="modelView"'), "index.html has the view's container");

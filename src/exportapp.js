@@ -2,11 +2,11 @@
 // =============================================================================
 // exportapp.js — Export to Fabric: a model's Explore, as a Fabric app of its own
 // =============================================================================
-// Explore's button (app/analyze/explore.js) hands the host the model's text and the shelves
+// Explore's button (app/explore/explore.js) hands the host the model's text and the shelves
 // on screen. What is written to a folder of this machine — the local copy, an agent's to grow
 // later — and what is published from its dist/ (fabricapp.js) is:
-//   site/analyze/    Studio's Explore, as it runs in the panel: explore.js, query.js (the
-//                    query as DAX, the DAX as SQL), draw.js, model.js, theme.js, analyze.css
+//   site/explore/    Studio's Explore, as it runs in the panel: explore.js, query.js (the
+//                    query as DAX, the DAX as SQL), draw.js, model.js, theme.js, explore.css
 //   site/semantic/   dax-sql (PINS.daxSql) and the model, as ossie.json
 //   site/storage/    analytics-as-code's Iceberg data source (PINS.exportTemplate): the page
 //                    signs in (Rayfin's Fabric SSO), the app's function answers where each
@@ -44,8 +44,8 @@ const TEMPLATE = [
   ['front_end/fabric_app/iceberg/rayfin', 'rayfin'],
 ];
 // Studio's own modules (app/, or webview/ installed), as the panel runs them.
-const STUDIO = ['analyze/explore.js', 'analyze/query.js', 'analyze/draw.js', 'analyze/model.js',
-  'analyze/theme.js', 'analyze/analyze.css', 'paths.js'];
+const STUDIO = ['explore/explore.js', 'explore/query.js', 'explore/draw.js', 'explore/model.js',
+  'explore/theme.js', 'explore/explore.css', 'paths.js'];
 
 // An app's name: lower case, letters, digits and dashes (as a Rayfin id).
 function slug(s) {
@@ -140,9 +140,9 @@ const indexHtml = plan => `<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${esc(plan.title)} · Explore</title>
-<link rel="stylesheet" href="./analyze/analyze.css">
+<link rel="stylesheet" href="./explore/explore.css">
 <style>
-  /* analyze.css's tokens, and the sign-in gate's (storage/auth.js: --bg, --muted, --accent,
+  /* explore.css's tokens, and the sign-in gate's (storage/auth.js: --bg, --muted, --accent,
      --on-accent). Dark first, as the panel's palette is drawn; light when the browser asks. */
   :root {
     color-scheme: dark;
@@ -187,14 +187,14 @@ const indexHtml = plan => `<!doctype html>
 `;
 
 const appJs = (plan, state) => `// app.js — Explore over the model, the page of this Fabric app (OneLake Studio's Export to
-// Fabric). Studio's own Explore (analyze/explore.js) drives it: a query of the shelves is DAX
-// (analyze/query.js), the DAX is SQL over the views v_<table> (dax-sql), and storage/data.js
+// Fabric). Studio's own Explore (explore/explore.js) drives it: a query of the shelves is DAX
+// (explore/query.js), the DAX is SQL over the views v_<table> (dax-sql), and storage/data.js
 // runs it in DuckDB-WASM over the lakehouse's tables, downloaded into this browser.
 import { createDataSource } from "./storage/data.js";
-import { createExplorer } from "./analyze/explore.js";
-import { createModelQuery, EXPLORE_CASTS } from "./analyze/query.js";
-import { tmslOf } from "./analyze/model.js";
-import { PALETTE, registerChartTheme } from "./analyze/theme.js";
+import { createExplorer } from "./explore/explore.js";
+import { createModelQuery, EXPLORE_CASTS } from "./explore/query.js";
+import { tmslOf } from "./explore/model.js";
+import { PALETTE, registerChartTheme } from "./explore/theme.js";
 import { createCompiler } from "./semantic/dax-sql/index.js";
 import { tmslToModel } from "./semantic/formats/tmsl.js";
 import { ossieToTmsl } from "./semantic/formats/ossie.js";
@@ -269,7 +269,7 @@ open the app item can load it.
 | Layer | Path | |
 |---|---|---|
 | Page | \`site/index.html\`, \`site/app.js\` | generated: Explore over the data source |
-| Explore | \`site/analyze/\` | OneLake Studio's Explore, as the extension runs it |
+| Explore | \`site/explore/\` | OneLake Studio's Explore, as the extension runs it |
 | Compiler | \`site/semantic/dax-sql/\`, \`site/semantic/formats/\` | dax-sql: the query as DAX, the DAX as SQL over \`v_<table>\` |
 | Model | \`site/semantic/ossie.json\` | the model, as the page reads it |
 | Data source | \`site/storage/\` | signs in (Rayfin Fabric SSO), asks the function, downloads the tables into the browser (OPFS), DuckDB-WASM |

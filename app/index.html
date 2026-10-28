@@ -5,7 +5,7 @@
   <meta http-equiv="Content-Security-Policy" content="{{csp}}" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>OneLake Studio</title>
-  <link rel="stylesheet" href="{{base}}/analyze/analyze.css" />
+  <link rel="stylesheet" href="{{base}}/explore/explore.css" />
   <style>
     /* The editor's theme IS the palette: a webview gets every --vscode-* colour on :root,
        and names its theme kind on <body>. Every rule below uses these names, so the panel
@@ -25,7 +25,7 @@
       --hover:   var(--vscode-list-hoverBackground);
       --sel:     var(--vscode-list-activeSelectionBackground);
       --stripe:  var(--vscode-tree-tableOddRowsBackground, transparent);
-      /* analyze/analyze.css's own tokens (the semantic model view). */
+      /* explore/explore.css's own tokens (the semantic model view). */
       --card:      var(--panel);
       --input-bg:  var(--vscode-input-background, var(--panel2));
       --raised:    var(--vscode-list-hoverBackground);
@@ -160,7 +160,7 @@
       <button id="runBtn" class="primary" disabled>Run ▶</button>
       <button id="csvBtn" disabled>Save CSV</button>
     </div>
-    <!-- A .bim's semantic model view (analyze/view.js), in place of the editor and results. -->
+    <!-- A .bim's semantic model view (explore/view.js), in place of the editor and results. -->
     <div id="modelView" hidden></div>
     <textarea id="sqlEditor" spellcheck="false" placeholder="Read-only SQL. Pick a table in the OneLake sidebar, or try: SELECT 42"></textarea>
     <div class="resultsWrap">

@@ -1,5 +1,5 @@
 // =============================================================================
-// analyze/view.js — what a .bim opens as: its semantic model, on three pages
+// explore/view.js — what a .bim opens as: its semantic model, on three pages
 // =============================================================================
 //   Model     the star of its tables and relationships, and what the model says of the
 //             table picked (model.js)
@@ -46,7 +46,7 @@ const loadEcharts = () => (echartsP ??= new Promise((resolve, reject) => {
 //                    published as a Fabric app of this model's Explore alone
 //                    (src/exportapp.js); answers what the button says when it is done
 // Returns { destroy }.
-export function mountAnalyze(root, ctx) {
+export function mountExplore(root, ctx) {
   const el = (tag, attrs = {}, ...kids) => {
     const n = document.createElement(tag);
     for (const [k, v] of Object.entries(attrs)) {
@@ -63,19 +63,19 @@ export function mountAnalyze(root, ctx) {
     'data-apage': k, 'aria-selected': String(!i), tabindex: i ? '-1' : '0' }, t));
   const modelPage = el('div', { class: 'model-page' });
   const ta = el('textarea', { spellcheck: 'false', wrap: 'off', 'aria-label': 'SQL over the semantic model' });
-  const info = el('div', { class: 'analyze-info' });
-  const out = el('table', { class: 'analyze-table' });
-  const btn = (text, onclick, primary) => el('button', { type: 'button', class: `btn-analyze${primary ? ' primary' : ''}`, onclick }, text);
+  const info = el('div', { class: 'explore-info' });
+  const out = el('table', { class: 'explore-table' });
+  const btn = (text, onclick, primary) => el('button', { type: 'button', class: `btn-explore${primary ? ' primary' : ''}`, onclick }, text);
   const previewBtn = btn('Preview', preview, true), planBtn = btn('Show plan', plan), csvBtn = btn('Save CSV', download);
-  const sqlPage = el('div', { class: 'analyze-sql-page', hidden: '' },
-    el('div', { class: 'analyze-controls' }, previewBtn, planBtn, csvBtn),
-    el('div', { class: 'analyze-sql' },
-      el('div', { class: 'analyze-sql-head' },
+  const sqlPage = el('div', { class: 'explore-sql-page', hidden: '' },
+    el('div', { class: 'explore-controls' }, previewBtn, planBtn, csvBtn),
+    el('div', { class: 'explore-sql' },
+      el('div', { class: 'explore-sql-head' },
         el('label', {}, 'SQL ', el('span', {}, `— a SELECT … FROM ${ctx.name} asks the semantic model: its columns, and its measures as AGG("name"). Any other SQL runs as written. Ctrl+Enter previews.`)),
         btn('Example', () => { ta.value = ctx.sample; })),
       ta),
     info,
-    el('div', { class: 'analyze-table-wrap' }, out));
+    el('div', { class: 'explore-table-wrap' }, out));
   const explorePage = el('div', { class: 'explore-page', hidden: '' });
   root.replaceChildren(
     el('div', { class: 'subtab-bar' },

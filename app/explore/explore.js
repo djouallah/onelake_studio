@@ -1,5 +1,5 @@
 // =============================================================================
-// analyze/explore.js — the Explore page: a pivot of a semantic model, built by dragging its
+// explore/explore.js — the Explore page: a pivot of a semantic model, built by dragging its
 // fields onto shelves (Rows, Columns, Values, Filters), drawn as a table or a chart
 // =============================================================================
 // General purpose: it knows no table, column or measure of any model. It reads the fields
@@ -211,14 +211,14 @@ export function createExplorer(root, ctx) {
   const sort = el('select', { 'aria-label': 'Sort' }, el('option', { value: 'fields' }, 'Sort by fields'),
     el('option', { value: 'desc' }, 'Sort by first value ↓'));
   const info = el('span', { class: 'ex-info' });
-  const exportBtn = ctx.exportToFabric ? el('button', { type: 'button', class: 'btn-analyze',
+  const exportBtn = ctx.exportToFabric ? el('button', { type: 'button', class: 'btn-explore',
     title: 'Publish this Explore, on this model, as a Fabric app (a local copy is written too)', onclick: exportApp }, 'Export to Fabric') : null;
   const tools = el('div', { class: 'ex-tools' }, marks,
     el('label', { class: 'ex-check' }, totals, 'Totals'), sort,
-    el('button', { type: 'button', class: 'btn-analyze', title: 'Swap rows and columns', onclick: () => {
+    el('button', { type: 'button', class: 'btn-explore', title: 'Swap rows and columns', onclick: () => {
       [state.rows, state.cols] = [state.cols, state.rows]; changed(); } }, '⇄ Swap'),
-    el('button', { type: 'button', class: 'btn-analyze', onclick: () => { state = { ...EMPTY(), mark: state.mark }; changed(); } }, 'Clear'),
-    el('button', { type: 'button', class: 'btn-analyze', onclick: download }, 'CSV'), exportBtn, info);
+    el('button', { type: 'button', class: 'btn-explore', onclick: () => { state = { ...EMPTY(), mark: state.mark }; changed(); } }, 'Clear'),
+    el('button', { type: 'button', class: 'btn-explore', onclick: download }, 'CSV'), exportBtn, info);
   const table = el('div', { class: 'ex-table' });
   const chartBox = el('div', { class: 'ex-chart' });
   // Over the view while a query runs: a model query reads OneLake and can take a while,
@@ -433,8 +433,8 @@ export function createExplorer(root, ctx) {
     pop = el('div', { class: 'ex-pop', role: 'dialog', 'aria-label': `Filter ${fd.name}` },
       el('div', { class: 'ex-pop-head' }, fd.id), body,
       el('div', { class: 'ex-pop-foot' },
-        el('button', { type: 'button', class: 'btn-analyze', onclick: closePop }, 'Cancel'),
-        el('button', { type: 'button', class: 'btn-analyze primary', onclick: apply }, 'Apply')));
+        el('button', { type: 'button', class: 'btn-explore', onclick: closePop }, 'Cancel'),
+        el('button', { type: 'button', class: 'btn-explore primary', onclick: apply }, 'Apply')));
     pop.addEventListener('keydown', e => { if (e.key === 'Escape') closePop(); if (e.key === 'Enter' && e.target.tagName === 'INPUT' && e.target.type !== 'checkbox') apply(); });
     showPop(anchor);
 
@@ -491,8 +491,8 @@ export function createExplorer(root, ctx) {
       find.addEventListener('input', show);
       const all = on => () => { picked.clear(); if (on) values.filter(v => String(v).toLowerCase().includes(find.value.toLowerCase())).forEach(v => picked.add(v)); draft.values = values.filter(x => picked.has(x)); show(); };
       detail.replaceChildren(find, el('div', { class: 'ex-row' },
-        el('button', { type: 'button', class: 'btn-analyze', onclick: all(true) }, 'All'),
-        el('button', { type: 'button', class: 'btn-analyze', onclick: all(false) }, 'None'),
+        el('button', { type: 'button', class: 'btn-explore', onclick: all(true) }, 'All'),
+        el('button', { type: 'button', class: 'btn-explore', onclick: all(false) }, 'None'),
         values.length >= 1000 ? el('span', { class: 'ex-hint' }, 'first 1,000 values') : null), boxes);
       show();
     }
@@ -628,7 +628,7 @@ export function createExplorer(root, ctx) {
     const rowKeys = [...piv.rowKeys, ...(piv.hasRowTotal ? [null] : [])];
     const tint = ctx.palette()[0];
     const ranges = Object.fromEntries(measures.map(m => [m, extent(piv.rowKeys.flatMap(a => piv.colKeys.map(b => piv.cell(a, b)?.[nameOf(m)])))]));
-    const t = el('table', { class: 'analyze-table ex-pivot' });
+    const t = el('table', { class: 'explore-table ex-pivot' });
     const head = el('thead');
     // One header line per column field, then the measures' names when there are several (or no column field).
     const lead = text => el('th', { class: 'ex-rowhead', scope: 'col' }, text);

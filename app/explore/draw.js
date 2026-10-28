@@ -1,5 +1,5 @@
 // =============================================================================
-// analyze/draw.js — the drawing helpers the model view uses: value formats, tints,
+// explore/draw.js — the drawing helpers the model view uses: value formats, tints,
 // small-multiple grids, the star layout of the model
 // =============================================================================
 // Ported from analytics-as-code's dashboard (frontend/draw.js), the helpers Analyze needs

@@ -1,5 +1,5 @@
 /* =============================================================================
-   analyze/analyze.css — the semantic model view (view.js): subtabs, Model, SQL, Explore
+   explore/explore.css — the semantic model view (view.js): subtabs, Model, SQL, Explore
    =============================================================================
    Ported from the Analyze tab of analytics-as-code's dashboard. Its tokens that the studio
    does not have are defined here, on :root because Explore's filter popup lives on <body>;
@@ -20,7 +20,7 @@ section.modelOpen #previewBtn, section.modelOpen #runBtn, section.modelOpen #csv
 .sm-title { font-size: 0.8rem; color: var(--muted); }
 .sm-title code { color: var(--text); }
 .sm-plan { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.72rem; line-height: 1.4; white-space: pre; overflow-x: auto; margin: 0; }
-.analyze-sql-head label { font-size: 0.7rem; color: var(--faint); text-transform: uppercase; letter-spacing: 0.06em; font-weight: 600; }
+.explore-sql-head label { font-size: 0.7rem; color: var(--faint); text-transform: uppercase; letter-spacing: 0.06em; font-weight: 600; }
 /* The studio styles every input; Explore's checkboxes keep their own size. */
 .ex input[type=checkbox], .ex-pop input[type=checkbox] { padding: 0; }
 
@@ -31,26 +31,26 @@ section.modelOpen #previewBtn, section.modelOpen #runBtn, section.modelOpen #csv
 .subtab.active { color: var(--on-accent); background: var(--accent); }
 
 /* --- SQL page --- */
-.analyze-controls { display: flex; gap: 0.8rem; padding: var(--gap) var(--gutter) 0.8rem; align-items: center; flex-wrap: wrap; }
-.btn-analyze { padding: 0.42rem 1rem; border: 1px solid var(--border); border-radius: 999px; font-size: 0.82rem; font-weight: 600; background: none; color: var(--text); cursor: pointer; transition: border-color 0.15s, background 0.15s, color 0.15s; }
-.btn-analyze:hover { border-color: var(--muted); }
-.btn-analyze.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
-.btn-analyze.primary:hover { opacity: 0.88; }
-.btn-analyze:disabled { opacity: 0.5; cursor: not-allowed; }
-.analyze-info { font-size: 0.8rem; color: var(--muted); padding: 0 var(--gutter); }
-.analyze-sql { padding: 0 var(--gutter) 0.4rem; }
-.analyze-sql-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.4rem; }
-.analyze-sql-head label span { text-transform: none; letter-spacing: 0; font-weight: 400; color: var(--faint); }
-.analyze-sql textarea { width: 100%; min-height: 120px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.8rem; line-height: 1.5; background: var(--input-bg); color: var(--text); border: 1px solid var(--border); border-radius: var(--radius); padding: 0.7rem 0.9rem; resize: vertical; white-space: pre; }
-.analyze-sql textarea:focus { outline: none; border-color: var(--accent); }
-.analyze-table-wrap { margin: 0.6rem var(--gutter) 1.5rem; overflow: auto; max-height: 60vh; border-radius: var(--radius); }
-.analyze-table { width: 100%; border-collapse: collapse; font-size: 0.8rem; font-variant-numeric: tabular-nums; }
-.analyze-table th { position: sticky; top: 0; background: var(--card); color: var(--muted); font-size: 0.74rem; font-weight: 600; padding: 0.5rem 0.7rem; border-bottom: 1px solid var(--border); text-align: left; }
-.analyze-table td { padding: 0.35rem 0.7rem; border-bottom: 1px solid var(--row-line); color: var(--text); }
-.analyze-table tr:hover td { background: var(--hover-soft); }
+.explore-controls { display: flex; gap: 0.8rem; padding: var(--gap) var(--gutter) 0.8rem; align-items: center; flex-wrap: wrap; }
+.btn-explore { padding: 0.42rem 1rem; border: 1px solid var(--border); border-radius: 999px; font-size: 0.82rem; font-weight: 600; background: none; color: var(--text); cursor: pointer; transition: border-color 0.15s, background 0.15s, color 0.15s; }
+.btn-explore:hover { border-color: var(--muted); }
+.btn-explore.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+.btn-explore.primary:hover { opacity: 0.88; }
+.btn-explore:disabled { opacity: 0.5; cursor: not-allowed; }
+.explore-info { font-size: 0.8rem; color: var(--muted); padding: 0 var(--gutter); }
+.explore-sql { padding: 0 var(--gutter) 0.4rem; }
+.explore-sql-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.4rem; }
+.explore-sql-head label span { text-transform: none; letter-spacing: 0; font-weight: 400; color: var(--faint); }
+.explore-sql textarea { width: 100%; min-height: 120px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.8rem; line-height: 1.5; background: var(--input-bg); color: var(--text); border: 1px solid var(--border); border-radius: var(--radius); padding: 0.7rem 0.9rem; resize: vertical; white-space: pre; }
+.explore-sql textarea:focus { outline: none; border-color: var(--accent); }
+.explore-table-wrap { margin: 0.6rem var(--gutter) 1.5rem; overflow: auto; max-height: 60vh; border-radius: var(--radius); }
+.explore-table { width: 100%; border-collapse: collapse; font-size: 0.8rem; font-variant-numeric: tabular-nums; }
+.explore-table th { position: sticky; top: 0; background: var(--card); color: var(--muted); font-size: 0.74rem; font-weight: 600; padding: 0.5rem 0.7rem; border-bottom: 1px solid var(--border); text-align: left; }
+.explore-table td { padding: 0.35rem 0.7rem; border-bottom: 1px solid var(--row-line); color: var(--text); }
+.explore-table tr:hover td { background: var(--hover-soft); }
 /* Analyze, Model: the star (an SVG, model.js) and the table picked. */
 .model-page { display: grid; grid-template-columns: minmax(0, 1fr) 380px; gap: var(--gap); padding: var(--gap) var(--gutter) 1.5rem; }
-.model-page[hidden], .analyze-sql-page[hidden], .explore-page[hidden] { display: none; }
+.model-page[hidden], .explore-sql-page[hidden], .explore-page[hidden] { display: none; }
 .model-diagram, .model-panel { background: var(--card); border: 1px solid var(--hairline); border-radius: var(--radius); overflow: auto; }
 .model-diagram { padding: 0.8rem; display: flex; }
 .model-diagram svg { display: block; flex: none; width: 100%; min-width: 640px; height: auto; margin: auto; font-family: inherit; }
@@ -119,7 +119,7 @@ section.modelOpen #previewBtn, section.modelOpen #runBtn, section.modelOpen #csv
 .ex-chip .ex-x { padding: 0.18rem 0.55rem 0.18rem 0.3rem; color: var(--faint); }
 .ex-chip .ex-x:hover { color: var(--text); }
 .ex-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 0.45rem; }
-.ex-tools .btn-analyze { padding: 0.28rem 0.75rem; font-size: 0.76rem; }
+.ex-tools .btn-explore { padding: 0.28rem 0.75rem; font-size: 0.76rem; }
 .ex-marks { display: flex; flex-wrap: wrap; gap: 0.1rem; padding: 0.15rem; border: 1px solid var(--hairline); border-radius: 999px; }
 .ex-mark { padding: 0.22rem 0.6rem; font-size: 0.74rem; font-weight: 600; color: var(--muted); background: none; border: 1px solid transparent; border-radius: 999px; cursor: pointer; }
 .ex-mark:hover { color: var(--text); }
@@ -159,7 +159,7 @@ section.modelOpen #previewBtn, section.modelOpen #runBtn, section.modelOpen #csv
 .ex-pop .ex-values { max-height: 240px; overflow: auto; gap: 0.1rem; }
 .ex-values label { color: var(--text); }
 .ex-pop .ex-row { flex-direction: row; align-items: center; }
-.ex-row .btn-analyze, .ex-pop-foot .btn-analyze { padding: 0.25rem 0.7rem; font-size: 0.74rem; }
+.ex-row .btn-explore, .ex-pop-foot .btn-explore { padding: 0.25rem 0.7rem; font-size: 0.74rem; }
 .ex-pop-foot { display: flex; justify-content: flex-end; gap: 0.4rem; }
 /* A summarised column's summaries: one button each, the current one lit. */
 .ex-aggs { display: flex; flex-direction: column; gap: 0.1rem; }
