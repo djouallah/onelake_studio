@@ -2,9 +2,11 @@
 
 ## Releases
 
-F5 (the Extension Development Host) is for debugging only. It never counts as testing a release.
+F5 (the Extension Development Host) is how changes are tested day to day. It never counts as
+testing a release.
 
-**Before any release, the build that will ship is installed and tested locally first.**
+**Only when the user says a release is ready:** the build that will ship is installed and tested
+locally first. Never install a vsix for ordinary testing.
 
 1. **Get the build.** Push to `main` and wait for the green CI run ("Extension"). Download that
    run's vsix for this machine:
