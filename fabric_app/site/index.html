@@ -29,7 +29,27 @@
   ::-webkit-scrollbar-thumb { background: var(--raised); border-radius: 6px; }
   #status { position: fixed; right: 1rem; bottom: 0.6rem; color: var(--muted); font-size: 0.78rem; }
   #status.error { color: var(--err); }
-  footer { padding: 0.5rem var(--gutter) 1rem; color: var(--faint); font-size: 0.72rem; }
+  footer { padding: 0.3rem var(--gutter) 0.5rem; color: var(--faint); font-size: 0.72rem; flex: none; }
+
+  /* The whole window. explore.css is sized for the VS Code panel (a 340px chart, tables
+     capped at 60-65vh); here the page is the browser's, so each page stretches to its
+     bottom edge and the pivot's table or chart takes what is left. The panel is untouched:
+     these rules are this page's only. */
+  html, body { height: 100%; }
+  body { display: flex; flex-direction: column; }
+  #explore { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; overflow: auto; }
+  #explore > .explore-page:not([hidden]), #explore > .explore-sql-page:not([hidden]),
+  #explore > .model-page:not([hidden]) { flex: 1 1 auto; min-height: 0; }
+  #explore > .explore-page:not([hidden]) { display: flex; flex-direction: column; padding-bottom: var(--gap); }
+  .explore-page > .ex { flex: 1 1 auto; min-height: 0; }
+  .ex-fields { max-height: none; }
+  .ex-out { min-height: 0; }
+  .ex-table { max-height: none; }
+  .ex-chart { min-height: 260px; }
+  .model-panel { max-height: none; }
+  #explore > .explore-sql-page:not([hidden]) { display: flex; flex-direction: column; }
+  .explore-sql-page > .explore-table-wrap { flex: 1 1 auto; min-height: 160px; max-height: none; }
+  .explore-sql-page > .explore-plan:not([hidden]) { flex: 1 1 auto; }
   /* What the page is doing until Explore is on screen (app.js): the step, and how long. */
   #boot { min-height: 70vh; display: flex; flex-direction: column; gap: 0.9rem; align-items: center; justify-content: center;
           color: var(--muted); text-align: center; padding: 2rem; }
