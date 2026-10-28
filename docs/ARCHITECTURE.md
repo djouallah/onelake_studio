@@ -71,9 +71,10 @@ compiler, how to run SQL, and where ECharts comes from.
 ## Export to Fabric
 
 Explore's **Export to Fabric** button publishes that model's Explore and Logs, nothing else, as a
-Fabric app (item type `AppBackend`, named `<model>-explore`). It also writes a local copy to
-`<the folder VS Code has open>/<model>-explore/`; with no folder open, it asks for one. VS Code and
-the extension are all it needs: no CLI, no Node, no GitHub.
+Fabric app (item type `AppBackend`, named `<model>-explore`). It also writes a local copy: to the
+folder approved last time for that model, or else `<the folder VS Code has open>/<model>-explore/`,
+or else one you pick. Before anything is written it shows where, and waits for *Export* or *Choose
+Another Folder…*. VS Code and the extension are all it needs: no CLI, no Node, no GitHub.
 
 **What you need**
 - **The model is a OneLake file** in a lakehouse's `Files/`.

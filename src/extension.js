@@ -802,23 +802,43 @@ async function activateInner(context) {
       const token = await appToken({ createIfNone: true });
       if (!token) throw new Error('not signed in to the Fabric API');
 
-      // The folder: <the folder VS Code has open>/<app>/. With none open, one is asked for,
-      // and remembered for this model.
+      // The folder: the one approved last time for this model, or else <the folder VS Code
+      // has open>/<app>/, or else a picker. Never used unapproved: where it goes is shown, and
+      // the export waits for an OK or another folder.
       const open = (vscode.workspace.workspaceFolders || [])[0];
       const key = `exportFolder:${plan.workspace}/${plan.lakehouse}/${plan.name}`;
-      let outDir = open ? join(open.uri.fsPath, plan.name) : context.globalState.get(key);
-      if (!outDir || (!open && !existsSync(outDir))) {
+      const remembered = context.globalState.get(key);
+      let outDir = remembered && existsSync(remembered) ? remembered : open ? join(open.uri.fsPath, plan.name) : null;
+      let prev = outDir;
+      const pickFolder = async () => {
         const picked = await vscode.window.showOpenDialog({
           canSelectFolders: true, canSelectFiles: false, canSelectMany: false,
-          defaultUri: vscode.Uri.file(require('node:os').homedir()),
+          defaultUri: vscode.Uri.file(prev ? require('node:path').dirname(prev) : require('node:os').homedir()),
           openLabel: 'Export Here',
           title: `Export to Fabric: the folder to keep the app's local copy (${plan.name}/) in`,
         });
-        if (!picked || !picked.length) return 'Export cancelled.';
-        outDir = join(picked[0].fsPath, plan.name);
+        if (!picked || !picked.length) return null;
+        // The app's own folder picked, rather than the one to put it in: used as it is.
+        const dir = picked[0].fsPath;
+        return require('node:path').basename(dir) === plan.name ? dir : join(dir, plan.name);
+      };
+      for (;;) {
+        if (!outDir) {
+          outDir = await pickFolder();
+          if (!outDir) return 'Export cancelled.';
+        }
+        const pick = await vscode.window.showInformationMessage(
+          `Export ${plan.name} to Fabric?`,
+          { modal: true, detail: `Local copy: ${outDir}${existsSync(outDir) ? '' : ' (new)'}\nWorkspace: ${workspace}\nModel: ${plan.modelPath}` },
+          'Export', 'Choose Another Folder…');
+        if (pick === 'Export') break;
+        if (!pick) return 'Export cancelled.';
+        prev = outDir;
+        outDir = null;
       }
-      // A folder Export to Fabric did not write is refused here, before anything is asked.
+      // A folder Export to Fabric did not write is refused here, before anything else is asked.
       const before = await readMarker(outDir);
+      await context.globalState.update(key, outDir);
       const fabricApp = createFabricApp({ getToken: appToken, log: m => out && out.appendLine(m) });
 
       // Edited since it was last published (by you, or an agent)? Asked, never overwritten.
@@ -899,7 +919,6 @@ async function activateInner(context) {
         if (pick !== 'Replace It') return `Not exported: an app named ${e.item.displayName} already exists.`;
         r = await publish(true);
       }
-      if (!open) await context.globalState.update(key, outDir);
       // The workspace's Apps, re-read: the app is new, or deployed again.
       tree.refresh({ kind: 'apps', workspace });
       if (out) {
