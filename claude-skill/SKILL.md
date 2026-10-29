@@ -58,7 +58,7 @@ Options: `--limit N` (rows printed, default 100), `--csv`, `--fresh` (ask OneLak
 sql "SHOW SEMANTIC VIEWS"
 sql "SHOW SEMANTIC METRICS IN semanticmodel.sales.sales_model"            measures, with their DAX
 sql "SHOW SEMANTIC DIMENSIONS IN semanticmodel.sales.sales_model FOR METRIC \"Total Sales\""   what can slice it
-sql "CREATE SEMANTIC VIEW semanticmodel.<ws>.sales FROM 'Files/models/sales.bim'" --in <ws>/<item>
+sql "CREATE SEMANTIC VIEW <ws>.sales FROM 'Files/models/sales.bim'" --in <ws>/<item>   then semanticmodel.<ws>.sales
 sql "DROP SEMANTIC VIEW semanticmodel.<ws>.sales"
 ```
 

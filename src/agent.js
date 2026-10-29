@@ -507,8 +507,9 @@ function createAgent({ onelake, fabric, engine, bimPath, appDir, vendorDir, daxS
         return;
       }
       if (st && st.create) {
-        if (String(st.create.db || '').toLowerCase() !== semantic.MODEL_CATALOG || !st.create.schema) {
-          throw new Error(`a semantic view is named ${semantic.MODEL_CATALOG}.<workspace>.<name>`);
+        // ws.name, or in full semanticmodel.ws.name: either way the view is semanticmodel.ws.name.
+        if (!st.create.schema || (st.create.db && String(st.create.db).toLowerCase() !== semantic.MODEL_CATALOG)) {
+          throw new Error('name the semantic view <workspace>.<name>');
         }
         const full = [semantic.MODEL_CATALOG, st.create.schema, st.create.name];
         if (st.create.mode === 'if_not_exists' && semantic.hasView(full)) {

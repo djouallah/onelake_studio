@@ -382,8 +382,9 @@ async function semanticDdl({ create, drop }) {
     semantic.dropView(drop.name);
     return had ? `Semantic view ${drop.name} dropped.` : `No semantic view ${drop.name}.`;
   }
-  if (String(create.db || '').toLowerCase() !== semantic.MODEL_CATALOG || !create.schema)
-    throw new Error(`a semantic view is named ${semantic.MODEL_CATALOG}.<workspace>.<name>`);
+  // ws.name, or in full semanticmodel.ws.name: either way the view is semanticmodel.ws.name.
+  if (!create.schema || (create.db && String(create.db).toLowerCase() !== semantic.MODEL_CATALOG))
+    throw new Error('name the semantic view <workspace>.<name>');
   const full = [semantic.MODEL_CATALOG, create.schema, create.name];
   if (create.mode === 'if_not_exists' && semantic.hasView(full))
     return `Semantic view ${create.name} already exists.`;

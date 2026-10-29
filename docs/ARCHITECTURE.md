@@ -230,7 +230,7 @@ the command line alike. The statements are dax-sql's (`createViews()`, vendored 
 [`src/vendored.js`](../src/vendored.js)); nothing here re-implements them:
 
 ```sql
-CREATE [OR REPLACE] SEMANTIC VIEW [IF NOT EXISTS] semanticmodel.ws.sales FROM '<a .bim or Ossie .yaml: local, abfss://… or Files/…>';
+CREATE [OR REPLACE] SEMANTIC VIEW [IF NOT EXISTS] ws.sales FROM '<a .bim or Ossie .yaml: local, abfss://… or Files/…>';
 DROP SEMANTIC VIEW [IF EXISTS] semanticmodel.ws.sales;
 SHOW SEMANTIC VIEWS;
 SHOW SEMANTIC DIMENSIONS IN semanticmodel.ws.sales [FOR METRIC m];

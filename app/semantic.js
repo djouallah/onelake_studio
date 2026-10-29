@@ -4,7 +4,7 @@
 // The statements and the compiling are dax-sql's, vendored at the pin in src/vendored.js —
 // its createViews() is the one implementation of
 //
-//   CREATE [OR REPLACE] SEMANTIC VIEW [IF NOT EXISTS] semanticmodel.ws.sales FROM '<path to .bim or .yaml>'
+//   CREATE [OR REPLACE] SEMANTIC VIEW [IF NOT EXISTS] ws.sales FROM '<path to .bim or .yaml>'   (semanticmodel.ws.sales)
 //   DROP SEMANTIC VIEW [IF EXISTS] semanticmodel.ws.sales
 //   SHOW SEMANTIC VIEWS | SHOW SEMANTIC DIMENSIONS IN … [FOR METRIC m] | SHOW SEMANTIC METRICS IN …
 //   DESCRIBE semanticmodel.ws.sales
