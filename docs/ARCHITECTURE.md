@@ -114,7 +114,7 @@ by [`scripts/function-bundle.mjs`](../scripts/function-bundle.mjs) with Rayfin's
 | `onelakeStudio.catalogTtlMinutes` | How old a listing may be before it is refreshed (default 5). The last known answer is always served instantly from disk and refreshed behind you. |
 | `onelakeStudio.tableMetadataTtlHours` | How old a table's Iceberg metadata may be before it is refreshed (default 24), so a table you have opened before opens without asking the catalog — even after a restart. **Refresh** on its lakehouse re-reads it at once. |
 | `onelakeStudio.prefetchMetadata` | Read every table's metadata in the background once a lakehouse's Tables node is opened, so the first click is a disk read (default on). |
-| `onelakeStudio.diskCacheMaxGB` | How much table data read from OneLake is kept on disk, per account, so it is read from this machine afterwards, even after a restart (default 10). |
+| `onelakeStudio.diskCacheMaxGB` | How much table data read from OneLake is kept on disk, per account, so it is read from this machine afterwards, even after a restart (default 64). |
 | `onelakeStudio.engineMemoryLimit` | Most memory DuckDB may use, e.g. `4GB`. Empty means a quarter of the machine's RAM. |
 
 ## Ask Claude Code or GitHub Copilot about your data

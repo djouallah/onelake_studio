@@ -362,7 +362,7 @@ function ensureEngine(context, { readme } = {}) {
       memoryLimit: vscode.workspace.getConfiguration('onelakeStudio').get('engineMemoryLimit', '').trim(),
       fileCacheDir: fileCacheDirFor(fileCacheAccount),
       fileCacheMaxBytes: Math.max(0, Number(vscode.workspace.getConfiguration('onelakeStudio')
-        .get('diskCacheMaxGB', 10)) || 0) * 1024 ** 3,
+        .get('diskCacheMaxGB', 64)) || 0) * 1024 ** 3,
     });
   } catch (e) {
     out && out.appendLine(`native DuckDB unavailable: ${e.message}`);

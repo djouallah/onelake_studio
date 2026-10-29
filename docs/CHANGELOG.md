@@ -10,6 +10,7 @@
   Export to Fabric publishes the model's Explore on DuckDB-WASM 1.5.6 from npm.
 - **Mirrored databases show up.** OneLake names them `.MountedRelationalDatabase`, which the tree
   didn't list. They now appear as *Mirrored database*, with a mirror icon.
+- **The disk cache keeps 64 GB by default, up from 10.** `onelakeStudio.diskCacheMaxGB` still sets it.
 - **Delta and Iceberg tables have their own icons.** The icon says which format the table was
   written in. Every table is still read through its Iceberg metadata.
 - **New: a History tab** beside Stats and Data.

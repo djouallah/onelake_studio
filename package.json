@@ -310,7 +310,7 @@
         },
         "onelakeStudio.diskCacheMaxGB": {
           "type": "number",
-          "default": 10,
+          "default": 64,
           "minimum": 0,
           "scope": "machine",
           "markdownDescription": "How much of what DuckDB reads from OneLake (table data, manifests, metadata) is kept on disk, in GB, so a table read once is read from this machine afterwards — even after a restart, with no request to OneLake. Tables only: an Iceberg table's files never change once written, while `Files/` objects can, so those are always read live. Kept per Microsoft account; the oldest is dropped past this size when the engine starts. **Clear Cached OneLake Data** empties it. Applies the next time the engine starts."
