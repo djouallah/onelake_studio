@@ -75,7 +75,7 @@ function lakeExpressions(bim) {
 }
 
 // The lakehouses a model's expressions name (by GUID), each once: the one an Ossie model's
-// Direct Lake expression holds is its Iceberg catalog (Generate Report, src/report.js).
+// Direct Lake expression holds is its Iceberg catalog (Export to Fabric, src/exportapp.js).
 export function lakehousesOf(bim) {
   const out = new Map();
   for (const l of lakeExpressions(bim).values()) out.set(`${l.workspace}/${l.item}`, l);
@@ -223,7 +223,7 @@ export function rewrite(sql) {
 
 // A model's (dax-sql's Model) first measure, and the first text column of another table it
 // can be sliced by: { measure, column: { table, name } | null }, or null with no measure.
-// The editor's sample query and Generate Report's starter chart.
+// The editor's sample query.
 export function starterChart(model) {
   const [measure] = model.measures.values();
   if (!measure) return null;

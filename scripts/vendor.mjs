@@ -3,8 +3,8 @@
 // =============================================================================
 // Downloads what src/vendored.js pins — the markdown renderer, ECharts and the dax-sql
 // compiler — into vendor/, which panel.js serves to the page as webview
-// resources. Nothing the page runs comes from a CDN at run time. Generate Report's template
-// (src/report.js) is vendored the same way, and copied from here into the folder it writes.
+// resources. Nothing the page runs comes from a CDN at run time. Export to Fabric copies
+// dax-sql from here into the app it writes.
 //
 // Layout, relative to vendor/:
 //   npm/<pkg>@<v>/+esm.js       a jsDelivr ESM bundle, saved with a .js extension: VS Code

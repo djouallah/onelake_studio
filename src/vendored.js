@@ -15,10 +15,6 @@ const PINS = {
   echarts: 'echarts@5.5.1',
   // The DAX-to-SQL compiler behind semantic models (semantic.js), at a commit.
   daxSql: 'djouallah/dax-sql@de799e0bb75559ac0d7cfbc62661339bcc93a417',
-  // Generate Report's template (report.js): analytics-as-code's Fabric app on the Iceberg
-  // catalog — its Rayfin project, its DuckDB-WASM data source and the page's generic modules.
-  // Not the webview's: the extension copies these files into the folder it generates.
-  reportTemplate: 'djouallah/analytics-as-code@34dc3b57ffd8f29a780b8e790d303737fa945d6b',
 };
 
 // What vendor.mjs fetches for each pin.
@@ -29,8 +25,6 @@ const VENDOR = {
   // relative path, so the files the page needs are listed by pattern.
   gh: [
     { repo: PINS.daxSql, include: /^\/(src\/.*\.js|formats\/(tmsl|ossie)\.js)$/ },
-    { repo: PINS.reportTemplate,
-      include: /^\/dashboard\/(fabric_app\/iceberg\/(duckdb\.mjs|rayfin\/.*|site\/.*)|fabric_app\/common\/site\/.*|page\/(storage\/queue|frontend\/perflog|semantic\/query)\.js)$/ },
   ],
 };
 

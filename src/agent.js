@@ -562,7 +562,7 @@ function createAgent({ onelake, fabric, engine, bimPath, appDir, vendorDir, daxS
     }
   }
 
-  // modules(): the compiler, for the extension's own uses of it too (Generate Report).
+  // modules(): the compiler, for the extension's own uses of it too (Export to Fabric).
   return { run, modules };
 }
 

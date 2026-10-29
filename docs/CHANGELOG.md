@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **Generate Report is gone. Use Export to Fabric instead.** It did the same thing, but from an
+  older copy of the app that ran a DuckDB-WASM 2.0 build taken from CI, with unsigned extensions.
+  Export to Fabric publishes the model's Explore on DuckDB-WASM 1.5.6 from npm.
 - **Mirrored databases show up.** OneLake names them `.MountedRelationalDatabase`, which the tree
   didn't list. They now appear as *Mirrored database*, with a mirror icon.
 - **Delta and Iceberg tables have their own icons.** The icon says which format the table was

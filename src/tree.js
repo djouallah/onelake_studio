@@ -184,10 +184,8 @@ class LakehouseTree {
     const C = vscode.TreeItemCollapsibleState;
     const item = new vscode.TreeItem(n.label,
       n.leaf ? C.None : n.expanded ? C.Expanded : C.Collapsed);
-    // A pinned workspace offers Unpin, an unpinned one Pin; a YAML file, which may be an Ossie
-    // model, Generate Report (package.json menus: a when clause cannot read the name).
+    // A pinned workspace offers Unpin, an unpinned one Pin (package.json menus).
     item.contextValue = n.kind === 'workspace' && n.pinned ? 'workspacePinned'
-      : n.kind === 'file' && /\.ya?ml$/i.test(n.path || '') ? 'yamlFile'
       : n.kind === 'fabricApp' && n.url ? 'fabricAppUrl'
       : n.kind;
     // A stable identity, so expansion state survives a refresh keyed on WHAT the node is

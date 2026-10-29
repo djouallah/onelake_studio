@@ -25,7 +25,6 @@ const { createAgent } = require('./agent');
 const { createSemViews } = require('./semviews');
 const { serveBridge } = require('./bridge');
 const { PINS } = require('./vendored');
-const { planReport, generateReport } = require('./report');
 const { planExport, writeExport, buildDist, writeMarker, readMarker, fingerprint, localChanges, zip, rayfinYml } = require('./exportapp');
 const { createFabricApp, tenantOf } = require('./fabricapp');
 const { createOneLakeWriter } = require('./onelakewrite');
@@ -825,43 +824,6 @@ async function activateInner(context) {
     }
   }
 
-  // Generate Report, on an Ossie model in Files/: a Fabric app (Rayfin, DuckDB-WASM over the
-  // lakehouse's Iceberg catalog, which the model names) written to a folder of this machine,
-  // from the template vendored at PINS.reportTemplate (report.js). Nothing is deployed.
-  async function generateReportFrom(n) {
-    if (!n || n.kind !== 'file') return;
-    const fileName = n.label || require('node:path').basename(n.path);
-    try {
-      const text = Buffer.from(await onelake.readBytes(n.workspace, n.path)).toString('utf8');
-      const plan = planReport(text, fileName, await agent.modules());
-      const folder = (vscode.workspace.workspaceFolders || [])[0];
-      const picked = await vscode.window.showOpenDialog({
-        canSelectFolders: true, canSelectFiles: false, canSelectMany: false,
-        defaultUri: folder ? folder.uri : vscode.Uri.file(require('node:os').homedir()),
-        openLabel: 'Generate Here',
-        title: `Generate Report: the folder to create ${plan.name}/ in`,
-      });
-      if (!picked || !picked.length) return;
-      const vendor = join(context.extensionUri.fsPath, 'vendor', 'gh');
-      const r = await vscode.window.withProgress(
-        { location: vscode.ProgressLocation.Notification, title: `Generating ${plan.name}` },
-        () => generateReport({ plan, text, outDir: join(picked[0].fsPath, plan.name),
-                               templateDir: join(vendor, PINS.reportTemplate), daxSqlDir: join(vendor, PINS.daxSql) }));
-      if (out) {
-        out.appendLine(`generated report ${r.name} -> ${r.dir} (catalog ${r.catalogUrl}, chart ${r.chart})`);
-        for (const w of r.warnings) out.appendLine(`  warning: ${w}`);
-      }
-      const warned = r.warnings.length ? ` ${r.warnings.length} warning(s) in the log.` : '';
-      const pick = await vscode.window.showInformationMessage(
-        `Report ${r.name} generated: ${r.chart}.${warned}`, 'Open Folder', 'Reveal');
-      if (pick === 'Open Folder') vscode.commands.executeCommand('vscode.openFolder', vscode.Uri.file(r.dir), { forceNewWindow: true });
-      else if (pick === 'Reveal') vscode.commands.executeCommand('revealFileInOS', vscode.Uri.file(r.dir));
-    } catch (e) {
-      if (out) out.appendLine(`generate report from ${n.path} failed — ${(e && e.stack) || e}`);
-      showError(`Generate Report: ${(e && e.message) || e}`);
-    }
-  }
-
   // Export to Fabric, from Explore: the model's Explore as a Fabric app (exportapp.js), its
   // local copy written to <the open folder>/<app>/ (asked for when no folder is open) —
   // and published from there over the Fabric REST API (fabricapp.js). The function's deploy
@@ -1091,8 +1053,6 @@ async function activateInner(context) {
     vscode.commands.registerCommand('onelakeStudio.openFile', n => openInPanel({
       type: 'open-file', workspace: n.workspace, item: n.item, path: n.path, bytes: n.bytes,
     })),
-
-    vscode.commands.registerCommand('onelakeStudio.generateReport', n => generateReportFrom(n)),
 
     // The tree's "Sign in to list semantic models" node. A command of its own, because the
     // Fabric API's consent is a separate prompt and must only ever follow a click.

@@ -225,9 +225,6 @@ jobs:
           files=$(unzip -Z1 "$vsix")
           grep -qx 'extension/dist/extension.js' <<<"$files" || { echo "no dist/extension.js in the vsix"; exit 1; }
           grep -qx 'extension/src/bridge.js' <<<"$files" || { echo "no src/bridge.js — bin/cli.mjs needs it"; exit 1; }
-          # Generate Report copies its template from vendor/ (src/report.js): it must ship.
-          grep -qE '^extension/vendor/gh/djouallah/analytics-as-code@[0-9a-f]+/dashboard/fabric_app/iceberg/rayfin/rayfin\.yml$' <<<"$files" \
-            || { echo "no Generate Report template in the vsix"; exit 1; }
           # Export to Fabric writes its app from fabric_app/ and Studio's Explore (webview/explore),
           # and deploys the prebuilt function.
           for f in fabric_app/site/app.js fabric_app/site/storage/data.js fabric_app/rayfin/rayfin.yml webview/explore/view.js; do
