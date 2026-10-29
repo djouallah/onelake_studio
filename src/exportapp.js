@@ -18,7 +18,8 @@
 //                    (built at package time, by scripts/function-bundle.mjs: nobody's machine
 //                    builds it)
 //   dist/            site/ stamped with the build, plus rayfin.config.json (the backend the
-//                    browser talks to): byte for byte what was uploaded
+//                    browser talks to): byte for byte what was uploaded, but for vendor/,
+//                    uploaded as site/ holds it and not written a second time
 // The model is never copied: the app's function reads it from the lakehouse, in place, at
 // run time (MODEL_URL), so the app shows the model as it is there. The lakehouse its Direct
 // Lake expression holds is the catalog (CATALOG_URL). Nothing here is AI.
@@ -156,7 +157,8 @@ Tables the app reads (\`v_<table>\` ← \`schema.table\`):
 
 ${plan.tables.map(([n, s]) => `- \`${n}\` ← \`${s}\``).join('\n')}
 
-\`dist/\` is \`site/\` as uploaded (stamped with the build, plus \`rayfin.config.json\`). Exporting again from
+\`dist/\` is \`site/\` as uploaded (stamped with the build, plus \`rayfin.config.json\`), but for \`vendor/\`:
+the packages are uploaded as \`site/vendor/\` holds them, and kept there only. Exporting again from
 OneLake Studio rewrites \`site/\`, \`dist/\`, \`rayfin/\` and this file, and updates the same app.
 
 The workspace must allow **OneLake user-delegated SAS tokens** (workspace settings → OneLake): the
@@ -276,6 +278,8 @@ const buildId = (d = new Date()) => d.toISOString().replace(/[-:]/g, '').replace
  * dist/ from site/: every relative import gets ?v=<build> and __BUILD__ becomes the build, so
  * a browser never runs the files of two deploys together; then rayfin.config.json, which the
  * browser SDK fetches from the site's root. Returns the files, path -> bytes, as uploaded.
+ * vendor/ is in the upload but not written to dist/: ~48 MB of packages, the same bytes as
+ * site/vendor/, kept once.
  */
 async function buildDist(outDir, config, build = buildId()) {
   const site = join(outDir, 'site'), dist = join(outDir, 'dist');
@@ -296,6 +300,7 @@ async function buildDist(outDir, config, build = buildId()) {
   }
   files.set('rayfin.config.json', Buffer.from(JSON.stringify(config, null, 2) + '\n', 'utf8'));
   for (const [rel, bytes] of files) {
+    if (rel.startsWith('vendor/')) continue;
     await fsp.mkdir(dirname(join(dist, rel)), { recursive: true });
     await fsp.writeFile(join(dist, rel), bytes);
   }

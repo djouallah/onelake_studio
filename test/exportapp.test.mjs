@@ -191,6 +191,7 @@ test("the folder: fabric_app's site and function, Studio's Explore, no model; di
     assert.ok(!files.has("dist/index.html"), "the paths are the site's, at the zip root");
     assert.equal(files.get("vendor/npm/@duckdb/duckdb-wasm@1.0.0/+esm.js").toString(), 'import{a}from"../../apache-arrow@17.0.0/+esm.js";\n',
       "vendored packages ship byte for byte");
+    assert.ok(!(await readdir(join(outDir, "dist"))).includes("vendor"), "the packages are kept once, in site/vendor/");
     assert.equal(await read("dist/rayfin.config.json"), files.get("rayfin.config.json").toString());
     assert.ok(unzip(zip(files)).get("app.js").equals(files.get("app.js")));
 
