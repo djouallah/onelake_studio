@@ -1041,12 +1041,20 @@ function openQuery(name, sql) {
 
 // Save Query, one click: over the query that is open, else as a new "Query N" — the tree's
 // Rename names it.
+// With a semantic model open, the SQL box is hidden: what is saved is the model's own SQL, its
+// Show SQL box (the pivot's query, or one typed there), which the SQL box runs as it is — a
+// semantic view can be named from any SQL. Each one is a new query.
+const modelSqlBox = () => modelView && $('modelView').querySelector('textarea[aria-label="SQL over the semantic model"]');
 async function saveQuery() {
   const btn = $('saveQueryBtn');
+  const fromModel = !!modelView;
+  const sql = fromModel ? (modelSqlBox()?.value ?? '').trim() : $('sqlEditor').value;
+  if (fromModel && !sql) { setStatus("Open Show SQL to save the model's query."); return; }
   btn.disabled = true;
   try {
-    const saved = await engine.saveQuery(activeQuery, $('sqlEditor').value);
+    const saved = await engine.saveQuery(fromModel ? null : activeQuery, sql);
     if (!saved) return;
+    if (fromModel) { setStatus(`Saved the model's query as ${saved.name} under Queries — rename it there.`, 'ok'); return; }
     activeQuery = saved.name;
     if (!activeTableRef && !activeFile) $('activeTable').textContent = `Query: ${saved.name}`;
     setStatus(`Saved as ${saved.name} under Queries — rename it there.`, 'ok');
