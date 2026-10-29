@@ -118,21 +118,30 @@ try {
   const css = await page.evaluate(() => getComputedStyle(document.querySelector("#modelView .subtabs")).borderRadius);
   if (css !== "999px") throw new Error(`explore.css did not load (subtabs border-radius ${css})`);
 
-  // SQL page: a model query compiled by dax-sql and run on the native engine.
-  await page.click('#modelView .subtab[data-apage="sql"]');
-  await page.fill("#modelView textarea",
+  // A model query, compiled by dax-sql and run on the native engine, from the Pivot's Show SQL:
+  // a measure on the shelves (so the box has a query to start from), then the box's own SQL.
+  // The Pivot loads ECharts as a classic script from the vendored tree — the CSP must admit it.
+  async function modelQuery(sql) {
+    await page.click('#modelView .subtab[data-apage="pivot"]');
+    await page.waitForFunction(() => !!window.echarts, { timeout: 60000 })
+      .catch(() => { throw new Error("ECharts never loaded for the Pivot"); });
+    // Fact tables start collapsed; a search opens the groups it matches.
+    await page.locator("#modelView .ex-search").fill("Total");
+    await page.locator("#modelView .ex-field", { hasText: /^.?Total$/ }).first().click();
+    await page.locator("#modelView .explore-actions .btn-explore", { hasText: "Show SQL" }).click();
+    const box = page.locator("#modelView .explore-sql-page");
+    await box.locator("textarea").fill(sql);
+    await box.locator(".btn-explore.primary", { hasText: "Run" }).click();
+    await page.waitForFunction(() => /rows|Error/.test(document.querySelector("#modelView .explore-sql-page .explore-info").textContent), { timeout: 60000 });
+    return {
+      info: await box.locator(".explore-info").innerText(),
+      rows: (await box.locator(".explore-table").innerText()).replace(/\s+/g, " "),
+    };
+  }
+  const { info, rows } = await modelQuery(
     `${TABLES}SELECT * FROM (SELECT Product.Color, AGG(Total) AS total FROM shop GROUP BY ALL) ORDER BY Color`);
-  await page.click("#modelView .btn-explore.primary");
-  await page.waitForFunction(() => /rows|Error/.test(document.querySelector("#modelView .explore-info").textContent), { timeout: 60000 });
-  const info = await page.locator("#modelView .explore-info").innerText();
-  const rows = (await page.locator("#modelView .explore-table").innerText()).replace(/\s+/g, " ");
-  console.log("sql page:", info, "|", rows);
-  if (!/^2 rows/.test(info) || !/blue 5(\.0)? red 12\.5/.test(rows)) throw new Error(`SQL page: ${info} ${rows}`);
-
-  // Explore loads ECharts as a classic script from the vendored tree — the CSP must admit it.
-  await page.click('#modelView .subtab[data-apage="explore"]');
-  await page.waitForFunction(() => !!window.echarts, { timeout: 60000 })
-    .catch(() => { throw new Error("ECharts never loaded for Explore"); });
+  console.log("model query:", info, "|", rows);
+  if (!/^2 rows/.test(info) || !/blue 5(\.0)? red 12\.5/.test(rows)) throw new Error(`model query: ${info} ${rows}`);
 
   // A model the extension downloaded to this machine arrives as text (open-model), not as
   // a OneLake path — the click in the tree.
@@ -156,15 +165,10 @@ try {
   const ossieCards = await page.locator("#modelView .m-card").count();
   const ossieRels = await page.locator("#modelView .m-rel").count();
   if (ossieCards !== 2 || ossieRels !== 1) throw new Error(`the Ossie model drew ${ossieCards} cards and ${ossieRels} relationships`);
-  await page.click('#modelView .subtab[data-apage="sql"]');
-  await page.fill("#modelView textarea",
+  const { info: ossieInfo, rows: ossieRows } = await modelQuery(
     `${TABLES}SELECT * FROM (SELECT Product.Color, AGG(Total) AS total FROM shop_ossie GROUP BY ALL) ORDER BY Color`);
-  await page.click("#modelView .btn-explore.primary");
-  await page.waitForFunction(() => /rows|Error/.test(document.querySelector("#modelView .explore-info").textContent), { timeout: 60000 });
-  const ossieInfo = await page.locator("#modelView .explore-info").innerText();
-  const ossieRows = (await page.locator("#modelView .explore-table").innerText()).replace(/\s+/g, " ");
   console.log("ossie model:", ossieInfo, "|", ossieRows);
-  if (!/^2 rows/.test(ossieInfo) || !/blue 5(\.0)? red 12\.5/.test(ossieRows)) throw new Error(`Ossie SQL page: ${ossieInfo} ${ossieRows}`);
+  if (!/^2 rows/.test(ossieInfo) || !/blue 5(\.0)? red 12\.5/.test(ossieRows)) throw new Error(`Ossie model query: ${ossieInfo} ${ossieRows}`);
 
   if (csp.length) throw new Error(`Content-Security-Policy refused something: ${csp.join(" | ")}`);
   console.log("RESULT: OK — a .bim and an Ossie .yaml opened in the panel as their model, and model queries ran on the native engine");
