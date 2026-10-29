@@ -19,6 +19,8 @@ import * as semantic from './semantic.js';
 import { mountExplore } from './explore/view.js';
 import { PINS, npmFile } from './cdn.js';
 import { tmslOf } from './explore/model.js';
+import { createPlanView, profileSql } from './explore/profile.js';
+import { PALETTE } from './explore/theme.js';
 import { vscodeApi } from './vscode-api.js';
 
 const $ = id => document.getElementById(id);
@@ -50,7 +52,7 @@ let docSeq = 0;              // a slow renderer import must not paint over a new
 // a one-column, one-row parquet is still a table. Set per query by runQuery.
 let docAllowed = true;
 let docSourceExt = '';           // ...and which file it came from, when it came from one
-let activeDocEligible = false;   // the same two answers for the loaded table/file, for Preview
+let activeDocEligible = false;   // the same two answers for the loaded table/file
 let activeDocExt = '';
 let activeInfo = null;       // the selected TABLE's info object — what the Stats tab renders
 let viewMode = 'data';       // 'data' | 'stats' | 'history' for a selected table
@@ -100,12 +102,7 @@ function wireUi() {
     $('stopBtn').disabled = true;
     setStatus('Stopping…');
   };
-  // Preview means "show me this thing", so it always pays for the table if it has to.
-  $('previewBtn').onclick = () => {
-    const ident = activeIdent || (activeTableRef && activeSqlName);
-    if (!ident) return;
-    runWithTable(previewSql(ident, activeDocEligible));
-  };
+  $('planBtn').onclick = () => showPlan();
   $('csvBtn').onclick = saveActive;
   $('saveQueryBtn').onclick = saveQuery;
   $('docPretty').onclick = () => {
@@ -223,7 +220,6 @@ async function selectFile(file) {
     // A database file with no tables attaches but leaves nothing to preview.
     if (info.ident) {
       $('sqlEditor').value = previewSql(info.ident, activeDocEligible);
-      $('previewBtn').disabled = false;
       $('runBtn').disabled = false;
       reportLoad(info, await runQuery({ doc: activeDocEligible, ext: activeDocExt }));
     } else {
@@ -397,7 +393,7 @@ async function selectImage(file) {
   const my = ++selSeq;
   $('activeTable').textContent = file.name;
   activeFile = file;
-  activeIdent = null;            // no table behind this: Preview/Run stay disabled
+  activeIdent = null;            // no table behind this
   activeQuery = null;
   setActiveStats(null);
   activeTableRef = null; tableStage = 'none';
@@ -530,7 +526,7 @@ async function bindTable() {
 }
 
 // Run SQL against the selected table, binding it first only if the SQL names it.
-// `sql` replaces the editor contents when given (the Preview button).
+// `sql` replaces the editor contents when given.
 async function runWithTable(sql) {
   if (sql != null) $('sqlEditor').value = sql;
   if (needsBind()) { if (!await bindTable()) return; }
@@ -559,6 +555,51 @@ function reportLoad(info, queryOk) {
 // A table gets the first hundred rows; a text file gets ALL of it — a LIMIT would cut the
 // document silently. The engine's own row cap still applies and still says so.
 const previewSql = (ident, whole) => `SELECT * FROM ${ident}` + (whole ? '' : ' LIMIT 100');
+
+// Plan: where the SQL box's query spends its time, in place of the results — Explore's own
+// view of it (explore/profile.js): the profile (EXPLAIN ANALYZE, so the query runs once to be
+// measured) and DuckDB's plan tree. A semantic model's query is planned as the SQL it
+// compiles to. Run puts the results back.
+const planElapsed = t0 => `${((performance.now() - t0) / 1000).toFixed(1)} s`;
+function planColors() {
+  const css = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  const [scan, join, aggregate, sort, win, filter] = PALETTE;
+  return { plan: css('--faint'), scan, join, aggregate, sort, window: win, filter, other: css('--muted') };
+}
+async function showPlan() {
+  const text = $('sqlEditor').value.trim();
+  if (!text) { setStatus('Write a query to plan it.'); return; }
+  const my = selSeq;
+  try {
+    await engineReady;
+    await viewsReady;
+    const model = await semantic.statement(text);
+    if (model && (model.create || model.drop)) { setStatus('CREATE and DROP SEMANTIC VIEW have no plan.'); return; }
+    // The selected table, or a file opened from Files/, is a view only once it is bound.
+    if (!model && needsBind()) { if (!await bindTable()) return; }
+    if (my !== selSeq) return;
+    const sql = model ? model.sql : text.replace(/;\s*$/, '');
+    clearResults();
+    const view = $('planView');
+    view.replaceChildren(createPlanView({
+      profile: async () => (await engine.runSql(profileSql(sql, { set: false }))).rows[0]?.explain_value,
+      tree: async () => {
+        const res = await engine.runSql(`EXPLAIN ${sql}`);
+        const pre = document.createElement('pre');
+        pre.className = 'sm-plan';
+        pre.textContent = res.rows.map(r => r.explain_value ?? Object.values(r).join('  ')).join('\n');
+        return pre;
+      },
+      colors: planColors,
+      elapsed: planElapsed,
+    }));
+    view.hidden = false;
+    $('resultsHint').hidden = true;
+    setStatus('Query plan — Run ▶ for the results.');
+  } catch (e) {
+    if (my === selSeq) setStatus('Plan failed: ' + e.message, 'error');
+  }
+}
 
 // `doc` says whether a document view may be offered for this result at all. Returns
 // whether the query succeeded, so a caller with its own message can keep quiet.
@@ -644,6 +685,8 @@ function clearResults(hint = '') {
   if (imageUrl) { URL.revokeObjectURL(imageUrl); imageUrl = null; }
   $('resultsTable').hidden = true;
   $('resultsTable').innerHTML = '';
+  $('planView').hidden = true;
+  $('planView').replaceChildren();
   $('resultsHint').hidden = !hint;
   $('resultsHint').textContent = hint;
   lastResult = null;
@@ -863,7 +906,7 @@ function statsCardHtml(info, delta) {
   const note = info.stage === 'loaded'
     ? 'From the Iceberg snapshot metadata — nothing was scanned to show this.'
     : 'From the Iceberg snapshot metadata — no data has been read yet. ' +
-      'Open Data for the first rows, or Preview to query the table.';
+      'Open Data for the first rows, or Run the SQL above to query the table.';
   return kvTable(rows) + columnsHtml(info) + `<p class="statsNote">${escapeHtml(note)}</p>`;
 }
 
@@ -1076,9 +1119,9 @@ function setBusy(b, { stoppable = false } = {}) {
   const stop = $('stopBtn');
   stop.hidden = !(b && stoppable);
   if (!stop.hidden) stop.disabled = false;
-  // Run needs only the engine; Preview needs something selected.
+  // Run and Plan need only the engine.
   $('runBtn').disabled = !engineUp || b;
-  $('previewBtn').disabled = !(activeIdent || activeTableRef) || b;
+  $('planBtn').disabled = !engineUp || b;
 }
 
 // ---------------------------------------------------------------------------

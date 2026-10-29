@@ -159,7 +159,7 @@
     <div class="toolbar">
       <span class="title" id="activeTable">No table selected</span>
       <div class="spacer"></div>
-      <button id="previewBtn" disabled>Preview</button>
+      <button id="planBtn" disabled title="Where the SQL box's query spends its time (it runs once to measure)">Plan</button>
       <!-- Only on screen while something can be stopped. -->
       <button id="stopBtn" hidden title="Stop">Stop ■</button>
       <button id="runBtn" class="primary" disabled>Run ▶</button>
@@ -178,6 +178,8 @@
       <div class="docBar tabs" id="docBar" hidden>
         <button id="docPretty" class="tab active">Pretty</button><button id="docRaw" class="tab">Raw</button>
       </div>
+      <!-- Plan: the query's profile and plan tree (explore/profile.js), in place of the results. -->
+      <div id="planView" hidden></div>
       <div class="hint" id="resultsHint">Query results appear here.</div>
       <article id="docView" class="docView" hidden></article>
       <table class="results" id="resultsTable" hidden></table>
