@@ -11,8 +11,8 @@
 //   npm/<pkg>@<v>/+esm.js       a jsDelivr ESM bundle, saved with a .js extension: VS Code
 //                               serves webview resources by extension, and a module script
 //                               refuses anything that is not JavaScript.
-//   npm/<pkg>@<v>/<path>        a plain file of a package (ECharts' own build).
-//   gh/<owner>/<repo>@<sha>/…   a pinned repository's modules.
+//   npm/<pkg>@<v>/<path>        a plain file of a package (ECharts' own build, dax-sql's
+//                               modules).
 //   webapp/npm/…                the web app's packages, the same two forms.
 //   webapp/duckdb-ext/<v>/wasm_eh/<name>.duckdb_extension.wasm
 //                               DuckDB's signed extensions, at the path DuckDB-WASM asks for.
@@ -90,11 +90,11 @@ await rm(OUT, { recursive: true, force: true });
 
 for (const pkg of VENDOR.esm) await esmClosure(`/npm/${pkg}/+esm`);
 for (const f of VENDOR.files) await save(`npm/${f}`, await get(`${JSDELIVR}/npm/${f}`));
-for (const { repo, include } of VENDOR.gh) {
-  const listing = JSON.parse((await get(`https://data.jsdelivr.com/v1/packages/gh/${repo}?structure=flat`)).toString("utf8"));
+for (const { pkg, include } of VENDOR.packages) {
+  const listing = JSON.parse((await get(`https://data.jsdelivr.com/v1/packages/npm/${pkg}?structure=flat`)).toString("utf8"));
   const names = (listing.files || []).map(f => f.name).filter(n => include.test(n));
-  if (!names.length) throw new Error(`gh/${repo}: the listing has none of the files to vendor`);
-  for (const n of names) await save(`gh/${repo}${n}`, await get(`${JSDELIVR}/gh/${repo}${n}`));
+  if (!names.length) throw new Error(`npm/${pkg}: the listing has none of the files to vendor`);
+  for (const n of names) await save(`npm/${pkg}${n}`, await get(`${JSDELIVR}/npm/${pkg}${n}`));
 }
 
 

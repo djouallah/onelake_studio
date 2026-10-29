@@ -23,7 +23,7 @@ const OPTS = {
   csp: "default-src 'none'; script-src 'nonce-N0NCE'",
   config: {
     vendorBase: "https://webview.test/vendor",
-    pins: { echarts: "echarts@1", daxSql: "o/r@sha", marked: "marked@1", dompurify: "dompurify@1" },
+    pins: { echarts: "echarts@1", daxSql: "dax-sql@1", marked: "marked@1", dompurify: "dompurify@1" },
     readmeUrl: "C:/ext/README.md",
     build: { version: "1.0.0", commit: "abc1234", dev: false },
   },
@@ -95,10 +95,10 @@ test("the page's libraries are exactly what vendor.mjs ships", async () => {
   assert.ok(VENDOR.esm.includes(PINS.marked) && VENDOR.esm.includes(PINS.dompurify), "the markdown renderer is vendored");
   assert.ok(VENDOR.esm.includes(PINS.yaml), "the YAML reader for Ossie models is vendored");
   assert.ok(VENDOR.files.includes(`${PINS.echarts}/dist/echarts.min.js`), "ECharts' build is vendored");
-  const gh = VENDOR.gh.find(g => g.repo === PINS.daxSql);
-  assert.ok(gh && gh.include.test("/src/index.js") && gh.include.test("/formats/tmsl.js") &&
-    gh.include.test("/formats/ossie.js"),
-    "dax-sql is vendored at the page's commit, with the files semantic.js imports");
+  const dax = VENDOR.packages.find(p => p.pkg === PINS.daxSql);
+  assert.ok(dax && dax.include.test("/src/index.js") && dax.include.test("/formats/tmsl.js") &&
+    dax.include.test("/formats/ossie.js"),
+    "dax-sql is vendored at the page's version, with the files semantic.js imports");
   assert.equal(cdn.npmEsm(PINS.marked), `https://webview.test/vendor/npm/${PINS.marked}/+esm.js`);
-  assert.equal(cdn.ghFile(PINS.daxSql, "src/index.js"), `https://webview.test/vendor/gh/${PINS.daxSql}/src/index.js`);
+  assert.equal(cdn.npmFile(PINS.daxSql, "src/index.js"), `https://webview.test/vendor/npm/${PINS.daxSql}/src/index.js`);
 });

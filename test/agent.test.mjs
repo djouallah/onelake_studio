@@ -209,9 +209,9 @@ test("export: a model file in Files/, or a semantic model's .bim where the tree 
   const vendorDir = await mkdtemp(join(tmpdir(), "agent-vendor-"));
   try {
     for (const [p, body] of [
-      ["gh/pin/src/index.js", "export const createCompiler = 0, createViews = 0;"],
-      ["gh/pin/formats/tmsl.js", "export const tmslToModel = 0;"],
-      ["gh/pin/formats/ossie.js", "export const ossieToTmsl = 0;"],
+      ["npm/pin/src/index.js", "export const createCompiler = 0, createViews = 0;"],
+      ["npm/pin/formats/tmsl.js", "export const tmslToModel = 0;"],
+      ["npm/pin/formats/ossie.js", "export const ossieToTmsl = 0;"],
       ["npm/yaml/+esm.js", "export const parse = 0;"],
     ]) {
       await mkdir(dirname(join(vendorDir, p)), { recursive: true });

@@ -186,7 +186,7 @@ const readMarker = async dir => (await isEmptyOrOurs(dir)).marker;
  * Writes the app's folder (the local copy). Returns the marker kept in the folder (an earlier
  * export's item and redirects, when there was one).
  * `fabricAppDir`: the extension's fabric_app/; `appDir`: Studio's page modules (app/, or
- * webview/ installed); `daxSqlDir`: vendor/gh/<PINS.daxSql>; `webappDir`: vendor/webapp, the
+ * webview/ installed); `daxSqlDir`: vendor/npm/<PINS.daxSql>; `webappDir`: vendor/webapp, the
  * page's packages.
  */
 async function writeExport({ plan, state, outDir, fabricAppDir, appDir, daxSqlDir, webappDir }) {

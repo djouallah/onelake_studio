@@ -46,7 +46,7 @@ const BIM = JSON.stringify({
 const BIM_PATH = "/ws/shop.Lakehouse/Files/semantic_models/shop.bim";
 // The same model as an Apache Ossie YAML, made by the vendored dax-sql and yaml themselves.
 const { PINS } = require("../src/vendored.js");
-const { tmslToOssie } = await import(pathToFileURL(join(VENDOR, "gh", PINS.daxSql, "formats", "ossie.js")).href);
+const { tmslToOssie } = await import(pathToFileURL(join(VENDOR, "npm", PINS.daxSql, "formats", "ossie.js")).href);
 const { stringify } = await import(pathToFileURL(join(VENDOR, "npm", PINS.yaml, "+esm.js")).href);
 const OSSIE = stringify(tmslToOssie(JSON.parse(BIM), "shop"));
 const OSSIE_PATH = "/ws/shop.Lakehouse/Files/semantic_models/shop_ossie.yaml";

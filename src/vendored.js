@@ -13,8 +13,8 @@ const PINS = {
   yaml: 'yaml@2.9.1',
   // Explore's charts — a classic script (dist/echarts.min.js), not a +esm closure.
   echarts: 'echarts@5.5.1',
-  // The DAX-to-SQL compiler behind semantic models (semantic.js), at a commit.
-  daxSql: 'djouallah/dax-sql@de799e0bb75559ac0d7cfbc62661339bcc93a417',
+  // The DAX-to-SQL compiler behind semantic models (semantic.js), from npm.
+  daxSql: 'dax-sql@0.1.0',
 };
 
 // The web app's (Export to Fabric, fabric_app/site): everything its page runs, so it loads
@@ -38,10 +38,10 @@ const WEBAPP = {
 const VENDOR = {
   esm: [PINS.marked, PINS.dompurify, PINS.yaml],          // npm/<pkg>/+esm, with its closure
   files: [`${PINS.echarts}/dist/echarts.min.js`],          // npm/<pkg>/<path>, as is
-  // A repository has no import closure to follow; its modules import each other by
+  // A package's own files, as published (npm/<pkg>@<v>/…): its modules import each other by
   // relative path, so the files the page needs are listed by pattern.
-  gh: [
-    { repo: PINS.daxSql, include: /^\/(src\/.*\.js|formats\/(tmsl|ossie)\.js)$/ },
+  packages: [
+    { pkg: PINS.daxSql, include: /^\/(src\/.*\.js|formats\/(tmsl|ossie)\.js)$/ },
   ],
   // The web app's tree, vendor/webapp/: the same layout (npm/…), plus duckdb-ext/<version>/
   // wasm_eh/<name>.duckdb_extension.wasm, the path DuckDB-WASM asks its repository for.

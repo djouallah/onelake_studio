@@ -79,9 +79,9 @@ function createAgent({ onelake, fabric, engine, bimPath, appDir, vendorDir, daxS
     const load = p => import(pathToFileURL(p).href);
     const [paths, semantic, c, t, o, y] = await Promise.all([
       load(join(appDir, 'paths.js')), load(join(appDir, 'semantic.js')),
-      load(join(vendorDir, 'gh', daxSqlPin, 'src', 'index.js')),
-      load(join(vendorDir, 'gh', daxSqlPin, 'formats', 'tmsl.js')),
-      load(join(vendorDir, 'gh', daxSqlPin, 'formats', 'ossie.js')),
+      load(join(vendorDir, 'npm', daxSqlPin, 'src', 'index.js')),
+      load(join(vendorDir, 'npm', daxSqlPin, 'formats', 'tmsl.js')),
+      load(join(vendorDir, 'npm', daxSqlPin, 'formats', 'ossie.js')),
       load(join(vendorDir, 'npm', yamlPin, '+esm.js')),
     ]);
     mods = { paths, semantic,

@@ -12,12 +12,9 @@ const BASE = String(cfg.vendorBase || "").replace(/\/+$/, "");
 
 export const PINS = cfg.pins || {};
 
-// A plain file inside a package: `npmFile(PINS.echarts, "dist/echarts.min.js")`.
+// A plain file inside a package: `npmFile(PINS.echarts, "dist/echarts.min.js")`. A module's
+// relative imports resolve beside it (dax-sql's).
 export const npmFile = (pkg, path) => `${BASE}/npm/${pkg}/${path}`;
 
 // A package's ES module bundle (jsDelivr's +esm, saved as +esm.js).
 export const npmEsm = pkg => `${BASE}/npm/${pkg}/+esm.js`;
-
-// A file of a pinned GitHub repository: `ghFile(PINS.daxSql, "src/index.js")`. Its relative
-// imports resolve beside it.
-export const ghFile = (repo, path) => `${BASE}/gh/${repo}/${path}`;

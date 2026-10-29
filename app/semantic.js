@@ -19,7 +19,7 @@
 // (the extension host, per account: src/semviews.js). This module is shared by the panel and
 // the host's command line (src/agent.js); `modules` lets the host hand in the compiler.
 // =============================================================================
-import { PINS, ghFile, npmEsm } from "./cdn.js";
+import { PINS, npmFile, npmEsm } from "./cdn.js";
 import { quoteIdent, basename } from "./paths.js";
 import { EXPLORE_CASTS } from "./explore/query.js";
 
@@ -28,9 +28,9 @@ const lc = s => String(s).toLowerCase();
 let modulesP = null;
 function compilerModules() {
   modulesP = modulesP || Promise.all([
-    import(ghFile(PINS.daxSql, "src/index.js")),
-    import(ghFile(PINS.daxSql, "formats/tmsl.js")),
-    import(ghFile(PINS.daxSql, "formats/ossie.js")),
+    import(npmFile(PINS.daxSql, "src/index.js")),
+    import(npmFile(PINS.daxSql, "formats/tmsl.js")),
+    import(npmFile(PINS.daxSql, "formats/ossie.js")),
     import(npmEsm(PINS.yaml)),
   ]).then(([c, t, o, y]) => ({
     createCompiler: c.createCompiler, createViews: c.createViews, tmslToModel: t.tmslToModel,

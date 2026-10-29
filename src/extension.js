@@ -925,7 +925,7 @@ async function activateInner(context) {
           else {
             say(`app ${plan.name}: writing the local copy to ${outDir}`);
             marker = await writeExport({ plan, state, outDir, fabricAppDir, appDir,
-                                         daxSqlDir: join(ext, 'vendor', 'gh', PINS.daxSql),
+                                         daxSqlDir: join(ext, 'vendor', 'npm', PINS.daxSql),
                                          webappDir: join(ext, 'vendor', 'webapp') });
           }
           // What the page's packages weigh, there in the folder (site/vendor/) and here in the log.
