@@ -91,3 +91,25 @@ test("a statement's tables are its five-part names under a kind, however they ar
   assert.equal(refs("EXPLAIN ANALYZE SELECT count(*) FROM SQLDatabase.ws.db.dbo.t").length, 1);
   assert.equal(refs("DESCRIBE Lakehouse.ws.lh.dbo.t").length, 1);
 });
+
+// catalogStatement: the SHOW statements answered with whole schema paths; nothing else.
+test("SHOW ALL TABLES, SHOW SCHEMAS and SHOW TABLES FROM a nested schema are rewritten, nothing else", () => {
+  const { catalogStatement, readsCatalog } = require("../src/sql.js");
+  for (const sql of ["SHOW ALL TABLES", "show all tables;", "  Show  All\n Tables ; ", "-- all of it\nSHOW ALL TABLES",
+                     "SHOW SCHEMAS", "show schemas;"]) {
+    assert.match(catalogStatement(sql) || "", /duckdb_schemas\(\)/, sql);
+  }
+  const from = catalogStatement('SHOW TABLES FROM lakehouse."ANZ ws".lh.dbo;');
+  assert.match(from, /lower\(p\.database_name\) = 'lakehouse'/);
+  assert.match(from, /= \['anz ws', 'lh', 'dbo'\]/);
+  assert.match(catalogStatement("show tables in memory.main"), /= \['main'\]/);
+  for (const sql of ["SHOW TABLES", "SHOW TABLES FROM memory", "SHOW DATABASES", "SELECT 1", "DESCRIBE lakehouse.a.b.c.d",
+                     "SHOW TABLES FROM a.b; DROP x", "SELECT 'SHOW ALL TABLES'"]) {
+    assert.equal(catalogStatement(sql), null, sql);
+  }
+  assert.ok(readsCatalog("SHOW ALL TABLES"));
+  assert.ok(readsCatalog("SELECT * FROM information_schema.tables"));
+  assert.ok(readsCatalog("select * from duckdb_columns()"));
+  assert.ok(!readsCatalog("SELECT 'duckdb_tables' AS x"));
+  assert.ok(!readsCatalog("SELECT * FROM lakehouse.ws.lh.dbo.t"));
+});

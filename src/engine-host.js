@@ -31,7 +31,7 @@ const fs = require('node:fs');
 const fsp = require('node:fs/promises');
 const { join } = require('node:path');
 const os = require('node:os');
-const { sqlStr, quoteIdent, assertReadOnly, tableRefs } = require('./sql');
+const { sqlStr, quoteIdent, assertReadOnly, tableRefs, catalogStatement, readsCatalog } = require('./sql');
 const { SQL_KINDS, sqlKind, itemKind, displayName, sqlName } = require('./names');
 
 
@@ -163,10 +163,16 @@ async function prepareFileCache(dir, maxBytes, onWarn) {
 // name, when the tree already knows it), it answers the same five spelled as OneLake spells
 // them, plus { metadataLocation } — or { emptySql }, the typed empty SELECT of a table nothing
 // was ever written to.
+//
+// `catalogTables` lists, from the host's cache alone, every table it knows: { kind, workspace,
+// item, schema, table } with { columns: [{ name, type }] } (DuckDB types) or { emptySql }.
+// Each becomes a view DuckDB lists (syncCatalog), so SHOW ALL TABLES and information_schema see
+// what the tree has seen without a single request to OneLake.
 function createEngineHost({ extensionDir, onLog = () => {}, onWarn = () => {}, getToken = null,
                             memoryLimit = '', allowedPaths = [], lockdown = true,
                             httpProxy = '', bundledExtensions = null,
-                            fileCacheDir = null, fileCacheMaxBytes = 0, resolveTable = null } = {}) {
+                            fileCacheDir = null, fileCacheMaxBytes = 0, resolveTable = null,
+                            catalogTables = null } = {}) {
   let instance = null;
   // The connection for the host's OWN statements — the secret, extension loading. Page
   // queries never run on it: each gets a connection of its own (see withConn), so a cancel
@@ -355,6 +361,8 @@ function createEngineHost({ extensionDir, onLog = () => {}, onWarn = () => {}, g
     ready.catch(() => {
       ready = null;
       made.clear();
+      listed.clear();
+      catalogStale = true;
       try { if (conn) conn.closeSync(); } catch (_) {}
       try { if (instance) instance.closeSync(); } catch (_) {}
       conn = instance = null;
@@ -529,8 +537,75 @@ function createEngineHost({ extensionDir, onLog = () => {}, onWarn = () => {}, g
       for (let k = 2; k <= path.length; k++) await conn.run(`CREATE SCHEMA IF NOT EXISTS ${path.slice(0, k).join('.')};`);
       await conn.run(`CREATE OR REPLACE VIEW ${name} AS ${source};`);
       made.set(key, source);
+      listed.delete(key);
     });
     return name;
+  }
+
+  // Every table the host's cache knows, in DuckDB's catalog before it is ever read: a view
+  // with the table's columns that FAILS if it is selected from. A statement that names the
+  // table replaces it with the real one first (ensureTables), so only a name that check
+  // cannot see — one inside a string — reaches it, and that is an error, never zero rows.
+  // `listed` holds the views made this way, by key -> name: only those are replaced or
+  // dropped when the cache moves; a view a statement made is never touched.
+  const listed = new Map();
+  let catalogStale = true;
+  const DUCK_TYPE = /^[A-Z_]+( [A-Z_]+)*(\(\d+,\d+\))?$/;
+  function listedSource(t, name) {
+    if (t.emptySql != null) return String(t.emptySql);
+    const cols = (t.columns || []).map(c =>
+      `CAST(NULL AS ${DUCK_TYPE.test(String(c.type)) ? c.type : 'VARCHAR'}) AS ${quoteIdent(c.name)}`);
+    if (!cols.length) return null;
+    return `SELECT ${cols.join(', ')} WHERE error(${sqlStr(`${name} is not open: name it in a query to read it`)}) IS NULL`;
+  }
+  // One listing at a time: a second statement waits for the one under way, not past it.
+  let syncing = null;
+  function syncCatalog() {
+    if (!syncing) syncing = listCatalog().finally(() => { syncing = null; });
+    return syncing;
+  }
+  async function listCatalog() {
+    if (!catalogTables || !catalogStale) return;
+    catalogStale = false;
+    let list;
+    try { list = await catalogTables(); }
+    catch (e) { catalogStale = true; onWarn(`the cached tables could not be listed in DuckDB — ${e.message}`); return; }
+    await admin(async () => {
+      const want = new Map();
+      for (const t of list || []) {
+        const name = sqlName(t);
+        const key = name.toLowerCase();
+        if (!want.has(key)) want.set(key, { t, name });
+      }
+      for (const [key, { t, name }] of want) {
+        if (made.has(key) && !listed.has(key)) continue;
+        const source = listedSource(t, name);
+        if (source == null || made.get(key) === source) continue;
+        try {
+          const path = [t.kind, t.workspace, t.item, t.schema || 'dbo'].map(quoteIdent);
+          for (let k = 2; k <= path.length; k++) await conn.run(`CREATE SCHEMA IF NOT EXISTS ${path.slice(0, k).join('.')};`);
+          await conn.run(`CREATE OR REPLACE VIEW ${name} AS ${source};`);
+          made.set(key, source);
+          listed.set(key, name);
+        } catch (e) { onWarn(`${name} could not be listed in DuckDB — ${e.message}`); }
+      }
+      for (const [key, name] of [...listed]) {
+        if (want.has(key)) continue;
+        try { await conn.run(`DROP VIEW IF EXISTS ${name};`); } catch (_) {}
+        listed.delete(key);
+        made.delete(key);
+      }
+    });
+  }
+  // The host's cache moved: the next statement that reads the catalog lists it again.
+  function catalogChanged() { catalogStale = true; }
+
+  // What a statement needs before it runs: the catalog when it reads the catalog, the tables
+  // it names — and then the statement itself, or its whole-path twin (sql.js catalogStatement).
+  async function prepare(sql) {
+    if (readsCatalog(sql)) await syncCatalog();
+    await ensureTables(sql);
+    return catalogStatement(sql) || sql;
   }
 
   // Every table a statement names by its SQL name, made before the statement runs — so a
@@ -622,7 +697,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onWarn = () => {}, g
     async query(sql) {
       assertReadOnly(sql);
       await init();
-      return withAuthRetry(async () => { await ensureTables(sql); return runAll(sql); });
+      return withAuthRetry(async () => runAll(await prepare(sql)));
     },
 
     async stream(sql, emit) {
@@ -632,8 +707,8 @@ function createEngineHost({ extensionDir, onLog = () => {}, onWarn = () => {}, g
       // late failure arrives, and running it again would deliver them twice. The token
       // is still refreshed up front, which is what covers the ordinary expiry case.
       await ensureAuth();
-      await withAuthRetry(() => ensureTables(sql));
-      const numRows = await withConn(c => runStreaming(c, sql, b => emit(b)));
+      const run = await withAuthRetry(() => prepare(sql));
+      const numRows = await withConn(c => runStreaming(c, run, b => emit(b)));
       return { done: true, numRows };
     },
 
@@ -666,7 +741,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onWarn = () => {}, g
     try {
       assertReadOnly(sql);
       await init();
-      return await withAuthRetry(async () => { await ensureTables(sql); return runAll(sql, agentLive); });
+      return await withAuthRetry(async () => runAll(await prepare(sql), agentLive));
     } catch (e) { throw scrub(e, authToken || token); }
   }
 
@@ -686,6 +761,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onWarn = () => {}, g
     conn = instance = null; ready = null;
     copies.clear();
     made.clear();
+    listed.clear();
     authToken = null;
     if (tmpDir) await fsp.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
   }
@@ -710,7 +786,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onWarn = () => {}, g
     try { return await openTable(target); } catch (e) { throw scrub(e, authToken); }
   }
 
-  return { init, call, close, openTable: openTableScrubbed, copyToTemp, agentQuery,
+  return { init, call, close, openTable: openTableScrubbed, copyToTemp, agentQuery, catalogChanged,
            get capabilities() { return capabilities; } };
 }
 

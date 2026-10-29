@@ -372,6 +372,7 @@ function ensureEngine(context, { readme } = {}) {
       fileCacheMaxBytes: Math.max(0, Number(vscode.workspace.getConfiguration('onelakeStudio')
         .get('diskCacheMaxGB', 64)) || 0) * 1024 ** 3,
       resolveTable: ref => (resolveSqlTable ? resolveSqlTable(ref) : Promise.reject(new Error('OneLake Studio is still starting'))),
+      catalogTables: () => (cachedSqlTables ? cachedSqlTables() : Promise.resolve([])),
     });
   } catch (e) {
     out && out.appendLine(`native DuckDB unavailable: ${e.message}`);
@@ -404,6 +405,9 @@ let exportExplore = null;
 // a semantic model's Direct Lake tables (by GUID) -> their SQL names. Set by activateInner,
 // which owns the store, the Fabric API and the agent's modules.
 let resolveSqlTable = null;
+// Every table the store holds with its columns, for the engine's catalog (SHOW ALL TABLES)
+// — read from the store alone, never from OneLake. Set by activateInner.
+let cachedSqlTables = null;
 let nameModelTables = null;
 // The SQL box's Save Query (a .sql file in the saved queries' folder); set by activateInner,
 // which owns the tree that lists them.
@@ -659,9 +663,15 @@ async function activateInner(context) {
     tree.queriesChanged();
     fileCacheAccount = key;   // the engine picks it up when it is next built
     onelake.useStore(storeFor(key));
+    if (engine) engine.catalogChanged();
     semviews.useAccount(key);
     await seedViews();
   };
+  // What the store holds moved: the engine's catalog is listed again before the next
+  // statement that reads it.
+  const catalogMoved = () => { if (engine) engine.catalogChanged(); };
+  context.subscriptions.push({ dispose: onelake.onChanged(catalogMoved) },
+                             { dispose: onelake.onTableRead(catalogMoved) });
   context.subscriptions.push({ dispose: onelake.onRefreshFailed((what, e) => {
     // The cached answer stays on screen; why it could not be refreshed goes here.
     if (out) out.appendLine(`refresh of ${what.kind} ${[what.workspace, what.item, what.schema, what.table]
@@ -986,6 +996,34 @@ async function activateInner(context) {
     return meta.empty
       ? { ...named, emptySql: (await agent.modules()).paths.emptyTableSql(meta.schemaFields) }
       : { ...named, metadataLocation: meta.metadataLocation };
+  };
+
+  // Every table the store has seen, with its columns, as its SQL name's parts: a walk of the
+  // cache alone (the command line's `find` walks it the same way). A table whose columns were
+  // never read is left out — a view needs columns, and opening its lakehouse reads them.
+  cachedSqlTables = async () => {
+    const { paths } = await agent.modules();
+    const found = [];
+    const ws = await onelake.cached.workspaces();
+    for (const w of (ws && ws.value) || []) {
+      const items = await onelake.cached.items(w);
+      for (const it of (items && items.value) || []) {
+        const kind = sqlKind(it.kind);
+        if (!kind) continue;
+        const lh = { workspace: w, item: it.name };
+        const tables = await onelake.cached.tables(lh);
+        for (const t of (tables && tables.value) || []) {
+          const meta = await onelake.cached.table(lh, t);
+          const fields = meta && meta.value && meta.value.schemaFields;
+          if (!fields || !fields.length) continue;
+          const named = { kind, workspace: w, item: displayName(it.name), schema: t.schema || 'dbo', table: t.table };
+          found.push(meta.value.empty
+            ? { ...named, emptySql: paths.emptyTableSql(fields) }
+            : { ...named, columns: fields.map(f => ({ name: f.name, type: paths.icebergToDuckType(f.type) })) });
+        }
+      }
+    }
+    return found;
   };
 
   // A semantic model's Direct Lake tables, which its expressions name by GUID, as SQL names:

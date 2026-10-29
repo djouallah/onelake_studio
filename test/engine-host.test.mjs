@@ -33,7 +33,16 @@ test("native engine host", async t => {
              item: ref.item, schema: ref.schema, table: ref.table,
              emptySql: `SELECT 7 AS answer, ${JSON.stringify(ref.table).replace(/"/g, "'")} AS t` };
   };
+  // What the host's cache holds: listed in DuckDB's catalog without resolveTable ever asked.
+  let cached = [
+    { kind: "lakehouse", workspace: "cat1", item: "lh", schema: "dbo", table: "t", columns: [{ name: "a", type: "BIGINT" }] },
+    { kind: "lakehouse", workspace: "Cat ws", item: "lh", schema: "dbo", table: "t",
+      columns: [{ name: "b", type: "VARCHAR" }, { name: "c", type: "DECIMAL(10,2)" }] },
+    { kind: "warehouse", workspace: "cat1", item: "wh", schema: "sales", table: "e",
+      emptySql: "SELECT CAST(NULL AS INTEGER) AS id WHERE false" },
+  ];
   const engine = createEngineHost({ extensionDir: extDir, onWarn: w => warnings.push(w), resolveTable,
+                                    catalogTables: async () => cached,
                                     bundledExtensions: existsSync(BUNDLED) ? BUNDLED : null });
   t.after(async () => {
     await engine.close();
@@ -71,6 +80,41 @@ test("native engine host", async t => {
     assert.equal(batches[0].rows[0].t, "t1");
     // What does not resolve says why.
     await assert.rejects(engine.call("query", ["SELECT * FROM Lakehouse.ws.missing.dbo.t"]), /there is no lakehouse missing/);
+  });
+
+  await t.test("the cached tables are DuckDB's catalog, each schema named by its whole path", async () => {
+    const before = resolved.length;
+    const ours = rows => rows.filter(r => /^(cat1|"Cat ws")\./.test(r.schema));
+    let r = await engine.call("query", ["SHOW ALL TABLES;"]);
+    assert.deepEqual(ours(r.rows).map(x => [x.database, x.schema, x.name, x.column_names, x.column_types]), [
+      ["lakehouse", '"Cat ws".lh.dbo', "t", "['b', 'c']", "['VARCHAR', 'DECIMAL(10,2)']"],
+      ["lakehouse", "cat1.lh.dbo", "t", "['a']", "['BIGINT']"],
+      ["warehouse", "cat1.wh.sales", "e", "['id']", "['INTEGER']"],
+    ]);
+    r = await engine.call("query", ["show schemas"]);
+    assert.ok(r.rows.some(x => x.database_name === "lakehouse" && x.schema_name === '"Cat ws".lh.dbo'), JSON.stringify(r.rows));
+    r = await engine.call("query", ['SHOW TABLES FROM lakehouse."cat ws".LH.dbo']);
+    assert.deepEqual(r.rows, [{ name: "t" }]);
+    r = await engine.call("query", ["SELECT count(*)::INT AS n FROM information_schema.tables WHERE table_catalog = 'warehouse' AND table_name = 'e'"]);
+    assert.equal(r.rows[0].n, 1);
+    assert.equal(resolved.length, before, "listing the catalog asked OneLake nothing");
+    // (A list crosses to the page as DuckDB writes it, jsonSafe.)
+    // A cached table that is empty is its own truth; one that is not fails when a name the
+    // engine cannot see reads it, rather than answering no rows.
+    r = await engine.call("query", ["SELECT count(*)::INT AS n FROM query_table('warehouse.cat1.wh.sales.e')"]);
+    assert.equal(r.rows[0].n, 0);
+    await assert.rejects(engine.call("query", ["SELECT * FROM query_table('lakehouse.cat1.lh.dbo.t')"]), /is not open/);
+    // Named, it is the real table, and stays it when the cache is listed again.
+    r = await engine.call("query", ["SELECT answer FROM lakehouse.cat1.lh.dbo.t"]);
+    assert.deepEqual(r.rows, [{ answer: 7 }]);
+    engine.catalogChanged();
+    r = await engine.call("query", ["SHOW ALL TABLES"]);
+    assert.deepEqual(ours(r.rows).find(x => x.schema === "cat1.lh.dbo").column_names, "['answer', 't']");
+    // A table the cache no longer holds leaves the catalog.
+    cached = cached.filter(x => x.workspace !== "Cat ws");
+    engine.catalogChanged();
+    r = await engine.call("query", ["SHOW ALL TABLES"]);
+    assert.deepEqual(ours(r.rows).map(x => x.schema), ["cat1.lh.dbo", "cat1.wh.sales"]);
   });
 
   await t.test("a statement needs no Microsoft account", async () => {

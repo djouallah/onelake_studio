@@ -29,8 +29,8 @@ const quoteIdent = s => `"${String(s).replace(/"/g, '""')}"`;
 
 // Comments become a space and the INSIDE of every literal, quoted identifier and $$ string
 // is dropped (its quotes kept), so no keyword can hide in one and no name can pose as one.
-// `seps` are the offsets of the ';' outside them.
-function scan(sql) {
+// `seps` are the offsets of the ';' outside them. With `keep`, only the comments go.
+function scan(sql, keep = false) {
   const out = [];
   const seps = [];
   const n = sql.length;
@@ -50,6 +50,7 @@ function scan(sql) {
       continue;
     }
     if (c === "'" || c === '"') {
+      const start = i;
       i++;
       while (i < n) {
         if (sql[i] === c) {
@@ -59,15 +60,17 @@ function scan(sql) {
         }
         i++;
       }
-      out.push(c, c);
+      if (keep) out.push(sql.slice(start, i));
+      else out.push(c, c);
       continue;
     }
     if (c === '$') {
       const m = /^\$([A-Za-z_][A-Za-z0-9_]*)?\$/.exec(sql.slice(i));
       if (m) {
+        const start = i;
         const end = sql.indexOf(m[0], i + m[0].length);
         i = end === -1 ? n : end + m[0].length;
-        out.push("''");
+        out.push(keep ? sql.slice(start, i) : "''");
         continue;
       }
     }
@@ -217,4 +220,82 @@ function tableRefs(sql, kinds) {
   return out;
 }
 
-module.exports = { sqlStr, quoteIdent, assertReadOnly, tableRefs };
+// -----------------------------------------------------------------------------
+// The catalog, listed with every schema's whole path
+// -----------------------------------------------------------------------------
+// A OneLake table's workspace, item and schema are nested schemas (names.js sqlName), and
+// DuckDB's own SHOW ALL TABLES and SHOW SCHEMAS name only the innermost one: two
+// workspaces' dbo.t came out as one row, its columns merged. These answer the same columns
+// from DuckDB's own catalog functions, each schema named by its path from the catalog down,
+// a part quoted where SQL must quote it — so `lakehouse` + `ws.lh.dbo` + `t` is the name a
+// query reads. Every other statement runs as written.
+const CATALOG_CTES = `WITH RECURSIVE
+  kw AS (SELECT keyword_name AS w FROM duckdb_keywords() WHERE keyword_category IN ('reserved', 'type_function')),
+  s AS (SELECT database_oid, database_name, oid, schema_name AS n, parent_schema_oid,
+               CASE WHEN regexp_full_match(schema_name, '[A-Za-z_][A-Za-z0-9_]*') AND lower(schema_name) NOT IN (SELECT w FROM kw)
+                    THEN schema_name ELSE '"' || replace(schema_name, '"', '""') || '"' END AS q
+        FROM duckdb_schemas()),
+  p AS (SELECT database_oid, database_name, oid, q AS path, [n] AS parts FROM s WHERE parent_schema_oid IS NULL
+        UNION ALL
+        SELECT s.database_oid, s.database_name, s.oid, p.path || '.' || s.q, list_append(p.parts, s.n)
+        FROM s JOIN p ON s.database_oid = p.database_oid AND s.parent_schema_oid = p.oid),
+  o AS (SELECT database_oid, schema_oid, table_oid AS oid, table_name AS name, temporary FROM duckdb_tables()
+        UNION ALL
+        SELECT database_oid, schema_oid, view_oid, view_name, temporary FROM duckdb_views() WHERE NOT internal)`;
+
+const SHOW_ALL_TABLES = `${CATALOG_CTES}
+SELECT p.database_name AS database, p.path AS schema, o.name,
+       list(c.column_name ORDER BY c.column_index) AS column_names,
+       list(c.data_type ORDER BY c.column_index) AS column_types,
+       first(o.temporary) AS temporary
+FROM o JOIN p ON p.database_oid = o.database_oid AND p.oid = o.schema_oid
+JOIN duckdb_columns() c ON c.database_oid = o.database_oid AND c.table_oid = o.oid
+GROUP BY ALL ORDER BY database, schema, name`;
+
+const SHOW_SCHEMAS = `${CATALOG_CTES}
+SELECT database_name, path AS schema_name,
+       database_name = current_database() AND path = current_schema() AS current
+FROM p ORDER BY database_name, schema_name`;
+
+// A dotted name as SQL wrote it -> its parts, quotes undone; null when it is not one.
+const PART = /^\s*(?:"((?:[^"]|"")*)"|([A-Za-z_][A-Za-z0-9_$]*))\s*/;
+function dottedParts(text) {
+  const parts = [];
+  let rest = text;
+  for (;;) {
+    const m = PART.exec(rest);
+    if (!m) return null;
+    parts.push(m[1] != null ? m[1].replace(/""/g, '"') : m[2]);
+    rest = rest.slice(m[0].length);
+    if (!rest) return parts;
+    if (rest[0] !== '.') return null;
+    rest = rest.slice(1);
+  }
+}
+
+/** The statement that lists the catalog with whole schema paths, or null to run `sql` as it is. */
+function catalogStatement(sql) {
+  const s = scan(String(sql), true).text.trim().replace(/;+\s*$/, '').trim();
+  if (/^show\s+all\s+tables$/i.test(s)) return SHOW_ALL_TABLES;
+  if (/^show\s+schemas$/i.test(s)) return SHOW_SCHEMAS;
+  // SHOW TABLES FROM catalog.schema…: DuckDB's parser takes two parts at most.
+  const from = /^show\s+tables\s+(?:from|in)\s+([\s\S]+)$/i.exec(s);
+  const parts = from && dottedParts(from[1]);
+  if (!parts || parts.length < 2) return null;
+  const [db, ...schema] = parts.map(x => x.toLowerCase());
+  return `${CATALOG_CTES}
+SELECT o.name FROM o JOIN p ON p.database_oid = o.database_oid AND p.oid = o.schema_oid
+WHERE lower(p.database_name) = ${sqlStr(db)}
+  AND list_transform(p.parts, lambda x: lower(x)) = [${schema.map(sqlStr).join(', ')}]
+ORDER BY o.name`;
+}
+
+// A statement that reads the catalog itself, rather than a table: the one that needs every
+// table the host has cached to be in it first (engine-host.js syncCatalog).
+const CATALOG_READS = /\b(information_schema|pg_catalog|pg_tables|pg_views|pg_class|pg_namespace|duckdb_(tables|views|columns|schemas|databases|constraints|indexes)|show_tables|show_tables_expanded|show_databases)\b/i;
+function readsCatalog(sql) {
+  const s = scan(String(sql)).text;
+  return /^\s*show\b/i.test(s) || CATALOG_READS.test(s);
+}
+
+module.exports = { sqlStr, quoteIdent, assertReadOnly, tableRefs, catalogStatement, readsCatalog };
