@@ -8,8 +8,8 @@
 // account, in the extension's own storage; its .bim stays where it is and is read from
 // there. Nothing is ever written to Fabric or OneLake.
 //
-// A path is a local model file, an abfss:// URL of one in OneLake, or Files/… relative to a
-// lakehouse (stored as its abfss:// URL). A model file is a .bim (TMSL) or an Apache Ossie
+// A path is a local model file (a semantic model's local copy) or an abfss:// URL of one in a
+// lakehouse's Files/. A view is kept when a model is opened — a click, or a query that names it. A model file is a .bim (TMSL) or an Apache Ossie
 // model (.yaml or .yml); app/semantic.js reads either. `schema` is the model's workspace: SQL
 // names it semanticmodel.ws.model. A semantic model opened from the tree is a local copy of its
 // definition (extension.js fetchModel), and its view points at that.
@@ -49,18 +49,6 @@ function createSemViews({ dir, onelake, onChange = () => {} }) {
     await fsp.rename(tmp, fileOf());
   }
 
-  // `Files/…` is relative to a lakehouse; everything else is already where it is.
-  function resolve(path, lh) {
-    const p = String(path).trim();
-    if (/^\/?Files\//i.test(p)) {
-      if (!lh || !lh.workspace || !lh.item) {
-        throw new Error(`${p} is relative to a lakehouse — open one first, or give the abfss:// path`);
-      }
-      return `abfss://${lh.workspace}@${DFS_HOST}/${lh.item}/${p.replace(/^\//, '')}`;
-    }
-    return p;
-  }
-
   async function readBim(path) {
     if (!/\.(bim|ya?ml)$/i.test(path)) {
       throw new Error(`${path}: a semantic view is read from a .bim file (TMSL) or an Ossie .yaml file`);
@@ -73,7 +61,6 @@ function createSemViews({ dir, onelake, onChange = () => {} }) {
   return {
     useAccount(key) { account = key || 'signed-out'; },
     list,
-    resolve,
     readBim,
     // Every view with its text, for defining them; one that cannot be read says why.
     async texts() {
@@ -94,11 +81,6 @@ function createSemViews({ dir, onelake, onChange = () => {} }) {
       await save(entries);
       onChange();
       return { name: String(name), schema: sch, path, text };
-    },
-    async remove(name, schema = null) {
-      const entries = await list();
-      const left = entries.filter(v => !sameView(v, name, schema));
-      if (left.length !== entries.length) { await save(left); onChange(); }
     },
   };
 }

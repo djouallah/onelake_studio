@@ -306,7 +306,7 @@ async function openModelView(file, text = null, { fromOneLake = text == null } =
     const m = await semantic.registerModel(file.name, bim, null, schema, file.modelName);
     // Kept by the host as a semantic view too, so it is there after a restart and the
     // command line can name it. Best effort: the view on screen does not depend on it.
-    engine.semanticCreate(m.view, fromOneLake ? abfssUrl(lakehouse.workspace, file.path) : file.path, null, m.schema)
+    engine.semanticKeep(m.view, fromOneLake ? abfssUrl(lakehouse.workspace, file.path) : file.path, m.schema)
       .catch(e => console.warn(`[views] ${m.name} not kept: ${e.message}`));
     if (my !== selSeq) return;
     $('modelView').closest('section').classList.add('modelOpen');
@@ -371,27 +371,6 @@ async function openModels(sql) {
     const v = await engine.semanticOpen(ref);
     await semantic.defineView(v.name, v.path, v.text, 'replace', null, v.schema);
   }
-}
-
-// CREATE or DROP SEMANTIC VIEW, carried out: the host reads the .bim and keeps the pointer,
-// and the page defines (or forgets) the view. Returns what the status bar says.
-async function semanticDdl({ create, drop }) {
-  if (drop) {
-    const had = semantic.viewOf(drop.name);
-    if (had) await engine.semanticDrop(had.name, had.schema);
-    semantic.dropView(drop.name);
-    return had ? `Semantic view ${drop.name} dropped.` : `No semantic view ${drop.name}.`;
-  }
-  // ws.name, or in full semanticmodel.ws.name: either way the view is semanticmodel.ws.name.
-  if (!create.schema || (create.db && String(create.db).toLowerCase() !== semantic.MODEL_CATALOG))
-    throw new Error('name the semantic view <workspace>.<name>');
-  const full = [semantic.MODEL_CATALOG, create.schema, create.name];
-  if (create.mode === 'if_not_exists' && semantic.hasView(full))
-    return `Semantic view ${create.name} already exists.`;
-  const v = await engine.semanticCreate(create.name, create.path, lakehouse, create.schema);
-  const m = await semantic.defineView(v.name, v.path, v.text, create.mode === 'create' ? 'create' : 'replace', null, v.schema);
-  return `Semantic view ${m.name} created from ${v.path}` +
-         (m.directLake ? ` — ${m.directLake} Direct Lake table(s), read from OneLake as a query needs them` : '') + '.';
 }
 
 // A compiled SQL of a model, run through the engine's read-only path: it names its Direct Lake
@@ -638,7 +617,6 @@ async function showPlan() {
     await viewsReady;
     await openModels(text);
     const model = await semantic.statement(text);
-    if (model && (model.create || model.drop)) { setStatus('CREATE and DROP SEMANTIC VIEW have no plan.'); return; }
     // The selected table, or a file opened from Files/, is a view only once it is bound.
     if (!model && needsBind()) { if (!await bindTable()) return; }
     if (my !== selSeq) return;
@@ -690,12 +668,6 @@ async function runQuery({ doc = true, ext = '' } = {}) {
     if (stale()) return false;
     const model = await semantic.statement(sql);
     if (stale()) return false;
-    // CREATE / DROP SEMANTIC VIEW: dax-sql has checked it; the host keeps the view.
-    if (model && (model.create || model.drop)) {
-      clearResults();
-      setStatus(await semanticDdl(model), 'ok');
-      return true;
-    }
     if (model) docAllowed = false;
     t0 = performance.now();
     const res = await engine.runSql(model ? model.sql : sql);

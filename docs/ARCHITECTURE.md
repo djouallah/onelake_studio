@@ -227,11 +227,11 @@ parser, and from there the two are one ([`app/semantic.js`](../app/semantic.js))
 
 A model is a **semantic view**, and SQL names it — in the main editor, the model's SQL tab and
 the command line alike. The statements are dax-sql's (`createViews()`, vendored at the pin in
-[`src/vendored.js`](../src/vendored.js)); nothing here re-implements them:
+[`src/vendored.js`](../src/vendored.js)); nothing here re-implements them. Only those that read
+are taken: a model is there because Fabric has it, or a lakehouse's `Files/` holds it, never
+because SQL made it, so dax-sql's `CREATE` and `DROP SEMANTIC VIEW` are refused.
 
 ```sql
-CREATE [OR REPLACE] SEMANTIC VIEW [IF NOT EXISTS] ws.sales FROM '<a .bim or Ossie .yaml: local, abfss://… or Files/…>';
-DROP SEMANTIC VIEW [IF EXISTS] semanticmodel.ws.sales;
 SHOW SEMANTIC VIEWS;
 SHOW SEMANTIC DIMENSIONS IN semanticmodel.ws.sales [FOR METRIC m];
 SHOW SEMANTIC METRICS IN semanticmodel.ws.sales;
@@ -241,9 +241,9 @@ SELECT * FROM (SHOW SEMANTIC METRICS IN semanticmodel.ws.sales) WHERE ...;
 
 A model is named `semanticmodel.<workspace>.<model>`. One opened from the tree, or named by a query,
 is its workspace's and keeps its own name; one opened from `Files/` is named after its file
-(`nem.bim` is `nem`) in the lakehouse's workspace. Views are kept by the extension ([`src/semviews.js`](../src/semviews.js)) as pointers —
-name, model file path, when — in one file per Microsoft account in its own storage, so they
-survive a restart; the file stays where it is. Creating one writes nothing to Fabric or OneLake. A
+(`nem.bim` is `nem`) in the lakehouse's workspace. Every model opened is kept by the extension
+([`src/semviews.js`](../src/semviews.js)) as a pointer — name, model file path, when — in one file
+per Microsoft account in its own storage, so it survives a restart; the file stays where it is. A
 Direct Lake table is read from the lakehouse its model names, through the same Iceberg catalog,
 whichever item is selected, and only when a query actually reads it.
 

@@ -25,32 +25,24 @@ test("a view is a pointer, kept per account, and its .bim is read where it is", 
     await v.put("Sales", bim);
     assert.equal((await v.list()).length, 1, "a name is kept once, whatever its case");
 
-    // Files/… is the lakehouse's; abfss:// is read through OneLake (cache-first there).
-    const path = v.resolve("Files/m/nem.bim", { workspace: "ws", item: "lh.Lakehouse" });
-    assert.equal(path, "abfss://ws@onelake.dfs.fabric.microsoft.com/lh.Lakehouse/Files/m/nem.bim");
-    await v.put("nem", path);
+    // abfss:// is read through OneLake (cache-first there).
+    await v.put("nem", "abfss://ws@onelake.dfs.fabric.microsoft.com/lh.Lakehouse/Files/m/nem.bim");
     assert.deepEqual(reads, [["ws", "lh.Lakehouse/Files/m/nem.bim"]]);
-    assert.throws(() => v.resolve("Files/x.bim", null), /relative to a lakehouse/);
     await assert.rejects(v.put("bad", join(dir, "model.json")), /\.bim file/);
     // An Apache Ossie model is a model file too; semantic.js reads its YAML.
     const ossie = join(dir, "ossie.yaml");
     await writeFile(ossie, "version: 0.2.0.dev0\ndatasets: []\n");
     assert.equal((await v.put("ossie", ossie)).text, "version: 0.2.0.dev0\ndatasets: []\n");
-    await v.remove("ossie");
 
     const texts = await v.texts();
-    assert.deepEqual(texts.map(t => t.name).sort(), ["Sales", "nem"]);
+    assert.deepEqual(texts.map(t => t.name).sort(), ["Sales", "nem", "ossie"]);
 
     v.useAccount("b");
     assert.deepEqual(await v.list(), [], "another account has its own views");
-
-    v.useAccount("a");
-    await v.remove("SALES");
-    assert.deepEqual((await v.list()).map(x => x.name), ["nem"]);
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
 
-test("two workspaces' models of one name are two views, each removed on its own", async () => {
+test("two workspaces' models of one name are two views", async () => {
   const dir = await mkdtemp(join(tmpdir(), "semviews-"));
   try {
     const bim = join(dir, "aemo.bim");
@@ -61,7 +53,5 @@ test("two workspaces' models of one name are two views, each removed on its own"
     await v.put("aemo", bim, "Test WS");
     await v.put("AEMO", bim, "PROD");
     assert.deepEqual((await v.list()).map(x => x.schema).sort(), ["PROD", "Test WS"], "one per workspace, whatever the case");
-    await v.remove("aemo", "test ws");
-    assert.deepEqual((await v.list()).map(x => `${x.schema}.${x.name}`), ["PROD.AEMO"]);
   } finally { await rm(dir, { recursive: true, force: true }); }
 });

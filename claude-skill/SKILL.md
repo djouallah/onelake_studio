@@ -26,7 +26,7 @@ node --no-warnings "{{cli}}" <command>
 | `ls <ws> <item>` | its tables with rows, size, files and last write, and their SQL names (`Lakehouse.<ws>.<item>.<schema>.<table>`); `<item>` may omit its `.Lakehouse` suffix |
 | `table <ws> <item> <schema.table>` | rows, files, size, last write, columns — metadata only, no scan |
 | `model <ws> <model>` | relationships, columns, measures with their DAX, and an example query; downloads the `.bim` once |
-| `sql "<sql>"` | read-only SQL. A table is `Kind.workspace.item.schema.table` — `lakehouse.aemo.data.dbo.dim_duid`; Kind is `lakehouse`, `warehouse`, `sqldatabase` or `mirroreddatabase` (any case), a lakehouse without schemas is `dbo`, a part with spaces is `"quoted"` — any table, any workspace, joined freely. Every semantic view is a table too: `AGG("measure")` is the measure; and `CREATE / DROP / SHOW SEMANTIC VIEW` (below) |
+| `sql "<sql>"` | read-only SQL. A table is `Kind.workspace.item.schema.table` — `lakehouse.aemo.data.dbo.dim_duid`; Kind is `lakehouse`, `warehouse`, `sqldatabase` or `mirroreddatabase` (any case), a lakehouse without schemas is `dbo`, a part with spaces is `"quoted"` — any table, any workspace, joined freely. Every semantic model is a table too, `semanticmodel.<ws>.<model>`: `AGG("measure")` is the measure; and `SHOW SEMANTIC …` (below) |
 | `sql "<sql>" --in <ws>/<item>` | the lakehouse's files as `'Files/…'`: `read_parquet('Files/log.parquet')` |
 | `dax "EVALUATE …" --model <name>` | a DAX query against a semantic view (`--model` may be left out when only one is defined) |
 | `export <ws> <model>` | Export to Fabric, as Explore's button does it: publishes the model's Explore as a Fabric app. The model must have been downloaded once (opened in the tree, or `model <ws> <model> --fresh`); the export writes its `.bim` into its lakehouse |
@@ -52,19 +52,17 @@ Options: `--limit N` (rows printed, default 100), `--csv`, `--fresh` (ask OneLak
 
 ## Semantic views
 
-`sql` also takes dax-sql's semantic-view statements:
+`sql` also takes dax-sql's statements that read semantic views:
 
 ```
 sql "SHOW SEMANTIC VIEWS"
 sql "SHOW SEMANTIC METRICS IN semanticmodel.sales.sales_model"            measures, with their DAX
 sql "SHOW SEMANTIC DIMENSIONS IN semanticmodel.sales.sales_model FOR METRIC \"Total Sales\""   what can slice it
-sql "CREATE SEMANTIC VIEW <ws>.sales FROM 'Files/models/sales.bim'" --in <ws>/<item>   then semanticmodel.<ws>.sales
-sql "DROP SEMANTIC VIEW semanticmodel.<ws>.sales"
 ```
 
-A model file is a `.bim` (TMSL) or an Apache Ossie `.yaml`/`.yml` whose metrics are DAX; its path
-is local, `abfss://…`, or `Files/…` with `--in`. Views are kept by the extension
-(shared with the VS Code panel) and survive restarts; nothing is written to Fabric or OneLake.
+A semantic model is never made or dropped in SQL: it is there because Fabric has it. A query that
+names one opens it (its definition downloaded to this machine the first time, shared with the
+VS Code panel); nothing is written to Fabric or OneLake.
 
 ## Things to know
 

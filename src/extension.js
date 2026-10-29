@@ -991,7 +991,7 @@ async function activateInner(context) {
         }
       }
     }
-    // And every model kept as a view, Fabric's or a file's (CREATE SEMANTIC VIEW).
+    // And every model kept as a view: Fabric's, or a model file opened from a lakehouse's Files/.
     for (const v of await semviews.list()) {
       if (v.schema) found.push({ kind: MODEL_CATALOG, workspace: v.schema, model: v.name });
     }

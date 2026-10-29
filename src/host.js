@@ -68,16 +68,14 @@ function createHostMethods({ onelake, engine, onStatus = () => {}, saveFile = nu
                              ...(x.workspace && x.path ? { workspace: String(x.workspace), path: String(x.path) } : { model }),
                              state: x.state && typeof x.state === 'object' ? x.state : null });
     },
-    // Semantic views (semviews.js): the ones this machine keeps, with their .bim text, and
-    // CREATE / DROP SEMANTIC VIEW carried out — a view is its name in its schema (the model's
-    // workspace, so SQL names it semanticmodel.ws.model). dax-sql (in the page) has already
-    // checked the statement. `Files/…` is relative to the lakehouse the page has open.
+    // Semantic models (semviews.js): the ones this machine keeps, with their text, and one the
+    // page just opened kept — its name in its schema, the model's workspace, so SQL names it
+    // semanticmodel.ws.model. The path is a local file or an abfss:// URL.
     'semantic.views': () => views().texts(),
-    'semantic.create': async x => {
-      const lh = x.workspace && x.item ? lhOf(x) : null;
-      return views().put(String(x.name), views().resolve(String(x.path), lh), x.schema ? String(x.schema) : null);
+    'semantic.keep': async x => {
+      if (!x.schema) throw new Error('a semantic model is kept in its workspace');
+      return views().put(String(x.name), String(x.path), String(x.schema));
     },
-    'semantic.drop': async x => { await views().remove(String(x.name), x.schema ? String(x.schema) : null); return true; },
     // A semantic model a query names and the page has no view of: opened and kept (openModel).
     'semantic.open': async x => {
       if (!openModel) throw new Error('semantic models are not available here');

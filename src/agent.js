@@ -17,13 +17,13 @@
 //                                    semantic models, and a downloaded model's tables and measures
 //   table <ws> <item> <schema.table> metadata only
 //   model <ws> <model>               relationships, columns, measures with DAX
-//   sql "<sql>" [--in <ws>/<item>]   a table is Kind.workspace.item.schema.table; a semantic view
-//                                    is a table, AGG("m") its measure m; and CREATE / DROP / SHOW
-//                                    SEMANTIC VIEW (dax-sql's statements); --in reads its
+//   sql "<sql>" [--in <ws>/<item>]   a table is Kind.workspace.item.schema.table; a semantic model
+//                                    is semanticmodel.ws.model, AGG("m") its measure m; and SHOW
+//                                    SEMANTIC VIEWS / METRICS / DIMENSIONS; --in reads its
 //                                    'Files/…' paths; --show-sql the compiled SQL
 //   dax "EVALUATE …" [--model m]     a DAX query, compiled as Explore compiles one
 //   export <ws> <model>              Export to Fabric, as Explore's button: a semantic model
-//   export <ws> <item> <Files/path>  (its .bim in its lakehouse) or a model file in Files/
+//   export <ws> <item> <Files/path>  (its local copy, written into its lakehouse) or a model file in Files/
 //
 // No `vscode` import: the extension passes in what it owns.
 // =============================================================================
@@ -497,31 +497,6 @@ function createAgent({ onelake, fabric, engine, bimPath, appDir, vendorDir, daxS
         defined.add(m.name.toLowerCase());
       }
       const st = await semantic.statement(text, compiler);
-      // CREATE / DROP SEMANTIC VIEW: dax-sql has checked it; the extension keeps the view.
-      if (st && st.drop) {
-        const had = semantic.viewOf(st.drop.name);
-        if (had) await semviews.remove(had.name, had.schema);
-        semantic.dropView(st.drop.name);
-        defined.delete(st.drop.name.toLowerCase());
-        out(had ? `Semantic view ${st.drop.name} dropped.` : `No semantic view ${st.drop.name}.`);
-        return;
-      }
-      if (st && st.create) {
-        // ws.name, or in full semanticmodel.ws.name: either way the view is semanticmodel.ws.name.
-        if (!st.create.schema || (st.create.db && String(st.create.db).toLowerCase() !== semantic.MODEL_CATALOG)) {
-          throw new Error('name the semantic view <workspace>.<name>');
-        }
-        const full = [semantic.MODEL_CATALOG, st.create.schema, st.create.name];
-        if (st.create.mode === 'if_not_exists' && semantic.hasView(full)) {
-          out(`Semantic view ${st.create.name} already exists.`);
-          return;
-        }
-        const v = await semviews.put(st.create.name, semviews.resolve(st.create.path, lhIn), st.create.schema);
-        const m = await semantic.defineView(v.name, v.path, v.text, 'replace', compiler, v.schema);
-        defined.add(m.name.toLowerCase());
-        out(`Semantic view ${m.name} created from ${v.path}. \`SHOW SEMANTIC METRICS IN ${m.name}\` lists its measures.`);
-        return;
-      }
       const run = st ? st.sql : text;
       if (st && opts.showSql) out(`${fence('sql', st.sql)}\n`);
       // Tables are named Kind.workspace.item.schema.table (`ls <ws> <item>` prints them), and

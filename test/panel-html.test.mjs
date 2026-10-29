@@ -79,7 +79,7 @@ test("a .bim opens as the semantic model view", async () => {
   assert.match(app, /from '\.\/semantic\.js'/, "app.js registers models");
   assert.match(app, /from '\.\/explore\/view\.js'/, "and mounts the model view");
   assert.match(app, /fileExt\(file\.name\) === 'bim'\) return openModelView/, "a .bim is diverted to it");
-  assert.match(app, /semantic\.statement\(sql\)/, "the main editor compiles model queries, and runs CREATE / SHOW SEMANTIC VIEW");
+  assert.match(app, /semantic\.statement\(sql\)/, "the main editor compiles model queries and SHOW SEMANTIC VIEWS");
   assert.ok(INDEX.includes('id="modelView"'), "index.html has the view's container");
   assert.match(app, /semantic\.setTableNamer\(/, "a model's Direct Lake tables are named by the host");
 });

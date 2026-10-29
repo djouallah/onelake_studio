@@ -740,13 +740,10 @@ export function createEngine({
   const saveOneLakeFile = (lh, file) =>
     callHost("host.saveFile", [{ name: file.name, workspace: lh.workspace, path: file.path }]);
 
-  // Semantic views, kept by the host (src/semviews.js): every one with its .bim text, and
-  // CREATE / DROP carried out there. `lh` resolves a Files/… path.
+  // Semantic models kept by the host (src/semviews.js): every one opened here, with its text,
+  // and one just opened kept — `schema` is its workspace: semanticmodel.ws.name.
   const semanticViews = () => callHost("semantic.views", [{}]);
-  // `schema` is the model's workspace: the view is semanticmodel.ws.name.
-  const semanticCreate = (name, path, lh, schema = null) =>
-    callHost("semantic.create", [{ name, path, schema, workspace: lh && lh.workspace, item: lh && lh.item }]);
-  const semanticDrop = (name, schema = null) => callHost("semantic.drop", [{ name, schema }]);
+  const semanticKeep = (name, path, schema) => callHost("semantic.keep", [{ name, path, schema }]);
   // A semantic model a query names that no view has yet: the host opens it (its local copy,
   // read from Fabric the first time) and keeps it — { name, schema, path, text }.
   const semanticOpen = ref => callHost("semantic.open", [ref]);
@@ -760,5 +757,5 @@ export function createEngine({
 
   return { init, reset, statTable, peekTable, loadTable, deltaState, deltaHistory,
            loadFile, readFileBytes, saveText, saveOneLakeFile, runSql, describeLoad, fmtBytes, cancelLoad,
-           semanticViews, semanticCreate, semanticDrop, semanticOpen, exportExplore, nameTables, saveQuery };
+           semanticViews, semanticKeep, semanticOpen, exportExplore, nameTables, saveQuery };
 }

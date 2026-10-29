@@ -7,7 +7,10 @@
   can only read the workspace can open and query it. Export to Fabric writes the `.bim` into its
   lakehouse, after you approve the export.
 - **A semantic model is `semanticmodel.<workspace>.<model>` in SQL.** A query that names one not
-  opened yet opens it first. `CREATE SEMANTIC VIEW ws.name` makes `semanticmodel.ws.name`.
+  opened yet opens it first.
+- **`CREATE` and `DROP SEMANTIC VIEW` are gone.** A model is there because Fabric has it, or a
+  lakehouse's `Files/` holds it; open one in the tree, or name it in a query. `SHOW SEMANTIC VIEWS`,
+  `SHOW SEMANTIC METRICS` / `DIMENSIONS` and `DESCRIBE` still work.
 - **`SHOW ALL TABLES` and `SHOW SCHEMAS` list everything the cache knows**, tables and semantic
   models, with no request to OneLake. Each schema is named by its whole path (`ws.lh.dbo`), so two
   workspaces' `dbo.t` are two rows. `SHOW TABLES FROM lakehouse.ws.lh.dbo` works.

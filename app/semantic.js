@@ -4,8 +4,6 @@
 // The statements and the compiling are dax-sql's, vendored at the pin in src/vendored.js —
 // its createViews() is the one implementation of
 //
-//   CREATE [OR REPLACE] SEMANTIC VIEW [IF NOT EXISTS] ws.sales FROM '<path to .bim or .yaml>'   (semanticmodel.ws.sales)
-//   DROP SEMANTIC VIEW [IF EXISTS] semanticmodel.ws.sales
 //   SHOW SEMANTIC VIEWS | SHOW SEMANTIC DIMENSIONS IN … [FOR METRIC m] | SHOW SEMANTIC METRICS IN …
 //   DESCRIBE semanticmodel.ws.sales
 //   SELECT dim.Region, AGG("Sales") FROM semanticmodel.ws.sales GROUP BY ALL    (AGG(m) is measure m)
@@ -347,10 +345,14 @@ export function tablesFor(sql) {
   return out;
 }
 
+// dax-sql's CREATE and DROP SEMANTIC VIEW, which this extension does not take: a model is
+// there because Fabric has it (or a lakehouse's Files/ holds it), never because SQL made it.
+const NO_DDL = "Read only: OneLake Studio never writes, and a semantic model is not made or dropped " +
+  `in SQL — open one in the tree, or name it ${MODEL_CATALOG}.<workspace>.<model> in a query.`;
+
 /**
  * What a statement asks, in dax-sql's words (createViews().rewrite): null when it names no
- * view, else { create: { name, path, mode } } or { drop: { name, ifExists } } for the host to
- * carry out, or { sql, tables } to run once `tables` (Direct Lake) are open. One statement.
+ * view, else { sql, tables } to run once `tables` (Direct Lake) are open. One statement.
  */
 export async function statement(sql, modules = null) {
   if (!views) {
@@ -362,7 +364,8 @@ export async function statement(sql, modules = null) {
   if (!out) return null;
   if (out.length !== 1) throw new Error("Run one statement at a time (no ';').");
   const [s] = out;
-  return s.sql != null ? { sql: s.sql, tables: tablesFor(s.sql) } : s;
+  if (s.sql == null) throw new Error(NO_DDL);
+  return { sql: s.sql, tables: tablesFor(s.sql) };
 }
 
 // A DAX query (EVALUATE …) against view `name`, as the SQL to run and the tables to open first —
@@ -389,8 +392,8 @@ export function rewrite(sql) {
   if (!views) return null;
   const out = views.rewrite(sql);
   if (!out) return null;
-  if (out.length !== 1 || out[0].sql == null)
-    throw new Error("CREATE and DROP SEMANTIC VIEW run in the main SQL editor.");
+  if (out.length !== 1) throw new Error("Run one statement at a time (no ';').");
+  if (out[0].sql == null) throw new Error(NO_DDL);
   return { sql: out[0].sql, tables: tablesFor(out[0].sql) };
 }
 
