@@ -7,10 +7,11 @@
 // names registered to https://store.local/... (duckdb-wasm's own HTTP file system; no httpfs).
 // store.local is not a host: this script answers it from the store, and a file the store does
 // not hold is an error (404), not a request. No SAS ever reaches this worker.
-// The one other request a worker may make is DuckDB downloading its extensions
-// (extensions.duckdb.org/v<version>/wasm_eh/...), each kept here whole after its first load (a
-// file under its version never changes). Every other request is refused: SQL typed in Explore
-// cannot reach any URL.
+// The one other request a worker may make is DuckDB downloading its extensions from the site's
+// own copy (self.DUCKDB_EXT_REPO, set by data.js: <site>/vendor/duckdb-ext/v<version>/wasm_eh/...),
+// each kept here whole after its first load (a file under its version never changes). Every
+// other request is refused: SQL typed in Explore cannot reach any URL, DuckDB's repository
+// included.
 //
 // A file is kept in OPFS in blocks of BLOCK bytes under its OneLake path without the SAS
 // (https://onelake.dfs.fabric.microsoft.com/<ws>/<lh>/...; store.local/<ws>/<lh>/... reads it).
@@ -56,7 +57,9 @@
   const dec = new TextDecoder();
 
   const pathOf = u => String(u).split('?')[0];
-  const isExtension = u => /^https:\/\/(community-)?extensions\.duckdb\.org\/v[^/]+\/wasm_[a-z]+\/[^/]+\.duckdb_extension\.wasm$/i.test(pathOf(u));
+  const EXT_REPO = String(self.DUCKDB_EXT_REPO || '');
+  const isExtension = u => !!EXT_REPO && pathOf(u).startsWith(EXT_REPO + '/') &&
+    /^v[^/]+\/wasm_[a-z]+\/[\w-]+\.duckdb_extension\.wasm$/i.test(pathOf(u).slice(EXT_REPO.length + 1));
   const isLocal = u => String(u).startsWith(LOCAL);
   // A store.local URL is the store path of the OneLake file it names.
   const storeKey = u => ONELAKE + pathOf(u).slice(LOCAL.length);

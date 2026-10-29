@@ -13,7 +13,7 @@ import { inflateRawSync } from "node:zlib";
 import { execFileSync } from "node:child_process";
 
 const require = createRequire(import.meta.url);
-const { planExport, writeExport, buildDist, zip, crc32, rayfinYml, appName, dfsUrl, MARKER,
+const { planExport, writeExport, buildDist, vendorSize, zip, crc32, rayfinYml, appName, dfsUrl, MARKER,
         readMarker, fingerprint, localChanges } = require("../src/exportapp.js");
 const semantic = await import("../app/semantic.js");
 
@@ -105,12 +105,16 @@ async function fixture(root) {
     "app/explore/view.js": "import { renderModel } from './model.js';\nimport { escapeHtml } from '../paths.js';\n",
     "app/explore/explore.js": "// explore\n", "app/explore/model.js": "// model\n", "app/explore/perflog.js": "// perflog\n",
     "app/explore/explore.css": "/* css */\n", "app/paths.js": "// paths\n",
+    "webapp/npm/@duckdb/duckdb-wasm@1.0.0/+esm.js": 'import{a}from"../../apache-arrow@17.0.0/+esm.js";\n',
+    "webapp/npm/apache-arrow@17.0.0/+esm.js": "// arrow\n",
+    "webapp/duckdb-ext/v1.5.6/wasm_eh/icu.duckdb_extension.wasm": "x".repeat(2048),
   };
   for (const [p, s] of Object.entries(files)) {
     await mkdir(dirname(join(root, p)), { recursive: true });
     await writeFile(join(root, p), s);
   }
-  return { fabricAppDir: join(root, "fabric_app"), daxSqlDir: join(root, "daxsql"), appDir: join(root, "app") };
+  return { fabricAppDir: join(root, "fabric_app"), daxSqlDir: join(root, "daxsql"), appDir: join(root, "app"),
+           webappDir: join(root, "webapp") };
 }
 
 // The zip's entries, read back through its central directory: path -> bytes.
@@ -157,9 +161,16 @@ test("the folder: fabric_app's site and function, Studio's Explore, no model; di
     for (const p of ["site/index.html", "site/app.js", "site/storage/data.js", "site/storage/catalog.js",
                      "site/explore/view.js", "site/explore/perflog.js", "site/explore/explore.css", "site/paths.js",
                      "site/semantic/dax-sql/dialects/duckdb.js", "site/semantic/formats/ossie.js",
+                     "site/vendor/npm/apache-arrow@17.0.0/+esm.js",
+                     "site/vendor/duckdb-ext/v1.5.6/wasm_eh/icu.duckdb_extension.wasm",
                      "rayfin/functions/src/function_app.ts", ".gitignore", MARKER]) {
       await read(p);
     }
+    const size = await vendorSize(outDir);
+    assert.equal(size.total, 2048 + "// arrow\n".length + 'import{a}from"../../apache-arrow@17.0.0/+esm.js";\n'.length);
+    assert.equal(size.total, size.parts.reduce((n, [, b]) => n + b, 0));
+    assert.deepEqual(size.parts.map(([n]) => n)[0], "icu extension", "largest first");
+    assert.ok(size.parts.some(([n]) => n === "@duckdb/duckdb-wasm@1.0.0"), "a scoped package is one part");
     const all = (await readdir(outDir, { recursive: true })).map(f => f.split("\\").join("/"));
     assert.ok(!all.some(f => /ossie\.(json|yaml)$|^model\//.test(f)), `no copy of the model: ${all.join(", ")}`);
     assert.deepEqual(JSON.parse(await read("site/explore.json")), state);
@@ -178,6 +189,8 @@ test("the folder: fabric_app's site and function, Studio's Explore, no model; di
     assert.match(files.get("explore/view.js").toString(), /from '\.\.\/paths\.js\?v=20261028-120000'/);
     assert.match(files.get("storage/data.js").toString(), /from "\.\.\/explore\/perflog\.js\?v=20261028-120000"/);
     assert.ok(!files.has("dist/index.html"), "the paths are the site's, at the zip root");
+    assert.equal(files.get("vendor/npm/@duckdb/duckdb-wasm@1.0.0/+esm.js").toString(), 'import{a}from"../../apache-arrow@17.0.0/+esm.js";\n',
+      "vendored packages ship byte for byte");
     assert.equal(await read("dist/rayfin.config.json"), files.get("rayfin.config.json").toString());
     assert.ok(unzip(zip(files)).get("app.js").equals(files.get("app.js")));
 
@@ -242,6 +255,21 @@ test("the shipped page and its data source parse, and read the model from the fu
   for (const p of ["fabric_app/site/app.js", "fabric_app/site/storage/data.js", "fabric_app/site/storage/catalog.js"]) {
     execFileSync(process.execPath, ["--check", new URL(`../${p}`, import.meta.url).pathname.replace(/^\/(\w:)/, "$1")]);
   }
+  // Every package the page runs is the site's own (vendor/, src/vendored.js WEBAPP), at the pins.
+  const { WEBAPP, VENDOR } = require("../src/vendored.js");
+  for (const p of ["app.js", "storage/data.js", "storage/results.js", "storage/auth.js", "storage/blockcache.js", "index.html"]) {
+    const s = await readFile(new URL(`../fabric_app/site/${p}`, import.meta.url), "utf8");
+    assert.doesNotMatch(s, /cdn\.jsdelivr\.net|unpkg\.com|esm\.sh|extensions\.duckdb\.org|getJsDelivrBundles/, `${p} loads nothing remote`);
+  }
+  const site = async p => readFile(new URL(`../fabric_app/site/${p}`, import.meta.url), "utf8");
+  assert.ok((await site("storage/data.js")).includes(`../vendor/npm/${WEBAPP.duckdbWasm}/+esm.js`));
+  assert.ok((await site("storage/data.js")).includes(`const DUCKDB = '${WEBAPP.duckdb}';`));
+  assert.ok((await site("storage/data.js")).includes(`const EXTENSIONS = ${JSON.stringify(WEBAPP.extensions).replace(/"/g, "'").replace(/,/g, ", ")};`));
+  assert.ok((await site("storage/results.js")).includes(`../vendor/npm/${WEBAPP.arrow}/+esm.js`));
+  assert.ok((await site("storage/auth.js")).includes(`../vendor/npm/${WEBAPP.rayfinClient}/+esm.js`));
+  assert.ok((await site("storage/auth.js")).includes(`../vendor/npm/${WEBAPP.rayfinFabric}/+esm.js`));
+  assert.ok((await site("app.js")).includes(`./vendor/npm/${WEBAPP.echarts}/dist/echarts.min.js`));
+  assert.ok(VENDOR.webapp.esm.includes(WEBAPP.duckdbWasm) && VENDOR.webapp.files.includes(`${WEBAPP.duckdbWasm}/dist/duckdb-eh.wasm`));
   const data = await readFile(new URL("../fabric_app/site/storage/data.js", import.meta.url), "utf8");
   assert.doesNotMatch(data, /ossie\.json/);
   assert.match(data, /catalog\.open\(\[\]\)/);

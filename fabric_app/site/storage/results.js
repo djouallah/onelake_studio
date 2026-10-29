@@ -2,7 +2,7 @@
 // results.js — a query's result kept in this browser across visits
 // =============================================================================
 // IndexedDB, as Arrow IPC (through the apache-arrow module duckdb-wasm itself imports: the
-// same URL, the same module). A reload answers every query already seen without an engine.
+// same vendored file, the same module). A reload answers every query already seen without an engine.
 // The key is the SQL and what the host says identifies the data it reads (`versions`: for
 // the Iceberg app, the metadata location of every table it names), so new data is a new key
 // and a result is never served over it. Not kept: a query that reads the clock or today's
@@ -12,7 +12,7 @@
 // Shared by the DuckDB hosts; which data a query reads, and its version, is the host's.
 // =============================================================================
 
-import { tableToIPC, tableFromIPC } from "https://cdn.jsdelivr.net/npm/apache-arrow@17.0.0/+esm";
+import { tableToIPC, tableFromIPC } from "../vendor/npm/apache-arrow@17.0.0/+esm.js";
 import { perf } from "../explore/perflog.js";
 
 const RESULT_MAX = 8 * 1024 * 1024, RESULTS_MAX = 256 * 1024 * 1024;

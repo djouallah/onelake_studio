@@ -11,6 +11,8 @@
 //                    tables in the browser as views v_<table>)
 //   site/explore/    Studio's Explore and Logs (app/explore/), the same files the panel runs
 //   site/semantic/   dax-sql (PINS.daxSql): SQL over the model, as SQL over the views
+//   site/vendor/     every package the page runs (vendor/webapp: DuckDB-WASM and its
+//                    extensions, Arrow, the Rayfin SDK, ECharts): nothing from a CDN
 //   site/explore.json  the shelves the first view shows
 //   rayfin/          fabric_app/rayfin: what the app is (rayfin.yml) and its function's source
 //                    (built at package time, by scripts/function-bundle.mjs: nobody's machine
@@ -28,7 +30,7 @@ const fsp = require('node:fs/promises');
 const zlib = require('node:zlib');
 const { createHash } = require('node:crypto');
 const { TABLE_ORIGIN } = require('./catalog');
-const { PINS } = require('./vendored');
+const { PINS, WEBAPP } = require('./vendored');
 
 const MARKER = '.onelake-studio-export.json';
 const DFS = 'https://onelake.dfs.fabric.microsoft.com';
@@ -146,6 +148,7 @@ open the app item can load it.
 | Page | \`site/index.html\`, \`site/app.js\` | Explore and Logs over the data source |
 | Explore, Logs | \`site/explore/\` | OneLake Studio's, the same files the extension runs |
 | Compiler | \`site/semantic/dax-sql/\`, \`site/semantic/formats/\` | dax-sql (\`${PINS.daxSql}\`): SQL over the model, as SQL over \`v_<table>\` |
+| Packages | \`site/vendor/\` | DuckDB-WASM (\`${WEBAPP.duckdbWasm}\`, DuckDB ${WEBAPP.duckdb}) with its ${WEBAPP.extensions.join(' and ')} extensions, Arrow, the Rayfin SDK, ECharts: shipped with the site, nothing from a CDN |
 | Data source | \`site/storage/\` | signs in (Rayfin Fabric SSO), asks the function, downloads the tables into the browser (OPFS), DuckDB-WASM |
 | Function | \`rayfin/functions/src/function_app.ts\` | reads the model, the tables' metadata locations, a read-only SAS on \`Tables/\` |
 
@@ -183,9 +186,10 @@ const readMarker = async dir => (await isEmptyOrOurs(dir)).marker;
  * Writes the app's folder (the local copy). Returns the marker kept in the folder (an earlier
  * export's item and redirects, when there was one).
  * `fabricAppDir`: the extension's fabric_app/; `appDir`: Studio's page modules (app/, or
- * webview/ installed); `daxSqlDir`: vendor/gh/<PINS.daxSql>.
+ * webview/ installed); `daxSqlDir`: vendor/gh/<PINS.daxSql>; `webappDir`: vendor/webapp, the
+ * page's packages.
  */
-async function writeExport({ plan, state, outDir, fabricAppDir, appDir, daxSqlDir }) {
+async function writeExport({ plan, state, outDir, fabricAppDir, appDir, daxSqlDir, webappDir }) {
   const { marker } = await isEmptyOrOurs(outDir);
   for (const p of OWNED) await fsp.rm(join(outDir, p), { recursive: true, force: true });
   const at = (root, p) => join(root, ...p.split('/'));
@@ -194,6 +198,7 @@ async function writeExport({ plan, state, outDir, fabricAppDir, appDir, daxSqlDi
   await fsp.cp(join(appDir, 'paths.js'), at(outDir, 'site/paths.js'));
   await fsp.cp(join(daxSqlDir, 'src'), at(outDir, 'site/semantic/dax-sql'), { recursive: true });
   for (const f of ['tmsl.js', 'ossie.js']) await fsp.cp(join(daxSqlDir, 'formats', f), at(outDir, `site/semantic/formats/${f}`));
+  await fsp.cp(webappDir, at(outDir, 'site/vendor'), { recursive: true });
   await fsp.cp(join(fabricAppDir, 'rayfin'), at(outDir, 'rayfin'), { recursive: true });
   const yml = at(outDir, 'rayfin/rayfin.yml');
   await fsp.writeFile(yml, rayfinYml(await fsp.readFile(yml, 'utf8'), plan.name, (marker && marker.redirects) || []));
@@ -213,6 +218,24 @@ async function writeExport({ plan, state, outDir, fabricAppDir, appDir, daxSqlDi
 }
 
 const writeMarker = (dir, m) => fsp.writeFile(join(dir, MARKER), JSON.stringify(m, null, 2) + '\n');
+
+// What site/vendor/ weighs: { total, parts: [[name, bytes]] }, a part per package
+// (npm/<pkg>@<v>, npm/@<scope>/<pkg>@<v>) or extension, largest first.
+async function vendorSize(outDir) {
+  const root = join(outDir, 'site', 'vendor');
+  const parts = new Map();
+  let total = 0;
+  for (const rel of (await fsp.readdir(root, { recursive: true }).catch(() => [])).map(f => f.split('\\').join('/'))) {
+    const st = await fsp.stat(join(root, rel));
+    if (!st.isFile()) continue;
+    const seg = rel.split('/');
+    const name = seg[0] === 'npm' ? seg.slice(1, seg[1].startsWith('@') ? 3 : 2).join('/')
+      : seg[0] === 'duckdb-ext' ? `${seg[seg.length - 1].replace(/\.duckdb_extension\.wasm$/, '')} extension` : rel;
+    parts.set(name, (parts.get(name) || 0) + st.size);
+    total += st.size;
+  }
+  return { total, parts: [...parts].sort((a, b) => b[1] - a[1]) };
+}
 
 // --- What changed in the folder since it was published ---------------------------
 
@@ -262,7 +285,8 @@ async function buildDist(outDir, config, build = buildId()) {
     const src = join(site, rel);
     if (!(await fsp.stat(src)).isFile()) continue;
     let bytes = await fsp.readFile(src);
-    if (/\.(html|js)$/.test(rel)) {
+    // site/vendor/ is pinned packages, already versioned by their path: left byte for byte.
+    if (/\.(html|js)$/.test(rel) && !rel.startsWith('vendor/')) {
       bytes = Buffer.from(bytes.toString('utf8')
         .replaceAll('__BUILD__', build)
         .replace(/(\b(?:from|import)\s*["']\.{1,2}\/[\w./-]+\.js)(["'])/g, `$1?v=${build}$2`)
@@ -324,4 +348,4 @@ function zip(files) {
 }
 
 module.exports = { planExport, writeExport, buildDist, writeMarker, readMarker, fingerprint, localChanges,
-                   zip, crc32, rayfinYml, appName, dfsUrl, MARKER };
+                   vendorSize, zip, crc32, rayfinYml, appName, dfsUrl, MARKER };

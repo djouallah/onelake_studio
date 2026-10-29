@@ -17,6 +17,23 @@ const PINS = {
   daxSql: 'djouallah/dax-sql@de799e0bb75559ac0d7cfbc62661339bcc93a417',
 };
 
+// The web app's (Export to Fabric, fabric_app/site): everything its page runs, so it loads
+// nothing from a CDN or DuckDB's repository. vendor.mjs downloads these into vendor/webapp/,
+// and the export copies that tree into the app's site/vendor/.
+const WEBAPP = {
+  // DuckDB-WASM, the eh build only (the page needs Chrome or Edge 121+, which always runs it).
+  duckdbWasm: '@duckdb/duckdb-wasm@1.33.1-dev65.0',
+  // The DuckDB that build reports (db.getVersion()): the path its extensions are asked under.
+  duckdb: 'v1.5.6',
+  // DuckDB's signed extensions the page LOADs (storage/data.js).
+  extensions: ['parquet', 'icu'],
+  arrow: 'apache-arrow@17.0.0',
+  // Kept on the same version: they share rayfin-auth and rayfin-lib, one module each.
+  rayfinClient: '@microsoft/rayfin-client@1.36.1',
+  rayfinFabric: '@microsoft/rayfin-auth-provider-fabric@1.36.1',
+  echarts: PINS.echarts,
+};
+
 // What vendor.mjs fetches for each pin.
 const VENDOR = {
   esm: [PINS.marked, PINS.dompurify, PINS.yaml],          // npm/<pkg>/+esm, with its closure
@@ -26,6 +43,14 @@ const VENDOR = {
   gh: [
     { repo: PINS.daxSql, include: /^\/(src\/.*\.js|formats\/(tmsl|ossie)\.js)$/ },
   ],
+  // The web app's tree, vendor/webapp/: the same layout (npm/…), plus duckdb-ext/<version>/
+  // wasm_eh/<name>.duckdb_extension.wasm, the path DuckDB-WASM asks its repository for.
+  webapp: {
+    esm: [WEBAPP.duckdbWasm, WEBAPP.arrow, WEBAPP.rayfinClient, WEBAPP.rayfinFabric],
+    files: [`${WEBAPP.duckdbWasm}/dist/duckdb-eh.wasm`, `${WEBAPP.duckdbWasm}/dist/duckdb-browser-eh.worker.js`,
+            `${WEBAPP.echarts}/dist/echarts.min.js`],
+    extensions: { duckdb: WEBAPP.duckdb, platform: 'wasm_eh', names: WEBAPP.extensions },
+  },
 };
 
-module.exports = { PINS, VENDOR };
+module.exports = { PINS, WEBAPP, VENDOR };

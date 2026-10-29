@@ -4,7 +4,8 @@
 // Downloads what src/vendored.js pins — the markdown renderer, ECharts and the dax-sql
 // compiler — into vendor/, which panel.js serves to the page as webview
 // resources. Nothing the page runs comes from a CDN at run time. Export to Fabric copies
-// dax-sql from here into the app it writes.
+// dax-sql from here into the app it writes, and vendor/webapp/ — the web app's own packages
+// (DuckDB-WASM and its extensions, Arrow, the Rayfin SDK, ECharts) — into its site/vendor/.
 //
 // Layout, relative to vendor/:
 //   npm/<pkg>@<v>/+esm.js       a jsDelivr ESM bundle, saved with a .js extension: VS Code
@@ -12,6 +13,9 @@
 //                               refuses anything that is not JavaScript.
 //   npm/<pkg>@<v>/<path>        a plain file of a package (ECharts' own build).
 //   gh/<owner>/<repo>@<sha>/…   a pinned repository's modules.
+//   webapp/npm/…                the web app's packages, the same two forms.
+//   webapp/duckdb-ext/<v>/wasm_eh/<name>.duckdb_extension.wasm
+//                               DuckDB's signed extensions, at the path DuckDB-WASM asks for.
 // Every absolute `/npm/…` import inside a bundle is rewritten to a RELATIVE path, so the
 // tree works under whatever base URI the webview gives it.
 //
@@ -43,8 +47,8 @@ async function get(url) {
   }
 }
 
-async function save(rel, buf) {
-  const file = join(OUT, ...rel.split("/"));
+async function save(rel, buf, root = OUT) {
+  const file = join(root, ...rel.split("/"));
   await mkdir(dirname(file), { recursive: true });
   await writeFile(file, buf);
   files++; bytes += buf.length;
@@ -53,10 +57,11 @@ async function save(rel, buf) {
 // "/npm/x@1/+esm" -> "npm/x@1/+esm.js"; "/npm/x@1/dist/a.mjs/+esm" -> "npm/x@1/dist/a.mjs/+esm.js"
 const localOf = npmPath => npmPath.replace(/^\//, "").replace(/\/\+esm$/, "/+esm.js");
 
+// `root`: vendor/ or vendor/webapp/, each tree whole on its own.
 const seen = new Set();
-async function esmClosure(npmPath) {
-  if (seen.has(npmPath)) return;
-  seen.add(npmPath);
+async function esmClosure(npmPath, root = OUT) {
+  if (seen.has(`${root}|${npmPath}`)) return;
+  seen.add(`${root}|${npmPath}`);
   const text = (await get(JSDELIVR + npmPath)).toString("utf8");
   const deps = new Set();
   for (const m of text.matchAll(/["'](\/npm\/[^"'\s]+?)["']/g)) deps.add(m[1]);
@@ -67,8 +72,8 @@ async function esmClosure(npmPath) {
     if (!rel.startsWith(".")) rel = "./" + rel;
     out = out.split(`"${dep}"`).join(`"${rel}"`).split(`'${dep}'`).join(`'${rel}'`);
   }
-  await save(localOf(npmPath), Buffer.from(out, "utf8"));
-  for (const dep of deps) await esmClosure(dep);
+  await save(localOf(npmPath), Buffer.from(out, "utf8"), root);
+  for (const dep of deps) await esmClosure(dep, root);
 }
 
 // A tree built from these exact pins is reused as it is — a restored CI cache costs no
@@ -92,5 +97,17 @@ for (const { repo, include } of VENDOR.gh) {
   for (const n of names) await save(`gh/${repo}${n}`, await get(`${JSDELIVR}/gh/${repo}${n}`));
 }
 
+
+const WEB = join(OUT, "webapp");
+const panelFiles = files, panelBytes = bytes;
+for (const pkg of VENDOR.webapp.esm) await esmClosure(`/npm/${pkg}/+esm`, WEB);
+for (const f of VENDOR.webapp.files) await save(`npm/${f}`, await get(`${JSDELIVR}/npm/${f}`), WEB);
+const { duckdb, platform, names } = VENDOR.webapp.extensions;
+for (const n of names) {
+  const rel = `duckdb-ext/${duckdb}/${platform}/${n}.duckdb_extension.wasm`;
+  await save(rel, await get(`https://extensions.duckdb.org/${duckdb}/${platform}/${n}.duckdb_extension.wasm`), WEB);
+}
+
 await writeFile(STAMP, want);
-console.log(`vendored ${files} file(s), ${(bytes / 1e6).toFixed(1)}MB`);
+console.log(`vendored ${panelFiles} file(s), ${(panelBytes / 1e6).toFixed(1)}MB for the panel; ` +
+  `${files - panelFiles} file(s), ${((bytes - panelBytes) / 1e6).toFixed(1)}MB for the web app (vendor/webapp)`);

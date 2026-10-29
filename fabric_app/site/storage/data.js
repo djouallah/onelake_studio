@@ -13,8 +13,9 @@
 // the view is created. DuckDB reads only that store, by names registered to
 // https://store.local/... (duckdb-wasm's own file system): no httpfs, no SAS in any view, and
 // its worker refuses every other request (blockcache.js). The engine is duckdb-wasm's npm
-// release (DuckDB 1.5), from jsDelivr, the GitHub page's pin, with two of DuckDB's signed
-// extensions: parquet, and icu for the session's time zone.
+// release (DuckDB 1.5), with two of DuckDB's signed extensions: parquet, and icu for the
+// session's time zone. All of it ships with the site, in vendor/ (src/vendored.js, WEBAPP):
+// nothing is loaded from a CDN or DuckDB's repository.
 //
 // A table is opened when a query first names its view, v_<table>, so the first paint pays only
 // for the tables it reads. Opening it: its record (the snapshot's live data and delete files),
@@ -43,7 +44,7 @@
 //   query, views, has, needs
 // =============================================================================
 
-import * as duckdb from "https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.33.1-dev65.0/+esm";
+import * as duckdb from "../vendor/npm/@duckdb/duckdb-wasm@1.33.1-dev65.0/+esm.js";
 import { engineQueue } from "./queue.js";
 import { createResults } from "./results.js";
 import { createAuth } from "./auth.js";
@@ -53,9 +54,18 @@ import { planTable, prefetchFiles, prioritize } from "./prefetch.js";
 import { perf, HTTP_TRACE_SHIM } from "../explore/perflog.js";
 
 const SMALL_BYTES = 32 * 1024 * 1024;   // a table up to this much Parquet is copied into memory
-// The extensions DuckDB installs, from DuckDB's repository: Parquet, and icu for the session's
-// time zone. No httpfs: DuckDB reads only the local store.
+// The site's own copy of the engine (vendor/, src/vendored.js WEBAPP), the eh build: the page
+// needs Chrome or Edge 121+, which always runs it.
+const VENDOR = new URL('../vendor/', import.meta.url).href;
+const WASM = `${VENDOR}npm/@duckdb/duckdb-wasm@1.33.1-dev65.0/dist/`;
+const BUNDLE = { mainModule: `${WASM}duckdb-eh.wasm`, mainWorker: `${WASM}duckdb-browser-eh.worker.js`, pthreadWorker: null };
+// The DuckDB that build is: its extensions are vendored under this version, and an engine that
+// says another would ask for files the site does not have.
+const DUCKDB = 'v1.5.6';
+// The extensions DuckDB installs, from the site's own repository (vendor/duckdb-ext): Parquet,
+// and icu for the session's time zone. No httpfs: DuckDB reads only the local store.
 const EXTENSIONS = ['parquet', 'icu'];
+const EXT_REPO = `${VENDOR}duckdb-ext`;
 // The local store DuckDB reads from, and its worker's only way out (blockcache.js).
 const BLOCKCACHE = new URL('./blockcache.js' + new URL(import.meta.url).search, import.meta.url).href;
 const ENGINES = (() => {
@@ -97,7 +107,7 @@ const localUrl = abfss => abfss.replace(ABFSS, 'https://store.local/$1/');
 // DuckDB's own request finds them. After that the store answers DuckDB (blockcache.js), and the
 // page fetches nothing (the version it loaded is remembered).
 const EXT_KEY = 'duckdb_extensions';
-const extensionUrl = (version, e) => `https://extensions.duckdb.org/${version}/wasm_eh/${e}.duckdb_extension.wasm`;
+const extensionUrl = (version, e) => `${EXT_REPO}/${version}/wasm_eh/${e}.duckdb_extension.wasm`;
 function warmExtensions(version) {
   let known = null; try { known = localStorage.getItem(EXT_KEY); } catch (e) {}
   if (known === version) return;
@@ -345,10 +355,12 @@ export function createDataSource({ onStatus = () => {}, onProgress = () => {}, t
 
     // Single-threaded (the eh bundle): the page is not cross-origin isolated. ENGINES of them,
     // started together.
-    const bundle = await duckdb.selectBundle(duckdb.getJsDelivrBundles());
+    const bundle = BUNDLE;
     const workerUrl = URL.createObjectURL(
       // HTTP_TRACE_SHIM times the worker's own requests (the store's answers) for the Logs tab.
-      new Blob([`importScripts("${BLOCKCACHE}");
+      // The store lets the worker fetch extensions from EXT_REPO, and nothing else.
+      new Blob([`self.DUCKDB_EXT_REPO = ${JSON.stringify(EXT_REPO)};
+importScripts("${BLOCKCACHE}");
 `, HTTP_TRACE_SHIM, `
 importScripts("${bundle.mainWorker}");`], { type: "text/javascript" }));
     let warmed = false;
@@ -366,13 +378,14 @@ importScripts("${bundle.mainWorker}");`], { type: "text/javascript" }));
       await db.open({ filesystem: { reliableHeadRequests: true, allowFullHTTPReads: false, forceFullHTTPReads: false },
         query: { castBigIntToDouble: true, castDecimalToDouble: true } });
       const version = await db.getVersion();
+      if (version !== DUCKDB) throw new Error(`the engine is DuckDB ${version}, but the site's extensions are for ${DUCKDB}`);
       if (!warmed) { warmed = true; warmExtensions(version); }
       const e = { i, db, conn: await db.connect(), opened: new Map(), registered: new Set() };
       engines[i] = e;
       queue.add(e);   // its setup below runs through the queue, on it
       // Installing needs a home directory.
       await perf.time('attach', `LOAD ${EXTENSIONS.join(', ')} (DuckDB ${version})${ENGINES > 1 ? ` [engine ${i + 1}]` : ''}`, () =>
-        q(e, `SET home_directory = '/tmp'; ${EXTENSIONS.map(x => `INSTALL ${x}; LOAD ${x};`).join(' ')}`));
+        q(e, `SET home_directory = '/tmp'; SET custom_extension_repository = ${lit(EXT_REPO)}; ${EXTENSIONS.map(x => `INSTALL ${x}; LOAD ${x};`).join(' ')}`));
       try { localStorage.setItem(EXT_KEY, version); } catch (x) {}
       // Iceberg's files never change once written: a Parquet footer read holds for the session.
       await q(e, 'SET parquet_metadata_cache = true;');

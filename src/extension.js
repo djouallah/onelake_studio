@@ -25,7 +25,7 @@ const { createAgent } = require('./agent');
 const { createSemViews } = require('./semviews');
 const { serveBridge } = require('./bridge');
 const { PINS } = require('./vendored');
-const { planExport, writeExport, buildDist, writeMarker, readMarker, fingerprint, localChanges, zip, rayfinYml } = require('./exportapp');
+const { planExport, writeExport, buildDist, writeMarker, readMarker, fingerprint, localChanges, vendorSize, zip, rayfinYml } = require('./exportapp');
 const { createFabricApp, tenantOf } = require('./fabricapp');
 const { createOneLakeWriter } = require('./onelakewrite');
 
@@ -925,8 +925,14 @@ async function activateInner(context) {
           else {
             say(`app ${plan.name}: writing the local copy to ${outDir}`);
             marker = await writeExport({ plan, state, outDir, fabricAppDir, appDir,
-                                         daxSqlDir: join(ext, 'vendor', 'gh', PINS.daxSql) });
+                                         daxSqlDir: join(ext, 'vendor', 'gh', PINS.daxSql),
+                                         webappDir: join(ext, 'vendor', 'webapp') });
           }
+          // What the page's packages weigh, there in the folder (site/vendor/) and here in the log.
+          const mb = n => `${(n / 1048576).toFixed(1)} MB`;
+          const size = await vendorSize(outDir);
+          say(`app ${plan.name}: site/vendor/ is ${mb(size.total)}`);
+          if (out) for (const [name, bytes] of size.parts) out.appendLine(`  ${mb(bytes).padStart(9)}  ${name}`);
           const done = await createFabricApp({ getToken: appToken, log: say }).publish({
             workspaceId: plan.workspace, name: plan.name, tenantId: tenantOf(token),
             catalogUrl: plan.catalogUrl, modelUrl: plan.modelUrl,

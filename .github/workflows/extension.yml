@@ -230,6 +230,14 @@ jobs:
           for f in fabric_app/site/app.js fabric_app/site/storage/data.js fabric_app/rayfin/rayfin.yml webview/explore/view.js; do
             grep -qx "extension/$f" <<<"$files" || { echo "no $f in the vsix"; exit 1; }
           done
+          # The web app's own packages (src/vendored.js WEBAPP): its page loads nothing from a CDN.
+          for f in npm/@duckdb/duckdb-wasm@1.33.1-dev65.0/+esm.js npm/@duckdb/duckdb-wasm@1.33.1-dev65.0/dist/duckdb-eh.wasm \
+                   npm/@duckdb/duckdb-wasm@1.33.1-dev65.0/dist/duckdb-browser-eh.worker.js npm/apache-arrow@17.0.0/+esm.js \
+                   npm/@microsoft/rayfin-client@1.36.1/+esm.js npm/@microsoft/rayfin-auth-provider-fabric@1.36.1/+esm.js \
+                   npm/echarts@5.5.1/dist/echarts.min.js \
+                   duckdb-ext/v1.5.6/wasm_eh/parquet.duckdb_extension.wasm duckdb-ext/v1.5.6/wasm_eh/icu.duckdb_extension.wasm; do
+            grep -qxF "extension/vendor/webapp/$f" <<<"$files" || { echo "no vendor/webapp/$f in the vsix"; exit 1; }
+          done
           for f in source.zip deploymetadata.json; do
             grep -qx "extension/fabric-function/$f" <<<"$files" || { echo "no fabric-function/$f in the vsix"; exit 1; }
           done
