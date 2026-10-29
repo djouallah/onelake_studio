@@ -5,7 +5,8 @@
 // A doorbell, nothing more: the arguments go to the extension over a local pipe
 // (src/bridge.js), the extension answers with its own sign-in, cache and engine
 // (src/agent.js), and this prints the answer — markdown on stdout, notes on stderr.
-// Written for an agent to run. Read only. Needs VS Code open with the extension signed in.
+// Written for an agent to run. Read only, but for export, which you confirm in VS Code.
+// Needs VS Code open with the extension signed in.
 //
 //   node bin/cli.mjs ls                                   workspaces
 //   node bin/cli.mjs ls <ws>                              its lakehouses/warehouses and semantic models
@@ -18,13 +19,16 @@
 //   node bin/cli.mjs model <ws> <model> [--fresh]         relationships, columns, measures + DAX
 //   node bin/cli.mjs sql "<sql>" [--in <ws>/<item>] [--limit N] [--csv] [--show-sql]
 //   node bin/cli.mjs dax "EVALUATE …" [--model <name>] [--show-sql]
+//   node bin/cli.mjs export <ws> <model>                  Export to Fabric, as Explore's button
+//   node bin/cli.mjs export <ws> <item> <Files/path>      (a model file in a lakehouse)
 // =============================================================================
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
 const { askBridge } = require("../src/bridge.js");
 
-const HELP = `onelake — ask OneLake Studio (VS Code must be open, signed in). Read only.
+const HELP = `onelake — ask OneLake Studio (VS Code must be open, signed in). Read only, but
+for export, which waits for your OK in VS Code.
 
   ls                                  workspaces
   ls <ws>                             its lakehouses/warehouses and semantic models
@@ -44,6 +48,11 @@ const HELP = `onelake — ask OneLake Studio (VS Code must be open, signed in). 
     --show-sql                        print the SQL a model query compiles to
   dax "EVALUATE …"                    a DAX query against a model (Explore's DAX runs as is)
     --model <name>                    which model (needed when more than one is defined)
+  export <ws> <model>                 Export to Fabric, as Explore's button does it: the model's
+                                        .bim in its lakehouse (open it in the tree once first).
+                                        VS Code asks where the local copy goes and for the OK;
+                                        the app opens on Explore's default view
+  export <ws> <item> <Files/path>     the same, for a model file (.bim, Ossie .yaml) in Files/
   --limit N  --csv
   --fresh                             ask OneLake/Fabric now: listings and metadata come only
                                         from the cache otherwise, and say so when it has nothing`;
@@ -66,6 +75,7 @@ if (!args.length || args[0] === "help" || args[0] === "--help") {
 }
 
 try {
+  if (args[0] === "export") console.error("Export to Fabric: confirm it in VS Code…");
   const r = await askBridge({ args, opts });
   if (r.out) console.log(r.out);
   if (r.err) console.error(r.err);

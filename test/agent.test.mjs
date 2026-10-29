@@ -198,3 +198,60 @@ test("free from the cache: table sizes, more table fields, files, find, model co
     assert.deepEqual(calls, [], "nothing fetched");
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
+
+// export hands Explore's own export the model file, as Explore's button does; the dax-sql and
+// YAML modules it loads stand in as stubs (CI's test job has no vendor/).
+test("export: a model file in Files/, or a semantic model's .bim where the tree wrote it", async () => {
+  const { mkdtemp, mkdir, writeFile, rm } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const { join, dirname } = await import("node:path");
+  const { fileURLToPath } = await import("node:url");
+  const vendorDir = await mkdtemp(join(tmpdir(), "agent-vendor-"));
+  try {
+    for (const [p, body] of [
+      ["gh/pin/src/index.js", "export const createCompiler = 0, createViews = 0;"],
+      ["gh/pin/formats/tmsl.js", "export const tmslToModel = 0;"],
+      ["gh/pin/formats/ossie.js", "export const ossieToTmsl = 0;"],
+      ["npm/yaml/+esm.js", "export const parse = 0;"],
+    ]) {
+      await mkdir(dirname(join(vendorDir, p)), { recursive: true });
+      await writeFile(join(vendorDir, p), body);
+    }
+    const { createAgent } = require("../src/agent.js");
+    const onelake = fakeOneLake();
+    onelake.readBytes = async (ws, path) => new TextEncoder().encode(`model at ${ws}/${path}`);
+    onelake.cached.models = async ws => ws === "a ws" ? { value: [{ id: "m1", name: "Sales" }, { id: "m2", name: "Ops" }], at: Date.now() } : null;
+    const exported = [];
+    const agent = createAgent({
+      onelake, bimPath: () => "/nowhere/x.bim",
+      appDir: join(dirname(fileURLToPath(import.meta.url)), "..", "app"),
+      vendorDir, daxSqlPin: "pin", yamlPin: "yaml",
+      exportApp: async x => { exported.push(x); return `Published to Fabric: ${x.name}`; },
+      modelFileOf: (ws, id) => id === "m1" ? { workspace: "lh ws", path: "a.Lakehouse/Files/semantic_model/Sales.bim" } : null,
+    });
+
+    let r = await agent.run({ args: ["export", "a ws", "a", "Files/models/sales-2.yaml"] });
+    assert.equal(r.code, 0, r.err);
+    assert.equal(r.out, "Published to Fabric: sales_2");
+    assert.deepEqual(exported.pop(), { file: "sales-2.yaml", name: "sales_2", text: "model at a ws/a.Lakehouse/Files/models/sales-2.yaml",
+                                       state: null, workspace: "a ws", path: "a.Lakehouse/Files/models/sales-2.yaml" });
+
+    r = await agent.run({ args: ["export", "a ws", "sales"] });
+    assert.equal(r.code, 0, r.err);
+    assert.deepEqual(exported.pop(), { file: "Sales.bim", name: "Sales", text: "model at lh ws/a.Lakehouse/Files/semantic_model/Sales.bim",
+                                       state: null, workspace: "lh ws", path: "a.Lakehouse/Files/semantic_model/Sales.bim" });
+
+    r = await agent.run({ args: ["export", "a ws", "Ops"] });
+    assert.equal(r.code, 1);
+    assert.match(r.err, /a ws\/Ops is not in its lakehouse yet — open it in the OneLake Studio tree/);
+
+    r = await agent.run({ args: ["export", "a ws", "dw", "Files/x.bim"] });
+    assert.match(r.err, /dw\.Warehouse has no Files area/);
+    assert.equal(exported.length, 0);
+
+    r = await createAgent({ onelake, bimPath: () => "" }).run({ args: ["export", "a ws", "Sales"] });
+    assert.match(r.err, /Export to Fabric is not available here/);
+  } finally {
+    await rm(vendorDir, { recursive: true, force: true });
+  }
+});

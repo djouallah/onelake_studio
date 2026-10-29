@@ -720,6 +720,9 @@ async function activateInner(context) {
     vendorDir: join(context.extensionUri.fsPath, 'vendor'),
     daxSqlPin: PINS.daxSql,
     yamlPin: PINS.yaml,
+    // `export`: Explore's own Export to Fabric (below), and the .bim the tree wrote for a model.
+    exportApp: x => (exportExplore ? exportExplore(x) : Promise.reject(new Error('OneLake Studio is still starting'))),
+    modelFileOf: (ws, modelId) => modelFile({ workspace: ws, modelId }),
   });
   context.subscriptions.push(serveBridge({
     handle: req => {

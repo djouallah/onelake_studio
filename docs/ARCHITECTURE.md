@@ -2,7 +2,8 @@
 
 - **Read only, except two writes, each only on a click.** Opening a semantic model from the tree
   writes its `.bim` into its lakehouse's `Files/` (below), and **Export to Fabric** publishes an
-  app. Nothing else is written to Fabric or OneLake: not by the host, not by DuckDB, not by SQL the
+  app. Export to Fabric runs from Explore's button or the command line's `export`, and either way
+  it waits for an OK in VS Code. Nothing else is written to Fabric or OneLake: not by the host, not by DuckDB, not by SQL the
   page sends. The host refuses any statement that could write.
 - **Cache as much as possible.** Every answer OneLake or Fabric gave is kept on this machine and
   served from there first; the network is asked only when nothing is cached, or the cached
@@ -127,7 +128,9 @@ same sign-in, cache, DuckDB and DAX compiler as the panel, read only. The skill 
 extension's `bin/cli.mjs` with Node.js, which only hands the question to the extension running in
 VS Code and prints its answer — so VS Code has to be open, signed in. The skill follows the
 extension through updates. It can also run a DAX query against a model, print the SQL a
-model query or DAX compiles to, and check a measure against its raw table.
+model query or DAX compiles to, and check a measure against its raw table. Its one write is
+`export`, which is Explore's own Export to Fabric: the same code path, with the same questions
+asked in VS Code. The app opens on Explore's default view.
 
 ## Sign-in, the engine and the cache
 

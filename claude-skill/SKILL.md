@@ -7,7 +7,7 @@ description: Answer questions about Microsoft Fabric OneLake data and Power BI s
 
 # OneLake and semantic models, from the shell
 
-One command, read only. It asks the OneLake Studio extension running in VS Code, which answers
+One command, read only but for `export`. It asks the OneLake Studio extension running in VS Code, which answers
 with its own sign-in and cache — so VS Code must be open with OneLake Studio signed in (if the
 command says it is not running, ask the user to open it). Needs Node.js on PATH:
 
@@ -29,6 +29,8 @@ node --no-warnings "{{cli}}" <command>
 | `sql "<sql>"` | read-only SQL. Every semantic view is a table: `AGG("measure")` is the measure; and `CREATE / DROP / SHOW SEMANTIC VIEW` (below) |
 | `sql "<sql>" --in <ws>/<item>` | the lakehouse's tables, as `<item>_<schema>.<table>` — e.g. `data_mart.dim_duid` — and its files as `'Files/…'`: `read_parquet('Files/log.parquet')` |
 | `dax "EVALUATE …" --model <name>` | a DAX query against a semantic view (`--model` may be left out when only one is defined) |
+| `export <ws> <model>` | Export to Fabric, as Explore's button does it: publishes the model's Explore as a Fabric app. The model must have been opened in the tree once (that writes its `.bim` into its lakehouse) |
+| `export <ws> <item> <Files/path>` | the same, for a model file (`.bim`, Ossie `.yaml`) in a lakehouse's Files/ |
 
 Options: `--limit N` (rows printed, default 100), `--csv`, `--fresh` (ask OneLake/Fabric instead of the cache — see below),
 `--show-sql` (print the SQL a model query or DAX compiles to — the answer to "is this SQL right?").
@@ -76,6 +78,9 @@ is local, `abfss://…`, or `Files/…` with `--in`. Views are kept by the exten
   yet) only when they agree or say the data just changed.
 - A query (`sql`, `dax`) reads OneLake, cached on disk too: a first query over a big table can
   take a minute or two, the next is seconds.
-- Read only by construction: anything but a read is refused.
+- Read only by construction: anything but a read is refused. The exception is `export`, and
+  only when the user asks for it. VS Code then asks the user where the local copy goes and
+  waits for their OK, so the command waits too. It prints the app's URL, or why nothing was
+  published. The app opens on Explore's default view.
 - The same downloads are shared with the OneLake Studio VS Code extension
   (`~/OneLakeStudio/semantic-models/<ws>/<model>.bim`).

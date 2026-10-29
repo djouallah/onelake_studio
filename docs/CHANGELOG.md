@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **Export to Fabric from the command line.** Run `export <ws> <model>`, or
+  `export <ws> <item> <Files/path>` for a model file. It uses the same export as Explore's
+  button, and VS Code asks where the local copy goes and waits for your OK before publishing.
 - **Generate Report is gone. Use Export to Fabric instead.** It did the same thing, but from an
   older copy of the app that ran a DuckDB-WASM 2.0 build taken from CI, with unsigned extensions.
   Export to Fabric publishes the model's Explore on DuckDB-WASM 1.5.6 from npm.

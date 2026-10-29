@@ -6,7 +6,8 @@
 // and prints what comes back. The answer is made here, with what the extension already
 // has — its sign-in, its cache-first OneLake (onelake.js), the Fabric API, the downloaded
 // .bim files, the DAX compiler — so there is one sign-in and one cache, not a second copy
-// for the command line. Read only: every statement goes through the engine's guard.
+// for the command line. Read only: every statement goes through the engine's guard. The one
+// exception is export, which is Explore's own Export to Fabric, confirmed in VS Code.
 //
 //   ls [<ws> [<item>]]               workspaces / items + semantic models / tables
 //   models [<ws>]                    semantic models in every workspace (or one), counted
@@ -20,6 +21,8 @@
 //                                    CREATE / DROP / SHOW SEMANTIC VIEW (dax-sql's statements);
 //                                    --in also reads its 'Files/…' paths; --show-sql the compiled SQL
 //   dax "EVALUATE …" [--model m]     a DAX query, compiled as Explore compiles one
+//   export <ws> <model>              Export to Fabric, as Explore's button: a semantic model
+//   export <ws> <item> <Files/path>  (its .bim in its lakehouse) or a model file in Files/
 //
 // No `vscode` import: the extension passes in what it owns.
 // =============================================================================
@@ -64,8 +67,12 @@ function filesToAbfss(sql, lh) {
  * @param {string} o.appDir                  the panel's modules (semantic.js, paths.js)
  * @param {string} o.vendorDir               the vendored DAX compiler and YAML reader
  * @param {ReturnType<import('./semviews').createSemViews>} o.semviews  the views this machine keeps
+ * @param {(x: object) => Promise<string>} [o.exportApp]  Explore's Export to Fabric (extension.js)
+ * @param {(ws: string, modelId: string) => ({workspace: string, path: string}|null)} [o.modelFileOf]
+ *   where the tree wrote a semantic model's .bim (<lakehouse>/Files/semantic_model/)
  */
-function createAgent({ onelake, fabric, engine, bimPath, appDir, vendorDir, daxSqlPin, yamlPin, semviews }) {
+function createAgent({ onelake, fabric, engine, bimPath, appDir, vendorDir, daxSqlPin, yamlPin, semviews,
+                       exportApp = null, modelFileOf = () => null }) {
   let mods = null;
   async function modules() {
     if (mods) return mods;
@@ -526,6 +533,32 @@ function createAgent({ onelake, fabric, engine, bimPath, appDir, vendorDir, daxS
       result(await (await engine()).agentQuery(run), opts, out);
       note(`${((Date.now() - t0) / 1000).toFixed(1)}s`);
     },
+
+    // Export to Fabric from a shell: Explore's own export (extension.js), which asks in
+    // VS Code where the local copy goes and waits for the OK there before it publishes. The
+    // model is what Explore's button would export: a semantic model's .bim, where the tree
+    // wrote it in its lakehouse, or a model file in a lakehouse's Files/. With no Explore on
+    // screen, the app opens on Explore's default view.
+    async export([ws, a, b], opts, out) {
+      if (!exportApp) throw new Error('Export to Fabric is not available here');
+      if (!a) throw new Error('usage: export <ws> <model>, or export <ws> <item> <Files/path>');
+      let where;
+      if (b) {
+        const lh = await itemOf(ws, a, await look('items', [ws], opts));
+        if (!hasFilesArea(lh.item)) throw new Error(`${lh.item} has no Files area — only a lakehouse does`);
+        where = { workspace: lh.workspace, path: `${lh.item}/Files/${String(b).replace(/^\/?Files\//i, '')}` };
+      } else {
+        const m = await modelOf(ws, a, opts);
+        where = modelFileOf(ws, m.id);
+        if (!where) throw new Error(`${ws}/${m.name} is not in its lakehouse yet — open it in the OneLake Studio tree, ` +
+          'which writes it to <lakehouse>/Files/semantic_model/');
+      }
+      const file = where.path.split('/').pop();
+      const text = Buffer.from(await onelake.readBytes(where.workspace, where.path)).toString('utf8');
+      const { semantic } = await modules();
+      out(await exportApp({ file, name: semantic.modelName(file), text, state: null,
+                            workspace: where.workspace, path: where.path }));
+    },
   };
 
   function result(res, { limit = 100, csv = false } = {}, out) {
@@ -545,7 +578,7 @@ function createAgent({ onelake, fabric, engine, bimPath, appDir, vendorDir, daxS
     const note = s => errLines.push(String(s));
     const [name, ...rest] = Array.isArray(args) ? args.map(String) : [];
     const cmd = Object.hasOwn(commands, name) ? commands[name] : null;
-    if (!cmd) return { out: '', err: `unknown command: ${name || '(none)'} — ls, models, items, files, find, table, model, sql or dax`, code: 1 };
+    if (!cmd) return { out: '', err: `unknown command: ${name || '(none)'} — ls, models, items, files, find, table, model, sql, dax or export`, code: 1 };
     const seen = [];   // when each cached answer was stored (look())
     try {
       await cmd(rest, {
