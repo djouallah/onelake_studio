@@ -52,7 +52,8 @@ const EMPTY = () => ({ v: 2, rows: [], cols: [], values: [], filters: [], mark: 
 export function modelFields(model) {
   const dims = new Set((model.relationships ?? []).map(r => r.toTable));
   const tables = (model.tables ?? []).map(t => ({
-    name: t.name, dimension: dims.has(t.name),
+    // A model of one table (a lakehouse table's Pivot) has neither.
+    name: t.name, dimension: dims.has(t.name), kind: dims.size ? (dims.has(t.name) ? 'dimension' : 'fact') : null,
     columns: (t.columns ?? []).filter(c => !c.isHidden && c.type !== 'rowNumber').map(c => ({ id: `${t.name}.${c.name}`, kind: 'column', table: t.name,
       name: c.name, type: TYPES[c.dataType] ?? 'text', format: c.formatString, description: c.description })),
     measures: (t.measures ?? []).filter(m => !m.isHidden).map(m => ({ id: m.name, kind: 'measure', table: t.name,
@@ -385,7 +386,7 @@ export function createExplorer(root, ctx) {
       const ms = t.measures.filter(f => !term || `${t.name} ${f.name}`.toLowerCase().includes(term));
       if (!cols.length && !ms.length) return null;
       return el('details', { class: 'ex-table-group', open: term || t.dimension ? true : null },
-        el('summary', {}, t.name, el('span', { class: 'ex-kind' }, t.dimension ? 'dimension' : 'fact')),
+        el('summary', {}, t.name, t.kind && el('span', { class: 'ex-kind' }, t.kind)),
         cols.map(item), ms.map(item));
     }).filter(Boolean));   // a table with nothing matching the search draws nothing, not "null"
   }

@@ -29,7 +29,7 @@ const elapsed = t0 => `${((performance.now() - t0) / 1000).toFixed(1)} s`;
 
 // `ctx`:
 //   name             the model's name: what SQL calls it (FROM <name>)
-//   title            what the bar says of it (its file)
+//   title            what the bar says of it (its file); none: nothing (the host's bar says it)
 //   tmsl             the model, as model.js's tmslOf reads it
 //   compiler         dax-sql's compiler over the model, with the host's tableSource and
 //                    query.js's EXPLORE_CASTS
@@ -50,7 +50,6 @@ const elapsed = t0 => `${((performance.now() - t0) / 1000).toFixed(1)} s`;
 //                    knows (the Fabric app's queue and engine): this view logs none of them
 //   pages            (optional) the pages shown, of 'model', 'pivot', 'logs' (default: all);
 //                    the first is the one it opens on. One page: no page tabs.
-//   kind             (optional) what the bar calls it (default: 'semantic model')
 //   stateKey         (optional) where its shelves are kept (default: explore.<name>)
 // Returns { destroy }.
 export function mountExplore(root, ctx) {
@@ -100,7 +99,7 @@ export function mountExplore(root, ctx) {
     el('div', { class: 'subtab-bar' },
       el('div', { class: 'subtabs', role: 'tablist', 'aria-label': 'Semantic model pages', hidden: pages.length < 2 }, tabs),
       actions,
-      el('span', { class: 'sm-title' }, `${ctx.title ?? ''} · ${ctx.kind ?? 'semantic model'} `, el('code', {}, ctx.name))),
+      ctx.title == null ? null : el('span', { class: 'sm-title' }, `${ctx.title} · semantic model `, el('code', {}, ctx.name))),
     modelPage, pivotPage, sqlPage, logsPage);
   ta.addEventListener('keydown', e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); runSql(); } });
 

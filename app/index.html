@@ -87,7 +87,11 @@
     }
     .resultsWrap { flex: 1; overflow: auto; }
     /* A semantic model's view has its own Show plan; Save Query saves its SQL (app.js). */
-    section.modelOpen #planBtn { display: none; }
+    section.modelOpen #planBtn, section:not(.tableOpen) #pivotBtn { display: none; }
+    /* A table's Pivot takes the place of the editor and results, as a model's view does. */
+    #pivotView { flex: 1; overflow: auto; min-height: 0; }
+    section.pivotOpen #sqlEditor, section.pivotOpen .resultsWrap, section.pivotOpen #planBtn,
+    section.pivotOpen #runBtn, section.pivotOpen #csvBtn, section.pivotOpen #saveQueryBtn { display: none; }
     table.results { border-collapse: collapse; width: 100%; font-size: 13px; }
     table.results th, table.results td {
       border: 1px solid var(--border); padding: 0.3rem 0.55rem; text-align: left; white-space: nowrap;
@@ -161,6 +165,7 @@
     <div class="toolbar">
       <span class="title" id="activeTable">No table selected</span>
       <div class="spacer"></div>
+      <button id="pivotBtn" disabled title="The table's columns on shelves, as a pivot or a chart">Pivot</button>
       <button id="planBtn" disabled title="Where the SQL box's query spends its time (it runs once to measure)">Plan</button>
       <!-- Only on screen while something can be stopped. -->
       <button id="stopBtn" hidden title="Stop">Stop ■</button>
@@ -170,15 +175,16 @@
     </div>
     <!-- A .bim's semantic model view (explore/view.js), in place of the editor and results. -->
     <div id="modelView" hidden></div>
+    <!-- Pivot: the selected table as a one-table model, in Explore's pivot (explore/view.js), in
+         place of the editor and results while it is open (app.js: section.pivotOpen). -->
+    <div id="pivotView" hidden></div>
     <textarea id="sqlEditor" spellcheck="false" placeholder="Read-only SQL. Pick a table in the OneLake sidebar, or try: SELECT 42"></textarea>
     <div class="resultsWrap">
       <!-- While a TABLE is selected: Stats leads, because statistics cost nothing. -->
       <div class="docBar tabs" id="viewBar" hidden>
-        <button id="viewStats" class="tab active">Stats</button><button id="viewHistory" class="tab">History</button><button id="viewData" class="tab">Data</button><button id="viewPivot" class="tab" title="The table as a model of its own: its columns on shelves, as a pivot or a chart">Pivot</button>
+        <button id="viewStats" class="tab active">Stats</button><button id="viewHistory" class="tab">History</button><button id="viewData" class="tab">Data</button>
       </div>
       <article id="statsView" class="docView" hidden></article>
-      <!-- Pivot: the table as a one-table model, in Explore's pivot (explore/view.js). -->
-      <div id="pivotView" hidden></div>
       <div class="docBar tabs" id="docBar" hidden>
         <button id="docPretty" class="tab active">Pretty</button><button id="docRaw" class="tab">Raw</button>
       </div>
