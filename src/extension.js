@@ -628,7 +628,8 @@ async function activateInner(context) {
       for (const f of await fsp.readdir(join(modelsFolder(), ws)).catch(() => [])) {
         if (!/\.bim$/i.test(f)) continue;
         const name = f.replace(/\..*$/, '').replace(/[^A-Za-z0-9_]/g, '_').replace(/^(\d)/, '_$1') || 'model';
-        if (!found.some(x => x.name.toLowerCase() === name.toLowerCase())) found.push({ name, path: join(modelsFolder(), ws, f) });
+        // In its workspace's folder, so it is that workspace's: ws.model.
+        found.push({ name, schema: ws, path: join(modelsFolder(), ws, f) });
       }
     }
     await semviews.seed(found).catch(e => out && out.appendLine(`semantic views not seeded: ${e.message}`));
@@ -766,7 +767,7 @@ async function activateInner(context) {
   // and a second click says so again without reading the definition from Fabric again.
   const unsupportedModels = new Map();
   const unsupportedNote = (n, mode) =>
-    `${n.model} is ${mode}. OneLake Studio opens Direct Lake models on one lakehouse only.`;
+    `${n.model} is ${mode}. OneLake Studio opens Direct Lake models over OneLake only.`;
 
   // The command line (cli.mjs) rings here: its questions are answered by THIS extension —
   // its sign-in, its cache, its engine — so an agent in a terminal reads what the tree and
@@ -800,14 +801,17 @@ async function activateInner(context) {
   }));
 
   // A semantic model, opened from the tree: its definition (Fabric's getDefinition, TMSL)
-  // written as a .bim into the Files/ of the lakehouse its Direct Lake expression names —
+  // written as a .bim into the Files/ of the (first) lakehouse its Direct Lake expressions name —
   // <lakehouse>/Files/semantic_model/<model>.bim — and opened from there like any Files/
-  // model, so Explore can export it to Fabric. A model that is not Direct Lake on one
-  // lakehouse is refused, and nothing is written. The file, once there, is what later clicks
+  // model, so Explore can export it to Fabric. Its tables may come from several items, each
+  // read by its own SQL name. A model that is not Direct Lake over OneLake is refused, and
+  // nothing is written. The file, once there, is what later clicks
   // open; Download Again (`fresh`) reads Fabric again and overwrites it, after asking.
   const writer = createOneLakeWriter({ getToken: hostToken });
-  const openFileInPanel = (where, bytes) => openInPanel({ type: 'open-file',
-    workspace: where.workspace, item: where.item, path: where.path, bytes });
+  // `modelWorkspace`: the model's own workspace, which names it in SQL (ws.model) — the
+  // lakehouse holding its .bim can be in another.
+  const openFileInPanel = (where, bytes, modelWorkspace = null) => openInPanel({ type: 'open-file',
+    workspace: where.workspace, item: where.item, path: where.path, bytes, modelWorkspace });
 
   // One step after another under the caller's progress notification (`say`), so nothing
   // happens off screen: the definition, its lakehouse, the write.
@@ -819,15 +823,22 @@ async function activateInner(context) {
     catch (e) { throw new Error(`its definition is not TMSL: ${e.message}`); }
     const { semantic } = await agent.modules();
     const lakes = semantic.lakehousesOf(doc);
-    if (lakes.length !== 1) {
+    if (!lakes.length) {
       const mode = semantic.storageMode(doc);
       unsupportedModels.set(modelKey(n), mode);
       tree.modelChanged(n);
       throw Object.assign(new Error(unsupportedNote(n, mode)), { unsupported: true });
     }
     unsupportedModels.delete(modelKey(n));
+    // A Direct Lake model may read several items; its .bim goes into the first lakehouse among
+    // them (a warehouse or a mirrored database has no Files/).
     say('finding its lakehouse…');
-    const lh = await fabric.itemOf(lakes[0].workspace, lakes[0].item);
+    let lh = null;
+    for (const l of lakes) {
+      const it = await fabric.itemOf(l.workspace, l.item);
+      if (/\.Lakehouse$/i.test(it.item)) { lh = it; break; }
+    }
+    if (!lh) throw new Error(`${n.model} reads no lakehouse, so there is no Files/ to keep its .bim in`);
     const where = { ...lh, path: `${lh.item}/Files/semantic_model/${bimFileName(n.model)}` };
     const there = await writer.stat(where.workspace, where.path);
     const ours = known && known.workspace === where.workspace && known.path === where.path;
@@ -894,7 +905,7 @@ async function activateInner(context) {
           if (!target) return;
           say('opening it in OneLake Studio…');
           const opened = whenOpened(require('node:path').posix.basename(target.where.path));
-          await openFileInPanel(target.where, target.bytes);
+          await openFileInPanel(target.where, target.bytes, n.workspace);
           await opened;
         });
     } catch (e) {

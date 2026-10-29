@@ -278,7 +278,7 @@ class LakehouseTree {
             .filter(Boolean).join(' · ');
           item.command = { command: 'onelakeStudio.openSemanticModel', title: 'Open semantic model', arguments: [n] };
           item.tooltip = (n.description ? `${n.description}\n\n` : '') +
-            `${n.model} is ${refused}. OneLake Studio opens Direct Lake models on one lakehouse only.`;
+            `${n.model} is ${refused}. OneLake Studio opens Direct Lake models over OneLake only.`;
           break;
         }
         const there = this.cachedModel(n);

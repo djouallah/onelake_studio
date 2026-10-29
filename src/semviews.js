@@ -4,13 +4,15 @@
 // =============================================================================
 // dax-sql's createViews() (app/semantic.js) knows what a view is; this only remembers which
 // ones exist, so they survive a restart and the panel and the command line see the same
-// list. A view is a pointer — { name, path, created } — kept in one JSON file per Microsoft
+// list. A view is a pointer — { name, schema, path, created } — kept in one JSON file per Microsoft
 // account, in the extension's own storage; its .bim stays where it is and is read from
 // there. Nothing is ever written to Fabric or OneLake.
 //
 // A path is a local model file, an abfss:// URL of one in OneLake, or Files/… relative to a
 // lakehouse (stored as its abfss:// URL). A model file is a .bim (TMSL) or an Apache Ossie
-// model (.yaml or .yml); app/semantic.js reads either.
+// model (.yaml or .yml); app/semantic.js reads either. `schema` is the model's workspace, so SQL
+// names it ws.model and two workspaces' models of one name are two views; none for a view
+// named by its name alone.
 // =============================================================================
 
 const fsp = require('node:fs/promises');
@@ -24,6 +26,11 @@ const ABFSS = /^abfss:\/\/([^@/]+)@onelake\.dfs\.fabric\.microsoft\.com\/(.+)$/i
  * @param {string} o.dir                          where the per-account files live
  * @param {{ readBytes(ws: string, path: string): Promise<Uint8Array> }} o.onelake
  */
+// One view: its name in its schema, ignoring case.
+const sameView = (v, name, schema) =>
+  v.name.toLowerCase() === String(name).toLowerCase() &&
+  String(v.schema || '').toLowerCase() === String(schema || '').toLowerCase();
+
 function createSemViews({ dir, onelake }) {
   let account = 'signed-out';
   const fileOf = () => join(dir, `${account}.json`);
@@ -76,25 +83,26 @@ function createSemViews({ dir, onelake }) {
       }
       return out;
     },
-    // Remembered (replacing one of that name); the text is read first, so a path that does
-    // not read is never stored.
-    async put(name, path) {
+    // Remembered (replacing the one of that name in that schema); the text is read first, so a
+    // path that does not read is never stored.
+    async put(name, path, schema = null) {
       const text = await readBim(path);
-      const entries = (await list()).filter(v => v.name.toLowerCase() !== String(name).toLowerCase());
-      entries.push({ name: String(name), path, created: new Date().toISOString() });
+      const sch = schema ? String(schema) : null;
+      const entries = (await list()).filter(v => !sameView(v, name, sch));
+      entries.push({ name: String(name), schema: sch, path, created: new Date().toISOString() });
       await save(entries);
-      return { name: String(name), path, text };
+      return { name: String(name), schema: sch, path, text };
     },
-    async remove(name) {
+    async remove(name, schema = null) {
       const entries = await list();
-      const left = entries.filter(v => v.name.toLowerCase() !== String(name).toLowerCase());
+      const left = entries.filter(v => !sameView(v, name, schema));
       if (left.length !== entries.length) await save(left);
     },
     // The first time an account has none, the models already downloaded become views, as
     // they were before views were kept.
     async seed(found) {
       try { await fsp.access(fileOf()); return; } catch (_) {}
-      await save(found.map(f => ({ name: f.name, path: f.path, created: new Date().toISOString() })));
+      await save(found.map(f => ({ name: f.name, schema: f.schema || null, path: f.path, created: new Date().toISOString() })));
     },
   };
 }

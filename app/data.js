@@ -743,9 +743,10 @@ export function createEngine({
   // Semantic views, kept by the host (src/semviews.js): every one with its .bim text, and
   // CREATE / DROP carried out there. `lh` resolves a Files/… path.
   const semanticViews = () => callHost("semantic.views", [{}]);
-  const semanticCreate = (name, path, lh) =>
-    callHost("semantic.create", [{ name, path, workspace: lh && lh.workspace, item: lh && lh.item }]);
-  const semanticDrop = name => callHost("semantic.drop", [{ name }]);
+  // `schema` is the model's workspace: the view is ws.name.
+  const semanticCreate = (name, path, lh, schema = null) =>
+    callHost("semantic.create", [{ name, path, schema, workspace: lh && lh.workspace, item: lh && lh.item }]);
+  const semanticDrop = (name, schema = null) => callHost("semantic.drop", [{ name, schema }]);
   // Export to Fabric: the model's text and the Explore shelves to the host, which writes the
   // app's folder and publishes it (src/exportapp.js); answers what to tell the user.
   const exportExplore = x => callHost("fabric.exportExplore", [x]);

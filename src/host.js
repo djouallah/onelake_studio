@@ -59,14 +59,15 @@ function createHostMethods({ onelake, engine, onStatus = () => {}, saveFile = nu
                              state: x.state && typeof x.state === 'object' ? x.state : null });
     },
     // Semantic views (semviews.js): the ones this machine keeps, with their .bim text, and
-    // CREATE / DROP SEMANTIC VIEW carried out — dax-sql (in the page) has already checked
+    // CREATE / DROP SEMANTIC VIEW carried out — a view is its name in its schema (the model's
+    // workspace, so SQL names it ws.model). dax-sql (in the page) has already checked
     // the statement. `Files/…` is relative to the lakehouse the page has open.
     'semantic.views': () => views().texts(),
     'semantic.create': async x => {
       const lh = x.workspace && x.item ? lhOf(x) : null;
-      return views().put(String(x.name), views().resolve(String(x.path), lh));
+      return views().put(String(x.name), views().resolve(String(x.path), lh), x.schema ? String(x.schema) : null);
     },
-    'semantic.drop': async x => { await views().remove(String(x.name)); return true; },
+    'semantic.drop': async x => { await views().remove(String(x.name), x.schema ? String(x.schema) : null); return true; },
     // A table's metadata, and its SQL name (lakehouse.ws.item.schema.table) for the editor.
     'onelake.table': async x => {
       const lh = lhOf(x), t = tableOf(x);

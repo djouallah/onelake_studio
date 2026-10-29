@@ -42,11 +42,12 @@ Options: `--limit N` (rows printed, default 100), `--csv`, `--fresh` (ask OneLak
 3. Compute with the model's own measures, never by re-deriving them from the fact table:
 
    ```
-   sql 'SELECT dim_customer.Region, AGG("Total Sales") AS sales FROM sales_model GROUP BY ALL ORDER BY 1'
+   sql 'SELECT dim_customer.Region, AGG("Total Sales") AS sales FROM sales.sales_model GROUP BY ALL ORDER BY 1'
    ```
 
-   A model is a semantic view named after its file (`sales_model.bim` is `sales_model`); `model`
-   prints a ready-made example for it. Columns are `table.column`; quote names with spaces:
+   A model is a semantic view named `workspace.model` (`sales_model` in workspace `sales` is
+   `sales.sales_model`), so two workspaces' models of one name are two views; the bare name
+   works while only one model has it. `model` prints a ready-made example for it. Columns are `table.column`; quote names with spaces:
    `AGG("Avg Price")`. Filters go in WHERE as usual.
 
 ## Semantic views

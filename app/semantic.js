@@ -162,12 +162,24 @@ function bimOf(path, text, mods) {
   catch (e) { throw new Error(`${basename(path)} is not a TMSL model: ${e.message}`); }
 }
 
+// Where a table's SQL name says it lives: its first three parts (lakehouse.ws.item), as written.
+function itemOfIdent(ident) {
+  let dots = 0, q = false;
+  for (let i = 0; i < ident.length; i++) {
+    if (ident[i] === '"') q = !q;
+    else if (ident[i] === "." && !q && ++dots === 3) return ident.slice(0, i);
+  }
+  return ident;
+}
+
 /**
- * A semantic view of a model file's text (a .bim, or an Ossie .yaml), under `name`. `mode`:
- * 'create', 'replace' or 'if_not_exists' (dax-sql's). Returns what the model view draws:
- * { name, file, sample, directLake, bim, exploreCompiler }.
+ * A semantic view of a model file's text (a .bim, or an Ossie .yaml), under `name` in
+ * `schema`: the model's workspace, so SQL names it ws.model and two workspaces' models of one
+ * name are two views (dax-sql); none for a view named by its name alone. `mode`: 'create',
+ * 'replace' or 'if_not_exists' (dax-sql's). Returns what the model view draws:
+ * { name (its SQL name, ws.model), file, sample, directLake, bim, exploreCompiler }.
  */
-export async function defineView(name, path, text, mode = "replace", modules = null) {
+export async function defineView(name, path, text, mode = "replace", modules = null, schema = null) {
   const mods = await ready(modules);
   const { createCompiler, tmslToModel } = mods;
   const bim = bimOf(path, text, mods);
@@ -180,24 +192,36 @@ export async function defineView(name, path, text, mode = "replace", modules = n
     const s = t.source;
     return s.schema ? `${quoteIdent(s.schema)}.${quoteIdent(s.entity)}` : quoteIdent(s.entity);
   };
-  const where = [...new Set([...lake.values()].map(l => `${l.lh.workspace}/${l.lh.item}`))];
+  // The items its tables are read from, by their SQL names — a model may read several.
+  const where = [...new Set([...lake.values()].map(l => itemOfIdent(l.ident)))];
   const done = views.define(name, tmslToModel(bim), {
-    path, mode, tableSource, tablesFrom: where.length ? `OneLake ${where.join(", ")}` : "search path",
+    path, mode, schema: schema || "main", tableSource, tablesFrom: where.length ? where.join(", ") : "search path",
   });
-  if (done === "created") lakes.set(lc(name), lake);
+  const v = views.get(schema ? [schema, name] : [name]);
+  if (done === "created") lakes.set(lc(v.sqlName), lake);
   // Explore's (explore/query.js): its rows go straight to the page, cast as EXPLORE_CASTS says.
   const exploreCompiler = createCompiler(tmslToModel(bim), { tableSource, castOutput: EXPLORE_CASTS });
-  const v = views.get(name);
-  return { name: v.name, file: basename(path), sample: sampleQuery(v), directLake: lake.size, bim, exploreCompiler, done };
+  return { name: v.sqlName, view: v.name, schema, file: basename(path), sample: sampleQuery(v),
+           directLake: lake.size, bim, exploreCompiler, done };
 }
 
-// A model opened from a file, under the file's name: the view `nem` for nem.bim or nem.yaml.
-export const registerModel = (fileName, text, modules = null) =>
-  defineView(modelName(fileName), fileName, text, "replace", modules);
+// A model opened from a file, under the file's name in its workspace: ws.nem for nem.bim or
+// nem.yaml.
+export const registerModel = (fileName, text, modules = null, schema = null) =>
+  defineView(modelName(fileName), fileName, text, "replace", modules, schema);
+
+// A view by its name, in full (ws.model) or in part: { name, schema } as the host keeps it,
+// or null. An error when a part fits several.
+export function viewOf(name) {
+  const v = views && views.get(name);
+  return v ? { name: v.name, schema: lc(v.schema) === "main" ? null : v.schema, sqlName: v.sqlName } : null;
+}
 
 export function dropView(name) {
-  if (views) views.drop(name, { ifExists: true });
-  lakes.delete(lc(name));
+  const v = views && views.get(name);
+  if (!v) return;
+  views.drop(v.sqlName, { ifExists: true });
+  lakes.delete(lc(v.sqlName));
 }
 
 export const hasView = name => !!(views && views.get(name));
@@ -242,7 +266,8 @@ export function compileDax(name, dax) {
 // A view's Direct Lake tables: the model's table name, the engine's view of it — which SQL
 // can name directly to read the raw table — and where it lives in OneLake (by GUID).
 export function lakeTablesOf(name) {
-  const lake = lakes.get(lc(name));
+  const v = views && views.get(name);
+  const lake = v && lakes.get(lc(v.sqlName));
   if (!lake) return [];
   return [...lake].map(([table, l]) => ({ table, ident: l.ident, schema: l.t.schema, entity: l.t.table, lh: l.lh }));
 }
@@ -280,12 +305,12 @@ export function starterChart(model) {
 // or the model's field list when it has no measure.
 function sampleQuery(v) {
   const name = id => (/^[A-Za-z_][A-Za-z0-9_]*$/.test(id) ? id : quoteIdent(id));
-  const head = `-- ${v.name} is a semantic view: AGG(measure) is a measure, ` +
-               `SHOW SEMANTIC METRICS IN ${v.name} lists them all.\n`;
+  const head = `-- ${v.sqlName} is a semantic view: AGG(measure) is a measure, ` +
+               `SHOW SEMANTIC METRICS IN ${v.sqlName} lists them all.\n`;
   const chart = starterChart(v.compiler.model);
-  if (!chart) return `${head}SHOW SEMANTIC DIMENSIONS IN ${v.name}`;
+  if (!chart) return `${head}SHOW SEMANTIC DIMENSIONS IN ${v.sqlName}`;
   const agg = `AGG(${name(chart.measure)}) AS ${quoteIdent(chart.measure)}`;
   return chart.column
-    ? `${head}SELECT ${name(chart.column.table)}.${name(chart.column.name)}, ${agg}\nFROM ${v.name}\nGROUP BY ALL\nORDER BY 1`
-    : `${head}SELECT ${agg}\nFROM ${v.name}`;
+    ? `${head}SELECT ${name(chart.column.table)}.${name(chart.column.name)}, ${agg}\nFROM ${v.sqlName}\nGROUP BY ALL\nORDER BY 1`
+    : `${head}SELECT ${agg}\nFROM ${v.sqlName}`;
 }

@@ -52,3 +52,19 @@ test("a view is a pointer, kept per account, and its .bim is read where it is", 
     assert.deepEqual((await v.list()).map(x => x.name), ["nem"]);
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
+
+test("two workspaces' models of one name are two views, each removed on its own", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "semviews-"));
+  try {
+    const bim = join(dir, "aemo.bim");
+    await writeFile(bim, '{"model":{}}');
+    const v = createSemViews({ dir: join(dir, "store"), onelake: { readBytes: async () => Buffer.from("{}") } });
+    v.useAccount("a");
+    await v.put("aemo", bim, "prod");
+    await v.put("aemo", bim, "Test WS");
+    await v.put("AEMO", bim, "PROD");
+    assert.deepEqual((await v.list()).map(x => x.schema).sort(), ["PROD", "Test WS"], "one per workspace, whatever the case");
+    await v.remove("aemo", "test ws");
+    assert.deepEqual((await v.list()).map(x => `${x.schema}.${x.name}`), ["PROD.AEMO"]);
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});

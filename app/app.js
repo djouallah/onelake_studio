@@ -185,7 +185,10 @@ async function openTable(m) {
 // directory. Whether a reader exists is loadFile's to decide, and it says so.
 async function openFile(m) {
   await goToLakehouse(m.workspace, m.item);
-  const entry = { name: basename(m.path), path: m.path, isDir: false, bytes: m.bytes || 0 };
+  // A semantic model the tree wrote here is named in its own workspace (ws.model), which can
+  // be another than the lakehouse's.
+  const entry = { name: basename(m.path), path: m.path, isDir: false, bytes: m.bytes || 0,
+                  modelWorkspace: m.modelWorkspace || null };
   if (IMAGE_EXTS.has(fileExt(entry.name))) await selectImage(entry);
   else await selectFile(entry);
 }
@@ -297,10 +300,13 @@ async function openModelView(file, text = null, { fromOneLake = text == null } =
     // engine's boot: only its queries need DuckDB, and runModelSql waits for it.
     if (fromOneLake) await engineReady;
     const bim = text != null ? text : new TextDecoder().decode(await engine.readFileBytes(lakehouse, file));
-    const m = await semantic.registerModel(file.name, bim);
+    // Named in its workspace, ws.model: the workspace of the semantic model the tree opened,
+    // else the one the file is in.
+    const schema = file.modelWorkspace || (fromOneLake && lakehouse ? lakehouse.workspace : null);
+    const m = await semantic.registerModel(file.name, bim, null, schema);
     // Kept by the host as a semantic view too, so it is there after a restart and the
     // command line can name it. Best effort: the view on screen does not depend on it.
-    engine.semanticCreate(m.name, fromOneLake ? abfssUrl(lakehouse.workspace, file.path) : file.path)
+    engine.semanticCreate(m.view, fromOneLake ? abfssUrl(lakehouse.workspace, file.path) : file.path, null, m.schema)
       .catch(e => console.warn(`[views] ${m.name} not kept: ${e.message}`));
     if (my !== selSeq) return;
     $('modelView').closest('section').classList.add('modelOpen');
@@ -322,7 +328,7 @@ async function openModelView(file, text = null, { fromOneLake = text == null } =
       // place, at run time, and the tables of the one lakehouse the model names: a model that
       // is not a OneLake file, or names no lakehouse or several, has no button.
       exportToFabric: fromOneLake && semantic.lakehousesOf(m.bim).length === 1
-        ? state => engine.exportExplore({ file: file.name, name: m.name, text: bim, state,
+        ? state => engine.exportExplore({ file: file.name, name: m.view, text: bim, state,
                                           workspace: lakehouse.workspace, path: file.path })
         : undefined,
     });
@@ -348,7 +354,7 @@ async function loadViews() {
   for (const v of list) {
     try {
       if (v.error) throw new Error(v.error);
-      await semantic.defineView(v.name, v.path, v.text, 'replace');
+      await semantic.defineView(v.name, v.path, v.text, 'replace', null, v.schema);
     } catch (e) { console.warn(`[views] ${v.name}: ${e.message}`); }
   }
 }
@@ -357,15 +363,16 @@ async function loadViews() {
 // and the page defines (or forgets) the view. Returns what the status bar says.
 async function semanticDdl({ create, drop }) {
   if (drop) {
-    await engine.semanticDrop(drop.name);
-    const had = semantic.hasView(drop.name);
+    const had = semantic.viewOf(drop.name);
+    if (had) await engine.semanticDrop(had.name, had.schema);
     semantic.dropView(drop.name);
     return had ? `Semantic view ${drop.name} dropped.` : `No semantic view ${drop.name}.`;
   }
-  if (create.mode === 'if_not_exists' && semantic.hasView(create.name))
+  const full = create.schema ? [create.schema, create.name] : create.name;
+  if (create.mode === 'if_not_exists' && semantic.hasView(full))
     return `Semantic view ${create.name} already exists.`;
-  const v = await engine.semanticCreate(create.name, create.path, lakehouse);
-  const m = await semantic.defineView(v.name, v.path, v.text, create.mode === 'create' ? 'create' : 'replace');
+  const v = await engine.semanticCreate(create.name, create.path, lakehouse, create.schema);
+  const m = await semantic.defineView(v.name, v.path, v.text, create.mode === 'create' ? 'create' : 'replace', null, v.schema);
   return `Semantic view ${m.name} created from ${v.path}` +
          (m.directLake ? ` — ${m.directLake} Direct Lake table(s), read from OneLake as a query needs them` : '') + '.';
 }

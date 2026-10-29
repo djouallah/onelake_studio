@@ -179,14 +179,15 @@ function createAgent({ onelake, fabric, engine, bimPath, appDir, vendorDir, daxS
   async function syncViews(note) {
     const { semantic, compiler } = await modules();
     const kept = await semviews.texts();
+    const names = new Set();   // each view's SQL name (ws.model), lower-cased
     for (const v of kept) {
       try {
         if (v.error) throw new Error(v.error);
-        await semantic.defineView(v.name, v.path, v.text, 'replace', compiler);
-        defined.add(v.name.toLowerCase());
-      } catch (e) { note(`semantic view ${v.name} skipped: ${e.message}`); }
+        const m = await semantic.defineView(v.name, v.path, v.text, 'replace', compiler, v.schema);
+        defined.add(m.name.toLowerCase());
+        names.add(m.name.toLowerCase());
+      } catch (e) { note(`semantic view ${v.schema ? `${v.schema}.` : ''}${v.name} skipped: ${e.message}`); }
     }
-    const names = new Set(kept.map(v => v.name.toLowerCase()));
     for (const n of [...defined]) if (!names.has(n)) { semantic.dropView(n); defined.delete(n); }
   }
 
@@ -441,9 +442,10 @@ function createAgent({ onelake, fabric, engine, bimPath, appDir, vendorDir, daxS
       await syncViews(note);
       const text = await fsp.readFile(path, 'utf8');
       const bim = JSON.parse(text.replace(/^﻿/, ''));
-      const m = await semantic.registerModel(path.split(/[\\/]/).pop(), text, compiler);
+      // Named in its workspace (ws.model), so another workspace's model of that name is another view.
+      const m = await semantic.registerModel(path.split(/[\\/]/).pop(), text, compiler, ws);
       // Kept as a semantic view, as the panel keeps a model it opens.
-      await semviews.put(m.name, path);
+      await semviews.put(m.view, path, ws);
       defined.add(m.name.toLowerCase());
       out(`# ${m.name} — semantic view of ${ws}/${name}, from ${path}\n`);
       out(`Query it as \`FROM ${m.name}\`; a measure is \`AGG("name")\`. Direct Lake tables: ${m.directLake}.\n`);
@@ -483,21 +485,22 @@ function createAgent({ onelake, fabric, engine, bimPath, appDir, vendorDir, daxS
       const st = await semantic.statement(text, compiler);
       // CREATE / DROP SEMANTIC VIEW: dax-sql has checked it; the extension keeps the view.
       if (st && st.drop) {
-        const had = semantic.hasView(st.drop.name);
-        await semviews.remove(st.drop.name);
+        const had = semantic.viewOf(st.drop.name);
+        if (had) await semviews.remove(had.name, had.schema);
         semantic.dropView(st.drop.name);
         defined.delete(st.drop.name.toLowerCase());
         out(had ? `Semantic view ${st.drop.name} dropped.` : `No semantic view ${st.drop.name}.`);
         return;
       }
       if (st && st.create) {
-        if (st.create.mode === 'if_not_exists' && semantic.hasView(st.create.name)) {
+        const full = st.create.schema ? [st.create.schema, st.create.name] : st.create.name;
+        if (st.create.mode === 'if_not_exists' && semantic.hasView(full)) {
           out(`Semantic view ${st.create.name} already exists.`);
           return;
         }
-        const v = await semviews.put(st.create.name, semviews.resolve(st.create.path, lhIn));
-        const m = await semantic.defineView(v.name, v.path, v.text, 'replace', compiler);
-        defined.add(v.name.toLowerCase());
+        const v = await semviews.put(st.create.name, semviews.resolve(st.create.path, lhIn), st.create.schema);
+        const m = await semantic.defineView(v.name, v.path, v.text, 'replace', compiler, v.schema);
+        defined.add(m.name.toLowerCase());
         out(`Semantic view ${m.name} created from ${v.path}. \`SHOW SEMANTIC METRICS IN ${m.name}\` lists its measures.`);
         return;
       }

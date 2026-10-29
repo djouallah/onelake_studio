@@ -14,7 +14,7 @@ const PINS = {
   // Explore's charts — a classic script (dist/echarts.min.js), not a +esm closure.
   echarts: 'echarts@5.5.1',
   // The DAX-to-SQL compiler behind semantic models (semantic.js), from npm.
-  daxSql: 'dax-sql@0.1.1',
+  daxSql: 'dax-sql@0.1.2',
 };
 
 // The web app's (Export to Fabric, fabric_app/site): everything its page runs, so it loads
