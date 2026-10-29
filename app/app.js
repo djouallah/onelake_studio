@@ -383,10 +383,49 @@ async function runModelSql(sql) {
   setBusy(true, { stoppable: true });
   try {
     await engineReady;
-    return await engine.runSql(sql);
+    const res = await engine.runSql(sql);
+    // Explore's Show plan: its profile, in the shape its view reads (profileJson, below).
+    if (PROFILE_SQL.test(sql) && res.rows[0]?.explain_value != null) {
+      res.rows[0].explain_value = profileJson(res.rows[0].explain_value);
+    }
+    return res;
   } finally {
     setBusy(false);
   }
+}
+
+// A profile (EXPLAIN (ANALYZE, FORMAT json)) as this engine writes it, in the shape Explore's
+// profile view reads (explore/profile.js parseProfile, shared with the exported app, which
+// runs DuckDB-WASM and keeps the older flat keys):
+//   - DuckDB 2.0 nests its totals: planner.total_time, optimizer.total_time,
+//     physical_planner.total_time, query.total_time and total_rows_scanned,
+//     system.peak_buffer_memory; and an operator's rows scanned are `rows_scanned`;
+//   - the native engine runs every statement prepared, so the plan has an EXECUTE above it,
+//     which would otherwise be taken for the query's top operator (its rows: 0).
+const PROFILE_SQL = /^\s*EXPLAIN\s*\(\s*ANALY[SZ]E\s*,\s*FORMAT\s+json\s*\)/i;
+function profileJson(json) {
+  let p;
+  try { p = typeof json === 'string' ? JSON.parse(json) : json; } catch (_) { return json; }
+  const total = v => (v && typeof v === 'object' ? v.total_time : v);
+  const out = { ...p };
+  if (p.planner != null) out.planner = total(p.planner);
+  if (p.optimizer != null && p.all_optimizers == null) out.all_optimizers = total(p.optimizer);
+  if (p.physical_planner != null) out.physical_planner = total(p.physical_planner);
+  if (p.query && typeof p.query === 'object') {
+    if (p.latency == null) out.latency = p.query.total_time;
+    if (p.cumulative_rows_scanned == null && p.query.total_rows_scanned) out.cumulative_rows_scanned = p.query.total_rows_scanned;
+  }
+  if (p.system && p.system_peak_buffer_memory == null) out.system_peak_buffer_memory = p.system.peak_buffer_memory;
+  const fix = n => {
+    const kids = (n.children ?? []).flatMap(k => (/^EXECUTE$/i.test(k.type ?? k.operator_type ?? k.operator_name ?? '')
+      ? (k.children ?? []).map(fix) : [fix(k)]));
+    const m = { ...n, children: kids };
+    if (m.operator_rows_scanned == null && m.rows_scanned != null) m.operator_rows_scanned = m.rows_scanned;
+    return m;
+  };
+  if (Array.isArray(p.operator)) out.operator = p.operator.map(fix);
+  if (Array.isArray(p.children)) out.children = p.children.map(fix);
+  return JSON.stringify(out);
 }
 
 // The image on screen holds one object URL. clearResults() is the only place the <img>
@@ -589,7 +628,7 @@ async function showPlan() {
     clearResults();
     const view = $('planView');
     view.replaceChildren(createPlanView({
-      profile: async () => (await engine.runSql(profileSql(sql, { set: false }))).rows[0]?.explain_value,
+      profile: async () => profileJson((await engine.runSql(profileSql(sql, { set: false }))).rows[0]?.explain_value),
       tree: async () => {
         const res = await engine.runSql(`EXPLAIN ${sql}`);
         const pre = document.createElement('pre');
