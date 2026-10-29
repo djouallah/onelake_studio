@@ -82,6 +82,32 @@ export function lakehousesOf(bim) {
   return [...out.values()];
 }
 
+// What kind of model it is, as a phrase for saying why it cannot be opened: "an Import
+// model", "a DirectQuery model", "a composite model", or Direct Lake over the SQL endpoint
+// (a directLake partition but no OneLake URL to read it from). A partition without a mode
+// (or "default") takes the model's defaultMode, which is Import when absent.
+export function storageMode(bim) {
+  const fallback = lc(bim?.model?.defaultMode || "import");
+  const modes = new Set();
+  for (const t of bim?.model?.tables ?? []) {
+    for (const p of t.partitions ?? []) {
+      // Calculated tables and the like have no storage of their own to judge by.
+      if (p.source?.type === "calculated" || p.source?.type === "calculationGroup") continue;
+      const m = lc(p.mode || "default");
+      modes.add(m === "default" ? fallback : m);
+    }
+  }
+  if (!modes.size) modes.add(fallback);
+  const lakes = lakehousesOf(bim).length;
+  if (modes.size === 1 && modes.has("directlake")) {
+    return lakes ? `Direct Lake on ${lakes} lakehouses` : "Direct Lake over a SQL endpoint";
+  }
+  if (modes.size > 1) return "a composite model";
+  if (modes.has("directquery")) return "a DirectQuery model";
+  if (modes.has("dual")) return "a Dual-mode model";
+  return "an Import model";
+}
+
 export function directLakeTables(bim) {
   const found = lakeExpressions(bim);
   const tables = new Map();

@@ -59,16 +59,18 @@ class LakehouseTree {
    * @param {() => boolean} deps.isSignedIn
    * @param {{ get: () => string[] }} [deps.favorites]   pinned workspace names, persisted
    * @param {(n: object) => string|null} [deps.cachedModel]  where a model's .bim was written in OneLake, if it was
+   * @param {(n: object) => string|null} [deps.unsupportedModel]  what kind of model a click found it cannot open, if it did
    * @param {() => boolean} [deps.groupByType]  a workspace's items under one heading per type
    * @param {(name: string) => any} [deps.iconPath]  a bundled icon (media/<name>.svg), or null
    */
   constructor({ onelake, fabric = null, hasFabric = async () => false, isSignedIn, log = () => {},
-                favorites = { get: () => [] }, cachedModel = () => null, groupByType = () => false,
-                iconPath = () => null }) {
+                favorites = { get: () => [] }, cachedModel = () => null, unsupportedModel = () => null,
+                groupByType = () => false, iconPath = () => null }) {
     this.iconPath = iconPath;
     this.onelake = onelake;
     this.groupByType = groupByType;
     this.cachedModel = cachedModel;
+    this.unsupportedModel = unsupportedModel;
     this.favorites = favorites;
     this.fabric = fabric;
     this.hasFabric = hasFabric;
@@ -245,6 +247,18 @@ class LakehouseTree {
       // reads; after that it opens from that file, and the icon says which: a cloud until
       // then, a check once it is there.
       case 'semanticModel': {
+        // A click already found it is not Direct Lake on one lakehouse: say what it is, and a
+        // click says why again.
+        const refused = this.unsupportedModel(n);
+        if (refused) {
+          item.iconPath = new vscode.ThemeIcon('circle-slash', new vscode.ThemeColor('disabledForeground'));
+          item.description = [n.showWorkspace ? n.workspace : '', `${refused.replace(/^an? /, '')} · not supported`]
+            .filter(Boolean).join(' · ');
+          item.command = { command: 'onelakeStudio.openSemanticModel', title: 'Open semantic model', arguments: [n] };
+          item.tooltip = (n.description ? `${n.description}\n\n` : '') +
+            `${n.model} is ${refused}. OneLake Studio opens Direct Lake models on one lakehouse only.`;
+          break;
+        }
         const there = this.cachedModel(n);
         item.iconPath = there
           ? new vscode.ThemeIcon('pass-filled', new vscode.ThemeColor('testing.iconPassed'))

@@ -667,6 +667,7 @@ async function activateInner(context) {
     hasFabric: async () => !!await fabricToken().catch(() => null),
     isSignedIn: () => signedIn,
     cachedModel: n => cachedModel(n),
+    unsupportedModel: n => unsupportedModels.get(modelKey(n)) || null,
     iconPath: name => vscode.Uri.joinPath(context.extensionUri, 'media', `${name}.svg`),
     // A listing failure becomes an error NODE, but the stack behind it goes here.
     log: m => out && out.appendLine(m),
@@ -702,6 +703,13 @@ async function activateInner(context) {
   const rememberModelFile = (n, where) => context.globalState.update(modelFilesKey(),
     { ...context.globalState.get(modelFilesKey(), {}), [modelKey(n)]: where });
   const cachedModel = n => modelFile(n);
+
+  // Models a click found it cannot open (Import, DirectQuery, Direct Lake over a SQL endpoint
+  // or several lakehouses), for this session: key -> what kind it is. The tree marks them,
+  // and a second click says so again without reading the definition from Fabric again.
+  const unsupportedModels = new Map();
+  const unsupportedNote = (n, mode) =>
+    `${n.model} is ${mode}. OneLake Studio opens Direct Lake models on one lakehouse only.`;
 
   // The command line (cli.mjs) rings here: its questions are answered by THIS extension —
   // its sign-in, its cache, its engine — so an agent in a terminal reads what the tree and
@@ -751,10 +759,15 @@ async function activateInner(context) {
     let doc;
     try { doc = JSON.parse(Buffer.from(bim).toString('utf8').replace(/^\uFEFF/, '')); }
     catch (e) { throw new Error(`its definition is not TMSL: ${e.message}`); }
-    const lakes = (await agent.modules()).semantic.lakehousesOf(doc);
+    const { semantic } = await agent.modules();
+    const lakes = semantic.lakehousesOf(doc);
     if (lakes.length !== 1) {
-      throw new Error(`${n.model} is not Direct Lake on one lakehouse (it names ${lakes.length}): OneLake Studio opens those only`);
+      const mode = semantic.storageMode(doc);
+      unsupportedModels.set(modelKey(n), mode);
+      tree.modelChanged(n);
+      throw Object.assign(new Error(unsupportedNote(n, mode)), { unsupported: true });
     }
+    unsupportedModels.delete(modelKey(n));
     say('finding its lakehouse…');
     const lh = await fabric.itemOf(lakes[0].workspace, lakes[0].item);
     const where = { ...lh, path: `${lh.item}/Files/semantic_model/${bimFileName(n.model)}` };
@@ -789,6 +802,11 @@ async function activateInner(context) {
   const exporting = new Map();   // `${workspace}|${modelId}` -> Promise
   async function openModel(n, { fresh = false } = {}) {
     if (!n || n.kind !== 'semanticModel') return;
+    const refused = !fresh && unsupportedModels.get(modelKey(n));
+    if (refused) {
+      vscode.window.showInformationMessage(unsupportedNote(n, refused));
+      return;
+    }
     try {
       const known = modelFile(n);
       if (known && fresh) {
@@ -822,6 +840,12 @@ async function activateInner(context) {
           await opened;
         });
     } catch (e) {
+      // Not Direct Lake on one lakehouse is not a failure: say what the model is, quietly.
+      if (e && e.unsupported) {
+        if (out) out.appendLine(`not opening ${n.workspace}/${n.model}: ${e.message}`);
+        vscode.window.showInformationMessage(e.message);
+        return;
+      }
       if (out) out.appendLine(`opening ${n.model} failed — ${(e && e.stack) || e}`);
       showError(`Could not open ${n.model}: ${(e && e.message) || e}`);
     }
