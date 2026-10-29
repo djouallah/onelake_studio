@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.6
 
 - **Export to Fabric from the command line.** Run `export <ws> <model>`, or
   `export <ws> <item> <Files/path>` for a model file. It uses the same export as Explore's

@@ -2,7 +2,7 @@
   "name": "onelake-studio",
   "displayName": "OneLake Studio",
   "description": "Browse and explore your Microsoft Fabric data in VS Code: OneLake tables and files, semantic models in a pivot, and one-click Fabric apps.",
-  "version": "0.2.5",
+  "version": "0.2.6",
   "publisher": "djouallah",
   "license": "MIT",
   "repository": {
