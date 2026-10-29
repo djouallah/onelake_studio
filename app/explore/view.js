@@ -83,7 +83,7 @@ export function mountExplore(root, ctx) {
   const editBtn = ctx.editSql ? btn('Edit SQL', () => {
     const sql = explorer?.query({ cap: 0, plain: ctx.plainSql ?? null })?.sql;
     if (sql) ctx.editSql(sql); else setStatus('Put a field on the shelves first', 'error');
-  }) : null;
+  }, true) : null;
   if (editBtn) editBtn.title = 'This query in the SQL box, to take further by hand (the pivot is kept)';
   const closeBtn = ctx.close ? btn('Close', ctx.close) : null;
   const actions = el('div', { class: 'explore-actions', hidden: true },

@@ -229,6 +229,13 @@ function tmslType(type) {
 // date column shows as a date (EXPLORE_CASTS), but a table's event timestamps are kept apart,
 // not shown as the same date row after row.
 const asTs = s => `CAST(${s} AS TIMESTAMP)`;
+
+// A date or timestamp column's grains in a table's Pivot: [suffix, TMSL type, expression].
+const DATE_GRAINS = [
+  ["year", "int64", c => `year(${c})`],
+  ["month", "dateTime", c => `CAST(date_trunc('month', ${c}) AS DATE)`],
+  ["day", "dateTime", c => `CAST(${c} AS DATE)`],   // a timestamp's only
+];
 const TABLE_CASTS = {
   ...EXPLORE_CASTS,
   datetime: s => `CASE WHEN CAST(${asTs(s)} AS TIME) = TIME '00:00:00' THEN CAST(CAST(${asTs(s)} AS DATE) AS VARCHAR) ` +
@@ -244,20 +251,44 @@ const TABLE_CASTS = {
  */
 export async function tableModel(table, sqlName, columns, modules = null) {
   const { createCompiler, tmslToModel } = await ready(modules);
-  const cols = (columns || []).map(c => ({ name: c.name, dataType: tmslType(c.type), sourceColumn: c.name }))
-    .filter(c => c.dataType);
-  const names = new Set(cols.map(c => lc(c.name)));
+  const listed = (columns || []).filter(c => tmslType(c.type));
+  const names = new Set(listed.map(c => lc(c.name)));
+  // A date's grains as columns of their own, next to it: <column>_year, _month, and _day for a
+  // timestamp. The pivot groups by them as by any column; the model reads them from the table
+  // with them added (tableSource), and the SQL a person gets writes each as its expression.
+  const grains = new Map();   // grain column -> (column as SQL writes it) => its expression
+  const cols = [];
+  for (const c of listed) {
+    const dataType = tmslType(c.type);
+    cols.push({ name: c.name, dataType, sourceColumn: c.name });
+    if (dataType !== "dateTime") continue;
+    const ts = /^timestamp/i.test(String(c.type).trim());
+    for (const [g, type, fn] of DATE_GRAINS) {
+      const name = `${c.name}_${g}`;
+      if ((g === "day" && !ts) || names.has(lc(name))) continue;
+      names.add(lc(name));
+      grains.set(name, q => fn(q(c.name)));
+      cols.push({ name, dataType: type, sourceColumn: name });
+    }
+  }
   const rows = ["Rows", "Row count", "Rows (count)"].find(n => !names.has(lc(n)));
   const bim = { model: { tables: [{
     name: table, columns: cols,
     measures: [{ name: rows, expression: `COUNTROWS('${table.replace(/'/g, "''")}')`, formatString: "#,0" }],
     partitions: [{ source: { type: "entity", entityName: table } }],
   }], relationships: [] } };
-  const compiler = createCompiler(tmslToModel(bim), { tableSource: () => sqlName, castOutput: TABLE_CASTS });
+  const from = grains.size
+    ? `(SELECT *, ${[...grains].map(([n, fn]) => `${fn(quoteIdent)} AS ${quoteIdent(n)}`).join(", ")} FROM ${sqlName})`
+    : sqlName;
+  const compiler = createCompiler(tmslToModel(bim), { tableSource: () => from, castOutput: TABLE_CASTS });
   // The shelves' query as SQL over the table itself, as a person writes it (explore.js
   // modelSql): with one table and no relationships the two mean the same, the measure being
-  // COUNT(*).
-  const plainSql = { from: sqlName, measure: n => (n === rows ? "COUNT(*)" : null) };
+  // COUNT(*) and a grain its expression.
+  const plainSql = {
+    from: sqlName,
+    measure: n => (n === rows ? "COUNT(*)" : null),
+    column: (n, q) => grains.get(n)?.(q) ?? null,
+  };
   return { name: modelName(table), tmsl: bim.model, compiler, plainSql };
 }
 

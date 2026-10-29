@@ -123,9 +123,10 @@ export function buildQuery(s, { cap = CAP, today = localToday() } = {}) {
 // the same plan from it as from DAX. `column(id)`: the model's column of an id, { table, name },
 // or null (a measure); `from`: the model's name in SQL.
 // Ported from analytics-as-code's Explore (modelSql), with quoted names and summaries.
-// `plain`: { from, measure(name) } for SQL over one table as a person writes it (a lakehouse
-// table's Edit as SQL): its columns by name alone, quoted only where DuckDB needs it, AS only
-// for a new name, DISTINCT for columns alone, each measure as `measure` says, LIMIT for the cap.
+// `plain`: { from, measure(name), column(name, quote)? } for SQL over one table as a person
+// writes it (a lakehouse table's Edit SQL): its columns by name alone, quoted only where DuckDB
+// needs it (or as `column` writes one: a date's grain), AS only for a new name, DISTINCT for
+// columns alone, each measure as `measure` says, LIMIT for the cap.
 const qid = s => `"${String(s).replace(/"/g, '""')}"`;
 const RESERVED = new Set(('all analyse analyze and any array as asc asymmetric both case cast check collate column constraint ' +
   'create default deferrable desc describe distinct do else end except false fetch for foreign from group having in ' +
@@ -140,7 +141,7 @@ export function modelSql(q, column, from = 'model', plain = null) {
   const ref = id => {
     const c = column(id);
     if (!c) throw new Error(`${id} is not a column of the model`);
-    return plain ? bare(c.name) : `${qid(c.table)}.${qid(c.name)}`;
+    return plain ? plain.column?.(c.name, bare) ?? bare(c.name) : `${qid(c.table)}.${qid(c.name)}`;
   };
   const name = plain ? bare : qid;
   const isColumn = x => typeof x === 'string' && !!column(x);
@@ -171,7 +172,7 @@ export function modelSql(q, column, from = 'model', plain = null) {
     }
   };
   const rollup = q.totals ?? {}, rolled = Object.values(rollup).flat();
-  const as = (n, x) => plain && isColumn(x) && column(x).name === n ? '' : ` AS ${name(n)}`;
+  const as = (n, x) => plain && isColumn(x) && ref(x) === name(n) ? '' : ` AS ${name(n)}`;
   const items = [...Object.entries(q.select).map(([n, x]) => `${expr(x)}${as(n, x)}`),
     // The pivot's marks of its total rows; SQL by hand reads a total by its NULL.
     ...(plain ? [] : Object.entries(rollup).map(([n, cols]) => `GROUPING(${ref(cols[0])}) AS ${qid(n)}`))];
