@@ -104,7 +104,7 @@ function wireUi() {
     setStatus('Stopping…');
   };
   $('planBtn').onclick = () => showPlan();
-  $('pivotBtn').onclick = () => ($('pivotView').hidden ? openPivot() : closePivot());
+  $('pivotBtn').onclick = openPivot;
   $('csvBtn').onclick = saveActive;
   $('saveQueryBtn').onclick = saveQuery;
   $('docPretty').onclick = () => {
@@ -928,15 +928,13 @@ function showData() {
 function setPivotOpen(open) {
   $('pivotView').hidden = !open;
   $('pivotView').closest('section').classList.toggle('pivotOpen', open);
-  $('pivotBtn').textContent = open ? 'Close Pivot' : 'Pivot';
-  $('pivotBtn').classList.toggle('primary', open);
 }
 const closePivot = () => setPivotOpen(false);
-// Edit as SQL: the pivot's query in the SQL box, as SQL over the table, to be taken further by
+// Edit SQL: the pivot's query in the SQL box, as SQL over the table, to be taken further by
 // hand, as Looker's Open in SQL Runner does. Asked for, never on close; the pivot is kept.
-function editPivotSql(sql, plain) {
+function editPivotSql(sql) {
   if (!tablePivot) return;
-  $('sqlEditor').value = plain ? sql : tablePivot.tableSql(sql);
+  $('sqlEditor').value = sql;
   activeQuery = null;
   closePivot();
   $('sqlEditor').focus();
@@ -953,7 +951,6 @@ async function openPivot() {
   try {
     const m = await semantic.tableModel(t.table, sqlName, activeInfo.columns);
     if (!tablePivot || tablePivot.table !== t) return;
-    tablePivot.tableSql = m.tableSql;
     tablePivot.view = mountExplore($('pivotView'), {
       name: m.name,
       tmsl: tmslOf(m.tmsl), compiler: m.compiler,
@@ -968,6 +965,7 @@ async function openPivot() {
       htmlPlan: false,
       editSql: editPivotSql,
       plainSql: m.plainSql,
+      close: closePivot,
     });
   } catch (e) {
     if (!tablePivot || tablePivot.table !== t) return;

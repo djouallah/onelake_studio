@@ -46,10 +46,12 @@ const elapsed = t0 => `${((performance.now() - t0) / 1000).toFixed(1)} s`;
 //                    published as a Fabric app of this Explore (src/exportapp.js); answers
 //                    what to say when it is done
 //   logsNote         (optional) the Logs page's line
-//   editSql(sql, plain)  (optional) the Edit as SQL button: the query on screen, handed to the
-//                    host's own SQL editor; `plain` when it is already SQL over the table
-//   plainSql         (optional) { from, measure(name) }: the shelves' query for editSql as SQL
-//                    over one table (explore.js's modelSql)
+//   editSql(sql)     (optional) the Edit SQL button: the shelves' query, all its rows, handed
+//                    to the host's own SQL editor, which runs it and saves its CSV, so Show SQL
+//                    and Download CSV are left out
+//   plainSql         (optional) { from, measure(name) }: editSql's query as SQL over one table
+//                    (explore.js's modelSql), else SQL over the model
+//   close()          (optional) a Close button, after Edit SQL
 //   hostLogs         the host logs its queries itself (perflog.js), with more than this view
 //                    knows (the Fabric app's queue and engine): this view logs none of them
 //   pages            (optional) the pages shown, of 'model', 'pivot', 'logs' (default: all);
@@ -78,15 +80,14 @@ export function mountExplore(root, ctx) {
   const csvBtn = btn('Download CSV', download, true);
   const exportBtn = ctx.exportToFabric ? btn('Export to Fabric', exportApp) : null;
   if (exportBtn) exportBtn.title = 'Publish this Explore, on this model, as a Fabric app (a local copy is written too)';
-  // The shelves' query, all its rows, as plain SQL where the host says how; Show SQL's box as
-  // it stands while it is open.
-  const editBtn = ctx.editSql ? btn('Edit as SQL', () => {
-    const plain = !sqlMode && ctx.plainSql ? ctx.plainSql : null;
-    const sql = (sqlMode ? typed() : explorer?.query({ cap: 0, plain })?.sql) || null;
-    if (sql) ctx.editSql(sql, !!plain); else setStatus('Put a field on the shelves first', 'error');
+  const editBtn = ctx.editSql ? btn('Edit SQL', () => {
+    const sql = explorer?.query({ cap: 0, plain: ctx.plainSql ?? null })?.sql;
+    if (sql) ctx.editSql(sql); else setStatus('Put a field on the shelves first', 'error');
   }) : null;
   if (editBtn) editBtn.title = 'This query in the SQL box, to take further by hand (the pivot is kept)';
-  const actions = el('div', { class: 'explore-actions', hidden: true }, sqlToggle, editBtn, csvBtn, exportBtn);
+  const closeBtn = ctx.close ? btn('Close', ctx.close) : null;
+  const actions = el('div', { class: 'explore-actions', hidden: true },
+    ...(editBtn ? [editBtn, closeBtn] : [sqlToggle, closeBtn, csvBtn]), exportBtn);
   const modelPage = el('div', { class: 'model-page' });
   const pivotPage = el('div', { class: 'explore-page', hidden: true });
   const logsPage = el('div', { class: 'explore-logs-page', hidden: true });

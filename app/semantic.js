@@ -240,7 +240,7 @@ const TABLE_CASTS = {
  * measure, its row count, so the pivot answers before a column is dragged. Made from the
  * columns the table's metadata lists, so nothing is read to build it; its queries read the
  * table by its SQL name, which the engine opens as a query names it. Not a view: SQL cannot
- * name it. Returns { name (what its SQL says FROM), tmsl, compiler, tableSql(text), plainSql }.
+ * name it. Returns { name (what its SQL says FROM), tmsl, compiler, plainSql }.
  */
 export async function tableModel(table, sqlName, columns, modules = null) {
   const { createCompiler, tmslToModel } = await ready(modules);
@@ -254,20 +254,11 @@ export async function tableModel(table, sqlName, columns, modules = null) {
     partitions: [{ source: { type: "entity", entityName: table } }],
   }], relationships: [] } };
   const compiler = createCompiler(tmslToModel(bim), { tableSource: () => sqlName, castOutput: TABLE_CASTS });
-  // The Pivot's SQL over this model as SQL over the table itself, for the SQL box: with one
-  // table and no relationships the two mean the same, the model read as the table (under the
-  // table's name, so "table"."column" still reads) and its measure as COUNT(*).
-  const esc = s => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const from = new RegExp(`\\bFROM\\s+${esc(modelName(table))}\\b`, "i");
-  const count = new RegExp(`\\bAGG\\(\\s*${esc(quoteIdent(rows))}\\s*\\)`, "gi");
-  // DuckDB has no FETCH … WITH TIES (Show SQL's box keeps the pivot's cap): a LIMIT, which
-  // may cut a tie the pivot would have kept.
-  const ties = /\bFETCH\s+FIRST\s+(\d+)\s+ROWS?\s+WITH\s+TIES\b/i;
-  const tableSql = text => String(text).replace(from, `FROM ${sqlName} AS ${quoteIdent(table)}`)
-    .replace(count, "COUNT(*)").replace(ties, "LIMIT $1");
-  // The same query written from the shelves, as a person writes it (explore.js modelSql).
+  // The shelves' query as SQL over the table itself, as a person writes it (explore.js
+  // modelSql): with one table and no relationships the two mean the same, the measure being
+  // COUNT(*).
   const plainSql = { from: sqlName, measure: n => (n === rows ? "COUNT(*)" : null) };
-  return { name: modelName(table), tmsl: bim.model, compiler, tableSql, plainSql };
+  return { name: modelName(table), tmsl: bim.model, compiler, plainSql };
 }
 
 // A view by its name, in full (ws.model) or in part: { name, schema } as the host keeps it,
