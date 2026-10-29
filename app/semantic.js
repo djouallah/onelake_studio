@@ -268,7 +268,9 @@ export async function tableModel(table, sqlName, columns, modules = null) {
       if ((g === "day" && !ts) || names.has(lc(name))) continue;
       names.add(lc(name));
       grains.set(name, q => fn(q(c.name)));
-      cols.push({ name, dataType: type, sourceColumn: name });
+      // Marked as worked out (explore.js draws it apart): the table has no such column.
+      cols.push({ name, dataType: type, sourceColumn: name, derivedFrom: c.name, derivedAs: g,
+        description: `${c.name} by ${g}, worked out as ${fn(s => s)}: not a column of the table` });
     }
   }
   const rows = ["Rows", "Row count", "Rows (count)"].find(n => !names.has(lc(n)));

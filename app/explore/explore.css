@@ -103,6 +103,11 @@ section.modelOpen #previewBtn, section.modelOpen #runBtn, section.modelOpen #csv
 .ex-field { display: flex; align-items: center; gap: 0.45rem; width: 100%; text-align: left; font-size: 0.78rem; color: var(--text); background: none; border: none; border-radius: var(--radius-sm); padding: 0.2rem 0.4rem 0.2rem 0.9rem; cursor: grab; }
 .ex-field:hover { background: var(--hover); }
 .ex-field.ex-used { color: var(--muted); }
+/* A column worked out from another (a table's date grains): under it, in italics, tagged. */
+.ex-field.ex-derived { padding-left: 1.2rem; font-style: italic; color: var(--muted); }
+.ex-derived-of { color: var(--faint); font-style: normal; }
+.ex-tag { margin-left: auto; font-size: 0.62rem; font-style: normal; color: var(--faint); border: 1px dashed var(--border); border-radius: 4px; padding: 0 0.3rem; }
+.ex-chip.ex-derived { border-style: dashed; font-style: italic; }
 .ex-icon { flex: none; width: 1.8rem; font-size: 0.64rem; font-weight: 700; color: var(--faint); text-align: center; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
 .ex-icon.ex-measure { color: var(--measure); font-size: 0.82rem; }
 .ex-main { display: flex; flex-direction: column; padding: 0.6rem 0.8rem; gap: 0.5rem; min-width: 0; }

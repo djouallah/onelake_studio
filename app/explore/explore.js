@@ -55,7 +55,9 @@ export function modelFields(model) {
     // A model of one table (a lakehouse table's Pivot) has neither.
     name: t.name, dimension: dims.has(t.name), kind: dims.size ? (dims.has(t.name) ? 'dimension' : 'fact') : null,
     columns: (t.columns ?? []).filter(c => !c.isHidden && c.type !== 'rowNumber').map(c => ({ id: `${t.name}.${c.name}`, kind: 'column', table: t.name,
-      name: c.name, type: TYPES[c.dataType] ?? 'text', format: c.formatString, description: c.description })),
+      name: c.name, type: TYPES[c.dataType] ?? 'text', format: c.formatString, description: c.description,
+      // A column the host worked out from another (a table's date grains), not one the data has.
+      derived: c.derivedFrom ? { from: c.derivedFrom, as: c.derivedAs ?? c.name } : null })),
     measures: (t.measures ?? []).filter(m => !m.isHidden).map(m => ({ id: m.name, kind: 'measure', table: t.name,
       name: m.name, type: 'measure', format: m.formatString, description: m.description })),
   })).filter(t => t.columns.length || t.measures.length)
@@ -393,9 +395,12 @@ export function createExplorer(root, ctx) {
     const term = search.value.trim().toLowerCase();
     const used = new Set([...state.rows, ...state.cols, ...state.values]);
     const item = f => {
-      const b = el('button', { type: 'button', class: `ex-field${used.has(f.id) ? ' ex-used' : ''}`, draggable: 'true',
-        title: f.description ?? f.id, onclick: () => add(f) },
-        el('span', { class: `ex-icon ex-${f.type}` }, ICONS[f.type]), f.name);
+      const b = el('button', { type: 'button', class: `ex-field${used.has(f.id) ? ' ex-used' : ''}${f.derived ? ' ex-derived' : ''}`,
+        draggable: 'true', title: f.description ?? f.id, onclick: () => add(f) },
+        // Under the column it is worked out from, by what it is of it.
+        f.derived ? el('span', { class: 'ex-derived-of', 'aria-hidden': 'true' }, '↳') : null,
+        el('span', { class: `ex-icon ex-${f.type}` }, ICONS[f.type]),
+        f.derived ? [f.derived.as, el('span', { class: 'ex-tag' }, 'derived')] : f.name);
       b.addEventListener('dragstart', e => { drag = { id: f.id }; e.dataTransfer.setData('text/plain', f.id); e.dataTransfer.effectAllowed = 'copyMove'; });
       b.addEventListener('dragend', () => { drag = null; });
       return b;
@@ -428,7 +433,8 @@ export function createExplorer(root, ctx) {
       box.replaceChildren(...items.map((_, i) => {
         const f = fieldOf(entry(k, i));
         const summed = k === 'values' && f?.agg;
-        const chip = el('span', { class: `ex-chip${f?.kind === 'measure' ? ' ex-measure' : ''}${f ? '' : ' ex-missing'}`,
+        const derived = f?.derived ?? f?.column?.derived;
+        const chip = el('span', { class: `ex-chip${f?.kind === 'measure' ? ' ex-measure' : ''}${f ? '' : ' ex-missing'}${derived ? ' ex-derived' : ''}`,
           draggable: 'true', 'data-index': i,
           title: !f ? `${nameOf(entry(k, i))}: not in the model`
             : summed ? `${f.column.id}: click to change how it is summarised` : entry(k, i) },
