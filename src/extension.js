@@ -73,6 +73,14 @@ function accountKey(session) {
     .update(`${session.account.id}|${tenant}`).digest('hex').slice(0, 16);
 }
 
+// Which account the saved queries belong to, as their folder's name: its sign-in name and the
+// tenant setting, readable on disk (unlike accountKey's hash) — the queries are the user's own.
+function queryAccountOf(session) {
+  if (!session || !session.account) return null;
+  const tenant = vscode.workspace.getConfiguration('onelakeStudio').get('tenantId', '').trim();
+  return `${session.account.label}${tenant ? ` (${tenant})` : ''}`.replace(/[\\/:*?"<>|]+/g, '_');
+}
+
 // getSession is an RPC into the account provider; asked once per request, that lookup —
 // not OneLake, not DuckDB — was most of a burst's wait. So the token is held briefly in
 // memory: long enough to collapse a burst, short enough that a stale one costs a single
@@ -604,7 +612,10 @@ async function activateInner(context) {
   // ever shown another account's listings, and switching back finds its cache still warm.
   const storeRoot = join(context.globalStorageUri.fsPath, 'onelake-store-v1');
   const storeFor = key => createStore({ dir: join(storeRoot, key || 'signed-out'), ttlMs: catalogTtlMs() });
-  let storeAccount = accountKey(await getSession({ createIfNone: false }).catch(() => null));
+  const firstSession = await getSession({ createIfNone: false }).catch(() => null);
+  let storeAccount = accountKey(firstSession);
+  // The saved queries' account (queriesFolder): its own folder, by its sign-in name.
+  let queryAccount = queryAccountOf(firstSession);
   fileCacheRoot = join(context.globalStorageUri.fsPath, 'file-cache-v1');
   fileCacheAccount = storeAccount;
   onelake = createOneLake({
@@ -638,9 +649,14 @@ async function activateInner(context) {
 
   // Called wherever the identity may have moved; a no-op when it has not.
   rebindStore = async function rebindStore() {
-    const key = accountKey(await getSession({ createIfNone: false }).catch(() => null));
+    const session = await getSession({ createIfNone: false }).catch(() => null);
+    const key = accountKey(session);
     if (key === storeAccount) return;
     storeAccount = key;
+    // Another account's saved queries, too.
+    queryAccount = queryAccountOf(session);
+    await adoptLooseQueries().catch(() => {});
+    tree.queriesChanged();
     fileCacheAccount = key;   // the engine picks it up when it is next built
     onelake.useStore(storeFor(key));
     semviews.useAccount(key);
@@ -706,17 +722,39 @@ async function activateInner(context) {
     return join(require('node:os').homedir(), 'OneLakeStudio', 'semantic-models');
   }
 
-  // Saved queries: one .sql file each in ~/OneLakeStudio/queries/, beside the downloaded
-  // models. They name their tables Kind.workspace.item.schema.table, so each one runs whatever
-  // the panel has open. The tree lists them; the SQL box's Save Query writes them.
+  // Saved queries: one .sql file each in ~/OneLakeStudio/queries/<account>/, beside the
+  // downloaded models. They name their tables lakehouse.workspace.item.schema.table — names
+  // that mean something in one tenant only — so each account (and tenant, when the
+  // onelakeStudio.tenantId setting picks one) has its own, and signing in elsewhere shows
+  // that account's. The tree lists them; the SQL box's Save Query writes them. Signed out,
+  // there are none.
+  const queriesRoot = () => join(require('node:os').homedir(), 'OneLakeStudio', 'queries');
   function queriesFolder() {
-    return join(require('node:os').homedir(), 'OneLakeStudio', 'queries');
+    return queryAccount ? join(queriesRoot(), queryAccount) : null;
   }
+  // Queries saved before they were kept per account sit loose in the root: they go to the
+  // first account signed in, the one most likely to have saved them. Never over one there.
+  async function adoptLooseQueries() {
+    const dir = queriesFolder();
+    if (!dir) return;
+    const loose = (await fsp.readdir(queriesRoot(), { withFileTypes: true }).catch(() => []))
+      .filter(e => e.isFile() && /\.sql$/i.test(e.name));
+    if (!loose.length) return;
+    await fsp.mkdir(dir, { recursive: true });
+    for (const e of loose) {
+      if (existsSync(join(dir, e.name))) continue;
+      await fsp.rename(join(queriesRoot(), e.name), join(dir, e.name)).catch(() => {});
+    }
+    if (out) out.appendLine(`saved queries: ${loose.length} moved into ${dir}`);
+  }
+  adoptLooseQueries().then(() => tree.queriesChanged(), () => {});
   async function listQueries() {
-    const files = await fsp.readdir(queriesFolder()).catch(() => []);
+    const dir = queriesFolder();
+    if (!dir) return [];
+    const files = await fsp.readdir(dir).catch(() => []);
     return files.filter(f => /\.sql$/i.test(f))
       .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }))
-      .map(f => ({ name: f.replace(/\.sql$/i, ''), path: join(queriesFolder(), f) }));
+      .map(f => ({ name: f.replace(/\.sql$/i, ''), path: join(dir, f) }));
   }
   // A name as a file name: what Windows refuses becomes _, and the .sql is ours to add.
   const queryStem = name => String(name).trim().replace(/[\\/:*?"<>|]+/g, '_').replace(/\.sql$/i, '');
@@ -737,6 +775,7 @@ async function activateInner(context) {
   // saved over, anything else becomes the next free "Query N" — Rename in the tree names it.
   // Answers { name, path }.
   saveQuery = async ({ name, sql }) => {
+    if (!queriesFolder()) throw new Error('sign in to save queries — they are kept per account');
     await fsp.mkdir(queriesFolder(), { recursive: true });
     let stem = name ? queryStem(name) : '';
     if (!stem) {
@@ -1246,6 +1285,7 @@ async function activateInner(context) {
       tree.queriesChanged();
     }),
     vscode.commands.registerCommand('onelakeStudio.revealQueries', async () => {
+      if (!queriesFolder()) return;
       await fsp.mkdir(queriesFolder(), { recursive: true });
       await vscode.commands.executeCommand('revealFileInOS', vscode.Uri.file(queriesFolder()));
     }),
