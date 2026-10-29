@@ -752,6 +752,7 @@ function clearResults(hint = '') {
   if (imageUrl) { URL.revokeObjectURL(imageUrl); imageUrl = null; }
   $('resultsTable').hidden = true;
   $('resultsTable').innerHTML = '';
+  $('resultsTable').onclick = null;
   $('planView').hidden = true;
   $('planView').replaceChildren();
   $('viewBar').hidden = !activeInfo;   // the table's tabs come back once the plan goes
@@ -768,6 +769,36 @@ function docOf(res) {
   return isDocResult(res) ? res.rows[0][res.fields[0]] : textLinesDoc(res);
 }
 
+// The grid's header: each column's name over its type, and the column it is sorted by marked.
+function gridHead(res, sort) {
+  const types = res.types || [];
+  return '<thead><tr>' + res.fields.map((f, i) => {
+    const t = types[i] || '';
+    const by = sort && sort.col === i;
+    return `<th class="${NUMERIC_TYPE.test(t) ? 'num' : ''}" title="${escapeHtml(f + ' ' + t)} — click to sort"` +
+      (by ? ` aria-sort="${sort.desc ? 'descending' : 'ascending'}"` : '') + '>' +
+      `<span class="cname">${escapeHtml(f)}${by ? (sort.desc ? ' ▼' : ' ▲') : ''}</span>` +
+      `<span class="ctype">${escapeHtml(t)}</span></th>`;
+  }).join('') + '</tr></thead>';
+}
+
+// A result's rows sorted by one column: numbers as numbers (a big integer arrives as text),
+// everything else as text with its digits compared as numbers. Empty cells are last either way.
+function sortedRows(rows, res, { col, desc }) {
+  const f = res.fields[col];
+  const numeric = NUMERIC_TYPE.test((res.types || [])[col] || '');
+  const key = v => (typeof v === 'number' ? v : numeric && !Number.isNaN(Number(v)) ? Number(v) : cellText(v));
+  const filled = [], empty = [];
+  for (const r of rows) (r[f] == null || r[f] === '' ? empty : filled).push(r);
+  filled.sort((a, b) => {
+    const x = key(a[f]), y = key(b[f]);
+    const c = typeof x === 'number' && typeof y === 'number' ? x - y
+      : String(x).localeCompare(String(y), undefined, { numeric: true });
+    return desc ? -c : c;
+  });
+  return filled.concat(empty);
+}
+
 function renderResults(res) {
   const table = $('resultsTable');
   const hint = $('resultsHint');
@@ -777,26 +808,35 @@ function renderResults(res) {
     return;
   }
   hint.hidden = true; table.hidden = false;
-  const types = res.types || [];
-  const head = '<thead><tr>' + res.fields.map((f, i) => {
-    const t = types[i] || '';
-    return `<th class="${NUMERIC_TYPE.test(t) ? 'num' : ''}" title="${escapeHtml(f + ' ' + t)}">` +
-      `<span class="cname">${escapeHtml(f)}</span>` +
-      `<span class="ctype">${escapeHtml(t)}</span></th>`;
-  }).join('') + '</tr></thead>';
-
   if (!res.rows.length) {
-    table.innerHTML = head +
+    table.innerHTML = gridHead(res, null) +
       `<tbody><tr><td colspan="${res.fields.length}">(no rows)</td></tr></tbody>`;
     return;
   }
-  const rows = res.rows.slice(0, MAX_DOM_ROWS);
-  const body = '<tbody>' + rows.map(r => '<tr>' + res.fields.map(f => {
-    const v = r[f];
-    const num = typeof v === 'number';
-    return `<td class="${num ? 'num' : ''}">${escapeHtml(cellText(v))}</td>`;
-  }).join('') + '</tr>').join('') + '</tbody>';
-  table.innerHTML = head + body;
+  // A click on a header sorts by that column: ascending, then descending, then back to the
+  // order the query gave. Every row the result holds is sorted, not only the ones drawn, and
+  // the CSV is saved in the order on screen.
+  const original = res.rows.slice();
+  let sort = null;   // { col, desc }
+  const draw = () => {
+    const rows = res.rows.slice(0, MAX_DOM_ROWS);
+    table.innerHTML = gridHead(res, sort) + '<tbody>' + rows.map(r => '<tr>' + res.fields.map(f => {
+      const v = r[f];
+      const num = typeof v === 'number';
+      return `<td class="${num ? 'num' : ''}">${escapeHtml(cellText(v))}</td>`;
+    }).join('') + '</tr>').join('') + '</tbody>';
+  };
+  draw();
+  table.onclick = e => {
+    const th = e.target.closest('thead th');
+    if (!th) return;
+    const col = th.cellIndex;
+    sort = !sort || sort.col !== col ? { col, desc: false } : !sort.desc ? { col, desc: true } : null;
+    // In place, so the CSV (lastResult) follows; one row at a time, as 200k rows will not spread.
+    const next = sort ? sortedRows(original, res, sort) : original;
+    for (let i = 0; i < next.length; i++) res.rows[i] = next[i];
+    draw();
+  };
 
   // The grid stays the source of truth; a document result additionally gets Pretty.
   const doc = docOf(res);

@@ -104,6 +104,9 @@
     }
     /* The column type rides under its name in the header. */
     table.results th .cname { display: block; }
+    /* A click on a header sorts by it (app.js renderResults). */
+    table.results thead th { cursor: pointer; user-select: none; }
+    table.results thead th:hover { color: var(--vscode-textLink-foreground, var(--accent2)); }
     table.results th .ctype { display: block; font-weight: 400; font-size: 0.72rem; color: var(--accent2); letter-spacing: 0.2px; }
     table.results th.num { text-align: right; }
     table.results td.num { text-align: right; font-variant-numeric: tabular-nums; }
