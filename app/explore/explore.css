@@ -176,7 +176,7 @@ section.modelOpen #previewBtn, section.modelOpen #runBtn, section.modelOpen #csv
 }
 /* The Pivot's actions, in the subtab bar: Show SQL, Download CSV, Export to Fabric. */
 .explore-actions { display: flex; gap: 0.4rem; margin-left: auto; }
-.explore-actions[hidden] { display: none; }
+.explore-actions[hidden], .subtabs[hidden] { display: none; }
 .explore-logs-page[hidden] { display: none; }
 
 /* Show plan (profile.js): the profile, and the plan's tree. Ported from analytics-as-code. */

@@ -210,6 +210,53 @@ export async function defineView(name, path, text, mode = "replace", modules = n
 export const registerModel = (fileName, text, modules = null, schema = null) =>
   defineView(modelName(fileName), fileName, text, "replace", modules, schema);
 
+// A column's type in TMSL's words, from the Iceberg schema (long, decimal(18,2), timestamp)
+// or DuckDB's DESCRIBE (BIGINT, DECIMAL(18,2), TIMESTAMP WITH TIME ZONE), whichever the
+// table's info holds. null: a type the pivot has no use for (nested, binary), left out.
+function tmslType(type) {
+  if (typeof type !== "string") return null;   // an Iceberg struct, list or map
+  const s = type.trim().toLowerCase();
+  if (/^(struct|list|map|array|union)\b|\[\]$/.test(s) || /^(binary|blob|bytea|fixed)\b/.test(s)) return null;
+  if (/^bool/.test(s)) return "boolean";
+  if (/^(u?(tiny|small|big|huge)?int(eger)?\d*|long)$/.test(s)) return "int64";
+  if (/^(float|double|real)/.test(s)) return "double";
+  if (/^(decimal|numeric)/.test(s)) return "decimal";
+  if (/^(date|timestamp)/.test(s)) return "dateTime";
+  return "string";
+}
+
+// A table's dates and times as text: the date alone at midnight, else the time too. A model's
+// date column shows as a date (EXPLORE_CASTS), but a table's event timestamps are kept apart,
+// not shown as the same date row after row.
+const asTs = s => `CAST(${s} AS TIMESTAMP)`;
+const TABLE_CASTS = {
+  ...EXPLORE_CASTS,
+  datetime: s => `CASE WHEN CAST(${asTs(s)} AS TIME) = TIME '00:00:00' THEN CAST(CAST(${asTs(s)} AS DATE) AS VARCHAR) ` +
+                 `ELSE CAST(${asTs(s)} AS VARCHAR) END`,
+};
+
+/**
+ * A lakehouse table as a model of its own, for the Pivot: one table, no relationships, and one
+ * measure, its row count, so the pivot answers before a column is dragged. Made from the
+ * columns the table's metadata lists, so nothing is read to build it; its queries read the
+ * table by its SQL name, which the engine opens as a query names it. Not a view: SQL cannot
+ * name it. Returns { name (what its SQL says FROM), tmsl, compiler }.
+ */
+export async function tableModel(table, sqlName, columns, modules = null) {
+  const { createCompiler, tmslToModel } = await ready(modules);
+  const cols = (columns || []).map(c => ({ name: c.name, dataType: tmslType(c.type), sourceColumn: c.name }))
+    .filter(c => c.dataType);
+  const names = new Set(cols.map(c => lc(c.name)));
+  const rows = ["Rows", "Row count", "Rows (count)"].find(n => !names.has(lc(n)));
+  const bim = { model: { tables: [{
+    name: table, columns: cols,
+    measures: [{ name: rows, expression: `COUNTROWS('${table.replace(/'/g, "''")}')`, formatString: "#,0" }],
+    partitions: [{ source: { type: "entity", entityName: table } }],
+  }], relationships: [] } };
+  const compiler = createCompiler(tmslToModel(bim), { tableSource: () => sqlName, castOutput: TABLE_CASTS });
+  return { name: modelName(table), tmsl: bim.model, compiler };
+}
+
 // A view by its name, in full (ws.model) or in part: { name, schema } as the host keeps it,
 // or null. An error when a part fits several.
 export function viewOf(name) {

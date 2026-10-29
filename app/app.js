@@ -55,8 +55,9 @@ let docSourceExt = '';           // ...and which file it came from, when it came
 let activeDocEligible = false;   // the same two answers for the loaded table/file
 let activeDocExt = '';
 let activeInfo = null;       // the selected TABLE's info object — what the Stats tab renders
-let viewMode = 'data';       // 'data' | 'stats' | 'history' for a selected table
-let statsPrev = null;        // hidden-flags of the data surfaces while Stats/History cover them
+let viewMode = 'data';       // 'data' | 'stats' | 'history' | 'pivot' for a selected table
+let statsPrev = null;        // hidden-flags of the data surfaces while Stats/History/Pivot cover them
+let tablePivot = null;       // the Pivot tab's view, { table, view }, of the table it was opened on
 // A Delta table's own log, each half once its tab asks: { table, value | error | pending }
 // for Stats, { table, entries, total, oldest, pending, error } for History. `table` is the
 // activeTableRef it belongs to; another selection makes it stale.
@@ -119,6 +120,7 @@ function wireUi() {
   $('viewData').onclick = onDataTab;
   $('viewStats').onclick = showStats;
   $('viewHistory').onclick = showHistory;
+  $('viewPivot').onclick = showPivot;
   $('statsView').addEventListener('click', e => { if (e.target.id === 'historyMore') loadHistory(true); });
   $('sqlEditor').addEventListener('keydown', e => {
     if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); runWithTable(); }
@@ -726,6 +728,7 @@ function clearResults(hint = '') {
   statsPrev = null;
   $('statsView').hidden = true;
   $('statsView').innerHTML = '';
+  $('pivotView').hidden = true;      // kept, for the same table's next visit
   setViewTabs();
   $('docBar').hidden = true;
   $('docView').hidden = true;
@@ -829,28 +832,33 @@ function setDocTabs() {
 function setActiveStats(info) {
   activeInfo = (info && info.stats) ? info : null;
   $('viewBar').hidden = !activeInfo;
+  if (!activeInfo) dropTablePivot();   // a new selection: the pivot was the last table's
   if (!activeInfo && viewMode !== 'data') showData();
-  else if (activeInfo && viewMode !== 'data') renderMeta();
+  else if (activeInfo && (viewMode === 'stats' || viewMode === 'history')) renderMeta();
 }
 
 function setViewTabs() {
   $('viewData').classList.toggle('active', viewMode === 'data');
   $('viewStats').classList.toggle('active', viewMode === 'stats');
   $('viewHistory').classList.toggle('active', viewMode === 'history');
+  $('viewPivot').classList.toggle('active', viewMode === 'pivot');
 }
 
 const isDelta = info => !!(info && info.stats && info.stats.format === 'delta');
 
-// Stats and History cover the result surfaces rather than replacing them: whatever was
-// showing is put back exactly on return.
+// Stats, History and Pivot cover the result surfaces rather than replacing them: whatever
+// was showing is put back exactly on return.
+function coverData() {
+  if (viewMode !== 'data') return;
+  statsPrev = ['resultsHint', 'docView', 'resultsTable', 'docBar']
+    .map(id => [id, $(id).hidden]);
+  for (const [id] of statsPrev) $(id).hidden = true;
+}
 function showMeta(mode) {
   if (!activeInfo || viewMode === mode) return;
-  if (viewMode === 'data') {
-    statsPrev = ['resultsHint', 'docView', 'resultsTable', 'docBar']
-      .map(id => [id, $(id).hidden]);
-    for (const [id] of statsPrev) $(id).hidden = true;
-  }
+  coverData();
   viewMode = mode;
+  $('pivotView').hidden = true;
   $('statsView').hidden = false;
   renderMeta();
   setViewTabs();
@@ -911,9 +919,57 @@ function showData() {
   if (viewMode === 'data') return;
   viewMode = 'data';
   $('statsView').hidden = true;
+  $('pivotView').hidden = true;
   if (statsPrev) for (const [id, h] of statsPrev) $(id).hidden = h;
   statsPrev = null;
   setViewTabs();
+}
+
+// Pivot: the table as a model of its own (semantic.tableModel) in Explore's pivot. It is
+// made from the metadata already on screen, so opening it reads nothing: the first read is
+// the first field put on a shelf. Kept while the table stays selected.
+async function showPivot() {
+  if (!activeInfo || !activeSqlName || viewMode === 'pivot') return;
+  if (tablePivot && tablePivot.table !== activeTableRef) dropTablePivot();
+  coverData();
+  viewMode = 'pivot';
+  $('statsView').hidden = true;
+  $('pivotView').hidden = false;
+  setViewTabs();
+  if (tablePivot) return;
+  const t = activeTableRef, sqlName = activeSqlName;
+  tablePivot = { table: t, view: null };
+  $('pivotView').innerHTML = '<div class="hint">Opening the pivot…</div>';
+  try {
+    const m = await semantic.tableModel(t.table, sqlName, activeInfo.columns);
+    if (!tablePivot || tablePivot.table !== t) return;
+    tablePivot.view = mountExplore($('pivotView'), {
+      name: m.name, title: $('activeTable').textContent, kind: 'table',
+      tmsl: tmslOf(m.tmsl), compiler: m.compiler,
+      pages: ['pivot'], stateKey: `pivot.${sqlName}`,
+      run: runModelSql,
+      echarts: loadEcharts,
+      setStatus,
+      saveText: (name, text) => engine.saveText(name, text),
+      loadState: viewState.get,
+      saveState: viewState.set,
+      profileSet: false,   // as the model view's (openModelView)
+      htmlPlan: false,
+    });
+  } catch (e) {
+    if (!tablePivot || tablePivot.table !== t) return;
+    tablePivot = null;
+    $('pivotView').innerHTML = `<div class="hint">${escapeHtml(`The pivot could not open: ${e.message}`)}</div>`;
+    setStatus(`Pivot: ${e.message}`, 'error');
+    console.error(e);
+  }
+}
+function dropTablePivot() {
+  if (!tablePivot) return;
+  tablePivot.view?.destroy();
+  tablePivot = null;
+  $('pivotView').replaceChildren();
+  $('pivotView').hidden = true;
 }
 
 const n0 = v => v == null ? '—' : Number(v).toLocaleString('en');

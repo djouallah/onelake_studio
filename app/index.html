@@ -174,9 +174,11 @@
     <div class="resultsWrap">
       <!-- While a TABLE is selected: Stats leads, because statistics cost nothing. -->
       <div class="docBar tabs" id="viewBar" hidden>
-        <button id="viewStats" class="tab active">Stats</button><button id="viewHistory" class="tab">History</button><button id="viewData" class="tab">Data</button>
+        <button id="viewStats" class="tab active">Stats</button><button id="viewHistory" class="tab">History</button><button id="viewData" class="tab">Data</button><button id="viewPivot" class="tab" title="The table as a model of its own: its columns on shelves, as a pivot or a chart">Pivot</button>
       </div>
       <article id="statsView" class="docView" hidden></article>
+      <!-- Pivot: the table as a one-table model, in Explore's pivot (explore/view.js). -->
+      <div id="pivotView" hidden></div>
       <div class="docBar tabs" id="docBar" hidden>
         <button id="docPretty" class="tab active">Pretty</button><button id="docRaw" class="tab">Raw</button>
       </div>

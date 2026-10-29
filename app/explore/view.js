@@ -48,6 +48,10 @@ const elapsed = t0 => `${((performance.now() - t0) / 1000).toFixed(1)} s`;
 //   logsNote         (optional) the Logs page's line
 //   hostLogs         the host logs its queries itself (perflog.js), with more than this view
 //                    knows (the Fabric app's queue and engine): this view logs none of them
+//   pages            (optional) the pages shown, of 'model', 'pivot', 'logs' (default: all);
+//                    the first is the one it opens on. One page: no page tabs.
+//   kind             (optional) what the bar calls it (default: 'semantic model')
+//   stateKey         (optional) where its shelves are kept (default: explore.<name>)
 // Returns { destroy }.
 export function mountExplore(root, ctx) {
   const setStatus = ctx.setStatus || (() => {});
@@ -64,7 +68,8 @@ export function mountExplore(root, ctx) {
   const btn = (text, onclick, primary) => el('button', { type: 'button', class: `btn-explore${primary ? ' primary' : ''}`, onclick }, text);
 
   // --- The frame: the subtabs and the Pivot's actions, then one element per page ---
-  const tabs = PAGES.map(([k, t], i) => el('button', { type: 'button', class: `subtab${i ? '' : ' active'}`, role: 'tab',
+  const pages = PAGES.filter(([k]) => !ctx.pages || ctx.pages.includes(k));
+  const tabs = pages.map(([k, t], i) => el('button', { type: 'button', class: `subtab${i ? '' : ' active'}`, role: 'tab',
     'data-apage': k, 'aria-selected': String(!i), tabindex: i ? '-1' : '0' }, t));
   const sqlToggle = btn('Show SQL', () => (sqlMode ? closeSql() : openSql()));
   const csvBtn = btn('Download CSV', download, true);
@@ -93,9 +98,9 @@ export function mountExplore(root, ctx) {
 
   root.replaceChildren(
     el('div', { class: 'subtab-bar' },
-      el('div', { class: 'subtabs', role: 'tablist', 'aria-label': 'Semantic model pages' }, tabs),
+      el('div', { class: 'subtabs', role: 'tablist', 'aria-label': 'Semantic model pages', hidden: pages.length < 2 }, tabs),
       actions,
-      el('span', { class: 'sm-title' }, `${ctx.title ?? ''} · semantic model `, el('code', {}, ctx.name))),
+      el('span', { class: 'sm-title' }, `${ctx.title ?? ''} · ${ctx.kind ?? 'semantic model'} `, el('code', {}, ctx.name))),
     modelPage, pivotPage, sqlPage, logsPage);
   ta.addEventListener('keydown', e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); runSql(); } });
 
@@ -107,7 +112,7 @@ export function mountExplore(root, ctx) {
     });
     b.addEventListener('click', () => show(b.dataset.apage));
   }
-  let page = 'model', logs = null;
+  let page = pages[0][0], logs = null;
   function show(p) {
     page = p;
     for (const b of tabs) {
@@ -126,7 +131,7 @@ export function mountExplore(root, ctx) {
   }
 
   // --- Model ---
-  renderModel(modelPage, ctx.tmsl, { title: `Semantic model ${ctx.name}` });
+  if (pages.some(([k]) => k === 'model')) renderModel(modelPage, ctx.tmsl, { title: `Semantic model ${ctx.name}` });
 
   // --- Running: compiled once, answered from this view's results when it ran before ---
   const compile = text => compileModelSql(ctx.compiler, text, ctx.name);
@@ -177,8 +182,8 @@ export function mountExplore(root, ctx) {
       },
       palette: () => PALETTE,
       css,
-      loadState: () => ctx.loadState(`explore.${ctx.name}`),
-      saveState: s => ctx.saveState(`explore.${ctx.name}`, s),
+      loadState: () => ctx.loadState(ctx.stateKey ?? `explore.${ctx.name}`),
+      saveState: s => ctx.saveState(ctx.stateKey ?? `explore.${ctx.name}`, s),
     });
   }
 
@@ -338,6 +343,8 @@ export function mountExplore(root, ctx) {
       exportBtn.textContent = 'Export to Fabric';
     }
   }
+
+  if (page !== 'model') show(page);
 
   return {
     destroy() {
