@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.2.7
+
+- **Export to Fabric's app carries its own packages.** DuckDB-WASM 1.5.6 with its parquet and
+  icu extensions, Apache Arrow, the Rayfin SDK and ECharts ship with the site, in the local copy's
+  `site/vendor/` (about 48 MB). The app loads nothing from jsDelivr or DuckDB's extension
+  repository. The export's output log lists what `site/vendor/` weighs, package by package.
+- **SQL over a semantic model takes `ORDER BY ALL` and constants.** `ORDER BY ALL` orders by
+  every column, left to right. A constant in the SELECT, such as `'orders' AS what`, is a column
+  of every row, so each arm of a `UNION` can label its rows. The compiler is now dax-sql 0.1.1,
+  from npm.
+
 ## 0.2.6
 
 - **Export to Fabric from the command line.** Run `export <ws> <model>`, or
