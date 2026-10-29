@@ -123,16 +123,30 @@ export function buildQuery(s, { cap = CAP, today = localToday() } = {}) {
 // the same plan from it as from DAX. `column(id)`: the model's column of an id, { table, name },
 // or null (a measure); `from`: the model's name in SQL.
 // Ported from analytics-as-code's Explore (modelSql), with quoted names and summaries.
+// `plain`: { from, measure(name) } for SQL over one table as a person writes it (a lakehouse
+// table's Edit as SQL): its columns by name alone, quoted only where DuckDB needs it, AS only
+// for a new name, DISTINCT for columns alone, each measure as `measure` says, LIMIT for the cap.
 const qid = s => `"${String(s).replace(/"/g, '""')}"`;
+const RESERVED = new Set(('all analyse analyze and any array as asc asymmetric both case cast check collate column constraint ' +
+  'create default deferrable desc describe distinct do else end except false fetch for foreign from group having in ' +
+  'initially intersect into lambda lateral leading limit not null offset on only or order pivot pivot_longer ' +
+  'pivot_wider placing primary qualify references returning select show some summarize symmetric table then to ' +
+  'trailing true union unique unpivot using variadic when where window with').split(' '));
+const bare = s => /^[A-Za-z_][A-Za-z0-9_]*$/.test(s) && !RESERVED.has(s.toLowerCase()) ? s : qid(s);
 const sqlStr = v => `'${String(v).replace(/'/g, "''")}'`;
 const sqlVal = v => v == null ? 'NULL' : typeof v === 'boolean' ? (v ? 'TRUE' : 'FALSE') : typeof v === 'number' ? String(v)
   : /^\d{4}-\d{2}-\d{2}$/.test(v) ? `DATE ${sqlStr(v)}` : sqlStr(v);
-export function modelSql(q, column, from = 'model') {
-  const ref = id => { const c = column(id); if (!c) throw new Error(`${id} is not a column of the model`); return `${qid(c.table)}.${qid(c.name)}`; };
+export function modelSql(q, column, from = 'model', plain = null) {
+  const ref = id => {
+    const c = column(id);
+    if (!c) throw new Error(`${id} is not a column of the model`);
+    return plain ? bare(c.name) : `${qid(c.table)}.${qid(c.name)}`;
+  };
+  const name = plain ? bare : qid;
   const isColumn = x => typeof x === 'string' && !!column(x);
   const expr = x => {
     if (isColumn(x)) return ref(x);
-    if (typeof x === 'string') return `AGG(${qid(x)})`;
+    if (typeof x === 'string') return plain?.measure(x) ?? `AGG(${qid(x)})`;
     const [agg, col] = Object.entries(x)[0];
     return `${AGG_SQL[agg]}(${agg === 'distinct' ? 'DISTINCT ' : ''}${ref(col)})`;
   };
@@ -157,17 +171,21 @@ export function modelSql(q, column, from = 'model') {
     }
   };
   const rollup = q.totals ?? {}, rolled = Object.values(rollup).flat();
-  const items = [...Object.entries(q.select).map(([n, x]) => `${expr(x)} AS ${qid(n)}`),
-    ...Object.entries(rollup).map(([n, cols]) => `GROUPING(${ref(cols[0])}) AS ${qid(n)}`)];
+  const as = (n, x) => plain && isColumn(x) && column(x).name === n ? '' : ` AS ${name(n)}`;
+  const items = [...Object.entries(q.select).map(([n, x]) => `${expr(x)}${as(n, x)}`),
+    // The pivot's marks of its total rows; SQL by hand reads a total by its NULL.
+    ...(plain ? [] : Object.entries(rollup).map(([n, cols]) => `GROUPING(${ref(cols[0])}) AS ${qid(n)}`))];
   const keys = Object.values(q.select).filter(isColumn).filter(c => !rolled.includes(c)).map(ref);
+  const columnsOnly = Object.values(q.select).every(isColumn);
   const group = rolled.length
     ? `GROUP BY ${[...keys, ...Object.values(rollup).map(cols => `ROLLUP(${cols.length > 1 ? `(${cols.map(ref).join(', ')})` : ref(cols[0])})`)].join(', ')}`
-    : Object.values(q.select).some(isColumn) ? 'GROUP BY ALL' : '';
-  const order = (q.orderBy ?? []).map(o => Array.isArray(o) ? `${qid(o[0])} ${o[1].toUpperCase()}` : qid(o));
-  return [`SELECT ${items.join(', ')}`, `FROM ${from}`,
+    : plain && columnsOnly ? '' : Object.values(q.select).some(isColumn) ? 'GROUP BY ALL' : '';
+  const order = (q.orderBy ?? []).map(o => Array.isArray(o) ? `${name(o[0])} ${o[1].toUpperCase()}` : name(o));
+  const distinct = plain && columnsOnly && !rolled.length ? 'DISTINCT ' : '';
+  return [`SELECT ${distinct}${items.join(', ')}`, `FROM ${plain ? plain.from : from}`,
     q.where?.length ? `WHERE ${q.where.map(cond).join('\n  AND ')}` : '', group,
     order.length ? `ORDER BY ${order.join(', ')}` : '',
-    q.top != null ? `FETCH FIRST ${q.top} ROWS WITH TIES` : ''].filter(Boolean).join('\n');
+    q.top == null ? '' : plain ? `LIMIT ${q.top}` : `FETCH FIRST ${q.top} ROWS WITH TIES`].filter(Boolean).join('\n');
 }
 
 // Order of the keys of an axis: numbers as numbers, text as a person sorts it.
@@ -806,7 +824,13 @@ export function createExplorer(root, ctx) {
     // The shelves as one SELECT over the model, and its conditions, or null. As the pivot runs
     // it by default (its first CAP rows: what Show SQL fills its box with, so its text is the
     // query the pivot ran); `cap: 0` for all its rows (Download CSV).
-    query: ({ cap = CAP } = {}) => { try { const q = fields && buildQuery(state, { cap }); return q && { sql: sqlOf(q), where: q.where ?? [] }; } catch { return null; } },
+    // `plain`: as SQL over one table (modelSql's).
+    query: ({ cap = CAP, plain = null } = {}) => {
+      try {
+        const q = fields && buildQuery(state, { cap });
+        return q && { sql: plain ? modelSql(q, columnOf, null, plain) : sqlOf(q), where: q.where ?? [] };
+      } catch { return null; }
+    },
     // The shelves as they are (Export to Fabric: the app's first view).
     state: () => JSON.parse(JSON.stringify(state)),
     // The view is going: its timers stop, its popup goes, and a query still running finds

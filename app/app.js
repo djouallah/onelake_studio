@@ -934,9 +934,9 @@ function setPivotOpen(open) {
 const closePivot = () => setPivotOpen(false);
 // Edit as SQL: the pivot's query in the SQL box, as SQL over the table, to be taken further by
 // hand, as Looker's Open in SQL Runner does. Asked for, never on close; the pivot is kept.
-function editPivotSql(sql) {
+function editPivotSql(sql, plain) {
   if (!tablePivot) return;
-  $('sqlEditor').value = tablePivot.tableSql(sql);
+  $('sqlEditor').value = plain ? sql : tablePivot.tableSql(sql);
   activeQuery = null;
   closePivot();
   $('sqlEditor').focus();
@@ -967,6 +967,7 @@ async function openPivot() {
       profileSet: false,   // as the model view's (openModelView)
       htmlPlan: false,
       editSql: editPivotSql,
+      plainSql: m.plainSql,
     });
   } catch (e) {
     if (!tablePivot || tablePivot.table !== t) return;

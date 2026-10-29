@@ -240,7 +240,7 @@ const TABLE_CASTS = {
  * measure, its row count, so the pivot answers before a column is dragged. Made from the
  * columns the table's metadata lists, so nothing is read to build it; its queries read the
  * table by its SQL name, which the engine opens as a query names it. Not a view: SQL cannot
- * name it. Returns { name (what its SQL says FROM), tmsl, compiler, tableSql(text) }.
+ * name it. Returns { name (what its SQL says FROM), tmsl, compiler, tableSql(text), plainSql }.
  */
 export async function tableModel(table, sqlName, columns, modules = null) {
   const { createCompiler, tmslToModel } = await ready(modules);
@@ -265,7 +265,9 @@ export async function tableModel(table, sqlName, columns, modules = null) {
   const ties = /\bFETCH\s+FIRST\s+(\d+)\s+ROWS?\s+WITH\s+TIES\b/i;
   const tableSql = text => String(text).replace(from, `FROM ${sqlName} AS ${quoteIdent(table)}`)
     .replace(count, "COUNT(*)").replace(ties, "LIMIT $1");
-  return { name: modelName(table), tmsl: bim.model, compiler, tableSql };
+  // The same query written from the shelves, as a person writes it (explore.js modelSql).
+  const plainSql = { from: sqlName, measure: n => (n === rows ? "COUNT(*)" : null) };
+  return { name: modelName(table), tmsl: bim.model, compiler, tableSql, plainSql };
 }
 
 // A view by its name, in full (ws.model) or in part: { name, schema } as the host keeps it,
