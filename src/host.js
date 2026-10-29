@@ -42,7 +42,7 @@ const ENGINE_METHODS = new Set(['query', 'stream', 'cancel', 'info']);
  * @param {(list: {workspace: string, item: string, schema: string, table: string}[]) => Promise<string[]>} [o.nameTables]
  *        a semantic model's Direct Lake tables (named by GUID) -> their SQL names
  * @param {(x: {name: string, sql: string}) => Promise<{name: string, path: string}|null>} [o.saveQuery]
- *        ask for a name and keep the SQL as a saved query
+ *        keep the SQL as a saved query: over the one named, else under a new name
  */
 function createHostMethods({ onelake, engine, onStatus = () => {}, saveFile = null, semviews = null, exportExplore = null,
                              nameTables = null, saveQuery = null }) {
@@ -120,8 +120,8 @@ function createHostMethods({ onelake, engine, onStatus = () => {}, saveFile = nu
         : await onelake.readBytes(String(x.workspace), String(x.path));
       return saveFile(name, bytes);
     },
-    // Save Query: the SQL box's text as a saved query (the tree's Queries). The host asks for
-    // the name, starting from the query open in the box; answers { name, path }, or null.
+    // Save Query: the SQL box's text as a saved query (the tree's Queries), over the query
+    // open in the box or under a new "Query N", with nothing asked; answers { name, path }.
     'host.saveQuery': async x => {
       if (!saveQuery) throw new Error('saving queries is not available here');
       return saveQuery({ name: x && x.name ? String(x.name) : '', sql: String((x && x.sql) ?? '') });

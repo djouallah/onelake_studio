@@ -996,7 +996,8 @@ function openQuery(name, sql) {
   setStatus(`${name || 'The query'} — Run ▶ (Ctrl+Enter) to run it.`);
 }
 
-// Save Query: the host asks for the name (the open query's, to start with) and writes it.
+// Save Query, one click: over the query that is open, else as a new "Query N" — the tree's
+// Rename names it.
 async function saveQuery() {
   const btn = $('saveQueryBtn');
   btn.disabled = true;
@@ -1005,7 +1006,7 @@ async function saveQuery() {
     if (!saved) return;
     activeQuery = saved.name;
     if (!activeTableRef && !activeFile) $('activeTable').textContent = `Query: ${saved.name}`;
-    setStatus(`Saved the query ${saved.name} (${saved.path}).`, 'ok');
+    setStatus(`Saved as ${saved.name} under Queries — rename it there.`, 'ok');
   } catch (e) {
     setStatus('Save failed: ' + e.message, 'error');
   } finally {
@@ -1118,6 +1119,13 @@ window.addEventListener('message', async e => {
     // A saved query from the tree's Queries: into the SQL box, ready to run.
     else if (m.type === 'open-query') {
       openQuery(String(m.name || ''), String(m.sql ?? ''));
+    }
+    // A saved query renamed (or deleted, `to` null) in the tree: the one open here follows.
+    else if (m.type === 'query-renamed') {
+      if (activeQuery && activeQuery.toLowerCase() === String(m.from || '').toLowerCase()) {
+        activeQuery = m.to || null;
+        if (!activeTableRef && !activeFile) $('activeTable').textContent = activeQuery ? `Query: ${activeQuery}` : 'Query';
+      }
     }
     else if (m.type === 'reset') { await engineReady; await leaveLakehouse(); lakehouse = null; }
     else if (m.type === 'reads') showReads(m);

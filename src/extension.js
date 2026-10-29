@@ -732,17 +732,22 @@ async function activateInner(context) {
       { modal: true }, 'Replace');
     return pick === 'Replace';
   }
-  // The page's Save Query: { name } is the query open in the SQL box, if one is. Answers
-  // { name, path }, or null when the name was not given.
+  // The page's Save Query, with nothing asked: the query open in the SQL box ({ name }) is
+  // saved over, anything else becomes the next free "Query N" — Rename in the tree names it.
+  // Answers { name, path }.
   saveQuery = async ({ name, sql }) => {
-    const picked = await askQueryName('Save Query', name || '');
-    if (!picked) return null;
-    const path = queryPath(picked);
-    if (!await mayReplace(path, name)) return null;
     await fsp.mkdir(queriesFolder(), { recursive: true });
+    let stem = name ? queryStem(name) : '';
+    if (!stem) {
+      const taken = new Set((await listQueries()).map(q => q.name.toLowerCase()));
+      let n = 1;
+      while (taken.has(`query ${n}`)) n++;
+      stem = `Query ${n}`;
+    }
+    const path = queryPath(stem);
     await fsp.writeFile(path, String(sql ?? ''), 'utf8');
     tree.queriesChanged();
-    return { name: queryStem(picked), path };
+    return { name: stem, path };
   };
 
   const bimPath = n => join(modelsFolder(),bimFileName(n.workspace).replace(/\.bim$/, ''), bimFileName(n.model));
@@ -1211,16 +1216,22 @@ async function activateInner(context) {
       if (!picked || queryStem(picked) === n.label) return;
       const path = queryPath(picked);
       if (!await mayReplace(path, n.label)) return;
-      try { await fsp.rename(n.path, path); }
-      catch (e) { showError(`Could not rename ${n.label}: ${e.message}`); }
+      try {
+        await fsp.rename(n.path, path);
+        // The SQL box may have it open: its next Save goes to the new name.
+        postLive({ type: 'query-renamed', from: n.label, to: queryStem(picked) });
+      } catch (e) { showError(`Could not rename ${n.label}: ${e.message}`); }
       tree.queriesChanged();
     }),
     vscode.commands.registerCommand('onelakeStudio.deleteQuery', async n => {
       if (!n || !n.path) return;
       const pick = await vscode.window.showWarningMessage(`Delete the query ${n.label}?`, { modal: true }, 'Delete');
       if (pick !== 'Delete') return;
-      try { await fsp.rm(n.path, { force: true }); }
-      catch (e) { showError(`Could not delete ${n.label}: ${e.message}`); }
+      try {
+        await fsp.rm(n.path, { force: true });
+        // Open in the SQL box, it is a new query now: its next Save makes a new one.
+        postLive({ type: 'query-renamed', from: n.label, to: null });
+      } catch (e) { showError(`Could not delete ${n.label}: ${e.message}`); }
       tree.queriesChanged();
     }),
     vscode.commands.registerCommand('onelakeStudio.revealQueries', async () => {
