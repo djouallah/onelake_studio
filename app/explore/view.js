@@ -51,7 +51,7 @@ const elapsed = t0 => `${((performance.now() - t0) / 1000).toFixed(1)} s`;
 //   pages            (optional) the pages shown, of 'model', 'pivot', 'logs' (default: all);
 //                    the first is the one it opens on. One page: no page tabs.
 //   stateKey         (optional) where its shelves are kept (default: explore.<name>)
-// Returns { destroy }.
+// Returns { sql, destroy }.
 export function mountExplore(root, ctx) {
   const setStatus = ctx.setStatus || (() => {});
   const el = (tag, attrs = {}, ...kids) => {
@@ -346,6 +346,9 @@ export function mountExplore(root, ctx) {
   if (page !== 'model') show(page);
 
   return {
+    // The SQL over the model on screen: Show SQL's box when it is open, else the shelves'
+    // query with all its rows (no cap). null: nothing on the shelves.
+    sql: () => (sqlMode ? typed() : explorer?.query({ cap: 0 })?.sql) || null,
     destroy() {
       destroyed = true;
       explorer?.destroy();

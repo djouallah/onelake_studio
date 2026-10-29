@@ -240,7 +240,7 @@ const TABLE_CASTS = {
  * measure, its row count, so the pivot answers before a column is dragged. Made from the
  * columns the table's metadata lists, so nothing is read to build it; its queries read the
  * table by its SQL name, which the engine opens as a query names it. Not a view: SQL cannot
- * name it. Returns { name (what its SQL says FROM), tmsl, compiler }.
+ * name it. Returns { name (what its SQL says FROM), tmsl, compiler, tableSql(text) }.
  */
 export async function tableModel(table, sqlName, columns, modules = null) {
   const { createCompiler, tmslToModel } = await ready(modules);
@@ -254,7 +254,14 @@ export async function tableModel(table, sqlName, columns, modules = null) {
     partitions: [{ source: { type: "entity", entityName: table } }],
   }], relationships: [] } };
   const compiler = createCompiler(tmslToModel(bim), { tableSource: () => sqlName, castOutput: TABLE_CASTS });
-  return { name: modelName(table), tmsl: bim.model, compiler };
+  // The Pivot's SQL over this model as SQL over the table itself, for the SQL box: with one
+  // table and no relationships the two mean the same, the model read as the table (under the
+  // table's name, so "table"."column" still reads) and its measure as COUNT(*).
+  const esc = s => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const from = new RegExp(`\\bFROM\\s+${esc(modelName(table))}\\b`, "i");
+  const count = new RegExp(`\\bAGG\\(\\s*${esc(quoteIdent(rows))}\\s*\\)`, "gi");
+  const tableSql = text => String(text).replace(from, `FROM ${sqlName} AS ${quoteIdent(table)}`).replace(count, "COUNT(*)");
+  return { name: modelName(table), tmsl: bim.model, compiler, tableSql };
 }
 
 // A view by its name, in full (ws.model) or in part: { name, schema } as the host keeps it,

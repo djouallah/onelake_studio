@@ -931,7 +931,16 @@ function setPivotOpen(open) {
   $('pivotBtn').textContent = open ? 'Close Pivot' : 'Pivot';
   $('pivotBtn').classList.toggle('primary', open);
 }
-const closePivot = () => setPivotOpen(false);
+// Closing puts the pivot's query in the SQL box, as SQL over the table, to be taken further
+// by hand; nothing on the shelves leaves the box as it was.
+function closePivot() {
+  const sql = tablePivot?.view?.sql();
+  if (sql) {
+    $('sqlEditor').value = tablePivot.tableSql(sql);
+    activeQuery = null;
+  }
+  setPivotOpen(false);
+}
 async function openPivot() {
   if (!activeInfo || !activeSqlName) return;
   if (tablePivot && tablePivot.table !== activeTableRef) dropTablePivot();
@@ -943,6 +952,7 @@ async function openPivot() {
   try {
     const m = await semantic.tableModel(t.table, sqlName, activeInfo.columns);
     if (!tablePivot || tablePivot.table !== t) return;
+    tablePivot.tableSql = m.tableSql;
     tablePivot.view = mountExplore($('pivotView'), {
       name: m.name,
       tmsl: tmslOf(m.tmsl), compiler: m.compiler,
