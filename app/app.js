@@ -931,15 +931,16 @@ function setPivotOpen(open) {
   $('pivotBtn').textContent = open ? 'Close Pivot' : 'Pivot';
   $('pivotBtn').classList.toggle('primary', open);
 }
-// Closing puts the pivot's query in the SQL box, as SQL over the table, to be taken further
-// by hand; nothing on the shelves leaves the box as it was.
-function closePivot() {
-  const sql = tablePivot?.view?.sql();
-  if (sql) {
-    $('sqlEditor').value = tablePivot.tableSql(sql);
-    activeQuery = null;
-  }
-  setPivotOpen(false);
+const closePivot = () => setPivotOpen(false);
+// Edit as SQL: the pivot's query in the SQL box, as SQL over the table, to be taken further by
+// hand, as Looker's Open in SQL Runner does. Asked for, never on close; the pivot is kept.
+function editPivotSql(sql) {
+  if (!tablePivot) return;
+  $('sqlEditor').value = tablePivot.tableSql(sql);
+  activeQuery = null;
+  closePivot();
+  $('sqlEditor').focus();
+  setStatus('The pivot\'s query is in the SQL box, over the table. Run it, or change it first.');
 }
 async function openPivot() {
   if (!activeInfo || !activeSqlName) return;
@@ -965,6 +966,7 @@ async function openPivot() {
       saveState: viewState.set,
       profileSet: false,   // as the model view's (openModelView)
       htmlPlan: false,
+      editSql: editPivotSql,
     });
   } catch (e) {
     if (!tablePivot || tablePivot.table !== t) return;

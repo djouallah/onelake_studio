@@ -46,12 +46,14 @@ const elapsed = t0 => `${((performance.now() - t0) / 1000).toFixed(1)} s`;
 //                    published as a Fabric app of this Explore (src/exportapp.js); answers
 //                    what to say when it is done
 //   logsNote         (optional) the Logs page's line
+//   editSql(sql)     (optional) the Edit as SQL button: the SQL over the model on screen,
+//                    handed to the host's own SQL editor
 //   hostLogs         the host logs its queries itself (perflog.js), with more than this view
 //                    knows (the Fabric app's queue and engine): this view logs none of them
 //   pages            (optional) the pages shown, of 'model', 'pivot', 'logs' (default: all);
 //                    the first is the one it opens on. One page: no page tabs.
 //   stateKey         (optional) where its shelves are kept (default: explore.<name>)
-// Returns { sql, destroy }.
+// Returns { destroy }.
 export function mountExplore(root, ctx) {
   const setStatus = ctx.setStatus || (() => {});
   const el = (tag, attrs = {}, ...kids) => {
@@ -74,7 +76,12 @@ export function mountExplore(root, ctx) {
   const csvBtn = btn('Download CSV', download, true);
   const exportBtn = ctx.exportToFabric ? btn('Export to Fabric', exportApp) : null;
   if (exportBtn) exportBtn.title = 'Publish this Explore, on this model, as a Fabric app (a local copy is written too)';
-  const actions = el('div', { class: 'explore-actions', hidden: true }, sqlToggle, csvBtn, exportBtn);
+  const editBtn = ctx.editSql ? btn('Edit as SQL', () => {
+    const sql = current();
+    if (sql) ctx.editSql(sql); else setStatus('Put a field on the shelves first', 'error');
+  }) : null;
+  if (editBtn) editBtn.title = 'This query in the SQL box, to take further by hand (the pivot is kept)';
+  const actions = el('div', { class: 'explore-actions', hidden: true }, sqlToggle, editBtn, csvBtn, exportBtn);
   const modelPage = el('div', { class: 'model-page' });
   const pivotPage = el('div', { class: 'explore-page', hidden: true });
   const logsPage = el('div', { class: 'explore-logs-page', hidden: true });
@@ -189,6 +196,9 @@ export function mountExplore(root, ctx) {
   // --- Show SQL ---
   let sqlMode = false, planShown = false;
   const typed = () => ta.value.trim().replace(/;+\s*$/, '');
+  // The SQL over the model on screen: Show SQL's box when it is open, else the shelves'
+  // query with all its rows (no cap). null: nothing on the shelves.
+  const current = () => (sqlMode ? typed() : explorer?.query({ cap: 0 })?.sql) || null;
   function clearResults() { out.innerHTML = ''; info.textContent = ''; }
   function fillSql() {
     showPlanNode(null);
@@ -346,9 +356,6 @@ export function mountExplore(root, ctx) {
   if (page !== 'model') show(page);
 
   return {
-    // The SQL over the model on screen: Show SQL's box when it is open, else the shelves'
-    // query with all its rows (no cap). null: nothing on the shelves.
-    sql: () => (sqlMode ? typed() : explorer?.query({ cap: 0 })?.sql) || null,
     destroy() {
       destroyed = true;
       explorer?.destroy();

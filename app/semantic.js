@@ -260,7 +260,11 @@ export async function tableModel(table, sqlName, columns, modules = null) {
   const esc = s => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const from = new RegExp(`\\bFROM\\s+${esc(modelName(table))}\\b`, "i");
   const count = new RegExp(`\\bAGG\\(\\s*${esc(quoteIdent(rows))}\\s*\\)`, "gi");
-  const tableSql = text => String(text).replace(from, `FROM ${sqlName} AS ${quoteIdent(table)}`).replace(count, "COUNT(*)");
+  // DuckDB has no FETCH … WITH TIES (Show SQL's box keeps the pivot's cap): a LIMIT, which
+  // may cut a tie the pivot would have kept.
+  const ties = /\bFETCH\s+FIRST\s+(\d+)\s+ROWS?\s+WITH\s+TIES\b/i;
+  const tableSql = text => String(text).replace(from, `FROM ${sqlName} AS ${quoteIdent(table)}`)
+    .replace(count, "COUNT(*)").replace(ties, "LIMIT $1");
   return { name: modelName(table), tmsl: bim.model, compiler, tableSql };
 }
 
