@@ -743,10 +743,13 @@ export function createEngine({
   // Semantic views, kept by the host (src/semviews.js): every one with its .bim text, and
   // CREATE / DROP carried out there. `lh` resolves a Files/… path.
   const semanticViews = () => callHost("semantic.views", [{}]);
-  // `schema` is the model's workspace: the view is ws.name.
+  // `schema` is the model's workspace: the view is semanticmodel.ws.name.
   const semanticCreate = (name, path, lh, schema = null) =>
     callHost("semantic.create", [{ name, path, schema, workspace: lh && lh.workspace, item: lh && lh.item }]);
   const semanticDrop = (name, schema = null) => callHost("semantic.drop", [{ name, schema }]);
+  // A semantic model a query names that no view has yet: the host opens it (its local copy,
+  // read from Fabric the first time) and keeps it — { name, schema, path, text }.
+  const semanticOpen = ref => callHost("semantic.open", [ref]);
   // Export to Fabric: the model's text and the Explore shelves to the host, which writes the
   // app's folder and publishes it (src/exportapp.js); answers what to tell the user.
   const exportExplore = x => callHost("fabric.exportExplore", [x]);
@@ -757,5 +760,5 @@ export function createEngine({
 
   return { init, reset, statTable, peekTable, loadTable, deltaState, deltaHistory,
            loadFile, readFileBytes, saveText, saveOneLakeFile, runSql, describeLoad, fmtBytes, cancelLoad,
-           semanticViews, semanticCreate, semanticDrop, exportExplore, nameTables, saveQuery };
+           semanticViews, semanticCreate, semanticDrop, semanticOpen, exportExplore, nameTables, saveQuery };
 }

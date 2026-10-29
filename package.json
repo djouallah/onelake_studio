@@ -128,7 +128,7 @@
       },
       {
         "command": "onelakeStudio.redownloadSemanticModel",
-        "title": "Download Again (from Fabric, into its lakehouse)",
+        "title": "Download Again (from Fabric)",
         "category": "OneLake Studio",
         "icon": "$(cloud-download)"
       },

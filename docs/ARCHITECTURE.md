@@ -1,10 +1,10 @@
 # OneLake Studio for VS Code — architecture
 
-- **Read only, except two writes, each only on a click.** Opening a semantic model from the tree
-  writes its `.bim` into its lakehouse's `Files/` (below), and **Export to Fabric** publishes an
-  app. Export to Fabric runs from Explore's button or the command line's `export`, and either way
-  it waits for an OK in VS Code. Nothing else is written to Fabric or OneLake: not by the host, not by DuckDB, not by SQL the
-  page sends. The host refuses any statement that could write.
+- **Read only, except Export to Fabric.** **Export to Fabric** publishes an app, and writes the
+  model's `.bim` into its lakehouse's `Files/` when the model was opened from its local copy
+  (below). It runs from Explore's button or the command line's `export`, and either way it waits
+  for an OK in VS Code. Nothing else is written to Fabric or OneLake: not by the host, not by
+  DuckDB, not by SQL the page sends. The host refuses any statement that could write.
 - **Cache as much as possible.** Every answer OneLake or Fabric gave is kept on this machine and
   served from there first; the network is asked only when nothing is cached, or the cached
   answer is past its window.
@@ -168,22 +168,24 @@ one account's data to another; it survives a sign-out (signing back in finds it 
 **Clear Cached OneLake Data** deletes it.
 
 The extension also lists each workspace's **Power BI semantic models** in its tree. Clicking one
-reads its TMSL definition (the Fabric REST API's `getDefinition`) and writes it, as a `.bim`, into
-the `Files/` of the lakehouse its Direct Lake expression names:
-`<lakehouse>/Files/semantic_model/<model>.bim` ([`src/onelakewrite.js`](../src/onelakewrite.js), the
-one write to OneLake). It then opens from there like any `Files/` model, so **Export to Fabric**
-works on it.
-- **Only Direct Lake on one lakehouse.** Any other model is refused, and nothing is written.
-- **The file is the cache.** Later clicks open it without asking Fabric. The tree marks the model
-  *in <lakehouse>*.
-- **Download Again** reads Fabric again and overwrites the file, after asking.
-- **A file of that name that this extension didn't write** is never replaced unasked: *Replace It*
-  or *Open Existing*.
+reads its TMSL definition (the Fabric REST API's `getDefinition`) and keeps it on this machine, as
+`~/OneLakeStudio/semantic-models/<workspace>/<model>.bim`, then opens it. Nothing is written to
+OneLake, so someone who may only read the workspace can open and query its models.
+- **Only Direct Lake over OneLake.** Any other model is refused, and nothing is kept.
+- **The local copy is the cache.** Later clicks open it without asking Fabric; the tree marks the
+  model with a check. The command line reads and writes the same copies.
+- **Download Again** reads Fabric again and replaces the local copy, after asking.
+- **In SQL a model is `semanticmodel.<workspace>.<model>`**, listed by `SHOW ALL TABLES` with the
+  rest of the catalog. A query that names a model not opened yet opens it first (one read from
+  Fabric).
+- **Export to Fabric** writes the local copy into the `Files/` of the one lakehouse its Direct Lake
+  expression names, `<lakehouse>/Files/semantic_model/<model>.bim`
+  ([`src/onelakewrite.js`](../src/onelakewrite.js)), because the app reads the model there. It
+  happens after you approve the export, and a different file of that name is replaced only when
+  you say so.
 - **What it needs:** a second token, in the Fabric API's audience, which VS Code asks for only when
   you first expand *Semantic models*. Reading a definition needs Contributor or above on the
-  workspace, or write on the model. Writing the file needs write access to the lakehouse.
-- **The command line** (the agent skill) still downloads its own `.bim` copies to this machine, to
-  `~/OneLakeStudio/semantic-models/<workspace>/<model>.bim`.
+  workspace, or write on the model. Exporting needs write access to the lakehouse.
 
 Each workspace also has an **Apps** node: its Fabric apps (`AppBackend` items), however they were
 made, listed with the Fabric API's item listing. Each shows its URL and when it was last deployed,
@@ -228,17 +230,18 @@ the command line alike. The statements are dax-sql's (`createViews()`, vendored 
 [`src/vendored.js`](../src/vendored.js)); nothing here re-implements them:
 
 ```sql
-CREATE [OR REPLACE] SEMANTIC VIEW [IF NOT EXISTS] sales FROM '<a .bim or Ossie .yaml: local, abfss://… or Files/…>';
-DROP SEMANTIC VIEW [IF EXISTS] sales;
+CREATE [OR REPLACE] SEMANTIC VIEW [IF NOT EXISTS] semanticmodel.ws.sales FROM '<a .bim or Ossie .yaml: local, abfss://… or Files/…>';
+DROP SEMANTIC VIEW [IF EXISTS] semanticmodel.ws.sales;
 SHOW SEMANTIC VIEWS;
-SHOW SEMANTIC DIMENSIONS IN sales [FOR METRIC m];
-SHOW SEMANTIC METRICS IN sales;
-DESCRIBE sales;
-SELECT * FROM (SHOW SEMANTIC METRICS IN sales) WHERE ...;
+SHOW SEMANTIC DIMENSIONS IN semanticmodel.ws.sales [FOR METRIC m];
+SHOW SEMANTIC METRICS IN semanticmodel.ws.sales;
+DESCRIBE semanticmodel.ws.sales;
+SELECT * FROM (SHOW SEMANTIC METRICS IN semanticmodel.ws.sales) WHERE ...;
 ```
 
-A model opened from the tree or from `Files/` becomes the view named after its file (`nem.bim`
-is `nem`). Views are kept by the extension ([`src/semviews.js`](../src/semviews.js)) as pointers —
+A model is named `semanticmodel.<workspace>.<model>`. One opened from the tree, or named by a query,
+is its workspace's and keeps its own name; one opened from `Files/` is named after its file
+(`nem.bim` is `nem`) in the lakehouse's workspace. Views are kept by the extension ([`src/semviews.js`](../src/semviews.js)) as pointers —
 name, model file path, when — in one file per Microsoft account in its own storage, so they
 survive a restart; the file stays where it is. Creating one writes nothing to Fabric or OneLake. A
 Direct Lake table is read from the lakehouse its model names, through the same Iceberg catalog,

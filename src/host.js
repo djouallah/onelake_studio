@@ -43,9 +43,12 @@ const ENGINE_METHODS = new Set(['query', 'stream', 'cancel', 'info']);
  *        a semantic model's Direct Lake tables (named by GUID) -> their SQL names
  * @param {(x: {name: string, sql: string}) => Promise<{name: string, path: string}|null>} [o.saveQuery]
  *        keep the SQL as a saved query: over the one named, else under a new name
+ * @param {(x: {workspace: string, model: string}) => Promise<object>} [o.openModel]
+ *        a semantic model a query names, opened from its local copy (read from Fabric the first
+ *        time) and kept as a view: { name, schema, path, text }
  */
 function createHostMethods({ onelake, engine, onStatus = () => {}, saveFile = null, semviews = null, exportExplore = null,
-                             nameTables = null, saveQuery = null }) {
+                             nameTables = null, saveQuery = null, openModel = null }) {
   const views = () => { if (!semviews) throw new Error('semantic views are not available here'); return semviews; };
   return {
     // Export to Fabric (exportapp.js): the model's text (to check it), where it lives in
@@ -53,21 +56,33 @@ function createHostMethods({ onelake, engine, onStatus = () => {}, saveFile = nu
     // the local copy goes and publishes it.
     'fabric.exportExplore': async x => {
       if (!exportExplore) throw new Error('Export to Fabric is not available here');
-      if (!x.workspace || !x.path) throw new Error('Export to Fabric needs a model that is a OneLake file');
+      // A OneLake file (workspace + path), or a semantic model opened from its local copy
+      // (model: { workspace, name }), which the export writes into its lakehouse.
+      const model = x.model && x.model.workspace && x.model.name
+        ? { workspace: String(x.model.workspace), name: String(x.model.name) } : null;
+      if (!(x.workspace && x.path) && !model) {
+        throw new Error('Export to Fabric needs a model that is a OneLake file, or one opened from the tree');
+      }
       return exportExplore({ file: String(x.file || 'model'), name: String(x.name || 'model'),
-                             text: String(x.text ?? ''), workspace: String(x.workspace), path: String(x.path),
+                             text: String(x.text ?? ''),
+                             ...(x.workspace && x.path ? { workspace: String(x.workspace), path: String(x.path) } : { model }),
                              state: x.state && typeof x.state === 'object' ? x.state : null });
     },
     // Semantic views (semviews.js): the ones this machine keeps, with their .bim text, and
     // CREATE / DROP SEMANTIC VIEW carried out — a view is its name in its schema (the model's
-    // workspace, so SQL names it ws.model). dax-sql (in the page) has already checked
-    // the statement. `Files/…` is relative to the lakehouse the page has open.
+    // workspace, so SQL names it semanticmodel.ws.model). dax-sql (in the page) has already
+    // checked the statement. `Files/…` is relative to the lakehouse the page has open.
     'semantic.views': () => views().texts(),
     'semantic.create': async x => {
       const lh = x.workspace && x.item ? lhOf(x) : null;
       return views().put(String(x.name), views().resolve(String(x.path), lh), x.schema ? String(x.schema) : null);
     },
     'semantic.drop': async x => { await views().remove(String(x.name), x.schema ? String(x.schema) : null); return true; },
+    // A semantic model a query names and the page has no view of: opened and kept (openModel).
+    'semantic.open': async x => {
+      if (!openModel) throw new Error('semantic models are not available here');
+      return openModel({ workspace: String(x.workspace), model: String(x.model) });
+    },
     // A table's metadata, and its SQL name (lakehouse.ws.item.schema.table) for the editor.
     'onelake.table': async x => {
       const lh = lhOf(x), t = tableOf(x);

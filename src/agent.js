@@ -65,11 +65,13 @@ function filesToAbfss(sql, lh) {
  * @param {string} o.vendorDir               the vendored DAX compiler and YAML reader
  * @param {ReturnType<import('./semviews').createSemViews>} o.semviews  the views this machine keeps
  * @param {(x: object) => Promise<string>} [o.exportApp]  Explore's Export to Fabric (extension.js)
- * @param {(ws: string, modelId: string) => ({workspace: string, path: string}|null)} [o.modelFileOf]
- *   where the tree wrote a semantic model's .bim (<lakehouse>/Files/semantic_model/)
+ * @param {(n: {workspace: string, model: string, modelId: string}) => Promise<{path: string, text: string}>} [o.fetchModel]
+ *   a semantic model's definition read from Fabric again, into its local copy (bimPath)
+ * @param {(x: {workspace: string, model: string}) => Promise<object>} [o.openModel]
+ *   a semantic model a query names, opened from its local copy and kept as a view
  */
 function createAgent({ onelake, fabric, engine, bimPath, appDir, vendorDir, daxSqlPin, yamlPin, semviews,
-                       exportApp = null, modelFileOf = () => null, nameTables = null }) {
+                       exportApp = null, fetchModel = null, openModel = null, nameTables = null }) {
   let mods = null;
   async function modules() {
     if (mods) return mods;
@@ -179,8 +181,9 @@ function createAgent({ onelake, fabric, engine, bimPath, appDir, vendorDir, daxS
   async function syncViews(note) {
     const { semantic, compiler } = await modules();
     const kept = await semviews.texts();
-    const names = new Set();   // each view's SQL name (ws.model), lower-cased
+    const names = new Set();   // each view's SQL name (semanticmodel.ws.model), lower-cased
     for (const v of kept) {
+      if (!v.schema) continue;   // named before models were semanticmodel.ws.model
       try {
         if (v.error) throw new Error(v.error);
         const m = await semantic.defineView(v.name, v.path, v.text, 'replace', compiler, v.schema);
@@ -432,18 +435,21 @@ function createAgent({ onelake, fabric, engine, bimPath, appDir, vendorDir, daxS
       }
       if (fresh) {
         const m = await modelOf(ws, name, opts);
-        path = bimPath(ws, m.name);
         note(`downloading ${ws}/${m.name} from Fabric…`);
-        const bytes = await fabric.getBim(ws, m.id);
-        await fsp.mkdir(dirname(path), { recursive: true });
-        await fsp.writeFile(path, bytes);
+        if (fetchModel) ({ path } = await fetchModel({ workspace: ws, model: m.name, modelId: m.id }));
+        else {
+          path = bimPath(ws, m.name);
+          await fsp.mkdir(dirname(path), { recursive: true });
+          await fsp.writeFile(path, await fabric.getBim(ws, m.id));
+        }
+        name = m.name;
       }
       const { semantic, compiler } = await modules();
       await syncViews(note);
       const text = await fsp.readFile(path, 'utf8');
       const bim = JSON.parse(text.replace(/^﻿/, ''));
-      // Named in its workspace (ws.model), so another workspace's model of that name is another view.
-      const m = await semantic.registerModel(path.split(/[\\/]/).pop(), text, compiler, ws);
+      // Named by its workspace and its own name: semanticmodel.ws.model.
+      const m = await semantic.registerModel(path.split(/[\\/]/).pop(), text, compiler, ws, name);
       // Kept as a semantic view, as the panel keeps a model it opens.
       await semviews.put(m.view, path, ws);
       defined.add(m.name.toLowerCase());
@@ -482,6 +488,14 @@ function createAgent({ onelake, fabric, engine, bimPath, appDir, vendorDir, daxS
       const [inWs, inItem] = opts.in ? String(opts.in).split('/') : [];
       const lhIn = opts.in ? await itemOf(inWs, inItem, await onelake.items(inWs)) : null;
       if (lhIn) text = filesToAbfss(text, lhIn);
+      // A semantic model it names that is not a view yet: opened (its local copy, read from
+      // Fabric the first time) and kept, as the panel does.
+      for (const ref of semantic.unopenedModels(text)) {
+        if (!openModel) throw new Error('semantic models cannot be opened here');
+        const v = await openModel(ref);
+        const m = await semantic.defineView(v.name, v.path, v.text, 'replace', compiler, v.schema);
+        defined.add(m.name.toLowerCase());
+      }
       const st = await semantic.statement(text, compiler);
       // CREATE / DROP SEMANTIC VIEW: dax-sql has checked it; the extension keeps the view.
       if (st && st.drop) {
@@ -493,7 +507,10 @@ function createAgent({ onelake, fabric, engine, bimPath, appDir, vendorDir, daxS
         return;
       }
       if (st && st.create) {
-        const full = st.create.schema ? [st.create.schema, st.create.name] : st.create.name;
+        if (String(st.create.db || '').toLowerCase() !== semantic.MODEL_CATALOG || !st.create.schema) {
+          throw new Error(`a semantic view is named ${semantic.MODEL_CATALOG}.<workspace>.<name>`);
+        }
+        const full = [semantic.MODEL_CATALOG, st.create.schema, st.create.name];
         if (st.create.mode === 'if_not_exists' && semantic.hasView(full)) {
           out(`Semantic view ${st.create.name} already exists.`);
           return;
@@ -521,20 +538,25 @@ function createAgent({ onelake, fabric, engine, bimPath, appDir, vendorDir, daxS
     async export([ws, a, b], opts, out) {
       if (!exportApp) throw new Error('Export to Fabric is not available here');
       if (!a) throw new Error('usage: export <ws> <model>, or export <ws> <item> <Files/path>');
-      let where;
-      if (b) {
-        const lh = await itemOf(ws, a, await look('items', [ws], opts));
-        if (!hasFilesArea(lh.item)) throw new Error(`${lh.item} has no Files area — only a lakehouse does`);
-        where = { workspace: lh.workspace, path: `${lh.item}/Files/${String(b).replace(/^\/?Files\//i, '')}` };
-      } else {
+      const { semantic } = await modules();
+      if (!b) {
+        // A semantic model: its local copy, which the export writes into its lakehouse.
         const m = await modelOf(ws, a, opts);
-        where = modelFileOf(ws, m.id);
-        if (!where) throw new Error(`${ws}/${m.name} is not in its lakehouse yet — open it in the OneLake Studio tree, ` +
-          'which writes it to <lakehouse>/Files/semantic_model/');
+        const path = bimPath(ws, m.name);
+        if (!await exists(path)) {
+          throw new Error(`${ws}/${m.name} is not downloaded yet — open it in the OneLake Studio tree, ` +
+            `or \`model "${ws}" "${m.name}" --fresh\``);
+        }
+        const text = await fsp.readFile(path, 'utf8');
+        out(await exportApp({ file: path.split(/[\\/]/).pop(), name: semantic.modelName(m.name), text, state: null,
+                              model: { workspace: ws, name: m.name } }));
+        return;
       }
+      const lh = await itemOf(ws, a, await look('items', [ws], opts));
+      if (!hasFilesArea(lh.item)) throw new Error(`${lh.item} has no Files area — only a lakehouse does`);
+      const where = { workspace: lh.workspace, path: `${lh.item}/Files/${String(b).replace(/^\/?Files\//i, '')}` };
       const file = where.path.split('/').pop();
       const text = Buffer.from(await onelake.readBytes(where.workspace, where.path)).toString('utf8');
-      const { semantic } = await modules();
       out(await exportApp({ file, name: semantic.modelName(file), text, state: null,
                             workspace: where.workspace, path: where.path }));
     },

@@ -144,9 +144,10 @@ try {
   if (!/^2 rows/.test(info) || !/blue 5(\.0)? red 12\.5/.test(rows)) throw new Error(`model query: ${info} ${rows}`);
 
   // A model the extension downloaded to this machine arrives as text (open-model), not as
-  // a OneLake path — the click in the tree.
+  // a OneLake path — the click in the tree — named by its workspace and its own name.
   await page.evaluate(text => window.postMessage({
     type: "open-model", name: "Local Model.bim", path: "C:/models/ws/Local Model.bim", text,
+    modelWorkspace: "ws", modelName: "Local Model",
   }, "*"), BIM);
   await page.waitForFunction(() => document.getElementById("activeTable").textContent === "Local Model.bim" &&
     !document.getElementById("modelView").hidden, { timeout: 60000 })

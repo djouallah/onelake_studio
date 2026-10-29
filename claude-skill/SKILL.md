@@ -29,7 +29,7 @@ node --no-warnings "{{cli}}" <command>
 | `sql "<sql>"` | read-only SQL. A table is `Kind.workspace.item.schema.table` — `lakehouse.aemo.data.dbo.dim_duid`; Kind is `lakehouse`, `warehouse`, `sqldatabase` or `mirroreddatabase` (any case), a lakehouse without schemas is `dbo`, a part with spaces is `"quoted"` — any table, any workspace, joined freely. Every semantic view is a table too: `AGG("measure")` is the measure; and `CREATE / DROP / SHOW SEMANTIC VIEW` (below) |
 | `sql "<sql>" --in <ws>/<item>` | the lakehouse's files as `'Files/…'`: `read_parquet('Files/log.parquet')` |
 | `dax "EVALUATE …" --model <name>` | a DAX query against a semantic view (`--model` may be left out when only one is defined) |
-| `export <ws> <model>` | Export to Fabric, as Explore's button does it: publishes the model's Explore as a Fabric app. The model must have been opened in the tree once (that writes its `.bim` into its lakehouse) |
+| `export <ws> <model>` | Export to Fabric, as Explore's button does it: publishes the model's Explore as a Fabric app. The model must have been downloaded once (opened in the tree, or `model <ws> <model> --fresh`); the export writes its `.bim` into its lakehouse |
 | `export <ws> <item> <Files/path>` | the same, for a model file (`.bim`, Ossie `.yaml`) in a lakehouse's Files/ |
 
 Options: `--limit N` (rows printed, default 100), `--csv`, `--fresh` (ask OneLake/Fabric instead of the cache — see below),
@@ -42,12 +42,12 @@ Options: `--limit N` (rows printed, default 100), `--csv`, `--fresh` (ask OneLak
 3. Compute with the model's own measures, never by re-deriving them from the fact table:
 
    ```
-   sql 'SELECT dim_customer.Region, AGG("Total Sales") AS sales FROM sales.sales_model GROUP BY ALL ORDER BY 1'
+   sql 'SELECT dim_customer.Region, AGG("Total Sales") AS sales FROM semanticmodel.sales.sales_model GROUP BY ALL ORDER BY 1'
    ```
 
-   A model is a semantic view named `workspace.model` (`sales_model` in workspace `sales` is
-   `sales.sales_model`), so two workspaces' models of one name are two views; the bare name
-   works while only one model has it. `model` prints a ready-made example for it. Columns are `table.column`; quote names with spaces:
+   A model is named `semanticmodel.<workspace>.<model>` (`sales_model` in workspace `sales` is
+   `semanticmodel.sales.sales_model`). A query that names a model not downloaded yet downloads it
+   first. `SHOW ALL TABLES` lists every model and table the cache knows. `model` prints a ready-made example for it. Columns are `table.column`; quote names with spaces:
    `AGG("Avg Price")`. Filters go in WHERE as usual.
 
 ## Semantic views
@@ -56,10 +56,10 @@ Options: `--limit N` (rows printed, default 100), `--csv`, `--fresh` (ask OneLak
 
 ```
 sql "SHOW SEMANTIC VIEWS"
-sql "SHOW SEMANTIC METRICS IN sales_model"            measures, with their DAX
-sql "SHOW SEMANTIC DIMENSIONS IN sales_model FOR METRIC \"Total Sales\""   what can slice it
-sql "CREATE SEMANTIC VIEW sales FROM 'Files/models/sales.bim'" --in <ws>/<item>
-sql "DROP SEMANTIC VIEW sales"
+sql "SHOW SEMANTIC METRICS IN semanticmodel.sales.sales_model"            measures, with their DAX
+sql "SHOW SEMANTIC DIMENSIONS IN semanticmodel.sales.sales_model FOR METRIC \"Total Sales\""   what can slice it
+sql "CREATE SEMANTIC VIEW semanticmodel.<ws>.sales FROM 'Files/models/sales.bim'" --in <ws>/<item>
+sql "DROP SEMANTIC VIEW semanticmodel.<ws>.sales"
 ```
 
 A model file is a `.bim` (TMSL) or an Apache Ossie `.yaml`/`.yml` whose metrics are DAX; its path

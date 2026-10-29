@@ -32,7 +32,7 @@ const fsp = require('node:fs/promises');
 const { join } = require('node:path');
 const os = require('node:os');
 const { sqlStr, quoteIdent, assertReadOnly, tableRefs, catalogStatement, readsCatalog } = require('./sql');
-const { SQL_KINDS, sqlKind, itemKind, displayName, sqlName } = require('./names');
+const { SQL_KINDS, sqlKind, itemKind, displayName, sqlName, MODEL_CATALOG, modelSqlName } = require('./names');
 
 
 // Rows are read in chunks so a large result starts painting before it has all arrived,
@@ -165,7 +165,8 @@ async function prepareFileCache(dir, maxBytes, onWarn) {
 // was ever written to.
 //
 // `catalogTables` lists, from the host's cache alone, every table it knows: { kind, workspace,
-// item, schema, table } with { columns: [{ name, type }] } (DuckDB types) or { emptySql }.
+// item, schema, table } with { columns: [{ name, type }] } (DuckDB types) or { emptySql } — and
+// every semantic model, { kind: 'semanticmodel', workspace, model }.
 // Each becomes a view DuckDB lists (syncCatalog), so SHOW ALL TABLES and information_schema see
 // what the tree has seen without a single request to OneLake.
 function createEngineHost({ extensionDir, onLog = () => {}, onWarn = () => {}, getToken = null,
@@ -297,6 +298,9 @@ function createEngineHost({ extensionDir, onLog = () => {}, onWarn = () => {}, g
       // the workspace, item and schema are nested schemas in it, made as a statement names
       // them (ensureTables). Before the lockdown, which leaves nothing to attach with.
       for (const k of SQL_KINDS) await conn.run(`ATTACH ':memory:' AS ${quoteIdent(k)};`);
+      // And one for semantic models (semanticmodel.ws.model): listed there (listCatalog), and
+      // queried through the page's semantic step, which compiles them before DuckDB sees them.
+      await conn.run(`ATTACH ':memory:' AS ${quoteIdent(MODEL_CATALOG)};`);
 
       // Parquet footers, kept between queries: a Data tab, a Preview and the user's own
       // SELECT over one table each re-read every footer otherwise. Entries are checked
@@ -551,7 +555,20 @@ function createEngineHost({ extensionDir, onLog = () => {}, onWarn = () => {}, g
   const listed = new Map();
   let catalogStale = true;
   const DUCK_TYPE = /^[A-Z_]+( [A-Z_]+)*(\(\d+,\d+\))?$/;
+  // Where an entry goes: its view's SQL name, and the schemas it sits in. A semantic model is
+  // { kind: 'semanticmodel', workspace, model }; anything else is a table.
+  function placeOf(t) {
+    if (t.kind === MODEL_CATALOG) {
+      return { name: modelSqlName(t.workspace, t.model), path: [t.kind, t.workspace] };
+    }
+    return { name: sqlName(t), path: [t.kind, t.workspace, t.item, t.schema || 'dbo'] };
+  }
   function listedSource(t, name) {
+    // A model has no columns to list, and is never read as a view: its one column says what
+    // it is, and selecting from it says why it cannot be.
+    if (t.kind === MODEL_CATALOG) {
+      return `SELECT NULL::VARCHAR AS model WHERE error(${sqlStr(`${name} is a semantic model that is not open`)}) IS NULL`;
+    }
     if (t.emptySql != null) return String(t.emptySql);
     const cols = (t.columns || []).map(c =>
       `CAST(NULL AS ${DUCK_TYPE.test(String(c.type)) ? c.type : 'VARCHAR'}) AS ${quoteIdent(c.name)}`);
@@ -573,16 +590,16 @@ function createEngineHost({ extensionDir, onLog = () => {}, onWarn = () => {}, g
     await admin(async () => {
       const want = new Map();
       for (const t of list || []) {
-        const name = sqlName(t);
+        const { name, path } = placeOf(t);
         const key = name.toLowerCase();
-        if (!want.has(key)) want.set(key, { t, name });
+        if (!want.has(key)) want.set(key, { t, name, path });
       }
-      for (const [key, { t, name }] of want) {
+      for (const [key, { t, name, path: parts }] of want) {
         if (made.has(key) && !listed.has(key)) continue;
         const source = listedSource(t, name);
         if (source == null || made.get(key) === source) continue;
         try {
-          const path = [t.kind, t.workspace, t.item, t.schema || 'dbo'].map(quoteIdent);
+          const path = parts.map(quoteIdent);
           for (let k = 2; k <= path.length; k++) await conn.run(`CREATE SCHEMA IF NOT EXISTS ${path.slice(0, k).join('.')};`);
           await conn.run(`CREATE OR REPLACE VIEW ${name} AS ${source};`);
           made.set(key, source);

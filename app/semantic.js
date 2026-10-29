@@ -4,11 +4,11 @@
 // The statements and the compiling are dax-sql's, vendored at the pin in src/vendored.js —
 // its createViews() is the one implementation of
 //
-//   CREATE [OR REPLACE] SEMANTIC VIEW [IF NOT EXISTS] sales FROM '<path to .bim or .yaml>'
-//   DROP SEMANTIC VIEW [IF EXISTS] sales
-//   SHOW SEMANTIC VIEWS | SHOW SEMANTIC DIMENSIONS IN sales [FOR METRIC m] | SHOW SEMANTIC METRICS IN sales
-//   DESCRIBE sales
-//   SELECT dim.Region, AGG("Sales") FROM sales GROUP BY ALL    (AGG(m) is measure m)
+//   CREATE [OR REPLACE] SEMANTIC VIEW [IF NOT EXISTS] semanticmodel.ws.sales FROM '<path to .bim or .yaml>'
+//   DROP SEMANTIC VIEW [IF EXISTS] semanticmodel.ws.sales
+//   SHOW SEMANTIC VIEWS | SHOW SEMANTIC DIMENSIONS IN … [FOR METRIC m] | SHOW SEMANTIC METRICS IN …
+//   DESCRIBE semanticmodel.ws.sales
+//   SELECT dim.Region, AGG("Sales") FROM semanticmodel.ws.sales GROUP BY ALL    (AGG(m) is measure m)
 //
 // and nothing here re-implements any of it. A model is TMSL (a .bim) or an Apache Ossie model
 // whose metrics are DAX (a .yaml or .yml): dax-sql's formats/ossie.js turns the latter into the
@@ -24,6 +24,13 @@ import { quoteIdent, basename } from "./paths.js";
 import { EXPLORE_CASTS } from "./explore/query.js";
 
 const lc = s => String(s).toLowerCase();
+
+// The catalog every semantic model is named in, as lakehouse tables are in `lakehouse`: a
+// model's SQL name is semanticmodel.<workspace>.<model>, and nothing shorter.
+export const MODEL_CATALOG = "semanticmodel";
+const namePart = s => (/^[A-Za-z_][A-Za-z0-9_]*$/.test(String(s)) ? String(s) : quoteIdent(s));
+export const modelSqlName = (workspace, name) => [MODEL_CATALOG, workspace, name].map(namePart).join(".");
+const fullName = v => modelSqlName(v.schema, v.name);
 
 let modulesP = null;
 function compilerModules() {
@@ -174,12 +181,12 @@ function itemOfIdent(ident) {
 
 /**
  * A semantic view of a model file's text (a .bim, or an Ossie .yaml), under `name` in
- * `schema`: the model's workspace, so SQL names it ws.model and two workspaces' models of one
- * name are two views (dax-sql); none for a view named by its name alone. `mode`: 'create',
+ * `schema`, the model's workspace: SQL names it semanticmodel.ws.model. `mode`: 'create',
  * 'replace' or 'if_not_exists' (dax-sql's). Returns what the model view draws:
- * { name (its SQL name, ws.model), file, sample, directLake, bim, exploreCompiler }.
+ * { name (its SQL name), view, schema, file, sample, directLake, bim, exploreCompiler }.
  */
 export async function defineView(name, path, text, mode = "replace", modules = null, schema = null) {
+  if (!schema) throw new Error(`a semantic model is named ${MODEL_CATALOG}.<workspace>.<model>: ${name} has no workspace`);
   const mods = await ready(modules);
   const { createCompiler, tmslToModel } = mods;
   const bim = bimOf(path, text, mods);
@@ -195,20 +202,20 @@ export async function defineView(name, path, text, mode = "replace", modules = n
   // The items its tables are read from, by their SQL names — a model may read several.
   const where = [...new Set([...lake.values()].map(l => itemOfIdent(l.ident)))];
   const done = views.define(name, tmslToModel(bim), {
-    path, mode, schema: schema || "main", tableSource, tablesFrom: where.length ? where.join(", ") : "search path",
+    path, mode, db: MODEL_CATALOG, schema, tableSource, tablesFrom: where.length ? where.join(", ") : "search path",
   });
-  const v = views.get(schema ? [schema, name] : [name]);
+  const v = views.get([MODEL_CATALOG, schema, name]);
   if (done === "created") lakes.set(lc(v.sqlName), lake);
   // Explore's (explore/query.js): its rows go straight to the page, cast as EXPLORE_CASTS says.
   const exploreCompiler = createCompiler(tmslToModel(bim), { tableSource, castOutput: EXPLORE_CASTS });
-  return { name: v.sqlName, view: v.name, schema, file: basename(path), sample: sampleQuery(v),
+  return { name: fullName(v), view: v.name, schema, file: basename(path), sample: sampleQuery(v),
            directLake: lake.size, bim, exploreCompiler, done };
 }
 
-// A model opened from a file, under the file's name in its workspace: ws.nem for nem.bim or
-// nem.yaml.
-export const registerModel = (fileName, text, modules = null, schema = null) =>
-  defineView(modelName(fileName), fileName, text, "replace", modules, schema);
+// A model opened from a file, in its workspace: under the semantic model's own name when it is
+// one (the tree's click), else the file's — semanticmodel.ws.nem for nem.bim or nem.yaml.
+export const registerModel = (fileName, text, modules = null, schema = null, name = null) =>
+  defineView(name || modelName(fileName), fileName, text, "replace", modules, schema);
 
 // A column's type in TMSL's words, from the Iceberg schema (long, decimal(18,2), timestamp)
 // or DuckDB's DESCRIBE (BIGINT, DECIMAL(18,2), TIMESTAMP WITH TIME ZONE), whichever the
@@ -294,17 +301,37 @@ export async function tableModel(table, sqlName, columns, modules = null) {
   return { name: modelName(table), tmsl: bim.model, compiler, plainSql };
 }
 
-// A view by its name, in full (ws.model) or in part: { name, schema } as the host keeps it,
-// or null. An error when a part fits several.
+// A view by its SQL name: { name, schema } as the host keeps it, and its SQL name; or null.
 export function viewOf(name) {
   const v = views && views.get(name);
-  return v ? { name: v.name, schema: lc(v.schema) === "main" ? null : v.schema, sqlName: v.sqlName } : null;
+  return v ? { name: v.name, schema: v.schema, sqlName: fullName(v) } : null;
+}
+
+// The semantic models a statement names (semanticmodel.ws.model) that are not views here yet,
+// as [{ workspace, model }] as written: the host opens each before the statement runs.
+// Comments and string literals are skipped.
+const PART_RE = '(?:"(?:[^"]|"")*"|[A-Za-z_\\u00C0-\\uFFFF][A-Za-z0-9_$\\u00C0-\\uFFFF]*)';
+const DOT_RE = "\\s*\\.\\s*";
+const MODEL_REF = new RegExp(`--[^\\n]*|/\\*[\\s\\S]*?\\*/|'(?:[^']|'')*'|` +
+  `(${PART_RE})${DOT_RE}(${PART_RE})${DOT_RE}(${PART_RE})`, "g");
+export function unopenedModels(sql) {
+  const s = String(sql);
+  if (!lc(s).includes(MODEL_CATALOG)) return [];
+  const unq = x => (x[0] === '"' ? x.slice(1, -1).replace(/""/g, '"') : x);
+  const out = [];
+  for (const m of s.matchAll(MODEL_REF)) {
+    if (!m[1] || lc(unq(m[1])) !== MODEL_CATALOG) continue;
+    const ref = { workspace: unq(m[2]), model: unq(m[3]) };
+    if (hasView([MODEL_CATALOG, ref.workspace, ref.model])) continue;
+    if (!out.some(r => lc(r.workspace) === lc(ref.workspace) && lc(r.model) === lc(ref.model))) out.push(ref);
+  }
+  return out;
 }
 
 export function dropView(name) {
   const v = views && views.get(name);
   if (!v) return;
-  views.drop(v.sqlName, { ifExists: true });
+  views.drop([MODEL_CATALOG, v.schema, v.name], { ifExists: true });
   lakes.delete(lc(v.sqlName));
 }
 
@@ -389,12 +416,13 @@ export function starterChart(model) {
 // or the model's field list when it has no measure.
 function sampleQuery(v) {
   const name = id => (/^[A-Za-z_][A-Za-z0-9_]*$/.test(id) ? id : quoteIdent(id));
-  const head = `-- ${v.sqlName} is a semantic view: AGG(measure) is a measure, ` +
-               `SHOW SEMANTIC METRICS IN ${v.sqlName} lists them all.\n`;
+  const full = fullName(v);
+  const head = `-- ${full} is a semantic model: AGG(measure) is a measure, ` +
+               `SHOW SEMANTIC METRICS IN ${full} lists them all.\n`;
   const chart = starterChart(v.compiler.model);
-  if (!chart) return `${head}SHOW SEMANTIC DIMENSIONS IN ${v.sqlName}`;
+  if (!chart) return `${head}SHOW SEMANTIC DIMENSIONS IN ${full}`;
   const agg = `AGG(${name(chart.measure)}) AS ${quoteIdent(chart.measure)}`;
   return chart.column
-    ? `${head}SELECT ${name(chart.column.table)}.${name(chart.column.name)}, ${agg}\nFROM ${v.sqlName}\nGROUP BY ALL\nORDER BY 1`
-    : `${head}SELECT ${agg}\nFROM ${v.sqlName}`;
+    ? `${head}SELECT ${name(chart.column.table)}.${name(chart.column.name)}, ${agg}\nFROM ${full}\nGROUP BY ALL\nORDER BY 1`
+    : `${head}SELECT ${agg}\nFROM ${full}`;
 }

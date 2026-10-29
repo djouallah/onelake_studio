@@ -143,6 +143,10 @@ const sqlPart = s => {
 // { kind, workspace, item (as Fabric shows it), schema, table } -> its SQL name.
 const sqlName = r =>
   [r.kind, r.workspace, r.item, r.schema || "dbo", r.table].map(sqlPart).join(".");
+// A semantic model's SQL name: semanticmodel.<workspace>.<model>, in a catalog of its own as a
+// lakehouse's tables are in theirs (app/semantic.js names its views the same way).
+const MODEL_CATALOG = "semanticmodel";
+const modelSqlName = (workspace, model) => [MODEL_CATALOG, workspace, model].map(sqlPart).join(".");
 // The same, for a table the tree knows by its item's directory name ("data.Lakehouse").
 function sqlNameOf(lh, t) {
   const kind = sqlKind(itemKind(lh.item));
@@ -264,7 +268,7 @@ function fmtBytes(n) {
 module.exports = {
   strip, basename, encPath,
   itemKind, holdsTables, isMirrored, hasFilesArea, kindLabel, kindLabelPlural,
-  SQL_KINDS, sqlKind, displayName, sqlPart, sqlName, sqlNameOf,
+  SQL_KINDS, sqlKind, displayName, sqlPart, sqlName, sqlNameOf, MODEL_CATALOG, modelSqlName,
   icebergTypeName, icebergFields, snapshotStats, sourceFormat, icebergHistory,
   fmtBytes,
 };

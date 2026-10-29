@@ -17,3 +17,16 @@ test("a .yaml or .yml is read as Ossie, anything else as TMSL", () => {
   assert.equal(isOssiePath("abfss://ws@onelake.dfs.fabric.microsoft.com/lh/Files/A.YML"), true);
   assert.equal(isOssiePath("C:/models/ws/Sales.bim"), false);
 });
+
+// A semantic model's one SQL name, and the ones a statement names that are not open yet.
+test("a model is semanticmodel.ws.model, and a statement's unopened models are found", async () => {
+  const { modelSqlName, unopenedModels, defineView } = await import("../app/semantic.js");
+  assert.equal(modelSqlName("a ws", "Sales"), 'semanticmodel."a ws".Sales');
+  assert.deepEqual(unopenedModels('SELECT AGG(x) FROM SemanticModel."a ws"."Sales Model" JOIN semanticmodel.b.c ON 1=1'),
+    [{ workspace: "a ws", model: "Sales Model" }, { workspace: "b", model: "c" }]);
+  // Each once; not in a string or a comment; a table's name is not a model's.
+  assert.deepEqual(unopenedModels("SELECT * FROM semanticmodel.w.m, semanticmodel . w . M"), [{ workspace: "w", model: "m" }]);
+  assert.deepEqual(unopenedModels("SELECT 'semanticmodel.w.m' -- semanticmodel.w.m\n/* semanticmodel.w.m */"), []);
+  assert.deepEqual(unopenedModels("SELECT * FROM lakehouse.w.lh.dbo.t"), []);
+  await assert.rejects(defineView("Sales", "Sales.bim", "{}"), /semanticmodel\.<workspace>\.<model>: Sales has no workspace/);
+});

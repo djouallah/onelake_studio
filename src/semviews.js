@@ -10,9 +10,9 @@
 //
 // A path is a local model file, an abfss:// URL of one in OneLake, or Files/… relative to a
 // lakehouse (stored as its abfss:// URL). A model file is a .bim (TMSL) or an Apache Ossie
-// model (.yaml or .yml); app/semantic.js reads either. `schema` is the model's workspace, so SQL
-// names it ws.model and two workspaces' models of one name are two views; none for a view
-// named by its name alone.
+// model (.yaml or .yml); app/semantic.js reads either. `schema` is the model's workspace: SQL
+// names it semanticmodel.ws.model. A semantic model opened from the tree is a local copy of its
+// definition (extension.js fetchModel), and its view points at that.
 // =============================================================================
 
 const fsp = require('node:fs/promises');
@@ -25,13 +25,14 @@ const ABFSS = /^abfss:\/\/([^@/]+)@onelake\.dfs\.fabric\.microsoft\.com\/(.+)$/i
  * @param {object} o
  * @param {string} o.dir                          where the per-account files live
  * @param {{ readBytes(ws: string, path: string): Promise<Uint8Array> }} o.onelake
+ * @param {() => void} [o.onChange]               a view was kept or dropped
  */
 // One view: its name in its schema, ignoring case.
 const sameView = (v, name, schema) =>
   v.name.toLowerCase() === String(name).toLowerCase() &&
   String(v.schema || '').toLowerCase() === String(schema || '').toLowerCase();
 
-function createSemViews({ dir, onelake }) {
+function createSemViews({ dir, onelake, onChange = () => {} }) {
   let account = 'signed-out';
   const fileOf = () => join(dir, `${account}.json`);
 
@@ -91,18 +92,13 @@ function createSemViews({ dir, onelake }) {
       const entries = (await list()).filter(v => !sameView(v, name, sch));
       entries.push({ name: String(name), schema: sch, path, created: new Date().toISOString() });
       await save(entries);
+      onChange();
       return { name: String(name), schema: sch, path, text };
     },
     async remove(name, schema = null) {
       const entries = await list();
       const left = entries.filter(v => !sameView(v, name, schema));
-      if (left.length !== entries.length) await save(left);
-    },
-    // The first time an account has none, the models already downloaded become views, as
-    // they were before views were kept.
-    async seed(found) {
-      try { await fsp.access(fileOf()); return; } catch (_) {}
-      await save(found.map(f => ({ name: f.name, schema: f.schema || null, path: f.path, created: new Date().toISOString() })));
+      if (left.length !== entries.length) { await save(left); onChange(); }
     },
   };
 }

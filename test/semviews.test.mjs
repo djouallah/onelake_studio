@@ -43,9 +43,6 @@ test("a view is a pointer, kept per account, and its .bim is read where it is", 
 
     v.useAccount("b");
     assert.deepEqual(await v.list(), [], "another account has its own views");
-    await v.seed([{ name: "seeded", path: bim }]);
-    await v.seed([{ name: "again", path: bim }]);
-    assert.deepEqual((await v.list()).map(x => x.name), ["seeded"], "seeding happens once");
 
     v.useAccount("a");
     await v.remove("SALES");

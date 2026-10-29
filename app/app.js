@@ -187,8 +187,6 @@ async function openTable(m) {
 // directory. Whether a reader exists is loadFile's to decide, and it says so.
 async function openFile(m) {
   await goToLakehouse(m.workspace, m.item);
-  // A semantic model the tree wrote here is named in its own workspace (ws.model), which can
-  // be another than the lakehouse's.
   const entry = { name: basename(m.path), path: m.path, isDir: false, bytes: m.bytes || 0,
                   modelWorkspace: m.modelWorkspace || null };
   if (IMAGE_EXTS.has(fileExt(entry.name))) await selectImage(entry);
@@ -302,10 +300,10 @@ async function openModelView(file, text = null, { fromOneLake = text == null } =
     // engine's boot: only its queries need DuckDB, and runModelSql waits for it.
     if (fromOneLake) await engineReady;
     const bim = text != null ? text : new TextDecoder().decode(await engine.readFileBytes(lakehouse, file));
-    // Named in its workspace, ws.model: the workspace of the semantic model the tree opened,
-    // else the one the file is in.
+    // semanticmodel.ws.model: the semantic model the tree opened, by its own workspace and
+    // name; else the file, in the workspace it is in, by its name.
     const schema = file.modelWorkspace || (fromOneLake && lakehouse ? lakehouse.workspace : null);
-    const m = await semantic.registerModel(file.name, bim, null, schema);
+    const m = await semantic.registerModel(file.name, bim, null, schema, file.modelName);
     // Kept by the host as a semantic view too, so it is there after a restart and the
     // command line can name it. Best effort: the view on screen does not depend on it.
     engine.semanticCreate(m.view, fromOneLake ? abfssUrl(lakehouse.workspace, file.path) : file.path, null, m.schema)
@@ -326,12 +324,14 @@ async function openModelView(file, text = null, { fromOneLake = text == null } =
       profileSet: false,
       htmlPlan: false,
       logsNote: 'This panel only — kept in memory, nothing is stored. The extension reads OneLake itself; its reads are in the Read Log.',
-      // Explore as a Fabric app of its own (src/exportapp.js). The app reads this file, in
-      // place, at run time, and the tables of the one lakehouse the model names: a model that
-      // is not a OneLake file, or names no lakehouse or several, has no button.
-      exportToFabric: fromOneLake && semantic.lakehousesOf(m.bim).length === 1
-        ? state => engine.exportExplore({ file: file.name, name: m.view, text: bim, state,
-                                          workspace: lakehouse.workspace, path: file.path })
+      // Explore as a Fabric app of its own (src/exportapp.js). The app reads the model from
+      // OneLake at run time, and the tables of the one lakehouse it names: a OneLake file is
+      // read where it is; a semantic model's local copy is written into its lakehouse by the
+      // export, once approved. A model that names no lakehouse or several has no button.
+      exportToFabric: semantic.lakehousesOf(m.bim).length === 1 && (fromOneLake || file.modelWorkspace)
+        ? state => engine.exportExplore(fromOneLake
+          ? { file: file.name, name: m.view, text: bim, state, workspace: lakehouse.workspace, path: file.path }
+          : { file: file.name, name: m.view, text: bim, state, model: { workspace: file.modelWorkspace, name: m.view } })
         : undefined,
     });
     setStatus(`${file.name} is the semantic model ${m.name}` +
@@ -354,10 +354,22 @@ async function loadViews() {
   let list = [];
   try { list = await engine.semanticViews(); } catch (e) { console.warn('[views]', e.message); return; }
   for (const v of list) {
+    if (!v.schema) continue;   // named before models were semanticmodel.ws.model
     try {
       if (v.error) throw new Error(v.error);
       await semantic.defineView(v.name, v.path, v.text, 'replace', null, v.schema);
     } catch (e) { console.warn(`[views] ${v.name}: ${e.message}`); }
+  }
+}
+
+// The semantic models a statement names (semanticmodel.ws.model) that are not views here
+// yet, opened by the host — a local copy of each, read from Fabric the first time, and kept —
+// and defined, so the statement compiles as if they had been open all along.
+async function openModels(sql) {
+  for (const ref of semantic.unopenedModels(sql)) {
+    setStatus(`Opening the semantic model ${ref.workspace}.${ref.model}…`);
+    const v = await engine.semanticOpen(ref);
+    await semantic.defineView(v.name, v.path, v.text, 'replace', null, v.schema);
   }
 }
 
@@ -370,7 +382,9 @@ async function semanticDdl({ create, drop }) {
     semantic.dropView(drop.name);
     return had ? `Semantic view ${drop.name} dropped.` : `No semantic view ${drop.name}.`;
   }
-  const full = create.schema ? [create.schema, create.name] : create.name;
+  if (String(create.db || '').toLowerCase() !== semantic.MODEL_CATALOG || !create.schema)
+    throw new Error(`a semantic view is named ${semantic.MODEL_CATALOG}.<workspace>.<name>`);
+  const full = [semantic.MODEL_CATALOG, create.schema, create.name];
   if (create.mode === 'if_not_exists' && semantic.hasView(full))
     return `Semantic view ${create.name} already exists.`;
   const v = await engine.semanticCreate(create.name, create.path, lakehouse, create.schema);
@@ -621,6 +635,7 @@ async function showPlan() {
   try {
     await engineReady;
     await viewsReady;
+    await openModels(text);
     const model = await semantic.statement(text);
     if (model && (model.create || model.drop)) { setStatus('CREATE and DROP SEMANTIC VIEW have no plan.'); return; }
     // The selected table, or a file opened from Files/, is a view only once it is bound.
@@ -670,6 +685,8 @@ async function runQuery({ doc = true, ext = '' } = {}) {
     // A query of a semantic model runs as the SQL dax-sql compiles it to, once the tables
     // that SQL reads are open; every other query runs as written.
     await viewsReady;
+    await openModels(sql);
+    if (stale()) return false;
     const model = await semantic.statement(sql);
     if (stale()) return false;
     // CREATE / DROP SEMANTIC VIEW: dax-sql has checked it; the host keeps the view.
@@ -1280,7 +1297,9 @@ window.addEventListener('message', async e => {
     // A semantic model the extension downloaded to this machine, handed over as text.
     else if (m.type === 'open-model') {
       const t0 = Date.now();
-      await openModelView({ name: String(m.name || 'model.bim'), path: String(m.path || '') }, String(m.text || ''));
+      await openModelView({ name: String(m.name || 'model.bim'), path: String(m.path || ''),
+                            modelWorkspace: m.modelWorkspace ? String(m.modelWorkspace) : null,
+                            modelName: m.modelName ? String(m.modelName) : null }, String(m.text || ''));
       reportOpened('file', String(m.name || 'model.bim'), Date.now() - t0);
     }
     // A saved query from the tree's Queries: into the SQL box, ready to run.

@@ -61,7 +61,7 @@ class LakehouseTree {
    * @param {() => Promise<boolean>} [deps.hasFabric]        a Fabric token, without a prompt?
    * @param {() => boolean} deps.isSignedIn
    * @param {{ get: () => string[] }} [deps.favorites]   pinned workspace names, persisted
-   * @param {(n: object) => string|null} [deps.cachedModel]  where a model's .bim was written in OneLake, if it was
+   * @param {(n: object) => string|null} [deps.cachedModel]  where a model's local copy is, if it has one
    * @param {(n: object) => string|null} [deps.unsupportedModel]  what kind of model a click found it cannot open, if it did
    * @param {{ list: () => Promise<{name: string, path: string}[]> }} [deps.queries]  the saved queries
    * @param {() => boolean} [deps.groupByType]  a workspace's items under one heading per type
@@ -265,8 +265,8 @@ class LakehouseTree {
       case 'models':
         item.iconPath = new vscode.ThemeIcon('graph');
         break;
-      // One click opens it. The first writes its .bim into the Files/ of the lakehouse it
-      // reads; after that it opens from that file, and the icon says which: a cloud until
+      // One click opens it. The first keeps a local copy of its definition, writing nothing to
+      // OneLake; after that it opens from that copy, and the icon says which: a cloud until
       // then, a check once it is there.
       case 'semanticModel': {
         // A click already found it is not Direct Lake on one lakehouse: say what it is, and a
@@ -285,12 +285,11 @@ class LakehouseTree {
         item.iconPath = there
           ? new vscode.ThemeIcon('pass-filled', new vscode.ThemeColor('testing.iconPassed'))
           : new vscode.ThemeIcon('cloud');
-        const lakehouse = there && there.item.replace(/\.[^.]+$/, '');
-        item.description = [n.showWorkspace ? n.workspace : '', there ? `in ${lakehouse}` : ''].filter(Boolean).join(' · ');
+        item.description = n.showWorkspace ? n.workspace : '';
         item.command = { command: 'onelakeStudio.openSemanticModel', title: 'Open semantic model', arguments: [n] };
         item.tooltip = (n.description ? `${n.description}\n\n` : '') + (there
-          ? `In ${there.workspace}/${there.path}. Click to open it; Download Again reads it from Fabric again and overwrites that file.`
-          : "Click to write its .bim into its lakehouse's Files/semantic_model/ and open it as a model.");
+          ? `Downloaded to ${there}. Click to open it; Download Again reads it from Fabric again.`
+          : 'Click to download its definition (kept on this machine only) and open it as a model.');
         break;
       }
       // A workspace's Fabric apps (AppBackend items), however they were made — from the

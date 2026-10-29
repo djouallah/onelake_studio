@@ -2,9 +2,9 @@
 // =============================================================================
 // onelakewrite.js — the one file the extension writes to OneLake
 // =============================================================================
-// A semantic model opened from the tree is written, as its .bim, into the Files/ of the
-// lakehouse it reads (extension.js, openModel), and opened from there like any Files/ model.
-// That is the only write to OneLake, and only on a click. Everything else the extension
+// Export to Fabric writes a semantic model opened from its local copy, as its .bim, into the
+// Files/ of the lakehouse it reads (extension.js, exportExplore), where the app reads it. That is
+// the only write to OneLake, and only once an export is approved. Everything else the extension
 // reads stays in catalog.js, which writes nothing.
 //
 // DFS, as Azure Data Lake Storage Gen2: create the file (an existing one is replaced), append

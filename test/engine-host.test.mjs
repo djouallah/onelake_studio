@@ -40,6 +40,7 @@ test("native engine host", async t => {
       columns: [{ name: "b", type: "VARCHAR" }, { name: "c", type: "DECIMAL(10,2)" }] },
     { kind: "warehouse", workspace: "cat1", item: "wh", schema: "sales", table: "e",
       emptySql: "SELECT CAST(NULL AS INTEGER) AS id WHERE false" },
+    { kind: "semanticmodel", workspace: "cat1", model: "Sales Model" },
   ];
   const engine = createEngineHost({ extensionDir: extDir, onWarn: w => warnings.push(w), resolveTable,
                                     catalogTables: async () => cached,
@@ -97,6 +98,14 @@ test("native engine host", async t => {
     assert.deepEqual(r.rows, [{ name: "t" }]);
     r = await engine.call("query", ["SELECT count(*)::INT AS n FROM information_schema.tables WHERE table_catalog = 'warehouse' AND table_name = 'e'"]);
     assert.equal(r.rows[0].n, 1);
+    // Semantic models are a catalog of their own, one schema per workspace.
+    r = await engine.call("query", ["SHOW ALL TABLES"]);
+    assert.deepEqual(r.rows.filter(x => x.database === "semanticmodel").map(x => [x.schema, x.name, x.column_names]),
+      [["cat1", "Sales Model", "['model']"]]);
+    r = await engine.call("query", ["SHOW TABLES FROM semanticmodel.cat1"]);
+    assert.deepEqual(r.rows, [{ name: "Sales Model" }]);
+    await assert.rejects(engine.call("query", ['SELECT * FROM semanticmodel.cat1."Sales Model"']),
+      /semanticmodel\.cat1\."Sales Model" is a semantic model that is not open/);
     assert.equal(resolved.length, before, "listing the catalog asked OneLake nothing");
     // (A list crosses to the page as DuckDB writes it, jsonSafe.)
     // A cached table that is empty is its own truth; one that is not fails when a name the

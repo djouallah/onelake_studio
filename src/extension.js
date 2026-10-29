@@ -20,7 +20,7 @@ const { createHostMethods } = require('./host');
 const { createFabric, bimFileName } = require('./fabric');
 const { LakehouseTree } = require('./tree');
 const { webviewRoot } = require('./webview');
-const { hasFilesArea, sqlKind, sqlName, sqlNameOf, displayName } = require('./names');
+const { hasFilesArea, sqlKind, sqlName, sqlNameOf, displayName, MODEL_CATALOG, modelSqlName } = require('./names');
 const { createAgent } = require('./agent');
 const { createSemViews } = require('./semviews');
 const { serveBridge } = require('./bridge');
@@ -408,6 +408,9 @@ let resolveSqlTable = null;
 // Every table the store holds with its columns, for the engine's catalog (SHOW ALL TABLES)
 // — read from the store alone, never from OneLake. Set by activateInner.
 let cachedSqlTables = null;
+// A semantic model a query names (semanticmodel.ws.model), opened: its local copy kept, and
+// kept as a semantic view. Set by activateInner.
+let openSqlModel = null;
 let nameModelTables = null;
 // The SQL box's Save Query (a .sql file in the saved queries' folder); set by activateInner,
 // which owns the tree that lists them.
@@ -441,6 +444,7 @@ async function show(context, options) {
       exportExplore: x => (exportExplore ? exportExplore(x) : Promise.reject(new Error('OneLake Studio is still starting'))),
       nameTables: list => (nameModelTables ? nameModelTables(list) : Promise.reject(new Error('OneLake Studio is still starting'))),
       saveQuery: x => (saveQuery ? saveQuery(x) : Promise.reject(new Error('OneLake Studio is still starting'))),
+      openModel: x => (openSqlModel ? openSqlModel(x) : Promise.reject(new Error('OneLake Studio is still starting'))),
     }),
     // The page could not bring the engine up. Everything it buffered is already gone;
     // this is the toast that stops the failure being a spinner that never moves.
@@ -632,24 +636,10 @@ async function activateInner(context) {
     fabric,
   });
   // Semantic views: pointers to .bim files, kept per account in the extension's storage.
-  semviews = createSemViews({ dir: join(context.globalStorageUri.fsPath, 'semantic-views'), onelake });
+  // A view made or dropped is in the engine's catalog (SHOW ALL TABLES) by the next statement.
+  semviews = createSemViews({ dir: join(context.globalStorageUri.fsPath, 'semantic-views'), onelake,
+                              onChange: () => { if (engine) engine.catalogChanged(); } });
   semviews.useAccount(storeAccount);
-  // An account's first time: the models already downloaded become its views, as SQL could
-  // name them before views were kept.
-  async function seedViews() {
-    const found = [];
-    const fsp = require('node:fs/promises');
-    for (const ws of await fsp.readdir(modelsFolder()).catch(() => [])) {
-      for (const f of await fsp.readdir(join(modelsFolder(), ws)).catch(() => [])) {
-        if (!/\.bim$/i.test(f)) continue;
-        const name = f.replace(/\..*$/, '').replace(/[^A-Za-z0-9_]/g, '_').replace(/^(\d)/, '_$1') || 'model';
-        // In its workspace's folder, so it is that workspace's: ws.model.
-        found.push({ name, schema: ws, path: join(modelsFolder(), ws, f) });
-      }
-    }
-    await semviews.seed(found).catch(e => out && out.appendLine(`semantic views not seeded: ${e.message}`));
-  }
-  await seedViews();
 
   // Called wherever the identity may have moved; a no-op when it has not.
   rebindStore = async function rebindStore() {
@@ -665,7 +655,6 @@ async function activateInner(context) {
     onelake.useStore(storeFor(key));
     if (engine) engine.catalogChanged();
     semviews.useAccount(key);
-    await seedViews();
   };
   // What the store holds moved: the engine's catalog is listed again before the next
   // statement that reads it.
@@ -726,8 +715,8 @@ async function activateInner(context) {
     postToPanel(msg);
   }
 
-  // Where the command line (agent.js) keeps the .bim files it downloads: <folder>/<workspace>/
-  // <model>.bim. The tree's clicks write a model into its lakehouse instead (openModel).
+  // Where a semantic model's local copy is kept (fetchModel), for the tree and the command line
+  // alike: <folder>/<workspace>/<model>.bim.
   function modelsFolder() {
     return join(require('node:os').homedir(), 'OneLakeStudio', 'semantic-models');
   }
@@ -802,14 +791,9 @@ async function activateInner(context) {
 
   const bimPath = n => join(modelsFolder(),bimFileName(n.workspace).replace(/\.bim$/, ''), bimFileName(n.model));
 
-  // Where each semantic model was written in OneLake, per account: { workspace, item, path }.
-  // The tree's check mark, and what a click opens without asking Fabric again.
-  const modelFilesKey = () => `onelakeStudio.modelFiles.${storeAccount || 'signed-out'}`;
+  // A model's local copy (fetchModel), when there is one: the tree's check mark.
   const modelKey = n => `${n.workspace}|${n.modelId}`;
-  const modelFile = n => context.globalState.get(modelFilesKey(), {})[modelKey(n)] || null;
-  const rememberModelFile = (n, where) => context.globalState.update(modelFilesKey(),
-    { ...context.globalState.get(modelFilesKey(), {}), [modelKey(n)]: where });
-  const cachedModel = n => modelFile(n);
+  const cachedModel = n => (existsSync(bimPath(n)) ? bimPath(n) : null);
 
   // Models a click found it cannot open (Import, DirectQuery, Direct Lake over a SQL endpoint
   // or several lakehouses), for this session: key -> what kind it is. The tree marks them,
@@ -837,7 +821,8 @@ async function activateInner(context) {
     yamlPin: PINS.yaml,
     // `export`: Explore's own Export to Fabric (below), and the .bim the tree wrote for a model.
     exportApp: x => (exportExplore ? exportExplore(x) : Promise.reject(new Error('OneLake Studio is still starting'))),
-    modelFileOf: (ws, modelId) => modelFile({ workspace: ws, modelId }),
+    fetchModel: n => fetchModel(n, { fresh: true }),
+    openModel: x => openSqlModel(x),
     nameTables: list => nameModelTables(list),
   });
   context.subscriptions.push(serveBridge({
@@ -849,75 +834,70 @@ async function activateInner(context) {
     log: m => out && out.appendLine(m),
   }));
 
-  // A semantic model, opened from the tree: its definition (Fabric's getDefinition, TMSL)
-  // written as a .bim into the Files/ of the (first) lakehouse its Direct Lake expressions name —
-  // <lakehouse>/Files/semantic_model/<model>.bim — and opened from there like any Files/
-  // model, so Explore can export it to Fabric. Its tables may come from several items, each
-  // read by its own SQL name. A model that is not Direct Lake over OneLake is refused, and
-  // nothing is written. The file, once there, is what later clicks
-  // open; Download Again (`fresh`) reads Fabric again and overwrites it, after asking.
-  const writer = createOneLakeWriter({ getToken: hostToken });
-  // `modelWorkspace`: the model's own workspace, which names it in SQL (ws.model) — the
-  // lakehouse holding its .bim can be in another.
-  const openFileInPanel = (where, bytes, modelWorkspace = null) => openInPanel({ type: 'open-file',
-    workspace: where.workspace, item: where.item, path: where.path, bytes, modelWorkspace });
-
-  // One step after another under the caller's progress notification (`say`), so nothing
-  // happens off screen: the definition, its lakehouse, the write.
-  async function exportModel(n, known, say) {
-    say('reading its definition from Fabric…');
-    const bim = await fabric.getBim(n.workspace, n.modelId);
-    let doc;
-    try { doc = JSON.parse(Buffer.from(bim).toString('utf8').replace(/^\uFEFF/, '')); }
-    catch (e) { throw new Error(`its definition is not TMSL: ${e.message}`); }
-    const { semantic } = await agent.modules();
-    const lakes = semantic.lakehousesOf(doc);
-    if (!lakes.length) {
-      const mode = semantic.storageMode(doc);
-      unsupportedModels.set(modelKey(n), mode);
-      tree.modelChanged(n);
-      throw Object.assign(new Error(unsupportedNote(n, mode)), { unsupported: true });
-    }
-    unsupportedModels.delete(modelKey(n));
-    // A Direct Lake model may read several items; its .bim goes into the first lakehouse among
-    // them (a warehouse or a mirrored database has no Files/).
-    say('finding its lakehouse…');
-    let lh = null;
-    for (const l of lakes) {
-      const it = await fabric.itemOf(l.workspace, l.item);
-      if (/\.Lakehouse$/i.test(it.item)) { lh = it; break; }
-    }
-    if (!lh) throw new Error(`${n.model} reads no lakehouse, so there is no Files/ to keep its .bim in`);
-    const where = { ...lh, path: `${lh.item}/Files/semantic_model/${bimFileName(n.model)}` };
-    const there = await writer.stat(where.workspace, where.path);
-    const ours = known && known.workspace === where.workspace && known.path === where.path;
-    if (there && !ours) {
-      const pick = await vscode.window.showWarningMessage(
-        `${where.workspace}/${where.path} already exists.`,
-        { modal: true, detail: `Replace it with ${n.model}'s current definition from Fabric, or open the file that is there?` },
-        'Replace It', 'Open Existing');
-      if (!pick) return null;
-      if (pick === 'Open Existing') {
-        await rememberModelFile(n, where);
-        tree.modelChanged(n);
-        return { where, bytes: there.bytes };
+  // A semantic model, opened from the tree or named by a query: its definition (Fabric's
+  // getDefinition, TMSL), kept as a local copy — bimPath(n), ~/OneLakeStudio/semantic-models/
+  // <workspace>/<model>.bim — and read from there after. Nothing is written to OneLake, so a
+  // user who may only read the workspace opens and queries a model all the same; Export to
+  // Fabric is the one write (exportExplore). A model that is not Direct Lake over OneLake is
+  // refused, and nothing is kept. `fresh` reads Fabric again, over the local copy.
+  const fetching = new Map();   // `${workspace}|${model}`, lower-cased -> Promise<{ path, text }>
+  function fetchModel(n, { fresh = false, say = () => {} } = {}) {
+    const key = `${n.workspace}|${n.model}`.toLowerCase();
+    if (!fetching.has(key)) fetching.set(key, (async () => {
+      const path = bimPath(n);
+      if (!fresh) {
+        const kept = await fsp.readFile(path, 'utf8').catch(() => null);
+        if (kept != null) return { path, text: kept };
       }
-    }
-    say(`writing it to ${where.item.replace(/\.[^.]+$/, '')}/Files/semantic_model…`);
-    await writer.writeFile(where.workspace, where.path, bim);
-    if (out) out.appendLine(`wrote ${n.workspace}/${n.model} -> ${where.workspace}/${where.path} (${fmtBytes(bim.length)})`);
-    await rememberModelFile(n, where);
-    // The listing again, so the file's bytes are read by its new version, not served old.
-    const lhOf = { workspace: where.workspace, item: where.item };
-    await onelake.files(lhOf, 'semantic_model', { fresh: true }).catch(() => {});
-    tree.refresh({ kind: 'dir', ...lhOf, dir: 'semantic_model' });
-    tree.modelChanged(n);
-    return { where, bytes: bim.length };
+      say('reading its definition from Fabric…');
+      const bim = await fabric.getBim(n.workspace, n.modelId);
+      const text = Buffer.from(bim).toString('utf8');
+      let doc;
+      try { doc = JSON.parse(text.replace(/^﻿/, '')); }
+      catch (e) { throw new Error(`its definition is not TMSL: ${e.message}`); }
+      const { semantic } = await agent.modules();
+      if (!semantic.lakehousesOf(doc).length) {
+        const mode = semantic.storageMode(doc);
+        unsupportedModels.set(modelKey(n), mode);
+        tree.modelChanged(n);
+        throw Object.assign(new Error(unsupportedNote(n, mode)), { unsupported: true });
+      }
+      unsupportedModels.delete(modelKey(n));
+      await fsp.mkdir(require('node:path').dirname(path), { recursive: true });
+      await fsp.writeFile(path, bim);
+      if (out) out.appendLine(`downloaded ${n.workspace}/${n.model} -> ${path} (${fmtBytes(bim.length)})`);
+      tree.modelChanged(n);
+      return { path, text };
+    })().finally(() => fetching.delete(key)));
+    return fetching.get(key);
   }
 
-  // Clicks on a model whose export is still running wait on that one, not a second. One
-  // progress notification from the click until the page says the model is on screen.
-  const exporting = new Map();   // `${workspace}|${modelId}` -> Promise
+  // The one OneLake writer (onelakewrite.js): Export to Fabric's .bim, and nothing else.
+  const writer = createOneLakeWriter({ getToken: hostToken });
+
+  // Where Export to Fabric writes a model opened from its local copy: <lakehouse>/Files/
+  // semantic_model/<model>.bim, in the one lakehouse its Direct Lake expressions name (the app
+  // reads it there at run time). Only worked out here; written once the export is approved.
+  async function modelTarget(text, model) {
+    if (!model || !model.workspace || !model.name) {
+      throw new Error('Export to Fabric needs a model that is a OneLake file, or one opened from the tree');
+    }
+    let doc;
+    try { doc = JSON.parse(String(text).replace(/^﻿/, '')); }
+    catch (e) { throw new Error(`${model.name} is not a TMSL model: ${e.message}`); }
+    const { semantic } = await agent.modules();
+    const lakes = semantic.lakehousesOf(doc);
+    if (lakes.length !== 1) {
+      throw new Error(`${model.name} reads ${lakes.length} lakehouses: Export to Fabric needs a model over exactly one`);
+    }
+    const lh = await fabric.itemOf(lakes[0].workspace, lakes[0].item);
+    if (!/\.Lakehouse$/i.test(lh.item)) throw new Error(`${model.name} reads ${lh.item}, which has no Files/ to keep its .bim in`);
+    return { workspace: lh.workspace, item: lh.item, path: `${lh.item}/Files/semantic_model/${bimFileName(model.name)}` };
+  }
+
+  // A click on a model in the tree: its local copy (read from Fabric the first time), opened in
+  // the panel. One progress notification from the click until the page says it is on screen.
+  // Download Again (`fresh`) asks before it replaces the local copy.
   async function openModel(n, { fresh = false } = {}) {
     if (!n || n.kind !== 'semanticModel') return;
     const refused = !fresh && unsupportedModels.get(modelKey(n));
@@ -926,39 +906,24 @@ async function activateInner(context) {
       return;
     }
     try {
-      const known = modelFile(n);
-      if (known && fresh) {
+      if (fresh && existsSync(bimPath(n))) {
         const pick = await vscode.window.showWarningMessage(
-          `Overwrite ${known.workspace}/${known.path} with ${n.model}'s current definition from Fabric?`,
-          { modal: true }, 'Overwrite');
-        if (pick !== 'Overwrite') return;
+          `Download ${n.model} from Fabric again, over its local copy?`, { modal: true, detail: bimPath(n) }, 'Download Again');
+        if (pick !== 'Download Again') return;
       }
       await vscode.window.withProgress(
         { location: vscode.ProgressLocation.Notification, title: `Opening ${n.model}` },
         async progress => {
           const say = message => progress.report({ message });
-          let target = null;
-          if (known && !fresh) {
-            say(`from ${known.item.replace(/\.[^.]+$/, '')}/Files/semantic_model…`);
-            const there = await writer.stat(known.workspace, known.path).catch(() => null);
-            if (there) {
-              if (out) out.appendLine(`opened ${n.workspace}/${n.model} from ${known.workspace}/${known.path}`);
-              target = { where: known, bytes: there.bytes };
-            }
-          }
-          if (!target) {
-            const id = modelKey(n);
-            if (!exporting.has(id)) exporting.set(id, exportModel(n, known, say).finally(() => exporting.delete(id)));
-            target = await exporting.get(id);
-          }
-          if (!target) return;
+          const { path, text } = await fetchModel(n, { fresh, say });
           say('opening it in OneLake Studio…');
-          const opened = whenOpened(require('node:path').posix.basename(target.where.path));
-          await openFileInPanel(target.where, target.bytes, n.workspace);
+          const name = bimFileName(n.model);
+          const opened = whenOpened(name);
+          await openInPanel({ type: 'open-model', name, path, text, modelWorkspace: n.workspace, modelName: n.model });
           await opened;
         });
     } catch (e) {
-      // Not Direct Lake on one lakehouse is not a failure: say what the model is, quietly.
+      // Not Direct Lake over OneLake is not a failure: say what the model is, quietly.
       if (e && e.unsupported) {
         if (out) out.appendLine(`not opening ${n.workspace}/${n.model}: ${e.message}`);
         vscode.window.showInformationMessage(e.message);
@@ -1006,6 +971,9 @@ async function activateInner(context) {
     const found = [];
     const ws = await onelake.cached.workspaces();
     for (const w of (ws && ws.value) || []) {
+      // Its semantic models, as the Fabric listing has them: semanticmodel.ws.model.
+      const models = await onelake.cached.models(w);
+      for (const m of (models && models.value) || []) found.push({ kind: MODEL_CATALOG, workspace: w, model: m.name });
       const items = await onelake.cached.items(w);
       for (const it of (items && items.value) || []) {
         const kind = sqlKind(it.kind);
@@ -1023,7 +991,32 @@ async function activateInner(context) {
         }
       }
     }
+    // And every model kept as a view, Fabric's or a file's (CREATE SEMANTIC VIEW).
+    for (const v of await semviews.list()) {
+      if (v.schema) found.push({ kind: MODEL_CATALOG, workspace: v.schema, model: v.name });
+    }
     return found;
+  };
+
+  // A semantic model a query names that no view has yet: found in its workspace's model
+  // listing (the cache's, else Fabric's), its local copy kept (fetchModel), and kept as a view.
+  // Answers the view as semviews keeps it, with its text: { name, schema, path, text }.
+  openSqlModel = async ({ workspace, model }) => {
+    const full = modelSqlName(workspace, model);
+    const workspaces = await onelake.workspaces().catch(() => []);
+    const ws = workspaces.find(w => same(w, workspace)) || String(workspace);
+    const pick = list => (list || []).find(m => same(m.name, model));
+    const kept = await onelake.cached.models(ws);
+    let hit = pick(kept && kept.value);
+    if (!hit) {
+      hit = pick(await onelake.models(ws).catch(e => {
+        throw new Error(`${full}: the semantic models of ${ws} could not be listed — ${e.message}`);
+      }));
+    }
+    if (!hit) throw new Error(`${full}: there is no semantic model ${model} in workspace ${ws}`);
+    const { path } = await fetchModel({ workspace: ws, model: hit.name, modelId: hit.id });
+    if (out) out.appendLine(`opened ${full} for a query, from ${path}`);
+    return semviews.put(hit.name, path, ws);
   };
 
   // A semantic model's Direct Lake tables, which its expressions name by GUID, as SQL names:
@@ -1051,8 +1044,13 @@ async function activateInner(context) {
   // and published from there over the Fabric REST API (fabricapp.js). The function's deploy
   // package ships in the vsix (fabric-function/, scripts/function-bundle.mjs). Answers what
   // Explore's info line says; a failure is thrown back to it, and logged.
-  exportExplore = async ({ file, name, text, state, workspace, path }) => {
+  exportExplore = async ({ file, name, text, state, workspace, path, model }) => {
     try {
+      // A model opened from its local copy is not in OneLake yet: it is written into its
+      // lakehouse (modelTarget) once every question below has been answered — the one write
+      // to OneLake a semantic model ever gets.
+      const target = path ? null : await modelTarget(text, model);
+      if (target) ({ workspace, path } = target);
       const plan = planExport(text, file, name, await agent.modules(), { workspace, path });
       const fnDir = join(context.extensionUri.fsPath, 'fabric-function');
       const [sourceZip, deployMetaData] = await Promise.all([
@@ -1127,6 +1125,27 @@ async function activateInner(context) {
             `${plan.name} was deployed again on ${new Date(theirs).toLocaleString()}, not from this folder. Overwrite it?`,
             { modal: true, detail: live.hostingUrl || '' }, 'Overwrite It');
           if (pick !== 'Overwrite It') return `Not exported: ${plan.name} was deployed from elsewhere since.`;
+        }
+      }
+
+      // Approved: the model's .bim into its lakehouse, where the app will read it. A different
+      // file already there is replaced only when the user says so.
+      if (target) {
+        const there = await writer.stat(target.workspace, target.path).catch(() => null);
+        const same = there && Buffer.from(await onelake.readBytes(target.workspace, target.path).catch(() => new Uint8Array()))
+          .toString('utf8') === String(text);
+        if (there && !same) {
+          const pick = await vscode.window.showWarningMessage(
+            `${target.workspace}/${target.path} already exists.`,
+            { modal: true, detail: `Replace it with ${model.name} as opened here, and publish?` }, 'Replace It');
+          if (pick !== 'Replace It') return `Not exported: ${target.path} is a different file.`;
+        }
+        if (!same) {
+          await writer.writeFile(target.workspace, target.path, Buffer.from(String(text), 'utf8'));
+          if (out) out.appendLine(`export: wrote ${model.workspace}/${model.name} -> ${target.workspace}/${target.path}`);
+          const lh = { workspace: target.workspace, item: target.item };
+          await onelake.files(lh, 'semantic_model', { fresh: true }).catch(() => {});
+          tree.refresh({ kind: 'dir', ...lh, dir: 'semantic_model' });
         }
       }
 

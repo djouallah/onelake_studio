@@ -36,8 +36,9 @@ Microsoft account VS Code already uses.
 
 It needs desktop VS Code 1.90 or later on Windows, macOS or Linux (x64 or arm64).
 
-**Your data stays as it is.** OneLake Studio only reads, except when you click: opening a semantic
-model saves its definition into its lakehouse, and *Export to Fabric* publishes an app.
+**Your data stays as it is.** OneLake Studio only reads, except when you click *Export to
+Fabric*: it publishes an app, and writes the model's definition into its lakehouse for the app to
+read. Opening a semantic model keeps its definition on your machine only.
 
 Commands, settings and release notes: [docs/](https://github.com/djouallah/onelake_studio/tree/main/docs).
 

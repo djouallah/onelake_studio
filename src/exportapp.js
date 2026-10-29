@@ -3,7 +3,8 @@
 // exportapp.js — Export to Fabric: a model's Explore and Logs, as a Fabric app of its own
 // =============================================================================
 // Explore's button (app/explore/view.js) hands the host the model's text (to check it), where
-// it lives in OneLake, and the shelves on screen. What is written to a folder of this machine
+// it lives in OneLake (for a model opened from its local copy, where the export writes it), and
+// the shelves on screen. What is written to a folder of this machine
 // — the local copy, an agent's to grow later — and what is published from its dist/
 // (fabricapp.js) is:
 //   site/            fabric_app/site: the page (index.html, app.js) and its data source
