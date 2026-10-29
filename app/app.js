@@ -601,6 +601,8 @@ async function showPlan() {
       elapsed: planElapsed,
     }));
     view.hidden = false;
+    // The plan is the query's, not one of the table's tabs: Stats | History | Data step aside.
+    $('viewBar').hidden = true;
     $('resultsHint').hidden = true;
     setStatus('Query plan — Run ▶ for the results.');
   } catch (e) {
@@ -694,6 +696,7 @@ function clearResults(hint = '') {
   $('resultsTable').innerHTML = '';
   $('planView').hidden = true;
   $('planView').replaceChildren();
+  $('viewBar').hidden = !activeInfo;   // the table's tabs come back once the plan goes
   $('resultsHint').hidden = !hint;
   $('resultsHint').textContent = hint;
   lastResult = null;
