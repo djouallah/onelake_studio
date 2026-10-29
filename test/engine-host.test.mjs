@@ -23,7 +23,17 @@ test("native engine host", async t => {
   const outside = await mkdtemp(join(tmpdir(), "onelake-outside-"));
   await writeFile(join(outside, "secret.csv"), "a\n1\n");
   const warnings = [];
-  const engine = createEngineHost({ extensionDir: extDir, onWarn: w => warnings.push(w),
+  // Tables by SQL name, answered without OneLake: each one's view is a typed empty SELECT
+  // (what a table nobody wrote to gets), here returning one row so the test can read it.
+  const resolved = [];
+  const resolveTable = async ref => {
+    resolved.push(ref);
+    if (ref.item.toLowerCase() === "missing") throw new Error(`there is no ${ref.kind} ${ref.item}`);
+    return { kind: ref.kind, workspace: ref.workspace === "anz ws" ? "ANZ ws" : ref.workspace,
+             item: ref.item, schema: ref.schema, table: ref.table,
+             emptySql: `SELECT 7 AS answer, ${JSON.stringify(ref.table).replace(/"/g, "'")} AS t` };
+  };
+  const engine = createEngineHost({ extensionDir: extDir, onWarn: w => warnings.push(w), resolveTable,
                                     bundledExtensions: existsSync(BUNDLED) ? BUNDLED : null });
   t.after(async () => {
     await engine.close();
@@ -41,6 +51,26 @@ test("native engine host", async t => {
     assert.match(r.rows[0].v, /^v2\./, `running ${r.rows[0].v}`);
     const { capabilities: caps } = await engine.call("info");
     for (const ext of ["iceberg", "azure", "httpfs"]) assert.ok(caps[ext], `${ext} loaded`);
+  });
+
+  await t.test("a table is read by its SQL name, opened by the statement that names it", async () => {
+    let r = await engine.call("query", ["SELECT answer, t FROM Lakehouse.aemo.data.dbo.dim_duid"]);
+    assert.deepEqual(r.rows, [{ answer: 7, t: "dim_duid" }]);
+    // Any case, quoted parts; the same view, made once.
+    const before = resolved.length;
+    r = await engine.call("query", ['SELECT count(*)::INT AS n FROM lakehouse.AEMO."data".DBO.Dim_Duid']);
+    assert.equal(r.rows[0].n, 1);
+    assert.equal(resolved.length, before + 1, "asked again — the snapshot may have moved");
+    // A join across kinds and workspaces, a name with spaces, and DESCRIBE.
+    r = await engine.call("query", ['SELECT a.t AS x, b.t AS y FROM Warehouse."anz ws".wh.sales.f a, MirroredDatabase.w.m.dbo.c b']);
+    assert.deepEqual(r.rows, [{ x: "f", y: "c" }]);
+    r = await engine.call("query", ['DESCRIBE Warehouse."ANZ ws".wh.sales.f']);
+    assert.deepEqual(r.rows.map(x => x.column_name), ["answer", "t"]);
+    // A stream, too.
+    const { batches } = await collect("SELECT t FROM SQLDatabase.ws.db.dbo.t1");
+    assert.equal(batches[0].rows[0].t, "t1");
+    // What does not resolve says why.
+    await assert.rejects(engine.call("query", ["SELECT * FROM Lakehouse.ws.missing.dbo.t"]), /there is no Lakehouse missing/);
   });
 
   await t.test("a statement needs no Microsoft account", async () => {

@@ -97,6 +97,59 @@ const kindLabelPlural = kind => {
   return /s$/i.test(l) ? l : `${l}s`;
 };
 
+// -----------------------------------------------------------------------------
+// A table's SQL name: Kind.workspace.item.schema.table
+// -----------------------------------------------------------------------------
+// One name per table, everywhere SQL is written (the panel, Explore, the command line, a
+// saved query), and unique by construction: it is the table's OneLake path
+// (<workspace>/<item>.<Kind>/Tables/<schema>/<table>) with the kind moved to the front, where
+// it names one of DuckDB's catalogs. The rest are nested schemas (engine-host.js), so
+//
+//   SELECT * FROM Lakehouse.aemo.data.dbo.dim_duid
+//
+// reads the same table whatever the panel has open. A lakehouse without schemas is `dbo`,
+// the one schema OneLake's catalog reports for it. The kind is the Fabric spelling, not the
+// internal one a OneLake directory carries.
+const SQL_KINDS = ["Lakehouse", "Warehouse", "SQLDatabase", "MirroredDatabase"];
+const SQL_KIND_OF = {
+  lakehouse: "Lakehouse", warehouse: "Warehouse",
+  sqldbnative: "SQLDatabase", sqldatabase: "SQLDatabase",
+  mountedrelationaldatabase: "MirroredDatabase",
+};
+// The catalog an item's tables are under: from its directory's kind ("SQLDbNative"), or the
+// kind itself when that is already the SQL one. null for an item that holds no tables.
+const sqlKind = kind => {
+  const k = String(kind || "");
+  return SQL_KIND_OF[k.toLowerCase()] || (/^Mirrored/i.test(k) ? "MirroredDatabase" : null);
+};
+// An item's name as Fabric shows it: its directory's name without the kind.
+const displayName = item => basename(item).replace(/\.[^.]+$/, "");
+
+// DuckDB's reserved words (duckdb_keywords(), 'reserved' and 'type_function'): a part
+// spelled like one must be quoted to be a name.
+const RESERVED = new Set(("all analyse analyze and anti any array as asc asof asymmetric at authorization binary " +
+  "both by case cast check collate collation column columns concurrently constraint create cross default " +
+  "deferrable desc describe distinct do else end except false fetch for foreign freeze from full generated " +
+  "glob group having ilike in initially inner intersect into is isnull join lambda lateral leading left like " +
+  "limit map natural not notnull null offset on only or order outer overlaps pivot pivot_longer pivot_wider " +
+  "placing positional primary qualify references returning right select semi show similar some struct " +
+  "summarize symmetric table tablesample then to trailing true try_cast tuple union unique unpack unpivot " +
+  "using variadic verbose when where window with").split(" "));
+// A part as SQL writes it: bare when it can be, quoted when it must.
+const sqlPart = s => {
+  const v = String(s);
+  return /^[A-Za-z_][A-Za-z0-9_]*$/.test(v) && !RESERVED.has(v.toLowerCase()) ? v : `"${v.replace(/"/g, '""')}"`;
+};
+// { kind, workspace, item (as Fabric shows it), schema, table } -> its SQL name.
+const sqlName = r =>
+  [r.kind, r.workspace, r.item, r.schema || "dbo", r.table].map(sqlPart).join(".");
+// The same, for a table the tree knows by its item's directory name ("data.Lakehouse").
+function sqlNameOf(lh, t) {
+  const kind = sqlKind(itemKind(lh.item));
+  if (!kind) throw new Error(`${lh.item} holds no tables SQL can name`);
+  return sqlName({ kind, workspace: lh.workspace, item: displayName(lh.item), schema: t.schema, table: t.table });
+}
+
 function icebergTypeName(t) {
   if (t == null) return "";
   if (typeof t === "string") return t;
@@ -211,6 +264,7 @@ function fmtBytes(n) {
 module.exports = {
   strip, basename, encPath,
   itemKind, holdsTables, isMirrored, hasFilesArea, kindLabel, kindLabelPlural,
+  SQL_KINDS, sqlKind, displayName, sqlPart, sqlName, sqlNameOf,
   icebergTypeName, icebergFields, snapshotStats, sourceFormat, icebergHistory,
   fmtBytes,
 };

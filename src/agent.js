@@ -17,9 +17,10 @@
 //                                    semantic models, and a downloaded model's tables and measures
 //   table <ws> <item> <schema.table> metadata only
 //   model <ws> <model>               relationships, columns, measures with DAX
-//   sql "<sql>" [--in <ws>/<item>]   a semantic view is a table, AGG("m") its measure m; and
-//                                    CREATE / DROP / SHOW SEMANTIC VIEW (dax-sql's statements);
-//                                    --in also reads its 'Files/…' paths; --show-sql the compiled SQL
+//   sql "<sql>" [--in <ws>/<item>]   a table is Kind.workspace.item.schema.table; a semantic view
+//                                    is a table, AGG("m") its measure m; and CREATE / DROP / SHOW
+//                                    SEMANTIC VIEW (dax-sql's statements); --in reads its
+//                                    'Files/…' paths; --show-sql the compiled SQL
 //   dax "EVALUATE …" [--model m]     a DAX query, compiled as Explore compiles one
 //   export <ws> <model>              Export to Fabric, as Explore's button: a semantic model
 //   export <ws> <item> <Files/path>  (its .bim in its lakehouse) or a model file in Files/
@@ -30,7 +31,7 @@
 const { join, dirname } = require('node:path');
 const { pathToFileURL } = require('node:url');
 const fsp = require('node:fs/promises');
-const { fmtBytes, hasFilesArea, kindLabel } = require('./names');
+const { fmtBytes, hasFilesArea, kindLabel, sqlNameOf } = require('./names');
 
 const cell = v => (v == null ? '' : typeof v === 'object' ? JSON.stringify(v) : String(v));
 function mdTable(cols, rows) {
@@ -42,10 +43,6 @@ const csvOf = (cols, rows) => [cols, ...rows].map(r => r.map(v => {
   const s = cell(v);
   return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }).join(',')).join('\n');
-
-// A lakehouse table's schema in agent SQL: data.Lakehouse's mart.x is data_mart.x.
-const sqlSchema = (lh, t) =>
-  `${lh.item.replace(/\.[^.]+$/, '')}_${t.schema || 'main'}`.replace(/[^A-Za-z0-9_]/g, '_');
 
 const DFS_HOST = 'onelake.dfs.fabric.microsoft.com';
 const fence = (lang, text) => '```' + lang + '\n' + String(text).trim() + '\n```';
@@ -72,7 +69,7 @@ function filesToAbfss(sql, lh) {
  *   where the tree wrote a semantic model's .bim (<lakehouse>/Files/semantic_model/)
  */
 function createAgent({ onelake, fabric, engine, bimPath, appDir, vendorDir, daxSqlPin, yamlPin, semviews,
-                       exportApp = null, modelFileOf = () => null }) {
+                       exportApp = null, modelFileOf = () => null, nameTables = null }) {
   let mods = null;
   async function modules() {
     if (mods) return mods;
@@ -84,6 +81,10 @@ function createAgent({ onelake, fabric, engine, bimPath, appDir, vendorDir, daxS
       load(join(vendorDir, 'npm', daxSqlPin, 'formats', 'ossie.js')),
       load(join(vendorDir, 'npm', yamlPin, '+esm.js')),
     ]);
+    // A model's Direct Lake tables are named by the extension, which asks Fabric for the
+    // names behind their GUIDs: the same SQL names the panel's models use.
+    semantic.setTableNamer(list => (nameTables ? nameTables(list)
+      : Promise.reject(new Error('Direct Lake tables cannot be named here'))));
     mods = { paths, semantic,
              compiler: { createCompiler: c.createCompiler, createViews: c.createViews, tmslToModel: t.tmslToModel,
                          ossieToTmsl: o.ossieToTmsl, parseYaml: y.parse } };
@@ -189,19 +190,6 @@ function createAgent({ onelake, fabric, engine, bimPath, appDir, vendorDir, daxS
     for (const n of [...defined]) if (!names.has(n)) { semantic.dropView(n); defined.delete(n); }
   }
 
-  // A table as a view, exactly as the panel opens one (data.js openTableView): iceberg_scan
-  // over the metadata file the cache holds.
-  async function openView(lh, t, ident, note) {
-    const { paths } = await modules();
-    const eng = await engine();
-    const meta = await onelake.table(lh, t, { onWait: note });
-    const schema = ident.includes('"."') ? ident.slice(0, ident.indexOf('"."') + 1) : null;
-    if (schema) await eng.agentQuery(`CREATE SCHEMA IF NOT EXISTS ${schema}`);
-    const body = meta.empty ? paths.emptyTableSql(meta.schemaFields)
-      : `SELECT * FROM ${(await eng.openTable({ metadataLocation: meta.metadataLocation })).ident}`;
-    await eng.agentQuery(`CREATE OR REPLACE VIEW ${ident} AS ${body}`);
-  }
-
   // Which view a DAX query is about: --model, else the only one.
   function viewFor(opts) {
     if (opts.model) return opts.model;
@@ -260,7 +248,6 @@ function createAgent({ onelake, fabric, engine, bimPath, appDir, vendorDir, daxS
       const t0 = Date.now();
       const c = semantic.compileDax(name, text);
       if (opts.showSql) out(`${fence('sql', c.sql)}\n`);
-      for (const x of c.tables) await openView(x.lh, x.t, x.ident, note);
       result(await (await engine()).agentQuery(c.sql), opts, out);
       note(`${((Date.now() - t0) / 1000).toFixed(1)}s`);
     },
@@ -302,11 +289,11 @@ function createAgent({ onelake, fabric, engine, bimPath, appDir, vendorDir, daxS
         const e = await onelake.cached.table(lh, t);
         const m = e ? e.value : null, s = (m && m.stats) || {};
         if (m) known++;
-        rows.push([t.schema ? `${t.schema}.${t.table}` : t.table, `${sqlSchema(lh, t)}.${t.table}`,
+        rows.push([t.schema ? `${t.schema}.${t.table}` : t.table, sqlNameOf(lh, t),
           m && m.totalRecords != null ? Number(m.totalRecords).toLocaleString('en') : '—',
           size(s.totalFilesSize), s.totalDataFiles != null ? s.totalDataFiles : '—', when(s.snapshotTs)]);
       }
-      out(grid(['table', `in sql --in ${ws}/${item}`, 'rows', 'size', 'files', 'last write (UTC)'], rows, opts));
+      out(grid(['table', 'in sql', 'rows', 'size', 'files', 'last write (UTC)'], rows, opts));
       if (!opts.csv) out(`\n${tables.length} table(s), ${known} with metadata cached` +
         (known < tables.length ? ' — open the rest in the tree for their sizes' : ''));
     },
@@ -486,7 +473,7 @@ function createAgent({ onelake, fabric, engine, bimPath, appDir, vendorDir, daxS
 
     async sql([text], opts, out, note) {
       if (!text) throw new Error('usage: sql "<query>"');
-      const { semantic, paths, compiler } = await modules();
+      const { semantic, compiler } = await modules();
       await syncViews(note);
       const t0 = Date.now();
       // A query: its lakehouse may be listed from OneLake when the cache does not have it.
@@ -516,20 +503,9 @@ function createAgent({ onelake, fabric, engine, bimPath, appDir, vendorDir, daxS
       }
       const run = st ? st.sql : text;
       if (st && opts.showSql) out(`${fence('sql', st.sql)}\n`);
-      // A model's query opens the tables it compiles to; any other SQL opens the raw
-      // Direct Lake tables it names ("mart_1a2b3c4d"."fct" — `model` lists them).
-      for (const x of st ? st.tables : semantic.tablesFor(text)) await openView(x.lh, x.t, x.ident, note);
-      // --in: the lakehouse's tables, as <item>_<schema>.<table> (`ls <ws> <item>` prints
-      // them) — a schema of their own, so they never repoint a view the panel made.
-      if (lhIn) {
-        const lh = lhIn;
-        const lc = text.toLowerCase();
-        for (const t of await onelake.tables(lh)) {
-          const schema = sqlSchema(lh, t);
-          if (!paths.sqlNeedsTable(text, t.table) || !lc.includes(schema.toLowerCase())) continue;
-          await openView(lh, t, `${paths.quoteIdent(schema)}.${paths.quoteIdent(t.table)}`, note);
-        }
-      }
+      // Tables are named Kind.workspace.item.schema.table (`ls <ws> <item>` prints them), and
+      // the engine opens each one a statement names as it runs it — a model's compiled SQL
+      // names its Direct Lake tables the same way.
       result(await (await engine()).agentQuery(run), opts, out);
       note(`${((Date.now() - t0) / 1000).toFixed(1)}s`);
     },
@@ -599,4 +575,4 @@ function createAgent({ onelake, fabric, engine, bimPath, appDir, vendorDir, daxS
   return { run, modules };
 }
 
-module.exports = { createAgent, sqlSchema, filesToAbfss };
+module.exports = { createAgent, filesToAbfss };

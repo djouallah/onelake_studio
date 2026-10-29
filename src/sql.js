@@ -141,4 +141,80 @@ function assertReadOnly(sql) {
   refuse(`${(/^[A-Za-z_]+/.exec(s) || ['this'])[0].toUpperCase()} is not a read`);
 }
 
-module.exports = { sqlStr, quoteIdent, assertReadOnly };
+// -----------------------------------------------------------------------------
+// The OneLake tables a statement names
+// -----------------------------------------------------------------------------
+// Every dotted name of five or more parts whose first part is one of `kinds` (names.js
+// SQL_KINDS, matched as DuckDB matches names: ignoring case), as { kind, workspace, item,
+// schema, table } — the kind spelled as `kinds` spells it, the rest as written, quotes
+// undone. A sixth part on is a column of that table. Comments and string literals are
+// skipped, so a name in either is not a table. Any statement: a SELECT, a DESCRIBE, an
+// EXPLAIN, a CREATE VIEW over one.
+const IDENT = /[A-Za-z_À-￿][A-Za-z0-9_$À-￿]*/y;
+function tableRefs(sql, kinds) {
+  const canon = new Map(kinds.map(k => [k.toLowerCase(), k]));
+  const s = String(sql);
+  const n = s.length;
+  const out = [];
+  let i = 0;
+  const startsIdent = j => s[j] === '"' || (IDENT.lastIndex = j, IDENT.test(s));
+  const ident = () => {
+    if (s[i] === '"') {
+      let v = '';
+      i++;
+      while (i < n) {
+        if (s[i] === '"') {
+          if (s[i + 1] === '"') { v += '"'; i += 2; continue; }
+          i++;
+          break;
+        }
+        v += s[i++];
+      }
+      return v;
+    }
+    IDENT.lastIndex = i;
+    const m = IDENT.exec(s);
+    i = IDENT.lastIndex;
+    return m[0];
+  };
+  const space = j => { while (j < n && /\s/.test(s[j])) j++; return j; };
+  while (i < n) {
+    const c = s[i];
+    if (c === '-' && s[i + 1] === '-') { while (i < n && s[i] !== '\n') i++; continue; }
+    if (c === '/' && s[i + 1] === '*') {
+      const end = s.indexOf('*/', i + 2);
+      i = end === -1 ? n : end + 2;
+      continue;
+    }
+    if (c === "'") {
+      i++;
+      while (i < n) { if (s[i] === "'") { if (s[i + 1] === "'") { i += 2; continue; } i++; break; } i++; }
+      continue;
+    }
+    if (c === '$') {
+      const m = /^\$([A-Za-z_][A-Za-z0-9_]*)?\$/.exec(s.slice(i, i + 66));
+      if (m) {
+        const end = s.indexOf(m[0], i + m[0].length);
+        i = end === -1 ? n : end + m[0].length;
+        continue;
+      }
+    }
+    if (!startsIdent(i)) { i++; continue; }
+    const parts = [ident()];
+    for (;;) {
+      const dot = space(i);
+      if (s[dot] !== '.') break;
+      const next = space(dot + 1);
+      if (!startsIdent(next)) break;
+      i = next;
+      parts.push(ident());
+    }
+    const kind = canon.get(parts[0].toLowerCase());
+    if (kind && parts.length >= 5) {
+      out.push({ kind, workspace: parts[1], item: parts[2], schema: parts[3], table: parts[4] });
+    }
+  }
+  return out;
+}
+
+module.exports = { sqlStr, quoteIdent, assertReadOnly, tableRefs };

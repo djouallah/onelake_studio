@@ -251,7 +251,7 @@ There is no guarantee that DAX compiled to SQL here gives the same results as Po
 ## Limitations
 
 - **A lakehouse with no schemas of its own lists its tables under `dbo`.** That's the synthetic
-  namespace OneLake's catalog reports for those items, so generated SQL reads `FROM "dbo"."sales"`.
+  namespace OneLake's catalog reports for those items, so generated SQL reads `FROM Lakehouse.ws.lh.dbo.sales`.
 - **An item its catalog can't serve shows an error rather than a table list.** There is no DFS
   fallback; re-picking the item tries again.
 - **A database file under `Files/` is opened by sniffing its header**, never its extension (`.duckdb`,

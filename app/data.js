@@ -22,7 +22,7 @@ import {
   strip, basename, abfssUrl,
   fileExt, readerFor, PARQUET_EXTS, DB_EXTS, ZIP_EXTS, isSqliteHeader, isTextExt,
   sqlStr, quoteIdent, prepareReadOnlySql,
-  tableKey, fileKey, sanitizeIdent, emptyTableSql,
+  tableKey, fileKey, sanitizeIdent,
   normalizeValue, fmtBytes,
 } from "./paths.js";
 
@@ -428,12 +428,6 @@ export function createEngine({
     return r.rows.map(j => ({ name: j.column_name, type: j.column_type }));
   }
 
-  // The view exists so the editor can say `dbo.sales` rather than an iceberg_scan(…), and
-  // so release() has a single name to drop.
-  async function createView(ident, source) {
-    await stream(`CREATE OR REPLACE VIEW ${ident} AS SELECT * FROM ${source}`);
-  }
-
   // ---------------------------------------------------------------------------
   // Tier 1: the table's Iceberg metadata, and nothing else.
   // ---------------------------------------------------------------------------
@@ -455,7 +449,7 @@ export function createEngine({
       check();
       resolved = {
         empty: !!r.empty, schemaFields: r.schemaFields || [], totalRecords: r.totalRecords,
-        stats: r.stats, metadataLocation: r.metadataLocation || null,
+        stats: r.stats, metadataLocation: r.metadataLocation || null, sqlName: r.sqlName || null,
       };
     } catch (e) {
       // A load the user stopped is not a failure, and app.js tells the two apart by
@@ -506,7 +500,8 @@ export function createEngine({
     check();
     const stats = resolved.stats || {};
     const info = {
-      label, ident: null, stage: "stats",
+      // `sqlName` is what the view will be called once it is opened (the host names it).
+      label, ident: null, stage: "stats", sqlName: resolved.sqlName,
       columns: resolved.schemaFields || [],
       // From the snapshot summary. It is the file count DuckDB will read at tier 2/3, but
       // nothing here has read one.
@@ -587,32 +582,19 @@ export function createEngine({
   // ---------------------------------------------------------------------------
   // Tier 3: a real queryable view.
   // ---------------------------------------------------------------------------
-  // `viewSchema` puts the view in a schema other than the table's own: a semantic model's
-  // tables come from whichever items it names, and their views must not take the name of
-  // the selected lakehouse's own dbo.sales (semantic.js).
-  // A model's tables are opened by its QUERIES, several of which can be running at once (an
-  // Explore pivot and a filter's value list). Those loads supersede nothing — a cancelLoad()
-  // here interrupted every query on the host, so opening a filter during a long pivot
-  // stopped the pivot — and two queries needing the same table share one open.
-  const modelLoads = new Map();     // cache key -> Promise<info>
-  function loadTable(lh, t, opts = {}) {
-    if (!opts.viewSchema) return openTableView(lh, t, opts);
-    const key = tableKey(lh, t) + `@${opts.viewSchema}`;
-    if (loaded.has(key)) return Promise.resolve(loaded.get(key));
-    if (!modelLoads.has(key)) {
-      modelLoads.set(key, openTableView(lh, t, opts).finally(() => modelLoads.delete(key)));
-    }
-    return modelLoads.get(key);
-  }
+  // The view is the host's: it is the table's SQL name (Lakehouse.ws.item.schema.table), the
+  // one any query names it by, made over the metadata file the host's store holds. The host
+  // makes it again when a query names it after the table moved on, so the page never drops it.
+  const loadTable = (lh, t, opts = {}) => openTableView(lh, t, opts);
 
-  async function openTableView(lh, t, { onPeek, viewSchema = null } = {}) {
+  async function openTableView(lh, t, { onPeek } = {}) {
     // Keyed per lakehouse: the engine outlives the user's choice of one, and two
     // lakehouses can both hold a dbo.sales.
-    const key = tableKey(lh, t) + (viewSchema ? `@${viewSchema}` : "");
+    const key = tableKey(lh, t);
     // A selection supersedes whatever came before — even on a cache hit, because the click
     // means "show me THIS" and the in-flight load must stand down rather than repaint the
-    // screen later. A model's query does not (loadTable, above).
-    if (!viewSchema) await cancelLoad();
+    // screen later.
+    await cancelLoad();
     if (loaded.has(key)) return loaded.get(key);
     const gen = loadGen;
     const check = () => { if (gen !== loadGen) throw cancelledError(); };
@@ -626,57 +608,29 @@ export function createEngine({
     const resolved = await resolveTable(lh, t, label, status, check);
     check();
 
-    const schema = viewSchema || t.schema;
-    const ident = schema
-      ? `${quoteIdent(schema)}.${quoteIdent(t.table)}`
-      : quoteIdent(t.table);
-
-    const res = track(key);
-    res.gen = gen;          // whoever set this last owns the teardown; see releaseOwned()
-    res.ident = ident;
-    // Claimed only once there is a record for release() to guard: a claim made before
-    // track() is state a concurrent release(key) sweeps with nothing to check against.
-    viewNames.set(ident, key);
-
-    let columns;
+    let ident, columns;
     try {
-      if (schema) await q(`CREATE SCHEMA IF NOT EXISTS ${quoteIdent(schema)}`);
+      status(`Opening ${label}…`);
+      ident = await attachedIdent(lh, t);
       check();
 
-      if (resolved.empty) {
-        // The catalog lists it, it has a schema, nothing has ever been written to it:
-        // the view is real, typed from the metadata, and simply empty.
-        await q(`CREATE OR REPLACE VIEW ${ident} AS ${emptyTableSql(resolved.schemaFields)}`);
-      } else {
-        status(`Opening ${label}…`);
-        const source = await attachedIdent(lh, t);
-        check();
-
-        // Rows on screen while the rest of the open runs. Cheap now: the same LIMIT 100
-        // the Data tab would ask for, pushed down into the Iceberg scan. It used to be
-        // suppressed on merge-on-read tables because a raw first-file read showed
-        // deleted rows as live; DuckDB applies the deletes, so it fires for every table.
-        // Best-effort by design — a superseded or failed peek says nothing, and the real
-        // open reports its own errors.
-        if (onPeek) {
-          materialize(`SELECT * FROM ${source} LIMIT ${QUICK_PEEK_ROWS}`)
-            .then(out => { if (gen === loadGen) onPeek(out, (resolved.stats || {}).totalDataFiles); })
-            .catch(() => {});
-        }
-
-        await createView(ident, source);
+      // Rows on screen while the rest of the open runs. Cheap now: the same LIMIT 100
+      // the Data tab would ask for, pushed down into the Iceberg scan. It used to be
+      // suppressed on merge-on-read tables because a raw first-file read showed
+      // deleted rows as live; DuckDB applies the deletes, so it fires for every table.
+      // Best-effort by design — a superseded or failed peek says nothing, and the real
+      // open reports its own errors.
+      if (onPeek && !resolved.empty) {
+        materialize(`SELECT * FROM ${ident} LIMIT ${QUICK_PEEK_ROWS}`)
+          .then(out => { if (gen === loadGen) onPeek(out, (resolved.stats || {}).totalDataFiles); })
+          .catch(() => {});
       }
-      check();
       columns = await describe(ident);
     } catch (e) {
       // A stop is not a failure. Superseded while failing is also not this load's
       // problem — and some of the ways it can fail here ARE the supersession.
-      if (e.cancelled) { await releaseOwned(key, gen); throw e; }
-      if (gen !== loadGen) { await releaseOwned(key, gen); throw cancelledError(); }
-      await releaseOwned(key, gen);
-      // No bisector any more, and none is needed: the old one existed because a failure
-      // inside a several-hundred-file read_parquet() named nothing, and the file list was
-      // ours to halve. DuckDB owns the file list now and its errors name the file.
+      if (e.cancelled) throw e;
+      if (gen !== loadGen) throw cancelledError();
       throw new Error(`Could not open ${label}: ${e.message}`);
     }
 
@@ -795,8 +749,12 @@ export function createEngine({
   // Export to Fabric: the model's text and the Explore shelves to the host, which writes the
   // app's folder and publishes it (src/exportapp.js); answers what to tell the user.
   const exportExplore = x => callHost("fabric.exportExplore", [x]);
+  // A semantic model's Direct Lake tables (named by GUID) as SQL names (semantic.js).
+  const nameTables = list => callHost("onelake.nameTables", [list]);
+  // Save Query: the host asks for a name and keeps the SQL (the tree's Queries).
+  const saveQuery = (name, sql) => callHost("host.saveQuery", [{ name, sql }]);
 
   return { init, reset, statTable, peekTable, loadTable, deltaState, deltaHistory,
            loadFile, readFileBytes, saveText, saveOneLakeFile, runSql, describeLoad, fmtBytes, cancelLoad,
-           semanticViews, semanticCreate, semanticDrop, exportExplore };
+           semanticViews, semanticCreate, semanticDrop, exportExplore, nameTables, saveQuery };
 }

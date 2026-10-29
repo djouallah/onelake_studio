@@ -70,3 +70,24 @@ test("everything the page sends to read is allowed", () => {
 test("everything that could write is refused, and says it is read only", () => {
   for (const sql of REFUSED) assert.throws(() => assertReadOnly(sql), /Read only/, sql);
 });
+
+// tableRefs: the five-part names a statement reads, which the engine opens before running it.
+test("a statement's tables are its five-part names under a kind, however they are written", () => {
+  const { tableRefs } = require("../src/sql.js");
+  const KINDS = ["Lakehouse", "Warehouse", "SQLDatabase", "MirroredDatabase"];
+  const refs = sql => tableRefs(sql, KINDS);
+  assert.deepEqual(refs("SELECT * FROM Lakehouse.aemo.data.dbo.dim_duid"),
+    [{ kind: "Lakehouse", workspace: "aemo", item: "data", schema: "dbo", table: "dim_duid" }]);
+  // Any case, quoted parts with spaces and doubled quotes, space around the dots.
+  assert.deepEqual(refs(`select 1 from lakehouse."ANZ ws"."my ""lh""" . dbo."t 1"`),
+    [{ kind: "Lakehouse", workspace: "ANZ ws", item: 'my "lh"', schema: "dbo", table: "t 1" }]);
+  // A join across kinds; a sixth part is a column.
+  assert.deepEqual(refs("SELECT w.Warehouse.x FROM Warehouse.ws.wh.sales.f w JOIN MirroredDatabase.ws.m.dbo.c ON Warehouse.ws.wh.sales.f.id = 1").map(r => r.kind + "." + r.table),
+    ["Warehouse.f", "MirroredDatabase.c", "Warehouse.f"]);
+  // Not tables: fewer parts, another first part, inside a string or a comment.
+  assert.deepEqual(refs("SELECT * FROM dbo.t, Lakehouse.a.b.c, x.Lakehouse.a.b.c.d"), []);
+  assert.deepEqual(refs("SELECT 'Lakehouse.a.b.c.d' -- Lakehouse.a.b.c.d\n /* Lakehouse.a.b.c.d */"), []);
+  // DESCRIBE, EXPLAIN and a view's body name tables too.
+  assert.equal(refs("EXPLAIN ANALYZE SELECT count(*) FROM SQLDatabase.ws.db.dbo.t").length, 1);
+  assert.equal(refs("DESCRIBE Lakehouse.ws.lh.dbo.t").length, 1);
+});

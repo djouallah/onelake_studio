@@ -18,7 +18,7 @@
 // =============================================================================
 
 const vscode = require('vscode');
-const { fmtBytes, hasFilesArea, isMirrored, kindLabel, kindLabelPlural, strip } = require('./names');
+const { fmtBytes, hasFilesArea, isMirrored, kindLabel, kindLabelPlural, strip, sqlNameOf } = require('./names');
 
 // What a table's icon says about how it was written. Either way the panel reads it
 // through its Iceberg metadata; for a Delta table that metadata is Fabric's conversion.
@@ -31,6 +31,9 @@ const FORMAT_TOOLTIP = {
 // domain data on the node (rather than encoding it into a label) is what lets a click hand
 // the panel a { workspace, item, schema, table } with nothing to parse back out.
 const node = (kind, label, extra) => ({ kind, label, ...extra });
+
+// A table node's SQL name (Lakehouse.ws.item.schema.table), or null for an item SQL cannot name.
+const sqlNameOrNull = n => { try { return sqlNameOf(n, n); } catch (_) { return null; } };
 
 // `fn` over every workspace, four at a time; the ones that failed come back by name.
 async function eachOf(names, fn) {
@@ -60,12 +63,14 @@ class LakehouseTree {
    * @param {{ get: () => string[] }} [deps.favorites]   pinned workspace names, persisted
    * @param {(n: object) => string|null} [deps.cachedModel]  where a model's .bim was written in OneLake, if it was
    * @param {(n: object) => string|null} [deps.unsupportedModel]  what kind of model a click found it cannot open, if it did
+   * @param {{ list: () => Promise<{name: string, path: string}[]> }} [deps.queries]  the saved queries
    * @param {() => boolean} [deps.groupByType]  a workspace's items under one heading per type
    * @param {(name: string) => any} [deps.iconPath]  a bundled icon (media/<name>.svg), or null
    */
   constructor({ onelake, fabric = null, hasFabric = async () => false, isSignedIn, log = () => {},
                 favorites = { get: () => [] }, cachedModel = () => null, unsupportedModel = () => null,
-                groupByType = () => false, iconPath = () => null }) {
+                queries = { list: async () => [] }, groupByType = () => false, iconPath = () => null }) {
+    this.queries = queries;
     this.iconPath = iconPath;
     this.onelake = onelake;
     this.groupByType = groupByType;
@@ -153,6 +158,7 @@ class LakehouseTree {
          : n.kind === 'allModels' ? 'allModels'
          : n.kind === 'apps' ? `apps|${n.workspace}`
          : n.kind === 'allApps' ? 'allApps'
+         : n.kind === 'queries' ? 'queries'
          : n.kind === 'table' ? `table|${n.workspace}|${n.item}|${n.schema || ''}|${n.table}`
          : null;
   }
@@ -161,6 +167,12 @@ class LakehouseTree {
   // whole tree — that would list every open workspace's models from Fabric again.
   modelChanged(n) {
     const on = this._nodes.get(`model|${n.workspace}|${n.modelId}`);
+    if (on) this._emitter.fire(on);
+  }
+
+  // The saved queries changed (saved, renamed, deleted, or edited on disk): redraw their node.
+  queriesChanged() {
+    const on = this._nodes.get('queries');
     if (on) this._emitter.fire(on);
   }
 
@@ -208,6 +220,16 @@ class LakehouseTree {
       case 'workspace':
         item.iconPath = new vscode.ThemeIcon(n.pinned ? 'star-full' : 'folder');
         break;
+      // Saved queries: .sql files, each naming its tables Kind.workspace.item.schema.table, so
+      // one runs whatever the panel has open. A click puts it in the SQL box.
+      case 'queries':
+        item.iconPath = new vscode.ThemeIcon('bookmark');
+        break;
+      case 'query':
+        item.iconPath = new vscode.ThemeIcon('file-code');
+        item.command = { command: 'onelakeStudio.openQuery', title: 'Open query', arguments: [n] };
+        item.tooltip = n.path;
+        break;
       // Grouped by type: every item of one type across workspaces, and every semantic model.
       case 'allModels':
         item.iconPath = new vscode.ThemeIcon('graph');
@@ -233,7 +255,7 @@ class LakehouseTree {
         // as the Tables node opens): a plain table until then.
         item.iconPath = (FORMAT_TOOLTIP[n.format] && this.iconPath(n.format)) || new vscode.ThemeIcon('table');
         item.command = { command: 'onelakeStudio.openTable', title: 'Open table', arguments: [n] };
-        item.tooltip = [n.schema ? `${n.schema}.${n.table}` : n.table, FORMAT_TOOLTIP[n.format]]
+        item.tooltip = [sqlNameOrNull(n) || (n.schema ? `${n.schema}.${n.table}` : n.table), FORMAT_TOOLTIP[n.format]]
           .filter(Boolean).join('\n');
         break;
       case 'dir':
@@ -341,14 +363,22 @@ class LakehouseTree {
     if (!n) {
       const names = await this.onelake.workspaces({ fresh: this._isFresh('root', undefined, undefined) });
       if (!names.length) return [node('empty', 'No workspaces — is this the right tenant?', { leaf: true })];
-      if (this.groupByType()) return this._byType(names);
+      const queries = this._track(node('queries', 'Queries', {}));
+      if (this.groupByType()) return [queries, ...await this._byType(names)];
       const pinned = new Set(this.favorites.get());
       const favs = names.filter(w => pinned.has(w));
       return [
+        queries,
         node('group', 'Favorites', { group: 'favorites', expanded: true, count: favs.length }),
         node('group', favs.length ? 'Other workspaces' : 'Workspaces',
              { group: 'others', expanded: !favs.length, count: names.length - favs.length }),
       ];
+    }
+
+    if (n.kind === 'queries') {
+      const list = await this.queries.list();
+      if (!list.length) return [node('empty', 'Save a query from the SQL box to keep it here', { leaf: true })];
+      return list.map(q => node('query', q.name, { leaf: true, path: q.path }));
     }
 
     if (n.kind === 'group') {

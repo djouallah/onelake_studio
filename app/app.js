@@ -40,6 +40,8 @@ let engineReady = null;      // resolves when engine.init() has finished; gates 
 let engineUp = false;        // ...and the settled form of it, for the synchronous checks
 let lakehouse = null;        // { workspace, item }
 let activeIdent = null;      // quoted identifier of the loaded table
+let activeSqlName = null;    // the selected table's SQL name (Lakehouse.ws.item.schema.table)
+let activeQuery = null;      // the saved query in the SQL box (its name), when one was opened or saved
 let activeFile = null;       // the file behind it, when a file is what was opened
 let lastResult = null;       // { fields, rows } for CSV export
 let docMode = 'pretty';      // Pretty | Raw for a document result; a session preference
@@ -100,11 +102,12 @@ function wireUi() {
   };
   // Preview means "show me this thing", so it always pays for the table if it has to.
   $('previewBtn').onclick = () => {
-    const ident = activeIdent || (activeTableRef && identOf(activeTableRef));
+    const ident = activeIdent || (activeTableRef && activeSqlName);
     if (!ident) return;
     runWithTable(previewSql(ident, activeDocEligible));
   };
   $('csvBtn').onclick = saveActive;
+  $('saveQueryBtn').onclick = saveQuery;
   $('docPretty').onclick = () => {
     if (docMode === 'pretty' || !lastResult) return;
     docMode = 'pretty';
@@ -166,6 +169,7 @@ async function goToLakehouse(workspace, item) {
 function leaveLakehouse(opts) {
   closeModelView();
   activeIdent = null;
+  activeQuery = null;
   activeFile = null;
   setActiveStats(null);
   activeTableRef = null; tableStage = 'none';
@@ -370,14 +374,12 @@ async function semanticDdl({ create, drop }) {
          (m.directLake ? ` — ${m.directLake} Direct Lake table(s), read from OneLake as a query needs them` : '') + '.';
 }
 
-// A compiled SQL of a model, run: the Direct Lake tables it reads opened first (each in its
-// own schema, semantic.js), then the SQL through the engine's read-only path. Stoppable.
+// A compiled SQL of a model, run through the engine's read-only path: it names its Direct Lake
+// tables by their SQL names, and the host opens each as the SQL reaches it. Stoppable.
 async function runModelSql(sql) {
   setBusy(true, { stoppable: true });
   try {
     await engineReady;
-    for (const x of semantic.tablesFor(sql))
-      await engine.loadTable(x.lh, x.t, { viewSchema: x.viewSchema });
     return await engine.runSql(sql);
   } finally {
     setBusy(false);
@@ -396,6 +398,7 @@ async function selectImage(file) {
   $('activeTable').textContent = file.name;
   activeFile = file;
   activeIdent = null;            // no table behind this: Preview/Run stay disabled
+  activeQuery = null;
   setActiveStats(null);
   activeTableRef = null; tableStage = 'none';
   activeDocEligible = false;
@@ -436,6 +439,8 @@ async function selectTable(t) {
   activeDocEligible = false;    // a table, whatever shape the preview comes back
   activeDocExt = '';
   activeIdent = null;           // no view exists yet — nothing is bound until asked for
+  activeSqlName = null;
+  activeQuery = null;            // the editor gets this table's preview, not the query
   activeTableRef = t;
   tableStage = 'none';
   // The previous table's rows must not sit on screen under the new table's name.
@@ -450,10 +455,11 @@ async function selectTable(t) {
     const info = await engine.statTable(lakehouse, t);
     if (my !== selSeq) return;
     activeIdent = info.ident;
+    activeSqlName = info.sqlName || info.ident;
     tableStage = info.stage === 'loaded' ? 'loaded' : 'stats';
     setActiveStats(info);
     showStats();                    // statistics are the landing view for a table
-    $('sqlEditor').value = previewSql(identOf(t), false);
+    $('sqlEditor').value = activeSqlName ? previewSql(activeSqlName, false) : '';
     setStatus(engine.describeLoad(info));
     // The Data tab's rows, started now: selecting a table is the strongest signal its
     // data is about to be looked at. Quiet, superseded by any later click, and its
@@ -466,10 +472,6 @@ async function selectTable(t) {
     if (my === selSeq) setBusy(false);
   }
 }
-
-// The identifier a table's view WILL have, derivable without opening anything.
-const identOf = t => t.schema ? `${quoteIdent(t.schema)}.${quoteIdent(t.table)}`
-                              : quoteIdent(t.table);
 
 function reportTableError(e) {
   // A load the user stopped is not a failure.
@@ -586,9 +588,6 @@ async function runQuery({ doc = true, ext = '' } = {}) {
       return true;
     }
     if (model) docAllowed = false;
-    for (const x of model ? model.tables : [])
-      await engine.loadTable(x.lh, x.t, { viewSchema: x.viewSchema });
-    if (stale()) return false;
     t0 = performance.now();
     const res = await engine.runSql(model ? model.sql : sql);
     if (stale()) return false;
@@ -974,6 +973,46 @@ async function saveActive() {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Saved queries: the tree's Queries, kept by the host as .sql files. A query names its tables
+// Kind.workspace.item.schema.table, so it runs as it is, whatever was selected before.
+// ---------------------------------------------------------------------------
+function openQuery(name, sql) {
+  closeModelView();
+  ++selSeq;                     // whatever was loading for the last click stands down
+  engine.cancelLoad();
+  activeTableRef = null;
+  activeFile = null;
+  activeIdent = null;
+  activeSqlName = null;
+  activeDocEligible = false;
+  activeDocExt = '';
+  tableStage = 'none';
+  activeQuery = name || null;
+  $('activeTable').textContent = name ? `Query: ${name}` : 'Query';
+  $('sqlEditor').value = sql;
+  $('sqlEditor').focus();
+  setBusy(false);
+  setStatus(`${name || 'The query'} — Run ▶ (Ctrl+Enter) to run it.`);
+}
+
+// Save Query: the host asks for the name (the open query's, to start with) and writes it.
+async function saveQuery() {
+  const btn = $('saveQueryBtn');
+  btn.disabled = true;
+  try {
+    const saved = await engine.saveQuery(activeQuery, $('sqlEditor').value);
+    if (!saved) return;
+    activeQuery = saved.name;
+    if (!activeTableRef && !activeFile) $('activeTable').textContent = `Query: ${saved.name}`;
+    setStatus(`Saved the query ${saved.name} (${saved.path}).`, 'ok');
+  } catch (e) {
+    setStatus('Save failed: ' + e.message, 'error');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
 function saveCsv() {
   if (!lastResult || !lastResult.rows.length) return null;
   const { fields, rows } = lastResult;
@@ -1048,6 +1087,7 @@ showVersion();
 wireUi();
 engine = createEngine({ onStatus: setStatus, onBoot: reportBoot });
 engineReady = engine.init();
+semantic.setTableNamer(list => engine.nameTables(list));
 viewsReady = loadViews().catch(e => console.warn('[views]', e.message));
 
 startEngine().catch(e => {
@@ -1074,6 +1114,10 @@ window.addEventListener('message', async e => {
       const t0 = Date.now();
       await openModelView({ name: String(m.name || 'model.bim'), path: String(m.path || '') }, String(m.text || ''));
       reportOpened('file', String(m.name || 'model.bim'), Date.now() - t0);
+    }
+    // A saved query from the tree's Queries: into the SQL box, ready to run.
+    else if (m.type === 'open-query') {
+      openQuery(String(m.name || ''), String(m.sql ?? ''));
     }
     else if (m.type === 'reset') { await engineReady; await leaveLakehouse(); lakehouse = null; }
     else if (m.type === 'reads') showReads(m);

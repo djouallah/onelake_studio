@@ -13,6 +13,7 @@ const { createCatalog } = require("../src/catalog.js");
 const { createStore } = require("../src/store.js");
 const { createOneLake } = require("../src/onelake.js");
 const { createHostMethods, answer } = require("../src/host.js");
+const { sqlKind, displayName } = require("../src/names.js");
 
 const root = join(fileURLToPath(new URL(".", import.meta.url)), "..");
 const APP = join(root, "app");
@@ -21,11 +22,20 @@ const APP = join(root, "app");
 export const README = join(root, "README.md");
 
 export function panelHost({ dfsOrigin, tableOrigin, engineOptions = {} } = {}) {
-  const engine = createEngineHost({ allowedPaths: [README], ...engineOptions });
   const catalog = createCatalog({
     getToken: async () => "test-token", dfsOrigin, tableOrigin, backoffMs: [],
   });
   const onelake = createOneLake({ catalog, store: createStore({ dir: null }), prefetchEnabled: () => false });
+  // A table's SQL name, found in the fake OneLake as the extension finds it (extension.js
+  // resolveSqlTable), less the case folding the harness never needs.
+  const resolveTable = async ref => {
+    const dir = ref.dir || (await onelake.items(ref.workspace))
+      .find(i => sqlKind(i.kind) === ref.kind && displayName(i.name) === ref.item)?.name;
+    if (!dir) throw new Error(`there is no ${ref.kind} ${ref.item} in workspace ${ref.workspace}`);
+    const meta = await onelake.table({ workspace: ref.workspace, item: dir }, { schema: ref.schema, table: ref.table });
+    return { ...ref, metadataLocation: meta.metadataLocation };
+  };
+  const engine = createEngineHost({ allowedPaths: [README], resolveTable, ...engineOptions });
   const statuses = [];
   const methods = createHostMethods({ onelake, engine, onStatus: m => statuses.push(m) });
 

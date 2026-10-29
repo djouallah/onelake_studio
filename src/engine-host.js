@@ -14,10 +14,11 @@
 //   cancel()      interrupt the page's running statements
 //   info()        { capabilities } — which optional formats loaded
 //
-// The rest is the HOST's: openTable() — the identifier a table is selected from, given
-// the metadata location the host's own cache holds — and copyToTemp(), a file the host
+// The rest is the HOST's: openTable() — a table's SQL name, its view made over the
+// metadata location the host's own cache holds — and copyToTemp(), a file the host
 // fetched written where the lockdown lets DuckDB open it. Neither takes a path or a
-// location from the page.
+// location from the page. query() and stream() make the view of every table a statement
+// names by its SQL name (Lakehouse.ws.item.schema.table) before running it.
 // =============================================================================
 
 const { DuckDBInstance } = require('@duckdb/node-api');
@@ -30,7 +31,8 @@ const fs = require('node:fs');
 const fsp = require('node:fs/promises');
 const { join } = require('node:path');
 const os = require('node:os');
-const { sqlStr, assertReadOnly } = require('./sql');
+const { sqlStr, quoteIdent, assertReadOnly, tableRefs } = require('./sql');
+const { SQL_KINDS, sqlKind, itemKind, displayName, sqlName } = require('./names');
 
 
 // Rows are read in chunks so a large result starts painting before it has all arrived,
@@ -156,10 +158,15 @@ async function prepareFileCache(dir, maxBytes, onWarn) {
   }
 }
 
+// `resolveTable` turns a table's SQL name (names.js sqlName) into what it reads: given
+// { kind, workspace, item, schema, table } as SQL wrote them (and `dir`, the item's directory
+// name, when the tree already knows it), it answers the same five spelled as OneLake spells
+// them, plus { metadataLocation } — or { emptySql }, the typed empty SELECT of a table nothing
+// was ever written to.
 function createEngineHost({ extensionDir, onLog = () => {}, onWarn = () => {}, getToken = null,
                             memoryLimit = '', allowedPaths = [], lockdown = true,
                             httpProxy = '', bundledExtensions = null,
-                            fileCacheDir = null, fileCacheMaxBytes = 0 } = {}) {
+                            fileCacheDir = null, fileCacheMaxBytes = 0, resolveTable = null } = {}) {
   let instance = null;
   // The connection for the host's OWN statements — the secret, extension loading. Page
   // queries never run on it: each gets a connection of its own (see withConn), so a cancel
@@ -280,6 +287,11 @@ function createEngineHost({ extensionDir, onLog = () => {}, onWarn = () => {}, g
       const tmp = tmpDir.replace(/\\/g, '/');
       await conn.run(`SET temp_directory = ${sqlStr(tmp)};`);
 
+      // One catalog per kind of item, for the tables' SQL names (Lakehouse.ws.item.schema.t):
+      // the workspace, item and schema are nested schemas in it, made as a statement names
+      // them (ensureTables). Before the lockdown, which leaves nothing to attach with.
+      for (const k of SQL_KINDS) await conn.run(`ATTACH ':memory:' AS ${quoteIdent(k)};`);
+
       // Parquet footers, kept between queries: a Data tab, a Preview and the user's own
       // SELECT over one table each re-read every footer otherwise. Entries are checked
       // against the file's last-modified time, so a Files/ parquet rewritten in place is
@@ -342,6 +354,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onWarn = () => {}, g
     // the retry starts clean instead of stacking a second instance on the first.
     ready.catch(() => {
       ready = null;
+      made.clear();
       try { if (conn) conn.closeSync(); } catch (_) {}
       try { if (instance) instance.closeSync(); } catch (_) {}
       conn = instance = null;
@@ -488,20 +501,61 @@ function createEngineHost({ extensionDir, onLog = () => {}, onWarn = () => {}, g
     }
   }
 
-  // A table, ready to be selected from: iceberg_scan on its metadata file, whose location
-  // the host's store holds (the catalog's loadTable answer, cached on disk). The catalog
-  // is never asked again at query time — it answered a loadTable in 5s, 12s and 114s on
-  // a real tenant. DuckDB applies deletes and the Warehouse field-id mapping (checked on a
-  // Warehouse table: readable names), and the snapshot is the one the Stats card showed.
-  async function openTable({ metadataLocation }) {
+  // A table, ready to be selected from by its SQL name: a view over iceberg_scan on its
+  // metadata file, whose location the host's store holds (the catalog's loadTable answer,
+  // cached on disk). The catalog is not asked at query time when the store has the answer —
+  // it answered a loadTable in 5s, 12s and 114s on a real tenant. DuckDB applies deletes and
+  // the Warehouse field-id mapping, and the snapshot is the one the Stats card showed.
+  //
+  // `made` is what each view reads now (by its lower-cased name, as DuckDB matches names): a
+  // view is made again only when its table moved to a new snapshot.
+  const made = new Map();
+  async function ensureTable(ref) {
+    if (!resolveTable) throw new Error('this engine cannot name OneLake tables');
+    const r = await resolveTable(ref);
+    let source;
+    if (r.emptySql != null) source = String(r.emptySql);
+    else if (isOneLakeMetadata(r.metadataLocation)) source = `SELECT * FROM iceberg_scan(${sqlStr(r.metadataLocation)})`;
+    else {
+      throw new Error(`OneLake gave ${sqlName(r)} no readable metadata location` +
+        (r.metadataLocation ? ` (${String(r.metadataLocation).slice(0, 120)})` : ''));
+    }
+    const name = sqlName(r);
+    const key = name.toLowerCase();
+    if (made.get(key) === source) return name;
+    await admin(async () => {
+      if (made.get(key) === source) return;
+      const path = [r.kind, r.workspace, r.item, r.schema || 'dbo'].map(quoteIdent);
+      for (let k = 2; k <= path.length; k++) await conn.run(`CREATE SCHEMA IF NOT EXISTS ${path.slice(0, k).join('.')};`);
+      await conn.run(`CREATE OR REPLACE VIEW ${name} AS ${source};`);
+      made.set(key, source);
+    });
+    return name;
+  }
+
+  // Every table a statement names by its SQL name, made before the statement runs — so a
+  // saved query, or one typed from scratch, reads what it names with nothing opened first.
+  async function ensureTables(sql) {
+    const seen = new Set();
+    for (const ref of tableRefs(sql, SQL_KINDS)) {
+      const key = [ref.kind, ref.workspace, ref.item, ref.schema, ref.table].join('\0').toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      await ensureTable(ref);
+    }
+  }
+
+  // A table the tree knows ({ workspace, item: "data.Lakehouse", schema, table }), opened:
+  // its SQL name, the view behind it made.
+  async function openTable({ workspace, item, schema, table }) {
     await init();
     await currentToken();
-    if (!isOneLakeMetadata(metadataLocation)) {
-      throw new Error('OneLake gave this table no readable metadata location' +
-        (metadataLocation ? ` (${String(metadataLocation).slice(0, 120)})` : ''));
-    }
     await ensureAuth();
-    return { ident: `iceberg_scan(${sqlStr(metadataLocation)})` };
+    const kind = sqlKind(itemKind(item));
+    if (!kind) throw new Error(`${item} holds no tables SQL can name`);
+    const ident = await withAuthRetry(() => ensureTable({ kind, workspace, item: displayName(item), dir: item,
+                                                          schema: schema || 'dbo', table }));
+    return { ident };
   }
 
   // Every statement, streamed chunk by chunk off its own connection. `onBatch` gets one
@@ -568,7 +622,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onWarn = () => {}, g
     async query(sql) {
       assertReadOnly(sql);
       await init();
-      return withAuthRetry(() => runAll(sql));
+      return withAuthRetry(async () => { await ensureTables(sql); return runAll(sql); });
     },
 
     async stream(sql, emit) {
@@ -578,6 +632,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onWarn = () => {}, g
       // late failure arrives, and running it again would deliver them twice. The token
       // is still refreshed up front, which is what covers the ordinary expiry case.
       await ensureAuth();
+      await withAuthRetry(() => ensureTables(sql));
       const numRows = await withConn(c => runStreaming(c, sql, b => emit(b)));
       return { done: true, numRows };
     },
@@ -611,7 +666,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onWarn = () => {}, g
     try {
       assertReadOnly(sql);
       await init();
-      return await withAuthRetry(() => runAll(sql, agentLive));
+      return await withAuthRetry(async () => { await ensureTables(sql); return runAll(sql, agentLive); });
     } catch (e) { throw scrub(e, authToken || token); }
   }
 
@@ -630,6 +685,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onWarn = () => {}, g
     try { if (instance) instance.closeSync(); } catch (_) {}
     conn = instance = null; ready = null;
     copies.clear();
+    made.clear();
     authToken = null;
     if (tmpDir) await fsp.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
   }

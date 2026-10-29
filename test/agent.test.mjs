@@ -165,8 +165,8 @@ test("free from the cache: table sizes, more table fields, files, find, model co
   try {
     let r = await agent.run({ args: ["ls", "ws", "data"] });
     assert.equal(r.code, 0, r.err);
-    assert.match(r.out, /\| customers \| data_main\.customers \| 1,200 \| 2\.5 MB \| 3 \| 2026-10-01 08:30 \|/);
-    assert.match(r.out, /\| orders \| data_main\.orders \| — \| — \| — \| — \|/);
+    assert.match(r.out, /\| customers \| Lakehouse\.ws\.data\.dbo\.customers \| 1,200 \| 2\.5 MB \| 3 \| 2026-10-01 08:30 \|/);
+    assert.match(r.out, /\| orders \| Lakehouse\.ws\.data\.dbo\.orders \| — \| — \| — \| — \|/);
     assert.match(r.out, /2 table\(s\), 1 with metadata cached/);
 
     r = await agent.run({ args: ["table", "ws", "data", "customers"] });

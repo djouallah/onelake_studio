@@ -137,6 +137,34 @@
         "title": "Copy App URL",
         "category": "OneLake Studio",
         "icon": "$(copy)"
+      },
+      {
+        "command": "onelakeStudio.copySqlName",
+        "title": "Copy SQL Name",
+        "category": "OneLake Studio",
+        "icon": "$(copy)"
+      },
+      {
+        "command": "onelakeStudio.openQuery",
+        "title": "Open Query",
+        "category": "OneLake Studio"
+      },
+      {
+        "command": "onelakeStudio.renameQuery",
+        "title": "Rename Query…",
+        "category": "OneLake Studio"
+      },
+      {
+        "command": "onelakeStudio.deleteQuery",
+        "title": "Delete Query",
+        "category": "OneLake Studio",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "onelakeStudio.revealQueries",
+        "title": "Show Queries Folder",
+        "category": "OneLake Studio",
+        "icon": "$(folder-opened)"
       }
     ],
     "viewsContainers": {
@@ -216,6 +244,26 @@
           "command": "onelakeStudio.copyAppUrl",
           "when": "view == onelakeStudio.explorer && viewItem == fabricAppUrl",
           "group": "inline"
+        },
+        {
+          "command": "onelakeStudio.copySqlName",
+          "when": "view == onelakeStudio.explorer && viewItem == table",
+          "group": "inline"
+        },
+        {
+          "command": "onelakeStudio.revealQueries",
+          "when": "view == onelakeStudio.explorer && viewItem == queries",
+          "group": "inline"
+        },
+        {
+          "command": "onelakeStudio.renameQuery",
+          "when": "view == onelakeStudio.explorer && viewItem == query",
+          "group": "1_edit@1"
+        },
+        {
+          "command": "onelakeStudio.deleteQuery",
+          "when": "view == onelakeStudio.explorer && viewItem == query",
+          "group": "1_edit@2"
         }
       ],
       "commandPalette": [
@@ -265,6 +313,22 @@
         },
         {
           "command": "onelakeStudio.copyAppUrl",
+          "when": "false"
+        },
+        {
+          "command": "onelakeStudio.copySqlName",
+          "when": "false"
+        },
+        {
+          "command": "onelakeStudio.openQuery",
+          "when": "false"
+        },
+        {
+          "command": "onelakeStudio.renameQuery",
+          "when": "false"
+        },
+        {
+          "command": "onelakeStudio.deleteQuery",
           "when": "false"
         }
       ]

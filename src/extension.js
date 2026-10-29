@@ -9,7 +9,7 @@
 // =============================================================================
 
 const vscode = require('vscode');
-const { join } = require('node:path');
+const { join, basename } = require('node:path');
 const { existsSync } = require('node:fs');
 const fsp = require('node:fs/promises');
 const { openPanel, closePanel, revealPanel, postToPanel, postLive } = require('./panel');
@@ -20,7 +20,7 @@ const { createHostMethods } = require('./host');
 const { createFabric, bimFileName } = require('./fabric');
 const { LakehouseTree } = require('./tree');
 const { webviewRoot } = require('./webview');
-const { hasFilesArea } = require('./names');
+const { hasFilesArea, sqlKind, sqlName, sqlNameOf, displayName } = require('./names');
 const { createAgent } = require('./agent');
 const { createSemViews } = require('./semviews');
 const { serveBridge } = require('./bridge');
@@ -363,6 +363,7 @@ function ensureEngine(context, { readme } = {}) {
       fileCacheDir: fileCacheDirFor(fileCacheAccount),
       fileCacheMaxBytes: Math.max(0, Number(vscode.workspace.getConfiguration('onelakeStudio')
         .get('diskCacheMaxGB', 64)) || 0) * 1024 ** 3,
+      resolveTable: ref => (resolveSqlTable ? resolveSqlTable(ref) : Promise.reject(new Error('OneLake Studio is still starting'))),
     });
   } catch (e) {
     out && out.appendLine(`native DuckDB unavailable: ${e.message}`);
@@ -391,6 +392,14 @@ let semviews = null;
 // Export to Fabric (exportapp.js), the page's fabric.exportExplore; set by activateInner,
 // which owns the agent's modules.
 let exportExplore = null;
+// A table's SQL name (Lakehouse.ws.item.schema.table) -> what it reads, for the engine; and
+// a semantic model's Direct Lake tables (by GUID) -> their SQL names. Set by activateInner,
+// which owns the store, the Fabric API and the agent's modules.
+let resolveSqlTable = null;
+let nameModelTables = null;
+// The SQL box's Save Query (a .sql file in the saved queries' folder); set by activateInner,
+// which owns the tree that lists them.
+let saveQuery = null;
 
 async function show(context, options) {
   if (revealPanel()) return true;
@@ -418,6 +427,8 @@ async function show(context, options) {
       onelake, engine: eng, onStatus: message => postLive({ type: 'status', message }),
       saveFile, semviews,
       exportExplore: x => (exportExplore ? exportExplore(x) : Promise.reject(new Error('OneLake Studio is still starting'))),
+      nameTables: list => (nameModelTables ? nameModelTables(list) : Promise.reject(new Error('OneLake Studio is still starting'))),
+      saveQuery: x => (saveQuery ? saveQuery(x) : Promise.reject(new Error('OneLake Studio is still starting'))),
     }),
     // The page could not bring the engine up. Everything it buffered is already gone;
     // this is the toast that stops the failure being a spinner that never moves.
@@ -667,6 +678,7 @@ async function activateInner(context) {
     hasFabric: async () => !!await fabricToken().catch(() => null),
     isSignedIn: () => signedIn,
     cachedModel: n => cachedModel(n),
+    queries: { list: () => listQueries() },
     unsupportedModel: n => unsupportedModels.get(modelKey(n)) || null,
     iconPath: name => vscode.Uri.joinPath(context.extensionUri, 'media', `${name}.svg`),
     // A listing failure becomes an error NODE, but the stack behind it goes here.
@@ -693,7 +705,47 @@ async function activateInner(context) {
     return join(require('node:os').homedir(), 'OneLakeStudio', 'semantic-models');
   }
 
-  const bimPath = n => join(modelsFolder(), bimFileName(n.workspace).replace(/\.bim$/, ''), bimFileName(n.model));
+  // Saved queries: one .sql file each in ~/OneLakeStudio/queries/, beside the downloaded
+  // models. They name their tables Kind.workspace.item.schema.table, so each one runs whatever
+  // the panel has open. The tree lists them; the SQL box's Save Query writes them.
+  function queriesFolder() {
+    return join(require('node:os').homedir(), 'OneLakeStudio', 'queries');
+  }
+  async function listQueries() {
+    const files = await fsp.readdir(queriesFolder()).catch(() => []);
+    return files.filter(f => /\.sql$/i.test(f))
+      .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }))
+      .map(f => ({ name: f.replace(/\.sql$/i, ''), path: join(queriesFolder(), f) }));
+  }
+  // A name as a file name: what Windows refuses becomes _, and the .sql is ours to add.
+  const queryStem = name => String(name).trim().replace(/[\\/:*?"<>|]+/g, '_').replace(/\.sql$/i, '');
+  const queryPath = name => join(queriesFolder(), `${queryStem(name)}.sql`);
+  const askQueryName = (title, value) => vscode.window.showInputBox({
+    title, value, prompt: `Kept in ${queriesFolder()}`,
+    validateInput: v => (queryStem(v) ? null : 'A query needs a name'),
+  });
+  // Saving over another query is asked first; saving the query that is open is just a save.
+  async function mayReplace(path, current) {
+    if (current && queryPath(current).toLowerCase() === path.toLowerCase()) return true;
+    if (!existsSync(path)) return true;
+    const pick = await vscode.window.showWarningMessage(`A query named ${basename(path, '.sql')} already exists.`,
+      { modal: true }, 'Replace');
+    return pick === 'Replace';
+  }
+  // The page's Save Query: { name } is the query open in the SQL box, if one is. Answers
+  // { name, path }, or null when the name was not given.
+  saveQuery = async ({ name, sql }) => {
+    const picked = await askQueryName('Save Query', name || '');
+    if (!picked) return null;
+    const path = queryPath(picked);
+    if (!await mayReplace(path, name)) return null;
+    await fsp.mkdir(queriesFolder(), { recursive: true });
+    await fsp.writeFile(path, String(sql ?? ''), 'utf8');
+    tree.queriesChanged();
+    return { name: queryStem(picked), path };
+  };
+
+  const bimPath = n => join(modelsFolder(),bimFileName(n.workspace).replace(/\.bim$/, ''), bimFileName(n.model));
 
   // Where each semantic model was written in OneLake, per account: { workspace, item, path }.
   // The tree's check mark, and what a click opens without asking Fabric again.
@@ -731,6 +783,7 @@ async function activateInner(context) {
     // `export`: Explore's own Export to Fabric (below), and the .bim the tree wrote for a model.
     exportApp: x => (exportExplore ? exportExplore(x) : Promise.reject(new Error('OneLake Studio is still starting'))),
     modelFileOf: (ws, modelId) => modelFile({ workspace: ws, modelId }),
+    nameTables: list => nameModelTables(list),
   });
   context.subscriptions.push(serveBridge({
     handle: req => {
@@ -850,6 +903,55 @@ async function activateInner(context) {
       showError(`Could not open ${n.model}: ${(e && e.message) || e}`);
     }
   }
+
+  // A table's SQL name, found in OneLake. The parts are matched as DuckDB matches names,
+  // ignoring case, against what the store lists (the tree's own listings, so a table the tree
+  // has shown resolves without a request), and answered spelled as OneLake spells them.
+  const same = (a, b) => String(a).toLowerCase() === String(b).toLowerCase();
+  resolveSqlTable = async ref => {
+    const workspaces = await onelake.workspaces().catch(() => []);
+    const ws = workspaces.find(w => same(w, ref.workspace)) || String(ref.workspace);
+    let dir = ref.dir;
+    if (!dir) {
+      const items = await onelake.items(ws).catch(e => {
+        throw new Error(`${sqlName(ref)}: workspace ${ref.workspace} could not be listed — ${e.message}`);
+      });
+      const hit = items.find(i => sqlKind(i.kind) === ref.kind && same(displayName(i.name), ref.item));
+      if (!hit) throw new Error(`${sqlName(ref)}: there is no ${ref.kind} ${ref.item} in workspace ${ws}`);
+      dir = hit.name;
+    }
+    const lh = { workspace: ws, item: dir };
+    const listed = await onelake.tables(lh).catch(() => []);
+    const t = listed.find(x => same(x.schema || 'dbo', ref.schema || 'dbo') && same(x.table, ref.table)) ||
+              { schema: ref.schema || 'dbo', table: ref.table };
+    let meta;
+    try { meta = await onelake.table(lh, t); }
+    catch (e) { throw new Error(`${sqlName(ref)}: ${e.message}`); }
+    const named = { kind: ref.kind, workspace: ws, item: displayName(dir), schema: t.schema || 'dbo', table: t.table };
+    return meta.empty
+      ? { ...named, emptySql: (await agent.modules()).paths.emptyTableSql(meta.schemaFields) }
+      : { ...named, metadataLocation: meta.metadataLocation };
+  };
+
+  // A semantic model's Direct Lake tables, which its expressions name by GUID, as SQL names:
+  // [{ workspace, item (GUIDs), schema, table }] -> [name]. The Fabric API names each item once.
+  const itemNames = new Map();
+  nameModelTables = async list => {
+    const out = [];
+    for (const x of list) {
+      const key = `${x.workspace}/${x.item}`.toLowerCase();
+      if (!itemNames.has(key)) {
+        const p = fabric.itemOf(x.workspace, x.item);
+        itemNames.set(key, p);
+        p.catch(() => itemNames.delete(key));
+      }
+      const it = await itemNames.get(key);
+      const kind = sqlKind(it.item.replace(/^.*\./, ''));
+      if (!kind) throw new Error(`${it.workspace}/${it.item} holds no tables SQL can name`);
+      out.push(sqlName({ kind, workspace: it.workspace, item: displayName(it.item), schema: x.schema, table: x.table }));
+    }
+    return out;
+  };
 
   // Export to Fabric, from Explore: the model's Explore as a Fabric app (exportapp.js), its
   // local copy written to <the open folder>/<app>/ (asked for when no folder is open) —
@@ -1086,6 +1188,45 @@ async function activateInner(context) {
     vscode.commands.registerCommand('onelakeStudio.openFile', n => openInPanel({
       type: 'open-file', workspace: n.workspace, item: n.item, path: n.path, bytes: n.bytes,
     })),
+
+    // A table's SQL name, for a query written by hand.
+    vscode.commands.registerCommand('onelakeStudio.copySqlName', async n => {
+      if (!n || !n.table) return;
+      const name = sqlNameOf(n, n);
+      await vscode.env.clipboard.writeText(name);
+      vscode.window.setStatusBarMessage(`Copied ${name}`, 3000);
+    }),
+
+    // Saved queries (queriesFolder): open one in the SQL box, rename, delete, show the folder.
+    vscode.commands.registerCommand('onelakeStudio.openQuery', async n => {
+      if (!n || !n.path) return;
+      let sql;
+      try { sql = await fsp.readFile(n.path, 'utf8'); }
+      catch (e) { tree.queriesChanged(); return showError(`Could not read ${n.label}: ${e.message}`); }
+      await openInPanel({ type: 'open-query', name: n.label, sql });
+    }),
+    vscode.commands.registerCommand('onelakeStudio.renameQuery', async n => {
+      if (!n || !n.path) return;
+      const picked = await askQueryName('Rename Query', n.label);
+      if (!picked || queryStem(picked) === n.label) return;
+      const path = queryPath(picked);
+      if (!await mayReplace(path, n.label)) return;
+      try { await fsp.rename(n.path, path); }
+      catch (e) { showError(`Could not rename ${n.label}: ${e.message}`); }
+      tree.queriesChanged();
+    }),
+    vscode.commands.registerCommand('onelakeStudio.deleteQuery', async n => {
+      if (!n || !n.path) return;
+      const pick = await vscode.window.showWarningMessage(`Delete the query ${n.label}?`, { modal: true }, 'Delete');
+      if (pick !== 'Delete') return;
+      try { await fsp.rm(n.path, { force: true }); }
+      catch (e) { showError(`Could not delete ${n.label}: ${e.message}`); }
+      tree.queriesChanged();
+    }),
+    vscode.commands.registerCommand('onelakeStudio.revealQueries', async () => {
+      await fsp.mkdir(queriesFolder(), { recursive: true });
+      await vscode.commands.executeCommand('revealFileInOS', vscode.Uri.file(queriesFolder()));
+    }),
 
     // The tree's "Sign in to list semantic models" node. A command of its own, because the
     // Fabric API's consent is a separate prompt and must only ever follow a click.

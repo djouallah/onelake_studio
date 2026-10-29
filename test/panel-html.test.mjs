@@ -81,7 +81,7 @@ test("a .bim opens as the semantic model view", async () => {
   assert.match(app, /fileExt\(file\.name\) === 'bim'\) return openModelView/, "a .bim is diverted to it");
   assert.match(app, /semantic\.statement\(sql\)/, "the main editor compiles model queries, and runs CREATE / SHOW SEMANTIC VIEW");
   assert.ok(INDEX.includes('id="modelView"'), "index.html has the view's container");
-  assert.match(await read("data.js"), /viewSchema/, "loadTable can put a model's tables in a schema of their own");
+  assert.match(app, /semantic\.setTableNamer\(/, "a model's Direct Lake tables are named by the host");
 });
 
 // One pin list (src/vendored.js): vendor.mjs downloads it, panel.js injects it, cdn.js

@@ -14,8 +14,8 @@
 // whose metrics are DAX (a .yaml or .yml): dax-sql's formats/ossie.js turns the latter into the
 // .bim it stands for, and from there the two are one. What is this extension's: reading a Direct Lake
 // model's tables from OneLake — each table's expression names a workspace and an item by GUID,
-// and the engine opens it through the same Iceberg catalog as any other, in a schema of its
-// own ("dbo_1a2b3c4d") so two lakehouses' dbo.x never collide — and where views are kept
+// the host names them (setTableNamer) and the compiled SQL reads each by its SQL name,
+// Lakehouse.ws.item.schema.table, the one any query writes — and where views are kept
 // (the extension host, per account: src/semviews.js). This module is shared by the panel and
 // the host's command line (src/agent.js); `modules` lets the host hand in the compiler.
 // =============================================================================
@@ -115,17 +115,28 @@ export function directLakeTables(bim) {
     const s = t.partitions?.[0]?.source;
     const lake = s?.expressionSource && found.get(s.expressionSource);
     if (!lake) continue;
-    const schema = s.schemaName ?? "dbo";
-    const entity = s.entityName ?? t.name;
-    const viewSchema = `${schema}_${lake.item.replace(/-/g, "").slice(0, 8)}`;
     tables.set(lc(t.name), {
       lh: { workspace: lake.workspace, item: lake.item },
-      t: { schema, table: entity },
-      viewSchema,
-      ident: `${quoteIdent(viewSchema)}.${quoteIdent(entity)}`,
+      t: { schema: s.schemaName ?? "dbo", table: s.entityName ?? t.name },
     });
   }
   return tables;
+}
+
+// Who turns a Direct Lake table (its item by GUID) into its SQL name: the host, which asks
+// the Fabric API what the GUIDs are called. Set once by the panel and by the command line.
+let tableNamer = null;
+export const setTableNamer = fn => { tableNamer = fn; };
+
+// directLakeTables(), each with its SQL name as `ident`.
+async function namedLakeTables(bim) {
+  const lake = directLakeTables(bim);
+  if (!lake.size) return lake;
+  if (!tableNamer) throw new Error("Direct Lake tables cannot be named here");
+  const list = [...lake.values()];
+  const names = await tableNamer(list.map(l => ({ ...l.lh, ...l.t })));
+  list.forEach((l, i) => { l.ident = names[i]; });
+  return lake;
 }
 
 // Whether a file of this name is an Ossie model rather than a .bim.
@@ -160,9 +171,9 @@ export async function defineView(name, path, text, mode = "replace", modules = n
   const mods = await ready(modules);
   const { createCompiler, tmslToModel } = mods;
   const bim = bimOf(path, text, mods);
-  const lake = directLakeTables(bim);
-  // A Direct Lake table is the view the engine opens for it; any other is the model's own
-  // source name, as dax-sql reads it by default.
+  const lake = await namedLakeTables(bim);
+  // A Direct Lake table is read by its SQL name, the engine making its view as a query
+  // names it; any other is the model's own source name, as dax-sql reads it by default.
   const tableSource = t => {
     const l = lake.get(lc(t.name));
     if (l) return l.ident;

@@ -34,7 +34,7 @@ function fixture() {
   return { calls, ask };
 }
 
-test("a table is opened at the location the host's store holds, whatever the page sends", async () => {
+test("a table is opened by name: a location the page sends never reaches the engine", async () => {
   const { calls, ask } = fixture();
   const out = await ask("onelake.openTable", [{
     workspace: "ws", item: "lh.Lakehouse", schema: "dbo", table: "t",
@@ -42,7 +42,13 @@ test("a table is opened at the location the host's store holds, whatever the pag
   }]);
   assert.deepEqual(out, [{ type: "result", id: 7, value: { ident: "x" } }]);
   const opened = calls.find(c => c[0] === "openTable")[1];
-  assert.equal(opened.metadataLocation, LOC);
+  assert.deepEqual(opened, { workspace: "ws", item: "lh.Lakehouse", schema: "dbo", table: "t" });
+});
+
+test("a table's metadata carries its SQL name", async () => {
+  const { ask } = fixture();
+  const [msg] = await ask("onelake.table", [{ workspace: "ws", item: "lh.Lakehouse", schema: "dbo", table: "t" }]);
+  assert.equal(msg.value.sqlName, "Lakehouse.ws.lh.dbo.t");
 });
 
 test("the engine is reachable through query, stream, cancel and info only", async () => {

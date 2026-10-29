@@ -10,7 +10,7 @@
 //
 //   node bin/cli.mjs ls                                   workspaces
 //   node bin/cli.mjs ls <ws>                              its lakehouses/warehouses and semantic models
-//   node bin/cli.mjs ls <ws> <item>                       its tables, and their names for --in
+//   node bin/cli.mjs ls <ws> <item>                       its tables, and their SQL names
 //   node bin/cli.mjs models [<ws>]                        semantic models in every workspace, counted
 //   node bin/cli.mjs items [<ws>]                         lakehouses and warehouses in every workspace, counted
 //   node bin/cli.mjs files <ws> <item> [<dir>]            a lakehouse's Files/ listing
@@ -33,7 +33,7 @@ for export, which waits for your OK in VS Code.
   ls                                  workspaces
   ls <ws>                             its lakehouses/warehouses and semantic models
   ls <ws> <item>                      its tables with rows, size and last write, and their
-                                        names for sql --in
+                                        SQL names
   models [<ws>]                       semantic models in every workspace (or one), counted
   items [<ws>]                        lakehouses and warehouses in every workspace (or one)
   files <ws> <item> [<dir>]           a lakehouse's Files/ listing, with sizes
@@ -41,10 +41,10 @@ for export, which waits for your OK in VS Code.
                                         semantic models, a downloaded model's tables/measures
   table <ws> <item> <schema.table>    columns and stats (metadata only)
   model <ws> <model>                  relationships, columns, measures with their DAX
-  sql "<sql>"                         read-only SQL; a downloaded model is a table:
-                                        SELECT d.col, AGG("measure") FROM model GROUP BY ALL
-    --in <ws>/<item>                  that lakehouse's tables, as <item>_<schema>.<table>,
-                                        and its files as 'Files/…' (read_parquet('Files/x.parquet'))
+  sql "<sql>"                         read-only SQL; a table is Kind.workspace.item.schema.table
+                                        (Lakehouse.aemo.data.dbo.dim_duid); a downloaded model is a
+                                        table: SELECT d.col, AGG("measure") FROM model GROUP BY ALL
+    --in <ws>/<item>                  that lakehouse's files as 'Files/…' (read_parquet('Files/x.parquet'))
     --show-sql                        print the SQL a model query compiles to
   dax "EVALUATE …"                    a DAX query against a model (Explore's DAX runs as is)
     --model <name>                    which model (needed when more than one is defined)

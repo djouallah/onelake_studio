@@ -20,7 +20,9 @@
 // =============================================================================
 
 // A target from the page, reduced to the strings it may carry.
-const lhOf = x => ({ workspace: String(x.workspace), item: String(x.item) });
+const { sqlNameOf } = require('./names');
+
+const lhOf = x =>({ workspace: String(x.workspace), item: String(x.item) });
 const tableOf = x => ({ schema: String(x.schema || ''), table: String(x.table) });
 const RANGE = /^bytes=\d+-\d*$/;
 
@@ -37,8 +39,13 @@ const ENGINE_METHODS = new Set(['query', 'stream', 'cancel', 'info']);
  *        ask where to save, write it, answer the path (null: dismissed)
  * @param {(x: {file: string, name: string, text: string, state: object|null}) => Promise<string>} [o.exportExplore]
  *        Export to Fabric: answers what the page says when it is done
+ * @param {(list: {workspace: string, item: string, schema: string, table: string}[]) => Promise<string[]>} [o.nameTables]
+ *        a semantic model's Direct Lake tables (named by GUID) -> their SQL names
+ * @param {(x: {name: string, sql: string}) => Promise<{name: string, path: string}|null>} [o.saveQuery]
+ *        ask for a name and keep the SQL as a saved query
  */
-function createHostMethods({ onelake, engine, onStatus = () => {}, saveFile = null, semviews = null, exportExplore = null }) {
+function createHostMethods({ onelake, engine, onStatus = () => {}, saveFile = null, semviews = null, exportExplore = null,
+                             nameTables = null, saveQuery = null }) {
   const views = () => { if (!semviews) throw new Error('semantic views are not available here'); return semviews; };
   return {
     // Export to Fabric (exportapp.js): the model's text (to check it), where it lives in
@@ -60,19 +67,32 @@ function createHostMethods({ onelake, engine, onStatus = () => {}, saveFile = nu
       return views().put(String(x.name), views().resolve(String(x.path), lh));
     },
     'semantic.drop': async x => { await views().remove(String(x.name)); return true; },
-    'onelake.table': x => onelake.table(lhOf(x), tableOf(x), { onWait: onStatus }),
+    // A table's metadata, and its SQL name (Lakehouse.ws.item.schema.table) for the editor.
+    'onelake.table': async x => {
+      const lh = lhOf(x), t = tableOf(x);
+      let sqlName = null;
+      try { sqlName = sqlNameOf(lh, t); } catch (_) { /* an item SQL cannot name */ }
+      return { ...await onelake.table(lh, t, { onWait: onStatus }), sqlName };
+    },
+    // A semantic model's Direct Lake tables, which it names by GUID, as SQL names.
+    'onelake.nameTables': async list => {
+      if (!nameTables) throw new Error('semantic models are not available here');
+      return nameTables((Array.isArray(list) ? list : []).map(x => ({
+        workspace: String(x.workspace), item: String(x.item), schema: String(x.schema || 'dbo'), table: String(x.table),
+      })));
+    },
     // A Delta table's own log: its state as of the converted version, and its commits a
     // page at a time. The engine is passed for the checkpoint, the one log file that is parquet.
     'onelake.deltaState': x => onelake.deltaState(lhOf(x), tableOf(x), { run: sql => engine.call('query', [sql]) }),
     'onelake.deltaHistory': x => onelake.deltaHistory(lhOf(x), tableOf(x),
       { skip: Number.isSafeInteger(x.skip) && x.skip > 0 ? x.skip : 0 }),
     'onelake.peek': x => onelake.peek(lhOf(x), tableOf(x), sql => engine.call('query', [sql])),
-    // The identifier to select a table from. The page names the table; the metadata
-    // location comes from the host's own store, never from the page.
+    // The table, opened: its SQL name, the view behind it made. The page names the table;
+    // the metadata location comes from the host's own store, never from the page.
     'onelake.openTable': async x => {
       const lh = lhOf(x), t = tableOf(x);
-      const meta = await onelake.table(lh, t, { onWait: onStatus });
-      return engine.openTable({ ...lh, ...t, metadataLocation: meta.metadataLocation });
+      await onelake.table(lh, t, { onWait: onStatus });
+      return engine.openTable({ ...lh, ...t });
     },
     // One level of a lakehouse's Files/ — the same cached listing the tree draws.
     'onelake.files': x => onelake.files(lhOf(x), String(x.dir || '')),
@@ -99,6 +119,12 @@ function createHostMethods({ onelake, engine, onStatus = () => {}, saveFile = nu
         ? Buffer.from(x.text, 'utf8')
         : await onelake.readBytes(String(x.workspace), String(x.path));
       return saveFile(name, bytes);
+    },
+    // Save Query: the SQL box's text as a saved query (the tree's Queries). The host asks for
+    // the name, starting from the query open in the box; answers { name, path }, or null.
+    'host.saveQuery': async x => {
+      if (!saveQuery) throw new Error('saving queries is not available here');
+      return saveQuery({ name: x && x.name ? String(x.name) : '', sql: String((x && x.sql) ?? '') });
     },
   };
 }
