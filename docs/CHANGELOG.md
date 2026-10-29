@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.2.8
+
+- **Every table has one SQL name: `lakehouse.workspace.item.schema.table`.** For example
+  `lakehouse.aemo.data.dbo.dim_duid`; the first part is `lakehouse`, `warehouse`, `sqldatabase`
+  or `mirroreddatabase`, and a lakehouse without schemas is `dbo`. A query names tables that
+  way and runs as written, whatever is open: joins across items and workspaces need no setup.
+  The panel, Explore, a model's compiled SQL and the command line all use it. Copy SQL Name on
+  a table gives it.
+- **Saved queries.** Save Query in the SQL box keeps it, with no name to type, under **Queries**
+  at the bottom of the tree: one folder per signed-in account,
+  `~/OneLakeStudio/queries/<account>/`. A click opens one; Rename and Delete are on its menu.
+- **Plan in place of Preview.** The query's profile (where the time goes) and DuckDB's plan
+  tree. Rows returned and planning time are now right there and in Explore's Show plan.
+- **Semantic models are named `workspace.model`**, so two workspaces' models of one name are
+  two views. The bare name works while only one model has it. dax-sql 0.1.2.
+- **Direct Lake models over several lakehouses open from the tree**, each table read from its own
+  lakehouse.
+- **An Import, DirectQuery or composite model gives a note, not an error** (#3), and the tree
+  marks it.
+
 ## 0.2.7
 
 - **Export to Fabric's app carries its own packages.** DuckDB-WASM 1.5.6 with its parquet and
