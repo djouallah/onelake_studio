@@ -105,22 +105,22 @@ const kindLabelPlural = kind => {
 // (<workspace>/<item>.<Kind>/Tables/<schema>/<table>) with the kind moved to the front, where
 // it names one of DuckDB's catalogs. The rest are nested schemas (engine-host.js), so
 //
-//   SELECT * FROM Lakehouse.aemo.data.dbo.dim_duid
+//   SELECT * FROM lakehouse.aemo.data.dbo.dim_duid
 //
 // reads the same table whatever the panel has open. A lakehouse without schemas is `dbo`,
 // the one schema OneLake's catalog reports for it. The kind is the Fabric spelling, not the
 // internal one a OneLake directory carries.
-const SQL_KINDS = ["Lakehouse", "Warehouse", "SQLDatabase", "MirroredDatabase"];
+const SQL_KINDS = ["lakehouse", "warehouse", "sqldatabase", "mirroreddatabase"];
 const SQL_KIND_OF = {
-  lakehouse: "Lakehouse", warehouse: "Warehouse",
-  sqldbnative: "SQLDatabase", sqldatabase: "SQLDatabase",
-  mountedrelationaldatabase: "MirroredDatabase",
+  lakehouse: "lakehouse", warehouse: "warehouse",
+  sqldbnative: "sqldatabase", sqldatabase: "sqldatabase",
+  mountedrelationaldatabase: "mirroreddatabase",
 };
 // The catalog an item's tables are under: from its directory's kind ("SQLDbNative"), or the
 // kind itself when that is already the SQL one. null for an item that holds no tables.
 const sqlKind = kind => {
   const k = String(kind || "");
-  return SQL_KIND_OF[k.toLowerCase()] || (/^Mirrored/i.test(k) ? "MirroredDatabase" : null);
+  return SQL_KIND_OF[k.toLowerCase()] || (/^Mirrored/i.test(k) ? "mirroreddatabase" : null);
 };
 // An item's name as Fabric shows it: its directory's name without the kind.
 const displayName = item => basename(item).replace(/\.[^.]+$/, "");

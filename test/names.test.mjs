@@ -79,14 +79,14 @@ test("a byte count reads as a size", () => {
 
 test("a table's SQL name is Kind.workspace.item.schema.table, quoted only where it must be", () => {
   assert.equal(n.sqlNameOf({ workspace: "aemo", item: "data.Lakehouse" }, { schema: "dbo", table: "dim_duid" }),
-    "Lakehouse.aemo.data.dbo.dim_duid");
+    "lakehouse.aemo.data.dbo.dim_duid");
   // A lakehouse without schemas is dbo; Fabric's spelling of the kind, not the directory's.
   assert.equal(n.sqlNameOf({ workspace: "ws", item: "db.SQLDbNative" }, { schema: "", table: "t" }),
-    "SQLDatabase.ws.db.dbo.t");
+    "sqldatabase.ws.db.dbo.t");
   assert.equal(n.sqlNameOf({ workspace: "ws", item: "m.MountedRelationalDatabase" }, { schema: "dbo", table: "t" }),
-    "MirroredDatabase.ws.m.dbo.t");
+    "mirroreddatabase.ws.m.dbo.t");
   assert.equal(n.sqlNameOf({ workspace: "ANZ Retail", item: "gold-1.Warehouse" }, { schema: "select", table: 'a"b' }),
-    'Warehouse."ANZ Retail"."gold-1"."select"."a""b"');
+    'warehouse."ANZ Retail"."gold-1"."select"."a""b"');
   assert.throws(() => n.sqlNameOf({ workspace: "ws", item: "nb.SynapseNotebook" }, { table: "t" }));
   // One catalog per kind, and every table-holding item has one.
   for (const k of ["Lakehouse", "Warehouse", "SQLDbNative", "MountedRelationalDatabase", "MirroredDatabase"])

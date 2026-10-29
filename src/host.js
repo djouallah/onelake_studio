@@ -67,7 +67,7 @@ function createHostMethods({ onelake, engine, onStatus = () => {}, saveFile = nu
       return views().put(String(x.name), views().resolve(String(x.path), lh));
     },
     'semantic.drop': async x => { await views().remove(String(x.name)); return true; },
-    // A table's metadata, and its SQL name (Lakehouse.ws.item.schema.table) for the editor.
+    // A table's metadata, and its SQL name (lakehouse.ws.item.schema.table) for the editor.
     'onelake.table': async x => {
       const lh = lhOf(x), t = tableOf(x);
       let sqlName = null;

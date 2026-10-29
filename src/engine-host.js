@@ -18,7 +18,7 @@
 // metadata location the host's own cache holds — and copyToTemp(), a file the host
 // fetched written where the lockdown lets DuckDB open it. Neither takes a path or a
 // location from the page. query() and stream() make the view of every table a statement
-// names by its SQL name (Lakehouse.ws.item.schema.table) before running it.
+// names by its SQL name (lakehouse.ws.item.schema.table) before running it.
 // =============================================================================
 
 const { DuckDBInstance } = require('@duckdb/node-api');
@@ -287,7 +287,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onWarn = () => {}, g
       const tmp = tmpDir.replace(/\\/g, '/');
       await conn.run(`SET temp_directory = ${sqlStr(tmp)};`);
 
-      // One catalog per kind of item, for the tables' SQL names (Lakehouse.ws.item.schema.t):
+      // One catalog per kind of item, for the tables' SQL names (lakehouse.ws.item.schema.t):
       // the workspace, item and schema are nested schemas in it, made as a statement names
       // them (ensureTables). Before the lockdown, which leaves nothing to attach with.
       for (const k of SQL_KINDS) await conn.run(`ATTACH ':memory:' AS ${quoteIdent(k)};`);

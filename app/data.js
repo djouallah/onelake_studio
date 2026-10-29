@@ -582,7 +582,7 @@ export function createEngine({
   // ---------------------------------------------------------------------------
   // Tier 3: a real queryable view.
   // ---------------------------------------------------------------------------
-  // The view is the host's: it is the table's SQL name (Lakehouse.ws.item.schema.table), the
+  // The view is the host's: it is the table's SQL name (lakehouse.ws.item.schema.table), the
   // one any query names it by, made over the metadata file the host's store holds. The host
   // makes it again when a query names it after the table moved on, so the page never drops it.
   const loadTable = (lh, t, opts = {}) => openTableView(lh, t, opts);

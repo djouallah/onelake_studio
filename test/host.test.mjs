@@ -48,7 +48,7 @@ test("a table is opened by name: a location the page sends never reaches the eng
 test("a table's metadata carries its SQL name", async () => {
   const { ask } = fixture();
   const [msg] = await ask("onelake.table", [{ workspace: "ws", item: "lh.Lakehouse", schema: "dbo", table: "t" }]);
-  assert.equal(msg.value.sqlName, "Lakehouse.ws.lh.dbo.t");
+  assert.equal(msg.value.sqlName, "lakehouse.ws.lh.dbo.t");
 });
 
 test("the engine is reachable through query, stream, cancel and info only", async () => {

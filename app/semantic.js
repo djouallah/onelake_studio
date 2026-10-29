@@ -15,7 +15,7 @@
 // .bim it stands for, and from there the two are one. What is this extension's: reading a Direct Lake
 // model's tables from OneLake — each table's expression names a workspace and an item by GUID,
 // the host names them (setTableNamer) and the compiled SQL reads each by its SQL name,
-// Lakehouse.ws.item.schema.table, the one any query writes — and where views are kept
+// lakehouse.ws.item.schema.table, the one any query writes — and where views are kept
 // (the extension host, per account: src/semviews.js). This module is shared by the panel and
 // the host's command line (src/agent.js); `modules` lets the host hand in the compiler.
 // =============================================================================

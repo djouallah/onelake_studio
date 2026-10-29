@@ -42,7 +42,7 @@ for export, which waits for your OK in VS Code.
   table <ws> <item> <schema.table>    columns and stats (metadata only)
   model <ws> <model>                  relationships, columns, measures with their DAX
   sql "<sql>"                         read-only SQL; a table is Kind.workspace.item.schema.table
-                                        (Lakehouse.aemo.data.dbo.dim_duid); a downloaded model is a
+                                        (lakehouse.aemo.data.dbo.dim_duid); a downloaded model is a
                                         table: SELECT d.col, AGG("measure") FROM model GROUP BY ALL
     --in <ws>/<item>                  that lakehouse's files as 'Files/…' (read_parquet('Files/x.parquet'))
     --show-sql                        print the SQL a model query compiles to

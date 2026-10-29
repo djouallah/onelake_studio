@@ -392,7 +392,7 @@ let semviews = null;
 // Export to Fabric (exportapp.js), the page's fabric.exportExplore; set by activateInner,
 // which owns the agent's modules.
 let exportExplore = null;
-// A table's SQL name (Lakehouse.ws.item.schema.table) -> what it reads, for the engine; and
+// A table's SQL name (lakehouse.ws.item.schema.table) -> what it reads, for the engine; and
 // a semantic model's Direct Lake tables (by GUID) -> their SQL names. Set by activateInner,
 // which owns the store, the Fabric API and the agent's modules.
 let resolveSqlTable = null;

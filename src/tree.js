@@ -32,7 +32,7 @@ const FORMAT_TOOLTIP = {
 // the panel a { workspace, item, schema, table } with nothing to parse back out.
 const node = (kind, label, extra) => ({ kind, label, ...extra });
 
-// A table node's SQL name (Lakehouse.ws.item.schema.table), or null for an item SQL cannot name.
+// A table node's SQL name (lakehouse.ws.item.schema.table), or null for an item SQL cannot name.
 const sqlNameOrNull = n => { try { return sqlNameOf(n, n); } catch (_) { return null; } };
 
 // `fn` over every workspace, four at a time; the ones that failed come back by name.

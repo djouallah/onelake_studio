@@ -26,7 +26,7 @@ node --no-warnings "{{cli}}" <command>
 | `ls <ws> <item>` | its tables with rows, size, files and last write, and their SQL names (`Lakehouse.<ws>.<item>.<schema>.<table>`); `<item>` may omit its `.Lakehouse` suffix |
 | `table <ws> <item> <schema.table>` | rows, files, size, last write, columns — metadata only, no scan |
 | `model <ws> <model>` | relationships, columns, measures with their DAX, and an example query; downloads the `.bim` once |
-| `sql "<sql>"` | read-only SQL. A table is `Kind.workspace.item.schema.table` — `Lakehouse.aemo.data.dbo.dim_duid`; Kind is `Lakehouse`, `Warehouse`, `SQLDatabase` or `MirroredDatabase`, a lakehouse without schemas is `dbo`, a part with spaces is `"quoted"` — any table, any workspace, joined freely. Every semantic view is a table too: `AGG("measure")` is the measure; and `CREATE / DROP / SHOW SEMANTIC VIEW` (below) |
+| `sql "<sql>"` | read-only SQL. A table is `Kind.workspace.item.schema.table` — `lakehouse.aemo.data.dbo.dim_duid`; Kind is `lakehouse`, `warehouse`, `sqldatabase` or `mirroreddatabase` (any case), a lakehouse without schemas is `dbo`, a part with spaces is `"quoted"` — any table, any workspace, joined freely. Every semantic view is a table too: `AGG("measure")` is the measure; and `CREATE / DROP / SHOW SEMANTIC VIEW` (below) |
 | `sql "<sql>" --in <ws>/<item>` | the lakehouse's files as `'Files/…'`: `read_parquet('Files/log.parquet')` |
 | `dax "EVALUATE …" --model <name>` | a DAX query against a semantic view (`--model` may be left out when only one is defined) |
 | `export <ws> <model>` | Export to Fabric, as Explore's button does it: publishes the model's Explore as a Fabric app. The model must have been opened in the tree once (that writes its `.bim` into its lakehouse) |
@@ -69,7 +69,7 @@ is local, `abfss://…`, or `Files/…` with `--in`. Views are kept by the exten
 
 - Results are DAX compiled to SQL by dax-sql — say so if exactness against Power BI matters.
 - To check a measure against its raw data, `model` lists each table by its SQL name
-  (`Lakehouse.sales.mart.dbo.fct_summary`); plain SQL naming it reads the table as stored.
+  (`lakehouse.sales.mart.dbo.fct_summary`); plain SQL naming it reads the table as stored.
 - Notes and timings go to stderr: keep `2>&1` off a `--csv` you mean to parse.
 - Listings and metadata (`ls`, `models`, `items`, `table`, `model`) come only from what the
   extension has already cached — what the user has opened in its tree — and never from

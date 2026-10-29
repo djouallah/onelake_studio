@@ -70,7 +70,7 @@ test("native engine host", async t => {
     const { batches } = await collect("SELECT t FROM SQLDatabase.ws.db.dbo.t1");
     assert.equal(batches[0].rows[0].t, "t1");
     // What does not resolve says why.
-    await assert.rejects(engine.call("query", ["SELECT * FROM Lakehouse.ws.missing.dbo.t"]), /there is no Lakehouse missing/);
+    await assert.rejects(engine.call("query", ["SELECT * FROM Lakehouse.ws.missing.dbo.t"]), /there is no lakehouse missing/);
   });
 
   await t.test("a statement needs no Microsoft account", async () => {
