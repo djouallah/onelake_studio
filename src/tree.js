@@ -364,14 +364,14 @@ class LakehouseTree {
       const names = await this.onelake.workspaces({ fresh: this._isFresh('root', undefined, undefined) });
       if (!names.length) return [node('empty', 'No workspaces — is this the right tenant?', { leaf: true })];
       const queries = this._track(node('queries', 'Queries', {}));
-      if (this.groupByType()) return [queries, ...await this._byType(names)];
+      if (this.groupByType()) return [...await this._byType(names), queries];
       const pinned = new Set(this.favorites.get());
       const favs = names.filter(w => pinned.has(w));
       return [
-        queries,
         node('group', 'Favorites', { group: 'favorites', expanded: true, count: favs.length }),
         node('group', favs.length ? 'Other workspaces' : 'Workspaces',
              { group: 'others', expanded: !favs.length, count: names.length - favs.length }),
+        queries,
       ];
     }
 
