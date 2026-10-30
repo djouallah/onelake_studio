@@ -21,13 +21,17 @@
 //
 // Two OPFS files, in blockcache/: blocks.bin (the blocks, appended) and index.jsonl (where
 // each block is, and each file's size), read back at start. Over CAP_BYTES the store starts
-// over. Every worker (each of the page's engines, in every tab) opens them 'readwrite-unsafe',
-// the one mode two handles share (Chrome 121+; 'read-only' fails while a 'readwrite' handle is
-// open, checked 2026-10-28), and one of them writes: the holder of the Web Lock
-// 'blockcache-writer', for its lifetime. The others wait in the lock's queue, answer from what
-// the writer has kept and read the index again on a miss (both files only grow, until the
-// writer starts the store over); when the writer's tab closes, the lock passes to the next of
-// them, which writes from then on.
+// over. Every worker opens them 'readwrite-unsafe', the one mode two handles share (Chrome 121+;
+// 'read-only' fails while a 'readwrite' handle is open, checked 2026-10-28). Two roles:
+//   - each DuckDB worker (each of the page's engines, in every tab) READS: it answers DuckDB
+//     from what the writer has kept and reads the index again on a miss (both files only grow,
+//     until the writer starts the store over);
+//   - each tab's store worker (data.js, self.BLOCKCACHE_ROLE = 'writer') may WRITE: one of them,
+//     the holder of the Web Lock 'blockcache-writer', for its lifetime. The others wait in the
+//     lock's queue; when the writer's tab closes, the lock passes to the next of them.
+// A file the page downloaded goes to its own tab's store worker, transferred (not copied); one
+// that does not write passes it on to the one that does (BroadcastChannel 'blockcache-store',
+// which only store workers listen to) and holds it until that one says it kept it.
 // The index's first line names the store's generation (`gen`), new each time the writer starts
 // it over: a reader whose generation is not the file's drops what it holds, so it never reads
 // blocks at another store's offsets.
@@ -38,11 +42,14 @@
 //   { missing, id }    store paths: the writer answers { id, missing } with those it does not
 //                      hold whole;
 //   { stats, id }      the writer answers { id, stats: { files, bytes } } (the Logs tab);
-//   { store, bytes }   a whole file the page downloaded: the writer keeps it and answers
-//                      { stored }, or { stored, error } when it could not. Not the browser's
-//                      HTTP cache: it does not keep a response of 70-100 MB.
+//   { stored }         the writer kept a file it was handed, or { stored, error } when it
+//                      could not. Not the browser's HTTP cache: it does not keep a response of
+//                      70-100 MB.
+// A file reaches the writer as { store, bytes }: posted by the page to its tab's store worker,
+// or on 'blockcache-store' between store workers (and from a DuckDB worker, an extension).
 // =============================================================================
 (() => {
+  const WRITER = self.BLOCKCACHE_ROLE === 'writer';   // this tab's store worker, else a DuckDB worker
   const BLOCK = 256 * 1024;
   // Whole files of every table read, and over the cap the store starts over: the cap is well
   // above what a model's tables hold, so it has room to grow.
@@ -152,12 +159,15 @@
     if (!applyIndex({ starting: true }) || index.getSize() === 0 || blocks.getSize() > CAP_BYTES) reset();
     end = blocks.getSize();
     announce();
+    // What this tab handed over while another worker wrote, kept now.
+    for (const [path, bytes] of [...pending]) { pending.delete(path); keepAndSay(path, bytes); }
   }
   // The writer's lock, waited for: granted at once when no one holds it, else when the
   // worker holding it ends (its tab closed), and held until this worker ends. Without the Locks
   // API the handles are exclusive anyway (a browser before 121 ignores the mode), so the worker
   // that opened them writes.
   function waitToWrite() {
+    if (!WRITER) return;   // a DuckDB worker only reads
     if (!navigator.locks) return becomeWriter();
     navigator.locks.request('blockcache-writer', () => { becomeWriter(); return new Promise(() => {}); })
       .catch(() => {});
@@ -187,16 +197,47 @@
       if (d.missing && d.id != null && writable) bc.postMessage({ id: d.id, missing: d.missing.filter(p => !whole(p)) });
       if (d.stats && d.id != null && writable) bc.postMessage({ id: d.id, stats: { files: files.size, bytes: end } });
       if (d.reset && !writable) forget();
-      // The writer answers once it has kept it, or says why it could not; the others leave it
-      // to the writer.
-      if (d.store && d.bytes && writable) {
-        let error = null;
-        try { const b = new Uint8Array(d.bytes); keep(d.store, b, b.length); }
-        catch (x) { error = String(x?.message || x); }
-        bc.postMessage(error ? { stored: d.store, error } : { stored: d.store });
+      if (WRITER) {
+        // Kept by the writer (this tab's file, or another's): no longer held here.
+        if (d.stored) pending.delete(d.stored);
+        // A new writer, after a tab closed: what this tab still holds is handed to it.
+        if (d.writer && !writable) for (const [path, bytes] of pending) pass(path, bytes);
       }
     };
   } catch (e) {}
+
+  // The files handed to the writer. `pending`: this tab's, held until the writer says it kept
+  // them (a store worker that does not write).
+  const pending = new Map();   // path -> bytes
+  // Only a store worker keeps 'blockcache-store' open: a channel gets its own copy of every
+  // message, listened to or not, so a DuckDB worker opens one just to send (an extension).
+  let storeBc = null;
+  if (WRITER) { try { storeBc = new BroadcastChannel('blockcache-store'); } catch (e) {} }
+  const pass = (path, bytes) => {
+    try {
+      if (storeBc) return storeBc.postMessage({ store: path, bytes });
+      const once = new BroadcastChannel('blockcache-store');
+      once.postMessage({ store: path, bytes });
+      once.close();
+    } catch (e) {}
+  };
+  function keepAndSay(path, bytes) {
+    let error = null;
+    try { const b = new Uint8Array(bytes); keep(path, b, b.length); }
+    catch (x) { error = String(x?.message || x); }
+    try { bc?.postMessage(error ? { stored: path, error } : { stored: path }); } catch (e) {}
+  }
+  function storeBytes(path, bytes) {
+    if (writable) return keepAndSay(path, bytes);
+    pending.set(path, bytes);
+    pass(path, bytes);
+  }
+  if (WRITER) {
+    // From this tab's page, transferred.
+    self.onmessage = e => { const d = e.data ?? {}; if (d.store && d.bytes) storeBytes(d.store, d.bytes); };
+    // From the other tabs' store workers, and the DuckDB workers' extensions: the writer keeps them.
+    if (storeBc) storeBc.onmessage = e => { const d = e.data ?? {}; if (writable && d.store && d.bytes) keepAndSay(d.store, d.bytes); };
+  }
 
   // A response DuckDB reads as if it came from a server: status, bytes and the headers it asks.
   function answer(xhr, status, body, headers = {}) {
@@ -266,6 +307,8 @@
       ...(r ? { 'Content-Range': `bytes ${a}-${b}/${f.size}` } : {}) });
   }
 
+  // Only a DuckDB worker's requests are answered from the store; the store worker makes none.
+  if (WRITER) return;
   P.open = function (m, u, ...r) {
     this.__bcM = String(m).toUpperCase(); this.__bcU = String(u); this.__bcR = null;
     return open.call(this, m, u, ...r);
@@ -291,7 +334,7 @@
       if (blocks && this.__bcM === 'GET' && !this.__bcR && this.status === 200 && this.response?.byteLength) {
         const bytes = new Uint8Array(this.response);
         if (writable) keep(path, bytes, bytes.length);
-        else bc?.postMessage({ store: path, bytes });   // the writer keeps it
+        else pass(path, bytes);   // the writer keeps it
       }
     } catch (e) {}
     return r;

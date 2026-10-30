@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **Export to Fabric's app:** a query's tables download together, and outside the engine queue;
+  each tab has one store writer, handed its downloads without a copy (the DuckDB workers only
+  read); the function's answer and the table snapshots live in IndexedDB, not localStorage; and
+  the manifest cache keeps only what the tables read now.
 - **SQL is written in VS Code's own editor.** The panel's SQL box is gone: New Query (+ under
   Queries) opens an editor, a saved query opens as its `.sql` file, and Edit SQL in the panel (or in
   a table's Pivot) opens what is on screen in a new one. In a query's editor:

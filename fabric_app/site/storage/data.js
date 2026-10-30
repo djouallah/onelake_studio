@@ -176,11 +176,12 @@ export function createDataSource({ onStatus = () => {}, onProgress = () => {}, t
     if (d?.id != null) settle(answers, d.id, d);
     if (d?.stored) settle(stored, d.stored, d);
   };
-  const waitFor = (map, key, send, what) => new Promise((resolve, reject) => {
+  // `resend`: false for a send that cannot be repeated (bytes transferred away).
+  const waitFor = (map, key, send, what, { resend = true } = {}) => new Promise((resolve, reject) => {
     const waiting = map.get(key) ?? [];
     waiting.push(resolve);
     map.set(key, waiting);
-    unanswered.set(waiting, send);
+    if (resend) unanswered.set(waiting, send);
     send();
     setTimeout(() => {
       const i = waiting.indexOf(resolve);
@@ -202,10 +203,17 @@ export function createDataSource({ onStatus = () => {}, onProgress = () => {}, t
     const { stats } = await waitFor(answers, id, () => channel.postMessage({ stats: true, id }), 'its size');
     perf.log('info', `store ${when}: ${stats.files} files, ${(stats.bytes / 1073741824).toFixed(2)} GB`);
   }
+  // This tab's store worker (blockcache.js, the writer's role): the downloads go to it,
+  // transferred rather than copied, and it hands them to whichever store worker writes (and
+  // again to a new one, after a tab closes). The DuckDB workers only read the store.
+  let storeWorker = null;
+  const storeWorkerOf = () => storeWorker ??= new Worker(URL.createObjectURL(new Blob(
+    [`self.BLOCKCACHE_ROLE = 'writer';\nimportScripts(${JSON.stringify(BLOCKCACHE)});\n`], { type: 'text/javascript' })));
   // A whole file the page downloaded, handed to the store: resolved once the writer keeps it,
-  // rejected when it says it could not.
+  // rejected when it says it could not. `bytes` (an ArrayBuffer) is the store's from then on.
   const toStore = (path, bytes) =>
-    waitFor(stored, storePath(path), () => channel.postMessage({ store: storePath(path), bytes }), path.split('/').pop())
+    waitFor(stored, storePath(path), () => storeWorkerOf().postMessage({ store: storePath(path), bytes }, [bytes]),
+            path.split('/').pop(), { resend: false })
       .then(d => { if (d?.error) throw new Error(`the local store could not keep ${path.split('/').pop()}: ${d.error}`); });
 
   // Opens a table: its view, over a copy in memory or over the files. Runs inside a queued
@@ -370,6 +378,7 @@ export function createDataSource({ onStatus = () => {}, onProgress = () => {}, t
 
 
   async function init() {
+    storeWorkerOf();   // the store's writer, waiting for the lock from the start
     // Before sign-in: a kept answer from the function is what lets the page start without one.
     await kv.load();
     await auth.signIn();

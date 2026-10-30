@@ -62,9 +62,10 @@ export async function prefetchFiles(name, files, url, store, onFile = () => {}) 
     const r = await fetch(url(f.path), { cache: 'no-store' });
     if (!r.ok) throw new Error(`${f.path.split('/').pop()}: HTTP ${r.status}`);
     const bytes = await r.arrayBuffer();
+    const size = bytes.byteLength;   // read first: the store takes the bytes (transferred)
     await store(f.path, bytes);
-    onFile(bytes.byteLength);
-    return { path: f.path, size: bytes.byteLength };
+    onFile(size);
+    return { path: f.path, size };
   }, name)));
 }
 
