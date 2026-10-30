@@ -104,8 +104,9 @@ test("native engine host", async t => {
       [["cat1", "Sales Model", "['model']"]]);
     r = await engine.call("query", ["SHOW TABLES FROM semanticmodel.cat1"]);
     assert.deepEqual(r.rows, [{ name: "Sales Model" }]);
-    r = await engine.call("query", ["SHOW SEMANTIC VIEWS"]);
-    assert.deepEqual(r.rows, [{ database_name: "semanticmodel", schema_name: "cat1", view_name: "Sales Model" }]);
+    // What SHOW SEMANTIC VIEWS reads (app/semantic.js): the catalog has the model, opened or not.
+    r = await engine.call("query", ["SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'semanticmodel'"]);
+    assert.deepEqual(r.rows, [{ schema_name: "cat1", view_name: "Sales Model" }]);
     await assert.rejects(engine.call("query", ['SELECT * FROM semanticmodel.cat1."Sales Model"']),
       /semanticmodel\.cat1\."Sales Model" is a semantic model that is not open/);
     assert.equal(resolved.length, before, "listing the catalog asked OneLake nothing");

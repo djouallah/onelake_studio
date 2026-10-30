@@ -18,7 +18,7 @@
 // the host's command line (src/agent.js); `modules` lets the host hand in the compiler.
 // =============================================================================
 import { PINS, npmFile, npmEsm } from "./cdn.js";
-import { quoteIdent, basename } from "./paths.js";
+import { quoteIdent, sqlStr, basename } from "./paths.js";
 import { EXPLORE_CASTS } from "./explore/query.js";
 
 const lc = s => String(s).toLowerCase();
@@ -345,7 +345,21 @@ export function tablesFor(sql) {
   return out;
 }
 
+// SHOW SEMANTIC VIEWS: every model the catalog has (the engine lists each one the cache knows,
+// engine-host.js listCatalog), in dax-sql's columns. A model opened here has its file and the
+// items its tables are read from; one not opened yet has neither.
 const SHOW_VIEWS = /^\s*show\s+semantic\s+views?\s*;?\s*$/i;
+function showViewsSql() {
+  const opened = views ? views.list() : [];
+  const rows = opened.map(v => `(${[v.schema, v.name, v.path, v.tablesFrom].map(x => (x == null ? "NULL" : sqlStr(x))).join(", ")})`);
+  const o = rows.length
+    ? `(VALUES ${rows.join(", ")}) o(schema_name, view_name, path, tables_from)`
+    : "(SELECT NULL::VARCHAR AS schema_name, NULL::VARCHAR AS view_name, NULL::VARCHAR AS path, NULL::VARCHAR AS tables_from WHERE false) o";
+  return `SELECT v.database_name, v.schema_name, v.view_name, o.path, o.tables_from
+FROM duckdb_views() v LEFT JOIN ${o}
+  ON lower(o.schema_name) = lower(v.schema_name) AND lower(o.view_name) = lower(v.view_name)
+WHERE v.database_name = '${MODEL_CATALOG}' ORDER BY v.schema_name, v.view_name`;
+}
 
 // dax-sql's CREATE and DROP SEMANTIC VIEW, which this extension does not take: a model is
 // there because Fabric has it (or a lakehouse's Files/ holds it), never because SQL made it.
@@ -357,9 +371,7 @@ const NO_DDL = "Read only: OneLake Studio never writes, and a semantic model is 
  * view, else { sql, tables } to run once `tables` (Direct Lake) are open. One statement.
  */
 export async function statement(sql, modules = null) {
-  // SHOW SEMANTIC VIEWS lists every model the catalog has, opened here or not: the engine
-  // answers it (src/sql.js catalogStatement), not dax-sql's registry of the opened ones.
-  if (SHOW_VIEWS.test(String(sql))) return null;
+  if (SHOW_VIEWS.test(String(sql))) return { sql: showViewsSql(), tables: [] };
   if (!views) {
     // Nothing defined yet: only a statement about views needs the compiler loaded.
     if (!/\bsemantic\b/i.test(String(sql))) return null;
