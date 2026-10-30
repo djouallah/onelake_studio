@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.9
 
 - **Clicking a semantic model writes nothing to OneLake.** Its definition is kept on this machine,
   `~/OneLakeStudio/semantic-models/<workspace>/<model>.bim`, and opened from there, so a user who
@@ -15,6 +15,24 @@
 - **`SHOW ALL TABLES` and `SHOW SCHEMAS` list everything the cache knows**, tables and semantic
   models, with no request to OneLake. Each schema is named by its whole path (`ws.lh.dbo`), so two
   workspaces' `dbo.t` are two rows. `SHOW TABLES FROM lakehouse.ws.lh.dbo` works.
+- **New Query.** The **+** on **Queries** opens a new query that starts with `SHOW ALL TABLES`,
+  not yet run. It lists only the tables cached on this machine; expand a lakehouse in the tree to
+  add its tables. Show Queries Folder moved to the node's right-click menu.
+- **A newer query keeps the results pane.** A slow query that finishes after a newer one no longer
+  replaces its results. Opening a saved query clears the last table's Stats, History and Pivot.
+- **Fixes:**
+  - Save Query on a semantic model saves the query as it stands.
+  - Sorting the grid no longer reorders a document's Pretty view.
+  - The Data tab puts a query's results back instead of replacing them.
+  - CSV quotes a cell with a carriage return.
+  - Plan no longer runs the query again on every click.
+  - A date-like filter on a text column compares text.
+  - Signed out of Fabric, expanding both Semantic models and Apps no longer fails.
+  - "Signed out" shows only to someone who was signed in.
+  - A new account or tenant lists Fabric workspaces again.
+  - Publishing a folder "as is" lists each redirect once in `rayfin.yml`.
+  - A SQLite file in `Files/` is downloaded once per session, and Save downloads only after the dialog.
+  - A `DROP` no longer leaves a table unreadable until reload.
 
 ## 0.2.8
 
