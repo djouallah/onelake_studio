@@ -316,6 +316,22 @@ function tableTtlMs() {
 // built for another architecture — surfaces when the panel opens, with a message, rather
 // than taking activation down with it.
 let engine = null;
+let engineAccount = null;   // the account (fileCacheAccount) the engine was built for
+
+// Calls of fn one at a time, each after the last has settled.
+function serialized(fn) {
+  let last = Promise.resolve();
+  return (...args) => {
+    const run = last.then(() => fn(...args));
+    last = run.catch(() => {});
+    return run;
+  };
+}
+// The account's turn: Switch Account, a tenant change and the session handler each rebind,
+// close the panel and reset the engine. Run in turn, a handler that fires during a switch
+// finds the switch done (the account already bound) instead of closing the panel the switch
+// just opened.
+const accountTurn = serialized(body => body());
 
 // The engine's disk cache of what it reads from OneLake (engine-host.js, cache_httpfs): one
 // directory per account, like the store. Cached bytes are served without OneLake being
@@ -347,8 +363,17 @@ function editorProxy() {
 // `readme` is the one file outside DuckDB's own directories the engine may read (the
 // landing query) — see the lockdown in engine-host.js.
 function ensureEngine(context, { readme } = {}) {
+  // An engine holds its account's token and disk cache: one built before the account moved
+  // is closed, with the panel over it, never handed to the new account.
+  if (engine && engineAccount !== fileCacheAccount) {
+    const old = engine;
+    engine = null;
+    closePanel();
+    old.close().catch(() => {});
+  }
   if (engine) return engine;
   try {
+    engineAccount = fileCacheAccount;
     const { createEngineHost } = require('./engine-host');
     engine = createEngineHost({
       allowedPaths: readme ? [readme] : [],
@@ -660,7 +685,9 @@ async function activateInner(context) {
   semviews.useAccount(storeAccount);
 
   // Called wherever the identity may have moved; a no-op when it has not.
-  rebindStore = async function rebindStore() {
+  // One at a time: two callers at once could both see the old account, or one return while
+  // the other was still moving the store.
+  rebindStore = serialized(async function rebindStore() {
     const session = await getSession({ createIfNone: false }).catch(() => null);
     const key = accountKey(session);
     if (key === storeAccount) return;
@@ -676,7 +703,7 @@ async function activateInner(context) {
     onelake.useStore(storeFor(key));
     if (engine) engine.catalogChanged();
     semviews.useAccount(key);
-  };
+  });
   // What the store holds moved: the engine's catalog is listed again before the next
   // statement that reads it.
   const catalogMoved = () => { if (engine) engine.catalogChanged(); };
@@ -1429,7 +1456,7 @@ async function activateInner(context) {
     // VS Code owns the account, so an extension cannot sign anyone out — that is the
     // Accounts menu in the bottom left. What it CAN do is stop reusing the remembered
     // choice, which is what someone with two tenants actually wants.
-    vscode.commands.registerCommand('onelakeStudio.switchAccount', async () => {
+    vscode.commands.registerCommand('onelakeStudio.switchAccount', () => accountTurn(async () => {
       try {
         // Ask FIRST. Tearing down before the picker meant that cancelling it still cost
         // the panel and the engine — for a switch that never happened.
@@ -1449,7 +1476,7 @@ async function activateInner(context) {
       } catch (e) {
         showError(`Could not switch account: ${(e && e.message) || e}`);
       }
-    }),
+    })),
 
     // Covers the other direction: signing out from the Accounts menu, or a token revoked
     // elsewhere. catalog.js asks for the token per request and recovers by itself; the
@@ -1465,8 +1492,7 @@ async function activateInner(context) {
     // A DIFFERENT account — chosen from the Accounts menu rather than Switch Account — is
     // the same teardown as a switch. It used to change nothing: the session was still
     // "live", so the panel, the engine and the cache carried on as the previous user.
-    vscode.authentication.onDidChangeSessions(async e => {
-      if (e.provider.id !== 'microsoft') return;
+    vscode.authentication.onDidChangeSessions(e => e.provider.id === 'microsoft' && accountTurn(async () => {
       try {
         forgetToken();
         const was = signedIn;
@@ -1491,26 +1517,42 @@ async function activateInner(context) {
       } catch (err) {
         if (out) out.appendLine(`account change failed — ${(err && err.message) || err}`);
       }
-    }),
+    })),
 
-    // Settings are read where they are used, but two of them configure things that are
-    // already built by then. Saying so beats silently applying at the next window reload.
+    // Settings are read where they are used, but some configure things that are already
+    // built by then. Saying so beats silently applying at the next window reload.
     vscode.workspace.onDidChangeConfiguration(async e => {
       if (e.affectsConfiguration('onelakeStudio.tenantId')) {
         // The cached token, the engine's secrets and the cache all belong to the tenant
         // being left.
-        try {
-          forgetToken();
-          fabric.reset();
-          itemNames.clear();
-          await rebindStore();
-          tree.redraw();
-          if (engine) {
-            closePanel();
-            await resetEngine();
+        await accountTurn(async () => {
+          try {
+            forgetToken();
+            fabric.reset();
+            itemNames.clear();
+            await rebindStore();
+            tree.redraw();
+            if (engine) {
+              closePanel();
+              await resetEngine();
+            }
+          } catch (err) {
+            if (out) out.appendLine(`tenant change failed — ${(err && err.message) || err}`);
           }
-        } catch (err) {
-          if (out) out.appendLine(`tenant change failed — ${(err && err.message) || err}`);
+        });
+      }
+      // The engine reads these when it is built: a running one keeps the old values until it
+      // is restarted (which closes the panel, whose tables live in it).
+      if (engine && (e.affectsConfiguration('onelakeStudio.engineMemoryLimit') ||
+                     e.affectsConfiguration('onelakeStudio.diskCacheMaxGB') ||
+                     e.affectsConfiguration('http.proxy'))) {
+        const pick = await vscode.window.showInformationMessage(
+          'OneLake Studio: the engine uses the new setting once it restarts. Restarting closes the panel.',
+          'Restart Engine');
+        if (pick === 'Restart Engine' && engine) {
+          closePanel();
+          await resetEngine();
+          vscode.commands.executeCommand('onelakeStudio.open');
         }
       }
       if (e.affectsConfiguration('onelakeStudio.catalogTtlMinutes') ||

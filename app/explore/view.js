@@ -160,11 +160,27 @@ export function mountExplore(root, ctx) {
   const charts = new Map();
   const resized = new ResizeObserver(entries => { for (const e of entries) charts.get(e.target)?.resize(); });
   const css = name => getComputedStyle(root).getPropertyValue(name).trim();
-  let explorer = null, destroyed = false;
+  let explorer = null, destroyed = false, echarts = null;
+  // VS Code's theme switch changes the body's class (vscode-dark, vscode-light, …). ECharts 5
+  // cannot re-theme a chart, so each is disposed and the pivot draws a new one in the theme
+  // registered again from the page's new tokens.
+  let bodyClass = document.body.className;
+  const themed = new MutationObserver(() => {
+    if (document.body.className === bodyClass) return;
+    bodyClass = document.body.className;
+    // A frame later: VS Code sets the new colour variables beside the class.
+    requestAnimationFrame(() => {
+      if (!echarts || destroyed) return;
+      registerChartTheme(echarts, css);
+      for (const [box, c] of charts) { resized.unobserve(box); c.dispose(); }
+      charts.clear();
+      explorer?.redraw();
+    });
+  });
+  themed.observe(document.body, { attributes: true, attributeFilter: ['class'] });
   async function openExplorer() {
     if (explorer) return;
     pivotPage.replaceChildren(el('div', { class: 'ex-empty' }, 'Loading the chart library…'));
-    let echarts;
     try {
       echarts = await ctx.echarts();
       registerChartTheme(echarts, css);
@@ -350,6 +366,7 @@ export function mountExplore(root, ctx) {
       logs?.destroy();
       results.clear();
       resized.disconnect();
+      themed.disconnect();
       for (const c of charts.values()) c.dispose();
       charts.clear();
       document.querySelectorAll('.ex-pop').forEach(p => p.remove());

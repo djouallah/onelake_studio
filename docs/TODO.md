@@ -24,10 +24,6 @@ These are the items from the code review (bugs, duplicates, dead code, inefficie
 - **`store.js`.** `total` drifts up on overwrites, and `putBlob` lacks `write()`'s Windows rename retry.
 
 ## Bugs still open
-- **Account-change race.** Commands and the session handler both rebind. An engine built for account A can survive a switch, or the handler can close a panel the command just opened. This needs one serialized `rebindStore` that owns the engine reset, and an `engineAccount` check in `ensureEngine`.
-- **Theme switch.** Charts keep the old theme after a VS Code theme switch. ECharts 5 can't re-theme a chart, so they must be disposed and rebuilt.
-- **Settings that need a rebuild.** `engineMemoryLimit`, `diskCacheMaxGB` and `http.proxy` apply only on an engine rebuild, and nothing says so.
-- **Concurrent lakehouse clicks.** Two quick clicks in different lakehouses share the global `lakehouse` (`app.js` `goToLakehouse`).
 - **`fabric_app/site/storage/blockcache.js`:**
   - readers never take over writing when the writer's tab closes, so the other tabs time out
   - a quota error is swallowed, so the store fills and never recovers

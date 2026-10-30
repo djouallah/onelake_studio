@@ -157,13 +157,18 @@ let selSeq = 0;
 let runSeq = 0;
 
 // The panel follows the tree: moving to another lakehouse hands the previous one's views
-// back before anything of the new one is opened.
+// back before anything of the new one is opened. False when a newer click moved on while
+// this one waited: its table belongs to a lakehouse no longer on screen, so it opens nothing.
+let goSeq = 0;
 async function goToLakehouse(workspace, item) {
+  const my = ++goSeq;
   await engineReady;
-  if (lakehouse && lakehouse.workspace === workspace && lakehouse.item === item) return;
+  if (my !== goSeq) return false;
+  if (lakehouse && lakehouse.workspace === workspace && lakehouse.item === item) return true;
   const resetP = lakehouse ? leaveLakehouse({ forget: false }) : null;
   lakehouse = { workspace, item };
   if (resetP) await resetP;
+  return my === goSeq;
 }
 
 // What was on screen belonged to the lakehouse being left: a file kept on screen with no
@@ -182,14 +187,14 @@ function leaveLakehouse(opts) {
 }
 
 async function openTable(m) {
-  await goToLakehouse(m.workspace, m.item);
+  if (!await goToLakehouse(m.workspace, m.item)) return;
   await selectTable({ schema: m.schema || '', table: m.table });
 }
 
 // The message carries everything a listing would have: the tree just read this
 // directory. Whether a reader exists is loadFile's to decide, and it says so.
 async function openFile(m) {
-  await goToLakehouse(m.workspace, m.item);
+  if (!await goToLakehouse(m.workspace, m.item)) return;
   const entry = { name: basename(m.path), path: m.path, isDir: false, bytes: m.bytes || 0,
                   modelWorkspace: m.modelWorkspace || null };
   if (IMAGE_EXTS.has(fileExt(entry.name))) await selectImage(entry);
