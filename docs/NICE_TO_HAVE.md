@@ -30,11 +30,9 @@ the panel holds no token, and table Pivot is only a SQL starter.
 
 ## Later
 9. **Quick chart of any result**, with no model needed. Kept apart from table Pivot.
-10. **SQL notebook** (VS Code Notebook API): one query per cell, its result under it. Item 1 is
-    built (queries in VS Code's editor), so this would be a second way to write SQL: probably not.
-11. **Query parameters:** `SET VARIABLE` / `getvariable()`, with a prompt for any value the query
+10. **Query parameters:** `SET VARIABLE` / `getvariable()`, with a prompt for any value the query
     leaves unset.
-12. **How old a result is** ("from cache, 3 min old"). Keep the last result of each saved query, so
+11. **How old a result is** ("from cache, 3 min old"). Keep the last result of each saved query, so
     reopening the query shows its result at once.
 
 ## Out of scope
