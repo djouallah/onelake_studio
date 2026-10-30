@@ -275,7 +275,7 @@ test("the shipped page and its data source parse, and read the model from the fu
   assert.ok(VENDOR.webapp.esm.includes(WEBAPP.duckdbWasm) && VENDOR.webapp.files.includes(`${WEBAPP.duckdbWasm}/dist/duckdb-eh.wasm`));
   const data = await readFile(new URL("../../fabric_app/site/storage/data.js", import.meta.url), "utf8");
   assert.doesNotMatch(data, /ossie\.json/);
-  assert.match(data, /catalog\.open\(\[\]\)/);
+  assert.match(data, /catalog\.open\(\)/);
   const fn = await readFile(new URL("../../fabric_app/rayfin/functions/src/function_app.ts", import.meta.url), "utf8");
   assert.match(fn, /ctx\.Secrets\.MODEL_URL/);
   const html = await readFile(new URL("../../fabric_app/site/index.html", import.meta.url), "utf8");
