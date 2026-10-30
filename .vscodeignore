@@ -37,3 +37,4 @@ fabric_app/**/node_modules/**
 
 # Rules for agents working in this repo.
 CLAUDE.md
+docs/TODO.md
