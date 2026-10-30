@@ -16,7 +16,7 @@ const fsp = require('node:fs/promises');
 const { registerQueryEditor } = require('./queryeditor');
 const { setVariable, variablesIn, bindVariables, literal } = require('./querytext');
 const { quoteIdent } = require('./sql');
-const { openPanel, closePanel, revealPanel, panelColumn, dockBelowEditor, postToPanel, postLive } = require('./panel');
+const { openPanel, closePanel, revealPanel, panelColumn, dockBelowEditor, postToPanel, postLive, panelSettings } = require('./panel');
 const { createCatalog } = require('./catalog');
 const { createStore } = require('./store');
 const { createOneLake, walkCached } = require('./onelake');
@@ -311,6 +311,24 @@ function tableTtlMs() {
   return Number.isFinite(h) && h >= 0 ? Math.round(h * 3600 * 1000) : 24 * 3600 * 1000;
 }
 
+// How much the store of listings and table metadata may hold, per account.
+function storeMaxBytes() {
+  const mb = vscode.workspace.getConfiguration('onelakeStudio').get('metadataCacheMaxMB', 256);
+  return (Number.isFinite(mb) && mb > 0 ? mb : 256) * 1024 * 1024;
+}
+
+// The disk cache's folder for all accounts: `file-cache-v1` under the folder the setting names,
+// or under the extension's storage. Always our own subfolder, so deleting an old cache can
+// never reach the user's files.
+function fileCacheRootFor(context) {
+  const chosen = vscode.workspace.getConfiguration('onelakeStudio').get('cacheDirectory', '').trim();
+  if (chosen && !isAbsolute(chosen)) {
+    if (out) out.appendLine(`cacheDirectory "${chosen}" is not a full path — using the default`);
+    return join(context.globalStorageUri.fsPath, 'file-cache-v1');
+  }
+  return join(chosen || context.globalStorageUri.fsPath, 'file-cache-v1');
+}
+
 // Real DuckDB, in this process. Built once and kept for the window's lifetime: an engine
 // costs ~17ms to create but its extensions are loaded on first use, and doing that per
 // panel open would be paying it again for nothing.
@@ -377,6 +395,9 @@ function ensureEngine(context, { readme } = {}) {
   if (engine) return engine;
   try {
     engineAccount = fileCacheAccount;
+    fileCacheRoot = fileCacheRootFor(context);
+    const config = vscode.workspace.getConfiguration('onelakeStudio');
+    const diskCacheGB = Math.max(0, Number(config.get('diskCacheMaxGB', 64)) || 0);
     const { createEngineHost } = require('./engine-host');
     engine = createEngineHost({
       allowedPaths: readme ? [readme] : [],
@@ -397,10 +418,13 @@ function ensureEngine(context, { readme } = {}) {
       // actually get PAST this cache — asking it again inside the 60s window returns
       // the very token that just expired, and the retry becomes a no-op.
       getToken: opts => hostToken(opts),
-      memoryLimit: vscode.workspace.getConfiguration('onelakeStudio').get('engineMemoryLimit', '').trim(),
-      fileCacheDir: fileCacheDirFor(fileCacheAccount),
-      fileCacheMaxBytes: Math.max(0, Number(vscode.workspace.getConfiguration('onelakeStudio')
-        .get('diskCacheMaxGB', 64)) || 0) * 1024 ** 3,
+      memoryLimit: config.get('engineMemoryLimit', '').trim(),
+      threads: Math.max(0, Math.floor(Number(config.get('engineThreads', 0)) || 0)),
+      spillMaxGB: Math.max(0, Number(config.get('engineSpillMaxGB', 0)) || 0),
+      maxRows: Math.min(1_000_000, Math.max(1000, Math.floor(Number(config.get('maxResultRows', 200_000)) || 200_000))),
+      // 0 is no disk cache at all.
+      fileCacheDir: diskCacheGB > 0 ? fileCacheDirFor(fileCacheAccount) : null,
+      fileCacheMaxBytes: diskCacheGB * 1024 ** 3,
       resolveTable: ref => (resolveSqlTable ? resolveSqlTable(ref) : Promise.reject(new Error('OneLake Studio is still starting'))),
       catalogTables: () => (cachedSqlTables ? cachedSqlTables() : Promise.resolve([])),
     });
@@ -704,19 +728,19 @@ async function activateInner(context) {
   // first (onelake.js). One directory per identity — a hashed account id — so nobody is
   // ever shown another account's listings, and switching back finds its cache still warm.
   const storeRoot = join(context.globalStorageUri.fsPath, 'onelake-store-v1');
-  const storeFor = key => createStore({ dir: join(storeRoot, key || 'signed-out'), ttlMs: catalogTtlMs() });
+  const storeFor = key => createStore({ dir: join(storeRoot, key || 'signed-out'), ttlMs: catalogTtlMs, maxBytes: storeMaxBytes() });
   const firstSession = await getSession({ createIfNone: false }).catch(() => null);
   let storeAccount = accountKey(firstSession);
   // The saved queries' account (queriesFolder): its own folder, by its sign-in name.
   let queryAccount = queryAccountOf(firstSession);
-  fileCacheRoot = join(context.globalStorageUri.fsPath, 'file-cache-v1');
+  fileCacheRoot = fileCacheRootFor(context);
   fileCacheAccount = storeAccount;
   onelake = createOneLake({
     catalog,
     store: storeFor(storeAccount),
     onHit: logRead,
     prefetchEnabled: () => vscode.workspace.getConfiguration('onelakeStudio').get('prefetchMetadata', true),
-    tableTtlMs: tableTtlMs(),
+    tableTtlMs,
     // A workspace's semantic models are a listing too, kept in the same store.
     fabric,
   });
@@ -1611,6 +1635,9 @@ async function activateInner(context) {
         `OneLake Studio: cleared ${fmtBytes(size)} of cached OneLake data.`);
     }),
 
+    vscode.commands.registerCommand('onelakeStudio.openSettings', () =>
+      vscode.commands.executeCommand('workbench.action.openSettings', `@ext:${context.extension.id}`)),
+
     vscode.commands.registerCommand('onelakeStudio.openTable', n => openInPanel({
       type: 'open-table',
       workspace: n.workspace, item: n.item, schema: n.schema, table: n.table,
@@ -1620,10 +1647,11 @@ async function activateInner(context) {
       type: 'open-file', workspace: n.workspace, item: n.item, path: n.path, bytes: n.bytes,
     })),
 
-    // A table's first thousand rows, as a query in an editor of its own, run at once.
+    // A table's first rows, as a query in an editor of its own, run at once.
     vscode.commands.registerCommand('onelakeStudio.selectTop', async n => {
       if (!n || !n.table) return;
-      await openNewQuery(`SELECT *\nFROM ${sqlNameOf(n, n)}\nLIMIT 1000;\n`);
+      const top = vscode.workspace.getConfiguration('onelakeStudio').get('selectTopRows', 1000);
+      await openNewQuery(`SELECT *\nFROM ${sqlNameOf(n, n)}\nLIMIT ${Number.isInteger(top) && top > 0 ? top : 1000};\n`);
       await vscode.commands.executeCommand('onelakeStudio.runQuery');
     }),
     // A table's columns, comma-separated and quoted where SQL needs it, from its metadata (read
@@ -1832,6 +1860,9 @@ async function activateInner(context) {
       // The engine reads these when it is built: a running one keeps the old values until it
       // is restarted (which closes the panel, whose tables live in it).
       if (engine && (e.affectsConfiguration('onelakeStudio.engineMemoryLimit') ||
+                     e.affectsConfiguration('onelakeStudio.engineThreads') ||
+                     e.affectsConfiguration('onelakeStudio.engineSpillMaxGB') ||
+                     e.affectsConfiguration('onelakeStudio.maxResultRows') ||
                      e.affectsConfiguration('onelakeStudio.diskCacheMaxGB') ||
                      e.affectsConfiguration('http.proxy'))) {
         const pick = await vscode.window.showInformationMessage(
@@ -1843,10 +1874,31 @@ async function activateInner(context) {
           vscode.commands.executeCommand('onelakeStudio.open');
         }
       }
-      if (e.affectsConfiguration('onelakeStudio.catalogTtlMinutes') ||
-          e.affectsConfiguration('onelakeStudio.tableMetadataTtlHours')) {
-        vscode.window.showInformationMessage(
-          'OneLake Studio: the cache setting applies after the window is reloaded.');
+      // A new folder starts empty, and the old one stays until it is deleted here. A running
+      // engine has the old one's files open, and keeps it until it restarts.
+      if (e.affectsConfiguration('onelakeStudio.cacheDirectory')) {
+        const old = fileCacheRoot, next = fileCacheRootFor(context);
+        if (next !== old) {
+          const running = !!engine;
+          if (!running) fileCacheRoot = next;
+          const remove = running ? 'Restart Engine and Delete Old Cache' : 'Delete Old Cache';
+          const actions = running ? [remove, 'Restart Engine'] : [remove];
+          const pick = await vscode.window.showInformationMessage(
+            `OneLake Studio: table data is now cached in ${next}, which starts empty. The old cache is still in ${old}.`,
+            ...actions);
+          if (pick && running && engine) {
+            closePanel();
+            await resetEngine();
+            fileCacheRoot = next;
+            vscode.commands.executeCommand('onelakeStudio.open');
+          }
+          if (pick === remove) await removeDir(old);
+        }
+      }
+      if (e.affectsConfiguration('onelakeStudio.metadataCacheMaxMB')) onelake.useStore(storeFor(storeAccount));
+      if (e.affectsConfiguration('onelakeStudio.tableOpensOn') ||
+          e.affectsConfiguration('onelakeStudio.gridThousandsSeparator')) {
+        postLive({ type: 'settings', ...panelSettings() });
       }
     }),
   );

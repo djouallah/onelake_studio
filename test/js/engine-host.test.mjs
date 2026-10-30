@@ -231,6 +231,19 @@ test("native engine host", async t => {
     }
   });
 
+  await t.test("threads, the spill limit and the row limit reach the engine", async () => {
+    const other = createEngineHost({ extensionDir: extDir, threads: 2, spillMaxGB: 1, maxRows: 1000 });
+    try {
+      assert.equal(other.maxRows, 1000);
+      const s = await other.call("query", ["SELECT current_setting('threads') AS t, current_setting('max_temp_directory_size') AS m"]);
+      assert.equal(Number(s.rows[0].t), 2);
+      assert.match(String(s.rows[0].m), /^(953\.6 MiB|1\.0 GB|1 GB)$/);
+      const r = await other.call("query", ["SELECT * FROM range(1500)"]);
+      assert.equal(r.rows.length, 1000, "rows past the limit are not kept");
+      assert.equal(r.numRows, 1500, "and are still counted");
+    } finally { await other.close(); }
+  });
+
   await t.test("a closed engine stays closed", async () => {
     const other = createEngineHost({ extensionDir: extDir });
     await other.call("query", ["SELECT 1"]);

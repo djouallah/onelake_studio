@@ -86,7 +86,7 @@ and joins at step 3.
      table's metadata file.
    - `catalogStatement` rewrites `SHOW` statements so they report whole paths.
 5. **Run.** The statement runs on its own connection, so Stop interrupts exactly that query. A result
-   past 200,000 rows is counted rather than carried into the panel.
+   past `maxResultRows` (200,000 by default) is counted rather than carried into the panel.
 
 ## Sign-in
 
@@ -121,8 +121,8 @@ The engine is **DuckDB 2.0 running natively in the extension host**
 | What | Where it is kept | When it is read again |
 | --- | --- | --- |
 | Listings (workspaces, items, tables, `Files/`, semantic models), table metadata, first rows | On disk, [`src/onelake.js`](../src/onelake.js) | Served at once, refreshed in the background past its window |
-| The bytes of a `Files/` object (an image, a `.bim`, a SQLite copy, a saved file) | Under the etag its cached listing gave | Only when the file was rewritten |
-| Table data | DuckDB's disk cache (`cache_httpfs`) | Never: Iceberg files do not change once written |
+| The bytes of a `Files/` object the host reads (an image, a `.bim`, a SQLite copy, a saved file) | Under the etag its cached listing gave | Only when the file was rewritten |
+| What DuckDB reads: table data and `Files/` objects | DuckDB's disk cache (`cache_httpfs`) | Only when the file was rewritten: a kept copy is checked against the file's version tag and modification time |
 | A semantic model's definition | `~/OneLakeStudio/semantic-models/<workspace>/<model>.yaml` | On **Download Again** |
 
 - **Per Microsoft account:** switching accounts never serves one account's data to another.
@@ -180,7 +180,7 @@ files are left to their own extensions.
   and an opened model's measures as `AGG("…")`.
 - **Variables:** `SET VARIABLE year = 2024` keeps a value for the session and `getvariable('year')`
   reads it. **Clear Query Variables** forgets them.
-- **From the tree:** a table's right-click has Select Top 1000 Rows, Copy SQL Name and Copy Column List.
+- **From the tree:** a table's right-click has Select Top Rows, Copy SQL Name and Copy Column List.
   A table or model dragged into an editor drops its SQL name. **Go to a Table, Column or Measure**
   (Ctrl+Alt+O) searches everything the cache holds.
 
@@ -367,17 +367,18 @@ personal skills, and it follows the extension through updates.
 | **Sign in to OneLake** | Signs in and fills the explorer, without opening the panel. |
 | **Sign in to the Fabric API** | Asks for the second token, for semantic models and apps. |
 | **Switch Microsoft Account** | Asks which account to use and reopens the panel, so the previous account's tables do not survive the switch. To sign out, use VS Code's Accounts menu. |
+| **Settings** | Opens VS Code's Settings page, filtered to this extension. In the explorer's "..." menu. |
 | **Refresh** | Re-reads a workspace, item or folder from OneLake in the foreground. |
 | **Group by Type** / **Group by Workspace** | The explorer's title-bar toggle. Remembered. |
 | **Pin to Favorites** / **Unpin from Favorites** | Moves a workspace in or out of the tree's favorites group. |
 | **Show Read Log** | Every OneLake request the extension made, with sizes and timings. |
-| **Clear Cached OneLake Data** | Empties the on-disk cache and reports what it freed. |
+| **Clear Cached OneLake Data** | Empties the on-disk cache and reports what it freed. In the explorer's "..." menu. |
 | **Install Agent Skill (Claude Code, GitHub Copilot)** | Installs the skill above. |
 | **New Query**, **Open Query**, **Rename Query…**, **Delete Query**, **Show Queries Folder** | Saved queries, under *Queries* in the tree. |
 | **OneLake Run** (Ctrl+Enter), **OneLake Plan**, **OneLake Save Query** (Ctrl+S) | In a query's editor. |
 | **Go to a Table, Column or Measure…** (Ctrl+Alt+O) | Searches everything the cache holds. |
 | **Clear Query Variables** | Forgets values from `SET VARIABLE`. |
-| **Select Top 1000 Rows**, **Copy SQL Name**, **Copy Column List** | A table's right-click. |
+| **Select Top Rows**, **Copy SQL Name**, **Copy Column List** | A table's right-click. |
 | **Download Again (from Fabric)** | Replaces a semantic model's local copy. |
 | **Copy App URL** | An app's button. |
 
@@ -389,9 +390,21 @@ personal skills, and it follows the extension through updates.
 | `onelakeStudio.catalogTtlMinutes` | 5 | How old a listing may be before it is refreshed. The last known answer is always served from disk first. |
 | `onelakeStudio.tableMetadataTtlHours` | 24 | How old a table's Iceberg metadata may be before it is refreshed. **Refresh** on its lakehouse re-reads it at once. |
 | `onelakeStudio.prefetchMetadata` | on | Reads every table's metadata in the background once a lakehouse's Tables node is opened, so the first click is a disk read. |
-| `onelakeStudio.diskCacheMaxGB` | 64 | How much table data read from OneLake is kept on disk, per account. |
+| `onelakeStudio.diskCacheMaxGB` | 64 | How much of what DuckDB reads from OneLake, tables and `Files/`, is kept on disk, per account. `0` turns the disk cache off. |
+| `onelakeStudio.cacheDirectory` | empty | Where the disk cache is kept, as a full path. Empty is VS Code's storage for this extension. A new folder starts empty. |
+| `onelakeStudio.metadataCacheMaxMB` | 256 | How much of the listings, table metadata and first rows is kept on disk, per account. |
 | `onelakeStudio.engineMemoryLimit` | empty | Most memory DuckDB may use, e.g. `4GB`. Empty is a quarter of the machine's RAM. |
+| `onelakeStudio.engineThreads` | 0 | How many threads DuckDB may use. `0` is every core. |
+| `onelakeStudio.engineSpillMaxGB` | 0 | How much a query bigger than memory may spill to the temp folder. `0` is DuckDB's default. |
 | `onelakeStudio.resultsLocation` | `below` | Where a query's results show when it is run from its editor. |
+| `onelakeStudio.selectTopRows` | 1000 | How many rows **Select Top Rows** asks for. |
+| `onelakeStudio.maxResultRows` | 200,000 | The most rows of one result the panel and the command line keep, from 1,000 to 1,000,000. Past it, rows are only counted. |
+| `onelakeStudio.tableOpensOn` | `stats` | What clicking a table shows first: `stats` or `data`. |
+| `onelakeStudio.gridThousandsSeparator` | off | Shows numbers in the grid with thousands separators. A copy still gets the raw value. |
+
+The engine locks its configuration after it boots. Disk cache size, cache folder, memory, threads,
+spill limit and the result row limit therefore apply when it restarts, which closes the panel. The rest
+apply at once.
 
 ## Limitations
 
@@ -399,7 +412,7 @@ personal skills, and it follows the extension through updates.
   reports for those items.
 - **An item its catalog cannot serve shows an error rather than a table list.** There is no DFS fallback.
   Re-picking the item tries again.
-- **A result past 200,000 rows is counted rather than carried into the panel.**
+- **A result past `maxResultRows` is counted rather than carried into the panel.**
 - **Requires desktop VS Code 1.90+** on x64 or arm64 Windows, macOS or Linux.
 
 ## Where the code is

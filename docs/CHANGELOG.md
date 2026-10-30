@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- **Settings are one click away.** The explorer's "..." menu has Settings, next to Switch Microsoft
+  Account, and Clear Cached OneLake Data. Settings are grouped into Cache, Engine, Query and Results,
+  and Sign-in.
+- **New settings:** `cacheDirectory`, `metadataCacheMaxMB`, `engineThreads`, `engineSpillMaxGB`,
+  `selectTopRows`, `maxResultRows`, `tableOpensOn` and `gridThousandsSeparator`. Select Top 1000 Rows
+  is now Select Top Rows.
+- **`Files/` objects DuckDB reads are kept in the disk cache.** A Parquet or CSV under `Files/` is no
+  longer downloaded again on every query. A kept copy is checked against OneLake first, so a rewritten
+  file is read again.
+- **`diskCacheMaxGB: 0` turns the disk cache off.** It used to mean no limit.
+- **`catalogTtlMinutes` and `tableMetadataTtlHours` apply at once**, with no window reload.
+
 - **Every OneLake table is read by its five-part name.** The Data tab's rows now are too. A model
   table with no Direct Lake source, in a `.bim` or `.yaml` opened from `Files/`, gives an error when
   a query reads it; it used to read whatever carried its short name, such as an open `Files/` view.

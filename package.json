@@ -57,6 +57,12 @@
         "icon": "$(account)"
       },
       {
+        "command": "onelakeStudio.openSettings",
+        "title": "Settings",
+        "category": "OneLake Studio",
+        "icon": "$(gear)"
+      },
+      {
         "command": "onelakeStudio.signIn",
         "title": "Sign in to OneLake",
         "category": "OneLake Studio"
@@ -140,7 +146,7 @@
       },
       {
         "command": "onelakeStudio.selectTop",
-        "title": "Select Top 1000 Rows",
+        "title": "Select Top Rows",
         "category": "OneLake Studio"
       },
       {
@@ -320,7 +326,17 @@
         {
           "command": "onelakeStudio.switchAccount",
           "when": "view == onelakeStudio.explorer",
-          "group": "1_account"
+          "group": "1_account@1"
+        },
+        {
+          "command": "onelakeStudio.openSettings",
+          "when": "view == onelakeStudio.explorer",
+          "group": "1_account@2"
+        },
+        {
+          "command": "onelakeStudio.clearCache",
+          "when": "view == onelakeStudio.explorer",
+          "group": "2_cache"
         }
       ],
       "view/item/context": [
@@ -564,64 +580,157 @@
         }
       ]
     },
-    "configuration": {
-      "title": "OneLake Studio",
-      "properties": {
-        "onelakeStudio.tenantId": {
-          "type": "string",
-          "default": "",
-          "scope": "machine",
-          "pattern": "^$|^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
-          "patternErrorMessage": "A directory (tenant) ID is a GUID, e.g. 72f988bf-86f1-41af-91ab-2d7cd011db47.",
-          "markdownDescription": "Directory (tenant) GUID to sign in against. Leave empty for your home tenant; set it to reach a tenant you are a guest in. Machine-scoped on purpose: a setting that steers *authentication* must not be overridable by a workspace's own `.vscode/settings.json`."
-        },
-        "onelakeStudio.catalogTtlMinutes": {
-          "type": "number",
-          "default": 5,
-          "minimum": 0,
-          "scope": "machine",
-          "markdownDescription": "How old a listing (workspaces, items, tables, Files/) may be before it is refreshed. The last-known answer is ALWAYS served instantly from disk; once it is older than this, a background refresh fetches the current one and the tree redraws if it changed. `0` refreshes behind every read. **Refresh** in the tree re-reads in the foreground. A table's own metadata has its own window, `tableMetadataTtlHours`. Applies after the window is reloaded."
-        },
-        "onelakeStudio.tableMetadataTtlHours": {
-          "type": "number",
-          "default": 24,
-          "minimum": 0,
-          "scope": "machine",
-          "markdownDescription": "How old a table's Iceberg metadata (its snapshot, schema and stats, from the catalog's slowest call) may be before it is refreshed, in hours. A table you have opened before opens from disk without asking the catalog; past this age it is refreshed behind you and a new snapshot shows one open later. **Refresh** on its lakehouse (or the whole tree) re-reads it at once. Applies after the window is reloaded."
-        },
-        "onelakeStudio.prefetchMetadata": {
-          "type": "boolean",
-          "default": true,
-          "scope": "machine",
-          "markdownDescription": "When a lakehouse's **Tables** node is opened, read each table's Iceberg metadata in the background (two at a time, skipping what is already cached), so the first click on a table is a disk read rather than a wait on the Iceberg catalog — which can take seconds per table. Turn off to read a table's metadata only when it is clicked."
-        },
-        "onelakeStudio.engineMemoryLimit": {
-          "type": "string",
-          "default": "",
-          "scope": "machine",
-          "pattern": "^$|^\\d+(\\.\\d+)?\\s*(KB|MB|GB|TB|KiB|MiB|GiB|TiB)$",
-          "patternErrorMessage": "A DuckDB memory size, e.g. 4GB or 512MB.",
-          "markdownDescription": "Most memory DuckDB may use, e.g. `4GB`. Empty means a quarter of this machine's RAM — DuckDB's own default is 80%, which is too much for the extension host every other extension shares. Bigger queries spill to a temp directory instead of failing. Applies the next time the engine starts."
-        },
-        "onelakeStudio.resultsLocation": {
-          "type": "string",
-          "enum": ["below", "beside"],
-          "enumDescriptions": [
-            "Under the query's editor, in a group of its own.",
-            "Beside the query's editor, side by side."
-          ],
-          "default": "below",
-          "markdownDescription": "Where a query's results show when it is run from its editor. The panel moves only when it would cover the editor; once it is in a group of its own, it stays wherever you put it."
-        },
-        "onelakeStudio.diskCacheMaxGB": {
-          "type": "number",
-          "default": 64,
-          "minimum": 0,
-          "scope": "machine",
-          "markdownDescription": "How much of what DuckDB reads from OneLake (table data, manifests, metadata) is kept on disk, in GB, so a table read once is read from this machine afterwards — even after a restart, with no request to OneLake. Tables only: an Iceberg table's files never change once written, while `Files/` objects can, so those are always read live. Kept per Microsoft account; the oldest is dropped past this size when the engine starts. **Clear Cached OneLake Data** empties it. Applies the next time the engine starts."
+    "configuration": [
+      {
+        "title": "Cache",
+        "order": 1,
+        "properties": {
+          "onelakeStudio.catalogTtlMinutes": {
+            "type": "number",
+            "default": 5,
+            "minimum": 0,
+            "scope": "machine",
+            "order": 1,
+            "markdownDescription": "How old a listing (workspaces, items, tables, Files/) may be before it is refreshed. The last-known answer is ALWAYS served instantly from disk; once it is older than this, a background refresh fetches the current one and the tree redraws if it changed. `0` refreshes behind every read. **Refresh** in the tree re-reads in the foreground. A table's own metadata has its own window, `tableMetadataTtlHours`."
+          },
+          "onelakeStudio.tableMetadataTtlHours": {
+            "type": "number",
+            "default": 24,
+            "minimum": 0,
+            "scope": "machine",
+            "order": 2,
+            "markdownDescription": "How old a table's Iceberg metadata (its snapshot, schema and stats, from the catalog's slowest call) may be before it is refreshed, in hours. A table you have opened before opens from disk without asking the catalog; past this age it is refreshed behind you and a new snapshot shows one open later. **Refresh** on its lakehouse (or the whole tree) re-reads it at once."
+          },
+          "onelakeStudio.prefetchMetadata": {
+            "type": "boolean",
+            "default": true,
+            "scope": "machine",
+            "order": 3,
+            "markdownDescription": "When a lakehouse's **Tables** node is opened, read each table's Iceberg metadata in the background (two at a time, skipping what is already cached), so the first click on a table is a disk read rather than a wait on the Iceberg catalog — which can take seconds per table. Turn off to read a table's metadata only when it is clicked."
+          },
+          "onelakeStudio.diskCacheMaxGB": {
+            "type": "number",
+            "default": 64,
+            "minimum": 0,
+            "scope": "machine",
+            "order": 4,
+            "markdownDescription": "How much of what DuckDB reads from OneLake (table data, manifests, metadata and `Files/` objects) is kept on disk, in GB, so what was read once is read from this machine afterwards, even after a restart. A kept copy is checked against OneLake first, so a rewritten file is read again. `0` turns the disk cache off. Kept per Microsoft account. The oldest is dropped past this size only when the engine starts, so a long session can go over it. **Clear Cached OneLake Data** empties it. Applies the next time the engine starts."
+          },
+          "onelakeStudio.cacheDirectory": {
+            "type": "string",
+            "default": "",
+            "scope": "machine",
+            "order": 5,
+            "pattern": "^$|^([A-Za-z]:)?[\\\\/]",
+            "patternErrorMessage": "A full path, e.g. D:\\OneLakeCache or /data/onelake-cache.",
+            "markdownDescription": "Where the disk cache is kept, as a full path, for a bigger disk than the one VS Code stores its data on. Empty is VS Code's storage for this extension. A new folder starts empty; you are asked whether to delete the old one. Listings and table metadata stay in VS Code's storage. Applies the next time the engine starts."
+          },
+          "onelakeStudio.metadataCacheMaxMB": {
+            "type": "number",
+            "default": 256,
+            "minimum": 1,
+            "scope": "machine",
+            "order": 6,
+            "markdownDescription": "How much of the listings, table metadata and first rows is kept on disk, in MB, per Microsoft account. The oldest is dropped past this size. Only a very large tenant should need more."
+          }
+        }
+      },
+      {
+        "title": "Engine",
+        "order": 2,
+        "properties": {
+          "onelakeStudio.engineMemoryLimit": {
+            "type": "string",
+            "default": "",
+            "scope": "machine",
+            "order": 1,
+            "pattern": "^$|^\\d+(\\.\\d+)?\\s*(KB|MB|GB|TB|KiB|MiB|GiB|TiB)$",
+            "patternErrorMessage": "A DuckDB memory size, e.g. 4GB or 512MB.",
+            "markdownDescription": "Most memory DuckDB may use, e.g. `4GB`. Empty means a quarter of this machine's RAM — DuckDB's own default is 80%, which is too much for the extension host every other extension shares. Bigger queries spill to a temp directory instead of failing. Applies the next time the engine starts."
+          },
+          "onelakeStudio.engineThreads": {
+            "type": "integer",
+            "default": 0,
+            "minimum": 0,
+            "scope": "machine",
+            "order": 2,
+            "markdownDescription": "How many threads DuckDB may use. Lower it to keep cores free for VS Code during a heavy query. `0` is DuckDB's default, every core. Applies the next time the engine starts."
+          },
+          "onelakeStudio.engineSpillMaxGB": {
+            "type": "number",
+            "default": 0,
+            "minimum": 0,
+            "scope": "machine",
+            "order": 3,
+            "markdownDescription": "How much a query bigger than memory may spill to the temp folder, in GB. A query that needs more fails. `0` is DuckDB's default. Applies the next time the engine starts."
+          }
+        }
+      },
+      {
+        "title": "Query and Results",
+        "order": 3,
+        "properties": {
+          "onelakeStudio.resultsLocation": {
+            "type": "string",
+            "enum": ["below", "beside"],
+            "enumDescriptions": [
+              "Under the query's editor, in a group of its own.",
+              "Beside the query's editor, side by side."
+            ],
+            "default": "below",
+            "order": 1,
+            "markdownDescription": "Where a query's results show when it is run from its editor. The panel moves only when it would cover the editor; once it is in a group of its own, it stays wherever you put it."
+          },
+          "onelakeStudio.selectTopRows": {
+            "type": "integer",
+            "default": 1000,
+            "minimum": 1,
+            "order": 2,
+            "markdownDescription": "How many rows **Select Top Rows** asks for."
+          },
+          "onelakeStudio.maxResultRows": {
+            "type": "integer",
+            "default": 200000,
+            "minimum": 1000,
+            "maximum": 1000000,
+            "scope": "machine",
+            "order": 3,
+            "markdownDescription": "The most rows of one result the panel and the command line keep. Past it, rows are only counted. **Export…** always writes every row. More rows use more memory in the extension host and the panel. Applies the next time the engine starts."
+          },
+          "onelakeStudio.tableOpensOn": {
+            "type": "string",
+            "enum": ["stats", "data"],
+            "enumDescriptions": [
+              "Stats, from the table's metadata. No table data is read.",
+              "Data, the table's first rows."
+            ],
+            "default": "stats",
+            "order": 4,
+            "markdownDescription": "What clicking a table shows first."
+          },
+          "onelakeStudio.gridThousandsSeparator": {
+            "type": "boolean",
+            "default": false,
+            "order": 5,
+            "markdownDescription": "Show numbers in the results grid with thousands separators, e.g. `1,234,567.89`. A copy still gets the raw value."
+          }
+        }
+      },
+      {
+        "title": "Sign-in",
+        "order": 4,
+        "properties": {
+          "onelakeStudio.tenantId": {
+            "type": "string",
+            "default": "",
+            "scope": "machine",
+            "pattern": "^$|^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+            "patternErrorMessage": "A directory (tenant) ID is a GUID, e.g. 72f988bf-86f1-41af-91ab-2d7cd011db47.",
+            "markdownDescription": "Directory (tenant) GUID to sign in against. Leave empty for your home tenant; set it to reach a tenant you are a guest in. Machine-scoped on purpose: a setting that steers *authentication* must not be overridable by a workspace's own `.vscode/settings.json`."
+          }
         }
       }
-    }
+    ]
   },
   "scripts": {
     "vscode:prepublish": "node scripts/check-binding.mjs && node scripts/stage-webview.mjs && node scripts/vendor.mjs && node scripts/function-bundle.mjs && node scripts/bundle.mjs",

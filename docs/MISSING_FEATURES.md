@@ -45,7 +45,7 @@ repository.
 
 | # | Expected | Today | Evidence |
 | --- | --- | --- | --- |
-| 21 | **A file has a right-click.** A file's name is its `abfss://` URL, yet nothing copies it. | No menu on files or folders: no Copy URL, no Select Top 1000 Rows. Go To does not search files. | [`package.json:329`](../package.json#L329), [`NAMING.md:119`](NAMING.md#L119) |
+| 21 | **A file has a right-click.** A file's name is its `abfss://` URL, yet nothing copies it. | No menu on files or folders: no Copy URL, no Select Top Rows. Go To does not search files. | [`package.json:329`](../package.json#L329), [`NAMING.md:119`](NAMING.md#L119) |
 | 22 | **Read a folder as one table**, with partitions. | Only one file opens from the tree. A glob has to be typed by hand. | [`src/tree.js:324`](../src/tree.js#L324) |
 | 23 | **A table expands to its columns.** | A table has no children, so no column can be seen, copied or dragged from the tree. | [`src/tree.js:255`](../src/tree.js#L255) |
 | 24 | **Open in Fabric** for a workspace, item or model. | The only link out is an exported app. | [`src/extension.js:1523`](../src/extension.js#L1523) |

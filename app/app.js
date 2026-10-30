@@ -34,6 +34,8 @@ const viewState = {
 };
 const cfg = window.ONELAKE_STUDIO_CONFIG || {};
 const vs = vscodeApi();
+// The settings the page reads as it goes: as of the panel's opening, then as the host posts them.
+const settings = { tableOpensOn: cfg.tableOpensOn, gridThousandsSeparator: cfg.gridThousandsSeparator };
 
 // Cap on rendered rows only. The CSV saves everything the engine materialised, which is
 // itself capped — runQuery says so when the two differ.
@@ -505,6 +507,8 @@ async function selectTable(t) {
     // Not run: Edit SQL opens it, to read the rows by query.
     currentSql = activeSqlName ? previewSql(activeSqlName, false) : '';
     setStatus(engine.describeLoad(info));
+    // Asked to land on the rows: the same as clicking Data.
+    if (settings.tableOpensOn === 'data') { await peekIntoView(); return; }
     // The Data tab's rows, started now: selecting a table is the strongest signal its
     // data is about to be looked at. Quiet, superseded by any later click, and its
     // failure is the Data tab's to report.
@@ -752,6 +756,7 @@ function renderResults(res) {
     ui: gridUi(),
     copyText: text => engine.copyText(text).catch(e => setStatus('Could not copy: ' + e.message, 'error')),
     say: text => setStatus(text, 'ok'),
+    grouped: () => settings.gridThousandsSeparator,
   });
 
   // The grid stays the source of truth; a document result additionally gets Pretty — kept as
@@ -1310,7 +1315,7 @@ function setBusy(b, { stoppable = false } = {}) {
 // ---------------------------------------------------------------------------
 showVersion();
 wireUi();
-engine = createEngine({ onStatus: setStatus, onBoot: reportBoot });
+engine = createEngine({ onStatus: setStatus, onBoot: reportBoot, ...(cfg.maxRows ? { maxRows: cfg.maxRows } : {}) });
 engineReady = engine.init();
 semantic.setTableNamer(list => engine.nameTables(list));
 viewsReady = loadViews().catch(e => console.warn('[views]', e.message));
@@ -1367,6 +1372,11 @@ window.addEventListener('message', async e => {
     }
     // Why the catalog is taking long — conversion pending, catalog busy.
     else if (m.type === 'status' && m.message) setStatus(m.message);
+    else if (m.type === 'settings') {
+      settings.tableOpensOn = m.tableOpensOn;
+      settings.gridThousandsSeparator = m.gridThousandsSeparator;
+      if (grid) grid.redraw();
+    }
   } catch (err) {
     setStatus('Could not open that: ' + err.message, 'error');
     console.error(err);

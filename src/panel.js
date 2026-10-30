@@ -73,6 +73,13 @@ function postLive(msg) {
   if (current && ready) current.webview.postMessage(msg);
 }
 
+// The settings the page reads itself, sent when it opens and again when one changes.
+function panelSettings() {
+  const config = vscode.workspace.getConfiguration('onelakeStudio');
+  return { tableOpensOn: config.get('tableOpensOn', 'stats'),
+           gridThousandsSeparator: config.get('gridThousandsSeparator', false) };
+}
+
 // The page's one channel to the host (host.js): DuckDB statements and OneLake reads,
 // answered here. postMessage THROWS once the panel is disposed, and a call can settle after
 // exactly that — a query still streaming when the tab is closed. Nobody is listening; the
@@ -128,6 +135,9 @@ async function openPanelUncontended(context, { onOpened, onBoot, onBootFailed, e
       // URI: the query runs in the host, where DuckDB is, and the engine's lockdown lets
       // it read exactly this file.
       readmeUrl: readmeUri.fsPath,
+      // The most rows a result keeps: the number this engine was built with.
+      maxRows: engine ? engine.maxRows : undefined,
+      ...panelSettings(),
     });
   } catch (e) {
     panel.dispose();
@@ -235,4 +245,4 @@ function dockBelowEditor() {
 // The column the panel is in, or undefined: a new query editor opens in another one.
 const panelColumn = () => (current ? current.viewColumn : undefined);
 
-module.exports = { openPanel, closePanel, revealPanel, panelColumn, dockBelowEditor, postToPanel, postLive };
+module.exports = { openPanel, closePanel, revealPanel, panelColumn, dockBelowEditor, postToPanel, postLive, panelSettings };

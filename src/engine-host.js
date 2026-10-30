@@ -63,10 +63,11 @@ function jsonSafe(v) {
   return v;
 }
 
-// The most rows of one result the host turns into JS and posts to the page. data.js stops
-// keeping rows at the same number; past it the host only COUNTS, so "stopped at N of M"
-// still has a truthful M without M rows crossing postMessage into a shared process.
-const MAX_ROWS = 200_000;
+// The most rows of one result the host turns into JS and posts to the page, unless the
+// `maxRows` option says otherwise. The page is told the same number (panel.js) and stops
+// keeping rows there; past it the host only COUNTS, so "stopped at N of M" still has a
+// truthful M without M rows crossing postMessage into a shared process.
+const DEFAULT_MAX_ROWS = 200_000;
 
 // A bearer token has no business in an error message the page displays, a log line, or a
 // bug report pasted from either. DuckDB echoes the statement it failed on, and two of ours
@@ -169,7 +170,8 @@ async function prepareFileCache(dir, maxBytes, onWarn) {
 // Each becomes a view DuckDB lists (syncCatalog), so SHOW ALL TABLES and information_schema see
 // what the tree has seen without a single request to OneLake.
 function createEngineHost({ extensionDir, onLog = () => {}, onWarn = () => {}, getToken = null,
-                            memoryLimit = '', allowedPaths = [], lockdown = true,
+                            memoryLimit = '', threads = 0, spillMaxGB = 0, maxRows = DEFAULT_MAX_ROWS,
+                            allowedPaths = [], lockdown = true,
                             httpProxy = '', bundledExtensions = null,
                             fileCacheDir = null, fileCacheMaxBytes = 0, resolveTable = null,
                             catalogTables = null } = {}) {
@@ -242,6 +244,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onWarn = () => {}, g
         allow_persistent_secrets: 'false',
         memory_limit: memoryLimit || defaultMemoryLimit(),
       };
+      if (threads > 0) config.threads = String(threads);
       if (extensionDir) config.extension_directory = extensionDir;
       // The disk cache (cache_httpfs) ships in the vsix as our own build of it, with the
       // Windows fix that is not released upstream yet — and our build is not signed by
@@ -292,6 +295,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onWarn = () => {}, g
       // extension. The temp dir is this session's own and is deleted on close.
       const tmp = tmpDir.replace(/\\/g, '/');
       await conn.run(`SET temp_directory = ${sqlStr(tmp)};`);
+      if (spillMaxGB > 0) await conn.run(`SET max_temp_directory_size = ${sqlStr(`${spillMaxGB}GB`)};`);
 
       // One catalog per kind of item, for the tables' SQL names (lakehouse.ws.item.schema.t):
       // the workspace, item and schema are nested schemas in it, made as a statement names
@@ -419,9 +423,8 @@ function createEngineHost({ extensionDir, onLog = () => {}, onWarn = () => {}, g
 
   // The bytes DuckDB reads from OneLake — data files, manifests, metadata.json — kept on
   // disk across sessions by cache_httpfs, around the azure filesystem: read once, read from
-  // here after, restart or not. Not validated against OneLake: that is a request per file
-  // opened, and an Iceberg table's files are never rewritten under the same name, so a
-  // cached copy cannot go stale. Files/ objects can be, so they are not cached at all.
+  // here after, restart or not. An Iceberg table's files are never rewritten under the same
+  // name, but a Files/ object can be, so a kept copy is validated before it is served.
   // Optional: without it, reads go to OneLake as they always did.
   async function enableFileCache(dir) {
     await load('cache_httpfs', 'community');
@@ -435,12 +438,15 @@ function createEngineHost({ extensionDir, onLog = () => {}, onWarn = () => {}, g
       // keep its parallelism inside DuckDB's.
       await conn.run(`SET cache_httpfs_parallel_read_mode = 'duckdb_task_scheduler';`);
       await conn.run('SET cache_httpfs_max_fanout_subrequest = 16;');
+      // A Files/ object can be rewritten in place, so what is kept is checked against the
+      // file's version tag and modification time before it is served. Before the wrap: a
+      // build without this setting fails here, with nothing cached, not serving stale files.
+      await conn.run('SET cache_httpfs_enable_cache_validation = true;');
       for (const name of ['AzureDfsStorageFileSystem', 'AzureBlobStorageFileSystem']) {
         // Released builds run a constant call twice and throw on the second although the
         // wrap worked: what is registered afterwards is the answer, not the error.
         try { await conn.run(`SELECT cache_httpfs_wrap_cache_filesystem(${sqlStr(name)});`); } catch (_) {}
       }
-      await conn.run(`SELECT cache_httpfs_add_exclusion_regex('.*/Files/.*');`);
       const r = await conn.runAndReadAll(`SELECT count(*)::INTEGER AS n FROM cache_httpfs_list_registered_filesystems()
         WHERE registered_filesystems = 'cache_httpfs_AzureDfsStorageFileSystem'`);
       capabilities.fileCache = r.getRowObjects()[0].n === 1;
@@ -633,7 +639,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onWarn = () => {}, g
   // batch per ~BATCH_ROWS rows: the columns (DuckDB's own type names) on every batch, and
   // rows as plain JSON-safe objects.
   //
-  // Past MAX_ROWS the chunks are only COUNTED — sent as row-less batches carrying numRows —
+  // Past maxRows the chunks are only COUNTED — sent as row-less batches carrying numRows —
   // so the page still learns the true total without the host converting, holding or
   // posting rows nobody will see. streamAndRead() used to keep every chunk it had read,
   // which made `SELECT *` on a big table an out-of-memory in the shared extension host.
@@ -653,7 +659,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onWarn = () => {}, g
       if (!chunk || chunk.rowCount === 0) break;
       const n = chunk.rowCount;
       total += n;
-      const room = Math.max(0, MAX_ROWS - kept);
+      const room = Math.max(0, maxRows - kept);
       if (room > 0) {
         const objs = chunk.getRowObjects(names);
         const take = Math.min(room, n);
@@ -821,7 +827,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onWarn = () => {}, g
     } catch (e) { throw scrub(e, authToken || token); }
   }
 
-  return { call, close, copyToTemp, exportTo, agentQuery, catalogChanged };
+  return { call, close, copyToTemp, exportTo, agentQuery, catalogChanged, maxRows };
 }
 
 module.exports = { createEngineHost, jsonSafe, isOneLakeMetadata, PROFILE_METRICS };

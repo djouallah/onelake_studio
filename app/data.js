@@ -27,8 +27,9 @@ import {
 } from "./paths.js";
 
 // Materialising a result costs one JS object per row, so an unbounded SELECT * is how you
-// take the tab down. Cap it and say so (the host caps at the same number).
-const MAX_ROWS = 200_000;
+// take the tab down. Cap it and say so. The host caps at the same number, and passes it in
+// as `maxRows`.
+const DEFAULT_MAX_ROWS = 200_000;
 
 // The first rows of a table, the Data tab's answer before any query of the user's.
 const QUICK_PEEK_ROWS = 100;
@@ -38,6 +39,7 @@ export function createEngine({
   // Called once per boot with a per-stage millisecond breakdown, printed beside the
   // engine host's own in the read log.
   onBoot = () => {},
+  maxRows = DEFAULT_MAX_ROWS,
 } = {}) {
   let host = null;                  // the channel to the extension host, set by init()
   let _seq = 0;
@@ -553,7 +555,7 @@ export function createEngine({
     if (resolved.empty) {
       const cols = resolved.schemaFields || [];
       return { fields: cols.map(f => f.name), types: cols.map(f => f.type), rows: [],
-               numRows: 0, truncated: false, limit: MAX_ROWS, fileCount: 0 };
+               numRows: 0, truncated: false, limit: maxRows, fileCount: 0 };
     }
 
     status(`Reading the first ${QUICK_PEEK_ROWS} rows of ${label}…`);
@@ -565,9 +567,9 @@ export function createEngine({
     check();
     const fields = (res.fields || []).map(f => f.name);
     const types = (res.fields || []).map(f => f.type);
-    const rows = (res.rows || []).slice(0, MAX_ROWS).map(r => normalizeRow(r, fields));
+    const rows = (res.rows || []).slice(0, maxRows).map(r => normalizeRow(r, fields));
     return { fields, types, rows, numRows: res.numRows || rows.length, truncated: false,
-             limit: MAX_ROWS, fileCount: (resolved.stats || {}).totalDataFiles };
+             limit: maxRows, fileCount: (resolved.stats || {}).totalDataFiles };
   }
 
   // One sentence about how the table was opened. Position deletes that applied cleanly are
@@ -639,11 +641,11 @@ export function createEngine({
       }
       numRows += batch.numRows;
       for (const r of batch.rows) {
-        if (rows.length >= MAX_ROWS) { truncated = true; break; }
+        if (rows.length >= maxRows) { truncated = true; break; }
         rows.push(normalizeRow(r, fields));
       }
     });
-    return { fields: fields || [], types: types || [], rows, numRows, truncated, limit: MAX_ROWS };
+    return { fields: fields || [], types: types || [], rows, numRows, truncated, limit: maxRows };
   }
 
   function normalizeRow(obj, fields) {

@@ -29,7 +29,7 @@ const MEMO_MAX = 2000;       // hot entries kept in memory, so a re-render reads
 /**
  * @param {object} o
  * @param {string|null} o.dir    where entries live; null keeps everything in memory only
- * @param {number} [o.ttlMs]     how old an answer may be before it is refreshed behind
+ * @param {number|(() => number)} [o.ttlMs]  how old an answer may be before it is refreshed behind
  * @param {number} [o.maxBytes]  disk budget; the oldest entries go first past it
  * @param {number} [o.blobMaxBytes]  the same, for the file bytes kept by getBlob/putBlob
  * @param {() => number} [o.now]
@@ -129,6 +129,7 @@ function createStore({ dir, ttlMs = DEFAULT_TTL_MS, maxBytes = DEFAULT_MAX_BYTES
    * refresh keeps the cached answer and says so through 'refresh-failed'.
    */
   async function get(key, fetcher, { fresh = false, ttl = ttlMs } = {}) {
+    if (typeof ttl === 'function') ttl = ttl();
     if (!fresh) {
       const hit = await read(key);
       if (hit) {

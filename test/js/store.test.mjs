@@ -65,6 +65,17 @@ test("an old answer is served at once and refreshed behind; 'changed' fires once
   assert.equal((await store.get("k", async () => "v3")).value, "v2", "the refreshed answer is now the cached one");
 });
 
+test("a TTL given as a function is read at each get, so a changed setting applies at once", async t => {
+  let clock = 1_000, ttl = 1_000;
+  const store = createStore({ dir: await tempDir(t), ttlMs: () => ttl, now: () => clock });
+  await store.get("k", async () => "v1");
+  clock += 500;
+  assert.equal((await store.get("k", async () => "v2")).stale, false);
+  ttl = 100;
+  assert.equal((await store.get("k", async () => "v2")).stale, true);
+  await settle();
+});
+
 test("a refresh that brings back the same answer is not a change", async t => {
   let clock = 1_000;
   const store = createStore({ dir: await tempDir(t), ttlMs: 100, now: () => clock });

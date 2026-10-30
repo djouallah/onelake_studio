@@ -1,7 +1,7 @@
 // grid.js: what the grid's copies write, the inspector's text, and the order a sort gives.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { formatRows, inspectText, sortedRows, cellText } from "../../app/grid.js";
+import { formatRows, inspectText, sortedRows, cellText, groupedText } from "../../app/grid.js";
 
 const fields = ["a", "b"];
 const rows = [{ a: 1, b: "x|y" }, { a: 2, b: "line\nbreak" }, { a: null, b: { k: [1] } }];
@@ -14,6 +14,15 @@ test("a selection copies as TSV, with headers, CSV, Markdown or JSON", () => {
   assert.deepEqual(JSON.parse(formatRows(fields, rows, "json")), [{ a: 1, b: "x|y" }, { a: 2, b: "line\nbreak" }, { a: null, b: { k: [1] } }]);
   assert.throws(() => formatRows(fields, rows, "xml"));
   assert.equal(cellText(null), "");
+});
+
+test("thousands are marked on a plain number's text, every digit kept", () => {
+  assert.equal(groupedText("999"), "999");
+  assert.equal(groupedText("1000"), "1,000");
+  assert.equal(groupedText("-1234567.8912"), "-1,234,567.8912");
+  assert.equal(groupedText("12345678901234567890"), "12,345,678,901,234,567,890");
+  assert.equal(groupedText("1e+21"), "1e+21");
+  assert.equal(groupedText(""), "");
 });
 
 test("the inspector indents JSON, a struct's or a text's, and leaves other text as it is", () => {

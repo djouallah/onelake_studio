@@ -61,6 +61,13 @@ export function sortedRows(rows, res, { col, desc }) {
   return filled.map(e => e.r).concat(empty);
 }
 
+// A plain number with its thousands marked: a grid cell's text only, never what a copy writes.
+// On the text, not the value, so a big integer or a decimal keeps every digit.
+export function groupedText(t) {
+  const m = /^(-?)(\d+)(\.\d+)?$/.exec(t);
+  return m ? m[1] + m[2].replace(/\B(?=(\d{3})+$)/g, ',') + (m[3] || '') : t;
+}
+
 // The inspector's text for a value: JSON indented (a struct, a list, or text that is JSON),
 // anything else as it is.
 export function inspectText(v) {
@@ -74,10 +81,11 @@ export function inspectText(v) {
  * Draws `res` ({ fields, types, rows }) in `table`, scrolled by `wrap`. `res.rows` is sorted in
  * place, so whatever saves the result (the CSV) saves it in the order on screen.
  * `ui`: { filter (input), count (element), inspector: { root, title, body, copy, close } },
- * `copyText(text)` puts text on the clipboard, `say(text)` a line in the status bar.
+ * `copyText(text)` puts text on the clipboard, `say(text)` a line in the status bar,
+ * `grouped()` whether numbers show their thousands.
  * Returns { copy(as), text(as), destroy() }.
  */
-export function mountGrid(table, wrap, res, { ui, copyText, say = () => {} }) {
+export function mountGrid(table, wrap, res, { ui, copyText, say = () => {}, grouped = () => false }) {
   const fields = res.fields, types = res.types || [];
   const original = res.rows.slice();
   let sort = null;                    // { col, desc }
@@ -128,7 +136,9 @@ export function mountGrid(table, wrap, res, { ui, copyText, say = () => {} }) {
       for (let c = 0; c < fields.length; c++) {
         const v = row[fields[c]];
         const cls = (typeof v === 'number' ? 'num' : '') + (selected(r, c) ? ' sel' : '');
-        html += `<td data-c="${c}" class="${cls}">${escapeHtml(cellText(v))}</td>`;
+        const text = cellText(v);
+        const shown = grouped() && NUMERIC_TYPE.test(types[c] || '') ? groupedText(text) : text;
+        html += `<td data-c="${c}" class="${cls}">${escapeHtml(shown)}</td>`;
       }
       html += '</tr>';
     }
@@ -259,6 +269,7 @@ export function mountGrid(table, wrap, res, { ui, copyText, say = () => {} }) {
   return {
     copy,
     text,
+    redraw: () => paint(true),
     destroy() {
       wrap.removeEventListener('scroll', onScroll);
       wrap.removeEventListener('keydown', onKey);
