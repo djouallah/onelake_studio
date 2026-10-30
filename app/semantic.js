@@ -18,7 +18,7 @@
 // the host's command line (src/agent.js); `modules` lets the host hand in the compiler.
 // =============================================================================
 import { PINS, npmFile, npmEsm } from "./cdn.js";
-import { quoteIdent, sqlStr, basename } from "./paths.js";
+import { quoteIdent, sqlStr, sqlPart, stripBom, basename } from "./paths.js";
 import { EXPLORE_CASTS } from "./explore/query.js";
 
 const lc = s => String(s).toLowerCase();
@@ -26,8 +26,7 @@ const lc = s => String(s).toLowerCase();
 // The catalog every semantic model is named in, as lakehouse tables are in `lakehouse`: a
 // model's SQL name is semanticmodel.<workspace>.<model>, and nothing shorter.
 export const MODEL_CATALOG = "semanticmodel";
-const namePart = s => (/^[A-Za-z_][A-Za-z0-9_]*$/.test(String(s)) ? String(s) : quoteIdent(s));
-export const modelSqlName = (workspace, name) => [MODEL_CATALOG, workspace, name].map(namePart).join(".");
+export const modelSqlName = (workspace, name) => [MODEL_CATALOG, workspace, name].map(sqlPart).join(".");
 const fullName = v => modelSqlName(v.schema, v.name);
 
 let modulesP = null;
@@ -154,7 +153,7 @@ export const isOssie = text =>
 
 // The TMSL a model file's text is: a .bim as it is, an Ossie model as the .bim it stands for.
 function bimOf(path, text, mods) {
-  const body = String(text).replace(/^﻿/, "");
+  const body = stripBom(text);
   if (isOssiePath(path)) {
     let doc;
     try { doc = mods.parseYaml(body); }
@@ -410,7 +409,7 @@ export function starterChart(model) {
 // What the editor offers once a model is open: one measure by one column it can slice by,
 // or the model's field list when it has no measure.
 function sampleQuery(v) {
-  const name = id => (/^[A-Za-z_][A-Za-z0-9_]*$/.test(id) ? id : quoteIdent(id));
+  const name = sqlPart;
   const full = fullName(v);
   const head = `-- ${full} is a semantic model: AGG(measure) is a measure, ` +
                `SHOW SEMANTIC METRICS IN ${full} lists them all.\n`;

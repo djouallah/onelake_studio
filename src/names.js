@@ -10,6 +10,9 @@
 
 const strip = s => String(s).replace(/^\/+|\/+$/g, "");
 const basename = p => strip(p).split("/").pop();
+// Text read as UTF-8 without the byte-order mark some editors write first (a .bim saved by
+// Visual Studio has one), which JSON.parse refuses.
+const stripBom = s => String(s).replace(/^\uFEFF/, "");
 
 // Percent-encode a RAW path — one whose segments are literal names, not URI escapes.
 // This is only correct for paths that came out of a DFS listing (`.name`), where a
@@ -134,7 +137,8 @@ const sqlKind = kind => {
 const displayName = item => basename(item).replace(/\.[^.]+$/, "");
 
 // DuckDB's reserved words (duckdb_keywords(), 'reserved' and 'type_function'): a part
-// spelled like one must be quoted to be a name.
+// spelled like one must be quoted to be a name. The panel's twin is app/paths.js sqlPart;
+// a test holds them equal.
 const RESERVED = new Set(("all analyse analyze and anti any array as asc asof asymmetric at authorization binary " +
   "both by case cast check collate collation column columns concurrently constraint create cross default " +
   "deferrable desc describe distinct do else end except false fetch for foreign freeze from full generated " +
@@ -274,9 +278,9 @@ function fmtBytes(n) {
 }
 
 module.exports = {
-  strip, basename, encPath, DFS_HOST, DFS_ORIGIN, dfsFileUrl, abfssUrl,
+  strip, basename, stripBom, encPath, DFS_HOST, DFS_ORIGIN, dfsFileUrl, abfssUrl,
   itemKind, holdsTables, isMirrored, hasFilesArea, kindLabel, kindLabelPlural,
-  SQL_KINDS, sqlKind, displayName, sqlPart, sqlName, sqlNameOf, MODEL_CATALOG, modelSqlName,
+  SQL_KINDS, sqlKind, displayName, RESERVED, sqlPart, sqlName, sqlNameOf, MODEL_CATALOG, modelSqlName,
   icebergTypeName, icebergFields, snapshotStats, sourceFormat, icebergHistory,
   fmtBytes,
 };

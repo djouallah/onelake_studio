@@ -13,7 +13,8 @@
 // =============================================================================
 
 import { formatValue, shade, extent, stackedGrids, shiftDate } from './draw.js';
-import { escapeHtml } from '../paths.js';
+import { el } from './dom.js';
+import { escapeHtml, quoteIdent as qid, sqlStr, sqlPart as bare } from '../paths.js';
 
 // A tooltip formatter's string is rendered as HTML: anything from the data goes in escaped.
 const esc = v => escapeHtml(v == null ? '' : String(v));
@@ -129,14 +130,6 @@ export function buildQuery(s, { cap = CAP, today = localToday() } = {}) {
 // writes it (a lakehouse table's Edit SQL): its columns by name alone, quoted only where DuckDB
 // needs it (or as `column` writes one: a date's grain), AS only for a new name, DISTINCT for
 // columns alone, each measure as `measure` says, LIMIT for the cap.
-const qid = s => `"${String(s).replace(/"/g, '""')}"`;
-const RESERVED = new Set(('all analyse analyze and any array as asc asymmetric both case cast check collate column constraint ' +
-  'create default deferrable desc describe distinct do else end except false fetch for foreign from group having in ' +
-  'initially intersect into lambda lateral leading limit not null offset on only or order pivot pivot_longer ' +
-  'pivot_wider placing primary qualify references returning select show some summarize symmetric table then to ' +
-  'trailing true union unique unpivot using variadic when where window with').split(' '));
-const bare = s => /^[A-Za-z_][A-Za-z0-9_]*$/.test(s) && !RESERVED.has(s.toLowerCase()) ? s : qid(s);
-const sqlStr = v => `'${String(v).replace(/'/g, "''")}'`;
 // A YYYY-MM-DD value is a DATE literal for a date column (or one whose type is not known); a
 // text column that holds such strings compares them as text.
 const sqlVal = (v, type) => v == null ? 'NULL' : typeof v === 'boolean' ? (v ? 'TRUE' : 'FALSE') : typeof v === 'number' ? String(v)
@@ -242,17 +235,6 @@ export function autoMark(s, fields) {
 // The page
 // =============================================================================
 
-const el = (tag, attrs = {}, ...kids) => {
-  const n = document.createElement(tag);
-  for (const [k, v] of Object.entries(attrs)) {
-    if (k === 'class') n.className = v;
-    else if (k.startsWith('on')) n.addEventListener(k.slice(2), v);
-    else if (v === true) n.setAttribute(k, '');
-    else if (v != null && v !== false) n.setAttribute(k, v);
-  }
-  n.append(...kids.flat().filter(k => k != null));
-  return n;
-};
 const label = a => a.length ? a.map(v => v == null ? '(blank)' : String(v)).join(' · ') : 'All';
 
 // `root`: the element the page is built in. `ctx`:

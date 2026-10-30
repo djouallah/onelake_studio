@@ -32,7 +32,7 @@ const fsp = require('node:fs/promises');
 const zlib = require('node:zlib');
 const { createHash } = require('node:crypto');
 const { TABLE_ORIGIN } = require('./catalog');
-const { dfsFileUrl } = require('./names');
+const { dfsFileUrl, stripBom } = require('./names');
 const { PINS, WEBAPP } = require('./vendored');
 
 const MARKER = '.onelake-studio-export.json';
@@ -74,7 +74,7 @@ const dfsUrl = (workspace, path) => dfsFileUrl(workspace, path);
 function planExport(text, fileName, name, { compiler, semantic }, where) {
   if (!where || !where.workspace || !where.path) throw new Error(`${fileName} is not a OneLake file: the app reads its model from the lakehouse`);
   if (!/^[^/]+\/Files\//.test(trimPath(where.path))) throw new Error(`${fileName} is not in a lakehouse's Files/`);
-  const body = String(text).replace(/^﻿/, '');
+  const body = stripBom(text);
   let doc, bim;
   if (semantic.isOssiePath(fileName)) {
     if (!semantic.isOssie(body)) throw new Error(`${fileName} is not an Apache Ossie model: it has no top-level version and datasets`);

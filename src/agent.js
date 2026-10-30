@@ -31,7 +31,7 @@
 const { join, dirname } = require('node:path');
 const { pathToFileURL } = require('node:url');
 const fsp = require('node:fs/promises');
-const { fmtBytes, hasFilesArea, kindLabel, sqlNameOf, abfssUrl } = require('./names');
+const { fmtBytes, hasFilesArea, kindLabel, sqlNameOf, abfssUrl, stripBom } = require('./names');
 const { mapPool } = require('./http');
 
 const cell = v => (v == null ? '' : typeof v === 'object' ? JSON.stringify(v) : String(v));
@@ -131,7 +131,7 @@ function createAgent({ onelake, fabric, engine, bimPath, appDir, vendorDir, daxS
   // names with their columns — for `models` and `find`. Null when it does not parse.
   async function bimSummary(path) {
     try {
-      const bim = JSON.parse((await fsp.readFile(path, 'utf8')).replace(/^\uFEFF/, ''));
+      const bim = JSON.parse(stripBom(await fsp.readFile(path, 'utf8')));
       const tables = ((bim.model && bim.model.tables) || []).filter(t => !t.isHidden || (t.measures || []).length);
       return {
         tables: tables.map(t => ({ name: t.name, columns: (t.columns || []).map(c => c.name),
@@ -443,7 +443,7 @@ function createAgent({ onelake, fabric, engine, bimPath, appDir, vendorDir, daxS
       const { semantic, compiler } = await modules();
       await syncViews(note);
       const text = await fsp.readFile(path, 'utf8');
-      const bim = JSON.parse(text.replace(/^﻿/, ''));
+      const bim = JSON.parse(stripBom(text));
       // Named by its workspace and its own name: semanticmodel.ws.model.
       const m = await semantic.registerModel(path.split(/[\\/]/).pop(), text, compiler, ws, name);
       // Kept as a semantic view, as the panel keeps a model it opens.

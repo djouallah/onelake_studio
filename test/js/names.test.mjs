@@ -92,3 +92,14 @@ test("a table's SQL name is Kind.workspace.item.schema.table, quoted only where 
   for (const k of ["Lakehouse", "Warehouse", "SQLDbNative", "MountedRelationalDatabase", "MirroredDatabase"])
     assert.ok(n.SQL_KINDS.includes(n.sqlKind(k)), k);
 });
+
+test("the host and the panel quote a name the same way (src/names.js and app/paths.js sqlPart)", async () => {
+  const p = await import("../../app/paths.js");
+  assert.deepEqual([...n.RESERVED].sort(), [...p.RESERVED].sort());
+  for (const s of [...p.RESERVED, "Order", "sales", "_x1", "1st", "a b", 'a"b', "café", "", 42])
+    assert.equal(p.sqlPart(s), n.sqlPart(s), String(s));
+  // The model views are named alike on both sides: a model called `order` is quoted.
+  const semantic = await import("../../app/semantic.js");
+  assert.equal(semantic.modelSqlName("ws", "order"), n.modelSqlName("ws", "order"));
+  assert.equal(semantic.modelSqlName("ws", "order"), 'semanticmodel.ws."order"');
+});

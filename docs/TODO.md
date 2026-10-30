@@ -1,25 +1,9 @@
 # TODO: the rest of the 2026-10-30 review
 
-These are the items from the code review (bugs, duplicates, dead code, inefficiency) that have not been done yet. Done so far: c7cdb26 (host bugs), 49a567d (panel bugs), 47c648e (`src/http.js` and the shared helpers), and the dead code.
+These are the items from the code review (bugs, duplicates, dead code, inefficiency) that have not been done yet. Done so far: c7cdb26 (host bugs), 49a567d (panel bugs), 47c648e (`src/http.js` and the shared helpers), the dead code, and the duplicates.
 
 ## Duplicates
-- **Plan helpers.** `app/app.js` `planElapsed`/`planColors` copy `app/explore/view.js` `elapsed`/`profileColors`. Export both from `app/explore/profile.js`; `profileColors(css)` takes the page's own `css` reader.
-- **HTML escaping.** `app/explore/logs.js` `esc` is a weaker copy of `paths.js` `escapeHtml`, which also escapes quotes. Import `escapeHtml` instead.
-- **SQL quoting.** `app/explore/explore.js` `qid` and `sqlStr` copy `paths.js` `quoteIdent` and `sqlStr`. Import them.
-- **"Quote only when needed" is written four times, and the copies disagree:**
-  - `explore.js` `bare`, with `RESERVED`
-  - `semantic.js` `namePart`, with no reserved list
-  - `semantic.js` `sampleQuery` `name`
-  - `src/names.js` `sqlPart`
-
-  `semantic.js` `modelSqlName` can quote a model named `order` differently from `names.js`. Use one helper in `paths.js`.
-- **`el()` DOM builder.** It is copied in `explore/view.js`, `explore.js`, `profile.js` and `model.js`, where it is a variant.
 - **Cache walks.** `extension.js` `cachedSqlTables` and `agent.js` `find` walk the same cache. They collect different things, so it is unclear whether a shared `onelake.cached.walk()` generator is worth it.
-- Two `FabricApp` instances per export (`extension.js`, export command).
-- The BOM strip is repeated in five places.
-- CRC32 is in both `exportapp.js` and `scripts/make-icon.mjs`.
-- Fetch-with-retry is in both `vendor.mjs` and `fetch-extensions.mjs`.
-- **Pinned versions.** CI (`extension.yml`) hard-codes the versions in `src/vendored.js` `WEBAPP`, and `fabric_app/site/app.js` hard-codes `echarts@5.5.1`.
 
 ## Inefficiency
 - **`engine-host.js` `ensureTables`.** It resolves the tables a statement names one after another. Use `Promise.all`; `admin()` already runs the DDL one at a time.
@@ -50,7 +34,6 @@ These are the items from the code review (bugs, duplicates, dead code, inefficie
 - **`scripts/fetch-binding.mjs`:**
   - `shell: true` with unquoted paths breaks on a temp path with spaces
   - the path comparison is case-sensitive, so a lowercase drive letter fails
-- **`scripts/fetch-extensions.mjs`.** It skips an optional extension on any failure, not only a 404, so CI can ship a vsix without sqlite or cache_httpfs.
 - **`scripts/function-bundle.mjs`.** Its hash leaves out `host.json`, `runtimemetadata.json`, `rayfin/tsconfig.json` and `data/schema.ts`.
 - **`fabric_app/rayfin/functions/src/function_app.ts`:**
   - catalog calls are unbounded `Promise.all` with no retry

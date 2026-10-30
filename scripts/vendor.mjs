@@ -25,6 +25,7 @@ import { mkdir, writeFile, readFile, rm } from "node:fs/promises";
 import { join, dirname, posix } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
+import { fetchRetry as get } from "./fetch-retry.mjs";
 
 const { VENDOR } = createRequire(import.meta.url)("../src/vendored.js");
 
@@ -33,19 +34,6 @@ const OUT = join(here, "vendor");
 const JSDELIVR = "https://cdn.jsdelivr.net";
 
 let files = 0, bytes = 0;
-
-async function get(url) {
-  for (let attempt = 1; ; attempt++) {
-    try {
-      const r = await fetch(url);
-      if (!r.ok) throw new Error(`${url}: HTTP ${r.status}`);
-      return Buffer.from(await r.arrayBuffer());
-    } catch (e) {
-      if (attempt >= 3) throw e;
-      await new Promise(res => setTimeout(res, 1000 * attempt));
-    }
-  }
-}
 
 async function save(rel, buf, root = OUT) {
   const file = join(root, ...rel.split("/"));

@@ -19,8 +19,7 @@ import * as semantic from './semantic.js';
 import { mountExplore } from './explore/view.js';
 import { PINS, npmFile } from './cdn.js';
 import { tmslOf } from './explore/model.js';
-import { createPlanView, profileSql } from './explore/profile.js';
-import { PALETTE } from './explore/theme.js';
+import { createPlanView, profileSql, elapsed, profileColors } from './explore/profile.js';
 import { vscodeApi } from './vscode-api.js';
 
 const $ = id => document.getElementById(id);
@@ -603,12 +602,7 @@ const previewSql = (ident, whole) => `SELECT * FROM ${ident}` + (whole ? '' : ' 
 // view of it (explore/profile.js): the profile (EXPLAIN ANALYZE, so the query runs once to be
 // measured) and DuckDB's plan tree. A semantic model's query is planned as the SQL it
 // compiles to. Run puts the results back.
-const planElapsed = t0 => `${((performance.now() - t0) / 1000).toFixed(1)} s`;
-function planColors() {
-  const css = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
-  const [scan, join, aggregate, sort, win, filter] = PALETTE;
-  return { plan: css('--faint'), scan, join, aggregate, sort, window: win, filter, other: css('--muted') };
-}
+const pageCss = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 // Plans and profiles under way. Each runs the whole query, so Plan waits for them rather
 // than start another on every click.
 let planning = 0;
@@ -643,8 +637,8 @@ async function showPlan() {
         pre.textContent = res.rows.map(r => r.explain_value ?? Object.values(r).join('  ')).join('\n');
         return pre;
       }),
-      colors: planColors,
-      elapsed: planElapsed,
+      colors: () => profileColors(pageCss),
+      elapsed,
     }));
     view.hidden = false;
     // The plan is the query's, not one of the table's tabs: Stats | History | Data step aside.

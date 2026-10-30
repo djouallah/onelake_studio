@@ -18,6 +18,19 @@
 // the arithmetic of the layout is here, not in the page.
 // =============================================================================
 
+import { PALETTE } from './theme.js';
+import { el } from './dom.js';
+
+// The time since `t0`, as the plan view's status line says it.
+export const elapsed = t0 => `${((performance.now() - t0) / 1000).toFixed(1)} s`;
+
+// The profile's colours: planning in the chrome's ink, each kind of operator a colour of the
+// palette. `css(name)` reads one of the page's tokens.
+export function profileColors(css) {
+  const [scan, join, aggregate, sort, win, filter] = PALETTE;
+  return { plan: css('--faint'), scan, join, aggregate, sort, window: win, filter, other: css('--muted') };
+}
+
 // What the profile is asked to measure: the operators, and the phases before them. The
 // extension's native engine sets the same list once, before it locks its configuration
 // (src/engine-host.js, PROFILE_METRICS).
@@ -92,17 +105,6 @@ export function parseProfile(json) {
 // The page
 // =============================================================================
 
-const el = (tag, attrs = {}, ...kids) => {
-  const n = document.createElement(tag);
-  for (const [k, v] of Object.entries(attrs)) {
-    if (k === 'class') n.className = v;
-    else if (k === 'style') n.style.cssText = v;
-    else if (k.startsWith('on')) n.addEventListener(k.slice(2), v);
-    else if (v != null && v !== false) n.setAttribute(k, v === true ? '' : v);
-  }
-  n.append(...kids.flat().filter(k => k != null));
-  return n;
-};
 const ms = v => v >= 1000 ? `${(v / 1000).toFixed(2)} s` : v >= 10 ? `${Math.round(v)} ms` : `${v.toFixed(1)} ms`;
 const count = v => Number(v).toLocaleString();
 const bytes = v => v >= 1 << 30 ? `${(v / (1 << 30)).toFixed(2)} GB` : v >= 1 << 20 ? `${(v / (1 << 20)).toFixed(1)} MB` : `${Math.round(v / 1024)} KB`;

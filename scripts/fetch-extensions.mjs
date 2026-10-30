@@ -18,6 +18,7 @@ import { mkdir, rm, writeFile, readFile } from "node:fs/promises";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { gunzipSync } from "node:zlib";
+import { fetchRetry } from "./fetch-retry.mjs";
 
 const here = join(dirname(fileURLToPath(import.meta.url)), "..");   // the extension root
 const OUT = join(here, "duckdb-extensions");
@@ -63,23 +64,16 @@ const duckdb = `v${apiVersion.replace(/-.*$/, "")}`;
 await rm(OUT, { recursive: true, force: true });
 await mkdir(OUT, { recursive: true });
 
-async function get(url) {
-  for (let attempt = 1; ; attempt++) {
-    const r = await fetch(url).catch(e => ({ ok: false, status: 0, statusText: e.message }));
-    if (r.ok) return Buffer.from(await r.arrayBuffer());
-    if (r.status === 404 || attempt >= 3) return { missing: r.status === 404, status: r.status };
-    await new Promise(res => setTimeout(res, 1000 * attempt));
-  }
-}
-
 let bytes = 0;
 for (const ext of EXTENSIONS) {
   // A repository serves gzipped binaries; a release asset (ext.url) is the binary itself.
   const url = ext.url ? ext.url(duckdb, platform) : `${ext.repo}/${duckdb}/${platform}/${ext.name}.duckdb_extension.gz`;
-  const got = await get(url);
-  if (!Buffer.isBuffer(got)) {
-    if (ext.required) throw new Error(`${ext.name} for ${platform} (${duckdb}): HTTP ${got.status} from ${url}`);
-    console.log(`  skip  ${ext.name} — no ${platform} build (${got.status})`);
+  // Only a 404 means there is no build for this platform. Any other failure stops the build,
+  // so a vsix never ships without an optional extension because of a network hiccup.
+  const got = await fetchRetry(url, { missingOk: true });
+  if (!got) {
+    if (ext.required) throw new Error(`${ext.name} for ${platform} (${duckdb}): HTTP 404 from ${url}`);
+    console.log(`  skip  ${ext.name} — no ${platform} build (404)`);
     continue;
   }
   const bin = ext.url ? got : gunzipSync(got);

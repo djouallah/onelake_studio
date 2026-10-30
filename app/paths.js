@@ -118,8 +118,26 @@ export const readerFor = ext =>
 // -----------------------------------------------------------------------------
 // SQL text
 // -----------------------------------------------------------------------------
+// Text without the byte-order mark some editors write first, which JSON.parse refuses.
+export const stripBom = s => String(s).replace(/^\uFEFF/, "");
+
 export const sqlStr = v => "'" + String(v).replace(/'/g, "''") + "'";
 export const quoteIdent = v => '"' + String(v).replace(/"/g, '""') + '"';
+// DuckDB's reserved words (duckdb_keywords(), 'reserved' and 'type_function'): a name spelled
+// like one must be quoted. src/names.js keeps the host's twin; a test holds them equal.
+export const RESERVED = new Set(("all analyse analyze and anti any array as asc asof asymmetric at authorization binary " +
+  "both by case cast check collate collation column columns concurrently constraint create cross default " +
+  "deferrable desc describe distinct do else end except false fetch for foreign freeze from full generated " +
+  "glob group having ilike in initially inner intersect into is isnull join lambda lateral leading left like " +
+  "limit map natural not notnull null offset on only or order outer overlaps pivot pivot_longer pivot_wider " +
+  "placing positional primary qualify references returning right select semi show similar some struct " +
+  "summarize symmetric table tablesample then to trailing true try_cast tuple union unique unpack unpivot " +
+  "using variadic verbose when where window with").split(" "));
+// A name as SQL writes it: bare when it can be, quoted when it must.
+export const sqlPart = v => {
+  const s = String(v);
+  return /^[A-Za-z_][A-Za-z0-9_]*$/.test(s) && !RESERVED.has(s.toLowerCase()) ? s : quoteIdent(s);
+};
 
 // CSV: a cell is quoted when it holds a quote, a comma or a line break of either kind.
 // `text` turns a value into its cell; lines end with `eol`.

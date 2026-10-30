@@ -21,7 +21,7 @@ const { createHostMethods } = require('./host');
 const { createFabric, bimFileName } = require('./fabric');
 const { LakehouseTree } = require('./tree');
 const { webviewRoot } = require('./webview');
-const { fmtBytes, sqlKind, sqlName, sqlNameOf, displayName, MODEL_CATALOG, modelSqlName } = require('./names');
+const { fmtBytes, sqlKind, sqlName, sqlNameOf, displayName, MODEL_CATALOG, modelSqlName, stripBom } = require('./names');
 const { createAgent } = require('./agent');
 const { createSemViews } = require('./semviews');
 const { serveBridge } = require('./bridge');
@@ -870,7 +870,7 @@ async function activateInner(context) {
       const bim = await fabric.getBim(n.workspace, n.modelId);
       const text = Buffer.from(bim).toString('utf8');
       let doc;
-      try { doc = JSON.parse(text.replace(/^﻿/, '')); }
+      try { doc = JSON.parse(stripBom(text)); }
       catch (e) { throw new Error(`its definition is not TMSL: ${e.message}`); }
       const { semantic } = await agent.modules();
       if (!semantic.lakehousesOf(doc).length) {
@@ -900,7 +900,7 @@ async function activateInner(context) {
       throw new Error('Export to Fabric needs a model that is a OneLake file, or one opened from the tree');
     }
     let doc;
-    try { doc = JSON.parse(String(text).replace(/^﻿/, '')); }
+    try { doc = JSON.parse(stripBom(text)); }
     catch (e) { throw new Error(`${model.name} is not a TMSL model: ${e.message}`); }
     const { semantic } = await agent.modules();
     const lakes = semantic.lakehousesOf(doc);
@@ -1117,7 +1117,10 @@ async function activateInner(context) {
       // A folder Export to Fabric did not write is refused here, before anything else is asked.
       const before = await readMarker(outDir);
       await context.globalState.update(key, outDir);
-      const fabricApp = createFabricApp({ getToken: appToken, log: m => out && out.appendLine(m) });
+      // One client for the export. Its lines go to the log, and while publishing also to the
+      // progress notification (`say`, below).
+      let appLog = m => out && out.appendLine(m);
+      const fabricApp = createFabricApp({ getToken: appToken, log: m => appLog(m) });
 
       // Edited since it was last published (by you, or an agent)? Asked, never overwritten.
       let asIs = false;
@@ -1192,13 +1195,18 @@ async function activateInner(context) {
           const size = await vendorSize(outDir);
           say(`app ${plan.name}: site/vendor/ is ${mb(size.total)}`);
           if (out) for (const [name, bytes] of size.parts) out.appendLine(`  ${mb(bytes).padStart(9)}  ${name}`);
-          const done = await createFabricApp({ getToken: appToken, log: say }).publish({
-            workspaceId: plan.workspace, name: plan.name, tenantId: tenantOf(token),
-            catalogUrl: plan.catalogUrl, modelUrl: plan.modelUrl,
-            site: async config => zip(await buildDist(outDir, config)),
-            fn: { sourceZip, deployMetaData }, redirects: marker.redirects || [],
-            itemId: marker.itemId || null, takeOver,
-          });
+          const quiet = appLog;
+          appLog = say;
+          let done;
+          try {
+            done = await fabricApp.publish({
+              workspaceId: plan.workspace, name: plan.name, tenantId: tenantOf(token),
+              catalogUrl: plan.catalogUrl, modelUrl: plan.modelUrl,
+              site: async config => zip(await buildDist(outDir, config)),
+              fn: { sourceZip, deployMetaData }, redirects: marker.redirects || [],
+              itemId: marker.itemId || null, takeOver,
+            });
+          } finally { appLog = quiet; }
           // The redirects in rayfin.yml: the template's, or (as is) the folder's own.
           const yml = join(outDir, 'rayfin', 'rayfin.yml');
           const tpl = asIs && existsSync(yml) ? await fsp.readFile(yml, 'utf8')

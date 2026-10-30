@@ -15,16 +15,16 @@
 
 import { escapeHtml, toCsv } from '../paths.js';
 import { renderModel } from './model.js';
+import { el } from './dom.js';
 import { createExplorer } from './explore.js';
 import { compileModelSql } from './query.js';
-import { createPlanView, profileSql } from './profile.js';
+import { createPlanView, profileSql, elapsed, profileColors } from './profile.js';
 import { mountLogs } from './logs.js';
 import { perf } from './perflog.js';
 import { PALETTE, registerChartTheme } from './theme.js';
 
 const PAGES = [['model', 'Model'], ['pivot', 'Pivot'], ['logs', 'Logs']];
 const PREVIEW_ROWS = 500;
-const elapsed = t0 => `${((performance.now() - t0) / 1000).toFixed(1)} s`;
 
 // `ctx`:
 //   name             the model's name: what SQL calls it (FROM <name>)
@@ -59,16 +59,6 @@ const elapsed = t0 => `${((performance.now() - t0) / 1000).toFixed(1)} s`;
 // Returns { destroy }.
 export function mountExplore(root, ctx) {
   const setStatus = ctx.setStatus || (() => {});
-  const el = (tag, attrs = {}, ...kids) => {
-    const n = document.createElement(tag);
-    for (const [k, v] of Object.entries(attrs)) {
-      if (k === 'class') n.className = v;
-      else if (k.startsWith('on')) n.addEventListener(k.slice(2), v);
-      else if (v != null && v !== false) n.setAttribute(k, v === true ? '' : v);
-    }
-    n.append(...kids.flat().filter(k => k != null));
-    return n;
-  };
   const btn = (text, onclick, primary) => el('button', { type: 'button', class: `btn-explore${primary ? ' primary' : ''}`, onclick }, text);
 
   // --- The frame: the subtabs and the Pivot's actions, then one element per page ---
@@ -279,12 +269,6 @@ export function mountExplore(root, ctx) {
     planShown = !!node;
     planBtn.textContent = planShown ? 'Show results' : 'Show plan';
   }
-  // The profile's colours: planning in the chrome's ink, each kind of operator a colour of
-  // the palette.
-  const profileColors = () => {
-    const [scan, join, aggregate, sort, win, filter] = PALETTE;
-    return { plan: css('--faint'), scan, join, aggregate, sort, window: win, filter, other: css('--muted') };
-  };
   async function planTree(sql, dax) {
     if (ctx.htmlPlan) {
       const res = await run(`EXPLAIN (FORMAT html) ${sql}`, dax);
@@ -306,7 +290,7 @@ export function mountExplore(root, ctx) {
       showPlanNode(createPlanView({
         profile: async () => (await run(profileSql(sql, { set: ctx.profileSet !== false }), dax, { fresh: true })).rows[0]?.explain_value,
         tree: () => planTree(sql, dax),
-        colors: profileColors,
+        colors: () => profileColors(css),
         elapsed,
       }));
       info.textContent = 'Query plan';

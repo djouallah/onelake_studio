@@ -9,11 +9,11 @@
 // =============================================================================
 
 import { perf, BUILD } from './perflog.js';
+import { escapeHtml as esc } from '../paths.js';
 
 // The table's columns, in header order: the event field each one sorts on.
 const COLS = ['at', 'kind', 'what', 'range', 'status', 'bytes', 'wait', 'ms'];
 const HEADS = ['At (s)', 'Kind', 'What', 'Range', 'Status', 'KB', 'Wait (ms)', 'Run (ms)'];
-const esc = t => String(t).replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c]);
 
 // `note`: a line under the buttons, the host's to say (where the events come from).
 export function mountLogs(root, { note = 'This session only — kept in memory, nothing is stored.' } = {}) {
@@ -62,7 +62,7 @@ export function mountLogs(root, { note = 'This session only — kept in memory, 
     });
     const what = e => e.dax ? `<div>${esc(e.dax)}</div><div class="logs-sql">${esc(e.what)}</div>` : esc(e.what);
     table.tBodies[0].innerHTML = rows.map(e =>
-      `<tr><td>${((e.at - pageStart) / 1000).toFixed(2)}</td><td>${e.kind}</td><td>${what(e)}</td>` +
+      `<tr><td>${((e.at - pageStart) / 1000).toFixed(2)}</td><td>${esc(e.kind)}</td><td>${what(e)}</td>` +
       `<td>${esc(e.range || '')}</td><td>${esc(e.status ?? '')}</td>` +
       `<td>${e.bytes == null ? '' : (e.bytes / 1024).toFixed(0)}</td><td>${e.wait == null ? '' : e.wait.toFixed(0)}</td>` +
       `<td>${e.ms == null ? '' : e.ms.toFixed(0)}</td></tr>`).join('');

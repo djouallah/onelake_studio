@@ -9,15 +9,8 @@
 // =============================================================================
 
 import { modelLayout, MODEL_CARD } from './draw.js';
+import { el } from './dom.js';
 
-const SVG = 'http://www.w3.org/2000/svg';
-
-const el = (tag, attrs = {}, text) => {
-  const n = tag.startsWith('svg:') ? document.createElementNS(SVG, tag.slice(4)) : document.createElement(tag);
-  for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v);
-  if (text != null) n.textContent = text;
-  return n;
-};
 const lines = v => Array.isArray(v) ? v.join('\n') : v ?? '';
 
 // Power BI injects a hidden date-table pair per date column; they are plumbing, not model.
