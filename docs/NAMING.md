@@ -119,15 +119,29 @@ Now a model table with no OneLake table behind it is refused when a query reads 
 OneLake table, so it has no five-part name to read"*. An Import, DirectQuery or composite model is
 refused for the same reason.
 
-## What these names do not cover
+## Files
 
-- **A file** in `Files/` is named by its OneLake URL, `abfss://<workspace>@onelake.dfs.fabric.microsoft.com/<item>/Files/…`.
-- **A database file** under `Files/` is attached, and its tables are `<name>.<schema>.<table>`.
+**A file uses its `abfss://` URL, and it can be anything.** The name is where the file is, in any
+subfolder under `Files/`:
+
+```sql
+SELECT * FROM 'abfss://aemo@onelake.dfs.fabric.microsoft.com/data.Lakehouse/Files/x.parquet';
+```
+
+**A `.bim` or `.yaml` is a file too.** It is a representation of a model, not the model. A lakehouse
+can hold thousands of them across its subfolders, and they do not get a model's name: the name
+`semanticmodel.<workspace>.<model>` belongs to the Fabric item.
+
+**A database file is still a file.** Once attached, its tables are `<name>.<schema>.<table>`, which
+is not a OneLake table's name.
 
 ## Known gaps
 
 These do not meet the contract yet:
 
+- **An opened model file still takes a model's name.** `registerModel` in `app/semantic.js` names
+  `nem.bim` `semanticmodel.<workspace>.nem`, the same name a Fabric item `nem` has in that workspace,
+  and `docs/ARCHITECTURE.md` describes it that way.
 - **A bare model name can still compile.** `app/semantic.js` says "nothing shorter", but dax-sql
   resolves a name by its last parts, so `FROM nem` can reach an open view when only one fits.
 - **The command line's help shows the short form.** `bin/cli.mjs` has `FROM model` in the `sql` help.
