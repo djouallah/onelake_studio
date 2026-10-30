@@ -1,9 +1,6 @@
 # TODO: the rest of the 2026-10-30 review
 
-These are the items from the code review (bugs, duplicates, dead code, inefficiency) that have not been done yet. Done so far: c7cdb26 (host bugs), 49a567d (panel bugs), 47c648e (`src/http.js` and the shared helpers), the dead code, the duplicates, and the bugs (653c16a, c0e1c14 and the blockcache fix).
-
-## Duplicates
-- **Cache walks.** `extension.js` `cachedSqlTables` and `agent.js` `find` walk the same cache. They collect different things, so it is unclear whether a shared `onelake.cached.walk()` generator is worth it. Go to (NICE_TO_HAVE #3) reuses `cachedSqlTables` through the editor's completion names, so it is still two walks.
+These are the items from the code review (bugs, duplicates, dead code, inefficiency) that have not been done yet. Done so far: c7cdb26 (host bugs), 49a567d (panel bugs), 47c648e (`src/http.js` and the shared helpers), the dead code, the duplicates and the bugs (653c16a, c0e1c14 and the blockcache fix).
 
 ## Inefficiency
 - **`engine-host.js` `ensureTables`.** It resolves the tables a statement names one after another. Use `Promise.all`; `admin()` already runs the DDL one at a time.

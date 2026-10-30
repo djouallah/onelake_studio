@@ -32,6 +32,7 @@ const { pathToFileURL } = require('node:url');
 const fsp = require('node:fs/promises');
 const { fmtBytes, hasFilesArea, kindLabel, sqlNameOf, abfssUrl, stripBom } = require('./names');
 const { mapPool } = require('./http');
+const { walkCached } = require('./onelake');
 
 const cell = v => (v == null ? '' : typeof v === 'object' ? JSON.stringify(v) : String(v));
 function mdTable(cols, rows) {
@@ -300,30 +301,24 @@ function createAgent({ onelake, fabric, engine, bimPath, appDir, vendorDir, daxS
       const q = String(text).toLowerCase();
       const has = s => String(s || '').toLowerCase().includes(q);
       const rows = [];
-      const unseen = { workspaces: 0, items: 0 };
-      const ws = await onelake.cached.workspaces();
-      if (!ws) throw notCached(...IN_TREE.workspaces);
-      opts.seen.push(ws.at);
-      for (const w of ws.value) {
+      // The cache's one walk (onelake.js cached.all), as the editor's catalog reads it.
+      const all = await walkCached(onelake.cached);
+      if (!all) throw notCached(...IN_TREE.workspaces);
+      opts.seen.push(all.at);
+      const unseen = all.unseen;
+      for (const { name: w, items, models } of all.workspaces) {
         if (has(w)) rows.push(['workspace', '', w]);
-        const items = await onelake.cached.items(w);
-        if (!items) unseen.workspaces++;
-        for (const it of (items && items.value) || []) {
+        for (const it of items) {
           if (has(it.name)) rows.push([it.kind.toLowerCase(), w, it.name]);
-          const lh = { workspace: w, item: it.name };
-          const tables = await onelake.cached.tables(lh);
-          if (!tables) { unseen.items++; continue; }
-          for (const t of tables.value) {
+          for (const t of it.tables || []) {
             const tn = t.schema ? `${t.schema}.${t.table}` : t.table;
             if (has(t.table)) rows.push(['table', `${w}/${it.name}`, tn]);
-            const meta = await onelake.cached.table(lh, t);
-            for (const f of (meta && meta.value.schemaFields) || []) {
+            for (const f of (t.meta && t.meta.schemaFields) || []) {
               if (has(f.name)) rows.push(['column', `${w}/${it.name} ${tn}`, `${f.name} (${f.type})`]);
             }
           }
         }
-        const models = await onelake.cached.models(w);
-        for (const m of (models && models.value) || []) {
+        for (const m of models) {
           if (has(m.name) || has(m.description)) rows.push(['semantic model', w, m.name]);
           const path = bimPath(w, m.name);
           const b = await exists(path) ? await bimSummary(path) : null;

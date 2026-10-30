@@ -20,7 +20,7 @@ const { quoteIdent } = require('./sql');
 const { openPanel, closePanel, revealPanel, panelColumn, dockBelowEditor, postToPanel, postLive } = require('./panel');
 const { createCatalog } = require('./catalog');
 const { createStore } = require('./store');
-const { createOneLake } = require('./onelake');
+const { createOneLake, walkCached } = require('./onelake');
 const { createHostMethods } = require('./host');
 const { createFabric, bimFileName } = require('./fabric');
 const { LakehouseTree } = require('./tree');
@@ -1300,34 +1300,24 @@ async function activateInner(context) {
   cachedSqlTables = async () => {
     const { paths } = await agent.modules();
     const found = [];
-    const tables = [];   // { kind, w, it, lh, t }: every cached table, its metadata read below
-    const ws = await onelake.cached.workspaces();
-    for (const w of (ws && ws.value) || []) {
+    const all = await walkCached(onelake.cached);
+    for (const w of (all && all.workspaces) || []) {
       // Its semantic models, as the Fabric listing has them: semanticmodel.ws.model.
-      const models = await onelake.cached.models(w);
-      for (const m of (models && models.value) || []) found.push({ kind: MODEL_CATALOG, workspace: w, model: m.name, modelId: m.id });
-      const items = await onelake.cached.items(w);
-      for (const it of (items && items.value) || []) {
+      for (const m of w.models) found.push({ kind: MODEL_CATALOG, workspace: w.name, model: m.name, modelId: m.id });
+      for (const it of w.items) {
         const kind = sqlKind(it.kind);
         if (!kind) continue;
-        const lh = { workspace: w, item: it.name };
-        const listed = await onelake.cached.tables(lh);
-        for (const t of (listed && listed.value) || []) tables.push({ kind, w, it, lh, t });
+        for (const t of it.tables || []) {
+          const fields = t.meta && t.meta.schemaFields;
+          if (!fields || !fields.length) continue;
+          // itemDir: the item as the tree knows it (data.Lakehouse), to open the table there.
+          const named = { kind, workspace: w.name, item: displayName(it.name), itemDir: it.name, schema: t.schema || 'dbo', table: t.table };
+          found.push(t.meta.empty
+            ? { ...named, emptySql: paths.emptyTableSql(fields) }
+            : { ...named, columns: fields.map(f => ({ name: f.name, type: paths.icebergToDuckType(f.type) })) });
+        }
       }
     }
-    // A table's metadata is a file on disk each, and a large cache holds thousands: read a
-    // few at a time rather than one after another.
-    const metas = await mapPool(tables, ({ lh, t }) => onelake.cached.table(lh, t), 16);
-    tables.forEach(({ kind, w, it, t }, i) => {
-      const meta = metas[i];
-      const fields = meta && meta.value && meta.value.schemaFields;
-      if (!fields || !fields.length) return;
-      // itemDir: the item as the tree knows it (data.Lakehouse), to open the table there.
-      const named = { kind, workspace: w, item: displayName(it.name), itemDir: it.name, schema: t.schema || 'dbo', table: t.table };
-      found.push(meta.value.empty
-        ? { ...named, emptySql: paths.emptyTableSql(fields) }
-        : { ...named, columns: fields.map(f => ({ name: f.name, type: paths.icebergToDuckType(f.type) })) });
-    });
     // And every model kept as a view: Fabric's, or a model file opened from a lakehouse's Files/.
     for (const v of await semviews.list()) {
       if (v.schema) found.push({ kind: MODEL_CATALOG, workspace: v.schema, model: v.name });

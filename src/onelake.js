@@ -19,6 +19,7 @@
 // =============================================================================
 
 const { sqlStr } = require('./sql');
+const { mapPool } = require('./http');
 const names = require('./names');
 const deltalog = require('./deltalog');
 
@@ -71,6 +72,37 @@ function summarize(metadata, metadataLocation) {
  * @param {() => boolean} [o.prefetchEnabled]
  * @param {{ listSemanticModels(ws: string): Promise<object[]> }} [o.fabric]
  */
+// Everything a cache holds (`cached`: onelake's own, above), read from it alone: every workspace
+// with its items, their tables and each table's metadata (null when it was never read), and its
+// semantic models — or null with no workspace listing. `unseen` counts the listings not cached
+// yet. The metadata is a file each, and a large cache holds thousands: read a few at a time.
+// The one walk over the cache: the engine's catalog (extension.js cachedSqlTables, which the
+// query editor's completion and Go to read too) and the command line's find.
+async function walkCached(cached) {
+  const ws = await cached.workspaces();
+  if (!ws) return null;
+  const out = { at: ws.at, workspaces: [], unseen: { workspaces: 0, items: 0 } };
+  const metaOf = [];
+  for (const w of ws.value) {
+    const models = await cached.models(w);
+    const entry = { name: w, items: [], models: (models && models.value) || [] };
+    const items = await cached.items(w);
+    if (!items) out.unseen.workspaces++;
+    for (const it of (items && items.value) || []) {
+      const lh = { workspace: w, item: it.name };
+      const listed = await cached.tables(lh);
+      if (!listed) out.unseen.items++;
+      const tables = listed ? listed.value.map(t => ({ ...t, meta: null })) : null;
+      for (const t of tables || []) metaOf.push({ lh, t });
+      entry.items.push({ ...it, tables });
+    }
+    out.workspaces.push(entry);
+  }
+  const metas = await mapPool(metaOf, ({ lh, t }) => cached.table(lh, { schema: t.schema, table: t.table }), 16);
+  metaOf.forEach(({ t }, i) => { t.meta = metas[i] ? metas[i].value : null; });
+  return out;
+}
+
 function createOneLake({ catalog, store, prefetchEnabled = () => true, onHit = () => {},
                          tableTtlMs = undefined, fabric = null }) {
   // The store is the account's: a different sign-in swaps it (useStore) and every listener
@@ -418,4 +450,4 @@ function sliceRange(bytes, range) {
   return bytes.subarray(Number(a), b === '' ? bytes.length : Number(b) + 1);
 }
 
-module.exports = { createOneLake, summarize };
+module.exports = { createOneLake, summarize, walkCached };
