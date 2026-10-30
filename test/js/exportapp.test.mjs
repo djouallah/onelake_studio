@@ -88,6 +88,8 @@ test("rayfin.yml: the app's id and name, its redirects first", async () => {
   assert.match(y, /^name: sales-model-explore$/m);
   assert.match(y, /allowedRedirectUris:\n      - https:\/\/x-eastus\.webapp\.fabricapps\.net\n      - http:\/\/localhost:5173\n/);
   assert.throws(() => rayfinYml("name: x\n", "y"), /has no id/);
+  assert.equal(rayfinYml(y, "sales-model-explore", ["https://x-eastus.webapp.fabricapps.net", "http://localhost:5173"]), y,
+    "a redirect already listed is not listed again");
 });
 
 async function fixture(root) {

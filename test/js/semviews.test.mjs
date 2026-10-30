@@ -55,3 +55,15 @@ test("two workspaces' models of one name are two views", async () => {
     assert.deepEqual((await v.list()).map(x => x.schema).sort(), ["PROD", "Test WS"], "one per workspace, whatever the case");
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
+
+test("views kept at once are all kept", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "semviews-"));
+  try {
+    const bim = join(dir, "m.bim");
+    await writeFile(bim, '{"model":{}}');
+    const v = createSemViews({ dir: join(dir, "store"), onelake: { readBytes: async () => Buffer.from("{}") } });
+    v.useAccount("a");
+    await Promise.all(["a", "b", "c", "d", "e"].map(n => v.put(n, bim, "ws")));
+    assert.deepEqual((await v.list()).map(x => x.name).sort(), ["a", "b", "c", "d", "e"]);
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});

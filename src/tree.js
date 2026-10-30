@@ -413,7 +413,7 @@ class LakehouseTree {
 
     // Grouped by type: every workspace's semantic models, a few workspaces at a time.
     if (n.kind === 'allModels') {
-      if (!await this.hasFabric()) return [node('fabricSignIn', 'Sign in to list semantic models', { leaf: true })];
+      if (!await this.hasFabric()) return [node('fabricSignIn', 'Sign in to list semantic models', { leaf: true, group: 'models' })];
       const names = await this.onelake.workspaces();
       const rows = [];
       const failed = await eachOf(names, async ws => {
@@ -430,7 +430,7 @@ class LakehouseTree {
 
     // Grouped by type: every workspace's apps, a few workspaces at a time.
     if (n.kind === 'allApps') {
-      if (!await this.hasFabric()) return [node('fabricSignIn', 'Sign in to list apps', { leaf: true })];
+      if (!await this.hasFabric()) return [node('fabricSignIn', 'Sign in to list apps', { leaf: true, group: 'apps' })];
       const names = await this.onelake.workspaces();
       const rows = [];
       const failed = await eachOf(names, async ws => {
@@ -445,7 +445,7 @@ class LakehouseTree {
 
     if (n.kind === 'apps') {
       if (!await this.hasFabric()) {
-        return [node('fabricSignIn', 'Sign in to list apps', { leaf: true, workspace: n.workspace })];
+        return [node('fabricSignIn', 'Sign in to list apps', { leaf: true, group: 'apps', workspace: n.workspace })];
       }
       const apps = await this.onelake.apps(n.workspace,
         { fresh: this._isFresh(`apps|${n.workspace}`, n.workspace) });
@@ -456,7 +456,7 @@ class LakehouseTree {
 
     if (n.kind === 'models') {
       if (!await this.hasFabric()) {
-        return [node('fabricSignIn', 'Sign in to list semantic models', { leaf: true, workspace: n.workspace })];
+        return [node('fabricSignIn', 'Sign in to list semantic models', { leaf: true, group: 'models', workspace: n.workspace })];
       }
       // Cached like every other listing (onelake.js): drawn from disk, refreshed behind.
       const models = await this.onelake.models(n.workspace,

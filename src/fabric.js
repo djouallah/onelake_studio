@@ -114,7 +114,10 @@ function createFabric({ getFabricToken, apiBase = FABRIC_API,
   }
   async function workspaceId(name) {
     if (GUID.test(name)) return name;
-    const id = (await workspaces()).get(name);
+    const listedBefore = !!wsIds;
+    let id = (await workspaces()).get(name);
+    // A workspace made since an earlier listing: list once more before giving up.
+    if (!id && listedBefore) { wsIds = null; id = (await workspaces()).get(name); }
     if (!id) throw new Error(`The Fabric API does not list a workspace named "${name}"`);
     return id;
   }

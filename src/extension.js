@@ -219,9 +219,9 @@ function logBoot(m) {
 const openedWaiters = new Set();
 function whenOpened(label, ms = 60_000) {
   return new Promise(resolve => {
-    const w = { label, resolve };
+    const timer = setTimeout(() => { openedWaiters.delete(w); resolve(false); }, ms);
+    const w = { label, resolve: v => { clearTimeout(timer); resolve(v); } };
     openedWaiters.add(w);
-    setTimeout(() => { openedWaiters.delete(w); resolve(false); }, ms);
   });
 }
 
@@ -440,7 +440,7 @@ async function show(context, options) {
     onOpened: logOpened, onBoot: logBoot, engine: eng, build: buildInfo,
     host: createHostMethods({
       onelake, engine: eng, onStatus: message => postLive({ type: 'status', message }),
-      saveFile, semviews,
+      saveFile, semviews, modelsDir: modelsFolder(),
       exportExplore: x => (exportExplore ? exportExplore(x) : Promise.reject(new Error('OneLake Studio is still starting'))),
       nameTables: list => (nameModelTables ? nameModelTables(list) : Promise.reject(new Error('OneLake Studio is still starting'))),
       saveQuery: x => (saveQuery ? saveQuery(x) : Promise.reject(new Error('OneLake Studio is still starting'))),
@@ -465,6 +465,12 @@ async function show(context, options) {
   return true;
 }
 
+// Where a semantic model's local copy is kept (fetchModel), for the tree, the command line
+// and the panel alike: <folder>/<workspace>/<model>.bim.
+function modelsFolder() {
+  return join(require('node:os').homedir(), 'OneLakeStudio', 'semantic-models');
+}
+
 // Where a CSV or a OneLake file the panel saves goes: the editor's own save dialog,
 // starting in the workspace folder (or the home directory), then a plain write.
 async function saveFile(name, bytes) {
@@ -472,7 +478,7 @@ async function saveFile(name, bytes) {
   const base = folder ? folder.uri : vscode.Uri.file(require('node:os').homedir());
   const uri = await vscode.window.showSaveDialog({ defaultUri: vscode.Uri.joinPath(base, name) });
   if (!uri) return null;
-  await vscode.workspace.fs.writeFile(uri, bytes);
+  await vscode.workspace.fs.writeFile(uri, typeof bytes === 'function' ? await bytes() : bytes);
   return uri.fsPath;
 }
 
@@ -614,6 +620,8 @@ async function activateInner(context) {
   // Semantic models and the .bim export: Fabric's token for the model, the storage one
   // (the same cache the catalog uses) for the one file the export writes.
   const fabric = createFabric({ getFabricToken: fabricToken });
+  // Direct Lake item GUIDs -> the names the tree uses (nameModelTables), per account.
+  const itemNames = new Map();
 
   // What the extension knows about OneLake, kept on disk per account and served from there
   // first (onelake.js). One directory per identity — a hashed account id — so nobody is
@@ -647,6 +655,9 @@ async function activateInner(context) {
     const key = accountKey(session);
     if (key === storeAccount) return;
     storeAccount = key;
+    // Workspace and item GUIDs belong to the account's tenant: listed again for the new one.
+    fabric.reset();
+    itemNames.clear();
     // Another account's saved queries, too.
     queryAccount = queryAccountOf(session);
     await adoptLooseQueries().catch(() => {});
@@ -713,12 +724,6 @@ async function activateInner(context) {
   async function openInPanel(msg) {
     if (!await showWithProgress({ createIfNone: true })) return;
     postToPanel(msg);
-  }
-
-  // Where a semantic model's local copy is kept (fetchModel), for the tree and the command line
-  // alike: <folder>/<workspace>/<model>.bim.
-  function modelsFolder() {
-    return join(require('node:os').homedir(), 'OneLakeStudio', 'semantic-models');
   }
 
   // Saved queries: one .sql file each in ~/OneLakeStudio/queries/<account>/, beside the
@@ -840,9 +845,11 @@ async function activateInner(context) {
   // user who may only read the workspace opens and queries a model all the same; Export to
   // Fabric is the one write (exportExplore). A model that is not Direct Lake over OneLake is
   // refused, and nothing is kept. `fresh` reads Fabric again, over the local copy.
-  const fetching = new Map();   // `${workspace}|${model}`, lower-cased -> Promise<{ path, text }>
+  // `${workspace}|${model}|${fresh}`, lower-cased -> Promise<{ path, text }>: a fresh read never
+  // joins one that may answer from the local copy.
+  const fetching = new Map();
   function fetchModel(n, { fresh = false, say = () => {} } = {}) {
-    const key = `${n.workspace}|${n.model}`.toLowerCase();
+    const key = `${n.workspace}|${n.model}|${!!fresh}`.toLowerCase();
     if (!fetching.has(key)) fetching.set(key, (async () => {
       const path = bimPath(n);
       if (!fresh) {
@@ -1021,7 +1028,6 @@ async function activateInner(context) {
 
   // A semantic model's Direct Lake tables, which its expressions name by GUID, as SQL names:
   // [{ workspace, item (GUIDs), schema, table }] -> [name]. The Fabric API names each item once.
-  const itemNames = new Map();
   nameModelTables = async list => {
     const out = [];
     for (const x of list) {
@@ -1431,22 +1437,29 @@ async function activateInner(context) {
     // "live", so the panel, the engine and the cache carried on as the previous user.
     vscode.authentication.onDidChangeSessions(async e => {
       if (e.provider.id !== 'microsoft') return;
-      forgetToken();
-      const session = await getSession({ createIfNone: false }).catch(() => null);
-      await setSignedIn(!!session);
-      const before = storeAccount;
-      await rebindStore();
-      tree.redraw();
-      if (!session) {
-        closePanel();
-        await resetEngine();
-        vscode.window.showInformationMessage(
-          'OneLake Studio signed out — the Microsoft account is no longer available.');
-      } else if (engine && storeAccount !== before) {
-        closePanel();
-        await resetEngine();
-        vscode.window.showInformationMessage(
-          `OneLake Studio is now using ${session.account.label}.`);
+      try {
+        forgetToken();
+        const was = signedIn;
+        const session = await getSession({ createIfNone: false }).catch(() => null);
+        await setSignedIn(!!session);
+        const before = storeAccount;
+        await rebindStore();
+        // Another extension's sign-in, or a token refresh of the same account, changes nothing here.
+        if (was !== !!session || storeAccount !== before) tree.redraw();
+        if (!session) {
+          if (!was) return;
+          closePanel();
+          await resetEngine();
+          vscode.window.showInformationMessage(
+            'OneLake Studio signed out — the Microsoft account is no longer available.');
+        } else if (engine && storeAccount !== before) {
+          closePanel();
+          await resetEngine();
+          vscode.window.showInformationMessage(
+            `OneLake Studio is now using ${session.account.label}.`);
+        }
+      } catch (err) {
+        if (out) out.appendLine(`account change failed — ${(err && err.message) || err}`);
       }
     }),
 
@@ -1456,12 +1469,18 @@ async function activateInner(context) {
       if (e.affectsConfiguration('onelakeStudio.tenantId')) {
         // The cached token, the engine's secrets and the cache all belong to the tenant
         // being left.
-        forgetToken();
-        await rebindStore();
-        tree.redraw();
-        if (engine) {
-          closePanel();
-          await resetEngine();
+        try {
+          forgetToken();
+          fabric.reset();
+          itemNames.clear();
+          await rebindStore();
+          tree.redraw();
+          if (engine) {
+            closePanel();
+            await resetEngine();
+          }
+        } catch (err) {
+          if (out) out.appendLine(`tenant change failed — ${(err && err.message) || err}`);
         }
       }
       if (e.affectsConfiguration('onelakeStudio.catalogTtlMinutes') ||

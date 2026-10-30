@@ -23,7 +23,7 @@ function fixture() {
       return { method };
     },
     openTable: async target => { calls.push(["openTable", target]); return { ident: "x" }; },
-    copyToTemp: async (key, bytes) => { calls.push(["copy", key, bytes.length]); return "/tmp/copy"; },
+    copyToTemp: async (key, bytes) => { if (typeof bytes === "function") bytes = await bytes(); calls.push(["copy", key, bytes.length]); return "/tmp/copy"; },
   };
   const methods = createHostMethods({ onelake, engine });
   const ask = async (method, args) => {
@@ -89,7 +89,7 @@ test("saving goes through the host's save function: text as given, a OneLake fil
   const saved = [];
   const onelake = { readBytes: async (ws, path) => Buffer.from(`bytes of ${ws}/${path}`) };
   const methods = createHostMethods({ onelake, engine: {},
-    saveFile: async (name, bytes) => { saved.push([name, Buffer.from(bytes).toString()]); return `/out/${name}`; } });
+    saveFile: async (name, bytes) => { if (typeof bytes === "function") bytes = await bytes(); saved.push([name, Buffer.from(bytes).toString()]); return `/out/${name}`; } });
   const ask = async args => { const out = []; await answer({ methods, engine: {} }, { id: 1, method: "host.saveFile", args }, m => out.push(m)); return out[0]; };
   assert.equal((await ask([{ name: "q.csv", text: "a,b\r\n1,2" }])).value, "/out/q.csv");
   assert.equal((await ask([{ name: "../../etc/x:y.parquet", workspace: "ws", path: "lh/Files/x.parquet" }])).value,

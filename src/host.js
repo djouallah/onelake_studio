@@ -19,6 +19,7 @@
 // real methods, exactly as panel.js does.
 // =============================================================================
 
+const { relative, resolve, isAbsolute } = require('node:path');
 // A target from the page, reduced to the strings it may carry.
 const { sqlNameOf } = require('./names');
 
@@ -48,7 +49,7 @@ const ENGINE_METHODS = new Set(['query', 'stream', 'cancel', 'info']);
  *        time) and kept as a view: { name, schema, path, text }
  */
 function createHostMethods({ onelake, engine, onStatus = () => {}, saveFile = null, semviews = null, exportExplore = null,
-                             nameTables = null, saveQuery = null, openModel = null }) {
+                             nameTables = null, saveQuery = null, openModel = null, modelsDir = null }) {
   const views = () => { if (!semviews) throw new Error('semantic views are not available here'); return semviews; };
   return {
     // Export to Fabric (exportapp.js): the model's text (to check it), where it lives in
@@ -74,7 +75,13 @@ function createHostMethods({ onelake, engine, onStatus = () => {}, saveFile = nu
     'semantic.views': () => views().texts(),
     'semantic.keep': async x => {
       if (!x.schema) throw new Error('a semantic model is kept in its workspace');
-      return views().put(String(x.name), String(x.path), String(x.schema));
+      const path = String(x.path);
+      // The page names a model's local copy or a OneLake file — never any other file on disk.
+      if (modelsDir && !/^abfss:\/\//i.test(path)) {
+        const rel = relative(resolve(modelsDir), resolve(path));
+        if (!rel || rel.startsWith('..') || isAbsolute(rel)) throw new Error(`${path}: not a semantic model's local copy`);
+      }
+      return views().put(String(x.name), path, String(x.schema));
     },
     // A semantic model a query names and the page has no view of: opened and kept (openModel).
     'semantic.open': async x => {
@@ -122,16 +129,18 @@ function createHostMethods({ onelake, engine, onStatus = () => {}, saveFile = nu
     // engine's temp directory; the page gets the path, never the bytes.
     'onelake.localCopy': async x => {
       const ws = String(x.workspace), path = String(x.path);
-      return engine.copyToTemp(`${ws}/${path}`, await onelake.readBytes(ws, path));
+      // Bytes are read only when this session has no copy yet.
+      return engine.copyToTemp(`${ws}/${path}`, () => onelake.readBytes(ws, path));
     },
     // Save, through the editor's save dialog: text the page made (a CSV), or a OneLake
     // file the host reads itself — its bytes never cross into the page to be saved.
     'host.saveFile': async x => {
       if (!saveFile) throw new Error('saving is not available here');
       const name = String(x.name || 'download').replace(/[\\/:*?"<>|]+/g, '_');
+      // A OneLake file is read after the dialog: a cancelled save downloads nothing.
       const bytes = typeof x.text === 'string'
         ? Buffer.from(x.text, 'utf8')
-        : await onelake.readBytes(String(x.workspace), String(x.path));
+        : () => onelake.readBytes(String(x.workspace), String(x.path));
       return saveFile(name, bytes);
     },
     // Save Query: the SQL box's text as a saved query (the tree's Queries), over the query

@@ -1310,10 +1310,14 @@ window.addEventListener('message', async e => {
     // A semantic model the extension downloaded to this machine, handed over as text.
     else if (m.type === 'open-model') {
       const t0 = Date.now();
-      await openModelView({ name: String(m.name || 'model.bim'), path: String(m.path || ''),
-                            modelWorkspace: m.modelWorkspace ? String(m.modelWorkspace) : null,
-                            modelName: m.modelName ? String(m.modelName) : null }, String(m.text || ''));
-      reportOpened('file', String(m.name || 'model.bim'), Date.now() - t0);
+      // Reported even when it fails: the host's progress notification waits for this.
+      try {
+        await openModelView({ name: String(m.name || 'model.bim'), path: String(m.path || ''),
+                              modelWorkspace: m.modelWorkspace ? String(m.modelWorkspace) : null,
+                              modelName: m.modelName ? String(m.modelName) : null }, String(m.text || ''));
+      } finally {
+        reportOpened('file', String(m.name || 'model.bim'), Date.now() - t0);
+      }
     }
     // A saved query from the tree's Queries: into the SQL box, ready to run.
     else if (m.type === 'open-query') {

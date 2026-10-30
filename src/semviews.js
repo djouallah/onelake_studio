@@ -34,19 +34,22 @@ const sameView = (v, name, schema) =>
 
 function createSemViews({ dir, onelake, onChange = () => {} }) {
   let account = 'signed-out';
+  // put() reads, changes and writes the file: one at a time, each with its own temp file.
+  let chain = Promise.resolve();
+  let tmpSeq = 0;
   const fileOf = () => join(dir, `${account}.json`);
 
-  async function list() {
+  async function list(file = fileOf()) {
     try {
-      const j = JSON.parse(await fsp.readFile(fileOf(), 'utf8'));
+      const j = JSON.parse(await fsp.readFile(file, 'utf8'));
       return Array.isArray(j) ? j : [];
     } catch (_) { return []; }
   }
-  async function save(entries) {
-    await fsp.mkdir(dirname(fileOf()), { recursive: true });
-    const tmp = `${fileOf()}.${process.pid}.tmp`;
+  async function save(entries, file) {
+    await fsp.mkdir(dirname(file), { recursive: true });
+    const tmp = `${file}.${process.pid}.${++tmpSeq}.tmp`;
     await fsp.writeFile(tmp, JSON.stringify(entries, null, 2));
-    await fsp.rename(tmp, fileOf());
+    await fsp.rename(tmp, file);
   }
 
   async function readBim(path) {
@@ -76,9 +79,14 @@ function createSemViews({ dir, onelake, onChange = () => {} }) {
     async put(name, path, schema = null) {
       const text = await readBim(path);
       const sch = schema ? String(schema) : null;
-      const entries = (await list()).filter(v => !sameView(v, name, sch));
-      entries.push({ name: String(name), schema: sch, path, created: new Date().toISOString() });
-      await save(entries);
+      const file = fileOf();   // the account it was kept under, should that move meanwhile
+      const write = chain.then(async () => {
+        const entries = (await list(file)).filter(v => !sameView(v, name, sch));
+        entries.push({ name: String(name), schema: sch, path, created: new Date().toISOString() });
+        await save(entries, file);
+      });
+      chain = write.catch(() => {});
+      await write;
       onChange();
       return { name: String(name), schema: sch, path, text };
     },

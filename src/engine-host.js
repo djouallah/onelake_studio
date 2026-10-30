@@ -616,6 +616,11 @@ function createEngineHost({ extensionDir, onLog = () => {}, onWarn = () => {}, g
   }
   // The host's cache moved: the next statement that reads the catalog lists it again.
   function catalogChanged() { catalogStale = true; }
+  // A DROP (sql.js lets views, tables and schemas go) may have taken views `made` still
+  // counts as there: every one is made again when next named, and the catalog listed again.
+  function afterStatement(sql) {
+    if (/^\s*drop\s/i.test(sql)) { made.clear(); catalogStale = true; }
+  }
 
   // What a statement needs before it runs: the catalog when it reads the catalog, the tables
   // it names — and then the statement itself, or its whole-path twin (sql.js catalogStatement).
@@ -714,7 +719,8 @@ function createEngineHost({ extensionDir, onLog = () => {}, onWarn = () => {}, g
     async query(sql) {
       assertReadOnly(sql);
       await init();
-      return withAuthRetry(async () => runAll(await prepare(sql)));
+      try { return await withAuthRetry(async () => runAll(await prepare(sql))); }
+      finally { afterStatement(sql); }
     },
 
     async stream(sql, emit) {
@@ -725,8 +731,10 @@ function createEngineHost({ extensionDir, onLog = () => {}, onWarn = () => {}, g
       // is still refreshed up front, which is what covers the ordinary expiry case.
       await ensureAuth();
       const run = await withAuthRetry(() => prepare(sql));
-      const numRows = await withConn(c => runStreaming(c, run, b => emit(b)));
-      return { done: true, numRows };
+      try {
+        const numRows = await withConn(c => runStreaming(c, run, b => emit(b)));
+        return { done: true, numRows };
+      } finally { afterStatement(sql); }
     },
 
     async cancel() {
@@ -760,6 +768,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onWarn = () => {}, g
       await init();
       return await withAuthRetry(async () => runAll(await prepare(sql), agentLive));
     } catch (e) { throw scrub(e, authToken || token); }
+    finally { afterStatement(sql); }
   }
 
   async function close() {
@@ -791,6 +800,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onWarn = () => {}, g
   async function copyToTemp(key, bytes) {
     await init();
     if (copies.has(key)) return copies.get(key);
+    if (typeof bytes === 'function') bytes = await bytes();
     const file = join(tmpDir, `copy_${++tmpSeq}_${String(key).replace(/[^\w.-]/g, '_').slice(-80)}`);
     await fsp.writeFile(file, bytes);
     const path = file.replace(/\\/g, '/');

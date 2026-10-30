@@ -280,6 +280,24 @@ test("a changed listing is reported as WHICH listing, and survives a store swap"
   assert.equal(seen.length, 2);
 });
 
+test("a listener let go twice lets go of itself only", async () => {
+  const catalog = fakeCatalog();
+  let clock = 1_000;
+  const ol = createOneLake({ catalog, store: createStore({ dir: null, ttlMs: 10, now: () => clock }) });
+  const a = [], b = [];
+  const offA = ol.onChanged(c => a.push(c));
+  ol.onChanged(c => b.push(c));
+  offA();
+  offA();
+  await ol.items("ws");
+  catalog.listItems = async () => [{ name: "new.Lakehouse", kind: "Lakehouse" }];
+  clock += 100;
+  await ol.items("ws");
+  await new Promise(r => setTimeout(r, 20));
+  assert.equal(a.length, 0);
+  assert.equal(b.length, 1, "the other listener still hears");
+});
+
 test("a workspace's semantic models are a cached listing: Fabric is asked once", async () => {
   let asked = 0;
   const fabric = { listSemanticModels: async ws => { asked++; return [{ id: "m1", name: `model of ${ws}` }]; } };

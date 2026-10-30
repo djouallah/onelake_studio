@@ -125,9 +125,14 @@ function rayfinYml(text, name, redirects = []) {
   };
   swap(/^id: .*$/m, `id: ${name}`, 'id');
   swap(/^name: .*$/m, `name: ${name}`, 'name');
-  if (redirects.length) {
+  // Only the redirects not listed yet: an as-is folder's rayfin.yml already has the last
+  // publish's, and every publish would list them once more.
+  const block = /^[ \t]*allowedRedirectUris:[ \t]*\r?\n((?:[ \t]+- .*\r?\n)*)/m.exec(out);
+  const listed = new Set(block ? block[1].split(/\r?\n/).map(l => l.replace(/^[ \t]+- /, '').trim()) : []);
+  const fresh = [...new Set(redirects)].filter(r => !listed.has(r));
+  if (fresh.length) {
     swap(/^([ \t]*)allowedRedirectUris:[ \t]*\r?\n/m,
-      m => m + redirects.map(r => `${/^([ \t]*)/.exec(m)[1]}  - ${r}\n`).join(''), 'allowedRedirectUris');
+      m => m + fresh.map(r => `${/^([ \t]*)/.exec(m)[1]}  - ${r}\n`).join(''), 'allowedRedirectUris');
   }
   return out;
 }
@@ -176,7 +181,8 @@ rayfin/.deployments.json
 async function isEmptyOrOurs(dir) {
   const entries = await fsp.readdir(dir).catch(e => (e.code === 'ENOENT' ? null : Promise.reject(e)));
   if (entries == null || !entries.length) return { exists: entries != null, marker: null };
-  const marker = await fsp.readFile(join(dir, MARKER), 'utf8').then(JSON.parse, () => null);
+  const marker = await fsp.readFile(join(dir, MARKER), 'utf8')
+    .then(t => { try { return JSON.parse(t); } catch { return null; } }, () => null);
   if (!marker) throw new Error(`${dir} is not empty and was not written by Export to Fabric: rename it, or open another folder`);
   return { exists: true, marker };
 }

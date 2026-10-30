@@ -79,7 +79,7 @@ function createOneLake({ catalog, store, prefetchEnabled = () => true, onHit = (
   function listen(ev, fn) {
     const sub = { ev, fn, off: store.on(ev, fn) };
     subs.push(sub);
-    return () => { sub.off(); subs.splice(subs.indexOf(sub), 1); };
+    return () => { const i = subs.indexOf(sub); if (i >= 0) { sub.off(); subs.splice(i, 1); } };
   }
   function useStore(next) {
     for (const sub of subs) { sub.off(); sub.off = next.on(sub.ev, sub.fn); }
