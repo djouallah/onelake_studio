@@ -748,16 +748,22 @@ async function activateInner(context, ready) {
     vscode.window.tabGroups.onDidChangeTabs(e => newQueries.tabsClosed(e.closed.map(tabUri).filter(Boolean))),
     // Save Query: a new query kept under Queries as "Query N", and its editor is that file from
     // then on. A saved query's editor just saves.
-    vscode.commands.registerCommand('onelakeStudio.saveQuery', async () => {
-      const ed = vscode.window.activeTextEditor;
-      if (!ed || !isQuery(ed.document)) return;
-      if (!ed.document.isUntitled) { await ed.document.save(); return; }
+    vscode.commands.registerCommand('onelakeStudio.saveQuery', async uri => {
+      // From the title bar the document comes with the command: the button shows on a query's
+      // group while the panel has the focus, and then no text editor is the active one.
+      const active = vscode.window.activeTextEditor;
+      const target = uri instanceof vscode.Uri ? uri : active && active.document.uri;
+      if (!target) return;
+      const doc = await vscode.workspace.openTextDocument(target);
+      if (!isQuery(doc)) return;
+      if (!doc.isUntitled) { await doc.save(); return; }
       try {
         await ready;
-        // Closing the active editor is how it becomes the file: never another one moved to meanwhile.
-        const now = vscode.window.activeTextEditor;
-        if (!now || now.document !== ed.document) return;
-        const saved = await saveNewQuery(ed.document.getText());
+        const saved = await saveNewQuery(doc.getText());
+        // Closing the active editor is how it becomes the file, so its own editor is made active
+        // first, in the group its tab is in: never the panel, or whatever was moved to meanwhile.
+        const group = vscode.window.tabGroups.all.find(g => g.tabs.some(t => tabUri(t) === doc.uri.toString()));
+        const ed = await vscode.window.showTextDocument(doc, { viewColumn: group ? group.viewColumn : undefined, preview: false });
         const column = ed.viewColumn;
         await vscode.commands.executeCommand('workbench.action.revertAndCloseActiveEditor');
         await vscode.window.showTextDocument(vscode.Uri.file(saved.path), { viewColumn: column, preview: false });
