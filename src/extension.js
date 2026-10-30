@@ -933,7 +933,7 @@ async function activateInner(context) {
     return bindVariables(sql, variables);
   }
 
-  async function runInPanel(sql, { plan, title, column }) {
+  async function runInPanel(sql, { plan, title, column, key }) {
     // SET VARIABLE is the editor's, not the engine's: kept here and answered at once.
     const set = setVariable(sql);
     if (set) {
@@ -950,7 +950,7 @@ async function activateInner(context) {
     // A panel closed before it answered never will: the oldest wait is let go.
     if (runs.size > 20) { const [old] = runs.keys(); runs.get(old)(null); runs.delete(old); }
     const at = new Date().toISOString(), requestsBefore = oneLakeRequests;
-    const sent = await openInPanel({ type: plan ? 'plan-sql' : 'run-sql', id, sql, title },
+    const sent = await openInPanel({ type: plan ? 'plan-sql' : 'run-sql', id, sql, title, key },
                                    { beside: true, from: column, below: resultsBelow() });
     if (!sent) { runs.delete(id); return null; }
     const r = await answer;
@@ -1084,6 +1084,11 @@ async function activateInner(context) {
   context.subscriptions.push(
     ...registerQueryEditor({ isQuery, run: runInPanel, names: completionNames }),
     vscode.window.onDidChangeActiveTextEditor(setQueryContext),
+    // Each query editor has its own last result: moving to one shows it in the panel, when the
+    // panel is showing a query (not a table or a file someone opened).
+    vscode.window.onDidChangeActiveTextEditor(ed => {
+      if (ed && isQuery(ed.document)) postLive({ type: 'show-kept', key: ed.document.uri.toString() });
+    }),
     // A language change closes the document and opens it again at once: forgotten only when it
     // is really gone, and the active editor's keys and buttons are worked out again.
     vscode.workspace.onDidCloseTextDocument(doc => {

@@ -28,7 +28,7 @@ const same = (a, b) => String(a).toLowerCase() === String(b).toLowerCase();
 /**
  * @param {object} o
  * @param {(doc: vscode.TextDocument) => boolean} o.isQuery     a query's document
- * @param {(sql: string, x: {plan: boolean, title: string, column: number|undefined}) =>
+ * @param {(sql: string, x: {plan: boolean, title: string, column: number|undefined, key: string}) =>
  *          Promise<{ok: boolean, error: string|null, rewritten: boolean}|null>} o.run
  *        the statement, run (or planned) in the panel; null when it never got there
  * @param {() => Promise<{tables: object[], models: object[]}>} o.names
@@ -65,7 +65,8 @@ function registerQueryEditor({ isQuery, run, names }) {
     const sql = doc.getText().slice(span.start, span.end);
     const version = doc.version;
     diagnostics.delete(doc.uri);
-    const r = await run(sql, { plan, title: titleOf(doc), column: editor ? editor.viewColumn : undefined });
+    const r = await run(sql, { plan, title: titleOf(doc), column: editor ? editor.viewColumn : undefined,
+                               key: doc.uri.toString() });
     if (!r || r.ok || !r.error || doc.isClosed || doc.version !== version) return;
     // Where DuckDB says the error is, as the statement is written; a semantic model's query ran
     // as the SQL it compiles to, whose positions are not the editor's: its first line then.

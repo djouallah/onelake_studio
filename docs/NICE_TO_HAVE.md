@@ -21,8 +21,9 @@ the panel holds no token, and table Pivot is only a SQL starter.
 ## Later
 9. ~~**Quick chart of any result**~~ Done.
 10. ~~**Query parameters**~~ Done.
-11. **How old a result is** ("from cache, 3 min old"). Keep the last result of each saved query, so
-    reopening the query shows its result at once.
+11. ~~**How old a result is**~~ Done: each query editor keeps its last result for the session, shown
+    again with when it ran. Left: keeping them across sessions, and how old the table metadata
+    behind a result was (from the cache, read N min ago).
 
 ## Out of scope
 - DAX queries (`EVALUATE`): the contract is SQL only. A semantic model is read with

@@ -178,6 +178,7 @@ async function goToLakehouse(workspace, item) {
 // lakehouse behind it offered a Save that could only fail.
 function leaveLakehouse(opts) {
   closeModelView();
+  shownKey = null;
   ++selSeq;                     // a load still under way belongs to the lakehouse being left
   currentSql = '';
   activeFile = null;
@@ -476,6 +477,7 @@ async function selectImage(file) {
 // ---------------------------------------------------------------------------
 async function selectTable(t) {
   closeModelView();
+  shownKey = null;
   const my = ++selSeq;
   // A click is also a verdict on whatever is still running: stop it now.
   engine.cancelLoad();
@@ -1131,6 +1133,43 @@ async function saveActive() {
 // Queries: written in VS Code's editor (saved ones are the tree's Queries, .sql files the host
 // keeps), run here.
 // ---------------------------------------------------------------------------
+// Each query editor's last result (by its document), shown again at once when the editor is
+// switched to, and said how old it is: the newest few, as long as they hold few enough rows.
+const KEPT_MAX = 20, KEPT_ROWS = 500_000;
+const kept = new Map();   // key -> { res, sql, title, at }
+let shownKey = null;      // the query editor whose result is on screen
+function keepResult(key, entry) {
+  kept.delete(key);
+  kept.set(key, entry);
+  let rows = 0;
+  for (const e of [...kept.values()].reverse()) rows += e.res.rows.length;
+  for (const [k, e] of kept) {
+    if (kept.size <= KEPT_MAX && rows <= KEPT_ROWS) break;
+    if (k === key) continue;
+    kept.delete(k);
+    rows -= e.res.rows.length;
+  }
+}
+const agoText = t => {
+  const s = (Date.now() - t) / 1000;
+  return s < 60 ? 'just now' : s < 3600 ? `${Math.round(s / 60)} min ago` : `at ${new Date(t).toLocaleTimeString()}`;
+};
+function showKept(key) {
+  const k = kept.get(key);
+  // Only over a query's result: a table or a file opened from the tree stays on screen.
+  if (!k || key === shownKey || activeTableRef || activeFile || modelView) return;
+  enterQuery(k.title);
+  shownKey = key;
+  renderResults(k.res);
+  lastResult = k.res;
+  currentSql = k.sql;
+  $('csvBtn').disabled = !k.res.rows.length;
+  $('profileBtn').disabled = !k.res.rows.length;
+  $('chartBtn').disabled = !k.res.rows.length;
+  setSaveLabel();
+  setStatus(`${k.res.rows.length.toLocaleString('en')} row(s), run ${agoText(k.at)} — Ctrl+Enter runs it again.`, 'ok');
+}
+
 // A query from the editor (run-sql, plan-sql): the panel is the query's now, not the last
 // table's or file's. A query names its tables Kind.workspace.item.schema.table, so it runs as
 // it is, whatever was selected before.
@@ -1312,11 +1351,16 @@ window.addEventListener('message', async e => {
     // went goes back to the editor, which marks an error where DuckDB says it is.
     else if (m.type === 'run-sql' || m.type === 'plan-sql') {
       enterQuery(String(m.title || ''));
+      shownKey = m.key ? String(m.key) : null;
       const ok = m.type === 'plan-sql' ? await showPlan(String(m.sql ?? '')) : await runQuery({ sql: String(m.sql ?? '') });
+      if (ok && m.type === 'run-sql' && shownKey && lastResult) {
+        keepResult(shownKey, { res: lastResult, sql: String(m.sql ?? ''), title: String(m.title || ''), at: Date.now() });
+      }
       engine.queryDone({ id: m.id, ok, ...lastRun }).catch(() => {});
     }
     else if (m.type === 'reset') { await engineReady; await leaveLakehouse(); lakehouse = null; }
     else if (m.type === 'reads') showReads(m);
+    else if (m.type === 'show-kept') showKept(String(m.key || ''));
     // The webview's context menu on the grid: Copy, with headers, as CSV, Markdown or JSON.
     else if (m.type === 'grid-copy') { if (grid) grid.copy(String(m.as || 'tsv')); }
     else if (m.type === 'grid-open') {

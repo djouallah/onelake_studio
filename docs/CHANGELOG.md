@@ -28,6 +28,8 @@
 - **Time travel on an Iceberg table:** History's Query opens a snapshot's rows in a query editor
   (`iceberg_scan(…, snapshot_from_id = …)`), and each snapshot says how its row count and its
   columns differ from the table now.
+- **Each query editor keeps its last result.** Moving to another query's editor shows its result
+  in the panel at once, and says when it ran (unless the panel is showing a table or a file).
 - **Query variables:** `SET VARIABLE year = 2024` run from a query editor keeps a value for the
   session, and `getvariable('year')` in a query reads it; one never set is asked for the first time.
   **Clear Query Variables** forgets them.
