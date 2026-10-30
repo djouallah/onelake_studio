@@ -469,6 +469,15 @@ async function show(context, options) {
 
 // Where a semantic model's local copy is kept (fetchModel), for the tree, the command line
 // and the panel alike: <folder>/<workspace>/<model>.bim.
+// What a new query (the Queries node's +) starts with. SHOW ALL TABLES is answered from the
+// cache (cachedSqlTables), so it lists only the tables seen in the tree.
+const NEW_QUERY_SQL = [
+  '-- New query. A table is named lakehouse.workspace.item.schema.table.',
+  '-- This lists only the tables cached on this machine: expand a lakehouse in the OneLake tree to add its tables.',
+  'SHOW ALL TABLES;',
+  '',
+].join('\n');
+
 function modelsFolder() {
   return join(os.homedir(), 'OneLakeStudio', 'semantic-models');
 }
@@ -1353,9 +1362,10 @@ async function activateInner(context) {
       } catch (e) { showError(`Could not delete ${n.label}: ${e.message}`); }
       tree.queriesChanged();
     }),
-    // An empty SQL box, as a query of its own: Save Query keeps it under Queries as "Query N".
+    // A new query of its own, started with what can be queried: Save Query keeps it under
+    // Queries as "Query N". Not run: one Ctrl+Enter does that.
     vscode.commands.registerCommand('onelakeStudio.newQuery', async () => {
-      await openInPanel({ type: 'open-query', name: '', sql: '' });
+      await openInPanel({ type: 'open-query', name: '', sql: NEW_QUERY_SQL });
     }),
     vscode.commands.registerCommand('onelakeStudio.revealQueries', async () => {
       if (!queriesFolder()) return;

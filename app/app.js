@@ -1214,7 +1214,7 @@ function openQuery(name, sql) {
   $('sqlEditor').focus();
   setBusy(false);
   setStatus(name ? `${name} — Run ▶ (Ctrl+Enter) to run it.`
-    : 'A new query — write SQL, Run ▶ (Ctrl+Enter), and Save Query keeps it under Queries.');
+    : 'A new query — Run ▶ (Ctrl+Enter) to list the cached tables, or write your own; Save Query keeps it under Queries.');
 }
 
 // Save Query, one click: over the query that is open, else as a new "Query N" — the tree's
