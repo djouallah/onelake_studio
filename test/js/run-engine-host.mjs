@@ -115,24 +115,9 @@ console.log("--- engine-host ---");
   try { await h.call("query", "SELECT 1"); } catch (_) { argsRejected = true; }
   ok(argsRejected, "non-array args are refused, not spread");
 
-  // openTable without a credential: the two failure shapes a harness can reach.
-  let noSource = "";
-  try { await h.openTable({ workspace: "w", item: "i", schema: "dbo", table: "t" }); }
-  catch (e) { noSource = e.message; }
-  ok(/token source/.test(noSource), `openTable without a token source says so — "${noSource}"`);
-
   await h.close();
 }
 
-{
-  // An engine WITH a token source that answers null: the signed-out shape.
-  const h = createEngineHost({ extensionDir: EXT_DIR, getToken: async () => null });
-  let signedOut = "";
-  try { await h.openTable({ workspace: "w", item: "i", schema: "dbo", table: "t" }); }
-  catch (e) { signedOut = e.message; }
-  ok(/Not signed in/.test(signedOut), `openTable while signed out says so — "${signedOut}"`);
-  await h.close();
-}
 
 // =============================================================================
 // Part 3 — the real page, over the real bridge

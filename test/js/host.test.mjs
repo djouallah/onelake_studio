@@ -22,7 +22,6 @@ function fixture() {
       if (method === "stream") { emit({ fields: [], rows: [], numRows: 0 }); return { numRows: 0 }; }
       return { method };
     },
-    openTable: async target => { calls.push(["openTable", target]); return { ident: "x" }; },
     copyToTemp: async (key, bytes) => { if (typeof bytes === "function") bytes = await bytes(); calls.push(["copy", key, bytes.length]); return "/tmp/copy"; },
   };
   const methods = createHostMethods({ onelake, engine });
@@ -33,17 +32,6 @@ function fixture() {
   };
   return { calls, ask };
 }
-
-test("a table is opened by name: a location the page sends never reaches the engine", async () => {
-  const { calls, ask } = fixture();
-  const out = await ask("onelake.openTable", [{
-    workspace: "ws", item: "lh.Lakehouse", schema: "dbo", table: "t",
-    metadataLocation: "file:///etc/passwd.metadata.json",
-  }]);
-  assert.deepEqual(out, [{ type: "result", id: 7, value: { ident: "x" } }]);
-  const opened = calls.find(c => c[0] === "openTable")[1];
-  assert.deepEqual(opened, { workspace: "ws", item: "lh.Lakehouse", schema: "dbo", table: "t" });
-});
 
 test("a table's metadata carries its SQL name", async () => {
   const { ask } = fixture();

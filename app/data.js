@@ -48,8 +48,8 @@ export function createEngine({
   const resources = new Map();      // cache key -> { ident, views[], attachments[], ... }, for release()
   const viewNames = new Map();      // view identifier -> the cache key that owns it
   // A table is read in tiers and each one's answer is kept: statTable (metadata only) ->
-  // peekTable (first rows) -> loadTable (a real view). These hold no DuckDB state, so
-  // only a refresh clears them (see reset()).
+  // peekTable (first rows); a query names it, and the host makes its view. These hold no
+  // DuckDB state, so only a refresh clears them (see reset()).
   const resolvedC = new Map();      // cache key -> the table's metadata summary
   const peekC = new Map();          // cache key -> the first rows, once per snapshot
 
@@ -225,9 +225,8 @@ export function createEngine({
     const key = fileKey(lh, file);
     // Supersede first, even on a cache hit: the click means "show me THIS", so whatever
     // is still loading stands down instead of repainting the screen later with a table
-    // the user has left. Same discipline as loadTable, for the same reason — a file
-    // opened during a table load used to leave both running and the UI split between
-    // them.
+    // the user has left. A file opened during a table load used to leave both running and
+    // the UI split between them.
     await cancelLoad();
     const gen = loadGen;
     const check = () => { if (gen !== loadGen) throw cancelledError(); };
@@ -490,7 +489,6 @@ export function createEngine({
     // does — otherwise a previous table's open keeps spending on files nobody wants.
     await cancelLoad();
     const key = tableKey(lh, t);
-    if (loaded.has(key)) return loaded.get(key);   // a fully opened table knows strictly more
     const label = labelFor(t);
     // Captured, not read live: the resolve can now sit in a retry loop, and a superseded
     // selection must not stamp "Waiting for Fabric… <old table>" over the new one.
@@ -570,68 +568,6 @@ export function createEngine({
     const rows = (res.rows || []).slice(0, MAX_ROWS).map(r => normalizeRow(r, fields));
     return { fields, types, rows, numRows: res.numRows || rows.length, truncated: false,
              limit: MAX_ROWS, fileCount: (resolved.stats || {}).totalDataFiles };
-  }
-
-  // The table, as DuckDB can select from it — iceberg_scan over the metadata file the
-  // host's store holds. The page names the table; the location never comes from here.
-  async function attachedIdent(lh, t) {
-    const { ident } = await callHost("onelake.openTable", [{
-      workspace: lh.workspace, item: lh.item, schema: t.schema || "", table: t.table,
-    }]);
-    return ident;
-  }
-
-  // ---------------------------------------------------------------------------
-  // Tier 3: a real queryable view.
-  // ---------------------------------------------------------------------------
-  // The view is the host's: it is the table's SQL name (lakehouse.ws.item.schema.table), the
-  // one any query names it by, made over the metadata file the host's store holds. The host
-  // makes it again when a query names it after the table moved on, so the page never drops it.
-  const loadTable = (lh, t) => openTableView(lh, t);
-
-  async function openTableView(lh, t) {
-    // Keyed per lakehouse: the engine outlives the user's choice of one, and two
-    // lakehouses can both hold a dbo.sales.
-    const key = tableKey(lh, t);
-    // A selection supersedes whatever came before — even on a cache hit, because the click
-    // means "show me THIS" and the in-flight load must stand down rather than repaint the
-    // screen later.
-    await cancelLoad();
-    if (loaded.has(key)) return loaded.get(key);
-    const gen = loadGen;
-    const check = () => { if (gen !== loadGen) throw cancelledError(); };
-    const status = statusFor(gen);
-
-    const label = labelFor(t);
-    const warnings = [];
-
-    status(`Resolving ${label}…`);
-    // Free on the normal path: the Stats tier already resolved and cached this.
-    const resolved = await resolveTable(lh, t, label, check);
-    check();
-
-    let ident, columns;
-    try {
-      status(`Opening ${label}…`);
-      ident = await attachedIdent(lh, t);
-      check();
-      columns = await describe(ident);
-    } catch (e) {
-      // A stop is not a failure. Superseded while failing is also not this load's
-      // problem — and some of the ways it can fail here ARE the supersession.
-      if (e.cancelled) throw e;
-      if (gen !== loadGen) throw cancelledError();
-      throw new Error(`Could not open ${label}: ${e.message}`);
-    }
-
-    const stats = resolved.stats || {};
-    const info = { label, ident, columns, fileCount: stats.totalDataFiles, stage: "loaded",
-                   posDeletes: stats.totalDeleteFiles || 0, eqDeletes: 0,
-                   totalRecords: resolved.totalRecords, stats, warnings };
-
-    loaded.set(key, info);
-    status(describeLoad(info));
-    return info;
   }
 
   // One sentence about how the table was opened. Position deletes that applied cleanly are
@@ -753,7 +689,7 @@ export function createEngine({
   // How a query the editor sent went ({ id, ok, error, rewritten }): the editor marks the error.
   const queryDone = x => callHost("host.queryDone", [x]);
 
-  return { init, reset, statTable, peekTable, loadTable, deltaState, deltaHistory,
+  return { init, reset, statTable, peekTable, deltaState, deltaHistory,
            loadFile, readFileBytes, saveText, saveOneLakeFile, runSql, describeLoad, fmtBytes, cancelLoad,
            semanticViews, semanticKeep, semanticOpen, exportExplore, nameTables, editSql, queryDone, copyText, exportResult, openDocument };
 }

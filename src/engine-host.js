@@ -14,10 +14,9 @@
 //   cancel()      interrupt the page's running statements
 //   info()        { capabilities } — which optional formats loaded
 //
-// The rest is the HOST's: openTable() — a table's SQL name, its view made over the
-// metadata location the host's own cache holds — and copyToTemp(), a file the host
-// fetched written where the lockdown lets DuckDB open it. Neither takes a path or a
-// location from the page. query() and stream() make the view of every table a statement
+// The rest is the HOST's: copyToTemp(), a file the host fetched written where the lockdown
+// lets DuckDB open it, and exportTo(), a query's whole result written there. Neither takes a
+// path or a location from the page. query() and stream() make the view of every table a statement
 // names by its SQL name (lakehouse.ws.item.schema.table) before running it.
 // =============================================================================
 
@@ -32,7 +31,7 @@ const fsp = require('node:fs/promises');
 const { join } = require('node:path');
 const os = require('node:os');
 const { sqlStr, quoteIdent, assertReadOnly, tableRefs, catalogStatement, readsCatalog } = require('./sql');
-const { SQL_KINDS, sqlKind, itemKind, displayName, sqlName, MODEL_CATALOG, modelSqlName } = require('./names');
+const { SQL_KINDS, sqlName, MODEL_CATALOG, modelSqlName } = require('./names');
 
 
 // Rows are read in chunks so a large result starts painting before it has all arrived,
@@ -459,19 +458,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onWarn = () => {}, g
   // catalog is ever asked at query time — the host's store already holds each table's
   // metadata location.
 
-  // Strict: for the paths that cannot do anything useful without a credential.
-  async function currentToken() {
-    if (!getToken) throw new Error('the engine was created without a token source');
-    const token = await getToken();
-    if (!token) {
-      const e = new Error('Not signed in to a Microsoft account.');
-      e.status = 401;
-      throw e;
-    }
-    return token;
-  }
-
-  // Lenient: reissues the storage secret when the token has changed. Returns null rather
+  // Reissues the storage secret when the token has changed. Returns null rather
   // than throwing when there is no credential to be had, because
   // most statements never touch OneLake: `SELECT 42` must not need a Microsoft account,
   // and the harnesses build this engine with no token source at all.
@@ -640,19 +627,6 @@ function createEngineHost({ extensionDir, onLog = () => {}, onWarn = () => {}, g
       seen.add(key);
       await ensureTable(ref);
     }
-  }
-
-  // A table the tree knows ({ workspace, item: "data.Lakehouse", schema, table }), opened:
-  // its SQL name, the view behind it made.
-  async function openTable({ workspace, item, schema, table }) {
-    await init();
-    await currentToken();
-    await ensureAuth();
-    const kind = sqlKind(itemKind(item));
-    if (!kind) throw new Error(`${item} holds no tables SQL can name`);
-    const ident = await withAuthRetry(() => ensureTable({ kind, workspace, item: displayName(item), dir: item,
-                                                          schema: schema || 'dbo', table }));
-    return { ident };
   }
 
   // Every statement, streamed chunk by chunk off its own connection. `onBatch` gets one
@@ -831,12 +805,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onWarn = () => {}, g
     } catch (e) { throw scrub(e, authToken || token); }
   }
 
-  // Scrubbed like call(): a failure may name a statement that carries a token.
-  async function openTableScrubbed(target) {
-    try { return await openTable(target); } catch (e) { throw scrub(e, authToken); }
-  }
-
-  return { call, close, openTable: openTableScrubbed, copyToTemp, exportTo, agentQuery, catalogChanged };
+  return { call, close, copyToTemp, exportTo, agentQuery, catalogChanged };
 }
 
 module.exports = { createEngineHost, jsonSafe, isOneLakeMetadata, PROFILE_METRICS };

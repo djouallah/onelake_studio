@@ -69,9 +69,9 @@ let tablePivot = null;       // the Pivot's view, { table, view }, of the table 
 let deltaState = null;
 let deltaHistory = null;
 // A selection buys the cheapest thing that answers the question: 'stats' = metadata
-// only, 'peek' = the first rows, 'loaded' = a real view. Each only when asked for.
+// only, 'peek' = the first rows. Each only when asked for; a query reads the rest.
 let activeTableRef = null;   // the table object behind the selection, for escalating
-let tableStage = 'none';     // 'none' | 'stats' | 'peek' | 'loaded'
+let tableStage = 'none';     // 'none' | 'stats' | 'peek'
 
 // The extension's read log prints these beside its own lines.
 const reportBoot = b => vs.postMessage({ type: 'boot', ...b });
@@ -500,7 +500,7 @@ async function selectTable(t) {
     const info = await engine.statTable(lakehouse, t);
     if (my !== selSeq) return;
     activeSqlName = info.sqlName || info.ident;
-    tableStage = info.stage === 'loaded' ? 'loaded' : 'stats';
+    tableStage = 'stats';
     setActiveStats(info);
     showStats();                    // statistics are the landing view for a table
     // Not run: Edit SQL opens it, to read the rows by query.
@@ -509,7 +509,7 @@ async function selectTable(t) {
     // The Data tab's rows, started now: selecting a table is the strongest signal its
     // data is about to be looked at. Quiet, superseded by any later click, and its
     // failure is the Data tab's to report.
-    if (info.stage !== 'loaded') engine.peekTable(lakehouse, t, { quiet: true }).catch(() => {});
+    engine.peekTable(lakehouse, t, { quiet: true }).catch(() => {});
   } catch (e) {
     if (my !== selSeq) return;
     reportTableError(e);
@@ -992,10 +992,8 @@ function statsCardHtml(info, delta) {
   if (s.formatVersion != null) rows.push(['Format', `Iceberg v${s.formatVersion}`]);
   if (s.vorderProp != null) rows.push(['V-Order', s.vorderProp ? 'enabled' : 'disabled']);
 
-  const note = info.stage === 'loaded'
-    ? 'From the Iceberg snapshot metadata — nothing was scanned to show this.'
-    : 'From the Iceberg snapshot metadata — no data has been read yet. ' +
-      'Open Data for the first rows, or Run the SQL above to query the table.';
+  const note = 'From the Iceberg snapshot metadata — no data has been read yet. ' +
+    'Open Data for the first rows, or Edit SQL to query the table.';
   return kvTable(rows) + columnsHtml(info) + `<p class="statsNote">${escapeHtml(note)}</p>`;
 }
 
