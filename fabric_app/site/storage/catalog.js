@@ -6,11 +6,11 @@
 // of its tables is now (its metadata.json) and signs a read-only SAS on the lakehouse's
 // Tables/ folder, valid ~55 min. It answers for the model's tables, with the model.
 //
-// The answer is kept in localStorage until shortly before its SAS expires, so a viewer calls
-// the function about once an hour, not on every load; a page open past that is given a new
-// one (`renew`). This browser's alone, like the page's memory: nothing is shared.
+// The answer is kept (kv.js, this browser's IndexedDB) until shortly before its SAS expires,
+// so a viewer calls the function about once an hour, not on every load; a page open past that
+// is given a new one (`renew`). This browser's alone, like the page's memory: nothing is shared.
 //
-//   const catalog = createCatalog(() => auth.client());
+//   const catalog = createCatalog(() => auth.client(), kv);
 //   await catalog.open()   the model's tables, and the model
 //     -> { model, metadata: { '<schema>.<table>': 'abfss://...metadata.json' }, missing: [...], sas, expiresOn }
 //   catalog.fresh()     true while the kept answer is good: the page can start without a session
@@ -19,13 +19,13 @@
 
 import { perf } from '../explore/perflog.js';
 
-const KEY = 'rayfin_catalog';
+const KEY = 'catalog';
 const RENEW_MARGIN_MS = 2 * 60 * 1000;   // ask again this long before the SAS expires
 
-export function createCatalog(client) {
-  // localStorage can be unavailable (private mode, blocked storage): the cache is best-effort.
-  const load = () => { try { return JSON.parse(localStorage.getItem(KEY)); } catch (e) { return null; } };
-  const save = v => { try { localStorage.setItem(KEY, JSON.stringify(v)); } catch (e) {} };
+// `kv`: where the answer is kept (kv.js), loaded before the page asks fresh().
+export function createCatalog(client, kv) {
+  const load = () => kv.get(KEY);
+  const save = v => kv.set(KEY, v);
   const renewAt = (a = load()) => a ? Date.parse(a.expiresOn) - RENEW_MARGIN_MS : 0;
   // A kept answer for the model's tables holds the model: an answer without one (a build that
   // kept another app's, or an older one) is asked again.

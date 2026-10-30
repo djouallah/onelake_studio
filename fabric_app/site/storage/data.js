@@ -49,6 +49,7 @@ import { createResults } from "./results.js";
 import { createAuth } from "./auth.js";
 import { createCatalog } from "./catalog.js";
 import { createSnapshots } from "./snapshots.js";
+import { createKv } from "./kv.js";
 import { planTable, prefetchFiles, prioritize } from "./prefetch.js";
 import { perf, HTTP_TRACE_SHIM } from "../explore/perflog.js";
 import { quoteIdent as ident, sqlStr as lit } from "../paths.js";
@@ -118,8 +119,11 @@ function warmExtensions(version) {
 // onProgress({ label, done, total, detail }) while a long download runs, null when it ends.
 // timeZone: the session's, which CURRENT_DATE follows; the page's to say (none: DuckDB's own).
 export function createDataSource({ onStatus = () => {}, onProgress = () => {}, timeZone = null } = {}) {
-  const catalog = createCatalog(() => auth.client());
-  const snapshots = createSnapshots();
+  // The function's answer and the snapshot records, kept in IndexedDB (kv.js); the keys
+  // localStorage held them under are moved over on the first load.
+  const kv = createKv('iceberg-app', { legacy: { catalog: 'rayfin_catalog', snapshots: 'iceberg_snapshots' } });
+  const catalog = createCatalog(() => auth.client(), kv);
+  const snapshots = createSnapshots(kv);
   // A kept answer from the function needs no session: the page starts without the Rayfin SDK.
   const auth = createAuth({ ready: catalog.fresh });
   let tables = new Map(), model = null;
@@ -360,6 +364,8 @@ export function createDataSource({ onStatus = () => {}, onProgress = () => {}, t
 
 
   async function init() {
+    // Before sign-in: a kept answer from the function is what lets the page start without one.
+    await kv.load();
     await auth.signIn();
     onStatus("Loading the query engine…");
     // The function's answer (the model, where its tables are, the SAS), the tables' sizes and

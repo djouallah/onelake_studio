@@ -10,20 +10,34 @@
 //
 //   { location, bytes, scan, files: [{ path, size }], deleteFiles: [{ path, size }], savedAt }
 //
-// Paths only, no URL: the SAS is never stored. localStorage, this browser's, best-effort: a
-// browser that blocks it plans every table every visit, as before.
+// Paths only, no URL: the SAS is never stored. In this browser's IndexedDB (kv.js), one record
+// per table, best-effort: a browser that blocks it plans every table every visit, as before.
 // =============================================================================
 
-const KEY = 'iceberg_snapshots';
+const KEY = 'snapshots';
 const VERSION = 4;   // a record of another version is not used (4: delete files listed, applied by the view)
 
-export function createSnapshots() {
-  const load = () => { try { return JSON.parse(localStorage.getItem(KEY)) || {}; } catch (e) { return {}; } };
-  const save = all => { try { localStorage.setItem(KEY, JSON.stringify(all)); } catch (e) {} };
+// `kv` (kv.js): one record per table, under snapshot:<table>. The records localStorage held
+// (all tables under one key) are split out on the first load.
+export function createSnapshots(kv) {
+  const key = name => `snapshot:${name}`;
+  let split = false;
+  const legacy = () => {
+    if (split) return;
+    split = true;
+    const all = kv.get(KEY);
+    if (!all) return;
+    for (const [name, r] of Object.entries(all)) if (!kv.get(key(name))) kv.set(key(name), r);
+    kv.delete(KEY);
+  };
   return {
     // The table's record if it is of this location, else null.
-    get(name, location) { const r = load()[name]; return r?.v === VERSION && r.location === location && Array.isArray(r.files) ? r : null; },
-    put(name, record) { const all = load(); all[name] = { ...record, v: VERSION, savedAt: new Date().toISOString() }; save(all); },
-    drop(name) { const all = load(); delete all[name]; save(all); },
+    get(name, location) {
+      legacy();
+      const r = kv.get(key(name));
+      return r?.v === VERSION && r.location === location && Array.isArray(r.files) ? r : null;
+    },
+    put(name, record) { legacy(); kv.set(key(name), { ...record, v: VERSION, savedAt: new Date().toISOString() }); },
+    drop(name) { legacy(); kv.delete(key(name)); },
   };
 }
