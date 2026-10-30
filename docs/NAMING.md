@@ -129,7 +129,8 @@ name. A file has no model name.
 
 **Creating a model from a file is what takes a name.** The model, whether for Fabric or only for a Fabric
 app, must be `semanticmodel.<workspace>.<model>`, wherever the file was stored. An export overwrites
-whatever we have under that name.
+whatever we have under that name. It asks first when that means replacing a different file at the model's
+path in `Files/`, or an app no export created.
 
 **A database file is still a file.** Once attached, its tables are `<name>.<schema>.<table>`, which is not
 a OneLake table's name.
@@ -181,8 +182,6 @@ same reason.
 
 These do not meet the contract yet:
 
-- **An export still asks before it overwrites.** `exportExplore` in `src/extension.js` asks before it
-  replaces a different file at the model's path in `Files/`, and before it replaces an app no export created.
 - **A bare model name can still compile.** `app/semantic.js` says "nothing shorter", but dax-sql resolves a
   name by its last parts, so `FROM nem` can reach an open view when only one fits.
 - **The command line's help shows the short form.** `bin/cli.mjs` has `FROM model` in the `sql` help.
