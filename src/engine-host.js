@@ -2,10 +2,10 @@
 // =============================================================================
 // engine-host.js — real DuckDB, in the extension host
 // =============================================================================
-// A VS Code extension host is Node, so DuckDB runs here natively — 284ms from nothing to
-// a usable engine, eight threads — and reads OneLake itself through its `iceberg` and
-// `azure` extensions: snapshot resolution, manifest filtering, position and equality
-// deletes, schema evolution and the Warehouse column mapping are all DuckDB's.
+// A VS Code extension host is Node, so DuckDB runs here natively, on every core, and reads
+// OneLake itself through its `iceberg` and `azure` extensions: snapshot resolution, manifest
+// filtering, position and equality deletes, schema evolution and the Warehouse column mapping
+// are all DuckDB's.
 //
 // WHAT THE PAGE MAY CALL (call(), from host.js), and nothing else:
 //
@@ -131,12 +131,12 @@ function proxySettings(proxyUrl) {
   } catch (_) { return null; }
 }
 
-// The disk cache's directory, made, and held under its budget before DuckDB opens anything
-// in it: oldest first — cache_httpfs touches a file each time it serves it, so the oldest is
-// the least recently used — down to 80%.
-async function prepareFileCache(dir, maxBytes, onWarn) {
+// The disk cache held under its budget: oldest first — cache_httpfs touches a file each time
+// it serves it, so the oldest is the least recently used — down to 80%. Nothing waits for it:
+// one stat per file was over a second of a boot at 14,000 files, and a file removed under a
+// read is only a cache miss.
+async function trimFileCache(dir, maxBytes, onWarn) {
   try {
-    await fsp.mkdir(dir, { recursive: true });
     if (!(maxBytes > 0)) return;
     const files = [];
     for (const name of await fsp.readdir(dir)) {
@@ -154,7 +154,7 @@ async function prepareFileCache(dir, maxBytes, onWarn) {
       total -= f.bytes;
     }
   } catch (e) {
-    onWarn(`could not prepare the disk cache in ${dir} — ${e.message}`);
+    onWarn(`could not trim the disk cache in ${dir} — ${e.message}`);
   }
 }
 
@@ -169,7 +169,7 @@ async function prepareFileCache(dir, maxBytes, onWarn) {
 // every semantic model, { kind: 'semanticmodel', workspace, model }.
 // Each becomes a view DuckDB lists (syncCatalog), so SHOW ALL TABLES and information_schema see
 // what the tree has seen without a single request to OneLake.
-function createEngineHost({ extensionDir, onLog = () => {}, onWarn = () => {}, getToken = null,
+function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}, onWarn = () => {}, getToken = null,
                             memoryLimit = '', threads = 0, spillMaxGB = 0, maxRows = DEFAULT_MAX_ROWS,
                             allowedPaths = [], lockdown = true,
                             httpProxy = '', bundledExtensions = null,
@@ -252,10 +252,16 @@ function createEngineHost({ extensionDir, onLog = () => {}, onWarn = () => {}, g
       // refuses every LOAD, so nothing the page sends can load anything else.
       const cacheBuild = fileCacheDir && bundledExtensions && join(bundledExtensions, 'cache_httpfs.duckdb_extension');
       if (cacheBuild && fs.existsSync(cacheBuild)) config.allow_unsigned_extensions = 'true';
-      if (fileCacheDir) await prepareFileCache(fileCacheDir, fileCacheMaxBytes, onWarn);
+      if (fileCacheDir) {
+        await fsp.mkdir(fileCacheDir, { recursive: true })
+          .catch(e => onWarn(`could not make the disk cache's folder ${fileCacheDir} — ${e.message}`));
+        trimFileCache(fileCacheDir, fileCacheMaxBytes, onWarn);
+      }
+      mark('temp+disk cache');
       instance = await DuckDBInstance.create(':memory:', config);
+      mark('instance');
       conn = await instance.connect();
-      mark('instance+connect');
+      mark('connect');
       // close() may have run while DuckDB was starting. The instance is torn down by the
       // catch below, which is the same path a failed boot takes.
       if (closed) throw new Error('the engine was closed');
@@ -577,6 +583,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onWarn = () => {}, g
   async function listCatalog() {
     if (!catalogTables || !catalogStale) return;
     catalogStale = false;
+    const t0 = Date.now();
     let list;
     try { list = await catalogTables(); }
     catch (e) { catalogStale = true; onWarn(`the cached tables could not be listed in DuckDB — ${e.message}`); return; }
@@ -606,9 +613,16 @@ function createEngineHost({ extensionDir, onLog = () => {}, onWarn = () => {}, g
         made.delete(key);
       }
     });
+    onCatalog({ count: (list || []).length, ms: Date.now() - t0 });
   }
   // The host's cache moved: the next statement that reads the catalog lists it again.
   function catalogChanged() { catalogStale = true; }
+  // Everything a first SHOW ALL TABLES would otherwise wait for, done ahead of it. Not a page
+  // method. Reads only the host's cache: no token, no request to OneLake.
+  async function warm() {
+    await init();
+    await syncCatalog();
+  }
   // A DROP (sql.js lets views, tables and schemas go) may have taken views `made` still
   // counts as there: every one is made again when next named, and the catalog listed again.
   function afterStatement(sql) {
@@ -827,7 +841,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onWarn = () => {}, g
     } catch (e) { throw scrub(e, authToken || token); }
   }
 
-  return { call, close, copyToTemp, exportTo, agentQuery, catalogChanged, maxRows };
+  return { call, close, copyToTemp, exportTo, agentQuery, catalogChanged, warm, maxRows };
 }
 
 module.exports = { createEngineHost, jsonSafe, isOneLakeMetadata, PROFILE_METRICS };

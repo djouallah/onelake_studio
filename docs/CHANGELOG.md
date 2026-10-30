@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **A first query starts sooner.** The engine starts in the background once the OneLake view is visible
+  or a query is open, rather than on the first statement, and its boot no longer waits to check the
+  disk cache's size. The Read Log shows the boot's stages in more detail, and how long the catalog and
+  semantic views took.
 - **A query's Run, Plan and Save Query buttons show up straight away.** They no longer wait for
   sign-in, or for other SQL extensions to finish starting. A new query's tab now reads `Query 1.sql`
   rather than `Untitled-1`.

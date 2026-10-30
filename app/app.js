@@ -360,6 +360,7 @@ async function openModelView(file, text = null, { fromOneLake = text == null } =
 let viewsReady = Promise.resolve();
 async function loadViews() {
   await engineReady;
+  const t0 = Date.now();
   let list = [];
   try { list = await engine.semanticViews(); } catch (e) { console.warn('[views]', e.message); return; }
   for (const v of list) {
@@ -369,6 +370,8 @@ async function loadViews() {
       await semantic.defineView(v.name, v.path, v.text, 'replace', null, v.schema);
     } catch (e) { console.warn(`[views] ${v.name}: ${e.message}`); }
   }
+  // Every query waits for this (viewsReady), so the read log says how long it took.
+  reportBoot({ what: `${list.length} semantic views loaded`, stages: [], totalMs: Date.now() - t0 });
 }
 
 // The semantic models a statement names (semanticmodel.ws.model) that are not views here

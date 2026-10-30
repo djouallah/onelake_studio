@@ -102,6 +102,10 @@ one, the secret is reissued.
 The engine is **DuckDB 2.0 running natively in the extension host**
 ([`src/engine-host.js`](../src/engine-host.js)), not a WebAssembly build in the page.
 
+- **When it starts:** once the explorer is visible or a query is open, if you are signed in. It boots
+  in the background and lists the cached catalog, so a first statement does not wait for either. That
+  statement still waits for the panel, the first time it opens. A window that does neither starts no
+  engine.
 - **Catalogs:** one attached `:memory:` catalog per kind (`lakehouse`, `warehouse`, `sqldatabase`,
   `mirroreddatabase`), and one for `semanticmodel`. The workspace, item and schema are nested schemas.
 - **Reading OneLake:** through DuckDB's `iceberg` and `azure` extensions. A table is read with

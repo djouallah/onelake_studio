@@ -18,6 +18,33 @@ const { createEngineHost, isOneLakeMetadata } = require("../../src/engine-host.j
 // What fetch-extensions.mjs put next to the extension, when CI ran it for this platform.
 const BUNDLED = join(fileURLToPath(new URL(".", import.meta.url)), "..", "..", "duckdb-extensions");
 
+test("warm() boots the engine and lists the catalog ahead of the first statement", async t => {
+  const extDir = await mkdtemp(join(tmpdir(), "onelake-ext-"));
+  let listings = 0;
+  const seen = [];
+  const engine = createEngineHost({
+    extensionDir: extDir,
+    bundledExtensions: existsSync(BUNDLED) ? BUNDLED : null,
+    onCatalog: m => seen.push(m),
+    catalogTables: async () => {
+      listings++;
+      return [{ kind: "lakehouse", workspace: "w", item: "lh", schema: "dbo", table: "t", columns: [{ name: "a", type: "BIGINT" }] }];
+    },
+  });
+  t.after(async () => {
+    await engine.close();
+    await rm(extDir, { recursive: true, force: true }).catch(() => {});
+  });
+
+  await engine.warm();
+  assert.equal(listings, 1);
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0].count, 1);
+  const r = await engine.call("query", ["SHOW ALL TABLES"]);
+  assert.deepEqual(r.rows.map(x => [x.schema, x.name]), [["w.lh.dbo", "t"]]);
+  assert.equal(listings, 1, "the statement found the catalog already listed");
+});
+
 test("native engine host", async t => {
   const extDir = await mkdtemp(join(tmpdir(), "onelake-ext-"));
   const outside = await mkdtemp(join(tmpdir(), "onelake-outside-"));

@@ -213,7 +213,7 @@ function logBoot(m) {
   if (!out) return;
   const stages = Array.isArray(m.stages) ? m.stages : [];
   out.appendLine(
-    `${String(Number(m.totalMs) || 0).padStart(6)}ms  BOOT engine ready` +
+    `${String(Number(m.totalMs) || 0).padStart(6)}ms  BOOT ${String(m.what || 'engine ready').slice(0, 80)}` +
     (m.quiet ? ' (engine reconnected)' : ''));
   for (const s of stages) {
     out.appendLine(`${String(Number(s.ms) || 0).padStart(6)}ms       ${s.stage}`);
@@ -224,6 +224,11 @@ function logBoot(m) {
     const missing = Object.entries(m.capabilities).filter(([, v]) => !v).map(([k]) => k);
     if (missing.length) out.appendLine(`        formats unavailable this session: ${missing.join(', ')}`);
   }
+}
+
+// The engine's catalog listed from the cache, which a first SHOW ALL TABLES waits for.
+function logCatalog(m) {
+  if (out) out.appendLine(`${String(m.ms).padStart(6)}ms  CATALOG ${m.count} tables and models listed`);
 }
 
 // Who is waiting for the page to say a file is on screen (a semantic model's progress
@@ -409,6 +414,7 @@ function ensureEngine(context, { readme } = {}) {
       // they would outlive the extension that fetched them.
       extensionDir: join(context.globalStorageUri.fsPath, 'duckdb-extensions'),
       onLog: logBoot,
+      onCatalog: logCatalog,
       // A failed optional extension is worth a line where someone will find it.
       onWarn: w => out && out.appendLine(w),
       // DuckDB talks to OneLake itself, on the same cached, silent token — reads must
@@ -438,8 +444,8 @@ function ensureEngine(context, { readme } = {}) {
 
 // Closing the engine is what revokes its credentials: the azure secret and every ATTACH
 // hold the access token BY VALUE, so an engine that outlives the sign-out keeps reading
-// OneLake for as long as the token lasts. Cheap to rebuild — ensureEngine does it lazily
-// on the next open, and a warm boot is ~300ms.
+// OneLake for as long as the token lasts. ensureEngine builds it again on the next open, in
+// a few seconds.
 async function resetEngine() {
   const e = engine;
   engine = null;
@@ -1583,22 +1589,50 @@ async function activateInner(context, ready) {
     }
   };
 
+  const explorer = vscode.window.createTreeView('onelakeStudio.explorer', {
+    treeDataProvider: tree,
+    showCollapseAll: true,
+    // A table or a semantic model dragged into an editor is its SQL name, dropped as text.
+    dragAndDropController: {
+      dragMimeTypes: ['text/plain'],
+      dropMimeTypes: [],
+      handleDrag(nodes, data) {
+        const names = nodes.map(n => (n.kind === 'table' && n.table ? sqlNameOf(n, n)
+          : n.kind === 'semanticModel' && n.model ? modelSqlName(n.workspace, n.model) : null)).filter(Boolean);
+        if (names.length) data.set('text/plain', new vscode.DataTransferItem(names.join(',\n')));
+      },
+    },
+  });
+
+  // The engine, started once this window shows it will want one, so the first statement does
+  // not wait for its boot: not at activation, which every window goes through. An engine
+  // already there is left alone: ensureEngine could close its panel over a moved account.
+  let warming = false;
+  const warmEngine = async () => {
+    if (warming || engine || !signedIn) return;
+    warming = true;
+    try {
+      await rebindStore();
+      const { readme } = await webviewRoot(context.extensionUri, { dev });
+      if (engine) return;
+      const eng = ensureEngine(context, { readme: readme.fsPath });
+      if (eng) await eng.warm();
+    } catch (e) {
+      if (out) out.appendLine(`the engine could not start ahead of a query — ${(e && e.message) || e}`);
+    } finally {
+      warming = false;
+    }
+  };
+  const warmIfWanted = () => {
+    if (explorer.visible || vscode.workspace.textDocuments.some(isQuery)) warmEngine();
+  };
+  warmIfWanted();
+
   context.subscriptions.push(
     tree,
-    vscode.window.createTreeView('onelakeStudio.explorer', {
-      treeDataProvider: tree,
-      showCollapseAll: true,
-      // A table or a semantic model dragged into an editor is its SQL name, dropped as text.
-      dragAndDropController: {
-        dragMimeTypes: ['text/plain'],
-        dropMimeTypes: [],
-        handleDrag(nodes, data) {
-          const names = nodes.map(n => (n.kind === 'table' && n.table ? sqlNameOf(n, n)
-            : n.kind === 'semanticModel' && n.model ? modelSqlName(n.workspace, n.model) : null)).filter(Boolean);
-          if (names.length) data.set('text/plain', new vscode.DataTransferItem(names.join(',\n')));
-        },
-      },
-    }),
+    explorer,
+    explorer.onDidChangeVisibility(warmIfWanted),
+    vscode.workspace.onDidOpenTextDocument(doc => { if (isQuery(doc)) warmEngine(); }),
 
     // The panel keeps table metadata across lakehouse switches now, so the refresh button
     // is what tells it to forget: a refresh exists to ask OneLake again, there too.
@@ -1793,6 +1827,7 @@ async function activateInner(context, ready) {
         await setSignedIn(!!await getToken({ createIfNone: false }));
         await rebindStore();
         tree.redraw();
+        warmIfWanted();
       } catch (e) {
         showError(`Could not sign in: ${(e && e.message) || e}`);
       }
