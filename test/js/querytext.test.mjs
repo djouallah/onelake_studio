@@ -47,3 +47,13 @@ test("the dotted names a statement holds, outside comments and strings", () => {
   assert.deepEqual(q.namesIn("SELECT a.b FROM lakehouse.ws.\"it em\".dbo.t -- x.y\nWHERE s = 'p.q'"),
     [["a", "b"], ["lakehouse", "ws", "it em", "dbo", "t"]]);
 });
+
+test("query variables: SET VARIABLE is kept, getvariable() is bound, a typed value is quoted", () => {
+  assert.deepEqual(q.setVariable("SET VARIABLE year = 2024;"), { name: "year", value: "2024" });
+  assert.deepEqual(q.setVariable("set variable \"my v\" TO DATE '2024-01-01'"), { name: "my v", value: "DATE '2024-01-01'" });
+  assert.equal(q.setVariable("SELECT 1"), null);
+  assert.deepEqual(q.variablesIn("SELECT getvariable('year'), GETVARIABLE( 'Year' ), getvariable('it''s')"), ["year", "it's"]);
+  assert.equal(q.bindVariables("WHERE y = getvariable('Year') AND n = getvariable('none')", new Map([["year", "2024"]])),
+    "WHERE y = (2024) AND n = getvariable('none')");
+  assert.deepEqual(["42", "-1.5e3", "abc", "'x'", "o'k", "NULL"].map(q.literal), ["42", "-1.5e3", "'abc'", "'x'", "'o''k'", "NULL"]);
+});

@@ -119,4 +119,38 @@ function namesIn(sql) {
   return out;
 }
 
-module.exports = { statements, statementAt, errorOffset, errorSummary, dottedName, namesIn };
+// Query variables, kept by the query editor for the session: `SET VARIABLE name = expr` sets one
+// (never sent to the engine, whose guard refuses SET), and getvariable('name') in a query is
+// replaced by its value before the query runs.
+const SET_VARIABLE = /^\s*set\s+variable\s+("(?:[^"]|"")+"|[A-Za-z_]\w*)\s*(?:=|to)\s*([\s\S]+?)\s*;?\s*$/i;
+const GET_VARIABLE = /getvariable\s*\(\s*'((?:[^']|'')*)'\s*\)/gi;
+function setVariable(sql) {
+  const m = SET_VARIABLE.exec(String(sql));
+  if (!m) return null;
+  const name = m[1].startsWith('"') ? m[1].slice(1, -1).replace(/""/g, '"') : m[1];
+  return { name, value: m[2] };
+}
+// The variable names a statement reads, once each, as written.
+function variablesIn(sql) {
+  const seen = new Map();
+  for (const m of String(sql).matchAll(GET_VARIABLE)) {
+    const name = m[1].replace(/''/g, "'");
+    if (!seen.has(name.toLowerCase())) seen.set(name.toLowerCase(), name);
+  }
+  return [...seen.values()];
+}
+// Each getvariable('name') replaced by (its value); `values` by lower-cased name.
+const bindVariables = (sql, values) => String(sql).replace(GET_VARIABLE, (all, name) => {
+  const v = values.get(name.replace(/''/g, "'").toLowerCase());
+  return v == null ? all : `(${v})`;
+});
+// A value typed at the prompt, as SQL: a number as it is, a quoted literal as it is, anything
+// else quoted.
+function literal(text) {
+  const t = String(text).trim();
+  if (/^-?\d+(\.\d+)?([eE][-+]?\d+)?$/.test(t) || /^'(?:[^']|'')*'$/.test(t) || /^null$/i.test(t)) return t;
+  return `'${t.replace(/'/g, "''")}'`;
+}
+
+module.exports = { statements, statementAt, errorOffset, errorSummary, dottedName, namesIn,
+                   setVariable, variablesIn, bindVariables, literal };

@@ -15,6 +15,7 @@ const { existsSync } = require('node:fs');
 const fsp = require('node:fs/promises');
 const { registerQueryEditor } = require('./queryeditor');
 const { createHistory } = require('./history');
+const { setVariable, variablesIn, bindVariables, literal } = require('./querytext');
 const { quoteIdent } = require('./sql');
 const { openPanel, closePanel, revealPanel, panelColumn, dockBelowEditor, postToPanel, postLive } = require('./panel');
 const { createCatalog } = require('./catalog');
@@ -916,7 +917,34 @@ async function activateInner(context) {
     const settle = runs.get(x.id);
     if (settle) { runs.delete(x.id); settle(x); }
   };
+  // Query variables for this session, by lower-cased name: SET VARIABLE in a query editor sets
+  // one, getvariable('name') reads it, and one never set is asked for the first time it is read.
+  const variables = new Map();
+  async function bindQueryVariables(sql) {
+    for (const name of variablesIn(sql)) {
+      if (variables.has(name.toLowerCase())) continue;
+      const typed = await vscode.window.showInputBox({
+        title: `getvariable('${name}')`, prompt: `A value for ${name}, kept for this session (SET VARIABLE ${name} = … changes it)`,
+        placeHolder: 'a number, or text (quoted for you)', ignoreFocusOut: true,
+      });
+      if (typed === undefined) return null;
+      variables.set(name.toLowerCase(), literal(typed));
+    }
+    return bindVariables(sql, variables);
+  }
+
   async function runInPanel(sql, { plan, title, column }) {
+    // SET VARIABLE is the editor's, not the engine's: kept here and answered at once.
+    const set = setVariable(sql);
+    if (set) {
+      variables.set(set.name.toLowerCase(), set.value);
+      vscode.window.setStatusBarMessage(`OneLake Studio: ${set.name} = ${set.value}`, 5000);
+      return { ok: true, error: null };
+    }
+    const bound = await bindQueryVariables(sql);
+    if (bound == null) return null;
+    const written = sql;
+    sql = bound;
     const id = ++runIds;
     const answer = new Promise(resolve => runs.set(id, resolve));
     // A panel closed before it answered never will: the oldest wait is let go.
@@ -928,7 +956,7 @@ async function activateInner(context) {
     const r = await answer;
     // A run, answered (a plan is not one, and a run a newer one replaced said nothing).
     if (!plan && r && (r.ok || r.error)) {
-      history.add({ sql, title, at, ms: r.ms, rows: r.ok ? r.rows : null, ok: !!r.ok,
+      history.add({ sql: written, title, at, ms: r.ms, rows: r.ok ? r.rows : null, ok: !!r.ok,
                     error: r.ok ? null : String(r.error).split('\n')[0], requests: oneLakeRequests - requestsBefore })
         .catch(e => out && out.appendLine(`query history: ${e.message}`));
     }
@@ -1684,6 +1712,12 @@ async function activateInner(context) {
     // it under Queries as "Query N". Not run: one Ctrl+Enter does that.
     vscode.commands.registerCommand('onelakeStudio.newQuery', () => openNewQuery(NEW_QUERY_SQL)),
     vscode.commands.registerCommand('onelakeStudio.queryHistory', () => showHistory()),
+    // Every query variable forgotten: the next getvariable() asks again.
+    vscode.commands.registerCommand('onelakeStudio.clearVariables', () => {
+      const n = variables.size;
+      variables.clear();
+      vscode.window.setStatusBarMessage(`OneLake Studio: ${n} query variable(s) cleared`, 4000);
+    }),
     vscode.commands.registerCommand('onelakeStudio.goTo', () => goTo()),
     // The grid's context menu (package.json webview/context): the page builds the text.
     ...[['gridCopy', 'tsv'], ['gridCopyHeaders', 'tsv-headers'], ['gridCopyCsv', 'csv'],

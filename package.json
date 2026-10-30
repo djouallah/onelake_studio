@@ -189,6 +189,11 @@
         "icon": "$(search)"
       },
       {
+        "command": "onelakeStudio.clearVariables",
+        "title": "Clear Query Variables",
+        "category": "OneLake Studio"
+      },
+      {
         "command": "onelakeStudio.queryHistory",
         "title": "Query History",
         "category": "OneLake Studio",

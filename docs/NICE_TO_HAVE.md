@@ -20,8 +20,7 @@ the panel holds no token, and table Pivot is only a SQL starter.
 
 ## Later
 9. ~~**Quick chart of any result**~~ Done.
-10. **Query parameters:** `SET VARIABLE` / `getvariable()`, with a prompt for any value the query
-    leaves unset.
+10. ~~**Query parameters**~~ Done.
 11. **How old a result is** ("from cache, 3 min old"). Keep the last result of each saved query, so
     reopening the query shows its result at once.
 
