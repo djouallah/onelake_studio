@@ -1,5 +1,8 @@
 # OneLake Studio: rules for agents
 
+Read [docs/NAMING.md](docs/NAMING.md), then [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), before
+changing code.
+
 ## Releases
 
 F5 (the Extension Development Host) is how changes are tested day to day. It never counts as
