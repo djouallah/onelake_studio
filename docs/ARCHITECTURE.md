@@ -39,9 +39,8 @@ A semantic model opens as **Explore** ([`app/explore/`](../app/explore/)), on th
     the costly operators) next to its plan tree.
 - **Logs:** what the session ran, with timings (`logs.js`, `perflog.js`).
 
-These files are owned here. analytics-as-code takes its Explore and Logs from this repo, not the
-other way round; its dashboard stays its own. `view.js` is host-neutral: the host passes in the
-compiler, how to run SQL, and where ECharts comes from.
+`view.js` is host-neutral: the host passes in the compiler, how to run SQL, and where ECharts
+comes from.
 - **The panel** runs on the native engine in the extension host (multithreaded, reading OneLake with
   your token). The engine sets the profile's metrics before it locks its configuration.
 - **The Fabric app** runs the same files on DuckDB-WASM.

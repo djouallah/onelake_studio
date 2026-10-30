@@ -2,8 +2,7 @@
 // explore/draw.js — the drawing helpers the model view uses: value formats, tints,
 // small-multiple grids, the star layout of the model
 // =============================================================================
-// Ported from analytics-as-code's dashboard (frontend/draw.js), the helpers Analyze needs
-// and nothing else.
+// The helpers Analyze needs, and nothing else.
 // =============================================================================
 
 // A date string moved by n days.

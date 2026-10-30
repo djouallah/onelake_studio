@@ -8,8 +8,8 @@
 // `orderBy`, `top`): the figures are the model's measures, a total is a `totals` row. What it
 // does with the rows is layout: a row of the result goes in a cell of the pivot or a point of
 // a chart. The host passes in how to run a query and how to draw (createExplorer's `ctx`).
-// Ported from analytics-as-code's dashboard (frontend/explore.js): a field's name is the
-// model's, so a table or a column with a dot in its name is read as itself.
+// A field's name is the model's, so a table or a column with a dot in its name is read as
+// itself.
 // =============================================================================
 
 import { formatValue, shade, extent, stackedGrids, shiftDate } from './draw.js';
@@ -124,7 +124,7 @@ export function buildQuery(s, { cap = CAP, today = localToday() } = {}) {
 // FETCH FIRST n ROWS WITH TIES. What Explore runs and what Show SQL shows: the compiler builds
 // the same plan from it as from DAX. `column(id)`: the model's column of an id, { table, name },
 // or null (a measure); `from`: the model's name in SQL.
-// Ported from analytics-as-code's Explore (modelSql), with quoted names and summaries.
+// Names are quoted, and summaries are aggregates.
 // `plain`: { from, measure(name), column(name, quote)? } for SQL over one table as a person
 // writes it (a lakehouse table's Edit SQL): its columns by name alone, quoted only where DuckDB
 // needs it (or as `column` writes one: a date's grain), AS only for a new name, DISTINCT for

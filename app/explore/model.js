@@ -2,7 +2,7 @@
 // explore/model.js — the Model page: the semantic model (the .bim) as a star, and what the
 // model says of the table picked
 // =============================================================================
-// Ported from analytics-as-code's dashboard (frontend/model.js). A dimension is a table a
+// A dimension is a table a
 // relationship points to, a fact any other: the model says it, not the names. Where each
 // card and line goes is draw.js's (modelLayout). Hover a table to see what it reaches; click
 // it for its columns, measures and relationships.

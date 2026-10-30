@@ -6,7 +6,7 @@
 // model is read in place, from the lakehouse, by the app's function (its MODEL_URL), which
 // answers with it where each of its tables is now and a read-only SAS (catalog.js). The model
 // names the tables (an Ossie dataset's `source`, or a TMSL table's Direct Lake partition:
-// schema.table). It began as analytics-as-code's Iceberg app, and is this repo's alone now.
+// schema.table).
 // The page is the only thing that reads OneLake, and the SAS never leaves it: it plans each
 // table itself (metadata.json, manifest list, manifests: prefetch.js's planTable) and
 // downloads every file a table's view reads into the local store (OPFS, blockcache.js) before

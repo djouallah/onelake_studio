@@ -1123,8 +1123,8 @@ async function activateInner(context) {
         asIs = pick === 'Publish Folder As Is';
       }
 
-      // Deployed again since this folder published it (another machine, analytics-as-code,
-      // rayfin up)? Asked before it is replaced.
+      // Deployed again since this folder published it (another machine, rayfin up)?
+      // Asked before it is replaced.
       if (before && before.itemId) {
         const live = await fabricApp.deployStatus(plan.workspace, before.itemId)
           .catch(e => { if (out) out.appendLine(`export: the app's last deploy could not be read — ${e.message}`); return null; });

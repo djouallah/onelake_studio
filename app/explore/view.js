@@ -9,8 +9,7 @@
 //             Show plan puts the query's profile and plan in place of the results
 //             (profile.js). Download CSV writes the pivot's rows, or the box's.
 //   Logs      what this session ran, with timings (logs.js, perflog.js)
-// Ported from analytics-as-code's Explore and Logs, which now take them from here. The same
-// file in the panel and in Export to Fabric's app: the host says how a model's SQL is compiled
+// The same file in the panel and in Export to Fabric's app: the host says how a model's SQL is compiled
 // and run, and where ECharts comes from (`ctx`); nothing here knows the engine.
 // =============================================================================
 

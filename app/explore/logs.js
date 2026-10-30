@@ -6,7 +6,6 @@
 // (perflog.js); the one way out is the Copy button. The same file in the panel and in Export
 // to Fabric's app: mountLogs(root) builds the page in `root`, and redraws it on new events
 // while it is shown (one render per animation frame).
-// Ported from analytics-as-code's Logs tab (frontend/logs.js), which now takes it from here.
 // =============================================================================
 
 import { perf, BUILD } from './perflog.js';
