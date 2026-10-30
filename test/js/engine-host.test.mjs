@@ -22,13 +22,18 @@ test("warm() boots the engine and lists the catalog ahead of the first statement
   const extDir = await mkdtemp(join(tmpdir(), "onelake-ext-"));
   let listings = 0;
   const seen = [];
+  const warnings = [];
   const engine = createEngineHost({
     extensionDir: extDir,
     bundledExtensions: existsSync(BUNDLED) ? BUNDLED : null,
     onCatalog: m => seen.push(m),
+    onWarn: w => warnings.push(w),
     catalogTables: async () => {
       listings++;
-      return [{ kind: "lakehouse", workspace: "w", item: "lh", schema: "dbo", table: "t", columns: [{ name: "a", type: "BIGINT" }] }];
+      return [
+        { kind: "lakehouse", workspace: "w", item: "lh", schema: "dbo", table: "bad", emptySql: "SELECT FROM WHERE (" },
+        { kind: "lakehouse", workspace: "w", item: "lh", schema: "dbo", table: "t", columns: [{ name: "a", type: "BIGINT" }] },
+      ];
     },
   });
   t.after(async () => {
@@ -39,9 +44,10 @@ test("warm() boots the engine and lists the catalog ahead of the first statement
   await engine.warm();
   assert.equal(listings, 1);
   assert.equal(seen.length, 1);
-  assert.equal(seen[0].count, 1);
+  assert.equal(seen[0].count, 2);
   const r = await engine.call("query", ["SHOW ALL TABLES"]);
-  assert.deepEqual(r.rows.map(x => [x.schema, x.name]), [["w.lh.dbo", "t"]]);
+  assert.deepEqual(r.rows.map(x => [x.schema, x.name]), [["w.lh.dbo", "t"]], "a bad entry costs only itself");
+  assert.equal(warnings.filter(w => /bad could not be listed/.test(w)).length, 1, warnings.join(" | "));
   assert.equal(listings, 1, "the statement found the catalog already listed");
 });
 

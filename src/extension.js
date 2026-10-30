@@ -1377,13 +1377,14 @@ async function activateInner(context, ready) {
   };
 
   // A semantic model's Direct Lake tables, which its expressions name by GUID, as SQL names:
-  // [{ workspace, item (GUIDs), schema, table }] -> [name]. The Fabric API names each item once.
+  // [{ workspace, item (GUIDs), schema, table }] -> [name]. Each item's name is the Fabric API's,
+  // kept on disk like any other answer: every model is named each time the panel opens.
   nameModelTables = async list => {
     const out = [];
     for (const x of list) {
       const key = `${x.workspace}/${x.item}`.toLowerCase();
       if (!itemNames.has(key)) {
-        const p = fabric.itemOf(x.workspace, x.item);
+        const p = onelake.itemNamed(x.workspace, x.item);
         itemNames.set(key, p);
         p.catch(() => itemNames.delete(key));
       }

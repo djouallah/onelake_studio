@@ -309,6 +309,15 @@ test("a workspace's semantic models are a cached listing: Fabric is asked once",
   assert.equal(asked, 2, "and a Refresh asks again");
 });
 
+test("an item's name behind its GUIDs is kept: Fabric is asked once, whatever the case", async () => {
+  let asked = 0;
+  const fabric = { itemOf: async () => { asked++; return { workspace: "Sales", item: "nem.Lakehouse" }; } };
+  const onelake = createOneLake({ catalog: fakeCatalog(), store: createStore({ dir: null }), fabric });
+  assert.deepEqual(await onelake.itemNamed("AAA", "BBB"), { workspace: "Sales", item: "nem.Lakehouse" });
+  assert.deepEqual(await onelake.itemNamed("aaa", "bbb"), { workspace: "Sales", item: "nem.Lakehouse" });
+  assert.equal(asked, 1);
+});
+
 test("a workspace's apps are a cached listing too", async () => {
   let asked = 0;
   const fabric = { listApps: async ws => { asked++; return [{ id: "a1", name: `app of ${ws}`, url: "" }]; } };

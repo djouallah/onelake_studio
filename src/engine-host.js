@@ -594,17 +594,30 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
         const key = name.toLowerCase();
         if (!want.has(key)) want.set(key, { t, name, path });
       }
+      const todo = [];
       for (const [key, { t, name, path: parts }] of want) {
         if (made.has(key) && !listed.has(key)) continue;
         const source = listedSource(t, name);
         if (source == null || made.get(key) === source) continue;
-        try {
-          const path = parts.map(quoteIdent);
-          for (let k = 2; k <= path.length; k++) await conn.run(`CREATE SCHEMA IF NOT EXISTS ${path.slice(0, k).join('.')};`);
-          await conn.run(`CREATE OR REPLACE VIEW ${name} AS ${source};`);
-          made.set(key, source);
-          listed.set(key, name);
-        } catch (e) { onWarn(`${name} could not be listed in DuckDB — ${e.message}`); }
+        const path = parts.map(quoteIdent);
+        const schemas = [];
+        for (let k = 2; k <= path.length; k++) schemas.push(`CREATE SCHEMA IF NOT EXISTS ${path.slice(0, k).join('.')};`);
+        todo.push({ key, name, source, schemas, view: `CREATE OR REPLACE VIEW ${name} AS ${source};` });
+      }
+      const listedAs = x => { made.set(x.key, x.source); listed.set(x.key, x.name); };
+      // In one call: a call per statement cost over a second at 300 entries. Run again one by
+      // one if that fails, so a bad entry costs only itself; both kinds of statement can repeat.
+      try {
+        if (todo.length) await conn.run([...new Set(todo.flatMap(x => x.schemas)), ...todo.map(x => x.view)].join('\n'));
+        todo.forEach(listedAs);
+      } catch (_) {
+        for (const x of todo) {
+          try {
+            for (const s of x.schemas) await conn.run(s);
+            await conn.run(x.view);
+            listedAs(x);
+          } catch (e) { onWarn(`${x.name} could not be listed in DuckDB — ${e.message}`); }
+        }
       }
       for (const [key, name] of [...listed]) {
         if (want.has(key)) continue;

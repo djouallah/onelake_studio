@@ -70,7 +70,7 @@ function summarize(metadata, metadataLocation) {
  * @param {ReturnType<import('./catalog').createCatalog>} o.catalog
  * @param {ReturnType<import('./store').createStore>} o.store
  * @param {() => boolean} [o.prefetchEnabled]
- * @param {{ listSemanticModels(ws: string): Promise<object[]> }} [o.fabric]
+ * @param {{ listSemanticModels(ws: string): Promise<object[]>, itemOf(wsId: string, itemId: string): Promise<object> }} [o.fabric]
  */
 // Everything a cache holds (`cached`: onelake's own, above), read from it alone: every workspace
 // with its items, their tables and each table's metadata (null when it was never read), and its
@@ -141,6 +141,7 @@ function createOneLake({ catalog, store, prefetchEnabled = () => true, onHit = (
     peek: loc => `peek\u0000${loc}`,
     models: ws => `models\u0000${ws}`,
     apps: ws => `apps\u0000${ws}`,
+    itemNamed: (wsId, itemId) => `item-named\u0000${wsId}\u0000${itemId}`.toLowerCase(),
     bytes: (ws, path, version) => `bytes\u0000${ws}\u0000${path}\u0000${version}`,
     deltaCommits: (lh, t) => `delta-commits\u0000${lh.workspace}\u0000${lh.item}\u0000${t.schema || ''}\u0000${t.table}`,
     // Immutable: the table as of one Delta version, under where the table lives.
@@ -185,6 +186,11 @@ function createOneLake({ catalog, store, prefetchEnabled = () => true, onHit = (
   const apps = (ws, o = {}) => {
     if (!fabric) return Promise.reject(new Error('apps are not available here'));
     return get(keys.apps(ws), () => fabric.listApps(ws), o).then(value);
+  };
+  // What an item named by GUIDs (a Direct Lake expression's) is called: { workspace, item }.
+  const itemNamed = (wsId, itemId, o = {}) => {
+    if (!fabric) return Promise.reject(new Error('semantic models are not available here'));
+    return get(keys.itemNamed(wsId, itemId), () => fabric.itemOf(wsId, itemId), o).then(value);
   };
 
   /**
@@ -433,7 +439,7 @@ function createOneLake({ catalog, store, prefetchEnabled = () => true, onHit = (
 
   return {
     workspaces, items, tables, files, table, deltaState, deltaHistory, peek, prefetch, refreshTables,
-    models, apps, readBytes, cached,
+    models, apps, itemNamed, readBytes, cached,
     onChanged: fn => listen('changed', key => fn(decode(key))),
     onTableRead,
     onRefreshFailed: fn => listen('refresh-failed', (key, e) => fn(decode(key), e)),

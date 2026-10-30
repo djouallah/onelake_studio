@@ -18,6 +18,18 @@ test("a .yaml or .yml is read as Ossie, anything else as TMSL", () => {
   assert.equal(isOssiePath("C:/models/ws/Sales.bim"), false);
 });
 
+test("only a statement about a semantic model waits for the views", async () => {
+  const { aboutModels } = await import("../../app/semantic.js");
+  for (const sql of ['SELECT AGG("x") FROM SemanticModel.ws.m', "SHOW SEMANTIC VIEWS", "show semantic metrics in semanticmodel.ws.m",
+                     "DESCRIBE semanticmodel.ws.m"]) assert.equal(aboutModels(sql), true, sql);
+  for (const sql of ["SHOW ALL TABLES;", "SELECT * FROM lakehouse.w.lh.dbo.t", "SELECT 1"]) assert.equal(aboutModels(sql, ["Shop"]), false, sql);
+  // dax-sql also takes a kept view by its name alone.
+  for (const sql of ["SELECT AGG(Total) FROM shop", "DESCRIBE ws.SHOP"]) {
+    assert.equal(aboutModels(sql, ["Shop"]), true, sql);
+    assert.equal(aboutModels(sql), false, `${sql}, with no view of that name`);
+  }
+});
+
 // A semantic model's one SQL name, and the ones a statement names that are not open yet.
 test("a model is semanticmodel.ws.model, and a statement's unopened models are found", async () => {
   const { modelSqlName, unopenedModels, defineView } = await import("../../app/semantic.js");

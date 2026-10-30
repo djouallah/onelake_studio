@@ -357,12 +357,22 @@ async function openModelView(file, text = null, { fromOneLake = text == null } =
 
 // Semantic views the host keeps (src/semviews.js), defined once the engine is up so SQL can
 // name them; every query waits for this. One that no longer reads is skipped, and says so.
+let viewsListed = Promise.resolve([]);
 let viewsReady = Promise.resolve();
+async function listViews() {
+  await engineReady;
+  try { return await engine.semanticViews(); } catch (e) { console.warn('[views]', e.message); return []; }
+}
+// What a statement waits for before it compiles: the views, only if it can name one. Listing them
+// reads this machine alone; defining them can wait on the Fabric API, for an item not named yet.
+async function viewsFor(sql) {
+  const list = await viewsListed;
+  if (semantic.aboutModels(sql, list.map(v => v.name))) await viewsReady;
+}
 async function loadViews() {
   await engineReady;
   const t0 = Date.now();
-  let list = [];
-  try { list = await engine.semanticViews(); } catch (e) { console.warn('[views]', e.message); return; }
+  const list = await viewsListed;
   for (const v of list) {
     if (!v.schema) continue;   // named before models were semanticmodel.ws.model
     try {
@@ -595,7 +605,7 @@ async function showPlan(text) {
   holdPlan(true);
   try {
     await engineReady;
-    await viewsReady;
+    await viewsFor(text);
     await openModels(text);
     const model = await semantic.statement(text);
     lastRun.rewritten = !!model;
@@ -652,8 +662,8 @@ async function runQuery({ sql, doc = true, ext = '' } = {}) {
   try {
     await engineReady;   // the editor can send a query before the engine is up
     // A query of a semantic model runs as the SQL dax-sql compiles it to, once the tables
-    // that SQL reads are open; every other query runs as written.
-    await viewsReady;
+    // that SQL reads are open; every other query runs as written, and does not wait for them.
+    await viewsFor(sql);
     await openModels(sql);
     if (stale()) return false;
     const model = await semantic.statement(sql);
@@ -1321,6 +1331,7 @@ wireUi();
 engine = createEngine({ onStatus: setStatus, onBoot: reportBoot, ...(cfg.maxRows ? { maxRows: cfg.maxRows } : {}) });
 engineReady = engine.init();
 semantic.setTableNamer(list => engine.nameTables(list));
+viewsListed = listViews();
 viewsReady = loadViews().catch(e => console.warn('[views]', e.message));
 
 startEngine().catch(e => {

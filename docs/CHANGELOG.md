@@ -2,10 +2,15 @@
 
 ## Unreleased
 
-- **A first query starts sooner.** The engine starts in the background once the OneLake view is visible
-  or a query is open, rather than on the first statement, and its boot no longer waits to check the
-  disk cache's size. The Read Log shows the boot's stages in more detail, and how long the catalog and
-  semantic views took.
+- **A first query answers much sooner.**
+  - A statement that names no semantic model no longer waits for the panel to load your models.
+  - The name behind a Direct Lake model's GUIDs is kept on disk, so opening the panel no longer waits
+    on the Fabric API each session.
+  - The engine starts in the background once the OneLake view is visible or a query is open, and its
+    boot no longer waits to check the disk cache's size.
+  - The catalog is listed in one call.
+  - The Read Log shows the boot's stages in more detail, and how long the catalog and semantic models
+    took.
 - **A query's Run, Plan and Save Query buttons show up straight away.** They no longer wait for
   sign-in, or for other SQL extensions to finish starting. A new query's tab now reads `Query 1.sql`
   rather than `Untitled-1`.

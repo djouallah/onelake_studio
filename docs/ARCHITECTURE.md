@@ -106,6 +106,9 @@ The engine is **DuckDB 2.0 running natively in the extension host**
   in the background and lists the cached catalog, so a first statement does not wait for either. That
   statement still waits for the panel, the first time it opens. A window that does neither starts no
   engine.
+- **What a statement waits for:** the panel defines every kept semantic model when it opens, which can
+  ask Fabric for an item's name. Only a statement that can name a model waits for that: one with
+  `semantic` or a kept model's name in it.
 - **Catalogs:** one attached `:memory:` catalog per kind (`lakehouse`, `warehouse`, `sqldatabase`,
   `mirroreddatabase`), and one for `semanticmodel`. The workspace, item and schema are nested schemas.
 - **Reading OneLake:** through DuckDB's `iceberg` and `azure` extensions. A table is read with
@@ -124,7 +127,7 @@ The engine is **DuckDB 2.0 running natively in the extension host**
 
 | What | Where it is kept | When it is read again |
 | --- | --- | --- |
-| Listings (workspaces, items, tables, `Files/`, semantic models), table metadata, first rows | On disk, [`src/onelake.js`](../src/onelake.js) | Served at once, refreshed in the background past its window |
+| Listings (workspaces, items, tables, `Files/`, semantic models), the names behind a Direct Lake model's GUIDs, table metadata, first rows | On disk, [`src/onelake.js`](../src/onelake.js) | Served at once, refreshed in the background past its window |
 | The bytes of a `Files/` object the host reads (an image, a `.bim`, a SQLite copy, a saved file) | Under the etag its cached listing gave | Only when the file was rewritten |
 | What DuckDB reads: table data and `Files/` objects | DuckDB's disk cache (`cache_httpfs`) | Only when the file was rewritten: a kept copy is checked against the file's version tag and modification time |
 | A semantic model's definition | `~/OneLakeStudio/semantic-models/<workspace>/<model>.yaml` | On **Download Again** |
