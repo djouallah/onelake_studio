@@ -45,9 +45,8 @@ let activeSqlName = null;    // the selected table's SQL name (lakehouse.ws.item
 // opens it in an editor. SQL is written in VS Code's editor (the host's queryeditor.js), which
 // sends each statement here to run; the page has no SQL box of its own.
 let currentSql = '';
-// How the last runQuery or showPlan went, for the editor (its diagnostic, the query history):
-// its error, whether the SQL run was a semantic model's compiled SQL (positions are not the
-// editor's), and for a query its rows and time.
+// How the last runQuery or showPlan went, for the editor's diagnostic: its error, and whether
+// the SQL run was a semantic model's compiled SQL (positions are not the editor's).
 let lastRun = { error: null, rewritten: false };
 let activeFile = null;       // the file behind it, when a file is what was opened
 let lastResult = null;       // { fields, rows } for CSV export
@@ -660,8 +659,6 @@ async function runQuery({ sql, doc = true, ext = '' } = {}) {
     renderResults(res);
     lastResult = res;
     const ms = Math.round(performance.now() - t0);
-    lastRun.ms = ms;
-    lastRun.rows = res.numRows ?? res.rows.length;
     // Every row held is in the grid (grid.js draws only those in view); res.truncated means the
     // engine stopped materialising, so the CSV is short too.
     let msg = `${res.rows.length.toLocaleString('en')} row(s) in ${ms} ms`;

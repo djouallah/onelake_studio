@@ -5,8 +5,7 @@ the panel holds no token, and table Pivot is only a SQL starter.
 
 ## Editing and results
 1. ~~**Queries in VS Code's own editor.**~~ Done: see the changelog.
-2. ~~**Query history**~~ Done. Left: whether DuckDB read the data from its disk cache or from
-   OneLake (the host counts its own requests only; it needs the engine's read statistics).
+2. ~~**Query history**~~ Removed: not wanted.
 3. ~~**Go to a table, column or measure**~~ Done.
 4. ~~**Results grid.**~~ Done.
 

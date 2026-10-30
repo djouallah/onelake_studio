@@ -27,9 +27,6 @@
   - OneLake Save Query (Ctrl+S) keeps a new query under Queries as "Query N".
 
   Other `.sql` files are left to their own extensions.
-- **Query History** (the clock on Queries, or in a query's title bar): every query run from an
-  editor, per account, newest first, searched by its SQL; with when it ran, its time, its rows or
-  its error, and how many requests reached OneLake meanwhile. A pick opens it in a new editor.
 - **Go to a Table, Column or Measure** (Ctrl+Alt+O, or the search icon on the tree): every table,
   column, semantic model and measure the cache holds, in one search. A pick opens the table or the
   model; its button puts the SQL name in the query being written (or copies it).
