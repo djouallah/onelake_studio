@@ -170,9 +170,15 @@ the tree can group by type.
 SQL is written in VS Code's own editor ([`src/queryeditor.js`](../src/queryeditor.js)). Other `.sql`
 files are left to their own extensions.
 
-- **New Query** (the **+** on *Queries*) opens an untitled query that starts with `SHOW ALL TABLES`.
-  **Save Query** (Ctrl+S) keeps it under *Queries*, and it stays a query across a reload
-  ([`src/newqueries.js`](../src/newqueries.js)).
+- **New Query** (the **+** on *Queries*) opens an untitled `Query N.sql` that starts with
+  `SHOW ALL TABLES`. **Save Query** (Ctrl+S) keeps it under *Queries*, and it stays a query across a
+  reload ([`src/newqueries.js`](../src/newqueries.js)).
+- **Buttons and keys don't wait for the extension host.** Opening SQL starts the other SQL extensions on
+  the same host, which can hold it for many seconds. So `package.json` decides them in the window: a
+  saved query by its path, a new query by a list told to the window before its document opens. A saved
+  query's path is matched by folder name, so a `OneLakeStudio/queries` folder outside the home folder
+  shows the buttons too, and they do nothing there. The lenses are the host's, and they register before
+  sign-in.
 - **Run** (Ctrl+Enter, or OneLake Run above each statement) runs the statement under the cursor, or the
   selection. **OneLake Plan** shows where it spends its time.
 - **Errors:** DuckDB's error is marked where it says it is, until the next edit.

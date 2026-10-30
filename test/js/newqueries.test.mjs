@@ -48,3 +48,41 @@ test("a tab closed while the extension was not running is forgotten at the next 
   createNewQueries(state, () => []).add(Q1);
   assert.equal(createNewQueries(state, () => [Q2]).has(Q1), false);
 });
+
+test("the window hears the list at the start, on an add and when a tab closes", () => {
+  const state = memento();
+  createNewQueries(state, () => []).add(Q1);
+  const heard = [];
+  let tabs = [Q1];
+  const q = createNewQueries(state, () => tabs, uris => { heard.push(uris); });
+  assert.deepEqual(heard, [[Q1]]);
+  q.add(Q2);
+  assert.deepEqual(heard[1], [Q1, Q2]);
+  tabs = [Q2];
+  q.tabsClosed([Q1]);
+  assert.deepEqual(heard[2], [Q2]);
+  // A tab that was not a query's says nothing new.
+  q.tabsClosed(["untitled:Untitled-9"]);
+  assert.equal(heard.length, 3);
+});
+
+test("add answers what the window was told, so a caller can wait for it", async () => {
+  const q = createNewQueries(memento(), () => [], async () => "heard");
+  assert.equal(await q.add(Q1), "heard");
+});
+
+test("the next new query takes the first name nothing holds", () => {
+  const one = "untitled:Query%201.sql", two = "untitled:Query%202.sql", three = "untitled:Query%203.sql";
+  let tabs = [];
+  const q = createNewQueries(memento(), () => tabs);
+  assert.equal(q.nextUri(), one);
+  q.add(one);
+  assert.equal(q.nextUri(), two);
+  tabs = [two];
+  assert.equal(q.nextUri(), three);
+  assert.equal(q.nextUri([three]), "untitled:Query%204.sql");
+  // Its tab closed: the name is free again.
+  tabs = [];
+  q.tabsClosed([one]);
+  assert.equal(q.nextUri(), one);
+});

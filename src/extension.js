@@ -698,20 +698,76 @@ async function activate(context) {
   // A failure past this point used to be INVISIBLE: activation dies half-way, the view
   // renders as an empty pane — no tree, no welcome content, no message anywhere. The
   // rest of activate is guarded so that shape can never be silent again.
+  let started, failed;
+  const ready = new Promise((resolve, reject) => { started = resolve; failed = reject; });
+  ready.catch(() => {});   // reported below; whoever is waiting on it hears it too
   try {
-    await activateInner(context);
+    await activateInner(context, ready);
+    started();
     // After an update the skill still names the previous install's cli.mjs. Not awaited:
     // nothing on screen depends on it.
     refreshSkill(context).catch(e => out.appendLine(`agent skill not refreshed: ${e.message}`));
     out.appendLine(`activated ${version} ${commit}${dev ? ' (dev)' : ''} — signed in: ${signedIn}`);
   } catch (e) {
+    failed(e);
     out.appendLine(`ACTIVATION FAILED: ${(e && e.stack) || e}`);
     showError(`OneLake Studio failed to activate: ${(e && e.message) || e}`);
     throw e;
   }
 }
 
-async function activateInner(context) {
+async function activateInner(context, ready) {
+  // Query editors (queryeditor.js): a saved query's file, or a new query opened here, untitled
+  // until Save Query keeps it under Queries. Only these get Run, the lenses and the completions:
+  // any other .sql file is its own extensions'.
+  // First, and before any await: the sign-in below can queue behind other extensions for a minute
+  // and more, and none of this needs to know who is signed in. What does waits for `ready`.
+  const queriesRoot = () => join(os.homedir(), 'OneLakeStudio', 'queries');
+  const tabUri = t => (t.input && t.input.uri ? t.input.uri.toString() : null);
+  const openTabs = () => vscode.window.tabGroups.all.flatMap(g => g.tabs).map(tabUri).filter(Boolean);
+  // The untitled ones. The title bar's buttons and the keys read this list in the window
+  // (package.json), so they are there even while another extension holds this host.
+  const newQueries = createNewQueries(context.workspaceState, openTabs,
+    uris => vscode.commands.executeCommand('setContext', 'onelakeStudio.newQueries', uris));
+  const isQueryFile = p => {
+    const rel = p ? relative(queriesRoot(), p) : '';
+    return !!rel && !rel.startsWith('..') && !isAbsolute(rel);
+  };
+  // Whatever its language says: another SQL extension can take over a .sql
+  // document's language (VS Code closes and reopens it to do so), and it is still a query here.
+  const isQuery = doc => (doc.isUntitled ? newQueries.has(doc.uri.toString())
+                                         : doc.uri.scheme === 'file' && isQueryFile(doc.uri.fsPath));
+  // Nothing to complete from yet: an empty answer, since the suggest widget waits for every answer.
+  let isReady = false;
+  ready.then(() => { isReady = true; }, () => {});
+  context.subscriptions.push(
+    ...registerQueryEditor({ isQuery,
+                             run: (sql, x) => ready.then(() => runInPanel(sql, x)),
+                             names: async () => (isReady ? completionNames() : { tables: [], models: [] }) }),
+    // A new query is forgotten when its tab closes (newqueries.js).
+    vscode.window.tabGroups.onDidChangeTabs(e => newQueries.tabsClosed(e.closed.map(tabUri).filter(Boolean))),
+    // Save Query: a new query kept under Queries as "Query N", and its editor is that file from
+    // then on. A saved query's editor just saves.
+    vscode.commands.registerCommand('onelakeStudio.saveQuery', async () => {
+      const ed = vscode.window.activeTextEditor;
+      if (!ed || !isQuery(ed.document)) return;
+      if (!ed.document.isUntitled) { await ed.document.save(); return; }
+      try {
+        await ready;
+        // Closing the active editor is how it becomes the file: never another one moved to meanwhile.
+        const now = vscode.window.activeTextEditor;
+        if (!now || now.document !== ed.document) return;
+        const saved = await saveNewQuery(ed.document.getText());
+        const column = ed.viewColumn;
+        await vscode.commands.executeCommand('workbench.action.revertAndCloseActiveEditor');
+        await vscode.window.showTextDocument(vscode.Uri.file(saved.path), { viewColumn: column, preview: false });
+        vscode.window.setStatusBarMessage(`Saved as ${saved.name} under Queries — rename it there`, 4000);
+      } catch (e) {
+        showError(`Could not save the query: ${(e && e.message) || e}`);
+      }
+    }),
+  );
+
   // Every OneLake request the extension makes goes through here, on the VS Code token,
   // and each one is a line in the read log.
   const catalog = createCatalog({
@@ -837,7 +893,6 @@ async function activateInner(context) {
   // onelakeStudio.tenantId setting picks one) has its own, and signing in elsewhere shows
   // that account's. The tree lists them, and each opens in VS Code's editor as its file.
   // Signed out, there are none.
-  const queriesRoot = () => join(os.homedir(), 'OneLakeStudio', 'queries');
   function queriesFolder() {
     return queryAccount ? join(queriesRoot(), queryAccount) : null;
   }
@@ -895,20 +950,6 @@ async function activateInner(context) {
     return { name: stem, path };
   }
 
-  // Query editors (queryeditor.js): a saved query's file, or a new query opened here, untitled
-  // until Save Query keeps it under Queries. Only these get Run, the lenses and the completions:
-  // any other .sql file is its own extensions'.
-  const tabUri = t => (t.input && t.input.uri ? t.input.uri.toString() : null);
-  const openTabs = () => vscode.window.tabGroups.all.flatMap(g => g.tabs).map(tabUri).filter(Boolean);
-  const newQueries = createNewQueries(context.workspaceState, openTabs);   // the untitled ones
-  const isQueryFile = p => {
-    const rel = p ? relative(queriesRoot(), p) : '';
-    return !!rel && !rel.startsWith('..') && !isAbsolute(rel);
-  };
-  // Whatever its language says: another SQL extension can take over a .sql
-  // document's language (VS Code closes and reopens it to do so), and it is still a query here.
-  const isQuery = doc => (doc.isUntitled ? newQueries.has(doc.uri.toString())
-                                         : doc.uri.scheme === 'file' && isQueryFile(doc.uri.fsPath));
   // Where a query's results go (onelakeStudio.resultsLocation): under its editor, or beside it.
   const resultsBelow = () => vscode.workspace.getConfiguration('onelakeStudio').get('resultsLocation', 'below') !== 'beside';
   // A query editor opens where the panel is not covered by it for long. Results below: in the
@@ -930,9 +971,24 @@ async function activateInner(context) {
     if (resultsBelow()) await dockBelowEditor();
   }
   async function openNewQuery(sql) {
-    const doc = await vscode.workspace.openTextDocument({ language: 'sql', content: String(sql ?? '') });
-    newQueries.add(doc.uri.toString());
-    await showQuery(doc);
+    // Its name first, and the window told before it opens: opening SQL can start other SQL
+    // extensions, which then hold this host for many seconds.
+    const key = newQueries.nextUri(vscode.workspace.textDocuments.map(d => d.uri.toString()));
+    const uri = vscode.Uri.parse(key);
+    await newQueries.add(key);
+    try {
+      const doc = await vscode.workspace.openTextDocument(uri);
+      const text = String(sql ?? '');
+      if (text) {
+        const edit = new vscode.WorkspaceEdit();
+        edit.insert(uri, new vscode.Position(0, 0), text);
+        await vscode.workspace.applyEdit(edit);
+      }
+      await showQuery(doc);
+    } catch (e) {
+      newQueries.tabsClosed([key]);   // it never got a tab
+      throw e;
+    }
   }
   const openSavedQuery = path => showQuery(vscode.Uri.file(path), { preview: false });
   editSql = ({ sql }) => openNewQuery(sql);
@@ -1078,42 +1134,13 @@ async function activateInner(context) {
     return value;
   }
 
-  // Which editor is a query's, for the keys and the title bar's buttons.
-  const setQueryContext = ed => {
-    const doc = ed && ed.document;
-    vscode.commands.executeCommand('setContext', 'onelakeStudio.queryEditor', !!doc && isQuery(doc));
-    vscode.commands.executeCommand('setContext', 'onelakeStudio.newQuery', !!doc && doc.isUntitled && isQuery(doc));
-  };
   context.subscriptions.push(
-    ...registerQueryEditor({ isQuery, run: runInPanel, names: completionNames }),
-    vscode.window.onDidChangeActiveTextEditor(setQueryContext),
     // Each query editor has its own last result: moving to one shows it in the panel, when the
     // panel is showing a query (not a table or a file someone opened).
     vscode.window.onDidChangeActiveTextEditor(ed => {
       if (ed && isQuery(ed.document)) postLive({ type: 'show-kept', key: ed.document.uri.toString() });
     }),
-    // A new query is forgotten when its tab closes (newqueries.js). A language change closes the
-    // document and opens it again: the active editor's keys and buttons are worked out again.
-    vscode.window.tabGroups.onDidChangeTabs(e => newQueries.tabsClosed(e.closed.map(tabUri).filter(Boolean))),
-    vscode.workspace.onDidOpenTextDocument(() => setQueryContext(vscode.window.activeTextEditor)),
-    // Save Query: a new query kept under Queries as "Query N", and its editor is that file from
-    // then on. A saved query's editor just saves.
-    vscode.commands.registerCommand('onelakeStudio.saveQuery', async () => {
-      const ed = vscode.window.activeTextEditor;
-      if (!ed || !isQuery(ed.document)) return;
-      if (!ed.document.isUntitled) { await ed.document.save(); return; }
-      try {
-        const saved = await saveNewQuery(ed.document.getText());
-        const column = ed.viewColumn;
-        await vscode.commands.executeCommand('workbench.action.revertAndCloseActiveEditor');
-        await vscode.window.showTextDocument(vscode.Uri.file(saved.path), { viewColumn: column, preview: false });
-        vscode.window.setStatusBarMessage(`Saved as ${saved.name} under Queries — rename it there`, 4000);
-      } catch (e) {
-        showError(`Could not save the query: ${(e && e.message) || e}`);
-      }
-    }),
   );
-  setQueryContext(vscode.window.activeTextEditor);
 
   const modelPath = n => join(modelsFolder(),modelFileName(n.workspace).replace(/\.yaml$/, ''), modelFileName(n.model));
 

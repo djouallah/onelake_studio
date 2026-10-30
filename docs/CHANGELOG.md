@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **A query's Run, Plan and Save Query buttons show up straight away.** They no longer wait for
+  sign-in, or for other SQL extensions to finish starting. A new query's tab now reads `Query 1.sql`
+  rather than `Untitled-1`.
 - **Settings are one click away.** The explorer's "..." menu has Settings, next to Switch Microsoft
   Account, and Clear Cached OneLake Data. Settings are grouped into Cache, Engine, Query and Results,
   and Sign-in.

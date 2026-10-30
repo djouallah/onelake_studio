@@ -33,7 +33,8 @@
   ],
   "main": "./dist/extension.js",
   "activationEvents": [
-    "onStartupFinished"
+    "onStartupFinished",
+    "onLanguage:sql"
   ],
   "capabilities": {
     "untrustedWorkspaces": {
@@ -263,13 +264,13 @@
         "command": "onelakeStudio.runQuery",
         "key": "ctrl+enter",
         "mac": "cmd+enter",
-        "when": "editorTextFocus && onelakeStudio.queryEditor"
+        "when": "editorTextFocus && (resource in onelakeStudio.newQueries || resourcePath =~ /[\\\\\\/]OneLakeStudio[\\\\\\/]queries[\\\\\\/]/i)"
       },
       {
         "command": "onelakeStudio.saveQuery",
         "key": "ctrl+s",
         "mac": "cmd+s",
-        "when": "editorTextFocus && onelakeStudio.newQuery"
+        "when": "editorTextFocus && resource in onelakeStudio.newQueries"
       }
     ],
     "viewsContainers": {
@@ -451,17 +452,17 @@
       "editor/title": [
         {
           "command": "onelakeStudio.runQuery",
-          "when": "onelakeStudio.queryEditor",
+          "when": "resource in onelakeStudio.newQueries || resourcePath =~ /[\\\\\\/]OneLakeStudio[\\\\\\/]queries[\\\\\\/]/i",
           "group": "navigation@1"
         },
         {
           "command": "onelakeStudio.planQuery",
-          "when": "onelakeStudio.queryEditor",
+          "when": "resource in onelakeStudio.newQueries || resourcePath =~ /[\\\\\\/]OneLakeStudio[\\\\\\/]queries[\\\\\\/]/i",
           "group": "navigation@2"
         },
         {
           "command": "onelakeStudio.saveQuery",
-          "when": "onelakeStudio.newQuery",
+          "when": "resource in onelakeStudio.newQueries",
           "group": "navigation@3"
         }
       ],
@@ -496,15 +497,15 @@
         },
         {
           "command": "onelakeStudio.runQuery",
-          "when": "onelakeStudio.queryEditor"
+          "when": "resource in onelakeStudio.newQueries || resourcePath =~ /[\\\\\\/]OneLakeStudio[\\\\\\/]queries[\\\\\\/]/i"
         },
         {
           "command": "onelakeStudio.planQuery",
-          "when": "onelakeStudio.queryEditor"
+          "when": "resource in onelakeStudio.newQueries || resourcePath =~ /[\\\\\\/]OneLakeStudio[\\\\\\/]queries[\\\\\\/]/i"
         },
         {
           "command": "onelakeStudio.saveQuery",
-          "when": "onelakeStudio.queryEditor"
+          "when": "resource in onelakeStudio.newQueries || resourcePath =~ /[\\\\\\/]OneLakeStudio[\\\\\\/]queries[\\\\\\/]/i"
         },
         {
           "command": "onelakeStudio.groupByType",
