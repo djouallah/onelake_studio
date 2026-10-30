@@ -75,6 +75,10 @@ lakehouse can share a name, and a five-part name is never mistaken for a model.
 **A semantic model here is the Fabric item**, the Power BI model. The model part is its own Fabric
 name, and the workspace part is its own workspace.
 
+**`semanticmodel.<workspace>.<model>` is unique by design.** Fabric allows one workspace of a name,
+and one semantic model of a name in a workspace, so the name identifies exactly one model. It belongs
+to that item and to nothing else.
+
 ## Spelling a name
 
 **Bare when it can be, quoted when it must.** A part stays bare only if it matches
@@ -129,8 +133,8 @@ SELECT * FROM 'abfss://aemo@onelake.dfs.fabric.microsoft.com/data.Lakehouse/File
 ```
 
 **A `.bim` or `.yaml` is a file too.** It is a representation of a model, not the model. A lakehouse
-can hold thousands of them across its subfolders, and they do not get a model's name: the name
-`semanticmodel.<workspace>.<model>` belongs to the Fabric item.
+can hold thousands of them across its subfolders, and they do not get a model's name:
+`semanticmodel.<workspace>.<model>` belongs to the Fabric item, and is unique by design.
 
 **A database file is still a file.** Once attached, its tables are `<name>.<schema>.<table>`, which
 is not a OneLake table's name.
