@@ -120,15 +120,46 @@ jobs:
           cache-dependency-path: package-lock.json
       - run: npm ci --no-audit --no-fund
       # The same bundle a linux-x64 vsix ships, so the test LOADs extensions by path the way
-      # an installed extension does.
+      # an installed extension does. Cached by DuckDB's version (the lockfile) and the list.
+      - uses: actions/cache@v6
+        with:
+          path: duckdb-extensions
+          key: duckdb-extensions-linux-x64-${{ hashFiles('scripts/fetch-extensions.mjs', 'package-lock.json') }}
       - run: node scripts/fetch-extensions.mjs linux-x64
       - run: node --test test/js/engine-host.test.mjs
-      # test/sql/*.test (sqllogictest) through the command line's sql: needs dax-sql (vendor/).
+      # test/sql/*.test (sqllogictest) through the command line's sql: needs dax-sql (vendor/),
+      # the tree the prepare job keeps in the cache.
+      - uses: actions/cache@v6
+        with:
+          path: vendor
+          key: vendor-${{ hashFiles('scripts/vendor.mjs', 'scripts/fetch-retry.mjs', 'src/vendored.js') }}
       - run: node scripts/vendor.mjs
       - run: node --test test/js/sqllogic.test.mjs
 
+  # What every vsix carries whatever its platform, built once and kept in the cache for the
+  # six package legs, which then restore it rather than build it six times: the webview's and
+  # the web app's libraries (vendor/, from jsDelivr: one CDN hiccup here instead of six chances
+  # to fail a leg), and Export to Fabric's function package.
+  prepare:
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - uses: actions/cache@v6
+        with:
+          path: vendor
+          key: vendor-${{ hashFiles('scripts/vendor.mjs', 'scripts/fetch-retry.mjs', 'src/vendored.js') }}
+      - run: node scripts/vendor.mjs
+      - uses: actions/cache@v6
+        with:
+          path: fabric-function
+          key: fabric-function-${{ hashFiles('scripts/function-bundle.mjs', 'src/fabricapp.js', 'fabric_app/rayfin/**') }}
+      - run: node scripts/function-bundle.mjs
+
   package:
-    needs: [test, engine]
+    needs: [test, engine, prepare]
     runs-on: ubuntu-26.04
     strategy:
       # Every leg's failure is worth seeing in the same run; the publish job is gated on ALL
@@ -150,10 +181,8 @@ jobs:
           cache: npm
           cache-dependency-path: package-lock.json
 
-      # vendor.mjs (run by vscode:prepublish, below) downloads the webview's libraries from
-      # jsDelivr. Six legs is six chances for a CDN hiccup to fail one, and one failed leg
-      # cancels the whole release. A vendor/ tree built from the same pins is reused as it
-      # is, so a restored cache makes it a no-op with no network at all.
+      # vendor/ as the prepare job built it: vendor.mjs (run by vscode:prepublish, below) finds
+      # the same pins and fetches nothing.
       - uses: actions/cache@v6
         with:
           path: vendor
@@ -177,23 +206,25 @@ jobs:
 
       # And this platform's DuckDB extensions (iceberg, azure, httpfs, avro + the optional
       # ones), so a first run offline or behind a proxy DuckDB cannot use still opens tables.
+      # Cached per platform; a restored tree with the same stamp is used as it is.
+      - uses: actions/cache@v6
+        with:
+          path: duckdb-extensions
+          key: duckdb-extensions-${{ matrix.target }}-${{ hashFiles('scripts/fetch-extensions.mjs', 'package-lock.json') }}
       - name: Bundle the DuckDB extensions for ${{ matrix.target }}
         run: node scripts/fetch-extensions.mjs ${{ matrix.target }}
 
       # Export to Fabric's function, as the deploy package Fabric takes (one esbuild bundle and
-      # its metadata), built from fabric_app/rayfin so nobody who exports needs npm.
-      # Its own step for the same reason as the two below; a restored cache makes it a no-op.
+      # its metadata), built from fabric_app/rayfin so nobody who exports needs npm: the
+      # prepare job's, from the cache (vscode:prepublish finds the same pins and builds nothing).
       - uses: actions/cache@v6
         with:
           path: fabric-function
           key: fabric-function-${{ hashFiles('scripts/function-bundle.mjs', 'src/fabricapp.js', 'fabric_app/rayfin/**') }}
       - run: node scripts/function-bundle.mjs
 
-      # The staged page carries the README and a build stamp. `vscode:prepublish` does this
-      # too; running it here means a failure shows up as its own step.
-      - run: node scripts/stage-webview.mjs
-      - run: node scripts/bundle.mjs
-
+      # The staged page (stage-webview.mjs) and the host's bundle (bundle.mjs) are built by
+      # vscode:prepublish, which vsce runs as it packages.
       # --target stamps TargetPlatform into the manifest AND names the file
       # onelake-studio-<target>-<version>.vsix, which is the name worth having on the
       # artifact. The major is pinned: an unpinned npx would let a future vsce 4 change how a

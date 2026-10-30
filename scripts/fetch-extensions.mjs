@@ -61,6 +61,14 @@ const apiVersion = JSON.parse(
   await readFile(join(here, "node_modules", "@duckdb", "node-api", "package.json"), "utf8")).version;
 const duckdb = `v${apiVersion.replace(/-.*$/, "")}`;
 
+// A tree fetched for this DuckDB, this platform and this list is reused as it is: a restored CI
+// cache costs no network. Anything else is fetched again from scratch.
+const STAMP = join(OUT, ".stamp.json");
+const want = JSON.stringify({ duckdb, platform, extensions: EXTENSIONS.map(e => (e.url ? e.url(duckdb, platform) : `${e.repo}/${e.name}`)) });
+if (await readFile(STAMP, "utf8").catch(() => "") === want) {
+  console.log(`duckdb-extensions/ already holds DuckDB ${duckdb}'s extensions for ${platform} — nothing to fetch`);
+  process.exit(0);
+}
 await rm(OUT, { recursive: true, force: true });
 await mkdir(OUT, { recursive: true });
 
@@ -81,4 +89,5 @@ for (const ext of EXTENSIONS) {
   bytes += bin.length;
   console.log(`  got   ${ext.name} (${(bin.length / 1e6).toFixed(1)}MB)`);
 }
+await writeFile(STAMP, want);
 console.log(`bundled DuckDB ${duckdb} extensions for ${platform}: ${(bytes / 1e6).toFixed(1)}MB`);

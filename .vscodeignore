@@ -37,4 +37,10 @@ fabric_app/**/node_modules/**
 
 # Rules for agents working in this repo.
 CLAUDE.md
-docs/TODO.md
+# The blog's posts and images, and the repo's own notes: the Marketplace page reads the README
+# and the changelog, the only doc the package needs.
+blog/**
+docs/**
+!docs/CHANGELOG.md
+# fetch-extensions.mjs's record of what it fetched, for a cached tree.
+duckdb-extensions/.stamp.json

@@ -25,7 +25,19 @@ import { mkdir, writeFile, readFile, rm } from "node:fs/promises";
 import { join, dirname, posix } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
-import { fetchRetry as get } from "./fetch-retry.mjs";
+import { fetchRetry } from "./fetch-retry.mjs";
+
+// Every download goes through here: at most PARALLEL at once, so a cold vendor/ takes the
+// slowest file's time, not the sum of a few hundred.
+const PARALLEL = 8;
+let active = 0;
+const waiting = [];
+async function get(url) {
+  if (active >= PARALLEL) await new Promise(r => waiting.push(r));
+  active++;
+  try { return await fetchRetry(url); }
+  finally { active--; const next = waiting.shift(); if (next) next(); }
+}
 
 const { VENDOR } = createRequire(import.meta.url)("../src/vendored.js");
 
@@ -61,7 +73,7 @@ async function esmClosure(npmPath, root = OUT) {
     out = out.split(`"${dep}"`).join(`"${rel}"`).split(`'${dep}'`).join(`'${rel}'`);
   }
   await save(localOf(npmPath), Buffer.from(out, "utf8"), root);
-  for (const dep of deps) await esmClosure(dep, root);
+  await Promise.all([...deps].map(dep => esmClosure(dep, root)));
 }
 
 // A tree built from these exact pins is reused as it is — a restored CI cache costs no
@@ -76,25 +88,30 @@ if (await readFile(STAMP, "utf8").catch(() => "") === want) {
 console.log(`vendoring webview libraries into ${OUT} ...`);
 await rm(OUT, { recursive: true, force: true });
 
-for (const pkg of VENDOR.esm) await esmClosure(`/npm/${pkg}/+esm`);
-for (const f of VENDOR.files) await save(`npm/${f}`, await get(`${JSDELIVR}/npm/${f}`));
-for (const { pkg, include } of VENDOR.packages) {
-  const listing = JSON.parse((await get(`https://data.jsdelivr.com/v1/packages/npm/${pkg}?structure=flat`)).toString("utf8"));
-  const names = (listing.files || []).map(f => f.name).filter(n => include.test(n));
-  if (!names.length) throw new Error(`npm/${pkg}: the listing has none of the files to vendor`);
-  for (const n of names) await save(`npm/${pkg}${n}`, await get(`${JSDELIVR}/npm/${pkg}${n}`));
-}
+// The panel's tree first, then the web app's: the counts below are each's own.
+await Promise.all([
+  ...VENDOR.esm.map(pkg => esmClosure(`/npm/${pkg}/+esm`)),
+  ...VENDOR.files.map(async f => save(`npm/${f}`, await get(`${JSDELIVR}/npm/${f}`))),
+  ...VENDOR.packages.map(async ({ pkg, include }) => {
+    const listing = JSON.parse((await get(`https://data.jsdelivr.com/v1/packages/npm/${pkg}?structure=flat`)).toString("utf8"));
+    const names = (listing.files || []).map(f => f.name).filter(n => include.test(n));
+    if (!names.length) throw new Error(`npm/${pkg}: the listing has none of the files to vendor`);
+    await Promise.all(names.map(async n => save(`npm/${pkg}${n}`, await get(`${JSDELIVR}/npm/${pkg}${n}`))));
+  }),
+]);
 
 
 const WEB = join(OUT, "webapp");
 const panelFiles = files, panelBytes = bytes;
-for (const pkg of VENDOR.webapp.esm) await esmClosure(`/npm/${pkg}/+esm`, WEB);
-for (const f of VENDOR.webapp.files) await save(`npm/${f}`, await get(`${JSDELIVR}/npm/${f}`), WEB);
 const { duckdb, platform, names } = VENDOR.webapp.extensions;
-for (const n of names) {
-  const rel = `duckdb-ext/${duckdb}/${platform}/${n}.duckdb_extension.wasm`;
-  await save(rel, await get(`https://extensions.duckdb.org/${duckdb}/${platform}/${n}.duckdb_extension.wasm`), WEB);
-}
+await Promise.all([
+  ...VENDOR.webapp.esm.map(pkg => esmClosure(`/npm/${pkg}/+esm`, WEB)),
+  ...VENDOR.webapp.files.map(async f => save(`npm/${f}`, await get(`${JSDELIVR}/npm/${f}`), WEB)),
+  ...names.map(async n => {
+    const rel = `duckdb-ext/${duckdb}/${platform}/${n}.duckdb_extension.wasm`;
+    await save(rel, await get(`https://extensions.duckdb.org/${duckdb}/${platform}/${n}.duckdb_extension.wasm`), WEB);
+  }),
+]);
 
 await writeFile(STAMP, want);
 console.log(`vendored ${panelFiles} file(s), ${(panelBytes / 1e6).toFixed(1)}MB for the panel; ` +

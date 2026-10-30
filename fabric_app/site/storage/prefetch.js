@@ -163,6 +163,20 @@ async function cached(path) {
 async function keep(path, entries) {
   try { await (await caches.open(MANIFESTS)).put(cacheKey(path), new Response(JSON.stringify(entries))); } catch (e) {}
 }
+// A table's manifests its current snapshot no longer lists are dropped: the cache holds what
+// each table reads now, not every manifest it ever had. Background, best-effort.
+async function pruneManifests(paths) {
+  try {
+    const keepKeys = new Set(paths.map(cacheKey));
+    const tables = new Set(paths.map(p => p.indexOf('/metadata/')).map((at, i) => at < 0 ? null
+      : cacheKey(paths[i].slice(0, at + '/metadata/'.length))).filter(Boolean));
+    if (!tables.size) return;
+    const store = await caches.open(MANIFESTS);
+    for (const req of await store.keys()) {
+      if (!keepKeys.has(req.url) && [...tables].some(t => req.url.startsWith(t))) await store.delete(req);
+    }
+  } catch (e) {}
+}
 async function manifestEntries(path, content, url, name) {
   const hit = await cached(path);
   if (hit) return { entries: hit, fetched: false };
@@ -184,6 +198,7 @@ export async function planTable(name, metadata, url) {
   const record = { scan: true, files: [], deleteFiles: [] };
   if (!snapshot?.['manifest-list']) return { record, manifests: 0, fetched: 0 };
   const list = await avroRecords(await get(url(snapshot['manifest-list']), name));
+  pruneManifests(list.map(m => m.manifest_path));
   const read = await Promise.all(list.map(m => manifestEntries(m.manifest_path, m.content ?? 0, url, name)));
   const live = read.flatMap(m => m.entries).filter(e => e[0] !== 2);
   const files = content => [...new Map(live.filter(e => e[1] === content).map(e => [e[2], { path: e[2], size: e[4] }])).values()];
