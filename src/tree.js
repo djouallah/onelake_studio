@@ -219,7 +219,7 @@ class LakehouseTree {
         item.iconPath = new vscode.ThemeIcon(n.pinned ? 'star-full' : 'folder');
         break;
       // Saved queries: .sql files, each naming its tables Kind.workspace.item.schema.table, so
-      // one runs whatever the panel has open. A click puts it in the SQL box.
+      // one runs whatever the panel has open. A click opens it in VS Code's editor.
       case 'queries':
         item.iconPath = new vscode.ThemeIcon('bookmark');
         break;
@@ -374,7 +374,7 @@ class LakehouseTree {
 
     if (n.kind === 'queries') {
       const list = await this.queries.list();
-      if (!list.length) return [node('empty', 'Start one with +, or save one from the SQL box', { leaf: true })];
+      if (!list.length) return [node('empty', 'Start one with +', { leaf: true })];
       return list.map(q => node('query', q.name, { leaf: true, path: q.path }));
     }
 

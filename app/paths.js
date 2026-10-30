@@ -206,10 +206,6 @@ function scan(sql) {
   return { text: out.join(""), seps };
 }
 
-export function stripComments(sql) {
-  return scan(String(sql)).text.trim().replace(/;+\s*$/, "").trim();
-}
-
 export const READ_START =
   /^\s*(with|select|describe|show|explain|summarize|pragma|values|from|table|pivot|unpivot)\b/i;
 
@@ -226,20 +222,6 @@ export function prepareReadOnlySql(raw) {
   if (!READ_START.test(sql))
     throw new Error("Read-only: only SELECT / WITH / DESCRIBE / SHOW / EXPLAIN / SUMMARIZE queries are allowed.");
   return sql;
-}
-
-// Does this SQL actually reference the named table? Binding a table means registering
-// every one of its data files and reading their footers — real money on a metered lake —
-// so it must not happen because someone ran `SELECT 42` while a table happened to be
-// selected. Comments are stripped first: a table named in a comment is not a reference.
-// Errs toward NOT binding; the cost of a miss is an "unknown table" the user fixes with
-// the Preview button, and the cost of a false positive is a bill.
-export function sqlNeedsTable(sql, table) {
-  if (!sql || !table) return false;
-  const esc = String(table).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  // Bounded by anything that cannot be part of an identifier — quotes included, so both
-  // `mart.sales` and `"mart"."sales"` match, but `sales_archive` does not.
-  return new RegExp(`(^|[^\\w"])"?${esc}"?($|[^\\w"])`, "i").test(stripComments(String(sql)));
 }
 
 // An Iceberg primitive type, in DuckDB's name for it. Anything nested or unknown is

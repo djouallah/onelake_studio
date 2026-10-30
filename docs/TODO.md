@@ -5,6 +5,12 @@ These are the items from the code review (bugs, duplicates, dead code, inefficie
 ## Duplicates
 - **Cache walks.** `extension.js` `cachedSqlTables` and `agent.js` `find` walk the same cache. They collect different things, so it is unclear whether a shared `onelake.cached.walk()` generator is worth it. NICE_TO_HAVE #3 (go to a table, column or measure) would be a third walk: build the shared walk with it.
 
+## Dead code
+- **`app/data.js` `loadTable` / `openTableView`**, and the `'loaded'` stage the page tracks for a
+  table: since SQL comes from the query editor, the page never binds the selected table before a
+  query (the host makes a table's view when a query names it). Check `statTable`'s
+  `loaded.has(key)` and `describeLoad`'s callers before removing.
+
 ## Inefficiency
 - **`engine-host.js` `ensureTables`.** It resolves the tables a statement names one after another. Use `Promise.all`; `admin()` already runs the DDL one at a time.
 - **`store.js` startup.** Every read waits for the startup sweep, which stats each file in turn. Resolve `usable` after mkdir and sweep in the background.

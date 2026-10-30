@@ -151,7 +151,7 @@ try {
   });
 
   await page.goto(`http://127.0.0.1:${PORT}/`);
-  await page.waitForFunction(() => !document.getElementById("runBtn").disabled, { timeout: 120000 });
+  await page.waitForFunction(() => /DuckDB ready/.test(document.getElementById("status").textContent), { timeout: 120000 });
 
   // --- the landing query -----------------------------------------------------
   await page.waitForFunction(() => {
@@ -192,19 +192,16 @@ try {
         .filter(n => !val(n)),
       bg: css.backgroundColor,
       font: css.fontFamily,
-      editorFont: getComputedStyle(document.getElementById("sqlEditor")).fontFamily,
       scheme: css.colorScheme,
     };
   });
   check("every palette variable resolved", painted.vars.length === 0, painted.vars.join(" "));
   check("the page took the editor background", painted.bg === "rgb(31, 31, 31)", painted.bg);
   check("the UI font is VS Code's", /Segoe WPC/.test(painted.font), painted.font);
-  check("the SQL box uses the editor font", /Consolas/.test(painted.editorFont), painted.editorFont);
   check("color-scheme follows the theme kind", painted.scheme === "dark", painted.scheme);
 
   // --- the engine still works ------------------------------------------------
-  await page.fill("#sqlEditor", "select 6*7 as answer");
-  await page.click("#runBtn");
+  await page.evaluate(sql => window.postMessage({ type: "run-sql", id: 1, sql }, "*"), "select 6*7 as answer");  // as the query editor sends it
   await page.waitForFunction(
     () => /\b42\b/.test(document.getElementById("resultsTable").innerText || ""), { timeout: 60000 });
   check("SQL still runs", true);
@@ -256,8 +253,7 @@ try {
   await page.waitForFunction(
     () => /orders/.test(document.getElementById("activeTable").textContent || ""), { timeout: 60000 })
     .catch(() => {});
-  await page.fill("#sqlEditor", "select sum(amount) as total from shop.main.orders");
-  await page.click("#runBtn");
+  await page.evaluate(sql => window.postMessage({ type: "run-sql", id: 1, sql }, "*"), "select sum(amount) as total from shop.main.orders");  // as the query editor sends it
   const sqliteOk = await page.waitForFunction(
     () => /\b6\.5\b/.test(document.getElementById("resultsTable").innerText || ""), { timeout: 60000 })
     .then(() => true, () => false);

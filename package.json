@@ -171,6 +171,38 @@
         "title": "New Query",
         "category": "OneLake Studio",
         "icon": "$(add)"
+      },
+      {
+        "command": "onelakeStudio.runQuery",
+        "title": "Run Query",
+        "category": "OneLake Studio",
+        "icon": "$(play)"
+      },
+      {
+        "command": "onelakeStudio.planQuery",
+        "title": "Plan Query",
+        "category": "OneLake Studio",
+        "icon": "$(pulse)"
+      },
+      {
+        "command": "onelakeStudio.saveQuery",
+        "title": "Save Query",
+        "category": "OneLake Studio",
+        "icon": "$(save)"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "onelakeStudio.runQuery",
+        "key": "ctrl+enter",
+        "mac": "cmd+enter",
+        "when": "editorTextFocus && onelakeStudio.queryEditor"
+      },
+      {
+        "command": "onelakeStudio.saveQuery",
+        "key": "ctrl+s",
+        "mac": "cmd+s",
+        "when": "editorTextFocus && onelakeStudio.newQuery"
       }
     ],
     "viewsContainers": {
@@ -282,7 +314,36 @@
           "group": "1_edit@2"
         }
       ],
+      "editor/title": [
+        {
+          "command": "onelakeStudio.runQuery",
+          "when": "onelakeStudio.queryEditor",
+          "group": "navigation@1"
+        },
+        {
+          "command": "onelakeStudio.planQuery",
+          "when": "onelakeStudio.queryEditor",
+          "group": "navigation@2"
+        },
+        {
+          "command": "onelakeStudio.saveQuery",
+          "when": "onelakeStudio.newQuery",
+          "group": "navigation@3"
+        }
+      ],
       "commandPalette": [
+        {
+          "command": "onelakeStudio.runQuery",
+          "when": "onelakeStudio.queryEditor"
+        },
+        {
+          "command": "onelakeStudio.planQuery",
+          "when": "onelakeStudio.queryEditor"
+        },
+        {
+          "command": "onelakeStudio.saveQuery",
+          "when": "onelakeStudio.queryEditor"
+        },
         {
           "command": "onelakeStudio.groupByType",
           "when": "onelakeStudio.signedIn && !onelakeStudio.groupedByType"
@@ -400,7 +461,7 @@
   },
   "scripts": {
     "vscode:prepublish": "node scripts/check-binding.mjs && node scripts/stage-webview.mjs && node scripts/vendor.mjs && node scripts/function-bundle.mjs && node scripts/bundle.mjs",
-    "test": "node --test test/js/app-paths.test.mjs test/js/catalog.test.mjs test/js/fabric.test.mjs test/js/host.test.mjs test/js/names.test.mjs test/js/deltalog.test.mjs test/js/onelake.test.mjs test/js/panel-html.test.mjs test/js/sql.test.mjs test/js/store.test.mjs test/js/bridge.test.mjs test/js/semviews.test.mjs test/js/semantic.test.mjs test/js/agent.test.mjs test/js/exportapp.test.mjs test/js/fabricapp.test.mjs test/js/onelakewrite.test.mjs test/js/http.test.mjs"
+    "test": "node --test test/js/app-paths.test.mjs test/js/catalog.test.mjs test/js/fabric.test.mjs test/js/host.test.mjs test/js/names.test.mjs test/js/deltalog.test.mjs test/js/onelake.test.mjs test/js/panel-html.test.mjs test/js/sql.test.mjs test/js/store.test.mjs test/js/bridge.test.mjs test/js/semviews.test.mjs test/js/semantic.test.mjs test/js/agent.test.mjs test/js/exportapp.test.mjs test/js/fabricapp.test.mjs test/js/onelakewrite.test.mjs test/js/http.test.mjs test/js/querytext.test.mjs"
   },
   "devDependencies": {
     "@types/vscode": "^1.90.0",

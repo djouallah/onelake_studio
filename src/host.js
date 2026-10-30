@@ -42,14 +42,16 @@ const ENGINE_METHODS = new Set(['query', 'stream', 'cancel', 'info']);
  *        Export to Fabric: answers what the page says when it is done
  * @param {(list: {workspace: string, item: string, schema: string, table: string}[]) => Promise<string[]>} [o.nameTables]
  *        a semantic model's Direct Lake tables (named by GUID) -> their SQL names
- * @param {(x: {name: string, sql: string}) => Promise<{name: string, path: string}|null>} [o.saveQuery]
- *        keep the SQL as a saved query: over the one named, else under a new name
+ * @param {(x: {sql: string}) => Promise<void>} [o.editSql]
+ *        Edit SQL: the SQL in a new query editor
+ * @param {(x: {id: number, ok: boolean, error: string|null, rewritten: boolean}) => void} [o.queryDone]
+ *        how a statement the query editor sent went
  * @param {(x: {workspace: string, model: string}) => Promise<object>} [o.openModel]
  *        a semantic model a query names, opened from its local copy (read from Fabric the first
  *        time) and kept as a view: { name, schema, path, text }
  */
 function createHostMethods({ onelake, engine, onStatus = () => {}, saveFile = null, semviews = null, exportExplore = null,
-                             nameTables = null, saveQuery = null, openModel = null, modelsDir = null }) {
+                             nameTables = null, editSql = null, queryDone = null, openModel = null, modelsDir = null }) {
   const views = () => { if (!semviews) throw new Error('semantic views are not available here'); return semviews; };
   return {
     // Export to Fabric (exportapp.js): the model's text (to check it), where it lives in
@@ -141,11 +143,15 @@ function createHostMethods({ onelake, engine, onStatus = () => {}, saveFile = nu
         : () => onelake.readBytes(String(x.workspace), String(x.path));
       return saveFile(name, bytes);
     },
-    // Save Query: the SQL box's text as a saved query (the tree's Queries), over the query
-    // open in the box or under a new "Query N", with nothing asked; answers { name, path }.
-    'host.saveQuery': async x => {
-      if (!saveQuery) throw new Error('saving queries is not available here');
-      return saveQuery({ name: x && x.name ? String(x.name) : '', sql: String((x && x.sql) ?? '') });
+    // Edit SQL: the SQL on the panel's screen, in a new query editor (queryeditor.js).
+    'host.editSql': async x => {
+      if (!editSql) throw new Error('query editors are not available here');
+      await editSql({ sql: String((x && x.sql) ?? '') });
+    },
+    // A statement the query editor sent, run (or planned) by the page: how it went.
+    'host.queryDone': async x => {
+      if (queryDone && x) queryDone({ id: Number(x.id), ok: !!x.ok, error: x.error == null ? null : String(x.error),
+                                      rewritten: !!x.rewritten });
     },
   };
 }

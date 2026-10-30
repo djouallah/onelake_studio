@@ -4,14 +4,7 @@ Ranked by value for the work. Every item keeps the contract: SQL only, read only
 the panel holds no token, and table Pivot is only a SQL starter.
 
 ## Editing and results
-1. **Queries in VS Code's own editor.** Saved queries are already `.sql` files: open them as normal
-   documents, with:
-   - completion from the cache: workspaces, items, schemas, tables, columns, models, measures
-   - Ctrl+Enter runs the statement under the cursor, or the selection
-   - a "▶ Run" CodeLens above each statement
-   - DuckDB errors as diagnostics at their line and column
-
-   Results still show in the panel.
+1. ~~**Queries in VS Code's own editor.**~~ Done: see the changelog.
 2. **Query history**, kept per account: SQL, time, duration, row count, and whether it was answered
    from the cache or from OneLake. Searchable from a quick pick or a tree node.
 3. **Go to a table, column or measure:** a quick pick over the cache (what `find` already searches).
@@ -37,8 +30,8 @@ the panel holds no token, and table Pivot is only a SQL starter.
 
 ## Later
 9. **Quick chart of any result**, with no model needed. Kept apart from table Pivot.
-10. **SQL notebook** (VS Code Notebook API): one query per cell, its result under it. Choose
-    between this and item 1; don't build both.
+10. **SQL notebook** (VS Code Notebook API): one query per cell, its result under it. Item 1 is
+    built (queries in VS Code's editor), so this would be a second way to write SQL: probably not.
 11. **Query parameters:** `SET VARIABLE` / `getvariable()`, with a prompt for any value the query
     leaves unset.
 12. **How old a result is** ("from cache, 3 min old"). Keep the last result of each saved query, so

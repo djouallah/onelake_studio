@@ -9,11 +9,12 @@
 // =============================================================================
 
 const vscode = require('vscode');
-const { join, basename, dirname } = require('node:path');
+const { join, basename, dirname, relative, isAbsolute } = require('node:path');
 const os = require('node:os');
 const { existsSync } = require('node:fs');
 const fsp = require('node:fs/promises');
-const { openPanel, closePanel, revealPanel, postToPanel, postLive } = require('./panel');
+const { registerQueryEditor } = require('./queryeditor');
+const { openPanel, closePanel, revealPanel, panelColumn, postToPanel, postLive } = require('./panel');
 const { createCatalog } = require('./catalog');
 const { createStore } = require('./store');
 const { createOneLake } = require('./onelake');
@@ -439,12 +440,14 @@ let cachedSqlTables = null;
 // kept as a semantic view. Set by activateInner.
 let openSqlModel = null;
 let nameModelTables = null;
-// The SQL box's Save Query (a .sql file in the saved queries' folder); set by activateInner,
-// which owns the tree that lists them.
-let saveQuery = null;
+// The query editors' side of the panel (queryeditor.js): Edit SQL opens a new one, and a
+// statement one sent comes back with how it went. Set by activateInner.
+let editSql = null;
+let queryDone = null;
 
-async function show(context, options) {
-  if (revealPanel()) return true;
+// `place`: where the panel goes, for a query run from an editor (panel.js openPanel).
+async function show(context, options, place) {
+  if (revealPanel(place)) return true;
   const token = await getToken(options);
   if (!token) {
     const why = lastAuthError ? `Sign-in failed: ${lastAuthError.message || lastAuthError}`
@@ -464,13 +467,14 @@ async function show(context, options) {
   const eng = ensureEngine(context, { readme: readme.fsPath });
   if (!eng) return false;
   await openPanel(context, {
-    onOpened: logOpened, onBoot: logBoot, engine: eng, build: buildInfo,
+    onOpened: logOpened, onBoot: logBoot, engine: eng, build: buildInfo, place,
     host: createHostMethods({
       onelake, engine: eng, onStatus: message => postLive({ type: 'status', message }),
       saveFile, semviews, modelsDir: modelsFolder(),
       exportExplore: x => (exportExplore ? exportExplore(x) : Promise.reject(new Error('OneLake Studio is still starting'))),
       nameTables: list => (nameModelTables ? nameModelTables(list) : Promise.reject(new Error('OneLake Studio is still starting'))),
-      saveQuery: x => (saveQuery ? saveQuery(x) : Promise.reject(new Error('OneLake Studio is still starting'))),
+      editSql: x => (editSql ? editSql(x) : Promise.reject(new Error('OneLake Studio is still starting'))),
+      queryDone: x => { if (queryDone) queryDone(x); },
       openModel: x => (openSqlModel ? openSqlModel(x) : Promise.reject(new Error('OneLake Studio is still starting'))),
     }),
     // The page could not bring the engine up. Everything it buffered is already gone;
@@ -754,21 +758,23 @@ async function activateInner(context) {
   // Opening a table means: make sure a panel exists, then tell it what to show. The panel
   // buffers the message if DuckDB is still booting. Boot is multi-second work with no
   // editor-side sign of life until now — withProgress is that sign.
-  const showWithProgress = options => vscode.window.withProgress(
+  const showWithProgress = (options, place) => vscode.window.withProgress(
     { location: vscode.ProgressLocation.Window, title: 'Opening OneLake Studio…' },
-    () => show(context, options));
+    () => show(context, options, place));
 
-  async function openInPanel(msg) {
-    if (!await showWithProgress({ createIfNone: true })) return;
+  // Whether the panel is there to take it.
+  async function openInPanel(msg, place) {
+    if (!await showWithProgress({ createIfNone: true }, place)) return false;
     postToPanel(msg);
+    return true;
   }
 
   // Saved queries: one .sql file each in ~/OneLakeStudio/queries/<account>/, beside the
   // downloaded models. They name their tables lakehouse.workspace.item.schema.table — names
   // that mean something in one tenant only — so each account (and tenant, when the
   // onelakeStudio.tenantId setting picks one) has its own, and signing in elsewhere shows
-  // that account's. The tree lists them; the SQL box's Save Query writes them. Signed out,
-  // there are none.
+  // that account's. The tree lists them, and each opens in VS Code's editor as its file.
+  // Signed out, there are none.
   const queriesRoot = () => join(os.homedir(), 'OneLakeStudio', 'queries');
   function queriesFolder() {
     return queryAccount ? join(queriesRoot(), queryAccount) : null;
@@ -812,24 +818,122 @@ async function activateInner(context) {
       { modal: true }, 'Replace');
     return pick === 'Replace';
   }
-  // The page's Save Query, with nothing asked: the query open in the SQL box ({ name }) is
-  // saved over, anything else becomes the next free "Query N" — Rename in the tree names it.
-  // Answers { name, path }.
-  saveQuery = async ({ name, sql }) => {
+  // A new query kept under Queries as the next free "Query N", with nothing asked (Rename in
+  // the tree names it). Answers { name, path }.
+  async function saveNewQuery(sql) {
     if (!queriesFolder()) throw new Error('sign in to save queries — they are kept per account');
     await fsp.mkdir(queriesFolder(), { recursive: true });
-    let stem = name ? queryStem(name) : '';
-    if (!stem) {
-      const taken = new Set((await listQueries()).map(q => q.name.toLowerCase()));
-      let n = 1;
-      while (taken.has(`query ${n}`)) n++;
-      stem = `Query ${n}`;
-    }
+    const taken = new Set((await listQueries()).map(q => q.name.toLowerCase()));
+    let n = 1;
+    while (taken.has(`query ${n}`)) n++;
+    const stem = `Query ${n}`;
     const path = queryPath(stem);
     await fsp.writeFile(path, String(sql ?? ''), 'utf8');
     tree.queriesChanged();
     return { name: stem, path };
+  }
+
+  // Query editors (queryeditor.js): a saved query's file, or a new query opened here, untitled
+  // until Save Query keeps it under Queries. Only these get Run, the lenses and the completions:
+  // any other .sql file is its own extensions'.
+  const newQueries = new Set();   // the untitled documents opened here, by URI
+  const isQueryFile = p => {
+    const rel = p ? relative(queriesRoot(), p) : '';
+    return !!rel && !rel.startsWith('..') && !isAbsolute(rel);
   };
+  const isQuery = doc => doc.languageId === 'sql' &&
+    (doc.isUntitled ? newQueries.has(doc.uri.toString()) : doc.uri.scheme === 'file' && isQueryFile(doc.uri.fsPath));
+  // A query editor opens in a column of its own, beside the panel rather than over it.
+  const queryColumn = () => {
+    const p = panelColumn();
+    return p == null ? vscode.ViewColumn.Active : p === vscode.ViewColumn.One ? vscode.ViewColumn.Two : vscode.ViewColumn.One;
+  };
+  async function openNewQuery(sql) {
+    const doc = await vscode.workspace.openTextDocument({ language: 'sql', content: String(sql ?? '') });
+    newQueries.add(doc.uri.toString());
+    await vscode.window.showTextDocument(doc, { viewColumn: queryColumn() });
+  }
+  const openSavedQuery = path => vscode.window.showTextDocument(vscode.Uri.file(path), { viewColumn: queryColumn(), preview: false });
+  editSql = ({ sql }) => openNewQuery(sql);
+
+  // A statement sent to the panel waits here for the page's answer (host.queryDone).
+  const runs = new Map();   // id -> resolve
+  let runIds = 0;
+  queryDone = x => {
+    const settle = runs.get(x.id);
+    if (settle) { runs.delete(x.id); settle(x); }
+  };
+  async function runInPanel(sql, { plan, title, column }) {
+    const id = ++runIds;
+    const answer = new Promise(resolve => runs.set(id, resolve));
+    // A panel closed before it answered never will: the oldest wait is let go.
+    if (runs.size > 20) { const [old] = runs.keys(); runs.get(old)(null); runs.delete(old); }
+    const sent = await openInPanel({ type: plan ? 'plan-sql' : 'run-sql', id, sql, title }, { beside: true, from: column });
+    if (!sent) { runs.delete(id); return null; }
+    return answer;
+  }
+
+  // What completion can name, from the cache alone (cachedSqlTables, below): every cached table
+  // with its columns, every semantic model, and the measures and columns of a model kept as a
+  // view (its .bim; an Ossie model gives its name only). Read again after a minute.
+  let namesKept = null;
+  function completionNames() {
+    if (namesKept && Date.now() - namesKept.at < 60_000) return namesKept.value;
+    const value = (async () => {
+      const found = cachedSqlTables ? await cachedSqlTables() : [];
+      const tables = found.filter(f => f.kind !== MODEL_CATALOG && f.table).map(f => ({ ...f, columns: f.columns || [] }));
+      const models = new Map();
+      for (const f of found) {
+        if (f.kind === MODEL_CATALOG) {
+          models.set(`${f.workspace}|${f.model}`.toLowerCase(), { workspace: f.workspace, model: f.model, measures: [], columns: [] });
+        }
+      }
+      for (const v of await semviews.list().catch(() => [])) {
+        const m = v.schema && v.path && models.get(`${v.schema}|${v.name}`.toLowerCase());
+        if (!m) continue;
+        try {
+          const bim = JSON.parse(stripBom(await fsp.readFile(v.path, 'utf8')));
+          for (const t of (bim.model || bim).tables || []) {
+            for (const x of t.measures || []) m.measures.push(x.name);
+            for (const c of t.columns || []) if (!c.isHidden) m.columns.push({ table: t.name, name: c.name });
+          }
+        } catch (_) { /* an Ossie model (YAML), or a file that cannot be read: its name alone */ }
+      }
+      return { tables, models: [...models.values()] };
+    })();
+    namesKept = { at: Date.now(), value };
+    value.catch(() => { namesKept = null; });
+    return value;
+  }
+
+  // Which editor is a query's, for the keys and the title bar's buttons.
+  const setQueryContext = ed => {
+    const doc = ed && ed.document;
+    vscode.commands.executeCommand('setContext', 'onelakeStudio.queryEditor', !!doc && isQuery(doc));
+    vscode.commands.executeCommand('setContext', 'onelakeStudio.newQuery', !!doc && doc.isUntitled && isQuery(doc));
+  };
+  context.subscriptions.push(
+    ...registerQueryEditor({ isQuery, run: runInPanel, names: completionNames }),
+    vscode.window.onDidChangeActiveTextEditor(setQueryContext),
+    vscode.workspace.onDidCloseTextDocument(doc => newQueries.delete(doc.uri.toString())),
+    // Save Query: a new query kept under Queries as "Query N", and its editor is that file from
+    // then on. A saved query's editor just saves.
+    vscode.commands.registerCommand('onelakeStudio.saveQuery', async () => {
+      const ed = vscode.window.activeTextEditor;
+      if (!ed || !isQuery(ed.document)) return;
+      if (!ed.document.isUntitled) { await ed.document.save(); return; }
+      try {
+        const saved = await saveNewQuery(ed.document.getText());
+        const column = ed.viewColumn;
+        await vscode.commands.executeCommand('workbench.action.revertAndCloseActiveEditor');
+        await vscode.window.showTextDocument(vscode.Uri.file(saved.path), { viewColumn: column, preview: false });
+        vscode.window.setStatusBarMessage(`Saved as ${saved.name} under Queries — rename it there`, 4000);
+      } catch (e) {
+        showError(`Could not save the query: ${(e && e.message) || e}`);
+      }
+    }),
+  );
+  setQueryContext(vscode.window.activeTextEditor);
 
   const bimPath = n => join(modelsFolder(),bimFileName(n.workspace).replace(/\.bim$/, ''), bimFileName(n.model));
 
@@ -1367,13 +1471,11 @@ async function activateInner(context) {
       vscode.window.setStatusBarMessage(`Copied ${name}`, 3000);
     }),
 
-    // Saved queries (queriesFolder): open one in the SQL box, rename, delete, show the folder.
+    // Saved queries (queriesFolder): open one in its editor, rename, delete, show the folder.
     vscode.commands.registerCommand('onelakeStudio.openQuery', async n => {
       if (!n || !n.path) return;
-      let sql;
-      try { sql = await fsp.readFile(n.path, 'utf8'); }
-      catch (e) { tree.queriesChanged(); return showError(`Could not read ${n.label}: ${e.message}`); }
-      await openInPanel({ type: 'open-query', name: n.label, sql });
+      if (!existsSync(n.path)) { tree.queriesChanged(); return showError(`${n.label} is no longer in ${queriesFolder()}`); }
+      await openSavedQuery(n.path);
     }),
     vscode.commands.registerCommand('onelakeStudio.renameQuery', async n => {
       if (!n || !n.path) return;
@@ -1381,29 +1483,24 @@ async function activateInner(context) {
       if (!picked || queryStem(picked) === n.label) return;
       const path = queryPath(picked);
       if (!await mayReplace(path, n.label)) return;
-      try {
-        await fsp.rename(n.path, path);
-        // The SQL box may have it open: its next Save goes to the new name.
-        postLive({ type: 'query-renamed', from: n.label, to: queryStem(picked) });
-      } catch (e) { showError(`Could not rename ${n.label}: ${e.message}`); }
+      // Through the editor: one that has the query open follows it to its new name.
+      const edit = new vscode.WorkspaceEdit();
+      edit.renameFile(vscode.Uri.file(n.path), vscode.Uri.file(path), { overwrite: true });
+      if (!await vscode.workspace.applyEdit(edit)) showError(`Could not rename ${n.label}`);
       tree.queriesChanged();
     }),
     vscode.commands.registerCommand('onelakeStudio.deleteQuery', async n => {
       if (!n || !n.path) return;
       const pick = await vscode.window.showWarningMessage(`Delete the query ${n.label}?`, { modal: true }, 'Delete');
       if (pick !== 'Delete') return;
-      try {
-        await fsp.rm(n.path, { force: true });
-        // Open in the SQL box, it is a new query now: its next Save makes a new one.
-        postLive({ type: 'query-renamed', from: n.label, to: null });
-      } catch (e) { showError(`Could not delete ${n.label}: ${e.message}`); }
+      const edit = new vscode.WorkspaceEdit();
+      edit.deleteFile(vscode.Uri.file(n.path), { ignoreIfNotExists: true });
+      if (!await vscode.workspace.applyEdit(edit)) showError(`Could not delete ${n.label}`);
       tree.queriesChanged();
     }),
-    // A new query of its own, started with what can be queried: Save Query keeps it under
-    // Queries as "Query N". Not run: one Ctrl+Enter does that.
-    vscode.commands.registerCommand('onelakeStudio.newQuery', async () => {
-      await openInPanel({ type: 'open-query', name: '', sql: NEW_QUERY_SQL });
-    }),
+    // A new query in an editor of its own, started with what can be queried: Save Query keeps
+    // it under Queries as "Query N". Not run: one Ctrl+Enter does that.
+    vscode.commands.registerCommand('onelakeStudio.newQuery', () => openNewQuery(NEW_QUERY_SQL)),
     vscode.commands.registerCommand('onelakeStudio.revealQueries', async () => {
       if (!queriesFolder()) return;
       await fsp.mkdir(queriesFolder(), { recursive: true });

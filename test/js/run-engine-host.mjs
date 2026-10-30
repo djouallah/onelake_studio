@@ -176,10 +176,10 @@ try {
   const t0 = Date.now();
   await page.goto(`${ORIGIN}/`);
   const booted = await page.waitForFunction(
-    () => !document.getElementById("runBtn").disabled, { timeout: 60000 })
+    () => /DuckDB ready/.test(document.getElementById("status").textContent), { timeout: 60000 })
     .then(() => true, () => false);
   const bootMs = Date.now() - t0;
-  ok(booted, `the page booted on the native engine (${bootMs}ms to an enabled Run button)`);
+  ok(booted, `the page booted on the native engine (${bootMs}ms to "DuckDB ready")`);
 
   if (!booted) {
     console.log("  status:", await page.evaluate(() => document.getElementById("status").textContent).catch(() => "?"));
@@ -191,8 +191,7 @@ try {
     ok(bootLine && bootLine.includes("native"), `…and reports itself native — ${bootLine || "(no line)"}`);
 
     // A real query, through data.js's own runSql, through the bridge, into the grid.
-    await page.fill("#sqlEditor", "SELECT 1 AS a, 'x' AS b UNION ALL SELECT 2, 'y' ORDER BY a");
-    await page.click("#runBtn");
+    await page.evaluate(sql => window.postMessage({ type: "run-sql", id: 1, sql }, "*"), "SELECT 1 AS a, 'x' AS b UNION ALL SELECT 2, 'y' ORDER BY a");  // as the query editor sends it
     await page.waitForFunction(
       () => document.querySelectorAll("#resultsTable tbody tr").length >= 2, { timeout: 30000 })
       .then(() => ok(true, "a query ran end to end and rendered rows"),
@@ -205,8 +204,7 @@ try {
        "…with the right values in the right order");
 
     // Types reach the UI as DuckDB's own names.
-    await page.fill("#sqlEditor", "SELECT 1::BIGINT AS n");
-    await page.click("#runBtn");
+    await page.evaluate(sql => window.postMessage({ type: "run-sql", id: 1, sql }, "*"), "SELECT 1::BIGINT AS n");  // as the query editor sends it
     // The previous result also has a "1" in it, so wait for THIS result's header.
     await page.waitForFunction(
       () => /n/.test((document.querySelector("#resultsTable thead") || {}).textContent || ""),

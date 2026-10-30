@@ -101,7 +101,7 @@ try {
   });
 
   await page.goto(`${ORIGIN}/`);
-  await page.waitForFunction(() => !document.getElementById("runBtn").disabled, { timeout: 120000 });
+  await page.waitForFunction(() => /DuckDB ready/.test(document.getElementById("status").textContent), { timeout: 120000 });
 
   // What extension.js posts after an export.
   await page.evaluate(path => window.postMessage({
@@ -114,7 +114,7 @@ try {
   const rels = await page.locator("#modelView .m-rel").count();
   console.log(`model page: ${cards} cards, ${rels} relationship(s)`);
   if (cards !== 2 || rels !== 1) throw new Error(`model page drew ${cards} cards and ${rels} relationships`);
-  if (!await page.locator("#sqlEditor").isHidden()) throw new Error("the editor is still on screen under the model view");
+  if (!await page.locator(".resultsWrap").isHidden()) throw new Error("the results are still on screen under the model view");
   const css = await page.evaluate(() => getComputedStyle(document.querySelector("#modelView .subtabs")).borderRadius);
   if (css !== "999px") throw new Error(`explore.css did not load (subtabs border-radius ${css})`);
 

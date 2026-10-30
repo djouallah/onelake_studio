@@ -87,20 +87,23 @@ function wireEngine(panel, engine, methods = {}) {
 // assignment, and the loser of that race was orphaned holding an engine bridge forever.
 let opening = null;
 
+// `place`: { beside, from } for a query run from an editor (queryeditor.js): the panel opens
+// beside that editor, and the editor keeps the focus.
 function openPanel(context, opts = {}) {
-  if (current) { current.reveal(vscode.ViewColumn.Active); return Promise.resolve(current); }
+  if (current) { revealPanel(opts.place); return Promise.resolve(current); }
   if (!opening) {
     opening = openPanelUncontended(context, opts).finally(() => { opening = null; });
   }
   return opening;
 }
 
-async function openPanelUncontended(context, { onOpened, onBoot, onBootFailed, engine, host, build } = {}) {
+async function openPanelUncontended(context, { onOpened, onBoot, onBootFailed, engine, host, build, place } = {}) {
   const { page: siteUri, readme: readmeUri } = await webviewRoot(context.extensionUri,
     { dev: context.extensionMode === vscode.ExtensionMode.Development });
   const vendorUri = vscode.Uri.joinPath(context.extensionUri, 'vendor');
   const panel = vscode.window.createWebviewPanel(
-    'onelakeStudio', 'OneLake Studio', vscode.ViewColumn.Active, {
+    'onelakeStudio', 'OneLake Studio',
+    place && place.beside ? { viewColumn: vscode.ViewColumn.Beside, preserveFocus: true } : vscode.ViewColumn.Active, {
       enableScripts: true,
       // DuckDB spends real time and network booting; tearing it down whenever the tab
       // loses focus would make the extension feel broken.
@@ -188,10 +191,18 @@ function closePanel() {
 // second table used to repeat the whole open: an account-provider RPC, the README lookup,
 // the engine check. None of it can have changed while the panel lives (a sign-out or an
 // account switch closes it), so a click on a live panel is a reveal and a message.
-function revealPanel() {
+// It stays in its own column: brought to the front there, not moved over the editor the user is
+// in. A query run from an editor (`place.beside`) keeps that editor's focus, and a panel
+// sharing the editor's column (behind it) moves beside it, so the two are on screen together.
+function revealPanel(place = {}) {
   if (!current) return false;
-  current.reveal(vscode.ViewColumn.Active);
+  const col = current.viewColumn;
+  if (place.beside && (col == null || col === place.from)) current.reveal(vscode.ViewColumn.Beside, true);
+  else current.reveal(col, !!place.beside);
   return true;
 }
 
-module.exports = { openPanel, closePanel, revealPanel, postToPanel, postLive };
+// The column the panel is in, or undefined: a new query editor opens in another one.
+const panelColumn = () => (current ? current.viewColumn : undefined);
+
+module.exports = { openPanel, closePanel, revealPanel, panelColumn, postToPanel, postLive };

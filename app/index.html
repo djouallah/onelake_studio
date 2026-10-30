@@ -80,18 +80,12 @@
     .toolbar { display: flex; gap: 0.5rem; align-items: center; padding: 0.5rem 0.75rem; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
     .toolbar .title { font-weight: 600; }
     .toolbar .spacer { flex: 1; }
-    #sqlEditor {
-      width: 100%; min-height: 96px; max-height: 40vh; resize: vertical; padding: 0.6rem 0.75rem;
-      border: 0; border-bottom: 1px solid var(--border); background: var(--vscode-editor-background); color: var(--text);
-      font-family: var(--vscode-editor-font-family); font-size: var(--vscode-editor-font-size);
-    }
     .resultsWrap { flex: 1; overflow: auto; }
-    /* A semantic model's view has its own Show plan; Save Query saves its SQL (app.js). */
-    section.modelOpen #planBtn, section:not(.tableOpen) #pivotBtn { display: none; }
-    /* A table's Pivot takes the place of the editor and results, as a model's view does. */
+    /* Pivot is a table's; Edit SQL opens a model's SQL too (app.js). */
+    section:not(.tableOpen) #pivotBtn { display: none; }
+    /* A table's Pivot takes the place of the results, as a model's view does; it has its own Edit SQL. */
     #pivotView { flex: 1; overflow: auto; min-height: 0; }
-    section.pivotOpen #sqlEditor, section.pivotOpen .resultsWrap, section.pivotOpen #planBtn,
-    section.pivotOpen #runBtn, section.pivotOpen #csvBtn, section.pivotOpen #saveQueryBtn,
+    section.pivotOpen .resultsWrap, section.pivotOpen #csvBtn, section.pivotOpen #editSqlBtn,
     section.pivotOpen #pivotBtn { display: none; }
     table.results { border-collapse: collapse; width: 100%; font-size: 13px; }
     table.results th, table.results td {
@@ -170,19 +164,16 @@
       <span class="title" id="activeTable">No table selected</span>
       <div class="spacer"></div>
       <button id="pivotBtn" disabled title="The table's columns on shelves, as a pivot or a chart">Pivot</button>
-      <button id="planBtn" disabled title="Where the SQL box's query spends its time (it runs once to measure)">Plan</button>
       <!-- Only on screen while something can be stopped. -->
       <button id="stopBtn" hidden title="Stop">Stop ■</button>
-      <button id="runBtn" class="primary" disabled>Run ▶</button>
       <button id="csvBtn" disabled>Save CSV</button>
-      <button id="saveQueryBtn" title="Keep this SQL under Queries in the OneLake sidebar">Save Query</button>
+      <button id="editSqlBtn" title="This SQL in a query editor, to change and run it there (Ctrl+Enter)">Edit SQL</button>
     </div>
-    <!-- A .bim's semantic model view (explore/view.js), in place of the editor and results. -->
+    <!-- A .bim's semantic model view (explore/view.js), in place of the results. -->
     <div id="modelView" hidden></div>
     <!-- Pivot: the selected table as a one-table model, in Explore's pivot (explore/view.js), in
-         place of the editor and results while it is open (app.js: section.pivotOpen). -->
+         place of the results while it is open (app.js: section.pivotOpen). -->
     <div id="pivotView" hidden></div>
-    <textarea id="sqlEditor" spellcheck="false" placeholder="Read-only SQL. Pick a table in the OneLake sidebar, or try: SELECT 42"></textarea>
     <div class="resultsWrap">
       <!-- While a TABLE is selected: Stats leads, because statistics cost nothing. -->
       <div class="docBar tabs" id="viewBar" hidden>
@@ -194,7 +185,7 @@
       </div>
       <!-- Plan: the query's profile and plan tree (explore/profile.js), in place of the results. -->
       <div id="planView" hidden></div>
-      <div class="hint" id="resultsHint">Query results appear here.</div>
+      <div class="hint" id="resultsHint">Query results appear here. Write SQL in a query editor: New Query (+) under Queries in the OneLake sidebar.</div>
       <article id="docView" class="docView" hidden></article>
       <table class="results" id="resultsTable" hidden></table>
     </div>
