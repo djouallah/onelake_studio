@@ -6,6 +6,17 @@ them. The code that holds it is [`src/names.js`](../src/names.js) and
 [`src/sql.js`](../src/sql.js) on the host, and [`app/semantic.js`](../app/semantic.js) and
 [`app/paths.js`](../app/paths.js) in the panel.
 
+## The point
+
+**The tenant acts as a single catalog.** Every table and semantic model in it has one name, and any
+statement can use any of them: it can join across items, workspaces and kinds with no setup.
+
+**This works because a name means exactly one object.** Fabric guarantees it: a workspace's name is
+unique in the tenant, an item's name is unique for its type in a workspace, and a table's name is
+unique in its schema. The convention is built on that guarantee, and it is what makes a cross join
+safe. If a name could mean two objects, a query could read the wrong data with no error, and nobody
+could trust the catalog.
+
 ## The rule
 
 **A name is where Fabric keeps the object, with the object's type moved to the front.** The two
@@ -16,8 +27,8 @@ shapes are one rule applied to two kinds of object:
 | A table | `<workspace>/<item>.<Kind>/Tables/<schema>/<table>` | `<kind>.<workspace>.<item>.<schema>.<table>` |
 | A semantic model | an item directly in `<workspace>` | `semanticmodel.<workspace>.<model>` |
 
-So a name is unique by construction: no two objects have the same address. It also needs no setup,
-so a statement can join across items and workspaces without attaching or declaring anything:
+No two objects have the same address, so no two have the same name. Nothing has to be attached or
+declared before a statement uses one:
 
 ```sql
 SELECT *
@@ -75,9 +86,9 @@ lakehouse can share a name, and a five-part name is never mistaken for a model.
 **A semantic model here is the Fabric item**, the Power BI model. The model part is its own Fabric
 name, and the workspace part is its own workspace.
 
-**`semanticmodel.<workspace>.<model>` is unique by design.** Fabric allows one workspace of a name,
-and one semantic model of a name in a workspace, so the name identifies exactly one model. It belongs
-to that item and to nothing else.
+**`semanticmodel.<workspace>.<model>` is unique by design.** Fabric guarantees one workspace of a
+name in the tenant and one semantic model of a name in a workspace, so the name identifies exactly
+one model. It belongs to that item and to nothing else.
 
 ## Spelling a name
 
