@@ -137,8 +137,10 @@ const RESERVED = new Set(('all analyse analyze and any array as asc asymmetric b
   'trailing true union unique unpivot using variadic when where window with').split(' '));
 const bare = s => /^[A-Za-z_][A-Za-z0-9_]*$/.test(s) && !RESERVED.has(s.toLowerCase()) ? s : qid(s);
 const sqlStr = v => `'${String(v).replace(/'/g, "''")}'`;
-const sqlVal = v => v == null ? 'NULL' : typeof v === 'boolean' ? (v ? 'TRUE' : 'FALSE') : typeof v === 'number' ? String(v)
-  : /^\d{4}-\d{2}-\d{2}$/.test(v) ? `DATE ${sqlStr(v)}` : sqlStr(v);
+// A YYYY-MM-DD value is a DATE literal for a date column (or one whose type is not known); a
+// text column that holds such strings compares them as text.
+const sqlVal = (v, type) => v == null ? 'NULL' : typeof v === 'boolean' ? (v ? 'TRUE' : 'FALSE') : typeof v === 'number' ? String(v)
+  : (!type || type === 'date') && /^\d{4}-\d{2}-\d{2}$/.test(v) ? `DATE ${sqlStr(v)}` : sqlStr(v);
 export function modelSql(q, column, from = 'model', plain = null) {
   const ref = id => {
     const c = column(id);
@@ -155,10 +157,12 @@ export function modelSql(q, column, from = 'model', plain = null) {
   };
   const cond = ([col, op, ...a]) => {
     const c = ref(col);
+    const type = column(col)?.type;
+    const val = v => sqlVal(v, type);
     const named = vs => vs.filter(v => v != null), blank = vs => vs.some(v => v == null);
-    const list = vs => `(${vs.map(sqlVal).join(', ')})`;
+    const list = vs => `(${vs.map(val).join(', ')})`;
     switch (op) {
-      case 'between': return `${c} BETWEEN ${sqlVal(a[0])} AND ${sqlVal(a[1])}`;
+      case 'between': return `${c} BETWEEN ${val(a[0])} AND ${val(a[1])}`;
       case 'blank': return `${c} IS NULL`;
       case 'notBlank': return `${c} IS NOT NULL`;
       case 'in': {
@@ -170,7 +174,7 @@ export function modelSql(q, column, from = 'model', plain = null) {
         const n = named(a[0]);
         return [...(n.length ? [`(${c} NOT IN ${list(n)} OR ${c} IS NULL)`] : []), ...(blank(a[0]) ? [`${c} IS NOT NULL`] : [])].join(' AND ');
       }
-      default: return `${c} ${op} ${sqlVal(a[0])}`;
+      default: return `${c} ${op} ${val(a[0])}`;
     }
   };
   const rollup = q.totals ?? {}, rolled = Object.values(rollup).flat();
@@ -268,7 +272,7 @@ export function createExplorer(root, ctx) {
   // the shelves, and the model is read only — asked once per field for the explorer's life.
   const valueLists = new Map();   // field id -> values
   // A query object as the SELECT over the model that runs: a column is the model's own.
-  const columnOf = id => { const f = fields?.byId.get(id); return f && f.kind === 'column' ? { table: f.table, name: f.name } : null; };
+  const columnOf = id => { const f = fields?.byId.get(id); return f && f.kind === 'column' ? { table: f.table, name: f.name, type: f.type } : null; };
   const sqlOf = q => modelSql(q, columnOf, ctx.name || 'model');
 
   function load() {

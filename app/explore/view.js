@@ -14,7 +14,7 @@
 // and run, and where ECharts comes from (`ctx`); nothing here knows the engine.
 // =============================================================================
 
-import { escapeHtml } from '../paths.js';
+import { escapeHtml, toCsv } from '../paths.js';
 import { renderModel } from './model.js';
 import { createExplorer } from './explore.js';
 import { compileModelSql } from './query.js';
@@ -228,7 +228,8 @@ export function mountExplore(root, ctx) {
   // Ctrl+Enter reaches runSql while a run or a plan is still going; only the latest may write.
   let outSeq = 0;
   async function busy(button, label, work) {
-    const was = button.textContent;
+    // Its idle label, from before any run: a second Ctrl+Enter must not keep 'Running…'.
+    const was = (button.dataset.idle ??= button.textContent);
     for (const b of [runBtn, planBtn]) b.disabled = true;
     button.textContent = label;
     try { return await work(); }
@@ -326,8 +327,7 @@ export function mountExplore(root, ctx) {
       const { sql, dax } = compile(base);
       // Cast as the box's results are, so the file holds what they show.
       const res = await run(`SELECT COLUMNS(*)::VARCHAR FROM (\n${sql}\n)`, dax, { fresh: true });
-      const cell = v => v == null ? '' : /[",\n\r]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : String(v);
-      const text = [res.fields.map(cell).join(','), ...res.rows.map(r => res.fields.map(f => cell(r[f])).join(','))].join('\n') + '\n';
+      const text = toCsv(res.fields, res.rows, { eol: '\n' }) + '\n';
       const saved = await ctx.saveText(`${ctx.name}-explore.csv`, text);
       if (saved) setStatus(`Saved ${res.rows.length.toLocaleString()} rows${typeof saved === 'string' ? ` to ${saved}` : ''}` +
         (res.truncated ? ` — stopped at the engine's cap of ${res.limit.toLocaleString()}; add a filter for all of them` : '') + '.',
@@ -359,6 +359,8 @@ export function mountExplore(root, ctx) {
   if (page !== 'model') show(page);
 
   return {
+    // The model's query as it stands: Show SQL's box when it is open, else the shelves'.
+    sql: () => (sqlMode ? typed() : explorer?.query()?.sql ?? ''),
     destroy() {
       destroyed = true;
       explorer?.destroy();

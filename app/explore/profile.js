@@ -187,23 +187,28 @@ export function createPlanView(ctx) {
   const tabs = [['profile', 'Profile'], ['tree', 'Tree']];
   const buttons = tabs.map(([k, t]) => el('button', { type: 'button', class: 'pf-tab', 'data-view': k, onclick: () => show(k) }, t));
   const root = el('div', { class: 'pf-view' }, el('div', { class: 'pf-tabs', role: 'tablist' }, buttons), body);
-  const done = {};
+  // done: each tab's view once it is in; waiting: its spinner while it is under way, so a
+  // second click shows that again rather than run the query once more.
+  const done = {}, waiting = {};
+  const active = () => buttons.find(b => b.classList.contains('active'))?.dataset.view;
   async function show(k) {
     for (const b of buttons) b.classList.toggle('active', b.dataset.view === k);
     if (done[k]) { body.replaceChildren(done[k]); return; }
+    if (waiting[k]) { body.replaceChildren(waiting[k]); return; }
     const t0 = performance.now(), wait = el('span', { class: 'pf-wait-time' });
-    body.replaceChildren(el('div', { class: 'pf-wait' }, el('span', { class: 'ex-spinner', 'aria-hidden': 'true' }),
-      k === 'profile' ? 'Profiling (the query runs once more)' : 'Planning', wait));
+    waiting[k] = el('div', { class: 'pf-wait' }, el('span', { class: 'ex-spinner', 'aria-hidden': 'true' }),
+      k === 'profile' ? 'Profiling (the query runs once more)' : 'Planning', wait);
+    body.replaceChildren(waiting[k]);
     const timer = setInterval(() => { wait.textContent = ctx.elapsed(t0); }, 100);
     try {
       let node;
       if (k === 'profile') { node = el('div'); renderProfile(node, parseProfile(await ctx.profile()), ctx.colors()); }
       else node = await ctx.tree();
       done[k] = node;
-      if (buttons.find(b => b.classList.contains('active'))?.dataset.view === k) body.replaceChildren(node);
+      if (active() === k) body.replaceChildren(node);
     } catch (e) {
-      body.replaceChildren(el('div', { class: 'ex-error' }, `Error: ${e.message}`));
-    } finally { clearInterval(timer); }
+      if (active() === k) body.replaceChildren(el('div', { class: 'ex-error' }, `Error: ${e.message}`));
+    } finally { clearInterval(timer); delete waiting[k]; }
   }
   show('profile');
   return root;

@@ -121,6 +121,13 @@ export const readerFor = ext =>
 export const sqlStr = v => "'" + String(v).replace(/'/g, "''") + "'";
 export const quoteIdent = v => '"' + String(v).replace(/"/g, '""') + '"';
 
+// CSV: a cell is quoted when it holds a quote, a comma or a line break of either kind.
+// `text` turns a value into its cell; lines end with `eol`.
+export function toCsv(fields, rows, { text = v => (v == null ? '' : String(v)), eol = '\r\n' } = {}) {
+  const cell = v => { const t = text(v); return /[",\r\n]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t; };
+  return [fields.map(cell).join(','), ...rows.map(r => fields.map(f => cell(r[f])).join(','))].join(eol);
+}
+
 // Walk SQL once, keeping track of what is inside a string literal. Returns the text with
 // comments replaced by a space, plus the offsets of every ';' that was NOT inside one.
 //

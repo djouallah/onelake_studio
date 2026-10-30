@@ -21,13 +21,13 @@ export async function renderMarkdown(text) {
     const purify = (d.default || d)(window);
     // read_text() renders files the user did not author, and this page holds
     // OneLake tokens — marked's output is never inserted unsanitized, and no
-    // rendered link ever gets an opener back into this window. Images stay
-    // allowed on purpose: this is a docs viewer and README badges are the point;
-    // the remote-fetch exposure is accepted.
+    // rendered link ever gets an opener back into this window.
     purify.addHook('afterSanitizeAttributes', node => {
-      // A relative image (the README's screenshot) has nothing to resolve against in
-      // this page, which has no <base>: hidden rather than drawn as a broken icon.
-      if (node.tagName === 'IMG' && !/^[a-z][a-z0-9+.-]*:/i.test(node.getAttribute('src') || '')) {
+      // Only an image carried in the document itself can be drawn: a relative one (the
+      // README's screenshot) has nothing to resolve against in this page, which has no
+      // <base>, and the panel's CSP (img-src, src/panel.js) blocks a remote one. Either
+      // is hidden rather than drawn as a broken icon.
+      if (node.tagName === 'IMG' && !/^(data|blob):/i.test(node.getAttribute('src') || '')) {
         node.setAttribute('hidden', '');
       }
       if (node.tagName === 'A') {

@@ -9,7 +9,7 @@
 // =============================================================================
 import { createEngine } from './data.js';
 import { isDocResult, textLinesDoc, fileExt, isTextExt, escapeHtml, basename,
-         IMAGE_EXTS, sqlNeedsTable, quoteIdent, abfssUrl } from './paths.js';
+         IMAGE_EXTS, sqlNeedsTable, abfssUrl, toCsv } from './paths.js';
 // Static import is safe: docview.js is tiny — the markdown renderer it uses is imported
 // only inside renderMarkdown(), and only for a document that IS markdown.
 import { renderDocument } from './docview.js';
@@ -110,7 +110,8 @@ function wireUi() {
   $('docPretty').onclick = () => {
     if (docMode === 'pretty' || !lastResult) return;
     docMode = 'pretty';
-    showDoc(docOf(lastResult));
+    // The document as the query gave it: a sorted grid must not reorder its lines.
+    showDoc('doc' in lastResult ? lastResult.doc : docOf(lastResult));
   };
   $('docRaw').onclick = () => {
     docMode = 'raw';
@@ -132,6 +133,7 @@ async function startEngine() {
   await engineReady;
   engineUp = true;
   $('runBtn').disabled = false;   // SQL needs the engine, not a lakehouse
+  $('planBtn').disabled = planning > 0;
   const before = selSeq;          // a click during boot outranks everything said below
   let landingFailed = false;
   if (README_SQL && !$('sqlEditor').value) {
@@ -152,6 +154,9 @@ async function startEngine() {
 // must not touch the screen: each selection takes a ticket, and after every await a stale
 // ticket stands down silently (the engine already cancelled the stale load).
 let selSeq = 0;
+// The same for what fills the results pane: a query (or the Data tab's first rows) that
+// lands after a newer one was started stands down rather than paint over it.
+let runSeq = 0;
 
 // The panel follows the tree: moving to another lakehouse hands the previous one's views
 // back before anything of the new one is opened.
@@ -167,6 +172,7 @@ async function goToLakehouse(workspace, item) {
 // lakehouse behind it offered a Save that could only fail.
 function leaveLakehouse(opts) {
   closeModelView();
+  ++selSeq;                     // a load still under way belongs to the lakehouse being left
   activeIdent = null;
   activeQuery = null;
   activeFile = null;
@@ -433,8 +439,10 @@ let imageUrl = null;
 async function selectImage(file) {
   closeModelView();
   const my = ++selSeq;
+  engine.cancelLoad();
   $('activeTable').textContent = file.name;
   activeFile = file;
+  activeDocExt = '';
   activeIdent = null;            // no table behind this
   activeQuery = null;
   setActiveStats(null);
@@ -525,22 +533,23 @@ function reportTableError(e) {
 
 // The Data tab's first click: the first rows, which the selection already started reading.
 async function peekIntoView() {
-  const my = selSeq;
+  const my = selSeq, run = ++runSeq;
+  const stale = () => my !== selSeq || run !== runSeq;
   const t0 = Date.now();
   setBusy(true, { stoppable: true });
   try {
     const out = await engine.peekTable(lakehouse, activeTableRef);
-    if (my !== selSeq) return;
+    if (stale()) return;
     tableStage = 'peek';
     docAllowed = false;             // a peek is a table, whatever shape it comes back
     renderResults(out);             // this lands the pane in the Data view by itself
     reportOpened('rows', $('activeTable').textContent, Date.now() - t0);
     setStatus(`The first ${out.rows.length} row(s). Run a query to read the whole table.`);
   } catch (e) {
-    if (my !== selSeq) return;
+    if (stale()) return;
     reportTableError(e);
   } finally {
-    if (my === selSeq) setBusy(false);
+    if (!stale()) setBusy(false);
   }
 }
 
@@ -608,10 +617,20 @@ function planColors() {
   const [scan, join, aggregate, sort, win, filter] = PALETTE;
   return { plan: css('--faint'), scan, join, aggregate, sort, window: win, filter, other: css('--muted') };
 }
+// Plans and profiles under way. Each runs the whole query, so Plan waits for them rather
+// than start another on every click.
+let planning = 0;
+function holdPlan(on) {
+  planning += on ? 1 : -1;
+  $('planBtn').disabled = planning > 0 || $('runBtn').disabled;
+}
+const held = work => async () => { holdPlan(true); try { return await work(); } finally { holdPlan(false); } };
 async function showPlan() {
   const text = $('sqlEditor').value.trim();
   if (!text) { setStatus('Write a query to plan it.'); return; }
+  if (planning) return;
   const my = selSeq;
+  holdPlan(true);
   try {
     await engineReady;
     await viewsReady;
@@ -624,14 +643,14 @@ async function showPlan() {
     clearResults();
     const view = $('planView');
     view.replaceChildren(createPlanView({
-      profile: async () => profileJson((await engine.runSql(profileSql(sql, { set: false }))).rows[0]?.explain_value),
-      tree: async () => {
+      profile: held(async () => profileJson((await engine.runSql(profileSql(sql, { set: false }))).rows[0]?.explain_value)),
+      tree: held(async () => {
         const res = await engine.runSql(`EXPLAIN ${sql}`);
         const pre = document.createElement('pre');
         pre.className = 'sm-plan';
         pre.textContent = res.rows.map(r => r.explain_value ?? Object.values(r).join('  ')).join('\n');
         return pre;
-      },
+      }),
       colors: planColors,
       elapsed: planElapsed,
     }));
@@ -642,6 +661,8 @@ async function showPlan() {
     setStatus('Query plan — Run ▶ for the results.');
   } catch (e) {
     if (my === selSeq) setStatus('Plan failed: ' + e.message, 'error');
+  } finally {
+    holdPlan(false);
   }
 }
 
@@ -653,8 +674,9 @@ async function runQuery({ doc = true, ext = '' } = {}) {
   // all, which a click that opens the panel races. Each await below can be where that
   // click lands, and a cancel sent before the statement reaches the host stops nothing,
   // so the result itself has to stand down rather than paint over the click's view.
-  const my = selSeq;
-  const stale = () => my !== selSeq;
+  // Ctrl+Enter runs even while a query is under way: the newer one owns the pane.
+  const my = selSeq, run = ++runSeq;
+  const stale = () => my !== selSeq || run !== runSeq;
   setBusy(true, { stoppable: true });
   docAllowed = doc;
   docSourceExt = ext;
@@ -757,19 +779,23 @@ function gridHead(res, sort) {
 
 // A result's rows sorted by one column: numbers as numbers (a big integer arrives as text),
 // everything else as text with its digits compared as numbers. Empty cells are last either way.
+const textOrder = new Intl.Collator(undefined, { numeric: true });
 function sortedRows(rows, res, { col, desc }) {
   const f = res.fields[col];
   const numeric = NUMERIC_TYPE.test((res.types || [])[col] || '');
-  const key = v => (typeof v === 'number' ? v : numeric && !Number.isNaN(Number(v)) ? Number(v) : cellText(v));
+  const key = v => (typeof v === 'number' ? v : numeric && !Number.isNaN(Number(v)) ? Number(v) : String(cellText(v)));
+  // Each row's key once, not once per comparison: 200k rows are millions of comparisons.
   const filled = [], empty = [];
-  for (const r of rows) (r[f] == null || r[f] === '' ? empty : filled).push(r);
+  for (const r of rows) {
+    if (r[f] == null || r[f] === '') empty.push(r);
+    else filled.push({ r, k: key(r[f]) });
+  }
   filled.sort((a, b) => {
-    const x = key(a[f]), y = key(b[f]);
-    const c = typeof x === 'number' && typeof y === 'number' ? x - y
-      : String(x).localeCompare(String(y), undefined, { numeric: true });
+    const x = a.k, y = b.k;
+    const c = typeof x === 'number' && typeof y === 'number' ? x - y : textOrder.compare(String(x), String(y));
     return desc ? -c : c;
   });
-  return filled.concat(empty);
+  return filled.map(e => e.r).concat(empty);
 }
 
 function renderResults(res) {
@@ -811,8 +837,10 @@ function renderResults(res) {
     draw();
   };
 
-  // The grid stays the source of truth; a document result additionally gets Pretty.
+  // The grid stays the source of truth; a document result additionally gets Pretty — kept as
+  // it reads now, before any sort.
   const doc = docOf(res);
+  res.doc = doc;
   if (doc != null) {
     $('docBar').hidden = false;
     setDocTabs();
@@ -859,6 +887,7 @@ function setDocTabs() {
 // as Delta, its own log, read once when one of the two is first shown.
 // ---------------------------------------------------------------------------
 function setActiveStats(info) {
+  if (!info) freshLoad = null;         // a new selection: the last load's report is not owed
   activeInfo = (info && info.stats) ? info : null;
   $('viewBar').hidden = !activeInfo;
   $('pivotBtn').disabled = !activeInfo || !activeSqlName;
@@ -938,7 +967,8 @@ async function loadHistory(more = false) {
 // The Data tab is where the user first asks to see rows.
 function onDataTab() {
   if (viewMode === 'data') return;
-  if (tableStage === 'stats' && activeTableRef) { peekIntoView(); return; }
+  // A query's results already under Stats are put back as they were, not replaced by a peek.
+  if (tableStage === 'stats' && activeTableRef && !lastResult) { peekIntoView(); return; }
   showData();
 }
 
@@ -1177,6 +1207,7 @@ function openQuery(name, sql) {
   activeDocEligible = false;
   activeDocExt = '';
   tableStage = 'none';
+  setActiveStats(null);         // the last table's tabs and pivot are not this query's
   activeQuery = name || null;
   $('activeTable').textContent = name ? `Query: ${name}` : 'Query';
   $('sqlEditor').value = sql;
@@ -1190,12 +1221,11 @@ function openQuery(name, sql) {
 // With a semantic model open, the SQL box is hidden: what is saved is the model's own SQL, its
 // Show SQL box (the pivot's query, or one typed there), which the SQL box runs as it is — a
 // semantic view can be named from any SQL. Each one is a new query.
-const modelSqlBox = () => modelView && $('modelView').querySelector('textarea[aria-label="SQL over the semantic model"]');
 async function saveQuery() {
   const btn = $('saveQueryBtn');
   const fromModel = !!modelView;
-  const sql = fromModel ? (modelSqlBox()?.value ?? '').trim() : $('sqlEditor').value;
-  if (fromModel && !sql) { setStatus("Open Show SQL to save the model's query."); return; }
+  const sql = fromModel ? (modelView.sql() || '').trim() : $('sqlEditor').value;
+  if (fromModel && !sql) { setStatus("Put a field on the shelves to save the model's query."); return; }
   btn.disabled = true;
   try {
     const saved = await engine.saveQuery(fromModel ? null : activeQuery, sql);
@@ -1214,14 +1244,8 @@ async function saveQuery() {
 function saveCsv() {
   if (!lastResult || !lastResult.rows.length) return null;
   const { fields, rows } = lastResult;
-  const q = s => {
-    const t = cellText(s);
-    return /[",\n]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t;
-  };
-  const lines = [fields.map(q).join(',')];
-  for (const r of rows) lines.push(fields.map(f => q(r[f])).join(','));
   return engine.saveText(($('activeTable').textContent || 'query').replace(/[^\w.-]+/g, '_') + '.csv',
-                         lines.join('\r\n'));
+                         toCsv(fields, rows, { text: cellText }));
 }
 
 // ---------------------------------------------------------------------------
@@ -1275,7 +1299,7 @@ function setBusy(b, { stoppable = false } = {}) {
   if (!stop.hidden) stop.disabled = false;
   // Run and Plan need only the engine.
   $('runBtn').disabled = !engineUp || b;
-  $('planBtn').disabled = !engineUp || b;
+  $('planBtn').disabled = !engineUp || b || planning > 0;
 }
 
 // ---------------------------------------------------------------------------

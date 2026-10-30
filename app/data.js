@@ -355,16 +355,24 @@ export function createEngine({
     const ext = fileExt(file.name);
     const url = abfssUrl(lh.workspace, file.path);
 
-    const head = await hostBytes(lh.workspace, file.path, "bytes=0-15");
-    check();
-    const sqlite = isSqliteHeader(head);
+    // Released on any failure before the attach, as after it: the record and the alias
+    // are this key's from here on.
+    let sqlite, alias;
+    try {
+      const head = await hostBytes(lh.workspace, file.path, "bytes=0-15");
+      check();
+      sqlite = isSqliteHeader(head);
 
-    // The alias is how the user names the database in SQL, so derive it from the file
-    // name; uniqueView guards it against colliding with an existing view or alias.
-    const alias = uniqueView(key, basename(file.name).replace(/\.[^.]+$/, ""));
-    if (sqlite && file.bytes > SQLITE_MAX_BYTES)
-      throw new Error(`${file.name} is ${fmtBytes(file.bytes)} — over the ${fmtBytes(SQLITE_MAX_BYTES)} ` +
-                      `cap for copying a SQLite file to this machine.`);
+      // The alias is how the user names the database in SQL, so derive it from the file
+      // name; uniqueView guards it against colliding with an existing view or alias.
+      alias = uniqueView(key, basename(file.name).replace(/\.[^.]+$/, ""));
+      if (sqlite && file.bytes > SQLITE_MAX_BYTES)
+        throw new Error(`${file.name} is ${fmtBytes(file.bytes)} — over the ${fmtBytes(SQLITE_MAX_BYTES)} ` +
+                        `cap for copying a SQLite file to this machine.`);
+    } catch (e) {
+      await releaseOwned(key, gen);
+      throw e;
+    }
 
     try {
       // READ_ONLY is not optional: the file lives in OneLake and the app never writes.
