@@ -89,8 +89,13 @@ Fabric app.
 
 **Every workspace has one model of a name, so the name is unique by design.** Fabric guarantees one
 workspace of a name in the tenant and one semantic model of a name in a workspace. A model created from a
-file keeps to the same rule: it takes a name no other model in that workspace has. The name therefore
-identifies exactly one model.
+file must use this name too, and it does not get a second one: if the name is taken in that workspace, the
+newer model overwrites what we have under it. The name therefore identifies exactly one model at a time.
+
+**Overwriting never reaches the Power BI item.** Nothing here writes a semantic model item in Fabric, so a
+model created from a file replaces only our own view of that name, and an export replaces only our own
+copy and app. Until the Fabric item is downloaded again, `semanticmodel.<workspace>.<model>` is the one
+created last.
 
 Why three parts and not five:
 
@@ -123,8 +128,8 @@ anywhere, and a lakehouse can hold thousands of them across its subfolders, even
 name. A file has no model name.
 
 **Creating a model from a file is what takes a name.** The model, whether for Fabric or only for a Fabric
-app, is `semanticmodel.<workspace>.<model>`, and that name is unique in its workspace, whatever the file
-was called or wherever it was stored.
+app, must be `semanticmodel.<workspace>.<model>`, wherever the file was stored. An export overwrites
+whatever we have under that name.
 
 **A database file is still a file.** Once attached, its tables are `<name>.<schema>.<table>`, which is not
 a OneLake table's name.
@@ -176,12 +181,8 @@ same reason.
 
 These do not meet the contract yet:
 
-- **Opening a model file takes a model's name.** Only creating a model should. `registerModel` in
-  `app/semantic.js` names `nem.bim` `semanticmodel.<workspace>.nem`, the same name a Fabric item `nem` has in
-  that workspace.
-- **Creating a model does not check that its name is free.** Export to Fabric (`planExport` in
-  `src/exportapp.js`) takes the name from the model's own `name` or the file's name, and does not compare it
-  with the workspace's other models. It checks only the app's name.
+- **An export still asks before it overwrites.** `exportExplore` in `src/extension.js` asks before it
+  replaces a different file at the model's path in `Files/`, and before it replaces an app no export created.
 - **A bare model name can still compile.** `app/semantic.js` says "nothing shorter", but dax-sql resolves a
   name by its last parts, so `FROM nem` can reach an open view when only one fits.
 - **The command line's help shows the short form.** `bin/cli.mjs` has `FROM model` in the `sql` help.

@@ -238,8 +238,9 @@ SELECT * FROM (SHOW SEMANTIC METRICS IN semanticmodel.ws.sales) WHERE ...;
 `.yaml` or `.yml` whose top level has `version:` and `datasets:`, opens in the model view in place of
 the editor. dax-sql's `formats/ossie.js` turns Ossie into the `.bim` it stands for, and from there the
 two are one. These files can be stored anywhere and have no model name. A model created from one, for
-Fabric or only for a Fabric app, is named `semanticmodel.<workspace>.<model>`, unique in its workspace.
-See [NAMING.md](NAMING.md#files), whose known gaps say what the code does today.
+Fabric or only for a Fabric app, must be named `semanticmodel.<workspace>.<model>`, and it overwrites
+whatever we have under that name. See [NAMING.md](NAMING.md#files), whose known gaps say what the code does
+today.
 
 ## Explore
 
