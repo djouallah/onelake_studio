@@ -1506,6 +1506,16 @@ async function activateInner(context) {
     vscode.window.createTreeView('onelakeStudio.explorer', {
       treeDataProvider: tree,
       showCollapseAll: true,
+      // A table or a semantic model dragged into an editor is its SQL name, dropped as text.
+      dragAndDropController: {
+        dragMimeTypes: ['text/plain'],
+        dropMimeTypes: [],
+        handleDrag(nodes, data) {
+          const names = nodes.map(n => (n.kind === 'table' && n.table ? sqlNameOf(n, n)
+            : n.kind === 'semanticModel' && n.model ? modelSqlName(n.workspace, n.model) : null)).filter(Boolean);
+          if (names.length) data.set('text/plain', new vscode.DataTransferItem(names.join(',\n')));
+        },
+      },
     }),
 
     // The panel keeps table metadata across lakehouse switches now, so the refresh button
@@ -1580,6 +1590,27 @@ async function activateInner(context) {
     vscode.commands.registerCommand('onelakeStudio.openFile', n => openInPanel({
       type: 'open-file', workspace: n.workspace, item: n.item, path: n.path, bytes: n.bytes,
     })),
+
+    // A table's first thousand rows, as a query in an editor of its own, run at once.
+    vscode.commands.registerCommand('onelakeStudio.selectTop', async n => {
+      if (!n || !n.table) return;
+      await openNewQuery(`SELECT *\nFROM ${sqlNameOf(n, n)}\nLIMIT 1000;\n`);
+      await vscode.commands.executeCommand('onelakeStudio.runQuery');
+    }),
+    // A table's columns, comma-separated and quoted where SQL needs it, from its metadata (read
+    // from OneLake if the cache does not have it yet).
+    vscode.commands.registerCommand('onelakeStudio.copyColumns', async n => {
+      if (!n || !n.table) return;
+      try {
+        const meta = await onelake.table({ workspace: n.workspace, item: n.item }, { schema: n.schema, table: n.table });
+        const cols = (meta.schemaFields || []).map(f => sqlPart(f.name));
+        if (!cols.length) { vscode.window.setStatusBarMessage(`${n.table} has no columns`, 3000); return; }
+        await vscode.env.clipboard.writeText(cols.join(', '));
+        vscode.window.setStatusBarMessage(`Copied the ${cols.length} columns of ${n.table}`, 3000);
+      } catch (e) {
+        showError(`Could not read the columns of ${n.table}: ${(e && e.message) || e}`);
+      }
+    }),
 
     // A table's SQL name, for a query written by hand.
     vscode.commands.registerCommand('onelakeStudio.copySqlName', async n => {

@@ -139,6 +139,16 @@
         "icon": "$(copy)"
       },
       {
+        "command": "onelakeStudio.selectTop",
+        "title": "Select Top 1000 Rows",
+        "category": "OneLake Studio"
+      },
+      {
+        "command": "onelakeStudio.copyColumns",
+        "title": "Copy Column List",
+        "category": "OneLake Studio"
+      },
+      {
         "command": "onelakeStudio.copySqlName",
         "title": "Copy SQL Name",
         "category": "OneLake Studio",
@@ -336,6 +346,21 @@
           "group": "inline"
         },
         {
+          "command": "onelakeStudio.selectTop",
+          "when": "view == onelakeStudio.explorer && viewItem == table",
+          "group": "0_query@1"
+        },
+        {
+          "command": "onelakeStudio.copySqlName",
+          "when": "view == onelakeStudio.explorer && viewItem == table",
+          "group": "1_copy@1"
+        },
+        {
+          "command": "onelakeStudio.copyColumns",
+          "when": "view == onelakeStudio.explorer && viewItem == table",
+          "group": "1_copy@2"
+        },
+        {
           "command": "onelakeStudio.newQuery",
           "when": "view == onelakeStudio.explorer && viewItem == queries",
           "group": "inline"
@@ -498,6 +523,14 @@
         },
         {
           "command": "onelakeStudio.copySqlName",
+          "when": "false"
+        },
+        {
+          "command": "onelakeStudio.selectTop",
+          "when": "false"
+        },
+        {
+          "command": "onelakeStudio.copyColumns",
           "when": "false"
         },
         {

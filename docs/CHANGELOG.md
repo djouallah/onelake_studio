@@ -25,6 +25,9 @@
   Ctrl+C copies as tab-separated text (Ctrl+Shift+C with headers). Right-click: Copy, Copy with
   Headers, Copy as CSV, Markdown or JSON. A double click (or Enter) shows a cell whole, JSON
   indented. The filter box keeps the rows that hold its text.
+- **SQL from the tree.** A table's right-click: Select Top 1000 Rows (a query in its editor, run),
+  Copy SQL Name, Copy Column List. A table or a semantic model dragged into an editor drops its
+  SQL name.
 - **The command line's `dax` command is gone.** OneLake Studio takes SQL only: a semantic model is
   queried with `AGG("measure")` in `sql`.
 

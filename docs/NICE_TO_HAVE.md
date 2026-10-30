@@ -18,10 +18,7 @@ the panel holds no token, and table Pivot is only a SQL starter.
 7. **Export to a local file** as Parquet, CSV or Excel, without the 200,000-row cap. The host writes
    the file; user SQL is still refused `COPY`. Also: open the result as an untitled CSV or JSON
    document.
-8. **SQL from the tree:**
-   - "New query: SELECT * … LIMIT 100"
-   - "Copy column list"
-   - drag a table or a column into the editor to insert its SQL name
+8. ~~**SQL from the tree**~~ Done (tables and models; the tree lists no columns to drag).
 
 ## Later
 9. **Quick chart of any result**, with no model needed. Kept apart from table Pivot.
