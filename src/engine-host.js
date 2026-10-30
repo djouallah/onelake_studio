@@ -799,7 +799,8 @@ function createEngineHost({ extensionDir, onLog = () => {}, onWarn = () => {}, g
       await ensureAuth();
       await withAuthRetry(async () => {
         const run = String(await prepare(sql)).trim().replace(/;+\s*$/, '');
-        await withConn(c => c.run(`COPY (${run}) TO ${sqlStr(file)} (${EXPORTS[format]})`), agentLive);
+        // The paren on a line of its own: a statement may end with a -- comment.
+        await withConn(c => c.run(`COPY (${run}\n) TO ${sqlStr(file)} (${EXPORTS[format]})`), agentLive);
       });
       return file;
     } catch (e) { throw scrub(e, authToken || token); }

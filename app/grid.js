@@ -231,7 +231,8 @@ export function mountGrid(table, wrap, res, { ui, copyText, say = () => {} }) {
   wrap.addEventListener('scroll', onScroll, { passive: true });
   const onKey = e => {
     if (!ui.inspector.root.hidden && e.key === 'Escape') { closeInspector(); return; }
-    if (e.target === ui.filter) return;
+    // A document, the Stats card or a chart in its place keeps its own Ctrl+C and Ctrl+A.
+    if (table.hidden || !(e.target === wrap || table.contains(e.target))) return;
     const mod = e.ctrlKey || e.metaKey;
     if (mod && e.key.toLowerCase() === 'c') { e.preventDefault(); copy(e.shiftKey ? 'tsv-headers' : 'tsv'); return; }
     if (mod && e.key.toLowerCase() === 'a') { e.preventDefault(); anchor = { r: 0, c: 0 }; focus = { r: view.length - 1, c: fields.length - 1 }; paint(true); return; }

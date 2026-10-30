@@ -124,11 +124,34 @@ function namesIn(sql) {
 // replaced by its value before the query runs.
 const SET_VARIABLE = /^\s*set\s+variable\s+("(?:[^"]|"")+"|[A-Za-z_]\w*)\s*(?:=|to)\s*([\s\S]+?)\s*;?\s*$/i;
 const GET_VARIABLE = /getvariable\s*\(\s*'((?:[^']|'')*)'\s*\)/gi;
+// Only when `sql` is one statement (a selection of a SET and a SELECT is not a SET), and the
+// value as SQL with its comments gone: `2024 -- the year` is 2024.
 function setVariable(sql) {
-  const m = SET_VARIABLE.exec(String(sql));
+  const text = String(sql);
+  const list = statements(text);
+  if (list.length !== 1) return null;
+  const m = SET_VARIABLE.exec(text.slice(list[0].start, list[0].end));
   if (!m) return null;
   const name = m[1].startsWith('"') ? m[1].slice(1, -1).replace(/""/g, '"') : m[1];
-  return { name, value: m[2] };
+  const value = withoutComments(m[2]).trim();
+  return value ? { name, value } : null;
+}
+// `sql` with its -- and /* */ comments removed, quotes kept as they are.
+function withoutComments(sql) {
+  const s = String(sql);
+  let out = '', i = 0;
+  while (i < s.length) {
+    const c = s[i];
+    if (c === '-' && s[i + 1] === '-') { while (i < s.length && s[i] !== '\n') i++; continue; }
+    if (c === '/' && s[i + 1] === '*') { const e = s.indexOf('*/', i + 2); i = e < 0 ? s.length : e + 2; out += ' '; continue; }
+    if (c === "'" || c === '"') {
+      let j = i + 1;
+      while (j < s.length) { if (s[j] === c) { if (s[j + 1] === c) { j += 2; continue; } j++; break; } j++; }
+      out += s.slice(i, j); i = j; continue;
+    }
+    out += c; i++;
+  }
+  return out;
 }
 // The variable names a statement reads, once each, as written.
 function variablesIn(sql) {

@@ -626,10 +626,12 @@ async function showPlan(text) {
 // `doc` says whether a document view may be offered for this result at all. Returns
 // whether the query succeeded, so a caller with its own message can keep quiet; what went
 // wrong is in lastRun.
+let running = 0;   // queries under way: a kept result waits for them rather than stop them
 async function runQuery({ sql, doc = true, ext = '' } = {}) {
   sql = String(sql ?? '');
   currentSql = sql;
   lastRun = { error: null, rewritten: false };
+  running++;
   // A click in the tree outranks a query already on its way — the welcome page's, above
   // all, which a click that opens the panel races. Each await below can be where that
   // click lands, and a cancel sent before the statement reaches the host stops nothing,
@@ -688,6 +690,7 @@ async function runQuery({ sql, doc = true, ext = '' } = {}) {
     console.error(e);
     return false;
   } finally {
+    running--;
     // The newer selection's load owns the busy state now.
     if (!stale()) setBusy(false);
   }
@@ -1155,7 +1158,8 @@ const agoText = t => {
 function showKept(key) {
   const k = kept.get(key);
   // Only over a query's result: a table or a file opened from the tree stays on screen.
-  if (!k || key === shownKey || activeTableRef || activeFile || modelView) return;
+  // Nor while a query or a plan runs: showing it would cancel them.
+  if (!k || key === shownKey || activeTableRef || activeFile || modelView || running || planning) return;
   enterQuery(k.title);
   shownKey = key;
   renderResults(k.res);

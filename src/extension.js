@@ -881,6 +881,9 @@ async function activateInner(context) {
   // until Save Query keeps it under Queries. Only these get Run, the lenses and the completions:
   // any other .sql file is its own extensions'.
   const newQueries = new Set();   // the untitled documents opened here, by URI
+  // Another SQL extension that takes over a document's language closes and reopens it: one
+  // reopened at once with the same text is the same query (a new Untitled-1 is not).
+  const closedQueries = new Map();   // URI -> { text, at }
   const isQueryFile = p => {
     const rel = p ? relative(queriesRoot(), p) : '';
     return !!rel && !rel.startsWith('..') && !isAbsolute(rel);
@@ -895,7 +898,14 @@ async function activateInner(context) {
   // panel's group, and the panel moves under it (dockBelowEditor). Beside: in another column.
   const queryColumn = () => {
     const p = panelColumn();
-    if (p == null || resultsBelow()) return p == null ? vscode.ViewColumn.Active : p;
+    if (p == null) return vscode.ViewColumn.Active;
+    if (resultsBelow()) {
+      // Beside the other queries, above the panel; the panel's own group only when it is the
+      // one group there is (the panel then moves under it): never a new row per query.
+      const other = [vscode.window.activeTextEditor, ...vscode.window.visibleTextEditors]
+        .find(e => e && e.viewColumn != null && e.viewColumn !== p);
+      return other ? other.viewColumn : p;
+    }
     return p === vscode.ViewColumn.One ? vscode.ViewColumn.Two : vscode.ViewColumn.One;
   };
   async function showQuery(docOrUri, opts) {
@@ -937,8 +947,11 @@ async function activateInner(context) {
     // SET VARIABLE is the editor's, not the engine's: kept here and answered at once.
     const set = setVariable(sql);
     if (set) {
-      variables.set(set.name.toLowerCase(), set.value);
-      vscode.window.setStatusBarMessage(`OneLake Studio: ${set.name} = ${set.value}`, 5000);
+      // Bound now: DuckDB never holds the variables, so getvariable('a') in b's value would be NULL.
+      const value = await bindQueryVariables(set.value);
+      if (value == null) return null;
+      variables.set(set.name.toLowerCase(), value);
+      vscode.window.setStatusBarMessage(`OneLake Studio: ${set.name} = ${value}`, 5000);
       return { ok: true, error: null };
     }
     const bound = await bindQueryVariables(sql);
@@ -1093,12 +1106,15 @@ async function activateInner(context) {
     // is really gone, and the active editor's keys and buttons are worked out again.
     vscode.workspace.onDidCloseTextDocument(doc => {
       const key = doc.uri.toString();
-      if (!newQueries.has(key)) return;
-      setTimeout(() => {
-        if (!vscode.workspace.textDocuments.some(d => d.uri.toString() === key)) newQueries.delete(key);
-      }, 2000);
+      if (!newQueries.delete(key)) return;
+      closedQueries.set(key, { text: doc.getText(), at: Date.now() });
     }),
-    vscode.workspace.onDidOpenTextDocument(() => setQueryContext(vscode.window.activeTextEditor)),
+    vscode.workspace.onDidOpenTextDocument(doc => {
+      const key = doc.uri.toString(), was = closedQueries.get(key);
+      closedQueries.delete(key);
+      if (was && Date.now() - was.at < 1000 && doc.getText() === was.text) newQueries.add(key);
+      setQueryContext(vscode.window.activeTextEditor);
+    }),
     // Save Query: a new query kept under Queries as "Query N", and its editor is that file from
     // then on. A saved query's editor just saves.
     vscode.commands.registerCommand('onelakeStudio.saveQuery', async () => {

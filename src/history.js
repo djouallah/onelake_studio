@@ -20,8 +20,7 @@ function createHistory({ dir, max = MAX }) {
   let chain = Promise.resolve();
   const serial = fn => (chain = chain.then(fn, fn));
 
-  async function read() {
-    const f = file();
+  async function read(f = file()) {
     if (!f) return [];
     const text = await fsp.readFile(f, 'utf8').catch(() => '');
     const out = [];
@@ -42,14 +41,14 @@ function createHistory({ dir, max = MAX }) {
         await fsp.mkdir(dir, { recursive: true });
         await fsp.appendFile(f, JSON.stringify(entry) + '\n', 'utf8');
         // Trimmed now and then rather than on every run: past a fifth over, back to `max`.
-        const all = await read();
+        const all = await read(f);
         if (all.length > max * 1.2) {
           await fsp.writeFile(f, all.slice(-max).map(e => JSON.stringify(e)).join('\n') + '\n', 'utf8');
         }
       });
     },
     // Newest first.
-    async list() { await chain; return (await read()).reverse(); },
+    async list() { await chain.catch(() => {}); return (await read()).reverse(); },
     clear() { const f = file(); return f ? serial(() => fsp.rm(f, { force: true })) : Promise.resolve(); },
   };
 }

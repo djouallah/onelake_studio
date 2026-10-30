@@ -52,6 +52,10 @@ test("query variables: SET VARIABLE is kept, getvariable() is bound, a typed val
   assert.deepEqual(q.setVariable("SET VARIABLE year = 2024;"), { name: "year", value: "2024" });
   assert.deepEqual(q.setVariable("set variable \"my v\" TO DATE '2024-01-01'"), { name: "my v", value: "DATE '2024-01-01'" });
   assert.equal(q.setVariable("SELECT 1"), null);
+  // A selection of a SET and a query is not a SET; a comment is not part of the value.
+  assert.equal(q.setVariable("SET VARIABLE x = 1;\nSELECT getvariable('x') AS v"), null);
+  assert.deepEqual(q.setVariable("SET VARIABLE y = 2024 -- the year"), { name: "y", value: "2024" });
+  assert.deepEqual(q.setVariable("SET VARIABLE s = '-- not a comment' /* note */;"), { name: "s", value: "'-- not a comment'" });
   assert.deepEqual(q.variablesIn("SELECT getvariable('year'), GETVARIABLE( 'Year' ), getvariable('it''s')"), ["year", "it's"]);
   assert.equal(q.bindVariables("WHERE y = getvariable('Year') AND n = getvariable('none')", new Map([["year", "2024"]])),
     "WHERE y = (2024) AND n = getvariable('none')");
