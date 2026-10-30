@@ -188,9 +188,10 @@ function createOneLake({ catalog, store, prefetchEnabled = () => true, onHit = (
     return get(keys.apps(ws), () => fabric.listApps(ws), o).then(value);
   };
   // What an item named by GUIDs (a Direct Lake expression's) is called: { workspace, item }.
-  const itemNamed = (wsId, itemId, o = {}) => {
+  // No TTL, like the item's catalog prefix: asked once, and never refreshed behind the caller.
+  const itemNamed = (wsId, itemId) => {
     if (!fabric) return Promise.reject(new Error('semantic models are not available here'));
-    return get(keys.itemNamed(wsId, itemId), () => fabric.itemOf(wsId, itemId), o).then(value);
+    return get(keys.itemNamed(wsId, itemId), () => fabric.itemOf(wsId, itemId), { ttl: Infinity }).then(value);
   };
 
   /**

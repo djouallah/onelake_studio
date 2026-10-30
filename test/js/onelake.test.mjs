@@ -309,12 +309,16 @@ test("a workspace's semantic models are a cached listing: Fabric is asked once",
   assert.equal(asked, 2, "and a Refresh asks again");
 });
 
-test("an item's name behind its GUIDs is kept: Fabric is asked once, whatever the case", async () => {
+test("an item's name behind its GUIDs is kept for good: Fabric is asked once, whatever the case or age", async () => {
   let asked = 0;
+  let now = 1000;
   const fabric = { itemOf: async () => { asked++; return { workspace: "Sales", item: "nem.Lakehouse" }; } };
-  const onelake = createOneLake({ catalog: fakeCatalog(), store: createStore({ dir: null }), fabric });
+  const onelake = createOneLake({ catalog: fakeCatalog(), store: createStore({ dir: null, now: () => now }), fabric });
   assert.deepEqual(await onelake.itemNamed("AAA", "BBB"), { workspace: "Sales", item: "nem.Lakehouse" });
   assert.deepEqual(await onelake.itemNamed("aaa", "bbb"), { workspace: "Sales", item: "nem.Lakehouse" });
+  now += 365 * 24 * 3600 * 1000;
+  assert.deepEqual(await onelake.itemNamed("aaa", "bbb"), { workspace: "Sales", item: "nem.Lakehouse" });
+  await new Promise(r => setImmediate(r));   // a refresh behind the caller would have started by now
   assert.equal(asked, 1);
 });
 

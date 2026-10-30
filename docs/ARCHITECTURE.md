@@ -127,7 +127,8 @@ The engine is **DuckDB 2.0 running natively in the extension host**
 
 | What | Where it is kept | When it is read again |
 | --- | --- | --- |
-| Listings (workspaces, items, tables, `Files/`, semantic models), the names behind a Direct Lake model's GUIDs, table metadata, first rows | On disk, [`src/onelake.js`](../src/onelake.js) | Served at once, refreshed in the background past its window |
+| Listings (workspaces, items, tables, `Files/`, semantic models), table metadata, first rows | On disk, [`src/onelake.js`](../src/onelake.js) | Served at once, refreshed in the background past its window |
+| The name behind a Direct Lake model's item GUIDs | On disk, [`src/onelake.js`](../src/onelake.js) | Never, until **Clear Cached OneLake Data**. A renamed lakehouse keeps its old name here until then |
 | The bytes of a `Files/` object the host reads (an image, a `.bim`, a SQLite copy, a saved file) | Under the etag its cached listing gave | Only when the file was rewritten |
 | What DuckDB reads: table data and `Files/` objects | DuckDB's disk cache (`cache_httpfs`) | Only when the file was rewritten: a kept copy is checked against the file's version tag and modification time |
 | A semantic model's definition | `~/OneLakeStudio/semantic-models/<workspace>/<model>.yaml` | On **Download Again** |
