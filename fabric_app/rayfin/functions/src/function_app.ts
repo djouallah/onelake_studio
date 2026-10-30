@@ -75,13 +75,37 @@ function catalogUrl(ctx: StorageCtx): { endpoint: string; ws: string; lh: string
   return { endpoint: m[1], ws: m[2], lh: m[3] };
 }
 
+// A catalog GET. A throttled (429), failed (5xx) or dropped request is tried again, up to three
+// times in all, half a second then a second apart; anything else is the answer.
 async function getJson(url: string, token: string): Promise<{ status: number; body: any }> {
-  const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
-  const text = await res.text();
-  let body: any = null;
-  try { body = JSON.parse(text); } catch { body = { error: { message: text.slice(0, 200) } }; }
-  return { status: res.status, body };
+  for (let attempt = 1; ; attempt++) {
+    let res: Response;
+    try {
+      res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+    } catch (e) {
+      if (attempt >= 3) throw e;
+      await new Promise(r => setTimeout(r, 500 * attempt));
+      continue;
+    }
+    if ((res.status === 429 || res.status >= 500) && attempt < 3) {
+      await res.text().catch(() => '');
+      await new Promise(r => setTimeout(r, 500 * attempt));
+      continue;
+    }
+    const text = await res.text();
+    let body: any = null;
+    try { body = JSON.parse(text); } catch { body = { error: { message: text.slice(0, 200) } }; }
+    return { status: res.status, body };
+  }
 }
+
+// fn over every item, at most `limit` at a time.
+async function eachLimited<T>(items: T[], limit: number, fn: (item: T) => Promise<void>): Promise<void> {
+  let next = 0;
+  const worker = async () => { while (next < items.length) await fn(items[next++]); };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+}
+const CATALOG_CONCURRENCY = 8;   // a model's tables asked of the catalog at once
 
 // The catalog's prefix for the warehouse (GET /v1/config), kept while this instance is warm.
 const _prefixes = new Map<string, string>();
@@ -96,20 +120,20 @@ async function catalogPrefix(endpoint: string, ws: string, lh: string, token: st
   return prefix;
 }
 
-// Each table's current metadata.json, all at once. A table the catalog does not have is
+// Each table's current metadata.json, a few at a time. A table the catalog does not have is
 // `missing`: the page shows no data where it reads it, as it does for a table not deployed.
 async function loadTables(endpoint: string, prefix: string, tables: string[], token: string):
     Promise<{ metadata: Record<string, string>; missing: string[] }> {
   const metadata: Record<string, string> = {};
   const missing: string[] = [];
-  await Promise.all(tables.map(async t => {
+  await eachLimited(tables, CATALOG_CONCURRENCY, async t => {
     const [ns, name] = t.split('.');
     const { status, body } = await getJson(`${endpoint}/v1/${prefix}/namespaces/${ns}/tables/${name}`, token);
     if (status === 404) { missing.push(t); return; }
     const location = body?.['metadata-location'];
     if (status !== 200 || !location) throw new Error(`${t}: HTTP ${status} ${body?.error?.message ?? 'no metadata-location'}`);
     metadata[t] = location;
-  }));
+  });
   return { metadata, missing: missing.sort() };
 }
 
@@ -190,8 +214,11 @@ udf.func(
         names = modelSources(model);
         step = "the model's tables";
       }
+      // A name that is not schema.table cannot be in the catalog: it is listed as missing, and
+      // the rest are still answered.
       const bad = names.filter(t => !TABLE.test(t));
-      if (!names.length || bad.length) throw new Error(`expected schema.table, comma-separated; got ${bad.join(', ') || 'none'}`);
+      names = names.filter(t => TABLE.test(t));
+      if (!names.length && !bad.length) throw new Error('expected schema.table, comma-separated; got none');
       step = 'the setting CATALOG_URL';
       const { endpoint, ws, lh } = catalogUrl(ctx);
       const { start, expiry } = sasWindow();
@@ -204,7 +231,8 @@ udf.func(
       const catalogMs = Date.now() - t0;
       step = 'signing the SAS';
       const sas = signFolderSas(`/${ws}/${lh}/Tables`, 'r', key, start, expiry);
-      return { ...(model ? { model } : {}), ...catalog, sas, expiresOn: iso(expiry), catalogMs };
+      return { ...(model ? { model } : {}), metadata: catalog.metadata,
+               missing: [...catalog.missing, ...bad].sort(), sas, expiresOn: iso(expiry), catalogMs };
     } catch (e) {
       return { error: `${step}: ${e instanceof Error ? e.message : String(e)}` };
     }

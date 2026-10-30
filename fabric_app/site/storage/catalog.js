@@ -55,5 +55,7 @@ export function createCatalog(client) {
     return call();
   }
 
-  return { open, renewAt: () => renewAt(), fresh: () => Date.now() < renewAt() };
+  // fresh: the page can start from the kept answer without a session. Only one that is still
+  // good and holds the model: without the model the page must sign in to ask again.
+  return { open, renewAt: () => renewAt(), fresh: () => good(load()) };
 }

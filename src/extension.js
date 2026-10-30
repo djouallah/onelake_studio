@@ -1232,8 +1232,9 @@ async function activateInner(context) {
         if (pick !== 'Replace It') return `Not exported: an app named ${e.item.displayName} already exists.`;
         r = await publish(true);
       }
-      // The workspace's Apps, re-read: the app is new, or deployed again.
-      tree.refresh({ kind: 'apps', workspace });
+      // The Apps of the workspace the app was published to (the lakehouse's, not always the
+      // model's), re-read: the app is new, or deployed again.
+      tree.refresh({ kind: 'apps', workspace: plan.workspace });
       if (out) {
         out.appendLine(`exported ${plan.name} -> ${r.hostingUrl || '(no hosting URL)'} (item ${r.itemId}, model ${plan.modelPath}, local copy ${outDir})`);
         for (const w of plan.warnings) out.appendLine(`  warning: ${w}`);

@@ -19,6 +19,7 @@ const { createHash } = require('node:crypto');
 
 const MAX_REQUEST = 1024 * 1024;
 const RETRY_MS = 30_000;
+const REQUEST_MS = 10_000;   // a client has this long to send its line; the answer takes what it takes
 
 function bridgePath() {
   const user = createHash('sha256').update(os.userInfo().username).digest('hex').slice(0, 12);
@@ -37,12 +38,15 @@ function serveBridge({ handle, log = () => {}, path = bridgePath() }) {
       let buf = '';
       sock.setEncoding('utf8');
       sock.on('error', () => {});
+      // A client that connects and never finishes its line would hold the socket open for good.
+      sock.setTimeout(REQUEST_MS, () => sock.destroy());
       sock.on('data', async chunk => {
         buf += chunk;
         if (buf.length > MAX_REQUEST) { sock.destroy(); return; }
         const nl = buf.indexOf('\n');
         if (nl < 0) return;
         sock.removeAllListeners('data');
+        sock.setTimeout(0);
         let reply;
         try { reply = await handle(JSON.parse(buf.slice(0, nl))); }
         catch (e) { reply = { out: '', err: `error: ${(e && e.message) || e}`, code: 1 }; }

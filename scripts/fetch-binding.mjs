@@ -17,7 +17,7 @@
 // Run per matrix leg in CI, before `vsce package --target <the same target>`.
 import { mkdir, rm, appendFile, readFile, cp, readdir } from "node:fs/promises";
 import { execFileSync } from "node:child_process";
-import { join, dirname } from "node:path";
+import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
 
@@ -56,11 +56,12 @@ const dest = join(MODULES, `node-bindings-${binding}`);
 console.log(`fetching ${pkg}@${version} for VS Code target ${target} ...`);
 
 // npm pack rather than a hand-rolled fetch: it honours the configured registry, any proxy
-// and any auth already set up on the machine, which a bare https.get does not.
+// and any auth already set up on the machine, which a bare https.get does not. It packs into
+// its cwd: on Windows npm runs through a shell, which would split a temp path with spaces.
 const work = join(tmpdir(), `onelake-binding-${binding}-${process.pid}`);
 await mkdir(work, { recursive: true });
-const tgz = execFileSync("npm", ["pack", `${pkg}@${version}`, "--silent", "--pack-destination", work],
-                         { encoding: "utf8", shell: process.platform === "win32" }).trim().split("\n").pop();
+const tgz = execFileSync("npm", ["pack", `${pkg}@${version}`, "--silent"],
+                         { cwd: work, encoding: "utf8", shell: process.platform === "win32" }).trim().split("\n").pop();
 
 // cwd and a bare filename, never an absolute path: GNU tar reads `C:\...` as a REMOTE
 // host spec — "Cannot connect to C: resolve failed" — and Git Bash puts GNU tar ahead of
@@ -115,7 +116,10 @@ try {
                 "too:\n" + (err.stdout || "") + (err.stderr || ""));
   process.exit(1);
 }
-if (!listed.split(/\r?\n/).some(p => p.trim() === dest)) {
+// Windows paths compare without case: npm may print the drive letter lowercase.
+const samePath = (a, b) => process.platform === "win32"
+  ? resolve(a).toLowerCase() === resolve(b).toLowerCase() : resolve(a) === resolve(b);
+if (!listed.split(/\r?\n/).some(p => p.trim() && samePath(p.trim(), dest))) {
   console.error(`npm's dependency walk does not list ${dest} — vsce would package a vsix ` +
                 `with no engine.`);
   process.exit(1);

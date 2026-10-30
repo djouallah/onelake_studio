@@ -65,18 +65,19 @@ for (let i = 0; i < argv.length; i++) {
   else if (a === "--show-sql") opts.showSql = true;
   else args.push(a);
 }
+// process.exitCode, not process.exit(): exiting at once can cut a long answer still being
+// written to a pipe.
 if (!args.length || args[0] === "help" || args[0] === "--help") {
   console.log(HELP);
-  process.exit(0);
-}
-
-try {
-  if (args[0] === "export") console.error("Export to Fabric: confirm it in VS Code…");
-  const r = await askBridge({ args, opts });
-  if (r.out) console.log(r.out);
-  if (r.err) console.error(r.err);
-  process.exit(r.code || 0);
-} catch (e) {
-  console.error(e.message);
-  process.exit(1);
+} else {
+  try {
+    if (args[0] === "export") console.error("Export to Fabric: confirm it in VS Code…");
+    const r = await askBridge({ args, opts });
+    if (r.out) console.log(r.out);
+    if (r.err) console.error(r.err);
+    process.exitCode = r.code || 0;
+  } catch (e) {
+    console.error(e.message);
+    process.exitCode = 1;
+  }
 }

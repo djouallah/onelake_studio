@@ -36,7 +36,10 @@ const OUT = join(here, "fabric-function");
 const RAYFIN = join(here, "fabric_app", "rayfin");
 
 // What the package is built from: the function's own files and the packager's version.
-const FILES = ["rayfin.yml", "functions/package.json", "functions/package-lock.json", "functions/tsconfig.json", "functions/src/function_app.ts", "functions/src/secrets.generated.ts", "functions/src/types.ts"];
+const FILES = ["rayfin.yml", "tsconfig.json", "data/schema.ts",
+  "functions/package.json", "functions/package-lock.json", "functions/tsconfig.json", "functions/host.json",
+  "functions/runtimemetadata.json", "functions/src/function_app.ts", "functions/src/secrets.generated.ts",
+  "functions/src/types.ts"];
 const hash = createHash("sha256");
 for (const f of FILES) hash.update(f).update(await readFile(join(RAYFIN, ...f.split("/"))));
 const pins = JSON.stringify({ source: hash.digest("hex").slice(0, 16), cli: CLIENT_VERSION });

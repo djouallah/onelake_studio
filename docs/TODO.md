@@ -3,7 +3,7 @@
 These are the items from the code review (bugs, duplicates, dead code, inefficiency) that have not been done yet. Done so far: c7cdb26 (host bugs), 49a567d (panel bugs), 47c648e (`src/http.js` and the shared helpers), the dead code, and the duplicates.
 
 ## Duplicates
-- **Cache walks.** `extension.js` `cachedSqlTables` and `agent.js` `find` walk the same cache. They collect different things, so it is unclear whether a shared `onelake.cached.walk()` generator is worth it.
+- **Cache walks.** `extension.js` `cachedSqlTables` and `agent.js` `find` walk the same cache. They collect different things, so it is unclear whether a shared `onelake.cached.walk()` generator is worth it. NICE_TO_HAVE #3 (go to a table, column or measure) would be a third walk: build the shared walk with it.
 
 ## Inefficiency
 - **`engine-host.js` `ensureTables`.** It resolves the tables a statement names one after another. Use `Promise.all`; `admin()` already runs the DDL one at a time.
@@ -25,27 +25,14 @@ These are the items from the code review (bugs, duplicates, dead code, inefficie
 
 ## Bugs still open
 - **Account-change race.** Commands and the session handler both rebind. An engine built for account A can survive a switch, or the handler can close a panel the command just opened. This needs one serialized `rebindStore` that owns the engine reset, and an `engineAccount` check in `ensureEngine`.
-- **Export refresh.** After an export, the Apps node refreshed is the model's workspace, not the lakehouse's (`plan.workspace`).
 - **Theme switch.** Charts keep the old theme after a VS Code theme switch. ECharts 5 can't re-theme a chart, so they must be disposed and rebuilt.
 - **Settings that need a rebuild.** `engineMemoryLimit`, `diskCacheMaxGB` and `http.proxy` apply only on an engine rebuild, and nothing says so.
-- **Bridge.** `bridge.js` has no timeout for a client that never sends a newline.
 - **Concurrent lakehouse clicks.** Two quick clicks in different lakehouses share the global `lakehouse` (`app.js` `goToLakehouse`).
-- **CLI output.** `bin/cli.mjs` calls `process.exit()` right after `console.log`, which can cut long output. Set `process.exitCode` instead.
-- **`scripts/fetch-binding.mjs`:**
-  - `shell: true` with unquoted paths breaks on a temp path with spaces
-  - the path comparison is case-sensitive, so a lowercase drive letter fails
-- **`scripts/function-bundle.mjs`.** Its hash leaves out `host.json`, `runtimemetadata.json`, `rayfin/tsconfig.json` and `data/schema.ts`.
-- **`fabric_app/rayfin/functions/src/function_app.ts`:**
-  - catalog calls are unbounded `Promise.all` with no retry
-  - one bad source name fails the whole call; list it under `missing` instead
-- **`fabric_app/site/storage/data.js` `resultKey`.** A query that names no table is cached in IndexedDB forever.
 - **`fabric_app/site/storage/blockcache.js`:**
   - readers never take over writing when the writer's tab closes, so the other tabs time out
   - a quota error is swallowed, so the store fills and never recovers
   - readers don't notice a reset and can serve stale block offsets
   - an index entry seen before its bytes is skipped for good
-- **`data.js` `waitFor`.** A second `{store}` for the same path overwrites the first waiter, which then hangs and holds a download slot.
-- **`auth.js`/`catalog.js` `fresh`.** It ignores whether the kept answer has a model, so sign-in can be skipped with no session.
 
 ## Structural (needs a decision first)
 - Make the blockcache writer a dedicated worker, and transfer downloaded bytes instead of broadcasting them to every DuckDB worker.

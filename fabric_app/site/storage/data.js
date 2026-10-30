@@ -153,17 +153,33 @@ export function createDataSource({ onStatus = () => {}, onProgress = () => {}, t
   const channel = new BroadcastChannel('blockcache');
   let storeUp;
   const storeReady = new Promise(r => { storeUp = r; });
-  const answers = new Map();   // id -> resolve, for { missing } and { stats }
-  const stored = new Map();    // store path -> resolve, for { store }
+  // Each key holds the waiters for its answer: the same file can be handed over twice at once,
+  // and the one answer settles both.
+  const answers = new Map();   // id -> [resolve], for { missing } and { stats }
+  const stored = new Map();    // store path -> [resolve], for { store }
+  const settle = (map, key, d) => {
+    const waiting = map.get(key);
+    if (!waiting) return;
+    map.delete(key);
+    for (const resolve of waiting) resolve(d);
+  };
   channel.onmessage = ({ data: d }) => {
     if (d?.writer) storeUp();
-    if (d?.id != null && answers.has(d.id)) { answers.get(d.id)(d); answers.delete(d.id); }
-    if (d?.stored && stored.has(d.stored)) { stored.get(d.stored)(); stored.delete(d.stored); }
+    if (d?.id != null) settle(answers, d.id, d);
+    if (d?.stored) settle(stored, d.stored, d);
   };
   const waitFor = (map, key, send, what) => new Promise((resolve, reject) => {
-    map.set(key, resolve);
+    const waiting = map.get(key) ?? [];
+    waiting.push(resolve);
+    map.set(key, waiting);
     send();
-    setTimeout(() => { if (map.get(key) === resolve) { map.delete(key); reject(new Error(`the local store did not answer (${what})`)); } }, STORE_WAIT);
+    setTimeout(() => {
+      const i = waiting.indexOf(resolve);
+      if (i < 0 || map.get(key) !== waiting) return;
+      waiting.splice(i, 1);
+      if (!waiting.length) map.delete(key);
+      reject(new Error(`the local store did not answer (${what})`));
+    }, STORE_WAIT);
   });
   // The files of `paths` (abfss) the store does not hold whole.
   async function lacking(paths) {
@@ -406,10 +422,14 @@ importScripts("${bundle.mainWorker}");`], { type: "text/javascript" }));
   // A query's result saved in this browser, across visits (results.js). What identifies the
   // data it reads: the metadata location of every table it names, as its view (v_<table>),
   // its copy in memory (<table>) or its deletes (__deletes_<table>), so a new snapshot of
-  // any of them is a new key.
+  // any of them is a new key. A query that names no table has no snapshot to tie its result
+  // to, so it is not kept.
   const results = createResults('iceberg-results');
-  const resultKey = sql => results.key(sql, [...located].filter(([n]) => new RegExp(`\\b(?:v_|__deletes_)?${n}\\b`).test(sql))
-    .map(([n, t]) => `${n} ${t.location}`).sort());
+  const resultKey = sql => {
+    const versions = [...located].filter(([n]) => new RegExp(`\\b(?:v_|__deletes_)?${n}\\b`).test(sql))
+      .map(([n, t]) => `${n} ${t.location}`).sort();
+    return versions.length ? results.key(sql, versions) : null;
+  };
 
   // After the first paint: the tables not opened yet, on every engine, small ones first, each
   // its own job at the back of its queue, so whatever the page asks goes first. A table not
