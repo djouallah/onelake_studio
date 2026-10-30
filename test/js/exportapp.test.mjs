@@ -64,6 +64,22 @@ test("the plan: a .bim's Direct Lake partitions are its tables, and a table with
   assert.match(plan.warnings[0], /Calendar/);
 });
 
+test("the plan: an Ossie model from Power BI reads as its .bim does, a bare source in dbo and a table with no entity a warning", () => {
+  const partition = source => ({ custom_extensions: [{ vendor_name: "POWER_BI", data: JSON.stringify({ partitions: [{ name: "p", source }] }) }] });
+  const ossie = doc({ datasets: [
+    { name: "fct_sales", source: "fct_sales", ...partition({ type: "entity", entityName: "fct_sales" }) },
+    { name: "dim_region", source: "mart.dim_region", ...partition({ type: "entity", entityName: "dim_region", schemaName: "mart" }) },
+    { name: "Time Calc", source: "Time Calc", ...partition({ type: "calculationGroup" }) },
+    { name: "Calendar", source: "Calendar", ...partition({ type: "calculated", expression: "CALENDARAUTO()" }) },
+    { name: "hand_written", source: "hand_written" },
+  ] });
+  const plan = planExport(OSSIE, "m.yaml", "m", mods(bimOf(URL_, ossie.datasets.map(d => d.name)), ossie), WHERE);
+  assert.deepEqual(plan.tables, [["fct_sales", "dbo.fct_sales"], ["dim_region", "mart.dim_region"], ["hand_written", "dbo.hand_written"]]);
+  assert.equal(plan.warnings.length, 2);
+  assert.match(plan.warnings[0], /Time Calc/);
+  assert.match(plan.warnings[1], /Calendar/);
+});
+
 test("the plan refuses: not a OneLake Files/ file, no lakehouse, two, a name the page cannot use, a source the function cannot open", () => {
   assert.throws(() => planExport(OSSIE, "m.yaml", "m", mods(bimOf(URL_)), null), /not a OneLake file/);
   assert.throws(() => planExport(OSSIE, "m.yaml", "m", mods(bimOf(URL_)), { workspace: "w", path: "lh.Lakehouse/Tables/x" }), /not in a lakehouse's Files/);
@@ -73,8 +89,8 @@ test("the plan refuses: not a OneLake Files/ file, no lakehouse, two, a name the
   assert.throws(() => planExport(OSSIE, "m.yaml", "m", mods(two), WHERE), /names 2 lakehouses/);
   const spaced = doc({ datasets: [{ name: "Internet Sales", source: "mart.sales" }] });
   assert.throws(() => planExport(OSSIE, "m.yaml", "m", mods(bimOf(URL_), spaced), WHERE), /letters, digits and _ only: Internet Sales/);
-  const bare = doc({ datasets: [{ name: "sales", source: "sales" }] });
-  assert.throws(() => planExport(OSSIE, "m.yaml", "m", mods(bimOf(URL_), bare), WHERE), /schema\.table sources only: sales \(sales\)/);
+  const deep = doc({ datasets: [{ name: "sales", source: "a.b.sales" }] });
+  assert.throws(() => planExport(OSSIE, "m.yaml", "m", mods(bimOf(URL_), deep), WHERE), /schema\.table sources only: sales \(a\.b\.sales\)/);
   assert.throws(() => planExport("version: 2\nmodels: []\n", "schema.yml", "m", mods(bimOf(URL_)), WHERE), /not an Apache Ossie model/);
 });
 

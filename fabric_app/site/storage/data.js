@@ -75,13 +75,28 @@ const ENGINES = (() => {
 })();
 const STORE_WAIT = 30000;   // how long the page waits for the store's writer to answer
 
-// The model's tables: name -> { source: schema.table, columns }. Ossie: a dataset's `source`
+// An Ossie dataset's table as schema.table, or null when it reads none. `source` is required
+// by the spec, so a model from Power BI has one even for a calculation group or a calculated
+// table: its partition, kept in the POWER_BI extension, says it has no entity. A bare name is
+// in dbo, as in a TMSL partition.
+function ossieSource(d) {
+  const pbi = (d.custom_extensions ?? []).find(e => String(e.vendor_name).toUpperCase() === 'POWER_BI');
+  let partition;
+  try { partition = JSON.parse(pbi.data).partitions?.[0]; } catch { /* no extension: its source alone */ }
+  if (!d.source || (partition && !partition.source?.entityName)) return null;
+  const s = String(d.source);
+  return s.includes('.') ? s : `dbo.${s}`;
+}
+
+// The model's tables: name -> { source: schema.table, columns }. Ossie: a dataset's table
 // and its fields' columns. TMSL (model.bim): a table's Direct Lake partition and its columns.
 function modelTables(model) {
   const out = new Map();
   const column = f => f.expression?.dialects?.[0]?.expression ?? f.name;
-  for (const d of model.datasets ?? [])
-    if (d.source) out.set(d.name, { source: d.source, columns: new Set((d.fields ?? []).map(column)) });
+  for (const d of model.datasets ?? []) {
+    const source = ossieSource(d);
+    if (source) out.set(d.name, { source, columns: new Set((d.fields ?? []).map(column)) });
+  }
   for (const t of (model.model ?? model).tables ?? []) {
     const s = t.partitions?.[0]?.source;
     if (s?.entityName) out.set(t.name, { source: `${s.schemaName ?? 'dbo'}.${s.entityName}`,

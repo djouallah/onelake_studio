@@ -55,11 +55,27 @@ async function readModel(ctx: StorageCtx, token: string): Promise<any> {
   try { return JSON.parse(body); } catch { return parseYaml(body); }
 }
 
+// An Ossie dataset's table as schema.table, or null when it reads none. `source` is required
+// by the spec, so a model from Power BI has one even for a calculation group or a calculated
+// table: its partition, kept in the POWER_BI extension, says it has no entity. A bare name is
+// in dbo, as in a TMSL partition.
+function ossieSource(d: any): string | null {
+  const pbi = (d?.custom_extensions ?? []).find((e: any) => String(e.vendor_name).toUpperCase() === 'POWER_BI');
+  let partition: any;
+  try { partition = JSON.parse(pbi.data).partitions?.[0]; } catch { /* no extension: its source alone */ }
+  if (!d?.source || (partition && !partition.source?.entityName)) return null;
+  const s = String(d.source);
+  return s.includes('.') ? s : `dbo.${s}`;
+}
+
 // The tables a model names, as the page reads them (site/storage/data.js, modelTables): an
-// Ossie dataset's `source`, a TMSL table's Direct Lake partition (schema.table).
+// Ossie dataset's table, a TMSL table's Direct Lake partition (schema.table).
 function modelSources(model: any): string[] {
   const out = new Set<string>();
-  for (const d of model?.datasets ?? []) if (d?.source) out.add(String(d.source));
+  for (const d of model?.datasets ?? []) {
+    const s = ossieSource(d);
+    if (s) out.add(s);
+  }
   for (const t of (model?.model ?? model)?.tables ?? []) {
     const s = t?.partitions?.[0]?.source;
     if (s?.entityName) out.add(`${s.schemaName ?? 'dbo'}.${s.entityName}`);

@@ -47,12 +47,29 @@ function appName(s) {
   return `${!out ? 'model' : /^[a-z]/.test(out) ? out : `m-${out}`}-explore`;
 }
 
+// An Ossie dataset's table as schema.table, or null when it reads none. `source` is required
+// by the spec, so a model from Power BI has one even for a calculation group or a calculated
+// table: its partition, kept in the POWER_BI extension, says it has no entity. A bare name is
+// in dbo, as in a TMSL partition. The page and the function read it the same way
+// (fabric_app/site/storage/data.js, fabric_app/rayfin/functions/src/function_app.ts).
+function ossieSource(d) {
+  const pbi = (d.custom_extensions ?? []).find(e => String(e.vendor_name).toUpperCase() === 'POWER_BI');
+  let partition;
+  try { partition = JSON.parse(pbi.data).partitions?.[0]; } catch { /* no extension: its source alone */ }
+  if (!d.source || (partition && !partition.source?.entityName)) return null;
+  const s = String(d.source);
+  return s.includes('.') ? s : `dbo.${s}`;
+}
+
 // The model's tables as the data source reads them (fabric_app/site/storage/data.js,
-// modelTables): name -> schema.table. An Ossie dataset's `source`; a TMSL table's Direct Lake
+// modelTables): name -> schema.table. An Ossie dataset's table; a TMSL table's Direct Lake
 // partition.
 function sourcesOf(model) {
   const out = new Map();
-  for (const d of model.datasets ?? []) if (d.source) out.set(d.name, String(d.source));
+  for (const d of model.datasets ?? []) {
+    const s = ossieSource(d);
+    if (s) out.set(d.name, s);
+  }
   for (const t of (model.model ?? model).tables ?? []) {
     const s = t.partitions?.[0]?.source;
     if (s?.entityName) out.set(t.name, `${s.schemaName ?? 'dbo'}.${s.entityName}`);
