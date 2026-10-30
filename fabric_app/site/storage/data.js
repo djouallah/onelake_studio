@@ -309,9 +309,15 @@ export function createDataSource({ onStatus = () => {}, onProgress = () => {}, t
   // The tables a query names (v_<table>) that are not open yet, opened first.
   const namedIn = sql => [...new Set([...sql.matchAll(/\bv_(\w+)\b/g)].map(m => m[1]))].filter(n => located.has(n));
   async function openFor(e, sql) {
+    for (const name of namedIn(sql)) await open(e, name);
+  }
+  // Every table a query names, planned and its files in the store, all of them together and
+  // before the query takes an engine: a download holds no engine, and one table's download does
+  // not wait for another's. Their files go first in the downloads.
+  function readyFor(sql) {
     const names = namedIn(sql);
-    prioritize(...names.filter(n => !e.opened.has(n)));   // their files first, in the downloads
-    for (const name of names) await open(e, name);
+    prioritize(...names);
+    return Promise.all(names.map(n => readyOf(n, located.get(n))));
   }
 
   // A new snapshot planned by the page, at once, off every engine: opening the table waits for it.
@@ -457,8 +463,9 @@ importScripts("${bundle.mainWorker}");`], { type: "text/javascript" }));
       for (const e of engines)
         for (const [name, t] of order) {
           if (e.opened.has(name)) continue;
+          // Made ready (planned, downloaded) outside the queue; then each engine opens it.
           const job = () => submit(() => e.opened.has(name) ? null : open(e, name), { engine: e, later: true });
-          (e === engines[0] ? job() : t.isReady.then(job)).catch(err =>
+          (e === engines[0] ? readyOf(name, t).then(job) : t.isReady.then(job)).catch(err =>
             perf.log('error', `OPEN ${name}${tag(e)}`, { status: String(err?.message || err) }));
         }
     }
@@ -488,12 +495,12 @@ importScripts("${bundle.mainWorker}");`], { type: "text/javascript" }));
         return saved;
       }
       let started = null, ran = null, used = null;
-      return submit(async e => {
+      return readyFor(sql).then(() => submit(async e => {
         used = e; started = performance.now();
         await openFor(e, sql);
         ran = performance.now();
         return e.conn.query(sql);
-      }, { ...options, names: namedIn(sql) }).then(r => {
+      }, { ...options, names: namedIn(sql) })).then(r => {
         perf.log('query', flat(sql), { wait: started - t0, ms: performance.now() - ran, status: `${r.numRows} rows${tag(used)}`, dax: flat(dax) });
         if (key) results.put(key, r);
         return r;
