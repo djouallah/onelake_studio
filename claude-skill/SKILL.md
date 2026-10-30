@@ -25,10 +25,10 @@ node --no-warnings "{{cli}}" <command>
 | `items [<ws>]` | every lakehouse and warehouse in every workspace (or one), counted by kind |
 | `ls <ws> <item>` | its tables with rows, size, files and last write, and their SQL names (`Lakehouse.<ws>.<item>.<schema>.<table>`); `<item>` may omit its `.Lakehouse` suffix |
 | `table <ws> <item> <schema.table>` | rows, files, size, last write, columns — metadata only, no scan |
-| `model <ws> <model>` | relationships, columns, measures with their DAX, and an example query; downloads the `.bim` once |
+| `model <ws> <model>` | relationships, columns, measures with their DAX, and an example query; downloads the model once |
 | `sql "<sql>"` | read-only SQL. A table is `Kind.workspace.item.schema.table` — `lakehouse.aemo.data.dbo.dim_duid`; Kind is `lakehouse`, `warehouse`, `sqldatabase` or `mirroreddatabase` (any case), a lakehouse without schemas is `dbo`, a part with spaces is `"quoted"` — any table, any workspace, joined freely. Every semantic model is a table too, `semanticmodel.<ws>.<model>`: `AGG("measure")` is the measure; and `SHOW SEMANTIC …` (below) |
 | `sql "<sql>" --in <ws>/<item>` | the lakehouse's files as `'Files/…'`: `read_parquet('Files/log.parquet')` |
-| `export <ws> <model>` | Export to Fabric, as Explore's button does it: publishes the model's Explore as a Fabric app. The model must have been downloaded once (opened in the tree, or `model <ws> <model> --fresh`); the export writes its `.bim` into its lakehouse |
+| `export <ws> <model>` | Export to Fabric, as Explore's button does it: publishes the model's Explore as a Fabric app. The model must have been downloaded once (opened in the tree, or `model <ws> <model> --fresh`); the export writes its `.yaml` into its lakehouse |
 | `export <ws> <item> <Files/path>` | the same, for a model file (`.bim`, Ossie `.yaml`) in a lakehouse's Files/ |
 
 Options: `--limit N` (rows printed, default 100), `--csv`, `--fresh` (ask OneLake/Fabric instead of the cache — see below),
@@ -81,4 +81,4 @@ VS Code panel); nothing is written to Fabric or OneLake.
   waits for their OK, so the command waits too. It prints the app's URL, or why nothing was
   published. The app opens on Explore's default view.
 - The same downloads are shared with the OneLake Studio VS Code extension
-  (`~/OneLakeStudio/semantic-models/<ws>/<model>.bim`).
+  (`~/OneLakeStudio/semantic-models/<ws>/<model>.yaml`).

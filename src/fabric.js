@@ -1,12 +1,13 @@
 'use strict';
 // =============================================================================
-// fabric.js — a workspace's semantic models and apps, and a model's .bim
+// fabric.js — a workspace's semantic models and apps, and a model's definition
 // =============================================================================
 // A semantic model is not in OneLake: its list and its definition come from the Fabric
 // REST API, which wants a token in a different audience — asked for only when someone
 // expands "Semantic models", never at sign-in. Read only: this module writes nothing to
 // Fabric or OneLake (Export to Fabric, fabricapp.js, is the one write, and only on its
-// button). A model's .bim is downloaded to this machine (extension.js) and opened from there.
+// button). A model's definition comes as TMSL; it is kept on this machine as an Apache Ossie
+// .yaml (extension.js) and opened from there.
 //
 // Host-side only. The panel never sees a Fabric token.
 // =============================================================================
@@ -26,9 +27,9 @@ const byName = (a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' });
 
 // A model's display name as a file name: the characters Windows or a path would choke on
 // become `_`, and a name that is nothing but those still gets a file.
-function bimFileName(modelName) {
+function modelFileName(modelName) {
   const safe = String(modelName).replace(/[\\/:*?"<>|#%\u0000-\u001f]/g, '_').replace(/^[.\s]+|[.\s]+$/g, '');
-  return `${safe || 'model'}.bim`;
+  return `${safe || 'model'}.yaml`;
 }
 
 /**
@@ -169,4 +170,4 @@ function createFabric({ getFabricToken, apiBase = FABRIC_API,
   return { workspaceId, itemOf, listSemanticModels, listApps, getBim, reset };
 }
 
-module.exports = { createFabric, bimFileName };
+module.exports = { createFabric, modelFileName };

@@ -5,7 +5,7 @@
 // cli.mjs is only a doorbell: it hands its arguments to the running extension (bridge.js)
 // and prints what comes back. The answer is made here, with what the extension already
 // has — its sign-in, its cache-first OneLake (onelake.js), the Fabric API, the downloaded
-// .bim files, the DAX compiler — so there is one sign-in and one cache, not a second copy
+// model files, the DAX compiler — so there is one sign-in and one cache, not a second copy
 // for the command line. Read only: every statement goes through the engine's guard. The one
 // exception is export, which is Explore's own Export to Fabric, confirmed in VS Code.
 //
@@ -27,10 +27,10 @@
 // No `vscode` import: the extension passes in what it owns.
 // =============================================================================
 
-const { join, dirname } = require('node:path');
+const { join } = require('node:path');
 const { pathToFileURL } = require('node:url');
 const fsp = require('node:fs/promises');
-const { fmtBytes, hasFilesArea, kindLabel, sqlNameOf, abfssUrl, stripBom } = require('./names');
+const { fmtBytes, hasFilesArea, kindLabel, sqlNameOf, abfssUrl } = require('./names');
 const { mapPool } = require('./http');
 const { walkCached } = require('./onelake');
 
@@ -58,19 +58,18 @@ function filesToAbfss(sql, lh) {
 /**
  * @param {object} o
  * @param {ReturnType<import('./onelake').createOneLake>} o.onelake
- * @param {{ getBim(ws: string, id: string): Promise<Uint8Array> }} o.fabric
  * @param {() => Promise<object>} o.engine   the extension's engine (engine-host.js)
- * @param {(ws: string, model: string) => string} o.bimPath  where a model's .bim is downloaded
+ * @param {(ws: string, model: string) => string} o.modelPath  where a model's .yaml is downloaded
  * @param {string} o.appDir                  the panel's modules (semantic.js, paths.js)
  * @param {string} o.vendorDir               the vendored DAX compiler and YAML reader
  * @param {ReturnType<import('./semviews').createSemViews>} o.semviews  the views this machine keeps
  * @param {(x: object) => Promise<string>} [o.exportApp]  Explore's Export to Fabric (extension.js)
  * @param {(n: {workspace: string, model: string, modelId: string}) => Promise<{path: string, text: string}>} [o.fetchModel]
- *   a semantic model's definition read from Fabric again, into its local copy (bimPath)
+ *   a semantic model's definition read from Fabric again, into its local copy (modelPath)
  * @param {(x: {workspace: string, model: string}) => Promise<object>} [o.openModel]
  *   a semantic model a query names, opened from its local copy and kept as a view
  */
-function createAgent({ onelake, fabric, engine, bimPath, appDir, vendorDir, daxSqlPin, yamlPin, semviews,
+function createAgent({ onelake, engine, modelPath, appDir, vendorDir, daxSqlPin, yamlPin, semviews,
                        exportApp = null, fetchModel = null, openModel = null, nameTables = null }) {
   let mods = null;
   async function modules() {
@@ -89,7 +88,8 @@ function createAgent({ onelake, fabric, engine, bimPath, appDir, vendorDir, daxS
       : Promise.reject(new Error('Direct Lake tables cannot be named here'))));
     mods = { paths, semantic,
              compiler: { createCompiler: c.createCompiler, createViews: c.createViews, tmslToModel: t.tmslToModel,
-                         ossieToTmsl: o.ossieToTmsl, parseYaml: y.parse } };
+                         ossieToTmsl: o.ossieToTmsl, tmslToOssie: o.tmslToOssie,
+                         parseYaml: y.parse, stringifyYaml: y.stringify } };
     return mods;
   }
 
@@ -127,11 +127,12 @@ function createAgent({ onelake, fabric, engine, bimPath, appDir, vendorDir, daxS
     return { schema: 'dbo', table: name };
   }
 
-  // A downloaded model, read from its .bim on disk: how many tables and measures, and their
+  // A downloaded model, read from its file on disk: how many tables and measures, and their
   // names with their columns — for `models` and `find`. Null when it does not parse.
-  async function bimSummary(path) {
+  async function modelSummary(path) {
     try {
-      const bim = JSON.parse(stripBom(await fsp.readFile(path, 'utf8')));
+      const { semantic, compiler } = await modules();
+      const bim = semantic.bimOf(path, await fsp.readFile(path, 'utf8'), compiler);
       const tables = ((bim.model && bim.model.tables) || []).filter(t => !t.isHidden || (t.measures || []).length);
       return {
         tables: tables.map(t => ({ name: t.name, columns: (t.columns || []).map(c => c.name),
@@ -247,7 +248,7 @@ function createAgent({ onelake, fabric, engine, bimPath, appDir, vendorDir, daxS
         try {
           const rows = [];
           for (const m of await look('models', [ws], opts)) {
-            rows.push([m.name, await exists(bimPath(ws, m.name)) ? 'downloaded' : '', m.description]);
+            rows.push([m.name, await exists(modelPath(ws, m.name)) ? 'downloaded' : '', m.description]);
           }
           out((shown ? '\n' : '') + (rows.length ? mdTable(['semantic model', '', 'description'], rows) : 'No semantic models.'));
           shown++;
@@ -320,8 +321,8 @@ function createAgent({ onelake, fabric, engine, bimPath, appDir, vendorDir, daxS
         }
         for (const m of models) {
           if (has(m.name) || has(m.description)) rows.push(['semantic model', w, m.name]);
-          const path = bimPath(w, m.name);
-          const b = await exists(path) ? await bimSummary(path) : null;
+          const path = modelPath(w, m.name);
+          const b = await exists(path) ? await modelSummary(path) : null;
           for (const t of (b && b.tables) || []) {
             const where = `${w}/${m.name}`;
             if (has(t.name)) rows.push(['model table', where, t.name]);
@@ -344,9 +345,9 @@ function createAgent({ onelake, fabric, engine, bimPath, appDir, vendorDir, daxS
       const rows = [];
       const gaps = await eachWorkspace(ws, opts, async w => {
         for (const m of await look('models', [w], opts)) {
-          // A downloaded model says what is in it, from its .bim on disk.
-          const path = bimPath(w, m.name);
-          const b = await exists(path) ? await bimSummary(path) : null;
+          // A downloaded model says what is in it, from its file on disk.
+          const path = modelPath(w, m.name);
+          const b = await exists(path) ? await modelSummary(path) : null;
           rows.push([w, m.name, b ? 'downloaded' : '', b ? b.tables.length : '', b ? b.measures : '', m.description]);
         }
       }, note);
@@ -397,27 +398,22 @@ function createAgent({ onelake, fabric, engine, bimPath, appDir, vendorDir, daxS
     async model([ws, name], opts, out, note) {
       const { fresh } = opts;
       if (!name) throw new Error('usage: model <ws> <model>');
-      let path = bimPath(ws, name);
+      let path = modelPath(ws, name);
       // A model not downloaded yet is an export from Fabric: only when asked for.
       if (!fresh && !await exists(path)) {
         throw Object.assign(new Error(`${ws}/${name} is not downloaded yet — open it in the OneLake Studio tree, ` +
           'or add --fresh to export it from Fabric now'), { notCached: true });
       }
       if (fresh) {
+        if (!fetchModel) throw new Error('semantic models cannot be downloaded here');
         const m = await modelOf(ws, name, opts);
         note(`downloading ${ws}/${m.name} from Fabric…`);
-        if (fetchModel) ({ path } = await fetchModel({ workspace: ws, model: m.name, modelId: m.id }));
-        else {
-          path = bimPath(ws, m.name);
-          await fsp.mkdir(dirname(path), { recursive: true });
-          await fsp.writeFile(path, await fabric.getBim(ws, m.id));
-        }
+        ({ path } = await fetchModel({ workspace: ws, model: m.name, modelId: m.id }));
         name = m.name;
       }
       const { semantic, compiler } = await modules();
       await syncViews(note);
       const text = await fsp.readFile(path, 'utf8');
-      const bim = JSON.parse(stripBom(text));
       // Named by its workspace and its own name: semanticmodel.ws.model.
       const m = await semantic.registerModel(path.split(/[\\/]/).pop(), text, compiler, ws, name);
       // Kept as a semantic view, as the panel keeps a model it opens.
@@ -425,7 +421,7 @@ function createAgent({ onelake, fabric, engine, bimPath, appDir, vendorDir, daxS
       defined.add(m.name.toLowerCase());
       out(`# ${m.name} — semantic view of ${ws}/${name}, from ${path}\n`);
       out(`Query it as \`FROM ${m.name}\`; a measure is \`AGG("name")\`. Direct Lake tables: ${m.directLake}.\n`);
-      const rels = ((bim.model && bim.model.relationships) || []).map(r =>
+      const rels = ((m.bim.model && m.bim.model.relationships) || []).map(r =>
         [`${r.fromTable}[${r.fromColumn}]`, `${r.toTable}[${r.toColumn}]`, r.isActive === false ? 'inactive' : '']);
       if (rels.length) out(mdTable(['from (many)', 'to (one)', ''], rels) + '\n');
       // dax-sql's own listings, trimmed to what reads well.
@@ -478,7 +474,7 @@ function createAgent({ onelake, fabric, engine, bimPath, appDir, vendorDir, daxS
 
     // Export to Fabric from a shell: Explore's own export (extension.js), which asks in
     // VS Code where the local copy goes and waits for the OK there before it publishes. The
-    // model is what Explore's button would export: a semantic model's .bim, where the tree
+    // model is what Explore's button would export: a semantic model's .yaml, where the tree
     // wrote it in its lakehouse, or a model file in a lakehouse's Files/. With no Explore on
     // screen, the app opens on Explore's default view.
     async export([ws, a, b], opts, out) {
@@ -488,7 +484,7 @@ function createAgent({ onelake, fabric, engine, bimPath, appDir, vendorDir, daxS
       if (!b) {
         // A semantic model: its local copy, which the export writes into its lakehouse.
         const m = await modelOf(ws, a, opts);
-        const path = bimPath(ws, m.name);
+        const path = modelPath(ws, m.name);
         if (!await exists(path)) {
           throw new Error(`${ws}/${m.name} is not downloaded yet — open it in the OneLake Studio tree, ` +
             `or \`model "${ws}" "${m.name}" --fresh\``);

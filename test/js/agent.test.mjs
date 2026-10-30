@@ -26,7 +26,7 @@ test("models and items --fresh: every workspace read now, and one that fails is 
     },
     items: async w => (w === "broken" ? [] : [{ name: `${w[0]}.Lakehouse`, kind: "Lakehouse" }, { name: "dw.Warehouse", kind: "Warehouse" }]),
   };
-  const agent = createAgent({ onelake, bimPath: () => "/nowhere/x.bim" });
+  const agent = createAgent({ onelake, modelPath: () => "/nowhere/x.bim" });
   const fresh = { fresh: true };
 
   let r = await agent.run({ args: ["models"], opts: fresh });
@@ -74,7 +74,7 @@ function fakeOneLake() {
 test("models and items: every cached workspace, counted, and nothing fetched", async () => {
   const { createAgent } = require("../../src/agent.js");
   const onelake = fakeOneLake();
-  const agent = createAgent({ onelake, bimPath: () => "/nowhere/x.bim" });
+  const agent = createAgent({ onelake, modelPath: () => "/nowhere/x.bim" });
 
   let r = await agent.run({ args: ["models"] });
   assert.equal(r.code, 0, r.err);
@@ -95,7 +95,7 @@ test("models and items: every cached workspace, counted, and nothing fetched", a
 test("a listing or metadata not cached says so; --fresh is what reads it", async () => {
   const { createAgent } = require("../../src/agent.js");
   const onelake = fakeOneLake();
-  const agent = createAgent({ onelake, bimPath: () => "/nowhere/x.bim" });
+  const agent = createAgent({ onelake, modelPath: () => "/nowhere/x.bim" });
 
   let r = await agent.run({ args: ["ls", "unseen"] });
   assert.equal(r.code, 1);
@@ -119,15 +119,27 @@ test("a listing or metadata not cached says so; --fresh is what reads it", async
 // A fuller cache: one lakehouse with two tables (one with metadata), a Files/ folder, a
 // warehouse, and one downloaded model on disk.
 async function richAgent() {
-  const { mkdtemp, writeFile } = await import("node:fs/promises");
+  const { mkdtemp, mkdir, writeFile } = await import("node:fs/promises");
   const { tmpdir } = await import("node:os");
-  const { join } = await import("node:path");
+  const { join, dirname } = await import("node:path");
+  const { fileURLToPath } = await import("node:url");
   const dir = await mkdtemp(join(tmpdir(), "agent-"));
-  const bim = join(dir, "Sales.bim");
-  await writeFile(bim, JSON.stringify({ model: { tables: [
+  // The local copy is an Ossie .yaml. The modules that read it stand in as stubs (CI's test job
+  // has no vendor/): YAML here is JSON, and the "Ossie" document carries the TMSL it stands for.
+  for (const [p, body] of [
+    ["npm/pin/src/index.js", "export const createCompiler = 0, createViews = 0;"],
+    ["npm/pin/formats/tmsl.js", "export const tmslToModel = 0;"],
+    ["npm/pin/formats/ossie.js", "export const ossieToTmsl = doc => doc.tmsl;"],
+    ["npm/yaml/+esm.js", "export const parse = JSON.parse;"],
+  ]) {
+    await mkdir(dirname(join(dir, p)), { recursive: true });
+    await writeFile(join(dir, p), body);
+  }
+  const bim = join(dir, "Sales.yaml");
+  await writeFile(bim, JSON.stringify({ datasets: [], tmsl: { model: { tables: [
     { name: "dim_customer", columns: [{ name: "customer_id" }, { name: "Region" }] },
     { name: "fct_sales", columns: [{ name: "amount" }], measures: [{ name: "Total Sales" }, { name: "Customer Count" }] },
-  ] } }));
+  ] } } }));
   const at = Date.now() - 10 * 60 * 1000;
   const lh = "ws\u0000data.Lakehouse";
   const known = {
@@ -156,7 +168,9 @@ async function richAgent() {
     },
   };
   const { createAgent } = require("../../src/agent.js");
-  return { agent: createAgent({ onelake, bimPath: (ws, m) => (m === "Sales" ? bim : join(dir, "none.bim")) }), calls, dir };
+  return { agent: createAgent({ onelake, modelPath: (ws, m) => (m === "Sales" ? bim : join(dir, "none.yaml")),
+                                appDir: join(dirname(fileURLToPath(import.meta.url)), "..", "..", "app"),
+                                vendorDir: dir, daxSqlPin: "pin", yamlPin: "yaml" }), calls, dir };
 }
 
 test("free from the cache: table sizes, more table fields, files, find, model counts", async () => {
@@ -222,10 +236,10 @@ test("export: a model file in Files/, or a semantic model's local copy, which th
     onelake.readBytes = async (ws, path) => new TextEncoder().encode(`model at ${ws}/${path}`);
     onelake.cached.models = async ws => ws === "a ws" ? { value: [{ id: "m1", name: "Sales" }, { id: "m2", name: "Ops" }], at: Date.now() } : null;
     // Sales is downloaded (its local copy); Ops is not.
-    await writeFile(join(vendorDir, "Sales.bim"), "the Sales model");
+    await writeFile(join(vendorDir, "Sales.yaml"), "the Sales model");
     const exported = [];
     const agent = createAgent({
-      onelake, bimPath: (ws, model) => join(vendorDir, `${model}.bim`),
+      onelake, modelPath: (ws, model) => join(vendorDir, `${model}.yaml`),
       appDir: join(dirname(fileURLToPath(import.meta.url)), "..", "..", "app"),
       vendorDir, daxSqlPin: "pin", yamlPin: "yaml",
       exportApp: async x => { exported.push(x); return `Published to Fabric: ${x.name}`; },
@@ -239,7 +253,7 @@ test("export: a model file in Files/, or a semantic model's local copy, which th
 
     r = await agent.run({ args: ["export", "a ws", "sales"] });
     assert.equal(r.code, 0, r.err);
-    assert.deepEqual(exported.pop(), { file: "Sales.bim", name: "Sales", text: "the Sales model", state: null,
+    assert.deepEqual(exported.pop(), { file: "Sales.yaml", name: "Sales", text: "the Sales model", state: null,
                                        model: { workspace: "a ws", name: "Sales" } });
 
     r = await agent.run({ args: ["export", "a ws", "Ops"] });
@@ -250,7 +264,7 @@ test("export: a model file in Files/, or a semantic model's local copy, which th
     assert.match(r.err, /dw\.Warehouse has no Files area/);
     assert.equal(exported.length, 0);
 
-    r = await createAgent({ onelake, bimPath: () => "" }).run({ args: ["export", "a ws", "Sales"] });
+    r = await createAgent({ onelake, modelPath: () => "" }).run({ args: ["export", "a ws", "Sales"] });
     assert.match(r.err, /Export to Fabric is not available here/);
   } finally {
     await rm(vendorDir, { recursive: true, force: true });

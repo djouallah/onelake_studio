@@ -46,7 +46,7 @@ for export, which waits for your OK in VS Code.
     --in <ws>/<item>                  that lakehouse's files as 'Files/…' (read_parquet('Files/x.parquet'))
     --show-sql                        print the SQL a model query compiles to
   export <ws> <model>                 Export to Fabric, as Explore's button does it: the model's
-                                        .bim in its lakehouse (open it in the tree once first).
+                                        .yaml in its lakehouse (open it in the tree once first).
                                         VS Code asks where the local copy goes and for the OK;
                                         the app opens on Explore's default view
   export <ws> <item> <Files/path>     the same, for a model file (.bim, Ossie .yaml) in Files/

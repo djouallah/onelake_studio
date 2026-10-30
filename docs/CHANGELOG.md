@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **A semantic model's local copy is an Apache Ossie file.** Clicking a model keeps
+  `~/OneLakeStudio/semantic-models/<workspace>/<model>.yaml` in place of the `.bim`, and Export to
+  Fabric writes that `.yaml` into its lakehouse. A model downloaded before this downloads again on
+  its next click; its old `.bim` is left where it is. Export refuses a model with a table whose
+  source is not `schema.table`, such as a calculation group.
 - **Export to Fabric's app:** a query's tables download together, and outside the engine queue;
   each tab has one store writer, handed its downloads without a copy (the DuckDB workers only
   read); the function's answer and the table snapshots live in IndexedDB, not localStorage; and

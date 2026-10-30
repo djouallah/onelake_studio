@@ -146,10 +146,10 @@ try {
   // A model the extension downloaded to this machine arrives as text (open-model), not as
   // a OneLake path — the click in the tree — named by its workspace and its own name.
   await page.evaluate(text => window.postMessage({
-    type: "open-model", name: "Local Model.bim", path: "C:/models/ws/Local Model.bim", text,
+    type: "open-model", name: "Local Model.yaml", path: "C:/models/ws/Local Model.yaml", text,
     modelWorkspace: "ws", modelName: "Local Model",
-  }, "*"), BIM);
-  await page.waitForFunction(() => document.getElementById("activeTable").textContent === "Local Model.bim" &&
+  }, "*"), stringify(tmslToOssie(JSON.parse(BIM), "Local Model"), { lineWidth: 0 }));
+  await page.waitForFunction(() => document.getElementById("activeTable").textContent === "Local Model.yaml" &&
     !document.getElementById("modelView").hidden, { timeout: 60000 })
     .catch(async () => { throw new Error(`a downloaded model never opened — status: ${await page.locator("#status").innerText()}`); });
   const localCards = await page.locator("#modelView .m-card").count();

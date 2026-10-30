@@ -152,7 +152,7 @@ export const isOssie = text =>
   /^datasets:/m.test(String(text)) && /^version:/m.test(String(text));
 
 // The TMSL a model file's text is: a .bim as it is, an Ossie model as the .bim it stands for.
-function bimOf(path, text, mods) {
+export function bimOf(path, text, mods) {
   const body = stripBom(text);
   if (isOssiePath(path)) {
     let doc;

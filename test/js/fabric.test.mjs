@@ -10,7 +10,7 @@ import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
 const fabricModule = require("../../src/fabric.js");
-const { createFabric, bimFileName } = fabricModule;
+const { createFabric, modelFileName } = fabricModule;
 
 const WS_ID = "11111111-2222-3333-4444-555555555555";
 
@@ -181,14 +181,14 @@ test("a long-running operation that never finishes gives up", async () => {
 });
 
 test("a model's name becomes a safe local file name", () => {
-  assert.equal(bimFileName("Sales Model"), "Sales Model.bim");
-  assert.equal(bimFileName('a/b\\c:d*e?"f<g>h|i'), "a_b_c_d_e__f_g_h_i.bim");
-  assert.equal(bimFileName(".."), "model.bim", "nothing but dots is still a file");
-  assert.equal(bimFileName("../../x"), "_.._x.bim", "slashes cannot survive into a path");
+  assert.equal(modelFileName("Sales Model"), "Sales Model.yaml");
+  assert.equal(modelFileName('a/b\\c:d*e?"f<g>h|i'), "a_b_c_d_e__f_g_h_i.yaml");
+  assert.equal(modelFileName(".."), "model.yaml", "nothing but dots is still a file");
+  assert.equal(modelFileName("../../x"), "_.._x.yaml", "slashes cannot survive into a path");
 });
 
 test("the module can only read: no write, no existence check, no storage token", () => {
-  assert.deepEqual(Object.keys(fabricModule).sort(), ["bimFileName", "createFabric"]);
+  assert.deepEqual(Object.keys(fabricModule).sort(), ["createFabric", "modelFileName"]);
   const f = createFabric({ getFabricToken: async () => "fab" });
   assert.deepEqual(Object.keys(f).sort(), ["getBim", "itemOf", "listApps", "listSemanticModels", "reset", "workspaceId"]);
 });

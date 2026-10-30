@@ -2,7 +2,7 @@
 // =============================================================================
 // onelakewrite.js — the one file the extension writes to OneLake
 // =============================================================================
-// Export to Fabric writes a semantic model opened from its local copy, as its .bim, into the
+// Export to Fabric writes a semantic model opened from its local copy, its .yaml, into the
 // Files/ of the lakehouse it reads (extension.js, exportExplore), where the app reads it. That is
 // the only write to OneLake, and only once an export is approved. Everything else the extension
 // reads stays in catalog.js, which writes nothing.

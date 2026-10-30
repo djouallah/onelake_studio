@@ -137,7 +137,7 @@ class LakehouseTree {
   // from disk first, so a Refresh is the one thing that goes to OneLake in the foreground:
   // each listing under the node is re-read once, and the rest of the tree keeps its cache.
   //
-  // `n` may also be a description of a node rather than the node itself (the .bim export
+  // `n` may also be a description of a node rather than the node itself (the model's export
   // refreshes a lakehouse's Files/ by name); it is redrawn only if it is on screen.
   refresh(n) {
     this._fresh = { workspace: n && n.workspace, item: n && n.item, done: new Set() };
@@ -161,7 +161,7 @@ class LakehouseTree {
          : null;
   }
 
-  // A model's .bim was just downloaded: redraw that one node, so its icon says so. Not the
+  // A model was just downloaded: redraw that one node, so its icon says so. Not the
   // whole tree — that would list every open workspace's models from Fabric again.
   modelChanged(n) {
     const on = this._nodes.get(`model|${n.workspace}|${n.modelId}`);

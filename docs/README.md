@@ -14,7 +14,7 @@
   SQL over those names. A model is queried with `AGG(measure)`, compiled from DAX by
   [dax-sql](https://github.com/djouallah/dax-sql).
 - **Read only.** The extension host refuses any statement that could write. The one exception is
-  Export to Fabric, after an OK: it publishes an app and writes the model's `.bim` into its
+  Export to Fabric, after an OK: it publishes an app and writes the model's `.yaml` into its
   lakehouse's `Files/`.
 - **Cache first.** Listings, table metadata, first rows, files, semantic models and table data
   are kept on this machine per Microsoft account, served from there at once and refreshed in the

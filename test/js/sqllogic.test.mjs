@@ -114,7 +114,7 @@ test("test/sql/*.test, through the command line's sql", async t => {
     await rm(extDir, { recursive: true, force: true }).catch(() => {});
   });
   const agent = createAgent({
-    onelake: {}, bimPath: () => "", engine: async () => engine, semviews: { texts: async () => [] },
+    onelake: {}, modelPath: () => "", engine: async () => engine, semviews: { texts: async () => [] },
     appDir: join(ROOT, "app"), vendorDir: join(ROOT, "vendor"), daxSqlPin: PINS.daxSql, yamlPin: PINS.yaml,
   });
 

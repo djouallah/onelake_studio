@@ -288,9 +288,9 @@ function closeModelView() {
   $('modelView').closest('section').classList.remove('modelOpen');
 }
 
-// A .bim from Files/ (read through the host), or one the extension downloaded from Fabric
-// and hands over as text (open-model): the same view either way. An Ossie .yaml from Files/
-// comes with its text already read (selectFile looked), and is still a OneLake file.
+// A .bim from Files/ (read through the host), or the .yaml the extension downloaded from
+// Fabric and hands over as text (open-model): the same view either way. An Ossie .yaml from
+// Files/ comes with its text already read (selectFile looked), and is still a OneLake file.
 async function openModelView(file, text = null, { fromOneLake = text == null } = {}) {
   closeModelView();
   const my = ++selSeq;
@@ -1342,11 +1342,11 @@ window.addEventListener('message', async e => {
       const t0 = Date.now();
       // Reported even when it fails: the host's progress notification waits for this.
       try {
-        await openModelView({ name: String(m.name || 'model.bim'), path: String(m.path || ''),
+        await openModelView({ name: String(m.name || 'model.yaml'), path: String(m.path || ''),
                               modelWorkspace: m.modelWorkspace ? String(m.modelWorkspace) : null,
                               modelName: m.modelName ? String(m.modelName) : null }, String(m.text || ''));
       } finally {
-        reportOpened('file', String(m.name || 'model.bim'), Date.now() - t0);
+        reportOpened('file', String(m.name || 'model.yaml'), Date.now() - t0);
       }
     }
     // A statement from a query editor (the host's queryeditor.js), run or planned here; how it

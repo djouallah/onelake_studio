@@ -30,7 +30,7 @@ SHOW ALL TABLES;
 
 **Read only.** Nothing is written to Fabric or OneLake: not by the host, not by DuckDB, not by SQL
 the page sends. The host refuses any statement that could write. The one exception is **Export to
-Fabric**: it publishes an app, and writes the model's `.bim` into its lakehouse's `Files/` when the
+Fabric**: it publishes an app, and writes the model's `.yaml` into its lakehouse's `Files/` when the
 model was opened from its local copy (below). It runs from Explore's button or the command line's
 `export`, and either way it waits for an OK in VS Code.
 
@@ -119,15 +119,16 @@ SELECT * FROM (SHOW SEMANTIC METRICS IN semanticmodel.ws.sales) WHERE ...;
 ```
 
 **From the tree.** The extension lists each workspace's **Power BI semantic models**. Clicking one
-reads its TMSL definition (the Fabric REST API's `getDefinition`) and keeps it on this machine, as
-`~/OneLakeStudio/semantic-models/<workspace>/<model>.bim`, then opens it. Nothing is written to
-OneLake, so someone who may only read the workspace can open and query its models.
+reads its TMSL definition (the Fabric REST API's `getDefinition`) and keeps it on this machine as
+Apache Ossie (dax-sql's `tmslToOssie`), `~/OneLakeStudio/semantic-models/<workspace>/<model>.yaml`,
+then opens it. Nothing is written to OneLake, so someone who may only read the workspace can open
+and query its models.
 - **Only Direct Lake over OneLake.** Any other model is refused, and nothing is kept.
 - **The local copy is the cache.** Later clicks open it without asking Fabric; the tree marks the
   model with a check. The command line reads and writes the same copies.
 - **Download Again** reads Fabric again and replaces the local copy, after asking.
 - **Export to Fabric** writes the local copy into the `Files/` of the one lakehouse its Direct Lake
-  expression names, `<lakehouse>/Files/semantic_model/<model>.bim`
+  expression names, `<lakehouse>/Files/semantic_model/<model>.yaml`
   ([`src/onelakewrite.js`](../src/onelakewrite.js)), because the app reads the model there. It
   happens after you approve the export, and a different file of that name is replaced only when
   you say so.
