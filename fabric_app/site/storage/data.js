@@ -157,14 +157,18 @@ export function createDataSource({ onStatus = () => {}, onProgress = () => {}, t
   // and the one answer settles both.
   const answers = new Map();   // id -> [resolve], for { missing } and { stats }
   const stored = new Map();    // store path -> [resolve], for { store }
+  // What was asked and not answered yet, to ask again of a new writer: one that took over from
+  // a closed tab never saw the question.
+  const unanswered = new Map();   // the waiters' list -> send
   const settle = (map, key, d) => {
     const waiting = map.get(key);
     if (!waiting) return;
     map.delete(key);
+    unanswered.delete(waiting);
     for (const resolve of waiting) resolve(d);
   };
   channel.onmessage = ({ data: d }) => {
-    if (d?.writer) storeUp();
+    if (d?.writer) { storeUp(); for (const send of [...unanswered.values()]) send(); }
     if (d?.id != null) settle(answers, d.id, d);
     if (d?.stored) settle(stored, d.stored, d);
   };
@@ -172,12 +176,13 @@ export function createDataSource({ onStatus = () => {}, onProgress = () => {}, t
     const waiting = map.get(key) ?? [];
     waiting.push(resolve);
     map.set(key, waiting);
+    unanswered.set(waiting, send);
     send();
     setTimeout(() => {
       const i = waiting.indexOf(resolve);
       if (i < 0 || map.get(key) !== waiting) return;
       waiting.splice(i, 1);
-      if (!waiting.length) map.delete(key);
+      if (!waiting.length) { map.delete(key); unanswered.delete(waiting); }
       reject(new Error(`the local store did not answer (${what})`));
     }, STORE_WAIT);
   });
@@ -193,9 +198,11 @@ export function createDataSource({ onStatus = () => {}, onProgress = () => {}, t
     const { stats } = await waitFor(answers, id, () => channel.postMessage({ stats: true, id }), 'its size');
     perf.log('info', `store ${when}: ${stats.files} files, ${(stats.bytes / 1073741824).toFixed(2)} GB`);
   }
-  // A whole file the page downloaded, handed to the store: resolved once the writer keeps it.
+  // A whole file the page downloaded, handed to the store: resolved once the writer keeps it,
+  // rejected when it says it could not.
   const toStore = (path, bytes) =>
-    waitFor(stored, storePath(path), () => channel.postMessage({ store: storePath(path), bytes }), path.split('/').pop());
+    waitFor(stored, storePath(path), () => channel.postMessage({ store: storePath(path), bytes }), path.split('/').pop())
+      .then(d => { if (d?.error) throw new Error(`the local store could not keep ${path.split('/').pop()}: ${d.error}`); });
 
   // Opens a table: its view, over a copy in memory or over the files. Runs inside a queued
   // job, so it calls the connection itself. One opening per table and engine, whoever asks; a

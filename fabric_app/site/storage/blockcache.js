@@ -24,18 +24,23 @@
 // over. Every worker (each of the page's engines, in every tab) opens them 'readwrite-unsafe',
 // the one mode two handles share (Chrome 121+; 'read-only' fails while a 'readwrite' handle is
 // open, checked 2026-10-28), and one of them writes: the holder of the Web Lock
-// 'blockcache-writer', for its lifetime. The others answer from what the writer has kept and
-// read the index again on a miss (both files only grow); when the writer is gone, the next of
-// them to be handed a file takes the lock and writes.
+// 'blockcache-writer', for its lifetime. The others wait in the lock's queue, answer from what
+// the writer has kept and read the index again on a miss (both files only grow, until the
+// writer starts the store over); when the writer's tab closes, the lock passes to the next of
+// them, which writes from then on.
+// The index's first line names the store's generation (`gen`), new each time the writer starts
+// it over: a reader whose generation is not the file's drops what it holds, so it never reads
+// blocks at another store's offsets.
 //
 // The page's channel (BroadcastChannel 'blockcache'), to every tab's worker:
 //   { ping }           the writer answers { writer: true } (it also says so when it becomes one);
+//   { reset }          the writer started the store over (sent by the writer to the readers);
 //   { missing, id }    store paths: the writer answers { id, missing } with those it does not
 //                      hold whole;
 //   { stats, id }      the writer answers { id, stats: { files, bytes } } (the Logs tab);
 //   { store, bytes }   a whole file the page downloaded: the writer keeps it and answers
-//                      { stored }. Not the browser's HTTP cache: it does not keep a response of
-//                      70-100 MB.
+//                      { stored }, or { stored, error } when it could not. Not the browser's
+//                      HTTP cache: it does not keep a response of 70-100 MB.
 // =============================================================================
 (() => {
   const BLOCK = 256 * 1024;
@@ -50,6 +55,7 @@
   let blocks = null, index = null;   // OPFS access handles, once open
   let writable = false;              // this worker is the writer: it keeps what it is handed
   let indexRead = 0;                 // bytes of index.jsonl applied (a reader reads on)
+  let gen = null;                    // the store's generation, from the index's first line
   const where = new Map();           // `${path}#${n}` -> [offset, length] in blocks.bin
   const files = new Map();           // path -> { size }
   let end = 0;                       // bytes in blocks.bin
@@ -72,34 +78,60 @@
   }
   function reset() {
     blocks.truncate(0); index.truncate(0); where.clear(); files.clear(); end = 0; indexRead = 0;
-    log({ v: VERSION, block: BLOCK });
+    gen = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+    log({ v: VERSION, block: BLOCK, gen });
+    try { bc?.postMessage({ reset: true }); } catch (e) {}
   }
+  // What a reader holds, dropped: the store was started over.
+  function forget() { where.clear(); files.clear(); indexRead = 0; gen = null; }
   // The index's lines not applied yet: all of them at start, and for a reader what the
   // writer added since. The first line is the store's version; a store of another version is
   // reset by its writer, and a reader leaves it alone and holds nothing.
-  function applyIndex() {
+  // A block line whose bytes are not in blocks.bin yet (indexed, not flushed) stops the read
+  // there, and the next one starts from it: the line is not lost. For the writer starting up,
+  // such a line is a write a closed tab never finished, and the store starts over (false).
+  function applyIndex({ starting = false } = {}) {
     const size = index.getSize();
     if (size <= indexRead) return true;
     const buf = new Uint8Array(size - indexRead);
     index.read(buf, { at: indexRead });
-    const text = dec.decode(buf);
-    const cut = text.lastIndexOf('\n');   // a line the writer has not finished
-    if (cut < 0) return true;
-    const lines = text.slice(0, cut).split('\n').filter(Boolean);
-    indexRead += enc.encode(text.slice(0, cut + 1)).length;
-    end = blocks.getSize();   // a block the writer has indexed but not flushed yet is not taken
-    for (const l of lines) {
-      let e; try { e = JSON.parse(l); } catch (x) { continue; }
-      if (e.v !== undefined) { if (e.v !== VERSION || e.block !== BLOCK) return false; }
-      else if (e.k) { if (e.o + e.l <= end) where.set(e.k, [e.o, e.l]); }
-      else if (e.f && !files.has(e.f)) files.set(e.f, { size: e.s });
+    end = blocks.getSize();
+    let at = 0;   // bytes of buf applied
+    for (;;) {
+      const nl = buf.indexOf(10, at);
+      if (nl < 0) break;   // a line the writer has not finished
+      let e = null;
+      try { e = JSON.parse(dec.decode(buf.subarray(at, nl))); } catch (x) {}
+      if (e?.k && e.o + e.l > end) {
+        if (starting) return false;
+        break;
+      }
+      if (e?.v !== undefined) {
+        if (e.v !== VERSION || e.block !== BLOCK) return false;   // nothing applied: holds nothing
+        gen = e.gen ?? null;
+      } else if (e?.k) where.set(e.k, [e.o, e.l]);
+      else if (e?.f && !files.has(e.f)) files.set(e.f, { size: e.s });
+      at = nl + 1;
     }
+    indexRead += at;
     return true;
   }
-  // A reader whose writer has started the store over (its index shrank): the offsets it holds
-  // now point at other files' blocks.
+  // A reader checks that the store is still the one it read (its generation, and an index no
+  // shorter than what it applied) before it reads blocks at the offsets it holds.
+  function sameStore() {
+    if (writable || !index) return;
+    const size = index.getSize();
+    if (size < indexRead) return forget();
+    const head = new Uint8Array(Math.min(256, size));
+    index.read(head, { at: 0 });
+    const nl = head.indexOf(10);
+    let first = null;
+    try { first = nl < 0 ? null : JSON.parse(dec.decode(head.subarray(0, nl))); } catch (e) {}
+    if (!first) { if (indexRead) forget(); return; }   // being started over right now
+    if ((first.gen ?? null) !== gen && indexRead) forget();
+  }
   function freshIndex() {
-    if (!writable && index.getSize() < indexRead) { where.clear(); files.clear(); indexRead = 0; }
+    sameStore();
     return applyIndex();
   }
   // A file kept whole: its size known and every block of it in the store.
@@ -110,27 +142,26 @@
     return true;
   }
 
-  // The writer's lock, if no one holds it: held until the worker ends. Without the Locks API
-  // the handles are exclusive anyway (a browser before 121 ignores the mode), so the worker that
-  // opened them writes.
-  const takeWriter = () => !navigator.locks ? Promise.resolve(true) : new Promise(resolve => {
-    navigator.locks.request('blockcache-writer', { ifAvailable: true }, lock => {
-      resolve(!!lock);
-      return lock ? new Promise(() => {}) : undefined;
-    }).catch(() => resolve(false));
-  });
   const announce = () => { try { bc?.postMessage({ writer: true }); } catch (e) {} };
-  // Becomes the writer when the last one is gone: from what the index says now.
-  let promoting = null;
-  const promote = () => promoting ??= takeWriter().then(won => {
-    promoting = null;
-    if (!won || writable || !blocks) return writable;
+  // This worker writes from now on: from what the index says, or from an empty store when the
+  // index is of another version, holds a write never finished, or the store is over its cap.
+  function becomeWriter() {
+    if (writable || !blocks) return;
+    sameStore();
     writable = true;
-    if (!applyIndex()) reset();
+    if (!applyIndex({ starting: true }) || index.getSize() === 0 || blocks.getSize() > CAP_BYTES) reset();
     end = blocks.getSize();
     announce();
-    return true;
-  });
+  }
+  // The writer's lock, waited for: granted at once when no one holds it, else when the
+  // worker holding it ends (its tab closed), and held until this worker ends. Without the Locks
+  // API the handles are exclusive anyway (a browser before 121 ignores the mode), so the worker
+  // that opened them writes.
+  function waitToWrite() {
+    if (!navigator.locks) return becomeWriter();
+    navigator.locks.request('blockcache-writer', () => { becomeWriter(); return new Promise(() => {}); })
+      .catch(() => {});
+  }
 
   let bc = null;
   (async () => {
@@ -143,10 +174,9 @@
       const b = await bh.createSyncAccessHandle({ mode: 'readwrite-unsafe' });
       const i = await ih.createSyncAccessHandle({ mode: 'readwrite-unsafe' });
       blocks = b; index = i; end = b.getSize();
-      writable = await takeWriter();
-      if (writable) { if (!applyIndex() || index.getSize() === 0 || end > CAP_BYTES) reset(); announce(); }
-      else if (!applyIndex()) blocks = index = null;   // a store of another version, not reset yet
-    } catch (e) { blocks = index = null; }   // a writer of an older build holds it exclusively
+      applyIndex();   // a store of another version: nothing is applied until a writer resets it
+    } catch (e) { blocks = index = null; return; }   // a writer of an older build holds it exclusively
+    waitToWrite();
   })();
 
   try {
@@ -156,12 +186,14 @@
       if (d.ping && writable) announce();
       if (d.missing && d.id != null && writable) bc.postMessage({ id: d.id, missing: d.missing.filter(p => !whole(p)) });
       if (d.stats && d.id != null && writable) bc.postMessage({ id: d.id, stats: { files: files.size, bytes: end } });
-      // The writer answers once it has kept it; the others leave it to the writer, or become it
-      // when it is gone.
-      if (d.store && d.bytes && blocks && !writable) await promote();
+      if (d.reset && !writable) forget();
+      // The writer answers once it has kept it, or says why it could not; the others leave it
+      // to the writer.
       if (d.store && d.bytes && writable) {
-        try { const b = new Uint8Array(d.bytes); keep(d.store, b, b.length); } catch (x) {}
-        bc.postMessage({ stored: d.store });
+        let error = null;
+        try { const b = new Uint8Array(d.bytes); keep(d.store, b, b.length); }
+        catch (x) { error = String(x?.message || x); }
+        bc.postMessage(error ? { stored: d.store, error } : { stored: d.store });
       }
     };
   } catch (e) {}
@@ -190,21 +222,29 @@
     return out;
   }
 
-  // Keeps a whole file, `body` of `size` bytes, as blocks (the writer only).
-  function keep(path, body, size) {
+  // Keeps a whole file, `body` of `size` bytes, as blocks (the writer only). Over the browser's
+  // quota the store starts over and the file is written once more: a full store that failed
+  // every write from then on would never hold a table again.
+  function keep(path, body, size, retried = false) {
     if (!writable) return;
     if (end > CAP_BYTES) reset();   // before the size is recorded: a reset clears it
-    if (!files.has(path)) { files.set(path, { size }); log({ f: path, s: size }); }
-    for (let n = 0; n * BLOCK < size; n++) {
-      const key = `${path}#${n}`;
-      const len = Math.min(BLOCK, size - n * BLOCK);
-      if (where.has(key)) continue;
-      blocks.write(body.subarray(n * BLOCK, n * BLOCK + len), { at: end });
-      where.set(key, [end, len]);
-      log({ k: key, o: end, l: len });
-      end += len;
+    try {
+      if (!files.has(path)) { files.set(path, { size }); log({ f: path, s: size }); }
+      for (let n = 0; n * BLOCK < size; n++) {
+        const key = `${path}#${n}`;
+        const len = Math.min(BLOCK, size - n * BLOCK);
+        if (where.has(key)) continue;
+        blocks.write(body.subarray(n * BLOCK, n * BLOCK + len), { at: end });
+        where.set(key, [end, len]);
+        log({ k: key, o: end, l: len });
+        end += len;
+      }
+      blocks.flush(); index.flush();
+    } catch (e) {
+      if (e?.name !== 'QuotaExceededError' || retried) throw e;
+      reset();
+      keep(path, body, size, true);
     }
-    blocks.flush(); index.flush();
   }
 
   // A store.local read, answered from the store: a HEAD (its size; 206 when asked with a
@@ -212,6 +252,7 @@
   function local(xhr) {
     if (!blocks || (xhr.__bcM !== 'GET' && xhr.__bcM !== 'HEAD')) return answer(xhr, 404, null);
     const path = storeKey(xhr.__bcU);
+    sameStore();
     let f = files.get(path);
     if (!f || !whole(path)) { freshIndex(); f = files.get(path); }   // the writer may have it by now
     if (!f || !whole(path)) return answer(xhr, 404, null);
@@ -239,6 +280,7 @@
     // An extension: from the store, else from DuckDB's repository, then kept.
     const path = pathOf(this.__bcU);
     try {
+      if (blocks) sameStore();
       if (blocks && this.__bcM === 'GET' && !this.__bcR && (whole(path) || (freshIndex() && whole(path)))) {
         const out = fromStore(path, 0, files.get(path).size - 1);
         if (out) return answer(this, 200, out.buffer, { 'Content-Length': out.length });

@@ -1,6 +1,6 @@
 # TODO: the rest of the 2026-10-30 review
 
-These are the items from the code review (bugs, duplicates, dead code, inefficiency) that have not been done yet. Done so far: c7cdb26 (host bugs), 49a567d (panel bugs), 47c648e (`src/http.js` and the shared helpers), the dead code, and the duplicates.
+These are the items from the code review (bugs, duplicates, dead code, inefficiency) that have not been done yet. Done so far: c7cdb26 (host bugs), 49a567d (panel bugs), 47c648e (`src/http.js` and the shared helpers), the dead code, the duplicates, and the bugs (653c16a, c0e1c14 and the blockcache fix).
 
 ## Duplicates
 - **Cache walks.** `extension.js` `cachedSqlTables` and `agent.js` `find` walk the same cache. They collect different things, so it is unclear whether a shared `onelake.cached.walk()` generator is worth it. NICE_TO_HAVE #3 (go to a table, column or measure) would be a third walk: build the shared walk with it.
@@ -22,13 +22,6 @@ These are the items from the code review (bugs, duplicates, dead code, inefficie
 - **YAML files.** A `.yaml` in Files/ is read whole just to check whether it is an Ossie model.
 - **`catalogChanged`.** It fires on every table read; debounce it.
 - **`store.js`.** `total` drifts up on overwrites, and `putBlob` lacks `write()`'s Windows rename retry.
-
-## Bugs still open
-- **`fabric_app/site/storage/blockcache.js`:**
-  - readers never take over writing when the writer's tab closes, so the other tabs time out
-  - a quota error is swallowed, so the store fills and never recovers
-  - readers don't notice a reset and can serve stale block offsets
-  - an index entry seen before its bytes is skipped for good
 
 ## Structural (needs a decision first)
 - Make the blockcache writer a dedicated worker, and transfer downloaded bytes instead of broadcasting them to every DuckDB worker.
