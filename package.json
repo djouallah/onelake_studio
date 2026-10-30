@@ -173,6 +173,12 @@
         "icon": "$(add)"
       },
       {
+        "command": "onelakeStudio.goTo",
+        "title": "Go to a Table, Column or Measure…",
+        "category": "OneLake Studio",
+        "icon": "$(search)"
+      },
+      {
         "command": "onelakeStudio.queryHistory",
         "title": "Query History",
         "category": "OneLake Studio",
@@ -198,6 +204,11 @@
       }
     ],
     "keybindings": [
+      {
+        "command": "onelakeStudio.goTo",
+        "key": "ctrl+alt+o",
+        "mac": "cmd+alt+o"
+      },
       {
         "command": "onelakeStudio.runQuery",
         "key": "ctrl+enter",
@@ -245,6 +256,11 @@
         {
           "command": "onelakeStudio.ungroupByType",
           "when": "view == onelakeStudio.explorer && onelakeStudio.signedIn && onelakeStudio.groupedByType",
+          "group": "navigation@0"
+        },
+        {
+          "command": "onelakeStudio.goTo",
+          "when": "view == onelakeStudio.explorer && onelakeStudio.signedIn",
           "group": "navigation@0"
         },
         {

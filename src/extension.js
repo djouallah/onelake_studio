@@ -15,6 +15,7 @@ const { existsSync } = require('node:fs');
 const fsp = require('node:fs/promises');
 const { registerQueryEditor } = require('./queryeditor');
 const { createHistory } = require('./history');
+const { quoteIdent } = require('./sql');
 const { openPanel, closePanel, revealPanel, panelColumn, dockBelowEditor, postToPanel, postLive } = require('./panel');
 const { createCatalog } = require('./catalog');
 const { createStore } = require('./store');
@@ -23,7 +24,7 @@ const { createHostMethods } = require('./host');
 const { createFabric, bimFileName } = require('./fabric');
 const { LakehouseTree } = require('./tree');
 const { webviewRoot } = require('./webview');
-const { fmtBytes, sqlKind, sqlName, sqlNameOf, displayName, MODEL_CATALOG, modelSqlName, stripBom } = require('./names');
+const { fmtBytes, sqlKind, sqlName, sqlNameOf, sqlPart, displayName, MODEL_CATALOG, modelSqlName, stripBom } = require('./names');
 const { createAgent } = require('./agent');
 const { createSemViews } = require('./semviews');
 const { serveBridge } = require('./bridge');
@@ -900,6 +901,64 @@ async function activateInner(context) {
     return r;
   }
 
+  // Go to: every table, column, semantic model and measure the cache holds, in one search. A
+  // pick opens it (a column or a measure: its table or model), or, from a query editor, its
+  // button puts its SQL name at the cursor.
+  async function goTo() {
+    const editor = vscode.window.activeTextEditor;
+    const intoEditor = editor && isQuery(editor.document);
+    const button = intoEditor ? { iconPath: new vscode.ThemeIcon('insert'), tooltip: 'Put its SQL name in the query' }
+                              : { iconPath: new vscode.ThemeIcon('copy'), tooltip: 'Copy its SQL name' };
+    const qp = vscode.window.createQuickPick();
+    qp.title = 'Go to a Table, Column or Measure';
+    qp.placeholder = 'Search what the cache holds: expand a lakehouse or open a model in the tree to add to it';
+    qp.matchOnDescription = true;
+    qp.busy = true;
+    qp.show();
+    const items = [];
+    try {
+      const { tables, models } = await completionNames();
+      for (const t of tables) {
+        const full = sqlName(t);
+        items.push({ label: `$(table) ${t.table}`, description: full, detail: `${t.columns.length} columns`, sql: full, open: { table: t }, buttons: [button] });
+        for (const c of t.columns) {
+          items.push({ label: `$(symbol-field) ${c.name}`, description: `${full} · ${c.type || ''}`, sql: sqlPart(c.name), open: { table: t }, buttons: [button] });
+        }
+      }
+      for (const m of models) {
+        const full = modelSqlName(m.workspace, m.model);
+        items.push({ label: `$(graph) ${m.model}`, description: full, detail: 'semantic model', sql: full, open: { model: m }, buttons: [button] });
+        for (const name of m.measures) {
+          items.push({ label: `$(symbol-function) ${name}`, description: `${full} · measure`, sql: `AGG(${quoteIdent(name)})`, open: { model: m }, buttons: [button] });
+        }
+      }
+    } catch (e) {
+      qp.dispose();
+      return showError(`Could not read the cache: ${(e && e.message) || e}`);
+    }
+    qp.items = items;
+    qp.busy = false;
+    const put = async it => {
+      if (intoEditor) await editor.edit(b => b.replace(editor.selection, it.sql));
+      else { await vscode.env.clipboard.writeText(it.sql); vscode.window.setStatusBarMessage(`Copied ${it.sql}`, 3000); }
+    };
+    qp.onDidTriggerItemButton(async e => { qp.hide(); await put(e.item); });
+    qp.onDidAccept(async () => {
+      const it = qp.selectedItems[0];
+      qp.hide();
+      if (!it) return;
+      if (it.open.table) {
+        const t = it.open.table;
+        await openInPanel({ type: 'open-table', workspace: t.workspace, item: t.itemDir, schema: t.schema, table: t.table });
+      } else if (it.open.model) {
+        const m = it.open.model;
+        if (!m.modelId) return showError(`${m.model}: open it once from its workspace in the tree`);
+        await openModel({ kind: 'semanticModel', workspace: m.workspace, model: m.model, modelId: m.modelId });
+      }
+    });
+    qp.onDidHide(() => qp.dispose());
+  }
+
   // Query History: the account's runs, newest first, searched by their SQL; a pick opens it in
   // a new query editor.
   const ago = iso => {
@@ -930,9 +989,11 @@ async function activateInner(context) {
       const tables = found.filter(f => f.kind !== MODEL_CATALOG && f.table).map(f => ({ ...f, columns: f.columns || [] }));
       const models = new Map();
       for (const f of found) {
-        if (f.kind === MODEL_CATALOG) {
-          models.set(`${f.workspace}|${f.model}`.toLowerCase(), { workspace: f.workspace, model: f.model, measures: [], columns: [] });
-        }
+        if (f.kind !== MODEL_CATALOG) continue;
+        const key = `${f.workspace}|${f.model}`.toLowerCase();
+        const m = models.get(key);
+        if (m) m.modelId = m.modelId || f.modelId;
+        else models.set(key, { workspace: f.workspace, model: f.model, modelId: f.modelId, measures: [], columns: [] });
       }
       for (const v of await semviews.list().catch(() => [])) {
         const m = v.schema && v.path && models.get(`${v.schema}|${v.name}`.toLowerCase());
@@ -1177,7 +1238,7 @@ async function activateInner(context) {
     for (const w of (ws && ws.value) || []) {
       // Its semantic models, as the Fabric listing has them: semanticmodel.ws.model.
       const models = await onelake.cached.models(w);
-      for (const m of (models && models.value) || []) found.push({ kind: MODEL_CATALOG, workspace: w, model: m.name });
+      for (const m of (models && models.value) || []) found.push({ kind: MODEL_CATALOG, workspace: w, model: m.name, modelId: m.id });
       const items = await onelake.cached.items(w);
       for (const it of (items && items.value) || []) {
         const kind = sqlKind(it.kind);
@@ -1194,7 +1255,8 @@ async function activateInner(context) {
       const meta = metas[i];
       const fields = meta && meta.value && meta.value.schemaFields;
       if (!fields || !fields.length) return;
-      const named = { kind, workspace: w, item: displayName(it.name), schema: t.schema || 'dbo', table: t.table };
+      // itemDir: the item as the tree knows it (data.Lakehouse), to open the table there.
+      const named = { kind, workspace: w, item: displayName(it.name), itemDir: it.name, schema: t.schema || 'dbo', table: t.table };
       found.push(meta.value.empty
         ? { ...named, emptySql: paths.emptyTableSql(fields) }
         : { ...named, columns: fields.map(f => ({ name: f.name, type: paths.icebergToDuckType(f.type) })) });
@@ -1557,6 +1619,7 @@ async function activateInner(context) {
     // it under Queries as "Query N". Not run: one Ctrl+Enter does that.
     vscode.commands.registerCommand('onelakeStudio.newQuery', () => openNewQuery(NEW_QUERY_SQL)),
     vscode.commands.registerCommand('onelakeStudio.queryHistory', () => showHistory()),
+    vscode.commands.registerCommand('onelakeStudio.goTo', () => goTo()),
     vscode.commands.registerCommand('onelakeStudio.revealQueries', async () => {
       if (!queriesFolder()) return;
       await fsp.mkdir(queriesFolder(), { recursive: true });

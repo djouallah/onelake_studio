@@ -7,8 +7,7 @@ the panel holds no token, and table Pivot is only a SQL starter.
 1. ~~**Queries in VS Code's own editor.**~~ Done: see the changelog.
 2. ~~**Query history**~~ Done. Left: whether DuckDB read the data from its disk cache or from
    OneLake (the host counts its own requests only; it needs the engine's read statistics).
-3. **Go to a table, column or measure:** a quick pick over the cache (what `find` already searches).
-   The tree has no search today.
+3. ~~**Go to a table, column or measure**~~ Done.
 4. **Results grid.**
    - Virtualized, so every held row scrolls, not only the first 2,000.
    - Copy a cell or a range, and "Copy as" TSV, CSV, Markdown or JSON.
