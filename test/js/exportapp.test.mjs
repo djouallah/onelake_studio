@@ -14,8 +14,8 @@ import { execFileSync } from "node:child_process";
 
 const require = createRequire(import.meta.url);
 const { planExport, writeExport, buildDist, vendorSize, zip, crc32, rayfinYml, appName, dfsUrl, MARKER,
-        readMarker, fingerprint, localChanges } = require("../src/exportapp.js");
-const semantic = await import("../app/semantic.js");
+        readMarker, fingerprint, localChanges } = require("../../src/exportapp.js");
+const semantic = await import("../../app/semantic.js");
 
 const WS = "0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0";
 const LH = "11111111-2222-3333-4444-555555555555";
@@ -79,7 +79,7 @@ test("the plan refuses: not a OneLake Files/ file, no lakehouse, two, a name the
 });
 
 test("rayfin.yml: the app's id and name, its redirects first", async () => {
-  const tpl = await readFile(new URL("../fabric_app/rayfin/rayfin.yml", import.meta.url), "utf8");
+  const tpl = await readFile(new URL("../../fabric_app/rayfin/rayfin.yml", import.meta.url), "utf8");
   assert.match(tpl, /^    assetAccess: protected$/m, "the template's site is protected");
   assert.match(tpl, /- name: MODEL_URL/);
   assert.doesNotMatch(tpl, /fabricapps\.net/, "no deployment's own redirect");
@@ -254,15 +254,15 @@ test("local changes: an edit, a new file, a removed one — never node_modules o
 
 test("the shipped page and its data source parse, and read the model from the function, not a file", async () => {
   for (const p of ["fabric_app/site/app.js", "fabric_app/site/storage/data.js", "fabric_app/site/storage/catalog.js"]) {
-    execFileSync(process.execPath, ["--check", new URL(`../${p}`, import.meta.url).pathname.replace(/^\/(\w:)/, "$1")]);
+    execFileSync(process.execPath, ["--check", new URL(`../../${p}`, import.meta.url).pathname.replace(/^\/(\w:)/, "$1")]);
   }
   // Every package the page runs is the site's own (vendor/, src/vendored.js WEBAPP), at the pins.
-  const { WEBAPP, VENDOR } = require("../src/vendored.js");
+  const { WEBAPP, VENDOR } = require("../../src/vendored.js");
   for (const p of ["app.js", "storage/data.js", "storage/results.js", "storage/auth.js", "storage/blockcache.js", "index.html"]) {
-    const s = await readFile(new URL(`../fabric_app/site/${p}`, import.meta.url), "utf8");
+    const s = await readFile(new URL(`../../fabric_app/site/${p}`, import.meta.url), "utf8");
     assert.doesNotMatch(s, /cdn\.jsdelivr\.net|unpkg\.com|esm\.sh|extensions\.duckdb\.org|getJsDelivrBundles/, `${p} loads nothing remote`);
   }
-  const site = async p => readFile(new URL(`../fabric_app/site/${p}`, import.meta.url), "utf8");
+  const site = async p => readFile(new URL(`../../fabric_app/site/${p}`, import.meta.url), "utf8");
   assert.ok((await site("storage/data.js")).includes(`../vendor/npm/${WEBAPP.duckdbWasm}/+esm.js`));
   assert.ok((await site("storage/data.js")).includes(`const DUCKDB = '${WEBAPP.duckdb}';`));
   assert.ok((await site("storage/data.js")).includes(`const EXTENSIONS = ${JSON.stringify(WEBAPP.extensions).replace(/"/g, "'").replace(/,/g, ", ")};`));
@@ -271,12 +271,12 @@ test("the shipped page and its data source parse, and read the model from the fu
   assert.ok((await site("storage/auth.js")).includes(`../vendor/npm/${WEBAPP.rayfinFabric}/+esm.js`));
   assert.ok((await site("app.js")).includes(`./vendor/npm/${WEBAPP.echarts}/dist/echarts.min.js`));
   assert.ok(VENDOR.webapp.esm.includes(WEBAPP.duckdbWasm) && VENDOR.webapp.files.includes(`${WEBAPP.duckdbWasm}/dist/duckdb-eh.wasm`));
-  const data = await readFile(new URL("../fabric_app/site/storage/data.js", import.meta.url), "utf8");
+  const data = await readFile(new URL("../../fabric_app/site/storage/data.js", import.meta.url), "utf8");
   assert.doesNotMatch(data, /ossie\.json/);
   assert.match(data, /catalog\.open\(\[\]\)/);
-  const fn = await readFile(new URL("../fabric_app/rayfin/functions/src/function_app.ts", import.meta.url), "utf8");
+  const fn = await readFile(new URL("../../fabric_app/rayfin/functions/src/function_app.ts", import.meta.url), "utf8");
   assert.match(fn, /ctx\.Secrets\.MODEL_URL/);
-  const html = await readFile(new URL("../fabric_app/site/index.html", import.meta.url), "utf8");
+  const html = await readFile(new URL("../../fabric_app/site/index.html", import.meta.url), "utf8");
   assert.match(html, /color-scheme: dark/);
   assert.doesNotMatch(html, /prefers-color-scheme: light|#fff\b|#ffffff|white/i, "black, always");
 });

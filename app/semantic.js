@@ -314,7 +314,7 @@ const MODEL_REF = new RegExp(`--[^\\n]*|/\\*[\\s\\S]*?\\*/|'(?:[^']|'')*'|` +
   `(${PART_RE})${DOT_RE}(${PART_RE})${DOT_RE}(${PART_RE})`, "g");
 export function unopenedModels(sql) {
   const s = String(sql);
-  if (!lc(s).includes(MODEL_CATALOG)) return [];
+  if (!lc(s).includes(MODEL_CATALOG) || VIEW_DDL.test(s)) return [];   // CREATE / DROP: refused, not opened
   const unq = x => (x[0] === '"' ? x.slice(1, -1).replace(/""/g, '"') : x);
   const out = [];
   for (const m of s.matchAll(MODEL_REF)) {
@@ -363,7 +363,8 @@ WHERE v.database_name = '${MODEL_CATALOG}' ORDER BY v.schema_name, v.view_name`;
 
 // dax-sql's CREATE and DROP SEMANTIC VIEW, which this extension does not take: a model is
 // there because Fabric has it (or a lakehouse's Files/ holds it), never because SQL made it.
-const NO_DDL = "Read only: OneLake Studio never writes, and a semantic model is not made or dropped " +
+const VIEW_DDL = /^\s*(create(\s+or\s+replace)?|drop)\s+semantic\s+view\b/i;
+const NO_DDL ="Read only: OneLake Studio never writes, and a semantic model is not made or dropped " +
   `in SQL — open one in the tree, or name it ${MODEL_CATALOG}.<workspace>.<model> in a query.`;
 
 /**
@@ -372,6 +373,8 @@ const NO_DDL = "Read only: OneLake Studio never writes, and a semantic model is 
  */
 export async function statement(sql, modules = null) {
   if (SHOW_VIEWS.test(String(sql))) return { sql: showViewsSql(), tables: [] };
+  // Refused before dax-sql reads it: whether the view exists is not the question.
+  if (VIEW_DDL.test(String(sql))) throw new Error(NO_DDL);
   if (!views) {
     // Nothing defined yet: only a statement about views needs the compiler loaded.
     if (!/\bsemantic\b/i.test(String(sql))) return null;

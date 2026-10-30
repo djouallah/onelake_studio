@@ -5,7 +5,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 
-const n = createRequire(import.meta.url)("../src/names.js");
+const n = createRequire(import.meta.url)("../../src/names.js");
 
 test("the items that write Delta into OneLake hold tables; the rest do not", () => {
   for (const name of ["sales.Lakehouse", "dw.Warehouse", "app.SQLDbNative", "snow.MirroredDatabase"])

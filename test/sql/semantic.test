@@ -1,0 +1,29 @@
+# Semantic models: semanticmodel.workspace.model, in a catalog of their own. SHOW SEMANTIC
+# VIEWS lists every one the cache knows; one not opened yet has no file and no tables yet.
+
+query TTTTT
+SHOW SEMANTIC VIEWS
+----
+semanticmodel	cat1	Sales	NULL	NULL
+
+query TTTTT
+show semantic views;
+----
+semanticmodel	cat1	Sales	NULL	NULL
+
+# Snowflake writes it in the plural, and so does this.
+statement error
+SHOW SEMANTIC VIEW
+----
+syntax error
+
+# A model is never made or dropped in SQL.
+statement error
+CREATE SEMANTIC VIEW cat1.x FROM 'x.bim'
+----
+Read only
+
+statement error
+DROP SEMANTIC VIEW semanticmodel.cat1.Sales
+----
+Read only

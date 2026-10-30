@@ -9,7 +9,7 @@ import { join } from "node:path";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { createStore } = require("../src/store.js");
+const { createStore } = require("../../src/store.js");
 
 async function tempDir(t) {
   const dir = await mkdtemp(join(tmpdir(), "onelake-store-"));

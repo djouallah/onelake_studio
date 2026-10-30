@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { createHostMethods, answer } = require("../src/host.js");
+const { createHostMethods, answer } = require("../../src/host.js");
 
 const LOC = "abfss://ws@onelake.dfs.fabric.microsoft.com/lh.Lakehouse/Tables/dbo/t/metadata/v1.metadata.json";
 

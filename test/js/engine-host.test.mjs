@@ -2,7 +2,7 @@
 // Needs node_modules (npm ci) and network for DuckDB's first
 // INSTALL of iceberg/azure/httpfs — so CI runs it in its own job, not in `npm test`.
 //
-// Run: node --test test/engine-host.test.mjs
+// Run: node --test test/js/engine-host.test.mjs
 import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -13,10 +13,10 @@ import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 
 const require = createRequire(import.meta.url);
-const { createEngineHost, isOneLakeMetadata } = require("../src/engine-host.js");
+const { createEngineHost, isOneLakeMetadata } = require("../../src/engine-host.js");
 
 // What fetch-extensions.mjs put next to the extension, when CI ran it for this platform.
-const BUNDLED = join(fileURLToPath(new URL(".", import.meta.url)), "..", "duckdb-extensions");
+const BUNDLED = join(fileURLToPath(new URL(".", import.meta.url)), "..", "..", "duckdb-extensions");
 
 test("native engine host", async t => {
   const extDir = await mkdtemp(join(tmpdir(), "onelake-ext-"));

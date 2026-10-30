@@ -1,0 +1,31 @@
+# Read only: nothing a statement says can write, to OneLake or anywhere else.
+
+statement error
+CREATE TABLE memory.main.x (a INT)
+----
+Read only
+
+statement error
+INSERT INTO lakehouse.cat1.lh.dbo.t VALUES (1)
+----
+Read only
+
+statement error
+DELETE FROM lakehouse.cat1.lh.dbo.t
+----
+Read only
+
+statement error
+COPY (SELECT 1) TO 'x.csv'
+----
+Read only
+
+statement error
+SET enable_external_access = true
+----
+Read only
+
+statement error
+SELECT 1; SELECT 2
+----
+one statement at a time

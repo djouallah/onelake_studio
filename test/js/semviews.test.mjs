@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const require = createRequire(import.meta.url);
-const { createSemViews } = require("../src/semviews.js");
+const { createSemViews } = require("../../src/semviews.js");
 
 test("a view is a pointer, kept per account, and its .bim is read where it is", async () => {
   const dir = await mkdtemp(join(tmpdir(), "semviews-"));

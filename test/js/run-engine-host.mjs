@@ -12,7 +12,7 @@
 //
 // No editor, no credentials, no lakehouse.
 //
-// Run: node test/run-engine-host.mjs
+// Run: node test/js/run-engine-host.mjs
 import http from "node:http";
 import { readFile, stat, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -23,9 +23,9 @@ import { chromium } from "playwright-core";
 import { panelHost, servePanel } from "./panel-host.mjs";
 
 const require = createRequire(import.meta.url);
-const { createEngineHost } = require("../src/engine-host.js");
+const { createEngineHost } = require("../../src/engine-host.js");
 
-const root = join(fileURLToPath(new URL(".", import.meta.url)), "..");
+const root = join(fileURLToPath(new URL(".", import.meta.url)), "..", "..");
 const APP = join(root, "app");
 const PORT = 5207;
 const CHROME = "C:/Program Files/Google/Chrome/Application/chrome.exe";

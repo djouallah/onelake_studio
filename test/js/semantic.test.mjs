@@ -2,7 +2,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-const { isOssie, isOssiePath } = await import("../app/semantic.js");
+const { isOssie, isOssiePath } = await import("../../app/semantic.js");
 
 test("an Ossie model is told from any other YAML by its text", () => {
   const ossie = "# models/aac/model.bim as Apache Ossie\nversion: 0.2.0.dev0\nname: aac\ndatasets:\n  - name: dim_calendar\n";
@@ -20,7 +20,7 @@ test("a .yaml or .yml is read as Ossie, anything else as TMSL", () => {
 
 // A semantic model's one SQL name, and the ones a statement names that are not open yet.
 test("a model is semanticmodel.ws.model, and a statement's unopened models are found", async () => {
-  const { modelSqlName, unopenedModels, defineView } = await import("../app/semantic.js");
+  const { modelSqlName, unopenedModels, defineView } = await import("../../app/semantic.js");
   assert.equal(modelSqlName("a ws", "Sales"), 'semanticmodel."a ws".Sales');
   assert.deepEqual(unopenedModels('SELECT AGG(x) FROM SemanticModel."a ws"."Sales Model" JOIN semanticmodel.b.c ON 1=1'),
     [{ workspace: "a ws", model: "Sales Model" }, { workspace: "b", model: "c" }]);

@@ -1,0 +1,47 @@
+# A table is read by its SQL name, kind.workspace.item.schema.table, whatever is open: the
+# engine opens it as the statement names it. Every cached table here is empty.
+
+# First, before anything here opens it: a cached table named where the engine cannot see
+# the name (inside a string) fails, never answers no rows.
+statement error
+SELECT * FROM query_table('lakehouse.cat2.lh.dbo.t')
+----
+is not open
+
+query TT
+SELECT column_name, column_type FROM (DESCRIBE lakehouse.cat2.lh.dbo.t)
+----
+b	VARCHAR
+c	DECIMAL(10,2)
+
+query TTTTTT
+DESCRIBE lakehouse.cat1.lh.dbo.t
+----
+a	BIGINT	YES	NULL	NULL	NULL
+
+query I
+SELECT count(*) FROM lakehouse.cat1.lh.dbo.t
+----
+0
+
+# Any case, quoted parts, spaces around the dots.
+query I
+SELECT count(*) FROM LAKEHOUSE."cat2" . lh . DBO."T"
+----
+0
+
+query I
+SELECT count(*) FROM lakehouse.cat1.lh.dbo.t a JOIN warehouse.cat1.wh.sales.e b ON a.a = b.id
+----
+0
+
+statement ok
+SUMMARIZE warehouse.cat1.wh.sales.e
+
+statement ok
+EXPLAIN SELECT * FROM lakehouse.cat2.lh.dbo.t
+
+statement error
+SELECT * FROM lakehouse.cat1.nothere.dbo.t
+----
+there is no lakehouse table

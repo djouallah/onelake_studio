@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { createOneLakeWriter } = require("../src/onelakewrite.js");
+const { createOneLakeWriter } = require("../../src/onelakewrite.js");
 
 const DFS = "https://onelake.dfs.fabric.microsoft.com";
 const res = (status, body = "", headers = {}) => ({

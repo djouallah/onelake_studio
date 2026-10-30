@@ -3,7 +3,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 test("a never-written table gets an empty view typed from its Iceberg schema", async () => {
-  const { emptyTableSql, icebergToDuckType } = await import("../app/paths.js");
+  const { emptyTableSql, icebergToDuckType } = await import("../../app/paths.js");
   assert.equal(icebergToDuckType("long"), "BIGINT");
   assert.equal(icebergToDuckType("decimal(10, 2)"), "DECIMAL(10,2)");
   assert.equal(icebergToDuckType("struct<a, b>"), "VARCHAR");

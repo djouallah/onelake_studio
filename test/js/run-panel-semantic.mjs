@@ -6,7 +6,7 @@
 // .yaml, which must draw and answer the same. The compiler and the chart library
 // come from vendor/ (vendor.mjs), as the panel serves them — nothing from a CDN.
 //
-// No editor, no credentials, no lakehouse. Run: node test/run-panel-semantic.mjs
+// No editor, no credentials, no lakehouse. Run: node test/js/run-panel-semantic.mjs
 import http from "node:http";
 import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -19,7 +19,7 @@ import { panelHost, servePanel } from "./panel-host.mjs";
 
 const require = createRequire(import.meta.url);
 
-const root = join(fileURLToPath(new URL(".", import.meta.url)), "..");
+const root = join(fileURLToPath(new URL(".", import.meta.url)), "..", "..");
 const APP = join(root, "app");
 const VENDOR = join(root, "vendor");
 const PORT = 5209;
@@ -45,7 +45,7 @@ const BIM = JSON.stringify({
 });
 const BIM_PATH = "/ws/shop.Lakehouse/Files/semantic_models/shop.bim";
 // The same model as an Apache Ossie YAML, made by the vendored dax-sql and yaml themselves.
-const { PINS } = require("../src/vendored.js");
+const { PINS } = require("../../src/vendored.js");
 const { tmslToOssie } = await import(pathToFileURL(join(VENDOR, "npm", PINS.daxSql, "formats", "ossie.js")).href);
 const { stringify } = await import(pathToFileURL(join(VENDOR, "npm", PINS.yaml, "+esm.js")).href);
 const OSSIE = stringify(tmslToOssie(JSON.parse(BIM), "shop"));

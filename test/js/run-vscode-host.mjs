@@ -5,7 +5,7 @@
 // --vscode-* token the stylesheet names is faked here, so a colour left unmapped shows up
 // as a var() that resolves to nothing rather than passing quietly.
 //
-// Run: node test/run-vscode-host.mjs
+// Run: node test/js/run-vscode-host.mjs
 import http from "node:http";
 import { readFile, mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -16,7 +16,7 @@ import { chromium } from "playwright-core";
 
 import { panelHost, servePanel } from "./panel-host.mjs";
 
-const root = join(fileURLToPath(new URL(".", import.meta.url)), "..");
+const root = join(fileURLToPath(new URL(".", import.meta.url)), "..", "..");
 const PORT = 5199;
 const ORIGIN = `http://127.0.0.1:${PORT}`;
 

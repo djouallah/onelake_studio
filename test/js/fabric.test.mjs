@@ -9,7 +9,7 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const fabricModule = require("../src/fabric.js");
+const fabricModule = require("../../src/fabric.js");
 const { createFabric, bimFileName } = fabricModule;
 
 const WS_ID = "11111111-2222-3333-4444-555555555555";

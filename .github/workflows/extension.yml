@@ -85,7 +85,7 @@ concurrency:
   cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/ext-v') }}
 
 jobs:
-  # The extension's own suite (test/), once rather than once per platform: it reads only tracked
+  # The extension's own suite (test/js/), once rather than once per platform: it reads only tracked
   # sources, so its answer cannot differ between legs. panel-html.test.mjs is the one that
   # matters here — it runs the webview's HTML rewriting against the real app/index.html, and
   # a silent failure there ships a panel that reads OneLake with no token. Ahead of the
@@ -122,7 +122,10 @@ jobs:
       # The same bundle a linux-x64 vsix ships, so the test LOADs extensions by path the way
       # an installed extension does.
       - run: node scripts/fetch-extensions.mjs linux-x64
-      - run: node --test test/engine-host.test.mjs
+      - run: node --test test/js/engine-host.test.mjs
+      # test/sql/*.test (sqllogictest) through the command line's sql: needs dax-sql (vendor/).
+      - run: node scripts/vendor.mjs
+      - run: node --test test/js/sqllogic.test.mjs
 
   package:
     needs: [test, engine]

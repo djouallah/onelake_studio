@@ -273,7 +273,8 @@ src/      extension host: sign-in, cache-first OneLake, tree, native DuckDB, Fab
           (ships bundled, with @duckdb/node-api, as dist/extension.js)
 app/      the panel: a view over the host (its own page, no sign-in, no network)
 media/    icons
-test/     node --test suite (npm test) and the browser runners
+test/     js/: the node --test suite (npm test) and the browser runners;
+          sql/: SQL statements and their answers (sqllogictest), run through the command line
 docs/     this file, the changelog, a summary of both and a screenshot
 bin/      cli.mjs, the command line: hands ls, table, model, sql to the running extension (bridge.js -> agent.js)
 claude-skill/  the agent skill (Claude Code, GitHub Copilot) that runs cli.mjs, installed by Install Agent Skill

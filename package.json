@@ -384,7 +384,7 @@
   },
   "scripts": {
     "vscode:prepublish": "node scripts/check-binding.mjs && node scripts/stage-webview.mjs && node scripts/vendor.mjs && node scripts/function-bundle.mjs && node scripts/bundle.mjs",
-    "test": "node --test test/app-paths.test.mjs test/catalog.test.mjs test/fabric.test.mjs test/host.test.mjs test/names.test.mjs test/deltalog.test.mjs test/onelake.test.mjs test/panel-html.test.mjs test/sql.test.mjs test/store.test.mjs test/bridge.test.mjs test/semviews.test.mjs test/semantic.test.mjs test/agent.test.mjs test/exportapp.test.mjs test/fabricapp.test.mjs test/onelakewrite.test.mjs"
+    "test": "node --test test/js/app-paths.test.mjs test/js/catalog.test.mjs test/js/fabric.test.mjs test/js/host.test.mjs test/js/names.test.mjs test/js/deltalog.test.mjs test/js/onelake.test.mjs test/js/panel-html.test.mjs test/js/sql.test.mjs test/js/store.test.mjs test/js/bridge.test.mjs test/js/semviews.test.mjs test/js/semantic.test.mjs test/js/agent.test.mjs test/js/exportapp.test.mjs test/js/fabricapp.test.mjs test/js/onelakewrite.test.mjs"
   },
   "devDependencies": {
     "@types/vscode": "^1.90.0"

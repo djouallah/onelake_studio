@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { assertReadOnly } = require("../src/sql.js");
+const { assertReadOnly } = require("../../src/sql.js");
 
 const ALLOWED = [
   "SELECT 42",
@@ -73,7 +73,7 @@ test("everything that could write is refused, and says it is read only", () => {
 
 // tableRefs: the five-part names a statement reads, which the engine opens before running it.
 test("a statement's tables are its five-part names under a kind, however they are written", () => {
-  const { tableRefs } = require("../src/sql.js");
+  const { tableRefs } = require("../../src/sql.js");
   const KINDS = ["lakehouse", "warehouse", "sqldatabase", "mirroreddatabase"];
   const refs = sql => tableRefs(sql, KINDS);
   assert.deepEqual(refs("SELECT * FROM Lakehouse.aemo.data.dbo.dim_duid"),
@@ -94,7 +94,7 @@ test("a statement's tables are its five-part names under a kind, however they ar
 
 // catalogStatement: the SHOW statements answered with whole schema paths; nothing else.
 test("SHOW ALL TABLES, SHOW SCHEMAS and SHOW TABLES FROM a nested schema are rewritten, nothing else", () => {
-  const { catalogStatement, readsCatalog } = require("../src/sql.js");
+  const { catalogStatement, readsCatalog } = require("../../src/sql.js");
   for (const sql of ["SHOW ALL TABLES", "show all tables;", "  Show  All\n Tables ; ", "-- all of it\nSHOW ALL TABLES",
                      "SHOW SCHEMAS", "show schemas;"]) {
     assert.match(catalogStatement(sql) || "", /duckdb_schemas\(\)/, sql);

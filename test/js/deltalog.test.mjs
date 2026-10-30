@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 
 const { readDeltaState, listCommits, readHistoryPage, tableDirOf, HISTORY_PAGE } =
-  createRequire(import.meta.url)("../src/deltalog.js");
+  createRequire(import.meta.url)("../../src/deltalog.js");
 
 const pad = v => String(v).padStart(20, "0");
 const DIR = "lh.Lakehouse/Tables/dbo/t";

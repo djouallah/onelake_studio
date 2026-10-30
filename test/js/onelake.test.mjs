@@ -6,8 +6,8 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { createStore } = require("../src/store.js");
-const { createOneLake, summarize } = require("../src/onelake.js");
+const { createStore } = require("../../src/store.js");
+const { createOneLake, summarize } = require("../../src/onelake.js");
 
 
 const LOC = "abfss://ws@onelake.dfs.fabric.microsoft.com/lh.Lakehouse/Tables/dbo/t/metadata/00002-x.metadata.json";

@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const require = createRequire(import.meta.url);
-const { serveBridge, askBridge } = require("../src/bridge.js");
+const { serveBridge, askBridge } = require("../../src/bridge.js");
 
 const path = process.platform === "win32"
   ? `\\\\.\\pipe\\onelake-studio-test-${process.pid}`

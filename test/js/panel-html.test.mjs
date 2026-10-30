@@ -10,9 +10,9 @@ import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { renderPage } = require("../src/html.js");
+const { renderPage } = require("../../src/html.js");
 
-const root = join(fileURLToPath(new URL(".", import.meta.url)), "..");
+const root = join(fileURLToPath(new URL(".", import.meta.url)), "..", "..");
 const APP = join(root, "app");
 const INDEX = await readFile(join(APP, "index.html"), "utf8");
 const read = f => readFile(join(APP, f), "utf8");
@@ -87,9 +87,9 @@ test("a .bim opens as the semantic model view", async () => {
 // One pin list (src/vendored.js): vendor.mjs downloads it, panel.js injects it, cdn.js
 // builds URLs from it.
 test("the page's libraries are exactly what vendor.mjs ships", async () => {
-  const { PINS, VENDOR } = require("../src/vendored.js");
+  const { PINS, VENDOR } = require("../../src/vendored.js");
   globalThis.window = { ONELAKE_STUDIO_CONFIG: { vendorBase: "https://webview.test/vendor/", pins: PINS } };
-  const cdn = await import("../app/cdn.js");
+  const cdn = await import("../../app/cdn.js");
   delete globalThis.window;
   for (const key of ["echarts", "daxSql", "marked", "dompurify", "yaml"]) assert.ok(PINS[key], `${key} is pinned`);
   assert.ok(VENDOR.esm.includes(PINS.marked) && VENDOR.esm.includes(PINS.dompurify), "the markdown renderer is vendored");

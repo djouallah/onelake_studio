@@ -1,0 +1,111 @@
+# The catalog, listed as standard DuckDB lists it: SHOW, information_schema and the
+# duckdb_*() functions. Every table and model the cache knows is there, opened or not, and
+# each OneLake schema is named by its whole path (workspace.item.schema).
+
+query TTTTTT rowsort
+SHOW ALL TABLES
+----
+lakehouse	cat1.lh.dbo	t	['a']	['BIGINT']	false
+lakehouse	cat2.lh.dbo	t	['b', 'c']	['VARCHAR', 'DECIMAL(10,2)']	false
+semanticmodel	cat1	Sales	['model']	['VARCHAR']	false
+warehouse	cat1.wh.sales	e	['id']	['INTEGER']	false
+
+query TTT rowsort
+SHOW SCHEMAS
+----
+lakehouse	cat1	false
+lakehouse	cat1.lh	false
+lakehouse	cat1.lh.dbo	false
+lakehouse	cat2	false
+lakehouse	cat2.lh	false
+lakehouse	cat2.lh.dbo	false
+lakehouse	main	false
+memory	main	true
+mirroreddatabase	main	false
+semanticmodel	cat1	false
+semanticmodel	main	false
+sqldatabase	main	false
+system	information_schema	false
+system	main	false
+system	pg_catalog	false
+temp	main	false
+warehouse	cat1	false
+warehouse	cat1.wh	false
+warehouse	cat1.wh.sales	false
+warehouse	main	false
+
+query T rowsort
+SHOW DATABASES
+----
+lakehouse
+memory
+mirroreddatabase
+semanticmodel
+sqldatabase
+warehouse
+
+statement ok
+SHOW TABLES
+
+query T
+SHOW TABLES FROM lakehouse.cat2.lh.dbo
+----
+t
+
+# Any case, and quoted parts.
+query T
+show tables from LAKEHOUSE.Cat1."lh".dbo;
+----
+t
+
+query T
+SHOW TABLES FROM semanticmodel.cat1
+----
+Sales
+
+# information_schema and duckdb_views() are DuckDB's own: they name only the innermost of
+# the nested schemas, so the two workspaces' dbo.t are two rows that look alike.
+query TTT
+SELECT table_catalog, table_schema, table_name FROM information_schema.tables WHERE table_catalog <> 'memory' ORDER BY ALL
+----
+lakehouse	dbo	t
+lakehouse	dbo	t
+semanticmodel	cat1	Sales
+warehouse	sales	e
+
+query TTTT
+SELECT table_catalog, table_name, column_name, data_type FROM information_schema.columns WHERE table_catalog <> 'memory' ORDER BY ALL
+----
+lakehouse	t	a	BIGINT
+lakehouse	t	b	VARCHAR
+lakehouse	t	c	DECIMAL(10,2)
+semanticmodel	Sales	model	VARCHAR
+warehouse	e	id	INTEGER
+
+query TTT
+SELECT database_name, schema_name, view_name FROM duckdb_views() WHERE NOT internal ORDER BY ALL
+----
+lakehouse	dbo	t
+lakehouse	dbo	t
+semanticmodel	cat1	Sales
+warehouse	sales	e
+
+query I
+SELECT count(*) FROM duckdb_schemas() WHERE database_name = 'lakehouse' AND NOT internal
+----
+6
+
+statement ok
+SELECT count(*) FROM duckdb_tables()
+
+statement ok
+SELECT count(*) FROM duckdb_columns()
+
+statement ok
+SELECT count(*) FROM duckdb_databases()
+
+statement ok
+PRAGMA database_list
+
+statement ok
+PRAGMA show_tables
