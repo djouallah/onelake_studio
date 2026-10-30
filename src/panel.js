@@ -135,7 +135,7 @@ async function openPanelUncontended(context, { onOpened, onBoot, onBootFailed, e
   }
 
   // Opened from an editor, results under it: made in the editor's group, then moved down.
-  if (fromEditor && place.below) await dockBelow();
+  if (fromEditor && place.below) await dockBelow(panel);
 
   const onCall = engine ? wireEngine(panel, engine, host) : null;
   // The panel's own listeners die with the panel. Pushed onto context.subscriptions they
@@ -215,9 +215,8 @@ function revealPanel(place = {}) {
 // the editor above. VS Code moves only the active tab of a group, so the panel is made active
 // in its group first.
 let docking = null;
-function dockBelow() {
-  if (!current || docking) return docking;
-  const panel = current;
+function dockBelow(panel = current) {
+  if (!panel || docking) return docking;
   docking = (async () => {
     panel.reveal(panel.viewColumn, false);
     await vscode.commands.executeCommand('workbench.action.moveEditorToBelowGroup');
