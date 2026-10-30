@@ -85,7 +85,7 @@
     section:not(.tableOpen) #pivotBtn { display: none; }
     /* A table's Pivot takes the place of the results, as a model's view does; it has its own Edit SQL. */
     #pivotView { flex: 1; overflow: auto; min-height: 0; }
-    section.pivotOpen .resultsWrap, section.pivotOpen #csvBtn, section.pivotOpen #editSqlBtn,
+    section.pivotOpen .resultsWrap, section.pivotOpen #csvBtn, section.pivotOpen #profileBtn, section.pivotOpen #editSqlBtn,
     section.pivotOpen #pivotBtn { display: none; }
     table.results { border-collapse: collapse; width: 100%; font-size: 13px; }
     table.results th, table.results td {
@@ -190,6 +190,7 @@
       <button id="pivotBtn" disabled title="The table's columns on shelves, as a pivot or a chart">Pivot</button>
       <!-- Only on screen while something can be stopped. -->
       <button id="stopBtn" hidden title="Stop">Stop ■</button>
+      <button id="profileBtn" disabled title="Each column of the result: its nulls, distinct values, min, max and quartiles, over every row">Profile</button>
       <button id="csvBtn" disabled>Export…</button>
       <button id="editSqlBtn" title="This SQL in a query editor, to change and run it there (Ctrl+Enter)">Edit SQL</button>
     </div>

@@ -11,8 +11,7 @@ the panel holds no token, and table Pivot is only a SQL starter.
 4. ~~**Results grid.**~~ Done.
 
 ## Fits "a catalog read with SQL"
-5. **Column profile of a result:** `SUMMARIZE` over it, with null %, distinct count, min, max and a
-   small histogram per column.
+5. ~~**Column profile of a result**~~ Done (`SUMMARIZE`). Left: a small histogram per column.
 6. **Time travel from History:** "Query this version" on a Delta commit or an Iceberg snapshot, and
    "Diff with current" for row count and schema.
 7. ~~**Export to a local file**~~ Done.

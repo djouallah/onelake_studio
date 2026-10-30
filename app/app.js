@@ -107,6 +107,7 @@ function wireUi() {
   $('pivotBtn').onclick = openPivot;
   $('csvBtn').onclick = saveActive;
   $('editSqlBtn').onclick = editSql;
+  $('profileBtn').onclick = profileResult;
   $('docPretty').onclick = () => {
     if (docMode === 'pretty' || !lastResult) return;
     docMode = 'pretty';
@@ -659,6 +660,7 @@ async function runQuery({ sql, doc = true, ext = '' } = {}) {
              `the CSV is capped at the same point`;
     setStatus(msg, res.truncated ? 'warn' : 'ok');
     $('csvBtn').disabled = res.rows.length === 0;
+    $('profileBtn').disabled = res.rows.length === 0 || /^\s*summarize\b/i.test(sql);
     setSaveLabel();
     return true;
   } catch (e) {
@@ -705,6 +707,7 @@ function clearResults(hint = '') {
   $('resultsHint').textContent = hint;
   lastResult = null;
   $('csvBtn').disabled = true;
+  $('profileBtn').disabled = true;
   setSaveLabel();
 }
 
@@ -1126,6 +1129,19 @@ function editSql() {
 function openInEditor(sql, said) {
   engine.editSql(sql).then(() => setStatus(said, 'ok'),
                            e => setStatus('Could not open an editor: ' + e.message, 'error'));
+}
+
+// Profile: each column of the query on screen, every row of it — DuckDB's SUMMARIZE: its type,
+// min and max, distinct values (approximately), average, spread, quartiles, count and nulls. In
+// place of the result; running the query again puts it back. A semantic model's query is
+// profiled as the SQL it compiles to.
+async function profileResult() {
+  if (!currentSql) return;
+  const title = ($('activeTable').textContent || '').replace(/^(Query|Profile): /, '');
+  const model = await semantic.statement(currentSql).catch(() => null);
+  const sql = (model ? model.sql : currentSql).trim().replace(/;+\s*$/, '');
+  $('activeTable').textContent = `Profile: ${title || 'query'}`;
+  await runQuery({ sql: `SUMMARIZE ${sql}`, doc: false });
 }
 
 // Export: the query on screen, every row (not the rows the page holds), to a file: the host

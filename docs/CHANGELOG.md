@@ -25,6 +25,8 @@
   Ctrl+C copies as tab-separated text (Ctrl+Shift+C with headers). Right-click: Copy, Copy with
   Headers, Copy as CSV, Markdown or JSON. A double click (or Enter) shows a cell whole, JSON
   indented. The filter box keeps the rows that hold its text.
+- **Profile** in the panel: each column of the result, over every row the query returns: its
+  type, min and max, distinct values, average, spread, quartiles, count and nulls.
 - **Export…** (was Save CSV) writes every row the query returns, not only the rows on screen, to
   a CSV, Parquet or Excel file. The engine writes it; SQL typed by hand still cannot `COPY`. The
   grid's right-click also opens the selection (or every row) as an untitled CSV or JSON document.
