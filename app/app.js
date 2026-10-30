@@ -13,6 +13,7 @@ import { isDocResult, textLinesDoc, fileExt, isTextExt, escapeHtml, basename,
 // Static import is safe: docview.js is tiny — the markdown renderer it uses is imported
 // only inside renderMarkdown(), and only for a document that IS markdown.
 import { renderDocument } from './docview.js';
+import { mountGrid, cellText } from './grid.js';
 // Static too, and as cheap: the DAX compiler it runs is imported on the first model only.
 import * as semantic from './semantic.js';
 // A .bim's model view. Explore's chart library is loaded when the Pivot first opens.
@@ -35,7 +36,6 @@ const vs = vscodeApi();
 
 // Cap on rendered rows only. The CSV saves everything the engine materialised, which is
 // itself capped — runQuery says so when the two differ.
-const MAX_DOM_ROWS = 2000;
 let engine = null;
 let engineReady = null;      // resolves when engine.init() has finished; gates every use of it
 let lakehouse = null;        // { workspace, item }
@@ -118,6 +118,7 @@ function wireUi() {
     setDocTabs();
     $('docView').hidden = true;
     $('resultsTable').hidden = false;
+    $('gridBar').hidden = !grid;
   };
   $('viewData').onclick = onDataTab;
   $('viewStats').onclick = showStats;
@@ -649,11 +650,9 @@ async function runQuery({ sql, doc = true, ext = '' } = {}) {
     const ms = Math.round(performance.now() - t0);
     lastRun.ms = ms;
     lastRun.rows = res.numRows ?? res.rows.length;
-    const shown = Math.min(res.rows.length, MAX_DOM_ROWS);
-    // Two caps: MAX_DOM_ROWS only limits what is drawn; res.truncated means the engine
-    // stopped materialising, so the CSV is short too.
+    // Every row held is in the grid (grid.js draws only those in view); res.truncated means the
+    // engine stopped materialising, so the CSV is short too.
     let msg = `${res.rows.length.toLocaleString('en')} row(s) in ${ms} ms`;
-    if (res.rows.length > shown) msg += ` — showing first ${shown.toLocaleString('en')}`;
     if (res.truncated)
       msg += `. Stopped at ${res.limit.toLocaleString('en')} rows of ` +
              `${res.numRows.toLocaleString('en')} — add a LIMIT or narrow the query; ` +
@@ -682,13 +681,11 @@ async function runQuery({ sql, doc = true, ext = '' } = {}) {
   }
 }
 
-// Column types live in the header cells, under the names.
-const NUMERIC_TYPE = /^(U?(TINY|SMALL|BIG|HUGE)INT|U?INTEGER|DOUBLE|FLOAT|DECIMAL)/;
-
 // Empty the whole pane. Every path that ends without a result goes through here, so
 // nothing on screen ever belongs to a query other than the current one.
 function clearResults(hint = '') {
   docSeq++;              // an in-flight showDoc() must not paint over this
+  if (grid) { grid.destroy(); grid = null; }
   viewMode = 'data';
   statsPrev = null;
   $('statsView').hidden = true;
@@ -717,39 +714,13 @@ function docOf(res) {
   return isDocResult(res) ? res.rows[0][res.fields[0]] : textLinesDoc(res);
 }
 
-// The grid's header: each column's name over its type, and the column it is sorted by marked.
-function gridHead(res, sort) {
-  const types = res.types || [];
-  return '<thead><tr>' + res.fields.map((f, i) => {
-    const t = types[i] || '';
-    const by = sort && sort.col === i;
-    return `<th class="${NUMERIC_TYPE.test(t) ? 'num' : ''}" title="${escapeHtml(f + ' ' + t)} — click to sort"` +
-      (by ? ` aria-sort="${sort.desc ? 'descending' : 'ascending'}"` : '') + '>' +
-      `<span class="cname">${escapeHtml(f)}${by ? (sort.desc ? ' ▼' : ' ▲') : ''}</span>` +
-      `<span class="ctype">${escapeHtml(t)}</span></th>`;
-  }).join('') + '</tr></thead>';
-}
-
-// A result's rows sorted by one column: numbers as numbers (a big integer arrives as text),
-// everything else as text with its digits compared as numbers. Empty cells are last either way.
-const textOrder = new Intl.Collator(undefined, { numeric: true });
-function sortedRows(rows, res, { col, desc }) {
-  const f = res.fields[col];
-  const numeric = NUMERIC_TYPE.test((res.types || [])[col] || '');
-  const key = v => (typeof v === 'number' ? v : numeric && !Number.isNaN(Number(v)) ? Number(v) : String(cellText(v)));
-  // Each row's key once, not once per comparison: 200k rows are millions of comparisons.
-  const filled = [], empty = [];
-  for (const r of rows) {
-    if (r[f] == null || r[f] === '') empty.push(r);
-    else filled.push({ r, k: key(r[f]) });
-  }
-  filled.sort((a, b) => {
-    const x = a.k, y = b.k;
-    const c = typeof x === 'number' && typeof y === 'number' ? x - y : textOrder.compare(String(x), String(y));
-    return desc ? -c : c;
-  });
-  return filled.map(e => e.r).concat(empty);
-}
+// The grid on screen (grid.js), while a result is.
+let grid = null;
+const gridUi = () => ({
+  filter: $('gridFilter'), count: $('gridCount'),
+  inspector: { root: $('inspector'), title: $('inspectorTitle'), body: $('inspectorBody'),
+               copy: $('inspectorCopy'), close: $('inspectorClose') },
+});
 
 function renderResults(res) {
   const table = $('resultsTable');
@@ -760,35 +731,13 @@ function renderResults(res) {
     return;
   }
   hint.hidden = true; table.hidden = false;
-  if (!res.rows.length) {
-    table.innerHTML = gridHead(res, null) +
-      `<tbody><tr><td colspan="${res.fields.length}">(no rows)</td></tr></tbody>`;
-    return;
-  }
-  // A click on a header sorts by that column: ascending, then descending, then back to the
-  // order the query gave. Every row the result holds is sorted, not only the ones drawn, and
-  // the CSV is saved in the order on screen.
-  const original = res.rows.slice();
-  let sort = null;   // { col, desc }
-  const draw = () => {
-    const rows = res.rows.slice(0, MAX_DOM_ROWS);
-    table.innerHTML = gridHead(res, sort) + '<tbody>' + rows.map(r => '<tr>' + res.fields.map(f => {
-      const v = r[f];
-      const num = typeof v === 'number';
-      return `<td class="${num ? 'num' : ''}">${escapeHtml(cellText(v))}</td>`;
-    }).join('') + '</tr>').join('') + '</tbody>';
-  };
-  draw();
-  table.onclick = e => {
-    const th = e.target.closest('thead th');
-    if (!th) return;
-    const col = th.cellIndex;
-    sort = !sort || sort.col !== col ? { col, desc: false } : !sort.desc ? { col, desc: true } : null;
-    // In place, so the CSV (lastResult) follows; one row at a time, as 200k rows will not spread.
-    const next = sort ? sortedRows(original, res, sort) : original;
-    for (let i = 0; i < next.length; i++) res.rows[i] = next[i];
-    draw();
-  };
+  // A header click sorts every row the result holds, in place: the CSV is saved in the order on
+  // screen.
+  grid = mountGrid(table, table.closest('.resultsWrap'), res, {
+    ui: gridUi(),
+    copyText: text => engine.copyText(text).catch(e => setStatus('Could not copy: ' + e.message, 'error')),
+    say: text => setStatus(text, 'ok'),
+  });
 
   // The grid stays the source of truth; a document result additionally gets Pretty — kept as
   // it reads now, before any sort.
@@ -820,6 +769,7 @@ async function showDoc(text) {
     $('docView').classList.toggle('prose', kind === 'markdown');
     $('docView').hidden = false;
     $('resultsTable').hidden = true;
+    $('gridBar').hidden = true;
     $('docPretty').title = DOC_KIND_TITLE[kind] || '';
     setDocTabs();
   } catch (e) {
@@ -862,7 +812,7 @@ const isDelta = info => !!(info && info.stats && info.stats.format === 'delta');
 function showMeta(mode) {
   if (!activeInfo || viewMode === mode) return;
   if (viewMode === 'data') {
-    statsPrev = ['resultsHint', 'docView', 'resultsTable', 'docBar']
+    statsPrev = ['resultsHint', 'docView', 'resultsTable', 'docBar', 'gridBar']
       .map(id => [id, $(id).hidden]);
     for (const [id] of statsPrev) $(id).hidden = true;
   }
@@ -1222,12 +1172,6 @@ function showVersion() {
 // ---------------------------------------------------------------------------
 // Utilities
 // ---------------------------------------------------------------------------
-function cellText(v) {
-  if (v == null) return '';
-  if (typeof v === 'object') return JSON.stringify(v);
-  return String(v);
-}
-
 // `stoppable`: table loads, file loads and queries — everything cancelLoad() reaches.
 function setBusy(b, { stoppable = false } = {}) {
   const stop = $('stopBtn');
@@ -1285,6 +1229,8 @@ window.addEventListener('message', async e => {
     }
     else if (m.type === 'reset') { await engineReady; await leaveLakehouse(); lakehouse = null; }
     else if (m.type === 'reads') showReads(m);
+    // The webview's context menu on the grid: Copy, with headers, as CSV, Markdown or JSON.
+    else if (m.type === 'grid-copy') { if (grid) grid.copy(String(m.as || 'tsv')); }
     // Why the catalog is taking long — conversion pending, catalog busy.
     else if (m.type === 'status' && m.message) setStatus(m.message);
   } catch (err) {

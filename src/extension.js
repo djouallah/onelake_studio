@@ -478,6 +478,7 @@ async function show(context, options, place) {
       saveFile, semviews, modelsDir: modelsFolder(),
       exportExplore: x => (exportExplore ? exportExplore(x) : Promise.reject(new Error('OneLake Studio is still starting'))),
       nameTables: list => (nameModelTables ? nameModelTables(list) : Promise.reject(new Error('OneLake Studio is still starting'))),
+      copyText: text => vscode.env.clipboard.writeText(text),
       editSql: x => (editSql ? editSql(x) : Promise.reject(new Error('OneLake Studio is still starting'))),
       queryDone: x => { if (queryDone) queryDone(x); },
       openModel: x => (openSqlModel ? openSqlModel(x) : Promise.reject(new Error('OneLake Studio is still starting'))),
@@ -1620,6 +1621,10 @@ async function activateInner(context) {
     vscode.commands.registerCommand('onelakeStudio.newQuery', () => openNewQuery(NEW_QUERY_SQL)),
     vscode.commands.registerCommand('onelakeStudio.queryHistory', () => showHistory()),
     vscode.commands.registerCommand('onelakeStudio.goTo', () => goTo()),
+    // The grid's context menu (package.json webview/context): the page builds the text.
+    ...[['gridCopy', 'tsv'], ['gridCopyHeaders', 'tsv-headers'], ['gridCopyCsv', 'csv'],
+        ['gridCopyMarkdown', 'markdown'], ['gridCopyJson', 'json']].map(([id, as]) =>
+      vscode.commands.registerCommand(`onelakeStudio.${id}`, () => postToPanel({ type: 'grid-copy', as }))),
     vscode.commands.registerCommand('onelakeStudio.revealQueries', async () => {
       if (!queriesFolder()) return;
       await fsp.mkdir(queriesFolder(), { recursive: true });

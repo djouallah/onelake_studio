@@ -42,6 +42,8 @@ const ENGINE_METHODS = new Set(['query', 'stream', 'cancel', 'info']);
  *        Export to Fabric: answers what the page says when it is done
  * @param {(list: {workspace: string, item: string, schema: string, table: string}[]) => Promise<string[]>} [o.nameTables]
  *        a semantic model's Direct Lake tables (named by GUID) -> their SQL names
+ * @param {(text: string) => Promise<void>} [o.copyText]
+ *        text on the clipboard (the grid's copies)
  * @param {(x: {sql: string}) => Promise<void>} [o.editSql]
  *        Edit SQL: the SQL in a new query editor
  * @param {(x: {id: number, ok: boolean, error: string|null, rewritten: boolean, rows?: number, ms?: number}) => void} [o.queryDone]
@@ -51,7 +53,7 @@ const ENGINE_METHODS = new Set(['query', 'stream', 'cancel', 'info']);
  *        time) and kept as a view: { name, schema, path, text }
  */
 function createHostMethods({ onelake, engine, onStatus = () => {}, saveFile = null, semviews = null, exportExplore = null,
-                             nameTables = null, editSql = null, queryDone = null, openModel = null, modelsDir = null }) {
+                             nameTables = null, copyText = null, editSql = null, queryDone = null, openModel = null, modelsDir = null }) {
   const views = () => { if (!semviews) throw new Error('semantic views are not available here'); return semviews; };
   return {
     // Export to Fabric (exportapp.js): the model's text (to check it), where it lives in
@@ -142,6 +144,11 @@ function createHostMethods({ onelake, engine, onStatus = () => {}, saveFile = nu
         ? Buffer.from(x.text, 'utf8')
         : () => onelake.readBytes(String(x.workspace), String(x.path));
       return saveFile(name, bytes);
+    },
+    // The grid's copies: the clipboard is the editor's, not the page's.
+    'host.copyText': async x => {
+      if (!copyText) throw new Error('the clipboard is not available here');
+      await copyText(String((x && x.text) ?? ''));
     },
     // Edit SQL: the SQL on the panel's screen, in a new query editor (queryeditor.js).
     'host.editSql': async x => {

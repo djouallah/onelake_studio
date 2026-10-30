@@ -201,6 +201,31 @@
         "title": "OneLake Save Query",
         "category": "OneLake Studio",
         "icon": "$(save)"
+      },
+      {
+        "command": "onelakeStudio.gridCopy",
+        "title": "Copy",
+        "category": "OneLake Studio"
+      },
+      {
+        "command": "onelakeStudio.gridCopyHeaders",
+        "title": "Copy with Headers",
+        "category": "OneLake Studio"
+      },
+      {
+        "command": "onelakeStudio.gridCopyCsv",
+        "title": "Copy as CSV",
+        "category": "OneLake Studio"
+      },
+      {
+        "command": "onelakeStudio.gridCopyMarkdown",
+        "title": "Copy as Markdown",
+        "category": "OneLake Studio"
+      },
+      {
+        "command": "onelakeStudio.gridCopyJson",
+        "title": "Copy as JSON",
+        "category": "OneLake Studio"
       }
     ],
     "keybindings": [
@@ -341,6 +366,33 @@
           "group": "1_edit@2"
         }
       ],
+      "webview/context": [
+        {
+          "command": "onelakeStudio.gridCopy",
+          "when": "webviewId == 'onelakeStudio' && webviewSection == 'grid'",
+          "group": "1_copy@1"
+        },
+        {
+          "command": "onelakeStudio.gridCopyHeaders",
+          "when": "webviewId == 'onelakeStudio' && webviewSection == 'grid'",
+          "group": "1_copy@2"
+        },
+        {
+          "command": "onelakeStudio.gridCopyCsv",
+          "when": "webviewId == 'onelakeStudio' && webviewSection == 'grid'",
+          "group": "1_copy@3"
+        },
+        {
+          "command": "onelakeStudio.gridCopyMarkdown",
+          "when": "webviewId == 'onelakeStudio' && webviewSection == 'grid'",
+          "group": "1_copy@4"
+        },
+        {
+          "command": "onelakeStudio.gridCopyJson",
+          "when": "webviewId == 'onelakeStudio' && webviewSection == 'grid'",
+          "group": "1_copy@5"
+        }
+      ],
       "editor/title": [
         {
           "command": "onelakeStudio.runQuery",
@@ -364,6 +416,26 @@
         }
       ],
       "commandPalette": [
+        {
+          "command": "onelakeStudio.gridCopy",
+          "when": "false"
+        },
+        {
+          "command": "onelakeStudio.gridCopyHeaders",
+          "when": "false"
+        },
+        {
+          "command": "onelakeStudio.gridCopyCsv",
+          "when": "false"
+        },
+        {
+          "command": "onelakeStudio.gridCopyMarkdown",
+          "when": "false"
+        },
+        {
+          "command": "onelakeStudio.gridCopyJson",
+          "when": "false"
+        },
         {
           "command": "onelakeStudio.runQuery",
           "when": "onelakeStudio.queryEditor"
@@ -503,7 +575,7 @@
   },
   "scripts": {
     "vscode:prepublish": "node scripts/check-binding.mjs && node scripts/stage-webview.mjs && node scripts/vendor.mjs && node scripts/function-bundle.mjs && node scripts/bundle.mjs",
-    "test": "node --test test/js/app-paths.test.mjs test/js/catalog.test.mjs test/js/fabric.test.mjs test/js/host.test.mjs test/js/names.test.mjs test/js/deltalog.test.mjs test/js/onelake.test.mjs test/js/panel-html.test.mjs test/js/sql.test.mjs test/js/store.test.mjs test/js/bridge.test.mjs test/js/semviews.test.mjs test/js/semantic.test.mjs test/js/agent.test.mjs test/js/exportapp.test.mjs test/js/fabricapp.test.mjs test/js/onelakewrite.test.mjs test/js/http.test.mjs test/js/querytext.test.mjs test/js/history.test.mjs"
+    "test": "node --test test/js/app-paths.test.mjs test/js/catalog.test.mjs test/js/fabric.test.mjs test/js/host.test.mjs test/js/names.test.mjs test/js/deltalog.test.mjs test/js/onelake.test.mjs test/js/panel-html.test.mjs test/js/sql.test.mjs test/js/store.test.mjs test/js/bridge.test.mjs test/js/semviews.test.mjs test/js/semantic.test.mjs test/js/agent.test.mjs test/js/exportapp.test.mjs test/js/fabricapp.test.mjs test/js/onelakewrite.test.mjs test/js/http.test.mjs test/js/querytext.test.mjs test/js/history.test.mjs test/js/grid.test.mjs"
   },
   "devDependencies": {
     "@types/vscode": "^1.90.0",

@@ -8,11 +8,7 @@ the panel holds no token, and table Pivot is only a SQL starter.
 2. ~~**Query history**~~ Done. Left: whether DuckDB read the data from its disk cache or from
    OneLake (the host counts its own requests only; it needs the engine's read statistics).
 3. ~~**Go to a table, column or measure**~~ Done.
-4. **Results grid.**
-   - Virtualized, so every held row scrolls, not only the first 2,000.
-   - Copy a cell or a range, and "Copy as" TSV, CSV, Markdown or JSON.
-   - An inspector for long text and for structs, lists and JSON.
-   - A quick filter box.
+4. ~~**Results grid.**~~ Done.
 
 ## Fits "a catalog read with SQL"
 5. **Column profile of a result:** `SUMMARIZE` over it, with null %, distinct count, min, max and a

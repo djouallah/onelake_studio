@@ -104,7 +104,31 @@
     table.results th .ctype { display: block; font-weight: 400; font-size: 0.72rem; color: var(--accent2); letter-spacing: 0.2px; }
     table.results th.num { text-align: right; }
     table.results td.num { text-align: right; font-variant-numeric: tabular-nums; }
-    table.results tr:nth-child(even) td { background: var(--stripe); }
+    table.results tr.odd td { background: var(--stripe); }
+    /* The grid (grid.js): row numbers, the selection, the spacers that stand for rows not drawn. */
+    table.results td.rn, table.results th.rn {
+      position: sticky; left: 0; text-align: right; color: var(--muted); min-width: 2.5rem;
+      background: var(--vscode-keybindingTable-headerBackground, var(--panel)); user-select: none; cursor: default;
+    }
+    table.results th.rn { z-index: 2; }
+    table.results td { user-select: none; }
+    table.results td.sel { background: var(--vscode-list-activeSelectionBackground, var(--sel));
+                           color: var(--vscode-list-activeSelectionForeground, var(--text)); }
+    table.results td.rn.sel { color: var(--text); }
+    table.results tr.spacer td { padding: 0; border: 0; background: none; }
+    .resultsWrap:focus { outline: none; }
+    .gridBar { position: sticky; left: 0; display: flex; gap: 0.5rem; align-items: center; padding: 0.35rem 0.75rem; }
+    .gridBar input { width: 16rem; padding: 0.2rem 0.4rem; background: var(--vscode-input-background, var(--panel));
+                     color: var(--vscode-input-foreground, var(--text)); border: 1px solid var(--vscode-input-border, var(--border)); }
+    .gridBar span { color: var(--muted); font-size: 0.8rem; }
+    #inspector { position: fixed; right: 1rem; bottom: 2.5rem; width: min(42rem, 80vw); max-height: 60vh; z-index: 5;
+                 display: flex; flex-direction: column; background: var(--vscode-editorWidget-background, var(--panel));
+                 border: 1px solid var(--vscode-editorWidget-border, var(--border)); box-shadow: 0 4px 16px rgba(0,0,0,0.35); }
+    #inspector[hidden] { display: none; }
+    #inspector header { display: flex; gap: 0.5rem; align-items: center; padding: 0.35rem 0.6rem; border-bottom: 1px solid var(--border); }
+    #inspector header span { flex: 1; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    #inspector pre { margin: 0; padding: 0.6rem; overflow: auto; white-space: pre-wrap; word-break: break-word;
+                     font-family: var(--vscode-editor-font-family); font-size: var(--vscode-editor-font-size); }
 
     /* Document view — a text result rendered as itself (docview.js). */
     .docBar { position: sticky; top: 0; z-index: 2; display: block; padding: 0.45rem 0.75rem; background: var(--bg); }
@@ -187,7 +211,17 @@
       <div id="planView" hidden></div>
       <div class="hint" id="resultsHint">Query results appear here. Write SQL in a query editor: New Query (+) under Queries in the OneLake sidebar.</div>
       <article id="docView" class="docView" hidden></article>
+      <!-- The grid's filter and row count (grid.js), while a result is on screen. -->
+      <div class="gridBar" id="gridBar" hidden>
+        <input id="gridFilter" type="search" placeholder="Filter rows" spellcheck="false">
+        <span id="gridCount"></span>
+      </div>
       <table class="results" id="resultsTable" hidden></table>
+    </div>
+    <!-- A cell, whole (grid.js: a double click, or Enter). -->
+    <div id="inspector" hidden>
+      <header><span id="inspectorTitle"></span><button id="inspectorCopy">Copy</button><button id="inspectorClose" title="Close (Esc)">×</button></header>
+      <pre id="inspectorBody"></pre>
     </div>
   </section>
 

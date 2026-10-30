@@ -20,6 +20,11 @@
 - **Go to a Table, Column or Measure** (Ctrl+Alt+O, or the search icon on the tree): every table,
   column, semantic model and measure the cache holds, in one search. A pick opens the table or the
   model; its button puts the SQL name in the query being written (or copies it).
+- **The results grid scrolls every row a result holds**, not the first 2,000, with row numbers.
+  Click a cell, Shift+click or Shift+arrows for a range, a row number for its row; Ctrl+A, and
+  Ctrl+C copies as tab-separated text (Ctrl+Shift+C with headers). Right-click: Copy, Copy with
+  Headers, Copy as CSV, Markdown or JSON. A double click (or Enter) shows a cell whole, JSON
+  indented. The filter box keeps the rows that hold its text.
 - **The command line's `dax` command is gone.** OneLake Studio takes SQL only: a semantic model is
   queried with `AGG("measure")` in `sql`.
 

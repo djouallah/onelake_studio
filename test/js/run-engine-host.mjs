@@ -193,13 +193,13 @@ try {
     // A real query, through data.js's own runSql, through the bridge, into the grid.
     await page.evaluate(sql => window.postMessage({ type: "run-sql", id: 1, sql }, "*"), "SELECT 1 AS a, 'x' AS b UNION ALL SELECT 2, 'y' ORDER BY a");  // as the query editor sends it
     await page.waitForFunction(
-      () => document.querySelectorAll("#resultsTable tbody tr").length >= 2, { timeout: 30000 })
+      () => document.querySelectorAll("#resultsTable tbody tr[data-r]").length >= 2, { timeout: 30000 })
       .then(() => ok(true, "a query ran end to end and rendered rows"),
             () => ok(false, "a query ran end to end and rendered rows"));
 
     const cells = await page.evaluate(() =>
-      [...document.querySelectorAll("#resultsTable tbody tr")].map(
-        tr => [...tr.querySelectorAll("td")].map(td => td.textContent.trim())));
+      [...document.querySelectorAll("#resultsTable tbody tr[data-r]")].map(
+        tr => [...tr.querySelectorAll("td:not(.rn)")].map(td => td.textContent.trim())));
     eq(JSON.stringify(cells.slice(0, 2)), JSON.stringify([["1", "x"], ["2", "y"]]),
        "…with the right values in the right order");
 
