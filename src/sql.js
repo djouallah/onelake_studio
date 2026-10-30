@@ -257,6 +257,11 @@ SELECT database_name, path AS schema_name,
        database_name = current_database() AND path = current_schema() AS current
 FROM p ORDER BY database_name, schema_name`;
 
+// Every semantic model the catalog has (engine-host.js lists each one the cache knows, opened
+// or not), in the columns dax-sql's SHOW SEMANTIC VIEWS starts with.
+const SHOW_SEMANTIC_VIEWS = `SELECT database_name, schema_name, view_name FROM duckdb_views()
+WHERE database_name = 'semanticmodel' ORDER BY schema_name, view_name`;
+
 // A dotted name as SQL wrote it -> its parts, quotes undone; null when it is not one.
 const PART = /^\s*(?:"((?:[^"]|"")*)"|([A-Za-z_][A-Za-z0-9_$]*))\s*/;
 function dottedParts(text) {
@@ -278,6 +283,7 @@ function catalogStatement(sql) {
   const s = scan(String(sql), true).text.trim().replace(/;+\s*$/, '').trim();
   if (/^show\s+all\s+tables$/i.test(s)) return SHOW_ALL_TABLES;
   if (/^show\s+schemas$/i.test(s)) return SHOW_SCHEMAS;
+  if (/^show\s+semantic\s+views?$/i.test(s)) return SHOW_SEMANTIC_VIEWS;
   // SHOW TABLES FROM catalog.schema…: DuckDB's parser takes two parts at most.
   const from = /^show\s+tables\s+(?:from|in)\s+([\s\S]+)$/i.exec(s);
   const parts = from && dottedParts(from[1]);

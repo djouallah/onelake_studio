@@ -10,7 +10,8 @@
   opened yet opens it first.
 - **`CREATE` and `DROP SEMANTIC VIEW` are gone.** A model is there because Fabric has it, or a
   lakehouse's `Files/` holds it; open one in the tree, or name it in a query. `SHOW SEMANTIC VIEWS`,
-  `SHOW SEMANTIC METRICS` / `DIMENSIONS` and `DESCRIBE` still work.
+  `SHOW SEMANTIC METRICS` / `DIMENSIONS` and `DESCRIBE` still work. `SHOW SEMANTIC VIEWS` lists
+  every model the cache knows, opened or not.
 - **`SHOW ALL TABLES` and `SHOW SCHEMAS` list everything the cache knows**, tables and semantic
   models, with no request to OneLake. Each schema is named by its whole path (`ws.lh.dbo`), so two
   workspaces' `dbo.t` are two rows. `SHOW TABLES FROM lakehouse.ws.lh.dbo` works.

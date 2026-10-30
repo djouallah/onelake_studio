@@ -345,6 +345,8 @@ export function tablesFor(sql) {
   return out;
 }
 
+const SHOW_VIEWS = /^\s*show\s+semantic\s+views?\s*;?\s*$/i;
+
 // dax-sql's CREATE and DROP SEMANTIC VIEW, which this extension does not take: a model is
 // there because Fabric has it (or a lakehouse's Files/ holds it), never because SQL made it.
 const NO_DDL = "Read only: OneLake Studio never writes, and a semantic model is not made or dropped " +
@@ -355,6 +357,9 @@ const NO_DDL = "Read only: OneLake Studio never writes, and a semantic model is 
  * view, else { sql, tables } to run once `tables` (Direct Lake) are open. One statement.
  */
 export async function statement(sql, modules = null) {
+  // SHOW SEMANTIC VIEWS lists every model the catalog has, opened here or not: the engine
+  // answers it (src/sql.js catalogStatement), not dax-sql's registry of the opened ones.
+  if (SHOW_VIEWS.test(String(sql))) return null;
   if (!views) {
     // Nothing defined yet: only a statement about views needs the compiler loaded.
     if (!/\bsemantic\b/i.test(String(sql))) return null;

@@ -99,6 +99,9 @@ test("SHOW ALL TABLES, SHOW SCHEMAS and SHOW TABLES FROM a nested schema are rew
                      "SHOW SCHEMAS", "show schemas;"]) {
     assert.match(catalogStatement(sql) || "", /duckdb_schemas\(\)/, sql);
   }
+  for (const sql of ["SHOW SEMANTIC VIEWS", "show semantic view;"]) {
+    assert.match(catalogStatement(sql) || "", /database_name = 'semanticmodel'/, sql);
+  }
   const from = catalogStatement('SHOW TABLES FROM lakehouse."ANZ ws".lh.dbo;');
   assert.match(from, /lower\(p\.database_name\) = 'lakehouse'/);
   assert.match(from, /= \['anz ws', 'lh', 'dbo'\]/);
