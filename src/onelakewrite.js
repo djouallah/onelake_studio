@@ -12,37 +12,20 @@
 // uses; a 401 is retried once with a fresh one.
 // =============================================================================
 
-const { encPath } = require('./names');
+const { DFS_ORIGIN, dfsFileUrl } = require('./names');
+const { authedFetch, oneLakeMessage } = require('./http');
 
-const DFS_ORIGIN = 'https://onelake.dfs.fabric.microsoft.com';
 const TIMEOUT_MS = 5 * 60_000;
-
-async function oneLakeMessage(r) {
-  try {
-    const j = JSON.parse(await r.text());
-    return (j && j.error && j.error.message) || '';
-  } catch (_) { return ''; }
-}
 
 /**
  * @param {object} o
  * @param {(o?: {fresh?: boolean}) => Promise<string|null>} o.getToken  storage audience
  */
 function createOneLakeWriter({ getToken, dfsOrigin = DFS_ORIGIN, fetchImpl = (...a) => fetch(...a) }) {
-  async function call(url, { method, headers = {}, body } = {}) {
-    let token = await getToken();
-    if (!token) throw Object.assign(new Error('Not signed in to a Microsoft account.'), { status: 401 });
-    const send = t => fetchImpl(url, { method, body, headers: { ...headers, authorization: `Bearer ${t}` },
-                                       signal: AbortSignal.timeout(TIMEOUT_MS) });
-    let r = await send(token);
-    if (r.status === 401) {
-      const fresh = await getToken({ fresh: true });
-      if (fresh && fresh !== token) r = await send(token = fresh);
-    }
-    return r;
-  }
+  const call = (url, { method, headers = {}, body } = {}) =>
+    authedFetch(url, { getToken, fetchImpl, method, headers, body, timeoutMs: TIMEOUT_MS });
 
-  const urlOf = (ws, path) => `${dfsOrigin}/${encodeURIComponent(ws)}/${encPath(path)}`;
+  const urlOf = (ws, path) => dfsFileUrl(ws, path, dfsOrigin);
 
   // The file's size, or null when there is none.
   async function stat(ws, path) {

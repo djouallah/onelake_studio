@@ -17,6 +17,14 @@ const basename = p => strip(p).split("/").pop();
 // existing %20 into %2520; see toHttps for that side.
 const encPath = p => strip(p).split("/").map(encodeURIComponent).join("/");
 
+// OneLake's DFS endpoint, and a file on it by the names the tree knows it by (the workspace,
+// and the path from its item, "nem.Lakehouse/Files/x.parquet"): its https URL, which the host
+// fetches, and its abfss:// URL, which DuckDB reads.
+const DFS_HOST = "onelake.dfs.fabric.microsoft.com";
+const DFS_ORIGIN = `https://${DFS_HOST}`;
+const dfsFileUrl = (workspace, path, origin = DFS_ORIGIN) => `${origin}/${encodeURIComponent(workspace)}/${encPath(path)}`;
+const abfssUrl = (workspace, path) => `abfss://${workspace}@${DFS_HOST}/${path}`;
+
 
 // -----------------------------------------------------------------------------
 // Workspace items — which ones hold OneLake tables, and what to call them
@@ -266,7 +274,7 @@ function fmtBytes(n) {
 }
 
 module.exports = {
-  strip, basename, encPath,
+  strip, basename, encPath, DFS_HOST, DFS_ORIGIN, dfsFileUrl, abfssUrl,
   itemKind, holdsTables, isMirrored, hasFilesArea, kindLabel, kindLabelPlural,
   SQL_KINDS, sqlKind, displayName, sqlPart, sqlName, sqlNameOf, MODEL_CATALOG, modelSqlName,
   icebergTypeName, icebergFields, snapshotStats, sourceFormat, icebergHistory,

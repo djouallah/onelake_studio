@@ -8,9 +8,9 @@
 // hold tables, what a kind is called) is names.js; caching the answers is onelake.js.
 // =============================================================================
 
-const { strip, basename, encPath, holdsTables, itemKind } = require('./names');
+const { strip, basename, holdsTables, itemKind, DFS_ORIGIN, dfsFileUrl } = require('./names');
+const { authedFetch: send, limiter, mapPool, oneLakeMessage } = require('./http');
 
-const DFS_ORIGIN = 'https://onelake.dfs.fabric.microsoft.com';
 const TABLE_ORIGIN = 'https://onelake.table.fabric.microsoft.com';
 const MAX_PARALLEL = 8;
 // A hung listing left the tree's spinner up forever — there is no cancel path through
@@ -28,15 +28,6 @@ const byName = (a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' });
 // prefetch and the panel. OneLake answers a burst with 429s and seconds of backoff, so a
 // queue here is faster than a stampede there.
 const MAX_IN_FLIGHT = 4;
-function limiter(n) {
-  let active = 0;
-  const waiting = [];
-  const next = () => { if (active < n && waiting.length) { active++; waiting.shift()(); } };
-  return async fn => {
-    await new Promise(r => { waiting.push(r); next(); });
-    try { return await fn(); } finally { active--; next(); }
-  };
-}
 
 // Fabric writes a table's Iceberg metadata lazily, so the very call that triggers the
 // conversion can lose the race to it: a 400/404 for a table the catalog just LISTED means
@@ -44,28 +35,6 @@ function limiter(n) {
 // catalog being busy. Anything else is a real answer and is not sat on.
 const RESOLVE_BACKOFF_MS = [500, 1500, 3000, 6000, 10000, 15000, 20000, 30000];
 const sleep = ms => new Promise(r => setTimeout(r, ms));
-
-async function mapPool(items, fn, limit = MAX_PARALLEL) {
-  const out = new Array(items.length);
-  let next = 0;
-  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, async () => {
-    for (;;) {
-      const i = next++;
-      if (i >= items.length) return;
-      out[i] = await fn(items[i], i);
-    }
-  }));
-  return out;
-}
-
-// OneLake says why it refused, in the body. Dropping that turns "this shortcut's auth type
-// is not supported" into a bare 400 and sends whoever reads it looking in the wrong place.
-async function oneLakeMessage(r) {
-  try {
-    const j = JSON.parse(await r.text());
-    return (j && j.error && j.error.message) || '';
-  } catch (_) { return ''; }
-}
 
 // OneLake Studio reads OneLake from outside Fabric, which a tenant admin can switch off
 // for every app at once. A 403 then looks exactly like one missing permission, so the
@@ -95,35 +64,17 @@ function createCatalog({ getToken, dfsOrigin = DFS_ORIGIN, tableOrigin = TABLE_O
                   bytes: r ? Number(r.headers.get('content-length')) || 0 : 0, error });
     } catch (_) {}
   };
-  // Same bargain as data.js's authedFetch: retry once on 401 and only on 401. A 403 means
-  // this identity may not read that path, and a fresh token will not change its mind.
-  async function authedFetch(url, extraHeaders = {}, timeoutMs = FETCH_TIMEOUT_MS) {
-    let token = await getToken();
-    if (!token) {
-      const e = new Error('Not signed in to a Microsoft account.');
-      e.status = 401;
-      throw e;
-    }
-    const opts = headers => ({ headers, signal: AbortSignal.timeout(timeoutMs) });
-    const signed = async t => {
+  // One request (http.js): a fresh token once on a 401, each send through the gate and into
+  // the read log. OneLake's answer, whatever it is, is the caller's to read.
+  function authedFetch(url, headers = {}, timeoutMs = FETCH_TIMEOUT_MS) {
+    return send(url, { getToken, headers, timeoutMs, through: async go => {
       const t0 = Date.now();
       try {
-        const r = await gate(() => fetch(url, opts({ ...extraHeaders, authorization: `Bearer ${t}` })));
+        const r = await gate(go);
         report(url, r, t0);
         return r;
       } catch (e) { report(url, null, t0, (e && e.message) || String(e)); throw e; }
-    };
-    let r = await signed(token);
-    if (r.status === 401) {
-      // { fresh: true } or the retry is theatre: the injected getToken is the extension's
-      // 60-second token cache, and asking it plainly returns the very string that just
-      // 401'd — `fresh !== token` was false every single time.
-      const fresh = await getToken({ fresh: true });
-      if (fresh && fresh !== token) {
-        r = await signed(fresh);
-      }
-    }
-    return r;
+    } });
   }
 
   async function getJson(url, what) {
@@ -284,7 +235,7 @@ function createCatalog({ getToken, dfsOrigin = DFS_ORIGIN, tableOrigin = TABLE_O
 
     const lists = await mapPool(names, n => getJson(
       `${tableOrigin}/iceberg/v1/${prefix}/namespaces/${ircSeg(n)}/tables`,
-      `Listing tables in ${n}`));
+      `Listing tables in ${n}`), MAX_PARALLEL);
 
     const tables = [];
     names.forEach((schema, i) => {
@@ -382,7 +333,7 @@ function createCatalog({ getToken, dfsOrigin = DFS_ORIGIN, tableOrigin = TABLE_O
   // For the panel's image and .bim previews, its SQLite copies, and anything else that
   // needs the bytes rather than a query.
   async function readBytes(ws, path, { range } = {}) {
-    const r = await authedFetch(`${dfsOrigin}/${encodeURIComponent(ws)}/${encPath(path)}`,
+    const r = await authedFetch(dfsFileUrl(ws, path, dfsOrigin),
       range ? { range } : {}, READ_TIMEOUT_MS);
     if (!r.ok) {
       const said = await oneLakeMessage(r);
@@ -399,4 +350,4 @@ function createCatalog({ getToken, dfsOrigin = DFS_ORIGIN, tableOrigin = TABLE_O
   return { listWorkspaces, listItems, listTables, listFiles, listDir, loadTable, readBytes, reset, usePrefixStore };
 }
 
-module.exports = { createCatalog, DFS_ORIGIN, TABLE_ORIGIN };
+module.exports = { createCatalog, TABLE_ORIGIN };

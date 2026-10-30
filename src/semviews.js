@@ -18,7 +18,6 @@
 const fsp = require('node:fs/promises');
 const { join, dirname } = require('node:path');
 
-const DFS_HOST = 'onelake.dfs.fabric.microsoft.com';
 const ABFSS = /^abfss:\/\/([^@/]+)@onelake\.dfs\.fabric\.microsoft\.com\/(.+)$/i;
 
 /**

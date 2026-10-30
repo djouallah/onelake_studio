@@ -21,6 +21,8 @@
 // No `vscode` import: the extension passes in its token.
 // =============================================================================
 
+const { authedFetch, fabricMessage, listPages, retryAfterMs } = require('./http');
+
 const FABRIC_API = 'https://api.fabric.microsoft.com/v1';
 const ITEM_TYPE = 'AppBackend';
 const MONIKER = 'X-Ms-Workload-Resource-Moniker';
@@ -35,19 +37,6 @@ const FUNCTION_POLLS = 30;   // ~5 minutes, as the CLI waits
 
 const byName = name => i => String(i.displayName).toLowerCase() === String(name).toLowerCase();
 
-// What Fabric said, from its error body (as fabric.js reads it): its messages name the
-// missing permission or capacity, which a bare status code never does.
-async function fabricMessage(r) {
-  try {
-    const j = JSON.parse(await r.text());
-    return (j && (j.message || (j.error && j.error.message))) || '';
-  } catch (_) { return ''; }
-}
-const retryAfterMs = (r, fallback) => {
-  const s = Number(r.headers.get('retry-after'));
-  return Number.isFinite(s) && s > 0 ? Math.min(s, 30) * 1000 : fallback;
-};
-
 /**
  * @param {object} o
  * @param {(o?: {fresh?: boolean}) => Promise<string|null>} o.getToken  Fabric API audience
@@ -58,22 +47,9 @@ function createFabricApp({ getToken, apiBase = FABRIC_API, log = () => {},
   // One request: a fresh token once on a 401, Retry-After waited out on a 429, and the
   // statuses the CLI treats as "not ready yet" (`retry`) retried with its backoff.
   async function call(url, { method = 'GET', headers = {}, body, retry = [], what = url } = {}) {
-    let token = await getToken();
-    if (!token) throw Object.assign(new Error('Not signed in to the Fabric API.'), { status: 401 });
-    const send = t => fetchImpl(url, { method, body, headers: { ...headers, authorization: `Bearer ${t}` },
-                                       signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
-    let r, refreshed = false;
-    for (let attempt = 1; ; attempt++) {
-      r = await send(token);
-      if (r.status === 401 && !refreshed) {
-        refreshed = true;
-        const fresh = await getToken({ fresh: true });
-        if (fresh && fresh !== token) { token = fresh; attempt--; continue; }
-      }
-      const again = r.status === 429 || retry.includes(r.status);
-      if (!again || attempt >= 5) break;
-      await sleep(retryAfterMs(r, 2000 * 2 ** (attempt - 1)));
-    }
+    const r = await authedFetch(url, { getToken, fetchImpl, method, headers, body, timeoutMs: FETCH_TIMEOUT_MS,
+                                       who: 'the Fabric API', retry, attempts: 5,
+                                       backoffMs: attempt => 2000 * 2 ** (attempt - 1), sleep });
     if (!r.ok) {
       const said = await fabricMessage(r);
       throw Object.assign(new Error(`${what} failed (HTTP ${r.status})` + (said ? ` — ${said}` : '')), { status: r.status });
@@ -82,18 +58,9 @@ function createFabricApp({ getToken, apiBase = FABRIC_API, log = () => {},
   }
   const json = async r => { const t = await r.text(); try { return JSON.parse(t); } catch (_) { return t; } };
 
-  async function listItems(ws) {
-    const out = [];
-    let cont = '';
-    do {
-      const u = new URL(`${apiBase}/workspaces/${ws}/items`);
-      u.searchParams.set('type', ITEM_TYPE);
-      if (cont) u.searchParams.set('continuationToken', cont);
-      const j = await json(await call(u.toString(), { what: 'Listing the workspace\'s apps' }));
-      out.push(...(j.value || []));
-      cont = j.continuationToken || '';
-    } while (cont);
-    return out;
+  function listItems(ws) {
+    const what = 'Listing the workspace\'s apps';
+    return listPages(`${apiBase}/workspaces/${ws}/items?type=${ITEM_TYPE}`, async url => json(await call(url, { what })), { what });
   }
 
   // The item called `name`, or a new one. Created once: a create that answered nothing

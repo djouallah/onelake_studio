@@ -11,6 +11,8 @@
 // Host-side only. The panel never sees a Fabric token.
 // =============================================================================
 
+const { authedFetch, fabricMessage, listPages, mapPool, retryAfterMs } = require('./http');
+
 const FABRIC_API = 'https://api.fabric.microsoft.com/v1';
 const FETCH_TIMEOUT_MS = 60_000;
 const MAX_PAGES = 200;
@@ -29,51 +31,17 @@ function bimFileName(modelName) {
   return `${safe || 'model'}.bim`;
 }
 
-// What Fabric said, from its error body. Its messages name the missing permission or the
-// unsupported model, which a bare status code never does.
-async function fabricMessage(r) {
-  try {
-    const j = JSON.parse(await r.text());
-    return (j && (j.message || (j.error && j.error.message))) || '';
-  } catch (_) { return ''; }
-}
-
-const retryAfterMs = (r, fallback) => {
-  const s = Number(r.headers.get('retry-after'));
-  return Number.isFinite(s) && s > 0 ? Math.min(s, 30) * 1000 : fallback;
-};
-
 /**
  * @param {object} opts
  * @param {(o?: {fresh?: boolean}) => Promise<string|null>} opts.getFabricToken  Fabric API audience
  */
 function createFabric({ getFabricToken, apiBase = FABRIC_API,
                         sleep = ms => new Promise(r => setTimeout(r, ms)), lroTimeoutMs = LRO_TIMEOUT_MS }) {
-  // Retry once on 401 with a fresh token, as catalog.js does; and wait out a 429, which
-  // the Fabric API hands out freely and always with a Retry-After.
-  async function call(getToken, url, { method = 'GET', body, headers = {} } = {}) {
-    let token = await getToken();
-    if (!token) {
-      const e = new Error('Not signed in to the Fabric API.');
-      e.status = 401;
-      throw e;
-    }
-    const send = t => fetch(url, {
-      method, body,
-      headers: { ...headers, authorization: `Bearer ${t}` },
-      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-    });
-    let r = await send(token);
-    if (r.status === 401) {
-      const fresh = await getToken({ fresh: true });
-      if (fresh && fresh !== token) r = await send(token = fresh);
-    }
-    for (let i = 0; r.status === 429 && i < 3; i++) {
-      await sleep(retryAfterMs(r, 5000));
-      r = await send(token);
-    }
-    return r;
-  }
+  // Retry once on 401 with a fresh token, as catalog.js does; and wait out a 429 (three
+  // times), which the Fabric API hands out freely and always with a Retry-After.
+  const call = (getToken, url, { method = 'GET', body, headers = {} } = {}) =>
+    authedFetch(url, { getToken, method, body, headers, timeoutMs: FETCH_TIMEOUT_MS, who: 'the Fabric API',
+                       attempts: 4, backoffMs: () => 5000, sleep });
 
   async function fabricJson(url, what, opts) {
     const r = await call(getFabricToken, url, opts);
@@ -87,19 +55,8 @@ function createFabric({ getFabricToken, apiBase = FABRIC_API,
   }
 
   // Fabric's list calls page with continuationToken and say so in the body.
-  async function listAll(path, what) {
-    const out = [];
-    let cont = '', pages = 0;
-    do {
-      if (++pages > MAX_PAGES) throw new Error(`${what} did not finish after ${MAX_PAGES} pages — giving up`);
-      const u = new URL(`${apiBase}${path}`);
-      if (cont) u.searchParams.set('continuationToken', cont);
-      const j = await (await fabricJson(u.toString(), what)).json().catch(() => ({}));
-      out.push(...(j.value || []));
-      cont = j.continuationToken || '';
-    } while (cont);
-    return out;
-  }
+  const listAll = (path, what) => listPages(`${apiBase}${path}`,
+    async url => (await fabricJson(url, what)).json().catch(() => ({})), { what, maxPages: MAX_PAGES });
 
   // The tree knows a workspace by the name OneLake's DFS listing gives it; the Fabric API
   // knows it by GUID. One listing maps every name, memoised until a refresh.
@@ -159,14 +116,15 @@ function createFabric({ getFabricToken, apiBase = FABRIC_API,
         return r.ok ? await r.json().catch(() => ({})) : {};
       } catch (_) { return {}; }
     };
-    const apps = await Promise.all(list.map(async a => {
+    // Two reads per app, a few apps at a time: the whole list at once is a burst of 429s.
+    const apps = await mapPool(list, async a => {
       const [status, settings] = await Promise.all([read(a.id, 'deploy/status'), read(a.id, 'projectRuntimeSettings')]);
       const hosting = settings && settings.serviceSettings && settings.serviceSettings.staticHosting;
       const anon = hosting && hosting.anonymousAccess;
       return { id: a.id, name: a.displayName, description: a.description || '',
                url: status.hostingUrl || '', deployedAt: status.lastSuccessfulDeploymentAt || '',
                access: anon === true ? 'public' : anon === false ? 'protected' : '' };
-    }));
+    }, 4);
     return apps.sort((a, b) => byName(a.name, b.name));
   }
 

@@ -31,7 +31,8 @@
 const { join, dirname } = require('node:path');
 const { pathToFileURL } = require('node:url');
 const fsp = require('node:fs/promises');
-const { fmtBytes, hasFilesArea, kindLabel, sqlNameOf } = require('./names');
+const { fmtBytes, hasFilesArea, kindLabel, sqlNameOf, abfssUrl } = require('./names');
+const { mapPool } = require('./http');
 
 const cell = v => (v == null ? '' : typeof v === 'object' ? JSON.stringify(v) : String(v));
 function mdTable(cols, rows) {
@@ -44,7 +45,6 @@ const csvOf = (cols, rows) => [cols, ...rows].map(r => r.map(v => {
   return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }).join(',')).join('\n');
 
-const DFS_HOST = 'onelake.dfs.fabric.microsoft.com';
 const fence = (lang, text) => '```' + lang + '\n' + String(text).trim() + '\n```';
 
 // 'Files/x.parquet' in SQL run --in a lakehouse is that lakehouse's file, by its abfss:// name:
@@ -52,7 +52,7 @@ const fence = (lang, text) => '```' + lang + '\n' + String(text).trim() + '\n```
 function filesToAbfss(sql, lh) {
   const ws = String(lh.workspace).replace(/'/g, "''");
   const item = String(lh.item).replace(/'/g, "''");
-  return String(sql).replace(/'\/?(Files\/(?:[^']|'')*)'/g, (_, p) => `'abfss://${ws}@${DFS_HOST}/${item}/${p}'`);
+  return String(sql).replace(/'\/?(Files\/(?:[^']|'')*)'/g, (_, p) => `'${abfssUrl(ws, `${item}/${p}`)}'`);
 }
 
 /**
@@ -208,20 +208,16 @@ function createAgent({ onelake, fabric, engine, bimPath, appDir, vendorDir, daxS
   async function eachWorkspace(ws, opts, fn, note) {
     const list = ws ? [ws] : await look('workspaces', [], opts);
     const missing = [];
-    let next = 0, failed = 0, unauthorised = false;
-    const worker = async () => {
-      while (next < list.length) {
-        const w = list[next++];
-        try { await fn(w); }
-        catch (e) {
-          if (e.notCached) { missing.push(w); continue; }
-          failed++;
-          if (e.status === 401) unauthorised = true;
-          note(`${w}: not listed — ${e.message}`);
-        }
+    let failed = 0, unauthorised = false;
+    await mapPool(list, async w => {
+      try { await fn(w); }
+      catch (e) {
+        if (e.notCached) { missing.push(w); return; }
+        failed++;
+        if (e.status === 401) unauthorised = true;
+        note(`${w}: not listed — ${e.message}`);
       }
-    };
-    await Promise.all(Array.from({ length: Math.min(4, list.length) }, worker));
+    }, 4);
     if (missing.length) {
       note(`not cached yet, so not counted: ${missing.sort().join(', ')} — expand them in the OneLake Studio tree, ` +
            'or add --fresh to read them now');

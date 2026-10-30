@@ -9,7 +9,8 @@
 // =============================================================================
 
 const vscode = require('vscode');
-const { join, basename } = require('node:path');
+const { join, basename, dirname } = require('node:path');
+const os = require('node:os');
 const { existsSync } = require('node:fs');
 const fsp = require('node:fs/promises');
 const { openPanel, closePanel, revealPanel, postToPanel, postLive } = require('./panel');
@@ -20,7 +21,7 @@ const { createHostMethods } = require('./host');
 const { createFabric, bimFileName } = require('./fabric');
 const { LakehouseTree } = require('./tree');
 const { webviewRoot } = require('./webview');
-const { hasFilesArea, sqlKind, sqlName, sqlNameOf, displayName, MODEL_CATALOG, modelSqlName } = require('./names');
+const { fmtBytes, sqlKind, sqlName, sqlNameOf, displayName, MODEL_CATALOG, modelSqlName } = require('./names');
 const { createAgent } = require('./agent');
 const { createSemViews } = require('./semviews');
 const { serveBridge } = require('./bridge');
@@ -28,6 +29,7 @@ const { PINS } = require('./vendored');
 const { planExport, writeExport, buildDist, writeMarker, readMarker, fingerprint, localChanges, vendorSize, zip, rayfinYml } = require('./exportapp');
 const { createFabricApp, tenantOf } = require('./fabricapp');
 const { createOneLakeWriter } = require('./onelakewrite');
+const { mapPool } = require('./http');
 
 // OneLake accepts tokens in the storage
 // audience only, and this one covers both the data reads and the Iceberg catalog. It is
@@ -35,8 +37,11 @@ const { createOneLakeWriter } = require('./onelakewrite');
 // only once someone expands a workspace's semantic models.
 const SCOPES = ['https://storage.azure.com/user_impersonation', 'offline_access'];
 
+// The onelakeStudio.tenantId setting: the tenant to sign in to, or '' for the home one.
+const tenantSetting = () => vscode.workspace.getConfiguration('onelakeStudio').get('tenantId', '').trim();
+
 function withTenant(scopes) {
-  const tenant = vscode.workspace.getConfiguration('onelakeStudio').get('tenantId', '').trim();
+  const tenant = tenantSetting();
   // A guest in someone else's tenant has to say so; the home tenant is the default.
   return tenant ? [...scopes, `VSCODE_TENANT:${tenant}`] : scopes;
 }
@@ -68,7 +73,7 @@ function getToken(options) {
 // directory name says nothing about who the user is.
 function accountKey(session) {
   if (!session || !session.account) return null;
-  const tenant = vscode.workspace.getConfiguration('onelakeStudio').get('tenantId', '').trim();
+  const tenant = tenantSetting();
   return require('node:crypto').createHash('sha256')
     .update(`${session.account.id}|${tenant}`).digest('hex').slice(0, 16);
 }
@@ -77,7 +82,7 @@ function accountKey(session) {
 // tenant setting, readable on disk (unlike accountKey's hash) — the queries are the user's own.
 function queryAccountOf(session) {
   if (!session || !session.account) return null;
-  const tenant = vscode.workspace.getConfiguration('onelakeStudio').get('tenantId', '').trim();
+  const tenant = tenantSetting();
   return `${session.account.label}${tenant ? ` (${tenant})` : ''}`.replace(/[\\/:*?"<>|]+/g, '_');
 }
 
@@ -112,6 +117,12 @@ let cachedFabric = null;   // { token, at }
 
 const isCancel = e => /cancel|did not consent/i.test(String((e && e.message) || e));
 
+// A session in `aud` for the account the storage session belongs to, never another one.
+async function sameAccountSession(aud, createIfNone, storage) {
+  return vscode.authentication.getSession('microsoft',
+    withTenant([aud, 'offline_access']), { createIfNone, account: storage.account });
+}
+
 async function fabricToken({ fresh = false, createIfNone = false } = {}) {
   if (!fresh && !createIfNone && cachedFabric && Date.now() - cachedFabric.at < TOKEN_TTL_MS) {
     return cachedFabric.token;
@@ -121,8 +132,7 @@ async function fabricToken({ fresh = false, createIfNone = false } = {}) {
   let lastErr = null;
   for (const aud of fabricAudience ? [fabricAudience] : FABRIC_AUDIENCES) {
     try {
-      const s = await vscode.authentication.getSession('microsoft',
-        withTenant([aud, 'offline_access']), { createIfNone, account: storage.account });
+      const s = await sameAccountSession(aud, createIfNone, storage);
       if (s) {
         fabricAudience = aud;
         cachedFabric = { token: s.accessToken, at: Date.now() };
@@ -146,8 +156,7 @@ async function appToken({ fresh = false, createIfNone = false } = {}) {
   if (!fresh && !createIfNone && cachedApp && Date.now() - cachedApp.at < TOKEN_TTL_MS) return cachedApp.token;
   const storage = await getSession({ createIfNone: false }).catch(() => null);
   if (!storage) return null;
-  const s = await vscode.authentication.getSession('microsoft',
-    withTenant([FABRIC_AUDIENCES[0], 'offline_access']), { createIfNone, account: storage.account });
+  const s = await sameAccountSession(FABRIC_AUDIENCES[0], createIfNone, storage);
   cachedApp = s ? { token: s.accessToken, at: Date.now() } : null;
   return s ? s.accessToken : null;
 }
@@ -284,8 +293,6 @@ function postReads() {
   }
 }
 
-const GB = 1024 * 1024 * 1024;
-
 // How long a catalog answer is served from disk with no network check at all. The user's
 // number, because it IS the trade: bigger means table opens skip the catalog's
 // seconds-per-call for longer, and a new snapshot takes that much longer to show up.
@@ -300,10 +307,6 @@ function tableTtlMs() {
   const h = vscode.workspace.getConfiguration('onelakeStudio').get('tableMetadataTtlHours', 24);
   return Number.isFinite(h) && h >= 0 ? Math.round(h * 3600 * 1000) : 24 * 3600 * 1000;
 }
-
-const fmtBytes = n => n >= GB ? `${(n / GB).toFixed(1)} GB`
-                   : n >= 1024 * 1024 ? `${Math.round(n / 1024 / 1024)} MB`
-                   : `${Math.round(n / 1024)} KB`;
 
 // Real DuckDB, in this process. Built once and kept for the window's lifetime: an engine
 // costs ~17ms to create but its extensions are loaded on first use, and doing that per
@@ -325,7 +328,6 @@ const fileCacheDirFor = key => (fileCacheRoot && key ? join(fileCacheRoot, key) 
 // The size of a directory's files, and their removal — for the disk cache.
 async function dirBytes(dir) {
   if (!dir) return 0;
-  const fsp = require('node:fs/promises');
   let n = 0;
   for (const name of await fsp.readdir(dir).catch(() => [])) {
     const st = await fsp.stat(join(dir, name)).catch(() => null);
@@ -333,7 +335,7 @@ async function dirBytes(dir) {
   }
   return n;
 }
-const removeDir = dir => (dir ? require('node:fs/promises').rm(dir, { recursive: true, force: true }).catch(() => {}) : Promise.resolve());
+const removeDir = dir => (dir ? fsp.rm(dir, { recursive: true, force: true }).catch(() => {}) : Promise.resolve());
 // The editor's proxy, for DuckDB's own downloads and reads: VS Code's `http.proxy` setting
 // first, then the environment variables the editor itself would honour.
 function editorProxy() {
@@ -468,14 +470,14 @@ async function show(context, options) {
 // Where a semantic model's local copy is kept (fetchModel), for the tree, the command line
 // and the panel alike: <folder>/<workspace>/<model>.bim.
 function modelsFolder() {
-  return join(require('node:os').homedir(), 'OneLakeStudio', 'semantic-models');
+  return join(os.homedir(), 'OneLakeStudio', 'semantic-models');
 }
 
 // Where a CSV or a OneLake file the panel saves goes: the editor's own save dialog,
 // starting in the workspace folder (or the home directory), then a plain write.
 async function saveFile(name, bytes) {
   const folder = (vscode.workspace.workspaceFolders || [])[0];
-  const base = folder ? folder.uri : vscode.Uri.file(require('node:os').homedir());
+  const base = folder ? folder.uri : vscode.Uri.file(os.homedir());
   const uri = await vscode.window.showSaveDialog({ defaultUri: vscode.Uri.joinPath(base, name) });
   if (!uri) return null;
   await vscode.workspace.fs.writeFile(uri, typeof bytes === 'function' ? await bytes() : bytes);
@@ -525,30 +527,29 @@ function buildCommit(context, dev) {
 // this extension wrote (it carries the marker) is rewritten at each activation. One the user
 // wrote themselves, without the marker, is never touched unless they ask.
 const SKILL_MARKER = 'Installed by the OneLake Studio extension';
-const skillFile = () => join(require('node:os').homedir(), '.claude', 'skills', 'onelake', 'SKILL.md');
+const skillFile = () => join(os.homedir(), '.claude', 'skills', 'onelake', 'SKILL.md');
 
 async function writeSkill(context) {
-  const fsp = require('node:fs/promises');
   const template = await fsp.readFile(join(context.extensionUri.fsPath, 'claude-skill', 'SKILL.md'), 'utf8');
   const cli = join(context.extensionUri.fsPath, 'bin', 'cli.mjs').replace(/\\/g, '/');
   const text = template.split('{{cli}}').join(cli);
   const file = skillFile();
   const before = await fsp.readFile(file, 'utf8').catch(() => null);
   if (before === text) return false;
-  await fsp.mkdir(require('node:path').dirname(file), { recursive: true });
+  await fsp.mkdir(dirname(file), { recursive: true });
   await fsp.writeFile(file, text);
   return true;
 }
 
 async function refreshSkill(context) {
-  const before = await require('node:fs/promises').readFile(skillFile(), 'utf8').catch(() => null);
+  const before = await fsp.readFile(skillFile(), 'utf8').catch(() => null);
   if (before && before.includes(SKILL_MARKER) && await writeSkill(context)) {
     if (out) out.appendLine(`agent skill updated at ${skillFile()}`);
   }
 }
 
 async function installSkill(context) {
-  const existing = await require('node:fs/promises').readFile(skillFile(), 'utf8').catch(() => null);
+  const existing = await fsp.readFile(skillFile(), 'utf8').catch(() => null);
   if (existing && !existing.includes(SKILL_MARKER)) {
     const pick = await vscode.window.showWarningMessage(
       `${skillFile()} exists and was not written by OneLake Studio. Replace it?`, { modal: true }, 'Replace');
@@ -732,7 +733,7 @@ async function activateInner(context) {
   // onelakeStudio.tenantId setting picks one) has its own, and signing in elsewhere shows
   // that account's. The tree lists them; the SQL box's Save Query writes them. Signed out,
   // there are none.
-  const queriesRoot = () => join(require('node:os').homedir(), 'OneLakeStudio', 'queries');
+  const queriesRoot = () => join(os.homedir(), 'OneLakeStudio', 'queries');
   function queriesFolder() {
     return queryAccount ? join(queriesRoot(), queryAccount) : null;
   }
@@ -870,7 +871,7 @@ async function activateInner(context) {
         throw Object.assign(new Error(unsupportedNote(n, mode)), { unsupported: true });
       }
       unsupportedModels.delete(modelKey(n));
-      await fsp.mkdir(require('node:path').dirname(path), { recursive: true });
+      await fsp.mkdir(dirname(path), { recursive: true });
       await fsp.writeFile(path, bim);
       if (out) out.appendLine(`downloaded ${n.workspace}/${n.model} -> ${path} (${fmtBytes(bim.length)})`);
       tree.modelChanged(n);
@@ -976,6 +977,7 @@ async function activateInner(context) {
   cachedSqlTables = async () => {
     const { paths } = await agent.modules();
     const found = [];
+    const tables = [];   // { kind, w, it, lh, t }: every cached table, its metadata read below
     const ws = await onelake.cached.workspaces();
     for (const w of (ws && ws.value) || []) {
       // Its semantic models, as the Fabric listing has them: semanticmodel.ws.model.
@@ -986,18 +988,22 @@ async function activateInner(context) {
         const kind = sqlKind(it.kind);
         if (!kind) continue;
         const lh = { workspace: w, item: it.name };
-        const tables = await onelake.cached.tables(lh);
-        for (const t of (tables && tables.value) || []) {
-          const meta = await onelake.cached.table(lh, t);
-          const fields = meta && meta.value && meta.value.schemaFields;
-          if (!fields || !fields.length) continue;
-          const named = { kind, workspace: w, item: displayName(it.name), schema: t.schema || 'dbo', table: t.table };
-          found.push(meta.value.empty
-            ? { ...named, emptySql: paths.emptyTableSql(fields) }
-            : { ...named, columns: fields.map(f => ({ name: f.name, type: paths.icebergToDuckType(f.type) })) });
-        }
+        const listed = await onelake.cached.tables(lh);
+        for (const t of (listed && listed.value) || []) tables.push({ kind, w, it, lh, t });
       }
     }
+    // A table's metadata is a file on disk each, and a large cache holds thousands: read a
+    // few at a time rather than one after another.
+    const metas = await mapPool(tables, ({ lh, t }) => onelake.cached.table(lh, t), 16);
+    tables.forEach(({ kind, w, it, t }, i) => {
+      const meta = metas[i];
+      const fields = meta && meta.value && meta.value.schemaFields;
+      if (!fields || !fields.length) return;
+      const named = { kind, workspace: w, item: displayName(it.name), schema: t.schema || 'dbo', table: t.table };
+      found.push(meta.value.empty
+        ? { ...named, emptySql: paths.emptyTableSql(fields) }
+        : { ...named, columns: fields.map(f => ({ name: f.name, type: paths.icebergToDuckType(f.type) })) });
+    });
     // And every model kept as a view: Fabric's, or a model file opened from a lakehouse's Files/.
     for (const v of await semviews.list()) {
       if (v.schema) found.push({ kind: MODEL_CATALOG, workspace: v.schema, model: v.name });
@@ -1076,14 +1082,14 @@ async function activateInner(context) {
       const pickFolder = async () => {
         const picked = await vscode.window.showOpenDialog({
           canSelectFolders: true, canSelectFiles: false, canSelectMany: false,
-          defaultUri: vscode.Uri.file(prev ? require('node:path').dirname(prev) : require('node:os').homedir()),
+          defaultUri: vscode.Uri.file(prev ? dirname(prev) : os.homedir()),
           openLabel: 'Export Here',
           title: `Export to Fabric: the folder to keep the app's local copy (${plan.name}/) in`,
         });
         if (!picked || !picked.length) return null;
         // The app's own folder picked, rather than the one to put it in: used as it is.
         const dir = picked[0].fsPath;
-        return require('node:path').basename(dir) === plan.name ? dir : join(dir, plan.name);
+        return basename(dir) === plan.name ? dir : join(dir, plan.name);
       };
       for (;;) {
         if (!outDir) {

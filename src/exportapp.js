@@ -32,10 +32,10 @@ const fsp = require('node:fs/promises');
 const zlib = require('node:zlib');
 const { createHash } = require('node:crypto');
 const { TABLE_ORIGIN } = require('./catalog');
+const { dfsFileUrl } = require('./names');
 const { PINS, WEBAPP } = require('./vendored');
 
 const MARKER = '.onelake-studio-export.json';
-const DFS = 'https://onelake.dfs.fabric.microsoft.com';
 // What a re-export writes again; anything else in the folder is left alone. `model` is an
 // earlier export's copy of the model, which no export writes any more.
 const OWNED = ['site', 'dist', 'rayfin', 'model', 'AGENTS.md', '.gitignore'];
@@ -63,8 +63,7 @@ function sourcesOf(model) {
 // A OneLake file's DFS URL, from the names the tree knows it by: the workspace, and the path
 // from its item ("nem.Lakehouse/Files/semantic_model/ossie.yaml").
 const trimPath = p => String(p).replace(/^\/+/, '');
-const dfsUrl = (workspace, path) =>
-  `${DFS}/${encodeURIComponent(workspace)}/${trimPath(path).split('/').map(encodeURIComponent).join('/')}`;
+const dfsUrl = (workspace, path) => dfsFileUrl(workspace, path);
 
 /**
  * What an export is, before anything is written: the app's name, its lakehouse and catalog,

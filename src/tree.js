@@ -19,6 +19,7 @@
 
 const vscode = require('vscode');
 const { fmtBytes, hasFilesArea, isMirrored, kindLabel, kindLabelPlural, strip, sqlNameOf } = require('./names');
+const { mapPool } = require('./http');
 
 // What a table's icon says about how it was written. Either way the panel reads it
 // through its Iceberg metadata; for a Delta table that metadata is Fabric's conversion.
@@ -38,14 +39,7 @@ const sqlNameOrNull = n => { try { return sqlNameOf(n, n); } catch (_) { return 
 // `fn` over every workspace, four at a time; the ones that failed come back by name.
 async function eachOf(names, fn) {
   const failed = [];
-  let next = 0;
-  const worker = async () => {
-    while (next < names.length) {
-      const ws = names[next++];
-      try { await fn(ws); } catch (e) { failed.push({ ws, e }); }
-    }
-  };
-  await Promise.all(Array.from({ length: Math.min(4, names.length) }, worker));
+  await mapPool(names, async ws => { try { await fn(ws); } catch (e) { failed.push({ ws, e }); } }, 4);
   return failed;
 }
 // ...and those, as one node rather than a tree that silently shows less.

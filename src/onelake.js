@@ -251,7 +251,7 @@ function createOneLake({ catalog, store, prefetchEnabled = () => true, onHit = (
       }
       if (!run) throw new Error('reading a Delta checkpoint needs the engine');
       // Two columns of one parquet file: DuckDB reads the footer and those column chunks.
-      const urls = paths.map(p => sqlStr(`abfss://${at.workspace}@onelake.dfs.fabric.microsoft.com/${p}`));
+      const urls = paths.map(p => sqlStr(names.abfssUrl(at.workspace, p)));
       const res = await run(`SELECT to_json(protocol)::VARCHAR AS protocol, to_json(metaData)::VARCHAR AS metadata ` +
         `FROM read_parquet([${urls.join(', ')}], union_by_name = true) WHERE protocol IS NOT NULL OR metaData IS NOT NULL`);
       for (const r of res.rows || []) {
