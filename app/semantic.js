@@ -371,14 +371,6 @@ export async function statement(sql, modules = null) {
   return { sql: s.sql };
 }
 
-// A DAX query (EVALUATE …) against view `name`, as the SQL to run — for the command line's
-// `dax`, which runs Explore's DAX as it is.
-export function compileDax(name, dax) {
-  const v = views && views.get(name);
-  if (!v) throw new Error(`No semantic view ${name}.`);
-  return { sql: v.compiler.compile(String(dax)).sql };
-}
-
 // A view's Direct Lake tables: the model's table name, the engine's view of it — which SQL
 // can name directly to read the raw table — and where it lives in OneLake (by GUID).
 export function lakeTablesOf(name) {

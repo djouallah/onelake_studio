@@ -279,8 +279,8 @@ column — `SELECT dim_customer.Region, AGG("Total Sales") FROM sales_model GROU
 same sign-in, cache, DuckDB and DAX compiler as the panel, read only. The skill runs the
 extension's `bin/cli.mjs` with Node.js, which only hands the question to the extension running in
 VS Code and prints its answer — so VS Code has to be open, signed in. The skill follows the
-extension through updates. It can also run a DAX query against a model, print the SQL a
-model query or DAX compiles to, and check a measure against its raw table. Its one write is
+extension through updates. It can also print the SQL a model query compiles to, and check a
+measure against its raw table. It takes SQL only: there is no DAX query. Its one write is
 `export`, which is Explore's own Export to Fabric: the same code path, with the same questions
 asked in VS Code. The app opens on Explore's default view.
 

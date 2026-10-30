@@ -28,12 +28,11 @@ node --no-warnings "{{cli}}" <command>
 | `model <ws> <model>` | relationships, columns, measures with their DAX, and an example query; downloads the `.bim` once |
 | `sql "<sql>"` | read-only SQL. A table is `Kind.workspace.item.schema.table` — `lakehouse.aemo.data.dbo.dim_duid`; Kind is `lakehouse`, `warehouse`, `sqldatabase` or `mirroreddatabase` (any case), a lakehouse without schemas is `dbo`, a part with spaces is `"quoted"` — any table, any workspace, joined freely. Every semantic model is a table too, `semanticmodel.<ws>.<model>`: `AGG("measure")` is the measure; and `SHOW SEMANTIC …` (below) |
 | `sql "<sql>" --in <ws>/<item>` | the lakehouse's files as `'Files/…'`: `read_parquet('Files/log.parquet')` |
-| `dax "EVALUATE …" --model <name>` | a DAX query against a semantic view (`--model` may be left out when only one is defined) |
 | `export <ws> <model>` | Export to Fabric, as Explore's button does it: publishes the model's Explore as a Fabric app. The model must have been downloaded once (opened in the tree, or `model <ws> <model> --fresh`); the export writes its `.bim` into its lakehouse |
 | `export <ws> <item> <Files/path>` | the same, for a model file (`.bim`, Ossie `.yaml`) in a lakehouse's Files/ |
 
 Options: `--limit N` (rows printed, default 100), `--csv`, `--fresh` (ask OneLake/Fabric instead of the cache — see below),
-`--show-sql` (print the SQL a model query or DAX compiles to — the answer to "is this SQL right?").
+`--show-sql` (print the SQL a model query compiles to — the answer to "is this SQL right?").
 
 ## Answering a semantic-model question
 
@@ -75,7 +74,7 @@ VS Code panel); nothing is written to Fabric or OneLake.
   OneLake or Fabric; stderr says how old the answer is. Something not cached says so: tell the
   user, and add `--fresh` (which reads OneLake/Fabric now, and exports a model not downloaded
   yet) only when they agree or say the data just changed.
-- A query (`sql`, `dax`) reads OneLake, cached on disk too: a first query over a big table can
+- A query (`sql`) reads OneLake, cached on disk too: a first query over a big table can
   take a minute or two, the next is seconds.
 - Read only by construction: anything but a read is refused. The exception is `export`, and
   only when the user asks for it. VS Code then asks the user where the local copy goes and

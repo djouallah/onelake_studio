@@ -21,7 +21,6 @@
 //                                    is semanticmodel.ws.model, AGG("m") its measure m; and SHOW
 //                                    SEMANTIC VIEWS / METRICS / DIMENSIONS; --in reads its
 //                                    'Files/…' paths; --show-sql the compiled SQL
-//   dax "EVALUATE …" [--model m]     a DAX query, compiled as Explore compiles one
 //   export <ws> <model>              Export to Fabric, as Explore's button: a semantic model
 //   export <ws> <item> <Files/path>  (its local copy, written into its lakehouse) or a model file in Files/
 //
@@ -99,7 +98,7 @@ function createAgent({ onelake, fabric, engine, bimPath, appDir, vendorDir, daxS
   // Listings and metadata are answered from what the extension already has on disk, and
   // never fetched: the command line does not sign anyone in, start an export, or list a
   // workspace behind the user's back. `--fresh` is the one way to have it ask OneLake or
-  // Fabric. A query (sql, dax) reads OneLake — that is what a query is for.
+  // Fabric. A query (sql) reads OneLake — that is what a query is for.
   // ---------------------------------------------------------------------------
   const notCached = (what, how) => Object.assign(
     new Error(`${what} is not cached yet — ${how} in the OneLake Studio tree, or add --fresh to read it now`),
@@ -194,13 +193,6 @@ function createAgent({ onelake, fabric, engine, bimPath, appDir, vendorDir, daxS
     for (const n of [...defined]) if (!names.has(n)) { semantic.dropView(n); defined.delete(n); }
   }
 
-  // Which view a DAX query is about: --model, else the only one.
-  function viewFor(opts) {
-    if (opts.model) return opts.model;
-    if (defined.size === 1) return [...defined][0];
-    throw new Error('which model? — add --model <name> (`sql "SHOW SEMANTIC VIEWS"` lists them)');
-  }
-
   // `fn` for one workspace, or for every workspace the cache knows. From disk that is quick;
   // with --fresh it is one OneLake or Fabric call per workspace, so a few run at a time. A
   // workspace whose listing is not cached, or cannot be read, is counted and named in a
@@ -239,19 +231,6 @@ function createAgent({ onelake, fabric, engine, bimPath, appDir, vendorDir, daxS
 
   // ---------------------------------------------------------------------------
   const commands = {
-    // A DAX query, as Explore runs one: compiled by dax-sql against a semantic view.
-    async dax([text], opts, out, note) {
-      if (!text) throw new Error('usage: dax "EVALUATE …" [--model <name>]');
-      const { semantic } = await modules();
-      await syncViews(note);
-      const name = viewFor(opts);
-      const t0 = Date.now();
-      const c = semantic.compileDax(name, text);
-      if (opts.showSql) out(`${fence('sql', c.sql)}\n`);
-      result(await (await engine()).agentQuery(c.sql), opts, out);
-      note(`${((Date.now() - t0) / 1000).toFixed(1)}s`);
-    },
-
     async ls([ws, item], opts, out, note) {
       if (!ws) {
         out(mdTable(['workspace'], (await look('workspaces', [], opts)).map(w => [w])));
@@ -551,13 +530,13 @@ function createAgent({ onelake, fabric, engine, bimPath, appDir, vendorDir, daxS
     const note = s => errLines.push(String(s));
     const [name, ...rest] = Array.isArray(args) ? args.map(String) : [];
     const cmd = Object.hasOwn(commands, name) ? commands[name] : null;
-    if (!cmd) return { out: '', err: `unknown command: ${name || '(none)'} — ls, models, items, files, find, table, model, sql, dax or export`, code: 1 };
+    if (!cmd) return { out: '', err: `unknown command: ${name || '(none)'} — ls, models, items, files, find, table, model, sql or export`, code: 1 };
     const seen = [];   // when each cached answer was stored (look())
     try {
       await cmd(rest, {
         fresh: !!opts.fresh, csv: !!opts.csv, in: opts.in ? String(opts.in) : '',
         limit: Number(opts.limit) > 0 ? Number(opts.limit) : 100,
-        showSql: !!opts.showSql, model: opts.model ? String(opts.model) : '', seen,
+        showSql: !!opts.showSql, seen,
       }, out, note);
       // An answer off disk says how old it is: the oldest listing it was made of.
       if (seen.length) note(`from the cache, as of ${ago(Math.min(...seen))} — --fresh reads OneLake/Fabric again`);

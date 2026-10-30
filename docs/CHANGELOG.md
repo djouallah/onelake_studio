@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- **The command line's `dax` command is gone.** OneLake Studio takes SQL only: a semantic model is
+  queried with `AGG("measure")` in `sql`.
+
 ## 0.2.9
 
 - **Clicking a semantic model writes nothing to OneLake.** Its definition is kept on this machine,
