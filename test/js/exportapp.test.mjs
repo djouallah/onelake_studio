@@ -80,6 +80,22 @@ test("the plan: an Ossie model from Power BI reads as its .bim does, a bare sour
   assert.match(plan.warnings[1], /Calendar/);
 });
 
+test("the page and the function read an Ossie dataset's table as the plan does", async () => {
+  const copy = async file => {
+    const text = await readFile(new URL(`../../${file}`, import.meta.url), "utf8");
+    const code = text.match(/function ossieSource[\s\S]*?\n}\r?\n/)[0].replace(/: any\b/g, "").replace(": string | null", "");
+    return new Function(`${code}; return ossieSource;`)();
+  };
+  const partition = source => [{ vendor_name: "POWER_BI", data: JSON.stringify({ partitions: [{ source }] }) }];
+  for (const read of [await copy("fabric_app/site/storage/data.js"), await copy("fabric_app/rayfin/functions/src/function_app.ts")]) {
+    assert.equal(read({ source: "x", custom_extensions: partition({ entityName: "x" }) }), "dbo.x");
+    assert.equal(read({ source: "mart.x", custom_extensions: partition({ entityName: "x", schemaName: "mart" }) }), "mart.x");
+    assert.equal(read({ source: "Time Calc", custom_extensions: partition({ type: "calculationGroup" }) }), null);
+    assert.equal(read({ source: "by_hand" }), "dbo.by_hand");
+    assert.equal(read({}), null);
+  }
+});
+
 test("the plan refuses: not a OneLake Files/ file, no lakehouse, two, a name the page cannot use, a source the function cannot open", () => {
   assert.throws(() => planExport(OSSIE, "m.yaml", "m", mods(bimOf(URL_)), null), /not a OneLake file/);
   assert.throws(() => planExport(OSSIE, "m.yaml", "m", mods(bimOf(URL_)), { workspace: "w", path: "lh.Lakehouse/Tables/x" }), /not in a lakehouse's Files/);

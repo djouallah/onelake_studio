@@ -139,7 +139,7 @@ try {
     };
   }
   const { info, rows } = await modelQuery(
-    `${TABLES}SELECT * FROM (SELECT Product.Color, AGG(Total) AS total FROM shop GROUP BY ALL) ORDER BY Color`);
+    `${TABLES}SELECT * FROM (SELECT Product.Color, AGG(Total) AS total FROM semanticmodel.ws.shop GROUP BY ALL) ORDER BY Color`);
   console.log("model query:", info, "|", rows);
   if (!/^2 rows/.test(info) || !/blue 5(\.0)? red 12\.5/.test(rows)) throw new Error(`model query: ${info} ${rows}`);
 
@@ -154,7 +154,10 @@ try {
     .catch(async () => { throw new Error(`a downloaded model never opened — status: ${await page.locator("#status").innerText()}`); });
   const localCards = await page.locator("#modelView .m-card").count();
   if (localCards !== 2) throw new Error(`the downloaded model drew ${localCards} cards`);
-  console.log("downloaded model: opened from text, 2 cards");
+  const { info: localInfo, rows: localRows } = await modelQuery(
+    `${TABLES}SELECT * FROM (SELECT Product.Color, AGG(Total) AS total FROM semanticmodel.ws."Local Model" GROUP BY ALL) ORDER BY Color`);
+  console.log("downloaded model:", localInfo, "|", localRows);
+  if (!/^2 rows/.test(localInfo) || !/blue 5(\.0)? red 12\.5/.test(localRows)) throw new Error(`downloaded model query: ${localInfo} ${localRows}`);
 
   // An Ossie .yaml in Files/ opens as the same model, and its view answers the same query.
   await page.evaluate(path => window.postMessage({
@@ -167,7 +170,7 @@ try {
   const ossieRels = await page.locator("#modelView .m-rel").count();
   if (ossieCards !== 2 || ossieRels !== 1) throw new Error(`the Ossie model drew ${ossieCards} cards and ${ossieRels} relationships`);
   const { info: ossieInfo, rows: ossieRows } = await modelQuery(
-    `${TABLES}SELECT * FROM (SELECT Product.Color, AGG(Total) AS total FROM shop_ossie GROUP BY ALL) ORDER BY Color`);
+    `${TABLES}SELECT * FROM (SELECT Product.Color, AGG(Total) AS total FROM semanticmodel.ws.shop_ossie GROUP BY ALL) ORDER BY Color`);
   console.log("ossie model:", ossieInfo, "|", ossieRows);
   if (!/^2 rows/.test(ossieInfo) || !/blue 5(\.0)? red 12\.5/.test(ossieRows)) throw new Error(`Ossie model query: ${ossieInfo} ${ossieRows}`);
 

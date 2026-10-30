@@ -8,7 +8,7 @@ const PINS = {
   // The markdown renderer for document previews (docview.js), as jsDelivr's +esm closure.
   marked: 'marked@18.0.7',
   dompurify: 'dompurify@3.4.12',
-  // The YAML reader for Apache Ossie models (semantic.js); dax-sql's formats/ossie.js takes
+  // YAML for Apache Ossie models (semantic.js, extension.js); dax-sql's formats/ossie.js takes
   // the parsed document.
   yaml: 'yaml@2.9.1',
   // Explore's charts — a classic script (dist/echarts.min.js), not a +esm closure.

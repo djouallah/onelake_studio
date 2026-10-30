@@ -5,7 +5,7 @@
 // dax-sql's createViews() (app/semantic.js) knows what a view is; this only remembers which
 // ones exist, so they survive a restart and the panel and the command line see the same
 // list. A view is a pointer — { name, schema, path, created } — kept in one JSON file per Microsoft
-// account, in the extension's own storage; its .bim stays where it is and is read from
+// account, in the extension's own storage; its model file stays where it is and is read from
 // there. Nothing is ever written to Fabric or OneLake.
 //
 // A path is a local model file (a semantic model's local copy) or an abfss:// URL of one in a
