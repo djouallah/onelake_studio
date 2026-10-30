@@ -841,8 +841,10 @@ async function activateInner(context) {
     const rel = p ? relative(queriesRoot(), p) : '';
     return !!rel && !rel.startsWith('..') && !isAbsolute(rel);
   };
-  const isQuery = doc => doc.languageId === 'sql' &&
-    (doc.isUntitled ? newQueries.has(doc.uri.toString()) : doc.uri.scheme === 'file' && isQueryFile(doc.uri.fsPath));
+  // Whatever its language says: an extension for Postgres or SQL Server can take over a .sql
+  // document's language (VS Code closes and reopens it to do so), and it is still a query here.
+  const isQuery = doc => (doc.isUntitled ? newQueries.has(doc.uri.toString())
+                                         : doc.uri.scheme === 'file' && isQueryFile(doc.uri.fsPath));
   // A query editor opens in a column of its own, beside the panel rather than over it.
   const queryColumn = () => {
     const p = panelColumn();
@@ -915,7 +917,16 @@ async function activateInner(context) {
   context.subscriptions.push(
     ...registerQueryEditor({ isQuery, run: runInPanel, names: completionNames }),
     vscode.window.onDidChangeActiveTextEditor(setQueryContext),
-    vscode.workspace.onDidCloseTextDocument(doc => newQueries.delete(doc.uri.toString())),
+    // A language change closes the document and opens it again at once: forgotten only when it
+    // is really gone, and the active editor's keys and buttons are worked out again.
+    vscode.workspace.onDidCloseTextDocument(doc => {
+      const key = doc.uri.toString();
+      if (!newQueries.has(key)) return;
+      setTimeout(() => {
+        if (!vscode.workspace.textDocuments.some(d => d.uri.toString() === key)) newQueries.delete(key);
+      }, 2000);
+    }),
+    vscode.workspace.onDidOpenTextDocument(() => setQueryContext(vscode.window.activeTextEditor)),
     // Save Query: a new query kept under Queries as "Query N", and its editor is that file from
     // then on. A saved query's editor just saves.
     vscode.commands.registerCommand('onelakeStudio.saveQuery', async () => {

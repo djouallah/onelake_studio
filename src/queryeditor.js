@@ -183,13 +183,14 @@ function registerQueryEditor({ isQuery, run, names }) {
     },
   };
 
-  const sql = { language: 'sql' };
+  // Every document, and isQuery picks: a query's language may be another SQL extension's.
+  const docs = [{ scheme: 'untitled' }, { scheme: 'file' }];
   return [
     diagnostics,
     vscode.commands.registerCommand('onelakeStudio.runQuery', (uri, at) => runAt(false, uri, at)),
     vscode.commands.registerCommand('onelakeStudio.planQuery', (uri, at) => runAt(true, uri, at)),
-    vscode.languages.registerCodeLensProvider(sql, lenses),
-    vscode.languages.registerCompletionItemProvider(sql, completions, '.', '"'),
+    vscode.languages.registerCodeLensProvider(docs, lenses),
+    vscode.languages.registerCompletionItemProvider(docs, completions, '.', '"'),
     // A diagnostic is about the text DuckDB saw: an edit makes it stale.
     vscode.workspace.onDidChangeTextDocument(e => { if (e.contentChanges.length) diagnostics.delete(e.document.uri); }),
     vscode.workspace.onDidCloseTextDocument(doc => diagnostics.delete(doc.uri)),
