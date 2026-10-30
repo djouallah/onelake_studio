@@ -429,7 +429,7 @@ personal skills, and it follows the extension through updates.
 | [`test/`](../test/) | `js/`: the `node --test` suite and browser runners. `sql/`: SQL statements and their answers (sqllogictest), run through the agent's `sql`. `cli*.test.mjs` run `bin/cli.mjs` as a process. |
 | [`scripts/`](../scripts/) | Packaging: bundle, stage-webview, vendor, fetch-extensions, check-binding, fetch-binding, make-icon. |
 | [`media/`](../media/) | Icons. |
-| `docs/` | This file, the naming contract, the changelog and a screenshot. |
+| `docs/` | This file, the naming contract, the changelog, the missing-features review and a screenshot. |
 
 `dist/`, `webview/`, `vendor/`, `duckdb-extensions/`, `fabric-function/` and `blog/` are ignored by git.
 The first five are build output or fetched at package time, so do not edit them.
