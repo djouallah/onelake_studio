@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **Every OneLake table is read by its five-part name.** The Data tab's rows now are too. A model
+  table with no Direct Lake source, in a `.bim` or `.yaml` opened from `Files/`, gives an error when
+  a query reads it; it used to read whatever carried its short name, such as an open `Files/` view.
 - **The command line is built for an agent to act on.**
   - **Exit codes say what happened:** 0 answered, 1 failed, 2 wrong call, 3 VS Code not open or not
     signed in, 4 not cached, 5 you declined an export, 6 timed out.

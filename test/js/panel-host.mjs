@@ -21,7 +21,7 @@ const APP = join(root, "app");
 // The landing query reads this, by path, as the packaged panel does (panel.js readmeUrl).
 export const README = join(root, "README.md");
 
-export function panelHost({ dfsOrigin, tableOrigin, engineOptions = {} } = {}) {
+export function panelHost({ dfsOrigin, tableOrigin, engineOptions = {}, nameTables = null } = {}) {
   const catalog = createCatalog({
     getToken: async () => "test-token", dfsOrigin, tableOrigin, backoffMs: [],
   });
@@ -37,7 +37,7 @@ export function panelHost({ dfsOrigin, tableOrigin, engineOptions = {} } = {}) {
   };
   const engine = createEngineHost({ allowedPaths: [README], resolveTable, ...engineOptions });
   const statuses = [];
-  const methods = createHostMethods({ onelake, engine, onStatus: m => statuses.push(m) });
+  const methods = createHostMethods({ onelake, engine, nameTables, onStatus: m => statuses.push(m) });
 
   // window.__hostCall(msg) answers one `call`: batches are posted into the page as
   // they come, and the closing result (or error) is what the call resolves to.

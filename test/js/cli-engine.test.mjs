@@ -64,6 +64,9 @@ const modelFile = name => join(dir, `${name}.yaml`);
 const OSSIE = stringify(tmslToOssie(BIM, "sales_model"));
 for (const name of ["sales_model", "opened_model"]) await writeFile(modelFile(name), OSSIE);
 await writeFile(modelFile("broken_model"), "datasets: [this is : not an ossie model");
+// The same tables with no lakehouse behind them, as an Import model has none.
+const IMPORT = { compatibilityLevel: 1604, model: { ...BIM.model, expressions: [], tables: BIM.model.tables.map(({ partitions, ...t }) => t) } };
+await writeFile(modelFile("import_model"), stringify(tmslToOssie(IMPORT, "import_model")));
 
 const engine = createEngineHost({
   extensionDir: extDir,
@@ -267,6 +270,15 @@ test("a model file that does not parse: exit 1 and why, not a stack trace", asyn
     assert.equal(r.stdout, "");
     assert.match(r.stderr, /broken_model\.yaml/);
     assert.doesNotMatch(r.stderr, /^\s+at /m);
+  });
+});
+
+test("a model table with no OneLake table is refused, never read by a shorter name", async () => {
+  await withAgent(agent, async ({ cli }) => {
+    const r = await cli(["sql", 'SELECT AGG("Total Sales") AS sales FROM semanticmodel.shop.import_model']);
+    assert.equal(r.code, EXIT.FAILED, r.stdout);
+    assert.equal(r.stdout, "");
+    assert.match(r.stderr, /fct_sales is not a OneLake table, so it has no five-part name to read/);
   });
 });
 

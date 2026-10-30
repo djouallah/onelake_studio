@@ -374,7 +374,7 @@ function createOneLake({ catalog, store, prefetchEnabled = () => true, onHit = (
     const k = keys.peek(meta.metadataLocation);
     const hit = await store.peek(k);
     if (hit) return { ...hit, cached: true };
-    const res = await run(`SELECT * FROM iceberg_scan(${sqlStr(meta.metadataLocation)}) LIMIT ${PEEK_ROWS}`);
+    const res = await run(`SELECT * FROM ${names.sqlNameOf(lh, t)} LIMIT ${PEEK_ROWS}`);
     const out = { fields: res.fields, rows: res.rows, numRows: res.numRows };
     await store.put(k, out);
     return { ...out, cached: false };

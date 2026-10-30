@@ -231,7 +231,7 @@ test("the first rows are read once per snapshot, and the engine is not asked aga
   assert.deepEqual(p1.rows, [{ id: 1 }]);
   assert.equal(p2.cached, true);
   assert.equal(sql.length, 1);
-  assert.match(sql[0], /^SELECT \* FROM iceberg_scan\('abfss:\/\/.*\.metadata\.json'\) LIMIT 100$/);
+  assert.equal(sql[0], "SELECT * FROM lakehouse.ws.lh.dbo.a LIMIT 100");
 });
 
 test("prefetch reads every table's metadata in the background, each once", async () => {

@@ -28,15 +28,24 @@ const NONCE = "panelsemantic";
 const CHROME = process.env.CHROME_PATH ||
   (process.platform === "win32" ? "C:/Program Files/Google/Chrome/Application/chrome.exe" : "/usr/bin/google-chrome");
 
+// Direct Lake: a query reads its tables by their five-part names (ROWS below).
+const partition = entityName => [{
+  name: entityName, mode: "directLake",
+  source: { type: "entity", entityName, schemaName: "dbo", expressionSource: "DatabaseQuery" },
+}];
 const BIM = JSON.stringify({
   compatibilityLevel: 1604,
   model: {
+    expressions: [{
+      name: "DatabaseQuery", kind: "m",
+      expression: 'AzureStorage.DataLake("https://onelake.dfs.fabric.microsoft.com/00000000-0000-0000-0000-000000000001/00000000-0000-0000-0000-000000000002")',
+    }],
     tables: [
-      { name: "Sales",
+      { name: "Sales", partitions: partition("Sales"),
         columns: [{ name: "ProductKey", dataType: "int64", sourceColumn: "ProductKey" },
                   { name: "Amount", dataType: "double", sourceColumn: "Amount" }],
         measures: [{ name: "Total", expression: "SUM ( Sales[Amount] )" }] },
-      { name: "Product",
+      { name: "Product", partitions: partition("Product"),
         columns: [{ name: "ProductKey", dataType: "int64", sourceColumn: "ProductKey", isKey: true },
                   { name: "Color", dataType: "string", sourceColumn: "Color" }] },
     ],
@@ -46,13 +55,15 @@ const BIM = JSON.stringify({
 const BIM_PATH = "/ws/shop.Lakehouse/Files/semantic_models/shop.bim";
 // The same model as an Apache Ossie YAML, made by the vendored dax-sql and yaml themselves.
 const { PINS } = require("../../src/vendored.js");
+const { sqlName } = require("../../src/names.js");
 const { tmslToOssie } = await import(pathToFileURL(join(VENDOR, "npm", PINS.daxSql, "formats", "ossie.js")).href);
 const { stringify } = await import(pathToFileURL(join(VENDOR, "npm", PINS.yaml, "+esm.js")).href);
 const OSSIE = stringify(tmslToOssie(JSON.parse(BIM), "shop"));
 const OSSIE_PATH = "/ws/shop.Lakehouse/Files/semantic_models/shop_ossie.yaml";
-const TABLES = `WITH "Sales" AS (SELECT * FROM (VALUES (1, 10.0), (2, 5.0), (1, 2.5)) t("ProductKey", "Amount")),
-"Product" AS (SELECT * FROM (VALUES (1, 'red'), (2, 'blue')) t("ProductKey", "Color"))
-`;
+const ROWS = {
+  Sales: `SELECT * FROM (VALUES (1, 10.0), (2, 5.0), (1, 2.5)) t("ProductKey", "Amount")`,
+  Product: `SELECT * FROM (VALUES (1, 'red'), (2, 'blue')) t("ProductKey", "Color")`,
+};
 
 // The page as panel.js renders it (panel-host.mjs), plus the .bim at the fake OneLake.
 const server = http.createServer(async (req, res) => {
@@ -71,7 +82,11 @@ await new Promise(r => server.listen(PORT, "127.0.0.1", r));
 
 const host = panelHost({
   dfsOrigin: ORIGIN, tableOrigin: ORIGIN,
-  engineOptions: { extensionDir: join(tmpdir(), "onelake-duckdb-extensions") },
+  engineOptions: {
+    extensionDir: join(tmpdir(), "onelake-duckdb-extensions"),
+    resolveTable: async ref => ({ ...ref, emptySql: ROWS[ref.table] }),
+  },
+  nameTables: async list => list.map(t => sqlName({ kind: "lakehouse", workspace: "ws", item: "shop", schema: t.schema, table: t.table })),
 });
 let code = 1;
 let browser;
@@ -139,7 +154,7 @@ try {
     };
   }
   const { info, rows } = await modelQuery(
-    `${TABLES}SELECT * FROM (SELECT Product.Color, AGG(Total) AS total FROM semanticmodel.ws.shop GROUP BY ALL) ORDER BY Color`);
+    `SELECT * FROM (SELECT Product.Color, AGG(Total) AS total FROM semanticmodel.ws.shop GROUP BY ALL) ORDER BY Color`);
   console.log("model query:", info, "|", rows);
   if (!/^2 rows/.test(info) || !/blue 5(\.0)? red 12\.5/.test(rows)) throw new Error(`model query: ${info} ${rows}`);
 
@@ -155,7 +170,7 @@ try {
   const localCards = await page.locator("#modelView .m-card").count();
   if (localCards !== 2) throw new Error(`the downloaded model drew ${localCards} cards`);
   const { info: localInfo, rows: localRows } = await modelQuery(
-    `${TABLES}SELECT * FROM (SELECT Product.Color, AGG(Total) AS total FROM semanticmodel.ws."Local Model" GROUP BY ALL) ORDER BY Color`);
+    `SELECT * FROM (SELECT Product.Color, AGG(Total) AS total FROM semanticmodel.ws."Local Model" GROUP BY ALL) ORDER BY Color`);
   console.log("downloaded model:", localInfo, "|", localRows);
   if (!/^2 rows/.test(localInfo) || !/blue 5(\.0)? red 12\.5/.test(localRows)) throw new Error(`downloaded model query: ${localInfo} ${localRows}`);
 
@@ -170,7 +185,7 @@ try {
   const ossieRels = await page.locator("#modelView .m-rel").count();
   if (ossieCards !== 2 || ossieRels !== 1) throw new Error(`the Ossie model drew ${ossieCards} cards and ${ossieRels} relationships`);
   const { info: ossieInfo, rows: ossieRows } = await modelQuery(
-    `${TABLES}SELECT * FROM (SELECT Product.Color, AGG(Total) AS total FROM semanticmodel.ws.shop_ossie GROUP BY ALL) ORDER BY Color`);
+    `SELECT * FROM (SELECT Product.Color, AGG(Total) AS total FROM semanticmodel.ws.shop_ossie GROUP BY ALL) ORDER BY Color`);
   console.log("ossie model:", ossieInfo, "|", ossieRows);
   if (!/^2 rows/.test(ossieInfo) || !/blue 5(\.0)? red 12\.5/.test(ossieRows)) throw new Error(`Ossie model query: ${ossieInfo} ${ossieRows}`);
 

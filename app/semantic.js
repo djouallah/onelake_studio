@@ -189,17 +189,17 @@ export async function defineView(name, path, text, mode = "replace", modules = n
   const bim = bimOf(path, text, mods);
   const lake = await namedLakeTables(bim);
   // A Direct Lake table is read by its SQL name, the engine making its view as a query
-  // names it; any other is the model's own source name, as dax-sql reads it by default.
+  // names it. Any other has no OneLake table behind it: a shorter name would resolve to
+  // whatever happens to carry it in the engine, such as a Files/ view, so it is refused.
   const tableSource = t => {
     const l = lake.get(lc(t.name));
     if (l) return l.ident;
-    const s = t.source;
-    return s.schema ? `${quoteIdent(s.schema)}.${quoteIdent(s.entity)}` : quoteIdent(s.entity);
+    throw new Error(`${t.name} is not a OneLake table, so it has no five-part name to read`);
   };
   // The items its tables are read from, by their SQL names — a model may read several.
   const where = [...new Set([...lake.values()].map(l => itemOfIdent(l.ident)))];
   const done = views.define(name, tmslToModel(bim), {
-    path, mode, db: MODEL_CATALOG, schema, tableSource, tablesFrom: where.length ? where.join(", ") : "search path",
+    path, mode, db: MODEL_CATALOG, schema, tableSource, tablesFrom: where.join(", ") || null,
   });
   const v = views.get([MODEL_CATALOG, schema, name]);
   if (done === "created") lakes.set(lc(v.sqlName), lake);
