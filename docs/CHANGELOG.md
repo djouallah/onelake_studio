@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **A new query keeps Run, Plan and Save Query across a reload.** VS Code restores its untitled tab,
+  and it is still a query until that tab is closed.
 - **A semantic model's local copy is an Apache Ossie file.** Clicking a model keeps
   `~/OneLakeStudio/semantic-models/<workspace>/<model>.yaml` in place of the `.bim`, and Export to
   Fabric writes that `.yaml` into its lakehouse. A model downloaded before this downloads again on

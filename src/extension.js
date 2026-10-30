@@ -28,6 +28,7 @@ const { webviewRoot } = require('./webview');
 const { fmtBytes, sqlKind, sqlName, sqlNameOf, sqlPart, displayName, MODEL_CATALOG, modelSqlName, stripBom } = require('./names');
 const { createAgent } = require('./agent');
 const { createSemViews } = require('./semviews');
+const { createNewQueries } = require('./newqueries');
 const { serveBridge } = require('./bridge');
 const { PINS } = require('./vendored');
 const { planExport, writeExport, buildDist, writeMarker, readMarker, fingerprint, localChanges, vendorSize, zip, rayfinYml } = require('./exportapp');
@@ -880,10 +881,9 @@ async function activateInner(context) {
   // Query editors (queryeditor.js): a saved query's file, or a new query opened here, untitled
   // until Save Query keeps it under Queries. Only these get Run, the lenses and the completions:
   // any other .sql file is its own extensions'.
-  const newQueries = new Set();   // the untitled documents opened here, by URI
-  // Another SQL extension that takes over a document's language closes and reopens it: one
-  // reopened at once with the same text is the same query (a new Untitled-1 is not).
-  const closedQueries = new Map();   // URI -> { text, at }
+  const tabUri = t => (t.input && t.input.uri ? t.input.uri.toString() : null);
+  const openTabs = () => vscode.window.tabGroups.all.flatMap(g => g.tabs).map(tabUri).filter(Boolean);
+  const newQueries = createNewQueries(context.workspaceState, openTabs);   // the untitled ones
   const isQueryFile = p => {
     const rel = p ? relative(queriesRoot(), p) : '';
     return !!rel && !rel.startsWith('..') && !isAbsolute(rel);
@@ -1103,19 +1103,10 @@ async function activateInner(context) {
     vscode.window.onDidChangeActiveTextEditor(ed => {
       if (ed && isQuery(ed.document)) postLive({ type: 'show-kept', key: ed.document.uri.toString() });
     }),
-    // A language change closes the document and opens it again at once: forgotten only when it
-    // is really gone, and the active editor's keys and buttons are worked out again.
-    vscode.workspace.onDidCloseTextDocument(doc => {
-      const key = doc.uri.toString();
-      if (!newQueries.delete(key)) return;
-      closedQueries.set(key, { text: doc.getText(), at: Date.now() });
-    }),
-    vscode.workspace.onDidOpenTextDocument(doc => {
-      const key = doc.uri.toString(), was = closedQueries.get(key);
-      closedQueries.delete(key);
-      if (was && Date.now() - was.at < 1000 && doc.getText() === was.text) newQueries.add(key);
-      setQueryContext(vscode.window.activeTextEditor);
-    }),
+    // A new query is forgotten when its tab closes (newqueries.js). A language change closes the
+    // document and opens it again: the active editor's keys and buttons are worked out again.
+    vscode.window.tabGroups.onDidChangeTabs(e => newQueries.tabsClosed(e.closed.map(tabUri).filter(Boolean))),
+    vscode.workspace.onDidOpenTextDocument(() => setQueryContext(vscode.window.activeTextEditor)),
     // Save Query: a new query kept under Queries as "Query N", and its editor is that file from
     // then on. A saved query's editor just saves.
     vscode.commands.registerCommand('onelakeStudio.saveQuery', async () => {
