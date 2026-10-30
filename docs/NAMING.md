@@ -83,12 +83,14 @@ therefore real SQL, which DuckDB resolves itself.
 
 ## Semantic models: three parts
 
-**A semantic model is the Fabric item**, the Power BI model. The model part is its own Fabric name, and
-the workspace part is its own workspace.
+**A semantic model is `semanticmodel.<workspace>.<model>`, however it was made.** That holds for a Power
+BI model in Fabric, and for a model created from a `.bim` or `.yaml`, whether for Fabric or only for a
+Fabric app.
 
-**`semanticmodel.<workspace>.<model>` is unique by design.** Fabric guarantees one workspace of a name in
-the tenant and one semantic model of a name in a workspace, so the name identifies exactly one model. It
-belongs to that item and to nothing else.
+**Every workspace has one model of a name, so the name is unique by design.** Fabric guarantees one
+workspace of a name in the tenant and one semantic model of a name in a workspace. A model created from a
+file keeps to the same rule: it takes a name no other model in that workspace has. The name therefore
+identifies exactly one model.
 
 Why three parts and not five:
 
@@ -116,9 +118,13 @@ subfolder under `Files/`:
 SELECT * FROM 'abfss://aemo@onelake.dfs.fabric.microsoft.com/data.Lakehouse/Files/x.parquet';
 ```
 
-**A `.bim` or `.yaml` is a file too.** It is a representation of a model, not the model. A lakehouse can
-hold thousands of them across its subfolders, and they do not get a model's name:
-`semanticmodel.<workspace>.<model>` belongs to the Fabric item, and is unique by design.
+**A `.bim` or `.yaml` is a file too.** It is a representation of a model, not the model. It can be stored
+anywhere, and a lakehouse can hold thousands of them across its subfolders, even with the same file
+name. A file has no model name.
+
+**Creating a model from a file is what takes a name.** The model, whether for Fabric or only for a Fabric
+app, is `semanticmodel.<workspace>.<model>`, and that name is unique in its workspace, whatever the file
+was called or wherever it was stored.
 
 **A database file is still a file.** Once attached, its tables are `<name>.<schema>.<table>`, which is not
 a OneLake table's name.
@@ -170,8 +176,12 @@ same reason.
 
 These do not meet the contract yet:
 
-- **An opened model file still takes a model's name.** `registerModel` in `app/semantic.js` names `nem.bim`
-  `semanticmodel.<workspace>.nem`, the same name a Fabric item `nem` has in that workspace.
+- **Opening a model file takes a model's name.** Only creating a model should. `registerModel` in
+  `app/semantic.js` names `nem.bim` `semanticmodel.<workspace>.nem`, the same name a Fabric item `nem` has in
+  that workspace.
+- **Creating a model does not check that its name is free.** Export to Fabric (`planExport` in
+  `src/exportapp.js`) takes the name from the model's own `name` or the file's name, and does not compare it
+  with the workspace's other models. It checks only the app's name.
 - **A bare model name can still compile.** `app/semantic.js` says "nothing shorter", but dax-sql resolves a
   name by its last parts, so `FROM nem` can reach an open view when only one fits.
 - **The command line's help shows the short form.** `bin/cli.mjs` has `FROM model` in the `sql` help.

@@ -196,10 +196,10 @@ Results show in the panel:
 
 ## Semantic models
 
-**A semantic model is the Fabric item, the Power BI model.** It is not in OneLake: its list and its
-definition come from the Fabric REST API ([`src/fabric.js`](../src/fabric.js)). In SQL it is a
-**semantic view**, named `semanticmodel.<workspace>.<model>` and listed by `SHOW ALL TABLES` with the
-rest of the catalog.
+**A Power BI semantic model is a Fabric item.** It is not in OneLake: its list and its definition come
+from the Fabric REST API ([`src/fabric.js`](../src/fabric.js)). In SQL it is a **semantic view**, named
+`semanticmodel.<workspace>.<model>` and listed by `SHOW ALL TABLES` with the rest of the catalog. Every
+workspace has one model of a name.
 
 **Opening one**
 - **From the tree:** a click reads its TMSL definition (the REST API's `getDefinition`) and keeps it as
@@ -237,8 +237,9 @@ SELECT * FROM (SHOW SEMANTIC METRICS IN semanticmodel.ws.sales) WHERE ...;
 **A model file is a file.** A `.bim` under `Files/`, or an [Apache Ossie](https://github.com/apache/ossie)
 `.yaml` or `.yml` whose top level has `version:` and `datasets:`, opens in the model view in place of
 the editor. dax-sql's `formats/ossie.js` turns Ossie into the `.bim` it stands for, and from there the
-two are one. [NAMING.md](NAMING.md#files) says why these files do not own a model's name, and its
-known gaps say what the code does today.
+two are one. These files can be stored anywhere and have no model name. A model created from one, for
+Fabric or only for a Fabric app, is named `semanticmodel.<workspace>.<model>`, unique in its workspace.
+See [NAMING.md](NAMING.md#files), whose known gaps say what the code does today.
 
 ## Explore
 
