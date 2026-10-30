@@ -348,7 +348,7 @@ export function tablesFor(sql) {
 // SHOW SEMANTIC VIEWS: every model the catalog has (the engine lists each one the cache knows,
 // engine-host.js listCatalog), in dax-sql's columns. A model opened here has its file and the
 // items its tables are read from; one not opened yet has neither.
-const SHOW_VIEWS = /^\s*show\s+semantic\s+views?\s*;?\s*$/i;
+const SHOW_VIEWS = /^\s*show\s+semantic\s+views\s*;?\s*$/i;
 function showViewsSql() {
   const opened = views ? views.list() : [];
   const rows = opened.map(v => `(${[v.schema, v.name, v.path, v.tablesFrom].map(x => (x == null ? "NULL" : sqlStr(x))).join(", ")})`);
