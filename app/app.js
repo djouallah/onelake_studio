@@ -41,7 +41,6 @@ let engine = null;
 let engineReady = null;      // resolves when engine.init() has finished; gates every use of it
 let engineUp = false;        // ...and the settled form of it, for the synchronous checks
 let lakehouse = null;        // { workspace, item }
-let activeIdent = null;      // quoted identifier of the loaded table
 let activeSqlName = null;    // the selected table's SQL name (lakehouse.ws.item.schema.table)
 let activeQuery = null;      // the saved query in the SQL box (its name), when one was opened or saved
 let activeFile = null;       // the file behind it, when a file is what was opened
@@ -173,7 +172,6 @@ async function goToLakehouse(workspace, item) {
 function leaveLakehouse(opts) {
   closeModelView();
   ++selSeq;                     // a load still under way belongs to the lakehouse being left
-  activeIdent = null;
   activeQuery = null;
   activeFile = null;
   setActiveStats(null);
@@ -225,7 +223,6 @@ async function selectFile(file) {
   try {
     const info = await engine.loadFile(lakehouse, file);
     if (my !== selSeq) return;
-    activeIdent = info.ident;
     // A database file with no tables attaches but leaves nothing to preview.
     if (info.ident) {
       $('sqlEditor').value = previewSql(info.ident, activeDocEligible);
@@ -294,7 +291,6 @@ async function openModelView(file, text = null, { fromOneLake = text == null } =
   engine.cancelLoad();
   $('activeTable').textContent = file.name;
   activeFile = fromOneLake ? file : null;   // only a OneLake file can be saved as itself
-  activeIdent = null;
   activeDocExt = 'bim'; activeDocEligible = false;
   setActiveStats(null);
   activeTableRef = null; tableStage = 'none';
@@ -443,7 +439,6 @@ async function selectImage(file) {
   $('activeTable').textContent = file.name;
   activeFile = file;
   activeDocExt = '';
-  activeIdent = null;            // no table behind this
   activeQuery = null;
   setActiveStats(null);
   activeTableRef = null; tableStage = 'none';
@@ -484,7 +479,6 @@ async function selectTable(t) {
   activeFile = null;
   activeDocEligible = false;    // a table, whatever shape the preview comes back
   activeDocExt = '';
-  activeIdent = null;           // no view exists yet — nothing is bound until asked for
   activeSqlName = null;
   activeQuery = null;            // the editor gets this table's preview, not the query
   activeTableRef = t;
@@ -500,7 +494,6 @@ async function selectTable(t) {
     // the table was ever opened before.
     const info = await engine.statTable(lakehouse, t);
     if (my !== selSeq) return;
-    activeIdent = info.ident;
     activeSqlName = info.sqlName || info.ident;
     tableStage = info.stage === 'loaded' ? 'loaded' : 'stats';
     setActiveStats(info);
@@ -562,7 +555,6 @@ async function bindTable() {
   try {
     const info = await engine.loadTable(lakehouse, activeTableRef);
     if (my !== selSeq) return null;
-    activeIdent = info.ident;
     tableStage = 'loaded';
     freshLoad = info;               // owed a report once the caller's query lands
     setActiveStats(info);           // richer now: real columns from DESCRIBE
@@ -1202,7 +1194,6 @@ function openQuery(name, sql) {
   engine.cancelLoad();
   activeTableRef = null;
   activeFile = null;
-  activeIdent = null;
   activeSqlName = null;
   activeDocEligible = false;
   activeDocExt = '';

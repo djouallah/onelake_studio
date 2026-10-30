@@ -117,7 +117,7 @@ function createAgent({ onelake, fabric, engine, bimPath, appDir, vendorDir, daxS
 
   // A table named as `schema.table`, or bare: a bare name is looked up in the item's cached
   // listing, so a schema-less item's table (schema '') is found rather than guessed as dbo.
-  async function tableOf(lh, name, opts) {
+  async function tableOf(lh, name) {
     const dot = name.indexOf('.');
     if (dot > 0) return { schema: name.slice(0, dot), table: name.slice(dot + 1) };
     const listed = await onelake.cached.tables(lh);
@@ -398,7 +398,7 @@ function createAgent({ onelake, fabric, engine, bimPath, appDir, vendorDir, daxS
     async table([ws, item, name], opts, out, note) {
       if (!name) throw new Error('usage: table <ws> <item> <schema.table>');
       const lh = await itemOf(ws, item, await look('items', [ws], opts));
-      const t = await tableOf(lh, name, opts);
+      const t = await tableOf(lh, name);
       let m;
       if (opts.fresh) m = await onelake.table(lh, t, { fresh: true, onWait: note });
       else {

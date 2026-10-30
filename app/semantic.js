@@ -299,12 +299,6 @@ export async function tableModel(table, sqlName, columns, modules = null) {
   return { name: modelName(table), tmsl: bim.model, compiler, plainSql };
 }
 
-// A view by its SQL name: { name, schema } as the host keeps it, and its SQL name; or null.
-export function viewOf(name) {
-  const v = views && views.get(name);
-  return v ? { name: v.name, schema: v.schema, sqlName: fullName(v) } : null;
-}
-
 // The semantic models a statement names (semanticmodel.ws.model) that are not views here yet,
 // as [{ workspace, model }] as written: the host opens each before the statement runs.
 // Comments and string literals are skipped.
@@ -335,16 +329,6 @@ export function dropView(name) {
 
 export const hasView = name => !!(views && views.get(name));
 
-// The Direct Lake tables a compiled SQL reads, of every view, and only those: a query about
-// one fact does not open the other five.
-export function tablesFor(sql) {
-  const out = [];
-  for (const lake of lakes.values())
-    for (const l of lake.values())
-      if (sql.includes(l.ident) && !out.some(x => x.ident === l.ident)) out.push(l);
-  return out;
-}
-
 // SHOW SEMANTIC VIEWS: every model the catalog has (the engine lists each one the cache knows,
 // engine-host.js listCatalog), in dax-sql's columns. A model opened here has its file and the
 // items its tables are read from; one not opened yet has neither.
@@ -369,10 +353,10 @@ const NO_DDL ="Read only: OneLake Studio never writes, and a semantic model is n
 
 /**
  * What a statement asks, in dax-sql's words (createViews().rewrite): null when it names no
- * view, else { sql, tables } to run once `tables` (Direct Lake) are open. One statement.
+ * view, else { sql } to run. One statement.
  */
 export async function statement(sql, modules = null) {
-  if (SHOW_VIEWS.test(String(sql))) return { sql: showViewsSql(), tables: [] };
+  if (SHOW_VIEWS.test(String(sql))) return { sql: showViewsSql() };
   // Refused before dax-sql reads it: whether the view exists is not the question.
   if (VIEW_DDL.test(String(sql))) throw new Error(NO_DDL);
   if (!views) {
@@ -385,16 +369,15 @@ export async function statement(sql, modules = null) {
   if (out.length !== 1) throw new Error("Run one statement at a time (no ';').");
   const [s] = out;
   if (s.sql == null) throw new Error(NO_DDL);
-  return { sql: s.sql, tables: tablesFor(s.sql) };
+  return { sql: s.sql };
 }
 
-// A DAX query (EVALUATE …) against view `name`, as the SQL to run and the tables to open first —
-// for the command line's `dax`, which runs Explore's DAX as it is.
+// A DAX query (EVALUATE …) against view `name`, as the SQL to run — for the command line's
+// `dax`, which runs Explore's DAX as it is.
 export function compileDax(name, dax) {
   const v = views && views.get(name);
   if (!v) throw new Error(`No semantic view ${name}.`);
-  const sql = v.compiler.compile(String(dax)).sql;
-  return { sql, tables: tablesFor(sql) };
+  return { sql: v.compiler.compile(String(dax)).sql };
 }
 
 // A view's Direct Lake tables: the model's table name, the engine's view of it — which SQL
@@ -404,17 +387,6 @@ export function lakeTablesOf(name) {
   const lake = v && lakes.get(lc(v.sqlName));
   if (!lake) return [];
   return [...lake].map(([table, l]) => ({ table, ident: l.ident, schema: l.t.schema, entity: l.t.table, lh: l.lh }));
-}
-
-// The SQL to run for a query, and the tables to open first; null when it names no view.
-// For the model view's SQL tab, which runs queries only.
-export function rewrite(sql) {
-  if (!views) return null;
-  const out = views.rewrite(sql);
-  if (!out) return null;
-  if (out.length !== 1) throw new Error("Run one statement at a time (no ';').");
-  if (out[0].sql == null) throw new Error(NO_DDL);
-  return { sql: out[0].sql, tables: tablesFor(out[0].sql) };
 }
 
 // A model's (dax-sql's Model) first measure, and the first text column of another table it

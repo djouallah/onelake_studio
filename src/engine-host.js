@@ -813,8 +813,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onWarn = () => {}, g
     try { return await openTable(target); } catch (e) { throw scrub(e, authToken); }
   }
 
-  return { init, call, close, openTable: openTableScrubbed, copyToTemp, agentQuery, catalogChanged,
-           get capabilities() { return capabilities; } };
+  return { call, close, openTable: openTableScrubbed, copyToTemp, agentQuery, catalogChanged };
 }
 
 module.exports = { createEngineHost, jsonSafe, isOneLakeMetadata, PROFILE_METRICS };

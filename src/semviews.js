@@ -63,7 +63,6 @@ function createSemViews({ dir, onelake, onChange = () => {} }) {
   return {
     useAccount(key) { account = key || 'signed-out'; },
     list,
-    readBim,
     // Every view with its text, for defining them; one that cannot be read says why.
     async texts() {
       const out = [];

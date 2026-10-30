@@ -44,9 +44,6 @@ if (await readFile(join(OUT, "pins.json"), "utf8").catch(() => "") === pins && e
   console.log("fabric-function/ already holds these pins — nothing to build");
   process.exit(0);
 }
-if (!existsSync(join(RAYFIN, "functions", "src", "function_app.ts"))) {
-  throw new Error(`no function source at ${RAYFIN}`);
-}
 
 const work = await mkdtemp(join(tmpdir(), "onelake-studio-function-"));
 const sh = (cmd, cwd) => execSync(cmd, { cwd, stdio: ["ignore", "inherit", "inherit"] });

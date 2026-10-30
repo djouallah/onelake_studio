@@ -1,6 +1,6 @@
 # TODO: the rest of the 2026-10-30 review
 
-These are the items from the code review (bugs, duplicates, dead code, inefficiency) that have not been done yet. Done so far: c7cdb26 (host bugs), 49a567d (panel bugs), 47c648e (`src/http.js` and the shared helpers).
+These are the items from the code review (bugs, duplicates, dead code, inefficiency) that have not been done yet. Done so far: c7cdb26 (host bugs), 49a567d (panel bugs), 47c648e (`src/http.js` and the shared helpers), and the dead code.
 
 ## Duplicates
 - **Plan helpers.** `app/app.js` `planElapsed`/`planColors` copy `app/explore/view.js` `elapsed`/`profileColors`. Export both from `app/explore/profile.js`; `profileColors(css)` takes the page's own `css` reader.
@@ -20,35 +20,6 @@ These are the items from the code review (bugs, duplicates, dead code, inefficie
 - CRC32 is in both `exportapp.js` and `scripts/make-icon.mjs`.
 - Fetch-with-retry is in both `vendor.mjs` and `fetch-extensions.mjs`.
 - **Pinned versions.** CI (`extension.yml`) hard-codes the versions in `src/vendored.js` `WEBAPP`, and `fabric_app/site/app.js` hard-codes `echarts@5.5.1`.
-
-## Dead code
-Each of these has no callers in the repo, tests included. Grep again before removing.
-- **`src/`:**
-  - the `listTables` wrapper in `catalog.js`
-  - `store.ready` and the `DEFAULT_TTL_MS` export
-  - the `fabricapp` exports `ensureItem`, `settings` and `ITEM_TYPE`
-  - the `bridgePath` export
-  - `semviews.readBim` in its API
-  - `engine-host` `init` and `capabilities` in its API
-  - the `opts` parameter of `agent.js` `tableOf`
-  - `host.js` `'onelake.files'`
-  - `tree.js` `dispose()`: the provider is never disposed, so either dispose it or drop the method
-- **`app/`:**
-  - `activeIdent`, which is written and never read
-  - the `strip` import in `data.js`
-  - in `data.js`: the `tables`/`schemas` arrays and their DROP loops (never filled), and the stale "`__del_` table" comment
-  - the `onPeek` branch in `data.js`
-  - the `status` parameter of `resolveTable`
-  - in `semantic.js`: `viewOf`, `rewrite`, and the `tables`/`tablesFor` results
-  - the `#previewBtn` CSS
-  - Note: `m.modelWorkspace` IS sent (`extension.js` `open-model`). That review finding was wrong.
-- **`fabric_app/`:**
-  - `snapshots.previous`
-  - the `manifests` field saved in every snapshot and never read; this also frees localStorage
-  - the unreachable check in `function-bundle.mjs`
-  - the `init()` CSV connection
-  - `data.js` members only another host called: `views`, `has`, `needs`, `ensureHistory`; `queue.js` `serialQueue`; `catalog.js`'s specific-tables branch; `auth.js`'s `client` option and its `build.mjs` comment.
-- `playwright-core`: the `test/js/run-*.mjs` harnesses import it but `package.json` doesn't declare it.
 
 ## Inefficiency
 - **`engine-host.js` `ensureTables`.** It resolves the tables a statement names one after another. Use `Promise.all`; `admin()` already runs the DDL one at a time.

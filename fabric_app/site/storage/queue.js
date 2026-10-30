@@ -53,10 +53,3 @@ export function engineQueue({ pick = (job, free) => free[0] } = {}) {
     }),
   };
 }
-
-// One engine: serial(run, options) runs run() in its turn.
-export function serialQueue() {
-  const queue = engineQueue();
-  queue.add({});
-  return (run, options) => queue.submit(() => run(), options);
-}

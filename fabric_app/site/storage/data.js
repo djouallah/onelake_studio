@@ -37,11 +37,10 @@
 // and its files downloaded once, whichever engine opens it first; each engine then has its own
 // view (and its own copy of a small table). All the workers share the store.
 //
-// The members are the ones the page calls on the other hosts:
+// The members the page calls:
 //   init            sign in, locate the tables, size them; nothing opened yet
 //   attachAgg       starts opening the rest in the background; nothing for the page to redraw
-//   ensureHistory   nothing to attach: every view reads its table whole
-//   query, views, has, needs
+//   model, query
 // =============================================================================
 
 import * as duckdb from "../vendor/npm/@duckdb/duckdb-wasm@1.33.1-dev65.0/+esm.js";
@@ -142,10 +141,10 @@ export function createDataSource({ onStatus = () => {}, onProgress = () => {}, t
   // longer than it gets a new one shortly before it expires (a failed renewal is tried again a
   // minute later); the views read the store, so no view changes.
   let sas = '';
-  function renewLater(sources) {
+  function renewLater() {
     setTimeout(async () => {
-      try { sas = (await catalog.open([], { renew: true })).sas; renewLater(sources); }
-      catch (e) { perf.log('error', 'SAS renewal', { status: String(e?.message || e) }); setTimeout(() => renewLater(sources), 60000); }
+      try { sas = (await catalog.open({ renew: true })).sas; renewLater(); }
+      catch (e) { perf.log('error', 'SAS renewal', { status: String(e?.message || e) }); setTimeout(renewLater, 60000); }
     }, Math.max(catalog.renewAt() - Date.now(), 0));
   }
 
@@ -342,7 +341,7 @@ export function createDataSource({ onStatus = () => {}, onProgress = () => {}, t
     onStatus("Loading the query engine…");
     // The function's answer (the model, where its tables are, the SAS), the tables' sizes and
     // their plans, while DuckDB's bundle loads: none of them needs it.
-    const ready = catalog.open([]).then(async answer => {
+    const ready = catalog.open().then(async answer => {
       if (!answer.model) throw new Error("the app's function gave no model: is its MODEL_URL set?");
       access = answer;
       model = answer.model;
@@ -401,15 +400,7 @@ importScripts("${bundle.mainWorker}");`], { type: "text/javascript" }));
 
     onStatus('Reading the model and its tables from the lakehouse…');
     await ready;
-    renewLater([...new Set([...tables.values()].map(t => t.source))]);
-    // The page's CSV export runs its SQL on a connection of its own: the first engine's, with
-    // the tables the SQL names opened there first.
-    const e0 = engines[0];
-    const db = { connect: async () => {
-      const c = await e0.db.connect();
-      return { send: async sql => { await submit(() => openFor(e0, sql), { engine: e0 }); return c.send(sql); }, close: () => c.close() };
-    } };
-    return { db };
+    renewLater();
   }
 
   // A query's result saved in this browser, across visits (results.js). What identifies the
@@ -446,7 +437,6 @@ importScripts("${bundle.mainWorker}");`], { type: "text/javascript" }));
     // The semantic model as the lakehouse holds it (an Ossie document or TMSL), once init has
     // answered.
     model: () => model,
-    ensureHistory: async () => false,
     // `dax`: the query as the page wrote it, for the Logs tab (the compiler passes it).
     // `options`: the page's for the queue (queue.js): `stale`, `early`, `later`.
     // Timed here, not by perf.query: its wait assumes one worker. `wait`: in the queue, until
@@ -481,13 +471,5 @@ importScripts("${bundle.mainWorker}");`], { type: "text/javascript" }));
         throw err;
       });
     },
-    // The tables the catalog has, with the model's columns (opening is not needed to list them).
-    views: () => [...located.keys()].map(name => ({ name: 'v_' + name, columns: [...tables.get(name).columns] })),
-    has: (view, column) => {
-      const name = view.replace(/^v_/, '');
-      return located.has(name) && (!column || tables.get(name).columns.has(column));
-    },
-    // Every view reads its table whole: a query needs nothing attached.
-    needs: () => ({ history: false, agg: false }),
   };
 }

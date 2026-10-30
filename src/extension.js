@@ -1244,6 +1244,7 @@ async function activateInner(context) {
   };
 
   context.subscriptions.push(
+    tree,
     vscode.window.createTreeView('onelakeStudio.explorer', {
       treeDataProvider: tree,
       showCollapseAll: true,

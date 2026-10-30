@@ -19,7 +19,7 @@
 // host (its cache-first store, its signed reads); DuckDB, also in the host, reads tables
 // and Files/ objects by their abfss:// names with the host's own credential.
 import {
-  strip, basename, abfssUrl,
+  basename, abfssUrl,
   fileExt, readerFor, PARQUET_EXTS, DB_EXTS, ZIP_EXTS, isSqliteHeader, isTextExt,
   sqlStr, quoteIdent, prepareReadOnlySql,
   tableKey, fileKey, sanitizeIdent,
@@ -30,7 +30,7 @@ import {
 // take the tab down. Cap it and say so (the host caps at the same number).
 const MAX_ROWS = 200_000;
 
-// The first rows of a table, painted while the view is still being opened.
+// The first rows of a table, the Data tab's answer before any query of the user's.
 const QUICK_PEEK_ROWS = 100;
 
 export function createEngine({
@@ -45,7 +45,7 @@ export function createEngine({
   let canZip = false;
 
   const loaded = new Map();         // cache key -> info
-  const resources = new Map();      // cache key -> { ident, views[], tables[], ... }, for release()
+  const resources = new Map();      // cache key -> { ident, views[], attachments[], ... }, for release()
   const viewNames = new Map();      // view identifier -> the cache key that owns it
   // A table is read in tiers and each one's answer is kept: statTable (metadata only) ->
   // peekTable (first rows) -> loadTable (a real view). These hold no DuckDB state, so
@@ -133,13 +133,11 @@ export function createEngine({
   // ---------------------------------------------------------------------------
   // Resource lifecycle
   // ---------------------------------------------------------------------------
-  // Everything a load creates — the view, the registered file URLs, the helper tables —
-  // is recorded against its cache key so it can be handed back. Without this, every table
-  // opened in a session leaked its registrations plus a `__del_` table holding one row per
-  // deleted row, for as long as the tab stayed open.
+  // Everything a load creates — the views, the attached database files — is recorded
+  // against its cache key so it can be handed back when the tab no longer needs it.
   function track(key) {
     let r = resources.get(key);
-    if (!r) { r = { ident: null, tables: [], attachments: [], schemas: [] }; resources.set(key, r); }
+    if (!r) { r = { ident: null, attachments: [] }; resources.set(key, r); }
     return r;
   }
 
@@ -164,14 +162,10 @@ export function createEngine({
       // on the serial queue — iterating the live arrays here is how a superseded load
       // once dropped state its successor had just created.
       const gen = r.gen, ident = r.ident;
-      const views = [...(r.views || [])], tables = [...r.tables];
-      const schemas = [...(r.schemas || [])], attachments = [...(r.attachments || [])];
+      const views = [...(r.views || [])], attachments = [...(r.attachments || [])];
       if (ident) { try { await q(`DROP VIEW IF EXISTS ${ident}`); } catch (_) {} }
       // Zip archives create one view per readable entry; ident is just the first.
       for (const v of views) { try { await q(`DROP VIEW IF EXISTS ${v}`); } catch (_) {} }
-      for (const t of tables) { try { await q(`DROP TABLE IF EXISTS ${t}`); } catch (_) {} }
-      // Schemas holding copied-in database tables: CASCADE takes the tables with them.
-      for (const s of schemas) { try { await q(`DROP SCHEMA IF EXISTS ${quoteIdent(s)} CASCADE`); } catch (_) {} }
       // Attached database files: DETACH releases the underlying URL handle.
       for (const a of attachments) { try { await q(`DETACH ${quoteIdent(a)}`); } catch (_) {} }
       // A successor may have claimed the key while the drops above were queued; the
@@ -442,7 +436,7 @@ export function createEngine({
   // One request through the catalog. No manifests, no parquet, no DuckDB. Everything the
   // Stats tab shows comes from here, which is why opening a table now costs kilobytes
   // instead of a scan: the rest is read only when the user asks to see rows.
-  async function resolveTable(lh, t, label, status, check) {
+  async function resolveTable(lh, t, label, check) {
     const key = tableKey(lh, t);
     if (resolvedC.has(key)) return resolvedC.get(key);
     let resolved;
@@ -504,7 +498,7 @@ export function createEngine({
     const check = () => { if (gen !== loadGen) throw cancelledError(); };
     const status = statusFor(gen);
     status(`Reading ${label} metadata…`);
-    const resolved = await resolveTable(lh, t, label, status, check);
+    const resolved = await resolveTable(lh, t, label, check);
     check();
     const stats = resolved.stats || {};
     const info = {
@@ -551,7 +545,7 @@ export function createEngine({
     const status = quiet ? () => {} : statusFor(gen);
     const label = labelFor(t);
 
-    const resolved = await resolveTable(lh, t, label, status, check);
+    const resolved = await resolveTable(lh, t, label, check);
     check();
     // An empty table has a schema and no rows. Reading it is not an error and not worth
     // an ATTACH — the metadata already said everything there is to say.
@@ -593,9 +587,9 @@ export function createEngine({
   // The view is the host's: it is the table's SQL name (lakehouse.ws.item.schema.table), the
   // one any query names it by, made over the metadata file the host's store holds. The host
   // makes it again when a query names it after the table moved on, so the page never drops it.
-  const loadTable = (lh, t, opts = {}) => openTableView(lh, t, opts);
+  const loadTable = (lh, t) => openTableView(lh, t);
 
-  async function openTableView(lh, t, { onPeek } = {}) {
+  async function openTableView(lh, t) {
     // Keyed per lakehouse: the engine outlives the user's choice of one, and two
     // lakehouses can both hold a dbo.sales.
     const key = tableKey(lh, t);
@@ -613,7 +607,7 @@ export function createEngine({
 
     status(`Resolving ${label}…`);
     // Free on the normal path: the Stats tier already resolved and cached this.
-    const resolved = await resolveTable(lh, t, label, status, check);
+    const resolved = await resolveTable(lh, t, label, check);
     check();
 
     let ident, columns;
@@ -621,18 +615,6 @@ export function createEngine({
       status(`Opening ${label}…`);
       ident = await attachedIdent(lh, t);
       check();
-
-      // Rows on screen while the rest of the open runs. Cheap now: the same LIMIT 100
-      // the Data tab would ask for, pushed down into the Iceberg scan. It used to be
-      // suppressed on merge-on-read tables because a raw first-file read showed
-      // deleted rows as live; DuckDB applies the deletes, so it fires for every table.
-      // Best-effort by design — a superseded or failed peek says nothing, and the real
-      // open reports its own errors.
-      if (onPeek && !resolved.empty) {
-        materialize(`SELECT * FROM ${ident} LIMIT ${QUICK_PEEK_ROWS}`)
-          .then(out => { if (gen === loadGen) onPeek(out, (resolved.stats || {}).totalDataFiles); })
-          .catch(() => {});
-      }
       columns = await describe(ident);
     } catch (e) {
       // A stop is not a failure. Superseded while failing is also not this load's

@@ -97,4 +97,4 @@ function askBridge(request, path = bridgePath()) {
   });
 }
 
-module.exports = { bridgePath, serveBridge, askBridge };
+module.exports = { serveBridge, askBridge };

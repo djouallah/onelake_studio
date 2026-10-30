@@ -250,8 +250,7 @@ function createStore({ dir, ttlMs = DEFAULT_TTL_MS, maxBytes = DEFAULT_MAX_BYTES
   return {
     get, put, peek, known, clear, size, getBlob, putBlob,
     on: (ev, fn) => { events.on(ev, fn); return () => events.off(ev, fn); },
-    ready: () => usable,
   };
 }
 
-module.exports = { createStore, DEFAULT_TTL_MS };
+module.exports = { createStore };

@@ -2,20 +2,16 @@
 // auth.js — AuthProvider: Rayfin Fabric SSO
 // =============================================================================
 // A Fabric app's sign-in, and the only place that knows about it: the page has no auth gate
-// of its own, so this file draws one over it until there is a session. Both Fabric apps use
-// this file (build.mjs copies it into each); what an app does once signed in is its data.js's.
+// of its own, so this file draws one over it until there is a session; what the app does once
+// signed in is data.js's.
 //
 //   const auth = createAuth();          // the gate goes up
 //   await auth.signIn();                // resolves once signed in; the gate comes down
 //   await auth.client()                 // the Rayfin client of the session
 //
-// Two options, one per app:
-//   client(rayfin, config)   builds the Rayfin client, from the SDK module and the resolved
-//                            config. The default is a RayfinClient (functions); the VertiPaq
-//                            app builds one with its connector.
-//   ready()                  true when the app already holds what it needs and can start
-//                            without a session (the iceberg app: while the function's kept
-//                            answer is good, catalog.js's fresh()).
+// One option:
+//   ready()   true when the app already holds what it needs and can start without a session
+//             (while the function's kept answer is good, catalog.js's fresh()).
 // =============================================================================
 
 // The site's own copy (vendor/, src/vendored.js WEBAPP). Keep these on the same version: their
@@ -27,7 +23,7 @@ const RAYFIN_FABRIC_ESM = new URL("../vendor/npm/@microsoft/rayfin-auth-provider
 // --- Rayfin provider: Fabric SSO session (no second login; inside the Fabric portal iframe the
 // session is handed over by postMessage). Backend URL, key and Fabric coordinates come from the
 // rayfin.config.json that `rayfin up` writes next to the site.
-function createRayfinAuth({ client = (rayfin, config) => new rayfin.RayfinClient(config), ready = () => false } = {}) {
+function createRayfinAuth({ ready = () => false } = {}) {
   let _client = null;
   let _fabric = null;
   let _fabricOpts = null;
@@ -45,7 +41,7 @@ function createRayfinAuth({ client = (rayfin, config) => new rayfin.RayfinClient
     const [rayfin, fabric] = await Promise.all([import(RAYFIN_CLIENT_ESM), import(RAYFIN_FABRIC_ESM)]);
     const resolved = await rayfin.resolveRayfinConfig({});
     if (!resolved.baseUrl) throw new Error('rayfin.config.json not found — deploy with `rayfin up`');
-    _client = await client(rayfin, { ...resolved, authStorage: true });
+    _client = new rayfin.RayfinClient({ ...resolved, authStorage: true });
     const rc = _client.runtimeConfig || {};
     _fabricOpts = {
       workspaceId: rc.workspaceId,

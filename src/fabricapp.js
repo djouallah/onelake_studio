@@ -246,7 +246,7 @@ function createFabricApp({ getToken, apiBase = FABRIC_API, log = () => {},
     }
   }
 
-  return { publish, ensureItem, settings, deployStatus };
+  return { publish, deployStatus };
 }
 
 // The tenant a token was issued in (its `tid`), for rayfin.config.json.
@@ -257,4 +257,4 @@ function tenantOf(token) {
   } catch (_) { return null; }
 }
 
-module.exports = { createFabricApp, tenantOf, ITEM_TYPE, MONIKER, CLIENT_VERSION };
+module.exports = { createFabricApp, tenantOf, MONIKER, CLIENT_VERSION };

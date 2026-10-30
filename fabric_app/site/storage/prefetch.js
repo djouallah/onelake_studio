@@ -181,16 +181,13 @@ export async function planTable(name, metadata, url) {
   if (!order.includes(name)) order.push(name);
   const current = String(metadata['current-snapshot-id']);
   const snapshot = (metadata.snapshots ?? []).find(s => String(s['snapshot-id']) === current);
-  const record = { scan: true, files: [], deleteFiles: [], manifests: [] };
+  const record = { scan: true, files: [], deleteFiles: [] };
   if (!snapshot?.['manifest-list']) return { record, manifests: 0, fetched: 0 };
   const list = await avroRecords(await get(url(snapshot['manifest-list']), name));
   const read = await Promise.all(list.map(m => manifestEntries(m.manifest_path, m.content ?? 0, url, name)));
   const live = read.flatMap(m => m.entries).filter(e => e[0] !== 2);
   const files = content => [...new Map(live.filter(e => e[1] === content).map(e => [e[2], { path: e[2], size: e[4] }])).values()];
-  Object.assign(record, {
-    files: files(0), deleteFiles: files(1),
-    manifests: list.map(m => m.manifest_path),
-  });
+  Object.assign(record, { files: files(0), deleteFiles: files(1) });
   record.scan = !record.files.length || live.some(e => e[1] === 2 || e[3] !== 'parquet');
   return { record, manifests: list.length, fetched: read.filter(m => m.fetched).length };
 }

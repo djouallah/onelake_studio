@@ -88,7 +88,11 @@ class LakehouseTree {
       ? onelake.onTableRead(r => this._formatKnown(r, r.value && r.value.format)) : null;
   }
 
-  dispose() { if (this._unsub) this._unsub(); if (this._unsubRead) this._unsubRead(); }
+  dispose() {
+    if (this._unsub) this._unsub();
+    if (this._unsubRead) this._unsubRead();
+    this._emitter.dispose();
+  }
 
   _formatKnown(t, format) {
     const n = this._nodes.get(`table|${t.workspace}|${t.item}|${t.schema || ''}|${t.table}`);

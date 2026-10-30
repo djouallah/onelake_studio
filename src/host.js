@@ -115,8 +115,6 @@ function createHostMethods({ onelake, engine, onStatus = () => {}, saveFile = nu
       await onelake.table(lh, t, { onWait: onStatus });
       return engine.openTable({ ...lh, ...t });
     },
-    // One level of a lakehouse's Files/ — the same cached listing the tree draws.
-    'onelake.files': x => onelake.files(lhOf(x), String(x.dir || '')),
     // A file's bytes, or a range of them, signed here. base64, because a webview message
     // is JSON and a Uint8Array does not survive it.
     'onelake.readBytes': async x => {
