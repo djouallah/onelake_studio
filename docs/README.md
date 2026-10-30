@@ -2,22 +2,26 @@
 
 | Doc | What's in it |
 | --- | --- |
-| [ARCHITECTURE.md](ARCHITECTURE.md) | Commands, settings, the agent skill, sign-in, the engine and the cache, semantic models, limitations and the source layout. |
+| [ARCHITECTURE.md](ARCHITECTURE.md) | Fabric as a catalog queried with SQL, sign-in, the engine and the cache, semantic models, Explore, Export to Fabric, commands, settings, the agent skill, limitations and the source layout. |
 | [CHANGELOG.md](CHANGELOG.md) | Release notes, newest first. It is also the Marketplace page's Changelog tab. |
 
 ## Architecture in brief
 
-- **Read only, except two writes, each on a click:** a semantic model's `.bim` into its
-  lakehouse's `Files/`, and Export to Fabric. The extension host refuses any statement that could
-  write.
+- **Fabric is a catalog** of objects, each with a name no other object has: tables
+  (`lakehouse.<ws>.<item>.<schema>.<table>`), files (their `abfss://` URL) and semantic models
+  (`semanticmodel.<ws>.<model>`), which are views over tables, with measures.
+- **SQL is how you ask it.** The editor, Explore, the command line and the agent skill all send
+  SQL over those names. A model is queried with `AGG(measure)`, compiled from DAX by
+  [dax-sql](https://github.com/djouallah/dax-sql).
+- **Read only.** The extension host refuses any statement that could write. The one exception is
+  Export to Fabric, after an OK: it publishes an app and writes the model's `.bim` into its
+  lakehouse's `Files/`.
+- **Cache first.** Listings, table metadata, first rows, files, semantic models and table data
+  are kept on this machine per Microsoft account, served from there at once and refreshed in the
+  background.
 - **The host does the work.** Sign-in, every OneLake read and the query engine run in the
   extension host ([`src/`](../src/)). The panel ([`app/`](../app/)) is only a view: it holds no
   token and makes no network request.
-- **Cache first.** Listings, table metadata, first rows, files and table data are kept on this
-  machine per Microsoft account, served from there at once and refreshed in the background.
-- **Semantic models** are written once as a `.bim` into their lakehouse's `Files/`, then opened
-  from there. They are queried
-  with `AGG(measure)`, compiled from DAX by [dax-sql](https://github.com/djouallah/dax-sql).
 
 ## Latest release: 0.2.4
 

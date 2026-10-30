@@ -1,31 +1,164 @@
 # OneLake Studio for VS Code — architecture
 
-- **Read only, except Export to Fabric.** **Export to Fabric** publishes an app, and writes the
-  model's `.bim` into its lakehouse's `Files/` when the model was opened from its local copy
-  (below). It runs from Explore's button or the command line's `export`, and either way it waits
-  for an OK in VS Code. Nothing else is written to Fabric or OneLake: not by the host, not by
-  DuckDB, not by SQL the page sends. The host refuses any statement that could write.
-- **Cache as much as possible.** Every answer OneLake or Fabric gave is kept on this machine and
-  served from there first; the network is asked only when nothing is cached, or the cached
-  answer is past its window.
+## How to think about it
+
+**Fabric is a catalog.** Everything the extension shows is an object in it, and every object has
+one name that no other object has:
+
+| Object | Its name |
+| --- | --- |
+| **A table** in a lakehouse, warehouse, SQL database or mirrored database | `<kind>.<workspace>.<item>.<schema>.<table>`, e.g. `lakehouse.aemo.data.dbo.dim_duid` |
+| **A file** in a lakehouse's `Files/` | its OneLake URL, `abfss://<workspace>@onelake.dfs.fabric.microsoft.com/<item>/Files/…` |
+| **A semantic model**: a view over tables, with measures | `semanticmodel.<workspace>.<model>` |
+
+**SQL is how you ask it.** Each of those names goes straight into a SQL statement, and the same
+statement runs in the main editor, a model's SQL tab and the command line (and so the agent
+skill). The tree, Explore and the agent are ways of writing that SQL: every Explore view is one
+`SELECT … FROM <model>`.
+
+```sql
+SELECT * FROM lakehouse.aemo.data.dbo.dim_duid;
+SELECT dim_region.Region, AGG("Registered MW") FROM semanticmodel.aemo.nem GROUP BY ALL;
+SELECT * FROM 'abfss://aemo@onelake.dfs.fabric.microsoft.com/data.Lakehouse/Files/x.parquet';
+SHOW ALL TABLES;
+```
+
+**Read only.** Nothing is written to Fabric or OneLake: not by the host, not by DuckDB, not by SQL
+the page sends. The host refuses any statement that could write. The one exception is **Export to
+Fabric**: it publishes an app, and writes the model's `.bim` into its lakehouse's `Files/` when the
+model was opened from its local copy (below). It runs from Explore's button or the command line's
+`export`, and either way it waits for an OK in VS Code.
+
+**Cache first.** Every answer OneLake or Fabric gave is kept on this machine and served from there
+first; the network is asked only when nothing is cached, or the cached answer is past its window.
+That includes the catalog itself: `SHOW ALL TABLES` and `information_schema` list what the tree
+has seen without a request to OneLake.
 
 The extension host in [`src/`](../src/) does sign-in, every OneLake read (cache first) and the query
 engine; its panel, [`app/`](../app/), is only a view.
 
-## Commands
+## Sign-in, the engine and the cache
 
-| Command | What it does |
-| --- | --- |
-| **OneLake Studio: Open** | Opens the panel, signing in if needed. |
-| **OneLake Studio: Sign in to OneLake** | Signs in and fills the explorer, without opening the panel. |
-| **OneLake Studio: Switch Microsoft Account** | Asks which account to use instead of reusing the remembered one, and reopens the panel so the previous account's tables do not survive the switch. To sign out altogether, use the Accounts menu in the bottom left — that is VS Code's to own, not an extension's. |
-| **OneLake Studio: Refresh** | Re-reads a workspace, item or folder from OneLake in the foreground. Everything else is served from the cache first and refreshed behind you. |
-| **OneLake Studio: Group by Type** / **Group by Workspace** | The explorer's title-bar toggle. By type, the top level is one heading per type — Lakehouses, Warehouses, SQL databases…, Semantic models, Apps — over every workspace, each item with its workspace beside it. The first time, it lists each workspace once; after that it is drawn from the cache. Remembered. |
-| **OneLake Studio: Show Read Log** | Every OneLake request the extension made, with sizes and timings. |
-| **OneLake Studio: Clear Cached OneLake Data** | Empties the on-disk cache (listings, table metadata, first rows, files, table data) and reports what it freed. It is the only thing that does: the cache survives a sign-out. |
-| **OneLake Studio: Install Agent Skill (Claude Code, GitHub Copilot)** | Lets Claude Code or GitHub Copilot answer questions about your OneLake data and semantic models (below). |
+[**OneLake Studio**](https://marketplace.visualstudio.com/items?itemName=djouallah.onelake-studio) needs
+no app registration: VS Code's own Microsoft account provider is a first-party application, so
+`getSession` returns the OneLake token directly.
 
-Saving a result as CSV, or a file from `Files/`, goes through VS Code's own save dialog.
+The query engine is **DuckDB 2.0 running natively in the extension host**
+([`src/engine-host.js`](../src/engine-host.js)) — a real DuckDB, not a WebAssembly
+build in the page. Each kind of item is one of its catalogs (`lakehouse`, `warehouse`,
+`sqldatabase`, `mirroreddatabase`, and `semanticmodel` for models), with the workspace, item and
+schema as nested schemas in it ([`src/names.js`](../src/names.js)). It reads OneLake itself through
+its `iceberg` and `azure` extensions: a table is read with `iceberg_scan` on the metadata file the
+host's cache holds — the catalog is never asked at query time — and `Files/` objects are read as
+`abfss://` URLs. DuckDB therefore does the Iceberg work itself — snapshot resolution, manifest
+filtering, position and equality deletes, schema evolution. Each query runs on its own connection,
+so Stop interrupts exactly that query, and a result past 200,000 rows is counted rather than carried
+into the panel.
+
+The token lives only in the extension host, in a DuckDB storage secret; when VS Code hands back a new
+one, the secret is reissued. The page holds no credential and makes no
+OneLake request: it reaches the host through one message channel, and only through `query`, `stream`,
+`cancel`, `info` and the host's OneLake reads ([`src/host.js`](../src/host.js)).
+File access is locked down to the temp directory, `https://`, `abfss://` and `zip://` over a remote
+archive, and the page's SQL is checked in the host ([`src/sql.js`](../src/sql.js)): one statement,
+a read, or the page's own views, schemas and `READ_ONLY` attaches — never `COPY`, `INSERT`,
+`EXPORT` or anything else that writes.
+
+Listings (workspaces, items, tables, `Files/`, semantic models), table metadata and first rows
+are served cache-first from disk ([`src/onelake.js`](../src/onelake.js)) and refreshed behind you.
+The bytes of a `Files/` object (an image, a `.bim`, a SQLite copy, a saved file) are kept under
+the etag its cached listing gave, so a rewritten file is read again and an unchanged one never
+is. Table data — Iceberg files never change once written — is kept by DuckDB's disk cache
+(cache_httpfs); the vsix carries a build of it with a Windows fix not yet released upstream
+(without it, nothing is cached on disk on Windows), which DuckDB loads as an unsigned extension
+until the fix ships. The cache is kept per Microsoft account, so switching accounts never serves
+one account's data to another; it survives a sign-out (signing back in finds it warm), and only
+**Clear Cached OneLake Data** deletes it.
+
+Each workspace also has an **Apps** node: its Fabric apps (`AppBackend` items), however they were
+made, listed with the Fabric API's item listing. Each shows its URL and when it was last deployed,
+from the app's deploy status (`GET …/appBackends/<id>/__private/deploy/status`), and whether its site
+is **public** or **protected**, from its runtime settings (`GET …/__private/projectRuntimeSettings`,
+`staticHosting.anonymousAccess`; nothing else from that answer is kept). Public means anyone with the
+URL loads the site without signing in, and its icon is an orange open lock; protected means Fabric asks
+for a sign-in and permission on the app first, a lock. Two reads per app, when *Apps* is expanded, then
+cached. A button copies the URL. Nothing is opened or changed.
+
+Requires desktop VS Code on x64 or arm64 Windows, macOS or Linux: the engine is a native library, so
+this does not run on vscode.dev.
+
+## Semantic models
+
+A model is a **semantic view**, and SQL names it — in the main editor, the model's SQL tab and
+the command line alike. It is named `semanticmodel.<workspace>.<model>`, and listed by
+`SHOW ALL TABLES` with the rest of the catalog. One opened from the tree, or named by a query, is
+its workspace's and keeps its own name; a query that names a model not opened yet opens it first
+(one read from Fabric). One opened from `Files/` is named after its file (`nem.bim` is `nem`) in the
+lakehouse's workspace. Every model opened is kept by the extension
+([`src/semviews.js`](../src/semviews.js)) as a pointer — name, model file path, when — in one file
+per Microsoft account in its own storage, so it survives a restart; the file stays where it is. A
+Direct Lake table is read from the lakehouse its model names, through the same Iceberg catalog,
+whichever item is selected, and only when a query actually reads it.
+
+The statements are dax-sql's (`createViews()`, vendored at the pin in
+[`src/vendored.js`](../src/vendored.js)); nothing here re-implements them. Only those that read
+are taken: a model is there because Fabric has it, or a lakehouse's `Files/` holds it, never
+because SQL made it, so dax-sql's `CREATE` and `DROP SEMANTIC VIEW` are refused.
+
+```sql
+SHOW SEMANTIC VIEWS;
+SHOW SEMANTIC DIMENSIONS IN semanticmodel.ws.sales [FOR METRIC m];
+SHOW SEMANTIC METRICS IN semanticmodel.ws.sales;
+DESCRIBE semanticmodel.ws.sales;
+SELECT * FROM (SHOW SEMANTIC METRICS IN semanticmodel.ws.sales) WHERE ...;
+```
+
+**From the tree.** The extension lists each workspace's **Power BI semantic models**. Clicking one
+reads its TMSL definition (the Fabric REST API's `getDefinition`) and keeps it on this machine, as
+`~/OneLakeStudio/semantic-models/<workspace>/<model>.bim`, then opens it. Nothing is written to
+OneLake, so someone who may only read the workspace can open and query its models.
+- **Only Direct Lake over OneLake.** Any other model is refused, and nothing is kept.
+- **The local copy is the cache.** Later clicks open it without asking Fabric; the tree marks the
+  model with a check. The command line reads and writes the same copies.
+- **Download Again** reads Fabric again and replaces the local copy, after asking.
+- **Export to Fabric** writes the local copy into the `Files/` of the one lakehouse its Direct Lake
+  expression names, `<lakehouse>/Files/semantic_model/<model>.bim`
+  ([`src/onelakewrite.js`](../src/onelakewrite.js)), because the app reads the model there. It
+  happens after you approve the export, and a different file of that name is replaced only when
+  you say so.
+- **What it needs:** a second token, in the Fabric API's audience, which VS Code asks for only when
+  you first expand *Semantic models*. Reading a definition needs Contributor or above on the
+  workspace, or write on the model. Exporting needs write access to the lakehouse.
+
+**From `Files/`.** A `.bim` under `Files/` opens as its semantic model, in place of the editor.
+So does an [Apache Ossie](https://github.com/apache/ossie) model whose metrics are DAX: a `.yaml`
+or `.yml` whose top level has `version:` and `datasets:` (any other YAML is a document).
+dax-sql's `formats/ossie.js` turns it into the `.bim` it stands for, with the vendored `yaml`
+parser, and from there the two are one ([`app/semantic.js`](../app/semantic.js)).
+
+Either way, a model opens on three pages:
+
+- **Model**: its tables as a star, dimensions in the middle and facts around them, with its
+  relationships. Click a table for its columns, measures (with their DAX) and relationships.
+- **Explore**: drag the model's columns onto Rows, Columns and Filters, and its measures onto
+  Values, to get a pivot table or a chart. A column dropped on Values is summarised, as in Power
+  BI: a number is summed and anything else counted, and its chip switches to average, median,
+  min, max, count or distinct count. Totals are off until you tick them, and a view cut at
+  5,000 rows leaves them out.
+- **SQL**: SQL in which `SELECT … FROM <model>` asks the model. `AGG(m)` is measure `m`, computed
+  with DAX's semantics by [dax-sql](https://github.com/djouallah/dax-sql), which compiles the
+  query to plain SQL:
+
+  ```sql
+  SELECT dim_region.Region, AGG("Registered MW") AS mw FROM nem GROUP BY ALL
+  ```
+
+  A model query can also be a subquery or CTE inside SQL of your own. Preview, Show plan and
+  Download CSV.
+
+To change the syntax, change dax-sql and move the pin: the extension carries no copy of it.
+
+There is no guarantee that DAX compiled to SQL here gives the same results as Power BI.
 
 ## Explore and Logs
 
@@ -105,6 +238,21 @@ The function's deploy package (an esbuild bundle plus its metadata) is built onc
 by [`scripts/function-bundle.mjs`](../scripts/function-bundle.mjs) with Rayfin's own packager, from
 `fabric_app/rayfin`. It ships in the vsix under `fabric-function/`.
 
+## Commands
+
+| Command | What it does |
+| --- | --- |
+| **OneLake Studio: Open** | Opens the panel, signing in if needed. |
+| **OneLake Studio: Sign in to OneLake** | Signs in and fills the explorer, without opening the panel. |
+| **OneLake Studio: Switch Microsoft Account** | Asks which account to use instead of reusing the remembered one, and reopens the panel so the previous account's tables do not survive the switch. To sign out altogether, use the Accounts menu in the bottom left — that is VS Code's to own, not an extension's. |
+| **OneLake Studio: Refresh** | Re-reads a workspace, item or folder from OneLake in the foreground. Everything else is served from the cache first and refreshed behind you. |
+| **OneLake Studio: Group by Type** / **Group by Workspace** | The explorer's title-bar toggle. By type, the top level is one heading per type — Lakehouses, Warehouses, SQL databases…, Semantic models, Apps — over every workspace, each item with its workspace beside it. The first time, it lists each workspace once; after that it is drawn from the cache. Remembered. |
+| **OneLake Studio: Show Read Log** | Every OneLake request the extension made, with sizes and timings. |
+| **OneLake Studio: Clear Cached OneLake Data** | Empties the on-disk cache (listings, table metadata, first rows, files, table data) and reports what it freed. It is the only thing that does: the cache survives a sign-out. |
+| **OneLake Studio: Install Agent Skill (Claude Code, GitHub Copilot)** | Lets Claude Code or GitHub Copilot answer questions about your OneLake data and semantic models (below). |
+
+Saving a result as CSV, or a file from `Files/`, goes through VS Code's own save dialog.
+
 ## Settings
 
 | Setting | What it does |
@@ -130,125 +278,6 @@ extension through updates. It can also run a DAX query against a model, print th
 model query or DAX compiles to, and check a measure against its raw table. Its one write is
 `export`, which is Explore's own Export to Fabric: the same code path, with the same questions
 asked in VS Code. The app opens on Explore's default view.
-
-## Sign-in, the engine and the cache
-
-[**OneLake Studio**](https://marketplace.visualstudio.com/items?itemName=djouallah.onelake-studio) needs
-no app registration: VS Code's own Microsoft account provider is a first-party application, so
-`getSession` returns the OneLake token directly.
-
-The query engine is **DuckDB 2.0 running natively in the extension host**
-([`src/engine-host.js`](../src/engine-host.js)) — a real DuckDB, not a WebAssembly
-build in the page. It reads OneLake itself through its `iceberg` and `azure` extensions: a table is
-read with `iceberg_scan` on the metadata file the host's cache holds — the catalog is never asked at
-query time — and `Files/` objects are read as `abfss://` URLs. DuckDB therefore does the Iceberg
-work itself — snapshot resolution, manifest filtering, position and equality deletes,
-schema evolution. Each query runs on its own connection, so Stop interrupts exactly that query, and a
-result past 200,000 rows is counted rather than carried into the panel.
-
-The token lives only in the extension host, in a DuckDB storage secret; when VS Code hands back a new
-one, the secret is reissued. The page holds no credential and makes no
-OneLake request: it reaches the host through one message channel, and only through `query`, `stream`,
-`cancel`, `info` and the host's OneLake reads ([`src/host.js`](../src/host.js)).
-File access is locked down to the temp directory, `https://`, `abfss://` and `zip://` over a remote
-archive, and the page's SQL is checked in the host ([`src/sql.js`](../src/sql.js)): one statement,
-a read, or the page's own views, schemas and `READ_ONLY` attaches — never `COPY`, `INSERT`,
-`EXPORT` or anything else that writes.
-
-Listings (workspaces, items, tables, `Files/`, semantic models), table metadata and first rows
-are served cache-first from disk ([`src/onelake.js`](../src/onelake.js)) and refreshed behind you.
-The bytes of a `Files/` object (an image, a `.bim`, a SQLite copy, a saved file) are kept under
-the etag its cached listing gave, so a rewritten file is read again and an unchanged one never
-is. Table data — Iceberg files never change once written — is kept by DuckDB's disk cache
-(cache_httpfs); the vsix carries a build of it with a Windows fix not yet released upstream
-(without it, nothing is cached on disk on Windows), which DuckDB loads as an unsigned extension
-until the fix ships. The cache is kept per Microsoft account, so switching accounts never serves
-one account's data to another; it survives a sign-out (signing back in finds it warm), and only
-**Clear Cached OneLake Data** deletes it.
-
-The extension also lists each workspace's **Power BI semantic models** in its tree. Clicking one
-reads its TMSL definition (the Fabric REST API's `getDefinition`) and keeps it on this machine, as
-`~/OneLakeStudio/semantic-models/<workspace>/<model>.bim`, then opens it. Nothing is written to
-OneLake, so someone who may only read the workspace can open and query its models.
-- **Only Direct Lake over OneLake.** Any other model is refused, and nothing is kept.
-- **The local copy is the cache.** Later clicks open it without asking Fabric; the tree marks the
-  model with a check. The command line reads and writes the same copies.
-- **Download Again** reads Fabric again and replaces the local copy, after asking.
-- **In SQL a model is `semanticmodel.<workspace>.<model>`**, listed by `SHOW ALL TABLES` with the
-  rest of the catalog. A query that names a model not opened yet opens it first (one read from
-  Fabric).
-- **Export to Fabric** writes the local copy into the `Files/` of the one lakehouse its Direct Lake
-  expression names, `<lakehouse>/Files/semantic_model/<model>.bim`
-  ([`src/onelakewrite.js`](../src/onelakewrite.js)), because the app reads the model there. It
-  happens after you approve the export, and a different file of that name is replaced only when
-  you say so.
-- **What it needs:** a second token, in the Fabric API's audience, which VS Code asks for only when
-  you first expand *Semantic models*. Reading a definition needs Contributor or above on the
-  workspace, or write on the model. Exporting needs write access to the lakehouse.
-
-Each workspace also has an **Apps** node: its Fabric apps (`AppBackend` items), however they were
-made, listed with the Fabric API's item listing. Each shows its URL and when it was last deployed,
-from the app's deploy status (`GET …/appBackends/<id>/__private/deploy/status`), and whether its site
-is **public** or **protected**, from its runtime settings (`GET …/__private/projectRuntimeSettings`,
-`staticHosting.anonymousAccess`; nothing else from that answer is kept). Public means anyone with the
-URL loads the site without signing in, and its icon is an orange open lock; protected means Fabric asks
-for a sign-in and permission on the app first, a lock. Two reads per app, when *Apps* is expanded, then
-cached. A button copies the URL. Nothing is opened or changed.
-
-Requires desktop VS Code on x64 or arm64 Windows, macOS or Linux: the engine is a native library, so
-this does not run on vscode.dev.
-
-## Semantic models
-
-**A `.bim` under `Files/` opens as its semantic model**, in place of the editor, on three pages.
-So does an [Apache Ossie](https://github.com/apache/ossie) model whose metrics are DAX: a `.yaml`
-or `.yml` whose top level has `version:` and `datasets:` (any other YAML is a document).
-dax-sql's `formats/ossie.js` turns it into the `.bim` it stands for, with the vendored `yaml`
-parser, and from there the two are one ([`app/semantic.js`](../app/semantic.js)). The pages:
-
-- **Model**: its tables as a star, dimensions in the middle and facts around them, with its
-  relationships. Click a table for its columns, measures (with their DAX) and relationships.
-- **Explore**: drag the model's columns onto Rows, Columns and Filters, and its measures onto
-  Values, to get a pivot table or a chart. A column dropped on Values is summarised, as in Power
-  BI: a number is summed and anything else counted, and its chip switches to average, median,
-  min, max, count or distinct count. Totals are off until you tick them, and a view cut at
-  5,000 rows leaves them out.
-- **SQL**: SQL in which `SELECT … FROM <model>` asks the model. `AGG(m)` is measure `m`, computed
-  with DAX's semantics by [dax-sql](https://github.com/djouallah/dax-sql), which compiles the
-  query to plain SQL:
-
-  ```sql
-  SELECT dim_region.Region, AGG("Registered MW") AS mw FROM nem GROUP BY ALL
-  ```
-
-  A model query can also be a subquery or CTE inside SQL of your own. Preview, Show plan and
-  Download CSV.
-
-A model is a **semantic view**, and SQL names it — in the main editor, the model's SQL tab and
-the command line alike. The statements are dax-sql's (`createViews()`, vendored at the pin in
-[`src/vendored.js`](../src/vendored.js)); nothing here re-implements them. Only those that read
-are taken: a model is there because Fabric has it, or a lakehouse's `Files/` holds it, never
-because SQL made it, so dax-sql's `CREATE` and `DROP SEMANTIC VIEW` are refused.
-
-```sql
-SHOW SEMANTIC VIEWS;
-SHOW SEMANTIC DIMENSIONS IN semanticmodel.ws.sales [FOR METRIC m];
-SHOW SEMANTIC METRICS IN semanticmodel.ws.sales;
-DESCRIBE semanticmodel.ws.sales;
-SELECT * FROM (SHOW SEMANTIC METRICS IN semanticmodel.ws.sales) WHERE ...;
-```
-
-A model is named `semanticmodel.<workspace>.<model>`. One opened from the tree, or named by a query,
-is its workspace's and keeps its own name; one opened from `Files/` is named after its file
-(`nem.bim` is `nem`) in the lakehouse's workspace. Every model opened is kept by the extension
-([`src/semviews.js`](../src/semviews.js)) as a pointer — name, model file path, when — in one file
-per Microsoft account in its own storage, so it survives a restart; the file stays where it is. A
-Direct Lake table is read from the lakehouse its model names, through the same Iceberg catalog,
-whichever item is selected, and only when a query actually reads it.
-
-To change the syntax, change dax-sql and move the pin: the extension carries no copy of it.
-
-There is no guarantee that DAX compiled to SQL here gives the same results as Power BI.
 
 ## Limitations
 
