@@ -12,8 +12,9 @@ the panel holds no token, and table Pivot is only a SQL starter.
 
 ## Fits "a catalog read with SQL"
 5. ~~**Column profile of a result**~~ Done (`SUMMARIZE`). Left: a small histogram per column.
-6. **Time travel from History:** "Query this version" on a Delta commit or an Iceberg snapshot, and
-   "Diff with current" for row count and schema.
+6. ~~**Time travel from History**~~ Done for Iceberg snapshots (Query, rows and columns vs now).
+   Left: a Delta commit, which needs the Iceberg snapshot Fabric converted it to (the metadata names
+   only the latest Delta version it synced).
 7. ~~**Export to a local file**~~ Done.
 8. ~~**SQL from the tree**~~ Done (tables and models; the tree lists no columns to drag).
 

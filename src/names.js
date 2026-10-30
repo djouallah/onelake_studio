@@ -244,10 +244,23 @@ function sourceFormat(meta) {
 }
 
 // An Iceberg table's history: its snapshots, newest first. Only for a table written as
-// Iceberg — a converted one's snapshots are the conversion's, not the writer's.
+// Iceberg — a converted one's snapshots are the conversion's, not the writer's. Each says how
+// its columns differ from the table's now (`columns`: { added, removed } by name, null when
+// they are the same), for the History tab's comparison with the current version.
 const HISTORY_MAX = 100;
 function icebergHistory(meta) {
   const num = v => (v == null || v === "" ? null : Number(v));
+  const names = id => {
+    const s = ((meta || {}).schemas || []).find(x => x["schema-id"] === id);
+    return s ? (s.fields || []).map(f => f.name) : null;
+  };
+  const now = names((meta || {})["current-schema-id"]);
+  const columns = id => {
+    const then = names(id);
+    if (!now || !then || id === meta["current-schema-id"]) return null;
+    const added = now.filter(c => !then.includes(c)), removed = then.filter(c => !now.includes(c));
+    return added.length || removed.length ? { added, removed } : null;
+  };
   return [...((meta || {}).snapshots || [])]
     .sort((a, b) => (b["sequence-number"] ?? b["timestamp-ms"]) - (a["sequence-number"] ?? a["timestamp-ms"]))
     .slice(0, HISTORY_MAX)
@@ -265,6 +278,7 @@ function icebergHistory(meta) {
         totalRows: num(m["total-records"]),
         engine: m["engine-name"] ? `${m["engine-name"]} ${m["engine-version"] || ""}`.trim()
               : m["iceberg-version"] || null,
+        columns: columns(s["schema-id"]),
       };
     });
 }

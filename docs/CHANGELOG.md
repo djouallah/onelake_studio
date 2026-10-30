@@ -25,6 +25,9 @@
   Ctrl+C copies as tab-separated text (Ctrl+Shift+C with headers). Right-click: Copy, Copy with
   Headers, Copy as CSV, Markdown or JSON. A double click (or Enter) shows a cell whole, JSON
   indented. The filter box keeps the rows that hold its text.
+- **Time travel on an Iceberg table:** History's Query opens a snapshot's rows in a query editor
+  (`iceberg_scan(…, snapshot_from_id = …)`), and each snapshot says how its row count and its
+  columns differ from the table now.
 - **Profile** in the panel: each column of the result, over every row the query returns: its
   type, min and max, distinct values, average, spread, quartiles, count and nulls.
 - **Export…** (was Save CSV) writes every row the query returns, not only the rows on screen, to

@@ -45,6 +45,19 @@ test("an Iceberg table's history is its snapshots, newest first", () => {
   assert.equal(h[0].rowsRemoved, 2);
   assert.equal(h[1].rowsAdded, 5);
   assert.equal(h[1].totalRows, 5);
+  assert.equal(h[0].columns, null);
+});
+
+test("a snapshot says how its columns differ from the table's now", () => {
+  const h = n.icebergHistory({
+    "current-schema-id": 1,
+    schemas: [{ "schema-id": 0, fields: [{ name: "a" }, { name: "old" }] },
+              { "schema-id": 1, fields: [{ name: "a" }, { name: "new" }] }],
+    snapshots: [{ "snapshot-id": 1, "sequence-number": 1, "schema-id": 0, summary: {} },
+                { "snapshot-id": 2, "sequence-number": 2, "schema-id": 1, summary: {} }],
+  });
+  assert.equal(h[0].columns, null);
+  assert.deepEqual(h[1].columns, { added: ["new"], removed: ["old"] });
 });
 
 test("only a lakehouse has a Files/ area, and kinds read as the portal says them", () => {

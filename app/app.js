@@ -124,7 +124,12 @@ function wireUi() {
   $('viewData').onclick = onDataTab;
   $('viewStats').onclick = showStats;
   $('viewHistory').onclick = showHistory;
-  $('statsView').addEventListener('click', e => { if (e.target.id === 'historyMore') loadHistory(true); });
+  $('statsView').addEventListener('click', e => {
+    if (e.target.id === 'historyMore') loadHistory(true);
+    // An Iceberg snapshot's Query: the table as it was then, in a query editor.
+    const snap = e.target.closest('button[data-snapshot]');
+    if (snap) querySnapshot(snap.dataset.snapshot);
+  });
   $('readSrc').onclick = () => vs.postMessage({ type: 'show-log' });
 }
 
@@ -1019,6 +1024,25 @@ function deltaCardHtml(info, state) {
   return kvTable(rows) + propsHtml + columnsHtml(info) + `<p class="statsNote">${escapeHtml(note)}</p>`;
 }
 
+// A snapshot against the newest one (the table now): rows, and columns by name.
+const rowsVsNow = (h, now) => {
+  if (h === now || h.totalRows == null || !now || now.totalRows == null) return '—';
+  const d = now.totalRows - h.totalRows;
+  return d === 0 ? 'same' : `${d > 0 ? '+' : '−'}${n0(Math.abs(d))} since`;
+};
+const columnsVsNow = h => !h.columns ? '—'
+  : [h.columns.added.length ? `added since: ${h.columns.added.join(', ')}` : '',
+     h.columns.removed.length ? `dropped since: ${h.columns.removed.join(', ')}` : ''].filter(Boolean).join('; ');
+
+// An Iceberg snapshot, queried as it was: its rows in a new query editor.
+function querySnapshot(id) {
+  if (!activeInfo || !activeInfo.metadataLocation || !/^\d+$/.test(String(id))) return;
+  const loc = String(activeInfo.metadataLocation).replace(/'/g, "''");
+  openInEditor(`-- ${activeSqlName || $('activeTable').textContent} as of snapshot ${id}\n` +
+               `SELECT *\nFROM iceberg_scan('${loc}', snapshot_from_id = ${id})\nLIMIT 1000;\n`,
+               `Snapshot ${id} is in a query editor: run it there (Ctrl+Enter).`);
+}
+
 // Newest first: the Delta log's commits, or an Iceberg table's snapshots.
 function historyHtml(info, hist) {
   const deltaTable = isDelta(info);
@@ -1041,11 +1065,15 @@ function historyHtml(info, hist) {
     : [['Snapshot', h => h.version, 'num'], ['When', h => when(h.timestamp)], ['Operation', h => h.operation || '—'],
        ['Rows added', h => n0(h.rowsAdded), 'num'], ['Rows deleted', h => n0(h.rowsRemoved), 'num'],
        ['Files', files, 'num'], ['Size added', h => h.bytesAdded == null ? '—' : engine.fmtBytes(h.bytesAdded), 'num'],
-       ['Total rows', h => n0(h.totalRows), 'num'], ['Engine', h => h.engine || '—']];
+       ['Total rows', h => n0(h.totalRows), 'num'], ['Rows vs now', h => rowsVsNow(h, list[0]), 'num'],
+       ['Columns vs now', columnsVsNow], ['Engine', h => h.engine || '—']];
   // A column nobody filled (no commit carried a user) is noise, not information.
   const shown = cols.filter(([, f], i) => i < 3 || list.some(h => !['—', ''].includes(String(f(h)))));
-  const table = '<table class="history"><tr>' + shown.map(([h]) => `<th>${escapeHtml(h)}</th>`).join('') + '</tr>' +
-    list.map(h => '<tr>' + shown.map(([, f, cls]) =>
+  // An Iceberg snapshot can be queried as it was (iceberg_scan's snapshot_from_id).
+  const canQuery = !deltaTable && !!info.metadataLocation;
+  const table = '<table class="history"><tr>' + (canQuery ? '<th></th>' : '') + shown.map(([h]) => `<th>${escapeHtml(h)}</th>`).join('') + '</tr>' +
+    list.map(h => '<tr>' + (canQuery ? `<td><button data-snapshot="${escapeHtml(h.version)}" title="This snapshot's rows, in a query editor">Query</button></td>` : '') +
+      shown.map(([, f, cls]) =>
       `<td${cls ? ` class="${cls}"` : ''}>${escapeHtml(String(f(h)))}</td>`).join('') + '</tr>').join('') +
     '</table>';
   if (!deltaTable) {
