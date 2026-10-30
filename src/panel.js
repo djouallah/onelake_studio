@@ -87,8 +87,9 @@ function wireEngine(panel, engine, methods = {}) {
 // assignment, and the loser of that race was orphaned holding an engine bridge forever.
 let opening = null;
 
-// `place`: { beside, from } for a query run from an editor (queryeditor.js): the panel opens
-// beside that editor, and the editor keeps the focus.
+// `place`: { beside, from, below } for a query run from an editor (queryeditor.js): the panel
+// opens with that editor, which keeps the focus — under it (`below`, the
+// onelakeStudio.resultsLocation setting) or beside it.
 function openPanel(context, opts = {}) {
   if (current) { revealPanel(opts.place); return Promise.resolve(current); }
   if (!opening) {
@@ -101,9 +102,10 @@ async function openPanelUncontended(context, { onOpened, onBoot, onBootFailed, e
   const { page: siteUri, readme: readmeUri } = await webviewRoot(context.extensionUri,
     { dev: context.extensionMode === vscode.ExtensionMode.Development });
   const vendorUri = vscode.Uri.joinPath(context.extensionUri, 'vendor');
+  const fromEditor = !!(place && place.beside);
   const panel = vscode.window.createWebviewPanel(
     'onelakeStudio', 'OneLake Studio',
-    place && place.beside ? { viewColumn: vscode.ViewColumn.Beside, preserveFocus: true } : vscode.ViewColumn.Active, {
+    fromEditor && !place.below ? { viewColumn: vscode.ViewColumn.Beside, preserveFocus: true } : vscode.ViewColumn.Active, {
       enableScripts: true,
       // DuckDB spends real time and network booting; tearing it down whenever the tab
       // loses focus would make the extension feel broken.
@@ -131,6 +133,9 @@ async function openPanelUncontended(context, { onOpened, onBoot, onBootFailed, e
     panel.dispose();
     throw e;
   }
+
+  // Opened from an editor, results under it: made in the editor's group, then moved down.
+  if (fromEditor && place.below) await dockBelow();
 
   const onCall = engine ? wireEngine(panel, engine, host) : null;
   // The panel's own listeners die with the panel. Pushed onto context.subscriptions they
@@ -193,16 +198,42 @@ function closePanel() {
 // account switch closes it), so a click on a live panel is a reveal and a message.
 // It stays in its own column: brought to the front there, not moved over the editor the user is
 // in. A query run from an editor (`place.beside`) keeps that editor's focus, and a panel
-// sharing the editor's column (behind it) moves beside it, so the two are on screen together.
+// sharing the editor's column (behind it) moves under it (`place.below`) or beside it, so the
+// two are on screen together. A panel in a column of its own stays where it is: wherever the
+// user put it is where it goes on showing.
 function revealPanel(place = {}) {
   if (!current) return false;
   const col = current.viewColumn;
-  if (place.beside && (col == null || col === place.from)) current.reveal(vscode.ViewColumn.Beside, true);
+  const covered = place.beside && (col == null || col === place.from);
+  if (covered && place.below) dockBelow();
+  else if (covered) current.reveal(vscode.ViewColumn.Beside, true);
   else current.reveal(col, !!place.beside);
   return true;
+}
+
+// The panel, moved out of the editor's group into a new group under it, and the focus back on
+// the editor above. VS Code moves only the active tab of a group, so the panel is made active
+// in its group first.
+let docking = null;
+function dockBelow() {
+  if (!current || docking) return docking;
+  const panel = current;
+  docking = (async () => {
+    panel.reveal(panel.viewColumn, false);
+    await vscode.commands.executeCommand('workbench.action.moveEditorToBelowGroup');
+    await vscode.commands.executeCommand('workbench.action.focusAboveGroup');
+  })().catch(() => {}).finally(() => { docking = null; });
+  return docking;
+}
+
+// Under the active editor, when the panel shares its group (a new query editor opened over it).
+function dockBelowEditor() {
+  const ed = vscode.window.activeTextEditor;
+  if (current && ed && current.viewColumn === ed.viewColumn) return dockBelow();
+  return null;
 }
 
 // The column the panel is in, or undefined: a new query editor opens in another one.
 const panelColumn = () => (current ? current.viewColumn : undefined);
 
-module.exports = { openPanel, closePanel, revealPanel, panelColumn, postToPanel, postLive };
+module.exports = { openPanel, closePanel, revealPanel, panelColumn, dockBelowEditor, postToPanel, postLive };

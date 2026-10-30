@@ -6,8 +6,8 @@
   Queries) opens an editor, a saved query opens as its `.sql` file, and Edit SQL in the panel (or in
   a table's Pivot) opens what is on screen in a new one. In a query's editor:
   - Ctrl+Enter, or ▶ OneLake Run above each statement (and in the title bar), runs the statement under the cursor (or the
-    selection); OneLake Plan shows where it spends its time. The results show in the panel, beside the
-    editor.
+    selection); OneLake Plan shows where it spends its time. The results show in the panel, under
+    the editor (or beside it: the `onelakeStudio.resultsLocation` setting).
   - DuckDB's error is marked where it says it is, until the next edit.
   - Completion names what the cache holds: catalogs, workspaces, items, schemas, tables and their
     columns, and an opened model's measures as `AGG("…")`.

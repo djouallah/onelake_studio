@@ -14,7 +14,7 @@ const os = require('node:os');
 const { existsSync } = require('node:fs');
 const fsp = require('node:fs/promises');
 const { registerQueryEditor } = require('./queryeditor');
-const { openPanel, closePanel, revealPanel, panelColumn, postToPanel, postLive } = require('./panel');
+const { openPanel, closePanel, revealPanel, panelColumn, dockBelowEditor, postToPanel, postLive } = require('./panel');
 const { createCatalog } = require('./catalog');
 const { createStore } = require('./store');
 const { createOneLake } = require('./onelake');
@@ -845,17 +845,25 @@ async function activateInner(context) {
   // document's language (VS Code closes and reopens it to do so), and it is still a query here.
   const isQuery = doc => (doc.isUntitled ? newQueries.has(doc.uri.toString())
                                          : doc.uri.scheme === 'file' && isQueryFile(doc.uri.fsPath));
-  // A query editor opens in a column of its own, beside the panel rather than over it.
+  // Where a query's results go (onelakeStudio.resultsLocation): under its editor, or beside it.
+  const resultsBelow = () => vscode.workspace.getConfiguration('onelakeStudio').get('resultsLocation', 'below') !== 'beside';
+  // A query editor opens where the panel is not covered by it for long. Results below: in the
+  // panel's group, and the panel moves under it (dockBelowEditor). Beside: in another column.
   const queryColumn = () => {
     const p = panelColumn();
-    return p == null ? vscode.ViewColumn.Active : p === vscode.ViewColumn.One ? vscode.ViewColumn.Two : vscode.ViewColumn.One;
+    if (p == null || resultsBelow()) return p == null ? vscode.ViewColumn.Active : p;
+    return p === vscode.ViewColumn.One ? vscode.ViewColumn.Two : vscode.ViewColumn.One;
   };
+  async function showQuery(docOrUri, opts) {
+    await vscode.window.showTextDocument(docOrUri, { viewColumn: queryColumn(), ...opts });
+    if (resultsBelow()) await dockBelowEditor();
+  }
   async function openNewQuery(sql) {
     const doc = await vscode.workspace.openTextDocument({ language: 'sql', content: String(sql ?? '') });
     newQueries.add(doc.uri.toString());
-    await vscode.window.showTextDocument(doc, { viewColumn: queryColumn() });
+    await showQuery(doc);
   }
-  const openSavedQuery = path => vscode.window.showTextDocument(vscode.Uri.file(path), { viewColumn: queryColumn(), preview: false });
+  const openSavedQuery = path => showQuery(vscode.Uri.file(path), { preview: false });
   editSql = ({ sql }) => openNewQuery(sql);
 
   // A statement sent to the panel waits here for the page's answer (host.queryDone).
@@ -870,7 +878,8 @@ async function activateInner(context) {
     const answer = new Promise(resolve => runs.set(id, resolve));
     // A panel closed before it answered never will: the oldest wait is let go.
     if (runs.size > 20) { const [old] = runs.keys(); runs.get(old)(null); runs.delete(old); }
-    const sent = await openInPanel({ type: plan ? 'plan-sql' : 'run-sql', id, sql, title }, { beside: true, from: column });
+    const sent = await openInPanel({ type: plan ? 'plan-sql' : 'run-sql', id, sql, title },
+                                   { beside: true, from: column, below: resultsBelow() });
     if (!sent) { runs.delete(id); return null; }
     return answer;
   }

@@ -449,6 +449,16 @@
           "patternErrorMessage": "A DuckDB memory size, e.g. 4GB or 512MB.",
           "markdownDescription": "Most memory DuckDB may use, e.g. `4GB`. Empty means a quarter of this machine's RAM — DuckDB's own default is 80%, which is too much for the extension host every other extension shares. Bigger queries spill to a temp directory instead of failing. Applies the next time the engine starts."
         },
+        "onelakeStudio.resultsLocation": {
+          "type": "string",
+          "enum": ["below", "beside"],
+          "enumDescriptions": [
+            "Under the query's editor, in a group of its own.",
+            "Beside the query's editor, side by side."
+          ],
+          "default": "below",
+          "markdownDescription": "Where a query's results show when it is run from its editor. The panel moves only when it would cover the editor; once it is in a group of its own, it stays wherever you put it."
+        },
         "onelakeStudio.diskCacheMaxGB": {
           "type": "number",
           "default": 64,
