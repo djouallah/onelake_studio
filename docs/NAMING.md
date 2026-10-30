@@ -72,11 +72,8 @@ and dax-sql, which compiles the model before DuckDB sees the statement, reads at
 **`semanticmodel` is a catalog of its own**, as `lakehouse` is for lakehouse tables. A model and a
 lakehouse can share a name, and a five-part name is never mistaken for a model.
 
-**Where the model part comes from:**
-- **From the tree, or named in a query:** the model's own Fabric name, in its own workspace.
-- **From a `.bim` or `.yaml` under `Files/`:** the file's name up to its first dot, with anything
-  other than `A-Za-z0-9_` replaced by `_`, and `_` in front of a leading digit. The workspace is the
-  one the file is in.
+**A semantic model here is the Fabric item**, the Power BI model. The model part is its own Fabric
+name, and the workspace part is its own workspace.
 
 ## Spelling a name
 
@@ -131,9 +128,6 @@ refused for the same reason.
 
 These do not meet the contract yet:
 
-- **Two model files can get one name.** A `Files/` model has no item part, so two `nem.bim` files in
-  different lakehouses of one workspace are both `semanticmodel.<workspace>.nem`, and the second
-  replaces the first (`src/semviews.js`).
 - **A bare model name can still compile.** `app/semantic.js` says "nothing shorter", but dax-sql
   resolves a name by its last parts, so `FROM nem` can reach an open view when only one fits.
 - **The command line's help shows the short form.** `bin/cli.mjs` has `FROM model` in the `sql` help.
