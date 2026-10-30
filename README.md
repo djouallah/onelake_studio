@@ -3,6 +3,9 @@
 Browse and query your Microsoft Fabric data in VS Code, signed in with the Microsoft account
 VS Code already uses.
 
+Fabric is treated as one catalog: tables, files and semantic models (views over tables), each with
+a unique name, queried with SQL. Read only, cache first.
+
 ![The OneLake explorer](docs/summary.png)
 
 ## What you can do
@@ -10,7 +13,8 @@ VS Code already uses.
 - **Browse OneLake.** Workspaces, lakehouses, warehouses, SQL and mirrored databases, their tables
   and files, in one tree. Pin workspaces, or group by type.
 - **Query with SQL.** Every table has one name, `lakehouse.workspace.item.schema.table`, and every
-  semantic model is `semanticmodel.workspace.model`. Join across items and workspaces;
+  semantic model is `semanticmodel.workspace.model`. The type comes first because a lakehouse and
+  a warehouse can share a name. Join across items and workspaces;
   `SHOW ALL TABLES` lists them all.
 - **Look at a table in a click.** Columns, row count, first rows, and Delta or Iceberg stats and
   history.
