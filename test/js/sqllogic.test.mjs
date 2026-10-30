@@ -50,6 +50,11 @@ const CACHED = [
     emptySql: "SELECT CAST(NULL AS INTEGER) AS id WHERE false" },
   { kind: "semanticmodel", workspace: "cat1", model: "Sales" },
 ];
+// A table not in the cache's listing, named all the same, that answers with rows (rows.test).
+const READABLE = [
+  { kind: "lakehouse", workspace: "cat1", item: "lh", schema: "dbo", table: "readings",
+    emptySql: `SELECT * FROM (VALUES (1, 'a', 10), (2, 'b', 20), (3, NULL, 30), (4, 'a,"b"', NULL)) t(id, name, reading)` },
+];
 
 // The records of one .test file: { kind, sql, expected, types, rowsort, line }.
 function parse(text) {
@@ -99,7 +104,7 @@ test("test/sql/*.test, through the command line's sql", async t => {
   const extDir = await mkdtemp(join(tmpdir(), "onelake-sqllogic-ext-"));
   // A table a statement names is the cache's, empty: its columns and no rows.
   const resolveTable = async ref => {
-    const c = CACHED.find(x => x.kind === ref.kind && x.workspace.toLowerCase() === ref.workspace.toLowerCase() &&
+    const c = [...CACHED, ...READABLE].find(x => x.kind === ref.kind && x.workspace.toLowerCase() === ref.workspace.toLowerCase() &&
                                x.item.toLowerCase() === ref.item.toLowerCase() &&
                                x.table.toLowerCase() === ref.table.toLowerCase());
     if (!c) throw new Error(`there is no ${ref.kind} table ${ref.workspace}.${ref.item}.${ref.schema}.${ref.table}`);

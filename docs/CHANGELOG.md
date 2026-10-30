@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- **The command line is built for an agent to act on.**
+  - **Exit codes say what happened:** 0 answered, 1 failed, 2 wrong call, 3 VS Code not open or not
+    signed in, 4 not cached, 5 you declined an export, 6 timed out.
+  - **New options:** `--json`, `sql -` for SQL from stdin with no shell quoting to get wrong,
+    `--timeout`, `--version` and `<command> --help`. A query stops when its command is killed.
+  - **Fixed:** `models <typo>` and `items <typo>` answered "none" and exit 0; a cancelled export
+    exited 0; `--csv` left rows out past 200,000 with no word, now fails; `--show-sql` broke a `--csv`.
+  - **Changed:** `--csv` holds raw values under plain column names, and always a header. An unknown
+    option, a bad `--limit` or an option a command does not take is refused rather than ignored.
 - **A new query keeps Run, Plan and Save Query across a reload.** VS Code restores its untitled tab,
   and it is still a query until that tab is closed.
 - **A semantic model's local copy is an Apache Ossie file.** Clicking a model keeps

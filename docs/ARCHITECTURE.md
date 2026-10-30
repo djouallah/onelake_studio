@@ -276,7 +276,7 @@ Saving a result as CSV, or a file from `Files/`, goes through VS Code's own save
 GitHub Copilot in VS Code (agent mode) look for personal skills. Either then
 answers questions about OneLake and Power BI semantic models itself: it lists workspaces,
 lakehouses and models, reads a model's measures and their DAX, and computes measures by any
-column — `SELECT dim_customer.Region, AGG("Total Sales") FROM sales_model GROUP BY ALL` — on the
+column — `SELECT dim_customer.Region, AGG("Total Sales") FROM semanticmodel.sales.sales_model GROUP BY ALL` — on the
 same sign-in, cache, DuckDB and DAX compiler as the panel, read only. The skill runs the
 extension's `bin/cli.mjs` with Node.js, which only hands the question to the extension running in
 VS Code and prints its answer — so VS Code has to be open, signed in. The skill follows the
@@ -308,9 +308,10 @@ src/      extension host: sign-in, cache-first OneLake, tree, native DuckDB, Fab
 app/      the panel: a view over the host (its own page, no sign-in, no network)
 media/    icons
 test/     js/: the node --test suite (npm test) and the browser runners;
-          sql/: SQL statements and their answers (sqllogictest), run through the command line
+          sql/: SQL statements and their answers (sqllogictest), run through the agent's sql;
+          cli*.test.mjs run bin/cli.mjs itself, as a process
 docs/     this file, the changelog, a summary of both and a screenshot
-bin/      cli.mjs, the command line: hands ls, table, model, sql to the running extension (bridge.js -> agent.js)
+bin/      cli.mjs, the command line: hands every command to the running extension (bridge.js -> agent.js)
 claude-skill/  the agent skill (Claude Code, GitHub Copilot) that runs cli.mjs, installed by Install Agent Skill
 scripts/  packaging: bundle, stage-webview, vendor, fetch-extensions, check-binding, fetch-binding, make-icon
 ```

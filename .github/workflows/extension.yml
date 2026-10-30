@@ -1,6 +1,6 @@
 # CI for the VS Code extension, and its Marketplace release.
 #
-# Every push to main and every pull request runs test -> engine -> package, so a change is
+# Every push to main and every pull request runs test, engine and cli-os, then package, so a change is
 # packaged for every platform and checked exactly as a release would be. Only an ext-v* tag
 # reaches the publish job.
 #
@@ -17,7 +17,7 @@
 # run time. So every supported platform gets its own vsix, all cross-packaged on ubuntu by
 # fetching that platform's binding tarball straight from the registry:
 #
-#   test  ->  package (one leg per target)  ->  publish (every vsix in ONE call)
+#   test, engine, cli-os  ->  package (one leg per target)  ->  publish (every vsix in ONE call)
 #
 # linux-armhf and web are deliberately absent: DuckDB publishes no binding for either, and an
 # extension that installs and then cannot start is worse than one that is not offered. Those
@@ -134,7 +134,30 @@ jobs:
           path: vendor
           key: vendor-${{ hashFiles('scripts/vendor.mjs', 'scripts/fetch-retry.mjs', 'src/vendored.js') }}
       - run: node scripts/vendor.mjs
-      - run: node --test test/js/sqllogic.test.mjs
+      # The command line over all of it, as an agent meets it: the real process, no stand-ins but
+      # OneLake. Measured here because only this job reaches `sql` and `model`; the spawned
+      # bin/cli.mjs is counted too, through the NODE_V8_COVERAGE it inherits.
+      - name: The command line, on the real engine, with its coverage
+        run: >-
+          node --test --experimental-test-coverage
+          --test-coverage-include=bin/cli.mjs --test-coverage-include=src/agent.js --test-coverage-include=src/bridge.js
+          test/js/sqllogic.test.mjs test/js/cli-engine.test.mjs
+          test/js/cli.test.mjs test/js/cli-contract.test.mjs test/js/agent.test.mjs test/js/bridge.test.mjs
+
+  # The command line where it runs for most people: a named pipe, not a socket, and another
+  # shell's idea of an argument. Everything but the engine, so nothing to install.
+  cli-os:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - run: node --test test/js/bridge.test.mjs test/js/agent.test.mjs test/js/cli.test.mjs test/js/cli-contract.test.mjs test/js/cli-docs.test.mjs
 
   # What every vsix carries whatever its platform, built once and kept in the cache for the
   # six package legs, which then restore it rather than build it six times: the webview's and
@@ -159,7 +182,7 @@ jobs:
       - run: node scripts/function-bundle.mjs
 
   package:
-    needs: [test, engine, prepare]
+    needs: [test, engine, cli-os, prepare]
     runs-on: ubuntu-26.04
     strategy:
       # Every leg's failure is worth seeing in the same run; the publish job is gated on ALL
@@ -280,6 +303,21 @@ jobs:
           ! grep -q '^extension/node_modules/@duckdb/node-api/' <<<"$files" \
             || { echo "@duckdb/node-api shipped beside the bundle"; exit 1; }
           echo "ok — $vsix carries $dirs and nothing else, bundles its DuckDB extensions, and runs from dist/extension.js"
+
+      # The command line runs from the vsix alone, beside no src/ but bridge.js: a require that
+      # packaging dropped fails here, not on an agent. Nothing listens, so `ls` must say exit 3.
+      - name: The vsix's command line must run
+        run: |
+          set -euo pipefail
+          unpacked="$RUNNER_TEMP/vsix-cli"
+          rm -rf "$unpacked" && mkdir -p "$unpacked"
+          unzip -q "$(ls *.vsix)" 'extension/bin/*' 'extension/src/*' 'extension/package.json' -d "$unpacked"
+          cli="$unpacked/extension/bin/cli.mjs"
+          node "$cli" --version | grep -q '^onelake-studio ' || { echo "--version did not answer"; exit 1; }
+          node "$cli" --help | grep -q 'exit codes:' || { echo "--help did not answer"; exit 1; }
+          code=0
+          ONELAKE_STUDIO_BRIDGE="$unpacked/nobody.sock" node "$cli" ls || code=$?
+          [ "$code" = 3 ] || { echo "ls with no extension exited $code, not 3"; exit 1; }
 
       # upload-artifact v4 refuses two jobs writing the same name, so the target is part of
       # it. overwrite lets "re-run failed jobs" replace a leg's output instead of failing on a

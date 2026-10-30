@@ -1,0 +1,55 @@
+# Tables that answer with rows: what comes back through the command line is what the table holds,
+# NULLs and awkward text included. The other files read tables with none.
+
+query I
+SELECT count(*) FROM lakehouse.cat1.lh.dbo.readings
+----
+4
+
+query ITI
+SELECT id, name, reading FROM lakehouse.cat1.lh.dbo.readings ORDER BY id
+----
+1	a	10
+2	b	20
+3	NULL	30
+4	a,"b"	NULL
+
+query I
+SELECT sum(reading) FROM lakehouse.cat1.lh.dbo.readings
+----
+60
+
+query TI rowsort
+SELECT coalesce(name, 'none'), count(*) FROM lakehouse.cat1.lh.dbo.readings GROUP BY ALL
+----
+a	1
+a,"b"	1
+b	1
+none	1
+
+query II
+SELECT a.id, b.id FROM lakehouse.cat1.lh.dbo.readings a JOIN lakehouse.cat1.lh.dbo.readings b ON a.id + 1 = b.id WHERE a.id = 1
+----
+1	2
+
+query II
+SELECT id, sum(reading) OVER (ORDER BY id) FROM lakehouse.cat1.lh.dbo.readings WHERE reading IS NOT NULL ORDER BY id
+----
+1	10
+2	30
+3	60
+
+query I
+SELECT id FROM lakehouse.cat1.lh.dbo.readings WHERE name IS NULL
+----
+3
+
+query I
+SELECT id FROM lakehouse.cat1.lh.dbo.readings WHERE name LIKE '%,%'
+----
+4
+
+# No rows is a header and nothing else, not a failure.
+query I
+SELECT id FROM lakehouse.cat1.lh.dbo.readings WHERE false
+----

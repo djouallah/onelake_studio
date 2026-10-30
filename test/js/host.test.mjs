@@ -14,7 +14,8 @@ function fixture() {
   const calls = [];
   const onelake = {
     table: async (lh, t) => { calls.push(["table", lh, t]); return { metadataLocation: LOC }; },
-    peek: async () => ({ rows: [] }), files: async () => [], readBytes: async () => new Uint8Array([1, 2, 3]),
+    peek: async () => ({ rows: [] }), files: async () => [],
+    readBytes: async (ws, path, o) => { calls.push(["readBytes", ws, path, o]); return new Uint8Array([1, 2, 3]); },
   };
   const engine = {
     call: async (method, args, emit) => {
@@ -55,9 +56,17 @@ test("the engine is reachable through query, stream, cancel and info only", asyn
 });
 
 test("bytes cross as base64; a range is passed on only in its one valid shape", async () => {
-  const { ask } = fixture();
-  const [r] = await ask("onelake.readBytes", [{ workspace: "ws", path: "lh/Files/a", range: "bytes=0-15" }]);
-  assert.equal(r.value.base64, Buffer.from([1, 2, 3]).toString("base64"));
+  const { ask, calls } = fixture();
+  const rangeOf = async range => {
+    const [r] = await ask("onelake.readBytes", [{ workspace: "ws", path: "lh/Files/a", range }]);
+    assert.equal(r.value.base64, Buffer.from([1, 2, 3]).toString("base64"));
+    return calls.findLast(c => c[0] === "readBytes")[3].range;
+  };
+  assert.equal(await rangeOf("bytes=0-15"), "bytes=0-15");
+  assert.equal(await rangeOf("bytes=16-"), "bytes=16-");
+  for (const bad of ["bytes=0-15, 20-30", "bytes=-5", "0-15", "bytes=0-15\r\nx: y", 15, null]) {
+    assert.equal(await rangeOf(bad), undefined, String(bad));
+  }
 });
 
 test("a local copy is the host's: the page gets a path, the bytes never cross", async () => {
@@ -71,6 +80,13 @@ test("a failure is posted, never dropped, and a Stop says so", async () => {
   const { ask } = fixture();
   const [r] = await ask("onelake.table", [null]);
   assert.equal(r.type, "error");
+  assert.ok(r.message);
+  assert.equal(r.cancelled, false, "a failure is not a Stop");
+
+  const engine = { call: async () => { throw Object.assign(new Error("Interrupted!"), { cancelled: true }); } };
+  const posted = [];
+  await answer({ methods: {}, engine }, { id: 8, method: "query", args: ["select 1"] }, m => posted.push(m));
+  assert.deepEqual(posted, [{ type: "error", id: 8, message: "Interrupted!", cancelled: true }]);
 });
 
 test("saving goes through the host's save function: text as given, a OneLake file read by the host", async () => {

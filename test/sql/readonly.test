@@ -29,3 +29,96 @@ statement error
 SELECT 1; SELECT 2
 ----
 one statement at a time
+
+# The same, hidden: nothing around a statement changes what it is.
+statement error
+/* a comment */ COPY (SELECT 1) TO 'x.csv'
+----
+Read only
+
+statement error
+SELECT 1 /* ; */; COPY (SELECT 1) TO 'x.csv'
+----
+one statement at a time
+
+statement error
+SELECT ';'; COPY (SELECT 1) TO 'x.csv'
+----
+one statement at a time
+
+statement error
+SELECT $$;$$; COPY (SELECT 1) TO 'x.csv'
+----
+one statement at a time
+
+statement error
+WITH a AS (SELECT 1) COPY (SELECT 1) TO 'x.csv'
+----
+Read only
+
+statement error
+WITH a AS (SELECT 1) DELETE FROM lakehouse.cat1.lh.dbo.t
+----
+Read only
+
+statement error
+EXPLAIN ANALYZE COPY (SELECT 1) TO 'x.csv'
+----
+Read only
+
+statement error
+CREATE VIEW v AS DELETE FROM lakehouse.cat1.lh.dbo.t
+----
+Read only
+
+# What changes the engine itself.
+statement error
+INSTALL httpfs
+----
+Read only
+
+statement error
+LOAD httpfs
+----
+Read only
+
+statement error
+CALL load_aws_credentials()
+----
+Read only
+
+statement error
+SET lock_configuration = false
+----
+Read only
+
+statement error
+ATTACH ':memory:' AS x
+----
+Read only
+
+# What the read-only check lets through, and the engine's lockdown has to refuse. A read of this
+# machine's disk is no read of OneLake, whatever the SQL calls it.
+statement error
+ATTACH 'x.db' AS x (READ_ONLY)
+
+statement error
+SELECT * FROM read_text('~/.ssh/id_rsa')
+
+statement error
+SELECT * FROM read_csv('/etc/passwd')
+
+statement error
+SELECT * FROM read_csv('C:/Windows/win.ini')
+
+statement error
+SELECT * FROM glob('/*')
+
+statement error
+SELECT getenv('HOME')
+
+statement error
+PRAGMA enable_external_access = true
+
+statement error
+PRAGMA allowed_directories = ['/']
