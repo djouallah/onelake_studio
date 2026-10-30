@@ -30,3 +30,12 @@ test("a sort orders numbers as numbers and puts empty cells last", () => {
   assert.deepEqual(sortedRows(rs, res, { col: 0, desc: true }).map(r => r.n), ["10", "9", null]);
   assert.deepEqual(sortedRows(rs, res, { col: 1, desc: false }).map(r => r.t), ["b2", "b10", ""]);
 });
+
+test("a chart's first guess: a label across, a number up", async () => {
+  const { numericColumns, guessAxes } = await import("../../app/chart.js");
+  const res = { fields: ["region", "sales", "year"], types: ["VARCHAR", "DOUBLE", "VARCHAR"],
+                rows: [{ region: "a", sales: 1.5, year: "2024" }, { region: "b", sales: 2, year: "2025" }] };
+  assert.deepEqual(numericColumns(res), ["sales", "year"]);
+  assert.deepEqual(guessAxes(res), { x: "region", y: "sales" });
+  assert.deepEqual(guessAxes({ fields: ["n"], types: ["BIGINT"], rows: [{ n: 1 }] }), { x: "n", y: null });
+});

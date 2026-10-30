@@ -85,7 +85,8 @@
     section:not(.tableOpen) #pivotBtn { display: none; }
     /* A table's Pivot takes the place of the results, as a model's view does; it has its own Edit SQL. */
     #pivotView { flex: 1; overflow: auto; min-height: 0; }
-    section.pivotOpen .resultsWrap, section.pivotOpen #csvBtn, section.pivotOpen #profileBtn, section.pivotOpen #editSqlBtn,
+    section.pivotOpen .resultsWrap, section.pivotOpen #csvBtn, section.pivotOpen #profileBtn, section.pivotOpen #chartBtn,
+    section.pivotOpen #editSqlBtn,
     section.pivotOpen #pivotBtn { display: none; }
     table.results { border-collapse: collapse; width: 100%; font-size: 13px; }
     table.results th, table.results td {
@@ -117,6 +118,13 @@
     table.results td.rn.sel { color: var(--text); }
     table.results tr.spacer td { padding: 0; border: 0; background: none; }
     .resultsWrap:focus { outline: none; }
+    #chartView { display: flex; flex-direction: column; height: 100%; min-height: 320px; }
+    #chartView[hidden] { display: none; }
+    .chartBar { display: flex; gap: 0.9rem; align-items: center; padding: 0.4rem 0.75rem; flex-wrap: wrap; }
+    .chartBar select { background: var(--vscode-dropdown-background, var(--panel)); color: var(--vscode-dropdown-foreground, var(--text));
+                       border: 1px solid var(--vscode-dropdown-border, var(--border)); }
+    .chartNote { color: var(--muted); font-size: 0.8rem; }
+    .chartBox { flex: 1; min-height: 280px; }
     .gridBar { position: sticky; left: 0; display: flex; gap: 0.5rem; align-items: center; padding: 0.35rem 0.75rem; }
     .gridBar input { width: 16rem; padding: 0.2rem 0.4rem; background: var(--vscode-input-background, var(--panel));
                      color: var(--vscode-input-foreground, var(--text)); border: 1px solid var(--vscode-input-border, var(--border)); }
@@ -190,6 +198,7 @@
       <button id="pivotBtn" disabled title="The table's columns on shelves, as a pivot or a chart">Pivot</button>
       <!-- Only on screen while something can be stopped. -->
       <button id="stopBtn" hidden title="Stop">Stop ■</button>
+      <button id="chartBtn" disabled title="The rows on screen as a bar, line or scatter chart">Chart</button>
       <button id="profileBtn" disabled title="Each column of the result: its nulls, distinct values, min, max and quartiles, over every row">Profile</button>
       <button id="csvBtn" disabled>Export…</button>
       <button id="editSqlBtn" title="This SQL in a query editor, to change and run it there (Ctrl+Enter)">Edit SQL</button>
@@ -210,6 +219,8 @@
       </div>
       <!-- Plan: the query's profile and plan tree (explore/profile.js), in place of the results. -->
       <div id="planView" hidden></div>
+      <!-- Chart: the rows on screen drawn (chart.js), in place of the grid. -->
+      <div id="chartView" hidden></div>
       <div class="hint" id="resultsHint">Query results appear here. Write SQL in a query editor: New Query (+) under Queries in the OneLake sidebar.</div>
       <article id="docView" class="docView" hidden></article>
       <!-- The grid's filter and row count (grid.js), while a result is on screen. -->

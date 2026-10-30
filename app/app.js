@@ -14,6 +14,7 @@ import { isDocResult, textLinesDoc, fileExt, isTextExt, escapeHtml, basename,
 // only inside renderMarkdown(), and only for a document that IS markdown.
 import { renderDocument } from './docview.js';
 import { mountGrid, cellText } from './grid.js';
+import { mountChart } from './chart.js';
 // Static too, and as cheap: the DAX compiler it runs is imported on the first model only.
 import * as semantic from './semantic.js';
 // A .bim's model view. Explore's chart library is loaded when the Pivot first opens.
@@ -108,6 +109,7 @@ function wireUi() {
   $('csvBtn').onclick = saveActive;
   $('editSqlBtn').onclick = editSql;
   $('profileBtn').onclick = profileResult;
+  $('chartBtn').onclick = toggleChart;
   $('docPretty').onclick = () => {
     if (docMode === 'pretty' || !lastResult) return;
     docMode = 'pretty';
@@ -666,6 +668,7 @@ async function runQuery({ sql, doc = true, ext = '' } = {}) {
     setStatus(msg, res.truncated ? 'warn' : 'ok');
     $('csvBtn').disabled = res.rows.length === 0;
     $('profileBtn').disabled = res.rows.length === 0 || /^\s*summarize\b/i.test(sql);
+    $('chartBtn').disabled = res.rows.length === 0;
     setSaveLabel();
     return true;
   } catch (e) {
@@ -693,6 +696,8 @@ async function runQuery({ sql, doc = true, ext = '' } = {}) {
 function clearResults(hint = '') {
   docSeq++;              // an in-flight showDoc() must not paint over this
   if (grid) { grid.destroy(); grid = null; }
+  hideChart();
+  $('chartBtn').disabled = true;
   viewMode = 'data';
   statsPrev = null;
   $('statsView').hidden = true;
@@ -1158,6 +1163,41 @@ function openInEditor(sql, said) {
   engine.editSql(sql).then(() => setStatus(said, 'ok'),
                            e => setStatus('Could not open an editor: ' + e.message, 'error'));
 }
+
+// Chart: the rows on screen drawn (chart.js), in place of the grid until Show Rows.
+let chart = null, chartSeq = 0;
+function hideChart() {
+  chartSeq++;
+  if (chart) { chart.destroy(); chart = null; }
+  $('chartView').hidden = true;
+  $('chartBtn').textContent = 'Chart';
+}
+async function toggleChart() {
+  if (chart || !$('chartView').hidden) {
+    hideChart();
+    $('resultsTable').hidden = false;
+    $('gridBar').hidden = !grid;
+    return;
+  }
+  if (!lastResult || !lastResult.rows.length) return;
+  const seq = ++chartSeq;
+  $('chartView').hidden = false;
+  $('resultsTable').hidden = true;
+  $('gridBar').hidden = true;
+  $('docView').hidden = true;
+  $('chartBtn').textContent = 'Show Rows';
+  try {
+    const c = await mountChart($('chartView'), lastResult, { echarts: loadEcharts, css: pageCss, say: t => setStatus(t, 'ok') });
+    if (seq !== chartSeq) { c.destroy(); return; }
+    chart = c;
+  } catch (e) {
+    if (seq === chartSeq) { hideChart(); $('resultsTable').hidden = false; setStatus('Could not draw the chart: ' + e.message, 'error'); }
+  }
+}
+
+// A VS Code theme switch: the chart is drawn again in the new theme (ECharts cannot re-theme one).
+new MutationObserver(() => { if (chart) { hideChart(); toggleChart(); } })
+  .observe(document.body, { attributes: true, attributeFilter: ['class'] });
 
 // Profile: each column of the query on screen, every row of it — DuckDB's SUMMARIZE: its type,
 // min and max, distinct values (approximately), average, spread, quartiles, count and nulls. In

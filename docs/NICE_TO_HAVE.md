@@ -19,7 +19,7 @@ the panel holds no token, and table Pivot is only a SQL starter.
 8. ~~**SQL from the tree**~~ Done (tables and models; the tree lists no columns to drag).
 
 ## Later
-9. **Quick chart of any result**, with no model needed. Kept apart from table Pivot.
+9. ~~**Quick chart of any result**~~ Done.
 10. **Query parameters:** `SET VARIABLE` / `getvariable()`, with a prompt for any value the query
     leaves unset.
 11. **How old a result is** ("from cache, 3 min old"). Keep the last result of each saved query, so

@@ -28,6 +28,8 @@
 - **Time travel on an Iceberg table:** History's Query opens a snapshot's rows in a query editor
   (`iceberg_scan(…, snapshot_from_id = …)`), and each snapshot says how its row count and its
   columns differ from the table now.
+- **Chart** in the panel: the rows on screen as a bar, line or scatter chart, one column across
+  and a number (or every number) up; nothing is queried again.
 - **Profile** in the panel: each column of the result, over every row the query returns: its
   type, min and max, distinct values, average, spread, quartiles, count and nulls.
 - **Export…** (was Save CSV) writes every row the query returns, not only the rows on screen, to

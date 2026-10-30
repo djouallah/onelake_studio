@@ -15,7 +15,8 @@
 }
 /* The view takes the place of the results (app.js: section.modelOpen). */
 #modelView { flex: 1; overflow: auto; min-height: 0; }
-section.modelOpen .resultsWrap, section.modelOpen #csvBtn, section.modelOpen #profileBtn { display: none; }
+section.modelOpen .resultsWrap, section.modelOpen #csvBtn, section.modelOpen #profileBtn,
+section.modelOpen #chartBtn { display: none; }
 .sm-title { font-size: 0.8rem; color: var(--muted); }
 .sm-title code { color: var(--text); }
 .sm-plan { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.72rem; line-height: 1.4; white-space: pre; overflow-x: auto; margin: 0; }
