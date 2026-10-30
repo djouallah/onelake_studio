@@ -1,10 +1,13 @@
-// agent.js: the command line's SQL rewrites, which need no engine.
+// agent.js: the command line's SQL rewrites and answers, which need no engine, called directly.
+// What an agent's shell sees of them, the process and its exit code, is cli.test.mjs.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
+import { fakeOneLake, richAgent, stubVendor, APP_DIR } from "./agent-fixtures.mjs";
 
 const require = createRequire(import.meta.url);
 const { filesToAbfss } = require("../../src/agent.js");
+const { EXIT } = require("../../src/bridge.js");
 
 test("'Files/…' with --in is the lakehouse's file, by its abfss:// name", () => {
   const lh = { workspace: "my ws", item: "data.Lakehouse" };
@@ -43,34 +46,6 @@ test("models and items --fresh: every workspace read now, and one that fails is 
   assert.match(r.out, /4 item\(s\): 2 Lakehouse, 2 Warehouse$/);
 });
 
-// A cache that knows "a ws" and "b ws" but has never listed "unseen"; anything that would
-// go to OneLake or Fabric is counted.
-function fakeOneLake() {
-  const at = Date.now() - 3 * 3600 * 1000;
-  const calls = [];
-  const remote = name => async (...a) => { calls.push([name, ...a.slice(0, -1)]); return name === "workspaces" ? ["x"] : []; };
-  const known = {
-    workspaces: ["b ws", "a ws", "unseen"],
-    "items a ws": [{ name: "a.Lakehouse", kind: "Lakehouse" }, { name: "dw.Warehouse", kind: "Warehouse" }],
-    "items b ws": [{ name: "b.Lakehouse", kind: "Lakehouse" }],
-    "models a ws": [{ name: "Sales", description: "the sales model" }, { name: "Ops", description: "" }],
-    "models b ws": [{ name: "Energy", description: "" }],
-  };
-  const hit = k => (k in known ? { value: known[k], at } : null);
-  return {
-    calls,
-    workspaces: remote("workspaces"), items: remote("items"), models: remote("models"),
-    tables: remote("tables"), table: remote("table"),
-    cached: {
-      workspaces: async () => hit("workspaces"),
-      items: async ws => hit(`items ${ws}`),
-      models: async ws => hit(`models ${ws}`),
-      tables: async () => null,
-      table: async () => null,
-    },
-  };
-}
-
 test("models and items: every cached workspace, counted, and nothing fetched", async () => {
   const { createAgent } = require("../../src/agent.js");
   const onelake = fakeOneLake();
@@ -87,7 +62,7 @@ test("models and items: every cached workspace, counted, and nothing fetched", a
   assert.match(r.out, /3 item\(s\): 2 Lakehouse, 1 Warehouse; 1 workspace\(s\) not cached$/);
 
   r = await agent.run({ args: ["models"], opts: { csv: true } });
-  assert.equal(r.out.split("\n")[0], "workspace,semantic model,,tables,measures,description");
+  assert.equal(r.out.split("\n")[0], "workspace,semantic_model,downloaded,tables,measures,description");
 
   assert.deepEqual(onelake.calls, [], "no OneLake or Fabric call without --fresh");
 });
@@ -98,84 +73,30 @@ test("a listing or metadata not cached says so; --fresh is what reads it", async
   const agent = createAgent({ onelake, modelPath: () => "/nowhere/x.bim" });
 
   let r = await agent.run({ args: ["ls", "unseen"] });
-  assert.equal(r.code, 1);
+  assert.equal(r.code, EXIT.NOT_CACHED);
   assert.match(r.err, /not cached yet — expand unseen in the OneLake Studio tree, or add --fresh/);
 
   r = await agent.run({ args: ["ls", "a ws", "a"] });
+  assert.equal(r.code, EXIT.NOT_CACHED);
   assert.match(r.err, /a ws\/a\.Lakehouse's tables is not cached yet/);
 
   r = await agent.run({ args: ["table", "a ws", "a", "dbo.x"] });
+  assert.equal(r.code, EXIT.NOT_CACHED);
   assert.match(r.err, /dbo\.x's metadata is not cached yet/);
 
   r = await agent.run({ args: ["model", "a ws", "Sales"] });
+  assert.equal(r.code, EXIT.NOT_CACHED);
   assert.match(r.err, /a ws\/Sales is not downloaded yet — open it in the OneLake Studio tree, or add --fresh/);
   assert.deepEqual(onelake.calls, []);
 
   r = await agent.run({ args: ["ls"], opts: { fresh: true } });
   assert.equal(r.code, 0, r.err);
+  assert.match(r.out, /\| x \|/, "what OneLake answered");
   assert.deepEqual(onelake.calls, [["workspaces"]], "--fresh asks OneLake");
 });
 
-// A fuller cache: one lakehouse with two tables (one with metadata), a Files/ folder, a
-// warehouse, and one downloaded model on disk.
-async function richAgent() {
-  const { mkdtemp, mkdir, writeFile } = await import("node:fs/promises");
-  const { tmpdir } = await import("node:os");
-  const { join, dirname } = await import("node:path");
-  const { fileURLToPath } = await import("node:url");
-  const dir = await mkdtemp(join(tmpdir(), "agent-"));
-  // The local copy is an Ossie .yaml. The modules that read it stand in as stubs (CI's test job
-  // has no vendor/): YAML here is JSON, and the "Ossie" document carries the TMSL it stands for.
-  for (const [p, body] of [
-    ["npm/pin/src/index.js", "export const createCompiler = 0, createViews = 0;"],
-    ["npm/pin/formats/tmsl.js", "export const tmslToModel = 0;"],
-    ["npm/pin/formats/ossie.js", "export const ossieToTmsl = doc => doc.tmsl;"],
-    ["npm/yaml/+esm.js", "export const parse = JSON.parse;"],
-  ]) {
-    await mkdir(dirname(join(dir, p)), { recursive: true });
-    await writeFile(join(dir, p), body);
-  }
-  const bim = join(dir, "Sales.yaml");
-  await writeFile(bim, JSON.stringify({ datasets: [], tmsl: { model: { tables: [
-    { name: "dim_customer", columns: [{ name: "customer_id" }, { name: "Region" }] },
-    { name: "fct_sales", columns: [{ name: "amount" }], measures: [{ name: "Total Sales" }, { name: "Customer Count" }] },
-  ] } } }));
-  const at = Date.now() - 10 * 60 * 1000;
-  const lh = "ws\u0000data.Lakehouse";
-  const known = {
-    workspaces: ["ws"],
-    "items ws": [{ name: "data.Lakehouse", kind: "Lakehouse" }, { name: "dw.Warehouse", kind: "Warehouse" }],
-    "models ws": [{ name: "Sales", description: "" }, { name: "Ops", description: "" }],
-    [`tables ${lh}`]: [{ schema: "", table: "customers" }, { schema: "", table: "orders" }],
-    [`table ${lh}\u0000\u0000customers`]: { totalRecords: 1200, schemaFields: [{ name: "customer_id", type: "long" }],
-      stats: { totalFilesSize: 2_500_000, totalDataFiles: 3, snapshotTs: Date.UTC(2026, 9, 1, 8, 30),
-               codec: "zstd", snapshotCount: 4, operation: "append", formatVersion: 2 } },
-    [`files ${lh}\u0000raw`]: [{ name: "2026", isDir: true }, { name: "a.parquet", isDir: false, bytes: 1_000_000 }],
-  };
-  const hit = k => (k in known ? { value: known[k], at } : null);
-  const calls = [];
-  const remote = name => async () => { calls.push(name); return []; };
-  const onelake = {
-    workspaces: remote("workspaces"), items: remote("items"), models: remote("models"),
-    tables: remote("tables"), table: remote("table"), files: remote("files"),
-    cached: {
-      workspaces: async () => hit("workspaces"),
-      items: async ws => hit(`items ${ws}`),
-      models: async ws => hit(`models ${ws}`),
-      tables: async l => hit(`tables ${l.workspace}\u0000${l.item}`),
-      table: async (l, t) => hit(`table ${l.workspace}\u0000${l.item}\u0000${t.schema || ""}\u0000${t.table}`),
-      files: async (l, d) => hit(`files ${l.workspace}\u0000${l.item}\u0000${d}`),
-    },
-  };
-  const { createAgent } = require("../../src/agent.js");
-  return { agent: createAgent({ onelake, modelPath: (ws, m) => (m === "Sales" ? bim : join(dir, "none.yaml")),
-                                appDir: join(dirname(fileURLToPath(import.meta.url)), "..", "..", "app"),
-                                vendorDir: dir, daxSqlPin: "pin", yamlPin: "yaml" }), calls, dir };
-}
-
 test("free from the cache: table sizes, more table fields, files, find, model counts", async () => {
-  const { rm } = await import("node:fs/promises");
-  const { agent, calls, dir } = await richAgent();
+  const { agent, calls, close } = await richAgent();
   try {
     let r = await agent.run({ args: ["ls", "ws", "data"] });
     assert.equal(r.code, 0, r.err);
@@ -210,27 +131,18 @@ test("free from the cache: table sizes, more table fields, files, find, model co
     assert.match(r.out, /\| ws \| Ops \|  \|  \|  \|/);
 
     assert.deepEqual(calls, [], "nothing fetched");
-  } finally { await rm(dir, { recursive: true, force: true }); }
+  } finally { await close(); }
 });
 
 // export hands Explore's own export the model file, as Explore's button does; the dax-sql and
 // YAML modules it loads stand in as stubs (CI's test job has no vendor/).
 test("export: a model file in Files/, or a semantic model's local copy, which the export writes", async () => {
-  const { mkdtemp, mkdir, writeFile, rm } = await import("node:fs/promises");
+  const { mkdtemp, writeFile, rm } = await import("node:fs/promises");
   const { tmpdir } = await import("node:os");
-  const { join, dirname } = await import("node:path");
-  const { fileURLToPath } = await import("node:url");
+  const { join } = await import("node:path");
   const vendorDir = await mkdtemp(join(tmpdir(), "agent-vendor-"));
   try {
-    for (const [p, body] of [
-      ["npm/pin/src/index.js", "export const createCompiler = 0, createViews = 0;"],
-      ["npm/pin/formats/tmsl.js", "export const tmslToModel = 0;"],
-      ["npm/pin/formats/ossie.js", "export const ossieToTmsl = 0;"],
-      ["npm/yaml/+esm.js", "export const parse = 0;"],
-    ]) {
-      await mkdir(dirname(join(vendorDir, p)), { recursive: true });
-      await writeFile(join(vendorDir, p), body);
-    }
+    await stubVendor(vendorDir);
     const { createAgent } = require("../../src/agent.js");
     const onelake = fakeOneLake();
     onelake.readBytes = async (ws, path) => new TextEncoder().encode(`model at ${ws}/${path}`);
@@ -240,7 +152,7 @@ test("export: a model file in Files/, or a semantic model's local copy, which th
     const exported = [];
     const agent = createAgent({
       onelake, modelPath: (ws, model) => join(vendorDir, `${model}.yaml`),
-      appDir: join(dirname(fileURLToPath(import.meta.url)), "..", "..", "app"),
+      appDir: APP_DIR,
       vendorDir, daxSqlPin: "pin", yamlPin: "yaml",
       exportApp: async x => { exported.push(x); return `Published to Fabric: ${x.name}`; },
     });
@@ -257,7 +169,7 @@ test("export: a model file in Files/, or a semantic model's local copy, which th
                                        model: { workspace: "a ws", name: "Sales" } });
 
     r = await agent.run({ args: ["export", "a ws", "Ops"] });
-    assert.equal(r.code, 1);
+    assert.equal(r.code, EXIT.NOT_CACHED);
     assert.match(r.err, /a ws\/Ops is not downloaded yet — open it in the OneLake Studio tree/);
 
     r = await agent.run({ args: ["export", "a ws", "dw", "Files/x.bim"] });

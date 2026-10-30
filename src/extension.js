@@ -473,7 +473,9 @@ async function show(context, options, place) {
     host: createHostMethods({
       onelake, engine: eng, onStatus: message => postLive({ type: 'status', message }),
       saveFile, semviews, modelsDir: modelsFolder(),
-      exportExplore: x => (exportExplore ? exportExplore(x) : Promise.reject(new Error('OneLake Studio is still starting'))),
+      // A refusal is what Explore's info line says, not a failure of the export.
+      exportExplore: x => (exportExplore ? exportExplore(x).catch(e => { if (e.declined) return e.message; throw e; })
+        : Promise.reject(new Error('OneLake Studio is still starting'))),
       nameTables: list => (nameModelTables ? nameModelTables(list) : Promise.reject(new Error('OneLake Studio is still starting'))),
       copyText: text => vscode.env.clipboard.writeText(text),
       exportResult: x => exportResult(eng, x),
@@ -1124,12 +1126,12 @@ async function activateInner(context) {
     fetchModel: n => fetchModel(n, { fresh: true }),
     openModel: x => openSqlModel(x),
     nameTables: list => nameModelTables(list),
+    signedIn: () => signedIn,
   });
   context.subscriptions.push(serveBridge({
-    handle: req => {
+    handle: (req, ctx) => {
       if (out) out.appendLine(`command line: ${(req && req.args || []).join(' ').slice(0, 120)}`);
-      if (!signedIn) return { out: '', err: 'OneLake Studio is not signed in — sign in from its view in VS Code.', code: 1 };
-      return agent.run(req);
+      return agent.run(req, ctx);
     },
     log: m => out && out.appendLine(m),
   }));
@@ -1338,8 +1340,10 @@ async function activateInner(context) {
   // local copy written to <the open folder>/<app>/ (asked for when no folder is open) —
   // and published from there over the Fabric REST API (fabricapp.js). The function's deploy
   // package ships in the vsix (fabric-function/, scripts/function-bundle.mjs). Answers what
-  // Explore's info line says; a failure is thrown back to it, and logged.
+  // Explore's info line says; a failure is thrown back to it, and logged. So is the user's No
+  // (`declined`), which is no failure, but must not read as a publish on the command line.
   exportExplore = async ({ file, name, text, state, workspace, path, model }) => {
+    const declined = message => Object.assign(new Error(message), { declined: true });
     try {
       // A model opened from its local copy is not in OneLake yet: it is written into its
       // lakehouse (modelTarget) once every question below has been answered — the one write
@@ -1377,14 +1381,14 @@ async function activateInner(context) {
       for (;;) {
         if (!outDir) {
           outDir = await pickFolder();
-          if (!outDir) return 'Export cancelled.';
+          if (!outDir) throw declined('Export cancelled.');
         }
         const pick = await vscode.window.showInformationMessage(
           `Export ${plan.name} to Fabric?`,
           { modal: true, detail: `Local copy: ${outDir}${existsSync(outDir) ? '' : ' (new)'}\nWorkspace: ${workspace}\nModel: ${plan.modelPath}` },
           'Export', 'Choose Another Folder…');
         if (pick === 'Export') break;
-        if (!pick) return 'Export cancelled.';
+        if (!pick) throw declined('Export cancelled.');
         prev = outDir;
         outDir = null;
       }
@@ -1405,7 +1409,7 @@ async function activateInner(context) {
           `The local copy of ${plan.name} has changed since it was last published.`,
           { modal: true, detail: `${outDir}\n\n${shown}\n\nOverwrite: rewrite it from this Explore, and publish that. Publish As Is: publish the folder with your changes, and leave it alone.` },
           'Overwrite Local Changes', 'Publish Folder As Is');
-        if (!pick) return 'Not exported: the local copy has changes.';
+        if (!pick) throw declined('Not exported: the local copy has changes.');
         asIs = pick === 'Publish Folder As Is';
       }
 
@@ -1422,7 +1426,7 @@ async function activateInner(context) {
           const pick = await vscode.window.showWarningMessage(
             `${plan.name} was deployed again on ${new Date(theirs).toLocaleString()}, not from this folder. Overwrite it?`,
             { modal: true, detail: live.hostingUrl || '' }, 'Overwrite It');
-          if (pick !== 'Overwrite It') return `Not exported: ${plan.name} was deployed from elsewhere since.`;
+          if (pick !== 'Overwrite It') throw declined(`Not exported: ${plan.name} was deployed from elsewhere since.`);
         }
       }
 
@@ -1436,7 +1440,7 @@ async function activateInner(context) {
           const pick = await vscode.window.showWarningMessage(
             `${target.workspace}/${target.path} already exists.`,
             { modal: true, detail: `Replace it with ${model.name} as opened here, and publish?` }, 'Replace It');
-          if (pick !== 'Replace It') return `Not exported: ${target.path} is a different file.`;
+          if (pick !== 'Replace It') throw declined(`Not exported: ${target.path} is a different file.`);
         }
         if (!same) {
           await writer.writeFile(target.workspace, target.path, Buffer.from(String(text), 'utf8'));
@@ -1503,7 +1507,7 @@ async function activateInner(context) {
         const pick = await vscode.window.showWarningMessage(
           `An app named "${e.item.displayName}" already exists in this workspace, and Export to Fabric did not create it. Replace it with this Explore?`,
           { modal: true }, 'Replace It');
-        if (pick !== 'Replace It') return `Not exported: an app named ${e.item.displayName} already exists.`;
+        if (pick !== 'Replace It') throw declined(`Not exported: an app named ${e.item.displayName} already exists.`);
         r = await publish(true);
       }
       // The Apps of the workspace the app was published to (the lakehouse's, not always the
@@ -1521,7 +1525,7 @@ async function activateInner(context) {
         });
       return `Published to Fabric${asIs ? ' (the local copy, as it is)' : ''}: ${r.hostingUrl || plan.name}`;
     } catch (e) {
-      if (out) out.appendLine(`export to fabric of ${file} failed — ${(e && e.stack) || e}`);
+      if (out && !(e && e.declined)) out.appendLine(`export to fabric of ${file} failed — ${(e && e.stack) || e}`);
       throw e;
     }
   };

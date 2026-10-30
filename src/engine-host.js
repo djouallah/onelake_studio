@@ -734,15 +734,30 @@ function createEngineHost({ extensionDir, onLog = () => {}, onWarn = () => {}, g
   }
 
   // The command line's query (agent.js): the same guard and the same engine as the page's,
-  // on connections the page's Stop does not reach. Not a page method.
-  async function agentQuery(sql) {
+  // on connections the page's Stop does not reach. Not a page method. `signal`: the command
+  // line went away, so its query stops (only its own: another agent's goes on).
+  async function agentQuery(sql, { signal } = {}) {
     const token = authToken;
+    const mine = new Set();
+    const owner = {
+      add(c) { agentLive.add(c); mine.add(c); },
+      delete(c) { agentLive.delete(c); mine.delete(c); },
+    };
+    const stop = () => { for (const c of mine) { try { c.interrupt(); } catch (_) {} } };
+    if (signal) signal.addEventListener('abort', stop, { once: true });
     try {
       assertReadOnly(sql);
       await init();
-      return await withAuthRetry(async () => runAll(await prepare(sql), agentLive));
+      return await withAuthRetry(async () => {
+        const run = await prepare(sql);
+        if (signal && signal.aborted) throw new Error('the command line went away');
+        return runAll(run, owner);
+      });
     } catch (e) { throw scrub(e, authToken || token); }
-    finally { afterStatement(sql); }
+    finally {
+      if (signal) signal.removeEventListener('abort', stop);
+      afterStatement(sql);
+    }
   }
 
   async function close() {
