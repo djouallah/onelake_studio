@@ -174,19 +174,19 @@
       },
       {
         "command": "onelakeStudio.runQuery",
-        "title": "Run Query",
+        "title": "OneLake Run",
         "category": "OneLake Studio",
         "icon": "$(play)"
       },
       {
         "command": "onelakeStudio.planQuery",
-        "title": "Plan Query",
+        "title": "OneLake Plan",
         "category": "OneLake Studio",
         "icon": "$(pulse)"
       },
       {
         "command": "onelakeStudio.saveQuery",
-        "title": "Save Query",
+        "title": "OneLake Save Query",
         "category": "OneLake Studio",
         "icon": "$(save)"
       }

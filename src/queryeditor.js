@@ -8,8 +8,8 @@
 // extensions'.
 //
 // In a query's editor:
-//   Ctrl+Enter / ▶ Run       the statement under the cursor, or the selection, in the panel
-//   Plan                     the same statement's profile and plan, in the panel
+//   Ctrl+Enter / OneLake Run the statement under the cursor, or the selection, in the panel
+//   OneLake Plan             the same statement's profile and plan, in the panel
 //   a CodeLens above each statement for both
 //   DuckDB's error           a diagnostic where DuckDB says it is, cleared by the next edit
 //   completion               the names the cache holds: catalogs, workspaces, items, schemas,
@@ -92,9 +92,9 @@ function registerQueryEditor({ isQuery, run, names }) {
         const p = doc.positionAt(st.start);
         const range = new vscode.Range(p, p);
         return [
-          new vscode.CodeLens(range, { title: '▶ Run', command: 'onelakeStudio.runQuery', arguments: [doc.uri, st.start],
+          new vscode.CodeLens(range, { title: '▶ OneLake Run', command: 'onelakeStudio.runQuery', arguments: [doc.uri, st.start],
                                        tooltip: 'Run this statement in the OneLake Studio panel (Ctrl+Enter)' }),
-          new vscode.CodeLens(range, { title: 'Plan', command: 'onelakeStudio.planQuery', arguments: [doc.uri, st.start],
+          new vscode.CodeLens(range, { title: 'OneLake Plan', command: 'onelakeStudio.planQuery', arguments: [doc.uri, st.start],
                                        tooltip: 'Where this statement spends its time (it runs once to measure)' }),
         ];
       });

@@ -5,13 +5,13 @@
 - **SQL is written in VS Code's own editor.** The panel's SQL box is gone: New Query (+ under
   Queries) opens an editor, a saved query opens as its `.sql` file, and Edit SQL in the panel (or in
   a table's Pivot) opens what is on screen in a new one. In a query's editor:
-  - Ctrl+Enter, or ▶ Run above each statement, runs the statement under the cursor (or the
-    selection); Plan shows where it spends its time. The results show in the panel, beside the
+  - Ctrl+Enter, or ▶ OneLake Run above each statement (and in the title bar), runs the statement under the cursor (or the
+    selection); OneLake Plan shows where it spends its time. The results show in the panel, beside the
     editor.
   - DuckDB's error is marked where it says it is, until the next edit.
   - Completion names what the cache holds: catalogs, workspaces, items, schemas, tables and their
     columns, and an opened model's measures as `AGG("…")`.
-  - Save Query (Ctrl+S) keeps a new query under Queries as "Query N".
+  - OneLake Save Query (Ctrl+S) keeps a new query under Queries as "Query N".
 
   Other `.sql` files are left to their own extensions.
 - **The command line's `dax` command is gone.** OneLake Studio takes SQL only: a semantic model is
