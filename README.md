@@ -1,46 +1,45 @@
 # OneLake Studio for VS Code
 
-Browse and explore your Microsoft Fabric data without leaving VS Code, signed in with the
-Microsoft account VS Code already uses.
+Browse and query your Microsoft Fabric data in VS Code, signed in with the Microsoft account
+VS Code already uses.
 
 ![The OneLake explorer](docs/summary.png)
 
 ## What you can do
 
-- **Browse everything in OneLake.** Workspaces, lakehouses, warehouses, SQL databases, mirrored
-  databases, their tables and files, in one tree. Pin the workspaces you use, or group everything
-  by type.
-- **Look at a table in a click.** Its columns, row count and first rows, then query it with SQL.
-  Delta and Iceberg tables each show their own stats and history.
-- **Open the files in a lakehouse.** Parquet, CSV, JSON, Excel, DuckDB and SQLite files, even
-  inside a zip, and query them with SQL.
-- **Explore a semantic model.** See its tables and relationships, then drag fields into a pivot:
-  rows, columns, values, filters, totals, as a table or a chart. See the SQL behind it, edit it,
-  and see where the time went.
-- **Publish it to Fabric.** One click turns a model's Explore into a Fabric app your colleagues
-  open in their browser. Only people with access can open it, and it always shows the model's
-  current data. A copy is kept in your folder to build on later.
-- **See your Fabric apps.** Each workspace lists its apps, with their address and whether anyone
-  can open them or only people with access.
-- **Ask Claude Code or GitHub Copilot about your data.** One command, and your assistant can list
-  your data, read a model's measures and compute them.
-- **Fast after the first look.** What you've opened is kept on your machine, so it opens at once
-  next time.
+- **Browse OneLake.** Workspaces, lakehouses, warehouses, SQL and mirrored databases, their tables
+  and files, in one tree. Pin workspaces, or group by type.
+- **Query with SQL.** Every table has one name, `lakehouse.workspace.item.schema.table`, and every
+  semantic model is `semanticmodel.workspace.model`. Join across items and workspaces;
+  `SHOW ALL TABLES` lists them all.
+- **Look at a table in a click.** Columns, row count, first rows, and Delta or Iceberg stats and
+  history.
+- **Open lakehouse files.** Parquet, CSV, JSON, Excel, DuckDB and SQLite, even inside a zip.
+- **Explore a semantic model.** Its tables and relationships, and a drag-and-drop pivot as a table
+  or a chart, with the SQL behind it.
+- **Ask Claude Code or GitHub Copilot.** One command, and your assistant can list your data, read a
+  model's measures and compute them.
+- **Fast after the first look.** What you've opened is kept on your machine.
+
+## Experimental
+
+- **Publish to Fabric.** Turn a model's Explore into a Fabric app your colleagues open in a browser,
+  showing the model's current data to those with access. A copy stays in your folder.
+- **See your Fabric apps.** Each workspace lists its apps, their address and who can open them.
 
 ## Get started
 
-1. In VS Code open Extensions (`Ctrl+Shift+X`), search **OneLake Studio** and click Install. It's
-   also on the [Marketplace](https://marketplace.visualstudio.com/items?itemName=djouallah.onelake-studio),
-   or run `code --install-extension djouallah.onelake-studio`.
+1. Install **OneLake Studio** from Extensions (`Ctrl+Shift+X`), the
+   [Marketplace](https://marketplace.visualstudio.com/items?itemName=djouallah.onelake-studio), or
+   `code --install-extension djouallah.onelake-studio`.
 2. Click the OneLake Studio icon in the activity bar and sign in.
 
-It needs desktop VS Code 1.90 or later on Windows, macOS or Linux (x64 or arm64).
+Needs desktop VS Code 1.90+ on Windows, macOS or Linux (x64 or arm64).
 
-**Your data stays as it is.** OneLake Studio only reads, except when you click *Export to
-Fabric*: it publishes an app, and writes the model's definition into its lakehouse for the app to
-read. Opening a semantic model keeps its definition on your machine only.
+**Read only.** The one exception is *Export to Fabric*, which publishes an app and writes the
+model's definition into its lakehouse. Opening a semantic model keeps it on your machine only.
 
 Commands, settings and release notes: [docs/](https://github.com/djouallah/onelake_studio/tree/main/docs).
 
 > A personal project, not a Microsoft product or supported by Microsoft. Results computed from a
-> semantic model here aren't guaranteed to match Power BI.
+> semantic model aren't guaranteed to match Power BI.
