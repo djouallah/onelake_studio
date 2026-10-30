@@ -20,7 +20,6 @@ These are the items from the code review (bugs, duplicates, dead code, inefficie
 - CRC32 is in both `exportapp.js` and `scripts/make-icon.mjs`.
 - Fetch-with-retry is in both `vendor.mjs` and `fetch-extensions.mjs`.
 - **Pinned versions.** CI (`extension.yml`) hard-codes the versions in `src/vendored.js` `WEBAPP`, and `fabric_app/site/app.js` hard-codes `echarts@5.5.1`.
-- **Do not touch** `fabric_app/site/storage/data.js` quoting. analytics-as-code takes that file from this repo (see `data.js:9`), so it cannot import `../paths.js`.
 
 ## Dead code
 Each of these has no callers in the repo, tests included. Grep again before removing.
@@ -47,7 +46,8 @@ Each of these has no callers in the repo, tests included. Grep again before remo
   - `snapshots.previous`
   - the `manifests` field saved in every snapshot and never read; this also frees localStorage
   - the unreachable check in `function-bundle.mjs`
-  - the `init()` CSV connection, if analytics-as-code doesn't use it
+  - the `init()` CSV connection
+  - `data.js` members only another host called: `views`, `has`, `needs`, `ensureHistory`; `queue.js` `serialQueue`; `catalog.js`'s specific-tables branch; `auth.js`'s `client` option and its `build.mjs` comment. analytics-as-code no longer takes these files, so nothing outside this repo calls them.
 - `playwright-core`: the `test/js/run-*.mjs` harnesses import it but `package.json` doesn't declare it.
 
 ## Inefficiency

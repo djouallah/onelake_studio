@@ -6,7 +6,7 @@
 // model is read in place, from the lakehouse, by the app's function (its MODEL_URL), which
 // answers with it where each of its tables is now and a read-only SAS (catalog.js). The model
 // names the tables (an Ossie dataset's `source`, or a TMSL table's Direct Lake partition:
-// schema.table). Taken from analytics-as-code's Iceberg app, which now takes it from here.
+// schema.table). It began as analytics-as-code's Iceberg app, and is this repo's alone now.
 // The page is the only thing that reads OneLake, and the SAS never leaves it: it plans each
 // table itself (metadata.json, manifest list, manifests: prefetch.js's planTable) and
 // downloads every file a table's view reads into the local store (OPFS, blockcache.js) before
@@ -52,6 +52,7 @@ import { createCatalog } from "./catalog.js";
 import { createSnapshots } from "./snapshots.js";
 import { planTable, prefetchFiles, prioritize } from "./prefetch.js";
 import { perf, HTTP_TRACE_SHIM } from "../explore/perflog.js";
+import { quoteIdent as ident, sqlStr as lit } from "../paths.js";
 
 const SMALL_BYTES = 32 * 1024 * 1024;   // a table up to this much Parquet is copied into memory
 // The site's own copy of the engine (vendor/, src/vendored.js WEBAPP), the eh build: the page
@@ -89,8 +90,6 @@ function modelTables(model) {
   return out;
 }
 
-const ident = s => `"${String(s).replace(/"/g, '""')}"`;
-const lit = s => `'${String(s).replace(/'/g, "''")}'`;
 // A OneLake file, abfss://<ws>@onelake.dfs.fabric.microsoft.com/<lh>/..., as
 //   https    the URL the page downloads it with (the SAS: the page's alone);
 //   storePath its key in the store (blockcache.js), the URL without the SAS;
