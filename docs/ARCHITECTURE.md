@@ -14,7 +14,8 @@ one name that no other object has:
 A name starts with the item's type because Fabric lets two items of different types share a name
 in one workspace: a lakehouse and a warehouse can both be `data`, so `lakehouse.aemo.data` and
 `warehouse.aemo.data` are two different items. OneLake tells them apart the same way, by the type it
-appends to the item's folder (`data.Lakehouse`, `data.Warehouse`).
+appends to the item's folder (`data.Lakehouse`, `data.Warehouse`). [NAMING.md](NAMING.md) has the
+exact rules and the reasons for them.
 
 **SQL is how you ask it.** Each of those names goes straight into a SQL statement, and the same
 statement runs in the main editor, a model's SQL tab and the command line (and so the agent

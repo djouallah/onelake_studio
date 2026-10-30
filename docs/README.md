@@ -3,6 +3,7 @@
 | Doc | What's in it |
 | --- | --- |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Fabric as a catalog queried with SQL, sign-in, the engine and the cache, semantic models, Explore, Export to Fabric, commands, settings, the agent skill, limitations and the source layout. |
+| [NAMING.md](NAMING.md) | The naming convention: five parts for a table, three for a semantic model, and why. |
 | [CHANGELOG.md](CHANGELOG.md) | Release notes, newest first. It is also the Marketplace page's Changelog tab. |
 
 ## Architecture in brief
