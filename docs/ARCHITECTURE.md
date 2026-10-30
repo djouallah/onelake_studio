@@ -171,12 +171,12 @@ SQL is written in VS Code's own editor ([`src/queryeditor.js`](../src/queryedito
 files are left to their own extensions.
 
 - **New Query** (the **+** on *Queries*) opens an untitled `Query N.sql` that starts with
-  `SHOW ALL TABLES`. **Save Query** (Ctrl+S) keeps it under *Queries*, and it stays a query across a
-  reload ([`src/newqueries.js`](../src/newqueries.js)).
+  `SHOW ALL TABLES`. **Save Query** (Ctrl+S) keeps it under *Queries*. Its URI is
+  `~/OneLakeStudio/queries/Query N.sql` with the `untitled` scheme, so it stays a query across a reload,
+  and VS Code's own File > Save writes it to that folder.
 - **Buttons and keys don't wait for the extension host.** Opening SQL starts the other SQL extensions on
-  the same host, which can hold it for many seconds. So `package.json` decides them in the window: a
-  saved query by its path, a new query by a list told to the window before its document opens. A saved
-  query's path is matched by folder name, so a `OneLakeStudio/queries` folder outside the home folder
+  the same host, which can hold it for many seconds. So `package.json` decides them in the window, by
+  the path. It matches the folder's name, so a `OneLakeStudio/queries` folder outside the home folder
   shows the buttons too, and they do nothing there. The lenses are the host's, and they register before
   sign-in.
 - **Run** (Ctrl+Enter, or OneLake Run above each statement) runs the statement under the cursor, or the
@@ -436,7 +436,7 @@ apply at once.
 | `src/fabric.js` | A workspace's semantic models and apps, and a model's definition. |
 | `src/semviews.js` | The models opened, per account. |
 | `src/tree.js` | The explorer. |
-| `src/queryeditor.js`, `src/querytext.js`, `src/newqueries.js` | The query editor. |
+| `src/queryeditor.js`, `src/querytext.js` | The query editor. |
 | `src/panel.js`, `src/host.js`, `src/html.js`, `src/webview.js` | The panel's webview, its channel, and its page. |
 | `src/agent.js`, `src/bridge.js`, `bin/cli.mjs` | The command line. |
 | `src/exportapp.js`, `src/fabricapp.js`, `src/onelakewrite.js` | Export to Fabric. |

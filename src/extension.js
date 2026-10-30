@@ -27,7 +27,6 @@ const { webviewRoot } = require('./webview');
 const { fmtBytes, sqlKind, sqlName, sqlNameOf, sqlPart, displayName, MODEL_CATALOG, modelSqlName, stripBom } = require('./names');
 const { createAgent } = require('./agent');
 const { createSemViews } = require('./semviews');
-const { createNewQueries } = require('./newqueries');
 const { serveBridge } = require('./bridge');
 const { PINS } = require('./vendored');
 const { planExport, writeExport, buildDist, writeMarker, readMarker, fingerprint, localChanges, vendorSize, zip, rayfinYml } = require('./exportapp');
@@ -725,18 +724,15 @@ async function activateInner(context, ready) {
   const queriesRoot = () => join(os.homedir(), 'OneLakeStudio', 'queries');
   const tabUri = t => (t.input && t.input.uri ? t.input.uri.toString() : null);
   const openTabs = () => vscode.window.tabGroups.all.flatMap(g => g.tabs).map(tabUri).filter(Boolean);
-  // The untitled ones. The title bar's buttons and the keys read this list in the window
-  // (package.json), so they are there even while another extension holds this host.
-  const newQueries = createNewQueries(context.workspaceState, openTabs,
-    uris => vscode.commands.executeCommand('setContext', 'onelakeStudio.newQueries', uris));
   const isQueryFile = p => {
     const rel = p ? relative(queriesRoot(), p) : '';
     return !!rel && !rel.startsWith('..') && !isAbsolute(rel);
   };
-  // Whatever its language says: another SQL extension can take over a .sql
+  // By where it is, whatever its language says: another SQL extension can take over a .sql
   // document's language (VS Code closes and reopens it to do so), and it is still a query here.
-  const isQuery = doc => (doc.isUntitled ? newQueries.has(doc.uri.toString())
-                                         : doc.uri.scheme === 'file' && isQueryFile(doc.uri.fsPath));
+  // The title bar's buttons and the keys go by the same path in the window (package.json), so
+  // they are there even while another extension holds this host, or before this one has started.
+  const isQuery = doc => (doc.uri.scheme === 'file' || doc.uri.scheme === 'untitled') && isQueryFile(doc.uri.fsPath);
   // Nothing to complete from yet: an empty answer, since the suggest widget waits for every answer.
   let isReady = false;
   ready.then(() => { isReady = true; }, () => {});
@@ -744,8 +740,6 @@ async function activateInner(context, ready) {
     ...registerQueryEditor({ isQuery,
                              run: (sql, x) => ready.then(() => runInPanel(sql, x)),
                              names: async () => (isReady ? completionNames() : { tables: [], models: [] }) }),
-    // A new query is forgotten when its tab closes (newqueries.js).
-    vscode.window.tabGroups.onDidChangeTabs(e => newQueries.tabsClosed(e.closed.map(tabUri).filter(Boolean))),
     // Save Query: a new query kept under Queries as "Query N", and its editor is that file from
     // then on. A saved query's editor just saves.
     vscode.commands.registerCommand('onelakeStudio.saveQuery', async uri => {
@@ -976,25 +970,27 @@ async function activateInner(context, ready) {
     await vscode.window.showTextDocument(docOrUri, { viewColumn: queryColumn(), ...opts });
     if (resultsBelow()) await dockBelowEditor();
   }
-  async function openNewQuery(sql) {
-    // Its name first, and the window told before it opens: opening SQL can start other SQL
-    // extensions, which then hold this host for many seconds.
-    const key = newQueries.nextUri(vscode.workspace.textDocuments.map(d => d.uri.toString()));
-    const uri = vscode.Uri.parse(key);
-    await newQueries.add(key);
-    try {
-      const doc = await vscode.workspace.openTextDocument(uri);
-      const text = String(sql ?? '');
-      if (text) {
-        const edit = new vscode.WorkspaceEdit();
-        edit.insert(uri, new vscode.Position(0, 0), text);
-        await vscode.workspace.applyEdit(edit);
-      }
-      await showQuery(doc);
-    } catch (e) {
-      newQueries.tabsClosed([key]);   // it never got a tab
-      throw e;
+  // The first "Query N" nothing holds: not a tab, a document, or a file, since VS Code refuses an
+  // untitled document whose path is a file that exists. The path is what makes it a query, and
+  // an absolute one is the same URI after a reload; File > Save writes there.
+  function newQueryUri() {
+    const inUse = new Set([...openTabs(), ...vscode.workspace.textDocuments.map(d => d.uri.toString())]);
+    for (let n = 1; ; n++) {
+      const path = join(queriesRoot(), `Query ${n}.sql`);
+      const uri = vscode.Uri.file(path).with({ scheme: 'untitled' });
+      if (!inUse.has(uri.toString()) && !existsSync(path)) return uri;
     }
+  }
+  async function openNewQuery(sql) {
+    const uri = newQueryUri();
+    const doc = await vscode.workspace.openTextDocument(uri);
+    const text = String(sql ?? '');
+    if (text) {
+      const edit = new vscode.WorkspaceEdit();
+      edit.insert(uri, new vscode.Position(0, 0), text);
+      await vscode.workspace.applyEdit(edit);
+    }
+    await showQuery(doc);
   }
   const openSavedQuery = path => showQuery(vscode.Uri.file(path), { preview: false });
   editSql = ({ sql }) => openNewQuery(sql);

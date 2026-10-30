@@ -51,7 +51,7 @@ function registerQueryEditor({ isQuery, run, names }) {
     return statementAt(statements(text), offset);
   }
 
-  const titleOf = doc => (doc.isUntitled ? doc.uri.path : doc.uri.path.split('/').pop()).replace(/\.sql$/i, '');
+  const titleOf = doc => doc.uri.path.split('/').pop().replace(/\.sql$/i, '');
 
   async function runAt(plan, uri, at) {
     const active = vscode.window.activeTextEditor;
