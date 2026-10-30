@@ -173,6 +173,12 @@
         "icon": "$(add)"
       },
       {
+        "command": "onelakeStudio.queryHistory",
+        "title": "Query History",
+        "category": "OneLake Studio",
+        "icon": "$(history)"
+      },
+      {
         "command": "onelakeStudio.runQuery",
         "title": "OneLake Run",
         "category": "OneLake Studio",
@@ -294,6 +300,11 @@
           "group": "inline"
         },
         {
+          "command": "onelakeStudio.queryHistory",
+          "when": "view == onelakeStudio.explorer && viewItem == queries",
+          "group": "inline"
+        },
+        {
           "command": "onelakeStudio.newQuery",
           "when": "view == onelakeStudio.explorer && viewItem == queries",
           "group": "1_edit@1"
@@ -329,6 +340,11 @@
           "command": "onelakeStudio.saveQuery",
           "when": "onelakeStudio.newQuery",
           "group": "navigation@3"
+        },
+        {
+          "command": "onelakeStudio.queryHistory",
+          "when": "onelakeStudio.queryEditor",
+          "group": "navigation@4"
         }
       ],
       "commandPalette": [
@@ -471,7 +487,7 @@
   },
   "scripts": {
     "vscode:prepublish": "node scripts/check-binding.mjs && node scripts/stage-webview.mjs && node scripts/vendor.mjs && node scripts/function-bundle.mjs && node scripts/bundle.mjs",
-    "test": "node --test test/js/app-paths.test.mjs test/js/catalog.test.mjs test/js/fabric.test.mjs test/js/host.test.mjs test/js/names.test.mjs test/js/deltalog.test.mjs test/js/onelake.test.mjs test/js/panel-html.test.mjs test/js/sql.test.mjs test/js/store.test.mjs test/js/bridge.test.mjs test/js/semviews.test.mjs test/js/semantic.test.mjs test/js/agent.test.mjs test/js/exportapp.test.mjs test/js/fabricapp.test.mjs test/js/onelakewrite.test.mjs test/js/http.test.mjs test/js/querytext.test.mjs"
+    "test": "node --test test/js/app-paths.test.mjs test/js/catalog.test.mjs test/js/fabric.test.mjs test/js/host.test.mjs test/js/names.test.mjs test/js/deltalog.test.mjs test/js/onelake.test.mjs test/js/panel-html.test.mjs test/js/sql.test.mjs test/js/store.test.mjs test/js/bridge.test.mjs test/js/semviews.test.mjs test/js/semantic.test.mjs test/js/agent.test.mjs test/js/exportapp.test.mjs test/js/fabricapp.test.mjs test/js/onelakewrite.test.mjs test/js/http.test.mjs test/js/querytext.test.mjs test/js/history.test.mjs"
   },
   "devDependencies": {
     "@types/vscode": "^1.90.0",

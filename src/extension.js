@@ -14,6 +14,7 @@ const os = require('node:os');
 const { existsSync } = require('node:fs');
 const fsp = require('node:fs/promises');
 const { registerQueryEditor } = require('./queryeditor');
+const { createHistory } = require('./history');
 const { openPanel, closePanel, revealPanel, panelColumn, dockBelowEditor, postToPanel, postLive } = require('./panel');
 const { createCatalog } = require('./catalog');
 const { createStore } = require('./store');
@@ -264,13 +265,16 @@ const POST_EVERY_MS = 250;    // ...and it is reported no more often than this w
 
 let burst = null;
 let postTimer = null, idleTimer = null;
+// Every request made to OneLake since activation: a query's history entry counts those made
+// while it ran.
+let oneLakeRequests = 0;
 
 function tally(e) {
   if (!burst) burst = { reads: 0, hits: 0, misses: 0, skips: 0, stores: 0,
                         cacheBytes: 0, netBytes: 0, storeBytes: 0, netMs: 0 };
   burst.reads++;
   if (e.cache === 'hit') { burst.hits++; burst.cacheBytes += e.bytes || 0; }
-  else { burst.misses++; burst.netBytes += e.bytes || 0; burst.netMs += e.ms || 0; }
+  else { burst.misses++; oneLakeRequests++; burst.netBytes += e.bytes || 0; burst.netMs += e.ms || 0; }
   if (!postTimer) postTimer = setTimeout(() => { postTimer = null; postReads(); }, POST_EVERY_MS);
   clearTimeout(idleTimer);
   // The settled number is the one worth reading, and it is also the one that arrives after
@@ -671,6 +675,9 @@ async function activateInner(context) {
   let storeAccount = accountKey(firstSession);
   // The saved queries' account (queriesFolder): its own folder, by its sign-in name.
   let queryAccount = queryAccountOf(firstSession);
+  // The query editor's runs (history.js), per account like the saved queries.
+  const history = createHistory({ dir: join(context.globalStorageUri.fsPath, 'history') });
+  history.useAccount(queryAccount);
   fileCacheRoot = join(context.globalStorageUri.fsPath, 'file-cache-v1');
   fileCacheAccount = storeAccount;
   onelake = createOneLake({
@@ -701,6 +708,7 @@ async function activateInner(context) {
     itemNames.clear();
     // Another account's saved queries, too.
     queryAccount = queryAccountOf(session);
+    history.useAccount(queryAccount);
     await adoptLooseQueries().catch(() => {});
     tree.queriesChanged();
     fileCacheAccount = key;   // the engine picks it up when it is next built
@@ -878,10 +886,37 @@ async function activateInner(context) {
     const answer = new Promise(resolve => runs.set(id, resolve));
     // A panel closed before it answered never will: the oldest wait is let go.
     if (runs.size > 20) { const [old] = runs.keys(); runs.get(old)(null); runs.delete(old); }
+    const at = new Date().toISOString(), requestsBefore = oneLakeRequests;
     const sent = await openInPanel({ type: plan ? 'plan-sql' : 'run-sql', id, sql, title },
                                    { beside: true, from: column, below: resultsBelow() });
     if (!sent) { runs.delete(id); return null; }
-    return answer;
+    const r = await answer;
+    // A run, answered (a plan is not one, and a run a newer one replaced said nothing).
+    if (!plan && r && (r.ok || r.error)) {
+      history.add({ sql, title, at, ms: r.ms, rows: r.ok ? r.rows : null, ok: !!r.ok,
+                    error: r.ok ? null : String(r.error).split('\n')[0], requests: oneLakeRequests - requestsBefore })
+        .catch(e => out && out.appendLine(`query history: ${e.message}`));
+    }
+    return r;
+  }
+
+  // Query History: the account's runs, newest first, searched by their SQL; a pick opens it in
+  // a new query editor.
+  const ago = iso => {
+    const s = Math.max(0, (Date.now() - Date.parse(iso)) / 1000);
+    return s < 90 ? 'just now' : s < 5400 ? `${Math.round(s / 60)} min ago` : s < 129600 ? `${Math.round(s / 3600)} h ago`
+      : new Date(iso).toLocaleString();
+  };
+  async function showHistory() {
+    const runs = await history.list();
+    if (!runs.length) { vscode.window.showInformationMessage('OneLake Studio: no query run from an editor yet.'); return; }
+    const pick = await vscode.window.showQuickPick(runs.map(e => ({
+      label: `${e.ok ? '$(pass)' : '$(error)'} ${String(e.sql).replace(/\s+/g, ' ').trim()}`,
+      description: e.ok ? `${Number(e.rows ?? 0).toLocaleString('en')} rows · ${e.ms ?? '?'} ms` : `failed: ${e.error || ''}`,
+      detail: `${ago(e.at)}${e.title ? ` · ${e.title}` : ''} · ${e.requests ? `${e.requests} OneLake request(s)` : 'no OneLake request'}`,
+      entry: e,
+    })), { title: 'Query History', placeHolder: 'Search the SQL of past runs', matchOnDescription: true, matchOnDetail: true });
+    if (pick) await openNewQuery(pick.entry.sql);
   }
 
   // What completion can name, from the cache alone (cachedSqlTables, below): every cached table
@@ -1521,6 +1556,7 @@ async function activateInner(context) {
     // A new query in an editor of its own, started with what can be queried: Save Query keeps
     // it under Queries as "Query N". Not run: one Ctrl+Enter does that.
     vscode.commands.registerCommand('onelakeStudio.newQuery', () => openNewQuery(NEW_QUERY_SQL)),
+    vscode.commands.registerCommand('onelakeStudio.queryHistory', () => showHistory()),
     vscode.commands.registerCommand('onelakeStudio.revealQueries', async () => {
       if (!queriesFolder()) return;
       await fsp.mkdir(queriesFolder(), { recursive: true });

@@ -44,7 +44,7 @@ const ENGINE_METHODS = new Set(['query', 'stream', 'cancel', 'info']);
  *        a semantic model's Direct Lake tables (named by GUID) -> their SQL names
  * @param {(x: {sql: string}) => Promise<void>} [o.editSql]
  *        Edit SQL: the SQL in a new query editor
- * @param {(x: {id: number, ok: boolean, error: string|null, rewritten: boolean}) => void} [o.queryDone]
+ * @param {(x: {id: number, ok: boolean, error: string|null, rewritten: boolean, rows?: number, ms?: number}) => void} [o.queryDone]
  *        how a statement the query editor sent went
  * @param {(x: {workspace: string, model: string}) => Promise<object>} [o.openModel]
  *        a semantic model a query names, opened from its local copy (read from Fabric the first
@@ -150,8 +150,9 @@ function createHostMethods({ onelake, engine, onStatus = () => {}, saveFile = nu
     },
     // A statement the query editor sent, run (or planned) by the page: how it went.
     'host.queryDone': async x => {
+      const num = v => (Number.isFinite(Number(v)) ? Number(v) : null);
       if (queryDone && x) queryDone({ id: Number(x.id), ok: !!x.ok, error: x.error == null ? null : String(x.error),
-                                      rewritten: !!x.rewritten });
+                                      rewritten: !!x.rewritten, rows: num(x.rows), ms: num(x.ms) });
     },
   };
 }

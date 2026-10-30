@@ -14,6 +14,9 @@
   - OneLake Save Query (Ctrl+S) keeps a new query under Queries as "Query N".
 
   Other `.sql` files are left to their own extensions.
+- **Query History** (the clock on Queries, or in a query's title bar): every query run from an
+  editor, per account, newest first, searched by its SQL; with when it ran, its time, its rows or
+  its error, and how many requests reached OneLake meanwhile. A pick opens it in a new editor.
 - **The command line's `dax` command is gone.** OneLake Studio takes SQL only: a semantic model is
   queried with `AGG("measure")` in `sql`.
 
