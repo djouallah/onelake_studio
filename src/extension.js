@@ -479,6 +479,13 @@ async function show(context, options, place) {
       exportExplore: x => (exportExplore ? exportExplore(x) : Promise.reject(new Error('OneLake Studio is still starting'))),
       nameTables: list => (nameModelTables ? nameModelTables(list) : Promise.reject(new Error('OneLake Studio is still starting'))),
       copyText: text => vscode.env.clipboard.writeText(text),
+      exportResult: x => exportResult(eng, x),
+      openDocument: async ({ as, content }) => {
+        // CSV as plain text unless an extension knows the language.
+        const language = as === 'json' ? 'json' : (await vscode.languages.getLanguages()).includes('csv') ? 'csv' : 'plaintext';
+        const doc = await vscode.workspace.openTextDocument({ language, content });
+        await vscode.window.showTextDocument(doc, { preview: false });
+      },
       editSql: x => (editSql ? editSql(x) : Promise.reject(new Error('OneLake Studio is still starting'))),
       queryDone: x => { if (queryDone) queryDone(x); },
       openModel: x => (openSqlModel ? openSqlModel(x) : Promise.reject(new Error('OneLake Studio is still starting'))),
@@ -519,6 +526,32 @@ function modelsFolder() {
 
 // Where a CSV or a OneLake file the panel saves goes: the editor's own save dialog,
 // starting in the workspace folder (or the home directory), then a plain write.
+// Export: every row of `sql`, written by the engine (engine-host.js exportTo) and moved to the
+// file the user picks. Answers its path, or null when dismissed.
+async function exportResult(eng, { sql, name }) {
+  const { capabilities = {} } = await eng.call('info').catch(() => ({}));
+  const formats = [
+    { label: 'CSV', description: 'every row, with a header line', format: 'csv' },
+    { label: 'Parquet', description: 'every row, its columns typed', format: 'parquet' },
+    ...(capabilities.excel ? [{ label: 'Excel', description: 'every row, one sheet', format: 'xlsx' }] : []),
+  ];
+  const pick = await vscode.window.showQuickPick(formats, { title: 'Export the Query', placeHolder: 'Every row the query returns, to a file' });
+  if (!pick) return null;
+  const folder = (vscode.workspace.workspaceFolders || [])[0];
+  const base = folder ? folder.uri : vscode.Uri.file(os.homedir());
+  const stem = String(name).replace(/[\\/:*?"<>|]+/g, '_') || 'query';
+  const uri = await vscode.window.showSaveDialog({
+    defaultUri: vscode.Uri.joinPath(base, `${stem}.${pick.format}`),
+    filters: { [pick.label]: [pick.format] },
+  });
+  if (!uri) return null;
+  return vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: `Exporting to ${basename(uri.fsPath)}` }, async () => {
+    const tmp = await eng.exportTo(sql, pick.format);
+    try { await fsp.copyFile(tmp, uri.fsPath); } finally { await fsp.rm(tmp, { force: true }).catch(() => {}); }
+    return uri.fsPath;
+  });
+}
+
 async function saveFile(name, bytes) {
   const folder = (vscode.workspace.workspaceFolders || [])[0];
   const base = folder ? folder.uri : vscode.Uri.file(os.homedir());
@@ -1656,6 +1689,8 @@ async function activateInner(context) {
     ...[['gridCopy', 'tsv'], ['gridCopyHeaders', 'tsv-headers'], ['gridCopyCsv', 'csv'],
         ['gridCopyMarkdown', 'markdown'], ['gridCopyJson', 'json']].map(([id, as]) =>
       vscode.commands.registerCommand(`onelakeStudio.${id}`, () => postToPanel({ type: 'grid-copy', as }))),
+    ...[['gridOpenCsv', 'csv'], ['gridOpenJson', 'json']].map(([id, as]) =>
+      vscode.commands.registerCommand(`onelakeStudio.${id}`, () => postToPanel({ type: 'grid-open', as }))),
     vscode.commands.registerCommand('onelakeStudio.revealQueries', async () => {
       if (!queriesFolder()) return;
       await fsp.mkdir(queriesFolder(), { recursive: true });

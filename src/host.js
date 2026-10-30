@@ -42,6 +42,10 @@ const ENGINE_METHODS = new Set(['query', 'stream', 'cancel', 'info']);
  *        Export to Fabric: answers what the page says when it is done
  * @param {(list: {workspace: string, item: string, schema: string, table: string}[]) => Promise<string[]>} [o.nameTables]
  *        a semantic model's Direct Lake tables (named by GUID) -> their SQL names
+ * @param {(x: {sql: string, name: string}) => Promise<string|null>} [o.exportResult]
+ *        Export: the query's every row to a file the user picks; its path (null: dismissed)
+ * @param {(x: {as: string, content: string}) => Promise<void>} [o.openDocument]
+ *        rows as an untitled CSV or JSON document
  * @param {(text: string) => Promise<void>} [o.copyText]
  *        text on the clipboard (the grid's copies)
  * @param {(x: {sql: string}) => Promise<void>} [o.editSql]
@@ -53,7 +57,7 @@ const ENGINE_METHODS = new Set(['query', 'stream', 'cancel', 'info']);
  *        time) and kept as a view: { name, schema, path, text }
  */
 function createHostMethods({ onelake, engine, onStatus = () => {}, saveFile = null, semviews = null, exportExplore = null,
-                             nameTables = null, copyText = null, editSql = null, queryDone = null, openModel = null, modelsDir = null }) {
+                             nameTables = null, exportResult = null, openDocument = null, copyText = null, editSql = null, queryDone = null, openModel = null, modelsDir = null }) {
   const views = () => { if (!semviews) throw new Error('semantic views are not available here'); return semviews; };
   return {
     // Export to Fabric (exportapp.js): the model's text (to check it), where it lives in
@@ -144,6 +148,16 @@ function createHostMethods({ onelake, engine, onStatus = () => {}, saveFile = nu
         ? Buffer.from(x.text, 'utf8')
         : () => onelake.readBytes(String(x.workspace), String(x.path));
       return saveFile(name, bytes);
+    },
+    // Export: the query on screen, every row, to a CSV, Parquet or Excel file (the host asks
+    // which and where, and its DuckDB writes it).
+    'host.exportResult': async x => {
+      if (!exportResult) throw new Error('export is not available here');
+      return exportResult({ sql: String((x && x.sql) ?? ''), name: String((x && x.name) || 'query') });
+    },
+    'host.openDocument': async x => {
+      if (!openDocument) throw new Error('documents are not available here');
+      await openDocument({ as: x && x.as === 'json' ? 'json' : 'csv', content: String((x && x.content) ?? '') });
     },
     // The grid's copies: the clipboard is the editor's, not the page's.
     'host.copyText': async x => {

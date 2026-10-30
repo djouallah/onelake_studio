@@ -742,6 +742,10 @@ export function createEngine({
   const exportExplore = x => callHost("fabric.exportExplore", [x]);
   // A semantic model's Direct Lake tables (named by GUID) as SQL names (semantic.js).
   const nameTables = list => callHost("onelake.nameTables", [list]);
+  // Export: the host asks for a format and a file and writes every row of `sql`.
+  const exportResult = x => callHost("host.exportResult", [x]);
+  // Rows as an untitled CSV or JSON document.
+  const openDocument = x => callHost("host.openDocument", [x]);
   // Text on the clipboard, by the host (the grid's copies).
   const copyText = text => callHost("host.copyText", [{ text }]);
   // Edit SQL: the host opens the SQL in a new query editor.
@@ -751,5 +755,5 @@ export function createEngine({
 
   return { init, reset, statTable, peekTable, loadTable, deltaState, deltaHistory,
            loadFile, readFileBytes, saveText, saveOneLakeFile, runSql, describeLoad, fmtBytes, cancelLoad,
-           semanticViews, semanticKeep, semanticOpen, exportExplore, nameTables, editSql, queryDone, copyText };
+           semanticViews, semanticKeep, semanticOpen, exportExplore, nameTables, editSql, queryDone, copyText, exportResult, openDocument };
 }

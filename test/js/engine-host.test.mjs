@@ -213,8 +213,20 @@ test("native engine host", async t => {
       "one copy per file per session");
   });
 
+  await t.test("Export writes every row into the temp directory, around a read only", async () => {
+    const path = await engine.exportTo("SELECT range AS n FROM range(3);", "csv");
+    assert.ok(existsSync(path), path);
+    const r = await engine.call("query", [`SELECT sum(n) AS s, count(*) AS c FROM read_csv('${path}')`]);
+    assert.equal(r.rows[0].s, 3);
+    assert.equal(r.rows[0].c, 3);
+    const pq = await engine.exportTo("SELECT 42 AS answer", "parquet");
+    assert.equal((await engine.call("query", [`SELECT answer FROM '${pq}'`])).rows[0].answer, 42);
+    await assert.rejects(engine.exportTo(`COPY (SELECT 1) TO '${path}'`, "csv"), /Read only/);
+    await assert.rejects(engine.exportTo("SELECT 1", "exe"), /no export format/);
+  });
+
   await t.test("the page reaches only query, stream, cancel and info", async () => {
-    for (const m of ["openTable", "copyToTemp", "registerFileBuffer", "constructor", "__proto__"]) {
+    for (const m of ["openTable", "copyToTemp", "exportTo", "registerFileBuffer", "constructor", "__proto__"]) {
       await assert.rejects(engine.call(m, []), /unknown engine method/, `${m} is not a page method`);
     }
   });

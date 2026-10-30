@@ -9,7 +9,7 @@
 // =============================================================================
 import { createEngine } from './data.js';
 import { isDocResult, textLinesDoc, fileExt, isTextExt, escapeHtml, basename,
-         IMAGE_EXTS, abfssUrl, toCsv } from './paths.js';
+         IMAGE_EXTS, abfssUrl } from './paths.js';
 // Static import is safe: docview.js is tiny — the markdown renderer it uses is imported
 // only inside renderMarkdown(), and only for a document that IS markdown.
 import { renderDocument } from './docview.js';
@@ -1069,8 +1069,9 @@ function saveIsFile() {
 function setSaveLabel() {
   const btn = $('csvBtn');
   const file = saveIsFile();
-  btn.textContent = file ? 'Save file' : 'Save CSV';
-  btn.title = file ? `Save ${activeFile.name} exactly as it is stored` : '';
+  btn.textContent = file ? 'Save file' : 'Export…';
+  btn.title = file ? `Save ${activeFile.name} exactly as it is stored`
+                   : 'Every row of the query, to a CSV, Parquet or Excel file';
 }
 
 // Both go through VS Code's own save dialog (the host writes the file): the bytes of a
@@ -1081,7 +1082,7 @@ async function saveActive() {
   try {
     const saved = saveIsFile()
       ? await engine.saveOneLakeFile(lakehouse, activeFile)
-      : await saveCsv();
+      : await exportQuery();
     if (saved) setStatus(`Saved ${saved}.`, 'ok');
   } catch (e) {
     setStatus('Save failed: ' + e.message, 'error');
@@ -1127,11 +1128,14 @@ function openInEditor(sql, said) {
                            e => setStatus('Could not open an editor: ' + e.message, 'error'));
 }
 
-function saveCsv() {
-  if (!lastResult || !lastResult.rows.length) return null;
-  const { fields, rows } = lastResult;
-  return engine.saveText(($('activeTable').textContent || 'query').replace(/[^\w.-]+/g, '_') + '.csv',
-                         toCsv(fields, rows, { text: cellText }));
+// Export: the query on screen, every row (not the rows the page holds), to a file: the host
+// asks which format and where, and its DuckDB writes it. A semantic model's query is exported as
+// the SQL it compiles to.
+async function exportQuery() {
+  if (!currentSql) return null;
+  const model = await semantic.statement(currentSql);
+  const name = ($('activeTable').textContent || 'query').replace(/^Query: /, '');
+  return engine.exportResult({ sql: model ? model.sql : currentSql, name });
 }
 
 // ---------------------------------------------------------------------------
@@ -1231,6 +1235,9 @@ window.addEventListener('message', async e => {
     else if (m.type === 'reads') showReads(m);
     // The webview's context menu on the grid: Copy, with headers, as CSV, Markdown or JSON.
     else if (m.type === 'grid-copy') { if (grid) grid.copy(String(m.as || 'tsv')); }
+    else if (m.type === 'grid-open') {
+      if (grid) await engine.openDocument({ as: m.as === 'json' ? 'json' : 'csv', content: grid.text(m.as === 'json' ? 'json' : 'csv') });
+    }
     // Why the catalog is taking long — conversion pending, catalog busy.
     else if (m.type === 'status' && m.message) setStatus(m.message);
   } catch (err) {

@@ -808,12 +808,35 @@ function createEngineHost({ extensionDir, onLog = () => {}, onWarn = () => {}, g
     return path;
   }
 
+  // A query's whole result, every row (no page cap), written by DuckDB into the temp
+  // directory, the one place the lockdown lets it write, as parquet, csv or xlsx; the path is
+  // handed back and the host moves the file where the user asked. Not a page method: the host
+  // builds the COPY around a statement the read-only guard has passed, so the page's own SQL
+  // still cannot COPY.
+  const EXPORTS = { parquet: 'FORMAT parquet', csv: 'FORMAT csv, HEADER true', xlsx: 'FORMAT xlsx, HEADER true' };
+  async function exportTo(sql, format) {
+    const token = authToken;
+    try {
+      assertReadOnly(sql);
+      if (!EXPORTS[format]) throw new Error(`no export format ${format}`);
+      await init();
+      if (format === 'xlsx' && !capabilities.excel) throw new Error('the excel extension is not loaded in this session');
+      const file = join(tmpDir, `export_${++tmpSeq}.${format}`).replace(/\\/g, '/');
+      await ensureAuth();
+      await withAuthRetry(async () => {
+        const run = String(await prepare(sql)).trim().replace(/;+\s*$/, '');
+        await withConn(c => c.run(`COPY (${run}) TO ${sqlStr(file)} (${EXPORTS[format]})`), agentLive);
+      });
+      return file;
+    } catch (e) { throw scrub(e, authToken || token); }
+  }
+
   // Scrubbed like call(): a failure may name a statement that carries a token.
   async function openTableScrubbed(target) {
     try { return await openTable(target); } catch (e) { throw scrub(e, authToken); }
   }
 
-  return { call, close, openTable: openTableScrubbed, copyToTemp, agentQuery, catalogChanged };
+  return { call, close, openTable: openTableScrubbed, copyToTemp, exportTo, agentQuery, catalogChanged };
 }
 
 module.exports = { createEngineHost, jsonSafe, isOneLakeMetadata, PROFILE_METRICS };

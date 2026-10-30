@@ -75,7 +75,7 @@ export function inspectText(v) {
  * place, so whatever saves the result (the CSV) saves it in the order on screen.
  * `ui`: { filter (input), count (element), inspector: { root, title, body, copy, close } },
  * `copyText(text)` puts text on the clipboard, `say(text)` a line in the status bar.
- * Returns { copy(as), destroy() }.
+ * Returns { copy(as), text(as), destroy() }.
  */
 export function mountGrid(table, wrap, res, { ui, copyText, say = () => {} }) {
   const fields = res.fields, types = res.types || [];
@@ -169,6 +169,8 @@ export function mountGrid(table, wrap, res, { ui, copyText, say = () => {} }) {
     copyText(formatRows(cols, rows, as));
     say(`Copied ${rows.length.toLocaleString('en')} row(s) × ${cols.length} column(s)${as.startsWith('tsv') ? '' : ` as ${as.toUpperCase()}`}.`);
   }
+  // The selection (everything, with none) as text, for a document of its own.
+  const text = as => { const { cols, rows } = selection(); return formatRows(cols, rows, as); };
 
   function inspect(r, c) {
     const v = view[r] && view[r][fields[c]];
@@ -255,6 +257,7 @@ export function mountGrid(table, wrap, res, { ui, copyText, say = () => {} }) {
   draw();
   return {
     copy,
+    text,
     destroy() {
       wrap.removeEventListener('scroll', onScroll);
       wrap.removeEventListener('keydown', onKey);

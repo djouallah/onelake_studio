@@ -236,6 +236,16 @@
         "command": "onelakeStudio.gridCopyJson",
         "title": "Copy as JSON",
         "category": "OneLake Studio"
+      },
+      {
+        "command": "onelakeStudio.gridOpenCsv",
+        "title": "Open as CSV Document",
+        "category": "OneLake Studio"
+      },
+      {
+        "command": "onelakeStudio.gridOpenJson",
+        "title": "Open as JSON Document",
+        "category": "OneLake Studio"
       }
     ],
     "keybindings": [
@@ -416,6 +426,16 @@
           "command": "onelakeStudio.gridCopyJson",
           "when": "webviewId == 'onelakeStudio' && webviewSection == 'grid'",
           "group": "1_copy@5"
+        },
+        {
+          "command": "onelakeStudio.gridOpenCsv",
+          "when": "webviewId == 'onelakeStudio' && webviewSection == 'grid'",
+          "group": "2_open@1"
+        },
+        {
+          "command": "onelakeStudio.gridOpenJson",
+          "when": "webviewId == 'onelakeStudio' && webviewSection == 'grid'",
+          "group": "2_open@2"
         }
       ],
       "editor/title": [
@@ -441,6 +461,14 @@
         }
       ],
       "commandPalette": [
+        {
+          "command": "onelakeStudio.gridOpenCsv",
+          "when": "false"
+        },
+        {
+          "command": "onelakeStudio.gridOpenJson",
+          "when": "false"
+        },
         {
           "command": "onelakeStudio.gridCopy",
           "when": "false"

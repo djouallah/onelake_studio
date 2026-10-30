@@ -15,9 +15,7 @@ the panel holds no token, and table Pivot is only a SQL starter.
    small histogram per column.
 6. **Time travel from History:** "Query this version" on a Delta commit or an Iceberg snapshot, and
    "Diff with current" for row count and schema.
-7. **Export to a local file** as Parquet, CSV or Excel, without the 200,000-row cap. The host writes
-   the file; user SQL is still refused `COPY`. Also: open the result as an untitled CSV or JSON
-   document.
+7. ~~**Export to a local file**~~ Done.
 8. ~~**SQL from the tree**~~ Done (tables and models; the tree lists no columns to drag).
 
 ## Later
