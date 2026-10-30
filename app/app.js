@@ -1213,7 +1213,8 @@ function openQuery(name, sql) {
   $('sqlEditor').value = sql;
   $('sqlEditor').focus();
   setBusy(false);
-  setStatus(`${name || 'The query'} — Run ▶ (Ctrl+Enter) to run it.`);
+  setStatus(name ? `${name} — Run ▶ (Ctrl+Enter) to run it.`
+    : 'A new query — write SQL, Run ▶ (Ctrl+Enter), and Save Query keeps it under Queries.');
 }
 
 // Save Query, one click: over the query that is open, else as a new "Query N" — the tree's

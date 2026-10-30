@@ -1353,6 +1353,10 @@ async function activateInner(context) {
       } catch (e) { showError(`Could not delete ${n.label}: ${e.message}`); }
       tree.queriesChanged();
     }),
+    // An empty SQL box, as a query of its own: Save Query keeps it under Queries as "Query N".
+    vscode.commands.registerCommand('onelakeStudio.newQuery', async () => {
+      await openInPanel({ type: 'open-query', name: '', sql: '' });
+    }),
     vscode.commands.registerCommand('onelakeStudio.revealQueries', async () => {
       if (!queriesFolder()) return;
       await fsp.mkdir(queriesFolder(), { recursive: true });

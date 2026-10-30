@@ -165,6 +165,12 @@
         "title": "Show Queries Folder",
         "category": "OneLake Studio",
         "icon": "$(folder-opened)"
+      },
+      {
+        "command": "onelakeStudio.newQuery",
+        "title": "New Query",
+        "category": "OneLake Studio",
+        "icon": "$(add)"
       }
     ],
     "viewsContainers": {
@@ -251,9 +257,19 @@
           "group": "inline"
         },
         {
-          "command": "onelakeStudio.revealQueries",
+          "command": "onelakeStudio.newQuery",
           "when": "view == onelakeStudio.explorer && viewItem == queries",
           "group": "inline"
+        },
+        {
+          "command": "onelakeStudio.newQuery",
+          "when": "view == onelakeStudio.explorer && viewItem == queries",
+          "group": "1_edit@1"
+        },
+        {
+          "command": "onelakeStudio.revealQueries",
+          "when": "view == onelakeStudio.explorer && viewItem == queries",
+          "group": "1_edit@2"
         },
         {
           "command": "onelakeStudio.renameQuery",

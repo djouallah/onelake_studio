@@ -370,7 +370,7 @@ class LakehouseTree {
 
     if (n.kind === 'queries') {
       const list = await this.queries.list();
-      if (!list.length) return [node('empty', 'Save a query from the SQL box to keep it here', { leaf: true })];
+      if (!list.length) return [node('empty', 'Start one with +, or save one from the SQL box', { leaf: true })];
       return list.map(q => node('query', q.name, { leaf: true, path: q.path }));
     }
 
