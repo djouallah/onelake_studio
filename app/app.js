@@ -940,8 +940,7 @@ function setPivotOpen(open) {
 }
 const closePivot = () => setPivotOpen(false);
 // Edit SQL: the pivot's query in an editor of its own, as SQL over the table, to be taken
-// further by hand, as Looker's Open in SQL Runner does. Asked for, never on close; the pivot
-// stays as it is.
+// further by hand. Asked for, never on close; the pivot stays as it is.
 function editPivotSql(sql) {
   if (!tablePivot) return;
   openInEditor(sql, "The pivot's query is in an editor, over the table: run it there (Ctrl+Enter), or change it first.");

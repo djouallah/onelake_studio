@@ -841,7 +841,7 @@ async function activateInner(context) {
     const rel = p ? relative(queriesRoot(), p) : '';
     return !!rel && !rel.startsWith('..') && !isAbsolute(rel);
   };
-  // Whatever its language says: an extension for Postgres or SQL Server can take over a .sql
+  // Whatever its language says: another SQL extension can take over a .sql
   // document's language (VS Code closes and reopens it to do so), and it is still a query here.
   const isQuery = doc => (doc.isUntitled ? newQueries.has(doc.uri.toString())
                                          : doc.uri.scheme === 'file' && isQueryFile(doc.uri.fsPath));
