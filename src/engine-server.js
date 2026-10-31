@@ -10,6 +10,7 @@
 //   window -> server   { token, window }   then the socket stays open: it says the window is alive
 //   server -> window   { ok, uri, capabilities, tmpDir }
 //   window -> server   { stop: true }      Sign Out, a restart, Clear Cached OneLake Data
+//   window -> server   { status: true }    answered { pid, uptimeMs, cpuUs, rss, windows }
 //
 // A window gone is a window whose queries nobody is waiting for: Quack lets them run on, so they
 // are cancelled here. With no window left the server waits `idleMs`, so a window reload finds it
@@ -102,7 +103,8 @@ async function main({ token, pipe, options, logFile, idleMs = 60_000, stateFile 
         try { msg = JSON.parse(line); } catch (_) {}
         if (!who) {
           if (!sameToken(msg.token, token)) { sock.destroy(); return; }
-          who = { window: String(msg.window || '') };
+          // `owner`: a VS Code window can hold two sockets, for the engine and for the tree.
+          who = { window: String(msg.window || ''), owner: String(msg.owner || msg.window || '') };
           clients.add(who);
           watchIdle();
           // A window that arrives during the boot waits for it.
@@ -110,6 +112,10 @@ async function main({ token, pipe, options, logFile, idleMs = 60_000, stateFile 
           catch (e) { sock.write(`${JSON.stringify({ ok: false, error: e.message })}\n`); }
         } else if (msg.stop) {
           shutdown('a window asked');
+        } else if (msg.status) {
+          const u = process.cpuUsage();
+          sock.write(`${JSON.stringify({ pid: process.pid, uptimeMs: process.uptime() * 1000, cpuUs: u.user + u.system,
+            rss: process.memoryUsage().rss, windows: new Set([...clients].map(c => c.owner)).size })}\n`);
         }
       }
     });

@@ -108,6 +108,34 @@ test("a window that leaves takes its statements with it, and the server stays", 
   assert.deepEqual((await b.call("query", ["SELECT 8 AS still"])).rows, [{ still: 8 }]);
 });
 
+test("stats: what the engine holds, what it runs in any window, and a Stop from another", async t => {
+  const { open } = await setup(t);
+  const a = open(), b = open();
+  await a.call("query", ["SELECT 1"]);
+  const idle = await a.stats();
+  assert.equal(idle.shared, true);
+  assert.equal(idle.running.length, 0, "its own statements aren't listed as running");
+  assert.equal(typeof idle.process.pid, "number");
+  assert.ok(idle.process.pid !== process.pid, "the server's process, not this one");
+  assert.ok(idle.process.windows >= 1);
+  assert.ok(Array.isArray(idle.memory) && Array.isArray(idle.files) && idle.temp.files === 0);
+
+  let result = null;
+  const running = b.call("query", [`${LONG} -- a trailing comment`]).catch(e => { result = e; });
+  await sleep(1000);
+  const seen = (await a.stats()).running;
+  assert.equal(seen.length, 1);
+  assert.match(seen[0].sql, /range\(100000000000000\)/);
+  assert.doesNotMatch(seen[0].sql, /onelake:/);
+  assert.equal(seen[0].here, false, "another window's");
+  assert.ok(seen[0].ms >= 500 && seen[0].ms < 60_000, `its age, whatever the time zone: ${seen[0].ms}`);
+  await a.stopStatement(seen[0].id);
+  await running;
+  assert.match(result.message, /cancel/i);
+  await sleep(200);
+  assert.equal((await a.stats()).running.length, 0);
+});
+
 test("the store's entries live in the server, shared by windows, imported once, and survive a stop", async t => {
   const dir = await mkdtemp(join(tmpdir(), "onelake-state-"));
   t.after(() => rm(dir, { recursive: true, force: true }).catch(() => {}));

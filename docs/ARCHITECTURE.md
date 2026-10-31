@@ -477,6 +477,7 @@ personal skills, and it follows the extension through updates.
 | **Switch Microsoft Account** | Asks which account to use and reopens the panel, so the previous account's tables do not survive the switch. |
 | **Sign Out** | Signs out of OneLake Studio and closes the panel and the engine. What is cached stays on show. In the explorer's "..." menu. |
 | **Settings** | Opens VS Code's Settings page, filtered to this extension. In the explorer's "..." menu. |
+| **Performance** | A tab of how the engine is doing right now: memory by use, cores in use, blocks in memory, the disk cache, and on the shared engine what is running, with a Stop on each. Nothing is stored. In the explorer's "..." menu. |
 | **Refresh** | Re-reads a workspace, item or folder from OneLake in the foreground. |
 | **Group by Type** / **Group by Workspace** | A toggle in the explorer's "..." menu. Remembered. |
 | **Pin to Favorites** / **Unpin from Favorites** | Moves a workspace in or out of the tree's favorites group. |
@@ -543,6 +544,8 @@ apply at once.
 | `src/tree.js` | The explorer. |
 | `app/querytext.js` | The SQL box's statements, error positions and variables. |
 | `src/panel.js`, `src/host.js`, `src/html.js`, `src/webview.js` | The panel's webview, its channel, and its page. |
+| `src/performance.js` | The Performance tab. |
+| `src/engine-server.js`, `src/engine-client.js`, `src/statestore.js` | The shared engine: its process, a window's side of it, and what it remembers. |
 | `src/agent.js`, `src/bridge.js`, `bin/cli.mjs` | The command line. |
 | `src/exportapp.js`, `src/fabricapp.js`, `src/onelakewrite.js` | Export to Fabric. |
 | `src/vendored.js` | The one list of pinned third-party code the webview runs, dax-sql included. |

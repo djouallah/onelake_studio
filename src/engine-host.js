@@ -918,6 +918,32 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
   }
   const running = () => [...live, ...agentLive, ...[...tabs].flatMap(t => [...t])];
 
+  // What the Performance tab shows, as it is now (performance.js). Nothing is kept. Not a page method.
+  async function stats() {
+    await init();
+    // Marked, so another window's Running list leaves these out.
+    const read = sql => withConn(async c => (await c.runAndReadAll(`/*stats*/ ${sql}`)).getRowObjectsJson(), agentLive);
+    const [[settings], memory, files, [temp]] = await Promise.all([
+      read(`SELECT current_setting('memory_limit') AS memory_limit, current_setting('threads') AS threads, version() AS version`),
+      read(`SELECT tag, memory_usage_bytes AS bytes, temporary_storage_bytes AS spilled FROM duckdb_memory()
+            WHERE memory_usage_bytes > 0 OR temporary_storage_bytes > 0 ORDER BY bytes DESC`),
+      read(`SELECT path, count(*)::INT AS blocks, sum(nr_bytes)::BIGINT AS bytes,
+                   (count(*) FILTER (loaded))::INT AS in_memory, (count(*) FILTER (spilled))::INT AS spilled
+            FROM duckdb_external_file_cache() GROUP BY path ORDER BY bytes DESC`),
+      read(`SELECT count(*)::INT AS files, coalesce(sum(size), 0)::BIGINT AS bytes FROM duckdb_temporary_files()`),
+    ]);
+    const u = process.cpuUsage();
+    return {
+      shared: !!remote, settings, memory, files, temp,
+      // A window's engine has no process of its own: this is the extension host's, shared.
+      process: instance.status ? await instance.status()
+        : { pid: process.pid, uptimeMs: process.uptime() * 1000, cpuUs: u.user + u.system, rss: process.memoryUsage().rss },
+      running: instance.running ? await instance.running() : null,
+    };
+  }
+  // Stops a statement the Running list named, whichever window sent it.
+  const stopStatement = id => (instance && instance.cancelStatement ? instance.cancelStatement(id) : Promise.resolve());
+
   // serve: once Quack is listening, what a window needs to know of this engine.
   async function boot() {
     await init();
@@ -1015,7 +1041,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
     } catch (e) { throw scrub(e, authToken || token); }
   }
 
-  const api = { call, close, copyToTemp, exportTo, agentQuery, catalogChanged, warm, maxRows, forTab, boot };
+  const api = { call, close, copyToTemp, exportTo, agentQuery, catalogChanged, warm, maxRows, forTab, boot, stats, stopStatement };
   return api;
 }
 

@@ -53,7 +53,7 @@ function pipePath(key) {
 // The control socket, signed in, and what the server says of itself; null if nobody answers or
 // the token is refused. A server still booting answers once it is up, so `waitMs` is long enough
 // for a boot once something has answered the connect.
-function connectControl(path, token, window, waitMs = BOOT_MS) {
+function connectControl(path, token, window, owner, waitMs = BOOT_MS) {
   return new Promise(resolve => {
     const sock = net.connect(path);
     let buf = '';
@@ -65,7 +65,7 @@ function connectControl(path, token, window, waitMs = BOOT_MS) {
     sock.on('connect', () => {
       clearTimeout(timer);
       timer = setTimeout(() => { sock.destroy(); done(null); }, waitMs);
-      sock.write(`${JSON.stringify({ token, window })}\n`);
+      sock.write(`${JSON.stringify({ token, window, owner })}\n`);
     });
     const onData = chunk => {
       buf += chunk;
@@ -132,17 +132,17 @@ function spawnServer({ script, token, pipe, options, logFile, idleMs, stateFile,
 }
 
 // The running server for this key, started if there is none.
-async function acquire({ pipe, window, getToken, setToken, lockFile, server }) {
+async function acquire({ pipe, window, owner, getToken, setToken, lockFile, server }) {
   const known = await getToken();
   if (known) {
-    const up = await connectControl(pipe, known, window);
+    const up = await connectControl(pipe, known, window, owner);
     if (up) return { ...up, token: known };
   }
   return withLock(lockFile, async () => {
     // Another window may have started it while this one waited.
     const now = await getToken();
     if (now) {
-      const up = await connectControl(pipe, now, window);
+      const up = await connectControl(pipe, now, window, owner);
       if (up) return { ...up, token: now };
     }
     const token = crypto.randomBytes(32).toString('hex');
@@ -155,7 +155,7 @@ async function acquire({ pipe, window, getToken, setToken, lockFile, server }) {
       said = await spawnServer({ ...server, token, pipe });
     }
     if (said.taken) throw new Error('an engine with another session is still running: try again in a minute');
-    const up = await connectControl(pipe, token, window);
+    const up = await connectControl(pipe, token, window, owner);
     if (!up) throw new Error('the engine started and then refused this window');
     return { ...up, token };
   });
@@ -227,12 +227,12 @@ async function openClient({ uri, token, extensionDir, bundledExtensions, lockdow
 
 // This window on the server, started if there is none. A server of another build is told to stop
 // and replaced: F5 after a rebuild must not find the old code, nor the state file held by it.
-async function joinServer({ key, script, options, stateDir, build = null, getToken, setToken, idleMs = 60_000 }) {
+async function joinServer({ key, script, options, stateDir, build = null, owner = null, getToken, setToken, idleMs = 60_000 }) {
   await fsp.mkdir(stateDir, { recursive: true });
   const id = crypto.createHash('sha256').update(key).digest('hex').slice(0, 16);
   const plain = typeof options === 'function' ? await options() : options;
   const asked = {
-    pipe: pipePath(key), window: crypto.randomBytes(6).toString('hex'), getToken, setToken,
+    pipe: pipePath(key), window: crypto.randomBytes(6).toString('hex'), owner, getToken, setToken,
     lockFile: join(stateDir, `${id}.lock`),
     server: { script, options: plain, logFile: join(stateDir, `${id}.log`), idleMs, build, stateFile: join(stateDir, `${id}.duckdb`) },
   };
@@ -310,6 +310,7 @@ function createStateClient(cfg) {
  * @param {object|(() => Promise<object>)} o.options  createEngineHost's plain options, for the server's engine
  * @param {string} o.stateDir  for the lock, the server's log and the state file
  * @param {*} [o.build]  which build this is; a server of another is replaced
+ * @param {string} [o.owner]  which VS Code window this is, for the server's count of them
  * @param {() => Promise<string|undefined>} o.getToken  the session token, from secret storage
  * @param {(t: string) => Promise<void>} o.setToken
  * @param {() => void} [o.onGone]  the server went away under this window
@@ -328,6 +329,19 @@ function createRemote({ onGone = () => {}, ...cfg }) {
     sock.on('error', () => {});
     sock.on('close', () => { if (!closing) onGone(); });
 
+    // The server's answers on the control pipe, oldest question first.
+    const asked = [];
+    let lines = '';
+    sock.on('data', chunk => {
+      lines += chunk;
+      for (let nl; (nl = lines.indexOf('\n')) >= 0;) {
+        const line = lines.slice(0, nl);
+        lines = lines.slice(nl + 1);
+        const waiting = asked.shift();
+        if (waiting) { try { waiting(JSON.parse(line)); } catch (_) { waiting(null); } }
+      }
+    });
+
     let seq = 0;
     async function cancel(tag) {
       for (let i = 0; i < CANCEL_TRIES && !closing; i++) {
@@ -340,6 +354,35 @@ function createRemote({ onGone = () => {}, ...cfg }) {
     return {
       capabilities: state.capabilities,
       tmpDir: state.tmpDir,
+      // The server's process: pid, uptimeMs, cpuUs, rss, windows.
+      status() {
+        return new Promise(resolve => {
+          asked.push(resolve);
+          sock.write(`${JSON.stringify({ status: true })}\n`);
+        });
+      },
+      // What the server is running, for every window. Only tagged statements: Quack's own aren't
+      // anyone's. A secret's statement holds a token, so its text is never given out.
+      async running() {
+        const c = await local.connect();
+        try {
+          // Quack's time is UTC with no zone, so its age comes from the epoch, on this machine's clock.
+          // The tag is split, or this statement, which holds it too, would list itself.
+          const sql = `SELECT connection_id AS id, query, epoch_ms(query_started_at) AS started
+                       FROM quack_active_connections()
+                       WHERE state = 'active' AND query LIKE '%/*one' || 'lake:%' AND query NOT LIKE '/*stats*/%'`;
+          return (await c.runAndReadAll(query(sql))).getRowObjectsJson().map(r => {
+            const tag = /\/\*onelake:([^:]+):/.exec(r.query);
+            const text = String(r.query).replace(/\s*\/\*onelake:[^*]*\*\/\s*$/, '');
+            return {
+              id: r.id, ms: Math.max(0, Date.now() - Number(r.started)),
+              here: !!tag && tag[1] === window,
+              sql: /\bcreate\s+(or\s+replace\s+)?(\w+\s+)?secret\b/i.test(text) ? '(a credential being issued)' : text,
+            };
+          });
+        } finally { try { c.closeSync(); } catch (_) {} }
+      },
+      cancelStatement: id => cancelIds([id]),
       async connect() {
         const c = await local.connect();
         let tag = null;

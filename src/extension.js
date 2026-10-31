@@ -16,6 +16,7 @@ const { createHash, randomBytes } = require('node:crypto');
 const fsp = require('node:fs/promises');
 const { quoteIdent } = require('./sql');
 const { openPanel, setPanelTitle, closePanel, revealPanel, panelOpen, postToPanel, postLive, panelSettings } = require('./panel');
+const { openPerformance } = require('./performance');
 const { createCatalog } = require('./catalog');
 const { createStore } = require('./store');
 const { createOneLake, walkCached } = require('./onelake');
@@ -448,7 +449,7 @@ function sharedEngineServer(context, account) {
   const key = [account || 'none', context.extensionUri.fsPath].join('|');
   const secret = `onelakeStudio.engineSession.${createHash('sha256').update(key).digest('hex').slice(0, 16)}`;
   return {
-    key, script, build,
+    key, script, build, owner: vscode.env.sessionId,
     stateDir: join(context.globalStorageUri.fsPath, 'engine-server'),
     getToken: () => context.secrets.get(secret),
     setToken: token => context.secrets.store(secret, token),
@@ -614,8 +615,9 @@ async function show(context, { newTab = false, ...options } = {}) {
   await openPanel(context, {
     newTab,
     onOpened: logOpened, onBoot: logBoot, engine: eng, build: buildInfo,
-    // Only the first tab: the draft is the text the last one closed with.
-    draft: panelOpen() ? null : memento.get(QUERY_DRAFT_KEY, null),
+    // The text the last tab closed with, for a tab opened to write in. One opened for what was
+    // clicked starts from that (app.js offerInBox), and the draft stays for the next.
+    draft: newTab || panelOpen() ? null : memento.get(QUERY_DRAFT_KEY, null),
     viewTag: sharedEngineOn() ? randomBytes(2).toString('hex') : null,
     host: (tabEngine, post) => createHostMethods({
       onelake, engine: tabEngine, onStatus: message => post({ type: 'status', message }),
@@ -1728,6 +1730,24 @@ async function activateInner(context) {
 
     vscode.commands.registerCommand('onelakeStudio.openSettings', () =>
       vscode.commands.executeCommand('workbench.action.openSettings', `@ext:${context.extension.id}`)),
+
+    vscode.commands.registerCommand('onelakeStudio.showPerformance', async () => {
+      const { readme } = await webviewRoot(context.extensionUri, { dev: context.extensionMode === vscode.ExtensionMode.Development });
+      openPerformance({
+        engine: () => ensureEngine(context, { readme: readme.fsPath }),
+        disk: async () => ({
+          cacheBytes: await dirBytes(fileCacheDirFor(storeAccount)),
+          cacheLimit: Math.max(0, Number(vscode.workspace.getConfiguration('onelakeStudio').get('diskCacheMaxGB', 64)) || 0) * 1024 ** 3,
+        }),
+        restart: async () => {
+          const pick = await vscode.window.showWarningMessage(
+            'Restart the engine? Every OneLake Studio tab closes, in every window, and running queries stop.', { modal: true }, 'Restart Engine');
+          if (pick !== 'Restart Engine') return;
+          closePanel();
+          await resetEngine();
+        },
+      });
+    }),
 
     vscode.commands.registerCommand('onelakeStudio.openTable', n => openInPanel({
       type: 'open-table',

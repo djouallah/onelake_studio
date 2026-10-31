@@ -51,6 +51,17 @@ test("warm() boots the engine and lists the catalog ahead of the first statement
   assert.equal(listings, 1, "the statement found the catalog already listed");
 });
 
+test("stats: the engine in this window answers too, with nothing running to list", async t => {
+  const engine = createEngineHost({ extensionDir: join(tmpdir(), "onelake-stats-ext"), lockdown: false });
+  t.after(() => engine.close());
+  const s = await engine.stats();
+  assert.equal(s.shared, false);
+  assert.equal(s.running, null);
+  assert.equal(s.process.pid, process.pid);
+  assert.ok(s.settings.memory_limit && s.settings.threads);
+  assert.ok(Array.isArray(s.memory) && Array.isArray(s.files));
+});
+
 test("offline with no disk cache: a read of OneLake is refused at once, and the rest of the catalog still answers", async t => {
   const extDir = await mkdtemp(join(tmpdir(), "onelake-ext-"));
   let reason = "no internet";

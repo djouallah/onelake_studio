@@ -14,6 +14,9 @@
   statement and red underlines (the cursor goes to the error instead). The `resultsLocation` setting is gone.
   Edit SQL stays only where the box is hidden: a semantic model's view and a table's Pivot. A table or
   file you click puts its SQL in an empty box, not run.
+- **Performance, in the explorer's "..." menu.** A tab of how the engine is doing right now: memory by use,
+  cores in use, blocks in memory and the disk cache. On the shared engine it also lists what is running, with a
+  Stop on each. Nothing is stored.
 - **A first `SHOW ALL TABLES` answers at once.** The catalog is kept in one file and checked behind you, so
   it no longer opens a file per table first. On a machine that scans what it opens, that took 35 seconds.
 - **The title says where you are.** The sidebar's header and the panel's tab read OneLake Studio and then

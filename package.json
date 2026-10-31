@@ -63,6 +63,12 @@
         "icon": "$(gear)"
       },
       {
+        "command": "onelakeStudio.showPerformance",
+        "title": "Performance",
+        "category": "OneLake Studio",
+        "icon": "$(pulse)"
+      },
+      {
         "command": "onelakeStudio.signIn",
         "title": "Sign in to OneLake",
         "category": "OneLake Studio"
@@ -317,6 +323,11 @@
           "command": "onelakeStudio.openSettings",
           "when": "view == onelakeStudio.explorer",
           "group": "1_account@3"
+        },
+        {
+          "command": "onelakeStudio.showPerformance",
+          "when": "view == onelakeStudio.explorer",
+          "group": "1_account@4"
         },
         {
           "command": "onelakeStudio.clearCache",
