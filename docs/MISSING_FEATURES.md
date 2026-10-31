@@ -46,8 +46,8 @@ repository.
 | # | Expected | Today | Evidence |
 | --- | --- | --- | --- |
 | 21 | **A file has a right-click.** A file's name is its `abfss://` URL, yet nothing copies it. | No menu on files or folders: no Copy URL, no Select Top Rows. Go To does not search files. | [`package.json:329`](../package.json#L329), [`NAMING.md:119`](NAMING.md#L119) |
-| 22 | **Read a folder as one table**, with partitions. | Only one file opens from the tree. A glob has to be typed by hand. | [`src/tree.js:324`](../src/tree.js#L324) |
-| 23 | **A table expands to its columns.** | A table has no children, so no column can be seen, copied or dragged from the tree. | [`src/tree.js:255`](../src/tree.js#L255) |
+| 22 | **Read a folder as one table**, with partitions. | Only one file opens from the tree. A glob has to be typed by hand. | [`src/tree.js:323`](../src/tree.js#L323) |
+| 23 | **A table expands to its columns.** | A table has no children, so no column can be seen, copied or dragged from the tree. | [`src/tree.js:253`](../src/tree.js#L253) |
 | 24 | **Open in Fabric** for a workspace, item or model. | The only link out is an exported app. | [`src/extension.js:1523`](../src/extension.js#L1523) |
 | 25 | **An item that can't be read says so.** | A mirrored Databricks catalog or an Eventhouse is simply absent. Proposed: list it with the reason. To check: an Eventhouse with OneLake availability on. | [`src/names.js:46`](../src/names.js#L46) |
 
@@ -63,7 +63,7 @@ repository.
 - Pivot's summaries include median in [`ARCHITECTURE.md:254`](ARCHITECTURE.md#L254); the code has none
   ([`app/explore/explore.js:33`](../app/explore/explore.js#L33)).
 - A model over several lakehouses is called refused in [`src/extension.js:1100`](../src/extension.js#L1100)
-  and [`src/tree.js:270`](../src/tree.js#L270); only zero is
+  and [`src/tree.js:269`](../src/tree.js#L269); only zero is
   ([`src/extension.js:1162`](../src/extension.js#L1162)).
 - Export… re-runs the SQL, so it drops the grid's sort, while a comment says the CSV keeps the order on
   screen ([`app/app.js:749`](../app/app.js#L749), [`app/app.js:1256`](../app/app.js#L1256)).

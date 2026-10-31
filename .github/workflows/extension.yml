@@ -274,7 +274,7 @@ jobs:
             || { echo "expected exactly ${{ steps.binding.outputs.binding }}, found: $dirs"; exit 1; }
           unzip -Z1 "$vsix" | grep -qE '^extension/node_modules/@duckdb/node-bindings-[^/]+/.*\.(node|dll|so|dylib)$' \
             || { echo "no native library in the vsix"; exit 1; }
-          for e in iceberg azure httpfs avro; do
+          for e in iceberg azure httpfs avro cache_httpfs; do
             unzip -Z1 "$vsix" | grep -qx "extension/duckdb-extensions/$e.duckdb_extension"               || { echo "the vsix does not bundle the $e extension"; exit 1; }
           done
           # The host ships as dist/extension.js (scripts/bundle.mjs): src/ stays out but for

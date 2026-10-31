@@ -43,10 +43,11 @@ const EXTENSIONS = [
   //
   // cache_httpfs, the disk cache, is OUR build of it (djouallah/duck-read-cache-fs, branch
   // fix/windows-long-path-xattr): the released one caches nothing on disk on Windows. It is
-  // unsigned, and engine-host.js allows that for it. Back to the community build once the
-  // fix is released upstream.
-  { name: "cache_httpfs", required: false,
-    url: (duckdb, platform) => `https://github.com/djouallah/duck-read-cache-fs/releases/download/onelake-${duckdb}-1/cache_httpfs.${platform}.duckdb_extension` },
+  // unsigned, and engine-host.js allows that for it. It also holds what reading kept data offline
+  // needs (cache_httpfs_set_offline), which upstream doesn't have. Required: without it a vsix would
+  // ship with no disk cache and nothing to read offline, and say so nowhere.
+  { name: "cache_httpfs", required: true,
+    url: (duckdb, platform) => `https://github.com/djouallah/duck-read-cache-fs/releases/download/onelake-${duckdb}-2/cache_httpfs.${platform}.duckdb_extension` },
 ];
 
 const target = process.argv[2];

@@ -220,6 +220,41 @@ test("a forced table listing also clears the catalog's own memo for that item", 
   assert.deepEqual(catalog.calls, ["tables lh.Lakehouse", "reset", "tables lh.Lakehouse"]);
 });
 
+test("a table is cached once its rows are read at its current snapshot, and says so to whoever listens", async () => {
+  const ol = createOneLake({ catalog: fakeCatalog(), store: createStore({ dir: null }) });
+  const t = { schema: "dbo", table: "a" };
+  assert.equal(await ol.cached.rows(lh, t), false, "nothing known");
+  await ol.table(lh, t);
+  assert.equal(await ol.cached.rows(lh, t), false, "its metadata is not its rows");
+  const said = [];
+  const off = ol.onRowsRead(l => said.push(l));
+  await ol.rowsRead(LOC);
+  off();
+  assert.deepEqual(said, [LOC]);
+  assert.equal(await ol.cached.rows(lh, t), true);
+
+  const moved = createOneLake({ catalog: fakeCatalog(), store: createStore({ dir: null }) });
+  await moved.table(lh, t);
+  await moved.rowsRead(LOC.replace("00002", "00001"));
+  assert.equal(await moved.cached.rows(lh, t), false, "another snapshot's rows are not this one's");
+});
+
+test("first rows already kept count as rows read", async () => {
+  const ol = createOneLake({ catalog: fakeCatalog(), store: createStore({ dir: null }) });
+  const t = { schema: "dbo", table: "a" };
+  await ol.peek(lh, t, async () => ({ fields: [], rows: [], numRows: 0 }));
+  assert.equal(await ol.cached.rows(lh, t), true);
+});
+
+test("a table nothing was ever written to reads no file, so it is cached once known", async () => {
+  const catalog = fakeCatalog();
+  catalog.loadTable = async () => ({ metadata: metadata({ "current-snapshot-id": -1, snapshots: [] }), metadataLocation: LOC });
+  const ol = createOneLake({ catalog, store: createStore({ dir: null }) });
+  const t = { schema: "dbo", table: "a" };
+  await ol.table(lh, t);
+  assert.equal(await ol.cached.rows(lh, t), true);
+});
+
 test("the first rows are read once per snapshot, and the engine is not asked again", async () => {
   const catalog = fakeCatalog();
   const ol = createOneLake({ catalog, store: createStore({ dir: null }) });

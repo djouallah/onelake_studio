@@ -170,12 +170,16 @@ async function trimFileCache(dir, maxBytes, onWarn) {
 // every semantic model, { kind: 'semanticmodel', workspace, model }.
 // Each becomes a view DuckDB lists (syncCatalog), so SHOW ALL TABLES and information_schema see
 // what the tree has seen without a single request to OneLake.
+//
+// `checkConnectivity` asks whether the internet is still there, once a read has failed. `onRowsRead`
+// gets a table's metadata location when a statement has read its rows.
 function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}, onWarn = () => {}, getToken = null,
                             memoryLimit = '', threads = 0, spillMaxGB = 0, maxRows = DEFAULT_MAX_ROWS,
                             allowedPaths = [], lockdown = true,
                             httpProxy = '', bundledExtensions = null,
                             fileCacheDir = null, fileCacheMaxBytes = 0, resolveTable = null,
-                            catalogTables = null, offlineReason = () => null } = {}) {
+                            catalogTables = null, offlineReason = () => null, checkConnectivity = null,
+                            onRowsRead = () => {} } = {}) {
   let instance = null;
   // The connection for the host's OWN statements — the secret, extension loading. Page
   // queries never run on it: each gets a connection of its own (see withConn), so a cancel
@@ -412,6 +416,8 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
       }
       if (!loaded) try { await conn.run(`LOAD ${ext};`); }
       catch (_) {
+        // INSTALL has no timeout, and every statement waits for the boot.
+        if (offlineReason() === 'no internet') throw new Error('there is no internet to install it');
         await conn.run(`INSTALL ${ext}${repo ? ` FROM ${repo}` : ''};`);
         await conn.run(`LOAD ${ext};`);
       }
@@ -461,6 +467,29 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
     } catch (e) {
       onWarn(`disk cache unavailable — ${e.message}`);
     }
+    if (!capabilities.fileCache) return;
+    // Any call starts keeping what opening a file answers, which an offline open needs. A build
+    // without this function reads nothing offline, and refuseOffline says so.
+    try {
+      await conn.run('SELECT cache_httpfs_set_offline(false);');
+      servingOffline = false;
+      capabilities.offlineRead = true;
+    } catch (e) {
+      onWarn(`reading kept data offline is unavailable — ${e.message}`);
+    }
+  }
+
+  // The disk cache serves what it keeps with no call to OneLake while this window is offline. A
+  // function, since the lockdown freezes the settings.
+  let servingOffline = false;
+  async function syncOffline() {
+    if (!capabilities.offlineRead || servingOffline === !!offlineReason()) return;
+    await admin(async () => {
+      const now = !!offlineReason();
+      if (servingOffline === now) return;
+      await conn.run(`SELECT cache_httpfs_set_offline(${now});`);
+      servingOffline = now;
+    });
   }
 
   // ---------------------------------------------------------------------------
@@ -533,7 +562,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
       throw new Error(`OneLake gave ${sqlName(r)} no readable metadata location` +
         (r.metadataLocation ? ` (${String(r.metadataLocation).slice(0, 120)})` : ''));
     }
-    return { name: sqlName(r), path: [r.kind, r.workspace, r.item, r.schema || 'dbo'], source };
+    return { name: sqlName(r), path: [r.kind, r.workspace, r.item, r.schema || 'dbo'], source, location: r.emptySql == null ? r.metadataLocation : null };
   }
   async function makeView({ name, path: parts, source }) {
     const key = name.toLowerCase();
@@ -664,20 +693,35 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
   // OneLake nothing.
   const READ_FAILURE = /^\s*IO Error\b/;
 
-  // Offline, a statement that reads OneLake is refused here rather than left to time out: the disk
-  // cache keeps a file's bytes, but DuckDB still asks OneLake to open it, so nothing kept helps.
+  // Offline, a statement that reads OneLake is served from the disk cache. Only with no such cache
+  // (turned off, or a build that can't) is it refused here, rather than left to time out.
   // A table nothing was ever written to reads no file, and needs no network.
   // A OneLake URL it reads: after FROM or JOIN, or as a function's argument. Not one that is only a
   // value, as a model's path is in what SHOW SEMANTIC VIEWS compiles to.
   const READS_ONELAKE = /(?:\b(?:from|join)\s+\(?\s*'|\b(?!values\b)\w+\s*\(\s*\[?\s*')(?:zip:\/\/)?(?:abfss?|az|azure):\/\//i;
   function refuseOffline(sql, tables) {
     const why = offlineReason();
-    if (!why) return;
+    if (!why || capabilities.offlineRead) return;
     const reading = tables.find(t => /\biceberg_scan\(/.test(t.source));
     if (!reading && !READS_ONELAKE.test(sql)) return;
     const what = reading ? reading.name : 'This statement';
     throw Object.assign(new Error(`${what}: reading rows needs OneLake, and ${why === 'no internet' ? 'there is no internet' : 'you are not signed in'}. ` +
-      'What this machine has cached still works: tables, columns, stats, first rows and semantic models.'), { offline: true });
+      'What this machine has cached still works: tables, columns, stats and first rows.'), { offline: true });
+  }
+
+  // What the disk cache says of a file, or a part of one, that it doesn't keep.
+  const NOT_CACHED = /is not cached on this machine/;
+  // A statement that names a table without reading its rows.
+  const READS_NO_ROWS = /^(?:\s|--[^\n]*\n|\/\*[\s\S]*?\*\/)*(?:describe|desc|explain(?!\s*(?:\(\s*)?analy[sz]e))\b/i;
+  // Said once per location: every statement passes here.
+  const rowsSaid = new Set();
+  function rowsRead(sql, tables) {
+    if (READS_NO_ROWS.test(sql)) return;
+    for (const { location } of tables) {
+      if (!location || rowsSaid.has(location)) continue;
+      rowsSaid.add(location);
+      try { onRowsRead(location); } catch (_) {}
+    }
   }
 
   // A statement run with what it needs: the catalog when it reads the catalog, the views of the
@@ -686,17 +730,33 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
   // (store.js revalidate). `canRetry`: false once running it again would repeat what it sent.
   async function withTables(sql, run, canRetry = () => true) {
     if (readsCatalog(sql)) await syncCatalog();
+    await syncOffline();
+    let named = [];
     try {
       return await revalidate(o => sourcesOf(sql, o), async tables => {
+        named = tables;
         refuseOffline(sql, tables);
         for (const t of tables) await makeView(t);
-        return run(catalogStatement(sql) || sql);
+        const result = await run(catalogStatement(sql) || sql);
+        rowsRead(sql, tables);
+        return result;
       }, e => READ_FAILURE.test(String(e && e.message)) && canRetry());
     } catch (e) {
-      // A read the check above could not see, and the reason it failed.
-      const why = offlineReason();
-      if (why && READ_FAILURE.test(String(e && e.message))) {
-        try { e.message += `\n(OneLake Studio is offline: ${why}.)`; } catch (_) {}
+      const message = String(e && e.message);
+      if (NOT_CACHED.test(message)) {
+        const what = named.filter(t => t.location);
+        throw Object.assign(new Error(`${what.length === 1 ? what[0].name : 'This statement'}: this part isn't cached on this machine. Read it once online.`), { offline: true });
+      }
+      if (READ_FAILURE.test(message)) {
+        // The internet went while this was reading, and nothing has said so yet. Run it again from
+        // what is kept. The statement isn't asked twice: the retry finds this window offline.
+        if (!offlineReason() && capabilities.offlineRead && checkConnectivity && canRetry()) {
+          await checkConnectivity();
+          if (offlineReason()) return withTables(sql, run, canRetry);
+        }
+        // A read the check above could not see, and the reason it failed.
+        const why = offlineReason();
+        if (why) { try { e.message += `\n(OneLake Studio is offline: ${why}.)`; } catch (_) {} }
       }
       throw e;
     }

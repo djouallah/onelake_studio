@@ -38,8 +38,8 @@ function summarize(metadata, metadataLocation) {
   const schema = (metadata.schemas || []).find(s => s['schema-id'] === metadata['current-schema-id'])
               || (metadata.schemas || [])[0];
   const snap = snapshots.find(s => String(s['snapshot-id']) === String(curId));
-  // Which format the table is written in: the tree draws its icon from this, and a Delta
-  // table's Stats and History come from its own log rather than from the conversion.
+  // Which format the table is written in: a Delta table's Stats and History come from its own
+  // log rather than from the conversion.
   const { format, deltaVersion } = names.sourceFormat(metadata);
   // Listed by the catalog but never written: snapshot -1, no snapshots, no files. DuckDB
   // opens it as an empty table against the right schema.
@@ -140,6 +140,7 @@ function createOneLake({ catalog, store, prefetchEnabled = () => true, onHit = (
     files: (lh, dir) => `files\u0000${lh.workspace}\u0000${lh.item}\u0000${dir || ''}`,
     table: (lh, t) => `table\u0000${lh.workspace}\u0000${lh.item}\u0000${t.schema || ''}\u0000${t.table}`,
     peek: loc => `peek\u0000${loc}`,
+    rows: loc => `rows\u0000${loc}`,
     models: ws => `models\u0000${ws}`,
     apps: ws => `apps\u0000${ws}`,
     itemNamed: (wsId, itemId) => `item-named\u0000${wsId}\u0000${itemId}`.toLowerCase(),
@@ -253,7 +254,7 @@ function createOneLake({ catalog, store, prefetchEnabled = () => true, onHit = (
     // without one until its TTL runs out.
     if (r.cached && (r.at < refreshedSince(lh) || !('format' in r.value))) r = await load(true);
     // The store says 'changed' only when an answer it had moved; a table read for the first
-    // time (a prefetch, a click) is news too — the tree draws its format from it.
+    // time (a prefetch, a click) is news too — the tree and the engine's catalog both want it.
     if (!r.cached) for (const fn of [...tableReadSubs]) { try { fn({ ...lh, ...t, value: r.value }); } catch (_) {} }
     return { ...r.value, at: r.at, cached: r.cached };
   }
@@ -387,6 +388,14 @@ function createOneLake({ catalog, store, prefetchEnabled = () => true, onHit = (
     return { ...out, cached: false };
   }
 
+  // A statement has read this table's rows, at this snapshot: what it read works offline from now on.
+  const rowsReadSubs = new Set();
+  const onRowsRead = fn => { rowsReadSubs.add(fn); return () => rowsReadSubs.delete(fn); };
+  async function rowsRead(location) {
+    await store.put(keys.rows(location), true);
+    for (const fn of [...rowsReadSubs]) { try { fn(location); } catch (_) {} }
+  }
+
   // ---------------------------------------------------------------------------
   // Prefetch: when the user opens a Tables node, read every table's metadata behind them,
   // two at a time, skipping what the store already has. The first click in a lakehouse is
@@ -436,11 +445,23 @@ function createOneLake({ catalog, store, prefetchEnabled = () => true, onHit = (
     files: (lh, dir = '') => store.known(keys.files(lh, dir)),
     models: ws => store.known(keys.models(ws)),
     table: (lh, t) => store.known(keys.table(lh, t)),
+    // Whether this table's rows have been read here at its current snapshot. Not whether all of them
+    // were: what is kept is the part of each file a statement read. A table nothing was ever written
+    // to reads no file. Its first rows kept are rows read, for what was read before this was noted.
+    rows: async (lh, t) => {
+      const kept = await store.known(keys.table(lh, t));
+      const meta = kept && kept.value;
+      if (!meta) return false;
+      if (meta.empty) return true;
+      if (!meta.metadataLocation) return false;
+      return await store.peek(keys.rows(meta.metadataLocation)) !== undefined
+        || await store.peek(keys.peek(meta.metadataLocation)) !== undefined;
+    },
   };
 
   return {
     workspaces, items, tables, files, table, deltaState, deltaHistory, peek, prefetch, refreshTables,
-    models, apps, itemNamed, readBytes, cached,
+    models, apps, itemNamed, readBytes, cached, rowsRead, onRowsRead,
     onChanged: fn => listen('changed', key => fn(decode(key))),
     onTableRead,
     onRefreshFailed: fn => listen('refresh-failed', (key, e) => fn(decode(key), e)),

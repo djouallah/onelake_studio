@@ -117,14 +117,22 @@ the status bar, and comes back by itself ([`src/connectivity.js`](../src/connect
 
 | Works offline, if cached | Needs OneLake |
 | --- | --- |
-| The tree, `SHOW ALL TABLES`, `information_schema`, completion, Go To | Reading table rows |
-| A table's Stats and History, and first rows already read | `abfss://` files read by SQL |
-| Semantic models: opening them, Explore's Model page, `SHOW SEMANTIC …` | A model query's rows |
-| `Files/` objects the host has read | Export to Fabric |
+| The tree, `SHOW ALL TABLES`, `information_schema`, completion, Go To | A column or a file never read |
+| A table's Stats and History, and first rows already read | A wildcard over `abfss://` files |
+| Semantic models: opening them, Explore's Model page, `SHOW SEMANTIC …` | A table whose metadata was never read |
+| Table rows, a model's queries and its Pivot, for what was read | Export to Fabric |
+| `Files/` objects read before | |
 
-**Why table rows need OneLake:** `cache_httpfs` keeps a file's bytes on disk, but DuckDB still asks OneLake
-to open the file, even with validation off (tested with a dummy token, 40 tables, all refused). So the
-engine refuses such a statement at once rather than let it time out.
+**How rows are read offline:** `cache_httpfs` keeps a file's bytes on disk, but opening a file asks OneLake
+for its size and version first. So what an open answers is kept too, as one more cache entry for the file,
+and offline (`cache_httpfs_set_offline`) an open builds its handle from that with no request. A block it
+holds reads as usual. A block it doesn't is an error, and the engine says that part isn't cached. Bytes from
+before this need one open online to be readable offline, and aren't downloaded again.
+
+With the disk cache off, there is nothing to read, and a statement that reads OneLake is refused at once.
+
+**Losing the internet during a read:** the read fails on DuckDB's own timeout, the engine checks the
+internet once, and if it has gone the statement runs again from what is kept.
 
 ## The engine
 
@@ -160,6 +168,7 @@ The engine is **DuckDB 2.0 running natively in the extension host**
 | The name behind a Direct Lake model's item GUIDs | On disk, [`src/onelake.js`](../src/onelake.js) | Only when using it fails |
 | The bytes of a `Files/` object the host reads (an image, a `.bim`, a SQLite copy, a saved file) | Under the etag its cached listing gave | Only when the file was rewritten |
 | What DuckDB reads: table data and `Files/` objects | DuckDB's disk cache (`cache_httpfs`) | Only when the file was rewritten: a kept copy is checked against the file's version tag and modification time |
+| That a table's rows were read, per snapshot | On disk, [`src/onelake.js`](../src/onelake.js) | Never: a new snapshot is a new entry |
 | A semantic model's definition | `~/OneLakeStudio/semantic-models/<workspace>/<model>.yaml` | On **Download Again** |
 
 - **A kept answer is trusted until using it fails.** Then it is read again once, and the work tried again
@@ -177,14 +186,19 @@ The engine is **DuckDB 2.0 running natively in the extension host**
 - **The catalog is cached too:** `SHOW ALL TABLES` and `information_schema` list what the tree has seen
   with no request to OneLake.
 - **A patched build:** the vsix carries a `cache_httpfs` with a Windows fix not yet released upstream
-  (without it, nothing is cached on disk on Windows). DuckDB loads it as an unsigned extension until
-  the fix ships.
+  (without it, nothing is cached on disk on Windows) and the offline read above. DuckDB loads it as an
+  unsigned extension. A build without it fails, rather than ship with no disk cache.
 
 ## The explorer
 
 The tree ([`src/tree.js`](../src/tree.js)) lists workspaces, then lakehouses, warehouses, SQL and
 mirrored databases, their tables and files, semantic models and apps. Workspaces can be pinned, and
 the tree can group by type.
+
+**A table's icon** says whether it is cached, as a model's does: a cloud until a statement has read its
+rows at its current snapshot, a check after (`cached.rows` in [`src/onelake.js`](../src/onelake.js)). What is
+kept is the part of each file that was read, so a check doesn't promise every column. A new snapshot goes
+back to the cloud. A table nothing was ever written to has a check, since it reads no file.
 
 **Clicking a table** shows it in the panel: Data, Stats, History and Pivot.
 - **Stats and History** come from the table's metadata, with no data read. A table written as Delta

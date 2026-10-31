@@ -51,7 +51,7 @@ test("warm() boots the engine and lists the catalog ahead of the first statement
   assert.equal(listings, 1, "the statement found the catalog already listed");
 });
 
-test("offline: a read of OneLake is refused at once, and the rest of the catalog still answers", async t => {
+test("offline with no disk cache: a read of OneLake is refused at once, and the rest of the catalog still answers", async t => {
   const extDir = await mkdtemp(join(tmpdir(), "onelake-ext-"));
   let reason = "no internet";
   const METADATA = "abfss://ws@onelake.dfs.fabric.microsoft.com/lh.Lakehouse/Tables/dbo/t/metadata/1.metadata.json";
@@ -89,6 +89,88 @@ test("offline: a read of OneLake is refused at once, and the rest of the catalog
     assert.equal((await engine.call("query", [sql])).rows[0].path, url, sql);
   }
   assert.deepEqual((await engine.call("query", ["SELECT * FROM lakehouse.w.lh.dbo.never_written"])).rows, []);
+});
+
+const CACHE_BUILD = join(BUNDLED, "cache_httpfs.duckdb_extension");
+
+test("offline with the disk cache: what it doesn't keep says so at once, with nothing sent", { skip: !existsSync(CACHE_BUILD) }, async t => {
+  const extDir = await mkdtemp(join(tmpdir(), "onelake-ext-"));
+  const cacheDir = await mkdtemp(join(tmpdir(), "onelake-cache-"));
+  const METADATA = "abfss://ws@onelake.dfs.fabric.microsoft.com/lh.Lakehouse/Tables/dbo/t/metadata/1.metadata.json";
+  const engine = createEngineHost({
+    extensionDir: extDir,
+    bundledExtensions: BUNDLED,
+    fileCacheDir: cacheDir,
+    fileCacheMaxBytes: 1024 ** 3,
+    offlineReason: () => "no internet",
+    resolveTable: async ref => ({ ...ref, metadataLocation: METADATA }),
+  });
+  t.after(async () => {
+    await engine.close();
+    await rm(extDir, { recursive: true, force: true }).catch(() => {});
+    await rm(cacheDir, { recursive: true, force: true }).catch(() => {});
+  });
+
+  const t0 = Date.now();
+  const offline = e => { assert.equal(e.offline, true); return true; };
+  await assert.rejects(engine.call("query", ["SELECT * FROM lakehouse.w.lh.dbo.t"]),
+    e => /lakehouse\.w\.lh\.dbo\.t: this part isn't cached on this machine\. Read it once online\./.test(e.message) && offline(e));
+  await assert.rejects(engine.call("query", [`SELECT * FROM '${METADATA.replace("metadata/1.metadata.json", "x.parquet")}'`]),
+    e => /This statement: this part isn't cached/.test(e.message) && offline(e));
+  assert.ok(Date.now() - t0 < 20000, "answered from this machine, not timed out");
+  assert.equal((await engine.call("query", ["SELECT 42 AS a"])).rows[0].a, 42);
+});
+
+test("the internet going during a read is checked once, and the statement runs again from what is kept", { skip: !existsSync(CACHE_BUILD) }, async t => {
+  const extDir = await mkdtemp(join(tmpdir(), "onelake-ext-"));
+  const cacheDir = await mkdtemp(join(tmpdir(), "onelake-cache-"));
+  let reason = null;
+  let checks = 0;
+  let opened = 0;
+  const engine = createEngineHost({
+    extensionDir: extDir,
+    bundledExtensions: BUNDLED,
+    fileCacheDir: cacheDir,
+    fileCacheMaxBytes: 1024 ** 3,
+    offlineReason: () => reason,
+    checkConnectivity: async () => { checks++; reason = "no internet"; return false; },
+    // An IO Error at once, with nothing leaving this machine, as a read with no network is.
+    resolveTable: async ref => { opened++; return { ...ref, emptySql: "SELECT * FROM read_parquet('https://127.0.0.1:1/gone.parquet')" }; },
+  });
+  t.after(async () => {
+    await engine.close();
+    await rm(extDir, { recursive: true, force: true }).catch(() => {});
+    await rm(cacheDir, { recursive: true, force: true }).catch(() => {});
+  });
+
+  await assert.rejects(engine.call("query", ["SELECT * FROM lakehouse.w.lh.dbo.t"]), /OneLake Studio is offline: no internet/);
+  assert.equal(checks, 1);
+  // Asked, asked again after the failure, and then both once more for the second run.
+  assert.equal(opened, 4, "run again once the check found no internet");
+});
+
+test("a read that fails with the internet still there stays that failure, and runs once", { skip: !existsSync(CACHE_BUILD) }, async t => {
+  const extDir = await mkdtemp(join(tmpdir(), "onelake-ext-"));
+  const cacheDir = await mkdtemp(join(tmpdir(), "onelake-cache-"));
+  let checks = 0;
+  let opened = 0;
+  const engine = createEngineHost({
+    extensionDir: extDir,
+    bundledExtensions: BUNDLED,
+    fileCacheDir: cacheDir,
+    fileCacheMaxBytes: 1024 ** 3,
+    checkConnectivity: async () => { checks++; return true; },
+    resolveTable: async ref => { opened++; return { ...ref, emptySql: "SELECT * FROM read_parquet('https://127.0.0.1:1/gone.parquet')" }; },
+  });
+  t.after(async () => {
+    await engine.close();
+    await rm(extDir, { recursive: true, force: true }).catch(() => {});
+    await rm(cacheDir, { recursive: true, force: true }).catch(() => {});
+  });
+
+  await assert.rejects(engine.call("query", ["SELECT * FROM lakehouse.w.lh.dbo.t"]), /IO Error/);
+  assert.equal(checks, 1);
+  assert.equal(opened, 2, "asked, and asked again after the failure, and no second run");
 });
 
 test("a read that fails asks for the table again, once, and only a read does", async t => {

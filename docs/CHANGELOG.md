@@ -3,9 +3,12 @@
 ## Unreleased
 
 - **It works offline.** With no internet, or nobody signed in, OneLake Studio notices and works from what
-  this machine has cached: the tree, the catalog, stats, first rows and semantic models. Reading table rows
-  still needs OneLake, and says so at once. The status bar shows when this is happening, and it comes back
-  by itself.
+  this machine has cached: the tree, the catalog, stats, first rows, semantic models, and the rows it has
+  read. A query or a model's Pivot runs from what was read, and a column or a file never read says so at
+  once. Export to Fabric needs OneLake. The status bar shows when this is happening, and it comes back by
+  itself.
+- **A table shows whether it is cached.** As a semantic model does: a cloud until its rows have been read on
+  this machine, a check after. The Delta and Iceberg icons are gone; Stats still says which format it is.
 - **Sign Out.** In the explorer's "..." menu. It signs out of OneLake Studio; VS Code's Accounts menu still
   removes the account itself. Signed out, the last account's cached data stays on show on this machine, until
   another account signs in or Clear Cached OneLake Data deletes it.

@@ -469,6 +469,8 @@ function ensureEngine(context, { readme } = {}) {
       fileCacheMaxBytes: diskCacheGB * 1024 ** 3,
       resolveTable: (ref, o) => (resolveSqlTable ? resolveSqlTable(ref, o) : Promise.reject(new Error('OneLake Studio is still starting'))),
       offlineReason: () => connectivity.reason(),
+      checkConnectivity: () => connectivity.check(),
+      onRowsRead: location => { if (onelake) onelake.rowsRead(location).catch(() => {}); },
       catalogTables: () => (cachedSqlTables ? cachedSqlTables() : Promise.resolve([])),
     });
   } catch (e) {
@@ -925,7 +927,6 @@ async function activateInner(context, ready) {
     cachedModel: n => cachedModel(n),
     queries: { list: () => listQueries() },
     unsupportedModel: n => unsupportedModels.get(modelKey(n)) || null,
-    iconPath: name => vscode.Uri.joinPath(context.extensionUri, 'media', `${name}.svg`),
     // A listing failure becomes an error NODE, but the stack behind it goes here.
     log: m => out && out.appendLine(m),
   });
