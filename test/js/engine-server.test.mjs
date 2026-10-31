@@ -98,9 +98,13 @@ test("a window that leaves takes its statements with it, and the server stays", 
   await a.call("query", ["SELECT 1"]);
   const running = a.call("query", [LONG]).catch(() => {});
   await sleep(1000);
-  const { admin, query, local } = await probe();
+  const { admin, route, local } = await probe();
   t.after(() => { try { admin.closeSync(); local.closeSync(); } catch (_) {} });
-  const count = async () => (await admin.runAndReadAll(query("SELECT count(*)::INT AS n FROM quack_active_connections() WHERE state = 'active' AND query LIKE '%range(' || '1000%'"))).getRowObjectsJson()[0].n;
+  const count = async () => {
+    const way = route("SELECT count(*)::INT AS n FROM quack_active_connections() WHERE state = 'active' AND query LIKE '%range(' || '1000%'");
+    try { return (await admin.runAndReadAll(way.text)).getRowObjectsJson()[0].n; }
+    finally { way.release(); }
+  };
   assert.equal(await count(), 1);
   await a.close();
   await running;
