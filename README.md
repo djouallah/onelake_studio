@@ -4,7 +4,7 @@ Browse and query your Microsoft Fabric data in VS Code, signed in with the Micro
 VS Code already uses.
 
 Fabric is treated as one catalog: tables, files and semantic models (views over tables), each with
-a unique name, queried with SQL. Read only, cache first.
+a unique name, queried with SQL. Read only, cache first, and it works offline.
 
 ![The OneLake explorer](docs/summary.png)
 
@@ -25,6 +25,7 @@ a unique name, queried with SQL. Read only, cache first.
 - **Ask Claude Code or GitHub Copilot.** One command, and your assistant can list your data, read a
   model's measures and compute them.
 - **Fast after the first look.** What you've opened is kept on your machine.
+- **Works offline.** What you've read keeps working with no internet: browse it, query it, pivot it.
 
 ## Experimental
 

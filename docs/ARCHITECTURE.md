@@ -12,6 +12,8 @@ queried with SQL.
   all send the same SQL over the same names. A Power BI semantic model is one more table: `AGG("measure")`
   computes its measure, compiled from its DAX by [dax-sql](https://github.com/djouallah/dax-sql).
 - **Runs on your machine.** DuckDB in the extension host reads OneLake directly, with your own token.
+- **Works offline.** This is a must, not a fallback. Everything you have read keeps working with no
+  internet and no sign-in: browsing, SQL, a model's Explore and its Pivot.
 - **Agents get the same access.** An agent asks through the command line, on the same sign-in, cache
   and engine as a person in the editor.
 
@@ -30,6 +32,7 @@ SHOW ALL TABLES;
 | **SQL only** | A model is read with `AGG("measure")` in SQL. There is no DAX query. | [`app/semantic.js`](../app/semantic.js) |
 | **Read only** | Nothing is written to Fabric or OneLake. The host refuses any statement that could write. The one exception is Export to Fabric, after an OK in VS Code. | `assertReadOnly` in [`src/sql.js`](../src/sql.js) |
 | **Cache first** | Every answer from OneLake or Fabric is kept on this machine and served from there first. It is trusted until using it fails, then read again once. | [`src/onelake.js`](../src/onelake.js), [`src/store.js`](../src/store.js) |
+| **Works offline** | A feature that reads data works from what this machine holds, with no network. What isn't held says so at once, never on a timeout. Only writing to Fabric needs a connection: Export to Fabric. The exported Fabric app is online by design, and this rule doesn't apply to it. | [`src/connectivity.js`](../src/connectivity.js), [`src/http.js`](../src/http.js), `cache_httpfs_set_offline` in [`src/engine-host.js`](../src/engine-host.js) |
 | **The host does the work** | Sign-in, every OneLake read and the engine are in the host. The panel is a view: it holds no token and makes no network request. | [`src/host.js`](../src/host.js), [`src/panel.js`](../src/panel.js) |
 | **A table's Pivot is a SQL starter** | It builds a first SQL. Its only actions are Edit SQL and Close. | [`app/app.js`](../app/app.js) |
 
@@ -101,6 +104,9 @@ one, the secret is reissued.
 stops asking for it until you sign in again. To remove the account too, use VS Code's Accounts menu.
 
 ## Offline
+
+Offline is a requirement for every feature of the extension that reads data, so a new one has to work here
+too. The exported Fabric app is online by design.
 
 Nothing turns this on. The extension is offline when there is no internet or no session, says which in
 the status bar, and comes back by itself ([`src/connectivity.js`](../src/connectivity.js)).
