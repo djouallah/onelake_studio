@@ -649,6 +649,8 @@ async function main() {
   });
   await step("Signed out, new VS Code: the first click, before the engine is up", async () => {
     await drive("exec", { command: "onelakeStudio.newQuery", timeoutMs: 120000 });
+    // New Query's own text lands as the page starts listening, long before the engine is up.
+    await until("New Query's text", async () => /SHOW ALL TABLES/i.test((await panelState()).box), 30000);
     await setBox("select 42 as answer");
     const f = await panel();
     await f.locator("#runBtn").click();
