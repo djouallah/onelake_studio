@@ -62,7 +62,7 @@ test("models and items: every cached workspace, counted, and nothing fetched", a
   assert.match(r.out, /3 item\(s\): 2 Lakehouse, 1 Warehouse; 1 workspace\(s\) not cached$/);
 
   r = await agent.run({ args: ["models"], opts: { csv: true } });
-  assert.equal(r.out.split("\n")[0], "workspace,semantic_model,downloaded,tables,measures,description");
+  assert.equal(r.out.split("\n")[0], "workspace,semantic_model,downloaded,staging,tables,measures,description");
 
   assert.deepEqual(onelake.calls, [], "no OneLake or Fabric call without --fresh");
 });
@@ -127,7 +127,7 @@ test("free from the cache: table sizes, more table fields, files, find, model co
     }
 
     r = await agent.run({ args: ["models"] });
-    assert.match(r.out, /\| ws \| Sales \| downloaded \| 2 \| 2 \|/);
+    assert.match(r.out, /\| ws \| Sales \| downloaded \|  \| 2 \| 2 \|/);
     assert.match(r.out, /\| ws \| Ops \|  \|  \|  \|/);
 
     assert.deepEqual(calls, [], "nothing fetched");
