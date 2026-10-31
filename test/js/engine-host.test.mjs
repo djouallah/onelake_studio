@@ -143,7 +143,8 @@ test("the internet going during a read is checked once, and the statement runs a
     await rm(cacheDir, { recursive: true, force: true }).catch(() => {});
   });
 
-  await assert.rejects(engine.call("query", ["SELECT * FROM lakehouse.w.lh.dbo.t"]), /OneLake Studio is offline: no internet/);
+  // https goes through the disk cache too, so the second run is answered from it: not kept.
+  await assert.rejects(engine.call("query", ["SELECT * FROM lakehouse.w.lh.dbo.t"]), /this part isn't cached on this machine/);
   assert.equal(checks, 1);
   // Asked, asked again after the failure, and then both once more for the second run.
   assert.equal(opened, 4, "run again once the check found no internet");
