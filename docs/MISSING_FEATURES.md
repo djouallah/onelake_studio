@@ -58,11 +58,6 @@ repository.
 | 26 | **The command line without VS Code**, for CI or a remote agent. | VS Code must be open and signed in. No service principal. *Decide:* this is the current design. | [`bin/cli.mjs:10`](../bin/cli.mjs#L10) |
 | 27 | **National clouds.** | The OneLake host is hard-coded and only the public Microsoft sign-in is used. | [`src/names.js:26`](../src/names.js#L26), [`src/extension.js:70`](../src/extension.js#L70) |
 
-## Where the docs and code disagree
-
-- [`package.json:44`](../package.json#L44) declares `virtualWorkspaces: true`, while
-  [`ARCHITECTURE.md:46`](ARCHITECTURE.md#L46) needs desktop VS Code.
-
 ## Ruled out, so not proposed
 
 DAX queries, writes, DDL and grid editing, `CREATE`/`DROP SEMANTIC VIEW`, a TDS connection (so no

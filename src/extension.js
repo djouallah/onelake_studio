@@ -279,6 +279,12 @@ function whenOpened(label, ms = 60_000) {
   });
 }
 
+// The panel won't open anything after all, so nobody waits out the timeout.
+function nothingWillOpen() {
+  for (const w of openedWaiters) w.resolve(false);
+  openedWaiters.clear();
+}
+
 function logOpened(m) {
   for (const w of openedWaiters) {
     if (w.label === m.label) { openedWaiters.delete(w); w.resolve(true); }
@@ -565,6 +571,7 @@ async function show(context, options, place) {
     // A panel whose engine never came up answers no click again, so the toast offers the
     // one thing that helps: a fresh panel and a fresh boot.
     onBootFailed: m => {
+      nothingWillOpen();
       vscode.window.showErrorMessage(`OneLake Studio's engine failed to start: ${m}`, 'Reload', 'Show Log')
         .then(async pick => {
           if (pick === 'Show Log' && out) out.show(true);
@@ -947,7 +954,41 @@ async function activateInner(context, ready) {
     showOffline(reason);
     if (engine) engine.catalogChanged();
     tree.redraw();
+    // A window that started with no internet may have been told there was no session. Nothing says
+    // so when the internet comes back, so ask.
+    if (!connectivity.noInternet() && !hasSession) sessionChanged();
   };
+
+  function sessionChanged() {
+    return accountTurn(async () => {
+      try {
+        forgetToken();
+        const was = hasSession;
+        const session = await getSession({ createIfNone: false }).catch(() => null);
+        // A token refresh that failed for want of internet looks like this. It is not a sign-out.
+        if (!session && connectivity.noInternet()) return;
+        await setSignedIn(!!session);
+        const before = storeAccount;
+        await rebindStore();
+        // Another extension's sign-in, or a token refresh of the same account, changes nothing here.
+        if (was !== !!session || storeAccount !== before) tree.redraw();
+        if (!session) {
+          if (!was) return;
+          closePanel();
+          await resetEngine();
+          vscode.window.showInformationMessage(
+            'OneLake Studio signed out: the Microsoft account is no longer available. What this machine has cached is still here.');
+        } else if (engine && storeAccount !== before) {
+          closePanel();
+          await resetEngine();
+          vscode.window.showInformationMessage(
+            `OneLake Studio is now using ${session.account.label}.`);
+        }
+      } catch (err) {
+        if (out) out.appendLine(`account change failed — ${(err && err.message) || err}`);
+      }
+    });
+  }
 
   await setSignedIn(!!await getToken({ createIfNone: false }));
   showOffline(connectivity.reason());
@@ -1355,7 +1396,7 @@ async function activateInner(context, ready) {
           say('opening it in OneLake Studio…');
           const name = modelFileName(n.model);
           const opened = whenOpened(name);
-          await openInPanel({ type: 'open-model', name, path, text, modelWorkspace: n.workspace, modelName: n.model });
+          if (!await openInPanel({ type: 'open-model', name, path, text, modelWorkspace: n.workspace, modelName: n.model })) return;
           await opened;
         });
     } catch (e) {
@@ -1919,34 +1960,7 @@ async function activateInner(context, ready) {
     // A DIFFERENT account — chosen from the Accounts menu rather than Switch Account — is
     // the same teardown as a switch. It used to change nothing: the session was still
     // "live", so the panel, the engine and the cache carried on as the previous user.
-    vscode.authentication.onDidChangeSessions(e => e.provider.id === 'microsoft' && accountTurn(async () => {
-      try {
-        forgetToken();
-        const was = hasSession;
-        const session = await getSession({ createIfNone: false }).catch(() => null);
-        // A token refresh that failed for want of internet looks like this. It is not a sign-out.
-        if (!session && connectivity.noInternet()) return;
-        await setSignedIn(!!session);
-        const before = storeAccount;
-        await rebindStore();
-        // Another extension's sign-in, or a token refresh of the same account, changes nothing here.
-        if (was !== !!session || storeAccount !== before) tree.redraw();
-        if (!session) {
-          if (!was) return;
-          closePanel();
-          await resetEngine();
-          vscode.window.showInformationMessage(
-            'OneLake Studio signed out: the Microsoft account is no longer available. What this machine has cached is still here.');
-        } else if (engine && storeAccount !== before) {
-          closePanel();
-          await resetEngine();
-          vscode.window.showInformationMessage(
-            `OneLake Studio is now using ${session.account.label}.`);
-        }
-      } catch (err) {
-        if (out) out.appendLine(`account change failed — ${(err && err.message) || err}`);
-      }
-    })),
+    vscode.authentication.onDidChangeSessions(e => e.provider.id === 'microsoft' && sessionChanged()),
 
     // Settings are read where they are used, but some configure things that are already
     // built by then. Saying so beats silently applying at the next window reload.
