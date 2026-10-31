@@ -467,7 +467,7 @@ export function createExplorer(root, ctx) {
     popTimer = setTimeout(() => document.addEventListener('pointerdown', outside, true));
   }
 
-  // Sum, average and median for a number; any column can be counted, or its min and max.
+  // Sum and average for a number; any column can be counted, or its min and max.
   function editAgg(i, anchor) {
     closePop();
     const a = aggOf(state.values[i]), col = a && fields.byId.get(a.col);

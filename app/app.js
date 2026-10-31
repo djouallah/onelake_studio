@@ -397,7 +397,9 @@ async function openModels(sql) {
 
 // A compiled SQL of a model, run through the engine's read-only path: it names its Direct Lake
 // tables by their SQL names, and the host opens each as the SQL reaches it. Stoppable.
+let modelRuns = 0;
 async function runModelSql(sql) {
+  modelRuns++;
   setBusy(true, { stoppable: true });
   try {
     await engineReady;
@@ -408,7 +410,8 @@ async function runModelSql(sql) {
     }
     return res;
   } finally {
-    setBusy(false);
+    // A Pivot's newer query may still be running when an older one ends, and it keeps its Stop.
+    if (--modelRuns === 0) setBusy(false);
   }
 }
 
@@ -763,8 +766,8 @@ function renderResults(res) {
     return;
   }
   hint.hidden = true; table.hidden = false;
-  // A header click sorts every row the result holds, in place: the CSV is saved in the order on
-  // screen.
+  // A header click sorts every row the result holds, in place. Export… runs the SQL again, so it
+  // doesn't keep this order.
   grid = mountGrid(table, table.closest('.resultsWrap'), res, {
     ui: gridUi(),
     copyText: text => engine.copyText(text).catch(e => setStatus('Could not copy: ' + e.message, 'error')),

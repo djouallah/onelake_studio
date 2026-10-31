@@ -324,7 +324,7 @@ A semantic model opens as **Explore** ([`app/explore/`](../app/explore/)), on th
 - **Pivot:** drag columns onto Rows, Columns and Filters and measures onto Values, drawn as a pivot or
   a chart.
   - A column dropped on Values is summarised, as in Power BI: a number is summed and anything else
-    counted, and its chip switches to average, median, min, max, count or distinct count.
+    counted, and its chip switches to average, min, max, count or distinct count.
   - Totals are off until you tick them, and a view cut at 5,000 rows leaves them out.
   - Every view is one `SELECT … FROM <model>` in dax-sql's SQL (`modelSql`): columns, `AGG("measure")`,
     summarised columns and `ROLLUP` totals.

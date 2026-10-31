@@ -23,10 +23,10 @@ node --no-warnings "{{cli}}" <command>
 | `find <text>` | every cached name containing it — items, tables, columns, semantic models, and a downloaded model's tables, columns and measures — for "which table has customer_id", "where is the Sales model" |
 | `files <ws> <item> [<dir>]` | a lakehouse's Files/ listing, with sizes |
 | `items [<ws>]` | every lakehouse and warehouse in every workspace (or one), counted by kind |
-| `ls <ws> <item>` | its tables with rows, size, files and last write, and their SQL names (`Lakehouse.<ws>.<item>.<schema>.<table>`); `<item>` may omit its `.Lakehouse` suffix |
+| `ls <ws> <item>` | its tables with rows, size, files and last write, and their SQL names (`lakehouse.<ws>.<item>.<schema>.<table>`); `<item>` may omit its `.Lakehouse` suffix |
 | `table <ws> <item> <schema.table>` | rows, files, size, last write, columns — metadata only, no scan |
 | `model <ws> <model>` | relationships, columns, measures with their DAX, and an example query. A model not downloaded yet exits 4: add `--fresh` to download it |
-| `sql "<sql>"` | read-only SQL. A table is `Kind.workspace.item.schema.table` — `lakehouse.aemo.data.dbo.dim_duid`; Kind is `lakehouse`, `warehouse`, `sqldatabase` or `mirroreddatabase` (any case), a lakehouse without schemas is `dbo`, a part with spaces is `"quoted"` — any table, any workspace, joined freely. Every semantic model is a table too, `semanticmodel.<ws>.<model>`: `AGG("measure")` is the measure; and `SHOW SEMANTIC …` (below) |
+| `sql "<sql>"` | read-only SQL. A table is `kind.workspace.item.schema.table` — `lakehouse.aemo.data.dbo.dim_duid`; kind is `lakehouse`, `warehouse`, `sqldatabase` or `mirroreddatabase` (any case), a lakehouse without schemas is `dbo`, a part with spaces is `"quoted"` — any table, any workspace, joined freely. Every semantic model is a table too, `semanticmodel.<ws>.<model>`: `AGG("measure")` is the measure; and `SHOW SEMANTIC …` (below) |
 | `sql -` | the SQL from stdin. Prefer it for anything with quotes in it: `AGG("Total Sales")` does not survive every shell, PowerShell's above all |
 | `sql "<sql>" --in <ws>/<item>` | the lakehouse's files as `'Files/…'`: `read_parquet('Files/log.parquet')` |
 | `export <ws> <model>` | Export to Fabric, as Explore's button does it: publishes the model's Explore as a Fabric app. The model must have been downloaded once (opened in the tree, or `model <ws> <model> --fresh`); the export writes its `.yaml` into its lakehouse |
@@ -47,7 +47,7 @@ Branch on the exit code, never on the wording:
 | 1 | `FAILED` | the query or OneLake failed, or a `--csv` had more rows than a query keeps | fix the query, or report it |
 | 2 | `USAGE` | a wrong command, option or argument | fix the call |
 | 3 | `UNAVAILABLE` | VS Code not open, not signed in, or Fabric refused the sign-in | ask the user |
-| 4 | `NOT_CACHED` | not in the cache; offline (no internet, or nobody signed in), `--fresh` and reading table rows end here too, and `retry` is absent | ask, or add `--fresh` unless offline |
+| 4 | `NOT_CACHED` | not in the cache; offline (no internet, or nobody signed in), `--fresh` and a table or file never read end here too, and `retry` is absent | ask, or add `--fresh` unless offline |
 | 5 | `DECLINED` | the user said no to an export | stop |
 | 6 | `TIMEOUT` | `--timeout` reached, and the query stopped | narrow it, or give it longer |
 

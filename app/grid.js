@@ -79,7 +79,7 @@ export function inspectText(v) {
 
 /**
  * Draws `res` ({ fields, types, rows }) in `table`, scrolled by `wrap`. `res.rows` is sorted in
- * place, so whatever saves the result (the CSV) saves it in the order on screen.
+ * place.
  * `ui`: { filter (input), count (element), inspector: { root, title, body, copy, close } },
  * `copyText(text)` puts text on the clipboard, `say(text)` a line in the status bar,
  * `grouped()` whether numbers show their thousands.

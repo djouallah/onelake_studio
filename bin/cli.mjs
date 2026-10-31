@@ -29,9 +29,9 @@ const USAGE = {
                                         semantic models, a downloaded model's tables/measures`,
   table: "  table <ws> <item> <schema.table>    columns and stats (metadata only)",
   model: "  model <ws> <model>                  relationships, columns, measures with their DAX",
-  sql: `  sql "<sql>"                         read-only SQL; a table is Kind.workspace.item.schema.table
+  sql: `  sql "<sql>"                         read-only SQL; a table is kind.workspace.item.schema.table
                                         (lakehouse.aemo.data.dbo.dim_duid); a downloaded model is a
-                                        table: SELECT d.col, AGG("measure") FROM model GROUP BY ALL
+                                        table: SELECT d.col, AGG("measure") FROM semanticmodel.ws.model GROUP BY ALL
   sql -                               the SQL from stdin: no shell quoting to get wrong
     --in <ws>/<item>                  that lakehouse's files as 'Files/…' (read_parquet('Files/x.parquet'))
     --show-sql                        print the SQL a model query compiles to`,

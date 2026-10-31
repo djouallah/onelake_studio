@@ -266,7 +266,7 @@ class LakehouseTree {
       // OneLake; after that it opens from that copy, and the icon says which: a cloud until
       // then, a check once it is there.
       case 'semanticModel': {
-        // A click already found it is not Direct Lake on one lakehouse: say what it is, and a
+        // A click already found it is not Direct Lake over OneLake: say what it is, and a
         // click says why again.
         const refused = this.unsupportedModel(n);
         if (refused) {

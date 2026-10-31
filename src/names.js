@@ -109,7 +109,7 @@ const kindLabelPlural = kind => {
 };
 
 // -----------------------------------------------------------------------------
-// A table's SQL name: Kind.workspace.item.schema.table
+// A table's SQL name: kind.workspace.item.schema.table
 // -----------------------------------------------------------------------------
 // One name per table, everywhere SQL is written (the panel, Explore, the command line, a
 // saved query), and unique by construction: it is the table's OneLake path

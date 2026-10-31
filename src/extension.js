@@ -935,7 +935,7 @@ async function activateInner(context, ready) {
   const offlineItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 99);
   offlineItem.name = 'OneLake Studio offline';
   offlineItem.command = 'onelakeStudio.signIn';
-  offlineItem.tooltip = 'OneLake Studio is showing what this machine has cached. Reading table rows needs OneLake. Click to sign in.';
+  offlineItem.tooltip = 'OneLake Studio is working from what this machine has read. Export to Fabric, and anything never read, need OneLake. Click to sign in.';
   context.subscriptions.push(offlineItem);
   const showOffline = reason => {
     if (!reason) { offlineItem.hide(); return; }
@@ -1230,8 +1230,8 @@ async function activateInner(context, ready) {
   const modelKey = n => `${n.workspace}|${n.modelId}`;
   const cachedModel = n => (existsSync(modelPath(n)) ? modelPath(n) : null);
 
-  // Models a click found it cannot open (Import, DirectQuery, Direct Lake over a SQL endpoint
-  // or several lakehouses), for this session: key -> what kind it is. The tree marks them,
+  // Models a click found it cannot open (Import, DirectQuery, Direct Lake over a SQL endpoint),
+  // for this session: key -> what kind it is. The tree marks them,
   // and a second click says so again without reading the definition from Fabric again.
   const unsupportedModels = new Map();
   const unsupportedNote = (n, mode) =>

@@ -184,10 +184,6 @@ These do not meet the contract yet:
 
 - **A bare model name can still compile.** `app/semantic.js` says "nothing shorter", but dax-sql resolves a
   name by its last parts, so `FROM nem` can reach an open view when only one fits.
-- **The command line's help shows the short form.** `bin/cli.mjs` has `FROM model` in the `sql` help.
-- **Two places capitalise the kind.** `claude-skill/SKILL.md` writes `Lakehouse.<ws>…` and the comment
-  heading the section in `src/names.js` writes `Kind.workspace…`. Both still read correctly, since case
-  does not matter.
 - **Two features read outside these names.** An app from Export to Fabric uses its own `v_<table>` views
   (`fabric_app/site/app.js`), and Time travel writes `iceberg_scan` directly (`app/app.js`).
 
