@@ -22,11 +22,13 @@ const USAGE = {
   ls <ws>                             its lakehouses/warehouses and semantic models
   ls <ws> <item>                      its tables with rows, size and last write, and their
                                         SQL names`,
-  models: "  models [<ws>]                       semantic models in every workspace (or one), counted",
+  models: `  models [<ws>]                       semantic models in every workspace (or one), counted
+    --downloaded                      only those on this machine: readable with no download`,
   items: "  items [<ws>]                        lakehouses and warehouses in every workspace (or one)",
   files: "  files <ws> <item> [<dir>]           a lakehouse's Files/ listing, with sizes",
   find: `  find <text>                         every cached name containing it: items, tables, columns,
-                                        semantic models, a downloaded model's tables/measures`,
+                                        semantic models, a downloaded model's tables/measures;
+                                        --fresh reads every listing first`,
   table: "  table <ws> <item> <schema.table>    columns and stats (metadata only)",
   model: "  model <ws> <model>                  relationships, columns, measures with their DAX",
   sql: `  sql "<sql>"                         read-only SQL; a table is kind.workspace.item.schema.table
@@ -61,7 +63,7 @@ for export, which waits for your OK in VS Code.
 ${Object.values(USAGE).join("\n")}
 ${OPTIONS}`;
 
-const SWITCHES = { "--fresh": "fresh", "--csv": "csv", "--json": "json", "--show-sql": "showSql" };
+const SWITCHES = { "--fresh": "fresh", "--csv": "csv", "--json": "json", "--show-sql": "showSql", "--downloaded": "downloaded" };
 const VALUES = { "--limit": "limit", "--in": "in", "--timeout": "timeout" };
 const DEFAULT_TIMEOUT_S = 600;
 

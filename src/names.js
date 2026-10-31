@@ -136,6 +136,10 @@ const sqlKind = kind => {
 // An item's name as Fabric shows it: its directory's name without the kind.
 const displayName = item => basename(item).replace(/\.[^.]+$/, "");
 
+// What a dataflow makes for its own staging, judged by the name Fabric gives it: an item or a
+// model with nothing in it to analyse.
+const isStaging = name => /^(DataflowsStaging|Staging(Lakehouse|Warehouse)ForDataflows_)/i.test(String(name));
+
 // DuckDB's reserved words (duckdb_keywords(), 'reserved' and 'type_function'): a part
 // spelled like one must be quoted to be a name. The panel's twin is app/paths.js sqlPart;
 // a test holds them equal.
@@ -294,7 +298,7 @@ function fmtBytes(n) {
 module.exports = {
   strip, basename, stripBom, encPath, DFS_HOST, DFS_ORIGIN, dfsFileUrl, abfssUrl,
   itemKind, holdsTables, isMirrored, hasFilesArea, kindLabel, kindLabelPlural,
-  SQL_KINDS, sqlKind, displayName, RESERVED, sqlPart, sqlName, sqlNameOf, MODEL_CATALOG, modelSqlName,
+  SQL_KINDS, sqlKind, displayName, isStaging, RESERVED, sqlPart, sqlName, sqlNameOf, MODEL_CATALOG, modelSqlName,
   icebergTypeName, icebergFields, snapshotStats, sourceFormat, icebergHistory,
   fmtBytes,
 };

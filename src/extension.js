@@ -27,6 +27,7 @@ const { useConnectivity } = require('./http');
 const { createHostMethods } = require('./host');
 const { createFabric, modelFileName } = require('./fabric');
 const { LakehouseTree } = require('./tree');
+const { doubleClicks } = require('./doubleclick');
 const { webviewRoot } = require('./webview');
 const { fmtBytes, sqlKind, sqlName, sqlNameOf, sqlPart, displayName, MODEL_CATALOG, modelSqlName, stripBom, DFS_ORIGIN } = require('./names');
 const { createAgent } = require('./agent');
@@ -669,6 +670,8 @@ async function show(context, { newTab = false, ...options } = {}) {
 
 // Where a semantic model's local copy is kept (fetchModel), for the tree, the command line
 // and the panel alike: <folder>/<workspace>/<model>.yaml.
+const appDoubleClick = doubleClicks();
+
 // What a new query (the Queries node's +) starts with. SHOW ALL TABLES is answered from the
 // cache (cachedSqlTables), so it lists only the tables seen in the tree.
 const NEW_QUERY_SQL = [
@@ -1864,11 +1867,15 @@ async function activateInner(context) {
     }),
 
     vscode.commands.registerCommand('onelakeStudio.openSemanticModel', n => openModel(n)),
-    // An app in the tree: its URL, copied. Nothing is opened or changed.
+    // An app in the tree: its URL, copied by its button and opened by a double click. Nothing is changed.
     vscode.commands.registerCommand('onelakeStudio.copyAppUrl', async n => {
       if (!n || !n.url) return;
       await vscode.env.clipboard.writeText(n.url);
       vscode.window.setStatusBarMessage(`Copied ${n.url}`, 3000);
+    }),
+    vscode.commands.registerCommand('onelakeStudio.openApp', n => {
+      if (!n || !/^https:\/\//i.test(n.url || '')) return;
+      if (appDoubleClick(n.url)) vscode.env.openExternal(vscode.Uri.parse(n.url));
     }),
     vscode.commands.registerCommand('onelakeStudio.redownloadSemanticModel', n => openModel(n, { fresh: true })),
 

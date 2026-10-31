@@ -26,7 +26,7 @@ const fs = require('node:fs');
 const fsp = require('node:fs/promises');
 const { join } = require('node:path');
 const os = require('node:os');
-const { sqlStr, quoteIdent, assertReadOnly, tableRefs, catalogStatement, readsCatalog } = require('./sql');
+const { sqlStr, quoteIdent, assertReadOnly, assertReads, tableRefs, catalogStatement, readsCatalog } = require('./sql');
 const { SQL_KINDS, sqlName, MODEL_CATALOG, modelSqlName } = require('./names');
 const { revalidate } = require('./store');
 
@@ -957,9 +957,10 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
     return { uri: served, tmpDir: tmpDir.replace(/\\/g, '/'), capabilities: { ...capabilities } };
   }
 
-  // The command line's query (agent.js): the same guard and the same engine as the page's,
-  // on connections the page's Stop does not reach. Not a page method. `signal`: the command
-  // line went away, so its query stops (only its own: another agent's goes on).
+  // The command line's query (agent.js): the same engine as the page's, on connections the
+  // page's Stop does not reach. Its guard is stricter, reads only: the page's setup statements
+  // are the page's. Not a page method. `signal`: the command line went away, so its query
+  // stops (only its own: another agent's goes on).
   async function agentQuery(sql, { signal } = {}) {
     const token = authToken;
     const mine = new Set();
@@ -970,7 +971,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
     const stop = () => { for (const c of mine) { try { c.interrupt(); } catch (_) {} } };
     if (signal) signal.addEventListener('abort', stop, { once: true });
     try {
-      assertReadOnly(sql);
+      assertReads(sql);
       await init();
       return await withAuthRetry(() => withTables(sql, run => {
         if (signal && signal.aborted) throw new Error('the command line went away');

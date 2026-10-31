@@ -10,6 +10,7 @@ const require = createRequire(import.meta.url);
 const { EXIT, exitName, COMMANDS } = require("../../src/bridge.js");
 const { createAgent } = require("../../src/agent.js");
 const { modelFileName } = require("../../src/fabric.js");
+const { ALL_TABLES_COUNTED } = require("../../src/sql.js");
 
 // What a query answers, without an engine: `numRows` may be more than the rows that came back.
 const fakeEngine = (rows = [{ a: 1, b: "x,y" }, { a: 2, b: null }], numRows = rows.length) => ({
@@ -159,10 +160,18 @@ test("--csv and --json carry raw values; Markdown reads well", async () => {
 
       r = await cli(["models", "ws", "--csv"]);
       assert.deepEqual(csvRows(r.stdout), [
-        ["workspace", "semantic_model", "downloaded", "tables", "measures", "description"],
-        ["ws", "Ops", "false", "", "", ""],
-        ["ws", "Sales", "true", "2", "2", ""],
+        ["workspace", "semantic_model", "downloaded", "staging", "tables", "measures", "description"],
+        ["ws", "Ops", "false", "false", "", "", ""],
+        ["ws", "Sales", "true", "false", "2", "2", ""],
       ]);
+
+      r = await cli(["models", "--downloaded", "--csv"]);
+      assert.deepEqual(csvRows(r.stdout), [
+        ["workspace", "semantic_model", "downloaded", "staging", "tables", "measures", "description"],
+        ["ws", "Sales", "true", "false", "2", "2", ""],
+      ], "the same columns, and only what is on this machine");
+      r = await cli(["models", "--downloaded"]);
+      assert.match(r.stdout, /1 downloaded semantic model\(s\) in 1 workspace\(s\)/);
 
       r = await cli(["files", "ws", "data", "Files/raw", "--csv"]);
       assert.deepEqual(csvRows(r.stdout), [["name", "type", "bytes"], ["2026", "folder", ""], ["a.parquet", "file", "1000000"]]);
@@ -314,15 +323,159 @@ test("find says what it could not search", async () => {
     const body = JSON.parse((await cli(["find", "sales", "--json"])).stdout);
     assert.equal(body.complete, false);
     assert.deepEqual(body.rows.map(r => r[2]), ["Sales"]);
-    assert.match(body.notes.join("\n"), /not searched/);
+    assert.match(body.notes.join("\n"), /not searched.*add --fresh to read them now/);
   });
   const none = createAgent({ onelake: { cached: { workspaces: async () => null } }, modelPath: () => "", appDir: APP_DIR });
   await withAgent(none, async ({ cli }) => {
     const r = await cli(["find", "x", "--json"]);
     assert.equal(r.code, EXIT.NOT_CACHED);
     const { error } = JSON.parse(r.stdout);
-    assert.equal(error.retry, "ls --fresh", "find has no --fresh of its own");
+    assert.equal(error.retry, "ls --fresh", "no workspace listing: that comes first");
     assert.doesNotMatch(error.message, /add --fresh/);
+  });
+});
+
+// A cache that fills as OneLake answers, the way the real one does.
+function fillingOneLake({ brokenItem = null } = {}) {
+  const kept = new Map([["workspaces", ["ws"]], ["items ws", [{ name: "known.Lakehouse", kind: "Lakehouse" }, { name: "new.Lakehouse", kind: "Lakehouse" }]],
+                        ["tables known.Lakehouse", [{ schema: "dbo", table: "known_duid" }]]]);
+  const calls = [];
+  const hit = k => (kept.has(k) ? { value: kept.get(k), at: Date.now() - 180_000 } : null);
+  const read = (k, value) => { calls.push(k); kept.set(k, value); return value; };
+  return {
+    calls,
+    workspaces: async () => read("workspaces", ["ws"]),
+    items: async w => read(`items ${w}`, kept.get(`items ${w}`)),
+    models: async w => read(`models ${w}`, [{ name: "Duid model", description: "" }]),
+    tables: async lh => {
+      if (lh.item === brokenItem) throw new Error("Server Error");
+      return read(`tables ${lh.item}`, [{ schema: "dbo", table: lh.item === "new.Lakehouse" ? "new_duid" : "known_duid" }]);
+    },
+    cached: {
+      workspaces: async () => hit("workspaces"),
+      items: async w => hit(`items ${w}`),
+      models: async w => hit(`models ${w}`),
+      tables: async lh => hit(`tables ${lh.item}`),
+      table: async () => ({ value: { schemaFields: [] }, at: Date.now() }),
+    },
+  };
+}
+
+test("find follows its own advice: --fresh reads what the cache lacks, then searches it", async () => {
+  const onelake = fillingOneLake();
+  const agent = createAgent({ onelake, modelPath: () => "/nowhere/x.yaml", appDir: APP_DIR });
+  await withAgent(agent, async ({ cli }) => {
+    let body = JSON.parse((await cli(["find", "duid", "--json"])).stdout);
+    assert.equal(body.complete, false);
+    assert.deepEqual(body.rows.map(r => r[2]), ["dbo.known_duid"]);
+    assert.match(body.notes.join("\n"), /--fresh reads OneLake\/Fabric again/);
+    assert.deepEqual(onelake.calls, [], "nothing fetched unasked");
+
+    const r = await cli(["find", "duid", "--fresh", "--json"]);
+    assert.equal(r.code, EXIT.OK, r.stdout);
+    body = JSON.parse(r.stdout);
+    assert.equal(body.complete, true, body.notes.join("\n"));
+    assert.deepEqual(body.rows.map(x => x[2]).sort(), ["Duid model", "dbo.known_duid", "dbo.new_duid"]);
+    assert.deepEqual(body.notes, [], "from OneLake: no \"as of\", and nothing left out");
+    assert.equal(body.cachedAt, null);
+    assert.ok(onelake.calls.includes("tables new.Lakehouse"), onelake.calls.join("\n"));
+  });
+});
+
+test("find --fresh: a listing that fails is counted, and the rest are still searched", async () => {
+  const onelake = fillingOneLake({ brokenItem: "new.Lakehouse" });
+  const agent = createAgent({ onelake, modelPath: () => "/nowhere/x.yaml", appDir: APP_DIR });
+  await withAgent(agent, async ({ cli }) => {
+    const r = await cli(["find", "duid", "--fresh", "--json"]);
+    assert.equal(r.code, EXIT.OK, r.stdout);
+    const body = JSON.parse(r.stdout);
+    assert.equal(body.complete, false);
+    assert.deepEqual(body.rows.map(x => x[2]).sort(), ["Duid model", "dbo.known_duid"]);
+    const notes = body.notes.join("\n");
+    assert.match(notes, /1 listing\(s\) could not be read\. The first: ws\/new\.Lakehouse's tables: Server Error/);
+    assert.match(notes, /not searched, not cached yet: the tables of 1 item\(s\)/);
+    assert.doesNotMatch(notes, /add --fresh/, "it was added");
+  });
+});
+
+test("find says which tables it searched by name only", async () => {
+  const { agent, close } = await richAgent();
+  try {
+    await withAgent(agent, async ({ cli }) => {
+      const body = JSON.parse((await cli(["find", "customer_id", "--json"])).stdout);
+      assert.equal(body.complete, false);
+      assert.match(body.notes.join("\n"), /searched by name only, their columns not read yet: 1 table\(s\)/);
+    });
+  } finally { await close(); }
+});
+
+test("sql keeps NULL and an empty string apart in Markdown and CSV", async () => {
+  const { agent, close } = await richAgent({ engine: fakeEngine([{ a: null, b: "" }]) });
+  try {
+    await withAgent(agent, async ({ cli }) => {
+      let r = await cli(["sql", "SELECT 1"]);
+      assert.match(r.stdout, /^\| NULL \|  \|$/m);
+      r = await cli(["sql", "SELECT 1", "--csv"]);
+      assert.equal(r.stdout, 'a,b\n,""\n');
+      r = await cli(["sql", "SELECT 1", "--json"]);
+      assert.deepEqual(JSON.parse(r.stdout).rows, [[null, ""]]);
+    });
+  } finally { await close(); }
+});
+
+test("SHOW ALL TABLES: Markdown counts each table's columns, --csv and --json have them", async () => {
+  const asked = [];
+  const engine = { agentQuery: async sql => {
+    asked.push(sql);
+    return { fields: [{ name: "name", type: "VARCHAR" }], rows: [{ name: "t" }], numRows: 1 };
+  } };
+  const { agent, close } = await richAgent({ engine });
+  try {
+    await withAgent(agent, async ({ cli }) => {
+      let r = await cli(["sql", "show all tables;"]);
+      assert.equal(asked.pop(), ALL_TABLES_COUNTED);
+      assert.match(r.stdout, /column names and types: --json, --csv/);
+
+      for (const format of ["--json", "--csv"]) {
+        r = await cli(["sql", "SHOW ALL TABLES", format]);
+        assert.equal(asked.pop(), "SHOW ALL TABLES", format);
+        assert.doesNotMatch(r.stdout, /column names and types/, format);
+      }
+
+      r = await cli(["sql", "SELECT * FROM (SHOW ALL TABLES)"]);
+      assert.equal(asked.pop(), "SELECT * FROM (SHOW ALL TABLES)", "a query of it asked for what it asked for");
+    });
+  } finally { await close(); }
+});
+
+test("models and items mark what a dataflow made for its staging", async () => {
+  const at = Date.now();
+  const list = value => ({ value, at });
+  const onelake = {
+    cached: {
+      workspaces: async () => list(["ws"]),
+      items: async () => list(["data.Lakehouse", "DataflowsStagingLakehouse.Lakehouse", "StagingLakehouseForDataflows_20261001.Lakehouse",
+                               "StagingWarehouseForDataflows_20261001.Warehouse"]
+        .map(name => ({ name, kind: name.endsWith("Warehouse") ? "Warehouse" : "Lakehouse" }))),
+      models: async () => list([{ name: "Sales", description: "" }, { name: "DataflowsStagingWarehouse", description: "" }]),
+    },
+  };
+  const agent = createAgent({ onelake, modelPath: () => "/nowhere/x.yaml", appDir: APP_DIR });
+  await withAgent(agent, async ({ cli }) => {
+    let r = JSON.parse((await cli(["models", "--json"])).stdout);
+    const models = r.columns.findIndex(c => c.name === "staging");
+    assert.equal(r.columns[models].type, "boolean");
+    assert.deepEqual(r.rows.map(x => [x[1], x[models]]), [["DataflowsStagingWarehouse", true], ["Sales", false]]);
+
+    r = JSON.parse((await cli(["items", "--json"])).stdout);
+    const items = r.columns.findIndex(c => c.name === "staging");
+    assert.deepEqual(r.rows.map(x => [x[1], x[items]]), [
+      ["DataflowsStagingLakehouse.Lakehouse", true], ["StagingLakehouseForDataflows_20261001.Lakehouse", true],
+      ["StagingWarehouseForDataflows_20261001.Warehouse", true], ["data.Lakehouse", false],
+    ]);
+
+    const { stdout } = await cli(["models"]);
+    assert.match(stdout, /\| DataflowsStagingWarehouse \|  \| staging \|/);
   });
 });
 

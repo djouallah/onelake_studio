@@ -227,6 +227,28 @@ test("--csv and --json carry what the engine answered", async () => {
   });
 });
 
+test("SHOW ALL TABLES on the real engine: Markdown counts the columns, --json has them", async () => {
+  await withAgent(agent, async ({ cli }) => {
+    let r = await cli(["sql", "SHOW ALL TABLES"]);
+    assert.equal(r.code, EXIT.OK, r.stderr);
+    assert.match(r.stdout, /^\| database \| schema \| name \| columns \|$/m);
+    assert.match(r.stdout, /^\| semanticmodel \| shop \| sales_model \| 1 \|$/m);
+    assert.doesNotMatch(r.stdout, /column_names|VARCHAR/);
+
+    r = await cli(["sql", "SHOW ALL TABLES", "--json"]);
+    const { columns } = JSON.parse(r.stdout);
+    assert.deepEqual(columns.map(c => c.name), ["database", "schema", "name", "column_names", "column_types", "temporary"]);
+  });
+});
+
+test("NULL and an empty string stay apart on the real engine", async () => {
+  await withAgent(agent, async ({ cli }) => {
+    const sql = "SELECT NULL AS a, '' AS b";
+    assert.match((await cli(["sql", sql])).stdout, /^\| NULL \|  \|$/m);
+    assert.equal((await cli(["sql", sql, "--csv"])).stdout, 'a,b\n,""\n');
+  });
+});
+
 test("past what a query keeps: --csv fails, --limit and --json say how many", async () => {
   await withAgent(agent, async ({ cli }) => {
     const big = "SELECT * FROM range(200001) t(a)";

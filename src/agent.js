@@ -14,7 +14,8 @@
 //   items [<ws>]                     lakehouses and warehouses in every workspace (or one), counted
 //   files <ws> <item> [<dir>]        a lakehouse's Files/ listing
 //   find <text>                      every cached name that contains it: items, tables, columns,
-//                                    semantic models, and a downloaded model's tables and measures
+//                                    semantic models, and a downloaded model's tables and measures;
+//                                    --fresh reads every listing first
 //   table <ws> <item> <schema.table> metadata only
 //   model <ws> <model>               relationships, columns, measures with DAX
 //   sql "<sql>" [--in <ws>/<item>]   a table is Kind.workspace.item.schema.table; a semantic model
@@ -30,9 +31,10 @@
 const { join } = require('node:path');
 const { pathToFileURL } = require('node:url');
 const fsp = require('node:fs/promises');
-const { fmtBytes, hasFilesArea, kindLabel, sqlNameOf, abfssUrl } = require('./names');
+const { fmtBytes, hasFilesArea, isStaging, kindLabel, sqlNameOf, abfssUrl } = require('./names');
 const { mapPool, offlineError } = require('./http');
 const { walkCached } = require('./onelake');
+const { isShowAllTables, ALL_TABLES_COUNTED } = require('./sql');
 const { EXIT, checkRequest, failureJson } = require('./bridge');
 
 const SIGN_IN_TO_FABRIC = 'expand "Semantic models" in the OneLake tree once to sign in to Fabric';
@@ -43,7 +45,9 @@ function mdTable(cols, rows) {
   return [`| ${cols.map(md).join(' | ')} |`, `|${cols.map(() => '---').join('|')}|`,
           ...rows.map(r => `| ${r.map(md).join(' | ')} |`)].join('\n');
 }
+// An empty cell is NULL, so an empty string is written quoted.
 const csvOf = (cols, rows) => [cols, ...rows].map(r => r.map(v => {
+  if (v === '') return '""';
   const s = cell(v);
   return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }).join(',')).join('\n');
@@ -240,12 +244,43 @@ function createAgent({ onelake, engine, modelPath, appDir, vendorDir, daxSqlPin,
   // (`label`, `show`). The rows are always the raw values.
   const col = (name, type = 'text', label = name, show = null) => ({ name, type, label, show });
   const count = v => (v == null ? '—' : Number(v).toLocaleString('en'));
+  // `sql`'s columns: Markdown marks a NULL, so a blank is an empty string.
+  const sqlCol = (name, type) => col(name, type, name, v => (v == null ? 'NULL' : v));
   const COLS = {
     downloaded: col('downloaded', 'boolean', '', v => (v ? 'downloaded' : '')),
+    staging: col('staging', 'boolean', '', v => (v ? 'staging' : '')),
     bytes: col('bytes', 'integer', 'size', size),
     lastWrite: col('last_write', 'timestamp', 'last write (UTC)', when),
   };
   const iso = ms => (ms ? new Date(ms).toISOString() : null);
+
+  // find --fresh: every listing it searches, read into the cache it walks. A few at a time, and
+  // kept as each one comes, so a run stopped by --timeout leaves the next one further on. A
+  // listing that fails is counted, not the end of the answer: no Fabric sign-in fails them all.
+  async function readListings(opts, io) {
+    const failed = [];
+    let unauthorised = false;
+    const attempt = async (what, read) => {
+      if (opts.signal && opts.signal.aborted) return [];
+      try { return await read(); }
+      catch (e) {
+        failed.push(`${what}: ${e.message}`);
+        if (e.status === 401) unauthorised = true;
+        return [];
+      }
+    };
+    await mapPool(await look('workspaces', [], opts), async w => {
+      const items = await attempt(`${w}'s items`, () => look('items', [w], opts));
+      await attempt(`${w}'s semantic models`, () => look('models', [w], opts));
+      await mapPool(items, i => attempt(`${w}/${i.name}'s tables`,
+        () => look('tables', [{ workspace: w, item: i.name }], opts)), 4);
+    }, 4);
+    if (failed.length) {
+      io.incomplete();
+      io.note(`${failed.length} listing(s) could not be read. The first: ${failed[0]}`);
+    }
+    if (unauthorised) io.note(SIGN_IN_TO_FABRIC);
+  }
 
   // ---------------------------------------------------------------------------
   // Every command writes to `io`: table() its answer, out() the prose around it for a person
@@ -318,17 +353,19 @@ function createAgent({ onelake, engine, modelPath, appDir, vendorDir, daxSqlPin,
              ` in Files/${d}`);
     },
 
-    // Every name the cache knows that contains `text` — never fetched, so what has not been
-    // opened in the tree is not searched, and the answer says how much that is.
+    // Every name the cache knows that contains `text`. Without --fresh nothing is fetched, so
+    // what has not been read is not searched, and the answer says how much that is.
     async find([text], opts, io) {
       const q = String(text).toLowerCase();
       const has = s => String(s || '').toLowerCase().includes(q);
       const rows = [];
+      if (opts.fresh) await readListings(opts, io);
       // The cache's one walk (onelake.js cached.all), as the editor's catalog reads it.
       const all = await walkCached(onelake.cached);
       if (!all) throw Object.assign(new Error(`${IN_TREE.workspaces[0]} is not cached yet — ${IN_TREE.workspaces[1]}`), { notCached: true, retry: 'ls --fresh' });
-      opts.seen.push(all.at);
+      if (!opts.fresh) opts.seen.push(all.at);
       const unseen = all.unseen;
+      let noColumns = 0;
       for (const { name: w, items, models } of all.workspaces) {
         if (has(w)) rows.push(['workspace', '', w]);
         for (const it of items) {
@@ -336,6 +373,7 @@ function createAgent({ onelake, engine, modelPath, appDir, vendorDir, daxSqlPin,
           for (const t of it.tables || []) {
             const tn = t.schema ? `${t.schema}.${t.table}` : t.table;
             if (has(t.table)) rows.push(['table', `${w}/${it.name}`, tn]);
+            if (!t.meta) noColumns++;
             for (const f of (t.meta && t.meta.schemaFields) || []) {
               if (has(f.name)) rows.push(['column', `${w}/${it.name} ${tn}`, `${f.name} (${f.type})`]);
             }
@@ -359,7 +397,12 @@ function createAgent({ onelake, engine, modelPath, appDir, vendorDir, daxSqlPin,
                     unseen.items && `the tables of ${unseen.items} item(s)`].filter(Boolean);
       if (gaps.length) {
         io.incomplete();
-        io.note(`not searched, not cached yet: ${gaps.join(' and ')} — expand them in the OneLake Studio tree`);
+        io.note(`not searched, not cached yet: ${gaps.join(' and ')}${opts.fresh ? '' : ' — add --fresh to read them now'}`);
+      }
+      if (noColumns) {
+        io.incomplete();
+        io.note(`searched by name only, their columns not read yet: ${noColumns} table(s) — ` +
+                '`table <ws> <item> <schema.table> --fresh` reads one');
       }
     },
 
@@ -371,22 +414,24 @@ function createAgent({ onelake, engine, modelPath, appDir, vendorDir, daxSqlPin,
           // A downloaded model says what is in it, from its file on disk.
           const path = modelPath(w, m.name);
           const b = await exists(path) ? await modelSummary(path) : null;
-          rows.push([w, m.name, !!b, b ? b.tables.length : null, b ? b.measures : null, m.description]);
+          if (opts.downloaded && !b) continue;
+          rows.push([w, m.name, !!b, isStaging(m.name), b ? b.tables.length : null, b ? b.measures : null, m.description]);
         }
       }, io);
       const n = new Set(rows.map(r => r[0])).size;
-      io.table([col('workspace'), col('semantic_model', 'text', 'semantic model'), COLS.downloaded, col('tables', 'integer'),
-                col('measures', 'integer'), col('description')], rows, { sort: 2, empty: 'No semantic models.' });
-      io.out(`\n${rows.length} semantic model(s) in ${n} workspace(s)${shortfall(gaps)}`);
+      const what = opts.downloaded ? 'downloaded semantic model' : 'semantic model';
+      io.table([col('workspace'), col('semantic_model', 'text', 'semantic model'), COLS.downloaded, COLS.staging, col('tables', 'integer'),
+                col('measures', 'integer'), col('description')], rows, { sort: 2, empty: `No ${what}s.` });
+      io.out(`\n${rows.length} ${what}(s) in ${n} workspace(s)${shortfall(gaps)}`);
     },
 
     // Every workspace's lakehouses and warehouses, or one workspace's, counted by kind.
     async items([ws], opts, io) {
       const rows = [];
       const gaps = await eachWorkspace(ws, opts, async w => {
-        for (const i of await look('items', [w], opts)) rows.push([w, i.name, kindLabel(i.kind)]);
+        for (const i of await look('items', [w], opts)) rows.push([w, i.name, kindLabel(i.kind), isStaging(i.name)]);
       }, io);
-      io.table([col('workspace'), col('item'), col('kind')], rows, { sort: 2, empty: 'No lakehouses or warehouses.' });
+      io.table([col('workspace'), col('item'), col('kind'), COLS.staging], rows, { sort: 2, empty: 'No lakehouses or warehouses.' });
       const kinds = new Map();
       for (const r of [...rows].sort(byColumns(3))) kinds.set(r[2], (kinds.get(r[2]) || 0) + 1);
       io.out(`\n${rows.length} item(s): ${[...kinds].map(([k, c]) => `${c} ${k}`).join(', ') || 'none'}${shortfall(gaps)}`);
@@ -503,7 +548,10 @@ function createAgent({ onelake, engine, modelPath, appDir, vendorDir, daxSqlPin,
       // Tables are named Kind.workspace.item.schema.table (`ls <ws> <item>` prints them), and
       // the engine opens each one a statement names as it runs it — a model's compiled SQL
       // names its Direct Lake tables the same way.
-      const res = await (await engine()).agentQuery(run, { signal: opts.signal });
+      // SHOW ALL TABLES holds every column of every table, too much for an agent's context: Markdown
+      // asks how many, and --csv and --json keep the columns.
+      const counted = !opts.csv && !opts.json && isShowAllTables(run);
+      const res = await (await engine()).agentQuery(counted ? ALL_TABLES_COUNTED : run, { signal: opts.signal });
       // A --csv is everything it says it is: rows it would have to leave out fail it, since
       // nothing in a CSV can say so. --limit, or an aggregate, is what asks for less.
       const total = res.numRows != null ? res.numRows : res.rows.length;
@@ -511,7 +559,8 @@ function createAgent({ onelake, engine, modelPath, appDir, vendorDir, daxSqlPin,
         throw new Error(`${total.toLocaleString('en')} rows, and a query keeps ${res.rows.length.toLocaleString('en')}: ` +
           'aggregate it, or ask for fewer with --limit');
       }
-      result(res, io);
+      result(res, io, { column: sqlCol });
+      if (counted) io.out('\nEach table\'s column names and types: --json, --csv, or `table <ws> <item> <schema.table>`');
       io.note(`${((Date.now() - t0) / 1000).toFixed(1)}s`);
     },
 
@@ -548,8 +597,8 @@ function createAgent({ onelake, engine, modelPath, appDir, vendorDir, daxSqlPin,
   };
 
   // An engine result, as one table: `numRows` is how many there were, whatever came back.
-  function result(res, io, { name, limit } = {}) {
-    io.table(res.fields.map(f => col(f.name, f.type)), res.rows.map(r => res.fields.map(f => r[f.name])), {
+  function result(res, io, { name, limit, column = col } = {}) {
+    io.table(res.fields.map(f => column(f.name, f.type)), res.rows.map(r => res.fields.map(f => r[f.name])), {
       name, limit, total: res.numRows != null ? res.numRows : res.rows.length,
       foot: (total, shown) => `\n${total.toLocaleString('en')} row(s)` + (total > shown ? `, first ${shown} shown` : ''),
     });
@@ -639,7 +688,7 @@ function createAgent({ onelake, engine, modelPath, appDir, vendorDir, daxSqlPin,
       if (opts.fresh && offlineReason()) throw offlineError(offlineReason(), 'An answer newer than the cache');
       await commands[name](rest, {
         fresh: !!opts.fresh, csv: !!opts.csv, json: !!opts.json, in: opts.in ? String(opts.in) : '',
-        explicitLimit, showSql: !!opts.showSql, seen, signal,
+        explicitLimit, showSql: !!opts.showSql, downloaded: !!opts.downloaded, seen, signal,
       }, answer);
       // An answer off disk says how old it is: the oldest listing it was made of.
       if (seen.length) {

@@ -35,16 +35,16 @@ const failureJson = (code, message, { retry, notes = [] } = {}) => JSON.stringif
 const LISTING = ['fresh', 'csv', 'json', 'limit'];
 const COMMANDS = {
   ls: { usage: 'ls [<ws> [<item>]]', max: 2, flags: LISTING },
-  models: { usage: 'models [<ws>]', max: 1, flags: LISTING },
+  models: { usage: 'models [<ws>]', max: 1, flags: [...LISTING, 'downloaded'] },
   items: { usage: 'items [<ws>]', max: 1, flags: LISTING },
   files: { usage: 'files <ws> <item> [<dir>]', min: 2, max: 3, flags: LISTING },
-  find: { usage: 'find <text>', min: 1, max: 1, flags: ['csv', 'json', 'limit'] },
+  find: { usage: 'find <text>', min: 1, max: 1, flags: LISTING },
   table: { usage: 'table <ws> <item> <schema.table>', min: 3, max: 3, flags: ['fresh', 'csv', 'json'] },
   model: { usage: 'model <ws> <model>', min: 2, max: 2, flags: ['fresh', 'json'] },
   sql: { usage: 'sql "<query>"', min: 1, max: 1, flags: ['in', 'csv', 'json', 'limit', 'showSql'] },
   export: { usage: 'export <ws> <model>, or export <ws> <item> <Files/path>', min: 2, max: 3, flags: ['json'] },
 };
-const FLAG_NAME = { fresh: '--fresh', csv: '--csv', json: '--json', limit: '--limit', in: '--in', showSql: '--show-sql' };
+const FLAG_NAME = { fresh: '--fresh', csv: '--csv', json: '--json', limit: '--limit', in: '--in', showSql: '--show-sql', downloaded: '--downloaded' };
 
 /** What is wrong with a request, or null: asked before the extension is, and by it. */
 function checkRequest({ args, opts = {} }) {
@@ -53,6 +53,10 @@ function checkRequest({ args, opts = {} }) {
     return `unknown command: ${name || '(none)'} — ${Object.keys(COMMANDS).join(', ')}`;
   }
   const c = COMMANDS[name];
+  // A measure's name with a space, through PowerShell 5.1: the call was right as written.
+  if (name === 'sql' && rest.length > c.max) {
+    return `sql got ${rest.length} arguments, so the shell split the query. Send it on stdin: sql -`;
+  }
   if (rest.length < (c.min || 0) || rest.length > c.max || rest.some(a => a === '')) return `usage: ${c.usage}`;
   for (const [key, flag] of Object.entries(FLAG_NAME)) {
     if (opts[key] != null && opts[key] !== false && !c.flags.includes(key)) return `${flag} is not an option of ${name}`;

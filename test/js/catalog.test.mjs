@@ -268,6 +268,7 @@ test("a table that never converts is reported with its conversion log's error", 
   const { fetch } = fakeFetch([
     [/\/v1\/config/, () => res(200, { overrides: { prefix: "a/b" } })],
     [/\/tables\/t$/, () => res(404, {})],
+    [/resource=filesystem/, () => res(200, { paths: [] })],
     [/Tables\/dbo\/t\/metadata\/latest_conversion_log\.txt$/, () => ({ ...res(200, {}),
       arrayBuffer: async () => new TextEncoder().encode(log).buffer })],
   ]);
@@ -284,6 +285,7 @@ test("no conversion log means the conversion never ran, and the error says so", 
   const { fetch } = fakeFetch([
     [/\/v1\/config/, () => res(200, { overrides: { prefix: "a/b" } })],
     [/\/tables\/t$/, () => res(404, {})],
+    [/resource=filesystem/, () => res(200, { paths: [] })],
   ]);
   const saved = globalThis.fetch;
   globalThis.fetch = fetch;
@@ -292,6 +294,57 @@ test("no conversion log means the conversion never ran, and the error says so", 
     await assert.rejects(() => catalog.loadTable({ workspace: "ws", item: "lh.Lakehouse" }, { schema: "dbo", table: "t" }),
       /no conversion log/);
   } finally { globalThis.fetch = saved; }
+});
+
+// loadTable with `answers`, and a backoff long enough that a test waiting on it would time out
+// unless `backoffMs` says otherwise.
+async function loading(answers, { backoffMs = [3_600_000], t = { schema: "mart", table: "t" }, onWait } = {}) {
+  const { fetch, calls } = fakeFetch([[/\/v1\/config/, () => res(200, { overrides: { prefix: "a/b" } })], ...answers]);
+  const saved = globalThis.fetch;
+  globalThis.fetch = fetch;
+  try {
+    const catalog = createCatalog({ getToken: async () => "tok", backoffMs });
+    const out = await catalog.loadTable({ workspace: "ws", item: "lh.Lakehouse" }, t, { onWait }).catch(e => e);
+    return { out, calls };
+  } finally { globalThis.fetch = saved; }
+}
+const CONVERTED = () => res(200, { "metadata-location": "abfss://x/m.json", metadata: { "format-version": 2 } });
+
+test("a table with no folder fails at once: nothing to wait for, and nothing about converting it", async () => {
+  const { out, calls } = await loading([]);
+  assert.equal(out.noTable, true);
+  assert.equal(out.message, "no table mart.t in ws/lh");
+  assert.equal(calls.filter(u => /\/tables\/t$/.test(u)).length, 1, calls.join("\n"));
+});
+
+test("a table with its folder is waited on, and the folder is asked about once", async () => {
+  let asked = 0;
+  const said = [];
+  const { out, calls } = await loading([
+    [/\/tables\/t$/, () => (++asked < 3 ? res(404, {}) : CONVERTED())],
+    [/resource=filesystem/, () => res(200, { paths: [] })],
+  ], { backoffMs: [1, 1, 1], onWait: m => said.push(m) });
+  assert.equal(out.metadataLocation, "abfss://x/m.json");
+  assert.match(said.join("\n"), /Waiting for Fabric to generate Iceberg metadata for mart\.t/);
+  assert.equal(calls.filter(u => /resource=filesystem/.test(u)).length, 1, calls.join("\n"));
+});
+
+test("a table directly under Tables/ counts as having its folder", async () => {
+  let asked = 0;
+  const { out } = await loading([
+    [/\/tables\/t$/, () => (++asked < 2 ? res(404, {}) : CONVERTED())],
+    [/directory=lh\.Lakehouse%2FTables%2Ft(&|$)/, () => res(200, { paths: [] })],
+  ], { backoffMs: [1] });
+  assert.equal(out.metadataLocation, "abfss://x/m.json");
+});
+
+test("a folder check that can't tell leaves the table waited on", async () => {
+  let asked = 0;
+  const { out } = await loading([
+    [/\/tables\/t$/, () => (++asked < 2 ? res(404, {}) : CONVERTED())],
+    [/resource=filesystem/, () => res(403, {})],
+  ], { backoffMs: [1] });
+  assert.equal(out.metadataLocation, "abfss://x/m.json");
 });
 
 // OneLake Studio is an app external to Fabric; a tenant can turn those off wholesale, and

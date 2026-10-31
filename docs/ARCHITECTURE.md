@@ -30,7 +30,7 @@ SHOW ALL TABLES;
 | --- | --- | --- |
 | **One name per object** | A table has five parts and a model has three. A file is its `abfss://` URL. | [NAMING.md](NAMING.md), [`src/names.js`](../src/names.js) |
 | **SQL only** | A model is read with `AGG("measure")` in SQL. There is no DAX query. | [`app/semantic.js`](../app/semantic.js) |
-| **Read only** | Nothing is written to Fabric or OneLake. The host refuses any statement that could write. The one exception is Export to Fabric, after an OK in VS Code. | `assertReadOnly` in [`src/sql.js`](../src/sql.js) |
+| **Read only** | Nothing is written to Fabric or OneLake. The host refuses any statement that could write, and the command line takes reads only. The one exception is Export to Fabric, after an OK in VS Code. | `assertReadOnly` and `assertReads` in [`src/sql.js`](../src/sql.js) |
 | **Cache first** | Every answer from OneLake or Fabric is kept on this machine and served from there first. It is trusted until using it fails, then read again once. | [`src/onelake.js`](../src/onelake.js), [`src/store.js`](../src/store.js) |
 | **Works offline** | A feature that reads data works from what this machine holds, with no network. What isn't held says so at once, never on a timeout. Only writing to Fabric needs a connection: Export to Fabric. The exported Fabric app is online by design, and this rule doesn't apply to it. | [`src/connectivity.js`](../src/connectivity.js), [`src/http.js`](../src/http.js), `cache_httpfs_set_offline` in [`src/engine-host.js`](../src/engine-host.js) |
 | **The host does the work** | Sign-in, the read-only guard and OneLake's listings, metadata and `Files/` bytes are in the host, and DuckDB's reads are in the server it starts. A tab is a view: it holds no token and makes no network request. | [`src/host.js`](../src/host.js), [`src/panel.js`](../src/panel.js), [`src/engine-client.js`](../src/engine-client.js) |
@@ -176,6 +176,8 @@ The engine is **DuckDB 2.0 running natively in a process of its own** ([The serv
   remote archive.
 - **What the page may run:** one statement: a read, a view, a schema, a `READ_ONLY` attach, or the `DROP`
   or `DETACH` of one. Never `COPY`, `INSERT`, `EXPORT`, anything else that writes, or a Quack function.
+- **What the command line may run:** one read, or an `EXPLAIN` of one. The views, schemas, attaches and drops above
+  are how a page sets up what it reads, and on a shared server they would reach every tab.
 - **What the page reaches:** the host, through one message channel, only by `query`, `stream`, `cancel`,
   `info` and the methods in [`src/host.js`](../src/host.js).
 
@@ -289,8 +291,9 @@ back to the cloud. A table nothing was ever written to has a check, since it rea
   answer is kept). Public means anyone with the URL loads the site without signing in, shown as an
   orange open lock. Protected means Fabric asks for a sign-in and permission on the app first, shown
   as a lock.
-- That is two reads per app when *Apps* is expanded, then cached. A button copies the URL. Nothing is
-  opened or changed.
+- That is two reads per app when *Apps* is expanded, then cached. A button copies the URL, and a double
+  click opens it in the browser ([`src/doubleclick.js`](../src/doubleclick.js): VS Code has no such event, so
+  it is two clicks on one app within half a second). Nothing is changed.
 
 ## The SQL box and results
 
@@ -482,6 +485,8 @@ personal skills, and it follows the extension through updates.
 - **`sql -`** reads SQL from stdin. Prefer it for anything with quotes in it: `AGG("Total Sales")` does
   not survive every shell.
 - **`--show-sql`** prints the SQL a model query compiles to.
+- **A missing table fails at once.** A 400 or 404 from the catalog checks for the table's folder under `Tables/`.
+  With no folder there is no conversion to wait for, and the error names the closest listed tables.
 - **`export`** is the one write: the same code path as Explore's button, with the same questions asked
   in VS Code.
 
@@ -508,6 +513,7 @@ personal skills, and it follows the extension through updates.
 | **Select Top Rows**, **Copy SQL Name**, **Copy Column List** | A table's right-click. |
 | **Download Again (from Fabric)** | Replaces a semantic model's local copy. |
 | **Copy App URL** | An app's button. |
+| **Open App** | A double click on an app with a site. |
 | **Open Table**, **Open File**, **Open Semantic Model** | A click in the tree. |
 | **Copy**, **Copy with Headers**, **Copy as CSV**, **Copy as Markdown**, **Copy as JSON**, **Open as CSV Document**, **Open as JSON Document** | The grid's right-click. |
 
@@ -564,7 +570,7 @@ every window. The rest apply at once.
 | `src/deltalog.js` | A Delta table's own log, for Stats and History. |
 | `src/fabric.js` | A workspace's semantic models and apps, and a model's definition. |
 | `src/semviews.js` | The models opened, per account. |
-| `src/tree.js` | The explorer. |
+| `src/tree.js`, `src/doubleclick.js` | The explorer, and what counts as a double click in it. |
 | `src/title.js` | What the sidebar's header and a tab's title say. |
 | `app/querytext.js` | The SQL box's statements, error positions and variables. |
 | `src/panel.js`, `src/host.js`, `src/html.js`, `src/webview.js` | A tab's webview, its channel, and its page. |

@@ -97,11 +97,49 @@ ATTACH ':memory:' AS x
 ----
 Read only
 
-# What the read-only check lets through, and the engine's lockdown has to refuse. A read of this
-# machine's disk is no read of OneLake, whatever the SQL calls it.
+# What the page sends to set up its reads is the page's. This is the command line, which reads.
+statement error
+DROP TABLE memory.main.not_a_table
+----
+DROP is not a read
+
+statement error
+DROP TABLE IF EXISTS lakehouse.cat1.lh.dbo.no_such_table
+----
+DROP is not a read
+
+statement error
+DROP VIEW lakehouse.cat1.lh.dbo.t
+----
+DROP is not a read
+
+statement error
+DROP SCHEMA lakehouse.cat1 CASCADE
+----
+DROP is not a read
+
+statement error
+DETACH lakehouse
+----
+DETACH is not a read
+
+statement error
+CREATE VIEW v AS SELECT 1
+----
+CREATE is not a read
+
+statement error
+CREATE SCHEMA s
+----
+CREATE is not a read
+
 statement error
 ATTACH 'x.db' AS x (READ_ONLY)
+----
+ATTACH is not a read
 
+# What the read-only check lets through, and the engine's lockdown has to refuse. A read of this
+# machine's disk is no read of OneLake, whatever the SQL calls it.
 statement error
 SELECT * FROM read_text('~/.ssh/id_rsa')
 

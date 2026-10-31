@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { assertReadOnly } = require("../../src/sql.js");
+const { assertReadOnly, assertReads, isShowAllTables } = require("../../src/sql.js");
 
 const ALLOWED = [
   "SELECT 42",
@@ -71,6 +71,27 @@ test("everything the page sends to read is allowed", () => {
 
 test("everything that could write is refused, and says it is read only", () => {
   for (const sql of REFUSED) assert.throws(() => assertReadOnly(sql), /Read only/, sql);
+});
+
+// The command line's guard: reads only. What the page sends to set up its reads is the page's.
+const PAGE_ONLY = ALLOWED.filter(sql => /^(CREATE|ATTACH|DETACH|DROP)\b/.test(sql));
+
+test("the command line takes what reads, and none of what the page sets up", () => {
+  assert.ok(PAGE_ONLY.length >= 8, "the list above is what it was");
+  for (const sql of ALLOWED.filter(s => !PAGE_ONLY.includes(s))) assert.doesNotThrow(() => assertReads(sql), sql);
+  for (const sql of PAGE_ONLY) assert.throws(() => assertReads(sql), /Read only/, sql);
+  for (const sql of REFUSED) assert.throws(() => assertReads(sql), /Read only/, sql);
+});
+
+test("the command line's refusal names what it refused", () => {
+  assert.throws(() => assertReads("DROP TABLE memory.main.not_a_table"),
+    { message: "Read only: OneLake Studio never writes, and DROP is not a read." });
+  assert.throws(() => assertReads("/* hidden */ detach x;"), /DETACH is not a read/);
+});
+
+test("SHOW ALL TABLES is known however it is written, and nothing else is", () => {
+  for (const sql of ["SHOW ALL TABLES", "show  all\ntables;", "-- why\nSHOW ALL TABLES ;"]) assert.ok(isShowAllTables(sql), sql);
+  for (const sql of ["SHOW TABLES", "SELECT 'SHOW ALL TABLES'", "SELECT * FROM (SHOW ALL TABLES)"]) assert.ok(!isShowAllTables(sql), sql);
 });
 
 // tableRefs: the five-part names a statement reads, which the engine opens before running it.

@@ -127,6 +127,18 @@ test("past the cache, a table no longer listed is gone: not waited on as a conve
   assert.equal(count(w, "load"), 0);
 });
 
+test("a table with no folder says so plainly, with the closest listed names", async () => {
+  const w = world();
+  w.tables = [{ schema: "dbo", table: "dim_duid" }, { schema: "mart", table: "dim_duids" }, { schema: "dbo", table: "fact_sales" }];
+  w.catalog.loadTable = async (lh, t) => {
+    throw Object.assign(new Error(`no table ${t.schema}.${t.table} in ws/old`), { status: 404, noTable: true });
+  };
+  const named = table => ({ ...ref(), table });
+  await assert.rejects(w.sql.resolve(named("dim_duidd")),
+    e => e.message === "no table dbo.dim_duidd in ws/old — closest: dbo.dim_duid, mart.dim_duids");
+  await assert.rejects(w.sql.resolve(named("no_such_table_xyz")), e => e.message === "no table dbo.no_such_table_xyz in ws/old");
+});
+
 test("offline, a kept listing cannot say an item does not exist", async () => {
   const w = world();
   await w.sql.resolve(ref());

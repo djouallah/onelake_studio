@@ -8,7 +8,7 @@
 // hold tables, what a kind is called) is names.js; caching the answers is onelake.js.
 // =============================================================================
 
-const { strip, basename, holdsTables, itemKind, DFS_ORIGIN, dfsFileUrl } = require('./names');
+const { strip, basename, displayName, holdsTables, itemKind, DFS_ORIGIN, dfsFileUrl } = require('./names');
 const { authedFetch: send, limiter, mapPool, oneLakeMessage } = require('./http');
 
 const TABLE_ORIGIN = 'https://onelake.table.fabric.microsoft.com';
@@ -45,6 +45,10 @@ const EXTERNAL_ACCESS_HINT = ' If this happens for every workspace, the tenant s
 // OneLake's message, as the end of a sentence: it brings its own full stop, or gets one.
 const sentence = said => (said ? ` — ${said}${/[.!?]$/.test(said) ? '' : '.'}` : '.');
 const forbidden = status => (status === 403 ? EXTERNAL_ACCESS_HINT : '');
+
+// Where a table's folder can be: a lakehouse without schemas keeps it directly under Tables/.
+const tableDirs = (lh, t) => [t.schema ? `${lh.item}/Tables/${t.schema}/${t.table}` : null, `${lh.item}/Tables/${t.table}`]
+  .filter(Boolean);
 
 /**
  * @param {object} opts
@@ -151,6 +155,16 @@ function createCatalog({ getToken, dfsOrigin = DFS_ORIGIN, tableOrigin = TABLE_O
         `Listing of ${strip(directory) || ws} did not finish after ${MAX_PAGES} pages — giving up`);
     } while (cont);
     return out;
+  }
+
+  // Whether a directory is there. listPaths can't say: to it, a 404 is an empty listing.
+  async function dirExists(ws, directory) {
+    const u = new URL(`${dfsOrigin}/${encodeURIComponent(ws)}`);
+    u.searchParams.set('resource', 'filesystem');
+    u.searchParams.set('recursive', 'false');
+    u.searchParams.set('directory', strip(directory));
+    u.searchParams.set('maxResults', '1');
+    return (await authedFetch(u.toString())).status !== 404;
   }
 
   async function listItems(ws) {
@@ -261,6 +275,11 @@ function createCatalog({ getToken, dfsOrigin = DFS_ORIGIN, tableOrigin = TABLE_O
         // conversion in progress.
         if (await stalePrefix(lh, e)) { url = urlOf(await ircPrefixFor(lh)); attempt--; continue; }
         const notYet = e.status === 400 || e.status === 404;
+        // A table waiting for its conversion has its folder. With none there is nothing to wait for.
+        if (notYet && attempt === 0 && await folderGone(lh, t)) {
+          throw Object.assign(new Error(`no table ${label} in ${lh.workspace}/${displayName(lh.item)}`),
+            { status: 404, noTable: true });
+        }
         const busy = e.status === 429 || e.status >= 500;
         if (!(notYet || busy) || attempt >= backoffMs.length) {
           if (notYet) e.message += await conversionStory(lh, t);
@@ -275,14 +294,21 @@ function createCatalog({ getToken, dfsOrigin = DFS_ORIGIN, tableOrigin = TABLE_O
     }
   }
 
+  // True only when OneLake says neither folder is there. A check that can't tell (a 403, no
+  // connection) leaves the table waited on, as it would be with no check.
+  async function folderGone(lh, t) {
+    try {
+      for (const dir of tableDirs(lh, t)) if (await dirExists(lh.workspace, dir)) return false;
+      return true;
+    } catch (_) { return false; }
+  }
+
   // Why a table has no Iceberg metadata, in Fabric's own words where it left any: the
   // conversion writes latest_conversion_log.txt into the table's metadata/ and says there
   // whether it failed, and why (a type it cannot convert, more than 5,000 commits…). No log
   // at all means it never tried.
   async function conversionStory(lh, t) {
-    const dirs = [t.schema ? `${lh.item}/Tables/${t.schema}/${t.table}` : null, `${lh.item}/Tables/${t.table}`]
-      .filter(Boolean);
-    for (const dir of dirs) {
+    for (const dir of tableDirs(lh, t)) {
       let text;
       try { text = new TextDecoder().decode(await readBytes(lh.workspace, `${dir}/metadata/latest_conversion_log.txt`)); }
       catch (_) { continue; }

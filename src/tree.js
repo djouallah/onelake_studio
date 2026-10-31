@@ -301,7 +301,7 @@ class LakehouseTree {
         break;
       }
       // A workspace's Fabric apps (AppBackend items), however they were made — from the
-      // Fabric API. Shown only: its URL and last deploy, and a button to copy the URL.
+      // Fabric API. Its URL and last deploy, a button to copy the URL, and a double click to open it.
       case 'apps':
       case 'allApps':
         item.iconPath = new vscode.ThemeIcon('rocket');
@@ -320,7 +320,9 @@ class LakehouseTree {
           n.access === 'public' ? 'Public: anyone with the URL can load the site, without signing in.'
             : n.access === 'protected' ? 'Protected: Fabric asks for a sign-in and permission on the app first.' : '',
           n.deployedAt ? `Last deployed ${new Date(n.deployedAt).toLocaleString()}` : '',
+          n.url ? 'Double-click to open it in the browser.' : '',
           n.description].filter(Boolean).join('\n');
+        if (n.url) item.command = { command: 'onelakeStudio.openApp', title: 'Open App', arguments: [n] };
         break;
       }
       case 'fabricSignIn':

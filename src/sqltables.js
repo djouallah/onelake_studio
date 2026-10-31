@@ -14,6 +14,31 @@ const { sqlKind, sqlName, displayName } = require('./names');
 
 const same = (a, b) => String(a).toLowerCase() === String(b).toLowerCase();
 
+// How many single-character edits turn one name into the other.
+function editDistance(a, b) {
+  let row = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    const next = [i];
+    for (let j = 1; j <= b.length; j++) {
+      next[j] = Math.min(row[j] + 1, next[j - 1] + 1, row[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    }
+    row = next;
+  }
+  return row[b.length];
+}
+
+// The listed tables nearest a name that isn't there, as schema.table: a typo, not a guess.
+function closestTables(name, listing, max = 3) {
+  const lc = String(name).toLowerCase();
+  const reach = Math.max(2, Math.floor(lc.length / 3));
+  return listing
+    .map(t => ({ t, d: editDistance(lc, t.table.toLowerCase()) }))
+    .filter(x => x.d <= reach)
+    .sort((a, b) => a.d - b.d || (a.t.table < b.t.table ? -1 : a.t.table > b.t.table ? 1 : 0))
+    .slice(0, max)
+    .map(({ t }) => (t.schema ? `${t.schema}.${t.table}` : t.table));
+}
+
 /**
  * @param {object} o
  * @param {ReturnType<import('./onelake').createOneLake>} o.onelake
@@ -61,7 +86,11 @@ function createSqlTables({ onelake, paths, offlineReason = () => null }) {
     const t = hit || { schema: ref.schema || 'dbo', table: ref.table };
     let meta;
     try { meta = await onelake.table(lh, t, { fresh }); }
-    catch (e) { throw new Error(`${sqlName(ref)}: ${e.message}`); }
+    catch (e) {
+      if (!e.noTable) throw new Error(`${sqlName(ref)}: ${e.message}`);
+      const near = closestTables(ref.table, listing || []);
+      throw new Error(e.message + (near.length ? ` — closest: ${near.join(', ')}` : ''));
+    }
     const named = { kind: ref.kind, workspace: ws, item: displayName(dir), schema: t.schema || 'dbo', table: t.table };
     return meta.empty
       ? { ...named, emptySql: (await paths()).emptyTableSql(meta.schemaFields) }

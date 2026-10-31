@@ -19,10 +19,10 @@ node --no-warnings "{{cli}}" <command>
 |---|---|
 | `ls` | workspaces |
 | `ls <ws>` | its lakehouses/warehouses, and its semantic models (marked *downloaded* if local) |
-| `models [<ws>]` | every semantic model in every workspace (or one), with description and *downloaded*, and how many — for "how many models", "which workspace has X" |
-| `find <text>` | every cached name containing it — items, tables, columns, semantic models, and a downloaded model's tables, columns and measures — for "which table has customer_id", "where is the Sales model" |
+| `models [<ws>]` | every semantic model in every workspace (or one), with description, *downloaded* and *staging*, and how many — for "how many models", "which workspace has X". `--downloaded`: only those on this machine, readable with no download |
+| `find <text>` | every cached name containing it — items, tables, columns, semantic models, and a downloaded model's tables, columns and measures — for "which table has customer_id", "where is the Sales model". `--fresh` reads every listing first, which is slow on a large tenant; what it read stays cached if `--timeout` stops it |
 | `files <ws> <item> [<dir>]` | a lakehouse's Files/ listing, with sizes |
-| `items [<ws>]` | every lakehouse and warehouse in every workspace (or one), counted by kind |
+| `items [<ws>]` | every lakehouse and warehouse in every workspace (or one), counted by kind, with *staging* |
 | `ls <ws> <item>` | its tables with rows, size, files and last write, and their SQL names (`lakehouse.<ws>.<item>.<schema>.<table>`); `<item>` may omit its `.Lakehouse` suffix |
 | `table <ws> <item> <schema.table>` | rows, files, size, last write, columns — metadata only, no scan |
 | `model <ws> <model>` | relationships, columns, measures with their DAX, and an example query. A model not downloaded yet exits 4: add `--fresh` to download it |
@@ -53,10 +53,15 @@ Branch on the exit code, never on the wording:
 
 A failure leaves stdout empty and says why on stderr. What each format gives you:
 
-- **Markdown** (the default) is for reading: `1,234`, `2.5 MB`, `—`. Row counts and "first 100 shown" are in it.
-- **`--csv`** is one table of raw values (bytes, ISO times, an empty cell for nothing) with always a header row, all
-  its rows unless `--limit` says otherwise. It never leaves rows out unasked: past what a query keeps, it fails.
-  `ls <ws>` and `model` are several tables, so they take no `--csv`.
+- **Markdown** (the default) is for reading. The listings (`ls`, `models`, `items`, `files`, `table`) format theirs:
+  `1,234`, `2.5 MB`, `—`. `sql` prints raw values: `1234567.891`, `NULL` for a null, and a blank for an empty string.
+  Row counts and "first 100 shown" are in it. `SHOW ALL TABLES` gives each table's column count here; `--json`,
+  `--csv` or `table` give the columns.
+- **`--csv`** is one table of raw values (bytes, ISO times, an empty cell for NULL, `""` for an empty string) with
+  always a header row, all its rows unless `--limit` says otherwise. It never leaves rows out unasked: past what a
+  query keeps, it fails. `ls <ws>` and `model` are several tables, so they take no `--csv`. Many CSV readers lose the
+  difference between NULL and `""`: DuckDB's `read_csv` needs `allow_quoted_nulls=false`, and Python's `csv` can't
+  keep it. Use `--json` when it matters.
 - **`--json`** is for acting on: `{ ok, columns, rows, total, truncated, complete, cachedAt, notes }`, with `tables`
   by name in place of `columns` and `rows` for `ls <ws>` and `model`, and `data` for what is not a table. A failure is
   `{ ok: false, error: { code, message, retry }, notes }`. Everything is in it, stderr stays empty, and `2>&1` is safe.
@@ -64,7 +69,11 @@ A failure leaves stdout empty and says why on stderr. What each format gives you
 
 An answer can be exit 0 and still short. A listing of every workspace that could not read some says `complete: false`
 in `--json`, and a note on stderr otherwise (`--csv` has nowhere else to say it): do not report its counts as the total.
-A workspace asked for by name fails instead.
+A workspace asked for by name fails instead. `find` says `complete: false` too when it could not search something: a
+listing not cached, or the columns of a table whose metadata was never read.
+
+*staging* marks what a dataflow made for its own staging (`DataflowsStaging*`, `StagingLakehouseForDataflows_*`,
+`StagingWarehouseForDataflows_*`). It is judged by the name. Leave these out when counting what people built.
 
 ## Answering a semantic-model question
 
@@ -102,7 +111,7 @@ VS Code extension); nothing is written to Fabric or OneLake.
   (`lakehouse.sales.mart.dbo.fct_summary`); plain SQL naming it reads the table as stored.
 - Notes, timings and `--show-sql` under `--csv` go to stderr: keep `2>&1` off a `--csv` you mean to parse. A killed
   or timed-out command stops its query.
-- Listings and metadata (`ls`, `models`, `items`, `table`, `model`) come only from what the
+- Listings and metadata (`ls`, `models`, `items`, `find`, `table`, `model`) come only from what the
   extension has already cached — what the user has opened in its tree — and never from
   OneLake or Fabric; stderr says how old the answer is. Something not cached says so: tell the
   user, and add `--fresh` (which reads OneLake/Fabric now, and exports a model not downloaded

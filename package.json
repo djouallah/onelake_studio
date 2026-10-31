@@ -162,6 +162,11 @@
         "icon": "$(copy)"
       },
       {
+        "command": "onelakeStudio.openApp",
+        "title": "Open App",
+        "category": "OneLake Studio"
+      },
+      {
         "command": "onelakeStudio.selectTop",
         "title": "Select Top Rows",
         "category": "OneLake Studio"
@@ -524,6 +529,10 @@
         },
         {
           "command": "onelakeStudio.copyAppUrl",
+          "when": "false"
+        },
+        {
+          "command": "onelakeStudio.openApp",
           "when": "false"
         },
         {

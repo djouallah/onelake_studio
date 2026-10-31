@@ -112,8 +112,9 @@ const refuse = why => {
   throw new Error(`Read only: OneLake Studio never writes, and ${why}.`);
 };
 
-/** Throws unless `sql` is one statement the read-only contract allows. */
-function assertReadOnly(sql) {
+// The statement's text with comments and the insides of quotes gone, or refused: more than one
+// statement, an empty one, or Quack.
+function oneStatement(sql) {
   const { text, seps } = scan(String(sql));
   if (seps.some(i => text.slice(i + 1).trim() !== '')) refuse('runs one statement at a time');
   // Quack is how the shared engine's windows reach it, and its functions start, stop and connect
@@ -121,14 +122,31 @@ function assertReadOnly(sql) {
   if (/\bquack_\w+|\bscan_data_from_quack_client\b/i.test(scan(String(sql), true).text)) refuse('Quack is not for statements');
   const s = text.trim().replace(/;+\s*$/, '').trim();
   if (!s) refuse('this statement is empty');
-  if (isRead(s)) return;
+  return s;
+}
+
+function readsOrExplains(s) {
+  if (isRead(s)) return true;
   // EXPLAIN [ANALYZE] q, or EXPLAIN (ANALYZE, FORMAT json|html) q — Explore's Show plan. The
   // option list is EXPLAIN's own words only; what follows must still be a read.
   const explained = /^explain\s*(?:\(\s*((?:analy[sz]e|format\s+(?:json|html|text|graphviz))(?:\s*,\s*(?:analy[sz]e|format\s+(?:json|html|text|graphviz)))*)\s*\)\s*|analy[sz]e\s+)?([\s\S]*)$/i.exec(s);
-  if (explained) {
-    if (isRead(explained[2])) return;
-    refuse('EXPLAIN runs only over a query');
-  }
+  if (!explained) return false;
+  if (isRead(explained[2])) return true;
+  refuse('EXPLAIN runs only over a query');
+}
+
+const notARead = s => refuse(`${(/^[A-Za-z_]+/.exec(s) || ['this'])[0].toUpperCase()} is not a read`);
+
+/** Throws unless `sql` is one statement that only reads: the command line's guard. */
+function assertReads(sql) {
+  const s = oneStatement(sql);
+  if (!readsOrExplains(s)) notARead(s);
+}
+
+/** Throws unless `sql` is one statement the page may send: a read, or what sets up its reads. */
+function assertReadOnly(sql) {
+  const s = oneStatement(sql);
+  if (readsOrExplains(s)) return;
   if (/^create\s+(or\s+replace\s+)?((temp|temporary)\s+)?view\s/i.test(s)) {
     const body = /\sas\s([\s\S]*)$/i.exec(s);
     if (body && isRead(body[1])) return;
@@ -144,7 +162,7 @@ function assertReadOnly(sql) {
     if (opts && /\bread_only\b(?!\s*=?\s*(false|0)\b)/i.test(opts[1])) return;
     refuse('a database is attached READ_ONLY');
   }
-  refuse(`${(/^[A-Za-z_]+/.exec(s) || ['this'])[0].toUpperCase()} is not a read`);
+  notARead(s);
 }
 
 // -----------------------------------------------------------------------------
@@ -246,14 +264,21 @@ const CATALOG_CTES = `WITH RECURSIVE
         UNION ALL
         SELECT database_oid, schema_oid, view_oid, view_name, temporary FROM duckdb_views() WHERE NOT internal)`;
 
+const ALL_TABLES_FROM = `FROM o JOIN p ON p.database_oid = o.database_oid AND p.oid = o.schema_oid
+JOIN duckdb_columns() c ON c.database_oid = o.database_oid AND c.table_oid = o.oid
+GROUP BY ALL ORDER BY database, schema, name`;
+
 const SHOW_ALL_TABLES = `${CATALOG_CTES}
 SELECT p.database_name AS database, p.path AS schema, o.name,
        list(c.column_name ORDER BY c.column_index) AS column_names,
        list(c.data_type ORDER BY c.column_index) AS column_types,
        first(o.temporary) AS temporary
-FROM o JOIN p ON p.database_oid = o.database_oid AND p.oid = o.schema_oid
-JOIN duckdb_columns() c ON c.database_oid = o.database_oid AND c.table_oid = o.oid
-GROUP BY ALL ORDER BY database, schema, name`;
+${ALL_TABLES_FROM}`;
+
+// The same tables with how many columns each has, for an answer that can't afford the columns.
+const ALL_TABLES_COUNTED = `${CATALOG_CTES}
+SELECT p.database_name AS database, p.path AS schema, o.name, count(*) AS columns
+${ALL_TABLES_FROM}`;
 
 const SHOW_SCHEMAS = `${CATALOG_CTES}
 SELECT database_name, path AS schema_name,
@@ -276,10 +301,13 @@ function dottedParts(text) {
   }
 }
 
+const withoutComments = sql => scan(String(sql), true).text.trim().replace(/;+\s*$/, '').trim();
+const isShowAllTables = sql => /^show\s+all\s+tables$/i.test(withoutComments(sql));
+
 /** The statement that lists the catalog with whole schema paths, or null to run `sql` as it is. */
 function catalogStatement(sql) {
-  const s = scan(String(sql), true).text.trim().replace(/;+\s*$/, '').trim();
-  if (/^show\s+all\s+tables$/i.test(s)) return SHOW_ALL_TABLES;
+  const s = withoutComments(sql);
+  if (isShowAllTables(s)) return SHOW_ALL_TABLES;
   if (/^show\s+schemas$/i.test(s)) return SHOW_SCHEMAS;
   // SHOW TABLES FROM catalog.schema…: DuckDB's parser takes two parts at most.
   const from = /^show\s+tables\s+(?:from|in)\s+([\s\S]+)$/i.exec(s);
@@ -301,4 +329,4 @@ function readsCatalog(sql) {
   return /^\s*show\b/i.test(s) || CATALOG_READS.test(s);
 }
 
-module.exports = { sqlStr, quoteIdent, assertReadOnly, tableRefs, catalogStatement, readsCatalog };
+module.exports = { sqlStr, quoteIdent, assertReadOnly, assertReads, tableRefs, catalogStatement, isShowAllTables, ALL_TABLES_COUNTED, readsCatalog };
