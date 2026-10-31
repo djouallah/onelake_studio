@@ -78,7 +78,7 @@ function summarize(metadata, metadataLocation) {
 // semantic models — or null with no workspace listing. `unseen` counts the listings not cached
 // yet. The metadata is a file each, and a large cache holds thousands: read a few at a time.
 // The one walk over the cache: the engine's catalog (extension.js cachedSqlTables, which the
-// query editor's completion and Go to read too) and the command line's find.
+// Go to reads too) and the command line's find.
 async function walkCached(cached) {
   const ws = await cached.workspaces();
   if (!ws) return null;

@@ -15,7 +15,7 @@ a unique name, queried with SQL. Read only, cache first, and it works offline.
 - **Query with SQL.** Every table has one name, `lakehouse.workspace.item.schema.table`, and every
   semantic model is `semanticmodel.workspace.model`. The type comes first because a lakehouse and
   a warehouse can share a name. Join across items and workspaces;
-  `SHOW ALL TABLES` lists them all. Write it in VS Code's own editor, with completion from what
+  `SHOW ALL TABLES` lists them all. Write it in the panel's SQL box, over what
   you've opened; Ctrl+Enter runs the statement under the cursor, and the results show in the panel.
 - **Look at a table in a click.** Columns, row count, first rows, and Delta or Iceberg stats and
   history.

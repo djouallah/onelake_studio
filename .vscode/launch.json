@@ -6,9 +6,8 @@
   // panel still serves app/ directly, so an edit to the page shows up on the next panel
   // open with no rebuild.
   //
-  // --disable-extensions: only this extension in the host. Every extension shares that one thread,
-  // and opening a .sql file starts the SQL extensions, which have held it for over a minute: a click
-  // on Run then waits behind them, with nothing to say so.
+  // The first has only this extension in the host. Every extension shares that one thread, and has
+  // been seen holding it for over a minute. The second is how it meets a user's own VS Code.
   "version": "0.2.0",
   "configurations": [
     {
@@ -16,6 +15,13 @@
       "type": "extensionHost",
       "request": "launch",
       "args": ["--extensionDevelopmentPath=${workspaceFolder}", "--disable-extensions"],
+      "preLaunchTask": "bundle"
+    },
+    {
+      "name": "Run OneLake Studio beside your other extensions",
+      "type": "extensionHost",
+      "request": "launch",
+      "args": ["--extensionDevelopmentPath=${workspaceFolder}"],
       "preLaunchTask": "bundle"
     }
   ]

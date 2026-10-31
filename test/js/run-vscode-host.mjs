@@ -201,7 +201,7 @@ try {
   check("color-scheme follows the theme kind", painted.scheme === "dark", painted.scheme);
 
   // --- the engine still works ------------------------------------------------
-  await page.evaluate(sql => window.postMessage({ type: "run-sql", id: 1, sql }, "*"), "select 6*7 as answer");  // as the query editor sends it
+  await page.evaluate(sql => window.postMessage({ type: "run-sql", id: 1, sql }, "*"), "select 6*7 as answer");  // as Select Top Rows sends it
   await page.waitForFunction(
     () => /\b42\b/.test(document.getElementById("resultsTable").innerText || ""), { timeout: 60000 });
   check("SQL still runs", true);
@@ -253,7 +253,7 @@ try {
   await page.waitForFunction(
     () => /orders/.test(document.getElementById("activeTable").textContent || ""), { timeout: 60000 })
     .catch(() => {});
-  await page.evaluate(sql => window.postMessage({ type: "run-sql", id: 1, sql }, "*"), "select sum(amount) as total from shop.main.orders");  // as the query editor sends it
+  await page.evaluate(sql => window.postMessage({ type: "run-sql", id: 1, sql }, "*"), "select sum(amount) as total from shop.main.orders");  // as Select Top Rows sends it
   const sqliteOk = await page.waitForFunction(
     () => /\b6\.5\b/.test(document.getElementById("resultsTable").innerText || ""), { timeout: 60000 })
     .then(() => true, () => false);

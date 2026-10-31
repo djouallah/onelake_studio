@@ -8,7 +8,7 @@ queried with SQL.
 - **One catalog.** Every table and semantic model in the tenant has one unique name, so any statement
   can join across items, workspaces and kinds with no setup. [NAMING.md](NAMING.md) is the contract
   for those names. Everything else here depends on it.
-- **SQL for everything.** The query editor, the panel, Explore, the command line and the agent skill
+- **SQL for everything.** The SQL box, the panel, Explore, the command line and the agent skill
   all send the same SQL over the same names. A Power BI semantic model is one more table: `AGG("measure")`
   computes its measure, compiled from its DAX by [dax-sql](https://github.com/djouallah/dax-sql).
 - **Runs on your machine.** DuckDB in the extension host reads OneLake directly, with your own token.
@@ -72,7 +72,7 @@ the pin: the extension carries no copy of its own.
 
 ## What happens when a statement runs
 
-The query editor, the panel and the command line follow these steps. Explore compiles its own view
+The SQL box, the panel and the command line follow these steps. Explore compiles its own view
 and joins at step 3.
 
 1. **Open the models it names.** `unopenedModels` finds each `semanticmodel.<ws>.<model>` not open yet.
@@ -219,7 +219,7 @@ back to the cloud. A table nothing was ever written to has a check, since it rea
 **Clicking a table** shows it in the panel: Data, Stats, History and Pivot.
 - **Stats and History** come from the table's metadata, with no data read. A table written as Delta
   also has its own log read for what Iceberg has no word for ([`src/deltalog.js`](../src/deltalog.js)).
-- **Time travel:** on an Iceberg table, History's Query opens a snapshot's rows in a query editor, and
+- **Time travel:** on an Iceberg table, History's Query puts a snapshot's rows in the SQL box, and
   each snapshot says how its row count and columns differ from the table now.
 - **Pivot** is the SQL starter described under the rules above.
 
@@ -242,36 +242,30 @@ back to the cloud. A table nothing was ever written to has a check, since it rea
 - That is two reads per app when *Apps* is expanded, then cached. A button copies the URL. Nothing is
   opened or changed.
 
-## The query editor and results
+## The SQL box and results
 
-SQL is written in VS Code's own editor ([`src/queryeditor.js`](../src/queryeditor.js)). Other `.sql`
-files are left to their own extensions.
+SQL is written in a box in the panel ([`app/app.js`](../app/app.js)), not in VS Code's editor. **A query
+never opens a `.sql` file**, because opening one starts every SQL extension installed, on the extension
+host every extension shares, and a click on Run then waits behind them with nothing on screen. A `.sql`
+file you open yourself is left to those extensions. The box reacts by itself: a click says *Running…* at
+once and counts, though the answer still comes through the host.
 
-- **New Query** (the **+** on *Queries*) opens an untitled `Query N.sql` that starts with
-  `SHOW ALL TABLES`. **Save Query** (Ctrl+S) keeps it under *Queries*. Its URI is
-  `~/OneLakeStudio/queries/Query N.sql` with the `untitled` scheme, so it stays a query across a reload,
-  and VS Code's own File > Save writes it to that folder.
-- **Buttons and keys don't wait for the extension host.** Opening SQL starts the other SQL extensions on
-  the same host, which can hold it for many seconds. So `package.json` decides them in the window, by
-  the path. It matches the folder's name, so a `OneLakeStudio/queries` folder outside the home folder
-  shows the buttons too, and they do nothing there. The lenses are the host's, and they register before
-  sign-in.
-- **Run** (Ctrl+Enter, or OneLake Run above each statement) runs the statement under the cursor, or the
-  selection. **OneLake Plan** shows where it spends its time.
-- **Errors:** DuckDB's error is marked where it says it is, until the next edit.
-- **Completion** names what the cache holds: catalogs, workspaces, items, schemas, tables and columns,
-  and an opened model's measures as `AGG("…")`.
+- **The box holds one query.** Its text comes back with the next panel and the next window.
+- **New Query** (the **+** on *Queries*) puts `SHOW ALL TABLES` in the box. A saved query opens there too.
+  **Save Query** (Ctrl+S) writes it back, or keeps a new one under *Queries* as `Query N`.
+- **Run** (Ctrl+Enter) runs the statement under the cursor, or the selection. **Plan** shows where it
+  spends its time.
+- **Errors:** the status line says what DuckDB says, and the cursor goes where it says it is.
 - **Variables:** `SET VARIABLE year = 2024` keeps a value for the session and `getvariable('year')`
   reads it. **Clear Query Variables** forgets them.
 - **From the tree:** a table's right-click has Select Top Rows, Copy SQL Name and Copy Column List.
-  A table or model dragged into an editor drops its SQL name. **Go to a Table, Column or Measure**
-  (Ctrl+Alt+O) searches everything the cache holds.
+  **Go to a Table, Column or Measure** (Ctrl+Alt+O) searches everything the cache holds, and puts a name
+  in the box.
 
 Results show in the panel:
 
 - **Grid** ([`app/grid.js`](../app/grid.js)): every row scrolls, cells select and copy, and a filter box
   keeps the rows that hold its text.
-- **Each query editor keeps its last result** for the session, shown again with when it ran.
 - **Chart** ([`app/chart.js`](../app/chart.js)): draws the rows on screen. Nothing is queried again.
 - **Profile:** each column of the result, over every row the query returns (`SUMMARIZE`).
 - **Export…** writes every row to a CSV, Parquet or Excel file. The engine writes it, through VS Code's
@@ -480,7 +474,6 @@ personal skills, and it follows the extension through updates.
 | `onelakeStudio.engineMemoryLimit` | empty | Most memory DuckDB may use, e.g. `4GB`. Empty is a quarter of the machine's RAM. |
 | `onelakeStudio.engineThreads` | 0 | How many threads DuckDB may use. `0` is every core. |
 | `onelakeStudio.engineSpillMaxGB` | 0 | How much a query bigger than memory may spill to the temp folder. `0` is DuckDB's default. |
-| `onelakeStudio.resultsLocation` | `below` | Where a query's results show when it is run from its editor. |
 | `onelakeStudio.selectTopRows` | 1000 | How many rows **Select Top Rows** asks for. |
 | `onelakeStudio.maxResultRows` | 200,000 | The most rows of one result the panel and the command line keep, from 1,000 to 1,000,000. Past it, rows are only counted. |
 | `onelakeStudio.tableOpensOn` | `stats` | What clicking a table shows first: `stats` or `data`. |
@@ -516,7 +509,7 @@ apply at once.
 | `src/fabric.js` | A workspace's semantic models and apps, and a model's definition. |
 | `src/semviews.js` | The models opened, per account. |
 | `src/tree.js` | The explorer. |
-| `src/queryeditor.js`, `src/querytext.js` | The query editor. |
+| `app/querytext.js` | The SQL box's statements, error positions and variables. |
 | `src/panel.js`, `src/host.js`, `src/html.js`, `src/webview.js` | The panel's webview, its channel, and its page. |
 | `src/agent.js`, `src/bridge.js`, `bin/cli.mjs` | The command line. |
 | `src/exportapp.js`, `src/fabricapp.js`, `src/onelakewrite.js` | Export to Fabric. |

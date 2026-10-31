@@ -9,14 +9,12 @@
 // =============================================================================
 
 const vscode = require('vscode');
-const { join, basename, dirname, relative, isAbsolute } = require('node:path');
+const { join, basename, dirname, isAbsolute } = require('node:path');
 const os = require('node:os');
 const { existsSync } = require('node:fs');
 const fsp = require('node:fs/promises');
-const { registerQueryEditor } = require('./queryeditor');
-const { setVariable, variablesIn, bindVariables, literal } = require('./querytext');
 const { quoteIdent } = require('./sql');
-const { openPanel, setPanelTitle, closePanel, revealPanel, panelColumn, dockBelowEditor, postToPanel, postLive, panelSettings } = require('./panel');
+const { openPanel, setPanelTitle, closePanel, revealPanel, panelOpen, postToPanel, postLive, panelSettings } = require('./panel');
 const { createCatalog } = require('./catalog');
 const { createStore } = require('./store');
 const { createOneLake, walkCached } = require('./onelake');
@@ -66,6 +64,12 @@ function scopesFor() { return withTenant(SCOPES); }
 // one asks for no session and sends nothing to OneLake until someone signs in.
 const SIGNED_OUT_KEY = 'onelakeStudio.signedOut';
 const LAST_ACCOUNT_KEY = 'onelakeStudio.lastAccount';
+const QUERY_DRAFT_KEY = 'onelakeStudio.queryDraft';
+// A query variable's value, for the SQL box: what was typed, or null when dismissed.
+const askQueryVariable = name => vscode.window.showInputBox({
+  title: `getvariable('${name}')`, prompt: `A value for ${name}, kept for this session (SET VARIABLE ${name} = … changes it)`,
+  placeHolder: 'a number, or text (quoted for you)', ignoreFocusOut: true,
+}).then(typed => (typed === undefined ? null : typed));
 let memento = null;   // context.globalState, set first thing at activation
 const signedOutByChoice = () => !!(memento && memento.get(SIGNED_OUT_KEY, false));
 function getSession(options) {
@@ -521,14 +525,11 @@ let cachedSqlTables = null;
 // kept as a semantic view. Set by activateInner.
 let openSqlModel = null;
 let nameModelTables = null;
-// The query editors' side of the panel (queryeditor.js): Edit SQL opens a new one, and a
-// statement one sent comes back with how it went. Set by activateInner.
-let editSql = null;
-let queryDone = null;
+// Save Query, from the panel's SQL box. Set by activateInner.
+let saveQuery = null;
 
-// `place`: where the panel goes, for a query run from an editor (panel.js openPanel).
-async function show(context, options, place) {
-  if (revealPanel(place)) return true;
+async function show(context, options) {
+  if (revealPanel()) return true;
   // With an account's cache to show, or after a Sign Out, no click prompts for a sign-in: it opens
   // on what is held.
   const noPrompt = !!knownAccount() || signedOutByChoice();
@@ -551,7 +552,7 @@ async function show(context, options, place) {
   const eng = ensureEngine(context, { readme: readme.fsPath });
   if (!eng) return false;
   await openPanel(context, {
-    onOpened: logOpened, onBoot: logBoot, engine: eng, build: buildInfo, place,
+    onOpened: logOpened, onBoot: logBoot, engine: eng, build: buildInfo, draft: memento.get(QUERY_DRAFT_KEY, null),
     host: createHostMethods({
       onelake, engine: eng, onStatus: message => postLive({ type: 'status', message }),
       saveFile, semviews, modelsDir: modelsFolder(),
@@ -567,8 +568,9 @@ async function show(context, options, place) {
         const doc = await vscode.workspace.openTextDocument({ language, content });
         await vscode.window.showTextDocument(doc, { preview: false });
       },
-      editSql: x => (editSql ? editSql(x) : Promise.reject(new Error('OneLake Studio is still starting'))),
-      queryDone: x => { if (queryDone) queryDone(x); },
+      saveQuery: x => (saveQuery ? saveQuery(x) : Promise.reject(new Error('OneLake Studio is still starting'))),
+      saveDraft: x => memento.update(QUERY_DRAFT_KEY, x),
+      askVariable: askQueryVariable,
       openModel: x => (openSqlModel ? openSqlModel(x) : Promise.reject(new Error('OneLake Studio is still starting'))),
     }),
     // The page could not bring the engine up. Everything it buffered is already gone;
@@ -765,76 +767,21 @@ async function activate(context) {
   // A failure past this point used to be INVISIBLE: activation dies half-way, the view
   // renders as an empty pane — no tree, no welcome content, no message anywhere. The
   // rest of activate is guarded so that shape can never be silent again.
-  let started, failed;
-  const ready = new Promise((resolve, reject) => { started = resolve; failed = reject; });
-  ready.catch(() => {});   // reported below; whoever is waiting on it hears it too
   try {
-    await activateInner(context, ready);
-    started();
+    await activateInner(context);
     // After an update the skill still names the previous install's cli.mjs. Not awaited:
     // nothing on screen depends on it.
     refreshSkill(context).catch(e => out.appendLine(`agent skill not refreshed: ${e.message}`));
     out.appendLine(`activated ${version} ${commit}${dev ? ' (dev)' : ''} — signed in: ${signedIn}`);
   } catch (e) {
-    failed(e);
     out.appendLine(`ACTIVATION FAILED: ${(e && e.stack) || e}`);
     showError(`OneLake Studio failed to activate: ${(e && e.message) || e}`);
     throw e;
   }
 }
 
-async function activateInner(context, ready) {
-  // Query editors (queryeditor.js): a saved query's file, or a new query opened here, untitled
-  // until Save Query keeps it under Queries. Only these get Run, the lenses and the completions:
-  // any other .sql file is its own extensions'.
-  // First, and before any await: the sign-in below can queue behind other extensions for a minute
-  // and more, and none of this needs to know who is signed in. What does waits for `ready`.
+async function activateInner(context) {
   const queriesRoot = () => join(os.homedir(), 'OneLakeStudio', 'queries');
-  const tabUri = t => (t.input && t.input.uri ? t.input.uri.toString() : null);
-  const openTabs = () => vscode.window.tabGroups.all.flatMap(g => g.tabs).map(tabUri).filter(Boolean);
-  const isQueryFile = p => {
-    const rel = p ? relative(queriesRoot(), p) : '';
-    return !!rel && !rel.startsWith('..') && !isAbsolute(rel);
-  };
-  // By where it is, whatever its language says: another SQL extension can take over a .sql
-  // document's language (VS Code closes and reopens it to do so), and it is still a query here.
-  // The title bar's buttons and the keys go by the same path in the window (package.json), so
-  // they are there even while another extension holds this host, or before this one has started.
-  const isQuery = doc => (doc.uri.scheme === 'file' || doc.uri.scheme === 'untitled') && isQueryFile(doc.uri.fsPath);
-  // Nothing to complete from yet: an empty answer, since the suggest widget waits for every answer.
-  let isReady = false;
-  ready.then(() => { isReady = true; }, () => {});
-  context.subscriptions.push(
-    ...registerQueryEditor({ isQuery,
-                             run: (sql, x) => ready.then(() => runInPanel(sql, x)),
-                             names: async () => (isReady ? completionNames() : { tables: [], models: [] }) }),
-    // Save Query: a new query kept under Queries as "Query N", and its editor is that file from
-    // then on. A saved query's editor just saves.
-    vscode.commands.registerCommand('onelakeStudio.saveQuery', async uri => {
-      // From the title bar the document comes with the command: the button shows on a query's
-      // group while the panel has the focus, and then no text editor is the active one.
-      const active = vscode.window.activeTextEditor;
-      const target = uri instanceof vscode.Uri ? uri : active && active.document.uri;
-      if (!target) return;
-      const doc = await vscode.workspace.openTextDocument(target);
-      if (!isQuery(doc)) return;
-      if (!doc.isUntitled) { await doc.save(); return; }
-      try {
-        await ready;
-        const saved = await saveNewQuery(doc.getText());
-        // Closing the active editor is how it becomes the file, so its own editor is made active
-        // first, in the group its tab is in: never the panel, or whatever was moved to meanwhile.
-        const group = vscode.window.tabGroups.all.find(g => g.tabs.some(t => tabUri(t) === doc.uri.toString()));
-        const ed = await vscode.window.showTextDocument(doc, { viewColumn: group ? group.viewColumn : undefined, preview: false });
-        const column = ed.viewColumn;
-        await vscode.commands.executeCommand('workbench.action.revertAndCloseActiveEditor');
-        await vscode.window.showTextDocument(vscode.Uri.file(saved.path), { viewColumn: column, preview: false });
-        vscode.window.setStatusBarMessage(`Saved as ${saved.name} under Queries — rename it there`, 4000);
-      } catch (e) {
-        showError(`Could not save the query: ${(e && e.message) || e}`);
-      }
-    }),
-  );
 
   // Every OneLake request the extension makes goes through here, on the VS Code token,
   // and each one is a line in the read log.
@@ -1028,13 +975,13 @@ async function activateInner(context, ready) {
   // Opening a table means: make sure a panel exists, then tell it what to show. The panel
   // buffers the message if DuckDB is still booting. Boot is multi-second work with no
   // editor-side sign of life until now — withProgress is that sign.
-  const showWithProgress = (options, place) => vscode.window.withProgress(
+  const showWithProgress = options => vscode.window.withProgress(
     { location: vscode.ProgressLocation.Window, title: 'Opening OneLake Studio…' },
-    () => show(context, options, place));
+    () => show(context, options));
 
   // Whether the panel is there to take it.
-  async function openInPanel(msg, place) {
-    if (!await showWithProgress({ createIfNone: true }, place)) return false;
+  async function openInPanel(msg) {
+    if (!await showWithProgress({ createIfNone: true })) return false;
     postToPanel(msg);
     return true;
   }
@@ -1043,7 +990,7 @@ async function activateInner(context, ready) {
   // downloaded models. They name their tables lakehouse.workspace.item.schema.table — names
   // that mean something in one tenant only — so each account (and tenant, when the
   // onelakeStudio.tenantId setting picks one) has its own, and signing in elsewhere shows
-  // that account's. The tree lists them, and each opens in VS Code's editor as its file.
+  // that account's. The tree lists them, and each opens in the panel's SQL box.
   // With no account known, there are none.
   function queriesFolder() {
     return queryAccount ? join(queriesRoot(), queryAccount) : null;
@@ -1102,108 +1049,21 @@ async function activateInner(context, ready) {
     return { name: stem, path };
   }
 
-  // Where a query's results go (onelakeStudio.resultsLocation): under its editor, or beside it.
-  const resultsBelow = () => vscode.workspace.getConfiguration('onelakeStudio').get('resultsLocation', 'below') !== 'beside';
-  // A query editor opens where the panel is not covered by it for long. Results below: in the
-  // panel's group, and the panel moves under it (dockBelowEditor). Beside: in another column.
-  const queryColumn = () => {
-    const p = panelColumn();
-    if (p == null) return vscode.ViewColumn.Active;
-    if (resultsBelow()) {
-      // Beside the other queries, above the panel; the panel's own group only when it is the
-      // one group there is (the panel then moves under it): never a new row per query.
-      const other = [vscode.window.activeTextEditor, ...vscode.window.visibleTextEditors]
-        .find(e => e && e.viewColumn != null && e.viewColumn !== p);
-      return other ? other.viewColumn : p;
-    }
-    return p === vscode.ViewColumn.One ? vscode.ViewColumn.Two : vscode.ViewColumn.One;
+  saveQuery = async ({ name, sql }) => {
+    if (!name || !queriesFolder()) return saveNewQuery(sql);
+    const path = queryPath(name);
+    await fsp.mkdir(queriesFolder(), { recursive: true });
+    await fsp.writeFile(path, sql, 'utf8');
+    tree.queriesChanged();
+    return { name, path };
   };
-  async function showQuery(docOrUri, opts) {
-    await vscode.window.showTextDocument(docOrUri, { viewColumn: queryColumn(), ...opts });
-    if (resultsBelow()) await dockBelowEditor();
-  }
-  // The first "Query N" nothing holds: not a tab, a document, or a file, since VS Code refuses an
-  // untitled document whose path is a file that exists. The path is what makes it a query, and
-  // an absolute one is the same URI after a reload; File > Save writes there.
-  function newQueryUri() {
-    const inUse = new Set([...openTabs(), ...vscode.workspace.textDocuments.map(d => d.uri.toString())]);
-    for (let n = 1; ; n++) {
-      const path = join(queriesRoot(), `Query ${n}.sql`);
-      const uri = vscode.Uri.file(path).with({ scheme: 'untitled' });
-      if (!inUse.has(uri.toString()) && !existsSync(path)) return uri;
-    }
-  }
-  async function openNewQuery(sql) {
-    const uri = newQueryUri();
-    const doc = await vscode.workspace.openTextDocument(uri);
-    const text = String(sql ?? '');
-    if (text) {
-      const edit = new vscode.WorkspaceEdit();
-      edit.insert(uri, new vscode.Position(0, 0), text);
-      await vscode.workspace.applyEdit(edit);
-    }
-    await showQuery(doc);
-  }
-  const openSavedQuery = path => showQuery(vscode.Uri.file(path), { preview: false });
-  editSql = ({ sql }) => openNewQuery(sql);
-
-  // A statement sent to the panel waits here for the page's answer (host.queryDone).
-  const runs = new Map();   // id -> resolve
-  let runIds = 0;
-  queryDone = x => {
-    const settle = runs.get(x.id);
-    if (settle) { runs.delete(x.id); settle(x); }
-  };
-  // Query variables for this session, by lower-cased name: SET VARIABLE in a query editor sets
-  // one, getvariable('name') reads it, and one never set is asked for the first time it is read.
-  const variables = new Map();
-  async function bindQueryVariables(sql) {
-    for (const name of variablesIn(sql)) {
-      if (variables.has(name.toLowerCase())) continue;
-      const typed = await vscode.window.showInputBox({
-        title: `getvariable('${name}')`, prompt: `A value for ${name}, kept for this session (SET VARIABLE ${name} = … changes it)`,
-        placeHolder: 'a number, or text (quoted for you)', ignoreFocusOut: true,
-      });
-      if (typed === undefined) return null;
-      variables.set(name.toLowerCase(), literal(typed));
-    }
-    return bindVariables(sql, variables);
-  }
-
-  async function runInPanel(sql, { plan, title, column, key }) {
-    if (out) out.appendLine(`RUN host: asked, offline=${connectivity.reason()}, ${String(sql).slice(0, 80).replace(/\s+/g, ' ')}`); // TEMP TRACE
-    // SET VARIABLE is the editor's, not the engine's: kept here and answered at once.
-    const set = setVariable(sql);
-    if (set) {
-      // Bound now: DuckDB never holds the variables, so getvariable('a') in b's value would be NULL.
-      const value = await bindQueryVariables(set.value);
-      if (value == null) return null;
-      variables.set(set.name.toLowerCase(), value);
-      vscode.window.setStatusBarMessage(`OneLake Studio: ${set.name} = ${value}`, 5000);
-      return { ok: true, error: null };
-    }
-    const bound = await bindQueryVariables(sql);
-    if (bound == null) return null;
-    sql = bound;
-    const id = ++runIds;
-    const answer = new Promise(resolve => runs.set(id, resolve));
-    // A panel closed before it answered never will: the oldest wait is let go.
-    if (runs.size > 20) { const [old] = runs.keys(); runs.get(old)(null); runs.delete(old); }
-    const sent = await openInPanel({ type: plan ? 'plan-sql' : 'run-sql', id, sql, title, key },
-                                   { beside: true, from: column, below: resultsBelow() });
-    if (out) out.appendLine(`RUN host: id=${id} sent=${sent}`); // TEMP TRACE
-    if (!sent) { runs.delete(id); return null; }
-    answer.then(x => { if (out) out.appendLine(`RUN host: id=${id} answered ok=${x && x.ok} error=${x && x.error}`); }); // TEMP TRACE
-    return answer;
-  }
 
   // Go to: every table, column, semantic model and measure the cache holds, in one search. A
-  // pick opens it (a column or a measure: its table or model), or, from a query editor, its
-  // button puts its SQL name at the cursor.
+  // pick opens it (a column or a measure: its table or model), or, with the panel open, its
+  // button puts its SQL name at the SQL box's cursor.
   async function goTo() {
-    const editor = vscode.window.activeTextEditor;
-    const intoEditor = editor && isQuery(editor.document);
-    const button = intoEditor ? { iconPath: new vscode.ThemeIcon('insert'), tooltip: 'Put its SQL name in the query' }
+    const intoBox = panelOpen();
+    const button = intoBox ? { iconPath: new vscode.ThemeIcon('insert'), tooltip: 'Put its SQL name in the query' }
                               : { iconPath: new vscode.ThemeIcon('copy'), tooltip: 'Copy its SQL name' };
     const qp = vscode.window.createQuickPick();
     qp.title = 'Go to a Table, Column or Measure';
@@ -1235,7 +1095,7 @@ async function activateInner(context, ready) {
     qp.items = items;
     qp.busy = false;
     const put = async it => {
-      if (intoEditor) await editor.edit(b => b.replace(editor.selection, it.sql));
+      if (intoBox) postToPanel({ type: 'insert-sql', text: it.sql });
       else { await vscode.env.clipboard.writeText(it.sql); vscode.window.setStatusBarMessage(`Copied ${it.sql}`, 3000); }
     };
     qp.onDidTriggerItemButton(async e => { qp.hide(); await put(e.item); });
@@ -1255,7 +1115,7 @@ async function activateInner(context, ready) {
     qp.onDidHide(() => qp.dispose());
   }
 
-  // What completion can name, from the cache alone (cachedSqlTables, below): every cached table
+  // What Go to can name, from the cache alone (cachedSqlTables, below): every cached table
   // with its columns, every semantic model, and the measures and columns of a model kept as a
   // view (its local file; one in OneLake gives its name only). Read again after a minute.
   let namesKept = null;
@@ -1290,14 +1150,6 @@ async function activateInner(context, ready) {
     value.catch(() => { namesKept = null; });
     return value;
   }
-
-  context.subscriptions.push(
-    // Each query editor has its own last result: moving to one shows it in the panel, when the
-    // panel is showing a query (not a table or a file someone opened).
-    vscode.window.onDidChangeActiveTextEditor(ed => {
-      if (ed && isQuery(ed.document)) postLive({ type: 'show-kept', key: ed.document.uri.toString() });
-    }),
-  );
 
   const modelPath = n => join(modelsFolder(),modelFileName(n.workspace).replace(/\.yaml$/, ''), modelFileName(n.model));
 
@@ -1732,7 +1584,7 @@ async function activateInner(context, ready) {
     }
   };
   const warmIfWanted = () => {
-    if (explorer.visible || vscode.workspace.textDocuments.some(isQuery)) warmEngine();
+    if (explorer.visible) warmEngine();
   };
   warmIfWanted();
 
@@ -1740,7 +1592,6 @@ async function activateInner(context, ready) {
     tree,
     explorer,
     explorer.onDidChangeVisibility(warmIfWanted),
-    vscode.workspace.onDidOpenTextDocument(doc => { if (isQuery(doc)) warmEngine(); }),
 
     // The panel keeps table metadata across lakehouse switches now, so the refresh button
     // is what tells it to forget: a refresh exists to ask OneLake again, there too.
@@ -1818,12 +1669,11 @@ async function activateInner(context, ready) {
       type: 'open-file', workspace: n.workspace, item: n.item, path: n.path, bytes: n.bytes,
     })),
 
-    // A table's first rows, as a query in an editor of its own, run at once.
+    // A table's first rows, as a query in the SQL box, run at once.
     vscode.commands.registerCommand('onelakeStudio.selectTop', async n => {
       if (!n || !n.table) return;
       const top = vscode.workspace.getConfiguration('onelakeStudio').get('selectTopRows', 1000);
-      await openNewQuery(`SELECT *\nFROM ${sqlNameOf(n, n)}\nLIMIT ${Number.isInteger(top) && top > 0 ? top : 1000};\n`);
-      await vscode.commands.executeCommand('onelakeStudio.runQuery');
+      await openInPanel({ type: 'run-sql', sql: `SELECT *\nFROM ${sqlNameOf(n, n)}\nLIMIT ${Number.isInteger(top) && top > 0 ? top : 1000};\n` });
     }),
     // A table's columns, comma-separated and quoted where SQL needs it, from its metadata (read
     // from OneLake if the cache does not have it yet).
@@ -1848,11 +1698,11 @@ async function activateInner(context, ready) {
       vscode.window.setStatusBarMessage(`Copied ${name}`, 3000);
     }),
 
-    // Saved queries (queriesFolder): open one in its editor, rename, delete, show the folder.
+    // Saved queries (queriesFolder): open one in the SQL box, rename, delete, show the folder.
     vscode.commands.registerCommand('onelakeStudio.openQuery', async n => {
       if (!n || !n.path) return;
       if (!existsSync(n.path)) { tree.queriesChanged(); return showError(`${n.label} is no longer in ${queriesFolder()}`); }
-      await openSavedQuery(n.path);
+      await openInPanel({ type: 'query', name: n.label, sql: await fsp.readFile(n.path, 'utf8') });
     }),
     vscode.commands.registerCommand('onelakeStudio.renameQuery', async n => {
       if (!n || !n.path) return;
@@ -1860,30 +1710,32 @@ async function activateInner(context, ready) {
       if (!picked || queryStem(picked) === n.label) return;
       const path = queryPath(picked);
       if (!await mayReplace(path, n.label)) return;
-      // Through the editor: one that has the query open follows it to its new name.
-      const edit = new vscode.WorkspaceEdit();
-      edit.renameFile(vscode.Uri.file(n.path), vscode.Uri.file(path), { overwrite: true });
-      if (!await vscode.workspace.applyEdit(edit)) showError(`Could not rename ${n.label}`);
+      try {
+        await fsp.rm(path, { force: true });
+        await fsp.rename(n.path, path);
+        postLive({ type: 'query-renamed', from: n.label, to: queryStem(picked) });
+      } catch (e) {
+        showError(`Could not rename ${n.label}: ${(e && e.message) || e}`);
+      }
       tree.queriesChanged();
     }),
     vscode.commands.registerCommand('onelakeStudio.deleteQuery', async n => {
       if (!n || !n.path) return;
       const pick = await vscode.window.showWarningMessage(`Delete the query ${n.label}?`, { modal: true }, 'Delete');
       if (pick !== 'Delete') return;
-      const edit = new vscode.WorkspaceEdit();
-      edit.deleteFile(vscode.Uri.file(n.path), { ignoreIfNotExists: true });
-      if (!await vscode.workspace.applyEdit(edit)) showError(`Could not delete ${n.label}`);
+      try {
+        await fsp.rm(n.path, { force: true });
+        postLive({ type: 'query-deleted', name: n.label });
+      } catch (e) {
+        showError(`Could not delete ${n.label}: ${(e && e.message) || e}`);
+      }
       tree.queriesChanged();
     }),
-    // A new query in an editor of its own, started with what can be queried: Save Query keeps
-    // it under Queries as "Query N". Not run: one Ctrl+Enter does that.
-    vscode.commands.registerCommand('onelakeStudio.newQuery', () => openNewQuery(NEW_QUERY_SQL)),
-    // Every query variable forgotten: the next getvariable() asks again.
-    vscode.commands.registerCommand('onelakeStudio.clearVariables', () => {
-      const n = variables.size;
-      variables.clear();
-      vscode.window.setStatusBarMessage(`OneLake Studio: ${n} query variable(s) cleared`, 4000);
-    }),
+    // A new query in the SQL box, started with what can be queried: Save Query keeps it under
+    // Queries as "Query N". Not run: one Ctrl+Enter does that.
+    vscode.commands.registerCommand('onelakeStudio.newQuery', () => openInPanel({ type: 'query', sql: NEW_QUERY_SQL })),
+    // Every query variable forgotten (the page keeps them): the next getvariable() asks again.
+    vscode.commands.registerCommand('onelakeStudio.clearVariables', () => postLive({ type: 'clear-variables' })),
     vscode.commands.registerCommand('onelakeStudio.goTo', () => goTo()),
     // The grid's context menu (package.json webview/context): the page builds the text.
     ...[['gridCopy', 'tsv'], ['gridCopyHeaders', 'tsv-headers'], ['gridCopyCsv', 'csv'],

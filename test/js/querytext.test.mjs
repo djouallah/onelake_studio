@@ -2,9 +2,8 @@
 // dotted name being typed.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createRequire } from "node:module";
 
-const q = createRequire(import.meta.url)("../../src/querytext.js");
+const q = await import("../../app/querytext.js");
 const texts = (t, list) => list.map(s => t.slice(s.start, s.end));
 
 test("statements split on ';' outside quotes and comments, each from its first code", () => {
@@ -33,19 +32,6 @@ test("DuckDB's LINE/caret is found in the statement as written, comments and all
   assert.equal(long.slice(q.errorOffset(cut, long)), "nope FROM t");
   assert.equal(q.errorOffset("Catalog Error: Table x does not exist", "SELECT * FROM x"), null);
   assert.equal(q.errorOffset(msg, "SELECT something else"), null);
-  assert.equal(q.errorSummary("\nBinder Error: x\n\nLINE 1: …"), "Binder Error: x");
-});
-
-test("the dotted name before the cursor, quoted parts unquoted", () => {
-  assert.deepEqual(q.dottedName("FROM lakehouse.aemo.da"), { parts: ["lakehouse", "aemo"], partial: "da", quoted: false, start: 20 });
-  assert.deepEqual(q.dottedName('FROM lakehouse."my ""ws""".'), { parts: ["lakehouse", 'my "ws"'], partial: "", quoted: false, start: 27 });
-  assert.deepEqual(q.dottedName('FROM "Sa'), { parts: [], partial: "Sa", quoted: true, start: 5 });
-  assert.deepEqual(q.dottedName("SELECT "), { parts: [], partial: "", quoted: false, start: 7 });
-});
-
-test("the dotted names a statement holds, outside comments and strings", () => {
-  assert.deepEqual(q.namesIn("SELECT a.b FROM lakehouse.ws.\"it em\".dbo.t -- x.y\nWHERE s = 'p.q'"),
-    [["a", "b"], ["lakehouse", "ws", "it em", "dbo", "t"]]);
 });
 
 test("query variables: SET VARIABLE is kept, getvariable() is bound, a typed value is quoted", () => {

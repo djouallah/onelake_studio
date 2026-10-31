@@ -3,7 +3,7 @@
 // =============================================================================
 // A view, driven by the extension: the OneLake tree in the editor's sidebar says what to
 // open (open-table / open-file), and this page shows it — a table's statistics, its first
-// rows, a SQL editor over it, a file as a table or a document, a .bim (or an Ossie .yaml)
+// rows, the SQL box, a file as a table or a document, a .bim (or an Ossie .yaml)
 // as its semantic model. Every statement and every OneLake read goes to the extension host
 // (data.js -> host.js); this file only decides what to show.
 // =============================================================================
@@ -23,6 +23,7 @@ import { PINS, npmFile } from './cdn.js';
 import { tmslOf } from './explore/model.js';
 import { createPlanView, profileSql, elapsed, profileColors } from './explore/profile.js';
 import { vscodeApi } from './vscode-api.js';
+import { statements, statementAt, errorOffset, setVariable, variablesIn, bindVariables, literal } from './querytext.js';
 
 const $ = id => document.getElementById(id);
 
@@ -44,11 +45,10 @@ let engineReady = null;      // resolves when engine.init() has finished; gates 
 let lakehouse = null;        // { workspace, item }
 let activeSqlName = null;    // the selected table's SQL name (lakehouse.ws.item.schema.table)
 // The SQL behind what is on screen (a query's, a table's first rows, a file's preview): Edit SQL
-// opens it in an editor. SQL is written in VS Code's editor (the host's queryeditor.js), which
-// sends each statement here to run; the page has no SQL box of its own.
+// puts it in the box.
 let currentSql = '';
-// How the last runQuery or showPlan went, for the editor's diagnostic: its error, and whether
-// the SQL run was a semantic model's compiled SQL (positions are not the editor's).
+// How the last runQuery or showPlan went, for the box: its error, and whether the SQL run was a
+// semantic model's compiled SQL (positions are not the box's).
 let lastRun = { error: null, rewritten: false };
 let activeFile = null;       // the file behind it, when a file is what was opened
 let lastResult = null;       // { fields, rows } for CSV export
@@ -109,6 +109,11 @@ function wireUi() {
   $('pivotBtn').onclick = openPivot;
   $('csvBtn').onclick = saveActive;
   $('editSqlBtn').onclick = editSql;
+  $('runBtn').onclick = () => runBox();
+  $('planBtn').onclick = () => runBox({ plan: true });
+  $('saveQueryBtn').onclick = saveBox;
+  $('sqlEditor').addEventListener('keydown', onBoxKey);
+  $('sqlEditor').addEventListener('input', keepDraft);
   $('profileBtn').onclick = profileResult;
   $('chartBtn').onclick = toggleChart;
   $('docPretty').onclick = () => {
@@ -129,7 +134,7 @@ function wireUi() {
   $('viewHistory').onclick = showHistory;
   $('statsView').addEventListener('click', e => {
     if (e.target.id === 'historyMore') loadHistory(true);
-    // An Iceberg snapshot's Query: the table as it was then, in a query editor.
+    // An Iceberg snapshot's Query: the table as it was then, in the box.
     const snap = e.target.closest('button[data-snapshot]');
     if (snap) querySnapshot(snap.dataset.snapshot);
   });
@@ -140,11 +145,11 @@ async function startEngine() {
   await engineReady;
   const before = selSeq;          // a click during boot outranks everything said below
   let landingFailed = false;
-  // Not when the editor's query got here first: its result is what was asked for.
+  // Not when a query from the box got here first: its result is what was asked for.
   if (README_SQL && !currentSql) landingFailed = !await runQuery({ sql: README_SQL });
   // A click while the welcome page was loading owns the status bar (and cancelled it).
   if (selSeq !== before || activeTableRef || activeFile) return;
-  setStatus('DuckDB ready — pick a table in the OneLake sidebar, or write SQL: New Query (+) under Queries.' +
+  setStatus('DuckDB ready — pick a table in the OneLake sidebar, or write SQL in the box.' +
     (landingFailed ? ' (The welcome page could not be read — the engine itself is fine.)' : ''),
     landingFailed ? 'warn' : 'ok');
 }
@@ -179,7 +184,6 @@ async function goToLakehouse(workspace, item) {
 // lakehouse behind it offered a Save that could only fail.
 function leaveLakehouse(opts) {
   closeModelView();
-  shownKey = null;
   ++selSeq;                     // a load still under way belongs to the lakehouse being left
   currentSql = '';
   activeFile = null;
@@ -493,7 +497,6 @@ async function selectImage(file) {
 // ---------------------------------------------------------------------------
 async function selectTable(t) {
   closeModelView();
-  shownKey = null;
   const my = ++selSeq;
   // A click is also a verdict on whatever is still running: stop it now.
   engine.cancelLoad();
@@ -603,6 +606,7 @@ async function showPlan(text) {
   if (!text) { setStatus('Write a query to plan it.'); return false; }
   if (planning) { setStatus('A plan is still being measured: wait for it, then plan again.', 'warn'); return false; }
   currentSql = text;
+  setStatus('Planning…');
   const my = selSeq;
   holdPlan(true);
   try {
@@ -613,7 +617,7 @@ async function showPlan(text) {
     lastRun.rewritten = !!model;
     if (my !== selSeq) return false;
     const sql = model ? model.sql : text.replace(/;\s*$/, '');
-    // Runs nothing, and it is where bad SQL or a table not held fails: below, so the editor hears.
+    // Runs nothing, and it is where bad SQL or a table not held fails: below, so the box hears.
     // On a line of its own, so DuckDB's error quotes the statement's line and not this word.
     const explained = await engine.runSql(`EXPLAIN\n${sql}`);
     if (my !== selSeq) return false;
@@ -624,7 +628,7 @@ async function showPlan(text) {
         try {
           return profileJson((await engine.runSql(profileSql(sql, { set: false }))).rows[0]?.explain_value);
         } catch (e) {
-          // Past the EXPLAIN, the editor has its answer: the view and this line say it.
+          // Past the EXPLAIN, the box has its answer: the view and this line say it.
           if (my === selSeq) setStatus('Plan failed: ' + e.message, 'error');
           throw e;
         }
@@ -642,7 +646,7 @@ async function showPlan(text) {
     // The plan is the query's, not one of the table's tabs: Stats | History | Data step aside.
     $('viewBar').hidden = true;
     $('resultsHint').hidden = true;
-    setStatus('Query plan — run the query (Ctrl+Enter in its editor) for the results.');
+    setStatus('Query plan — Run ▶ (Ctrl+Enter) for the results.');
     return true;
   } catch (e) {
     if (my === selSeq) {
@@ -670,34 +674,33 @@ async function runQuery({ sql, doc = true, ext = '' } = {}) {
   // all, which a click that opens the panel races. Each await below can be where that
   // click lands, and a cancel sent before the statement reaches the host stops nothing,
   // so the result itself has to stand down rather than paint over the click's view.
-  // The editor runs a query even while one is under way: the newer one owns the pane.
+  // The box runs a query even while one is under way: the newer one owns the pane.
   const my = selSeq, run = ++runSeq;
   const stale = () => my !== selSeq || run !== runSeq;
   setBusy(true, { stoppable: true });
   docAllowed = doc;
   docSourceExt = ext;
   let t0 = performance.now();
-  const TRACE_t = performance.now(); // TEMP TRACE
-  const TRACE = what => reportBoot({ what: `RUN ${run}: ${what}${stale() ? ' (STALE)' : ''}`, stages: [], totalMs: Math.round(performance.now() - TRACE_t) }); // TEMP TRACE
-  TRACE('runQuery started'); // TEMP TRACE
+  // Said at once, and counted, by the page alone: however long the host takes to answer, a click
+  // always shows it landed.
+  const asked = performance.now();
+  setStatus('Running…');
+  const ticker = setInterval(() => {
+    if (!stale() && $('status').textContent.startsWith('Running')) setStatus(`Running… ${elapsed(asked)}`);
+  }, 1000);
   try {
-    await engineReady;   // the editor can send a query before the engine is up
-    TRACE('engine ready'); // TEMP TRACE
+    await engineReady;   // the box can send a query before the engine is up
     // A query of a semantic model runs as the SQL dax-sql compiles it to, once the tables
     // that SQL reads are open; every other query runs as written, and does not wait for them.
     await viewsFor(sql);
-    TRACE('views ready'); // TEMP TRACE
     await openModels(sql);
-    TRACE('models open'); // TEMP TRACE
     if (stale()) return false;
     const model = await semantic.statement(sql);
-    TRACE(`compiled, model=${!!model}`); // TEMP TRACE
     if (stale()) return false;
     if (model) docAllowed = false;
     lastRun.rewritten = !!model;
     t0 = performance.now();
     const res = await engine.runSql(model ? model.sql : sql);
-    TRACE(`engine answered, ${res.rows.length} rows`); // TEMP TRACE
     if (stale()) return false;
     renderResults(res);
     lastResult = res;
@@ -716,7 +719,6 @@ async function runQuery({ sql, doc = true, ext = '' } = {}) {
     setSaveLabel();
     return true;
   } catch (e) {
-    TRACE(`threw: ${String(e && e.message).slice(0, 200)}`); // TEMP TRACE
     // Most likely cancelled by the very click that superseded it: not this query's screen.
     if (stale()) return false;
     // The pane is not a scratchpad of whatever last worked.
@@ -731,6 +733,7 @@ async function runQuery({ sql, doc = true, ext = '' } = {}) {
     console.error(e);
     return false;
   } finally {
+    clearInterval(ticker);
     running--;
     // The newer selection's load owns the busy state now.
     if (!stale()) setBusy(false);
@@ -952,11 +955,13 @@ function setPivotOpen(open) {
   $('pivotView').closest('section').classList.toggle('pivotOpen', open);
 }
 const closePivot = () => setPivotOpen(false);
-// Edit SQL: the pivot's query in an editor of its own, as SQL over the table, to be taken
-// further by hand. Asked for, never on close; the pivot stays as it is.
+// Edit SQL: the pivot's query in the box, as SQL over the table, to be taken further by hand.
+// Asked for, never on close.
 function editPivotSql(sql) {
   if (!tablePivot) return;
-  openInEditor(sql, "The pivot's query is in an editor, over the table: run it there (Ctrl+Enter), or change it first.");
+  closePivot();
+  putInBox(sql);
+  setStatus("The pivot's query is in the box, over the table: run it (Ctrl+Enter), or change it first.", 'ok');
 }
 async function openPivot() {
   if (!activeInfo || !activeSqlName) return;
@@ -1084,13 +1089,13 @@ const columnsVsNow = h => !h.columns ? '—'
   : [h.columns.added.length ? `added since: ${h.columns.added.join(', ')}` : '',
      h.columns.removed.length ? `dropped since: ${h.columns.removed.join(', ')}` : ''].filter(Boolean).join('; ');
 
-// An Iceberg snapshot, queried as it was: its rows in a new query editor.
+// An Iceberg snapshot, queried as it was: its rows, in the box.
 function querySnapshot(id) {
   if (!activeInfo || !activeInfo.metadataLocation || !/^\d+$/.test(String(id))) return;
   const loc = String(activeInfo.metadataLocation).replace(/'/g, "''");
-  openInEditor(`-- ${activeSqlName || $('activeTable').textContent} as of snapshot ${id}\n` +
-               `SELECT *\nFROM iceberg_scan('${loc}', snapshot_from_id = ${id})\nLIMIT 1000;\n`,
-               `Snapshot ${id} is in a query editor: run it there (Ctrl+Enter).`);
+  putInBox(`-- ${activeSqlName || $('activeTable').textContent} as of snapshot ${id}\n` +
+           `SELECT *\nFROM iceberg_scan('${loc}', snapshot_from_id = ${id})\nLIMIT 1000;\n`);
+  setStatus(`Snapshot ${id} is in the box: run it (Ctrl+Enter).`, 'ok');
 }
 
 // Newest first: the Delta log's commits, or an Iceberg table's snapshots.
@@ -1172,51 +1177,8 @@ async function saveActive() {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Queries: written in VS Code's editor (saved ones are the tree's Queries, .sql files the host
-// keeps), run here.
-// ---------------------------------------------------------------------------
-// Each query editor's last result (by its document), shown again at once when the editor is
-// switched to, and said how old it is: the newest few, as long as they hold few enough rows.
-const KEPT_MAX = 20, KEPT_ROWS = 500_000;
-const kept = new Map();   // key -> { res, sql, title, at }
-let shownKey = null;      // the query editor whose result is on screen
-function keepResult(key, entry) {
-  kept.delete(key);
-  kept.set(key, entry);
-  let rows = 0;
-  for (const e of [...kept.values()].reverse()) rows += e.res.rows.length;
-  for (const [k, e] of kept) {
-    if (kept.size <= KEPT_MAX && rows <= KEPT_ROWS) break;
-    if (k === key) continue;
-    kept.delete(k);
-    rows -= e.res.rows.length;
-  }
-}
-const agoText = t => {
-  const s = (Date.now() - t) / 1000;
-  return s < 60 ? 'just now' : s < 3600 ? `${Math.round(s / 60)} min ago` : `at ${new Date(t).toLocaleTimeString()}`;
-};
-function showKept(key) {
-  const k = kept.get(key);
-  // Only over a query's result: a table or a file opened from the tree stays on screen.
-  // Nor while a query or a plan runs: showing it would cancel them.
-  if (!k || key === shownKey || activeTableRef || activeFile || modelView || running || planning) return;
-  enterQuery(k.title);
-  shownKey = key;
-  renderResults(k.res);
-  lastResult = k.res;
-  currentSql = k.sql;
-  $('csvBtn').disabled = !k.res.rows.length;
-  $('profileBtn').disabled = !k.res.rows.length;
-  $('chartBtn').disabled = !k.res.rows.length;
-  setSaveLabel();
-  setStatus(`${k.res.rows.length.toLocaleString('en')} row(s), run ${agoText(k.at)} — Ctrl+Enter runs it again.`, 'ok');
-}
-
-// A query from the editor (run-sql, plan-sql): the panel is the query's now, not the last
-// table's or file's. A query names its tables Kind.workspace.item.schema.table, so it runs as
-// it is, whatever was selected before.
+// A query from the box: the panel is the query's now, not the last table's or file's. A query
+// names its tables Kind.workspace.item.schema.table, so it runs as it is, whatever was selected.
 function enterQuery(title) {
   closeModelView();
   ++selSeq;                     // whatever was loading for the last click stands down
@@ -1231,20 +1193,131 @@ function enterQuery(title) {
   $('activeTable').textContent = title ? `Query: ${title}` : 'Query';
 }
 
-// Edit SQL: what is on screen as SQL, in a new editor (the host opens it). With a semantic model
-// open, the model's own SQL: its Show SQL box, the pivot's query or one typed there.
+// The SQL box: written, run and saved here, so a query never opens a .sql file, and nothing else
+// in VS Code has a say in it. It holds one query: the saved one it came from, when it did.
+let activeQuery = null;
+const sameName = (a, b) => a != null && String(a).toLowerCase() === String(b).toLowerCase();
+function nameBoxQuery(name) {
+  activeQuery = name;
+  keepDraft();
+}
+// Kept by the host, so it comes back with the next panel, in the next window too.
+let draftTimer = null;
+function keepDraft() {
+  clearTimeout(draftTimer);
+  draftTimer = setTimeout(() => {
+    if (engine) engine.saveDraft({ sql: $('sqlEditor').value, name: activeQuery }).catch(() => {});
+  }, 500);
+}
+// The box on screen, with whatever covers it put away.
+function showBox() {
+  closeModelView();
+  if (tablePivot) closePivot();
+  return $('sqlEditor');
+}
+function putInBox(sql) {
+  const box = showBox();
+  box.value = sql;
+  nameBoxQuery(null);
+  box.focus();
+  box.setSelectionRange(0, 0);
+}
+function openInBox(sql, name) {
+  putInBox(sql);
+  nameBoxQuery(name);
+  $('activeTable').textContent = name ? `Query: ${name}` : 'Query';
+  setStatus(name ? `${name} — Run ▶ (Ctrl+Enter) to run it.` : 'Run ▶ (Ctrl+Enter) runs the statement under the cursor.');
+}
+function onBoxKey(e) {
+  const box = e.target;
+  if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); runBox(); }
+  else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') { e.preventDefault(); saveBox(); }
+  else if (e.key === 'Tab' && !e.shiftKey) {
+    e.preventDefault();
+    box.setRangeText('  ', box.selectionStart, box.selectionEnd, 'end');
+    keepDraft();
+  }
+}
+// The selection when there is one, else the statement under the cursor: { start, end }.
+function boxStatement() {
+  const box = $('sqlEditor'), text = box.value;
+  if (box.selectionStart !== box.selectionEnd) {
+    const span = { start: box.selectionStart, end: box.selectionEnd };
+    return text.slice(span.start, span.end).trim() ? span : null;
+  }
+  return statementAt(statements(text), box.selectionStart);
+}
+// Query variables for this session, by lower-cased name: SET VARIABLE in the box sets one,
+// getvariable('name') reads it, and one never set is asked for the first time it is read.
+const variables = new Map();
+async function bindBoxVariables(sql) {
+  for (const name of variablesIn(sql)) {
+    if (variables.has(name.toLowerCase())) continue;
+    const typed = await engine.askVariable(name);
+    if (typed == null) return null;
+    variables.set(name.toLowerCase(), literal(typed));
+  }
+  return bindVariables(sql, variables);
+}
+async function runBox({ plan = false } = {}) {
+  const box = $('sqlEditor'), text = box.value;
+  const span = boxStatement();
+  if (!span) { setStatus('Nothing here to run: write a statement, or put the cursor in one.'); return; }
+  const written = text.slice(span.start, span.end);
+  try {
+    // SET VARIABLE is the page's, not the engine's: kept here and answered at once. Bound now:
+    // DuckDB never holds the variables, so getvariable('a') in b's value would be NULL.
+    const set = setVariable(written);
+    if (set) {
+      const value = await bindBoxVariables(set.value);
+      if (value == null) { setStatus('Cancelled: the variable has no value.'); return; }
+      variables.set(set.name.toLowerCase(), value);
+      setStatus(`${set.name} = ${value}`, 'ok');
+      return;
+    }
+    const sql = await bindBoxVariables(written);
+    if (sql == null) { setStatus('Cancelled: the query needs that variable.'); return; }
+    enterQuery(activeQuery);
+    const ok = plan ? await showPlan(sql) : await runQuery({ sql });
+    // The cursor goes where DuckDB says the error is, as the statement is written. Not a
+    // selection: the next Ctrl+Enter runs the statement again, not one word of it.
+    if (!ok && lastRun.error && !lastRun.rewritten && box.value === text) {
+      const at = errorOffset(lastRun.error, written);
+      if (at != null) { box.focus(); box.setSelectionRange(span.start + at, span.start + at); }
+    }
+  } catch (e) {
+    setStatus('Could not run that: ' + e.message, 'error');
+  }
+}
+// Save Query: over the query the box came from, else as the next free "Query N", with nothing
+// asked (Rename in the tree names it).
+async function saveBox() {
+  const sql = $('sqlEditor').value;
+  if (!sql.trim()) { setStatus('Nothing to save: write a query first.'); return; }
+  try {
+    const saved = await engine.saveQuery(activeQuery || '', sql);
+    nameBoxQuery(saved.name);
+    if ($('activeTable').textContent.startsWith('Query')) $('activeTable').textContent = `Query: ${saved.name}`;
+    setStatus(`Saved as ${saved.name} under Queries.`, 'ok');
+  } catch (e) {
+    setStatus('Could not save the query: ' + e.message, 'error');
+  }
+}
+
+// Edit SQL: what is on screen as SQL, in the box. With a semantic model open, the model's own SQL:
+// its Show SQL box, the pivot's query or one typed there.
 function editSql() {
   const sql = modelView ? (modelView.sql() || '').trim() : currentSql;
   if (!sql) {
-    setStatus(modelView ? "Put a field on the shelves first: Edit SQL opens the model's query."
-                        : 'Nothing to edit yet: pick a table, or start a New Query (+) under Queries.');
+    setStatus(modelView ? "Put a field on the shelves first: Edit SQL takes the model's query."
+                        : 'Nothing to edit yet: pick a table, or write SQL in the box.');
     return;
   }
-  openInEditor(sql, 'The SQL is in an editor: run it there (Ctrl+Enter).');
-}
-function openInEditor(sql, said) {
-  engine.editSql(sql).then(() => setStatus(said, 'ok'),
-                           e => setStatus('Could not open an editor: ' + e.message, 'error'));
+  // What is on screen came from the box: its text stays as it is.
+  if (!modelView && $('sqlEditor').value.includes(sql)) { $('sqlEditor').focus(); return; }
+  if (modelView) enterQuery('');
+  putInBox(sql);
+  setStatus('The SQL is in the box: run it (Ctrl+Enter).', 'ok');
 }
 
 // Chart: the rows on screen drawn (chart.js), in place of the grid until Show Rows.
@@ -1357,6 +1430,10 @@ showVersion();
 wireUi();
 engine = createEngine({ onStatus: setStatus, onBoot: reportBoot, ...(cfg.maxRows ? { maxRows: cfg.maxRows } : {}) });
 engineReady = engine.init();
+if (cfg.draft) {
+  $('sqlEditor').value = String(cfg.draft.sql || '');
+  nameBoxQuery(cfg.draft.name ? String(cfg.draft.name) : null);
+}
 semantic.setTableNamer(list => engine.nameTables(list));
 viewsListed = listViews();
 viewsReady = loadViews().catch(e => console.warn('[views]', e.message));
@@ -1392,21 +1469,24 @@ window.addEventListener('message', async e => {
         reportOpened('file', String(m.name || 'model.yaml'), Date.now() - t0);
       }
     }
-    // A statement from a query editor (the host's queryeditor.js), run or planned here; how it
-    // went goes back to the editor, which marks an error where DuckDB says it is.
-    else if (m.type === 'run-sql' || m.type === 'plan-sql') {
-      reportBoot({ what: `RUN page got ${m.type} id=${m.id}`, stages: [], totalMs: 0 }); // TEMP TRACE
-      enterQuery(String(m.title || ''));
-      shownKey = m.key ? String(m.key) : null;
-      const ok = m.type === 'plan-sql' ? await showPlan(String(m.sql ?? '')) : await runQuery({ sql: String(m.sql ?? '') });
-      if (ok && m.type === 'run-sql' && shownKey && lastResult) {
-        keepResult(shownKey, { res: lastResult, sql: String(m.sql ?? ''), title: String(m.title || ''), at: Date.now() });
-      }
-      engine.queryDone({ id: m.id, ok, ...lastRun }).catch(() => {});
+    // SQL for the box, from the tree: a new query, a saved one, Select Top Rows (run at once).
+    else if (m.type === 'query') openInBox(String(m.sql ?? ''), m.name ? String(m.name) : null);
+    else if (m.type === 'run-sql') { openInBox(String(m.sql ?? ''), null); await runBox(); }
+    // Go to: a name, put at the cursor.
+    else if (m.type === 'insert-sql') {
+      const box = showBox();
+      box.setRangeText(String(m.text ?? ''), box.selectionStart, box.selectionEnd, 'end');
+      box.focus();
+      keepDraft();
+    }
+    else if (m.type === 'query-renamed') { if (sameName(activeQuery, m.from)) nameBoxQuery(String(m.to)); }
+    else if (m.type === 'query-deleted') { if (sameName(activeQuery, m.name)) nameBoxQuery(null); }
+    else if (m.type === 'clear-variables') {
+      setStatus(`${variables.size} query variable(s) cleared.`, 'ok');
+      variables.clear();
     }
     else if (m.type === 'reset') { await engineReady; await leaveLakehouse(); lakehouse = null; }
     else if (m.type === 'reads') showReads(m);
-    else if (m.type === 'show-kept') showKept(String(m.key || ''));
     // The webview's context menu on the grid: Copy, with headers, as CSV, Markdown or JSON.
     else if (m.type === 'grid-copy') { if (grid) grid.copy(String(m.as || 'tsv')); }
     else if (m.type === 'grid-open') {

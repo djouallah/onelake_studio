@@ -686,12 +686,14 @@ export function createEngine({
   const openDocument = x => callHost("host.openDocument", [x]);
   // Text on the clipboard, by the host (the grid's copies).
   const copyText = text => callHost("host.copyText", [{ text }]);
-  // Edit SQL: the host opens the SQL in a new query editor.
-  const editSql = sql => callHost("host.editSql", [{ sql }]);
-  // How a query the editor sent went ({ id, ok, error, rewritten }): the editor marks the error.
-  const queryDone = x => callHost("host.queryDone", [x]);
+  // Save Query: the box's SQL under Queries, over the one named, else as a new "Query N".
+  const saveQuery = (name, sql) => callHost("host.saveQuery", [{ name, sql }]);
+  // The box's text, for the next panel.
+  const saveDraft = draft => callHost("host.saveDraft", [draft]);
+  // A query variable's value, asked of the user: text, or null when dismissed.
+  const askVariable = name => callHost("host.askVariable", [{ name }]);
 
   return { init, reset, statTable, peekTable, deltaState, deltaHistory,
            loadFile, readFileBytes, saveText, saveOneLakeFile, runSql, describeLoad, fmtBytes, cancelLoad,
-           semanticViews, semanticKeep, semanticOpen, exportExplore, nameTables, editSql, queryDone, copyText, exportResult, openDocument };
+           semanticViews, semanticKeep, semanticOpen, exportExplore, nameTables, saveQuery, saveDraft, askVariable, copyText, exportResult, openDocument };
 }

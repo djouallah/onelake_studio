@@ -1,17 +1,15 @@
-'use strict';
 // =============================================================================
-// querytext.js — what the query editor needs to know about the text in it
+// querytext.js — what the SQL box needs to know about the text in it
 // =============================================================================
-// Pure, no vscode: the statements of a .sql document and which one the cursor is in, where
-// in a statement DuckDB says an error is, and the dotted name being typed before the cursor.
-// queryeditor.js turns these into Run, CodeLens, diagnostics and completion.
+// Pure: the statements in the box and which one the cursor is in, where in a statement DuckDB
+// says an error is, and the query variables. app.js turns these into Run and Plan.
 // =============================================================================
 
 // The statements of `text`, as [start, end) offsets, each without its ';', the comments and
 // whitespace before it, or the whitespace after it. Quotes ('…', "…", $tag$…$tag$) and
 // comments (--, /* */) are skipped, so a ';' in one does not split. A statement that is only
 // comments is left out.
-function statements(text) {
+export function statements(text) {
   const s = String(text);
   const n = s.length;
   const out = [];
@@ -65,7 +63,7 @@ function statements(text) {
 
 // The statement the cursor is in: the one whose span holds it, else the last one that ends
 // before it on the text (a cursor after `SELECT 1;` runs SELECT 1), else the first after it.
-function statementAt(list, offset) {
+export function statementAt(list, offset) {
   let before = null;
   for (const st of list) {
     if (offset >= st.start && offset <= st.end) return st;
@@ -81,7 +79,7 @@ function statementAt(list, offset) {
 // with the line cut to a window around the error ("..." at either end). The page runs the
 // statement with its comments removed and trimmed, so the line number is not the editor's:
 // the excerpt is found in the statement instead, and the caret's place in it is the offset.
-function errorOffset(message, sql) {
+export function errorOffset(message, sql) {
   const m = /LINE (\d+): ([^\n]*)\n( *)\^/.exec(String(message || ''));
   if (!m) return null;
   let excerpt = m[2];
@@ -94,39 +92,14 @@ function errorOffset(message, sql) {
   return at + Math.min(caret, excerpt.length);
 }
 
-// The error's first line, as a diagnostic says it ("Binder Error: … not found").
-const errorSummary = message => String(message || '').split('\n').find(l => l.trim()) || 'Query failed';
-
-// The dotted name being typed at the end of `prefix` (the line up to the cursor):
-// `FROM lakehouse.aemo.da` -> { parts: ['lakehouse', 'aemo'], partial: 'da' }. A part may be
-// "quoted" ("" inside it is a quote). null when the cursor is in no name.
-function dottedName(prefix) {
-  const m = /((?:(?:"(?:[^"]|"")*"|[A-Za-z_][\w$]*)\s*\.\s*)*)("(?:[^"]|"")*|[A-Za-z_][\w$]*)?$/.exec(String(prefix));
-  if (!m) return null;
-  const parts = [...m[1].matchAll(/"((?:[^"]|"")*)"|([A-Za-z_][\w$]*)/g)].map(p => (p[1] != null ? p[1].replace(/""/g, '"') : p[2]));
-  const raw = m[2] || '';
-  const partial = raw.startsWith('"') ? raw.slice(1).replace(/""/g, '"') : raw;
-  return { parts, partial, quoted: raw.startsWith('"'), start: String(prefix).length - raw.length };
-}
-
-// Every dotted name in `sql` outside quotes and comments, as its parts (unquoted).
-function namesIn(sql) {
-  const s = String(sql).replace(/--[^\n]*|\/\*[\s\S]*?\*\/|'(?:[^']|'')*'/g, ' ');
-  const out = [];
-  for (const m of s.matchAll(/(?:"(?:[^"]|"")*"|[A-Za-z_][\w$]*)(?:\s*\.\s*(?:"(?:[^"]|"")*"|[A-Za-z_][\w$]*))+/g)) {
-    out.push([...m[0].matchAll(/"((?:[^"]|"")*)"|([A-Za-z_][\w$]*)/g)].map(p => (p[1] != null ? p[1].replace(/""/g, '"') : p[2])));
-  }
-  return out;
-}
-
-// Query variables, kept by the query editor for the session: `SET VARIABLE name = expr` sets one
+// Query variables, kept by the page for the session: `SET VARIABLE name = expr` sets one
 // (never sent to the engine, whose guard refuses SET), and getvariable('name') in a query is
 // replaced by its value before the query runs.
 const SET_VARIABLE = /^\s*set\s+variable\s+("(?:[^"]|"")+"|[A-Za-z_]\w*)\s*(?:=|to)\s*([\s\S]+?)\s*;?\s*$/i;
 const GET_VARIABLE = /getvariable\s*\(\s*'((?:[^']|'')*)'\s*\)/gi;
 // Only when `sql` is one statement (a selection of a SET and a SELECT is not a SET), and the
 // value as SQL with its comments gone: `2024 -- the year` is 2024.
-function setVariable(sql) {
+export function setVariable(sql) {
   const text = String(sql);
   const list = statements(text);
   if (list.length !== 1) return null;
@@ -154,7 +127,7 @@ function withoutComments(sql) {
   return out;
 }
 // The variable names a statement reads, once each, as written.
-function variablesIn(sql) {
+export function variablesIn(sql) {
   const seen = new Map();
   for (const m of String(sql).matchAll(GET_VARIABLE)) {
     const name = m[1].replace(/''/g, "'");
@@ -163,17 +136,14 @@ function variablesIn(sql) {
   return [...seen.values()];
 }
 // Each getvariable('name') replaced by (its value); `values` by lower-cased name.
-const bindVariables = (sql, values) => String(sql).replace(GET_VARIABLE, (all, name) => {
+export const bindVariables = (sql, values) => String(sql).replace(GET_VARIABLE, (all, name) => {
   const v = values.get(name.replace(/''/g, "'").toLowerCase());
   return v == null ? all : `(${v})`;
 });
 // A value typed at the prompt, as SQL: a number as it is, a quoted literal as it is, anything
 // else quoted.
-function literal(text) {
+export function literal(text) {
   const t = String(text).trim();
   if (/^-?\d+(\.\d+)?([eE][-+]?\d+)?$/.test(t) || /^'(?:[^']|'')*'$/.test(t) || /^null$/i.test(t)) return t;
   return `'${t.replace(/'/g, "''")}'`;
 }
-
-module.exports = { statements, statementAt, errorOffset, errorSummary, dottedName, namesIn,
-                   setVariable, variablesIn, bindVariables, literal };

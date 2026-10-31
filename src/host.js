@@ -48,16 +48,18 @@ const ENGINE_METHODS = new Set(['query', 'stream', 'cancel', 'info']);
  *        rows as an untitled CSV or JSON document
  * @param {(text: string) => Promise<void>} [o.copyText]
  *        text on the clipboard (the grid's copies)
- * @param {(x: {sql: string}) => Promise<void>} [o.editSql]
- *        Edit SQL: the SQL in a new query editor
- * @param {(x: {id: number, ok: boolean, error: string|null, rewritten: boolean, rows?: number, ms?: number}) => void} [o.queryDone]
- *        how a statement the query editor sent went
+ * @param {(x: {name: string, sql: string}) => Promise<{name: string, path: string}>} [o.saveQuery]
+ *        Save Query: the box's SQL under Queries, over the one named, else as a new "Query N"
+ * @param {(x: {sql: string, name: string|null}) => Promise<void>} [o.saveDraft]
+ *        the box's text, for the next panel
+ * @param {(name: string) => Promise<string|null>} [o.askVariable]
+ *        a query variable's value, asked of the user; null when dismissed
  * @param {(x: {workspace: string, model: string}) => Promise<object>} [o.openModel]
  *        a semantic model a query names, opened from its local copy (read from Fabric the first
  *        time) and kept as a view: { name, schema, path, text }
  */
 function createHostMethods({ onelake, engine, onStatus = () => {}, saveFile = null, semviews = null, exportExplore = null,
-                             nameTables = null, exportResult = null, openDocument = null, copyText = null, editSql = null, queryDone = null, openModel = null, modelsDir = null }) {
+                             nameTables = null, exportResult = null, openDocument = null, copyText = null, saveQuery = null, saveDraft = null, askVariable = null, openModel = null, modelsDir = null }) {
   const views = () => { if (!semviews) throw new Error('semantic views are not available here'); return semviews; };
   return {
     // Export to Fabric (exportapp.js): the model's text (to check it), where it lives in
@@ -157,16 +159,17 @@ function createHostMethods({ onelake, engine, onStatus = () => {}, saveFile = nu
       if (!copyText) throw new Error('the clipboard is not available here');
       await copyText(String((x && x.text) ?? ''));
     },
-    // Edit SQL: the SQL on the panel's screen, in a new query editor (queryeditor.js).
-    'host.editSql': async x => {
-      if (!editSql) throw new Error('query editors are not available here');
-      await editSql({ sql: String((x && x.sql) ?? '') });
+    // Save Query: the SQL box's text, over the query it came from or as the next "Query N".
+    'host.saveQuery': async x => {
+      if (!saveQuery) throw new Error('saving queries is not available here');
+      return saveQuery({ name: x && x.name ? String(x.name) : '', sql: String((x && x.sql) ?? '') });
     },
-    // A statement the query editor sent, run (or planned) by the page: how it went.
-    'host.queryDone': async x => {
-      const num = v => (Number.isFinite(Number(v)) ? Number(v) : null);
-      if (queryDone && x) queryDone({ id: Number(x.id), ok: !!x.ok, error: x.error == null ? null : String(x.error),
-                                      rewritten: !!x.rewritten, rows: num(x.rows), ms: num(x.ms) });
+    'host.saveDraft': async x => {
+      if (saveDraft) await saveDraft({ sql: String((x && x.sql) ?? ''), name: x && x.name ? String(x.name) : null });
+    },
+    'host.askVariable': async x => {
+      if (!askVariable) throw new Error('query variables are not available here');
+      return askVariable(String((x && x.name) ?? ''));
     },
   };
 }

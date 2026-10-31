@@ -7,6 +7,11 @@
   read. A query or a model's Pivot runs from what was read, and a column or a file never read says so at
   once. Export to Fabric needs OneLake. The status bar shows when this is happening, and it comes back by
   itself.
+- **SQL is back in a box in the panel.** A query no longer opens a `.sql` file, which started every SQL
+  extension installed, and a click on Run could wait behind them for over a minute with nothing on screen.
+  Run, Plan and Save Query are the panel's own; Ctrl+Enter and Ctrl+S work in the box; its text comes back
+  with the next panel. Gone with VS Code's editor: tabs per query, completion, the links above each
+  statement and red underlines (the cursor goes to the error instead). The `resultsLocation` setting is gone.
 - **A first `SHOW ALL TABLES` answers at once.** The catalog is kept in one file and checked behind you, so
   it no longer opens a file per table first. On a machine that scans what it opens, that took 35 seconds.
 - **The title says where you are.** The sidebar's header and the panel's tab read OneLake Studio and then

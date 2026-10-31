@@ -216,7 +216,7 @@ class LakehouseTree {
         item.iconPath = new vscode.ThemeIcon(n.pinned ? 'star-full' : 'folder');
         break;
       // Saved queries: .sql files, each naming its tables Kind.workspace.item.schema.table, so
-      // one runs whatever the panel has open. A click opens it in VS Code's editor.
+      // one runs whatever the panel has open. A click opens it in the panel's SQL box.
       case 'queries':
         item.iconPath = new vscode.ThemeIcon('bookmark');
         break;

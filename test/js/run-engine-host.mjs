@@ -176,7 +176,7 @@ try {
     ok(bootLine && bootLine.includes("native"), `…and reports itself native — ${bootLine || "(no line)"}`);
 
     // A real query, through data.js's own runSql, through the bridge, into the grid.
-    await page.evaluate(sql => window.postMessage({ type: "run-sql", id: 1, sql }, "*"), "SELECT 1 AS a, 'x' AS b UNION ALL SELECT 2, 'y' ORDER BY a");  // as the query editor sends it
+    await page.evaluate(sql => window.postMessage({ type: "run-sql", id: 1, sql }, "*"), "SELECT 1 AS a, 'x' AS b UNION ALL SELECT 2, 'y' ORDER BY a");  // as Select Top Rows sends it
     await page.waitForFunction(
       () => document.querySelectorAll("#resultsTable tbody tr[data-r]").length >= 2, { timeout: 30000 })
       .then(() => ok(true, "a query ran end to end and rendered rows"),
@@ -189,7 +189,7 @@ try {
        "…with the right values in the right order");
 
     // Types reach the UI as DuckDB's own names.
-    await page.evaluate(sql => window.postMessage({ type: "run-sql", id: 1, sql }, "*"), "SELECT 1::BIGINT AS n");  // as the query editor sends it
+    await page.evaluate(sql => window.postMessage({ type: "run-sql", id: 1, sql }, "*"), "SELECT 1::BIGINT AS n");  // as Select Top Rows sends it
     // The previous result also has a "1" in it, so wait for THIS result's header.
     await page.waitForFunction(
       () => /n/.test((document.querySelector("#resultsTable thead") || {}).textContent || ""),

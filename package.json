@@ -33,8 +33,7 @@
   ],
   "main": "./dist/extension.js",
   "activationEvents": [
-    "onStartupFinished",
-    "onLanguage:sql"
+    "onStartupFinished"
   ],
   "capabilities": {
     "untrustedWorkspaces": {
@@ -206,24 +205,6 @@
         "category": "OneLake Studio"
       },
       {
-        "command": "onelakeStudio.runQuery",
-        "title": "OneLake Run",
-        "category": "OneLake Studio",
-        "icon": "$(play)"
-      },
-      {
-        "command": "onelakeStudio.planQuery",
-        "title": "OneLake Plan",
-        "category": "OneLake Studio",
-        "icon": "$(pulse)"
-      },
-      {
-        "command": "onelakeStudio.saveQuery",
-        "title": "OneLake Save Query",
-        "category": "OneLake Studio",
-        "icon": "$(save)"
-      },
-      {
         "command": "onelakeStudio.gridCopy",
         "title": "Copy",
         "category": "OneLake Studio"
@@ -264,18 +245,6 @@
         "command": "onelakeStudio.goTo",
         "key": "ctrl+alt+o",
         "mac": "cmd+alt+o"
-      },
-      {
-        "command": "onelakeStudio.runQuery",
-        "key": "ctrl+enter",
-        "mac": "cmd+enter",
-        "when": "editorTextFocus && resourcePath =~ /[\\\\\\/]OneLakeStudio[\\\\\\/]queries[\\\\\\/]/i"
-      },
-      {
-        "command": "onelakeStudio.saveQuery",
-        "key": "ctrl+s",
-        "mac": "cmd+s",
-        "when": "editorTextFocus && resourceScheme == untitled && resourcePath =~ /[\\\\\\/]OneLakeStudio[\\\\\\/]queries[\\\\\\/]/i"
       }
     ],
     "viewsContainers": {
@@ -464,23 +433,6 @@
           "group": "2_open@2"
         }
       ],
-      "editor/title": [
-        {
-          "command": "onelakeStudio.runQuery",
-          "when": "resourcePath =~ /[\\\\\\/]OneLakeStudio[\\\\\\/]queries[\\\\\\/]/i",
-          "group": "navigation@1"
-        },
-        {
-          "command": "onelakeStudio.planQuery",
-          "when": "resourcePath =~ /[\\\\\\/]OneLakeStudio[\\\\\\/]queries[\\\\\\/]/i",
-          "group": "navigation@2"
-        },
-        {
-          "command": "onelakeStudio.saveQuery",
-          "when": "resourceScheme == untitled && resourcePath =~ /[\\\\\\/]OneLakeStudio[\\\\\\/]queries[\\\\\\/]/i",
-          "group": "navigation@3"
-        }
-      ],
       "commandPalette": [
         {
           "command": "onelakeStudio.gridOpenCsv",
@@ -509,18 +461,6 @@
         {
           "command": "onelakeStudio.gridCopyJson",
           "when": "false"
-        },
-        {
-          "command": "onelakeStudio.runQuery",
-          "when": "resourcePath =~ /[\\\\\\/]OneLakeStudio[\\\\\\/]queries[\\\\\\/]/i"
-        },
-        {
-          "command": "onelakeStudio.planQuery",
-          "when": "resourcePath =~ /[\\\\\\/]OneLakeStudio[\\\\\\/]queries[\\\\\\/]/i"
-        },
-        {
-          "command": "onelakeStudio.saveQuery",
-          "when": "resourcePath =~ /[\\\\\\/]OneLakeStudio[\\\\\\/]queries[\\\\\\/]/i"
         },
         {
           "command": "onelakeStudio.groupByType",
@@ -690,17 +630,6 @@
         "title": "Query and Results",
         "order": 3,
         "properties": {
-          "onelakeStudio.resultsLocation": {
-            "type": "string",
-            "enum": ["below", "beside"],
-            "enumDescriptions": [
-              "Under the query's editor, in a group of its own.",
-              "Beside the query's editor, side by side."
-            ],
-            "default": "below",
-            "order": 1,
-            "markdownDescription": "Where a query's results show when it is run from its editor. The panel moves only when it would cover the editor; once it is in a group of its own, it stays wherever you put it."
-          },
           "onelakeStudio.selectTopRows": {
             "type": "integer",
             "default": 1000,
