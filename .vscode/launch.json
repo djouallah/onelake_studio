@@ -5,20 +5,10 @@
   // The host runs from dist/extension.js, so F5 bundles src/ first (tasks.json); the
   // panel still serves app/ directly, so an edit to the page shows up on the next panel
   // open with no rebuild.
-  //
-  // The first has only this extension in the host. Every extension shares that one thread, and has
-  // been seen holding it for over a minute. The second is how it meets a user's own VS Code.
   "version": "0.2.0",
   "configurations": [
     {
       "name": "Run OneLake Studio extension",
-      "type": "extensionHost",
-      "request": "launch",
-      "args": ["--extensionDevelopmentPath=${workspaceFolder}", "--disable-extensions"],
-      "preLaunchTask": "bundle"
-    },
-    {
-      "name": "Run OneLake Studio beside your other extensions",
       "type": "extensionHost",
       "request": "launch",
       "args": ["--extensionDevelopmentPath=${workspaceFolder}"],
