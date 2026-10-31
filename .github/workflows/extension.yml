@@ -330,6 +330,88 @@ jobs:
           overwrite: true
           retention-days: 14
 
+  # OneLake Studio as a signed-out user meets it: the linux-x64 vsix built above, in a real VS Code
+  # server, its real interface in headless Chrome, Run and Plan from the editor through the panel
+  # (test/e2e/run-vscode-web.mjs). OneLake's and Microsoft's hosts point at a listener here, so an
+  # attempt to reach them shows up, whichever process makes it. The server's commit is pinned, as
+  # the image is: VS Code changes here when this file does.
+  browser:
+    needs: package
+    runs-on: ubuntu-26.04
+    timeout-minutes: 30
+    env:
+      VSCODE_COMMIT: 2c33b50b16c472efe58357d1d2a8a5414bc23fbf
+      E2E_HOSTS: >-
+        onelake.dfs.fabric.microsoft.com onelake.blob.fabric.microsoft.com
+        onelake.table.fabric.microsoft.com api.fabric.microsoft.com app.fabric.microsoft.com
+        analysis.windows.net api.powerbi.com login.microsoftonline.com login.live.com
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: package-lock.json
+      # playwright-core, without the engine: DuckDB here is the vsix's.
+      - run: npm ci --omit=optional --no-audit --no-fund
+      # dax-sql, to write the test's semantic model.
+      - uses: actions/cache@v6
+        with:
+          path: vendor
+          key: vendor-${{ hashFiles('scripts/vendor.mjs', 'scripts/fetch-retry.mjs', 'src/vendored.js') }}
+      - run: node scripts/vendor.mjs
+      - uses: actions/download-artifact@v8
+        with:
+          name: vsix-linux-x64
+          path: ${{ runner.temp }}/vsix
+      - uses: actions/cache@v6
+        with:
+          path: ${{ runner.temp }}/vscode-server
+          key: vscode-server-linux-x64-web-${{ env.VSCODE_COMMIT }}
+      - name: The VS Code server
+        run: |
+          set -euo pipefail
+          dir="$RUNNER_TEMP/vscode-server"
+          if [ ! -x "$dir/bin/code-server" ]; then
+            mkdir -p "$dir"
+            curl -fsSL --retry 3 "https://update.code.visualstudio.com/commit:$VSCODE_COMMIT/server-linux-x64-web/stable"               | tar -xz -C "$dir" --strip-components=1
+          fi
+          "$dir/bin/code-server" --version
+          echo "E2E_SERVER=$dir" >> "$GITHUB_ENV"
+      - name: Chrome
+        run: |
+          set -euo pipefail
+          if ! command -v google-chrome >/dev/null; then
+            curl -fsSL --retry 3 -o "$RUNNER_TEMP/chrome.deb" https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
+            sudo apt-get install -y "$RUNNER_TEMP/chrome.deb"
+          fi
+          google-chrome --version
+      - name: OneLake's and Microsoft's hosts, pointed here
+        run: |
+          set -euo pipefail
+          for host in $E2E_HOSTS; do echo "127.0.0.1 $host" | sudo tee -a /etc/hosts >/dev/null; done
+          sudo sysctl -w net.ipv4.ip_unprivileged_port_start=443
+      - name: The test's driver, as a vsix
+        working-directory: test/e2e/driver
+        run: npx --yes @vscode/vsce@3 package --allow-missing-repository --skip-license --no-dependencies -o "$RUNNER_TEMP/driver.vsix"
+      - name: Signed out, in headless Chrome
+        run: |
+          set -euo pipefail
+          export E2E_VSIX="$(ls "$RUNNER_TEMP"/vsix/*.vsix)"
+          export E2E_DRIVER_VSIX="$RUNNER_TEMP/driver.vsix"
+          export E2E_OUT="$RUNNER_TEMP/e2e"
+          node test/e2e/run-vscode-web.mjs
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: browser-test
+          path: |
+            ${{ runner.temp }}/e2e/shots
+            ${{ runner.temp }}/e2e/*/data/data/logs
+          if-no-files-found: warn
+          overwrite: true
+          retention-days: 14
+
   publish:
     needs: package
     if: startsWith(github.ref, 'refs/tags/ext-v')

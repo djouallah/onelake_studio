@@ -1,0 +1,12 @@
+{
+  "name": "onelake-e2e-driver",
+  "displayName": "OneLake Studio E2E driver",
+  "description": "Lets test/e2e/run-vscode-web.mjs ask the extension host what it knows. Never shipped.",
+  "version": "0.0.1",
+  "publisher": "e2e",
+  "engines": { "vscode": "^1.90.0" },
+  "main": "./extension.js",
+  "extensionKind": ["workspace"],
+  "activationEvents": ["onStartupFinished"],
+  "contributes": {}
+}
