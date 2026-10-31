@@ -35,6 +35,7 @@ const { PINS } = require('./vendored');
 const { planExport, writeExport, buildDist, writeMarker, readMarker, fingerprint, localChanges, vendorSize, zip, rayfinYml } = require('./exportapp');
 const { createFabricApp, tenantOf } = require('./fabricapp');
 const { NAME, placeOf, tabTitle } = require('./title');
+const { createCatalogSnapshot } = require('./catalogsnapshot');
 const { createOneLakeWriter } = require('./onelakewrite');
 const { mapPool } = require('./http');
 
@@ -880,6 +881,13 @@ async function activateInner(context, ready) {
   // Called wherever the identity may have moved; a no-op when it has not.
   // One at a time: two callers at once could both see the old account, or one return while
   // the other was still moving the store.
+  const catalogSnapshot = createCatalogSnapshot({
+    walk: () => walkTables(),
+    read: () => onelake.keptCatalog.read(),
+    write: list => onelake.keptCatalog.write(list),
+    onMoved: () => { if (engine) engine.catalogChanged(); },
+    onError: e => { if (out) out.appendLine(`the cached tables could not be walked — ${e.message}`); },
+  });
   rebindStore = serialized(async function rebindStore() {
     const session = await getSession({ createIfNone: false }).catch(() => null);
     rememberAccount(session);
@@ -896,12 +904,13 @@ async function activateInner(context, ready) {
     tree.queriesChanged();
     fileCacheAccount = key;   // the engine picks it up when it is next built
     onelake.useStore(storeFor(key));
+    catalogSnapshot.reset();
     if (engine) engine.catalogChanged();
     semviews.useAccount(key);
   });
   // What the store holds moved: the engine's catalog is listed again before the next
   // statement that reads it.
-  const catalogMoved = () => { if (engine) engine.catalogChanged(); };
+  const catalogMoved = () => { catalogSnapshot.moved(); if (engine) engine.catalogChanged(); };
   context.subscriptions.push({ dispose: onelake.onChanged(catalogMoved) },
                              { dispose: onelake.onTableRead(catalogMoved) });
   context.subscriptions.push({ dispose: onelake.onRefreshFailed((what, e) => {
@@ -1441,7 +1450,7 @@ async function activateInner(context, ready) {
   // Every table the store has seen, with its columns, as its SQL name's parts: a walk of the
   // cache alone (the command line's `find` walks it the same way). A table whose columns were
   // never read is left out — a view needs columns, and opening its lakehouse reads them.
-  cachedSqlTables = async () => {
+  async function walkTables() {
     const { paths } = await agent.modules();
     const found = [];
     const all = await walkCached(onelake.cached);
@@ -1467,7 +1476,8 @@ async function activateInner(context, ready) {
       if (v.schema) found.push({ kind: MODEL_CATALOG, workspace: v.schema, model: v.name });
     }
     return found;
-  };
+  }
+  cachedSqlTables = () => catalogSnapshot.list();
 
   // A semantic model a query names that no view has yet: found in its workspace's model
   // listing (the cache's, else Fabric's), its local copy kept (fetchModel), and kept as a view.

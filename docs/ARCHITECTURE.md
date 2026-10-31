@@ -198,6 +198,9 @@ The engine is **DuckDB 2.0 running natively in the extension host**
 - **Survives a sign-out:** signing back in finds it warm. Only **Clear Cached OneLake Data** deletes it.
 - **The catalog is cached too:** `SHOW ALL TABLES` and `information_schema` list what the tree has seen
   with no request to OneLake.
+- **The catalog is kept in one file** ([`src/catalogsnapshot.js`](../src/catalogsnapshot.js)): listing it walks a
+  file per table, and on a machine that scans what it opens the first open of each is slow. A first listing
+  answers from the kept list and walks behind the caller.
 - **A patched build:** the vsix carries a `cache_httpfs` with a Windows fix not yet released upstream
   (without it, nothing is cached on disk on Windows) and the offline read above. DuckDB loads it as an
   unsigned extension. A build without it fails, rather than ship with no disk cache.

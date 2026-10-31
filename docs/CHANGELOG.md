@@ -7,6 +7,8 @@
   read. A query or a model's Pivot runs from what was read, and a column or a file never read says so at
   once. Export to Fabric needs OneLake. The status bar shows when this is happening, and it comes back by
   itself.
+- **A first `SHOW ALL TABLES` answers at once.** The catalog is kept in one file and checked behind you, so
+  it no longer opens a file per table first. On a machine that scans what it opens, that took 35 seconds.
 - **The title says where you are.** The sidebar's header and the panel's tab read OneLake Studio and then
   `offline` or the tenant in use.
 - **Sign Out stays signed out.** The next VS Code start asks for no session and sends nothing to OneLake,

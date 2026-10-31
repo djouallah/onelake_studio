@@ -659,6 +659,9 @@ async function main() {
     await runIt("select 78", { plan: true });
     const s = await planned();
     check("Plan drew a profile", s.profileDrawn && !s.planError, s.planText);
+    const listed = await runIt("SHOW ALL TABLES");
+    settled("the kept catalog", listed);
+    check("the catalog lists the tables after a restart", /orders/.test(listed.table), listed.table || listed.status);
   }, 180000);
   await close();
 
