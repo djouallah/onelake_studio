@@ -250,7 +250,7 @@ test("past what a query keeps: --csv fails, --limit and --json say how many", as
 
 test("a statement that fails, or would write: exit 1, why on stderr, nothing on stdout", async () => {
   await withAgent(agent, async ({ cli }) => {
-    for (const [sql, why] of [["SELEC 1", /syntax error/i], ["SELECT * FROM nosuch", /nosuch/],
+    for (const [sql, why] of [["SELECT * FORM t", /syntax error/i], ["SELECT * FROM nosuch", /nosuch/],
                               ["COPY (SELECT 1) TO 'x.csv'", /Read only/], ["SELECT 1; SELECT 2", /one statement at a time/]]) {
       const r = await cli(["sql", sql]);
       assert.equal(r.code, EXIT.FAILED, sql);
