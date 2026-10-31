@@ -450,7 +450,7 @@ personal skills, and it follows the extension through updates.
 | **Sign Out** | Signs out of OneLake Studio and closes the panel and the engine. What is cached stays on show. In the explorer's "..." menu. |
 | **Settings** | Opens VS Code's Settings page, filtered to this extension. In the explorer's "..." menu. |
 | **Refresh** | Re-reads a workspace, item or folder from OneLake in the foreground. |
-| **Group by Type** / **Group by Workspace** | The explorer's title-bar toggle. Remembered. |
+| **Group by Type** / **Group by Workspace** | A toggle in the explorer's "..." menu. Remembered. |
 | **Pin to Favorites** / **Unpin from Favorites** | Moves a workspace in or out of the tree's favorites group. |
 | **Show Read Log** | Every OneLake request the extension made, with sizes and timings. |
 | **Clear Cached OneLake Data** | Empties the on-disk cache and reports what it freed. In the explorer's "..." menu. |
