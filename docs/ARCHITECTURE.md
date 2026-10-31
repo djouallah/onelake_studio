@@ -11,7 +11,7 @@ queried with SQL.
 - **SQL for everything.** The SQL box, the panel, Explore, the command line and the agent skill
   all send the same SQL over the same names. A Power BI semantic model is one more table: `AGG("measure")`
   computes its measure, compiled from its DAX by [dax-sql](https://github.com/djouallah/dax-sql).
-- **Runs on your machine.** DuckDB in the extension host reads OneLake directly, with your own token.
+- **Runs on your machine.** DuckDB in a process of its own reads OneLake directly, with your own token.
 - **Works offline.** This is a must, not a fallback. Everything you have read keeps working with no
   internet and no sign-in: browsing, SQL, a model's Explore and its Pivot.
 - **Agents get the same access.** An agent asks through the command line, on the same sign-in, cache
@@ -50,20 +50,26 @@ Results computed from a semantic model are not guaranteed to match Power BI.
 ## How the parts fit
 
 ```
- Query editor    Panel and Explore       Command line, agent skill
+ Tree            Tabs, Explore           Command line, agent skill
  (VS Code)       (webview, app/)         (bin/cli.mjs)
       |                 |                        |
       |          one message channel       local pipe or socket
       |            (src/host.js)            (src/bridge.js, src/agent.js)
       v                 v                        v
  +-------------------------------------------------------------+
- |  Extension host (src/)                                      |
- |  sign-in  |  cache-first OneLake  |  native DuckDB engine   |
+ |  Extension host (src/), one per window                      |
+ |  sign-in  |  cache-first OneLake  |  the read-only guard    |
  +-------------------------------------------------------------+
-      |                                          |
-      v                                          v
- Fabric REST API                              OneLake
- (semantic models, apps)                      (tables, files)
+      |                  |  Quack, control pipe
+      |                  v
+      |     +---------------------------------------------+
+      |     |  The server (src/engine-server.js)          |
+      |     |  one per account: DuckDB, its caches, state |
+      |     +---------------------------------------------+
+      v                  v
+ Fabric REST API      OneLake
+ (semantic models,    (tables, files)
+  apps)
 ```
 
 The model compiler, dax-sql, is pinned in [`src/vendored.js`](../src/vendored.js). The panel loads it,
@@ -97,7 +103,7 @@ No app registration is needed. VS Code's Microsoft account provider is a first-p
 `getSession` returns the OneLake token directly. The Fabric API needs a second token, in its own
 audience, which VS Code asks for only when *Semantic models* is first expanded.
 
-The token lives only in the extension host, in a DuckDB storage secret. When VS Code hands back a new
+The token lives only in the extension host and, as a DuckDB storage secret, in the server. When VS Code hands back a new
 one, the secret is reissued.
 
 **Sign Out** is out of OneLake Studio, not out of VS Code: an extension cannot remove an account, so it
@@ -149,13 +155,12 @@ internet once, and if it has gone the statement runs again from what is kept.
 
 ## The engine
 
-The engine is **DuckDB 2.0 running natively in the extension host**
-([`src/engine-host.js`](../src/engine-host.js)), not a WebAssembly build in the page.
+The engine is **DuckDB 2.0 running natively in a process of its own** ([The server](#the-server),
+[`src/engine-host.js`](../src/engine-host.js)), not a WebAssembly build in the page.
 
-- **When it starts:** once the explorer is visible or a query is open, if you are signed in. It boots
-  in the background and lists the cached catalog, so a first statement does not wait for either. That
-  statement still waits for the panel, the first time it opens. A window that does neither starts no
-  engine.
+- **When it starts:** as soon as the tree needs what is remembered, signed in or not. It boots in the
+  background and lists the cached catalog, so a first statement does not wait for either. That statement
+  still waits for the panel, the first time it opens.
 - **What a statement waits for:** the panel defines every kept semantic model when it opens, which can
   ask Fabric for an item's name. Only a statement that can name a model waits for that: one with
   `semantic` in it.
@@ -173,34 +178,42 @@ The engine is **DuckDB 2.0 running natively in the extension host**
 - **What the page reaches:** the host, through one message channel, only by `query`, `stream`, `cancel`,
   `info` and the host's OneLake reads.
 
-## The shared engine
+## The server
 
-Experimental, behind `onelakeStudio.sharedEngine`. DuckDB runs in a process of its own
-([`src/engine-server.js`](../src/engine-server.js)), and every tab of every window is a client of it
-over DuckDB's Quack protocol ([`src/engine-client.js`](../src/engine-client.js)).
+DuckDB runs in a process of its own ([`src/engine-server.js`](../src/engine-server.js)), and every tab of
+every window is a client of it over DuckDB's Quack protocol ([`src/engine-client.js`](../src/engine-client.js)).
 
-- **One per account and build.** The first window that needs it starts it. A window that leaves cancels
-  its statements, and with no window left the server waits a minute, so a reload finds it warm, then exits.
+- **One per account and install.** The first window that needs it starts it. A rebuild replaces it. A window
+  that leaves cancels its statements, and with no window left the server waits a minute, so a reload finds
+  it warm, then exits. If it dies, its tabs close and the next click starts it again.
 - **What is shared:** one memory budget, and the blocks read, in memory over the disk cache.
-- **Several tabs:** each runs its own statements, and its Stop reaches only those. Whatever the tree opens
-  gets a new tab, and so does **New Query**. A tab's `Files/` views carry a tag, so tabs can't read
-  each other's.
+- **Tabs:** each runs its own statements, and its Stop reaches only those. Whatever the tree opens gets a new
+  tab, and so does **New Query**. A tab's `Files/` views carry a tag, so tabs can't read each other's.
 - **The session token:** a new random one per server, kept in VS Code's secret storage, and reaching the
   server over its stdin. Without it the port on `127.0.0.1` runs nothing. In the client's DuckDB it is a
   named secret, since an `ATTACH`'s `TOKEN` option shows in `duckdb_databases()`.
-- **What stays in the window:** the read-only guard, the sign-in, and naming and resolving tables. A
-  window sends the server its OneLake token as the engine's secret.
+- **What stays in the window:** the read-only guard, the sign-in, and naming and resolving tables.
 - **How a statement goes:** `quack_query()`, which gives each statement a session of its own. One attach
   runs one statement at a time. Stop finds the statement by a tag in a comment and uses `quack_cancel`,
   since `interrupt()` doesn't reach the server.
+- **The control pipe:** an OS pipe, signed in with the session token, that says a window is alive. The OneLake
+  token and what Logs and Performance ask for go this way rather than over Quack, which logs what it is sent.
+- **What is remembered:** the store's entries (listings, table metadata, first rows) and the log are tables in a
+  state file, `engine-server\<id>.duckdb` in the extension's storage, in a second DuckDB in the server on a Quack
+  port of its own, so a page's SQL can't reach them ([`src/statestore.js`](../src/statestore.js)). The tree therefore
+  waits for the server. JSON files from before are imported once and left as they were.
 
-- **What is remembered:** the store's entries (listings, table metadata, first rows) are a table in a state
-  file, one per account, in a second DuckDB in the server on a Quack port of its own, so a page's SQL
-  can't reach it ([`src/statestore.js`](../src/statestore.js)). The tree therefore waits for the server.
-  The JSON files are imported once and left as they were.
+Still files: a `Files/` object's bytes, saved queries, models and semantic-model pointers.
 
-Not done: a `Files/` object's bytes, saved queries, models and semantic-model pointers are still files, and a
-server that dies closes its tabs.
+**Logs** ([`src/logs.js`](../src/logs.js)), a node in the tree. The record is DuckDB's own: its `Quack` log has a row per
+statement with its time and any error, for every tab, window and the command line. It is kept in memory
+(file storage can't be read back on Windows, since DuckDB locks its own file), and the server moves it to the state
+file every two seconds ([`src/enginelog.js`](../src/enginelog.js)), up to `onelakeStudio.logMaxGB`, the oldest going first.
+It holds your SQL and its errors in plain text, and never the OneLake token. A row reopens its SQL in a new tab, not run.
+`SELECT * FROM duckdb_logs` answers in a SQL box for what is still in memory. Its cost is too small to measure.
+
+**Performance** ([`src/performance.js`](../src/performance.js)), a node in the tree. Live charts of memory, cores in use,
+queries per second and the disk cache, while the tab is on screen. Nothing is stored.
 
 ## The cache
 
@@ -352,7 +365,7 @@ today.
 
 ## Explore
 
-A semantic model opens as **Explore** ([`app/explore/`](../app/explore/)), on three pages:
+A semantic model opens as **Explore** ([`app/explore/`](../app/explore/)), on two pages:
 
 - **Model:** its tables as a star, dimensions in the middle and facts around them, with its
   relationships. Click a table for its columns, measures (with their DAX) and relationships.
@@ -366,16 +379,15 @@ A semantic model opens as **Explore** ([`app/explore/`](../app/explore/)), on th
   - **Show SQL** swaps the pivot for that SQL in a box you can edit and run.
   - **Show plan** profiles it (`profile.js`: DuckDB's `EXPLAIN ANALYZE` as totals, a timeline and the
     costly operators) next to its plan tree.
-- **Logs:** what the session ran, with timings (`logs.js`, `perflog.js`).
 
 `view.js` is host-neutral: the host passes in the compiler, how to run SQL, and where ECharts comes
-from. **The panel** runs it on the native engine in the extension host. **The Fabric app** runs the
+from. **The panel** runs it on the native engine. **The Fabric app** runs the
 same files on DuckDB-WASM.
 
 ## Export to Fabric
 
 The one write. Explore's **Export to Fabric** button, or the command line's `export`, publishes that
-model's Explore and Logs, nothing else, as a Fabric app (item type `AppBackend`, named
+model's Explore, nothing else, as a Fabric app (item type `AppBackend`, named
 `<model>-explore`). VS Code and the extension are all it needs: no CLI, no Node, no GitHub.
 
 **What it writes**
@@ -477,7 +489,7 @@ personal skills, and it follows the extension through updates.
 | **Switch Microsoft Account** | Asks which account to use and reopens the panel, so the previous account's tables do not survive the switch. |
 | **Sign Out** | Signs out of OneLake Studio and closes the panel and the engine. What is cached stays on show. In the explorer's "..." menu. |
 | **Settings** | Opens VS Code's Settings page, filtered to this extension. In the explorer's "..." menu. |
-| **Performance** | A tab of how the engine is doing right now: memory by use, cores in use, blocks in memory, the disk cache, and on the shared engine what is running, with a Stop on each. Nothing is stored. In the explorer's "..." menu. |
+| **Logs**, **Performance** | Nodes in the tree. See [The server](#the-server). |
 | **Refresh** | Re-reads a workspace, item or folder from OneLake in the foreground. |
 | **Group by Type** / **Group by Workspace** | A toggle in the explorer's "..." menu. Remembered. |
 | **Pin to Favorites** / **Unpin from Favorites** | Moves a workspace in or out of the tree's favorites group. |
@@ -506,7 +518,7 @@ personal skills, and it follows the extension through updates.
 | `onelakeStudio.engineMemoryLimit` | empty | Most memory DuckDB may use, e.g. `4GB`. Empty is a quarter of the machine's RAM. |
 | `onelakeStudio.engineThreads` | 0 | How many threads DuckDB may use. `0` is every core. |
 | `onelakeStudio.engineSpillMaxGB` | 0 | How much a query bigger than memory may spill to the temp folder. `0` is DuckDB's default. |
-| `onelakeStudio.sharedEngine` | off | Experimental: one engine in a process of its own for every tab and window of an account, and several tabs. See [The shared engine](#the-shared-engine). |
+| `onelakeStudio.logMaxGB` | 1 | How much of what the engine ran is kept for **Logs**, per account. `0` keeps none. |
 | `onelakeStudio.selectTopRows` | 1000 | How many rows **Select Top Rows** asks for. |
 | `onelakeStudio.maxResultRows` | 200,000 | The most rows of one result the panel and the command line keep, from 1,000 to 1,000,000. Past it, rows are only counted. |
 | `onelakeStudio.tableOpensOn` | `stats` | What clicking a table shows first: `stats` or `data`. |
@@ -544,8 +556,8 @@ apply at once.
 | `src/tree.js` | The explorer. |
 | `app/querytext.js` | The SQL box's statements, error positions and variables. |
 | `src/panel.js`, `src/host.js`, `src/html.js`, `src/webview.js` | The panel's webview, its channel, and its page. |
-| `src/performance.js` | The Performance tab. |
-| `src/engine-server.js`, `src/engine-client.js`, `src/statestore.js` | The shared engine: its process, a window's side of it, and what it remembers. |
+| `src/performance.js`, `src/logs.js` | The Performance and Logs tabs. |
+| `src/engine-server.js`, `src/engine-client.js`, `src/statestore.js`, `src/enginelog.js` | The server: its process, a window's side of it, what it remembers, and its log. |
 | `src/agent.js`, `src/bridge.js`, `bin/cli.mjs` | The command line. |
 | `src/exportapp.js`, `src/fabricapp.js`, `src/onelakewrite.js` | Export to Fabric. |
 | `src/vendored.js` | The one list of pinned third-party code the webview runs, dax-sql included. |

@@ -17,8 +17,6 @@
 //   catalog.renewAt()   when to ask again (ms since the epoch)
 // =============================================================================
 
-import { perf } from '../explore/perflog.js';
-
 const KEY = 'catalog';
 const RENEW_MARGIN_MS = 2 * 60 * 1000;   // ask again this long before the SAS expires
 
@@ -34,13 +32,8 @@ export function createCatalog(client, kv) {
   async function call() {
     const rayfin = await client();
     // The function returns its failure as { error }, naming the step that failed.
-    const r = await perf.time('sas', "openCatalog (the model's tables)", async () => {
-      const r = await rayfin.functions.openCatalog.invoke({ tables: '' }, { timeoutMs: 240000 });
-      if (r?.error) throw new Error(`openCatalog failed at ${r.error}`);
-      return r;
-    });
-    perf.log('info', `catalog: ${Object.keys(r.metadata).length} tables located in ${r.catalogMs} ms` +
-      (r.missing.length ? `, not in the catalog: ${r.missing.join(', ')}` : '') + `; SAS until ${r.expiresOn}`);
+    const r = await rayfin.functions.openCatalog.invoke({ tables: '' }, { timeoutMs: 240000 });
+    if (r?.error) throw new Error(`openCatalog failed at ${r.error}`);
     save(r);
     return r;
   }
@@ -48,10 +41,7 @@ export function createCatalog(client, kv) {
   // The kept answer if it is still good, else a new one. `renew`: a new one.
   async function open({ renew = false } = {}) {
     const kept = load();
-    if (!renew && good(kept)) {
-      perf.log('info', `catalog: kept answer, SAS until ${kept.expiresOn}`);
-      return kept;
-    }
+    if (!renew && good(kept)) return kept;
     return call();
   }
 

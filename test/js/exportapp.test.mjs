@@ -128,7 +128,7 @@ async function fixture(root) {
   const files = {
     "fabric_app/site/index.html": '<link rel="stylesheet" href="./explore/explore.css">\n<script type="module">import { start } from "./app.js"; start();</script>\n<footer>build __BUILD__</footer>\n',
     "fabric_app/site/app.js": 'import { mountExplore } from "./explore/view.js";\n',
-    "fabric_app/site/storage/data.js": 'import { perf } from "../explore/perflog.js";\n',
+    "fabric_app/site/storage/data.js": 'import { renderModel } from "../explore/model.js";\n',
     "fabric_app/site/storage/catalog.js": "// catalog\n",
     "fabric_app/rayfin/rayfin.yml": "id: explore\nname: explore\nservices:\n  auth:\n    allowedRedirectUris:\n      - http://localhost:5173\n",
     "fabric_app/rayfin/functions/src/function_app.ts": "// openCatalog\n",
@@ -137,7 +137,7 @@ async function fixture(root) {
     "daxsql/formats/tmsl.js": "// tmsl\n",
     "daxsql/formats/ossie.js": "import { tmslToModel } from './tmsl.js';\n",
     "app/explore/view.js": "import { renderModel } from './model.js';\nimport { escapeHtml } from '../paths.js';\n",
-    "app/explore/explore.js": "// explore\n", "app/explore/model.js": "// model\n", "app/explore/perflog.js": "// perflog\n",
+    "app/explore/explore.js": "// explore\n", "app/explore/model.js": "// model\n",
     "app/explore/explore.css": "/* css */\n", "app/paths.js": "// paths\n",
     "webapp/npm/@duckdb/duckdb-wasm@1.0.0/+esm.js": 'import{a}from"../../apache-arrow@17.0.0/+esm.js";\n',
     "webapp/npm/apache-arrow@17.0.0/+esm.js": "// arrow\n",
@@ -193,7 +193,7 @@ test("the folder: fabric_app's site and function, Studio's Explore, no model; di
     assert.equal(marker.model, plan.modelPath);
     const read = p => readFile(join(outDir, p), "utf8");
     for (const p of ["site/index.html", "site/app.js", "site/storage/data.js", "site/storage/catalog.js",
-                     "site/explore/view.js", "site/explore/perflog.js", "site/explore/explore.css", "site/paths.js",
+                     "site/explore/view.js", "site/explore/model.js", "site/explore/explore.css", "site/paths.js",
                      "site/semantic/dax-sql/dialects/duckdb.js", "site/semantic/formats/ossie.js",
                      "site/vendor/npm/apache-arrow@17.0.0/+esm.js",
                      "site/vendor/duckdb-ext/v1.5.6/wasm_eh/icu.duckdb_extension.wasm",
@@ -221,7 +221,7 @@ test("the folder: fabric_app's site and function, Studio's Explore, no model; di
     assert.match(files.get("index.html").toString(), /build 20261028-120000/);
     assert.match(files.get("app.js").toString(), /from "\.\/explore\/view\.js\?v=20261028-120000"/);
     assert.match(files.get("explore/view.js").toString(), /from '\.\.\/paths\.js\?v=20261028-120000'/);
-    assert.match(files.get("storage/data.js").toString(), /from "\.\.\/explore\/perflog\.js\?v=20261028-120000"/);
+    assert.match(files.get("storage/data.js").toString(), /from "\.\.\/explore\/model\.js\?v=20261028-120000"/);
     assert.ok(!files.has("dist/index.html"), "the paths are the site's, at the zip root");
     assert.equal(files.get("vendor/npm/@duckdb/duckdb-wasm@1.0.0/+esm.js").toString(), 'import{a}from"../../apache-arrow@17.0.0/+esm.js";\n',
       "vendored packages ship byte for byte");

@@ -220,6 +220,17 @@ class LakehouseTree {
       case 'queries':
         item.iconPath = new vscode.ThemeIcon('bookmark');
         break;
+      // Two views of the engine, each a tab of its own.
+      case 'logs':
+        item.iconPath = new vscode.ThemeIcon('history');
+        item.tooltip = 'What the engine has run, from every tab and window';
+        item.command = { command: 'onelakeStudio.showLogs', title: 'Logs' };
+        break;
+      case 'performance':
+        item.iconPath = new vscode.ThemeIcon('pulse');
+        item.tooltip = 'How the engine is doing right now';
+        item.command = { command: 'onelakeStudio.showPerformance', title: 'Performance' };
+        break;
       case 'query':
         item.iconPath = new vscode.ThemeIcon('file-code');
         item.command = { command: 'onelakeStudio.openQuery', title: 'Open query', arguments: [n] };
@@ -360,7 +371,8 @@ class LakehouseTree {
       const names = await this.onelake.workspaces({ fresh: this._isFresh('root', undefined, undefined) });
       if (!names.length) return [node('empty', 'No workspaces — is this the right tenant?', { leaf: true })];
       const queries = this._track(node('queries', 'Queries', {}));
-      if (this.groupByType()) return [...await this._byType(names), queries];
+      const engineViews = [node('logs', 'Logs', { leaf: true }), node('performance', 'Performance', { leaf: true })];
+      if (this.groupByType()) return [...await this._byType(names), queries, ...engineViews];
       const pinned = new Set(this.favorites.get());
       const favs = names.filter(w => pinned.has(w));
       return [
@@ -368,6 +380,7 @@ class LakehouseTree {
         node('group', favs.length ? 'Other workspaces' : 'Workspaces',
              { group: 'others', expanded: !favs.length, count: names.length - favs.length }),
         queries,
+        ...engineViews,
       ];
     }
 

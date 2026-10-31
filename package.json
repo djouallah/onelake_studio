@@ -69,6 +69,12 @@
         "icon": "$(pulse)"
       },
       {
+        "command": "onelakeStudio.showLogs",
+        "title": "Logs",
+        "category": "OneLake Studio",
+        "icon": "$(history)"
+      },
+      {
         "command": "onelakeStudio.signIn",
         "title": "Sign in to OneLake",
         "category": "OneLake Studio"
@@ -323,11 +329,6 @@
           "command": "onelakeStudio.openSettings",
           "when": "view == onelakeStudio.explorer",
           "group": "1_account@3"
-        },
-        {
-          "command": "onelakeStudio.showPerformance",
-          "when": "view == onelakeStudio.explorer",
-          "group": "1_account@4"
         },
         {
           "command": "onelakeStudio.clearCache",
@@ -635,12 +636,13 @@
             "order": 3,
             "markdownDescription": "How much a query bigger than memory may spill to the temp folder, in GB. A query that needs more fails. `0` is DuckDB's default. Applies the next time the engine starts."
           },
-          "onelakeStudio.sharedEngine": {
-            "type": "boolean",
-            "default": false,
+          "onelakeStudio.logMaxGB": {
+            "type": "number",
+            "default": 1,
+            "minimum": 0,
             "scope": "machine",
             "order": 4,
-            "markdownDescription": "**Experimental.** Runs DuckDB in a process of its own, shared by every tab and every window of this account: one memory budget and one cache of what was read. Also lets you have several OneLake Studio tabs, each running its own query. Applies the next time the engine starts."
+            "markdownDescription": "How much of what the engine ran is kept for **Logs**, in GB, per account. It holds your SQL and its errors. Past this the oldest go. `0` keeps none. Applies the next time the engine starts."
           }
         }
       },

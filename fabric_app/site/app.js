@@ -1,7 +1,7 @@
 // =============================================================================
-// app.js — Export to Fabric's app: a semantic model's Explore and Logs, nothing else
+// app.js — Export to Fabric's app: a semantic model's Explore, nothing else
 // =============================================================================
-// OneLake Studio's own Explore (explore/view.js: Model, Pivot, Logs), over the data source of
+// OneLake Studio's own Explore (explore/view.js: Model, Pivot), over the data source of
 // this app (storage/data.js): it signs in, its function reads the model from the lakehouse and
 // says where the tables are, and DuckDB-WASM reads them in this browser. The model is never
 // copied into the app: it is the lakehouse's file, as it is now. Nothing here is specific to
@@ -83,9 +83,7 @@ export async function start() {
     mountExplore(document.getElementById("explore"), {
       name, title: String(doc.name || name), tmsl: tmslOf(bim),
       compiler: createCompiler(tmslToModel(bim), { tableSource: t => `v_${t.name}`, castOutput: EXPLORE_CASTS }),
-      run: async (sql, dax) => resultOf(await data.query(sql, dax)),
-      // data.js logs every query itself, with its wait and its engine.
-      hostLogs: true,
+      run: async sql => resultOf(await data.query(sql)),
       echarts: () => echartsReady,
       saveText: download,
       loadState: key => { try { return JSON.parse(localStorage.getItem(key)) ?? first; } catch { return first; } },
@@ -93,7 +91,6 @@ export async function start() {
       setStatus: status,
       profileSet: true,
       htmlPlan: true,
-      logsNote: "This session only — kept in memory, nothing is stored. \"http\" rows are the engine's own requests for its data files (Range = a seek in a file).",
     });
     // The model's other tables, opened in the background for the next query.
     data.attachAgg();

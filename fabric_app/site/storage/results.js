@@ -13,7 +13,6 @@
 // =============================================================================
 
 import { tableToIPC, tableFromIPC } from "../vendor/npm/apache-arrow@17.0.0/+esm.js";
-import { perf } from "../explore/perflog.js";
 
 const RESULT_MAX = 8 * 1024 * 1024, RESULTS_MAX = 256 * 1024 * 1024;
 const VOLATILE = /\bcurrent_(date|time|timestamp)\b|\b(now|today|random|uuid|gen_random_uuid|setseed|nextval|get_current_time|timezone)\s*\(/i;
@@ -43,7 +42,6 @@ export function createResults(name) {
     if (!out.length) return;
     const tx = idb.transaction(['bytes', 'meta'], 'readwrite');
     for (const k of out) { tx.objectStore('bytes').delete(k); tx.objectStore('meta').delete(k); }
-    perf.log('info', `saved results: ${out.length} dropped (over ${RESULTS_MAX / 1048576} MB)`);
   }
   let pruning = null;
 

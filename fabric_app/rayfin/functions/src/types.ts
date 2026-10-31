@@ -19,6 +19,6 @@
 export type AppFunctionsSchema = {
   openCatalog: {
     input: { tables: string };
-    output: { model?: any; metadata: Record<string, string>; missing: string[]; sas: string; expiresOn: string; catalogMs: number } | { error: string };
+    output: { model?: any; metadata: Record<string, string>; missing: string[]; sas: string; expiresOn: string } | { error: string };
   };
 };

@@ -1,6 +1,6 @@
 'use strict';
 // =============================================================================
-// exportapp.js — Export to Fabric: a model's Explore and Logs, as a Fabric app of its own
+// exportapp.js — Export to Fabric: a model's Explore, as a Fabric app of its own
 // =============================================================================
 // Explore's button (app/explore/view.js) hands the host the model's text (to check it), where
 // it lives in OneLake (for a model opened from its local copy, where the export writes it), and
@@ -10,7 +10,7 @@
 //   site/            fabric_app/site: the page (index.html, app.js) and its data source
 //                    (storage/: Fabric sign-in, the function's answer, DuckDB-WASM reading the
 //                    tables in the browser as views v_<table>)
-//   site/explore/    Studio's Explore and Logs (app/explore/), the same files the panel runs
+//   site/explore/    Studio's Explore (app/explore/), the same files the panel runs
 //   site/semantic/   dax-sql (PINS.daxSql): SQL over the model, as SQL over the views
 //   site/vendor/     every package the page runs (vendor/webapp: DuckDB-WASM and its
 //                    extensions, Arrow, the Rayfin SDK, ECharts): nothing from a CDN
@@ -168,8 +168,8 @@ open the app item can load it.
 
 | Layer | Path | |
 |---|---|---|
-| Page | \`site/index.html\`, \`site/app.js\` | Explore and Logs over the data source |
-| Explore, Logs | \`site/explore/\` | OneLake Studio's, the same files the extension runs |
+| Page | \`site/index.html\`, \`site/app.js\` | Explore over the data source |
+| Explore | \`site/explore/\` | OneLake Studio's, the same files the extension runs |
 | Compiler | \`site/semantic/dax-sql/\`, \`site/semantic/formats/\` | dax-sql (\`${PINS.daxSql}\`): SQL over the model, as SQL over \`v_<table>\` |
 | Packages | \`site/vendor/\` | DuckDB-WASM (\`${WEBAPP.duckdbWasm}\`, DuckDB ${WEBAPP.duckdb}) with its ${WEBAPP.extensions.join(' and ')} extensions, Arrow, the Rayfin SDK, ECharts: shipped with the site, nothing from a CDN |
 | Data source | \`site/storage/\` | signs in (Rayfin Fabric SSO), asks the function, downloads the tables into the browser (OPFS), DuckDB-WASM |

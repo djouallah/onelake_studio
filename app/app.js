@@ -271,7 +271,7 @@ async function ossieText(file) {
 }
 
 // A .bim (or an Ossie .yaml) is a semantic model, not a document: it opens as its model view
-// (explore/view.js) in place of the editor and the results — Model, Pivot, Logs — and is
+// (explore/view.js) in place of the editor and the results — Model and Pivot — and is
 // registered (semantic.js) so SQL anywhere, the main editor's included, can name it.
 let modelView = null;
 
@@ -337,7 +337,6 @@ async function openModelView(file, text = null, { fromOneLake = text == null } =
       // the panel's CSP runs no inline script (DuckDB's HTML plan): its text plan instead.
       profileSet: false,
       htmlPlan: false,
-      logsNote: 'This panel only — kept in memory, nothing is stored. The extension reads OneLake itself; its reads are in the Read Log.',
       // Explore as a Fabric app of its own (src/exportapp.js). The app reads the model from
       // OneLake at run time, and the tables of the one lakehouse it names: a OneLake file is
       // read where it is; a semantic model's local copy is written into its lakehouse by the

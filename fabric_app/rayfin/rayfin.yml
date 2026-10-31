@@ -1,5 +1,5 @@
 # The Fabric app Export to Fabric deploys (OneLake Studio, src/exportapp.js and fabricapp.js):
-# a model's Explore and Logs, over its lakehouse's tables. The extension deploys it over the
+# a model's Explore, over its lakehouse's tables. The extension deploys it over the
 # Fabric REST API from the local copy's dist/, so nothing reads this file to deploy: it says
 # what the app is, for whoever grows it from the local copy. The id, the name and the sign-in
 # redirects are each app's own (written in by the export).

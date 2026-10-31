@@ -174,7 +174,7 @@ async function trimFileCache(dir, maxBytes, onWarn) {
 // `checkConnectivity` asks whether the internet is still there, once a read has failed. `onRowsRead`
 // gets a table's metadata location when a statement has read its rows.
 //
-// The shared engine (onelakeStudio.sharedEngine) splits this in two. `serve: { token }` is the
+// The shared engine splits this in two. `serve: { token }` is the
 // server's side (engine-server.js): the boot below, then Quack listening with that token. `remote`
 // is a window's (engine-client.js): a function that joins the server and answers something shaped
 // like an instance, so a window boots nothing and keeps everything from sourcesOf down.
@@ -369,6 +369,10 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
         // Port 0: the system picks a free one. A port already taken raises no error on Windows.
         const r = await conn.runAndReadAll(`SELECT listen_uri FROM quack_serve('quack:127.0.0.1:0', token = ${sqlStr(serve.token)})`);
         served = r.getRowObjectsJson()[0].listen_uri;
+        // DuckDB's own log of what Quack is asked: one row a statement, with its time and any error,
+        // in memory. engine-server.js moves it into the state file, so it outlives this process.
+        // Writing it to a file isn't an option: on Windows DuckDB then can't read its own file back.
+        await conn.run(`CALL enable_logging(['Quack'], storage = 'memory');`);
         mark('quack');
       }
 
@@ -550,12 +554,18 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
     if (token === authToken) return token;
     await admin(async () => {
       if (token === authToken) return;
-      await conn.run(
-        `CREATE OR REPLACE SECRET onelake_storage (
-           TYPE azure, PROVIDER access_token, ACCESS_TOKEN ${sqlStr(token)})`);
+      // On the shared engine, over the control pipe: a statement sent over Quack is in its log.
+      if (remote) await instance.setStorageToken(token);
+      else await issueSecret(token);
       authToken = token;
     });
     return token;
+  }
+  // A parameter, so the token is in no statement's text, whatever logs them.
+  async function issueSecret(token) {
+    const p = await conn.prepare('CREATE OR REPLACE SECRET onelake_storage (TYPE azure, PROVIDER access_token, ACCESS_TOKEN ?)');
+    p.bindVarchar(1, token);
+    await p.run();
   }
 
   // A token that expired mid-session shows up as a storage failure, never as
@@ -921,28 +931,27 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
   // What the Performance tab shows, as it is now (performance.js). Nothing is kept. Not a page method.
   async function stats() {
     await init();
-    // Marked, so another window's Running list leaves these out.
-    const read = sql => withConn(async c => (await c.runAndReadAll(`/*stats*/ ${sql}`)).getRowObjectsJson(), agentLive);
-    const [[settings], memory, files, [temp]] = await Promise.all([
-      read(`SELECT current_setting('memory_limit') AS memory_limit, current_setting('threads') AS threads, version() AS version`),
-      read(`SELECT tag, memory_usage_bytes AS bytes, temporary_storage_bytes AS spilled FROM duckdb_memory()
-            WHERE memory_usage_bytes > 0 OR temporary_storage_bytes > 0 ORDER BY bytes DESC`),
-      read(`SELECT path, count(*)::INT AS blocks, sum(nr_bytes)::BIGINT AS bytes,
-                   (count(*) FILTER (loaded))::INT AS in_memory, (count(*) FILTER (spilled))::INT AS spilled
-            FROM duckdb_external_file_cache() GROUP BY path ORDER BY bytes DESC`),
-      read(`SELECT count(*)::INT AS files, coalesce(sum(size), 0)::BIGINT AS bytes FROM duckdb_temporary_files()`),
+    // The server answers, on its own connections: over Quack this would fill the log it reads.
+    if (remote) return instance.stats();
+    const read = sql => withConn(async c => (await c.runAndReadAll(sql)).getRowObjectsJson(), agentLive);
+    const [[limits], [used]] = await Promise.all([
+      read(`SELECT current_setting('memory_limit') AS memory_limit, current_setting('threads') AS threads`),
+      read(`SELECT coalesce(sum(memory_usage_bytes), 0)::BIGINT AS bytes FROM duckdb_memory()`),
     ]);
     const u = process.cpuUsage();
-    return {
-      shared: !!remote, settings, memory, files, temp,
-      // A window's engine has no process of its own: this is the extension host's, shared.
-      process: instance.status ? await instance.status()
-        : { pid: process.pid, uptimeMs: process.uptime() * 1000, cpuUs: u.user + u.system, rss: process.memoryUsage().rss },
-      running: instance.running ? await instance.running() : null,
-    };
+    return { pid: process.pid, cpuUs: u.user + u.system, memoryBytes: Number(used.bytes),
+             memoryLimit: limits.memory_limit, threads: limits.threads };
   }
-  // Stops a statement the Running list named, whichever window sent it.
-  const stopStatement = id => (instance && instance.cancelStatement ? instance.cancelStatement(id) : Promise.resolve());
+
+  // serve: DuckDB's log since `sinceUs` (enginelog.js moves it to the state file), and its emptying.
+  const readLog = sinceUs => withConn(async c => (await c.runAndReadAll(
+    `SELECT epoch_us(timestamp) AS us, message FROM duckdb_logs WHERE type = 'Quack' AND epoch_us(timestamp) > ${BigInt(sinceUs)} ORDER BY timestamp`)).getRowObjectsJson(), agentLive);
+  const emptyLog = () => withConn(c => c.run('CALL truncate_duckdb_logs();'), agentLive);
+  // serve: the OneLake token a window sends, over the control pipe.
+  const setStorageToken = token => init().then(() => admin(() => issueSecret(token)));
+  // What the Logs tab shows.
+  const logs = limit => init().then(() => (remote ? instance.logs(limit) : []));
+  const clearLogs = () => init().then(() => (remote ? instance.clearLogs() : undefined));
 
   // serve: once Quack is listening, what a window needs to know of this engine.
   async function boot() {
@@ -1041,7 +1050,8 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
     } catch (e) { throw scrub(e, authToken || token); }
   }
 
-  const api = { call, close, copyToTemp, exportTo, agentQuery, catalogChanged, warm, maxRows, forTab, boot, stats, stopStatement };
+  const api = { call, close, copyToTemp, exportTo, agentQuery, catalogChanged, warm, maxRows, forTab, boot, stats,
+                readLog, emptyLog, setStorageToken, logs, clearLogs };
   return api;
 }
 

@@ -132,6 +132,8 @@ try {
   if (!await page.locator(".resultsWrap").isHidden()) throw new Error("the results are still on screen under the model view");
   const css = await page.evaluate(() => getComputedStyle(document.querySelector("#modelView .subtabs")).borderRadius);
   if (css !== "999px") throw new Error(`explore.css did not load (subtabs border-radius ${css})`);
+  const subtabs = await page.locator("#modelView .subtab").allTextContents();
+  if (subtabs.join() !== "Model,Pivot") throw new Error(`Explore's pages are ${subtabs.join(", ")}, not Model and Pivot`);
 
   // A model query, compiled by dax-sql and run on the native engine, from the Pivot's Show SQL:
   // a measure on the shelves (so the box has a query to start from), then the box's own SQL.

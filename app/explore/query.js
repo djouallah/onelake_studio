@@ -22,11 +22,9 @@ export const EXPLORE_CASTS = {
   datetime: s => `CAST(CAST(${s} AS DATE) AS VARCHAR)`,
 };
 
-// SQL text with SELECTs over model `name` in it, as { sql, dax }: the SQL that runs (each of
-// them compiled in place, the rest as written) and the DAX each stands for (the Logs page's).
-// DAX text is refused: Explore takes SQL.
+// SQL text with SELECTs over model `name` in it, as the SQL that runs: each of them compiled in
+// place, the rest as written. DAX text is refused: Explore takes SQL.
 export function compileModelSql(compiler, text, name = 'model') {
   if (compiler.isDax?.(text)) throw new Error('Explore takes SQL: SELECT … FROM the model, or SQL over the tables');
-  const { sql, relations } = compiler.compileStatement(text, name);
-  return { sql, dax: relations.map(r => r.dax).join('\n\n') };
+  return compiler.compileStatement(text, name).sql;
 }

@@ -41,7 +41,6 @@
 //   { reset }          the writer started the store over (sent by the writer to the readers);
 //   { missing, id }    store paths: the writer answers { id, missing } with those it does not
 //                      hold whole;
-//   { stats, id }      the writer answers { id, stats: { files, bytes } } (the Logs tab);
 //   { stored }         the writer kept a file it was handed, or { stored, error } when it
 //                      could not. Not the browser's HTTP cache: it does not keep a response of
 //                      70-100 MB.
@@ -195,7 +194,6 @@
       const d = e.data ?? {};
       if (d.ping && writable) announce();
       if (d.missing && d.id != null && writable) bc.postMessage({ id: d.id, missing: d.missing.filter(p => !whole(p)) });
-      if (d.stats && d.id != null && writable) bc.postMessage({ id: d.id, stats: { files: files.size, bytes: end } });
       if (d.reset && !writable) forget();
       if (WRITER) {
         // Kept by the writer (this tab's file, or another's): no longer held here.

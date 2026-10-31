@@ -166,13 +166,24 @@ async function expectOffline(label) {
   check(`${label}: all of the title can be read`, await titleFits());
 }
 
+// The tab on top: every tab's page stays loaded, so of those with a page it is the newest whose
+// frames are all on screen. Failing that, the newest.
+async function onScreen(f) {
+  for (let at = f; at && at.parentFrame(); at = at.parentFrame()) {
+    const el = await at.frameElement().catch(() => null);
+    if (!el || !await el.isVisible().catch(() => false)) return false;
+  }
+  return true;
+}
 async function panel() {
   return until("the panel's page", async () => {
-    for (const f of page.frames()) {
-      if (f.isDetached()) continue;
-      if (await f.locator("#status").count().catch(() => 0)) return f;
+    let newest = null;
+    for (const f of [...page.frames()].reverse()) {
+      if (f.isDetached() || !await f.locator("#status").count().catch(() => 0)) continue;
+      if (await onScreen(f)) return f;
+      newest = newest || f;
     }
-    return null;
+    return newest;
   }, 60000);
 }
 
@@ -429,25 +440,33 @@ async function cachedRunMatrix({ saved, home }) {
     check("saving again is the same query", /Saved as Query 1/.test(again.status) && !existsSync(join(folder, "Query 2.sql")), again.status);
   });
 
-  await step("Tree: a table click gives an empty box its SQL, not run", async () => {
-    await setBox("");
+  await step("Tree: a table click adds a tab with its SQL, not run, and the last tab is left as it was", async () => {
+    await setBox("select 'mine' as typed");
+    const before = await panel();
     await drive("exec", { command: "onelakeStudio.openTable", args: [{ workspace: WORKSPACE, item: "data.Lakehouse", schema: "dbo", table: "orders" }] });
     const s = await until("the table's SQL in the box", async () => {
       const x = await panelState();
-      return /^SELECT \* FROM \S*orders LIMIT 100$/.test(x.box) && x;
-    }, 20000);
+      return /^SELECT \* FROM \S*orders LIMIT 100$/.test(x.box) && /orders/.test(x.title) && x;
+    }, 30000);
     check("it wasn't run", !/select \* from/i.test(s.status), s.status);
+    check("what was typed is still in the last tab", await before.locator("#sqlEditor").inputValue() === "select 'mine' as typed");
+    check("the box's own tab has no Edit SQL", !await (await panel()).locator("#editSqlBtn").isVisible());
   });
 
-  await step("Tree: a table click leaves the box as it is, with no Edit SQL beside it", async () => {
-    await setBox("select 'mine' as typed");
-    await drive("exec", { command: "onelakeStudio.openTable", args: [{ workspace: WORKSPACE, item: "data.Lakehouse", schema: "dbo", table: "orders" }] });
-    const s = await until("the table", async () => {
-      const x = await panelState();
-      return /orders/.test(x.title) && x;
-    }, 20000);
-    check("what was typed is still there", s.box === "select 'mine' as typed", s.box);
-    check("the box's own tab has no Edit SQL", !await (await panel()).locator("#editSqlBtn").isVisible());
+  await step("Tree: Logs and Performance open, and a statement that ran is in Logs", async () => {
+    const tabs = async () => (await drive("state")).tabs.join(", ");
+    await drive("exec", { command: "onelakeStudio.showPerformance" });
+    await until("the Performance tab", async () => /Performance/.test(await tabs()), 15000);
+    await drive("exec", { command: "onelakeStudio.showLogs" });
+    await until("the Logs tab", async () => /Logs/.test(await tabs()), 15000);
+    const listed = await until("a statement in Logs", async () => {
+      for (const f of page.frames()) {
+        if (f.isDetached() || !await f.locator("#filter").count().catch(() => 0)) continue;
+        if (/from a saved query/.test(await f.locator("#list").innerText().catch(() => ""))) return true;
+      }
+      return false;
+    }, 20000).catch(() => false);
+    check("what ran earlier is listed", listed);
   });
 
   await step("Tree: Select Top Rows runs from the box", async () => {

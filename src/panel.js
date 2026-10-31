@@ -49,9 +49,8 @@ async function buildHtml(webview, siteUri, cfg) {
   });
 }
 
-// The tabs of this window. Invoking the command again reveals the active one rather than opening
-// another; only the shared engine asks for a second (openPanel's newTab), where a tab's views and
-// its Stop are its own.
+// The tabs of this window, each with its own views and its own Stop. Opening OneLake Studio again
+// reveals the active one; what the tree opens asks for another (openPanel's newTab).
 const tabs = new Set();
 let active = null;
 

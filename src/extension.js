@@ -17,6 +17,7 @@ const fsp = require('node:fs/promises');
 const { quoteIdent } = require('./sql');
 const { openPanel, setPanelTitle, closePanel, revealPanel, panelOpen, postToPanel, postLive, panelSettings } = require('./panel');
 const { openPerformance } = require('./performance');
+const { openLogs } = require('./logs');
 const { createCatalog } = require('./catalog');
 const { createStore } = require('./store');
 const { createOneLake, walkCached } = require('./onelake');
@@ -441,7 +442,6 @@ function editorProxy() {
 // The shared engine (engine-client.js): DuckDB in a process of its own, one per account, with
 // every tab of every window as a client over Quack. Its session token lives in the editor's secret
 // storage, where the next window finds it.
-const sharedEngineOn = () => vscode.workspace.getConfiguration('onelakeStudio').get('sharedEngine', false);
 // One server per account and install. A rebuild of the same install replaces it (`build`).
 function sharedEngineServer(context, account) {
   const script = join(context.extensionUri.fsPath, 'dist', 'engine-server.js');
@@ -449,7 +449,7 @@ function sharedEngineServer(context, account) {
   const key = [account || 'none', context.extensionUri.fsPath].join('|');
   const secret = `onelakeStudio.engineSession.${createHash('sha256').update(key).digest('hex').slice(0, 16)}`;
   return {
-    key, script, build, owner: vscode.env.sessionId,
+    key, script, build,
     stateDir: join(context.globalStorageUri.fsPath, 'engine-server'),
     getToken: () => context.secrets.get(secret),
     setToken: token => context.secrets.store(secret, token),
@@ -471,7 +471,14 @@ function sharedStateBackend(context, account, importFrom, maxBytes) {
       },
     }));
   }
-  return createStateBackend({ run: sql => stateClients.get(account).run(sql), importFrom, maxBytes });
+  // A store that can't reach it reads as nothing cached, so why goes where someone will find it.
+  let said = false;
+  const run = sql => stateClients.get(account).run(sql).catch(e => {
+    if (!said && out) out.appendLine(`the engine's state file can't be reached: ${e.message}`);
+    said = true;
+    throw e;
+  });
+  return createStateBackend({ run, importFrom, maxBytes });
 }
 function sharedEngineRemote(context, options) {
   const { createRemote } = require('./engine-client');
@@ -503,6 +510,7 @@ function engineBootOptions(context, account, readme) {
     memoryLimit: config.get('engineMemoryLimit', '').trim(),
     threads: Math.max(0, Math.floor(Number(config.get('engineThreads', 0)) || 0)),
     spillMaxGB: Math.max(0, Number(config.get('engineSpillMaxGB', 0)) || 0),
+    logMaxGB: Math.max(0, Number(config.get('logMaxGB', 1)) || 0),
     maxRows: Math.min(1_000_000, Math.max(1000, Math.floor(Number(config.get('maxResultRows', 200_000)) || 200_000))),
     // 0 is no disk cache at all.
     fileCacheDir: diskCacheGB > 0 ? fileCacheDirFor(account) : null,
@@ -529,7 +537,7 @@ function ensureEngine(context, { readme } = {}) {
     const booting = engineBootOptions(context, fileCacheAccount, readme);
     engine = createEngineHost({
       ...booting,
-      ...(sharedEngineOn() ? { remote: sharedEngineRemote(context, booting) } : {}),
+      remote: sharedEngineRemote(context, booting),
       onLog: logBoot,
       onCatalog: logCatalog,
       // A failed optional extension is worth a line where someone will find it.
@@ -618,7 +626,7 @@ async function show(context, { newTab = false, ...options } = {}) {
     // The text the last tab closed with, for a tab opened to write in. One opened for what was
     // clicked starts from that (app.js offerInBox), and the draft stays for the next.
     draft: newTab || panelOpen() ? null : memento.get(QUERY_DRAFT_KEY, null),
-    viewTag: sharedEngineOn() ? randomBytes(2).toString('hex') : null,
+    viewTag: randomBytes(2).toString('hex'),
     host: (tabEngine, post) => createHostMethods({
       onelake, engine: tabEngine, onStatus: message => post({ type: 'status', message }),
       saveFile, semviews, modelsDir: modelsFolder(),
@@ -865,7 +873,7 @@ async function activateInner(context) {
   const storeRoot = join(context.globalStorageUri.fsPath, 'onelake-store-v1');
   const storeFor = key => {
     const dir = join(storeRoot, key || 'signed-out');
-    const backend = sharedEngineOn() ? sharedStateBackend(context, key, dir, storeMaxBytes) : null;
+    const backend = sharedStateBackend(context, key, dir, storeMaxBytes);
     return createStore({ dir, backend, ttlMs: catalogTtlMs, maxBytes: storeMaxBytes() });
   };
   const firstSession = await getSession({ createIfNone: false }).catch(() => null);
@@ -1049,10 +1057,10 @@ async function activateInner(context) {
     { location: vscode.ProgressLocation.Window, title: 'Opening OneLake Studio…' },
     () => show(context, options));
 
-  // Whether the panel is there to take it. On the shared engine each one gets a tab of its own, so
-  // a click adds to what is open and stops nothing.
+  // Whether the panel is there to take it. Each one gets a tab of its own, so a click adds to what is
+  // open and stops nothing.
   async function openInPanel(msg) {
-    if (!await showWithProgress({ createIfNone: true, newTab: sharedEngineOn() })) return false;
+    if (!await showWithProgress({ createIfNone: true, newTab: true })) return false;
     postToPanel(msg);
     return true;
   }
@@ -1736,15 +1744,22 @@ async function activateInner(context) {
       openPerformance({
         engine: () => ensureEngine(context, { readme: readme.fsPath }),
         disk: async () => ({
-          cacheBytes: await dirBytes(fileCacheDirFor(storeAccount)),
-          cacheLimit: Math.max(0, Number(vscode.workspace.getConfiguration('onelakeStudio').get('diskCacheMaxGB', 64)) || 0) * 1024 ** 3,
+          bytes: await dirBytes(fileCacheDirFor(storeAccount)),
+          limit: Math.max(0, Number(vscode.workspace.getConfiguration('onelakeStudio').get('diskCacheMaxGB', 64)) || 0) * 1024 ** 3,
         }),
-        restart: async () => {
+      });
+    }),
+
+    vscode.commands.registerCommand('onelakeStudio.showLogs', async () => {
+      const { readme } = await webviewRoot(context.extensionUri, { dev: context.extensionMode === vscode.ExtensionMode.Development });
+      openLogs({
+        engine: () => ensureEngine(context, { readme: readme.fsPath }),
+        open: sql => openInPanel({ type: 'query', sql }),
+        copy: sql => vscode.env.clipboard.writeText(sql),
+        clear: async () => {
           const pick = await vscode.window.showWarningMessage(
-            'Restart the engine? Every OneLake Studio tab closes, in every window, and running queries stop.', { modal: true }, 'Restart Engine');
-          if (pick !== 'Restart Engine') return;
-          closePanel();
-          await resetEngine();
+            'Clear what the engine has run, for every window?', { modal: true }, 'Clear');
+          if (pick === 'Clear') await engine?.clearLogs();
         },
       });
     }),
@@ -1968,7 +1983,7 @@ async function activateInner(context) {
       if (engine && (e.affectsConfiguration('onelakeStudio.engineMemoryLimit') ||
                      e.affectsConfiguration('onelakeStudio.engineThreads') ||
                      e.affectsConfiguration('onelakeStudio.engineSpillMaxGB') ||
-                     e.affectsConfiguration('onelakeStudio.sharedEngine') ||
+                     e.affectsConfiguration('onelakeStudio.logMaxGB') ||
                      e.affectsConfiguration('onelakeStudio.maxResultRows') ||
                      e.affectsConfiguration('onelakeStudio.diskCacheMaxGB') ||
                      e.affectsConfiguration('http.proxy'))) {
@@ -2002,8 +2017,7 @@ async function activateInner(context) {
           if (pick === remove) await removeDir(old);
         }
       }
-      if (e.affectsConfiguration('onelakeStudio.metadataCacheMaxMB') ||
-          e.affectsConfiguration('onelakeStudio.sharedEngine')) onelake.useStore(storeFor(storeAccount));
+      if (e.affectsConfiguration('onelakeStudio.metadataCacheMaxMB')) onelake.useStore(storeFor(storeAccount));
       if (e.affectsConfiguration('onelakeStudio.tableOpensOn') ||
           e.affectsConfiguration('onelakeStudio.gridThousandsSeparator')) {
         postLive({ type: 'settings', ...panelSettings() });

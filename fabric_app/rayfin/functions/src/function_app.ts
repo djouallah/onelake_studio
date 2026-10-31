@@ -216,7 +216,7 @@ function signFolderSas(blobPath: string, permissions: string, key: DelegationKey
 udf.func(
   'openCatalog',
   async (ctx: RayfinContext<BlankAppSchema, AudienceType.Storage>, tables: string): Promise<{
-    model?: any; metadata: Record<string, string>; missing: string[]; sas: string; expiresOn: string; catalogMs: number;
+    model?: any; metadata: Record<string, string>; missing: string[]; sas: string; expiresOn: string;
   } | { error: string }> => {
     let step = 'the table names';
     try {
@@ -239,16 +239,14 @@ udf.func(
       const { endpoint, ws, lh } = catalogUrl(ctx);
       const { start, expiry } = sasWindow();
       step = 'the catalog and the OneLake user delegation key';
-      const t0 = Date.now();
       const [catalog, key] = await Promise.all([
         catalogPrefix(endpoint, ws, lh, token).then(prefix => loadTables(endpoint, prefix, names, token)),
         getDelegationKey(token, start, expiry),
       ]);
-      const catalogMs = Date.now() - t0;
       step = 'signing the SAS';
       const sas = signFolderSas(`/${ws}/${lh}/Tables`, 'r', key, start, expiry);
       return { ...(model ? { model } : {}), metadata: catalog.metadata,
-               missing: [...catalog.missing, ...bad].sort(), sas, expiresOn: iso(expiry), catalogMs };
+               missing: [...catalog.missing, ...bad].sort(), sas, expiresOn: iso(expiry) };
     } catch (e) {
       return { error: `${step}: ${e instanceof Error ? e.message : String(e)}` };
     }

@@ -182,7 +182,6 @@ section.modelOpen #chartBtn { display: none; }
 /* The Pivot's actions, in the subtab bar: Show SQL, Download CSV, Export to Fabric. */
 .explore-actions { display: flex; gap: 0.4rem; margin-left: auto; }
 .explore-actions[hidden], .subtabs[hidden] { display: none; }
-.explore-logs-page[hidden] { display: none; }
 
 /* Show plan (profile.js): the profile, and the plan's tree. Ported from analytics-as-code. */
 .explore-plan { flex: 1 1 auto; min-height: 420px; display: flex; padding: 0 var(--gutter) 1rem; }
@@ -222,12 +221,6 @@ section.modelOpen #chartBtn { display: none; }
 .pf-share { display: inline-block; min-width: 3.2rem; background: linear-gradient(to right, color-mix(in srgb, var(--accent) 35%, transparent) var(--w), transparent var(--w)); border-radius: 2px; padding: 0 0.3rem; }
 .pf-off { color: var(--bad); font-weight: 600; }
 .pf-what { max-width: 32rem; overflow: hidden; text-overflow: ellipsis; color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.72rem; }
-
-/* Logs (logs.js). */
-.logs-summary { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.74rem; line-height: 1.5; color: var(--muted); padding: 0 var(--gutter); margin: 0 0 0.6rem; white-space: pre-wrap; }
-.logs-table td { font-size: 0.74rem; vertical-align: top; }
-.logs-table td:nth-child(3) { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; white-space: pre-wrap; word-break: break-word; max-width: 60vw; }
-.logs-sql { color: var(--muted); }
 
 @media (max-width: 560px) {
   .ex { grid-template-columns: 1fr; min-height: 0; }

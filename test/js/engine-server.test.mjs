@@ -108,32 +108,94 @@ test("a window that leaves takes its statements with it, and the server stays", 
   assert.deepEqual((await b.call("query", ["SELECT 8 AS still"])).rows, [{ still: 8 }]);
 });
 
-test("stats: what the engine holds, what it runs in any window, and a Stop from another", async t => {
+test("stats: the server's process, its memory, and how many statements someone asked for", async t => {
+  const { open } = await setup(t);
+  const a = open();
+  await a.call("query", ["SELECT 1"]);
+  const before = await a.stats();
+  assert.notEqual(before.pid, process.pid, "the server's process, not this one");
+  assert.ok(before.cpuUs > 0 && before.memoryBytes >= 0 && before.memoryLimit && Number(before.threads) === 2);
+  for (let i = 0; i < 3; i++) await a.call("query", [`SELECT ${i} AS n`]);
+  await a.call("query", ["CREATE OR REPLACE VIEW only_setup AS SELECT 1 AS one"]);
+  const after = await a.stats();
+  assert.equal(after.statements - before.statements, 3, "setup isn't counted");
+  assert.equal((await a.stats()).statements, after.statements, "asking adds nothing");
+});
+
+test("the log: every window's statements, as DuckDB recorded them", async t => {
   const { open } = await setup(t);
   const a = open(), b = open();
-  await a.call("query", ["SELECT 1"]);
-  const idle = await a.stats();
-  assert.equal(idle.shared, true);
-  assert.equal(idle.running.length, 0, "its own statements aren't listed as running");
-  assert.equal(typeof idle.process.pid, "number");
-  assert.ok(idle.process.pid !== process.pid, "the server's process, not this one");
-  assert.ok(idle.process.windows >= 1);
-  assert.ok(Array.isArray(idle.memory) && Array.isArray(idle.files) && idle.temp.files === 0);
-
-  let result = null;
-  const running = b.call("query", [`${LONG} -- a trailing comment`]).catch(e => { result = e; });
+  await a.call("query", ["SELECT 1 AS it's_a -- never parsed\nFROM range(1)"]).catch(() => {});
+  await a.call("query", ["SELECT 'it''s a \"quote\", {x: ''y''}' AS txt,\n  2 AS second"]);
+  await b.call("query", ["SELECT * FROM no_such_table"]).catch(() => {});
+  const big = (await a.call("query", ["SELECT i FROM range(200000) t(i)"])).numRows;
+  assert.equal(big, 200000);
+  let stopped = null;
+  const running = b.call("query", [LONG]).catch(e => { stopped = e; });
   await sleep(1000);
-  const seen = (await a.stats()).running;
-  assert.equal(seen.length, 1);
-  assert.match(seen[0].sql, /range\(100000000000000\)/);
-  assert.doesNotMatch(seen[0].sql, /onelake:/);
-  assert.equal(seen[0].here, false, "another window's");
-  assert.ok(seen[0].ms >= 500 && seen[0].ms < 60_000, `its age, whatever the time zone: ${seen[0].ms}`);
-  await a.stopStatement(seen[0].id);
+  await b.call("cancel");
   await running;
-  assert.match(result.message, /cancel/i);
-  await sleep(200);
-  assert.equal((await a.stats()).running.length, 0);
+  assert.equal(stopped.cancelled, true);
+  await sleep(300);
+
+  const rows = await a.logs(100);
+  const of = text => rows.find(r => r.sql.includes(text));
+  const quoted = of("it''s a");
+  assert.equal(quoted.sql, "SELECT 'it''s a \"quote\", {x: ''y''}' AS txt,\n  2 AS second", "the SQL as it was written");
+  assert.equal(quoted.status, "ok");
+  assert.equal(quoted.here, true);
+  assert.ok(!/onelake:/.test(quoted.sql), "no tag");
+  const failed = of("no_such_table");
+  assert.equal(failed.status, "error");
+  assert.equal(failed.here, false, "from the other window");
+  assert.match(failed.error, /no_such_table/);
+  assert.equal(of("range(100000000000000)").status, "stopped");
+  assert.ok(of("range(200000)").ms >= 0);
+  assert.ok(rows[0].at >= rows[rows.length - 1].at, "newest first");
+
+  const now = (await a.logs(1000)).length;
+  for (let i = 0; i < 5; i++) { await a.stats(); await a.logs(10); }
+  assert.equal((await a.logs(1000)).length, now, "reading adds nothing to the log");
+
+  // SQL over it, through the page's own guard.
+  const seen = await a.call("query", ["SELECT count(*)::INT AS n FROM duckdb_logs WHERE type = 'Quack'"]);
+  assert.ok(seen.rows[0].n > 0);
+
+  await a.clearLogs();
+  assert.equal((await a.logs(1000)).length <= 1, true, "cleared");
+});
+
+test("the OneLake token reaches no log, and history survives the server", async t => {
+  const dir = await mkdtemp(join(tmpdir(), "onelake-log-"));
+  t.after(() => rm(dir, { recursive: true, force: true }).catch(() => {}));
+  const TOKEN = "eyJfake.TOKEN-THAT-MUST-NOT-BE-LOGGED.signature";
+  let secret;
+  const open = () => {
+    const w = createEngineHost({
+      getToken: async () => TOKEN,
+      remote: createRemote({ key: `log-${dir}`, script: SCRIPT, stateDir: join(dir, "state"),
+        options: { extensionDir: join(dir, "extensions"), bundledExtensions: existsSync(BUNDLED) ? BUNDLED : null, threads: 2 },
+        getToken: async () => secret, setToken: async s => { secret = s; } }),
+    });
+    t.after(() => w.close({ stop: true }).catch(() => {}));
+    return w;
+  };
+  const a = open();
+  await a.call("query", ["SELECT 'before the restart' AS said"]);
+  const types = await a.call("query", ["SELECT count(*)::INT AS n, count(*) FILTER (name = 'onelake_storage')::INT AS ours FROM duckdb_secrets()"]);
+  assert.equal(types.rows[0].ours, 1, "the secret was issued");
+  const leaked = await a.call("query", ["SELECT count(*)::INT AS n FROM duckdb_logs WHERE message LIKE '%TOKEN-THAT' || '-MUST%'"]);
+  assert.equal(leaked.rows[0].n, 0);
+  assert.ok(!(await a.logs(1000)).some(r => r.sql.includes("MUST-NOT-BE-LOGGED")));
+  await a.close({ stop: true });
+  await sleep(1000);
+
+  const state = join(dir, "state");
+  for (const f of readdirSync(state)) {
+    assert.ok(!readFileSync(join(state, f)).includes(TOKEN), `${f} holds no token`);
+  }
+  const b = open();
+  assert.ok((await b.logs(1000)).some(r => r.sql.includes("before the restart")), "still there");
 });
 
 test("the store's entries live in the server, shared by windows, imported once, and survive a stop", async t => {

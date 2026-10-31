@@ -14,9 +14,13 @@
   statement and red underlines (the cursor goes to the error instead). The `resultsLocation` setting is gone.
   Edit SQL stays only where the box is hidden: a semantic model's view and a table's Pivot. A table or
   file you click puts its SQL in an empty box, not run.
-- **Performance, in the explorer's "..." menu.** A tab of how the engine is doing right now: memory by use,
-  cores in use, blocks in memory and the disk cache. On the shared engine it also lists what is running, with a
-  Stop on each. Nothing is stored.
+- **DuckDB runs in a process of its own, shared by every tab and window.** One memory budget and one cache of what
+  was read, and it outlives a window reload. What the tree opens gets a new tab, each running its own query with its own
+  Stop. Listings, table metadata and first rows move to a DuckDB file, imported once from the JSON files.
+- **Logs and Performance, as nodes in the tree.** Logs is what the engine ran, from DuckDB's own log, kept up to
+  `logMaxGB`, and a row reopens its SQL in a new tab. It holds your SQL in plain text. Performance is live charts of
+  memory, cores, queries per second and the disk cache. Nothing of it is stored.
+- **Logs left Explore and the Fabric app.** A published app has no built-in diagnostics page now.
 - **A first `SHOW ALL TABLES` answers at once.** The catalog is kept in one file and checked behind you, so
   it no longer opens a file per table first. On a machine that scans what it opens, that took 35 seconds.
 - **The title says where you are.** The sidebar's header and the panel's tab read OneLake Studio and then

@@ -51,7 +51,6 @@ import { createCatalog } from "./catalog.js";
 import { createSnapshots } from "./snapshots.js";
 import { createKv } from "./kv.js";
 import { planTable, prefetchFiles, prioritize } from "./prefetch.js";
-import { perf, HTTP_TRACE_SHIM } from "../explore/perflog.js";
 import { quoteIdent as ident, sqlStr as lit } from "../paths.js";
 
 const SMALL_BYTES = 32 * 1024 * 1024;   // a table up to this much Parquet is copied into memory
@@ -125,10 +124,8 @@ const extensionUrl = (version, e) => `${EXT_REPO}/${version}/wasm_eh/${e}.duckdb
 function warmExtensions(version) {
   let known = null; try { known = localStorage.getItem(EXT_KEY); } catch (e) {}
   if (known === version) return;
-  const t0 = performance.now();
   Promise.all(EXTENSIONS.map(e => fetch(extensionUrl(version, e)).then(r => r.arrayBuffer())))
-    .then(f => perf.log('fetch', `prefetch extensions: ${f.length} files`, { ms: performance.now() - t0 }))
-    .catch(e => perf.log('info', `prefetch extensions: ${e?.message || e}`));
+    .catch(() => {});
 }
 
 // onProgress({ label, done, total, detail }) while a long download runs, null when it ends.
@@ -154,7 +151,6 @@ export function createDataSource({ onStatus = () => {}, onProgress = () => {}, t
     (job.names ?? []).filter(n => b.opened.has(n)).length > (job.names ?? []).filter(n => a.opened.has(n)).length ? b : a) });
   const submit = queue.submit;
   const q = (e, sql) => submit(() => e.conn.query(sql), { engine: e });
-  const tag = e => ENGINES > 1 ? ` [engine ${e.i + 1}]` : '';
 
   // The SAS from the function: the page's downloads use it, and nothing else does. A page open
   // longer than it gets a new one shortly before it expires (a failed renewal is tried again a
@@ -163,7 +159,7 @@ export function createDataSource({ onStatus = () => {}, onProgress = () => {}, t
   function renewLater() {
     setTimeout(async () => {
       try { sas = (await catalog.open({ renew: true })).sas; renewLater(); }
-      catch (e) { perf.log('error', 'SAS renewal', { status: String(e?.message || e) }); setTimeout(renewLater, 60000); }
+      catch { setTimeout(renewLater, 60000); }
     }, Math.max(catalog.renewAt() - Date.now(), 0));
   }
 
@@ -174,7 +170,7 @@ export function createDataSource({ onStatus = () => {}, onProgress = () => {}, t
   const storeReady = new Promise(r => { storeUp = r; });
   // Each key holds the waiters for its answer: the same file can be handed over twice at once,
   // and the one answer settles both.
-  const answers = new Map();   // id -> [resolve], for { missing } and { stats }
+  const answers = new Map();   // id -> [resolve], for { missing }
   const stored = new Map();    // store path -> [resolve], for { store }
   // What was asked and not answered yet, to ask again of a new writer: one that took over from
   // a closed tab never saw the question.
@@ -212,12 +208,6 @@ export function createDataSource({ onStatus = () => {}, onProgress = () => {}, t
     const missing = new Set((await waitFor(answers, id, () => channel.postMessage({ missing: paths.map(storePath), id }), 'what it holds')).missing);
     return paths.filter(p => missing.has(storePath(p)));
   }
-  // What the store holds, for the Logs tab.
-  async function logStore(when) {
-    const id = `${Date.now()}-${Math.random()}`;
-    const { stats } = await waitFor(answers, id, () => channel.postMessage({ stats: true, id }), 'its size');
-    perf.log('info', `store ${when}: ${stats.files} files, ${(stats.bytes / 1073741824).toFixed(2)} GB`);
-  }
   // This tab's store worker (blockcache.js, the writer's role): the downloads go to it,
   // transferred rather than copied, and it hands them to whichever store worker writes (and
   // again to a new one, after a tab closes). The DuckDB workers only read the store.
@@ -249,7 +239,6 @@ export function createDataSource({ onStatus = () => {}, onProgress = () => {}, t
       try { await bind(e, name, t, await readyOf(name, t)); }
       catch (err) {
         if (!t.stored) throw err;
-        perf.log('info', `OPEN ${name} from its record failed (${err?.message || err}): planned again`);
         snapshots.drop(name); t.record = null; t.stored = false; t.ready = null;
         t.planning = planFor(t);
         await bind(e, name, t, await readyOf(name, t));
@@ -278,7 +267,6 @@ export function createDataSource({ onStatus = () => {}, onProgress = () => {}, t
     const missing = new Set(await lacking(all.map(f => f.path)));
     if (!missing.size) return;
     const fresh = all.filter(f => missing.has(f.path));
-    const t0 = performance.now();
     const shown = !(t.bytes != null && t.bytes <= SMALL_BYTES);
     let done = 0, got = 0;
     const progress = () => shown && onProgress({ label: `Downloading ${name}`, done, total: fresh.length,
@@ -289,12 +277,9 @@ export function createDataSource({ onStatus = () => {}, onProgress = () => {}, t
     } finally { if (shown) onProgress(null); }
     const still = await lacking(fresh.map(f => f.path));
     if (still.length) throw new Error(`${name}: ${still.length} files not in the local store after their download`);
-    perf.log('fetch', `download ${name}: ${fresh.length} files, ${(got / 1048576).toFixed(0)} MB`, { ms: performance.now() - t0 });
-    logStore(`after ${name}`).catch(() => {});
   }
   // The table's view on engine `e`, over a copy in its memory or over the files.
   async function bind(e, name, t, record) {
-    const mb = t.bytes == null ? '?' : (t.bytes / 1048576).toFixed(1);
     const small = t.bytes != null && t.bytes <= SMALL_BYTES;
     // What a view cannot read (no data file, a file that is not Parquet such as a deletion
     // vector, an equality delete) is an error: there is no other way in.
@@ -306,17 +291,16 @@ export function createDataSource({ onStatus = () => {}, onProgress = () => {}, t
     }
     // The positions the delete files remove, read once per session into memory.
     if (record.deleteFiles.length)
-      await perf.time('attach', `DELETES ${name} (${record.deleteFiles.length} delete files)${tag(e)}`, () => e.conn.query(
+      await e.conn.query(
         `CREATE OR REPLACE TABLE ${ident(deletesOf(name))} AS
          SELECT DISTINCT regexp_replace(file_path, '^abfss?://([^@/]+)@([^/]+)/', 'store/\\1/') AS path, pos
-         FROM read_parquet([${record.deleteFiles.map(f => lit(localName(f.path))).join(', ')}])`));
-    const how = `${record.files.length} Parquet files${record.deleteFiles.length ? `, ${record.deleteFiles.length} delete files applied` : ''}`;
+         FROM read_parquet([${record.deleteFiles.map(f => lit(localName(f.path))).join(', ')}])`);
     if (small)
-      await perf.time('attach', `OPEN ${name} (${mb} MB, copied into memory, ${how})${tag(e)}`, () => e.conn.query(
-        `CREATE OR REPLACE TABLE ${ident(name)} AS ${selectOf(name, record)}; CREATE OR REPLACE VIEW ${ident('v_' + name)} AS SELECT * FROM ${ident(name)}`));
+      await e.conn.query(
+        `CREATE OR REPLACE TABLE ${ident(name)} AS ${selectOf(name, record)}; CREATE OR REPLACE VIEW ${ident('v_' + name)} AS SELECT * FROM ${ident(name)}`);
     else
-      await perf.time('attach', `OPEN ${name} (${mb} MB, read in place, ${how})${tag(e)}`, () => e.conn.query(
-        `CREATE OR REPLACE VIEW ${ident('v_' + name)} AS ${selectOf(name, record)}`));
+      await e.conn.query(
+        `CREATE OR REPLACE VIEW ${ident('v_' + name)} AS ${selectOf(name, record)}`);
   }
   // What a view reads: read_parquet over the files' local names. With delete files, the rows
   // whose file and position (file_row_number, 0-based as Iceberg's pos) a delete file names are
@@ -346,11 +330,7 @@ export function createDataSource({ onStatus = () => {}, onProgress = () => {}, t
   // A new snapshot planned by the page, at once, off every engine: opening the table waits for it.
   let access = null;
   function planFor(t) {
-    const t0 = performance.now();
-    const planning = (t.m ? Promise.resolve(t.m) : metadataOf(t.location)).then(m => planTable(t.name, m, f => https(f, sas || access.sas)));
-    planning.then(p => perf.log('attach', `PLAN ${t.name} (in the page: ${p.manifests} manifests, ${p.fetched} read, ${p.record.files.length} files)`, { ms: performance.now() - t0 }),
-                  e => perf.log('error', `PLAN ${t.name}`, { status: String(e?.message || e) }));
-    return planning;
+    return (t.m ? Promise.resolve(t.m) : metadataOf(t.location)).then(m => planTable(t.name, m, f => https(f, sas || access.sas)));
   }
   async function metadataOf(location) {
     const r = await fetch(https(location, sas || access.sas));
@@ -378,17 +358,14 @@ export function createDataSource({ onStatus = () => {}, onProgress = () => {}, t
     }));
     // Smallest first: the downloads are served first come, first served, and a small table's
     // few files would otherwise wait behind a large one's.
-    let kept = 0;
     for (const t of metas.filter(Boolean).sort((a, b) => (a.bytes ?? Infinity) - (b.bytes ?? Infinity))) {
-      if (t.record) kept++;
       const planning = t.record ? null : t.error ? Promise.reject(t.error) : planFor(t);
-      planning?.catch(() => {});   // logged by planFor, thrown when the table opens
+      planning?.catch(() => {});   // thrown when the table opens
       let whenReady;
       const isReady = new Promise(r => { whenReady = r; });
       located.set(t.name, { name: t.name, location: t.location, bytes: t.bytes, planning, record: t.record ?? null,
         stored: !!t.record, ready: null, whenReady, isReady });
     }
-    if (kept) perf.log('info', `snapshots: ${kept} of ${metas.filter(Boolean).length} tables unchanged, opened from their records`);
   }
 
 
@@ -414,18 +391,15 @@ export function createDataSource({ onStatus = () => {}, onProgress = () => {}, t
     // started together.
     const bundle = BUNDLE;
     const workerUrl = URL.createObjectURL(
-      // HTTP_TRACE_SHIM times the worker's own requests (the store's answers) for the Logs tab.
       // The store lets the worker fetch extensions from EXT_REPO, and nothing else.
       new Blob([`self.DUCKDB_EXT_REPO = ${JSON.stringify(EXT_REPO)};
 importScripts("${BLOCKCACHE}");
-`, HTTP_TRACE_SHIM, `
 importScripts("${bundle.mainWorker}");`], { type: "text/javascript" }));
     let warmed = false;
     engines = new Array(ENGINES).fill(null);
     await Promise.all(Array.from({ length: ENGINES }, async (_, i) => {
       const db = new duckdb.AsyncDuckDB(new duckdb.ConsoleLogger(), new Worker(workerUrl));
-      // Its worker script and WASM module fetched and compiled: the Logs tab says how long.
-      await perf.time('attach', `START engine ${i + 1} (worker + WASM instantiate)`, () => db.instantiate(bundle.mainModule, bundle.pthreadWorker));
+      await db.instantiate(bundle.mainModule, bundle.pthreadWorker);
       // Its file system reads a registered https file by range, after a HEAD with
       // Range: bytes=0- that the store answers 206; never the whole file at once. All three are
       // needed: with forceFullHTTPReads left out (on), a file opens with no request and fails.
@@ -437,12 +411,11 @@ importScripts("${bundle.mainWorker}");`], { type: "text/javascript" }));
       const version = await db.getVersion();
       if (version !== DUCKDB) throw new Error(`the engine is DuckDB ${version}, but the site's extensions are for ${DUCKDB}`);
       if (!warmed) { warmed = true; warmExtensions(version); }
-      const e = { i, db, conn: await db.connect(), opened: new Map(), registered: new Set() };
+      const e = { db, conn: await db.connect(), opened: new Map(), registered: new Set() };
       engines[i] = e;
       queue.add(e);   // its setup below runs through the queue, on it
       // Installing needs a home directory.
-      await perf.time('attach', `LOAD ${EXTENSIONS.join(', ')} (DuckDB ${version})${ENGINES > 1 ? ` [engine ${i + 1}]` : ''}`, () =>
-        q(e, `SET home_directory = '/tmp'; SET custom_extension_repository = ${lit(EXT_REPO)}; ${EXTENSIONS.map(x => `INSTALL ${x}; LOAD ${x};`).join(' ')}`));
+      await q(e, `SET home_directory = '/tmp'; SET custom_extension_repository = ${lit(EXT_REPO)}; ${EXTENSIONS.map(x => `INSTALL ${x}; LOAD ${x};`).join(' ')}`);
       try { localStorage.setItem(EXT_KEY, version); } catch (x) {}
       // Iceberg's files never change once written: a Parquet footer read holds for the session.
       await q(e, 'SET parquet_metadata_cache = true;');
@@ -455,7 +428,6 @@ importScripts("${bundle.mainWorker}");`], { type: "text/javascript" }));
     channel.postMessage({ ping: true });
     await Promise.race([storeReady, new Promise((_, reject) => setTimeout(() =>
       reject(new Error('no local store in this browser (OPFS with shared access handles, Chrome or Edge 121+)')), STORE_WAIT))]);
-    logStore('at start').catch(() => {});
 
     onStatus('Reading the model and its tables from the lakehouse…');
     await ready;
@@ -489,8 +461,8 @@ importScripts("${bundle.mainWorker}");`], { type: "text/javascript" }));
           if (e.opened.has(name)) continue;
           // Made ready (planned, downloaded) outside the queue; then each engine opens it.
           const job = () => submit(() => e.opened.has(name) ? null : open(e, name), { engine: e, later: true });
-          (e === engines[0] ? readyOf(name, t).then(job) : t.isReady.then(job)).catch(err =>
-            perf.log('error', `OPEN ${name}${tag(e)}`, { status: String(err?.message || err) }));
+          // A table that fails here fails again, with its reason, when a query names it.
+          (e === engines[0] ? readyOf(name, t).then(job) : t.isReady.then(job)).catch(() => {});
         }
     }
     return Promise.resolve(false);
@@ -501,38 +473,20 @@ importScripts("${bundle.mainWorker}");`], { type: "text/javascript" }));
     // The semantic model as the lakehouse holds it (an Ossie document or TMSL), once init has
     // answered.
     model: () => model,
-    // `dax`: the query as the page wrote it, for the Logs tab (the compiler passes it).
     // `options`: the page's for the queue (queue.js): `stale`, `early`, `later`.
-    // Timed here, not by perf.query: its wait assumes one worker. `wait`: in the queue, until
-    // an engine took it; `ms`: the query itself (opening its tables is logged as OPEN); the
-    // engine in its status.
     // A result already computed on these snapshots, on this visit or an earlier one, is read
     // back from this browser (results.js) instead: the page's own cache (runQuery) holds the
     // last 200 for the visit, this one survives a reload.
-    query: async (sql, dax, options) => {
-      const t0 = performance.now();
-      const flat = s => String(s ?? '').replace(/\s+/g, ' ').trim();
+    query: async (sql, options) => {
       const key = resultKey(sql);
       const saved = key && await results.get(key);
-      if (saved) {
-        perf.log('query', flat(sql), { wait: 0, ms: performance.now() - t0, status: `${saved.numRows} rows (saved)`, dax: flat(dax) });
-        return saved;
-      }
-      let started = null, ran = null, used = null;
+      if (saved) return saved;
       return readyFor(sql).then(() => submit(async e => {
-        used = e; started = performance.now();
         await openFor(e, sql);
-        ran = performance.now();
         return e.conn.query(sql);
       }, { ...options, names: namedIn(sql) })).then(r => {
-        perf.log('query', flat(sql), { wait: started - t0, ms: performance.now() - ran, status: `${r.numRows} rows${tag(used)}`, dax: flat(dax) });
         if (key) results.put(key, r);
         return r;
-      }, err => {
-        if (err?.skipped) perf.log('skip', flat(sql), { status: 'replaced by a newer render', dax: flat(dax) });
-        else perf.log('error', flat(sql), { wait: started == null ? null : started - t0, ms: started == null ? null : performance.now() - (ran ?? started),
-                                            status: `${err?.message || err}${used ? tag(used) : ''}`, dax: flat(dax) });
-        throw err;
       });
     },
   };

@@ -1,5 +1,5 @@
 // =============================================================================
-// explore/view.js — a semantic model's Explore: Model, Pivot and Logs
+// explore/view.js — a semantic model's Explore: Model and Pivot
 // =============================================================================
 //   Model     the star of its tables and relationships, and what the model says of the
 //             table picked (model.js)
@@ -8,7 +8,6 @@
 //             edits (a SELECT … FROM <model> asks the model; any other SQL runs as written);
 //             Show plan puts the query's profile and plan in place of the results
 //             (profile.js). Download CSV writes the pivot's rows, or the box's.
-//   Logs      what this session ran, with timings (logs.js, perflog.js)
 // The same file in the panel and in Export to Fabric's app: the host says how a model's SQL is compiled
 // and run, and where ECharts comes from (`ctx`); nothing here knows the engine.
 // =============================================================================
@@ -19,11 +18,9 @@ import { el } from './dom.js';
 import { createExplorer } from './explore.js';
 import { compileModelSql } from './query.js';
 import { createPlanView, profileSql, elapsed, profileColors } from './profile.js';
-import { mountLogs } from './logs.js';
-import { perf } from './perflog.js';
 import { PALETTE, registerChartTheme } from './theme.js';
 
-const PAGES = [['model', 'Model'], ['pivot', 'Pivot'], ['logs', 'Logs']];
+const PAGES = [['model', 'Model'], ['pivot', 'Pivot']];
 const PREVIEW_ROWS = 500;
 
 // `ctx`:
@@ -32,7 +29,7 @@ const PREVIEW_ROWS = 500;
 //   tmsl             the model, as model.js's tmslOf reads it
 //   compiler         dax-sql's compiler over the model, with the host's tableSource and
 //                    query.js's EXPLORE_CASTS
-//   run(sql, dax)    a compiled SQL's result (`dax`: what it stands for, for a host that logs): { fields, rows, numRows, truncated?, limit? }
+//   run(sql)         a compiled SQL's result: { fields, rows, numRows, truncated?, limit? }
 //   echarts()        ECharts (a promise)
 //   saveText(name, text)  a CSV saved: answers where (or null: dismissed)
 //   loadState(key), saveState(key, s)  the shelves, between visits
@@ -44,16 +41,13 @@ const PREVIEW_ROWS = 500;
 //   exportToFabric(state)  (optional) the Export to Fabric button: the shelves on screen,
 //                    published as a Fabric app of this Explore (src/exportapp.js); answers
 //                    what to say when it is done
-//   logsNote         (optional) the Logs page's line
 //   editSql(sql)     (optional) the Edit SQL button: the shelves' query, all its rows, handed
 //                    to the host's own SQL editor, which runs it and saves its CSV, so Show SQL
 //                    and Download CSV are left out
 //   plainSql         (optional) { from, measure(name) }: editSql's query as SQL over one table
 //                    (explore.js's modelSql), else SQL over the model
 //   close()          (optional) a Close button, after Edit SQL
-//   hostLogs         the host logs its queries itself (perflog.js), with more than this view
-//                    knows (the Fabric app's queue and engine): this view logs none of them
-//   pages            (optional) the pages shown, of 'model', 'pivot', 'logs' (default: all);
+//   pages            (optional) the pages shown, of 'model', 'pivot' (default: both);
 //                    the first is the one it opens on. One page: no page tabs.
 //   stateKey         (optional) where its shelves are kept (default: explore.<name>)
 // Returns { destroy }.
@@ -79,7 +73,6 @@ export function mountExplore(root, ctx) {
     ...(editBtn ? [editBtn, closeBtn] : [sqlToggle, closeBtn, csvBtn]), exportBtn);
   const modelPage = el('div', { class: 'model-page' });
   const pivotPage = el('div', { class: 'explore-page', hidden: true });
-  const logsPage = el('div', { class: 'explore-logs-page', hidden: true });
 
   // Show SQL: the pivot's SQL in a box the user edits, in place of the whole pivot.
   const ta = el('textarea', { spellcheck: 'false', wrap: 'off', 'aria-label': 'SQL over the semantic model' });
@@ -102,7 +95,7 @@ export function mountExplore(root, ctx) {
       el('div', { class: 'subtabs', role: 'tablist', 'aria-label': 'Semantic model pages', hidden: pages.length < 2 }, tabs),
       actions,
       ctx.title == null ? null : el('span', { class: 'sm-title' }, `${ctx.title} · semantic model `, el('code', {}, ctx.name))),
-    modelPage, pivotPage, sqlPage, logsPage);
+    modelPage, pivotPage, sqlPage);
   ta.addEventListener('keydown', e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); runSql(); } });
 
   for (const b of tabs) {
@@ -113,7 +106,7 @@ export function mountExplore(root, ctx) {
     });
     b.addEventListener('click', () => show(b.dataset.apage));
   }
-  let page = pages[0][0], logs = null;
+  let page = pages[0][0];
   function show(p) {
     page = p;
     for (const b of tabs) {
@@ -125,10 +118,8 @@ export function mountExplore(root, ctx) {
     if (sqlMode && p !== 'pivot') closeSql();
     modelPage.hidden = p !== 'model';
     pivotPage.hidden = p !== 'pivot' || sqlMode;
-    logsPage.hidden = p !== 'logs';
     actions.hidden = p !== 'pivot';
     if (p === 'pivot') openExplorer();
-    if (p === 'logs') { logs ??= mountLogs(logsPage, { note: ctx.logsNote }); logs.render(); }
   }
 
   // --- Model ---
@@ -141,14 +132,14 @@ export function mountExplore(root, ctx) {
   // SQL's unedited box, are answered here. Only answers are kept, never a failure or a Stop;
   // a CSV and a profile run fresh.
   const results = new Map();   // sql -> result, oldest first
-  async function run(sql, dax = '', { fresh = false } = {}) {
+  async function run(sql, { fresh = false } = {}) {
     if (!fresh && results.has(sql)) {
       const hit = results.get(sql);
       results.delete(sql);
       results.set(sql, hit);
       return hit;
     }
-    const res = ctx.hostLogs ? await ctx.run(sql, dax) : await perf.query(sql, () => ctx.run(sql, dax), dax, { queued: false });
+    const res = await ctx.run(sql);
     if (!fresh) {
       results.set(sql, res);
       if (results.size > 40) results.delete(results.keys().next().value);
@@ -192,7 +183,7 @@ export function mountExplore(root, ctx) {
     explorer = createExplorer(pivotPage, {
       model: async () => ctx.tmsl,
       name: ctx.name,
-      run: async text => { const { sql, dax } = compile(text); return (await run(sql, dax)).rows; },
+      run: async text => (await run(compile(text))).rows,
       chart: box => {
         if (!charts.has(box)) { charts.set(box, echarts.init(box, 'studio')); resized.observe(box); }
         return charts.get(box);
@@ -258,17 +249,17 @@ export function mountExplore(root, ctx) {
       const t0 = performance.now();
       const ticker = setInterval(() => { if (my === outSeq) info.textContent = `Running query… ${elapsed(t0)}`; }, 100);
       try {
-        const { sql, dax } = compile(base);
+        const sql = compile(base);
         // Every column as DuckDB prints it: a DATE, TIMESTAMP or DECIMAL would otherwise show
         // as its raw number.
-        const res = await run(`SELECT COLUMNS(*)::VARCHAR FROM (\n${sql}\n) LIMIT ${PREVIEW_ROWS}`, dax);
+        const res = await run(`SELECT COLUMNS(*)::VARCHAR FROM (\n${sql}\n) LIMIT ${PREVIEW_ROWS}`);
         if (my !== outSeq) return;
         if (!res.rows.length) { info.textContent = `No rows · ${elapsed(t0)}`; return; }
         out.innerHTML = '<thead><tr>' + res.fields.map(c => `<th>${escapeHtml(c)}</th>`).join('') + '</tr></thead><tbody>' +
           res.rows.map(r => '<tr>' + res.fields.map(c => `<td>${escapeHtml(r[c] ?? '')}</td>`).join('') + '</tr>').join('') + '</tbody>';
         // The count runs the query again: only when the rows shown are cut at the limit.
         const total = res.rows.length < PREVIEW_ROWS ? res.rows.length
-          : Number((await run(`SELECT COUNT(*) AS cnt FROM (\n${sql}\n)`, dax)).rows[0]?.cnt ?? res.rows.length);
+          : Number((await run(`SELECT COUNT(*) AS cnt FROM (\n${sql}\n)`)).rows[0]?.cnt ?? res.rows.length);
         if (my !== outSeq) return;
         info.textContent = (res.rows.length < total ? `Showing ${res.rows.length} of ${total.toLocaleString()} rows`
           : `${total.toLocaleString()} rows`) + ` · ${elapsed(t0)}`;
@@ -285,14 +276,14 @@ export function mountExplore(root, ctx) {
     planShown = !!node;
     planBtn.textContent = planShown ? 'Show results' : 'Show plan';
   }
-  async function planTree(sql, dax) {
+  async function planTree(sql) {
     if (ctx.htmlPlan) {
-      const res = await run(`EXPLAIN (FORMAT html) ${sql}`, dax);
+      const res = await run(`EXPLAIN (FORMAT html) ${sql}`);
       const frame = el('iframe', { class: 'plan-frame', title: 'Query plan', sandbox: 'allow-scripts' });
       frame.srcdoc = res.rows.map(r => r.explain_value ?? Object.values(r).join('\n')).join('\n');
       return frame;
     }
-    const res = await run(`EXPLAIN ${sql}`, dax);
+    const res = await run(`EXPLAIN ${sql}`);
     return el('pre', { class: 'sm-plan' }, res.rows.map(r => r.explain_value ?? Object.values(r).join('  ')).join('\n'));
   }
   function showPlan() {
@@ -302,10 +293,10 @@ export function mountExplore(root, ctx) {
     if (!base) { info.textContent = 'Enter a SQL query.'; return; }
     info.textContent = '';
     try {
-      const { sql, dax } = compile(base);
+      const sql = compile(base);
       showPlanNode(createPlanView({
-        profile: async () => (await run(profileSql(sql, { set: ctx.profileSet !== false }), dax, { fresh: true })).rows[0]?.explain_value,
-        tree: () => planTree(sql, dax),
+        profile: async () => (await run(profileSql(sql, { set: ctx.profileSet !== false }), { fresh: true })).rows[0]?.explain_value,
+        tree: () => planTree(sql),
         colors: () => profileColors(css),
         elapsed,
       }));
@@ -323,9 +314,9 @@ export function mountExplore(root, ctx) {
     csvBtn.disabled = true;
     csvBtn.textContent = 'Exporting…';
     try {
-      const { sql, dax } = compile(base);
+      const sql = compile(base);
       // Cast as the box's results are, so the file holds what they show.
-      const res = await run(`SELECT COLUMNS(*)::VARCHAR FROM (\n${sql}\n)`, dax, { fresh: true });
+      const res = await run(`SELECT COLUMNS(*)::VARCHAR FROM (\n${sql}\n)`, { fresh: true });
       const text = toCsv(res.fields, res.rows, { eol: '\n' }) + '\n';
       const saved = await ctx.saveText(`${ctx.name}-explore.csv`, text);
       if (saved) setStatus(`Saved ${res.rows.length.toLocaleString()} rows${typeof saved === 'string' ? ` to ${saved}` : ''}` +
@@ -363,7 +354,6 @@ export function mountExplore(root, ctx) {
     destroy() {
       destroyed = true;
       explorer?.destroy();
-      logs?.destroy();
       results.clear();
       resized.disconnect();
       themed.disconnect();

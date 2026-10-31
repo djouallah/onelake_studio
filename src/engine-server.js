@@ -10,7 +10,7 @@
 //   window -> server   { token, window }   then the socket stays open: it says the window is alive
 //   server -> window   { ok, uri, capabilities, tmpDir }
 //   window -> server   { stop: true }      Sign Out, a restart, Clear Cached OneLake Data
-//   window -> server   { status: true }    answered { pid, uptimeMs, cpuUs, rss, windows }
+//   window -> server   { id, stats | logs | clearLogs | storageToken }, answered { id, value | error }
 //
 // A window gone is a window whose queries nobody is waiting for: Quack lets them run on, so they
 // are cancelled here. With no window left the server waits `idleMs`, so a window reload finds it
@@ -24,6 +24,7 @@ const crypto = require('node:crypto');
 const { DuckDBInstance } = require('@duckdb/node-api');
 const { createEngineHost } = require('./engine-host');
 const { openClient, loadExtension } = require('./engine-client');
+const { createLogKeeper } = require('./enginelog');
 const { sqlStr } = require('./sql');
 
 const sameToken = (a, b) => {
@@ -42,9 +43,10 @@ async function openState({ stateFile, token, options }) {
   await loadExtension(c, 'httpfs', options);
   await loadExtension(c, 'quack', options);
   await c.run('CREATE TABLE IF NOT EXISTS kv (k VARCHAR PRIMARY KEY, ts BIGINT, value VARCHAR);');
+  await c.run('CREATE TABLE IF NOT EXISTS logs (ts BIGINT, win VARCHAR, sql VARCHAR, ms BIGINT, status VARCHAR, error VARCHAR, conn VARCHAR);');
   const r = await c.runAndReadAll(`SELECT listen_uri FROM quack_serve('quack:127.0.0.1:0', token = ${sqlStr(token)})`);
   await c.run(`SET allowed_directories = []; SET enable_external_access = false; SET lock_configuration = true;`);
-  return { db, uri: r.getRowObjectsJson()[0].listen_uri };
+  return { db, conn: c, uri: r.getRowObjectsJson()[0].listen_uri };
 }
 
 async function main({ token, pipe, options, logFile, idleMs = 60_000, stateFile = null, build = null }) {
@@ -55,7 +57,7 @@ async function main({ token, pipe, options, logFile, idleMs = 60_000, stateFile 
   const engine = createEngineHost({ ...options, serve: { token }, onWarn: log,
     onLog: b => log(`booted in ${b.totalMs}ms`) });
 
-  let idle = null, state = null, reaper = null, stopping = false, stateDb = null;
+  let idle = null, state = null, reaper = null, stopping = false, stateDb = null, keeper = null;
   const clients = new Set();
   async function shutdown(why) {
     if (stopping) return;
@@ -64,6 +66,7 @@ async function main({ token, pipe, options, logFile, idleMs = 60_000, stateFile 
     server.close();
     // No engine.close(): closing an instance blocks until its statements are done, and a client's
     // are running on it. Everything it holds that matters is on disk already, or goes with it.
+    if (keeper) { keeper.stop(); await keeper.flush().catch(() => {}); }
     if (state) await fsp.rm(state.tmpDir, { recursive: true, force: true }).catch(() => {});
     if (stateDb) { try { stateDb.closeSync(); } catch (_) {} }   // checkpoints; a kill replays its log
     process.exit(0);
@@ -81,6 +84,16 @@ async function main({ token, pipe, options, logFile, idleMs = 60_000, stateFile 
       log(`cancelling ${ids.length} left by a window that went`);
       await reaper.cancelIds(ids);
     }
+  }
+
+  // What a window asks over the pipe rather than Quack: nothing here is in Quack's log, the token above all.
+  async function answer(msg) {
+    await booted;
+    if (msg.storageToken) { await engine.setStorageToken(String(msg.storageToken)); return true; }
+    if (msg.stats) return { ...await engine.stats(), statements: keeper ? await keeper.statements() : 0 };
+    if (msg.logs) return keeper ? keeper.read(msg.logs.limit) : [];
+    if (msg.clearLogs) { if (keeper) await keeper.clear(); return true; }
+    throw new Error('the engine was asked something it does not know');
   }
 
   let booted;
@@ -103,8 +116,7 @@ async function main({ token, pipe, options, logFile, idleMs = 60_000, stateFile 
         try { msg = JSON.parse(line); } catch (_) {}
         if (!who) {
           if (!sameToken(msg.token, token)) { sock.destroy(); return; }
-          // `owner`: a VS Code window can hold two sockets, for the engine and for the tree.
-          who = { window: String(msg.window || ''), owner: String(msg.owner || msg.window || '') };
+          who = { window: String(msg.window || '') };
           clients.add(who);
           watchIdle();
           // A window that arrives during the boot waits for it.
@@ -112,10 +124,10 @@ async function main({ token, pipe, options, logFile, idleMs = 60_000, stateFile 
           catch (e) { sock.write(`${JSON.stringify({ ok: false, error: e.message })}\n`); }
         } else if (msg.stop) {
           shutdown('a window asked');
-        } else if (msg.status) {
-          const u = process.cpuUsage();
-          sock.write(`${JSON.stringify({ pid: process.pid, uptimeMs: process.uptime() * 1000, cpuUs: u.user + u.system,
-            rss: process.memoryUsage().rss, windows: new Set([...clients].map(c => c.owner)).size })}\n`);
+        } else if (msg.id != null) {
+          // Answered by id: these finish in any order.
+          answer(msg).then(value => ({ value }), e => ({ error: (e && e.message) || String(e) }))
+            .then(reply => { if (!sock.destroyed) sock.write(`${JSON.stringify({ id: msg.id, ...reply })}\n`); });
         }
       }
     });
@@ -143,7 +155,12 @@ async function main({ token, pipe, options, logFile, idleMs = 60_000, stateFile 
         state.stateError = `the state file could not be opened: ${e.message}`;
         return null;
       });
-      if (kept) { state.stateUri = kept.uri; stateDb = kept.db; }
+      if (kept) {
+        state.stateUri = kept.uri;
+        stateDb = kept.db;
+        keeper = createLogKeeper({ engine, state: kept.conn, log, maxBytes: Math.max(0, Number(options.logMaxGB ?? 1) || 0) * 1024 ** 3 });
+        keeper.start();
+      }
     }
     reaper = await openClient({ uri: s.uri, token, extensionDir: options.extensionDir, bundledExtensions: options.bundledExtensions })
       .catch(e => { log(`no way to cancel a gone window's queries: ${e.message}`); return null; });
