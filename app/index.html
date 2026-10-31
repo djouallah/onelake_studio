@@ -90,12 +90,13 @@
     #sqlEditor:focus { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
     /* A semantic model's view has its own SQL box and Show plan. */
     section.modelOpen #sqlEditor, section.modelOpen #runBtn, section.modelOpen #planBtn, section.modelOpen #saveQueryBtn { display: none; }
-    /* Pivot is a table's; Edit SQL puts a model's SQL in the box too (app.js). */
+    /* Pivot is a table's. Edit SQL takes a model's SQL to the box its view hides (app.js). */
     section:not(.tableOpen) #pivotBtn { display: none; }
+    section:not(.modelOpen) #editSqlBtn { display: none; }
     /* A table's Pivot takes the place of the results, as a model's view does; it has its own Edit SQL. */
     #pivotView { flex: 1; overflow: auto; min-height: 0; }
     section.pivotOpen .resultsWrap, section.pivotOpen #csvBtn, section.pivotOpen #profileBtn, section.pivotOpen #chartBtn,
-    section.pivotOpen #editSqlBtn, section.pivotOpen #sqlEditor, section.pivotOpen #runBtn, section.pivotOpen #planBtn,
+    section.pivotOpen #sqlEditor, section.pivotOpen #runBtn, section.pivotOpen #planBtn,
     section.pivotOpen #saveQueryBtn,
     section.pivotOpen #pivotBtn { display: none; }
     table.results { border-collapse: collapse; width: 100%; font-size: 13px; }
@@ -211,7 +212,7 @@
       <button id="chartBtn" disabled title="The rows on screen as a bar, line or scatter chart">Chart</button>
       <button id="profileBtn" disabled title="Each column of the result: its nulls, distinct values, min, max and quartiles, over every row">Profile</button>
       <button id="csvBtn" disabled>Export…</button>
-      <button id="editSqlBtn" title="This SQL in the box, to change and run it there (Ctrl+Enter)">Edit SQL</button>
+      <button id="editSqlBtn" title="The model's SQL in the box, to change and run it there (Ctrl+Enter)">Edit SQL</button>
       <button id="saveQueryBtn" title="Keep the box's SQL under Queries in the OneLake sidebar (Ctrl+S)">Save Query</button>
       <button id="planBtn" title="Where the statement spends its time (it runs once to measure)">Plan</button>
       <button id="runBtn" class="primary" title="The statement under the cursor, or the selection (Ctrl+Enter)">Run ▶</button>

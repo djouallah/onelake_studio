@@ -429,7 +429,7 @@ async function cachedRunMatrix({ saved, home }) {
     check("saving again is the same query", /Saved as Query 1/.test(again.status) && !existsSync(join(folder, "Query 2.sql")), again.status);
   });
 
-  await step("Tree: a table click leaves the box as it is, and Edit SQL fills it", async () => {
+  await step("Tree: a table click leaves the box as it is, with no Edit SQL beside it", async () => {
     await setBox("select 'mine' as typed");
     await drive("exec", { command: "onelakeStudio.openTable", args: [{ workspace: WORKSPACE, item: "data.Lakehouse", schema: "dbo", table: "orders" }] });
     const s = await until("the table", async () => {
@@ -437,12 +437,7 @@ async function cachedRunMatrix({ saved, home }) {
       return /orders/.test(x.title) && x;
     }, 20000);
     check("what was typed is still there", s.box === "select 'mine' as typed", s.box);
-    const f = await panel();
-    await until("Edit SQL to have something", async () => {
-      await f.locator("#editSqlBtn").click();
-      return /orders/.test((await panelState()).box);
-    }, 20000);
-    check("Edit SQL puts the table's SQL in the box", true);
+    check("the box's own tab has no Edit SQL", !await (await panel()).locator("#editSqlBtn").isVisible());
   });
 
   await step("Tree: Select Top Rows runs from the box", async () => {

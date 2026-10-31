@@ -44,8 +44,8 @@ let engine = null;
 let engineReady = null;      // resolves when engine.init() has finished; gates every use of it
 let lakehouse = null;        // { workspace, item }
 let activeSqlName = null;    // the selected table's SQL name (lakehouse.ws.item.schema.table)
-// The SQL behind what is on screen (a query's, a table's first rows, a file's preview): Edit SQL
-// puts it in the box.
+// The SQL behind what is on screen (a query's, a table's first rows, a file's preview): what
+// Profile and Export work from.
 let currentSql = '';
 // How the last runQuery or showPlan went, for the box: its error, and whether the SQL run was a
 // semantic model's compiled SQL (positions are not the box's).
@@ -522,7 +522,7 @@ async function selectTable(t) {
     tableStage = 'stats';
     setActiveStats(info);
     showStats();                    // statistics are the landing view for a table
-    // Not run: Edit SQL opens it, to read the rows by query.
+    // Not run: Profile and Export read the rows by it.
     currentSql = activeSqlName ? previewSql(activeSqlName, false) : '';
     setStatus(engine.describeLoad(info));
     // Asked to land on the rows: the same as clicking Data.
@@ -564,7 +564,7 @@ async function peekIntoView() {
     docAllowed = false;             // a peek is a table, whatever shape it comes back
     renderResults(out);             // this lands the pane in the Data view by itself
     reportOpened('rows', $('activeTable').textContent, Date.now() - t0);
-    setStatus(`The first ${out.rows.length} row(s). Edit SQL to query the whole table.`);
+    setStatus(`The first ${out.rows.length} row(s). Query the whole table in the box.`);
   } catch (e) {
     if (stale()) return;
     reportTableError(e);
@@ -1043,7 +1043,7 @@ function statsCardHtml(info, delta) {
   if (s.vorderProp != null) rows.push(['V-Order', s.vorderProp ? 'enabled' : 'disabled']);
 
   const note = 'From the Iceberg snapshot metadata — no data has been read yet. ' +
-    'Open Data for the first rows, or Edit SQL to query the table.';
+    'Open Data for the first rows, or query the table in the box.';
   return kvTable(rows) + columnsHtml(info) + `<p class="statsNote">${escapeHtml(note)}</p>`;
 }
 
@@ -1304,18 +1304,15 @@ async function saveBox() {
   }
 }
 
-// Edit SQL: what is on screen as SQL, in the box. With a semantic model open, the model's own SQL:
-// its Show SQL box, the pivot's query or one typed there.
+// Edit SQL, a semantic model's only: its view hides the box, and this takes the model's own SQL
+// there: its Show SQL box, the pivot's query or one typed there.
 function editSql() {
-  const sql = modelView ? (modelView.sql() || '').trim() : currentSql;
+  const sql = (modelView.sql() || '').trim();
   if (!sql) {
-    setStatus(modelView ? "Put a field on the shelves first: Edit SQL takes the model's query."
-                        : 'Nothing to edit yet: pick a table, or write SQL in the box.');
+    setStatus("Put a field on the shelves first: Edit SQL takes the model's query.");
     return;
   }
-  // What is on screen came from the box: its text stays as it is.
-  if (!modelView && $('sqlEditor').value.includes(sql)) { $('sqlEditor').focus(); return; }
-  if (modelView) enterQuery('');
+  enterQuery('');
   putInBox(sql);
   setStatus('The SQL is in the box: run it (Ctrl+Enter).', 'ok');
 }
