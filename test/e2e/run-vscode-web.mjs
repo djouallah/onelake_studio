@@ -135,12 +135,17 @@ const toasts = () => page.locator(".notifications-toasts .notification-list-item
 const onelakeStatus = () => page.locator(".part.statusbar .statusbar-item").allInnerTexts()
   .then(all => all.filter(t => /OneLake/.test(t)));
 
+// What the eye gets: VS Code cuts a title too long for the header with "...", and the DOM still holds it all.
+const titleFits = () => page.locator(".part.sidebar .composite.title .title-label h2").first()
+  .evaluate(h => h.scrollWidth <= h.clientWidth);
+
 async function expectOffline(label) {
   const title = await until(`${label}: the title`, async () => {
     const t = await sidebarTitle();
     return /^onelake studio: offline$/i.test(t) && t;
   }, 20000).catch(e => e.message);
   check(`${label}: the sidebar's title says OneLake Studio and offline`, /^onelake studio: offline$/i.test(title), title);
+  check(`${label}: all of the title can be read`, await titleFits());
 }
 
 async function panel() {
@@ -153,6 +158,7 @@ async function panel() {
   }, 60000);
 }
 
+const isError = s => /\berror\b/.test(s.cls);
 const panelState = async () => (await panel()).evaluate(() => {
   const $ = id => document.getElementById(id);
   const shown = el => !!el && !el.hidden;
@@ -194,7 +200,7 @@ async function runMatrix() {
     await focusEditor();
     await page.keyboard.press("Control+Enter");
     const s = await cell(/\b101\b/, 120000);
-    check("Ctrl+Enter ran it", s.cls !== "error", s.status);
+    check("Ctrl+Enter ran it", !isError(s), s.status);
     check("Stop is gone when it ends", !s.stop);
   }, 180000);
 
@@ -225,14 +231,16 @@ async function runMatrix() {
     check("only the selection ran", /\b555\b/.test(r.table) && !/\b444\b/.test(r.table), r.table);
   });
 
-  await step("Run: a syntax error", async () => {
-    const r = await runIt("select 1;\n\nselct 2;", { cursor: 12 });
-    settled("a syntax error", r);
-    check("the status bar is red", r.cls === "error", r.status);
-    check("the old result is gone", !r.table, r.table);
-    const d = await drive("diagnostics");
-    check("a diagnostic sits on the statement's line", d.length === 1 && d[0].line === 2, JSON.stringify(d));
-  });
+  for (const [name, bad] of [["a syntax error", "select 2 fromm where"], ["a word that starts no statement", "selct 2"]]) {
+    await step(`Run: ${name}`, async () => {
+      const r = await runIt(`select 1;\n\n${bad};`, { cursor: 12 });
+      settled(name, r);
+      check(`${name}: the status bar is red`, isError(r), r.status);
+      check(`${name}: the old result is gone`, !r.table, r.table);
+      const d = await drive("diagnostics");
+      check(`${name}: a diagnostic sits on the statement's line`, d.length === 1 && d[0].line === 2, JSON.stringify(d));
+    });
+  }
 
   await step("Run: an edit clears the diagnostic, and the next run works", async () => {
     const r = await runIt("select 601 as fixed");
@@ -277,7 +285,7 @@ async function runMatrix() {
     const r = await pending;
     check("Stop ended it", r.settled === "settled", JSON.stringify(r));
     const s = await panelState();
-    check("the status says stopped, not failed", /stopped/i.test(s.status) && s.cls !== "error", s.status);
+    check("the status says stopped, not failed", /stopped/i.test(s.status) && !isError(s), s.status);
     check("Stop is gone", !s.stop);
   }, 90000);
 
@@ -312,7 +320,7 @@ async function runMatrix() {
     await step(`Run: ${name} is refused`, async () => {
       const r = await runIt(sql);
       settled(name, r);
-      check(`${name} is refused`, r.cls === "error", r.status);
+      check(`${name} is refused`, isError(r), r.status);
       check(`${name}: the editor marks it`, (await drive("diagnostics")).length === 1);
     });
   }
@@ -344,7 +352,7 @@ async function cachedRunMatrix({ saved }) {
     const r = await runIt(`select * from ${NEVER_READ}`);
     settled("a table never read", r);
     check("it ends at once, not on a timeout", r.ms < 15000, `${r.ms} ms`);
-    check("the status is an error", r.cls === "error", r.status);
+    check("the status is an error", isError(r), r.status);
     check("it says why", /cache|offline|sign/i.test(r.status), r.status);
     check("the editor marks it", (await drive("diagnostics")).length === 1);
   });
@@ -353,16 +361,16 @@ async function cachedRunMatrix({ saved }) {
     const r = await runIt(`select count(*) from ${TABLE}`);
     settled("a table with metadata only", r);
     check("it ends at once, not on a timeout", r.ms < 15000, `${r.ms} ms`);
-    check("the status is an error", r.cls === "error", r.status);
+    check("the status is an error", isError(r), r.status);
     check("it says why", /cache|offline|sign/i.test(r.status), r.status);
   });
 
   await step("Run: a semantic model's query, with no rows held", async () => {
     const r = await runIt(MODEL_QUERY);
     settled("a model query", r);
-    check("it ends with an answer or a reason", r.cls === "error" ? r.status.length > 15 : !!r.table, r.status);
+    check("it compiled, and names the table it could not read", isError(r) && /(Sales|Product)\b.*cached/.test(r.status), r.status);
     check("it ends at once, not on a timeout", r.ms < 30000, `${r.ms} ms`);
-    check("the editor marks a failure", r.cls !== "error" || (await drive("diagnostics")).length === 1);
+    check("the editor marks it", (await drive("diagnostics")).length === 1);
   });
 }
 
@@ -400,7 +408,7 @@ async function planMatrix() {
       const t = await f.locator("pre.sm-plan").innerText().catch(() => "");
       return t.trim() && t;
     }, 30000);
-    check("the tree holds DuckDB's plan", /PROJECTION|DUMMY_SCAN|┌/.test(text), text.slice(0, 200));
+    check("the tree holds DuckDB's plan", /projection|dummy_scan/i.test(text), text.slice(0, 200));
     await f.locator('.pf-tab[data-view="profile"]').click();
     check("back on the Profile, it is not measured again", await f.locator(".pf").isVisible());
   });
@@ -420,15 +428,24 @@ async function planMatrix() {
   });
 
   await step("Plan: bad SQL reaches the editor", async () => {
-    const r = await runIt("select 1;\n\nselct 2;", { plan: true, cursor: 12 });
+    const r = await runIt("select 1;\n\nselect 2 fromm where;", { plan: true, cursor: 12 });
     settled("bad SQL's plan", r);
-    const d = await until("the diagnostic", async () => {
-      const list = await drive("diagnostics");
-      return list.length && list;
-    }, 10000).catch(() => []);
+    const d = await drive("diagnostics");
     check("the editor marks the line", d.length === 1 && d[0].line === 2, JSON.stringify(d));
-    const s = await panelState();
-    check("the panel says it failed", s.cls === "error" || s.planError, s.status);
+    check("the status bar is red", isError(r), r.status);
+    check("no plan is left on screen", !r.plan, r.planText);
+  });
+
+  await step("Plan: a query that fails only when run", async () => {
+    const r = await runIt("select 1 / cast(i::varchar || 'x' as int) from range(3) t(i)", { plan: true });
+    settled("a failure at run time", r);
+    const s = await planned();
+    check("the view says why", s.planError, s.planText);
+    const red = await until("the status", async () => {
+      const x = await panelState();
+      return isError(x) && x;
+    }, 10000).catch(() => s);
+    check("the status bar is red", isError(red), red.status);
   });
 
   await step("Plan: empty says so", async () => {
@@ -457,21 +474,17 @@ async function cachedPlanMatrix() {
     const r = await runIt(`select * from ${NEVER_READ}`, { plan: true });
     settled("a table never read", r);
     check("it ends at once, not on a timeout", r.ms < 15000, `${r.ms} ms`);
-    const s = await until("a reason", async () => {
-      const x = await panelState();
-      return (x.cls === "error" || x.planError) && x;
-    }, 30000);
-    check("it says why", /cache|offline|sign/i.test(`${s.status} ${s.planText}`), `${s.status} ${s.planText}`);
+    check("it says why, in red", isError(r) && /cache|offline|sign/i.test(r.status), r.status);
+    check("the editor marks it", (await drive("diagnostics")).length === 1);
+    check("no plan is left on screen", !r.plan, r.planText);
   });
 
   await step("Plan: a semantic model's query, with no rows held", async () => {
     const r = await runIt(MODEL_QUERY, { plan: true });
     settled("a model's plan", r);
-    const s = await until("an answer or a reason", async () => {
-      const x = await panelState();
-      return (x.cls === "error" || x.planError || x.profileDrawn) && x;
-    }, 60000);
-    check("it ends with an answer or a reason", s.profileDrawn || `${s.status} ${s.planText}`.length > 15, `${s.status} ${s.planText}`);
+    check("it compiled, and names the table it could not read", isError(r) && /(Sales|Product)\b.*cached/.test(r.status), r.status);
+    check("the editor marks it", (await drive("diagnostics")).length === 1);
+    check("no plan is left on screen", !r.plan, r.planText);
   });
 }
 

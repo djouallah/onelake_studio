@@ -613,17 +613,27 @@ async function showPlan(text) {
     lastRun.rewritten = !!model;
     if (my !== selSeq) return false;
     const sql = model ? model.sql : text.replace(/;\s*$/, '');
+    // Runs nothing, and it is where bad SQL or a table not held fails: below, so the editor hears.
+    const explained = await engine.runSql(`EXPLAIN ${sql}`);
+    if (my !== selSeq) return false;
     clearResults();
     const view = $('planView');
     view.replaceChildren(createPlanView({
-      profile: held(async () => profileJson((await engine.runSql(profileSql(sql, { set: false }))).rows[0]?.explain_value)),
-      tree: held(async () => {
-        const res = await engine.runSql(`EXPLAIN ${sql}`);
+      profile: held(async () => {
+        try {
+          return profileJson((await engine.runSql(profileSql(sql, { set: false }))).rows[0]?.explain_value);
+        } catch (e) {
+          // Past the EXPLAIN, the editor has its answer: the view and this line say it.
+          if (my === selSeq) setStatus('Plan failed: ' + e.message, 'error');
+          throw e;
+        }
+      }),
+      tree: async () => {
         const pre = document.createElement('pre');
         pre.className = 'sm-plan';
-        pre.textContent = res.rows.map(r => r.explain_value ?? Object.values(r).join('  ')).join('\n');
+        pre.textContent = explained.rows.map(r => r.explain_value ?? Object.values(r).join('  ')).join('\n');
         return pre;
-      }),
+      },
       colors: () => profileColors(pageCss),
       elapsed,
     }));
@@ -634,7 +644,12 @@ async function showPlan(text) {
     setStatus('Query plan — run the query (Ctrl+Enter in its editor) for the results.');
     return true;
   } catch (e) {
-    if (my === selSeq) { lastRun.error = e.message; setStatus('Plan failed: ' + e.message, 'error'); }
+    if (my === selSeq) {
+      // As a query that fails: nothing on screen belongs to another statement.
+      clearResults('(no plan — the query failed)');
+      lastRun.error = e.message;
+      setStatus('Plan failed: ' + e.message, 'error');
+    }
     return false;
   } finally {
     holdPlan(false);

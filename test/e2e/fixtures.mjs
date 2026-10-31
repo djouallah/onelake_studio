@@ -24,6 +24,8 @@ export const MODEL_QUERY = `SELECT Product.Color, AGG("Total") FROM ${MODEL} GRO
 export const SAVED_QUERY = "kept";
 
 const LAKEHOUSE = { workspace: WORKSPACE, item: "data.Lakehouse" };
+const WORKSPACE_ID = "00000000-0000-0000-0000-000000000001";
+const ITEM_ID = "00000000-0000-0000-0000-000000000002";
 const location = table => `abfss://${WORKSPACE}@onelake.dfs.fabric.microsoft.com/data.Lakehouse/Tables/dbo/${table}/metadata/00001-x.metadata.json`;
 const metadata = () => ({
   "format-version": 2,
@@ -43,7 +45,7 @@ const BIM = {
   model: {
     expressions: [{
       name: "DatabaseQuery", kind: "m",
-      expression: 'AzureStorage.DataLake("https://onelake.dfs.fabric.microsoft.com/00000000-0000-0000-0000-000000000001/00000000-0000-0000-0000-000000000002")',
+      expression: `AzureStorage.DataLake("https://onelake.dfs.fabric.microsoft.com/${WORKSPACE_ID}/${ITEM_ID}")`,
     }],
     tables: [
       { name: "Sales", partitions: partition("Sales"),
@@ -69,17 +71,21 @@ export async function seedAccount({ dataDir, home }) {
       reset() {},
       listWorkspaces: async () => [WORKSPACE],
       listItems: async () => [{ name: LAKEHOUSE.item, kind: "Lakehouse" }],
-      listTables: async () => [{ schema: "dbo", table: "orders" }, { schema: "dbo", table: "neverread" }],
+      listTables: async () => ["orders", "neverread", "Sales", "Product"].map(table => ({ schema: "dbo", table })),
       listFiles: async () => [],
       loadTable: async (_, t) => ({ metadata: metadata(), metadataLocation: location(t.table) }),
       readBytes: async () => new Uint8Array(),
     },
-    fabric: { listSemanticModels: async () => [{ id: "00000000-0000-0000-0000-000000000003", name: "shop", description: "" }] },
+    fabric: {
+      listSemanticModels: async () => [{ id: "00000000-0000-0000-0000-000000000003", name: "shop", description: "" }],
+      itemOf: async () => ({ workspace: WORKSPACE, item: LAKEHOUSE.item }),
+    },
   });
   await onelake.workspaces({ fresh: true });
   await onelake.items(WORKSPACE, { fresh: true });
   await onelake.tables(LAKEHOUSE, { fresh: true });
-  await onelake.table(LAKEHOUSE, { schema: "dbo", table: "orders" }, { fresh: true });
+  for (const table of ["orders", "Sales", "Product"]) await onelake.table(LAKEHOUSE, { schema: "dbo", table }, { fresh: true });
+  await onelake.itemNamed(WORKSPACE_ID, ITEM_ID, { fresh: true });
   await onelake.models(WORKSPACE, { fresh: true });
 
   const queries = join(home, "OneLakeStudio", "queries", ACCOUNT.queries);

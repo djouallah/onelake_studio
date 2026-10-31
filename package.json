@@ -307,12 +307,12 @@
         {
           "command": "onelakeStudio.groupByType",
           "when": "view == onelakeStudio.explorer && onelakeStudio.signedIn && !onelakeStudio.groupedByType",
-          "group": "navigation@0"
+          "group": "0_view@0"
         },
         {
           "command": "onelakeStudio.ungroupByType",
           "when": "view == onelakeStudio.explorer && onelakeStudio.signedIn && onelakeStudio.groupedByType",
-          "group": "navigation@0"
+          "group": "0_view@0"
         },
         {
           "command": "onelakeStudio.goTo",
@@ -322,12 +322,12 @@
         {
           "command": "onelakeStudio.refresh",
           "when": "view == onelakeStudio.explorer && onelakeStudio.signedIn",
-          "group": "navigation@1"
+          "group": "0_view@1"
         },
         {
           "command": "onelakeStudio.open",
           "when": "view == onelakeStudio.explorer",
-          "group": "navigation@2"
+          "group": "0_view@2"
         },
         {
           "command": "onelakeStudio.signIn",
