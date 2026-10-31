@@ -943,6 +943,8 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
   const readLog = sinceUs => withConn(async c => (await c.runAndReadAll(
     `SELECT epoch_us(timestamp) AS us, message FROM duckdb_logs WHERE type = 'Quack' AND epoch_us(timestamp) > ${BigInt(sinceUs)} ORDER BY timestamp`)).getRowObjectsJson(), agentLive);
   const emptyLog = () => withConn(c => c.run('CALL truncate_duckdb_logs();'), agentLive);
+  // serve: Quack listening again, on the same port, with its listener gone or going.
+  const relisten = () => admin(() => restartListener(conn, served, serve.token));
   // serve: the OneLake token a window sends, over the control pipe.
   const setStorageToken = token => init().then(() => admin(() => issueSecret(token)));
   // What the Logs tab shows.
@@ -1047,8 +1049,14 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
   }
 
   const api = { call, close, copyToTemp, exportTo, agentQuery, catalogChanged, warm, maxRows, forTab, boot, stats,
-                readLog, emptyLog, setStorageToken, setOffline, logs, clearLogs };
+                readLog, emptyLog, relisten, setStorageToken, setOffline, logs, clearLogs };
   return api;
 }
 
-module.exports = { createEngineHost, jsonSafe, isOneLakeMetadata };
+// Stopping one that has already gone is fine: Quack answers that it found none.
+async function restartListener(conn, uri, token) {
+  await conn.run(`SELECT * FROM quack_stop(${sqlStr(uri)});`);
+  await conn.run(`SELECT * FROM quack_serve(${sqlStr(uri)}, token = ${sqlStr(token)});`);
+}
+
+module.exports = { createEngineHost, jsonSafe, isOneLakeMetadata, restartListener };

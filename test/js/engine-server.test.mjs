@@ -6,6 +6,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
+import net from "node:net";
 import { join } from "node:path";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
@@ -233,6 +234,30 @@ test("the store's entries live in the server, shared by windows, imported once, 
   const four = storeOf();
   assert.equal(await four.peek("from a file"), undefined);
   assert.equal(await four.peek("listing"), undefined);
+});
+
+test("a listener that stops: the next statement starts it again, and goes on", async t => {
+  const { open, secret, pipe } = await setup(t);
+  const a = open();
+  await a.call("query", ["SELECT 1"]);
+  // Over the pipe, as a window would: a statement can't stop the listener.
+  const sock = net.connect(pipe);
+  await new Promise(r => sock.once("connect", r));
+  t.after(() => sock.destroy());
+  sock.setEncoding("utf8");
+  const reply = () => new Promise(r => sock.once("data", r));
+  let said = reply();
+  sock.write(`${JSON.stringify({ token: secret(), window: "test" })}\n`);
+  await said;
+  said = reply();
+  sock.write(`${JSON.stringify({ id: 1, listen: { force: true } })}\n`);
+  assert.equal(JSON.parse(await said).value, true);
+
+  assert.deepEqual((await a.call("query", ["SELECT 2 AS back"])).rows, [{ back: 2 }], "the old attach recovered");
+  const running = a.call("query", [LONG]).catch(e => e);
+  await sleep(800);
+  await a.call("cancel");
+  assert.equal((await running).cancelled, true, "and Stop works after it");
 });
 
 test("a lost session token: the next window waits for the old server to go idle, then starts", async t => {

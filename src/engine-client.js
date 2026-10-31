@@ -244,6 +244,16 @@ async function openClient({ uri, token, extensionDir, bundledExtensions, lockdow
     return { text: `SELECT * FROM ${free.name}.query(${sqlStr(sql)})`, release() { free.busy = false; } };
   }
   const stopGrowing = () => { closed = true; };
+  // After the server's listener was started again: what was attached knows a session it has lost.
+  async function reattach() {
+    const c = await local.connect();
+    try {
+      for (const a of attaches.splice(0)) await c.run(`DETACH ${a.name};`).catch(() => {});
+      await c.run('DETACH control;').catch(() => {});
+      await c.run(`ATTACH ${sqlStr(uri)} AS control (TYPE quack, SECRET studio);`);
+    } finally { try { c.closeSync(); } catch (_) {} }
+    grow();
+  }
 
   // The running statements whose tag starts with `tag`. The tag is built at run time, or this
   // statement, which holds it too, would find itself.
@@ -260,7 +270,53 @@ async function openClient({ uri, token, extensionDir, bundledExtensions, lockdow
       for (const id of ids) await c.run(`SELECT * FROM quack_cancel('control', ${sqlStr(id)});`).catch(() => {});
     } finally { try { c.closeSync(); } catch (_) {} }
   }
-  return { local, admin, route, stopGrowing, listTagged, cancelIds };
+  return { local, admin, route, stopGrowing, reattach, listTagged, cancelIds };
+}
+
+// Questions on the control pipe, answered by id.
+function controlChannel(sock) {
+  const asked = new Map();
+  let seq = 0, lines = '';
+  sock.on('data', chunk => {
+    lines += chunk;
+    for (let nl; (nl = lines.indexOf('\n')) >= 0;) {
+      let m = null;
+      try { m = JSON.parse(lines.slice(0, nl)); } catch (_) {}
+      lines = lines.slice(nl + 1);
+      const waiting = m && asked.get(m.id);
+      if (!waiting) continue;
+      asked.delete(m.id);
+      if (m.error) waiting.reject(new Error(m.error)); else waiting.resolve(m.value);
+    }
+  });
+  sock.on('close', () => {
+    for (const w of asked.values()) w.reject(new Error('the engine stopped'));
+    asked.clear();
+  });
+  return msg => new Promise((resolve, reject) => {
+    if (sock.destroyed) { reject(new Error('the engine stopped')); return; }
+    const id = ++seq;
+    asked.set(id, { resolve, reject });
+    sock.write(`${JSON.stringify({ id, ...msg })}\n`);
+  });
+}
+
+// A statement that can't reach the server although the pipe to it is fine. The server's listener can
+// stop while its process lives on, and an attach outlives the session it knew. Asked over the pipe,
+// the server starts its listener again if it has to, and what was attached is attached again: once,
+// however many statements noticed.
+const LOST = /Could not connect to server|Invalid connection id/;
+function recovery(ask, client) {
+  let going = null;
+  return () => {
+    if (!going) {
+      going = (async () => {
+        await ask({ listen: {} });
+        await client.reattach();
+      })().finally(() => { going = null; });
+    }
+    return going;
+  };
 }
 
 // This window on the server, started if there is none. A server of another build is told to stop
@@ -311,7 +367,7 @@ function createStateClient(cfg) {
         if (!state.stateUri) { sock.destroy(); throw new Error(state.stateError || 'the engine has no state file open'); }
         const client = await openClient({ uri: state.stateUri, token, extensionDir: options.extensionDir, bundledExtensions: options.bundledExtensions })
           .catch(e => { sock.destroy(); throw e; });
-        const me = { sock, client };
+        const me = { sock, client, recover: recovery(controlChannel(sock), client) };
         sock.on('error', () => {});
         sock.on('close', () => drop(me));
         joined = me;
@@ -322,14 +378,21 @@ function createStateClient(cfg) {
   }
   return {
     async run(sql) {
-      const { client } = await connected();
-      const c = await client.local.connect();
-      const way = client.route(sql);
-      try { return (await c.runAndReadAll(way.text)).getRowObjectsJson(); }
-      finally {
-        way.release();
-        try { c.closeSync(); } catch (_) {}
-      }
+      const { client, recover } = await connected();
+      const once = async () => {
+        const c = await client.local.connect();
+        const way = client.route(sql);
+        try { return (await c.runAndReadAll(way.text)).getRowObjectsJson(); }
+        finally {
+          way.release();
+          try { c.closeSync(); } catch (_) {}
+        }
+      };
+      return once().catch(async e => {
+        if (!LOST.test(String(e && e.message))) throw e;
+        await recover();
+        return once();
+      });
     },
     async stop() {
       const j = joined;
@@ -371,31 +434,8 @@ function createRemote({ onGone = () => {}, ...cfg }) {
     sock.on('error', () => {});
     sock.on('close', () => { if (!closing) onGone(); });
 
-    // Questions on the control pipe, and their answers by id.
-    const asked = new Map();
-    let askSeq = 0, lines = '';
-    sock.on('data', chunk => {
-      lines += chunk;
-      for (let nl; (nl = lines.indexOf('\n')) >= 0;) {
-        let m = null;
-        try { m = JSON.parse(lines.slice(0, nl)); } catch (_) {}
-        lines = lines.slice(nl + 1);
-        const waiting = m && asked.get(m.id);
-        if (!waiting) continue;
-        asked.delete(m.id);
-        if (m.error) waiting.reject(new Error(m.error)); else waiting.resolve(m.value);
-      }
-    });
-    sock.on('close', () => {
-      for (const w of asked.values()) w.reject(new Error('the engine stopped'));
-      asked.clear();
-    });
-    const ask = msg => new Promise((resolve, reject) => {
-      if (sock.destroyed) { reject(new Error('the engine stopped')); return; }
-      const id = ++askSeq;
-      asked.set(id, { resolve, reject });
-      sock.write(`${JSON.stringify({ id, ...msg })}\n`);
-    });
+    const ask = controlChannel(sock);
+    const recover = recovery(ask, client);
     const mine = r => ({ ...r, here: r.window === window });
 
     let seq = 0;
@@ -428,12 +468,19 @@ function createRemote({ onGone = () => {}, ...cfg }) {
           way = route(`${sql}\n/*onelake:${tag}`);
           return way.text;
         };
+        // Nothing has come back yet when these fail, so going again repeats nothing.
+        const again = (go, sql) => go(wrapped(sql)).catch(async e => {
+          if (closing || !LOST.test(String(e && e.message))) throw e;
+          done();
+          await recover();
+          return go(wrapped(sql));
+        });
         return {
-          run: sql => c.run(wrapped(sql)).catch(clean).finally(done),
-          runAndReadAll: sql => c.runAndReadAll(wrapped(sql)).catch(clean).finally(done),
+          run: sql => again(x => c.run(x), sql).catch(clean).finally(done),
+          runAndReadAll: sql => again(x => c.runAndReadAll(x), sql).catch(clean).finally(done),
           // A stream holds its attach until its connection closes: rows are still coming through it.
           async stream(sql) {
-            const r = await c.stream(wrapped(sql)).catch(clean);
+            const r = await again(x => c.stream(x), sql).catch(clean);
             return {
               deduplicatedColumnNames: () => r.deduplicatedColumnNames(),
               columnType: i => r.columnType(i),

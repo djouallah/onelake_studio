@@ -199,6 +199,8 @@ every window is a client of it over DuckDB's Quack protocol ([`src/engine-client
   comment and uses `quack_cancel`, since `interrupt()` doesn't reach the server.
 - **The control pipe:** an OS pipe, signed in with the session token, that says a window is alive. The OneLake
   token and what Logs and Performance ask for go this way rather than over Quack, which logs what it is sent.
+  A Quack listener can stop while the process lives on: a statement that can't connect asks over this pipe, the
+  server starts it again on the same port, and the statement goes once more.
 - **What is remembered:** the store's entries (listings, table metadata, first rows) and the log are tables in a
   state file, `engine-server\<id>.duckdb` in the extension's storage, in a second DuckDB in the server on a Quack
   port of its own, so a page's SQL can't reach them ([`src/statestore.js`](../src/statestore.js)). The tree therefore

@@ -10,7 +10,7 @@
 //   window -> server   { token, window }   then the socket stays open: it says the window is alive
 //   server -> window   { ok, uri, capabilities, tmpDir }
 //   window -> server   { stop: true }      Sign Out, a restart, Clear Cached OneLake Data
-//   window -> server   { id, stats | logs | clearLogs | storageToken | offline }, answered { id, value | error }
+//   window -> server   { id, stats | logs | clearLogs | storageToken | offline | listen }, answered { id, value | error }
 //
 // A window gone is a window whose queries nobody is waiting for: Quack lets them run on, so they
 // are cancelled here. With no window left the server waits `idleMs`, so a window reload finds it
@@ -22,7 +22,7 @@ const fs = require('node:fs');
 const fsp = require('node:fs/promises');
 const crypto = require('node:crypto');
 const { DuckDBInstance } = require('@duckdb/node-api');
-const { createEngineHost } = require('./engine-host');
+const { createEngineHost, restartListener } = require('./engine-host');
 const { openClient, loadExtension } = require('./engine-client');
 const { createLogKeeper } = require('./enginelog');
 const { sqlStr } = require('./sql');
@@ -57,7 +57,7 @@ async function main({ token, pipe, options, logFile, idleMs = 60_000, stateFile 
   const engine = createEngineHost({ ...options, serve: { token }, onWarn: log,
     onLog: b => log(`booted in ${b.totalMs}ms`) });
 
-  let idle = null, state = null, reaper = null, stopping = false, stateDb = null, keeper = null;
+  let idle = null, state = null, reaper = null, stopping = false, stateDb = null, stateConn = null, keeper = null;
   const clients = new Set();
   async function shutdown(why) {
     if (stopping) return;
@@ -86,11 +86,32 @@ async function main({ token, pipe, options, logFile, idleMs = 60_000, stateFile 
     }
   }
 
+  // A window couldn't reach Quack. The process being alive doesn't mean its listeners are: one has
+  // been seen gone with no error anywhere, and nothing else would start it again. `force` is for tests.
+  const accepting = uri => new Promise(resolve => {
+    const [host, port] = uri.replace(/^quack:/, '').split(':');
+    const s = net.connect(Number(port), host);
+    s.once('connect', () => { s.destroy(); resolve(true); });
+    s.once('error', () => resolve(false));
+  });
+  async function listenAgain(force) {
+    if (force || !await accepting(state.uri)) {
+      log(`the engine's listener on ${state.uri} had stopped: starting it again`);
+      await engine.relisten();
+      if (reaper) await reaper.reattach().catch(e => log(`could not attach again: ${e.message}`));
+    }
+    if (state.stateUri && (force || !await accepting(state.stateUri))) {
+      log(`the state file's listener on ${state.stateUri} had stopped: starting it again`);
+      await restartListener(stateConn, state.stateUri, token);
+    }
+  }
+
   // What a window asks over the pipe rather than Quack: nothing here is in Quack's log, the token above all.
   async function answer(msg) {
     await booted;
     if (msg.storageToken) { await engine.setStorageToken(String(msg.storageToken)); return true; }
     if (msg.offline != null) { await engine.setOffline(!!msg.offline); return true; }
+    if (msg.listen) { await listenAgain(!!msg.listen.force); return true; }
     if (msg.stats) return { ...await engine.stats(), statements: keeper ? await keeper.statements() : 0 };
     if (msg.logs) return keeper ? keeper.read(msg.logs.limit) : [];
     if (msg.clearLogs) { if (keeper) await keeper.clear(); return true; }
@@ -159,6 +180,7 @@ async function main({ token, pipe, options, logFile, idleMs = 60_000, stateFile 
       if (kept) {
         state.stateUri = kept.uri;
         stateDb = kept.db;
+        stateConn = kept.conn;
         keeper = createLogKeeper({ engine, state: kept.conn, log, maxBytes: Math.max(0, Number(options.logMaxGB ?? 1) || 0) * 1024 ** 3 });
         keeper.start();
       }
