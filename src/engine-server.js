@@ -20,15 +20,33 @@ const net = require('node:net');
 const fs = require('node:fs');
 const fsp = require('node:fs/promises');
 const crypto = require('node:crypto');
+const { DuckDBInstance } = require('@duckdb/node-api');
 const { createEngineHost } = require('./engine-host');
-const { openClient } = require('./engine-client');
+const { openClient, loadExtension } = require('./engine-client');
+const { sqlStr } = require('./sql');
 
 const sameToken = (a, b) => {
   const x = Buffer.from(String(a)), y = Buffer.from(String(b));
   return x.length === y.length && crypto.timingSafeEqual(x, y);
 };
 
-async function main({ token, pipe, options, logFile, idleMs = 60_000 }) {
+// What the extension remembers (statestore.js): a DuckDB of its own, on a Quack port of its own, so
+// no statement a page sends the engine can reach it, and it holds none of the engine's memory.
+async function openState({ stateFile, token, options }) {
+  const db = await DuckDBInstance.create(stateFile, {
+    allow_persistent_secrets: 'false', threads: '2', memory_limit: '512MB',
+    ...(options.extensionDir ? { extension_directory: options.extensionDir } : {}),
+  });
+  const c = await db.connect();
+  await loadExtension(c, 'httpfs', options);
+  await loadExtension(c, 'quack', options);
+  await c.run('CREATE TABLE IF NOT EXISTS kv (k VARCHAR PRIMARY KEY, ts BIGINT, value VARCHAR);');
+  const r = await c.runAndReadAll(`SELECT listen_uri FROM quack_serve('quack:127.0.0.1:0', token = ${sqlStr(token)})`);
+  await c.run(`SET allowed_directories = []; SET enable_external_access = false; SET lock_configuration = true;`);
+  return { db, uri: r.getRowObjectsJson()[0].listen_uri };
+}
+
+async function main({ token, pipe, options, logFile, idleMs = 60_000, stateFile = null, build = null }) {
   const log = line => { try { fs.appendFileSync(logFile, `${new Date().toISOString()} ${line}\n`); } catch (_) {} };
   const say = o => process.stdout.write(`${JSON.stringify(o)}\n`);
   log(`starting: pid ${process.pid}`);
@@ -36,7 +54,7 @@ async function main({ token, pipe, options, logFile, idleMs = 60_000 }) {
   const engine = createEngineHost({ ...options, serve: { token }, onWarn: log,
     onLog: b => log(`booted in ${b.totalMs}ms`) });
 
-  let idle = null, state = null, reaper = null, stopping = false;
+  let idle = null, state = null, reaper = null, stopping = false, stateDb = null;
   const clients = new Set();
   async function shutdown(why) {
     if (stopping) return;
@@ -46,6 +64,7 @@ async function main({ token, pipe, options, logFile, idleMs = 60_000 }) {
     // No engine.close(): closing an instance blocks until its statements are done, and a client's
     // are running on it. Everything it holds that matters is on disk already, or goes with it.
     if (state) await fsp.rm(state.tmpDir, { recursive: true, force: true }).catch(() => {});
+    if (stateDb) { try { stateDb.closeSync(); } catch (_) {} }   // checkpoints; a kill replays its log
     process.exit(0);
   }
   function watchIdle() {
@@ -109,8 +128,17 @@ async function main({ token, pipe, options, logFile, idleMs = 60_000 }) {
   if (process.platform !== 'win32') { try { fs.chmodSync(pipe, 0o600); } catch (_) {} }
 
   booted = engine.boot().then(async s => {
-    state = s;
+    state = { ...s, build };
     log(`serving ${s.uri}`);
+    if (stateFile) {
+      // Held for the life of this process: nothing else opens the file.
+      const kept = await openState({ stateFile, token, options }).catch(e => {
+        log(`no state file: ${e.message}`);
+        state.stateError = `the state file could not be opened: ${e.message}`;
+        return null;
+      });
+      if (kept) { state.stateUri = kept.uri; stateDb = kept.db; }
+    }
     reaper = await openClient({ uri: s.uri, token, extensionDir: options.extensionDir, bundledExtensions: options.bundledExtensions })
       .catch(e => { log(`no way to cancel a gone window's queries: ${e.message}`); return null; });
   });

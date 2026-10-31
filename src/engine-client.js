@@ -103,7 +103,7 @@ async function withLock(file, fn) {
 
 // The server's process: detached, so it outlives this window. execPath is the editor's Electron,
 // which runs as plain Node with this variable set.
-function spawnServer({ script, token, pipe, options, logFile, idleMs }) {
+function spawnServer({ script, token, pipe, options, logFile, idleMs, stateFile, build }) {
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [script], {
       env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
@@ -127,7 +127,7 @@ function spawnServer({ script, token, pipe, options, logFile, idleMs }) {
       if (said.error) reject(new Error(`the engine could not start: ${said.error}`));
       else resolve(said);
     });
-    child.stdin.end(`${JSON.stringify({ token, pipe, options, logFile, idleMs })}\n`);
+    child.stdin.end(`${JSON.stringify({ token, pipe, options, logFile, idleMs, stateFile, build })}\n`);
   });
 }
 
@@ -147,8 +147,13 @@ async function acquire({ pipe, window, getToken, setToken, lockFile, server }) {
     }
     const token = crypto.randomBytes(32).toString('hex');
     await setToken(token);
-    const said = await spawnServer({ ...server, token, pipe });
-    // A server whose token is lost holds the pipe until it goes idle.
+    // A server just told to stop may hold the pipe a moment more. One whose token is lost holds it
+    // until it goes idle.
+    let said = await spawnServer({ ...server, token, pipe });
+    for (let i = 0; said.taken && i < 10; i++) {
+      await sleep(300);
+      said = await spawnServer({ ...server, token, pipe });
+    }
     if (said.taken) throw new Error('an engine with another session is still running: try again in a minute');
     const up = await connectControl(pipe, token, window);
     if (!up) throw new Error('the engine started and then refused this window');
@@ -220,29 +225,99 @@ async function openClient({ uri, token, extensionDir, bundledExtensions, lockdow
   return { local, admin, query, listTagged, cancelIds };
 }
 
+// This window on the server, started if there is none. A server of another build is told to stop
+// and replaced: F5 after a rebuild must not find the old code, nor the state file held by it.
+async function joinServer({ key, script, options, stateDir, build = null, getToken, setToken, idleMs = 60_000 }) {
+  await fsp.mkdir(stateDir, { recursive: true });
+  const id = crypto.createHash('sha256').update(key).digest('hex').slice(0, 16);
+  const plain = typeof options === 'function' ? await options() : options;
+  const asked = {
+    pipe: pipePath(key), window: crypto.randomBytes(6).toString('hex'), getToken, setToken,
+    lockFile: join(stateDir, `${id}.lock`),
+    server: { script, options: plain, logFile: join(stateDir, `${id}.log`), idleMs, build, stateFile: join(stateDir, `${id}.duckdb`) },
+  };
+  let joined = await acquire(asked);
+  if (joined.state.build !== build) {
+    await new Promise(resolve => {
+      const timer = setTimeout(resolve, 5_000);
+      joined.sock.once('close', () => { clearTimeout(timer); resolve(); });
+      joined.sock.write(`${JSON.stringify({ stop: true })}\n`);
+    });
+    joined.sock.destroy();
+    joined = await acquire(asked);
+  }
+  return { ...joined, window: asked.window, options: plain };
+}
+
+/**
+ * The server's second DuckDB: what the extension remembers, in one file per account. It answers
+ * on a Quack port of its own, so no statement a page sends can reach it. Joined on first use, and
+ * again after the server went: signing out stops the server, and the tree still reads the cache.
+ * @param {object} cfg  as createRemote's
+ * @returns {{ run: (sql: string) => Promise<object[]>, stop: () => Promise<void>, close: () => void }}
+ */
+function createStateClient(cfg) {
+  let joined = null, joining = null;
+  function drop(j) {
+    if (joined === j) joined = null;
+    j.sock.destroy();
+    try { j.client.admin.closeSync(); } catch (_) {}
+    try { j.client.local.closeSync(); } catch (_) {}
+  }
+  function connected() {
+    if (joined) return Promise.resolve(joined);
+    if (!joining) {
+      joining = (async () => {
+        const { sock, state, token, options } = await joinServer(cfg);
+        if (!state.stateUri) { sock.destroy(); throw new Error(state.stateError || 'the engine has no state file open'); }
+        const client = await openClient({ uri: state.stateUri, token, extensionDir: options.extensionDir, bundledExtensions: options.bundledExtensions })
+          .catch(e => { sock.destroy(); throw e; });
+        const me = { sock, client };
+        sock.on('error', () => {});
+        sock.on('close', () => drop(me));
+        joined = me;
+        return me;
+      })().finally(() => { joining = null; });
+    }
+    return joining;
+  }
+  return {
+    async run(sql) {
+      const { client } = await connected();
+      const c = await client.local.connect();
+      try { return (await c.runAndReadAll(client.query(sql))).getRowObjectsJson(); }
+      finally { try { c.closeSync(); } catch (_) {} }
+    },
+    async stop() {
+      const j = joined;
+      if (!j) return;
+      await new Promise(resolve => {
+        const timer = setTimeout(resolve, 5_000);
+        j.sock.once('close', () => { clearTimeout(timer); resolve(); });
+        j.sock.write(`${JSON.stringify({ stop: true })}\n`);
+      });
+    },
+    close() { if (joined) drop(joined); },
+  };
+}
+
 /**
  * What engine-host.js takes as `remote`: a function that joins the server and answers something
  * shaped like a DuckDBInstance: connect() and closeSync(), plus capabilities and tmpDir.
  * @param {object} o
- * @param {string} o.key  the account and build this server is for
+ * @param {string} o.key  the account this server is for
  * @param {string} o.script  dist/engine-server.js
- * @param {object} o.options  createEngineHost's plain options, for the server's engine
- * @param {string} o.stateDir  for the lock and the server's log
+ * @param {object|(() => Promise<object>)} o.options  createEngineHost's plain options, for the server's engine
+ * @param {string} o.stateDir  for the lock, the server's log and the state file
+ * @param {*} [o.build]  which build this is; a server of another is replaced
  * @param {() => Promise<string|undefined>} o.getToken  the session token, from secret storage
  * @param {(t: string) => Promise<void>} o.setToken
  * @param {() => void} [o.onGone]  the server went away under this window
  * @param {number} [o.idleMs]  how long the server waits with no window left
  */
-function createRemote({ key, script, options, stateDir, getToken, setToken, onGone = () => {}, idleMs = 60_000 }) {
+function createRemote({ onGone = () => {}, ...cfg }) {
   return async () => {
-    await fsp.mkdir(stateDir, { recursive: true });
-    const id = crypto.createHash('sha256').update(key).digest('hex').slice(0, 16);
-    const window = crypto.randomBytes(6).toString('hex');
-    const { sock, state, token } = await acquire({
-      pipe: pipePath(key), window, getToken, setToken,
-      lockFile: join(stateDir, `${id}.lock`),
-      server: { script, options, logFile: join(stateDir, `${id}.log`), idleMs },
-    });
+    const { sock, state, token, window, options } = await joinServer(cfg);
     let client;
     try {
       client = await openClient({ uri: state.uri, token, extensionDir: options.extensionDir, bundledExtensions: options.bundledExtensions });
@@ -317,4 +392,4 @@ function createRemote({ key, script, options, stateDir, getToken, setToken, onGo
   };
 }
 
-module.exports = { createRemote, openClient, pipePath };
+module.exports = { createRemote, createStateClient, openClient, loadExtension, pipePath };

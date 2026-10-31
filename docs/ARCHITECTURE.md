@@ -194,7 +194,13 @@ over DuckDB's Quack protocol ([`src/engine-client.js`](../src/engine-client.js))
   runs one statement at a time. Stop finds the statement by a tag in a comment and uses `quack_cancel`,
   since `interrupt()` doesn't reach the server.
 
-Not done: the store and semantic-model pointers are still files, and a server that dies closes its tabs.
+- **What is remembered:** the store's entries (listings, table metadata, first rows) are a table in a state
+  file, one per account, in a second DuckDB in the server on a Quack port of its own, so a page's SQL
+  can't reach it ([`src/statestore.js`](../src/statestore.js)). The tree therefore waits for the server.
+  The JSON files are imported once and left as they were.
+
+Not done: a `Files/` object's bytes, saved queries, models and semantic-model pointers are still files, and a
+server that dies closes its tabs.
 
 ## The cache
 

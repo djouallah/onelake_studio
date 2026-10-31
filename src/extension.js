@@ -441,18 +441,41 @@ function editorProxy() {
 // every tab of every window as a client over Quack. Its session token lives in the editor's secret
 // storage, where the next window finds it.
 const sharedEngineOn = () => vscode.workspace.getConfiguration('onelakeStudio').get('sharedEngine', false);
-function sharedEngineRemote(context, options) {
-  const { createRemote } = require('./engine-client');
+// One server per account and install. A rebuild of the same install replaces it (`build`).
+function sharedEngineServer(context, account) {
   const script = join(context.extensionUri.fsPath, 'dist', 'engine-server.js');
-  // A server belongs to one account and one build: F5 after a rebuild must not find the old one.
-  const built = (() => { try { return statSync(script).mtimeMs; } catch (_) { return 0; } })();
-  const key = [fileCacheAccount || 'none', context.extensionUri.fsPath, built].join('|');
+  const build = (() => { try { return statSync(script).mtimeMs; } catch (_) { return 0; } })();
+  const key = [account || 'none', context.extensionUri.fsPath].join('|');
   const secret = `onelakeStudio.engineSession.${createHash('sha256').update(key).digest('hex').slice(0, 16)}`;
-  return createRemote({
-    key, script, options,
+  return {
+    key, script, build,
     stateDir: join(context.globalStorageUri.fsPath, 'engine-server'),
     getToken: () => context.secrets.get(secret),
     setToken: token => context.secrets.store(secret, token),
+  };
+}
+// What the store keeps, on the shared engine (statestore.js), per account: the same client for each
+// store made for it.
+const stateClients = new Map();
+function sharedStateBackend(context, account, importFrom, maxBytes) {
+  const { createStateClient } = require('./engine-client');
+  const { createStateBackend } = require('./statestore');
+  if (!stateClients.has(account)) {
+    stateClients.set(account, createStateClient({
+      ...sharedEngineServer(context, account),
+      // The tree may need the server before any statement does, so it can be the one starting it.
+      options: async () => {
+        const { readme } = await webviewRoot(context.extensionUri, { dev: context.extensionMode === vscode.ExtensionMode.Development });
+        return engineBootOptions(context, account, readme.fsPath);
+      },
+    }));
+  }
+  return createStateBackend({ run: sql => stateClients.get(account).run(sql), importFrom, maxBytes });
+}
+function sharedEngineRemote(context, options) {
+  const { createRemote } = require('./engine-client');
+  return createRemote({
+    ...sharedEngineServer(context, fileCacheAccount), options,
     onGone: () => {
       // Its views and the models the tabs defined went with it, so the tabs do too.
       closePanel();
@@ -460,6 +483,30 @@ function sharedEngineRemote(context, options) {
       vscode.window.showWarningMessage('OneLake Studio: the engine stopped, so its tabs closed. Opening a table starts it again.');
     },
   });
+}
+
+// What the engine reads when it boots: here, or in the shared engine's process.
+function engineBootOptions(context, account, readme) {
+  const config = vscode.workspace.getConfiguration('onelakeStudio');
+  const diskCacheGB = Math.max(0, Number(config.get('diskCacheMaxGB', 64)) || 0);
+  return {
+    allowedPaths: readme ? [readme] : [],
+    httpProxy: editorProxy(),
+    // Fetched for this vsix's platform at package time (fetch-extensions.mjs); a first
+    // run offline, or behind a proxy DuckDB cannot use, still has its extensions.
+    bundledExtensions: join(context.extensionUri.fsPath, 'duckdb-extensions'),
+    // Beside the data cache, so the four extensions are downloaded once per install
+    // rather than once per session — and never into the user's own ~/.duckdb, where
+    // they would outlive the extension that fetched them.
+    extensionDir: join(context.globalStorageUri.fsPath, 'duckdb-extensions'),
+    memoryLimit: config.get('engineMemoryLimit', '').trim(),
+    threads: Math.max(0, Math.floor(Number(config.get('engineThreads', 0)) || 0)),
+    spillMaxGB: Math.max(0, Number(config.get('engineSpillMaxGB', 0)) || 0),
+    maxRows: Math.min(1_000_000, Math.max(1000, Math.floor(Number(config.get('maxResultRows', 200_000)) || 200_000))),
+    // 0 is no disk cache at all.
+    fileCacheDir: diskCacheGB > 0 ? fileCacheDirFor(account) : null,
+    fileCacheMaxBytes: diskCacheGB * 1024 ** 3,
+  };
 }
 
 // `readme` is the one file outside DuckDB's own directories the engine may read (the
@@ -477,28 +524,8 @@ function ensureEngine(context, { readme } = {}) {
   try {
     engineAccount = fileCacheAccount;
     fileCacheRoot = fileCacheRootFor(context);
-    const config = vscode.workspace.getConfiguration('onelakeStudio');
-    const diskCacheGB = Math.max(0, Number(config.get('diskCacheMaxGB', 64)) || 0);
     const { createEngineHost } = require('./engine-host');
-    // What the engine reads when it boots: here, or in the shared engine's process.
-    const booting = {
-      allowedPaths: readme ? [readme] : [],
-      httpProxy: editorProxy(),
-      // Fetched for this vsix's platform at package time (fetch-extensions.mjs); a first
-      // run offline, or behind a proxy DuckDB cannot use, still has its extensions.
-      bundledExtensions: join(context.extensionUri.fsPath, 'duckdb-extensions'),
-      // Beside the data cache, so the four extensions are downloaded once per install
-      // rather than once per session — and never into the user's own ~/.duckdb, where
-      // they would outlive the extension that fetched them.
-      extensionDir: join(context.globalStorageUri.fsPath, 'duckdb-extensions'),
-      memoryLimit: config.get('engineMemoryLimit', '').trim(),
-      threads: Math.max(0, Math.floor(Number(config.get('engineThreads', 0)) || 0)),
-      spillMaxGB: Math.max(0, Number(config.get('engineSpillMaxGB', 0)) || 0),
-      maxRows: Math.min(1_000_000, Math.max(1000, Math.floor(Number(config.get('maxResultRows', 200_000)) || 200_000))),
-      // 0 is no disk cache at all.
-      fileCacheDir: diskCacheGB > 0 ? fileCacheDirFor(fileCacheAccount) : null,
-      fileCacheMaxBytes: diskCacheGB * 1024 ** 3,
-    };
+    const booting = engineBootOptions(context, fileCacheAccount, readme);
     engine = createEngineHost({
       ...booting,
       ...(sharedEngineOn() ? { remote: sharedEngineRemote(context, booting) } : {}),
@@ -535,6 +562,8 @@ async function resetEngine({ stop = true } = {}) {
   const e = engine;
   engine = null;
   if (e) await e.close({ stop }).catch(() => {});
+  // A window with only the tree open holds the server through the store.
+  if (stop) for (const c of stateClients.values()) await c.stop().catch(() => {});
 }
 
 // Points the store and the engine's disk cache at the account now signed in; a no-op when
@@ -832,7 +861,11 @@ async function activateInner(context) {
   // first (onelake.js). One directory per identity — a hashed account id — so nobody is
   // ever shown another account's listings, and switching back finds its cache still warm.
   const storeRoot = join(context.globalStorageUri.fsPath, 'onelake-store-v1');
-  const storeFor = key => createStore({ dir: join(storeRoot, key || 'signed-out'), ttlMs: catalogTtlMs, maxBytes: storeMaxBytes() });
+  const storeFor = key => {
+    const dir = join(storeRoot, key || 'signed-out');
+    const backend = sharedEngineOn() ? sharedStateBackend(context, key, dir, storeMaxBytes) : null;
+    return createStore({ dir, backend, ttlMs: catalogTtlMs, maxBytes: storeMaxBytes() });
+  };
   const firstSession = await getSession({ createIfNone: false }).catch(() => null);
   rememberAccount(firstSession);
   let storeAccount = accountKey(firstSession) || (knownAccount() || {}).key || null;
@@ -1950,7 +1983,8 @@ async function activateInner(context) {
           if (pick === remove) await removeDir(old);
         }
       }
-      if (e.affectsConfiguration('onelakeStudio.metadataCacheMaxMB')) onelake.useStore(storeFor(storeAccount));
+      if (e.affectsConfiguration('onelakeStudio.metadataCacheMaxMB') ||
+          e.affectsConfiguration('onelakeStudio.sharedEngine')) onelake.useStore(storeFor(storeAccount));
       if (e.affectsConfiguration('onelakeStudio.tableOpensOn') ||
           e.affectsConfiguration('onelakeStudio.gridThousandsSeparator')) {
         postLive({ type: 'settings', ...panelSettings() });
@@ -1964,6 +1998,7 @@ function deactivate() {
   // The burst timers hold the process open if they are live at shutdown.
   clearTimeout(postTimer);
   clearTimeout(idleTimer);
+  for (const c of stateClients.values()) c.close();
   // The engine holds a native database handle and a temp directory; closing it is what
   // releases both.
   return engine ? engine.close() : undefined;

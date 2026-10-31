@@ -29,12 +29,14 @@ const MEMO_MAX = 2000;       // hot entries kept in memory, so a re-render reads
 /**
  * @param {object} o
  * @param {string|null} o.dir    where entries live; null keeps everything in memory only
+ * @param {object} [o.backend]   where entries live instead, on the shared engine (statestore.js):
+ *                               read, write, clear, size. Blobs stay under `dir`.
  * @param {number|(() => number)} [o.ttlMs]  how old an answer may be before it is refreshed behind
  * @param {number} [o.maxBytes]  disk budget; the oldest entries go first past it
  * @param {number} [o.blobMaxBytes]  the same, for the file bytes kept by getBlob/putBlob
  * @param {() => number} [o.now]
  */
-function createStore({ dir, ttlMs = DEFAULT_TTL_MS, maxBytes = DEFAULT_MAX_BYTES,
+function createStore({ dir, backend = null, ttlMs = DEFAULT_TTL_MS, maxBytes = DEFAULT_MAX_BYTES,
                        blobMaxBytes = DEFAULT_BLOB_MAX_BYTES, now = Date.now } = {}) {
   const events = new EventEmitter();
   // 'error' is special to EventEmitter — emitted with no listener it throws. Background
@@ -63,6 +65,11 @@ function createStore({ dir, ttlMs = DEFAULT_TTL_MS, maxBytes = DEFAULT_MAX_BYTES
   async function read(key) {
     const hot = memo.get(key);
     if (hot) return remember(key, hot);
+    if (backend) {
+      // No answer either way when it can't be reached: not cached is what that means to a caller.
+      const e = await backend.read(key).catch(() => null);
+      return e ? remember(key, { value: JSON.parse(e.json), at: e.at, json: e.json }) : null;
+    }
     if (!await usable) return null;
     try {
       const e = JSON.parse(await fs.readFile(fileOf(key), 'utf8'));
@@ -78,6 +85,11 @@ function createStore({ dir, ttlMs = DEFAULT_TTL_MS, maxBytes = DEFAULT_MAX_BYTES
   async function write(key, value) {
     const json = JSON.stringify(value);
     const ent = remember(key, { value, at: now(), json });
+    if (backend) {
+      // Memory still holds it, as when a file could not be written.
+      await backend.write(key, ent.at, json).catch(() => {});
+      return ent;
+    }
     if (!await usable) return ent;
     const file = fileOf(key);
     const tmp = `${file}.${process.pid}.${++tmpSeq}.tmp`;
@@ -235,17 +247,22 @@ function createStore({ dir, ttlMs = DEFAULT_TTL_MS, maxBytes = DEFAULT_MAX_BYTES
 
   async function clear() {
     memo.clear();
-    if (!await usable) return 0;
+    const kept = backend ? await backend.size().catch(() => 0) : 0;
+    if (backend) await backend.clear().catch(() => {});
+    if (!await usable) return kept;
     const list = await everything();
     for (const e of list) await fs.rm(e.p, { force: true }).catch(() => {});
     total = 0;
     blobTotal = 0;
-    return list.reduce((n, e) => n + e.bytes, 0);
+    return kept + list.reduce((n, e) => n + e.bytes, 0);
   }
 
   async function size() {
-    if (!await usable) return 0;
-    return (await everything()).reduce((n, e) => n + e.bytes, 0);
+    const kept = backend ? await backend.size().catch(() => 0) : 0;
+    if (!await usable) return kept;
+    // With a backend the JSON files were imported, and only a Clear still has them to delete.
+    const here = backend && blobDir ? await entries(blobDir, '.bin') : await everything();
+    return kept + here.reduce((n, e) => n + e.bytes, 0);
   }
 
   return {

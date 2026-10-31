@@ -3,7 +3,7 @@
 // socket, which is all a window is to the server.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -12,7 +12,9 @@ import { fileURLToPath } from "node:url";
 
 const require = createRequire(import.meta.url);
 const { createEngineHost } = require("../../src/engine-host.js");
-const { createRemote, openClient, pipePath } = require("../../src/engine-client.js");
+const { createRemote, createStateClient, openClient, pipePath } = require("../../src/engine-client.js");
+const { createStateBackend } = require("../../src/statestore.js");
+const { createStore } = require("../../src/store.js");
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
 const SCRIPT = join(root, "src", "engine-server.js");
@@ -104,6 +106,43 @@ test("a window that leaves takes its statements with it, and the server stays", 
   await sleep(1000);
   assert.equal(await count(), 0);
   assert.deepEqual((await b.call("query", ["SELECT 8 AS still"])).rows, [{ still: 8 }]);
+});
+
+test("the store's entries live in the server, shared by windows, imported once, and survive a stop", async t => {
+  const dir = await mkdtemp(join(tmpdir(), "onelake-state-"));
+  t.after(() => rm(dir, { recursive: true, force: true }).catch(() => {}));
+  const jsonDir = join(dir, "json");
+  await mkdir(jsonDir);
+  await writeFile(join(jsonDir, "a.json"), JSON.stringify({ key: "from a file", at: 123, value: { kept: true, q: "it's" } }));
+  let secret;
+  const cfg = { key: `state-${dir}`, script: SCRIPT, stateDir: join(dir, "state"),
+    options: { extensionDir: join(dir, "extensions"), bundledExtensions: existsSync(BUNDLED) ? BUNDLED : null, threads: 2 },
+    getToken: async () => secret, setToken: async s => { secret = s; } };
+  const clients = [];
+  const storeOf = () => {
+    const client = createStateClient(cfg);
+    clients.push(client);
+    return createStore({ dir: join(dir, "blobs"), backend: createStateBackend({ run: sql => client.run(sql), importFrom: jsonDir }) });
+  };
+  t.after(async () => { for (const c of clients) { await c.stop().catch(() => {}); c.close(); } });
+
+  const one = storeOf(), two = storeOf();
+  assert.deepEqual(await one.known("from a file"), { value: { kept: true, q: "it's" }, at: 123 });
+  await one.put("listing", ["a", "b's"]);
+  assert.deepEqual(await two.peek("listing"), ["a", "b's"]);
+
+  // A kept answer outlives the server, and the next one starts by itself.
+  await clients[0].stop();
+  await clients[1].stop();
+  await sleep(1000);
+  const three = storeOf();
+  assert.deepEqual(await three.peek("listing"), ["a", "b's"]);
+
+  // What Clear takes doesn't come back from the old files.
+  await three.clear();
+  const four = storeOf();
+  assert.equal(await four.peek("from a file"), undefined);
+  assert.equal(await four.peek("listing"), undefined);
 });
 
 test("stop ends the server for every window, and with no window left it goes by itself", async t => {
