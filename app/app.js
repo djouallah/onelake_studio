@@ -661,19 +661,27 @@ async function runQuery({ sql, doc = true, ext = '' } = {}) {
   docAllowed = doc;
   docSourceExt = ext;
   let t0 = performance.now();
+  const TRACE_t = performance.now(); // TEMP TRACE
+  const TRACE = what => reportBoot({ what: `RUN ${run}: ${what}${stale() ? ' (STALE)' : ''}`, stages: [], totalMs: Math.round(performance.now() - TRACE_t) }); // TEMP TRACE
+  TRACE('runQuery started'); // TEMP TRACE
   try {
     await engineReady;   // the editor can send a query before the engine is up
+    TRACE('engine ready'); // TEMP TRACE
     // A query of a semantic model runs as the SQL dax-sql compiles it to, once the tables
     // that SQL reads are open; every other query runs as written, and does not wait for them.
     await viewsFor(sql);
+    TRACE('views ready'); // TEMP TRACE
     await openModels(sql);
+    TRACE('models open'); // TEMP TRACE
     if (stale()) return false;
     const model = await semantic.statement(sql);
+    TRACE(`compiled, model=${!!model}`); // TEMP TRACE
     if (stale()) return false;
     if (model) docAllowed = false;
     lastRun.rewritten = !!model;
     t0 = performance.now();
     const res = await engine.runSql(model ? model.sql : sql);
+    TRACE(`engine answered, ${res.rows.length} rows`); // TEMP TRACE
     if (stale()) return false;
     renderResults(res);
     lastResult = res;
@@ -692,6 +700,7 @@ async function runQuery({ sql, doc = true, ext = '' } = {}) {
     setSaveLabel();
     return true;
   } catch (e) {
+    TRACE(`threw: ${String(e && e.message).slice(0, 200)}`); // TEMP TRACE
     // Most likely cancelled by the very click that superseded it: not this query's screen.
     if (stale()) return false;
     // The pane is not a scratchpad of whatever last worked.
@@ -1370,6 +1379,7 @@ window.addEventListener('message', async e => {
     // A statement from a query editor (the host's queryeditor.js), run or planned here; how it
     // went goes back to the editor, which marks an error where DuckDB says it is.
     else if (m.type === 'run-sql' || m.type === 'plan-sql') {
+      reportBoot({ what: `RUN page got ${m.type} id=${m.id}`, stages: [], totalMs: 0 }); // TEMP TRACE
       enterQuery(String(m.title || ''));
       shownKey = m.key ? String(m.key) : null;
       const ok = m.type === 'plan-sql' ? await showPlan(String(m.sql ?? '')) : await runQuery({ sql: String(m.sql ?? '') });

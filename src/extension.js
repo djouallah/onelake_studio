@@ -1140,6 +1140,7 @@ async function activateInner(context, ready) {
   }
 
   async function runInPanel(sql, { plan, title, column, key }) {
+    if (out) out.appendLine(`RUN host: asked, offline=${connectivity.reason()}, ${String(sql).slice(0, 80).replace(/\s+/g, ' ')}`); // TEMP TRACE
     // SET VARIABLE is the editor's, not the engine's: kept here and answered at once.
     const set = setVariable(sql);
     if (set) {
@@ -1159,7 +1160,9 @@ async function activateInner(context, ready) {
     if (runs.size > 20) { const [old] = runs.keys(); runs.get(old)(null); runs.delete(old); }
     const sent = await openInPanel({ type: plan ? 'plan-sql' : 'run-sql', id, sql, title, key },
                                    { beside: true, from: column, below: resultsBelow() });
+    if (out) out.appendLine(`RUN host: id=${id} sent=${sent}`); // TEMP TRACE
     if (!sent) { runs.delete(id); return null; }
+    answer.then(x => { if (out) out.appendLine(`RUN host: id=${id} answered ok=${x && x.ok} error=${x && x.error}`); }); // TEMP TRACE
     return answer;
   }
 
