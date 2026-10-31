@@ -7,13 +7,10 @@
   read. A query or a model's Pivot runs from what was read, and a column or a file never read says so at
   once. Export to Fabric needs OneLake. The status bar shows when this is happening, and it comes back by
   itself.
-- **SQL is back in a box in the panel.** A query no longer opens a `.sql` file, which started every SQL
-  extension installed, and a click on Run could wait behind them for over a minute with nothing on screen.
-  Run, Plan and Save Query are the panel's own; Ctrl+Enter and Ctrl+S work in the box; its text comes back
-  with the next panel. Gone with VS Code's editor: tabs per query, completion, the links above each
-  statement and red underlines (the cursor goes to the error instead). The `resultsLocation` setting is gone.
-  Edit SQL stays only where the box is hidden: a semantic model's view and a table's Pivot. A table or
-  file you click puts its SQL in an empty box, not run.
+- **The SQL box runs the statement under the cursor, or the selection.** Ctrl+Enter runs it, Ctrl+S keeps it
+  under Queries as "Query N", and the cursor goes to where DuckDB says an error is. The text last written comes
+  back in the next window. Edit SQL is only where the box is hidden: a semantic model's view and a table's
+  Pivot. A table or file you click puts its SQL in its tab's box, not run.
 - **DuckDB runs in a process of its own, shared by every tab and window.** One memory budget and one cache of what
   was read, and it outlives a window reload. What the tree opens gets a new tab, each running its own query with its own
   Stop. Listings, table metadata and first rows move to a DuckDB file, imported once from the JSON files.
@@ -21,9 +18,9 @@
   `logMaxGB`, and a row reopens its SQL in a new tab. It holds your SQL in plain text. Performance is live charts of
   memory, cores, queries per second and the disk cache. Nothing of it is stored.
 - **Logs left Explore and the Fabric app.** A published app has no built-in diagnostics page now.
-- **A first `SHOW ALL TABLES` answers at once.** The catalog is kept in one file and checked behind you, so
-  it no longer opens a file per table first. On a machine that scans what it opens, that took 35 seconds.
-- **The title says where you are.** The sidebar's header and the panel's tab read OneLake Studio and then
+- **A first `SHOW ALL TABLES` answers at once.** The catalog's list is kept and checked behind you, so it no
+  longer walks every table first. On a machine that scans what it opens, that took 35 seconds.
+- **The title says where you are.** The sidebar's header and each tab's title read OneLake Studio and then
   `offline` or the tenant in use.
 - **Sign Out stays signed out.** The next VS Code start asks for no session and sends nothing to OneLake,
   until you sign in again.
@@ -38,23 +35,19 @@
   gives "there is no lakehouse", a renamed one keeps working under its model, and a table whose metadata
   has moved is read again rather than failing. Nothing extra is read unless something fails.
 - **A first query answers much sooner.**
-  - A statement that names no semantic model no longer waits for the panel to load your models.
-  - The name behind a Direct Lake model's GUIDs is kept on disk, so opening the panel no longer waits
+  - A statement that names no semantic model no longer waits for its tab to load your models.
+  - The name behind a Direct Lake model's GUIDs is kept on disk, so opening a tab no longer waits
     on the Fabric API each session.
-  - The engine starts in the background once the OneLake view is visible or a query is open, and its
-    boot no longer waits to check the disk cache's size.
+  - The engine starts in the background once the OneLake view is visible, and its boot no longer
+    waits to check the disk cache's size.
   - The catalog is listed in one call.
   - The Read Log shows the boot's stages in more detail, and how long the catalog and semantic models
     took.
-- **A query's Run, Plan and Save Query buttons show up straight away.** They no longer wait for
-  sign-in, or for other SQL extensions to finish starting. A new query's tab now reads `Query 1.sql`
-  rather than `Untitled-1`.
 - **Settings are one click away.** The explorer's "..." menu has Settings, next to Switch Microsoft
   Account, and Clear Cached OneLake Data. Settings are grouped into Cache, Engine, Query and Results,
   and Sign-in.
-- **New settings:** `cacheDirectory`, `metadataCacheMaxMB`, `engineThreads`, `engineSpillMaxGB`,
-  `selectTopRows`, `maxResultRows`, `tableOpensOn` and `gridThousandsSeparator`. Select Top 1000 Rows
-  is now Select Top Rows.
+- **New settings:** `cacheDirectory`, `metadataCacheMaxMB`, `engineThreads`, `engineSpillMaxGB`, `logMaxGB`,
+  `selectTopRows`, `maxResultRows`, `tableOpensOn` and `gridThousandsSeparator`.
 - **`Files/` objects DuckDB reads are kept in the disk cache.** A Parquet or CSV under `Files/` is no
   longer downloaded again on every query. A kept copy is checked against OneLake first, so a rewritten
   file is read again.
@@ -73,8 +66,6 @@
     exited 0; `--csv` left rows out past 200,000 with no word, now fails; `--show-sql` broke a `--csv`.
   - **Changed:** `--csv` holds raw values under plain column names, and always a header. An unknown
     option, a bad `--limit` or an option a command does not take is refused rather than ignored.
-- **A new query keeps Run, Plan and Save Query across a reload.** VS Code restores its untitled tab,
-  and it is still a query until that tab is closed.
 - **A semantic model's local copy is an Apache Ossie file.** Clicking a model keeps
   `~/OneLakeStudio/semantic-models/<workspace>/<model>.yaml` in place of the `.bim`, and Export to
   Fabric writes that `.yaml` into its lakehouse. A model downloaded before this downloads again on
@@ -86,42 +77,28 @@
   each tab has one store writer, handed its downloads without a copy (the DuckDB workers only
   read); the function's answer and the table snapshots live in IndexedDB, not localStorage; and
   the manifest cache keeps only what the tables read now.
-- **SQL is written in VS Code's own editor.** The panel's SQL box is gone: New Query (+ under
-  Queries) opens an editor, a saved query opens as its `.sql` file, and Edit SQL in the panel (or in
-  a table's Pivot) opens what is on screen in a new one. In a query's editor:
-  - Ctrl+Enter, or ▶ OneLake Run above each statement (and in the title bar), runs the statement under the cursor (or the
-    selection); OneLake Plan shows where it spends its time. The results show in the panel, under
-    the editor (or beside it: the `onelakeStudio.resultsLocation` setting).
-  - DuckDB's error is marked where it says it is, until the next edit.
-  - Completion names what the cache holds: catalogs, workspaces, items, schemas, tables and their
-    columns, and an opened model's measures as `AGG("…")`.
-  - OneLake Save Query (Ctrl+S) keeps a new query under Queries as "Query N".
-
-  Other `.sql` files are left to their own extensions.
 - **Go to a Table, Column or Measure** (Ctrl+Alt+O, or the search icon on the tree): every table,
   column, semantic model and measure the cache holds, in one search. A pick opens the table or the
-  model; its button puts the SQL name in the query being written (or copies it).
+  model; its button puts the SQL name in the SQL box (or copies it).
 - **The results grid scrolls every row a result holds**, not the first 2,000, with row numbers.
   Click a cell, Shift+click or Shift+arrows for a range, a row number for its row; Ctrl+A, and
   Ctrl+C copies as tab-separated text (Ctrl+Shift+C with headers). Right-click: Copy, Copy with
   Headers, Copy as CSV, Markdown or JSON. A double click (or Enter) shows a cell whole, JSON
   indented. The filter box keeps the rows that hold its text.
-- **Time travel on an Iceberg table:** History's Query opens a snapshot's rows in a query editor
+- **Time travel on an Iceberg table:** History's Query puts a snapshot's rows in the SQL box
   (`iceberg_scan(…, snapshot_from_id = …)`), and each snapshot says how its row count and its
   columns differ from the table now.
-- **Each query editor keeps its last result.** Moving to another query's editor shows its result
-  in the panel at once, and says when it ran (unless the panel is showing a table or a file).
-- **Query variables:** `SET VARIABLE year = 2024` run from a query editor keeps a value for the
-  session, and `getvariable('year')` in a query reads it; one never set is asked for the first time.
+- **Query variables:** `SET VARIABLE year = 2024` run from the SQL box keeps a value in that tab,
+  and `getvariable('year')` in a query reads it; one never set is asked for the first time.
   **Clear Query Variables** forgets them.
-- **Chart** in the panel: the rows on screen as a bar, line or scatter chart, one column across
+- **Chart** on a result: the rows on screen as a bar, line or scatter chart, one column across
   and a number (or every number) up; nothing is queried again.
-- **Profile** in the panel: each column of the result, over every row the query returns: its
+- **Profile** on a result: each column of the result, over every row the query returns: its
   type, min and max, distinct values, average, spread, quartiles, count and nulls.
 - **Export…** (was Save CSV) writes every row the query returns, not only the rows on screen, to
   a CSV, Parquet or Excel file. The engine writes it; SQL typed by hand still cannot `COPY`. The
   grid's right-click also opens the selection (or every row) as an untitled CSV or JSON document.
-- **SQL from the tree.** A table's right-click: Select Top 1000 Rows (a query in its editor, run),
+- **SQL from the tree.** A table's right-click: Select Top Rows (a query in the SQL box, run),
   Copy SQL Name, Copy Column List. A table or a semantic model dragged into an editor drops its
   SQL name.
 - **The command line's `dax` command is gone.** OneLake Studio takes SQL only: a semantic model is

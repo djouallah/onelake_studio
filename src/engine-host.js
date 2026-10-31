@@ -1,9 +1,9 @@
 'use strict';
 // =============================================================================
-// engine-host.js — real DuckDB, in the extension host
+// engine-host.js — real DuckDB, and a window's way to it
 // =============================================================================
-// A VS Code extension host is Node, so DuckDB runs here natively, on every core, and reads
-// OneLake itself through its `iceberg` and `azure` extensions: snapshot resolution, manifest
+// DuckDB runs natively in the server's process (engine-server.js, `serve` below), on every core, and
+// a window's engine is this same code joined to it (`remote`). It reads OneLake itself through its `iceberg` and `azure` extensions: snapshot resolution, manifest
 // filtering, position and equality deletes, schema evolution and the Warehouse column mapping
 // are all DuckDB's.
 //

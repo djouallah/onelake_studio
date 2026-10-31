@@ -23,6 +23,27 @@ const BUNDLED = join(root, "duckdb-extensions");
 const LONG = "SELECT sum(hash(x)) FROM range(100000000000000) t(x)";
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
+// As a window would ask, over the pipe: a statement can't stop a listener. The pipe also carries the
+// server's news, so the answer is found by its id, and the news gets a moment to reach the windows.
+async function restartListeners(pipe, token) {
+  const sock = net.connect(pipe);
+  await new Promise(r => sock.once("connect", r));
+  sock.setEncoding("utf8");
+  let lines = "";
+  const answered = new Promise((resolve, reject) => {
+    sock.on("error", reject);
+    sock.on("data", chunk => {
+      lines += chunk;
+      if (lines.split("\n").some(l => { try { return JSON.parse(l).id === 1; } catch (_) { return false; } })) resolve();
+    });
+  });
+  sock.write(`${JSON.stringify({ token, window: "test" })}\n`);
+  sock.write(`${JSON.stringify({ id: 1, listen: { force: true } })}\n`);
+  await answered;
+  sock.destroy();
+  await sleep(200);
+}
+
 async function setup(t, { key = "test", idleMs = 60_000 } = {}) {
   const dir = await mkdtemp(join(tmpdir(), "onelake-shared-"));
   let secret;
@@ -304,24 +325,32 @@ test("a listener that stops: the next statement starts it again, and goes on", a
   const { open, secret, pipe } = await setup(t);
   const a = open();
   await a.call("query", ["SELECT 1"]);
-  // Over the pipe, as a window would: a statement can't stop the listener.
-  const sock = net.connect(pipe);
-  await new Promise(r => sock.once("connect", r));
-  t.after(() => sock.destroy());
-  sock.setEncoding("utf8");
-  const reply = () => new Promise(r => sock.once("data", r));
-  let said = reply();
-  sock.write(`${JSON.stringify({ token: secret(), window: "test" })}\n`);
-  await said;
-  said = reply();
-  sock.write(`${JSON.stringify({ id: 1, listen: { force: true } })}\n`);
-  assert.equal(JSON.parse(await said).value, true);
+  await restartListeners(pipe, secret());
 
   assert.deepEqual((await a.call("query", ["SELECT 2 AS back"])).rows, [{ back: 2 }], "the old attach recovered");
   const running = a.call("query", [LONG]).catch(e => e);
   await sleep(800);
   await a.call("cancel");
-  assert.equal((await running).cancelled, true, "and Stop works after it");
+  const stopped = await Promise.race([running, sleep(20_000).then(() => new Error("Stop reached nothing"))]);
+  assert.equal(stopped.cancelled, true, "and Stop works after it");
+});
+
+test("Stop still reaches the server when its listener came back before anything noticed", async t => {
+  const { open, secret, pipe } = await setup(t);
+  // A hang here is what this is about, so it fails rather than waits.
+  const within = (ms, what, p) => Promise.race([p, sleep(ms).then(() => { throw new Error(`${what}: nothing after ${ms}ms`); })]);
+  // With a new window, a pool's first attach can land on either side of the restart, so several tries.
+  for (let i = 0; i < 4; i++) {
+    const w = open();
+    await w.call("query", ["SELECT 1"]);
+    await restartListeners(pipe, secret());
+    const running = w.call("query", [LONG]).catch(e => e);
+    await sleep(800);
+    await w.call("cancel");
+    assert.equal((await within(20_000, `Stop, try ${i}`, running)).cancelled, true);
+    assert.deepEqual((await within(20_000, `after Stop, try ${i}`, w.call("query", ["SELECT 3 AS after"]))).rows, [{ after: 3 }]);
+    await within(20_000, `closing, try ${i}`, w.close());
+  }
 });
 
 test("a lost session token: the next window waits for the old server to go idle, then starts", async t => {

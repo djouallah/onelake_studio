@@ -82,7 +82,10 @@ async function main({ token, pipe, options, logFile, idleMs = 60_000, stateFile 
     const ids = await reaper.listTagged(`${window}:`).catch(() => []);
     if (ids.length) {
       log(`cancelling ${ids.length} left by a window that went`);
-      await reaper.cancelIds(ids);
+      await reaper.cancelIds(ids).catch(async () => {
+        await reaper.reattachControl();
+        await reaper.cancelIds(ids);
+      });
     }
   }
 
@@ -95,15 +98,20 @@ async function main({ token, pipe, options, logFile, idleMs = 60_000, stateFile 
     s.once('error', () => resolve(false));
   });
   async function listenAgain(force) {
+    let again = false;
     if (force || !await accepting(state.uri)) {
       log(`the engine's listener on ${state.uri} had stopped: starting it again`);
       await engine.relisten();
       if (reaper) await reaper.reattach().catch(e => log(`could not attach again: ${e.message}`));
+      again = true;
     }
     if (state.stateUri && (force || !await accepting(state.stateUri))) {
       log(`the state file's listener on ${state.stateUri} had stopped: starting it again`);
       await restartListener(stateConn, state.stateUri, token);
+      again = true;
     }
+    // Every window's attaches belong to the listener that stopped (engine-client.js).
+    if (again) for (const c of clients) { if (!c.sock.destroyed) c.sock.write(`${JSON.stringify({ reattach: true })}\n`); }
   }
 
   // What a window asks over the pipe rather than Quack: nothing here is in Quack's log, the token above all.
@@ -138,7 +146,7 @@ async function main({ token, pipe, options, logFile, idleMs = 60_000, stateFile 
         try { msg = JSON.parse(line); } catch (_) {}
         if (!who) {
           if (!sameToken(msg.token, token)) { sock.destroy(); return; }
-          who = { window: String(msg.window || '') };
+          who = { window: String(msg.window || ''), sock };
           clients.add(who);
           watchIdle();
           // A window that arrives during the boot waits for it.

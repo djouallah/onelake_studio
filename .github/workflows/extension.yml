@@ -111,6 +111,8 @@ jobs:
   # it runs without node_modules — and it is where a DuckDB major bump breaks.
   engine:
     runs-on: ubuntu-26.04
+    # A statement that never ends is a failure, not a job that waits for six hours.
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7

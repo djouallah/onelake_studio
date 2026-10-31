@@ -1979,7 +1979,7 @@ async function activateInner(context) {
         });
       }
       // The engine reads these when it is built: a running one keeps the old values until it
-      // is restarted (which closes the panel, whose tables live in it).
+      // is restarted (which closes the tabs, whose views live in it).
       if (engine && (e.affectsConfiguration('onelakeStudio.engineMemoryLimit') ||
                      e.affectsConfiguration('onelakeStudio.engineThreads') ||
                      e.affectsConfiguration('onelakeStudio.engineSpillMaxGB') ||
@@ -1988,7 +1988,7 @@ async function activateInner(context) {
                      e.affectsConfiguration('onelakeStudio.diskCacheMaxGB') ||
                      e.affectsConfiguration('http.proxy'))) {
         const pick = await vscode.window.showInformationMessage(
-          'OneLake Studio: the engine uses the new setting once it restarts. Restarting closes the panel.',
+          'OneLake Studio: the engine uses the new setting once it restarts. Restarting closes every tab, in every window.',
           'Restart Engine');
         if (pick === 'Restart Engine' && engine) {
           closePanel();

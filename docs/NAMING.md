@@ -3,7 +3,7 @@
 This is the contract for how every object in OneLake Studio is named. Change the code to fit it, not the
 other way round. The code that holds it is [`src/names.js`](../src/names.js) and
 [`src/sql.js`](../src/sql.js) on the host, and [`app/semantic.js`](../app/semantic.js) and
-[`app/paths.js`](../app/paths.js) in the panel.
+[`app/paths.js`](../app/paths.js) in the page.
 
 ## The point
 
@@ -189,7 +189,7 @@ These do not meet the contract yet:
 
 | Test | What it holds |
 | --- | --- |
-| `test/js/names.test.mjs` | Building names, the `dbo` default, the kind mapping, quoting, and the host and panel `sqlPart` staying equal |
+| `test/js/names.test.mjs` | Building names, the `dbo` default, the kind mapping, quoting, and the host and page `sqlPart` staying equal |
 | `test/js/sql.test.mjs` | `tableRefs`: case, quotes, spaces, the sixth part as a column, and what is not a table; `SHOW` rewriting |
 | `test/js/semantic.test.mjs` | `modelSqlName`, `unopenedModels`, and a model with no workspace refused |
 | `test/js/cli-engine.test.mjs` | Listed names run as SQL; an Import model is refused with the five-part error |

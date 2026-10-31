@@ -223,11 +223,11 @@ async function openClient({ uri, token, extensionDir, bundledExtensions, lockdow
   // statement (a second cancels the first), so there are several, added as they are needed. With
   // all of them busy a statement doesn't wait: it goes by quack_query, and the next attach is on its way.
   const attaches = [];
-  let growing = false, closed = false;
+  let growing = false, closed = false, named = 0;
   function grow() {
     if (growing || closed || attaches.length >= MAX_ATTACHES) return;
     growing = true;
-    const name = `r${attaches.length}`;
+    const name = `r${named++}`;
     (async () => {
       const c = await local.connect();
       try { await c.run(`ATTACH ${sqlStr(uri)} AS ${name} (TYPE quack, SECRET studio);`); }
@@ -249,9 +249,8 @@ async function openClient({ uri, token, extensionDir, bundledExtensions, lockdow
     const c = await local.connect();
     try {
       for (const a of attaches.splice(0)) await c.run(`DETACH ${a.name};`).catch(() => {});
-      await c.run('DETACH control;').catch(() => {});
-      await c.run(`ATTACH ${sqlStr(uri)} AS control (TYPE quack, SECRET studio);`);
     } finally { try { c.closeSync(); } catch (_) {} }
+    await reattachControl();
     grow();
   }
 
@@ -264,17 +263,26 @@ async function openClient({ uri, token, extensionDir, bundledExtensions, lockdow
       return (await c.runAndReadAll(query(sql))).getRowObjectsJson().map(r => r.connection_id);
     } finally { try { c.closeSync(); } catch (_) {} }
   }
+  // A failure is the caller's to see: a Stop that didn't reach anything must not look as if it had.
   async function cancelIds(ids) {
     const c = await local.connect();
     try {
-      for (const id of ids) await c.run(`SELECT * FROM quack_cancel('control', ${sqlStr(id)});`).catch(() => {});
+      for (const id of ids) await c.run(`SELECT * FROM quack_cancel('control', ${sqlStr(id)});`);
     } finally { try { c.closeSync(); } catch (_) {} }
   }
-  return { local, admin, route, stopGrowing, reattach, listTagged, cancelIds };
+  // Only what Stop goes through: a pool's attaches may have statements running on them.
+  async function reattachControl() {
+    const c = await local.connect();
+    try {
+      await c.run('DETACH control;').catch(() => {});
+      await c.run(`ATTACH ${sqlStr(uri)} AS control (TYPE quack, SECRET studio);`);
+    } finally { try { c.closeSync(); } catch (_) {} }
+  }
+  return { local, admin, route, stopGrowing, reattach, reattachControl, listTagged, cancelIds };
 }
 
-// Questions on the control pipe, answered by id.
-function controlChannel(sock) {
+// Questions on the control pipe, answered by id. A line with no id is the server's own news.
+function controlChannel(sock, onNews = () => {}) {
   const asked = new Map();
   let seq = 0, lines = '';
   sock.on('data', chunk => {
@@ -283,6 +291,7 @@ function controlChannel(sock) {
       let m = null;
       try { m = JSON.parse(lines.slice(0, nl)); } catch (_) {}
       lines = lines.slice(nl + 1);
+      if (m && m.id == null) { onNews(m); continue; }
       const waiting = m && asked.get(m.id);
       if (!waiting) continue;
       asked.delete(m.id);
@@ -305,6 +314,10 @@ function controlChannel(sock) {
 // stop while its process lives on, and an attach outlives the session it knew. Asked over the pipe,
 // the server starts its listener again if it has to, and what was attached is attached again: once,
 // however many statements noticed.
+//
+// Every window is told when that happens. An attach whose socket is still open goes on being answered
+// by the listener that was stopped, where a statement runs and nothing can find it to Stop it, so
+// waiting to notice isn't enough.
 const LOST = /Could not connect to server|Invalid connection id/;
 function recovery(ask, client) {
   let going = null;
@@ -367,7 +380,8 @@ function createStateClient(cfg) {
         if (!state.stateUri) { sock.destroy(); throw new Error(state.stateError || 'the engine has no state file open'); }
         const client = await openClient({ uri: state.stateUri, token, extensionDir: options.extensionDir, bundledExtensions: options.bundledExtensions })
           .catch(e => { sock.destroy(); throw e; });
-        const me = { sock, client, recover: recovery(controlChannel(sock), client) };
+        const ask = controlChannel(sock, m => { if (m.reattach) client.reattach().catch(() => {}); });
+        const me = { sock, client, recover: recovery(ask, client) };
         sock.on('error', () => {});
         sock.on('close', () => drop(me));
         joined = me;
@@ -428,21 +442,33 @@ function createRemote({ onGone = () => {}, ...cfg }) {
     try {
       client = await openClient({ uri: state.uri, token, extensionDir: options.extensionDir, bundledExtensions: options.bundledExtensions });
     } catch (e) { sock.destroy(); throw e; }
-    const { local, admin, route, stopGrowing, listTagged, cancelIds } = client;
+    const { local, admin, route, stopGrowing, reattachControl, listTagged, cancelIds } = client;
 
     let closing = false;
     sock.on('error', () => {});
     sock.on('close', () => { if (!closing) onGone(); });
 
-    const ask = controlChannel(sock);
+    const ask = controlChannel(sock, m => { if (m.reattach && !closing) client.reattach().catch(() => {}); });
     const recover = recovery(ask, client);
     const mine = r => ({ ...r, here: r.window === window });
 
     let seq = 0;
-    async function cancel(tag) {
+    // Statements can work while `control` is stale: an attach made after the listener came back knows
+    // nothing is wrong. So a failed cancel looks again: gone from the list means it finished, and
+    // still there means `control` is what's lost.
+    async function cancelNow(ids) {
+      try { await cancelIds(ids); return true; }
+      catch (e) {
+        if (!LOST.test(String(e && e.message))) throw e;
+        await ask({ listen: {} }).catch(() => {});
+        await reattachControl();
+        return false;
+      }
+    }
+    async function cancel(tagNow) {
       for (let i = 0; i < CANCEL_TRIES && !closing; i++) {
-        const ids = await listTagged(tag).catch(() => []);
-        if (ids.length) return cancelIds(ids);
+        const ids = await listTagged(tagNow()).catch(() => []);
+        if (ids.length && await cancelNow(ids)) return;
         await sleep(CANCEL_EVERY_MS);
       }
     }
@@ -459,7 +485,7 @@ function createRemote({ onGone = () => {}, ...cfg }) {
       clearLogs: () => ask({ clearLogs: true }),
       async connect() {
         const c = await local.connect();
-        let tag = null, way = null;
+        let tag = null, way = null, stopped = false;
         const done = () => { if (way) way.release(); way = null; };
         // The tag ends with its comment's close, so statement 1's doesn't also match statement 12.
         const wrapped = sql => {
@@ -473,6 +499,8 @@ function createRemote({ onGone = () => {}, ...cfg }) {
           if (closing || !LOST.test(String(e && e.message))) throw e;
           done();
           await recover();
+          // A Stop that came while this recovered: there is no statement to go again.
+          if (stopped) throw new Error('INTERRUPT Error: Interrupted!');
           return go(wrapped(sql));
         });
         return {
@@ -487,7 +515,11 @@ function createRemote({ onGone = () => {}, ...cfg }) {
               fetchChunk: () => r.fetchChunk().catch(clean),
             };
           },
-          interrupt() { if (tag) cancel(tag).catch(() => {}); },
+          interrupt() {
+            stopped = true;
+            // The tag as it is by then: going again gives a statement a new one.
+            if (tag) cancel(() => tag).catch(() => {});
+          },
           closeSync() { done(); c.closeSync(); },
         };
       },
@@ -501,7 +533,9 @@ function createRemote({ onGone = () => {}, ...cfg }) {
       async leave({ stop = false } = {}) {
         closing = true;
         const ids = await listTagged(`${window}:`).catch(() => []);
-        if (ids.length) await cancelIds(ids);
+        if (ids.length && !await cancelNow(ids).catch(() => true)) {
+          await cancelNow(await listTagged(`${window}:`).catch(() => [])).catch(() => {});
+        }
         await new Promise(resolve => {
           const timer = setTimeout(resolve, stop ? 5_000 : 1_000);
           sock.once('close', () => { clearTimeout(timer); resolve(); });

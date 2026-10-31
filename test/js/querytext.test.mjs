@@ -1,4 +1,4 @@
-// querytext.js: the statements of a query editor's text, where DuckDB's error points, and the
+// querytext.js: the statements of the SQL box's text, where DuckDB's error points, and the
 // dotted name being typed.
 import { test } from "node:test";
 import assert from "node:assert/strict";

@@ -93,7 +93,7 @@ sql "SHOW SEMANTIC DIMENSIONS IN semanticmodel.sales.sales_model FOR METRIC \"To
 
 A semantic model is never made or dropped in SQL: it is there because Fabric has it. A query that
 names one opens it (its definition downloaded to this machine the first time, shared with the
-VS Code panel); nothing is written to Fabric or OneLake.
+VS Code extension); nothing is written to Fabric or OneLake.
 
 ## Things to know
 

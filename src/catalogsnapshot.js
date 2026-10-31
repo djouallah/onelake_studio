@@ -1,10 +1,9 @@
 'use strict';
 // =============================================================================
-// catalogsnapshot.js — the engine's catalog, kept in one file
+// catalogsnapshot.js — the engine's catalog, kept as one entry
 // =============================================================================
-// Listing the catalog walks the cache: a file per table. The first open of each is slow on a
-// machine that scans what it opens: 440 files took 18 s cold and 0.4 s warm, and a first SHOW ALL
-// TABLES waited for all of them. So the last list is kept as one entry. A store's first listing
+// Listing the catalog walks the cache: an entry per table, and a first SHOW ALL TABLES would wait
+// for all of them. So the last list is kept as one entry. A store's first listing
 // answers from it at once and walks behind the caller; if the walk finds something else, onMoved
 // says so, and the next statement that reads the catalog lists it again.
 //

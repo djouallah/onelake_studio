@@ -618,7 +618,7 @@
             "order": 1,
             "pattern": "^$|^\\d+(\\.\\d+)?\\s*(KB|MB|GB|TB|KiB|MiB|GiB|TiB)$",
             "patternErrorMessage": "A DuckDB memory size, e.g. 4GB or 512MB.",
-            "markdownDescription": "Most memory DuckDB may use, e.g. `4GB`. Empty means a quarter of this machine's RAM — DuckDB's own default is 80%, which is too much for the extension host every other extension shares. Bigger queries spill to a temp directory instead of failing. Applies the next time the engine starts."
+            "markdownDescription": "Most memory DuckDB may use, e.g. `4GB`. Empty means a quarter of this machine's RAM. Bigger queries spill to a temp directory instead of failing. Applies the next time the engine starts."
           },
           "onelakeStudio.engineThreads": {
             "type": "integer",
@@ -664,7 +664,7 @@
             "maximum": 1000000,
             "scope": "machine",
             "order": 3,
-            "markdownDescription": "The most rows of one result the panel and the command line keep. Past it, rows are only counted. **Export…** always writes every row. More rows use more memory in the extension host and the panel. Applies the next time the engine starts."
+            "markdownDescription": "The most rows of one result a tab and the command line keep. Past it, rows are only counted. **Export…** always writes every row. More rows use more memory in the extension host and the tab. Applies the next time the engine starts."
           },
           "onelakeStudio.tableOpensOn": {
             "type": "string",

@@ -2,10 +2,9 @@
 // =============================================================================
 // statestore.js — what the extension remembers, in DuckDB
 // =============================================================================
-// On the shared engine the store's entries (store.js: listings, table metadata, first rows) live in
+// The store's entries (store.js: listings, table metadata, first rows) live in
 // a table in the server's state file, one per account, in place of one JSON file per key. A kept
-// answer that used to be a file is imported once. Those files are left where they are, so turning
-// the setting off finds them, as they were when it was turned on.
+// answer that was a file is imported once, and the file is left where it is.
 //
 // A file's bytes stay files (store.js blobs): they can be half a gigabyte, and a statement is text.
 // =============================================================================

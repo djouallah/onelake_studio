@@ -18,3 +18,4 @@ fabric-function/
 fabric_app/**/node_modules/
 # Screenshots and drafts for blog posts, kept out of the repo.
 blog/
+.tmp/

@@ -1128,7 +1128,7 @@ function historyHtml(info, hist) {
   // An Iceberg snapshot can be queried as it was (iceberg_scan's snapshot_from_id).
   const canQuery = !deltaTable && !!info.metadataLocation;
   const table = '<table class="history"><tr>' + (canQuery ? '<th></th>' : '') + shown.map(([h]) => `<th>${escapeHtml(h)}</th>`).join('') + '</tr>' +
-    list.map(h => '<tr>' + (canQuery ? `<td><button data-snapshot="${escapeHtml(h.version)}" title="This snapshot's rows, in a query editor">Query</button></td>` : '') +
+    list.map(h => '<tr>' + (canQuery ? `<td><button data-snapshot="${escapeHtml(h.version)}" title="This snapshot's rows, as a query in the box">Query</button></td>` : '') +
       shown.map(([, f, cls]) =>
       `<td${cls ? ` class="${cls}"` : ''}>${escapeHtml(String(f(h)))}</td>`).join('') + '</tr>').join('') +
     '</table>';
