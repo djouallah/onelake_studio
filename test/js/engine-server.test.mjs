@@ -236,6 +236,66 @@ test("the store's entries live in the server, shared by windows, imported once, 
   assert.equal(await four.peek("listing"), undefined);
 });
 
+test("concurrency: many tabs of two windows on one server, every answer right, and all of it in that server's log", async t => {
+  const { open, log } = await setup(t);
+  const a = open(), b = open();
+  await Promise.all([a.call("query", ["SELECT 1"]), b.call("query", ["SELECT 1"])]);
+  const before = await a.stats();
+  const TABS = { a: 10, b: 4 };     // more than a window's pool of attaches, so its overflow runs too
+  const ROUNDS = 25;
+  const wrong = [], failures = [];
+  const ran = new Set();
+  const worker = async (window, name, tab) => {
+    for (let i = 0; i < ROUNDS; i++) {
+      const id = `${name}-${i}`;
+      ran.add(id);
+      try {
+        if (i % 5 === 4) {
+          // A result in batches, and whole: another tab's rows can't be in it.
+          const rows = [];
+          const end = await tab.call("stream", [`SELECT '${id}' AS id, i FROM range(15000) t(i)`], b => rows.push(...b.rows));
+          if (end.numRows !== 15000 || rows.length !== 15000 || rows.some(r => r.id !== id)) wrong.push(id);
+        } else {
+          const { rows } = await tab.call("query", [`SELECT '${id}' AS id, sum(x)::BIGINT AS total FROM range(100000) t(x)`]);
+          if (rows.length !== 1 || rows[0].id !== id || Number(rows[0].total) !== 4999950000) wrong.push(`${id}: ${JSON.stringify(rows)}`);
+        }
+      } catch (e) { failures.push(`${id}: ${e.message}`); }
+    }
+  };
+  // In the middle of it: a bad statement fails alone, and a Stop stops one tab's query and no other's.
+  const bad = a.forTab(), stopper = b.forTab();
+  const badOne = bad.call("query", ["SELECT * FROM no_such_concurrent_table"]).catch(e => e);
+  const long = stopper.call("query", [LONG]).catch(e => e);
+  await Promise.all([
+    ...Array.from({ length: TABS.a }, (_, i) => worker(a, `a${i}`, a.forTab())),
+    ...Array.from({ length: TABS.b }, (_, i) => worker(b, `b${i}`, b.forTab())),
+    (async () => { await sleep(500); await stopper.call("cancel"); })(),
+  ]);
+  assert.deepEqual(failures, [], "no statement failed");
+  assert.deepEqual(wrong, [], "every answer was its own");
+  assert.match((await badOne).message, /no_such_concurrent_table/);
+  assert.equal((await long).cancelled, true);
+  assert.equal(log().match(/starting: pid/g).length, 1, "one server for all of it");
+
+  const logged = await a.logs(5000);
+  const inLog = new Map();
+  for (const r of logged) {
+    const id = /SELECT '([ab]\d+-\d+)' AS id/.exec(r.sql);
+    if (id) inLog.set(id[1], r);
+  }
+  const missing = [...ran].filter(id => !inLog.has(id));
+  assert.deepEqual(missing, [], "each statement is in the server's log");
+  assert.ok([...inLog.values()].every(r => r.status === "ok" && r.ms >= 0));
+  // Each from the window that sent it.
+  assert.ok([...inLog].every(([id, r]) => r.here === id.startsWith("a")), "the log knows whose it was");
+  assert.equal(logged.find(r => r.sql.includes("no_such_concurrent_table")).status, "error");
+  assert.equal(logged.find(r => r.sql.includes("range(100000000000000)")).status, "stopped");
+
+  const after = await a.stats();
+  assert.ok(after.statements - before.statements >= ran.size, "queries are counted");
+  assert.equal(after.pid, before.pid);
+});
+
 test("a listener that stops: the next statement starts it again, and goes on", async t => {
   const { open, secret, pipe } = await setup(t);
   const a = open();
