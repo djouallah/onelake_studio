@@ -237,8 +237,9 @@ async function selectFile(file) {
     if (my !== selSeq) return;
     // A database file with no tables attaches but leaves nothing to preview.
     if (info.ident) {
-      reportLoad(info, await runQuery({ sql: previewSql(info.ident, activeDocEligible),
-                                        doc: activeDocEligible, ext: activeDocExt }));
+      const preview = previewSql(info.ident, activeDocEligible);
+      offerInBox(preview);
+      reportLoad(info, await runQuery({ sql: preview, doc: activeDocEligible, ext: activeDocExt }));
     } else {
       reportLoad(info, true);
     }
@@ -522,8 +523,9 @@ async function selectTable(t) {
     tableStage = 'stats';
     setActiveStats(info);
     showStats();                    // statistics are the landing view for a table
-    // Not run: Profile and Export read the rows by it.
+    // Not run: Profile and Export read the rows by it, and the box starts from it.
     currentSql = activeSqlName ? previewSql(activeSqlName, false) : '';
+    if (currentSql) offerInBox(currentSql);
     setStatus(engine.describeLoad(info));
     // Asked to land on the rows: the same as clicking Data.
     if (settings.tableOpensOn === 'data') { await peekIntoView(); return; }
@@ -1221,6 +1223,15 @@ function putInBox(sql) {
   nameBoxQuery(null);
   box.focus();
   box.setSelectionRange(0, 0);
+}
+// What was clicked, as SQL to start from: a click isn't a request to type, so the cursor stays where
+// it is, and it never replaces what someone wrote. Nor is it a draft to keep.
+let offered = '';
+function offerInBox(sql) {
+  const box = $('sqlEditor');
+  if (box.value.trim() && box.value !== offered) return;
+  box.value = offered = sql;
+  activeQuery = null;
 }
 function openInBox(sql, name) {
   putInBox(sql);

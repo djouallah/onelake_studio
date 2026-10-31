@@ -245,7 +245,9 @@ rows at its current snapshot, a check after (`cached.rows` in [`src/onelake.js`]
 kept is the part of each file that was read, so a check doesn't promise every column. A new snapshot goes
 back to the cloud. A table nothing was ever written to has a check, since it reads no file.
 
-**Clicking a table** shows it in the panel: Data, Stats, History and Pivot.
+**Clicking a table** shows it in the panel: Data, Stats, History and Pivot. The SQL box gets
+`SELECT * FROM <its name> LIMIT 100` to start from, not run, unless it already holds something you wrote. A
+file does the same with what its preview runs.
 - **Stats and History** come from the table's metadata, with no data read. A table written as Delta
   also has its own log read for what Iceberg has no word for ([`src/deltalog.js`](../src/deltalog.js)).
 - **Time travel:** on an Iceberg table, History's Query puts a snapshot's rows in the SQL box, and

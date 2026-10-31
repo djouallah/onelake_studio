@@ -12,7 +12,8 @@
   Run, Plan and Save Query are the panel's own; Ctrl+Enter and Ctrl+S work in the box; its text comes back
   with the next panel. Gone with VS Code's editor: tabs per query, completion, the links above each
   statement and red underlines (the cursor goes to the error instead). The `resultsLocation` setting is gone.
-  Edit SQL stays only where the box is hidden: a semantic model's view and a table's Pivot.
+  Edit SQL stays only where the box is hidden: a semantic model's view and a table's Pivot. A table or
+  file you click puts its SQL in an empty box, not run.
 - **A first `SHOW ALL TABLES` answers at once.** The catalog is kept in one file and checked behind you, so
   it no longer opens a file per table first. On a machine that scans what it opens, that took 35 seconds.
 - **The title says where you are.** The sidebar's header and the panel's tab read OneLake Studio and then

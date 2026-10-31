@@ -429,6 +429,16 @@ async function cachedRunMatrix({ saved, home }) {
     check("saving again is the same query", /Saved as Query 1/.test(again.status) && !existsSync(join(folder, "Query 2.sql")), again.status);
   });
 
+  await step("Tree: a table click gives an empty box its SQL, not run", async () => {
+    await setBox("");
+    await drive("exec", { command: "onelakeStudio.openTable", args: [{ workspace: WORKSPACE, item: "data.Lakehouse", schema: "dbo", table: "orders" }] });
+    const s = await until("the table's SQL in the box", async () => {
+      const x = await panelState();
+      return /^SELECT \* FROM \S*orders LIMIT 100$/.test(x.box) && x;
+    }, 20000);
+    check("it wasn't run", !/select \* from/i.test(s.status), s.status);
+  });
+
   await step("Tree: a table click leaves the box as it is, with no Edit SQL beside it", async () => {
     await setBox("select 'mine' as typed");
     await drive("exec", { command: "onelakeStudio.openTable", args: [{ workspace: WORKSPACE, item: "data.Lakehouse", schema: "dbo", table: "orders" }] });
