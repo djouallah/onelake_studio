@@ -6,7 +6,7 @@
 //
 // CI's "browser" job runs it (.github/workflows/extension.yml), which sets up the server and hosts.
 import { spawn, execFile } from "node:child_process";
-import { mkdir, mkdtemp, readdir } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir } from "node:fs/promises";
 import net from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -63,9 +63,17 @@ await new Promise((resolve, reject) => { listener.once("error", reject); listene
 // ---------------------------------------------------------------------------
 let shots = 0;
 const pageErrors = [];
-let server = null, context = null, page = null;
+let server = null, context = null, page = null, logsOf = null;
+
+// What the extension's Output channel holds, over every window on this data.
+async function outputLog() {
+  const files = await readdir(logsOf, { recursive: true }).catch(() => []);
+  const ours = files.filter(f => /OneLake Studio\.log$/.test(f));
+  return (await Promise.all(ours.map(f => readFile(join(logsOf, f), "utf8")))).join("\n");
+}
 
 async function open({ dataDir, home, profile }) {
+  logsOf = join(dataDir, "data", "logs");
   server = spawn(join(SERVER, "bin", "code-server"), [
     "--host", "127.0.0.1", "--port", String(PORT), "--without-connection-token",
     "--accept-server-license-terms", "--disable-telemetry",
@@ -239,6 +247,7 @@ async function runMatrix() {
       check(`${name}: the old result is gone`, !r.table, r.table);
       const d = await drive("diagnostics");
       check(`${name}: a diagnostic sits on the statement's line`, d.length === 1 && d[0].line === 2, JSON.stringify(d));
+      if (name === "a syntax error") check("it sits on the wrong word", d[0]?.character === bad.indexOf("where"), JSON.stringify(d));
     });
   }
 
@@ -368,7 +377,8 @@ async function cachedRunMatrix({ saved }) {
   await step("Run: a semantic model's query, with no rows held", async () => {
     const r = await runIt(MODEL_QUERY);
     settled("a model query", r);
-    check("it compiled, and names the table it could not read", isError(r) && /(Sales|Product)\b.*cached/.test(r.status), r.status);
+    check("it stops where the rows aren't held, past the compiler", isError(r) && /isn't cached/.test(r.status) && !/AGG|Catalog Error|Binder/.test(r.status), r.status);
+    check("the model opened from its local copy", /opened semanticmodel\.e2e\.shop for a query/.test(await outputLog()));
     check("it ends at once, not on a timeout", r.ms < 30000, `${r.ms} ms`);
     check("the editor marks it", (await drive("diagnostics")).length === 1);
   });
@@ -432,6 +442,8 @@ async function planMatrix() {
     settled("bad SQL's plan", r);
     const d = await drive("diagnostics");
     check("the editor marks the line", d.length === 1 && d[0].line === 2, JSON.stringify(d));
+    check("it sits on the wrong word", d[0]?.character === "select 2 fromm where".indexOf("where"), JSON.stringify(d));
+    check("the message doesn't speak of the EXPLAIN behind it", !/EXPLAIN/.test(d[0]?.message || ""), JSON.stringify(d));
     check("the status bar is red", isError(r), r.status);
     check("no plan is left on screen", !r.plan, r.planText);
   });
@@ -482,7 +494,7 @@ async function cachedPlanMatrix() {
   await step("Plan: a semantic model's query, with no rows held", async () => {
     const r = await runIt(MODEL_QUERY, { plan: true });
     settled("a model's plan", r);
-    check("it compiled, and names the table it could not read", isError(r) && /(Sales|Product)\b.*cached/.test(r.status), r.status);
+    check("it stops where the rows aren't held, past the compiler", isError(r) && /isn't cached/.test(r.status) && !/AGG|Catalog Error|Binder/.test(r.status), r.status);
     check("the editor marks it", (await drive("diagnostics")).length === 1);
     check("no plan is left on screen", !r.plan, r.planText);
   });

@@ -108,7 +108,7 @@ prompts for nothing, until **Sign in to OneLake** or **Switch Microsoft Account*
 **The title says where this window reads from** ([`src/title.js`](../src/title.js)): the sidebar's header and
 the panel's tab read OneLake Studio and then `offline` or the tenant in use. The tenant is the
 `onelakeStudio.tenantId` setting when it is set, since a guest's own domain would name the wrong tenant, and
-otherwise the account's domain.
+otherwise the account's domain. Group, Refresh and Open are in the view's "..." menu so it fits.
 
 ## Offline
 

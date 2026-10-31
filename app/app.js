@@ -614,7 +614,8 @@ async function showPlan(text) {
     if (my !== selSeq) return false;
     const sql = model ? model.sql : text.replace(/;\s*$/, '');
     // Runs nothing, and it is where bad SQL or a table not held fails: below, so the editor hears.
-    const explained = await engine.runSql(`EXPLAIN ${sql}`);
+    // On a line of its own, so DuckDB's error quotes the statement's line and not this word.
+    const explained = await engine.runSql(`EXPLAIN\n${sql}`);
     if (my !== selSeq) return false;
     clearResults();
     const view = $('planView');

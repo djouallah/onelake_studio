@@ -12,9 +12,12 @@ const isQuery = doc => /[\\/]OneLakeStudio[\\/]queries[\\/]/i.test(doc.uri.path)
 // then VS Code has no active text editor.
 let current = null;
 
+// In the group that holds it, as a click on its tab does: the panel's group can be the active one.
 async function focus() {
   if (!current) throw new Error('no query is open');
-  return vscode.window.showTextDocument(current, { preview: false, preserveFocus: false });
+  const uri = current.uri.toString();
+  const group = vscode.window.tabGroups.all.find(g => g.tabs.some(t => t.input && t.input.uri && t.input.uri.toString() === uri));
+  return vscode.window.showTextDocument(current, { preview: false, preserveFocus: false, viewColumn: group && group.viewColumn });
 }
 
 async function setText({ text, cursor = null, selection = null }) {
@@ -59,7 +62,7 @@ const ops = {
   setText,
   diagnostics() {
     if (!current) return [];
-    return vscode.languages.getDiagnostics(current.uri).map(d => ({ line: d.range.start.line, message: d.message }));
+    return vscode.languages.getDiagnostics(current.uri).map(d => ({ line: d.range.start.line, character: d.range.start.character, message: d.message }));
   },
   state() {
     const ext = vscode.extensions.getExtension(STUDIO);
