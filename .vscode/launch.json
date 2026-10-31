@@ -5,13 +5,17 @@
   // The host runs from dist/extension.js, so F5 bundles src/ first (tasks.json); the
   // panel still serves app/ directly, so an edit to the page shows up on the next panel
   // open with no rebuild.
+  //
+  // --disable-extensions: only this extension in the host. Every extension shares that one thread,
+  // and opening a .sql file starts the SQL extensions, which have held it for over a minute: a click
+  // on Run then waits behind them, with nothing to say so.
   "version": "0.2.0",
   "configurations": [
     {
       "name": "Run OneLake Studio extension",
       "type": "extensionHost",
       "request": "launch",
-      "args": ["--extensionDevelopmentPath=${workspaceFolder}"],
+      "args": ["--extensionDevelopmentPath=${workspaceFolder}", "--disable-extensions"],
       "preLaunchTask": "bundle"
     }
   ]

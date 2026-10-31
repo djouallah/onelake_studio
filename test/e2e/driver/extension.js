@@ -69,6 +69,7 @@ const ops = {
     return {
       installed: !!ext,
       active: !!(ext && ext.isActive),
+      language: current ? current.languageId : null,
       tabs: vscode.window.tabGroups.all.flatMap(g => g.tabs).map(t => t.label),
     };
   },

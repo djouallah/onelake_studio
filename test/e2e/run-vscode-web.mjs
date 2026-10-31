@@ -23,6 +23,7 @@ const CHROME = process.env.CHROME_PATH || "/usr/bin/google-chrome";
 const HOSTS = (process.env.E2E_HOSTS || "").split(/\s+/).filter(Boolean);
 const PORT = 5301;
 const DRIVER_PORT = 5302;
+const OTHER_SQL_EXTENSIONS = ["ms-mssql.mssql", "ms-ossdata.vscode-pgsql"];
 
 // ---------------------------------------------------------------------------
 // What is reported
@@ -69,6 +70,13 @@ let server = null, context = null, page = null, logsOf = null;
 async function outputLog() {
   const files = await readdir(logsOf, { recursive: true }).catch(() => []);
   const ours = files.filter(f => /OneLake Studio\.log$/.test(f));
+  return (await Promise.all(ours.map(f => readFile(join(logsOf, f), "utf8")))).join("\n");
+}
+
+// The extension host's own log, over every window on this data: what it activated, and when.
+async function hostLog() {
+  const files = await readdir(logsOf, { recursive: true }).catch(() => []);
+  const ours = files.filter(f => /exthost\.log$/.test(f.replace(/\\/g, "/")));
   return (await Promise.all(ours.map(f => readFile(join(logsOf, f), "utf8")))).join("\n");
 }
 
@@ -507,12 +515,11 @@ async function main() {
   await mkdir(join(OUT, "shots"), { recursive: true });
   await mkdir(join(OUT, "extensions"), { recursive: true });
   const installEnv = { ...process.env, HOME: await mkdtemp(join(tmpdir(), "e2e-home-")) };
-  for (const vsix of [VSIX, DRIVER_VSIX]) {
-    await promisify(execFile)(join(SERVER, "bin", "code-server"), [
-      "--accept-server-license-terms", "--server-data-dir", join(OUT, "install"),
-      "--extensions-dir", join(OUT, "extensions"), "--install-extension", vsix, "--force",
-    ], { env: installEnv });
-  }
+  const install = extension => promisify(execFile)(join(SERVER, "bin", "code-server"), [
+    "--accept-server-license-terms", "--server-data-dir", join(OUT, "install"),
+    "--extensions-dir", join(OUT, "extensions"), "--install-extension", extension, "--force",
+  ], { env: installEnv, maxBuffer: 1 << 24 });
+  for (const vsix of [VSIX, DRIVER_VSIX]) await install(vsix);
   console.log("installed:", await readdir(join(OUT, "extensions")));
 
   const place = async name => {
@@ -651,6 +658,31 @@ async function main() {
     const s = await planned();
     check("Plan drew a profile", s.profileDrawn && !s.planError, s.planText);
   }, 180000);
+  await close();
+
+  // ------------------------------------------------------------------- 5
+  // Every extension shares the host's one thread, and opening a .sql file starts the SQL extensions.
+  // A click on Run waits behind them, so what counts is how long a click takes to be answered.
+  console.log("\n=== 5. Beside the SQL extensions many people have");
+  const othersInstalled = await Promise.all(OTHER_SQL_EXTENSIONS.map(install)).then(() => true, e => e.message);
+  check("the other SQL extensions installed", othersInstalled === true, othersInstalled);
+  await open(cached);
+  await step("Beside them: a click on Run, on a query just opened", async () => {
+    await globalState(page, { "onelakeStudio.signedOut": true });
+    const t0 = Date.now();
+    await drive("newQuery");
+    const opened = Date.now() - t0;
+    await drive("setText", { text: "select 5555 as beside_them" });
+    const clicked = Date.now();
+    await button("OneLake Run").click();
+    const s = await cell(/\b5555\b/, 180000);
+    const ms = Date.now() - clicked;
+    const { language } = await drive("state");
+    const log = await hostLog();
+    const started = OTHER_SQL_EXTENSIONS.filter(x => log.includes(`_doActivateExtension ${x}`));
+    console.log(`  opening took ${opened} ms, the click ${ms} ms; language ${language}; started: ${started.join(", ") || "none"}`);
+    check("it answered within 15 s of the click", ms < 15000, `${ms} ms; language ${language}; started: ${started.join(", ") || "none"}; ${s.status}`);
+  }, 240000);
   await close();
 
   const ours = pageErrors.filter(e => /vscode-resource|vscode-cdn|\/app\/|\/webview\//.test(e));
