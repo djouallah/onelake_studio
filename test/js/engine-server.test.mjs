@@ -235,6 +235,27 @@ test("the store's entries live in the server, shared by windows, imported once, 
   assert.equal(await four.peek("listing"), undefined);
 });
 
+test("a lost session token: the next window waits for the old server to go idle, then starts", async t => {
+  const dir = await mkdtemp(join(tmpdir(), "onelake-lost-"));
+  t.after(() => rm(dir, { recursive: true, force: true }).catch(() => {}));
+  let secret;
+  const open = () => {
+    const w = createEngineHost({
+      remote: createRemote({ key: `lost-${dir}`, script: SCRIPT, stateDir: join(dir, "state"), idleMs: 4000,
+        options: { extensionDir: join(dir, "extensions"), bundledExtensions: existsSync(BUNDLED) ? BUNDLED : null, threads: 2 },
+        getToken: async () => secret, setToken: async s => { secret = s; } }),
+    });
+    t.after(() => w.close({ stop: true }).catch(() => {}));
+    return w;
+  };
+  const a = open();
+  await a.call("query", ["SELECT 1"]);
+  await a.close();
+  secret = undefined;
+  const b = open();
+  assert.deepEqual((await b.call("query", ["SELECT 2 AS two"])).rows, [{ two: 2 }]);
+});
+
 test("stop ends the server for every window, and with no window left it goes by itself", async t => {
   const one = await setup(t);
   const a = one.open(), b = one.open();

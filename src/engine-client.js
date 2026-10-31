@@ -37,6 +37,7 @@ const { sqlStr } = require('./sql');
 const CONNECT_MS = 5_000;
 const BOOT_MS = 180_000;       // a first boot may be downloading its extensions
 const LOCK_STALE_MS = 200_000;
+const TOKEN_LOST_MS = 90_000;  // longer than a server waits with no window left
 const CANCEL_TRIES = 20;
 const CANCEL_EVERY_MS = 100;   // a Stop can land before the statement reaches the server
 
@@ -80,6 +81,13 @@ function connectControl(path, token, window, waitMs = BOOT_MS) {
     sock.on('data', onData);
   });
 }
+
+// Whether anything is listening there.
+const pipeHeld = path => new Promise(resolve => {
+  const sock = net.connect(path);
+  sock.once('connect', () => { sock.destroy(); resolve(true); });
+  sock.once('error', () => resolve(false));
+});
 
 // One window at a time gets to start the server.
 async function withLock(file, fn) {
@@ -147,12 +155,14 @@ async function acquire({ pipe, window, getToken, setToken, lockFile, server }) {
     }
     const token = crypto.randomBytes(32).toString('hex');
     await setToken(token);
-    // A server just told to stop may hold the pipe a moment more. One whose token is lost holds it
-    // until it goes idle.
+    // A server just told to stop may hold the pipe a moment more. One whose token is lost (the
+    // editor's secret storage was emptied, say) can't be told anything, and holds it until it goes
+    // idle: this window waits for that.
+    const deadline = Date.now() + TOKEN_LOST_MS;
     let said = await spawnServer({ ...server, token, pipe });
-    for (let i = 0; said.taken && i < 10; i++) {
-      await sleep(300);
-      said = await spawnServer({ ...server, token, pipe });
+    while (said.taken && Date.now() < deadline) {
+      await sleep(500);
+      if (!await pipeHeld(pipe)) said = await spawnServer({ ...server, token, pipe });
     }
     if (said.taken) throw new Error('an engine with another session is still running: try again in a minute');
     const up = await connectControl(pipe, token, window);
