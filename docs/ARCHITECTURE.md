@@ -182,9 +182,9 @@ over DuckDB's Quack protocol ([`src/engine-client.js`](../src/engine-client.js))
 - **One per account and build.** The first window that needs it starts it. A window that leaves cancels
   its statements, and with no window left the server waits a minute, so a reload finds it warm, then exits.
 - **What is shared:** one memory budget, and the blocks read, in memory over the disk cache.
-- **Several tabs:** each runs its own statements, and its Stop reaches only those. A click in the tree
-  opens in the tab on top, unless that tab has a statement running. Then it gets a new tab. **New Query**
-  always does. A tab's `Files/` views carry a tag, so tabs can't read each other's.
+- **Several tabs:** each runs its own statements, and its Stop reaches only those. Whatever the tree opens
+  gets a new tab, and so does **New Query**. A tab's `Files/` views carry a tag, so tabs can't read
+  each other's.
 - **The session token:** a new random one per server, kept in VS Code's secret storage, and reaching the
   server over its stdin. Without it the port on `127.0.0.1` runs nothing. In the client's DuckDB it is a
   named secret, since an `ATTACH`'s `TOKEN` option shows in `duckdb_databases()`.

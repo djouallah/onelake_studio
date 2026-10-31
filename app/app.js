@@ -1418,8 +1418,6 @@ function setBusy(b, { stoppable = false } = {}) {
   const stop = $('stopBtn');
   stop.hidden = !(b && stoppable);
   if (!stop.hidden) stop.disabled = false;
-  // A click in the tree stops what this tab runs, so with this said it opens another tab instead.
-  vs.postMessage({ type: 'busy', busy: !stop.hidden });
 }
 
 // ---------------------------------------------------------------------------

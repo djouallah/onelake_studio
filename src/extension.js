@@ -15,7 +15,7 @@ const { existsSync, statSync } = require('node:fs');
 const { createHash, randomBytes } = require('node:crypto');
 const fsp = require('node:fs/promises');
 const { quoteIdent } = require('./sql');
-const { openPanel, setPanelTitle, closePanel, revealPanel, panelOpen, activeBusy, postToPanel, postLive, panelSettings } = require('./panel');
+const { openPanel, setPanelTitle, closePanel, revealPanel, panelOpen, postToPanel, postLive, panelSettings } = require('./panel');
 const { createCatalog } = require('./catalog');
 const { createStore } = require('./store');
 const { createOneLake, walkCached } = require('./onelake');
@@ -614,8 +614,8 @@ async function show(context, { newTab = false, ...options } = {}) {
   await openPanel(context, {
     newTab,
     onOpened: logOpened, onBoot: logBoot, engine: eng, build: buildInfo,
-    // A new tab starts empty: the draft is the text the last tab closed with.
-    draft: newTab ? null : memento.get(QUERY_DRAFT_KEY, null),
+    // Only the first tab: the draft is the text the last one closed with.
+    draft: panelOpen() ? null : memento.get(QUERY_DRAFT_KEY, null),
     viewTag: sharedEngineOn() ? randomBytes(2).toString('hex') : null,
     host: (tabEngine, post) => createHostMethods({
       onelake, engine: tabEngine, onStatus: message => post({ type: 'status', message }),
@@ -1047,11 +1047,10 @@ async function activateInner(context) {
     { location: vscode.ProgressLocation.Window, title: 'Opening OneLake Studio…' },
     () => show(context, options));
 
-  // Whether the panel is there to take it. On the shared engine a click never stops anything: with
-  // a statement running in the tab it would land in, or with `newTab`, it gets a tab of its own.
-  async function openInPanel(msg, { newTab = false } = {}) {
-    const another = sharedEngineOn() && panelOpen() && (newTab || activeBusy());
-    if (!await showWithProgress({ createIfNone: true, newTab: another })) return false;
+  // Whether the panel is there to take it. On the shared engine each one gets a tab of its own, so
+  // a click adds to what is open and stops nothing.
+  async function openInPanel(msg) {
+    if (!await showWithProgress({ createIfNone: true, newTab: sharedEngineOn() })) return false;
     postToPanel(msg);
     return true;
   }
@@ -1803,7 +1802,7 @@ async function activateInner(context) {
     }),
     // A new query in the SQL box, started with what can be queried: Save Query keeps it under
     // Queries as "Query N". Not run: one Ctrl+Enter does that.
-    vscode.commands.registerCommand('onelakeStudio.newQuery', () => openInPanel({ type: 'query', sql: NEW_QUERY_SQL }, { newTab: true })),
+    vscode.commands.registerCommand('onelakeStudio.newQuery', () => openInPanel({ type: 'query', sql: NEW_QUERY_SQL })),
     // Every query variable forgotten (the page keeps them): the next getvariable() asks again.
     vscode.commands.registerCommand('onelakeStudio.clearVariables', () => postLive({ type: 'clear-variables' })),
     vscode.commands.registerCommand('onelakeStudio.goTo', () => goTo()),

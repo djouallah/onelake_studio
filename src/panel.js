@@ -91,9 +91,6 @@ function postLive(msg) {
   for (const tab of tabs) if (tab.ready) tab.panel.webview.postMessage(msg);
 }
 
-// Whether the tab a click would land in has something running, which that click would stop.
-const activeBusy = () => !!(active && active.busy);
-
 // The settings the page reads itself, sent when it opens and again when one changes.
 function panelSettings() {
   const config = vscode.workspace.getConfiguration('onelakeStudio');
@@ -117,6 +114,8 @@ let opening = null;
 
 function openPanel(context, opts = {}) {
   if (active && !opts.newTab) { revealPanel(); return Promise.resolve(active.panel); }
+  // Two quick clicks are two tabs: the second waits for the first's.
+  if (opening && opts.newTab) return opening.catch(() => {}).then(() => openPanel(context, opts));
   if (!opening) {
     opening = openPanelUncontended(context, opts).finally(() => { opening = null; });
   }
@@ -171,7 +170,7 @@ async function openPanelUncontended(context, { onOpened, onBoot, onBootFailed, e
   const post = msg => { try { panel.webview.postMessage(msg); } catch (_) {} };
   const tabEngine = engine ? engine.forTab() : null;
   const onCall = engine ? wireEngine(panel, tabEngine, host(tabEngine, post)) : null;
-  const tab = { panel, number, ready: false, pending, busy: false };
+  const tab = { panel, number, ready: false, pending };
   pending = null;
   // The panel's own listeners die with the panel. Pushed onto context.subscriptions they
   // piled up — one more pair per panel ever opened in the window.
@@ -186,8 +185,6 @@ async function openPanelUncontended(context, { onOpened, onBoot, onBootFailed, e
     } else if (msg.type === 'ready') {
       tab.ready = true;
       if (tab.pending) { panel.webview.postMessage(tab.pending); tab.pending = null; }
-    } else if (msg.type === 'busy') {
-      tab.busy = !!msg.busy;
     } else if (msg.type === 'boot-failed') {
       // The engine did not come up, so `ready` never will — a click parked in `pending`
       // is not going to be delivered, and holding it silently was this failure's old
@@ -249,4 +246,4 @@ function revealPanel() {
 // Whether there is a panel to put a name in.
 const panelOpen = () => tabs.size > 0;
 
-module.exports = { openPanel, setPanelTitle, closePanel, revealPanel, panelOpen, activeBusy, postToPanel, postLive, panelSettings };
+module.exports = { openPanel, setPanelTitle, closePanel, revealPanel, panelOpen, postToPanel, postLive, panelSettings };
