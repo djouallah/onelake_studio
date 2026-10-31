@@ -10,9 +10,9 @@
 //   a control socket   an OS pipe to the server, authenticated with the session token. It says
 //                      the window is alive: when it closes the server cancels that window's
 //                      queries, and with no window left the server exits.
-//   a small DuckDB     with no data, only the Quack client. Every statement goes through it as
-//                      quack_query(), which gives each statement a session of its own, so any
-//                      number run at once.
+//   a small DuckDB     with no data, only the Quack client. Every statement goes through it, by a
+//                      pool of attaches (openClient), so any number run at once and sockets are
+//                      reused.
 //
 // THE SESSION TOKEN. A new random one per server. It is kept in VS Code's secret storage so the
 // next window finds it, and reaches the server over its stdin, never a command line or a file.
@@ -40,6 +40,7 @@ const LOCK_STALE_MS = 200_000;
 const TOKEN_LOST_MS = 90_000;  // longer than a server waits with no window left
 const CANCEL_TRIES = 20;
 const CANCEL_EVERY_MS = 100;   // a Stop can land before the statement reaches the server
+const MAX_ATTACHES = 8;
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const slash = p => String(p).replace(/\\/g, '/');
@@ -176,7 +177,7 @@ async function acquire({ pipe, window, getToken, setToken, lockFile, server }) {
 function clean(e) {
   if (!e || typeof e.message !== 'string') throw e;
   const message = e.message
-    .replace(/\s*LINE \d+: SELECT \* FROM quack_query\([\s\S]*$/, '')
+    .replace(/\s*LINE \d+: SELECT \* FROM (?:quack_query|r\d+\.query)\([\s\S]*$/, '')
     .replace(/\s*\/\*onelake:[^*]*\*\//g, '');
   if (message !== e.message) {
     try { e.message = message; } catch (_) { throw Object.assign(new Error(message), { cancelled: e.cancelled }); }
@@ -217,6 +218,33 @@ async function openClient({ uri, token, extensionDir, bundledExtensions, lockdow
   }
   const query = sql => `SELECT * FROM quack_query(${sqlStr(uri)}, ${sqlStr(sql)})`;
 
+  // How a statement goes: through an attach, whose socket stays open. quack_query opens a new socket
+  // each time, about 10ms, and at hundreds a second Windows runs out of ports. One attach runs one
+  // statement (a second cancels the first), so there are several, added as they are needed. With
+  // all of them busy a statement doesn't wait: it goes by quack_query, and the next attach is on its way.
+  const attaches = [];
+  let growing = false, closed = false;
+  function grow() {
+    if (growing || closed || attaches.length >= MAX_ATTACHES) return;
+    growing = true;
+    const name = `r${attaches.length}`;
+    (async () => {
+      const c = await local.connect();
+      try { await c.run(`ATTACH ${sqlStr(uri)} AS ${name} (TYPE quack, SECRET studio);`); }
+      finally { try { c.closeSync(); } catch (_) {} }
+      attaches.push({ name, busy: false });
+    })().catch(() => {}).finally(() => { growing = false; });
+  }
+  grow();
+  // The text to run `sql`, and what gives back what it took.
+  function route(sql) {
+    const free = attaches.find(a => !a.busy);
+    if (!free) { grow(); return { text: query(sql), release() {} }; }
+    free.busy = true;
+    return { text: `SELECT * FROM ${free.name}.query(${sqlStr(sql)})`, release() { free.busy = false; } };
+  }
+  const stopGrowing = () => { closed = true; };
+
   // The running statements whose tag starts with `tag`. The tag is built at run time, or this
   // statement, which holds it too, would find itself.
   async function listTagged(tag) {
@@ -232,7 +260,7 @@ async function openClient({ uri, token, extensionDir, bundledExtensions, lockdow
       for (const id of ids) await c.run(`SELECT * FROM quack_cancel('control', ${sqlStr(id)});`).catch(() => {});
     } finally { try { c.closeSync(); } catch (_) {} }
   }
-  return { local, admin, query, listTagged, cancelIds };
+  return { local, admin, route, stopGrowing, listTagged, cancelIds };
 }
 
 // This window on the server, started if there is none. A server of another build is told to stop
@@ -271,6 +299,7 @@ function createStateClient(cfg) {
   function drop(j) {
     if (joined === j) joined = null;
     j.sock.destroy();
+    j.client.stopGrowing();
     try { j.client.admin.closeSync(); } catch (_) {}
     try { j.client.local.closeSync(); } catch (_) {}
   }
@@ -295,8 +324,12 @@ function createStateClient(cfg) {
     async run(sql) {
       const { client } = await connected();
       const c = await client.local.connect();
-      try { return (await c.runAndReadAll(client.query(sql))).getRowObjectsJson(); }
-      finally { try { c.closeSync(); } catch (_) {} }
+      const way = client.route(sql);
+      try { return (await c.runAndReadAll(way.text)).getRowObjectsJson(); }
+      finally {
+        way.release();
+        try { c.closeSync(); } catch (_) {}
+      }
     },
     async stop() {
       const j = joined;
@@ -332,7 +365,7 @@ function createRemote({ onGone = () => {}, ...cfg }) {
     try {
       client = await openClient({ uri: state.uri, token, extensionDir: options.extensionDir, bundledExtensions: options.bundledExtensions });
     } catch (e) { sock.destroy(); throw e; }
-    const { local, admin, query, listTagged, cancelIds } = client;
+    const { local, admin, route, stopGrowing, listTagged, cancelIds } = client;
 
     let closing = false;
     sock.on('error', () => {});
@@ -380,20 +413,25 @@ function createRemote({ onGone = () => {}, ...cfg }) {
       // Asked over the control pipe, so they cost no Quack request and leave nothing in its log. The
       // token goes this way for that reason: a statement sent over Quack is in the log.
       setStorageToken: token => ask({ storageToken: token }),
+      setOffline: now => ask({ offline: now }),
       stats: () => ask({ stats: true }),
       logs: async limit => (await ask({ logs: { limit } })).map(mine),
       clearLogs: () => ask({ clearLogs: true }),
       async connect() {
         const c = await local.connect();
-        let tag = null;
+        let tag = null, way = null;
+        const done = () => { if (way) way.release(); way = null; };
         // The tag ends with its comment's close, so statement 1's doesn't also match statement 12.
         const wrapped = sql => {
+          done();
           tag = `${window}:${++seq}*/`;
-          return query(`${sql}\n/*onelake:${tag}`);
+          way = route(`${sql}\n/*onelake:${tag}`);
+          return way.text;
         };
         return {
-          run: sql => c.run(wrapped(sql)).catch(clean),
-          runAndReadAll: sql => c.runAndReadAll(wrapped(sql)).catch(clean),
+          run: sql => c.run(wrapped(sql)).catch(clean).finally(done),
+          runAndReadAll: sql => c.runAndReadAll(wrapped(sql)).catch(clean).finally(done),
+          // A stream holds its attach until its connection closes: rows are still coming through it.
           async stream(sql) {
             const r = await c.stream(wrapped(sql)).catch(clean);
             return {
@@ -403,7 +441,7 @@ function createRemote({ onGone = () => {}, ...cfg }) {
             };
           },
           interrupt() { if (tag) cancel(tag).catch(() => {}); },
-          closeSync() { c.closeSync(); },
+          closeSync() { done(); c.closeSync(); },
         };
       },
       // This window's part of the server, ended while Node can still run. closeSync below blocks
@@ -427,6 +465,7 @@ function createRemote({ onGone = () => {}, ...cfg }) {
       },
       closeSync() {
         closing = true;
+        stopGrowing();
         sock.destroy();
         try { admin.closeSync(); } catch (_) {}
         try { local.closeSync(); } catch (_) {}

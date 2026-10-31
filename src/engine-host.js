@@ -22,10 +22,6 @@
 
 const { DuckDBInstance } = require('@duckdb/node-api');
 
-// The metrics Explore's profile reads (app/explore/profile.js keeps the same list).
-const PROFILE_METRICS = ['LATENCY', 'OPERATOR_TIMING', 'OPERATOR_CARDINALITY', 'OPERATOR_ROWS_SCANNED', 'OPERATOR_TYPE',
-  'OPERATOR_NAME', 'EXTRA_INFO', 'CUMULATIVE_ROWS_SCANNED', 'PLANNER', 'PHYSICAL_PLANNER', 'ALL_OPTIMIZERS',
-  'SYSTEM_PEAK_BUFFER_MEMORY'];
 const fs = require('node:fs');
 const fsp = require('node:fs/promises');
 const { join } = require('node:path');
@@ -349,12 +345,6 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
       try { await conn.run('SET external_file_cache_spill = true;'); }
       catch (e) { onWarn(`could not let DuckDB's file cache spill to disk — ${e.message}`); }
 
-      // What Explore's Show plan measures (app/explore/profile.js, PROFILE_METRICS): set
-      // here, for every connection, because the lockdown below freezes the configuration and
-      // the page's EXPLAIN (ANALYZE, FORMAT json) cannot set it itself.
-      try { await conn.run(`SET GLOBAL custom_profiling_settings = ${sqlStr(JSON.stringify(Object.fromEntries(PROFILE_METRICS.map(m => [m, 'true']))))};`); }
-      catch (e) { onWarn(`could not set the profile's metrics — ${e.message}`); }
-
       // The shared engine's server. Loading cache_httpfs turns DuckDB's external file cache off, so
       // it is turned back on here: the blocks every client reads stay in this process's memory,
       // over the disk cache. Quack starts before the lockdown, which leaves nothing to start with.
@@ -522,9 +512,15 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
   // function, since the lockdown freezes the settings.
   let servingOffline = false;
   async function syncOffline() {
-    if (!capabilities.offlineRead || servingOffline === !!offlineReason()) return;
-    await admin(async () => {
-      const now = !!offlineReason();
+    if (!capabilities.offlineRead) return;
+    // On the shared engine the switch is the server's, and another window may have moved it, so what
+    // this window remembers says nothing: each statement says what it needs, over the control pipe.
+    if (remote) { await instance.setOffline(!!offlineReason()); return; }
+    await setOffline(!!offlineReason());
+  }
+  function setOffline(now) {
+    if (servingOffline === now) return Promise.resolve();
+    return admin(async () => {
       if (servingOffline === now) return;
       await conn.run(`SELECT cache_httpfs_set_offline(${now});`);
       servingOffline = now;
@@ -1051,8 +1047,8 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
   }
 
   const api = { call, close, copyToTemp, exportTo, agentQuery, catalogChanged, warm, maxRows, forTab, boot, stats,
-                readLog, emptyLog, setStorageToken, logs, clearLogs };
+                readLog, emptyLog, setStorageToken, setOffline, logs, clearLogs };
   return api;
 }
 
-module.exports = { createEngineHost, jsonSafe, isOneLakeMetadata, PROFILE_METRICS };
+module.exports = { createEngineHost, jsonSafe, isOneLakeMetadata };

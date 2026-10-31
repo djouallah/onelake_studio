@@ -31,15 +31,13 @@ export function profileColors(css) {
   return { plan: css('--faint'), scan, join, aggregate, sort, window: win, filter, other: css('--muted') };
 }
 
-// What the profile is asked to measure: the operators, and the phases before them. The
-// extension's native engine sets the same list once, before it locks its configuration
-// (src/engine-host.js, PROFILE_METRICS).
+// What the profile is asked to measure on DuckDB 1.5 (the Fabric app's): the operators, and the
+// phases before them. DuckDB 2.0, the extension's engine, always collects them and has no such setting.
 export const PROFILE_METRICS = ['LATENCY', 'OPERATOR_TIMING', 'OPERATOR_CARDINALITY', 'OPERATOR_ROWS_SCANNED', 'OPERATOR_TYPE',
   'OPERATOR_NAME', 'EXTRA_INFO', 'CUMULATIVE_ROWS_SCANNED', 'PLANNER', 'PHYSICAL_PLANNER', 'ALL_OPTIMIZERS',
   'SYSTEM_PEAK_BUFFER_MEMORY'];
 // The SQL that profiles a query: the metrics, then EXPLAIN ANALYZE, which runs it. One row,
-// its `explain_value` the profile as JSON. `set: false` for an engine whose metrics are
-// already set (the extension's: its configuration is locked).
+// its `explain_value` the profile as JSON. `set: false` for DuckDB 2.0 (the extension's engine).
 export const profileSql = (sql, { set = true } = {}) =>
   (set ? `SET custom_profiling_settings = '${JSON.stringify(Object.fromEntries(PROFILE_METRICS.map(m => [m, 'true'])))}';\n` : '') +
   `EXPLAIN (ANALYZE, FORMAT json) ${sql}`;

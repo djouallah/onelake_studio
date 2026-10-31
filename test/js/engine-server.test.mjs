@@ -150,7 +150,7 @@ test("the log: every window's statements, as DuckDB recorded them", async t => {
   assert.equal(failed.here, false, "from the other window");
   assert.match(failed.error, /no_such_table/);
   assert.equal(of("range(100000000000000)").status, "stopped");
-  assert.ok(of("range(200000)").ms >= 0);
+  assert.ok(of("range(200000)").ms >= 0, "to its first rows");
   assert.ok(rows[0].at >= rows[rows.length - 1].at, "newest first");
 
   const now = (await a.logs(1000)).length;

@@ -10,7 +10,7 @@
 //   window -> server   { token, window }   then the socket stays open: it says the window is alive
 //   server -> window   { ok, uri, capabilities, tmpDir }
 //   window -> server   { stop: true }      Sign Out, a restart, Clear Cached OneLake Data
-//   window -> server   { id, stats | logs | clearLogs | storageToken }, answered { id, value | error }
+//   window -> server   { id, stats | logs | clearLogs | storageToken | offline }, answered { id, value | error }
 //
 // A window gone is a window whose queries nobody is waiting for: Quack lets them run on, so they
 // are cancelled here. With no window left the server waits `idleMs`, so a window reload finds it
@@ -90,6 +90,7 @@ async function main({ token, pipe, options, logFile, idleMs = 60_000, stateFile 
   async function answer(msg) {
     await booted;
     if (msg.storageToken) { await engine.setStorageToken(String(msg.storageToken)); return true; }
+    if (msg.offline != null) { await engine.setOffline(!!msg.offline); return true; }
     if (msg.stats) return { ...await engine.stats(), statements: keeper ? await keeper.statements() : 0 };
     if (msg.logs) return keeper ? keeper.read(msg.logs.limit) : [];
     if (msg.clearLogs) { if (keeper) await keeper.clear(); return true; }

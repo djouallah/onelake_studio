@@ -3,7 +3,7 @@
 // enginelog.js — what the engine ran, kept
 // =============================================================================
 // The record is DuckDB's own: with its Quack log on, each request a client makes is a row with the
-// statement, how long it took and any error (engine-host.js turns it on). That log lives in memory,
+// statement, the time to its first rows and any error (engine-host.js turns it on). That log lives in memory,
 // so the server moves it into a table in the state file, which outlives the process and answers the
 // Logs tab with no scan of anything large. Nothing here looks at a statement as it runs.
 //
@@ -51,7 +51,7 @@ function statementOf(request) {
 }
 
 // What the host and a page issue to get ready, rather than what someone asked.
-const isSetup = sql => /^\s*(create|drop|attach|detach)\b|cache_httpfs_set_offline/i.test(sql);
+const isSetup = sql => /^\s*(create|drop|attach|detach)\b/i.test(sql);
 
 const cut = s => { const t = String(s).split('\0').join(''); return t.length > SQL_MAX ? `${t.slice(0, SQL_MAX)}\n… (cut)` : t; };
 
@@ -65,34 +65,23 @@ const cut = s => { const t = String(s).split('\0').join(''); return t.length > S
 function createLogKeeper({ engine, state, maxBytes, log = () => {} }) {
   let last = 0n, moved = 0, chain = Promise.resolve(), timers = [];
   let asked = 0;              // statements someone asked for, since this process started
-  // A statement is a PREPARE, with the time to its first rows. Its connection closes when the
-  // client has them all: the time between says what a large result really took.
-  const open = new Map();     // conn -> { us, ms }
 
   async function move() {
     const rows = await engine.readLog(last);
     if (!rows.length) return;
-    const fresh = [], finished = [];
+    const fresh = [];
     for (const r of rows) {
       const us = BigInt(r.us);
       if (us > last) last = us;
       moved++;
-      const request = parseRequest(r.message);
-      const st = statementOf(request);
+      const st = statementOf(parseRequest(r.message));
       if (st) {
         if (!isSetup(st.sql)) asked++;
         const at = Number(us / 1000n);
         fresh.push(`(${at}, ${sqlStr(st.window)}, ${sqlStr(cut(st.sql))}, ${st.ms}, ${sqlStr(st.status)}, ${st.error == null ? 'NULL' : sqlStr(cut(st.error))}, ${sqlStr(st.conn)})`);
-        if (st.status === 'ok') open.set(st.conn, us);
-      } else if (request && request.type === 'DISCONNECT_MESSAGE' && open.has(request.conn)) {
-        finished.push({ conn: request.conn, extra: Number((us - open.get(request.conn)) / 1000n) });
-        open.delete(request.conn);
       }
     }
-    if (maxBytes > 0) {
-      if (fresh.length) await state.run(`INSERT INTO logs VALUES ${fresh.join(',\n')};`);
-      for (const f of finished) await state.run(`UPDATE logs SET ms = ms + ${f.extra} WHERE conn = ${sqlStr(f.conn)};`);
-    }
+    if (maxBytes > 0 && fresh.length) await state.run(`INSERT INTO logs VALUES ${fresh.join(',\n')};`);
     if (moved > EMPTY_PAST_ROWS) {
       await engine.emptyLog();
       moved = 0;

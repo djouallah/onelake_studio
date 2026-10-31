@@ -193,9 +193,10 @@ every window is a client of it over DuckDB's Quack protocol ([`src/engine-client
   server over its stdin. Without it the port on `127.0.0.1` runs nothing. In the client's DuckDB it is a
   named secret, since an `ATTACH`'s `TOKEN` option shows in `duckdb_databases()`.
 - **What stays in the window:** the read-only guard, the sign-in, and naming and resolving tables.
-- **How a statement goes:** `quack_query()`, which gives each statement a session of its own. One attach
-  runs one statement at a time. Stop finds the statement by a tag in a comment and uses `quack_cancel`,
-  since `interrupt()` doesn't reach the server.
+- **How a statement goes:** through a pool of attaches, up to eight a window, since one runs one statement at
+  a time and its socket stays open. With all of them busy it goes by `quack_query()`, which costs a new socket:
+  about 10ms, and at hundreds a second Windows runs out of ports. Stop finds the statement by a tag in a
+  comment and uses `quack_cancel`, since `interrupt()` doesn't reach the server.
 - **The control pipe:** an OS pipe, signed in with the session token, that says a window is alive. The OneLake
   token and what Logs and Performance ask for go this way rather than over Quack, which logs what it is sent.
 - **What is remembered:** the store's entries (listings, table metadata, first rows) and the log are tables in a
@@ -206,11 +207,12 @@ every window is a client of it over DuckDB's Quack protocol ([`src/engine-client
 Still files: a `Files/` object's bytes, saved queries, models and semantic-model pointers.
 
 **Logs** ([`src/logs.js`](../src/logs.js)), a node in the tree. The record is DuckDB's own: its `Quack` log has a row per
-statement with its time and any error, for every tab, window and the command line. It is kept in memory
+statement with the time to its first rows and any error, for every tab, window and the command line. A large
+result's later rows aren't in that time, since DuckDB doesn't log them. It is kept in memory
 (file storage can't be read back on Windows, since DuckDB locks its own file), and the server moves it to the state
 file every two seconds ([`src/enginelog.js`](../src/enginelog.js)), up to `onelakeStudio.logMaxGB`, the oldest going first.
 It holds your SQL and its errors in plain text, and never the OneLake token. A row reopens its SQL in a new tab, not run.
-`SELECT * FROM duckdb_logs` answers in a SQL box for what is still in memory. Its cost is too small to measure.
+`SELECT * FROM duckdb_logs` answers in a SQL box for what is still in memory.
 
 **Performance** ([`src/performance.js`](../src/performance.js)), a node in the tree. Live charts of memory, cores in use,
 queries per second and the disk cache, while the tab is on screen. Nothing is stored.
