@@ -309,6 +309,29 @@ test("a workspace's semantic models are a cached listing: Fabric is asked once",
   assert.equal(asked, 2, "and a Refresh asks again");
 });
 
+test("offline, what is kept is the answer, however old and whoever asks; a miss fails at once", async () => {
+  let now = 1000, offline = false;
+  const catalog = fakeCatalog();
+  const onelake = createOneLake({ catalog, prefetchEnabled: () => true, isOffline: () => offline,
+                                  store: createStore({ dir: null, ttlMs: 1000, now: () => now }) });
+  const kept = await onelake.items("ws");
+  offline = true;
+  now += 365 * 24 * 3600 * 1000;
+  catalog.calls.length = 0;
+  assert.deepEqual(await onelake.items("ws"), kept, "past its window");
+  assert.deepEqual(await onelake.items("ws", { fresh: true }), kept, "a Refresh");
+  await new Promise(r => setImmediate(r));
+  assert.deepEqual(catalog.calls, [], "nothing behind the caller either");
+
+  onelake.prefetch(lh, [{ schema: "dbo", table: "a" }]);
+  await new Promise(r => setTimeout(r, 20));
+  assert.deepEqual(catalog.calls, [], "and nothing fetched ahead");
+
+  // Not held: the fetcher runs, and it is the request (http.js) that refuses it.
+  catalog.listItems = async () => { throw Object.assign(new Error("not cached"), { offline: true }); };
+  await assert.rejects(onelake.items("other"), e => e.offline === true);
+});
+
 test("an item's name behind its GUIDs is kept for good: Fabric is asked once, whatever the case or age", async () => {
   let asked = 0;
   let now = 1000;

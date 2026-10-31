@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { authedFetch, listPages, mapPool, fabricMessage } = require("../../src/http.js");
+const { authedFetch, listPages, mapPool, fabricMessage, useConnectivity } = require("../../src/http.js");
 
 const res = (status, { retryAfter, body = "" } = {}) => {
   let cancelled = false;
@@ -16,6 +16,31 @@ const res = (status, { retryAfter, body = "" } = {}) => {
     get cancelled() { return cancelled; },
   };
 };
+
+test("offline, nothing is sent and no token is asked for, and it says why", async t => {
+  t.after(() => useConnectivity(null));
+  let asked = 0;
+  const go = () => authedFetch("https://x/a", {
+    getToken: async () => { asked++; return "t"; }, timeoutMs: 1000,
+    fetchImpl: async () => { asked++; return res(200); },
+  });
+  for (const [reason, said] of [["no internet", /there is no internet/], ["not signed in", /you are not signed in/]]) {
+    useConnectivity({ offline: () => true, reason: () => reason, networkFailed() {} });
+    await assert.rejects(go(), e => e.offline === true && said.test(e.message), reason);
+  }
+  assert.equal(asked, 0);
+});
+
+test("a request with no answer at all is reported; any status is an answer", async t => {
+  t.after(() => useConnectivity(null));
+  let failures = 0;
+  useConnectivity({ offline: () => false, reason: () => null, networkFailed: () => { failures++; } });
+  const opts = { getToken: async () => "t", timeoutMs: 1000 };
+  await assert.rejects(authedFetch("https://x/a", { ...opts, fetchImpl: async () => { throw new TypeError("fetch failed"); } }), /fetch failed/);
+  assert.equal(failures, 1);
+  assert.equal((await authedFetch("https://x/a", { ...opts, fetchImpl: async () => res(500) })).status, 500);
+  assert.equal(failures, 1);
+});
 
 test("a 401 is retried once with a fresh token, and the refused body let go", async () => {
   const sent = [], answers = [res(401), res(401)];

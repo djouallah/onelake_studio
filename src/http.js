@@ -12,6 +12,17 @@
 
 const sleepMs = ms => new Promise(r => setTimeout(r, ms));
 
+// Whether this window may ask anything (connectivity.js). Offline, no request is sent, and one
+// that gets no answer at all is reported there.
+let connectivity = null;
+function useConnectivity(c) { connectivity = c; }
+
+// `what`: what is missing, when the caller knows.
+function offlineError(reason, what = 'This') {
+  const why = reason === 'no internet' ? 'there is no internet' : 'you are not signed in';
+  return Object.assign(new Error(`${what} is not cached on this machine, and ${why}.`), { offline: true, status: 0 });
+}
+
 // A response that is not going to be read: its body let go, so its socket is free now
 // rather than whenever it is collected.
 function discard(r) {
@@ -41,11 +52,19 @@ const retryAfterMs = (r, fallback) => {
 async function authedFetch(url, { getToken, fetchImpl = (...a) => fetch(...a), timeoutMs, method = 'GET', headers = {},
                                   body, who = 'a Microsoft account', retry = [], attempts = 1,
                                   backoffMs = () => 5000, sleep = sleepMs, through = send => send() }) {
+  if (connectivity && connectivity.offline()) throw offlineError(connectivity.reason());
   let token = await getToken();
   if (!token) throw Object.assign(new Error(`Not signed in to ${who}.`), { status: 401 });
-  const send = t => through(() => fetchImpl(url, {
-    method, body, headers: { ...headers, authorization: `Bearer ${t}` }, signal: AbortSignal.timeout(timeoutMs),
-  }));
+  const send = t => through(async () => {
+    try {
+      return await fetchImpl(url, {
+        method, body, headers: { ...headers, authorization: `Bearer ${t}` }, signal: AbortSignal.timeout(timeoutMs),
+      });
+    } catch (e) {
+      if (connectivity) connectivity.networkFailed();
+      throw e;
+    }
+  });
   let refreshed = false;
   for (let attempt = 1; ; attempt++) {
     const r = await send(token);
@@ -111,4 +130,4 @@ async function mapPool(items, fn, limit) {
   return out;
 }
 
-module.exports = { authedFetch, discard, retryAfterMs, fabricMessage, oneLakeMessage, listPages, limiter, mapPool };
+module.exports = { authedFetch, discard, retryAfterMs, fabricMessage, oneLakeMessage, listPages, limiter, mapPool, useConnectivity, offlineError };

@@ -9,7 +9,48 @@ import { join } from "node:path";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { createStore } = require("../../src/store.js");
+const { createStore, revalidate } = require("../../src/store.js");
+
+test("revalidate: a kept answer is trusted until using it fails, then read again once", async () => {
+  const stale = () => Object.assign(new Error("stale"), { stale: true });
+  const isStale = e => !!e.stale;
+  const setup = answers => {
+    const reads = [];
+    return { reads, read: async o => { reads.push(!!o.fresh); const a = answers[reads.length - 1]; if (a instanceof Error) throw a; return a; } };
+  };
+
+  let s = setup(["kept"]);
+  assert.equal(await revalidate(s.read, async a => `used ${a}`, isStale), "used kept");
+  assert.deepEqual(s.reads, [false], "working: nothing is read past the cache");
+
+  s = setup(["kept", "new"]);
+  const used = [];
+  const useNewOnly = async a => { used.push(a); if (a === "kept") throw stale(); return a; };
+  assert.equal(await revalidate(s.read, useNewOnly, isStale), "new");
+  assert.deepEqual(s.reads, [false, true]);
+  assert.deepEqual(used, ["kept", "new"]);
+
+  // The same answer: the first error stands, with no second try.
+  s = setup(["kept", "kept"]);
+  let tries = 0;
+  const first = stale();
+  await assert.rejects(revalidate(s.read, async () => { tries++; throw first; }, isStale), e => e === first);
+  assert.equal(tries, 1);
+
+  // Not a failure the answer can explain: not read again.
+  s = setup(["kept"]);
+  await assert.rejects(revalidate(s.read, async () => { throw new Error("typo"); }, isStale), /typo/);
+  assert.deepEqual(s.reads, [false]);
+
+  // Offline: the real error, not the failed read's.
+  s = setup(["kept", new Error("offline")]);
+  await assert.rejects(revalidate(s.read, async () => { throw first; }, isStale), e => e === first);
+
+  // New answer, still failing: that failure, and no third read.
+  s = setup(["kept", "new", "newer"]);
+  await assert.rejects(revalidate(s.read, async a => { throw Object.assign(stale(), { message: a }); }, isStale), /new/);
+  assert.deepEqual(s.reads, [false, true]);
+});
 
 async function tempDir(t) {
   const dir = await mkdtemp(join(tmpdir(), "onelake-store-"));

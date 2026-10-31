@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- **It works offline.** With no internet, or nobody signed in, OneLake Studio notices and works from what
+  this machine has cached: the tree, the catalog, stats, first rows and semantic models. Reading table rows
+  still needs OneLake, and says so at once. The status bar shows when this is happening, and it comes back
+  by itself.
+- **Sign Out.** In the explorer's "..." menu. It signs out of OneLake Studio; VS Code's Accounts menu still
+  removes the account itself. Signed out, the last account's cached data stays on show on this machine, until
+  another account signs in or Clear Cached OneLake Data deletes it.
+- **A cached answer that turns out wrong now corrects itself.** A lakehouse made a minute ago no longer
+  gives "there is no lakehouse", a renamed one keeps working under its model, and a table whose metadata
+  has moved is read again rather than failing. Nothing extra is read unless something fails.
 - **A first query answers much sooner.**
   - A statement that names no semantic model no longer waits for the panel to load your models.
   - The name behind a Direct Lake model's GUIDs is kept on disk, so opening the panel no longer waits

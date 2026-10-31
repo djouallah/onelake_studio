@@ -254,4 +254,25 @@ function createStore({ dir, ttlMs = DEFAULT_TTL_MS, maxBytes = DEFAULT_MAX_BYTES
   };
 }
 
-module.exports = { createStore };
+/**
+ * The cache's other half: a kept answer is trusted until using it fails. Then it is read again
+ * once, and the work tried again only if the answer changed; otherwise the first error stands,
+ * and so it does when the read itself fails, offline say.
+ * @template A, R
+ * @param {(o: {fresh?: boolean}) => Promise<A>} read  the answer: the kept one, or with `fresh` OneLake's
+ * @param {(answer: A) => Promise<R>} use
+ * @param {(e: any) => boolean} isStale  whether this failure can mean the answer was out of date
+ * @returns {Promise<R>}
+ */
+async function revalidate(read, use, isStale) {
+  const kept = await read({});
+  try { return await use(kept); }
+  catch (e) {
+    if (!isStale(e)) throw e;
+    const now = await read({ fresh: true }).catch(() => { throw e; });
+    if (JSON.stringify(now) === JSON.stringify(kept)) throw e;
+    return use(now);
+  }
+}
+
+module.exports = { createStore, revalidate };

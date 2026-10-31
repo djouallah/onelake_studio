@@ -51,6 +51,102 @@ test("warm() boots the engine and lists the catalog ahead of the first statement
   assert.equal(listings, 1, "the statement found the catalog already listed");
 });
 
+test("offline: a read of OneLake is refused at once, and the rest of the catalog still answers", async t => {
+  const extDir = await mkdtemp(join(tmpdir(), "onelake-ext-"));
+  let reason = "no internet";
+  const METADATA = "abfss://ws@onelake.dfs.fabric.microsoft.com/lh.Lakehouse/Tables/dbo/t/metadata/1.metadata.json";
+  const engine = createEngineHost({
+    extensionDir: extDir,
+    bundledExtensions: existsSync(BUNDLED) ? BUNDLED : null,
+    offlineReason: () => reason,
+    catalogTables: async () => [{ kind: "lakehouse", workspace: "w", item: "lh", schema: "dbo", table: "t", columns: [{ name: "a", type: "BIGINT" }] }],
+    resolveTable: async ref => (ref.table === "never_written"
+      ? { ...ref, emptySql: "SELECT 1 AS a WHERE false" }
+      : { ...ref, metadataLocation: METADATA }),
+  });
+  t.after(async () => {
+    await engine.close();
+    await rm(extDir, { recursive: true, force: true }).catch(() => {});
+  });
+
+  const t0 = Date.now();
+  await assert.rejects(engine.call("query", ["SELECT * FROM lakehouse.w.lh.dbo.t"]),
+    /lakehouse\.w\.lh\.dbo\.t: reading rows needs OneLake, and there is no internet/);
+  await assert.rejects(engine.call("query", [`SELECT * FROM '${METADATA.replace("metadata/1.metadata.json", "x.parquet")}'`]),
+    /This statement: reading rows needs OneLake/);
+  reason = "not signed in";
+  await assert.rejects(engine.call("query", ["SELECT * FROM lakehouse.w.lh.dbo.t"]), /you are not signed in/);
+  const batches = [];
+  await assert.rejects(engine.call("stream", ["SELECT * FROM lakehouse.w.lh.dbo.t"], b => batches.push(b)), /reading rows needs OneLake/);
+  assert.ok(Date.now() - t0 < 20000, "refused, not timed out");
+
+  const r = await engine.call("query", ["SHOW ALL TABLES"]);
+  assert.deepEqual(r.rows.map(x => x.name), ["t"]);
+  assert.equal((await engine.call("query", ["SELECT 42 AS a"])).rows[0].a, 42);
+  // A OneLake URL that is only a value, as a model's path is in SHOW SEMANTIC VIEWS.
+  const url = "abfss://w@onelake.dfs.fabric.microsoft.com/lh.Lakehouse/Files/m.bim";
+  for (const sql of [`SELECT '${url}' AS path`, `SELECT * FROM (VALUES ('${url}'), ('x')) t(path)`]) {
+    assert.equal((await engine.call("query", [sql])).rows[0].path, url, sql);
+  }
+  assert.deepEqual((await engine.call("query", ["SELECT * FROM lakehouse.w.lh.dbo.never_written"])).rows, []);
+});
+
+test("a read that fails asks for the table again, once, and only a read does", async t => {
+  const extDir = await mkdtemp(join(tmpdir(), "onelake-ext-"));
+  // Refused at once, with nothing leaving this machine: an IO Error, as a read of a metadata file
+  // that has gone is.
+  const BROKEN = "SELECT * FROM read_parquet('https://127.0.0.1:1/gone.parquet')";
+  let answers = {};
+  const asked = [];
+  const engine = createEngineHost({
+    extensionDir: extDir,
+    bundledExtensions: existsSync(BUNDLED) ? BUNDLED : null,
+    resolveTable: async (ref, o) => {
+      asked.push(`${ref.table}${o && o.fresh ? " fresh" : ""}`);
+      const a = answers[ref.table];
+      return { ...ref, emptySql: o && o.fresh ? a.fresh : a.kept };
+    },
+  });
+  t.after(async () => {
+    await engine.close();
+    await rm(extDir, { recursive: true, force: true }).catch(() => {});
+  });
+  const name = table => `lakehouse.w.lh.dbo.${table}`;
+
+  await t.test("the table moved: the statement answers from where it is now", async () => {
+    answers = { moved: { kept: BROKEN, fresh: "SELECT 7 AS answer" } };
+    const r = await engine.call("query", [`SELECT answer FROM ${name("moved")}`]);
+    assert.deepEqual(r.rows, [{ answer: 7 }]);
+    assert.deepEqual(asked, ["moved", "moved fresh"]);
+    asked.length = 0;
+    // A stream too, before its first batch.
+    answers = { moved2: { kept: BROKEN, fresh: "SELECT 8 AS answer" } };
+    const batches = [];
+    await engine.call("stream", [`SELECT answer FROM ${name("moved2")}`], b => batches.push(b));
+    assert.deepEqual(batches[0].rows, [{ answer: 8 }]);
+  });
+
+  await t.test("the table says the same again: DuckDB's error stands, with no second try", async () => {
+    asked.length = 0;
+    answers = { same: { kept: BROKEN, fresh: BROKEN } };
+    await assert.rejects(engine.call("query", [`SELECT * FROM ${name("same")}`]), /IO Error/);
+    assert.deepEqual(asked, ["same", "same fresh"]);
+  });
+
+  await t.test("a statement's own mistake asks OneLake nothing", async () => {
+    asked.length = 0;
+    answers = { fine: { kept: "SELECT 1 AS a", fresh: "SELECT 2 AS a" } };
+    await assert.rejects(engine.call("query", [`SELECT nope FROM ${name("fine")}`]), /Binder Error/);
+    assert.deepEqual(asked, ["fine"]);
+  });
+
+  await t.test("a failure with no OneLake table in it asks for nothing", async () => {
+    asked.length = 0;
+    await assert.rejects(engine.call("query", [BROKEN]));
+    assert.deepEqual(asked, []);
+  });
+});
+
 test("native engine host", async t => {
   const extDir = await mkdtemp(join(tmpdir(), "onelake-ext-"));
   const outside = await mkdtemp(join(tmpdir(), "onelake-outside-"));

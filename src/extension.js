@@ -20,11 +20,14 @@ const { openPanel, closePanel, revealPanel, panelColumn, dockBelowEditor, postTo
 const { createCatalog } = require('./catalog');
 const { createStore } = require('./store');
 const { createOneLake, walkCached } = require('./onelake');
+const { createSqlTables } = require('./sqltables');
+const { createConnectivity } = require('./connectivity');
+const { useConnectivity } = require('./http');
 const { createHostMethods } = require('./host');
 const { createFabric, modelFileName } = require('./fabric');
 const { LakehouseTree } = require('./tree');
 const { webviewRoot } = require('./webview');
-const { fmtBytes, sqlKind, sqlName, sqlNameOf, sqlPart, displayName, MODEL_CATALOG, modelSqlName, stripBom } = require('./names');
+const { fmtBytes, sqlKind, sqlName, sqlNameOf, sqlPart, displayName, MODEL_CATALOG, modelSqlName, stripBom, DFS_ORIGIN } = require('./names');
 const { createAgent } = require('./agent');
 const { createSemViews } = require('./semviews');
 const { serveBridge } = require('./bridge');
@@ -54,9 +57,30 @@ function scopesFor() { return withTenant(SCOPES); }
 // `options` is passed straight through: the command handler asks with createIfNone (and,
 // for a switch, clearSessionPreference), while the per-request calls ask for neither.
 // That matters — reads come in bursts, and a prompt per request would be unusable.
+//
+// VS Code owns the account, so Sign Out cannot remove it: it makes this extension stop asking for
+// it, until something asks with createIfNone, which only a sign-in does (show() never prompts
+// while an account's cache is known).
+const SIGNED_OUT_KEY = 'onelakeStudio.signedOut';
+const LAST_ACCOUNT_KEY = 'onelakeStudio.lastAccount';
+let memento = null;   // context.globalState, set first thing at activation
 function getSession(options) {
-  return vscode.authentication.getSession('microsoft', scopesFor(), options);
+  const signingIn = !!(options && options.createIfNone);
+  if (!signingIn && memento && memento.get(SIGNED_OUT_KEY, false)) return Promise.resolve(null);
+  return vscode.authentication.getSession('microsoft', scopesFor(), options).then(s => {
+    if (s && signingIn && memento) memento.update(SIGNED_OUT_KEY, false);
+    return s;
+  });
 }
+
+// Whether this window can ask OneLake anything: offline is noticed, not switched (connectivity.js).
+// Any answer from OneLake's front door at all means there is internet.
+let onOfflineChange = () => {};
+const connectivity = createConnectivity({
+  probe: () => fetch(`${DFS_ORIGIN}/`, { method: 'HEAD', signal: AbortSignal.timeout(5000) }).then(() => true, () => false),
+  onChange: reason => onOfflineChange(reason),
+});
+useConnectivity(connectivity);
 
 // Why the last sign-in produced no token. A null used to mean "cancelled" whatever the
 // cause, so a wrong tenant or a provider failure told the user they had cancelled.
@@ -89,6 +113,17 @@ function queryAccountOf(session) {
   return `${session.account.label}${tenant ? ` (${tenant})` : ''}`.replace(/[\\/:*?"<>|]+/g, '_');
 }
 
+// The account this machine last signed in with, in the tenant the setting names now, so its cache
+// can still be shown with no session: { key, queries }, or null.
+function knownAccount() {
+  const last = memento && memento.get(LAST_ACCOUNT_KEY, null);
+  return last && last.tenant === tenantSetting() ? last : null;
+}
+function rememberAccount(session) {
+  const key = accountKey(session);
+  if (key && memento) memento.update(LAST_ACCOUNT_KEY, { key, queries: queryAccountOf(session), tenant: tenantSetting() });
+}
+
 // getSession is an RPC into the account provider; asked once per request, that lookup —
 // not OneLake, not DuckDB — was most of a burst's wait. So the token is held briefly in
 // memory: long enough to collapse a burst, short enough that a stale one costs a single
@@ -100,6 +135,8 @@ let cachedToken = null;   // { token, at }
 function forgetToken() { cachedToken = null; cachedFabric = null; fabricAudience = null; cachedApp = null; }
 
 async function hostToken({ fresh = false } = {}) {
+  // No internet: a refresh could only hang, and nothing is about to use the token.
+  if (connectivity.noInternet()) return cachedToken ? cachedToken.token : null;
   if (!fresh && cachedToken && Date.now() - cachedToken.at < TOKEN_TTL_MS) return cachedToken.token;
   const token = await getToken({ createIfNone: false });
   cachedToken = token ? { token, at: Date.now() } : null;
@@ -430,7 +467,8 @@ function ensureEngine(context, { readme } = {}) {
       // 0 is no disk cache at all.
       fileCacheDir: diskCacheGB > 0 ? fileCacheDirFor(fileCacheAccount) : null,
       fileCacheMaxBytes: diskCacheGB * 1024 ** 3,
-      resolveTable: ref => (resolveSqlTable ? resolveSqlTable(ref) : Promise.reject(new Error('OneLake Studio is still starting'))),
+      resolveTable: (ref, o) => (resolveSqlTable ? resolveSqlTable(ref, o) : Promise.reject(new Error('OneLake Studio is still starting'))),
+      offlineReason: () => connectivity.reason(),
       catalogTables: () => (cachedSqlTables ? cachedSqlTables() : Promise.resolve([])),
     });
   } catch (e) {
@@ -479,8 +517,10 @@ let queryDone = null;
 // `place`: where the panel goes, for a query run from an editor (panel.js openPanel).
 async function show(context, options, place) {
   if (revealPanel(place)) return true;
-  const token = await getToken(options);
-  if (!token) {
+  // With an account's cache to show, no click prompts for a sign-in: it opens on what is held.
+  const known = !!knownAccount();
+  const token = known && connectivity.noInternet() ? null : await getToken(known ? { createIfNone: false } : options);
+  if (!token && !known) {
     const why = lastAuthError ? `Sign-in failed: ${lastAuthError.message || lastAuthError}`
                               : 'Sign-in was cancelled.';
     vscode.window.showWarningMessage(
@@ -591,13 +631,18 @@ async function saveFile(name, bytes) {
 
 // The tree and the welcome view are two states of one view: the welcome buttons show
 // while this is false. Kept in a context key rather than asked for on every render, so a
-// collapsed tree costs no token lookups.
+// collapsed tree costs no token lookups. An account whose cache is known keeps the tree, with
+// no session: hasSession is what says OneLake can be asked.
 let signedIn = false;
+let hasSession = false;
 // Which build this window runs, for the panel's status bar: set at activation.
 let buildInfo = {};
 async function setSignedIn(value) {
-  signedIn = value;
-  await vscode.commands.executeCommand('setContext', 'onelakeStudio.signedIn', value);
+  hasSession = !!value;
+  signedIn = hasSession || !!knownAccount();
+  connectivity.setSession(hasSession);
+  await vscode.commands.executeCommand('setContext', 'onelakeStudio.signedIn', signedIn);
+  await vscode.commands.executeCommand('setContext', 'onelakeStudio.hasSession', hasSession);
 }
 
 // The exact commit this window is running. Installed build: the stamp stage-webview.mjs
@@ -670,8 +715,9 @@ async function installSkill(context) {
 }
 
 async function activate(context) {
+  memento = context.globalState;
   out = vscode.window.createOutputChannel('OneLake Studio');
-  context.subscriptions.push(out);
+  context.subscriptions.push(out, { dispose: () => connectivity.dispose() });
 
   // The read indicator, visible even when the panel's tab is not. Hidden until the first
   // burst — a status bar item with nothing to say is noise.
@@ -783,8 +829,6 @@ async function activateInner(context, ready) {
   // Semantic models and their export: Fabric's token for the model, the storage one
   // (the same cache the catalog uses) for the one file the export writes.
   const fabric = createFabric({ getFabricToken: fabricToken });
-  // Direct Lake item GUIDs -> the names the tree uses (nameModelTables), per account.
-  const itemNames = new Map();
 
   // What the extension knows about OneLake, kept on disk per account and served from there
   // first (onelake.js). One directory per identity — a hashed account id — so nobody is
@@ -792,9 +836,10 @@ async function activateInner(context, ready) {
   const storeRoot = join(context.globalStorageUri.fsPath, 'onelake-store-v1');
   const storeFor = key => createStore({ dir: join(storeRoot, key || 'signed-out'), ttlMs: catalogTtlMs, maxBytes: storeMaxBytes() });
   const firstSession = await getSession({ createIfNone: false }).catch(() => null);
-  let storeAccount = accountKey(firstSession);
+  rememberAccount(firstSession);
+  let storeAccount = accountKey(firstSession) || (knownAccount() || {}).key || null;
   // The saved queries' account (queriesFolder): its own folder, by its sign-in name.
-  let queryAccount = queryAccountOf(firstSession);
+  let queryAccount = queryAccountOf(firstSession) || (knownAccount() || {}).queries || null;
   fileCacheRoot = fileCacheRootFor(context);
   fileCacheAccount = storeAccount;
   onelake = createOneLake({
@@ -805,7 +850,12 @@ async function activateInner(context, ready) {
     tableTtlMs,
     // A workspace's semantic models are a listing too, kept in the same store.
     fabric,
+    isOffline: () => connectivity.offline(),
   });
+  const sqlTables = createSqlTables({ onelake, paths: async () => (await agent.modules()).paths,
+                                      offlineReason: () => connectivity.reason() });
+  resolveSqlTable = sqlTables.resolve;
+  nameModelTables = sqlTables.nameTables;
   // Semantic views: pointers to model files, kept per account in the extension's storage.
   // A view made or dropped is in the engine's catalog (SHOW ALL TABLES) by the next statement.
   semviews = createSemViews({ dir: join(context.globalStorageUri.fsPath, 'semantic-views'), onelake,
@@ -817,14 +867,16 @@ async function activateInner(context, ready) {
   // the other was still moving the store.
   rebindStore = serialized(async function rebindStore() {
     const session = await getSession({ createIfNone: false }).catch(() => null);
-    const key = accountKey(session);
+    rememberAccount(session);
+    // No session is not another account: the last one's cache is what there is to show.
+    const key = accountKey(session) || (knownAccount() || {}).key || null;
     if (key === storeAccount) return;
     storeAccount = key;
     // Workspace and item GUIDs belong to the account's tenant: listed again for the new one.
     fabric.reset();
-    itemNames.clear();
+    sqlTables.forget();
     // Another account's saved queries, too.
-    queryAccount = queryAccountOf(session);
+    queryAccount = queryAccountOf(session) || (knownAccount() || {}).queries || null;
     await adoptLooseQueries().catch(() => {});
     tree.queriesChanged();
     fileCacheAccount = key;   // the engine picks it up when it is next built
@@ -867,7 +919,8 @@ async function activateInner(context, ready) {
     favorites,
     groupByType,
     fabric,
-    hasFabric: async () => !!await fabricToken().catch(() => null),
+    // Offline, a workspace's models are whatever listing is kept: there is no sign-in to offer.
+    hasFabric: async () => connectivity.offline() || !!await fabricToken().catch(() => null),
     isSignedIn: () => signedIn,
     cachedModel: n => cachedModel(n),
     queries: { list: () => listQueries() },
@@ -877,7 +930,27 @@ async function activateInner(context, ready) {
     log: m => out && out.appendLine(m),
   });
 
+  // Said only while offline, and why. A click signs in.
+  const offlineItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 99);
+  offlineItem.name = 'OneLake Studio offline';
+  offlineItem.command = 'onelakeStudio.signIn';
+  offlineItem.tooltip = 'OneLake Studio is showing what this machine has cached. Reading table rows needs OneLake. Click to sign in.';
+  context.subscriptions.push(offlineItem);
+  const showOffline = reason => {
+    if (!reason) { offlineItem.hide(); return; }
+    offlineItem.text = `$(cloud-offline) OneLake: offline (${reason})`;
+    offlineItem.show();
+  };
+  onOfflineChange = reason => {
+    if (out) out.appendLine(reason ? `offline: ${reason}` : 'back online');
+    showOffline(reason);
+    if (engine) engine.catalogChanged();
+    tree.redraw();
+  };
+
   await setSignedIn(!!await getToken({ createIfNone: false }));
+  showOffline(connectivity.reason());
+  connectivity.check();
 
   // Opening a table means: make sure a panel exists, then tell it what to show. The panel
   // buffers the message if DuckDB is still booting. Boot is multi-second work with no
@@ -1186,6 +1259,7 @@ async function activateInner(context, ready) {
     openModel: x => openSqlModel(x),
     nameTables: list => nameModelTables(list),
     signedIn: () => signedIn,
+    offlineReason: () => connectivity.reason(),
   });
   context.subscriptions.push(serveBridge({
     handle: (req, ctx) => {
@@ -1295,34 +1369,7 @@ async function activateInner(context, ready) {
     }
   }
 
-  // A table's SQL name, found in OneLake. The parts are matched as DuckDB matches names,
-  // ignoring case, against what the store lists (the tree's own listings, so a table the tree
-  // has shown resolves without a request), and answered spelled as OneLake spells them.
   const same = (a, b) => String(a).toLowerCase() === String(b).toLowerCase();
-  resolveSqlTable = async ref => {
-    const workspaces = await onelake.workspaces().catch(() => []);
-    const ws = workspaces.find(w => same(w, ref.workspace)) || String(ref.workspace);
-    let dir = ref.dir;
-    if (!dir) {
-      const items = await onelake.items(ws).catch(e => {
-        throw new Error(`${sqlName(ref)}: workspace ${ref.workspace} could not be listed — ${e.message}`);
-      });
-      const hit = items.find(i => sqlKind(i.kind) === ref.kind && same(displayName(i.name), ref.item));
-      if (!hit) throw new Error(`${sqlName(ref)}: there is no ${ref.kind} ${ref.item} in workspace ${ws}`);
-      dir = hit.name;
-    }
-    const lh = { workspace: ws, item: dir };
-    const listed = await onelake.tables(lh).catch(() => []);
-    const t = listed.find(x => same(x.schema || 'dbo', ref.schema || 'dbo') && same(x.table, ref.table)) ||
-              { schema: ref.schema || 'dbo', table: ref.table };
-    let meta;
-    try { meta = await onelake.table(lh, t); }
-    catch (e) { throw new Error(`${sqlName(ref)}: ${e.message}`); }
-    const named = { kind: ref.kind, workspace: ws, item: displayName(dir), schema: t.schema || 'dbo', table: t.table };
-    return meta.empty
-      ? { ...named, emptySql: (await agent.modules()).paths.emptyTableSql(meta.schemaFields) }
-      : { ...named, metadataLocation: meta.metadataLocation };
-  };
 
   // Every table the store has seen, with its columns, as its SQL name's parts: a walk of the
   // cache alone (the command line's `find` walks it the same way). A table whose columns were
@@ -1365,8 +1412,9 @@ async function activateInner(context, ready) {
     const pick = list => (list || []).find(m => same(m.name, model));
     const kept = await onelake.cached.models(ws);
     let hit = pick(kept && kept.value);
+    // Not in the kept listing is not an answer yet: a model made since. Past the cache.
     if (!hit) {
-      hit = pick(await onelake.models(ws).catch(e => {
+      hit = pick(await onelake.models(ws, { fresh: true }).catch(e => {
         throw new Error(`${full}: the semantic models of ${ws} could not be listed — ${e.message}`);
       }));
     }
@@ -1374,26 +1422,6 @@ async function activateInner(context, ready) {
     const { path } = await fetchModel({ workspace: ws, model: hit.name, modelId: hit.id });
     if (out) out.appendLine(`opened ${full} for a query, from ${path}`);
     return semviews.put(hit.name, path, ws);
-  };
-
-  // A semantic model's Direct Lake tables, which its expressions name by GUID, as SQL names:
-  // [{ workspace, item (GUIDs), schema, table }] -> [name]. Fabric names each item once, ever, on
-  // disk: every model is named each time the panel opens.
-  nameModelTables = async list => {
-    const out = [];
-    for (const x of list) {
-      const key = `${x.workspace}/${x.item}`.toLowerCase();
-      if (!itemNames.has(key)) {
-        const p = onelake.itemNamed(x.workspace, x.item);
-        itemNames.set(key, p);
-        p.catch(() => itemNames.delete(key));
-      }
-      const it = await itemNames.get(key);
-      const kind = sqlKind(it.item.replace(/^.*\./, ''));
-      if (!kind) throw new Error(`${it.workspace}/${it.item} holds no tables SQL can name`);
-      out.push(sqlName({ kind, workspace: it.workspace, item: displayName(it.item), schema: x.schema, table: x.table }));
-    }
-    return out;
   };
 
   // Export to Fabric, from Explore: the model's Explore as a Fabric app (exportapp.js), its
@@ -1834,9 +1862,26 @@ async function activateInner(context, ready) {
       }
     }),
 
-    // VS Code owns the account, so an extension cannot sign anyone out — that is the
-    // Accounts menu in the bottom left. What it CAN do is stop reusing the remembered
-    // choice, which is what someone with two tenants actually wants.
+    // Out of OneLake Studio, not of VS Code, which owns the account (getSession). The engine goes,
+    // since its secret holds the token by value; what is cached stays on show.
+    vscode.commands.registerCommand('onelakeStudio.signOut', () => accountTurn(async () => {
+      try {
+        await context.globalState.update(SIGNED_OUT_KEY, true);
+        forgetToken();
+        await setSignedIn(false);
+        closePanel();
+        await resetEngine();
+        tree.redraw();
+        warmIfWanted();
+        vscode.window.showInformationMessage(
+          'Signed out of OneLake Studio. What this machine has cached is still here. VS Code keeps the account: its Accounts menu removes it.');
+      } catch (e) {
+        showError(`Could not sign out: ${(e && e.message) || e}`);
+      }
+    })),
+
+    // VS Code owns the account, and what an extension can do beyond Sign Out above is stop reusing
+    // the remembered choice, which is what someone with two tenants actually wants.
     vscode.commands.registerCommand('onelakeStudio.switchAccount', () => accountTurn(async () => {
       try {
         // Ask FIRST. Tearing down before the picker meant that cancelling it still cost
@@ -1876,8 +1921,10 @@ async function activateInner(context, ready) {
     vscode.authentication.onDidChangeSessions(e => e.provider.id === 'microsoft' && accountTurn(async () => {
       try {
         forgetToken();
-        const was = signedIn;
+        const was = hasSession;
         const session = await getSession({ createIfNone: false }).catch(() => null);
+        // A token refresh that failed for want of internet looks like this. It is not a sign-out.
+        if (!session && connectivity.noInternet()) return;
         await setSignedIn(!!session);
         const before = storeAccount;
         await rebindStore();
@@ -1888,7 +1935,7 @@ async function activateInner(context, ready) {
           closePanel();
           await resetEngine();
           vscode.window.showInformationMessage(
-            'OneLake Studio signed out — the Microsoft account is no longer available.');
+            'OneLake Studio signed out: the Microsoft account is no longer available. What this machine has cached is still here.');
         } else if (engine && storeAccount !== before) {
           closePanel();
           await resetEngine();
@@ -1910,7 +1957,7 @@ async function activateInner(context, ready) {
           try {
             forgetToken();
             fabric.reset();
-            itemNames.clear();
+            sqlTables.forget();
             await rebindStore();
             tree.redraw();
             if (engine) {

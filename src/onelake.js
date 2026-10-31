@@ -22,6 +22,7 @@ const { sqlStr } = require('./sql');
 const { mapPool } = require('./http');
 const names = require('./names');
 const deltalog = require('./deltalog');
+const { revalidate } = require('./store');
 
 const PEEK_ROWS = 100;
 const PREFETCH_WORKERS = 2;
@@ -104,7 +105,7 @@ async function walkCached(cached) {
 }
 
 function createOneLake({ catalog, store, prefetchEnabled = () => true, onHit = () => {},
-                         tableTtlMs = undefined, fabric = null }) {
+                         tableTtlMs = undefined, fabric = null, isOffline = () => false }) {
   // The store is the account's: a different sign-in swaps it (useStore) and every listener
   // follows, so nothing above this module has to know an account changed.
   const subs = [];   // { ev, fn, off }
@@ -163,9 +164,11 @@ function createOneLake({ catalog, store, prefetchEnabled = () => true, onHit = (
 
   // Read through the store, and tell the read log when the answer came off disk — the
   // other half of what a click cost, beside the requests catalog.js reports.
+  // Offline, what is kept is the answer, however old and whoever asks: nothing is refreshed behind
+  // the caller, and a miss reaches the fetcher, whose request fails at once (http.js).
   async function get(key, fetcher, o) {
     const t0 = Date.now();
-    const r = await store.get(key, fetcher, o);
+    const r = await store.get(key, fetcher, isOffline() ? { ...o, fresh: false, ttl: Infinity } : o);
     if (r.cached) { try { onHit({ cache: 'hit', ms: Date.now() - t0, path: key.split('\u0000').join(' ') }); } catch (_) {} }
     return r;
   }
@@ -188,10 +191,12 @@ function createOneLake({ catalog, store, prefetchEnabled = () => true, onHit = (
     return get(keys.apps(ws), () => fabric.listApps(ws), o).then(value);
   };
   // What an item named by GUIDs (a Direct Lake expression's) is called: { workspace, item }.
-  // No TTL, like the item's catalog prefix: asked once, and never refreshed behind the caller.
-  const itemNamed = (wsId, itemId) => {
+  // No TTL: nothing refreshes it behind the caller. It is read again (`fresh`) when the name it
+  // gave stops resolving (sqltables.js), past Fabric's own memo of the workspaces' names too.
+  const itemNamed = (wsId, itemId, o = {}) => {
     if (!fabric) return Promise.reject(new Error('semantic models are not available here'));
-    return get(keys.itemNamed(wsId, itemId), () => fabric.itemOf(wsId, itemId), { ttl: Infinity }).then(value);
+    if (o.fresh && fabric.reset && !isOffline()) fabric.reset();
+    return get(keys.itemNamed(wsId, itemId), () => fabric.itemOf(wsId, itemId), { ttl: Infinity, ...o }).then(value);
   };
 
   /**
@@ -329,28 +334,23 @@ function createOneLake({ catalog, store, prefetchEnabled = () => true, onHit = (
     const { meta, at, readText } = await deltaTarget(lh, t);
     const load = f => get(keys.deltaCommits(lh, t), () => deltalog.listCommits(d => catalog.listDir(at.workspace, d), at.dir),
       { fresh: f, ...(tableTtlMs != null ? { ttl: tableTtlMs } : {}) });
-    let r = await load(false);
-    const newest = r.value.length ? r.value[0].version : -1;
-    const behind = meta.stats && meta.stats.deltaVersion != null && newest < meta.stats.deltaVersion;
-    if (r.cached && (behind || r.at < refreshedSince(lh))) r = await load(true);
-    let entries;
-    try {
-      if (!r.value.length) throw new Error('the Delta log has no commits');
-      entries = await deltalog.readHistoryPage(readText, at.dir, r.value, skip);
-    } catch (e) {
-      // A kept listing can name commits log retention has deleted since: list again, once.
-      if (!r.cached || !(e.status === 404 || /HTTP 404/.test(e.message || '') || !r.value.length)) throw e;
-      r = await load(true);
-      if (!r.value.length) throw new Error('the Delta log has no commits');
-      entries = await deltalog.readHistoryPage(readText, at.dir, r.value, skip);
-    }
-    const commits = r.value;
-    return {
-      entries,
-      total: commits.length,
-      latest: commits[0].version,
-      oldest: commits[commits.length - 1].version,
+    const listing = async ({ fresh }) => {
+      let r = await load(!!fresh);
+      const newest = r.value.length ? r.value[0].version : -1;
+      const behind = meta.stats && meta.stats.deltaVersion != null && newest < meta.stats.deltaVersion;
+      if (r.cached && (behind || r.at < refreshedSince(lh))) r = await load(true);
+      return r.value;
     };
+    // A kept listing can name commits log retention has deleted since.
+    return revalidate(listing, async commits => {
+      if (!commits.length) throw Object.assign(new Error('the Delta log has no commits'), { empty: true });
+      return {
+        entries: await deltalog.readHistoryPage(readText, at.dir, commits, skip),
+        total: commits.length,
+        latest: commits[0].version,
+        oldest: commits[commits.length - 1].version,
+      };
+    }, e => e.empty || e.status === 404 || /HTTP 404/.test(e.message || ''));
   }
 
   // When a Refresh last covered a lakehouse: everything, a workspace, or one item.
@@ -398,7 +398,7 @@ function createOneLake({ catalog, store, prefetchEnabled = () => true, onHit = (
   let workers = 0;
 
   function prefetch(lh, list) {
-    if (!prefetchEnabled()) return;
+    if (!prefetchEnabled() || isOffline()) return;
     for (const t of list) {
       const k = keys.table(lh, t);
       if (queued.has(k)) continue;

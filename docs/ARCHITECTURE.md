@@ -29,7 +29,7 @@ SHOW ALL TABLES;
 | **One name per object** | A table has five parts and a model has three. A file is its `abfss://` URL. | [NAMING.md](NAMING.md), [`src/names.js`](../src/names.js) |
 | **SQL only** | A model is read with `AGG("measure")` in SQL. There is no DAX query. | [`app/semantic.js`](../app/semantic.js) |
 | **Read only** | Nothing is written to Fabric or OneLake. The host refuses any statement that could write. The one exception is Export to Fabric, after an OK in VS Code. | `assertReadOnly` in [`src/sql.js`](../src/sql.js) |
-| **Cache first** | Every answer from OneLake or Fabric is kept on this machine and served from there first. | [`src/onelake.js`](../src/onelake.js), [`src/store.js`](../src/store.js) |
+| **Cache first** | Every answer from OneLake or Fabric is kept on this machine and served from there first. It is trusted until using it fails, then read again once. | [`src/onelake.js`](../src/onelake.js), [`src/store.js`](../src/store.js) |
 | **The host does the work** | Sign-in, every OneLake read and the engine are in the host. The panel is a view: it holds no token and makes no network request. | [`src/host.js`](../src/host.js), [`src/panel.js`](../src/panel.js) |
 | **A table's Pivot is a SQL starter** | It builds a first SQL. Its only actions are Edit SQL and Close. | [`app/app.js`](../app/app.js) |
 
@@ -78,12 +78,12 @@ and joins at step 3.
    names. A statement that names no model passes through unchanged.
 3. **Check.** `assertReadOnly` in the host refuses more than one statement, and anything that could
    write.
-4. **Prepare.** `prepare` in [`src/engine-host.js`](../src/engine-host.js) does three things:
+4. **Prepare.** `withTables` in [`src/engine-host.js`](../src/engine-host.js) does three things:
    - A statement that reads the catalog (`SHOW ALL TABLES`, `information_schema`) gets the catalog
      synced from the cache first.
-   - `ensureTables` makes a view for each five-part name: `tableRefs` finds the names,
-     `resolveSqlTable` looks them up in the cached listings, and the view is `iceberg_scan` on the
-     table's metadata file.
+   - `withTables` makes a view for each five-part name: `tableRefs` finds the names,
+     `resolve` ([`src/sqltables.js`](../src/sqltables.js)) looks them up in the cached listings, and the
+     view is `iceberg_scan` on the table's metadata file.
    - `catalogStatement` rewrites `SHOW` statements so they report whole paths.
 5. **Run.** The statement runs on its own connection, so Stop interrupts exactly that query. A result
    past `maxResultRows` (200,000 by default) is counted rather than carried into the panel.
@@ -96,6 +96,35 @@ audience, which VS Code asks for only when *Semantic models* is first expanded.
 
 The token lives only in the extension host, in a DuckDB storage secret. When VS Code hands back a new
 one, the secret is reissued.
+
+**Sign Out** is out of OneLake Studio, not out of VS Code: an extension cannot remove an account, so it
+stops asking for it until you sign in again. To remove the account too, use VS Code's Accounts menu.
+
+## Offline
+
+Nothing turns this on. The extension is offline when there is no internet or no session, says which in
+the status bar, and comes back by itself ([`src/connectivity.js`](../src/connectivity.js)).
+
+- **Detecting it:** a request that gets no answer at all starts a probe of OneLake, and offline means the
+  probe got none either. Any HTTP status is an answer, so a slow connection counts as online. Offline, the
+  probe repeats every 30 seconds.
+- **No request is sent.** `authedFetch` refuses first ([`src/http.js`](../src/http.js)), so nothing waits
+  on a timeout. Export to Fabric is refused too.
+- **What is kept is the answer,** however old ([`src/onelake.js`](../src/onelake.js)), with no background
+  refresh or prefetch. Anything not held says so at once.
+- **No session:** the tree and the panel open on the cache of the last account signed in on this machine,
+  in the tenant the setting names, with no prompt. Another account signing in gets its own cache.
+
+| Works offline, if cached | Needs OneLake |
+| --- | --- |
+| The tree, `SHOW ALL TABLES`, `information_schema`, completion, Go To | Reading table rows |
+| A table's Stats and History, and first rows already read | `abfss://` files read by SQL |
+| Semantic models: opening them, Explore's Model page, `SHOW SEMANTIC …` | A model query's rows |
+| `Files/` objects the host has read | Export to Fabric |
+
+**Why table rows need OneLake:** `cache_httpfs` keeps a file's bytes on disk, but DuckDB still asks OneLake
+to open the file, even with validation off (tested with a dummy token, 40 tables, all refused). So the
+engine refuses such a statement at once rather than let it time out.
 
 ## The engine
 
@@ -128,11 +157,21 @@ The engine is **DuckDB 2.0 running natively in the extension host**
 | What | Where it is kept | When it is read again |
 | --- | --- | --- |
 | Listings (workspaces, items, tables, `Files/`, semantic models), table metadata, first rows | On disk, [`src/onelake.js`](../src/onelake.js) | Served at once, refreshed in the background past its window |
-| The name behind a Direct Lake model's item GUIDs | On disk, [`src/onelake.js`](../src/onelake.js) | Never, until **Clear Cached OneLake Data**. A renamed lakehouse keeps its old name here until then |
+| The name behind a Direct Lake model's item GUIDs | On disk, [`src/onelake.js`](../src/onelake.js) | Only when using it fails |
 | The bytes of a `Files/` object the host reads (an image, a `.bim`, a SQLite copy, a saved file) | Under the etag its cached listing gave | Only when the file was rewritten |
 | What DuckDB reads: table data and `Files/` objects | DuckDB's disk cache (`cache_httpfs`) | Only when the file was rewritten: a kept copy is checked against the file's version tag and modification time |
 | A semantic model's definition | `~/OneLakeStudio/semantic-models/<workspace>/<model>.yaml` | On **Download Again** |
 
+- **A kept answer is trusted until using it fails.** Then it is read again once, and the work tried again
+  only if the answer changed. Otherwise the first error stands, and so it does offline
+  (`revalidate` in [`src/store.js`](../src/store.js)). A window's age only ever starts a refresh in the
+  background.
+  - **A name not in a kept listing:** the listing is read again before the name is called missing.
+  - **A lakehouse renamed under a model:** the name its GUIDs gave no longer resolves, so Fabric is asked
+    again. A compiled query goes on working, and the next one uses the new name.
+  - **A table's read fails** (DuckDB's `IO Error`): the table's listing and metadata are read again. A
+    statement's own mistake asks OneLake nothing.
+  - **A model's local copy** is not covered: it changes only on **Download Again**.
 - **Per Microsoft account:** switching accounts never serves one account's data to another.
 - **Survives a sign-out:** signing back in finds it warm. Only **Clear Cached OneLake Data** deletes it.
 - **The catalog is cached too:** `SHOW ALL TABLES` and `information_schema` list what the tree has seen
@@ -360,7 +399,7 @@ personal skills, and it follows the extension through updates.
 | 1 | Failed. |
 | 2 | Wrong call. |
 | 3 | VS Code is not open, or not signed in. |
-| 4 | Not cached. `--fresh` asks OneLake or Fabric now. |
+| 4 | Not cached. `--fresh` asks OneLake or Fabric now, unless offline, when it fails the same way. |
 | 5 | You declined an export. |
 | 6 | Timed out. |
 
@@ -380,7 +419,8 @@ personal skills, and it follows the extension through updates.
 | **Open OneLake Studio** | Opens the panel, signing in if needed. |
 | **Sign in to OneLake** | Signs in and fills the explorer, without opening the panel. |
 | **Sign in to the Fabric API** | Asks for the second token, for semantic models and apps. |
-| **Switch Microsoft Account** | Asks which account to use and reopens the panel, so the previous account's tables do not survive the switch. To sign out, use VS Code's Accounts menu. |
+| **Switch Microsoft Account** | Asks which account to use and reopens the panel, so the previous account's tables do not survive the switch. |
+| **Sign Out** | Signs out of OneLake Studio and closes the panel and the engine. What is cached stays on show. In the explorer's "..." menu. |
 | **Settings** | Opens VS Code's Settings page, filtered to this extension. In the explorer's "..." menu. |
 | **Refresh** | Re-reads a workspace, item or folder from OneLake in the foreground. |
 | **Group by Type** / **Group by Workspace** | The explorer's title-bar toggle. Remembered. |
@@ -434,11 +474,13 @@ apply at once.
 | Folder or file | What it holds |
 | --- | --- |
 | [`src/`](../src/) | The extension host. Ships bundled, with `@duckdb/node-api`, as `dist/extension.js`. |
-| `src/extension.js` | Activation, commands, and `resolveSqlTable`. |
+| `src/extension.js` | Activation and commands. |
 | `src/names.js` | What items hold tables, and how a table or model is named. |
 | `src/sql.js` | The read-only guard, `tableRefs`, and `SHOW` rewriting. |
 | `src/engine-host.js` | The native DuckDB engine. |
 | `src/catalog.js`, `src/onelake.js`, `src/store.js` | OneLake requests, cache first, and the store on disk. |
+| `src/sqltables.js` | A table's SQL name found in OneLake, and a model's GUIDs named. |
+| `src/connectivity.js` | Whether this window is offline, and why. |
 | `src/http.js` | How the host asks OneLake and the Fabric API for anything. |
 | `src/deltalog.js` | A Delta table's own log, for Stats and History. |
 | `src/fabric.js` | A workspace's semantic models and apps, and a model's definition. |

@@ -31,7 +31,7 @@ const { join } = require('node:path');
 const { pathToFileURL } = require('node:url');
 const fsp = require('node:fs/promises');
 const { fmtBytes, hasFilesArea, kindLabel, sqlNameOf, abfssUrl } = require('./names');
-const { mapPool } = require('./http');
+const { mapPool, offlineError } = require('./http');
 const { walkCached } = require('./onelake');
 const { EXIT, checkRequest, failureJson } = require('./bridge');
 
@@ -72,10 +72,11 @@ function filesToAbfss(sql, lh) {
  * @param {(x: {workspace: string, model: string}) => Promise<object>} [o.openModel]
  *   a semantic model a query names, opened from its local copy and kept as a view
  * @param {() => boolean} [o.signedIn]       false: every question is answered UNAVAILABLE
+ * @param {() => string|null} [o.offlineReason]  why OneLake cannot be asked now: answers come from the cache
  */
 function createAgent({ onelake, engine, modelPath, appDir, vendorDir, daxSqlPin, yamlPin, semviews,
                        exportApp = null, fetchModel = null, openModel = null, nameTables = null,
-                       signedIn = () => true }) {
+                       signedIn = () => true, offlineReason = () => null }) {
   let mods = null;
   async function modules() {
     if (mods) return mods;
@@ -106,7 +107,7 @@ function createAgent({ onelake, engine, modelPath, appDir, vendorDir, daxSqlPin,
   // workspace behind the user's back. `--fresh` is the one way to have it ask OneLake or
   // Fabric. A query (sql) reads OneLake — that is what a query is for.
   // ---------------------------------------------------------------------------
-  const notCached = (what, how) => Object.assign(
+  const notCached = (what, how) => (offlineReason() ? offlineError(offlineReason(), what) : null) || Object.assign(
     new Error(`${what} is not cached yet — ${how} in the OneLake Studio tree, or add --fresh to read it now`),
     { notCached: true });
   const IN_TREE = {
@@ -557,7 +558,7 @@ function createAgent({ onelake, engine, modelPath, appDir, vendorDir, daxSqlPin,
   const usage = message => Object.assign(new Error(message), { usage: true });
   const unavailable = message => Object.assign(new Error(message), { unavailable: true });
   const exitOf = e => (e.usage ? EXIT.USAGE : e.unavailable || e.status === 401 ? EXIT.UNAVAILABLE
-    : e.notCached ? EXIT.NOT_CACHED : e.declined ? EXIT.DECLINED : EXIT.FAILED);
+    : e.notCached || e.offline ? EXIT.NOT_CACHED : e.declined ? EXIT.DECLINED : EXIT.FAILED);
 
   // One answer, written out once as Markdown, CSV or JSON, from the same raw tables. Nothing
   // reaches stdout until the command is done: a failure leaves none of it there.
@@ -616,7 +617,7 @@ function createAgent({ onelake, engine, modelPath, appDir, vendorDir, daxSqlPin,
       failed(e) {
         const message = (e && e.message) || String(e);
         const code = exitOf(e || {});
-        const retry = code === EXIT.NOT_CACHED ? (e.retry || '--fresh') : undefined;
+        const retry = code === EXIT.NOT_CACHED && !e.offline ? (e.retry || '--fresh') : undefined;
         const hint = e && e.status === 401 ? ` — ${SIGN_IN_TO_FABRIC}` : '';
         if (format === 'json') return { out: failureJson(code, message + hint, { retry, notes }), err: '', code };
         return { out: '', err: [...notes, `error: ${message}${hint}`].join('\n'), code };
@@ -635,6 +636,7 @@ function createAgent({ onelake, engine, modelPath, appDir, vendorDir, daxSqlPin,
       const wrong = checkRequest({ args, opts });
       if (wrong) throw usage(wrong);
       if (!signedIn()) throw unavailable('OneLake Studio is not signed in — sign in from its view in VS Code.');
+      if (opts.fresh && offlineReason()) throw offlineError(offlineReason(), 'An answer newer than the cache');
       await commands[name](rest, {
         fresh: !!opts.fresh, csv: !!opts.csv, json: !!opts.json, in: opts.in ? String(opts.in) : '',
         explicitLimit, showSql: !!opts.showSql, seen, signal,
@@ -643,7 +645,7 @@ function createAgent({ onelake, engine, modelPath, appDir, vendorDir, daxSqlPin,
       if (seen.length) {
         const oldest = Math.min(...seen);
         answer.seen(oldest);
-        answer.note(`from the cache, as of ${ago(oldest)} — --fresh reads OneLake/Fabric again`);
+        answer.note(`from the cache, as of ${ago(oldest)} — ${offlineReason() ? `offline: ${offlineReason()}` : '--fresh reads OneLake/Fabric again'}`);
       }
       return answer.done();
     } catch (e) {

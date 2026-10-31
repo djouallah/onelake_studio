@@ -32,6 +32,7 @@ const { join } = require('node:path');
 const os = require('node:os');
 const { sqlStr, quoteIdent, assertReadOnly, tableRefs, catalogStatement, readsCatalog } = require('./sql');
 const { SQL_KINDS, sqlName, MODEL_CATALOG, modelSqlName } = require('./names');
+const { revalidate } = require('./store');
 
 
 // Rows are read in chunks so a large result starts painting before it has all arrived,
@@ -162,7 +163,7 @@ async function trimFileCache(dir, maxBytes, onWarn) {
 // { kind, workspace, item, schema, table } as SQL wrote them (and `dir`, the item's directory
 // name, when the tree already knows it), it answers the same five spelled as OneLake spells
 // them, plus { metadataLocation } — or { emptySql }, the typed empty SELECT of a table nothing
-// was ever written to.
+// was ever written to. Its second argument is { fresh }: past the cache, once a read has failed.
 //
 // `catalogTables` lists, from the host's cache alone, every table it knows: { kind, workspace,
 // item, schema, table } with { columns: [{ name, type }] } (DuckDB types) or { emptySql } — and
@@ -174,7 +175,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
                             allowedPaths = [], lockdown = true,
                             httpProxy = '', bundledExtensions = null,
                             fileCacheDir = null, fileCacheMaxBytes = 0, resolveTable = null,
-                            catalogTables = null } = {}) {
+                            catalogTables = null, offlineReason = () => null } = {}) {
   let instance = null;
   // The connection for the host's OWN statements — the secret, extension loading. Page
   // queries never run on it: each gets a connection of its own (see withConn), so a cancel
@@ -305,7 +306,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
 
       // One catalog per kind of item, for the tables' SQL names (lakehouse.ws.item.schema.t):
       // the workspace, item and schema are nested schemas in it, made as a statement names
-      // them (ensureTables). Before the lockdown, which leaves nothing to attach with.
+      // them (withTables). Before the lockdown, which leaves nothing to attach with.
       for (const k of SQL_KINDS) await conn.run(`ATTACH ':memory:' AS ${quoteIdent(k)};`);
       // And one for semantic models (semanticmodel.ws.model): listed there (listCatalog), and
       // queried through the page's semantic step, which compiles them before DuckDB sees them.
@@ -499,12 +500,12 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
   // change its mind, which is the same bargain catalog.js makes.
   const AUTH_FAILURE = /AuthenticationFailed|401|Unauthorized|token.*expired|ExpiredAuthenticationToken/i;
 
-  async function withAuthRetry(run) {
+  async function withAuthRetry(run, canRetry = () => true) {
     await ensureAuth();
     try {
       return await run();
     } catch (e) {
-      if (!AUTH_FAILURE.test(String(e && e.message))) throw e;
+      if (!AUTH_FAILURE.test(String(e && e.message)) || !canRetry()) throw e;
       const stale = authToken;
       const fresh = await ensureAuth(true);   // PAST the caller's token cache
       if (!fresh || fresh === stale) throw e;  // same token, same answer — do not loop
@@ -521,9 +522,10 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
   // `made` is what each view reads now (by its lower-cased name, as DuckDB matches names): a
   // view is made again only when its table moved to a new snapshot.
   const made = new Map();
-  async function ensureTable(ref) {
+  // What a table reads: its view's name, where that goes, and the view's source.
+  async function sourceOf(ref, o) {
     if (!resolveTable) throw new Error('this engine cannot name OneLake tables');
-    const r = await resolveTable(ref);
+    const r = await resolveTable(ref, o);
     let source;
     if (r.emptySql != null) source = String(r.emptySql);
     else if (isOneLakeMetadata(r.metadataLocation)) source = `SELECT * FROM iceberg_scan(${sqlStr(r.metadataLocation)})`;
@@ -531,23 +533,24 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
       throw new Error(`OneLake gave ${sqlName(r)} no readable metadata location` +
         (r.metadataLocation ? ` (${String(r.metadataLocation).slice(0, 120)})` : ''));
     }
-    const name = sqlName(r);
+    return { name: sqlName(r), path: [r.kind, r.workspace, r.item, r.schema || 'dbo'], source };
+  }
+  async function makeView({ name, path: parts, source }) {
     const key = name.toLowerCase();
-    if (made.get(key) === source) return name;
+    if (made.get(key) === source) return;
     await admin(async () => {
       if (made.get(key) === source) return;
-      const path = [r.kind, r.workspace, r.item, r.schema || 'dbo'].map(quoteIdent);
+      const path = parts.map(quoteIdent);
       for (let k = 2; k <= path.length; k++) await conn.run(`CREATE SCHEMA IF NOT EXISTS ${path.slice(0, k).join('.')};`);
       await conn.run(`CREATE OR REPLACE VIEW ${name} AS ${source};`);
       made.set(key, source);
       listed.delete(key);
     });
-    return name;
   }
 
   // Every table the host's cache knows, in DuckDB's catalog before it is ever read: a view
   // with the table's columns that FAILS if it is selected from. A statement that names the
-  // table replaces it with the real one first (ensureTables), so only a name that check
+  // table replaces it with the real one first (withTables), so only a name that check
   // cannot see — one inside a string — reaches it, and that is an error, never zero rows.
   // `listed` holds the views made this way, by key -> name: only those are replaced or
   // dropped when the cache moves; a view a statement made is never touched.
@@ -642,23 +645,60 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
     if (/^\s*drop\s/i.test(sql)) { made.clear(); catalogStale = true; }
   }
 
-  // What a statement needs before it runs: the catalog when it reads the catalog, the tables
-  // it names — and then the statement itself, or its whole-path twin (sql.js catalogStatement).
-  async function prepare(sql) {
-    if (readsCatalog(sql)) await syncCatalog();
-    await ensureTables(sql);
-    return catalogStatement(sql) || sql;
-  }
-
-  // Every table a statement names by its SQL name, made before the statement runs — so a
-  // saved query, or one typed from scratch, reads what it names with nothing opened first.
-  async function ensureTables(sql) {
+  // Every table a statement names by its SQL name, so a saved query, or one typed from scratch,
+  // reads what it names with nothing opened first.
+  async function sourcesOf(sql, o) {
     const seen = new Set();
+    const out = [];
     for (const ref of tableRefs(sql, SQL_KINDS)) {
       const key = [ref.kind, ref.workspace, ref.item, ref.schema, ref.table].join('\0').toLowerCase();
       if (seen.has(key)) continue;
       seen.add(key);
-      await ensureTable(ref);
+      out.push(await sourceOf(ref, o));
+    }
+    return out;
+  }
+
+  // A read that fails is how DuckDB says a kept metadata location no longer holds, at the view
+  // or at the statement. A statement's own mistake is a Binder or Catalog Error, which asks
+  // OneLake nothing.
+  const READ_FAILURE = /^\s*IO Error\b/;
+
+  // Offline, a statement that reads OneLake is refused here rather than left to time out: the disk
+  // cache keeps a file's bytes, but DuckDB still asks OneLake to open it, so nothing kept helps.
+  // A table nothing was ever written to reads no file, and needs no network.
+  // A OneLake URL it reads: after FROM or JOIN, or as a function's argument. Not one that is only a
+  // value, as a model's path is in what SHOW SEMANTIC VIEWS compiles to.
+  const READS_ONELAKE = /(?:\b(?:from|join)\s+\(?\s*'|\b(?!values\b)\w+\s*\(\s*\[?\s*')(?:zip:\/\/)?(?:abfss?|az|azure):\/\//i;
+  function refuseOffline(sql, tables) {
+    const why = offlineReason();
+    if (!why) return;
+    const reading = tables.find(t => /\biceberg_scan\(/.test(t.source));
+    if (!reading && !READS_ONELAKE.test(sql)) return;
+    const what = reading ? reading.name : 'This statement';
+    throw Object.assign(new Error(`${what}: reading rows needs OneLake, and ${why === 'no internet' ? 'there is no internet' : 'you are not signed in'}. ` +
+      'What this machine has cached still works: tables, columns, stats, first rows and semantic models.'), { offline: true });
+  }
+
+  // A statement run with what it needs: the catalog when it reads the catalog, the views of the
+  // tables it names — and then `run` gets the statement itself, or its whole-path twin (sql.js
+  // catalogStatement). Its tables come from the cache, and are read again if it fails on them
+  // (store.js revalidate). `canRetry`: false once running it again would repeat what it sent.
+  async function withTables(sql, run, canRetry = () => true) {
+    if (readsCatalog(sql)) await syncCatalog();
+    try {
+      return await revalidate(o => sourcesOf(sql, o), async tables => {
+        refuseOffline(sql, tables);
+        for (const t of tables) await makeView(t);
+        return run(catalogStatement(sql) || sql);
+      }, e => READ_FAILURE.test(String(e && e.message)) && canRetry());
+    } catch (e) {
+      // A read the check above could not see, and the reason it failed.
+      const why = offlineReason();
+      if (why && READ_FAILURE.test(String(e && e.message))) {
+        try { e.message += `\n(OneLake Studio is offline: ${why}.)`; } catch (_) {}
+      }
+      throw e;
     }
   }
 
@@ -726,20 +766,20 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
     async query(sql) {
       assertReadOnly(sql);
       await init();
-      try { return await withAuthRetry(async () => runAll(await prepare(sql))); }
+      try { return await withAuthRetry(() => withTables(sql, run => runAll(run))); }
       finally { afterStatement(sql); }
     },
 
     async stream(sql, emit) {
       assertReadOnly(sql);
       await init();
-      // Not through withAuthRetry: a stream has already emitted batches by the time a
-      // late failure arrives, and running it again would deliver them twice. The token
-      // is still refreshed up front, which is what covers the ordinary expiry case.
-      await ensureAuth();
-      const run = await withAuthRetry(() => prepare(sql));
+      // Run again only before its first batch: a late failure comes after batches went out,
+      // and running it again would deliver them twice.
+      let sent = false;
+      const canRetry = () => !sent;
       try {
-        const numRows = await withConn(c => runStreaming(c, run, b => emit(b)));
+        const numRows = await withAuthRetry(() => withTables(sql, run =>
+          withConn(c => runStreaming(c, run, b => { sent = true; emit(b); })), canRetry), canRetry);
         return { done: true, numRows };
       } finally { afterStatement(sql); }
     },
@@ -781,11 +821,10 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
     try {
       assertReadOnly(sql);
       await init();
-      return await withAuthRetry(async () => {
-        const run = await prepare(sql);
+      return await withAuthRetry(() => withTables(sql, run => {
         if (signal && signal.aborted) throw new Error('the command line went away');
         return runAll(run, owner);
-      });
+      }));
     } catch (e) { throw scrub(e, authToken || token); }
     finally {
       if (signal) signal.removeEventListener('abort', stop);
@@ -845,11 +884,11 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
       if (format === 'xlsx' && !capabilities.excel) throw new Error('the excel extension is not loaded in this session');
       const file = join(tmpDir, `export_${++tmpSeq}.${format}`).replace(/\\/g, '/');
       await ensureAuth();
-      await withAuthRetry(async () => {
-        const run = String(await prepare(sql)).trim().replace(/;+\s*$/, '');
+      await withAuthRetry(() => withTables(sql, statement => {
+        const run = String(statement).trim().replace(/;+\s*$/, '');
         // The paren on a line of its own: a statement may end with a -- comment.
-        await withConn(c => c.run(`COPY (${run}\n) TO ${sqlStr(file)} (${EXPORTS[format]})`), agentLive);
-      });
+        return withConn(c => c.run(`COPY (${run}\n) TO ${sqlStr(file)} (${EXPORTS[format]})`), agentLive);
+      }));
       return file;
     } catch (e) { throw scrub(e, authToken || token); }
   }

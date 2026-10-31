@@ -47,7 +47,7 @@ Branch on the exit code, never on the wording:
 | 1 | `FAILED` | the query or OneLake failed, or a `--csv` had more rows than a query keeps | fix the query, or report it |
 | 2 | `USAGE` | a wrong command, option or argument | fix the call |
 | 3 | `UNAVAILABLE` | VS Code not open, not signed in, or Fabric refused the sign-in | ask the user |
-| 4 | `NOT_CACHED` | not in the cache | ask, or add `--fresh` |
+| 4 | `NOT_CACHED` | not in the cache; offline (no internet, or nobody signed in), `--fresh` and reading table rows end here too, and `retry` is absent | ask, or add `--fresh` unless offline |
 | 5 | `DECLINED` | the user said no to an export | stop |
 | 6 | `TIMEOUT` | `--timeout` reached, and the query stopped | narrow it, or give it longer |
 
