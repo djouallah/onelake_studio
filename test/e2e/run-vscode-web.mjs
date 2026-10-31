@@ -288,9 +288,11 @@ async function runMatrix() {
   await step("Run: cancelling a variable's box stops the run", async () => {
     await drive("setText", { text: "select getvariable('e2e_c') as v" });
     const pending = drive("exec", { command: "onelakeStudio.runQuery" });
-    await page.locator(".quick-input-widget input:visible").first().waitFor({ timeout: 20000 });
-    await page.keyboard.press("Escape");
-    check("the editor is not left waiting", (await pending).settled === "settled");
+    const box = page.locator(".quick-input-widget input:visible").first();
+    await box.waitFor({ timeout: 20000 });
+    await box.press("Escape");
+    const r = await pending;
+    check("the editor is not left waiting", r.settled === "settled", JSON.stringify(r));
   });
 
   await step("Run: Stop", async () => {
