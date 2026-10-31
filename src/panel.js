@@ -15,6 +15,7 @@ const { renderPage } = require('./html');
 const { answer } = require('./host');
 const { webviewRoot } = require('./webview');
 const { PINS } = require('./vendored');
+const { NAME } = require('./title');
 
 // A webview is a sandboxed iframe with no CSP of its own, so this is the only thing
 // between the page and the network — and the page needs none. Its scripts are its own and
@@ -50,6 +51,13 @@ async function buildHtml(webview, siteUri, cfg) {
 
 // One panel; invoking the command again reveals it rather than booting a second DuckDB.
 let current = null;
+
+// What the tab says (title.js): kept for a panel not open yet.
+let tabText = NAME;
+function setPanelTitle(text) {
+  tabText = text;
+  if (current) current.title = text;
+}
 
 // The page cannot be told to open anything until its script is listening. A click in the
 // tree that lands before that must not be dropped, so it waits here until app.js says it
@@ -111,7 +119,7 @@ async function openPanelUncontended(context, { onOpened, onBoot, onBootFailed, e
   const vendorUri = vscode.Uri.joinPath(context.extensionUri, 'vendor');
   const fromEditor = !!(place && place.beside);
   const panel = vscode.window.createWebviewPanel(
-    'onelakeStudio', 'OneLake Studio',
+    'onelakeStudio', tabText,
     fromEditor && !place.below ? { viewColumn: vscode.ViewColumn.Beside, preserveFocus: true } : vscode.ViewColumn.Active, {
       enableScripts: true,
       // DuckDB spends real time and network booting; tearing it down whenever the tab
@@ -245,4 +253,4 @@ function dockBelowEditor() {
 // The column the panel is in, or undefined: a new query editor opens in another one.
 const panelColumn = () => (current ? current.viewColumn : undefined);
 
-module.exports = { openPanel, closePanel, revealPanel, panelColumn, dockBelowEditor, postToPanel, postLive, panelSettings };
+module.exports = { openPanel, setPanelTitle, closePanel, revealPanel, panelColumn, dockBelowEditor, postToPanel, postLive, panelSettings };

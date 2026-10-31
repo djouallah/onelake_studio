@@ -102,6 +102,13 @@ one, the secret is reissued.
 
 **Sign Out** is out of OneLake Studio, not out of VS Code: an extension cannot remove an account, so it
 stops asking for it until you sign in again. To remove the account too, use VS Code's Accounts menu.
+The decision outlives the window: the next VS Code start asks for no session, sends nothing to OneLake, and
+prompts for nothing, until **Sign in to OneLake** or **Switch Microsoft Account** is chosen.
+
+**The title says where this window reads from** ([`src/title.js`](../src/title.js)): the sidebar's header and
+the panel's tab read OneLake Studio and then `offline` or the tenant in use. The tenant is the
+`onelakeStudio.tenantId` setting when it is set, since a guest's own domain would name the wrong tenant, and
+otherwise the account's domain.
 
 ## Offline
 

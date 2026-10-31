@@ -16,7 +16,7 @@ const fsp = require('node:fs/promises');
 const { registerQueryEditor } = require('./queryeditor');
 const { setVariable, variablesIn, bindVariables, literal } = require('./querytext');
 const { quoteIdent } = require('./sql');
-const { openPanel, closePanel, revealPanel, panelColumn, dockBelowEditor, postToPanel, postLive, panelSettings } = require('./panel');
+const { openPanel, setPanelTitle, closePanel, revealPanel, panelColumn, dockBelowEditor, postToPanel, postLive, panelSettings } = require('./panel');
 const { createCatalog } = require('./catalog');
 const { createStore } = require('./store');
 const { createOneLake, walkCached } = require('./onelake');
@@ -34,6 +34,7 @@ const { serveBridge } = require('./bridge');
 const { PINS } = require('./vendored');
 const { planExport, writeExport, buildDist, writeMarker, readMarker, fingerprint, localChanges, vendorSize, zip, rayfinYml } = require('./exportapp');
 const { createFabricApp, tenantOf } = require('./fabricapp');
+const { NAME, placeOf, tabTitle } = require('./title');
 const { createOneLakeWriter } = require('./onelakewrite');
 const { mapPool } = require('./http');
 
@@ -60,13 +61,15 @@ function scopesFor() { return withTenant(SCOPES); }
 //
 // VS Code owns the account, so Sign Out cannot remove it: it makes this extension stop asking for
 // it, until something asks with createIfNone, which only a sign-in does (show() never prompts
-// while an account's cache is known).
+// after a Sign Out, or while an account's cache is known). The decision outlives the window: a new
+// one asks for no session and sends nothing to OneLake until someone signs in.
 const SIGNED_OUT_KEY = 'onelakeStudio.signedOut';
 const LAST_ACCOUNT_KEY = 'onelakeStudio.lastAccount';
 let memento = null;   // context.globalState, set first thing at activation
+const signedOutByChoice = () => !!(memento && memento.get(SIGNED_OUT_KEY, false));
 function getSession(options) {
   const signingIn = !!(options && options.createIfNone);
-  if (!signingIn && memento && memento.get(SIGNED_OUT_KEY, false)) return Promise.resolve(null);
+  if (!signingIn && signedOutByChoice()) return Promise.resolve(null);
   return vscode.authentication.getSession('microsoft', scopesFor(), options).then(s => {
     if (s && signingIn && memento) memento.update(SIGNED_OUT_KEY, false);
     return s;
@@ -404,7 +407,7 @@ const accountTurn = serialized(body => body());
 // The engine's disk cache of what it reads from OneLake (engine-host.js, cache_httpfs): one
 // directory per account, like the store. Cached bytes are served without OneLake being
 // asked, so they must never be served to a different account. Set at activation and
-// whenever the account moves; null when signed out, which runs the engine without it.
+// whenever the account moves; null with no account known, which runs the engine without it.
 let fileCacheRoot = null;
 let fileCacheAccount = null;
 const fileCacheDirFor = key => (fileCacheRoot && key ? join(fileCacheRoot, key) : null);
@@ -525,10 +528,11 @@ let queryDone = null;
 // `place`: where the panel goes, for a query run from an editor (panel.js openPanel).
 async function show(context, options, place) {
   if (revealPanel(place)) return true;
-  // With an account's cache to show, no click prompts for a sign-in: it opens on what is held.
-  const known = !!knownAccount();
-  const token = known && connectivity.noInternet() ? null : await getToken(known ? { createIfNone: false } : options);
-  if (!token && !known) {
+  // With an account's cache to show, or after a Sign Out, no click prompts for a sign-in: it opens
+  // on what is held.
+  const noPrompt = !!knownAccount() || signedOutByChoice();
+  const token = noPrompt && connectivity.noInternet() ? null : await getToken(noPrompt ? { createIfNone: false } : options);
+  if (!token && !noPrompt) {
     const why = lastAuthError ? `Sign-in failed: ${lastAuthError.message || lastAuthError}`
                               : 'Sign-in was cancelled.';
     vscode.window.showWarningMessage(
@@ -644,6 +648,7 @@ async function saveFile(name, bytes) {
 // no session: hasSession is what says OneLake can be asked.
 let signedIn = false;
 let hasSession = false;
+let onAccountChange = () => {};
 // Which build this window runs, for the panel's status bar: set at activation.
 let buildInfo = {};
 async function setSignedIn(value) {
@@ -652,6 +657,7 @@ async function setSignedIn(value) {
   connectivity.setSession(hasSession);
   await vscode.commands.executeCommand('setContext', 'onelakeStudio.signedIn', signedIn);
   await vscode.commands.executeCommand('setContext', 'onelakeStudio.hasSession', hasSession);
+  onAccountChange();
 }
 
 // The exact commit this window is running. Installed build: the stamp stage-webview.mjs
@@ -949,9 +955,23 @@ async function activateInner(context, ready) {
     offlineItem.text = `$(cloud-offline) OneLake: offline (${reason})`;
     offlineItem.show();
   };
+  // The sidebar's header and the panel's tab: OneLake Studio, and offline or the tenant in use.
+  let explorerView = null;
+  let titleTurn = 0;
+  const refreshTitle = async () => {
+    const turn = ++titleTurn;
+    const offline = connectivity.offline();
+    const session = offline ? null : await getSession({ createIfNone: false }).catch(() => null);
+    if (turn !== titleTurn) return;
+    const place = placeOf({ offline, account: session && session.account.label, tenant: tenantSetting() });
+    if (explorerView) explorerView.title = place || NAME;
+    setPanelTitle(tabTitle(place));
+  };
+  onAccountChange = refreshTitle;
   onOfflineChange = reason => {
     if (out) out.appendLine(reason ? `offline: ${reason}` : 'back online');
     showOffline(reason);
+    refreshTitle();
     if (engine) engine.catalogChanged();
     tree.redraw();
     // A window that started with no internet may have been told there was no session. Nothing says
@@ -992,7 +1012,9 @@ async function activateInner(context, ready) {
 
   await setSignedIn(!!await getToken({ createIfNone: false }));
   showOffline(connectivity.reason());
-  connectivity.check();
+  // After a Sign Out nothing is sent, not even this; a window that lost a session to no internet
+  // needs it, to find that session when the internet returns.
+  if (!signedOutByChoice()) connectivity.check();
 
   // Opening a table means: make sure a panel exists, then tell it what to show. The panel
   // buffers the message if DuckDB is still booting. Boot is multi-second work with no
@@ -1013,7 +1035,7 @@ async function activateInner(context, ready) {
   // that mean something in one tenant only — so each account (and tenant, when the
   // onelakeStudio.tenantId setting picks one) has its own, and signing in elsewhere shows
   // that account's. The tree lists them, and each opens in VS Code's editor as its file.
-  // Signed out, there are none.
+  // With no account known, there are none.
   function queriesFolder() {
     return queryAccount ? join(queriesRoot(), queryAccount) : null;
   }
@@ -1677,6 +1699,8 @@ async function activateInner(context, ready) {
       },
     },
   });
+  explorerView = explorer;
+  refreshTitle();
 
   // The engine, started once this window shows it will want one, so the first statement does
   // not wait for its boot: not at activation, which every window goes through. An engine
@@ -1977,6 +2001,7 @@ async function activateInner(context, ready) {
             fabric.reset();
             sqlTables.forget();
             await rebindStore();
+            refreshTitle();
             tree.redraw();
             if (engine) {
               closePanel();
