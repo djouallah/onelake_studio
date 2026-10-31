@@ -16,6 +16,22 @@ SHOW SEMANTIC VIEW
 ----
 syntax error
 
+# A model has one name: a shorter one is not a model, and DuckDB says so.
+statement error
+SELECT AGG("x") FROM Sales
+----
+Sales
+
+statement error
+SELECT AGG("x") FROM cat1.Sales
+----
+cat1
+
+statement error
+DESCRIBE cat1.Sales
+----
+cat1
+
 # A model is never made or dropped in SQL.
 statement error
 CREATE SEMANTIC VIEW cat1.x FROM 'x.bim'

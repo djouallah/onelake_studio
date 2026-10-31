@@ -7,6 +7,8 @@
   read. A query or a model's Pivot runs from what was read, and a column or a file never read says so at
   once. Export to Fabric needs OneLake. The status bar shows when this is happening, and it comes back by
   itself.
+- **A model has one name in SQL.** `FROM nem` no longer reaches an open model: only
+  `semanticmodel.<workspace>.<model>` does. A shorter name is an error from DuckDB.
 - **A table shows whether it is cached.** As a semantic model does: a cloud until its rows have been read on
   this machine, a check after. The Delta and Iceberg icons are gone; Stats still says which format it is.
 - **Sign Out.** In the explorer's "..." menu. It signs out of OneLake Studio; VS Code's Accounts menu still

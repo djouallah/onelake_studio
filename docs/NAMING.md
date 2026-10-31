@@ -182,8 +182,6 @@ same reason.
 
 These do not meet the contract yet:
 
-- **A bare model name can still compile.** `app/semantic.js` says "nothing shorter", but dax-sql resolves a
-  name by its last parts, so `FROM nem` can reach an open view when only one fits.
 - **Two features read outside these names.** An app from Export to Fabric uses its own `v_<table>` views
   (`fabric_app/site/app.js`), and Time travel writes `iceberg_scan` directly (`app/app.js`).
 

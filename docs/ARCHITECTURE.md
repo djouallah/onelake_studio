@@ -151,7 +151,7 @@ The engine is **DuckDB 2.0 running natively in the extension host**
   engine.
 - **What a statement waits for:** the panel defines every kept semantic model when it opens, which can
   ask Fabric for an item's name. Only a statement that can name a model waits for that: one with
-  `semantic` or a kept model's name in it.
+  `semantic` in it.
 - **Catalogs:** one attached `:memory:` catalog per kind (`lakehouse`, `warehouse`, `sqldatabase`,
   `mirroreddatabase`), and one for `semanticmodel`. The workspace, item and schema are nested schemas.
 - **Reading OneLake:** through DuckDB's `iceberg` and `azure` extensions. A table is read with

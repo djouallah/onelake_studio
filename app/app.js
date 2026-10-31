@@ -366,8 +366,7 @@ async function listViews() {
 // What a statement waits for before it compiles: the views, only if it can name one. Listing them
 // reads this machine alone; defining them can wait on the Fabric API, for an item not named yet.
 async function viewsFor(sql) {
-  const list = await viewsListed;
-  if (semantic.aboutModels(sql, list.map(v => v.name))) await viewsReady;
+  if (semantic.aboutModels(sql)) await viewsReady;
 }
 async function loadViews() {
   await engineReady;

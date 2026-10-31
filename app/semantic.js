@@ -50,7 +50,8 @@ const lakes = new Map();   // lower-cased view name -> directLakeTables()
 async function ready(modules) {
   if (!views) {
     mods = modules || await compilerModules();
-    views = mods.createViews();
+    // A statement reaches a model by its whole name alone (NAMING.md): `FROM nem` is not a model.
+    views = mods.createViews({ fullNames: true });
   }
   return mods;
 }
@@ -328,12 +329,11 @@ export function dropView(name) {
 
 export const hasView = name => !!(views && views.get(name));
 
-// Whether a statement can be about a semantic model: one is named semanticmodel.ws.model, or by
-// a kept view's name alone (`names`), and described by SHOW SEMANTIC …. Any other statement has
-// no use for the views, loaded or not. A false yes costs only a wait.
-export function aboutModels(sql, names = []) {
-  const s = lc(String(sql));
-  return s.includes("semantic") || names.some(n => s.includes(lc(n)));
+// Whether a statement can be about a semantic model: one is named semanticmodel.ws.model, and
+// described by SHOW SEMANTIC …. Any other statement has no use for the views, loaded or not. A
+// false yes costs only a wait.
+export function aboutModels(sql) {
+  return lc(String(sql)).includes("semantic");
 }
 
 // SHOW SEMANTIC VIEWS: every model the catalog has (the engine lists each one the cache knows,
