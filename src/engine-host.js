@@ -173,14 +173,20 @@ async function trimFileCache(dir, maxBytes, onWarn) {
 //
 // `checkConnectivity` asks whether the internet is still there, once a read has failed. `onRowsRead`
 // gets a table's metadata location when a statement has read its rows.
+//
+// The shared engine (onelakeStudio.sharedEngine) splits this in two. `serve: { token }` is the
+// server's side (engine-server.js): the boot below, then Quack listening with that token. `remote`
+// is a window's (engine-client.js): a function that joins the server and answers something shaped
+// like an instance, so a window boots nothing and keeps everything from sourcesOf down.
 function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}, onWarn = () => {}, getToken = null,
                             memoryLimit = '', threads = 0, spillMaxGB = 0, maxRows = DEFAULT_MAX_ROWS,
                             allowedPaths = [], lockdown = true,
                             httpProxy = '', bundledExtensions = null,
                             fileCacheDir = null, fileCacheMaxBytes = 0, resolveTable = null,
                             catalogTables = null, offlineReason = () => null, checkConnectivity = null,
-                            onRowsRead = () => {} } = {}) {
+                            onRowsRead = () => {}, serve = null, remote = null } = {}) {
   let instance = null;
+  let served = null;            // serve: the address Quack answers on
   // The connection for the host's OWN statements — the secret, extension loading. Page
   // queries never run on it: each gets a connection of its own (see withConn), so a cancel
   // aimed at the page's query cannot land on the host's work.
@@ -234,6 +240,18 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
       const stages = [];
       let at = Date.now();
       const mark = name => { stages.push({ stage: name, ms: Date.now() - at }); at = Date.now(); };
+
+      // A window of the shared engine: the server has done all of the below.
+      if (remote) {
+        instance = await remote();
+        mark('joined the shared engine');
+        if (closed) throw new Error('the engine was closed');
+        conn = await instance.connect();
+        Object.assign(capabilities, instance.capabilities);
+        tmpDir = instance.tmpDir;
+        onLog({ stages, totalMs: stages.reduce((n, s) => n + s.ms, 0), capabilities: { ...capabilities } });
+        return true;
+      }
 
       tmpDir = await fsp.mkdtemp(join(os.tmpdir(), 'onelake-engine-'));
 
@@ -337,6 +355,23 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
       try { await conn.run(`SET GLOBAL custom_profiling_settings = ${sqlStr(JSON.stringify(Object.fromEntries(PROFILE_METRICS.map(m => [m, 'true']))))};`); }
       catch (e) { onWarn(`could not set the profile's metrics — ${e.message}`); }
 
+      // The shared engine's server. Loading cache_httpfs turns DuckDB's external file cache off, so
+      // it is turned back on here: the blocks every client reads stay in this process's memory,
+      // over the disk cache. Quack starts before the lockdown, which leaves nothing to start with.
+      if (serve) {
+        await load('quack', '', true);
+        await conn.run('SET enable_external_file_cache = true;');
+        // A window's own guard (assertReadOnly) refuses these already. This is one more wall, and
+        // a text match, so not the only one: the session token is what keeps others out.
+        await conn.run(`CREATE MACRO memory.main.studio_authorize(token, query) AS
+          CASE WHEN regexp_matches(lower(query), 'quack_(serve|stop)') THEN NULL ELSE query END;`);
+        await conn.run(`SET GLOBAL quack_authorization_function = 'studio_authorize';`);
+        // Port 0: the system picks a free one. A port already taken raises no error on Windows.
+        const r = await conn.runAndReadAll(`SELECT listen_uri FROM quack_serve('quack:127.0.0.1:0', token = ${sqlStr(serve.token)})`);
+        served = r.getRowObjectsJson()[0].listen_uri;
+        mark('quack');
+      }
+
       // THE LOCKDOWN. This engine runs SQL that a webview sends it, with the user's files
       // and the user's OneLake token within reach — so whatever the page says, DuckDB may
       // touch the local disk only in its own temp directory, its extension directory, and
@@ -387,7 +422,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
       if (tmpDir) {
         const d = tmpDir;
         tmpDir = null;
-        fsp.rm(d, { recursive: true, force: true }).catch(() => {});
+        if (!remote) fsp.rm(d, { recursive: true, force: true }).catch(() => {});
       }
     });
     return ready;
@@ -395,7 +430,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
 
   const capabilities = {
     excel: false, zipfs: false, h3: false, avro: false, httpfs: false, sqlite_scanner: false,
-    iceberg: false, azure: false, cache_httpfs: false, fileCache: false,
+    iceberg: false, azure: false, cache_httpfs: false, fileCache: false, quack: false,
   };
 
   // An optional extension that will not load costs one file format, which is not a
@@ -566,12 +601,15 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
   }
   async function makeView({ name, path: parts, source }) {
     const key = name.toLowerCase();
-    if (made.get(key) === source) return;
+    // On a shared engine another window may have changed the view since, so what this window
+    // remembers making says nothing. A statement costs little there, sent in one call.
+    if (!remote && made.get(key) === source) return;
     await admin(async () => {
-      if (made.get(key) === source) return;
+      if (!remote && made.get(key) === source) return;
       const path = parts.map(quoteIdent);
-      for (let k = 2; k <= path.length; k++) await conn.run(`CREATE SCHEMA IF NOT EXISTS ${path.slice(0, k).join('.')};`);
-      await conn.run(`CREATE OR REPLACE VIEW ${name} AS ${source};`);
+      const schemas = [];
+      for (let k = 2; k <= path.length; k++) schemas.push(`CREATE SCHEMA IF NOT EXISTS ${path.slice(0, k).join('.')};`);
+      await conn.run([...schemas, `CREATE OR REPLACE VIEW ${name} AS ${source};`].join('\n'));
       made.set(key, source);
       listed.delete(key);
     });
@@ -634,7 +672,8 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
         const path = parts.map(quoteIdent);
         const schemas = [];
         for (let k = 2; k <= path.length; k++) schemas.push(`CREATE SCHEMA IF NOT EXISTS ${path.slice(0, k).join('.')};`);
-        todo.push({ key, name, source, schemas, view: `CREATE OR REPLACE VIEW ${name} AS ${source};` });
+        // On a shared engine this name may be another window's real view: a listing never replaces it.
+        todo.push({ key, name, source, schemas, view: `CREATE ${remote ? 'VIEW IF NOT EXISTS' : 'OR REPLACE VIEW'} ${name} AS ${source};` });
       }
       const listedAs = x => { made.set(x.key, x.source); listed.set(x.key, x.name); };
       // In one call: a call per statement cost over a second at 300 entries. Run again one by
@@ -653,7 +692,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
       }
       for (const [key, name] of [...listed]) {
         if (want.has(key)) continue;
-        try { await conn.run(`DROP VIEW IF EXISTS ${name};`); } catch (_) {}
+        if (!remote) try { await conn.run(`DROP VIEW IF EXISTS ${name};`); } catch (_) {}
         listed.delete(key);
         made.delete(key);
       }
@@ -820,13 +859,14 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
   }
 
   // What the page may call, and nothing else. call() appends `emit` after the caller's
-  // arguments; only stream() reads it.
-  const methods = {
+  // arguments; only stream() reads it. `owner` is whose connections these are: a tab's Stop
+  // reaches that tab's statements and no other's.
+  const methodsOf = owner => ({
     // Both check the statement first: the page's SQL may read, never write (sql.js).
     async query(sql) {
       assertReadOnly(sql);
       await init();
-      try { return await withAuthRetry(() => withTables(sql, run => runAll(run))); }
+      try { return await withAuthRetry(() => withTables(sql, run => runAll(run, owner))); }
       finally { afterStatement(sql); }
     },
 
@@ -839,7 +879,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
       const canRetry = () => !sent;
       try {
         const numRows = await withAuthRetry(() => withTables(sql, run =>
-          withConn(c => runStreaming(c, run, b => { sent = true; emit(b); })), canRetry), canRetry);
+          withConn(c => runStreaming(c, run, b => { sent = true; emit(b); }), owner), canRetry), canRetry);
         return { done: true, numRows };
       } finally { afterStatement(sql); }
     },
@@ -847,23 +887,41 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
     async cancel() {
       // A native interrupt. Only the PAGE's queries are interrupted: a secret being
       // issued on the host's own connection is left to finish.
-      for (const c of live) { interrupted.add(c); try { c.interrupt(); } catch (_) {} }
+      for (const c of owner) { interrupted.add(c); try { c.interrupt(); } catch (_) {} }
       return true;
     },
 
     // Which optional formats this session has — the page greys out what it cannot read.
     async info() { await init(); return { capabilities: { ...capabilities } }; },
-  };
+  });
+  const methods = methodsOf(live);
 
-  async function call(method, args = [], emit = () => {}) {
+  async function callOn(table, method, args = [], emit = () => {}) {
     // hasOwn, not a bare lookup: 'constructor' and friends resolve on any object literal,
     // and the method name arrives from the webview. Same for args — spread throws on
     // anything that is not an array, with a worse message than this one.
-    if (!Object.hasOwn(methods, method)) throw new Error(`unknown engine method: ${method}`);
+    if (!Object.hasOwn(table, method)) throw new Error(`unknown engine method: ${method}`);
     if (!Array.isArray(args)) throw new Error(`engine method ${method}: args must be an array`);
     const token = authToken;
-    try { return await methods[method](...args, emit); }
+    try { return await table[method](...args, emit); }
     catch (e) { throw scrub(e, authToken || token); }
+  }
+  const call = (method, args, emit) => callOn(methods, method, args, emit);
+
+  // One tab's view of this engine: the same engine, with a Stop of its own.
+  const tabs = new Set();
+  function forTab() {
+    const mine = new Set();
+    tabs.add(mine);
+    const table = methodsOf(mine);
+    return { ...api, call: (method, args, emit) => callOn(table, method, args, emit), dispose: () => tabs.delete(mine) };
+  }
+  const running = () => [...live, ...agentLive, ...[...tabs].flatMap(t => [...t])];
+
+  // serve: once Quack is listening, what a window needs to know of this engine.
+  async function boot() {
+    await init();
+    return { uri: served, tmpDir: tmpDir.replace(/\\/g, '/'), capabilities: { ...capabilities } };
   }
 
   // The command line's query (agent.js): the same guard and the same engine as the page's,
@@ -892,17 +950,21 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
     }
   }
 
-  async function close() {
+  // `stop`: on a shared engine, stop the server too, for every window. Without it this window
+  // only leaves, and the server stays for the others and for a reload.
+  async function close({ stop = false } = {}) {
     closed = true;
     // Whatever is running is stopped first: closing an instance under a live query is
     // the native binding's problem to survive, and there is no reason to make it one.
-    for (const c of [...live, ...agentLive]) { try { c.interrupt(); } catch (_) {} }
+    for (const c of running()) { try { c.interrupt(); } catch (_) {} }
     // A boot still in flight finishes (or fails) before its handles are released.
     if (ready) await ready.catch(() => {});
+    if (instance && instance.leave) await instance.leave({ stop }).catch(() => {});
     await adminChain.catch(() => {});
-    for (const c of [...live, ...agentLive]) { try { c.closeSync(); } catch (_) {} }
+    for (const c of running()) { try { c.closeSync(); } catch (_) {} }
     live.clear();
     agentLive.clear();
+    tabs.clear();
     try { if (conn) conn.closeSync(); } catch (_) {}
     try { if (instance) instance.closeSync(); } catch (_) {}
     conn = instance = null; ready = null;
@@ -910,7 +972,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
     made.clear();
     listed.clear();
     authToken = null;
-    if (tmpDir) await fsp.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+    if (tmpDir && !remote) await fsp.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
   }
 
   // A file the HOST fetched (a SQLite database from Files/), written into this engine's
@@ -953,7 +1015,8 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
     } catch (e) { throw scrub(e, authToken || token); }
   }
 
-  return { call, close, copyToTemp, exportTo, agentQuery, catalogChanged, warm, maxRows };
+  const api = { call, close, copyToTemp, exportTo, agentQuery, catalogChanged, warm, maxRows, forTab, boot };
+  return api;
 }
 
 module.exports = { createEngineHost, jsonSafe, isOneLakeMetadata, PROFILE_METRICS };

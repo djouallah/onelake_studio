@@ -116,6 +116,9 @@ const refuse = why => {
 function assertReadOnly(sql) {
   const { text, seps } = scan(String(sql));
   if (seps.some(i => text.slice(i + 1).trim() !== '')) refuse('runs one statement at a time');
+  // Quack is how the shared engine's windows reach it, and its functions start, stop and connect
+  // servers. Read with the quotes' insides kept, since a function's name can be quoted.
+  if (/\bquack_\w+|\bscan_data_from_quack_client\b/i.test(scan(String(sql), true).text)) refuse('Quack is not for statements');
   const s = text.trim().replace(/;+\s*$/, '').trim();
   if (!s) refuse('this statement is empty');
   if (isRead(s)) return;

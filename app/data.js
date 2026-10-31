@@ -40,6 +40,8 @@ export function createEngine({
   // engine host's own in the read log.
   onBoot = () => {},
   maxRows = DEFAULT_MAX_ROWS,
+  // On an engine other tabs share: what makes this tab's views its own (uniqueView).
+  viewTag = null,
 } = {}) {
   let host = null;                  // the channel to the extension host, set by init()
   let _seq = 0;
@@ -205,10 +207,12 @@ export function createEngine({
 
   // A DuckDB identifier for this key that no other key already owns. sanitizeIdent is
   // lossy — a/data.parquet, a-data.parquet and a.data.parquet all reduce to the same stem
-  // — and CREATE OR REPLACE VIEW would silently repoint whichever got there first.
+  // — and CREATE OR REPLACE VIEW would silently repoint whichever got there first. viewNames is
+  // this page's alone, so on a shared engine the tag keeps another tab's files out of it too.
   function uniqueView(key, stem) {
     let name = sanitizeIdent(stem) || "view";
     if (/^\d/.test(name)) name = "_" + name;
+    if (viewTag) name = `${name}_${viewTag}`;
     while (viewNames.has(name) && viewNames.get(name) !== key) name = `${name}_${++_seq}`;
     viewNames.set(name, key);
     return name;

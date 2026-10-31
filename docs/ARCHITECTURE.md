@@ -173,6 +173,29 @@ The engine is **DuckDB 2.0 running natively in the extension host**
 - **What the page reaches:** the host, through one message channel, only by `query`, `stream`, `cancel`,
   `info` and the host's OneLake reads.
 
+## The shared engine
+
+Experimental, behind `onelakeStudio.sharedEngine`. DuckDB runs in a process of its own
+([`src/engine-server.js`](../src/engine-server.js)), and every tab of every window is a client of it
+over DuckDB's Quack protocol ([`src/engine-client.js`](../src/engine-client.js)).
+
+- **One per account and build.** The first window that needs it starts it. A window that leaves cancels
+  its statements, and with no window left the server waits a minute, so a reload finds it warm, then exits.
+- **What is shared:** one memory budget, and the blocks read, in memory over the disk cache.
+- **Several tabs:** each runs its own statements, and its Stop reaches only those. A click in the tree
+  opens in the tab on top, unless that tab has a statement running. Then it gets a new tab. **New Query**
+  always does. A tab's `Files/` views carry a tag, so tabs can't read each other's.
+- **The session token:** a new random one per server, kept in VS Code's secret storage, and reaching the
+  server over its stdin. Without it the port on `127.0.0.1` runs nothing. In the client's DuckDB it is a
+  named secret, since an `ATTACH`'s `TOKEN` option shows in `duckdb_databases()`.
+- **What stays in the window:** the read-only guard, the sign-in, and naming and resolving tables. A
+  window sends the server its OneLake token as the engine's secret.
+- **How a statement goes:** `quack_query()`, which gives each statement a session of its own. One attach
+  runs one statement at a time. Stop finds the statement by a tag in a comment and uses `quack_cancel`,
+  since `interrupt()` doesn't reach the server.
+
+Not done: the store and semantic-model pointers are still files, and a server that dies closes its tabs.
+
 ## The cache
 
 | What | Where it is kept | When it is read again |
@@ -474,6 +497,7 @@ personal skills, and it follows the extension through updates.
 | `onelakeStudio.engineMemoryLimit` | empty | Most memory DuckDB may use, e.g. `4GB`. Empty is a quarter of the machine's RAM. |
 | `onelakeStudio.engineThreads` | 0 | How many threads DuckDB may use. `0` is every core. |
 | `onelakeStudio.engineSpillMaxGB` | 0 | How much a query bigger than memory may spill to the temp folder. `0` is DuckDB's default. |
+| `onelakeStudio.sharedEngine` | off | Experimental: one engine in a process of its own for every tab and window of an account, and several tabs. See [The shared engine](#the-shared-engine). |
 | `onelakeStudio.selectTopRows` | 1000 | How many rows **Select Top Rows** asks for. |
 | `onelakeStudio.maxResultRows` | 200,000 | The most rows of one result the panel and the command line keep, from 1,000 to 1,000,000. Past it, rows are only counted. |
 | `onelakeStudio.tableOpensOn` | `stats` | What clicking a table shows first: `stats` or `data`. |

@@ -623,6 +623,13 @@
             "scope": "machine",
             "order": 3,
             "markdownDescription": "How much a query bigger than memory may spill to the temp folder, in GB. A query that needs more fails. `0` is DuckDB's default. Applies the next time the engine starts."
+          },
+          "onelakeStudio.sharedEngine": {
+            "type": "boolean",
+            "default": false,
+            "scope": "machine",
+            "order": 4,
+            "markdownDescription": "**Experimental.** Runs DuckDB in a process of its own, shared by every tab and every window of this account: one memory budget and one cache of what was read. Also lets you have several OneLake Studio tabs, each running its own query. Applies the next time the engine starts."
           }
         }
       },

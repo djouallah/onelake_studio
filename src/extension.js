@@ -11,10 +11,11 @@
 const vscode = require('vscode');
 const { join, basename, dirname, isAbsolute } = require('node:path');
 const os = require('node:os');
-const { existsSync } = require('node:fs');
+const { existsSync, statSync } = require('node:fs');
+const { createHash, randomBytes } = require('node:crypto');
 const fsp = require('node:fs/promises');
 const { quoteIdent } = require('./sql');
-const { openPanel, setPanelTitle, closePanel, revealPanel, panelOpen, postToPanel, postLive, panelSettings } = require('./panel');
+const { openPanel, setPanelTitle, closePanel, revealPanel, panelOpen, activeBusy, postToPanel, postLive, panelSettings } = require('./panel');
 const { createCatalog } = require('./catalog');
 const { createStore } = require('./store');
 const { createOneLake, walkCached } = require('./onelake');
@@ -436,6 +437,31 @@ function editorProxy() {
          process.env.HTTP_PROXY || process.env.http_proxy || '';
 }
 
+// The shared engine (engine-client.js): DuckDB in a process of its own, one per account, with
+// every tab of every window as a client over Quack. Its session token lives in the editor's secret
+// storage, where the next window finds it.
+const sharedEngineOn = () => vscode.workspace.getConfiguration('onelakeStudio').get('sharedEngine', false);
+function sharedEngineRemote(context, options) {
+  const { createRemote } = require('./engine-client');
+  const script = join(context.extensionUri.fsPath, 'dist', 'engine-server.js');
+  // A server belongs to one account and one build: F5 after a rebuild must not find the old one.
+  const built = (() => { try { return statSync(script).mtimeMs; } catch (_) { return 0; } })();
+  const key = [fileCacheAccount || 'none', context.extensionUri.fsPath, built].join('|');
+  const secret = `onelakeStudio.engineSession.${createHash('sha256').update(key).digest('hex').slice(0, 16)}`;
+  return createRemote({
+    key, script, options,
+    stateDir: join(context.globalStorageUri.fsPath, 'engine-server'),
+    getToken: () => context.secrets.get(secret),
+    setToken: token => context.secrets.store(secret, token),
+    onGone: () => {
+      // Its views and the models the tabs defined went with it, so the tabs do too.
+      closePanel();
+      resetEngine({ stop: false }).catch(() => {});
+      vscode.window.showWarningMessage('OneLake Studio: the engine stopped, so its tabs closed. Opening a table starts it again.');
+    },
+  });
+}
+
 // `readme` is the one file outside DuckDB's own directories the engine may read (the
 // landing query) — see the lockdown in engine-host.js.
 function ensureEngine(context, { readme } = {}) {
@@ -445,7 +471,7 @@ function ensureEngine(context, { readme } = {}) {
     const old = engine;
     engine = null;
     closePanel();
-    old.close().catch(() => {});
+    old.close({ stop: true }).catch(() => {});
   }
   if (engine) return engine;
   try {
@@ -454,7 +480,8 @@ function ensureEngine(context, { readme } = {}) {
     const config = vscode.workspace.getConfiguration('onelakeStudio');
     const diskCacheGB = Math.max(0, Number(config.get('diskCacheMaxGB', 64)) || 0);
     const { createEngineHost } = require('./engine-host');
-    engine = createEngineHost({
+    // What the engine reads when it boots: here, or in the shared engine's process.
+    const booting = {
       allowedPaths: readme ? [readme] : [],
       httpProxy: editorProxy(),
       // Fetched for this vsix's platform at package time (fetch-extensions.mjs); a first
@@ -464,6 +491,17 @@ function ensureEngine(context, { readme } = {}) {
       // rather than once per session — and never into the user's own ~/.duckdb, where
       // they would outlive the extension that fetched them.
       extensionDir: join(context.globalStorageUri.fsPath, 'duckdb-extensions'),
+      memoryLimit: config.get('engineMemoryLimit', '').trim(),
+      threads: Math.max(0, Math.floor(Number(config.get('engineThreads', 0)) || 0)),
+      spillMaxGB: Math.max(0, Number(config.get('engineSpillMaxGB', 0)) || 0),
+      maxRows: Math.min(1_000_000, Math.max(1000, Math.floor(Number(config.get('maxResultRows', 200_000)) || 200_000))),
+      // 0 is no disk cache at all.
+      fileCacheDir: diskCacheGB > 0 ? fileCacheDirFor(fileCacheAccount) : null,
+      fileCacheMaxBytes: diskCacheGB * 1024 ** 3,
+    };
+    engine = createEngineHost({
+      ...booting,
+      ...(sharedEngineOn() ? { remote: sharedEngineRemote(context, booting) } : {}),
       onLog: logBoot,
       onCatalog: logCatalog,
       // A failed optional extension is worth a line where someone will find it.
@@ -474,13 +512,6 @@ function ensureEngine(context, { readme } = {}) {
       // actually get PAST this cache — asking it again inside the 60s window returns
       // the very token that just expired, and the retry becomes a no-op.
       getToken: opts => hostToken(opts),
-      memoryLimit: config.get('engineMemoryLimit', '').trim(),
-      threads: Math.max(0, Math.floor(Number(config.get('engineThreads', 0)) || 0)),
-      spillMaxGB: Math.max(0, Number(config.get('engineSpillMaxGB', 0)) || 0),
-      maxRows: Math.min(1_000_000, Math.max(1000, Math.floor(Number(config.get('maxResultRows', 200_000)) || 200_000))),
-      // 0 is no disk cache at all.
-      fileCacheDir: diskCacheGB > 0 ? fileCacheDirFor(fileCacheAccount) : null,
-      fileCacheMaxBytes: diskCacheGB * 1024 ** 3,
       resolveTable: (ref, o) => (resolveSqlTable ? resolveSqlTable(ref, o) : Promise.reject(new Error('OneLake Studio is still starting'))),
       offlineReason: () => connectivity.reason(),
       checkConnectivity: () => connectivity.check(),
@@ -499,11 +530,11 @@ function ensureEngine(context, { readme } = {}) {
 // Closing the engine is what revokes its credentials: the azure secret and every ATTACH
 // hold the access token BY VALUE, so an engine that outlives the sign-out keeps reading
 // OneLake for as long as the token lasts. ensureEngine builds it again on the next open, in
-// a few seconds.
-async function resetEngine() {
+// a few seconds. On the shared engine that means stopping the server, unless it has gone already.
+async function resetEngine({ stop = true } = {}) {
   const e = engine;
   engine = null;
-  if (e) await e.close().catch(() => {});
+  if (e) await e.close({ stop }).catch(() => {});
 }
 
 // Points the store and the engine's disk cache at the account now signed in; a no-op when
@@ -528,8 +559,8 @@ let nameModelTables = null;
 // Save Query, from the panel's SQL box. Set by activateInner.
 let saveQuery = null;
 
-async function show(context, options) {
-  if (revealPanel()) return true;
+async function show(context, { newTab = false, ...options } = {}) {
+  if (!newTab && revealPanel()) return true;
   // With an account's cache to show, or after a Sign Out, no click prompts for a sign-in: it opens
   // on what is held.
   const noPrompt = !!knownAccount() || signedOutByChoice();
@@ -552,16 +583,20 @@ async function show(context, options) {
   const eng = ensureEngine(context, { readme: readme.fsPath });
   if (!eng) return false;
   await openPanel(context, {
-    onOpened: logOpened, onBoot: logBoot, engine: eng, build: buildInfo, draft: memento.get(QUERY_DRAFT_KEY, null),
-    host: createHostMethods({
-      onelake, engine: eng, onStatus: message => postLive({ type: 'status', message }),
+    newTab,
+    onOpened: logOpened, onBoot: logBoot, engine: eng, build: buildInfo,
+    // A new tab starts empty: the draft is the text the last tab closed with.
+    draft: newTab ? null : memento.get(QUERY_DRAFT_KEY, null),
+    viewTag: sharedEngineOn() ? randomBytes(2).toString('hex') : null,
+    host: (tabEngine, post) => createHostMethods({
+      onelake, engine: tabEngine, onStatus: message => post({ type: 'status', message }),
       saveFile, semviews, modelsDir: modelsFolder(),
       // A refusal is what Explore's info line says, not a failure of the export.
       exportExplore: x => (exportExplore ? exportExplore(x).catch(e => { if (e.declined) return e.message; throw e; })
         : Promise.reject(new Error('OneLake Studio is still starting'))),
       nameTables: list => (nameModelTables ? nameModelTables(list) : Promise.reject(new Error('OneLake Studio is still starting'))),
       copyText: text => vscode.env.clipboard.writeText(text),
-      exportResult: x => exportResult(eng, x),
+      exportResult: x => exportResult(tabEngine, x),
       openDocument: async ({ as, content }) => {
         // CSV as plain text unless an extension knows the language.
         const language = as === 'json' ? 'json' : (await vscode.languages.getLanguages()).includes('csv') ? 'csv' : 'plaintext';
@@ -979,9 +1014,11 @@ async function activateInner(context) {
     { location: vscode.ProgressLocation.Window, title: 'Opening OneLake Studio…' },
     () => show(context, options));
 
-  // Whether the panel is there to take it.
-  async function openInPanel(msg) {
-    if (!await showWithProgress({ createIfNone: true })) return false;
+  // Whether the panel is there to take it. On the shared engine a click never stops anything: with
+  // a statement running in the tab it would land in, or with `newTab`, it gets a tab of its own.
+  async function openInPanel(msg, { newTab = false } = {}) {
+    const another = sharedEngineOn() && panelOpen() && (newTab || activeBusy());
+    if (!await showWithProgress({ createIfNone: true, newTab: another })) return false;
     postToPanel(msg);
     return true;
   }
@@ -1733,7 +1770,7 @@ async function activateInner(context) {
     }),
     // A new query in the SQL box, started with what can be queried: Save Query keeps it under
     // Queries as "Query N". Not run: one Ctrl+Enter does that.
-    vscode.commands.registerCommand('onelakeStudio.newQuery', () => openInPanel({ type: 'query', sql: NEW_QUERY_SQL })),
+    vscode.commands.registerCommand('onelakeStudio.newQuery', () => openInPanel({ type: 'query', sql: NEW_QUERY_SQL }, { newTab: true })),
     // Every query variable forgotten (the page keeps them): the next getvariable() asks again.
     vscode.commands.registerCommand('onelakeStudio.clearVariables', () => postLive({ type: 'clear-variables' })),
     vscode.commands.registerCommand('onelakeStudio.goTo', () => goTo()),
@@ -1879,6 +1916,7 @@ async function activateInner(context) {
       if (engine && (e.affectsConfiguration('onelakeStudio.engineMemoryLimit') ||
                      e.affectsConfiguration('onelakeStudio.engineThreads') ||
                      e.affectsConfiguration('onelakeStudio.engineSpillMaxGB') ||
+                     e.affectsConfiguration('onelakeStudio.sharedEngine') ||
                      e.affectsConfiguration('onelakeStudio.maxResultRows') ||
                      e.affectsConfiguration('onelakeStudio.diskCacheMaxGB') ||
                      e.affectsConfiguration('http.proxy'))) {

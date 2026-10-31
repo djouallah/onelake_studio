@@ -1418,6 +1418,8 @@ function setBusy(b, { stoppable = false } = {}) {
   const stop = $('stopBtn');
   stop.hidden = !(b && stoppable);
   if (!stop.hidden) stop.disabled = false;
+  // A click in the tree stops what this tab runs, so with this said it opens another tab instead.
+  vs.postMessage({ type: 'busy', busy: !stop.hidden });
 }
 
 // ---------------------------------------------------------------------------
@@ -1425,7 +1427,7 @@ function setBusy(b, { stoppable = false } = {}) {
 // ---------------------------------------------------------------------------
 showVersion();
 wireUi();
-engine = createEngine({ onStatus: setStatus, onBoot: reportBoot, ...(cfg.maxRows ? { maxRows: cfg.maxRows } : {}) });
+engine = createEngine({ onStatus: setStatus, onBoot: reportBoot, viewTag: cfg.viewTag, ...(cfg.maxRows ? { maxRows: cfg.maxRows } : {}) });
 engineReady = engine.init();
 if (cfg.draft) {
   $('sqlEditor').value = String(cfg.draft.sql || '');

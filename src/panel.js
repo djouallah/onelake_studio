@@ -49,14 +49,24 @@ async function buildHtml(webview, siteUri, cfg) {
   });
 }
 
-// One panel; invoking the command again reveals it rather than booting a second DuckDB.
-let current = null;
+// The tabs of this window. Invoking the command again reveals the active one rather than opening
+// another; only the shared engine asks for a second (openPanel's newTab), where a tab's views and
+// its Stop are its own.
+const tabs = new Set();
+let active = null;
 
-// What the tab says (title.js): kept for a panel not open yet.
+// What a tab says (title.js): kept for a tab not open yet, numbered past the first.
 let tabText = NAME;
+const titleOf = number => (number > 1 ? `${tabText} (${number})` : tabText);
 function setPanelTitle(text) {
   tabText = text;
-  if (current) current.title = text;
+  for (const tab of tabs) tab.panel.title = titleOf(tab.number);
+}
+function nextNumber() {
+  const taken = new Set([...tabs].map(t => t.number));
+  let n = 1;
+  while (taken.has(n)) n++;
+  return n;
 }
 
 // The page cannot be told to open anything until its script is listening. A click in the
@@ -65,11 +75,11 @@ function setPanelTitle(text) {
 // a semantic model handed over as text is drawn while DuckDB is still starting.
 // Only the last one is kept: they are all "show me this", and replaying a
 // queue of them would open four tables in a row to arrive where one click asked for.
-let pending = null;
-let ready = false;
+let pending = null;   // for a tab not made yet; a tab being made holds its own
 
 function postToPanel(msg) {
-  if (current && ready) current.webview.postMessage(msg);
+  if (active && active.ready) active.panel.webview.postMessage(msg);
+  else if (active) active.pending = msg;
   else pending = msg;
 }
 
@@ -78,8 +88,11 @@ function postToPanel(msg) {
 // stat there would throw away the click that is waiting to be delivered, and a stat
 // replayed after a boot describes reads the user has long since stopped waiting for.
 function postLive(msg) {
-  if (current && ready) current.webview.postMessage(msg);
+  for (const tab of tabs) if (tab.ready) tab.panel.webview.postMessage(msg);
 }
+
+// Whether the tab a click would land in has something running, which that click would stop.
+const activeBusy = () => !!(active && active.busy);
 
 // The settings the page reads itself, sent when it opens and again when one changes.
 function panelSettings() {
@@ -103,19 +116,20 @@ function wireEngine(panel, engine, methods = {}) {
 let opening = null;
 
 function openPanel(context, opts = {}) {
-  if (current) { revealPanel(); return Promise.resolve(current); }
+  if (active && !opts.newTab) { revealPanel(); return Promise.resolve(active.panel); }
   if (!opening) {
     opening = openPanelUncontended(context, opts).finally(() => { opening = null; });
   }
   return opening;
 }
 
-async function openPanelUncontended(context, { onOpened, onBoot, onBootFailed, engine, host, build, draft } = {}) {
+async function openPanelUncontended(context, { onOpened, onBoot, onBootFailed, engine, host, build, draft, viewTag } = {}) {
   const { page: siteUri, readme: readmeUri } = await webviewRoot(context.extensionUri,
     { dev: context.extensionMode === vscode.ExtensionMode.Development });
   const vendorUri = vscode.Uri.joinPath(context.extensionUri, 'vendor');
+  const number = nextNumber();
   const panel = vscode.window.createWebviewPanel(
-    'onelakeStudio', tabText,
+    'onelakeStudio', titleOf(number),
     vscode.ViewColumn.Active, {
       enableScripts: true,
       // DuckDB spends real time and network booting; tearing it down whenever the tab
@@ -133,6 +147,8 @@ async function openPanelUncontended(context, { onOpened, onBoot, onBootFailed, e
       build: build || {},
       // The SQL box's text when the last panel closed.
       draft: draft || null,
+      // What makes this tab's views its own, on an engine other tabs share (data.js uniqueView).
+      viewTag: viewTag || null,
       // Where the vendored libraries are (cdn.js builds every URL from it), and which
       // versions — src/vendored.js, the same list vendor.mjs shipped.
       vendorBase: panel.webview.asWebviewUri(vendorUri).toString(),
@@ -150,7 +166,13 @@ async function openPanelUncontended(context, { onOpened, onBoot, onBootFailed, e
     throw e;
   }
 
-  const onCall = engine ? wireEngine(panel, engine, host) : null;
+  // This tab's own view of the engine and of the host's methods: its Stop reaches its statements
+  // and no other tab's, and what the host says of a read goes to the tab that asked.
+  const post = msg => { try { panel.webview.postMessage(msg); } catch (_) {} };
+  const tabEngine = engine ? engine.forTab() : null;
+  const onCall = engine ? wireEngine(panel, tabEngine, host(tabEngine, post)) : null;
+  const tab = { panel, number, ready: false, pending, busy: false };
+  pending = null;
   // The panel's own listeners die with the panel. Pushed onto context.subscriptions they
   // piled up — one more pair per panel ever opened in the window.
   const disposables = [];
@@ -162,13 +184,15 @@ async function openPanelUncontended(context, { onOpened, onBoot, onBootFailed, e
       else panel.webview.postMessage({ type: 'error', id: msg.id,
         message: 'the native engine is not available in this build' });
     } else if (msg.type === 'ready') {
-      ready = true;
-      if (pending) { panel.webview.postMessage(pending); pending = null; }
+      tab.ready = true;
+      if (tab.pending) { panel.webview.postMessage(tab.pending); tab.pending = null; }
+    } else if (msg.type === 'busy') {
+      tab.busy = !!msg.busy;
     } else if (msg.type === 'boot-failed') {
       // The engine did not come up, so `ready` never will — a click parked in `pending`
       // is not going to be delivered, and holding it silently was this failure's old
       // shape: a spinner that never moves and a message that never comes.
-      pending = null;
+      tab.pending = null;
       if (onBootFailed) onBootFailed(String(msg.message || 'the engine failed to start'));
     } else if (msg.type === 'show-log') {
       // The read indicator in the panel's status bar is clickable, and this is what it
@@ -186,14 +210,19 @@ async function openPanelUncontended(context, { onOpened, onBoot, onBootFailed, e
     }
   }, null, disposables);
 
+  // A click lands in the tab last on top.
+  panel.onDidChangeViewState(e => { if (e.webviewPanel.active) active = tab; }, null, disposables);
+
   panel.onDidDispose(() => {
-    current = null; ready = false;
+    tabs.delete(tab);
+    if (active === tab) active = [...tabs].pop() || null;
     // A query still scanning for a tab that no longer exists is pure cost — CPU, and a
     // OneLake read that nobody will see.
-    if (engine) engine.call('cancel').catch(() => {});
+    if (tabEngine) tabEngine.call('cancel').catch(() => {}).finally(() => tabEngine.dispose());
     for (const d of disposables.splice(0)) { try { d.dispose(); } catch (_) {} }
   }, null, disposables);
-  current = panel;
+  tabs.add(tab);
+  active = tab;
   return panel;
 }
 
@@ -202,7 +231,7 @@ async function openPanelUncontended(context, { onOpened, onBoot, onBootFailed, e
 // token alone would leave the previous account's tables on screen.
 function closePanel() {
   pending = null;
-  if (current) current.dispose();   // onDidDispose nulls `current` and clears `ready`
+  for (const tab of [...tabs]) tab.panel.dispose();   // onDidDispose takes each out of `tabs`
 }
 
 // The panel already on screen, brought forward — and nothing else. A tree click on a
@@ -212,12 +241,12 @@ function closePanel() {
 // It stays in its own column: brought to the front there, not moved over the editor the user is
 // in. Wherever the user put it is where it goes on showing.
 function revealPanel() {
-  if (!current) return false;
-  current.reveal(current.viewColumn);
+  if (!active) return false;
+  active.panel.reveal(active.panel.viewColumn);
   return true;
 }
 
 // Whether there is a panel to put a name in.
-const panelOpen = () => !!current;
+const panelOpen = () => tabs.size > 0;
 
-module.exports = { openPanel, setPanelTitle, closePanel, revealPanel, panelOpen, postToPanel, postLive, panelSettings };
+module.exports = { openPanel, setPanelTitle, closePanel, revealPanel, panelOpen, activeBusy, postToPanel, postLive, panelSettings };

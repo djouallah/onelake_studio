@@ -40,6 +40,8 @@ const ALLOWED = [
 ];
 
 const REFUSED = [
+  "SELECT * FROM quack_stop('quack:127.0.0.1:1')",
+  "SELECT * FROM \"quack_serve\"('quack:127.0.0.1:1')",
   "COPY (SELECT 1) TO 'abfss://ws@onelake.dfs.fabric.microsoft.com/lh.Lakehouse/Files/x.csv'",
   "EXPLAIN ANALYZE COPY (SELECT 1) TO 'abfss://ws@onelake.dfs.fabric.microsoft.com/x.csv'",
   "EXPLAIN (ANALYZE, FORMAT json) COPY (SELECT 1) TO 'x.csv'",

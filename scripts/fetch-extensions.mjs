@@ -33,6 +33,8 @@ const EXTENSIONS = [
   { name: "azure", repo: "https://extensions.duckdb.org", required: true },
   { name: "httpfs", repo: "https://extensions.duckdb.org", required: true },
   { name: "avro", repo: "https://extensions.duckdb.org", required: true },
+  // The shared engine's client and server (engine-client.js).
+  { name: "quack", repo: "https://extensions.duckdb.org", required: true },
   { name: "excel", repo: "https://extensions.duckdb.org", required: false },
   // SQLite files under Files/: the host copies one to the engine's temp directory and
   // ATTACHes it read-only.
