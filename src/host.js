@@ -119,6 +119,7 @@ function createHostMethods({ onelake, engine, onStatus = () => {}, saveFile = nu
     'onelake.deltaHistory': x => onelake.deltaHistory(lhOf(x), tableOf(x),
       { skip: Number.isSafeInteger(x.skip) && x.skip > 0 ? x.skip : 0 }),
     'onelake.peek': x => onelake.peek(lhOf(x), tableOf(x), sql => engine.call('query', [sql])),
+    'onelake.rowsOutOfReach': x => onelake.rowsOutOfReach(lhOf(x), tableOf(x)),
     // A file's bytes, or a range of them, signed here. base64, because a webview message
     // is JSON and a Uint8Array does not survive it.
     'onelake.readBytes': async x => {

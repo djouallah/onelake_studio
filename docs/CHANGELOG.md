@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **No Data tab where it could only fail.** Offline, a table with none of its rows read here opens on Stats and has no Data
+  tab, and the status line says why. It comes back with the connection.
 - **The tree opens at once.** It draws from what this machine holds before sign-in, with no server running and no DuckDB
   loaded, and the rest follows behind it. Listings, table metadata and first rows moved from the DuckDB state file to a
   SQLite file, and come across by themselves the first time. It needs VS Code 1.101 or later.

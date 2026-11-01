@@ -239,6 +239,18 @@ test("a table is cached once its rows are read at its current snapshot, and says
   assert.equal(await moved.cached.rows(lh, t), false, "another snapshot's rows are not this one's");
 });
 
+test("a table's rows are out of reach only offline, and only if none were read here", async () => {
+  let offline = false;
+  const ol = createOneLake({ catalog: fakeCatalog(), store: createStore({ dir: null }), isOffline: () => offline });
+  const t = { schema: "dbo", table: "a" };
+  await ol.table(lh, t);
+  assert.equal(await ol.rowsOutOfReach(lh, t), false, "online they are one read away");
+  offline = true;
+  assert.equal(await ol.rowsOutOfReach(lh, t), true);
+  await ol.rowsRead(LOC);
+  assert.equal(await ol.rowsOutOfReach(lh, t), false, "read before, so there is something to show");
+});
+
 test("first rows already kept count as rows read", async () => {
   const ol = createOneLake({ catalog: fakeCatalog(), store: createStore({ dir: null }) });
   const t = { schema: "dbo", table: "a" };

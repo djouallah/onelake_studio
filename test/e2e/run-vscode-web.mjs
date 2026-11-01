@@ -477,6 +477,10 @@ async function cachedRunMatrix({ saved, home, dbFile }) {
     check("its tab is named after the table", tabs.includes("orders"), tabs.join(", "));
     check("what was typed is still in the last tab", await before.locator("#sqlEditor").inputValue() === "select 'mine' as typed");
     check("the box's own tab has no Edit SQL", !await (await panel()).locator("#editSqlBtn").isVisible());
+    check("offline, with none of its rows read, it has no Data tab", await (await panel()).locator("#viewData").isHidden());
+    check("and it lands on Stats", await (await panel()).locator("#viewStats").isVisible());
+    const said = await runIt("select 7007 as here");
+    check("a query's result brings it back", !isError(said) && await (await panel()).locator("#viewData").isVisible(), said.status);
   });
 
   await step("Tree: a database file opens on what it holds", async () => {

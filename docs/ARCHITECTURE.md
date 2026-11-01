@@ -299,6 +299,8 @@ back to the cloud. A table nothing was ever written to has a check, since it rea
 
 **Clicking a table** opens it in a new tab: Data, Stats, History and Pivot. The SQL box gets
 `SELECT * FROM <its name> LIMIT 100` to start from, not run. A file does the same with what its preview runs.
+- **Data** is hidden offline on a table with none of its rows read here, since all it could show is an error. The status
+  line says why. It comes back with the connection, and whenever the tab holds a query's result.
 - **Stats and History** come from the table's metadata, with no data read. A table written as Delta
   also has its own log read for what Iceberg has no word for ([`src/deltalog.js`](../src/deltalog.js)).
 - **Time travel:** on an Iceberg table, History's Query puts a snapshot's rows in the SQL box, and

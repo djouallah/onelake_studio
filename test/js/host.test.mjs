@@ -15,6 +15,7 @@ function fixture() {
   const onelake = {
     table: async (lh, t) => { calls.push(["table", lh, t]); return { metadataLocation: LOC }; },
     peek: async () => ({ rows: [] }), files: async () => [],
+    rowsOutOfReach: async (lh, t) => { calls.push(["rowsOutOfReach", lh, t]); return true; },
     readBytes: async (ws, path, o) => { calls.push(["readBytes", ws, path, o]); return new Uint8Array([1, 2, 3]); },
   };
   const engine = {
@@ -38,6 +39,12 @@ test("a table's metadata carries its SQL name", async () => {
   const { ask } = fixture();
   const [msg] = await ask("onelake.table", [{ workspace: "ws", item: "lh.Lakehouse", schema: "dbo", table: "t" }]);
   assert.equal(msg.value.sqlName, "lakehouse.ws.lh.dbo.t");
+});
+
+test("a tab can ask whether a table's rows are out of reach", async () => {
+  const { ask } = fixture();
+  const [msg] = await ask("onelake.rowsOutOfReach", [{ workspace: "ws", item: "lh.Lakehouse", schema: "dbo", table: "t" }]);
+  assert.equal(msg.value, true);
 });
 
 test("the engine is reachable through its page methods only", async () => {

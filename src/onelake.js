@@ -458,8 +458,12 @@ function createOneLake({ catalog, store, prefetchEnabled = () => true, onHit = (
         || await store.peek(keys.peek(meta.metadataLocation)) !== undefined;
     },
   };
+  // Whether a table's rows can't be read from here at all: offline, with none of them read before.
+  // Online they are one read away.
+  const rowsOutOfReach = async (lh, t) => !!isOffline() && !await cached.rows(lh, t);
 
   return {
+    rowsOutOfReach,
     workspaces, items, tables, files, table, deltaState, deltaHistory, peek, prefetch, refreshTables,
     models, apps, itemNamed, readBytes, cached, rowsRead, onRowsRead,
     onChanged: fn => listen('changed', key => fn(decode(key))),

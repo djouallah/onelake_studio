@@ -74,6 +74,7 @@ let deltaHistory = null;
 // only, 'peek' = the first rows. Each only when asked for; a query reads the rest.
 let activeTableRef = null;   // the table object behind the selection, for escalating
 let tableStage = 'none';     // 'none' | 'stats' | 'peek'
+let rowsOutOfReach = null;   // the table whose Data tab is hidden (checkDataTab)
 
 // The extension's read log prints these beside its own lines.
 const reportBoot = b => vs.postMessage({ type: 'boot', ...b });
@@ -635,12 +636,19 @@ async function selectTable(t) {
     if (my !== selSeq) return;
     activeSqlName = info.sqlName || info.ident;
     tableStage = 'stats';
+    await checkDataTab();
+    if (my !== selSeq) return;
     setActiveStats(info);
     showStats();                    // statistics are the landing view for a table
+    setViewTabs();
     // Not run: Profile and Export read the rows by it, and the box starts from it.
     currentSql = activeSqlName ? previewSql(activeSqlName, false) : '';
     if (currentSql) offerInBox(currentSql);
     setStatus(engine.describeLoad(info));
+    if (rowsOutOfReach === t) {
+      setStatus('Offline, and none of this table\'s rows have been read here, so it has no Data tab.');
+      return;
+    }
     // Asked to land on the rows: the same as clicking Data.
     if (settings.tableOpensOn === 'data') { await peekIntoView(); return; }
     // The Data tab's rows, started now: selecting a table is the strongest signal its
@@ -665,6 +673,16 @@ function reportTableError(e) {
     setStatus('Load failed: ' + e.message, 'error');
     console.error(e);
   }
+}
+
+// Offline, a table with none of its rows read has nothing for the Data tab but an error, so it has no
+// Data tab. Online the rows are one read away, and it stays. Asked each time, as the answer moves
+// with the connection and with what has been read.
+async function checkDataTab() {
+  const t = activeTableRef;
+  if (!t || !lakehouse) return;
+  const out = await engine.rowsOutOfReach(lakehouse, t).catch(() => false);
+  if (activeTableRef === t) rowsOutOfReach = out ? t : null;
 }
 
 // The Data tab's first click: the first rows, which the selection already started reading.
@@ -998,6 +1016,8 @@ function setViewTabs() {
     $(id).classList.toggle('active', viewMode === mode);
     $(id).setAttribute('aria-pressed', String(viewMode === mode));
   }
+  // Data also holds what a query in the box returned, so that keeps the tab whatever the table's rows.
+  $('viewData').hidden = !!rowsOutOfReach && rowsOutOfReach === activeTableRef && viewMode !== 'data' && !lastResult;
 }
 
 const isDelta = info => !!(info && info.stats && info.stats.format === 'delta');
@@ -1647,6 +1667,10 @@ window.addEventListener('message', async e => {
     }
     // Why the catalog is taking long — conversion pending, catalog busy.
     else if (m.type === 'status' && m.message) setStatus(m.message);
+    // Offline or back: whether the table on screen can have a Data tab.
+    else if (m.type === 'connectivity') {
+      if (activeInfo && activeTableRef) { await engineReady; await checkDataTab(); setViewTabs(); }
+    }
     else if (m.type === 'settings') {
       settings.tableOpensOn = m.tableOpensOn;
       settings.gridThousandsSeparator = m.gridThousandsSeparator;

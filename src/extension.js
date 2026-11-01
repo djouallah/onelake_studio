@@ -1075,6 +1075,7 @@ async function activateInner(context) {
     if (out) out.appendLine(reason ? `offline: ${reason}` : 'back online');
     showOffline(reason);
     refreshTitle();
+    postLive({ type: 'connectivity' });
     if (engine) engine.catalogChanged();
     tree.redraw();
     // A window that started with no internet may have been told there was no session. Nothing says

@@ -556,6 +556,10 @@ export function createEngine({
   //
   // `quiet` is for the prefetch: its progress writing over the stats view's status read
   // as the app being stuck.
+  const rowsOutOfReach = (lh, t) => callHost("onelake.rowsOutOfReach", [{
+    workspace: lh.workspace, item: lh.item, schema: t.schema || "", table: t.table,
+  }]);
+
   function peekTable(lh, t, { quiet = false } = {}) {
     const key = tableKey(lh, t);
     if (peekC.has(key)) return peekC.get(key);
@@ -699,7 +703,7 @@ export function createEngine({
   // A query variable's value, asked of the user: text, or null when dismissed.
   const askVariable = name => callHost("host.askVariable", [{ name }]);
 
-  return { init, reset, statTable, peekTable, deltaState, deltaHistory,
+  return { init, reset, statTable, peekTable, rowsOutOfReach, deltaState, deltaHistory,
            loadFile, readFileBytes, saveText, saveOneLakeFile, runSql, describeLoad, fmtBytes, cancelLoad,
            semanticViews, semanticKeep, semanticOpen, exportExplore, nameTables, saveQuery, saveDraft, askVariable, copyText, exportResult, openDocument };
 }
