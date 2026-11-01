@@ -14,7 +14,7 @@ import { fileURLToPath } from "node:url";
 import { READS, WRITES } from "./sql-disagreements.mjs";
 
 const require = createRequire(import.meta.url);
-const { createEngineHost, isOneLakeMetadata, isOneLakeTable, READ_FAILURE, AUTH_FAILURE } = require("../../src/engine-host.js");
+const { createEngineHost, isOneLakeMetadata, isOneLakeTable, duckdbPath, READ_FAILURE, AUTH_FAILURE } = require("../../src/engine-host.js");
 
 // What fetch-extensions.mjs put next to the extension, when CI ran it for this platform.
 const BUNDLED = join(fileURLToPath(new URL(".", import.meta.url)), "..", "..", "duckdb-extensions");
@@ -687,6 +687,12 @@ test("only a OneLake table folder is read with delta_scan", () => {
     "abfss://ws@evil.example.com/x/t", "abfss://ws@onelake.dfs.fabric.microsoft.com/lh/Tables/t\nATTACH 'x'", "abfss://ws@onelake.dfs.fabric.microsoft.com/"]) {
     assert.equal(isOneLakeTable(bad), false, String(bad));
   }
+});
+
+test("a kept log's folder is spelled the way the lockdown keeps it", () => {
+  assert.equal(duckdbPath("c:\\Users\\x\\file-cache-v1\\a\\delta\\b"), "C:/Users/x/file-cache-v1/a/delta/b");
+  assert.equal(duckdbPath("C:/Users/x"), "C:/Users/x");
+  assert.equal(duckdbPath("/home/x/cache"), "/home/x/cache");
 });
 
 test("offline, a Delta table says so at once, disk cache or not, and an empty one still answers", async t => {

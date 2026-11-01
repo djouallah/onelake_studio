@@ -109,6 +109,9 @@ const isOneLakeMetadata = s => typeof s === 'string' && ONELAKE_METADATA.test(s)
 // A Delta table's folder, spliced into delta_scan(...) as that is: only this shape may pass.
 const ONELAKE_TABLE = /^abfss:\/\/[^@/\r\n\0]+@onelake\.dfs\.fabric\.microsoft\.com\/[^\r\n\0]*[^/\r\n\0]$/i;
 const isOneLakeTable = s => typeof s === 'string' && ONELAKE_TABLE.test(s);
+// A local folder as the lockdown knows it. DuckDB keeps allowed_directories with a capital drive letter and
+// compares as written, and VS Code hands paths over with a small one, so a read through a mount was refused.
+const duckdbPath = p => String(p).replace(/\\/g, '/').replace(/^[a-z]:/, d => d.toUpperCase());
 
 // 25% of RAM unless told otherwise. DuckDB's own default is 80%, which is a fine answer
 // for a process that owns the machine and a bad one for the extension host, which every
@@ -649,7 +652,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
       if (!isOneLakeTable(r.deltaTable)) throw new Error(`OneLake gave ${sqlName(r)} no readable folder (${String(r.deltaTable).slice(0, 120)})`);
       // On the copy of its log, with the files it names served from OneLake through the disk cache, when
       // both are here. Otherwise on OneLake itself, which is the same online and nothing offline.
-      const local = r.deltaLocal && capabilities.mount ? String(r.deltaLocal).replace(/\\/g, '/') : null;
+      const local = r.deltaLocal && capabilities.mount ? duckdbPath(r.deltaLocal) : null;
       source = `SELECT * FROM delta_scan(${sqlStr(local || r.deltaTable)})`;
       if (local) mount = { local, remote: r.deltaTable };
     } else if (isOneLakeMetadata(r.metadataLocation)) source = `SELECT * FROM iceberg_scan(${sqlStr(r.metadataLocation)})`;
@@ -1253,4 +1256,4 @@ async function restartListener(conn, uri, token) {
   await conn.run(`SELECT * FROM quack_serve(${sqlStr(uri)}, token = ${sqlStr(token)});`);
 }
 
-module.exports = { createEngineHost, jsonSafe, isOneLakeMetadata, isOneLakeTable, restartListener, AUTH_FAILURE, READ_FAILURE, NOT_CACHED };
+module.exports = { createEngineHost, jsonSafe, isOneLakeMetadata, isOneLakeTable, duckdbPath, restartListener, AUTH_FAILURE, READ_FAILURE, NOT_CACHED };
