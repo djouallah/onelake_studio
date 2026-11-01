@@ -1016,8 +1016,7 @@ function setViewTabs() {
     $(id).classList.toggle('active', viewMode === mode);
     $(id).setAttribute('aria-pressed', String(viewMode === mode));
   }
-  // Data also holds what a query in the box returned, so that keeps the tab whatever the table's rows.
-  $('viewData').hidden = !!rowsOutOfReach && rowsOutOfReach === activeTableRef && viewMode !== 'data' && !lastResult;
+  $('viewData').hidden = !!rowsOutOfReach && rowsOutOfReach === activeTableRef && viewMode !== 'data';
 }
 
 const isDelta = info => !!(info && info.stats && info.stats.format === 'delta');

@@ -480,7 +480,7 @@ async function cachedRunMatrix({ saved, home, dbFile }) {
     check("offline, with none of its rows read, it has no Data tab", await (await panel()).locator("#viewData").isHidden());
     check("and it lands on Stats", await (await panel()).locator("#viewStats").isVisible());
     const said = await runIt("select 7007 as here");
-    check("a query's result brings it back", !isError(said) && await (await panel()).locator("#viewData").isVisible(), said.status);
+    check("a query there still shows its result", !isError(said) && await (await panel()).locator("#resultsTable").isVisible(), said.status);
   });
 
   await step("Tree: a database file opens on what it holds", async () => {
