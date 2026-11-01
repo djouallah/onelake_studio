@@ -26,7 +26,7 @@ const here = join(dirname(fileURLToPath(import.meta.url)), "..");   // the exten
 const OUT = join(here, "duckdb-extensions");
 
 const PLATFORM = {
-  "win32-x64": "windows_amd64", "win32-arm64": "windows_arm64",
+  "win32-x64": "windows_amd64",
   "darwin-x64": "osx_amd64", "darwin-arm64": "osx_arm64",
   "linux-x64": "linux_amd64", "linux-arm64": "linux_arm64",
 };
@@ -35,9 +35,8 @@ const EXTENSIONS = [
   { name: "azure", repo: "https://extensions.duckdb.org", required: true },
   { name: "httpfs", repo: "https://extensions.duckdb.org", required: true },
   { name: "avro", repo: "https://extensions.duckdb.org", required: true },
-  // How a Delta table's rows are read. Not required as DuckDB has no build of it for windows_arm64, and a
-  // Delta table says so there rather than being read another way.
-  { name: "delta", repo: "https://extensions.duckdb.org", required: false },
+  // How a Delta table's rows are read. DuckDB has no build of it for windows_arm64, so there's no vsix for that.
+  { name: "delta", repo: "https://extensions.duckdb.org", required: true },
   // The shared engine's client and server (engine-client.js).
   { name: "quack", repo: "https://extensions.duckdb.org", required: true },
   { name: "excel", repo: "https://extensions.duckdb.org", required: false },

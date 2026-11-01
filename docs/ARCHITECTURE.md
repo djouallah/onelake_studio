@@ -617,7 +617,7 @@ every window. The rest apply at once.
 - **Tabs don't come back after a window reload.** Only the box's last text does (see
   [The SQL box and results](#the-sql-box-and-results)).
 - **A Pivot's shelves are kept per tab,** so a model opened again in a new tab starts with empty shelves.
-- **Requires desktop VS Code 1.101+** on x64 or arm64 Windows, macOS or Linux, for its built-in SQLite.
+- **Requires desktop VS Code 1.101+** on Windows x64, or macOS or Linux on x64 or arm64, for its built-in SQLite. Windows on arm64 has no build of DuckDB's `delta`, so no package.
 
 ## Where the code is
 

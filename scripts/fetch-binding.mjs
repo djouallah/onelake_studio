@@ -31,7 +31,6 @@ const MODULES = join(here, "node_modules", "@duckdb");
 // cannot start is worse than one that is not offered.
 const TARGETS = {
   "win32-x64": "win32-x64",
-  "win32-arm64": "win32-arm64",
   "darwin-x64": "darwin-x64",
   "darwin-arm64": "darwin-arm64",
   "linux-x64": "linux-x64",

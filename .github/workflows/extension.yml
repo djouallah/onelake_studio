@@ -27,7 +27,7 @@
 # when the require fails, so `!node_modules/detect-libc/**` would have to join .vscodeignore
 # or an Alpine install would load a binding that is not in the package.
 #
-# The fan-in matters. Publishing from each leg would make six independent Marketplace calls,
+# The fan-in matters. Publishing from each leg would make five independent Marketplace calls,
 # and leg five failing would leave a version half-published — four platforms live, two
 # missing, and the version number already spent. Here, one failing leg means the publish job
 # never runs and nothing goes out.
@@ -162,8 +162,8 @@ jobs:
       - run: node --test test/js/bridge.test.mjs test/js/agent.test.mjs test/js/cli.test.mjs test/js/cli-contract.test.mjs test/js/cli-catalog.test.mjs test/js/cli-docs.test.mjs
 
   # What every vsix carries whatever its platform, built once and kept in the cache for the
-  # six package legs, which then restore it rather than build it six times: the webview's and
-  # the web app's libraries (vendor/, from jsDelivr: one CDN hiccup here instead of six chances
+  # five package legs, which then restore it rather than build it five times: the webview's and
+  # the web app's libraries (vendor/, from jsDelivr: one CDN hiccup here instead of five chances
   # to fail a leg), and Export to Fabric's function package.
   prepare:
     runs-on: ubuntu-26.04
@@ -193,7 +193,6 @@ jobs:
       matrix:
         target:
           - win32-x64
-          - win32-arm64
           - darwin-x64
           - darwin-arm64
           - linux-x64
