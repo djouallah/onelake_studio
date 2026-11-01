@@ -343,9 +343,20 @@ class LakehouseTree {
       this.log(`tree: listing ${n ? `${n.kind} ${n.label}` : 'workspaces'} failed — ${(e && e.stack) || e}`);
       const detail = (e && e.message) || String(e);
       // `parent` is what its Refresh button refreshes: the error node itself names nothing.
-      return [node('error', detail.length > 90 ? detail.slice(0, 87) + '…' : detail,
-        { leaf: true, detail, parent: n })];
+      const error = node('error', detail.length > 90 ? detail.slice(0, 87) + '…' : detail,
+        { leaf: true, detail, parent: n });
+      // At the top, what doesn't need OneLake stays reachable: saved queries above all.
+      return n ? [error] : [error, ...this._local()];
     }
+  }
+
+  // What the tree shows with or without OneLake.
+  _local() {
+    return [
+      this._track(node('queries', 'Queries', {})),
+      node('logs', 'Logs', { leaf: true }),
+      node('performance', 'Performance', { leaf: true }),
+    ];
   }
 
   async _children(n) {
@@ -356,24 +367,21 @@ class LakehouseTree {
     // not shown.
     if (!n) {
       const names = await this.onelake.workspaces({ fresh: this._isFresh('root', undefined, undefined) });
-      if (!names.length) return [node('empty', 'No workspaces — is this the right tenant?', { leaf: true })];
-      const queries = this._track(node('queries', 'Queries', {}));
-      const engineViews = [node('logs', 'Logs', { leaf: true }), node('performance', 'Performance', { leaf: true })];
+      if (!names.length) return [node('empty', 'No workspaces — is this the right tenant?', { leaf: true }), ...this._local()];
       const only = this.filter();
       if (isFabricFilter(only) && !await this.hasFabric()) {
         const what = only === 'models' ? 'semantic models' : 'apps';
-        return [node('fabricSignIn', `Sign in to list ${what}`, { leaf: true, group: only }), queries, ...engineViews];
+        return [node('fabricSignIn', `Sign in to list ${what}`, { leaf: true, group: only }), ...this._local()];
       }
       const shown = only ? await this._holding(names, only) : names;
-      if (!shown.length) return [node('empty', 'No workspace holds this type', { leaf: true }), queries, ...engineViews];
+      if (!shown.length) return [node('empty', 'No workspace holds this type', { leaf: true }), ...this._local()];
       const pinned = new Set(this.favorites.get());
       const favs = shown.filter(w => pinned.has(w));
       return [
         node('group', 'Favorites', { group: 'favorites', expanded: true, count: favs.length, filter: only, names: shown }),
         node('group', favs.length ? 'Other workspaces' : 'Workspaces',
              { group: 'others', expanded: !favs.length || !!only, count: shown.length - favs.length, filter: only, names: shown }),
-        queries,
-        ...engineViews,
+        ...this._local(),
       ];
     }
 

@@ -18,9 +18,10 @@ const udf = new UserDataFunctions();
  *     no tables: the app ships no copy of it, so it is the model as the lakehouse holds it now,
  *   - where each table the page asked for is now: its current metadata.json, from the OneLake
  *     Iceberg REST catalog (loadTable), and
- *   - a OneLake user-delegation SAS, read-only, on the lakehouse's Tables/ folder: DuckDB in the
- *     browser reads the metadata, the manifests and the data files with it.
- * Nothing in it names a table: the page asks for the tables its model names.
+ *   - a OneLake user-delegation SAS for each of those tables, read-only, on its own folder: DuckDB
+ *     in the browser reads the metadata, the manifests and the data files with them.
+ * Only the model's tables: someone who can call this reads what the app shows, not the rest of the
+ * lakehouse, whichever tables they ask for.
  *
  * CATALOG_URL (an app setting): the catalog the app reads,
  *   https://onelake.table.fabric.microsoft.com/iceberg/<workspace id>/<lakehouse id>
@@ -86,8 +87,9 @@ function modelSources(model: any): string[] {
 // CATALOG_URL: the catalog's REST endpoint, then its warehouse, <workspace id>/<lakehouse id>,
 // which is also the Tables/ folder's parent.
 function catalogUrl(ctx: StorageCtx): { endpoint: string; ws: string; lh: string } {
-  const m = ctx.Secrets.CATALOG_URL.trim().replace(/\/+$/, '').match(/^(https:\/\/.+)\/([^/]+)\/([^/]+)$/);
-  if (!m) throw new Error('CATALOG_URL is not https://<catalog endpoint>/<workspace id>/<lakehouse id>');
+  // Only OneLake's own catalog: the app identity's token goes there.
+  const m = ctx.Secrets.CATALOG_URL.trim().replace(/\/+$/, '').match(/^(https:\/\/[a-z0-9-]*onelake\.table\.fabric\.microsoft\.com\/.+)\/([^/]+)\/([^/]+)$/);
+  if (!m) throw new Error('CATALOG_URL is not https://onelake.table.fabric.microsoft.com/<path>/<workspace id>/<lakehouse id>');
   return { endpoint: m[1], ws: m[2], lh: m[3] };
 }
 
@@ -183,7 +185,14 @@ async function getDelegationKey(token: string, start: Date, expiry: Date): Promi
   };
 }
 
-// User-delegation SAS query string for one folder (sr=d): /<ws>/<lh>/Tables.
+// A table's folder under Tables/, from where its metadata.json is: dbo/t, or t with no schemas.
+function tableFolder(location: string): string {
+  const m = String(location).match(/\/Tables\/(.+?)\/metadata\/[^/]+$/);
+  if (!m) throw new Error(`no table folder in ${String(location).slice(0, 200)}`);
+  return m[1];
+}
+
+// User-delegation SAS query string for one folder (sr=d): /<ws>/<lh>/Tables/<schema>/<table>.
 function signFolderSas(blobPath: string, permissions: string, key: DelegationKey, start: Date, expiry: Date): string {
   const st = iso(start);
   const se = iso(expiry);
@@ -199,7 +208,7 @@ function signFolderSas(blobPath: string, permissions: string, key: DelegationKey
   const query = new URLSearchParams({
     sp: permissions, st, se, skoid: key.oid, sktid: key.tid, skt: key.start, ske: key.expiry,
     sks: key.service, skv: key.version, spr: 'https', sv: SAS_VERSION, sr: 'd',
-    // Depth = folders below the workspace (container): <lh>/Tables -> 2
+    // Depth = folders below the workspace (container): <lh>/Tables/dbo/t -> 4
     sdd: String(blobPath.split('/').filter(Boolean).length - 1),
     sig,
   });
@@ -209,30 +218,29 @@ function signFolderSas(blobPath: string, permissions: string, key: DelegationKey
 /**
  * The tables the page asks for (`schema.table`, comma-separated) — or, asked for none, the
  * model (MODEL_URL) and the tables it names — as they are in the catalog now, and a read-only
- * SAS on Tables/ to read them with.
+ * SAS on each one's folder to read it with. A table the model doesn't name is `missing`.
  * A failure is returned as { error }, naming the step: thrown, it reaches the browser as a bare
  * 500 that says nothing. The message never holds a token or a key.
  */
 udf.func(
   'openCatalog',
   async (ctx: RayfinContext<BlankAppSchema, AudienceType.Storage>, tables: string): Promise<{
-    model?: any; metadata: Record<string, string>; missing: string[]; sas: string; expiresOn: string;
+    model?: any; metadata: Record<string, string>; missing: string[]; sas: Record<string, string>; expiresOn: string;
   } | { error: string }> => {
     let step = 'the table names';
     try {
-      let names = [...new Set(String(tables ?? '').split(',').map(s => s.trim()).filter(Boolean))];
+      const asked = [...new Set(String(tables ?? '').split(',').map(s => s.trim()).filter(Boolean))];
       step = 'the storage token of the app identity';
       const token = ctx.Tokens.Storage;
-      let model: any;
-      if (!names.length) {
-        step = 'the setting MODEL_URL (the model)';
-        model = await readModel(ctx, token);
-        names = modelSources(model);
-        step = "the model's tables";
-      }
-      // A name that is not schema.table cannot be in the catalog: it is listed as missing, and
-      // the rest are still answered.
-      const bad = names.filter(t => !TABLE.test(t));
+      step = 'the setting MODEL_URL (the model)';
+      const read = await readModel(ctx, token);
+      step = "the model's tables";
+      const inModel = modelSources(read);
+      const model = asked.length ? undefined : read;
+      let names = asked.length ? asked.filter(t => inModel.includes(t)) : inModel;
+      // A name that is not schema.table cannot be in the catalog, and one the model doesn't name is
+      // not this app's: each is listed as missing, and the rest are still answered.
+      const bad = [...asked.filter(t => !inModel.includes(t)), ...names.filter(t => !TABLE.test(t))];
       names = names.filter(t => TABLE.test(t));
       if (!names.length && !bad.length) throw new Error('expected schema.table, comma-separated; got none');
       step = 'the setting CATALOG_URL';
@@ -244,7 +252,12 @@ udf.func(
         getDelegationKey(token, start, expiry),
       ]);
       step = 'signing the SAS';
-      const sas = signFolderSas(`/${ws}/${lh}/Tables`, 'r', key, start, expiry);
+      // By the table's folder: what the page reads names its file, and the file its folder.
+      const sas: Record<string, string> = {};
+      for (const location of Object.values(catalog.metadata)) {
+        const folder = tableFolder(location);
+        sas[folder] = signFolderSas(`/${ws}/${lh}/Tables/${folder}`, 'r', key, start, expiry);
+      }
       return { ...(model ? { model } : {}), metadata: catalog.metadata,
                missing: [...catalog.missing, ...bad].sort(), sas, expiresOn: iso(expiry) };
     } catch (e) {

@@ -26,16 +26,18 @@ import { join, dirname, posix } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 import { fetchRetry } from "./fetch-retry.mjs";
+import { createPins } from "./pinned-downloads.mjs";
 
 // Every download goes through here: at most PARALLEL at once, so a cold vendor/ takes the
 // slowest file's time, not the sum of a few hundred.
 const PARALLEL = 8;
 let active = 0;
 const waiting = [];
+const pins = createPins();
 async function get(url) {
   if (active >= PARALLEL) await new Promise(r => waiting.push(r));
   active++;
-  try { return await fetchRetry(url); }
+  try { return pins.check(url, await fetchRetry(url)); }
   finally { active--; const next = waiting.shift(); if (next) next(); }
 }
 
@@ -93,7 +95,8 @@ await Promise.all([
   ...VENDOR.esm.map(pkg => esmClosure(`/npm/${pkg}/+esm`)),
   ...VENDOR.files.map(async f => save(`npm/${f}`, await get(`${JSDELIVR}/npm/${f}`))),
   ...VENDOR.packages.map(async ({ pkg, include }) => {
-    const listing = JSON.parse((await get(`https://data.jsdelivr.com/v1/packages/npm/${pkg}?structure=flat`)).toString("utf8"));
+    // Only which files there are, each of them held to its hash below.
+    const listing = JSON.parse((await fetchRetry(`https://data.jsdelivr.com/v1/packages/npm/${pkg}?structure=flat`)).toString("utf8"));
     const names = (listing.files || []).map(f => f.name).filter(n => include.test(n));
     if (!names.length) throw new Error(`npm/${pkg}: the listing has none of the files to vendor`);
     await Promise.all(names.map(async n => save(`npm/${pkg}${n}`, await get(`${JSDELIVR}/npm/${pkg}${n}`))));
@@ -113,6 +116,7 @@ await Promise.all([
   }),
 ]);
 
+pins.save();
 await writeFile(STAMP, want);
 console.log(`vendored ${panelFiles} file(s), ${(panelBytes / 1e6).toFixed(1)}MB for the panel; ` +
   `${files - panelFiles} file(s), ${((bytes - panelBytes) / 1e6).toFixed(1)}MB for the web app (vendor/webapp)`);

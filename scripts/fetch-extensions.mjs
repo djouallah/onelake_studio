@@ -8,7 +8,8 @@
 // cannot get through, that first open simply failed. So each platform's vsix carries its
 // platform's binaries in duckdb-extensions/, and engine-host.js LOADs them by
 // path before it ever thinks of downloading. They are the signed binaries DuckDB itself
-// would have installed; DuckDB checks the signature at LOAD either way.
+// would have installed; DuckDB checks the signature at LOAD for the core ones. Each is held to its
+// hash here too (pinned-downloads.mjs).
 //
 // The DuckDB version is read from the installed @duckdb/node-api — the same rule
 // fetch-binding.mjs follows — so a dependency bump moves these with it. Required ones fail
@@ -19,6 +20,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { gunzipSync } from "node:zlib";
 import { fetchRetry } from "./fetch-retry.mjs";
+import { createPins } from "./pinned-downloads.mjs";
 
 const here = join(dirname(fileURLToPath(import.meta.url)), "..");   // the extension root
 const OUT = join(here, "duckdb-extensions");
@@ -39,9 +41,12 @@ const EXTENSIONS = [
   // SQLite files under Files/: the host copies one to the engine's temp directory and
   // ATTACHes it read-only.
   { name: "sqlite_scanner", repo: "https://extensions.duckdb.org", required: false },
-  // Not h3 or zipfs: they are COMMUNITY extensions, and a LOAD by path verifies against the
-  // core signing keys only (DuckDB 2.0 refuses them as unsigned). They keep downloading
-  // from the community repository on first use, signature checked as before.
+  // COMMUNITY extensions, so nothing is downloaded at run time and a zip reads offline from the first
+  // start. A LOAD by path verifies against the core signing keys only, so these load as unsigned, as
+  // cache_httpfs does, and their hash here is what holds them. With the disk cache off the engine
+  // doesn't allow unsigned ones, and it installs them from the community repository as before.
+  { name: "h3", repo: "https://community-extensions.duckdb.org", required: false },
+  { name: "zipfs", repo: "https://community-extensions.duckdb.org", required: false },
   //
   // cache_httpfs, the disk cache, is OUR build of it (djouallah/duck-read-cache-fs, branch
   // fix/windows-long-path-xattr): the released one caches nothing on disk on Windows. It is
@@ -75,6 +80,7 @@ if (await readFile(STAMP, "utf8").catch(() => "") === want) {
 await rm(OUT, { recursive: true, force: true });
 await mkdir(OUT, { recursive: true });
 
+const pins = createPins();
 let bytes = 0;
 for (const ext of EXTENSIONS) {
   // A repository serves gzipped binaries; a release asset (ext.url) is the binary itself.
@@ -87,10 +93,12 @@ for (const ext of EXTENSIONS) {
     console.log(`  skip  ${ext.name} — no ${platform} build (404)`);
     continue;
   }
+  pins.check(url, got);
   const bin = ext.url ? got : gunzipSync(got);
   await writeFile(join(OUT, `${ext.name}.duckdb_extension`), bin);
   bytes += bin.length;
   console.log(`  got   ${ext.name} (${(bin.length / 1e6).toFixed(1)}MB)`);
 }
+pins.save();
 await writeFile(STAMP, want);
 console.log(`bundled DuckDB ${duckdb} extensions for ${platform}: ${(bytes / 1e6).toFixed(1)}MB`);

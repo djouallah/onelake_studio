@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **A Fabric app reads only its model's tables.** Its function signed one read-only SAS over all of the lakehouse's
+  `Tables/`. It now signs one per table the model names, and refuses any other. Export again to get this.
+- **`h3` and `zipfs` ship in the vsix,** so a zip file reads offline from the first start and nothing is downloaded at
+  run time.
+- **Queries, Logs and Performance stay in the tree** when a listing fails or finds no workspaces, so a saved query can
+  always be reached.
 - **An answer says how old its tables are.** A table's metadata is kept for a day by default, so a query could read
   yesterday's snapshot with no sign of it. Past an hour the status line says so, and `sql` gives `cachedAt`, a note, and
   `--fresh` to read them from OneLake first.

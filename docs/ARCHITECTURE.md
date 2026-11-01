@@ -104,7 +104,8 @@ and joins at step 3.
 
 No app registration is needed. VS Code's Microsoft account provider is a first-party application, so
 `getSession` returns the OneLake token directly. The Fabric API needs a second token, in its own
-audience, which VS Code asks for only when *Semantic models* is first expanded.
+audience. Expanding *Semantic models* doesn't ask for it: the tree shows a sign-in node, and VS Code asks when that is
+clicked.
 
 The token lives only in the extension host and, as a DuckDB storage secret, in the server. When VS Code hands back a new
 one, the secret is reissued.
@@ -117,7 +118,7 @@ prompts for nothing, until **Sign in to OneLake** or **Switch Microsoft Account*
 **The title says where this window reads from** ([`src/title.js`](../src/title.js)): the sidebar's header and
 the title of each tab with a SQL box read OneLake Studio and then `offline` or the tenant in use. The tenant is the
 `onelakeStudio.tenantId` setting when it is set, since a guest's own domain would name the wrong tenant, and
-otherwise the account's domain. Group, Refresh and Open are in the view's "..." menu so it fits.
+otherwise the account's domain. Refresh and Open are in the view's "..." menu so it fits.
 
 ## Offline
 
@@ -264,12 +265,15 @@ SQL box, no Stop and no Restart.
 - **A patched build:** the vsix carries a `cache_httpfs` with a Windows fix not yet released upstream
   (without it, nothing is cached on disk on Windows) and the offline read above. DuckDB loads it as an
   unsigned extension. A build without it fails, rather than ship with no disk cache.
+- **What a build downloads is held to its hash:** the libraries and DuckDB's extensions, against
+  `scripts/downloads.sha256.json`, and DuckDB's native binding against the lockfile. The community extensions `h3` and
+  `zipfs` ship in the vsix too, so nothing is downloaded at run time unless the disk cache is off.
 
 ## The explorer
 
 The tree ([`src/tree.js`](../src/tree.js)) lists workspaces, then lakehouses, warehouses, SQL and
 mirrored databases, their tables and files, semantic models and apps. *Queries*, **Logs** and
-**Performance** come after them. Workspaces can be pinned, and the tree can be filtered to one type.
+**Performance** come after them, and stay there when a listing fails or finds nothing. Workspaces can be pinned, and the tree can be filtered to one type.
 
 **A table's icon** says whether it is cached, as a model's does: a cloud until a statement has read its
 rows at its current snapshot, a check after (`cached.rows` in [`src/onelake.js`](../src/onelake.js)). What is
@@ -431,6 +435,8 @@ model's Explore, nothing else, as a Fabric app (item type `AppBackend`, named
 - **Protected:** the site loads only for people who may open the app item.
 - **The model is read in place:** the app never holds a copy. Its function reads the model file from
   the lakehouse at run time (its `MODEL_URL` secret), so the app shows the model as it is there.
+- **The app reads the model's tables, not the lakehouse:** its function signs a read-only SAS for each table the model
+  names, and refuses any other.
 - **No silent takeover:** a re-export updates the item the last export created (its id is kept in the
   local copy, as soon as the item exists). If an app of that name exists and no export created it, the export asks.
 - **Local edits are never overwritten unasked.** The local copy's marker keeps a hash of each of its
@@ -443,7 +449,7 @@ model's Explore, nothing else, as a Fabric app (item type `AppBackend`, named
 
 **The template** ([`fabric_app/`](../fabric_app/))
 - **`site/`:** the page, black always. Its data source (`storage/`) signs in with Rayfin's Fabric SSO,
-  takes the model and the tables' locations from the app's function with a read-only SAS, and downloads
+  takes the model and the tables' locations from the app's function with a read-only SAS per table, and downloads
   the tables' files into the browser, where DuckDB-WASM 1.5, shipped in the site's `vendor/`, reads them as `v_<table>`
   views.
 - **`rayfin/`:** `rayfin.yml` and the function (`openCatalog`).
@@ -596,7 +602,7 @@ every window. The rest apply at once.
 | [`app/explore/`](../app/explore/) | Explore, shared with the Fabric app. |
 | [`fabric_app/`](../fabric_app/) | The template for an exported app. |
 | [`claude-skill/`](../claude-skill/) | The agent skill. |
-| [`test/`](../test/) | `js/`: the `node --test` suite and browser runners. Its `cli*.test.mjs` run `bin/cli.mjs` as a process. `sql/`: SQL statements and their answers (sqllogictest), run through the agent's `sql`. `e2e/`: the vsix in a real VS Code server and headless Chrome, signed out. |
+| [`test/`](../test/) | `js/`: the `node --test` suite and browser runners. Its `cli*.test.mjs` run `bin/cli.mjs` as a process. `sql/`: SQL statements and their answers (sqllogictest), run through the agent's `sql`. `e2e/`: the vsix in a real VS Code server and headless Chrome, signed out, and signed in with no internet. |
 | [`scripts/`](../scripts/) | Packaging: bundle, stage-webview, vendor, function-bundle, fetch-extensions, check-binding, fetch-binding, fetch-retry, make-icon. |
 | [`media/`](../media/) | Icons. |
 | `docs/` | This file, the naming contract, the changelog, an index and a screenshot. |

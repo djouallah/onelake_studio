@@ -1543,7 +1543,7 @@ async function activateInner(context) {
         const shown = changed.slice(0, 5).join('\n') + (changed.length > 5 ? `\n…and ${changed.length - 5} more` : '');
         const pick = await vscode.window.showWarningMessage(
           `The local copy of ${plan.name} has changed since it was last published.`,
-          { modal: true, detail: `${outDir}\n\n${shown}\n\nOverwrite: rewrite it from this Explore, and publish that. Publish As Is: publish the folder with your changes, and leave it alone.` },
+          { modal: true, detail: `${outDir}\n\n${shown}\n\nOverwrite: rewrite it from this Explore, and publish that. Publish As Is: publish the folder's site with your changes, and leave it alone. The function always comes from this version of the extension.` },
           'Overwrite Local Changes', 'Publish Folder As Is');
         if (!pick) throw declined('Not exported: the local copy has changes.');
         asIs = pick === 'Publish Folder As Is';

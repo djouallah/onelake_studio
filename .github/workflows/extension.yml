@@ -93,8 +93,8 @@ jobs:
   test:
     runs-on: ubuntu-26.04
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: 24
       # --skip-duplicate makes a mismatched tag a SILENT no-op: tagging ext-v0.2.0 while
@@ -114,8 +114,8 @@ jobs:
     # A statement that never ends is a failure, not a job that waits for six hours.
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: 24
           cache: npm
@@ -123,7 +123,7 @@ jobs:
       - run: npm ci --no-audit --no-fund
       # The same bundle a linux-x64 vsix ships, so the test LOADs extensions by path the way
       # an installed extension does. Cached by DuckDB's version (the lockfile) and the list.
-      - uses: actions/cache@v6
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: duckdb-extensions
           key: duckdb-extensions-linux-x64-${{ hashFiles('scripts/fetch-extensions.mjs', 'package-lock.json') }}
@@ -131,7 +131,7 @@ jobs:
       - run: node --test test/js/engine-host.test.mjs test/js/engine-server.test.mjs
       # test/sql/*.test (sqllogictest) through the command line's sql: needs dax-sql (vendor/),
       # the tree the prepare job keeps in the cache.
-      - uses: actions/cache@v6
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: vendor
           key: vendor-${{ hashFiles('scripts/vendor.mjs', 'scripts/fetch-retry.mjs', 'src/vendored.js') }}
@@ -155,8 +155,8 @@ jobs:
         os: [windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: 24
       - run: node --test test/js/bridge.test.mjs test/js/agent.test.mjs test/js/cli.test.mjs test/js/cli-contract.test.mjs test/js/cli-docs.test.mjs
@@ -168,16 +168,16 @@ jobs:
   prepare:
     runs-on: ubuntu-26.04
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: 24
-      - uses: actions/cache@v6
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: vendor
           key: vendor-${{ hashFiles('scripts/vendor.mjs', 'scripts/fetch-retry.mjs', 'src/vendored.js') }}
       - run: node scripts/vendor.mjs
-      - uses: actions/cache@v6
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: fabric-function
           key: fabric-function-${{ hashFiles('scripts/function-bundle.mjs', 'src/fabricapp.js', 'fabric_app/rayfin/**') }}
@@ -199,8 +199,8 @@ jobs:
           - linux-x64
           - linux-arm64
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: 24
           cache: npm
@@ -208,7 +208,7 @@ jobs:
 
       # vendor/ as the prepare job built it: vendor.mjs (run by vscode:prepublish, below) finds
       # the same pins and fetches nothing.
-      - uses: actions/cache@v6
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: vendor
           key: vendor-${{ hashFiles('scripts/vendor.mjs', 'scripts/fetch-retry.mjs', 'src/vendored.js') }}
@@ -232,7 +232,7 @@ jobs:
       # And this platform's DuckDB extensions (iceberg, azure, httpfs, avro + the optional
       # ones), so a first run offline or behind a proxy DuckDB cannot use still opens tables.
       # Cached per platform; a restored tree with the same stamp is used as it is.
-      - uses: actions/cache@v6
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: duckdb-extensions
           key: duckdb-extensions-${{ matrix.target }}-${{ hashFiles('scripts/fetch-extensions.mjs', 'package-lock.json') }}
@@ -242,7 +242,7 @@ jobs:
       # Export to Fabric's function, as the deploy package Fabric takes (one esbuild bundle and
       # its metadata), built from fabric_app/rayfin so nobody who exports needs npm: the
       # prepare job's, from the cache (vscode:prepublish finds the same pins and builds nothing).
-      - uses: actions/cache@v6
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: fabric-function
           key: fabric-function-${{ hashFiles('scripts/function-bundle.mjs', 'src/fabricapp.js', 'fabric_app/rayfin/**') }}
@@ -256,7 +256,7 @@ jobs:
       # release is built without anyone choosing that. --changelog-path because vsce looks
       # for CHANGELOG.md beside package.json, and it lives in docs/.
       - name: Package
-        run: npx --yes @vscode/vsce@3 package --target ${{ matrix.target }} --changelog-path docs/CHANGELOG.md
+        run: npx --yes @vscode/vsce@3.9.2 package --target ${{ matrix.target }} --changelog-path docs/CHANGELOG.md
 
       # The only check that cannot lie. Everything above is a claim about node_modules; this
       # reads the artifact that actually ships. A vsix carrying two bindings is 37MB of waste,
@@ -325,7 +325,7 @@ jobs:
       # upload-artifact v4 refuses two jobs writing the same name, so the target is part of
       # it. overwrite lets "re-run failed jobs" replace a leg's output instead of failing on a
       # name a previous attempt already claimed.
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: vsix-${{ matrix.target }}
           path: "*.vsix"
@@ -349,8 +349,8 @@ jobs:
         onelake.table.fabric.microsoft.com api.fabric.microsoft.com app.fabric.microsoft.com
         analysis.windows.net api.powerbi.com login.microsoftonline.com login.live.com
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: 24
           cache: npm
@@ -358,16 +358,16 @@ jobs:
       # playwright-core, without the engine: DuckDB here is the vsix's.
       - run: npm ci --omit=optional --no-audit --no-fund
       # dax-sql, to write the test's semantic model.
-      - uses: actions/cache@v6
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: vendor
           key: vendor-${{ hashFiles('scripts/vendor.mjs', 'scripts/fetch-retry.mjs', 'src/vendored.js') }}
       - run: node scripts/vendor.mjs
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: vsix-linux-x64
           path: ${{ runner.temp }}/vsix
-      - uses: actions/cache@v6
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: ${{ runner.temp }}/vscode-server
           key: vscode-server-linux-x64-web-${{ env.VSCODE_COMMIT }}
@@ -396,7 +396,7 @@ jobs:
           sudo sysctl -w net.ipv4.ip_unprivileged_port_start=443
       - name: The test's driver, as a vsix
         working-directory: test/e2e/driver
-        run: npx --yes @vscode/vsce@3 package --allow-missing-repository --skip-license --no-dependencies -o "$RUNNER_TEMP/driver.vsix"
+        run: npx --yes @vscode/vsce@3.9.2 package --allow-missing-repository --skip-license --no-dependencies -o "$RUNNER_TEMP/driver.vsix"
       - name: Signed out, in headless Chrome
         run: |
           set -euo pipefail
@@ -404,7 +404,7 @@ jobs:
           export E2E_DRIVER_VSIX="$RUNNER_TEMP/driver.vsix"
           export E2E_OUT="$RUNNER_TEMP/e2e"
           node test/e2e/run-vscode-web.mjs
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         if: always()
         with:
           name: browser-test
@@ -427,7 +427,7 @@ jobs:
       # No checkout and no install: `vsce publish --packagePath` reads the manifest out of
       # each vsix and never runs vscode:prepublish. What goes out is exactly what was
       # packaged, checked and uploaded above — not a second build.
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           pattern: vsix-*
           merge-multiple: true
@@ -437,7 +437,7 @@ jobs:
         run: ls -l vsix
 
       - name: Sign in to Azure
-        uses: azure/login@v3
+        uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3
         with:
           client-id: ${{ vars.AZURE_CLIENT_ID }}
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
@@ -460,4 +460,4 @@ jobs:
       # re-pushing an already-published tag becomes a no-op instead of an error.
       - name: Publish
         if: startsWith(github.ref, 'refs/tags/ext-v')
-        run: npx --yes @vscode/vsce@3 publish --azure-credential --skip-duplicate --packagePath vsix/*.vsix
+        run: npx --yes @vscode/vsce@3.9.2 publish --azure-credential --skip-duplicate --packagePath vsix/*.vsix

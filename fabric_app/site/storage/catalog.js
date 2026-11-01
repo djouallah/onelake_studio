@@ -3,8 +3,8 @@
 // =============================================================================
 // The browser never holds a token: the openCatalog function (rayfin/functions) reads the
 // semantic model from the lakehouse, asks the OneLake Iceberg catalog, server side, where each
-// of its tables is now (its metadata.json) and signs a read-only SAS on the lakehouse's
-// Tables/ folder, valid ~55 min. It answers for the model's tables, with the model.
+// of its tables is now (its metadata.json) and signs a read-only SAS on each table's folder,
+// valid ~55 min. It answers for the model's tables, with the model.
 //
 // The answer is kept (kv.js, this browser's IndexedDB) until shortly before its SAS expires,
 // so a viewer calls the function about once an hour, not on every load; a page open past that
@@ -12,7 +12,7 @@
 //
 //   const catalog = createCatalog(() => auth.client(), kv);
 //   await catalog.open()   the model's tables, and the model
-//     -> { model, metadata: { '<schema>.<table>': 'abfss://...metadata.json' }, missing: [...], sas, expiresOn }
+//     -> { model, metadata: { '<schema>.<table>': 'abfss://...metadata.json' }, missing: [...], sas: { '<folder under Tables/>': '...' }, expiresOn }
 //   catalog.fresh()     true while the kept answer is good: the page can start without a session
 //   catalog.renewAt()   when to ask again (ms since the epoch)
 // =============================================================================
@@ -25,9 +25,9 @@ export function createCatalog(client, kv) {
   const load = () => kv.get(KEY);
   const save = v => kv.set(KEY, v);
   const renewAt = (a = load()) => a ? Date.parse(a.expiresOn) - RENEW_MARGIN_MS : 0;
-  // A kept answer for the model's tables holds the model: an answer without one (a build that
-  // kept another app's, or an older one) is asked again.
-  const good = a => !!a && Date.now() < renewAt(a) && !!a.model;
+  // A kept answer for the model's tables holds the model and a SAS per table: an answer without
+  // them (a build that kept another app's, or an older one) is asked again.
+  const good = a => !!a && Date.now() < renewAt(a) && !!a.model && !!a.sas && typeof a.sas === 'object';
 
   async function call() {
     const rayfin = await client();

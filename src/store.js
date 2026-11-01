@@ -8,10 +8,10 @@
 // disk at once, and when that answer is older than the TTL it is fetched again behind the
 // caller, with a 'changed' event if, and only if, it really changed.
 //
-// One JSON file per key, written to a temp name and renamed into place, so a reader never
-// sees half an entry and two VS Code windows sharing the directory cannot corrupt each
-// other — the last write wins, and both writes were whole. The directory is per account
-// (the caller picks it), so one identity is never served another's listings.
+// In the extension the entries live in the server's state file (`backend`, statestore.js). With no
+// backend, as the tests drive it, each is a JSON file in `dir`, written to a temp name and renamed
+// into place. Either way it is per account (the caller picks it), so one identity is never served
+// another's listings. A Files/ object's bytes are files in `dir` whichever it is (blobs, below).
 //
 // No `vscode` import: the store is driven from tests with a temp directory and a clock.
 // =============================================================================

@@ -1,4 +1,5 @@
-// Fetch with retry, for the build scripts (vendor.mjs, fetch-extensions.mjs): up to three
+// Fetch with retry, for the build scripts (vendor.mjs, fetch-extensions.mjs, which hold what
+// arrives to its hash: pinned-downloads.mjs): up to three
 // tries, one then two seconds apart, each bounded by `timeoutMs`. A 404 is an answer, not a
 // hiccup, so it is not tried again: null when `missingOk`, else an error. Any other failure
 // that outlasts the tries is an error.

@@ -20,6 +20,7 @@ import { execFileSync } from "node:child_process";
 import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
+import { createHash } from "node:crypto";
 
 const here = join(dirname(fileURLToPath(import.meta.url)), "..");   // the extension root
 const MODULES = join(here, "node_modules", "@duckdb");
@@ -62,6 +63,15 @@ const work = join(tmpdir(), `onelake-binding-${binding}-${process.pid}`);
 await mkdir(work, { recursive: true });
 const tgz = execFileSync("npm", ["pack", `${pkg}@${version}`, "--silent"],
                          { cwd: work, encoding: "utf8", shell: process.platform === "win32" }).trim().split("\n").pop();
+
+// The library that ships, and runs beside the user's token, is what the lockfile says it is: npm ci
+// checks only what it installs, and this is fetched past it.
+const locked = JSON.parse(await readFile(join(here, "package-lock.json"), "utf8")).packages[`node_modules/${pkg}`];
+const got = `sha512-${createHash("sha512").update(await readFile(join(work, tgz))).digest("base64")}`;
+if (!locked || locked.version !== version || locked.integrity !== got) {
+  console.error(`${pkg}@${version} is not what package-lock.json holds: ${got}, and it says ${locked && locked.integrity}`);
+  process.exit(1);
+}
 
 // cwd and a bare filename, never an absolute path: GNU tar reads `C:\...` as a REMOTE
 // host spec — "Cannot connect to C: resolve failed" — and Git Bash puts GNU tar ahead of

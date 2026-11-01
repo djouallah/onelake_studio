@@ -1,0 +1,46 @@
+# Adds what the build downloads for the first time to scripts/downloads.sha256.json, and commits it
+# (scripts/pinned-downloads.mjs). It never changes a hash already there.
+#
+# Run it from the Actions tab (or `gh workflow run download-hashes.yml`) after moving a pin in
+# src/vendored.js, a DuckDB version, or the disk cache's build.
+name: Refresh download hashes
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: download-hashes
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 24
+      # For the DuckDB version the extensions follow. Nothing here runs it.
+      - run: npm ci --omit=optional --ignore-scripts --no-audit --no-fund
+      - name: Every platform's extensions, and the libraries
+        env:
+          RECORD_DOWNLOAD_HASHES: "1"
+        run: |
+          set -euo pipefail
+          for target in win32-x64 win32-arm64 darwin-x64 darwin-arm64 linux-x64 linux-arm64; do
+            node scripts/fetch-extensions.mjs "$target"
+          done
+          node scripts/vendor.mjs
+      - name: Commit, if anything changed
+        run: |
+          git add scripts/downloads.sha256.json
+          if git diff --cached --quiet; then
+            echo "no new downloads"; exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898283+github-actions[bot]@users.noreply.github.com"
+          git commit -m "What the build downloads, by its hash"
+          git push

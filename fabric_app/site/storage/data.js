@@ -110,7 +110,14 @@ function modelTables(model) {
 //   localName the name DuckDB reads it by, registered to localUrl, which the store answers.
 // Some writers name the same file abfs:// (no s): one file either way.
 const ABFSS = /^abfss?:\/\/([^@/]+)@([^/]+)\//;
-const https = (abfss, sas) => `${abfss.replace(ABFSS, 'https://$2/$1/')}?${sas}`;
+// The SAS is per table, by its folder under Tables/: the one this file is in.
+function sasOf(abfss, sas) {
+  const under = String(abfss).split('/Tables/')[1] ?? '';
+  const folder = Object.keys(sas ?? {}).find(f => under.startsWith(`${f}/`));
+  if (!folder) throw new Error(`${abfss} is not in a table this app reads`);
+  return sas[folder];
+}
+const https = (abfss, sas) => `${abfss.replace(ABFSS, 'https://$2/$1/')}?${sasOf(abfss, sas)}`;
 const storePath = abfss => abfss.replace(ABFSS, 'https://$2/$1/');
 const localName = abfss => abfss.replace(ABFSS, 'store/$1/');
 const localUrl = abfss => abfss.replace(ABFSS, 'https://store.local/$1/');
@@ -152,10 +159,10 @@ export function createDataSource({ onStatus = () => {}, onProgress = () => {}, t
   const submit = queue.submit;
   const q = (e, sql) => submit(() => e.conn.query(sql), { engine: e });
 
-  // The SAS from the function: the page's downloads use it, and nothing else does. A page open
-  // longer than it gets a new one shortly before it expires (a failed renewal is tried again a
-  // minute later); the views read the store, so no view changes.
-  let sas = '';
+  // The SAS per table from the function: the page's downloads use them, and nothing else does. A
+  // page open longer than them gets new ones shortly before they expire (a failed renewal is tried
+  // again a minute later); the views read the store, so no view changes.
+  let sas = null;
   function renewLater() {
     setTimeout(async () => {
       try { sas = (await catalog.open({ renew: true })).sas; renewLater(); }

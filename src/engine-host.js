@@ -286,8 +286,10 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
       if (extensionDir) config.extension_directory = extensionDir;
       // The disk cache (cache_httpfs) ships in the vsix as our own build of it, with the
       // Windows fix that is not released upstream yet — and our build is not signed by
-      // DuckDB. Loading it needs unsigned extensions allowed; the lockdown below then
-      // refuses every LOAD, so nothing the page sends can load anything else.
+      // DuckDB. Loading it needs unsigned extensions allowed, as do h3 and zipfs by path (a LOAD by
+      // path knows only the core signing keys). All three are held to their hash when the vsix is
+      // built (scripts/pinned-downloads.mjs); the lockdown below then refuses every LOAD, so nothing
+      // the page sends can load anything else.
       const cacheBuild = fileCacheDir && bundledExtensions && join(bundledExtensions, 'cache_httpfs.duckdb_extension');
       if (cacheBuild && fs.existsSync(cacheBuild)) config.allow_unsigned_extensions = 'true';
       if (fileCacheDir) {
