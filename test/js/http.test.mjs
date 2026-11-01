@@ -4,7 +4,19 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { authedFetch, createTokenHold, listPages, mapPool, fabricMessage, useConnectivity } = require("../../src/http.js");
+const { authedFetch, createTokenHold, inTime, listPages, mapPool, fabricMessage, useConnectivity } = require("../../src/http.js");
+
+test("a provider that stalls gets a few seconds, and what it says later still counts", async () => {
+  assert.equal(await inTime(Promise.resolve("on time"), 1000), "on time");
+  assert.equal(await inTime(Promise.reject(new Error("no")), 1000), null, "a failure is no answer");
+  let answer;
+  const later = [];
+  const stalled = inTime(new Promise(r => { answer = r; }), 10, v => later.push(v));
+  assert.equal(await stalled, null);
+  answer("late");
+  await new Promise(r => setTimeout(r, 5));
+  assert.deepEqual(later, ["late"]);
+});
 
 test("a token asked for before a sign-out is not kept after it", () => {
   let at = 1000;

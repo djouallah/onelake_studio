@@ -633,8 +633,8 @@ export function createEngine({
     // The batches keep being drained past the cap: numRows is the size of the whole
     // result, and the message that says "stopped at N of M" needs a truthful M.
     const collected = rowCollector(maxRows);
-    await stream(clean, batch => collected.add(batch));
-    return collected.result();
+    const end = await stream(clean, batch => collected.add(batch));
+    return { ...collected.result(), asOf: end && Number.isFinite(end.asOf) ? end.asOf : null };
   }
 
   // The file itself, byte for byte, straight off OneLake. Not reassembled from the query

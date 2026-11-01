@@ -14,7 +14,7 @@ import { fileURLToPath } from "node:url";
 import { READS, WRITES } from "./sql-disagreements.mjs";
 
 const require = createRequire(import.meta.url);
-const { createEngineHost, isOneLakeMetadata } = require("../../src/engine-host.js");
+const { createEngineHost, isOneLakeMetadata, READ_FAILURE, AUTH_FAILURE } = require("../../src/engine-host.js");
 
 // What fetch-extensions.mjs put next to the extension, when CI ran it for this platform.
 const BUNDLED = join(fileURLToPath(new URL(".", import.meta.url)), "..", "..", "duckdb-extensions");
@@ -127,6 +127,46 @@ test("what the read-only guard takes as a read or a write, DuckDB's own parser d
   await assert.rejects(engine.call("query", ["SELECT 1 FROM"]), /syntax error/i);
   // An export goes inside a COPY of ours, so a read that closes its parenthesis isn't one.
   await assert.rejects(engine.exportTo("SELECT 1) TO 'x.csv' (FORMAT csv) --", "csv"), /syntax error/i);
+});
+
+test("DuckDB's words for a failed read are the ones the engine looks for", async t => {
+  const extDir = await mkdtemp(join(tmpdir(), "onelake-ext-"));
+  const engine = createEngineHost({ extensionDir: extDir, bundledExtensions: existsSync(BUNDLED) ? BUNDLED : null, lockdown: false });
+  t.after(async () => {
+    await engine.close();
+    await rm(extDir, { recursive: true, force: true }).catch(() => {});
+  });
+  await assert.rejects(engine.call("query", [`SELECT * FROM read_parquet('${join(extDir, "no_such.parquet").replace(/\\/g, "/")}')`]),
+    e => READ_FAILURE.test(e.message), "a read that fails");
+  await assert.rejects(engine.call("query", ["SELECT nope FROM range(1)"]), e => !READ_FAILURE.test(e.message), "a mistake asks OneLake nothing");
+  // A table's or a column's name is no token failure.
+  assert.ok(!AUTH_FAILURE.test("Binder Error: column fact_401 not found"));
+  assert.ok(AUTH_FAILURE.test("IO Error: HTTP 401 from the server"));
+  assert.ok(AUTH_FAILURE.test("AuthenticationFailed: Server failed to authenticate the request"));
+});
+
+test("an answer knows when its oldest table was read from OneLake, and fresh asks again", async t => {
+  const extDir = await mkdtemp(join(tmpdir(), "onelake-ext-"));
+  const asked = [];
+  const engine = createEngineHost({
+    extensionDir: extDir,
+    bundledExtensions: existsSync(BUNDLED) ? BUNDLED : null,
+    resolveTable: async (ref, o = {}) => {
+      asked.push(!!o.fresh);
+      return { ...ref, emptySql: "SELECT 1 AS a", at: ref.table === "old" ? 1000 : 2000 };
+    },
+  });
+  t.after(async () => {
+    await engine.close();
+    await rm(extDir, { recursive: true, force: true }).catch(() => {});
+  });
+  const both = "SELECT * FROM lakehouse.w.lh.dbo.old, lakehouse.w.lh.dbo.new";
+  assert.equal((await engine.call("query", [both])).asOf, 1000);
+  assert.equal((await engine.call("stream", [both], () => {})).asOf, 1000);
+  assert.equal((await engine.call("query", ["SELECT 1"])).asOf, null, "no table, no age");
+  assert.ok(asked.every(f => !f), "kept unless asked");
+  assert.equal((await engine.agentQuery(both, { fresh: true })).asOf, 1000);
+  assert.ok(asked.some(f => f), "--fresh reads OneLake first");
 });
 
 test("Stop reaches a statement still being prepared: it answers at once, and never runs", async t => {

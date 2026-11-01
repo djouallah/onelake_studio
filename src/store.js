@@ -243,6 +243,9 @@ function createStore({ dir, backend = null, ttlMs = DEFAULT_TTL_MS, maxBytes = D
     }
   }
 
+  // What another window cleared: nothing here is true any more, and there is nothing on disk to do.
+  const forget = () => { memo.clear(); };
+
   const everything = async () => [...await entries(), ...(blobDir ? await entries(blobDir, '.bin') : [])];
 
   async function clear() {
@@ -266,7 +269,7 @@ function createStore({ dir, backend = null, ttlMs = DEFAULT_TTL_MS, maxBytes = D
   }
 
   return {
-    get, put, peek, known, clear, size, getBlob, putBlob,
+    get, put, peek, known, clear, forget, size, getBlob, putBlob,
     on: (ev, fn) => { events.on(ev, fn); return () => events.off(ev, fn); },
   };
 }

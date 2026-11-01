@@ -369,7 +369,7 @@ async function joinServer({ key, stateKey = key, script, options, stateDir, buil
  * @param {object} cfg  as createRemote's
  * @returns {{ run: (sql: string) => Promise<object[]>, stop: () => Promise<void>, close: () => void }}
  */
-function createStateClient(cfg) {
+function createStateClient({ onCleared = () => {}, ...cfg }) {
   let joined = null, joining = null;
   function drop(j) {
     if (joined === j) joined = null;
@@ -386,8 +386,11 @@ function createStateClient(cfg) {
         if (!state.stateUri) { sock.destroy(); throw new Error(state.stateError || 'the engine has no state file open'); }
         const client = await openClient({ uri: state.stateUri, token, extensionDir: options.extensionDir, bundledExtensions: options.bundledExtensions })
           .catch(e => { sock.destroy(); throw e; });
-        const ask = controlChannel(sock, m => { if (m.reattach) client.reattach().catch(() => {}); });
-        const me = { sock, client, recover: recovery(ask, client) };
+        const ask = controlChannel(sock, m => {
+          if (m.reattach) client.reattach().catch(() => {});
+          if (m.cleared) onCleared();
+        });
+        const me = { sock, client, ask, recover: recovery(ask, client) };
         sock.on('error', () => {});
         sock.on('close', () => drop(me));
         joined = me;
@@ -423,6 +426,8 @@ function createStateClient(cfg) {
         j.sock.write(`${JSON.stringify({ stop: true })}\n`);
       });
     },
+    // The state file was emptied: every window is told, this one too.
+    async announceCleared() { if (joined) await joined.ask({ cleared: true }); },
     close() { if (joined) drop(joined); },
   };
 }
@@ -563,4 +568,4 @@ function createRemote({ onGone = () => {}, ...cfg }) {
   };
 }
 
-module.exports = { createRemote, createStateClient, openClient, loadExtension, pipePath, stateFileOf };
+module.exports = { createRemote, createStateClient, openClient, loadExtension, pipePath, stateFileOf, LOST };

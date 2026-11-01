@@ -91,7 +91,7 @@ function createSqlTables({ onelake, paths, offlineReason = () => null }) {
       const near = closestTables(ref.table, listing || []);
       throw new Error(e.message + (near.length ? ` — closest: ${near.join(', ')}` : ''));
     }
-    const named = { kind: ref.kind, workspace: ws, item: displayName(dir), schema: t.schema || 'dbo', table: t.table };
+    const named = { kind: ref.kind, workspace: ws, item: displayName(dir), schema: t.schema || 'dbo', table: t.table, at: meta.at };
     return meta.empty
       ? { ...named, emptySql: (await paths()).emptyTableSql(meta.schemaFields) }
       : { ...named, metadataLocation: meta.metadataLocation };

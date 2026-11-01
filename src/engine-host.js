@@ -86,6 +86,19 @@ function scrub(e, token) {
   return e;
 }
 
+// DuckDB says what went wrong only in words, so these are matched by text. A test holds each one it
+// can provoke to DuckDB's real message, so a new DuckDB that words it differently fails there.
+//
+// A token that expired mid-session shows up as a storage failure, never as anything structured.
+// Retried ONCE and only after the token actually changed — a 403 is a permission answer and a fresh
+// token will not change its mind, which is the same bargain catalog.js makes.
+const AUTH_FAILURE = /AuthenticationFailed|\b401\b|Unauthorized|token.*expired|ExpiredAuthenticationToken/i;
+// A read that fails is how DuckDB says a kept metadata location no longer holds, at the view or at
+// the statement. A statement's own mistake is a Binder or Catalog Error, which asks OneLake nothing.
+const READ_FAILURE = /^\s*IO Error\b/;
+// What the disk cache says of a file, or a part of one, that it doesn't keep.
+const NOT_CACHED = /is not cached on this machine/;
+
 // This string came from the catalog (via the host's store) and is spliced into SQL, so
 // only the one shape the catalog actually returns is accepted: a OneLake abfss URI ending
 // in a metadata.json. Spaces are allowed — a workspace named "ANZ Retail Demo" gets name-based
@@ -570,12 +583,6 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
     await p.run();
   }
 
-  // A token that expired mid-session shows up as a storage failure, never as
-  // anything structured, so it is recognised by text. Retried ONCE and only after the
-  // token actually changed — a 403 is a permission answer and a fresh token will not
-  // change its mind, which is the same bargain catalog.js makes.
-  const AUTH_FAILURE = /AuthenticationFailed|401|Unauthorized|token.*expired|ExpiredAuthenticationToken/i;
-
   async function withAuthRetry(run, canRetry = () => true) {
     await ensureAuth();
     try {
@@ -609,7 +616,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
       throw new Error(`OneLake gave ${sqlName(r)} no readable metadata location` +
         (r.metadataLocation ? ` (${String(r.metadataLocation).slice(0, 120)})` : ''));
     }
-    return { name: sqlName(r), path: [r.kind, r.workspace, r.item, r.schema || 'dbo'], source, location: r.emptySql == null ? r.metadataLocation : null };
+    return { name: sqlName(r), path: [r.kind, r.workspace, r.item, r.schema || 'dbo'], source, location: r.emptySql == null ? r.metadataLocation : null, at: r.at };
   }
   async function makeView({ name, path: parts, source }) {
     const key = name.toLowerCase();
@@ -734,11 +741,6 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
     return out;
   }
 
-  // A read that fails is how DuckDB says a kept metadata location no longer holds, at the view
-  // or at the statement. A statement's own mistake is a Binder or Catalog Error, which asks
-  // OneLake nothing.
-  const READ_FAILURE = /^\s*IO Error\b/;
-
   // Offline, a statement that reads OneLake is served from the disk cache. Only with no such cache
   // (turned off, or a build that can't) is it refused here, rather than left to time out.
   // A table nothing was ever written to reads no file, and needs no network.
@@ -755,8 +757,6 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
       'What this machine has cached still works: tables, columns, stats and first rows.'), { offline: true });
   }
 
-  // What the disk cache says of a file, or a part of one, that it doesn't keep.
-  const NOT_CACHED = /is not cached on this machine/;
   // A statement that names a table without reading its rows.
   const READS_NO_ROWS = /^(?:\s|--[^\n]*\n|\/\*[\s\S]*?\*\/)*(?:describe|desc|explain(?!\s*(?:\(\s*)?analy[sz]e))\b/i;
   // Said once per location: every statement passes here.
@@ -774,13 +774,17 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
   // tables it names — and then `run` gets the statement itself, or its whole-path twin (sql.js
   // catalogStatement). Its tables come from the cache, and are read again if it fails on them
   // (store.js revalidate). `canRetry`: false once running it again would repeat what it sent.
-  async function withTables(sql, run, canRetry = () => true) {
+  // `fresh` asks OneLake for them first. `seen` hears when the oldest of them was read from OneLake,
+  // which is how old the answer may be: a table's metadata is trusted for a day by default.
+  async function withTables(sql, run, canRetry = () => true, { fresh = false, seen = () => {} } = {}) {
     if (readsCatalog(sql)) await syncCatalog();
     await syncOffline();
     let named = [];
     try {
-      return await revalidate(o => sourcesOf(sql, o), async tables => {
+      return await revalidate(o => sourcesOf(sql, { ...o, fresh: fresh || !!o.fresh }), async tables => {
         named = tables;
+        const read = tables.map(t => t.at).filter(Number.isFinite);
+        seen(read.length ? Math.min(...read) : null);
         refuseOffline(sql, tables);
         for (const t of tables) await makeView(t);
         const result = await run(catalogStatement(sql) || sql);
@@ -798,7 +802,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
         // what is kept. The statement isn't asked twice: the retry finds this window offline.
         if (!offlineReason() && capabilities.offlineRead && checkConnectivity && canRetry()) {
           await checkConnectivity();
-          if (offlineReason()) return withTables(sql, run, canRetry);
+          if (offlineReason()) return withTables(sql, run, canRetry, { fresh, seen });
         }
         // A read the check above could not see, and the reason it failed.
         const why = offlineReason();
@@ -898,13 +902,13 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
     // A statement of this tab's, in batches. Run again only before its first batch: a late failure
     // comes after batches went out, and running it again would deliver them twice.
     async function streamed(statement, emit, begin) {
-      let sent = false;
+      let sent = false, asOf = null;
       const canRetry = () => !sent;
       const numRows = await withAuthRetry(() => withTables(statement, run => {
         begin();
         return withConn(c => runStreaming(c, run, b => { sent = true; emit(b); }), owner);
-      }, canRetry), canRetry);
-      return { done: true, numRows };
+      }, canRetry, { seen: at => { asOf = at; } }), canRetry);
+      return { done: true, numRows, asOf };
     }
     // What this tab made, the only things it may take away.
     const views = new Set(), attached = new Set();
@@ -924,10 +928,12 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
         return stoppable(async begin => {
           await init();
           const statement = await checkedRead(sql, serialize);
-          return withAuthRetry(() => withTables(statement, run => {
+          let asOf = null;
+          const res = await withAuthRetry(() => withTables(statement, run => {
             begin();
             return runAll(run, owner);
-          }));
+          }, undefined, { seen: at => { asOf = at; } }));
+          return { ...res, asOf };
         });
       },
 
@@ -1062,7 +1068,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
   // page's Stop does not reach. Its guard is stricter, reads only: the page's setup statements
   // are the page's. Not a page method. `signal`: the command line went away, so its query
   // stops (only its own: another agent's goes on).
-  async function agentQuery(sql, { signal } = {}) {
+  async function agentQuery(sql, { signal, fresh = false } = {}) {
     const token = authToken;
     const mine = new Set();
     const owner = {
@@ -1075,10 +1081,12 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
       assertReads(sql);
       await init();
       const statement = await checkedRead(sql, serialize);
-      return await withAuthRetry(() => withTables(statement, run => {
+      let asOf = null;
+      const res = await withAuthRetry(() => withTables(statement, run => {
         if (signal && signal.aborted) throw new Error('the command line went away');
         return runAll(run, owner);
-      }));
+      }, undefined, { fresh, seen: at => { asOf = at; } }));
+      return { ...res, asOf };
     } catch (e) { throw scrub(e, authToken || token); }
     finally {
       if (signal) signal.removeEventListener('abort', stop);
@@ -1163,4 +1171,4 @@ async function restartListener(conn, uri, token) {
   await conn.run(`SELECT * FROM quack_serve(${sqlStr(uri)}, token = ${sqlStr(token)});`);
 }
 
-module.exports = { createEngineHost, jsonSafe, isOneLakeMetadata, restartListener };
+module.exports = { createEngineHost, jsonSafe, isOneLakeMetadata, restartListener, AUTH_FAILURE, READ_FAILURE, NOT_CACHED };

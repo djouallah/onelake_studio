@@ -254,6 +254,7 @@ SQL box, no Stop and no Restart.
   - **A table's read fails** (DuckDB's `IO Error`): the table's listing and metadata are read again. A
     statement's own mistake asks OneLake nothing.
   - **A model's local copy** is not covered: it changes only on **Download Again**.
+- **Clearing reaches every window:** the server tells each one, and what it holds in memory goes too.
 - **Per Microsoft account:** switching accounts never serves one account's data to another.
 - **Survives a sign-out:** signing back in finds it warm. Only **Clear Cached OneLake Data** deletes it.
 - **The catalog is cached too:** `SHOW ALL TABLES` and `information_schema` list what the tree has seen
@@ -492,6 +493,8 @@ personal skills, and it follows the extension through updates.
 - **Output:** the answer alone goes to stdout and notes go to stderr.
 - **`--json`** prints `{ ok, columns, rows, total, truncated, complete, cachedAt, notes }`, or
   `{ ok: false, error: { code, message, retry }, notes }`.
+- **How old an answer is:** `cachedAt` on `sql` is when the oldest table it read was last read from OneLake, and
+  `sql --fresh` reads their metadata first. Past an hour, a note says so, and so does a tab's status line.
 - **`sql -`** reads SQL from stdin. Prefer it for anything with quotes in it: `AGG("Total Sales")` does
   not survive every shell.
 - **`--show-sql`** prints the SQL a model query compiles to.

@@ -523,7 +523,7 @@ function createAgent({ onelake, engine, modelPath, appDir, vendorDir, daxSqlPin,
     },
 
     async sql([text], opts, io) {
-      const { semantic, compiler } = await modules();
+      const { semantic, compiler, paths } = await modules();
       await syncViews(io.note);
       const t0 = Date.now();
       // A query: its lakehouse may be listed from OneLake when the cache does not have it.
@@ -551,7 +551,13 @@ function createAgent({ onelake, engine, modelPath, appDir, vendorDir, daxSqlPin,
       // SHOW ALL TABLES holds every column of every table, too much for an agent's context: Markdown
       // asks how many, and --csv and --json keep the columns.
       const counted = !opts.csv && !opts.json && isShowAllTables(run);
-      const res = await (await engine()).agentQuery(counted ? ALL_TABLES_COUNTED : run, { signal: opts.signal });
+      const res = await (await engine()).agentQuery(counted ? ALL_TABLES_COUNTED : run, { signal: opts.signal, fresh: !!opts.fresh });
+      // cachedAt: when the oldest table it read was last read from OneLake.
+      if (Number.isFinite(res.asOf)) {
+        io.seen(res.asOf);
+        const age = paths.ageNote(res.asOf);
+        if (age) io.note(`${age}: --fresh reads them from OneLake first`);
+      }
       // A --csv is everything it says it is: rows it would have to leave out fail it, since
       // nothing in a CSV can say so. --limit, or an aggregate, is what asks for less.
       const total = res.numRows != null ? res.numRows : res.rows.length;

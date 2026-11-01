@@ -9,7 +9,7 @@
 // =============================================================================
 import { createEngine } from './data.js';
 import { isDocResult, textLinesDoc, fileExt, isTextExt, escapeHtml, basename,
-         IMAGE_EXTS, abfssUrl } from './paths.js';
+         IMAGE_EXTS, abfssUrl, ageNote } from './paths.js';
 // Static import is safe: docview.js is tiny — the markdown renderer it uses is imported
 // only inside renderMarkdown(), and only for a document that IS markdown.
 import { renderDocument } from './docview.js';
@@ -712,6 +712,8 @@ async function runQuery({ sql, doc = true, ext = '' } = {}) {
     if (res.truncated)
       msg = `The first ${res.rows.length.toLocaleString('en')} of ${res.numRows.toLocaleString('en')} rows, in ${ms} ms. ` +
             `Narrow the query to see the rest here: Export… writes every row`;
+    const age = ageNote(res.asOf);
+    if (age) msg += `. The ${age}`;
     setStatus(msg, res.truncated ? 'warn' : 'ok');
     $('csvBtn').disabled = res.rows.length === 0;
     $('profileBtn').disabled = res.rows.length === 0 || /^\s*summarize\b/i.test(sql);

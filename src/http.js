@@ -41,6 +41,18 @@ function createTokenHold(ttlMs, now = Date.now) {
   };
 }
 
+// `asked`'s answer, or null after `ms`: activation must not wait on a provider that has stalled.
+// `onLate` hears an answer that comes after that, and a failure is no answer.
+function inTime(asked, ms, onLate = () => {}) {
+  return new Promise(resolve => {
+    let late = false;
+    const timer = setTimeout(() => { late = true; resolve(null); }, ms);
+    Promise.resolve(asked).then(
+      value => { clearTimeout(timer); if (late) onLate(value); else resolve(value); },
+      () => { clearTimeout(timer); resolve(null); });
+  });
+}
+
 // A response that is not going to be read: its body let go, so its socket is free now
 // rather than whenever it is collected.
 function discard(r) {
@@ -148,4 +160,4 @@ async function mapPool(items, fn, limit) {
   return out;
 }
 
-module.exports = { createTokenHold, authedFetch, discard, retryAfterMs, fabricMessage, oneLakeMessage, listPages, limiter, mapPool, useConnectivity, offlineError };
+module.exports = { createTokenHold, inTime, authedFetch, discard, retryAfterMs, fabricMessage, oneLakeMessage, listPages, limiter, mapPool, useConnectivity, offlineError };

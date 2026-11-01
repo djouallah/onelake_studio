@@ -24,8 +24,9 @@ const keyOf = key => sqlStr(String(key).replace(/\0/g, '␟'));
  * @param {(sql: string) => Promise<object[]>} o.run  a statement on the state file (createStateClient)
  * @param {string|null} [o.importFrom]  the JSON store's directory
  * @param {() => number} [o.maxBytes]  budget; the oldest go first past it
+ * @param {() => Promise<void>} [o.announce]  tells every window that what it holds in memory has gone
  */
-function createStateBackend({ run, importFrom = null, maxBytes = () => 256 * 1024 * 1024 }) {
+function createStateBackend({ run, importFrom = null, maxBytes = () => 256 * 1024 * 1024, announce = async () => {} }) {
   async function importOnce() {
     const done = await run(`SELECT 1 AS done FROM kv WHERE k = ${sqlStr(IMPORTED)}`);
     if (done.length) return;
@@ -80,6 +81,7 @@ function createStateBackend({ run, importFrom = null, maxBytes = () => 256 * 102
       await opened();
       // Still marked as imported: what was cleared doesn't come back from the old files.
       await run(`DELETE FROM kv WHERE k <> ${sqlStr(IMPORTED)}`);
+      await announce();
     },
     async size() {
       await opened();

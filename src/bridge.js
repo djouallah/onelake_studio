@@ -41,7 +41,7 @@ const COMMANDS = {
   find: { usage: 'find <text>', min: 1, max: 1, flags: LISTING },
   table: { usage: 'table <ws> <item> <schema.table>', min: 3, max: 3, flags: ['fresh', 'csv', 'json'] },
   model: { usage: 'model <ws> <model>', min: 2, max: 2, flags: ['fresh', 'json'] },
-  sql: { usage: 'sql "<query>"', min: 1, max: 1, flags: ['in', 'csv', 'json', 'limit', 'showSql'] },
+  sql: { usage: 'sql "<query>"', min: 1, max: 1, flags: ['in', 'csv', 'json', 'limit', 'showSql', 'fresh'] },
   export: { usage: 'export <ws> <model>, or export <ws> <item> <Files/path>', min: 2, max: 3, flags: ['json'] },
 };
 const FLAG_NAME = { fresh: '--fresh', csv: '--csv', json: '--json', limit: '--limit', in: '--in', showSql: '--show-sql', downloaded: '--downloaded' };

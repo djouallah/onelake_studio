@@ -23,7 +23,7 @@ const { createStore } = require('./store');
 const { createOneLake, walkCached } = require('./onelake');
 const { createSqlTables } = require('./sqltables');
 const { createConnectivity } = require('./connectivity');
-const { useConnectivity, createTokenHold } = require('./http');
+const { useConnectivity, createTokenHold, inTime } = require('./http');
 const { createHostMethods } = require('./host');
 const { createFabric, modelFileName, modelAccountDir, modelCopyPath } = require('./fabric');
 const { LakehouseTree, TREE_FILTERS } = require('./tree');
@@ -142,6 +142,7 @@ function rememberAccount(session) {
 // retry (catalog.js and the engine ask again with `fresh` after a 401). Anything that can
 // change the answer clears it outright.
 const TOKEN_TTL_MS = 60_000;
+const SESSION_WAIT_MS = 5_000;
 const storageHold = createTokenHold(TOKEN_TTL_MS);
 
 function forgetToken() { storageHold.forget(); fabricHold.forget(); fabricAudience = null; appHold.forget(); }
@@ -463,12 +464,15 @@ function sharedEngineServer(context, account) {
 // What the store keeps, on the shared engine (statestore.js), per account: the same client for each
 // store made for it.
 const stateClients = new Map();
+// Another window cleared the cache (statestore.js announce). Set by activateInner.
+let onStoreCleared = () => {};
 function sharedStateBackend(context, account, importFrom, maxBytes) {
   const { createStateClient } = require('./engine-client');
   const { createStateBackend } = require('./statestore');
   if (!stateClients.has(account)) {
     stateClients.set(account, createStateClient({
       ...sharedEngineServer(context, account),
+      onCleared: () => onStoreCleared(),
       // The tree may need the server before any statement does, so it can be the one starting it.
       options: async () => {
         const { readme } = await webviewRoot(context.extensionUri, { dev: context.extensionMode === vscode.ExtensionMode.Development });
@@ -483,7 +487,7 @@ function sharedStateBackend(context, account, importFrom, maxBytes) {
     said = true;
     throw e;
   });
-  return createStateBackend({ run, importFrom, maxBytes });
+  return createStateBackend({ run, importFrom, maxBytes, announce: () => stateClients.get(account).announceCleared() });
 }
 function sharedEngineRemote(context, options) {
   const { createRemote } = require('./engine-client');
@@ -883,7 +887,9 @@ async function activateInner(context) {
     const backend = sharedStateBackend(context, key, dir, storeMaxBytes);
     return createStore({ dir, backend, ttlMs: catalogTtlMs, maxBytes: storeMaxBytes() });
   };
-  const firstSession = await getSession({ createIfNone: false }).catch(() => null);
+  // Everything waits on these two answers at activation, commands included, so a provider that has
+  // stalled gets a few seconds, and what it says after that is taken as a session change.
+  const firstSession = await inTime(getSession({ createIfNone: false }), SESSION_WAIT_MS, () => sessionChanged());
   rememberAccount(firstSession);
   let storeAccount = accountKey(firstSession) || (knownAccount() || {}).key || null;
   // The saved queries' account (queriesFolder): its own folder, by its sign-in name.
@@ -912,6 +918,8 @@ async function activateInner(context) {
   // A model's local copy is kept per account (fabric.js modelCopyPath). The copies from before
   // that move once; opening a model waits for it, so it finds its copy where it now is.
   let modelsAdopted = Promise.resolve(0);
+  // What Go To can name, kept for a moment (completionNames below). Here, since an account moving clears it.
+  let namesKept = null;
   function adoptModels() {
     modelsAdopted = semviews.adoptCopies(modelsFolder(), modelAccountDir(modelsFolder(), queryAccount)).catch(e => {
       if (out) out.appendLine(`the local copies of models could not be moved: ${e.message}`);
@@ -938,6 +946,11 @@ async function activateInner(context) {
     const key = accountKey(session) || (knownAccount() || {}).key || null;
     if (key === storeAccount) return;
     storeAccount = key;
+    // In one step with the account, before anything below waits: a read in between would write the
+    // new account's answers into the old account's store.
+    fileCacheAccount = key;   // the engine picks it up when it is next built
+    onelake.useStore(storeFor(key));
+    namesKept = null;
     // Workspace and item GUIDs belong to the account's tenant: listed again for the new one.
     fabric.reset();
     sqlTables.forget();
@@ -945,8 +958,6 @@ async function activateInner(context) {
     queryAccount = queryAccountOf(session) || (knownAccount() || {}).queries || null;
     await adoptLooseQueries().catch(() => {});
     tree.queriesChanged();
-    fileCacheAccount = key;   // the engine picks it up when it is next built
-    onelake.useStore(storeFor(key));
     catalogSnapshot.reset();
     if (engine) engine.catalogChanged();
     semviews.useAccount(key);
@@ -1064,7 +1075,7 @@ async function activateInner(context) {
     });
   }
 
-  await setSignedIn(!!await getToken({ createIfNone: false }));
+  await setSignedIn(!!await inTime(getToken({ createIfNone: false }), SESSION_WAIT_MS, () => sessionChanged()));
   showOffline(connectivity.reason());
   // After a Sign Out nothing is sent, not even this; a window that lost a session to no internet
   // needs it, to find that session when the internet returns.
@@ -1217,7 +1228,6 @@ async function activateInner(context) {
   // What Go to can name, from the cache alone (cachedSqlTables, below): every cached table
   // with its columns, every semantic model, and the measures and columns of a model kept as a
   // view (its local file; one in OneLake gives its name only). Read again after a minute.
-  let namesKept = null;
   function completionNames() {
     if (namesKept && Date.now() - namesKept.at < 60_000) return namesKept.value;
     const value = (async () => {
@@ -1431,6 +1441,14 @@ async function activateInner(context) {
     return found;
   }
   cachedSqlTables = () => catalogSnapshot.list();
+  onStoreCleared = () => {
+    onelake.forgetKept();
+    catalogSnapshot.reset();
+    namesKept = null;
+    if (engine) engine.catalogChanged();
+    postLive({ type: 'reset' });
+    tree.redraw();
+  };
 
   // A semantic model a query names that no view has yet: found in its workspace's model
   // listing (the cache's, else Fabric's), its local copy kept (fetchModel), and kept as a view.

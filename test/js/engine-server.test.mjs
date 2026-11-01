@@ -14,7 +14,7 @@ import { fileURLToPath } from "node:url";
 
 const require = createRequire(import.meta.url);
 const { createEngineHost } = require("../../src/engine-host.js");
-const { createRemote, createStateClient, openClient, pipePath, stateFileOf } = require("../../src/engine-client.js");
+const { createRemote, createStateClient, openClient, pipePath, stateFileOf, LOST } = require("../../src/engine-client.js");
 const { createStateBackend } = require("../../src/statestore.js");
 const { createStore } = require("../../src/store.js");
 
@@ -305,6 +305,43 @@ async function stateServer(t) {
   t.after(async () => { for (const c of clients) { await c.stop().catch(() => {}); c.close(); } });
   return { dir, stateDir, open };
 }
+
+test("a server's words for a lost connection are the ones a window looks for", async t => {
+  const { open, secret, log } = await setup(t);
+  await open().call("query", ["SELECT 1"]);
+  const uri = /serving (quack:\S+)/.exec(log())[1];
+  const client = await openClient({ uri, token: secret(), lockdown: false,
+    extensionDir: null, bundledExtensions: existsSync(BUNDLED) ? BUNDLED : null });
+  t.after(() => { try { client.local.closeSync(); } catch (_) {} });
+  const c = await client.local.connect();
+  // A port nobody answers on.
+  await assert.rejects(c.run("SELECT * FROM quack_query('quack:127.0.0.1:9', 'SELECT 1')"),
+    e => { assert.match(e.message, LOST); return true; });
+  c.closeSync();
+});
+
+test("Clear Cached reaches what other windows hold in memory", async t => {
+  const dir = await mkdtemp(join(tmpdir(), "onelake-state-"));
+  t.after(() => rm(dir, { recursive: true, force: true }).catch(() => {}));
+  let secret;
+  const clients = [];
+  const windowOf = () => {
+    let store = null;
+    const client = createStateClient({ key: `clear-${dir}`, script: SCRIPT, stateDir: join(dir, "state"),
+      options: { extensionDir: join(dir, "extensions"), bundledExtensions: existsSync(BUNDLED) ? BUNDLED : null, threads: 2 },
+      getToken: async () => secret, setToken: async s => { secret = s; }, onCleared: () => store.forget() });
+    clients.push(client);
+    store = createStore({ dir: join(dir, "blobs"), backend: createStateBackend({ run: sql => client.run(sql), announce: () => client.announceCleared() }) });
+    return store;
+  };
+  t.after(async () => { for (const c of clients) { await c.stop().catch(() => {}); c.close(); } });
+  const one = windowOf(), two = windowOf();
+  await one.put("listing", ["kept"]);
+  assert.deepEqual(await two.peek("listing"), ["kept"]);
+  await one.clear();
+  await sleep(300);
+  assert.equal(await two.peek("listing"), undefined);
+});
 
 test("what is remembered survives an update, which moves the install but not the account", async t => {
   const { dir, stateDir, open } = await stateServer(t);

@@ -48,7 +48,7 @@ const OPTIONS = `  --limit N                           rows printed (default 100
   --csv                               one table, raw values, on stdout
   --json                              { ok, columns, rows, total, truncated, complete, cachedAt, notes }
                                         or { ok: false, error: { code, message, retry }, notes }
-  --fresh                             ask OneLake/Fabric now: listings and metadata come only
+  --fresh                             ask OneLake/Fabric now, and for sql, read its tables' metadata first: listings and metadata come only
                                         from the cache otherwise, and say so when it has nothing
   --timeout SEC                       give up and stop the query (default 600; 0 waits; export waits)
   --                                  what follows is not an option

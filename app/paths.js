@@ -288,6 +288,17 @@ export function normalizeValue(v) {
   return v;
 }
 
+// How old an answer's tables are, when that is worth saying: "" within the hour. A table's metadata
+// is trusted for a day by default, so a query can read yesterday's snapshot with no error.
+export function ageNote(asOf, now = Date.now()) {
+  if (!Number.isFinite(asOf)) return "";
+  const hours = Math.floor((now - asOf) / 3_600_000);
+  if (hours < 1) return "";
+  const days = Math.floor(hours / 24);
+  const [n, unit] = hours < 48 ? [hours, "hour"] : [days, "day"];
+  return `tables as of ${n} ${unit}${n === 1 ? "" : "s"} ago`;
+}
+
 export function normalizeRow(obj, fields) {
   const out = {};
   for (const f of fields) out[f] = normalizeValue(obj[f]);

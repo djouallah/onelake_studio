@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **An answer says how old its tables are.** A table's metadata is kept for a day by default, so a query could read
+  yesterday's snapshot with no sign of it. Past an hour the status line says so, and `sql` gives `cachedAt`, a note, and
+  `--fresh` to read them from OneLake first.
+- **Clear Cached OneLake Data reaches every window,** rather than leaving other windows showing what it cleared.
+- **A stalled account provider no longer holds up VS Code's commands for OneLake Studio.** It gets five seconds at
+  startup, and what it says later still counts.
 - **Read only holds against more ways of writing SQL.** Nested comments, `E'…'` strings, a `$` inside a name, a
   `$` tag that isn't ASCII and a carriage return after `--` could each hide a second statement or a `COPY` from the
   check. All are refused now.

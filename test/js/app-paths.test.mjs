@@ -31,6 +31,17 @@ test("a result past the cap says so: the host sends a count for the rows it stop
   assert.deepEqual(rowCollector(2).result(), { fields: [], types: [], rows: [], numRows: 0, truncated: false, limit: 2 });
 });
 
+test("an answer says how old its tables are, once that is worth saying", async () => {
+  const { ageNote } = await import("../../app/paths.js");
+  const HOUR = 3_600_000, now = 100 * 24 * HOUR;
+  assert.equal(ageNote(null, now), "", "no table read");
+  assert.equal(ageNote(now - HOUR / 2, now), "", "within the hour");
+  assert.equal(ageNote(now - HOUR, now), "tables as of 1 hour ago");
+  assert.equal(ageNote(now - 14 * HOUR, now), "tables as of 14 hours ago");
+  assert.equal(ageNote(now - 47 * HOUR, now), "tables as of 47 hours ago");
+  assert.equal(ageNote(now - 72 * HOUR, now), "tables as of 3 days ago");
+});
+
 test("CSV quotes a cell holding a quote, a comma, or either line break", async () => {
   const { toCsv } = await import("../../app/paths.js");
   const rows = [{ a: 'x"y', b: "1,2" }, { a: "cr\rhere", b: "lf\nhere" }, { a: null, b: 3 }];

@@ -62,6 +62,9 @@ A failure leaves stdout empty and says why on stderr. What each format gives you
   query keeps, it fails. `ls <ws>` and `model` are several tables, so they take no `--csv`. Many CSV readers lose the
   difference between NULL and `""`: DuckDB's `read_csv` needs `allow_quoted_nulls=false`, and Python's `csv` can't
   keep it. Use `--json` when it matters.
+- **How old an answer is:** a table's metadata is kept for a day by default, so `sql` can read an older snapshot with
+  no error. `cachedAt` says when its oldest table was last read from OneLake, a note says so past an hour, and
+  `sql --fresh` reads their metadata first.
 - **`--json`** is for acting on: `{ ok, columns, rows, total, truncated, complete, cachedAt, notes }`, with `tables`
   by name in place of `columns` and `rows` for `ls <ws>` and `model`, and `data` for what is not a table. A failure is
   `{ ok: false, error: { code, message, retry }, notes }`. Everything is in it, stderr stays empty, and `2>&1` is safe.

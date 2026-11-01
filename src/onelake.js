@@ -469,6 +469,8 @@ function createOneLake({ catalog, store, prefetchEnabled = () => true, onHit = (
     // The engine's catalog as one entry (catalogsnapshot.js), kept with the account's answers.
     keptCatalog: { read: () => store.peek('catalog snapshot'), write: list => store.put('catalog snapshot', list) },
     clear: () => { catalog.reset(); return store.clear(); },
+    // Another window cleared the cache: what this one holds in memory goes too.
+    forgetKept: () => { catalog.reset(); store.forget(); },
     size: () => store.size(),
   };
 }
