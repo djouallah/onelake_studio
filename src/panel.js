@@ -116,6 +116,8 @@ function wireEngine(panel, engine, methods = {}) {
 // not create two panels — the check on `current` alone has an await between it and the
 // assignment, and the loser of that race was orphaned holding an engine bridge forever.
 let opening = null;
+// How many times every tab was closed: one being built meanwhile doesn't survive that.
+let closes = 0;
 
 function openPanel(context, opts = {}) {
   if (active && !opts.newTab) { revealPanel(); return Promise.resolve(active.panel); }
@@ -128,6 +130,7 @@ function openPanel(context, opts = {}) {
 }
 
 async function openPanelUncontended(context, { onOpened, onBoot, onBootFailed, engine, host, build, draft, viewTag } = {}) {
+  const closesBefore = closes;
   const { page: siteUri, readme: readmeUri } = await webviewRoot(context.extensionUri,
     { dev: context.extensionMode === vscode.ExtensionMode.Development });
   const vendorUri = vscode.Uri.joinPath(context.extensionUri, 'vendor');
@@ -168,6 +171,11 @@ async function openPanelUncontended(context, { onOpened, onBoot, onBootFailed, e
   } catch (e) {
     panel.dispose();
     throw e;
+  }
+  // Every tab was closed while this one was being built, for an engine that is gone by now.
+  if (closes !== closesBefore) {
+    panel.dispose();
+    return null;
   }
 
   // This tab's own view of the engine and of the host's methods: its Stop reaches its statements
@@ -232,6 +240,7 @@ async function openPanelUncontended(context, { onOpened, onBoot, onBootFailed, e
 // its memo of each table's metadata belong to the old identity and go with it. Rebinding the
 // token alone would leave the previous account's tables on screen.
 function closePanel() {
+  closes++;
   pending = null;
   for (const tab of [...tabs]) tab.panel.dispose();   // onDidDispose takes each out of `tabs`
 }

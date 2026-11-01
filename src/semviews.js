@@ -18,7 +18,8 @@
 const fsp = require('node:fs/promises');
 const { join, dirname, relative, isAbsolute } = require('node:path');
 
-const ABFSS = /^abfss:\/\/([^@/]+)@onelake\.dfs\.fabric\.microsoft\.com\/(.+)$/i;
+const { ONELAKE_FILE_URL: ABFSS } = require('./names');
+
 const exists = p => fsp.access(p).then(() => true, () => false);
 
 /**

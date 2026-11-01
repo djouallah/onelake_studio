@@ -83,6 +83,28 @@ test("a local copy is the host's: the page gets a path, the bytes never cross", 
   assert.deepEqual(calls.find(c => c[0] === "copy"), ["copy", "ws/lh/Files/db.sqlite@", 3]);
 });
 
+test("a semantic model is kept from a OneLake file or its local copy, and no other file", async () => {
+  const kept = [];
+  const methods = createHostMethods({
+    onelake: {}, engine: {}, modelsDir: "/cache/models",
+    semviews: { put: async (name, path) => { kept.push(path); return { name, path }; } },
+  });
+  const keep = async path => {
+    const out = [];
+    await answer({ methods, engine: {} }, { id: 1, method: "semantic.keep", args: [{ name: "m", schema: "ws", path }] }, m => out.push(m));
+    return out[0];
+  };
+  const inLake = "abfss://ws@onelake.dfs.fabric.microsoft.com/lh.Lakehouse/Files/m.yaml";
+  assert.equal((await keep(inLake)).type, "result");
+  assert.equal((await keep("/cache/models/a/ws/m.yaml")).type, "result");
+  for (const bad of ["abfss://../../secret.yaml", "abfss://x/../../secret.bim", "/home/me/secret.yaml", "/cache/models/../secret.yaml"]) {
+    const r = await keep(bad);
+    assert.equal(r.type, "error", bad);
+    assert.match(r.message, /not a semantic model's local copy/, bad);
+  }
+  assert.deepEqual(kept, [inLake, "/cache/models/a/ws/m.yaml"]);
+});
+
 test("a failure is posted, never dropped, and a Stop says so", async () => {
   const { ask } = fixture();
   const [r] = await ask("onelake.table", [null]);

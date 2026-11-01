@@ -171,4 +171,6 @@ vs.postMessage({ ready: true });
 </script></body></html>`;
 }
 
-module.exports = { openLogs };
+const closeLogs = () => { if (current) current.dispose(); };
+
+module.exports = { openLogs, closeLogs };

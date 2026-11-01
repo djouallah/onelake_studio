@@ -145,4 +145,6 @@ vs.postMessage({ ready: true });
 </script></body></html>`;
 }
 
-module.exports = { openPerformance };
+const closePerformance = () => { if (current) current.dispose(); };
+
+module.exports = { openPerformance, closePerformance };

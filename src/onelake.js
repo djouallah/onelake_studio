@@ -104,7 +104,7 @@ async function walkCached(cached) {
 }
 
 function createOneLake({ catalog, store, prefetchEnabled = () => true, onHit = () => {},
-                         tableTtlMs = undefined, listingTtlMs = 5 * 60 * 1000, fabric = null, isOffline = () => false }) {
+                         tableTtlMs = undefined, listingTtlMs = 5 * 60 * 1000, refreshing = () => true, fabric = null, isOffline = () => false }) {
   // The store is the account's: a different sign-in swaps it (useStore) and every listener
   // follows, so nothing above this module has to know an account changed.
   const subs = [];   // { ev, fn, off }
@@ -169,7 +169,7 @@ function createOneLake({ catalog, store, prefetchEnabled = () => true, onHit = (
   // the caller, and a miss reaches the fetcher, whose request fails at once (http.js).
   async function get(key, fetcher, o) {
     const t0 = Date.now();
-    const r = await store.get(key, fetcher, isOffline() ? { ...o, fresh: false, ttl: Infinity } : o);
+    const r = await store.get(key, fetcher, isOffline() ? { ...o, fresh: false, ttl: Infinity } : refreshing() ? o : { ...o, ttl: Infinity });
     if (r.cached) { try { onHit({ cache: 'hit', ms: Date.now() - t0, path: key.split('\u0000').join(' ') }); } catch (_) {} }
     return r;
   }

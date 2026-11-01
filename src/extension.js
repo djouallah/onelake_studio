@@ -21,8 +21,8 @@ const { createHash, randomBytes } = require('node:crypto');
 const fsp = require('node:fs/promises');
 const { quoteIdent, sqlStr } = require('./sql');
 const { openPanel, setPanelTitle, nameActiveTab, closePanel, revealPanel, panelOpen, postToPanel, postLive, panelSettings } = require('./panel');
-const { openPerformance } = require('./performance');
-const { openLogs } = require('./logs');
+const { openPerformance, closePerformance } = require('./performance');
+const { openLogs, closeLogs } = require('./logs');
 const { createCatalog } = require('./catalog');
 const { createStore } = require('./store');
 const { createCatalogFile, catalogFileOf, stateFileOf } = require('./catalogfile');
@@ -582,12 +582,14 @@ function engineBootOptions(context, account, readme) {
 // `readme` is the one file outside DuckDB's own directories the engine may read (the
 // landing query) — see the lockdown in engine-host.js.
 function ensureEngine(context, { readme } = {}) {
+  // Being stopped: one started now would be stopped too, or left over what is about to be deleted.
+  if (resetting) return null;
   // An engine holds its account's token and disk cache: one built before the account moved
   // is closed, with the panel over it, never handed to the new account.
   if (engine && engineAccount !== fileCacheAccount) {
     const old = engine;
     engine = null;
-    closePanel();
+    closeAllTabs();
     old.close({ stop: true }).catch(() => {});
   }
   if (engine) return engine;
@@ -630,12 +632,23 @@ function ensureEngine(context, { readme } = {}) {
 // hold the access token BY VALUE, so an engine that outlives the sign-out keeps reading
 // OneLake for as long as the token lasts. ensureEngine builds it again on the next open, in
 // a few seconds. On the shared engine that means stopping the server, unless it has gone already.
+let resetting = 0;
 async function resetEngine({ stop = true } = {}) {
-  const e = engine;
-  engine = null;
-  if (e) await e.close({ stop }).catch(() => {});
-  // A window with only the tree open isn't joined to the server, and another window may have one.
-  if (stop) await stopServers().catch(() => {});
+  resetting++;
+  try {
+    const e = engine;
+    engine = null;
+    if (e) await e.close({ stop }).catch(() => {});
+    // A window with only the tree open isn't joined to the server, and another window may have one.
+    if (stop) await stopServers().catch(() => {});
+  } finally { resetting--; }
+}
+
+// Every tab of this window, for an account that is going: Logs and Performance show what it ran too.
+function closeAllTabs() {
+  closePanel();
+  closeLogs();
+  closePerformance();
 }
 
 // Points the store and the engine's disk cache at the account now signed in; a no-op when
@@ -684,7 +697,7 @@ async function show(context, { newTab = false, ...options } = {}) {
     { dev: context.extensionMode === vscode.ExtensionMode.Development });
   const eng = ensureEngine(context, { readme: readme.fsPath });
   if (!eng) return false;
-  await openPanel(context, {
+  const opened = await openPanel(context, {
     newTab,
     onOpened: logOpened, onBoot: logBoot, engine: eng, build: buildInfo,
     // The text the last tab closed with, for a tab opened to write in. One opened for what was
@@ -728,7 +741,7 @@ async function show(context, { newTab = false, ...options } = {}) {
         });
     },
   });
-  return true;
+  return !!opened;
 }
 
 // Where a semantic model's local copy is kept (fetchModel), for the tree, the command line
@@ -961,6 +974,9 @@ async function activateInner(context) {
   signedIn = !!knownAccount();
   vscode.commands.executeCommand('setContext', 'onelakeStudio.signedIn', signedIn);
   let storeAccount = (knownAccount() || {}).key || null;
+  // Whether the account provider has said who is signed in. Until it has, nothing is refreshed behind
+  // the tree: with no session, that would only note failures against listings that are fine.
+  let sessionAsked = false;
   // The saved queries' account (queriesFolder): its own folder, by its sign-in name.
   let queryAccount = (knownAccount() || {}).queries || null;
   fileCacheRoot = fileCacheRootFor(context);
@@ -972,6 +988,7 @@ async function activateInner(context) {
     prefetchEnabled: () => vscode.workspace.getConfiguration('onelakeStudio').get('prefetchMetadata', true),
     tableTtlMs,
     listingTtlMs: catalogTtlMs,
+    refreshing: () => sessionAsked,
     // A workspace's semantic models are a listing too, kept in the same store.
     fabric,
     isOffline: () => connectivity.offline(),
@@ -1030,6 +1047,9 @@ async function activateInner(context) {
   // One at a time: two callers at once could both see the old account, or one return while
   // the other was still moving the store.
   rebindStore = serialized(async function rebindStore() {
+    // No internet: a provider refreshing a token could only hang, every click behind it, and nobody
+    // can sign in as anyone else meanwhile.
+    if (connectivity.noInternet()) return;
     const session = await getSession({ createIfNone: false }).catch(() => null);
     rememberAccount(session);
     // No session is not another account: the last one's cache is what there is to show.
@@ -1040,6 +1060,7 @@ async function activateInner(context) {
     // new account's answers into the old account's store.
     fileCacheAccount = key;   // the engine picks it up when it is next built
     onelake.useStore(storeFor(key));
+    semviews.useAccount(key);
     importKept(context, key, jsonStoreOf(key), hostCacheOf(key));
     syncWorker.reset();
     namesKept = null;
@@ -1051,7 +1072,6 @@ async function activateInner(context) {
     await adoptLooseQueries().catch(() => {});
     tree.queriesChanged();
     if (engine) engine.catalogChanged();
-    semviews.useAccount(key);
     await adoptModels();
   });
   // What the store holds moved: the engine's catalog is listed again before the next
@@ -1194,12 +1214,12 @@ async function activateInner(context) {
         if (was !== !!session || storeAccount !== before) tree.redraw();
         if (!session) {
           if (!was) return;
-          closePanel();
+          closeAllTabs();
           await resetEngine();
           vscode.window.showInformationMessage(
             'OneLake Studio signed out: the Microsoft account is no longer available. What this machine has cached is still here.');
         } else if (engine && storeAccount !== before) {
-          closePanel();
+          closeAllTabs();
           await resetEngine();
           vscode.window.showInformationMessage(
             `OneLake Studio is now using ${session.account.label}.`);
@@ -1415,7 +1435,7 @@ async function activateInner(context) {
     engine: async () => {
       const { readme } = await webviewRoot(context.extensionUri, { dev });
       const eng = ensureEngine(context, { readme: readme.fsPath });
-      if (!eng) throw new Error('DuckDB could not be loaded on this platform — see OneLake Studio: Show Read Log');
+      if (!eng) throw new Error(resetting ? 'the engine is restarting: try again in a moment' : 'DuckDB could not be loaded on this platform — see OneLake Studio: Show Read Log');
       return eng;
     },
     appDir: (await webviewRoot(context.extensionUri, { dev })).page.fsPath,
@@ -1510,7 +1530,10 @@ async function activateInner(context) {
       // lineWidth 0: a long DAX expression stays on its lines, not folded to the page's width.
       const text = compiler.stringifyYaml(compiler.tmslToOssie(doc, n.model), { lineWidth: 0 });
       await fsp.mkdir(dirname(path), { recursive: true });
-      await fsp.writeFile(path, text);
+      // Whole or not at all: this file is what later opens trust, with nothing to say it was cut short.
+      const partial = `${path}.${process.pid}.tmp`;
+      await fsp.writeFile(partial, text);
+      await fsp.rename(partial, path).catch(async e => { await fsp.rm(partial, { force: true }).catch(() => {}); throw e; });
       if (out) out.appendLine(`downloaded ${n.workspace}/${n.model} -> ${path} (${fmtBytes(Buffer.byteLength(text))})`);
       tree.modelChanged(n);
       return { path, text };
@@ -1649,6 +1672,10 @@ async function activateInner(context) {
   exportExplore = async ({ file, name, text, state, workspace, path, model }) => {
     const declined = message => Object.assign(new Error(message), { declined: true });
     try {
+      // The one thing that can't work from what is held, said before anything is asked.
+      if (connectivity.offline()) {
+        throw new Error(`Export to Fabric needs a connection, and ${connectivity.noInternet() ? 'there is no internet' : 'you are not signed in'}.`);
+      }
       // A model opened from its local copy is not in OneLake yet: it is written into its
       // lakehouse (modelTarget) once every question below has been answered — the one write
       // to OneLake a semantic model ever gets.
@@ -1866,7 +1893,6 @@ async function activateInner(context) {
   // not wait for its boot: not at activation, which every window goes through, and not before the
   // tree has drawn and the session is known. An engine already there is left alone: ensureEngine
   // could close its panel over a moved account.
-  let sessionAsked = false;
   let warming = false;
   const warmEngine = async () => {
     if (warming || engine || !signedIn) return;
@@ -2034,7 +2060,8 @@ async function activateInner(context) {
       const path = queryPath(picked);
       if (!await mayReplace(path, n.label)) return;
       try {
-        await fsp.rm(path, { force: true });
+        // Replaces what's there, if that was agreed. An rm first would take the only copy when the name
+        // differs by case alone, on a disk that ignores it.
         await fsp.rename(n.path, path);
         postLive({ type: 'query-renamed', from: n.label, to: queryStem(picked) });
       } catch (e) {
@@ -2121,10 +2148,18 @@ async function activateInner(context) {
     vscode.commands.registerCommand('onelakeStudio.signIn', async () => {
       try {
         await getToken({ createIfNone: true });
-        await setSignedIn(!!await getToken({ createIfNone: false }));
-        await rebindStore();
-        tree.redraw();
-        warmIfWanted();
+        await accountTurn(async () => {
+          await setSignedIn(!!await getToken({ createIfNone: false }));
+          const before = storeAccount;
+          await rebindStore();
+          // What was open read the last account's cache, and must not go on with this one's token.
+          if (engine && storeAccount !== before) {
+            closeAllTabs();
+            await resetEngine();
+          }
+          tree.redraw();
+          warmIfWanted();
+        });
       } catch (e) {
         showError(`Could not sign in: ${(e && e.message) || e}`);
       }
@@ -2137,7 +2172,7 @@ async function activateInner(context) {
         await context.globalState.update(SIGNED_OUT_KEY, true);
         forgetToken();
         await setSignedIn(false);
-        closePanel();
+        closeAllTabs();
         await resetEngine();
         tree.redraw();
         warmIfWanted();
@@ -2159,10 +2194,12 @@ async function activateInner(context) {
         // Now the teardown is FOR something: the panel on screen and the engine's secrets
         // belong to the account being left. Its cache does not need deleting — it is that
         // account's own directory, and the new account gets its own.
-        closePanel();
+        closeAllTabs();
         forgetToken();
-        await resetEngine();
+        // The store before anything waits: from here a token is the new account's, and what a background
+        // read brings back with it must not land in the old account's catalog.
         await rebindStore();
+        await resetEngine();
         tree.redraw();
         await showWithProgress({ createIfNone: true });
         await setSignedIn(!!await getToken({ createIfNone: false }));
@@ -2199,11 +2236,13 @@ async function activateInner(context) {
             forgetToken();
             fabric.reset();
             sqlTables.forget();
+            // Whether there is a session in this tenant, which nothing else asks: no internet can't say.
+            if (!connectivity.noInternet()) await setSignedIn(!!await getToken({ createIfNone: false }));
             await rebindStore();
             refreshTitle();
             tree.redraw();
             if (engine) {
-              closePanel();
+              closeAllTabs();
               await resetEngine();
             }
           } catch (err) {
@@ -2262,6 +2301,9 @@ async function activateInner(context) {
   // a session change.
   out.mark('activation code ran');
   importKept(context, storeAccount, jsonStoreOf(storeAccount), hostCacheOf(storeAccount));
+  // Now, not after the provider has answered: a click in those seconds with no internet shouldn't wait
+  // on a request's timeout to find out.
+  if (!signedOutByChoice()) connectivity.check();
   (async () => {
     const answered = await inTime(getSession({ createIfNone: false }).then(s => ({ s }), () => ({ s: null })), SESSION_WAIT_MS, () => sessionChanged());
     // At startup the account provider can still be starting, and says there is no session when there

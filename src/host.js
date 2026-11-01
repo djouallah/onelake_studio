@@ -22,7 +22,7 @@
 
 const { relative, resolve, isAbsolute } = require('node:path');
 // A target from the page, reduced to the strings it may carry.
-const { sqlNameOf } = require('./names');
+const { sqlNameOf, ONELAKE_FILE_URL } = require('./names');
 
 const lhOf = x =>({ workspace: String(x.workspace), item: String(x.item) });
 const tableOf = x => ({ schema: String(x.schema || ''), table: String(x.table) });
@@ -88,7 +88,7 @@ function createHostMethods({ onelake, engine, onStatus = () => {}, saveFile = nu
       if (!x.schema) throw new Error('a semantic model is kept in its workspace');
       const path = String(x.path);
       // The page names a model's local copy or a OneLake file — never any other file on disk.
-      if (modelsDir && !/^abfss:\/\//i.test(path)) {
+      if (modelsDir && !ONELAKE_FILE_URL.test(path)) {
         const rel = relative(resolve(modelsDir), resolve(path));
         if (!rel || rel.startsWith('..') || isAbsolute(rel)) throw new Error(`${path}: not a semantic model's local copy`);
       }

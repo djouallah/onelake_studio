@@ -27,6 +27,9 @@ const DFS_HOST = "onelake.dfs.fabric.microsoft.com";
 const DFS_ORIGIN = `https://${DFS_HOST}`;
 const dfsFileUrl = (workspace, path, origin = DFS_ORIGIN) => `${origin}/${encodeURIComponent(workspace)}/${encPath(path)}`;
 const abfssUrl = (workspace, path) => `abfss://${workspace}@${DFS_HOST}/${path}`;
+// A file in OneLake, with its workspace and its path. `abfss://../../x` isn't one: as a path, the system
+// would take it to a file on this machine.
+const ONELAKE_FILE_URL = /^abfss:\/\/([^@/]+)@onelake\.dfs\.fabric\.microsoft\.com\/(.+)$/i;
 
 
 // -----------------------------------------------------------------------------
@@ -304,7 +307,7 @@ function fmtBytes(n) {
 }
 
 module.exports = {
-  strip, basename, stripBom, encPath, DFS_HOST, DFS_ORIGIN, dfsFileUrl, abfssUrl,
+  strip, basename, stripBom, encPath, DFS_HOST, DFS_ORIGIN, dfsFileUrl, abfssUrl, ONELAKE_FILE_URL,
   itemKind, holdsTables, isMirrored, hasFilesArea, kindLabel,
   SQL_KINDS, sqlKind, displayName, isStaging, RESERVED, sqlPart, sqlName, sqlNameOf, fileSqlName, fileNamesIn, MODEL_CATALOG, modelSqlName,
   icebergTypeName, icebergFields, snapshotStats, sourceFormat, icebergHistory,
