@@ -16,6 +16,7 @@ import { escapeHtml, toCsv } from './paths.js';
 
 const NUMERIC_TYPE = /^(U?(TINY|SMALL|BIG|HUGE)INT|U?INTEGER|DOUBLE|FLOAT|DECIMAL)/;
 const OVERSCAN = 20;   // rows drawn above and below what is in view
+const FILTER_AT_ONCE = 20_000;   // rows a filter looks through on every key, with no pause first
 
 // A cell as text: what the grid shows, and what every copy writes.
 export function cellText(v) {
@@ -101,7 +102,7 @@ export function mountGrid(table, wrap, res, { ui, copyText, say = () => {}, grou
   const head = () => '<thead><tr><th class="rn" title="Select every cell">#</th>' + fields.map((f, i) => {
     const t = types[i] || '';
     const by = sort && sort.col === i;
-    return `<th class="${NUMERIC_TYPE.test(t) ? 'num' : ''}" title="${escapeHtml(f + ' ' + t)} — click to sort"` +
+    return `<th tabindex="0" class="${NUMERIC_TYPE.test(t) ? 'num' : ''}" title="${escapeHtml(f + ' ' + t)} — click, or Enter, to sort"` +
       (by ? ` aria-sort="${sort.desc ? 'descending' : 'ascending'}"` : '') + '>' +
       `<span class="cname">${escapeHtml(f)}${by ? (sort.desc ? ' ▼' : ' ▲') : ''}</span>` +
       `<span class="ctype">${escapeHtml(t)}</span></th>`;
@@ -132,7 +133,7 @@ export function mountGrid(table, wrap, res, { ui, copyText, say = () => {}, grou
       const row = view[r];
       // A row's number is marked while any of its cells is selected.
       const inRows = !!g && r >= g.r0 && r <= g.r1;
-      html += `<tr data-r="${r}" class="${r % 2 ? 'odd' : ''}"><td class="rn${inRows ? ' sel' : ''}">${r + 1}</td>`;
+      html += `<tr data-r="${r}" aria-rowindex="${r + 2}" class="${r % 2 ? 'odd' : ''}"><td class="rn${inRows ? ' sel' : ''}">${r + 1}</td>`;
       for (let c = 0; c < fields.length; c++) {
         const v = row[fields[c]];
         const cls = (typeof v === 'number' ? 'num' : '') + (selected(r, c) ? ' sel' : '');
@@ -152,6 +153,8 @@ export function mountGrid(table, wrap, res, { ui, copyText, say = () => {}, grou
 
   function draw() {
     table.innerHTML = head() + '<tbody></tbody>';
+    // Only the rows in view are in the table: this says how many there are.
+    table.setAttribute('aria-rowcount', String(view.length + 1));
     start = end = -1;
     paint(true);
     ui.count.textContent = view.length === res.rows.length
@@ -189,9 +192,11 @@ export function mountGrid(table, wrap, res, { ui, copyText, say = () => {}, grou
     body.textContent = inspectText(v);
     root.hidden = false;
     ui.inspector.copy.onclick = () => { copyText(body.textContent); say(`Copied ${fields[c]}.`); };
+    ui.inspector.close.focus();
   }
-  const closeInspector = () => { ui.inspector.root.hidden = true; };
+  const closeInspector = () => { ui.inspector.root.hidden = true; wrap.focus({ preventScroll: true }); };
   ui.inspector.close.onclick = closeInspector;
+  ui.inspector.root.onkeydown = e => { if (e.key === 'Escape') closeInspector(); };
 
   const cellAt = el => {
     const td = el.closest('td');
@@ -237,20 +242,33 @@ export function mountGrid(table, wrap, res, { ui, copyText, say = () => {}, grou
     const at = cellAt(e.target);
     if (at && !selected(at.r, Math.max(at.c, 0))) select(at, false);
   };
-  const onScroll = () => paint();
+  // Once a frame, however fast the scroll events come.
+  let frame = 0;
+  const onScroll = () => { if (!frame) frame = requestAnimationFrame(() => { frame = 0; paint(); }); };
   wrap.addEventListener('scroll', onScroll, { passive: true });
   const onKey = e => {
     if (!ui.inspector.root.hidden && e.key === 'Escape') { closeInspector(); return; }
     // A document, the Stats card or a chart in its place keeps its own Ctrl+C and Ctrl+A.
     if (table.hidden || !(e.target === wrap || table.contains(e.target))) return;
+    const th = e.target.closest && e.target.closest('thead th');
+    if (th && (e.key === 'Enter' || e.key === ' ')) {
+      e.preventDefault();
+      // Drawing again replaces the header, so the focus goes back to the same column's.
+      const at = th.cellIndex;
+      th.click();
+      if (table.tHead) table.tHead.rows[0].cells[at].focus();
+      return;
+    }
     const mod = e.ctrlKey || e.metaKey;
     if (mod && e.key.toLowerCase() === 'c') { e.preventDefault(); copy(e.shiftKey ? 'tsv-headers' : 'tsv'); return; }
     if (mod && e.key.toLowerCase() === 'a') { e.preventDefault(); anchor = { r: 0, c: 0 }; focus = { r: view.length - 1, c: fields.length - 1 }; paint(true); return; }
     if (e.key === 'Escape') { anchor = focus = null; paint(true); return; }
     if (e.key === 'Enter' && focus && focus.c >= 0) { inspect(focus.r, focus.c); return; }
     const move = { ArrowUp: [-1, 0], ArrowDown: [1, 0], ArrowLeft: [0, -1], ArrowRight: [0, 1] }[e.key];
-    if (!move || !focus) return;
+    if (!move) return;
     e.preventDefault();
+    // The first arrow key starts at the first cell: the keyboard needs no click first.
+    if (!focus) { if (view.length) select({ r: 0, c: 0 }, false); return; }
     const next = { r: Math.min(view.length - 1, Math.max(0, focus.r + move[0])),
                    c: Math.min(fields.length - 1, Math.max(0, focus.c + move[1])) };
     if (e.shiftKey) focus = next; else { anchor = next; focus = next; }
@@ -260,7 +278,14 @@ export function mountGrid(table, wrap, res, { ui, copyText, say = () => {}, grou
   wrap.tabIndex = 0;
   wrap.addEventListener('keydown', onKey);
   ui.filter.value = '';
-  ui.filter.oninput = () => { filterText = ui.filter.value; refilter(); };
+  // Every row is looked through on each change, so a large result waits for a pause in the typing.
+  let typing = null;
+  ui.filter.oninput = () => {
+    filterText = ui.filter.value;
+    clearTimeout(typing);
+    if (res.rows.length < FILTER_AT_ONCE) refilter();
+    else typing = setTimeout(refilter, 200);
+  };
   ui.filter.parentElement.hidden = false;
   // What the webview's context menu runs on: the grid (package.json webview/context).
   table.dataset.vscodeContext = JSON.stringify({ webviewSection: 'grid', preventDefaultContextMenuItems: true });

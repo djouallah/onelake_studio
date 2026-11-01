@@ -185,7 +185,7 @@ export function renderProfile(root, prof, colors) {
 export function createPlanView(ctx) {
   const body = el('div', { class: 'pf-body' });
   const tabs = [['profile', 'Profile'], ['tree', 'Tree']];
-  const buttons = tabs.map(([k, t]) => el('button', { type: 'button', class: 'pf-tab', 'data-view': k, onclick: () => show(k) }, t));
+  const buttons = tabs.map(([k, t]) => el('button', { type: 'button', role: 'tab', class: 'pf-tab', 'data-view': k, onclick: () => show(k) }, t));
   const root = el('div', { class: 'pf-view' }, el('div', { class: 'pf-tabs', role: 'tablist' }, buttons), body);
   // done: each tab's view once it is in; waiting: its spinner while it is under way, so a
   // second click shows that again rather than run the query once more.

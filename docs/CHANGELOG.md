@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- **A failed query's whole error is in the pane,** rather than one cut-off line in the status bar. A long-running query
+  says how many rows have arrived. A table's first rows can be charted, profiled and exported.
+- **The box keeps its undo** when something is put in it, and Esc then Tab leaves it by keyboard.
+- **A Pivot by keyboard.** R, C, F or V on a field puts it on a shelf, Delete takes a chip off, and Alt+arrow moves it.
+  Tables stay open as you left them, a newer view stops the older query, a failed view says why in the view, and a
+  view too large to draw says so rather than hanging.
+- **The grid by keyboard.** Enter sorts by a header, and an arrow key starts the selection. Screen readers hear the status
+  line and how many rows there are.
+- **Colours that follow the theme** for measures and popups, and readable text in Light and High Contrast.
 - **A Fabric app reads only its model's tables.** Its function signed one read-only SAS over all of the lakehouse's
   `Tables/`. It now signs one per table the model names, and refuses any other. Export again to get this.
 - **`h3` and `zipfs` ship in the vsix,** so a zip file reads offline from the first start and nothing is downloaded at

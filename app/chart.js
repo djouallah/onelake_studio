@@ -57,6 +57,7 @@ export async function mountChart(root, res, { echarts, css, say = () => {} }) {
     const num = v => (v == null || v === '' ? null : Number(v));
     const xNumeric = type === 'scatter' && nums.includes(x);
     chart.setOption({
+      aria: { enabled: true },
       color: PALETTE,
       tooltip: { trigger: type === 'scatter' ? 'item' : 'axis' },
       legend: ys.length > 1 ? { top: 0 } : undefined,

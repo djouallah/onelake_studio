@@ -20,6 +20,7 @@ import { escapeHtml, quoteIdent as qid, sqlStr, sqlPart as bare } from '../paths
 const esc = v => escapeHtml(v == null ? '' : String(v));
 
 const CAP = 5000;             // rows asked for at most
+const MAX_CELLS = 200_000;    // cells a pivot's table draws at most
 const SERIES_CAP = 24;        // series a chart draws at most
 const MULTIPLES = 4;          // measures a chart draws, one plot each
 const ROW_TOTAL = '__rows_total', COL_TOTAL = '__columns_total';
@@ -273,7 +274,7 @@ export function createExplorer(root, ctx) {
   const shelfEls = Object.fromEntries(SHELVES.map(([k, t]) => [k, el('div', { class: 'ex-drop', 'data-shelf': k })]));
   const shelves = el('div', { class: 'ex-shelves' }, SHELVES.map(([k, t]) =>
     el('div', { class: 'ex-shelf' }, el('span', { class: 'ex-shelf-name' }, t), shelfEls[k])));
-  const marks = el('div', { class: 'ex-marks', role: 'radiogroup', 'aria-label': 'Show me' });
+  const marks = el('div', { class: 'ex-marks', role: 'group', 'aria-label': 'Show me' });
   const totals = el('input', { type: 'checkbox' });
   const sort = el('select', { 'aria-label': 'Sort' }, el('option', { value: 'fields' }, 'Sort by fields'),
     el('option', { value: 'desc' }, 'Sort by first value ↓'));
@@ -298,7 +299,7 @@ export function createExplorer(root, ctx) {
   totals.addEventListener('change', () => { state.totals = totals.checked; changed(); });
   sort.addEventListener('change', () => { state.sort = sort.value; changed(); });
   for (const [k, m] of MARKS) {
-    marks.append(el('button', { type: 'button', class: 'ex-mark', role: 'radio', 'data-mark': k,
+    marks.append(el('button', { type: 'button', class: 'ex-mark', 'data-mark': k,
       onclick: () => { state.mark = k; save(); renderControls(); draw(); } }, m));
   }
 
@@ -375,14 +376,43 @@ export function createExplorer(root, ctx) {
     place({ id: f.id }, shelf, null);
   }
 
+  // The keyboard's way to the shelves, as a drag is the mouse's. Everything is drawn again after a
+  // change, so the focus goes back to the field.
+  const openTables = new Map();
+  const focusField = id => list.querySelector(`[data-field="${CSS.escape(id)}"]`)?.focus();
+  function fieldKey(e, f) {
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    const to = { r: 'rows', c: 'cols', f: 'filters', v: 'values' }[e.key.toLowerCase()];
+    if (!to || (f.kind === 'measure' && to !== 'values')) return;
+    e.preventDefault();
+    place({ id: f.id }, to, null);
+    if (to !== 'filters') focusField(f.id);
+  }
+  // A chip by keyboard: Delete takes it off, Alt+arrow moves it along its shelf.
+  function chipKey(e, k, i) {
+    const list = state[k];
+    if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); removeAt(k, i); focusChip(k, Math.min(i, list.length - 1)); return; }
+    const by = e.altKey ? { ArrowLeft: -1, ArrowRight: 1 }[e.key] : 0;
+    if (!by || i + by < 0 || i + by >= list.length) return;
+    e.preventDefault();
+    const [moved] = list.splice(i, 1);
+    list.splice(i + by, 0, moved);
+    changed();
+    focusChip(k, i + by);
+  }
+  const focusChip = (k, i) => shelfEls[k].querySelector(`.ex-chip[data-index="${i}"] .ex-chip-name`)?.focus();
+
   // --- Rendering the controls ---
   function renderFields() {
     if (!fields) return;
     const term = search.value.trim().toLowerCase();
     const used = new Set([...state.rows, ...state.cols, ...state.values]);
     const item = f => {
+      const shelvesFor = f.kind === 'measure' ? 'V: Values' : 'R: Rows, C: Columns, F: Filters, V: Values';
       const b = el('button', { type: 'button', class: `ex-field${used.has(f.id) ? ' ex-used' : ''}${f.derived ? ' ex-derived' : ''}`,
-        draggable: 'true', title: f.description ?? f.id, onclick: () => add(f) },
+        draggable: 'true', 'data-field': f.id, 'aria-keyshortcuts': f.kind === 'measure' ? 'V' : 'R C F V',
+        title: `${f.description ?? f.id} (${shelvesFor})`, onclick: () => { add(f); focusField(f.id); },
+        onkeydown: e => fieldKey(e, f) },
         // Under the column it is worked out from, by what it is of it.
         f.derived ? el('span', { class: 'ex-derived-of', 'aria-hidden': 'true' }, '↳') : null,
         el('span', { class: `ex-icon ex-${f.type}` }, ICONS[f.type]),
@@ -395,9 +425,13 @@ export function createExplorer(root, ctx) {
       const cols = t.columns.filter(f => !term || `${t.name} ${f.name}`.toLowerCase().includes(term));
       const ms = t.measures.filter(f => !term || `${t.name} ${f.name}`.toLowerCase().includes(term));
       if (!cols.length && !ms.length) return null;
-      return el('details', { class: 'ex-table-group', open: term || t.dimension ? true : null },
+      // Open as it was left, so adding a field doesn't close the table it came from.
+      const open = term || (openTables.has(t.name) ? openTables.get(t.name) : t.dimension || fields.tables.length === 1);
+      const group = el('details', { class: 'ex-table-group', open: open ? true : null },
         el('summary', {}, t.name, t.kind && el('span', { class: 'ex-kind' }, t.kind)),
         cols.map(item), ms.map(item));
+      group.addEventListener('toggle', () => { if (!search.value.trim()) openTables.set(t.name, group.open); });
+      return group;
     }).filter(Boolean));   // a table with nothing matching the search draws nothing, not "null"
   }
   function chipText(shelf, i) {
@@ -421,7 +455,7 @@ export function createExplorer(root, ctx) {
         const summed = k === 'values' && f?.agg;
         const derived = f?.derived ?? f?.column?.derived;
         const chip = el('span', { class: `ex-chip${f?.kind === 'measure' ? ' ex-measure' : ''}${f ? '' : ' ex-missing'}${derived ? ' ex-derived' : ''}`,
-          draggable: 'true', 'data-index': i,
+          draggable: 'true', 'data-index': i, onkeydown: e => chipKey(e, k, i),
           title: !f ? `${nameOf(entry(k, i))}: not in the model`
             : summed ? `${f.column.id}: click to change how it is summarised` : entry(k, i) },
           el('button', { type: 'button', class: 'ex-chip-name', onclick: e => {
@@ -445,7 +479,7 @@ export function createExplorer(root, ctx) {
     for (const b of marks.children) {
       const on = b.dataset.mark === state.mark;
       b.classList.toggle('active', on);
-      b.setAttribute('aria-checked', String(on));
+      b.setAttribute('aria-pressed', String(on));
       b.classList.toggle('ex-auto', state.mark === 'auto' && b.dataset.mark === auto);
     }
   }
@@ -463,7 +497,9 @@ export function createExplorer(root, ctx) {
     document.body.append(pop);
     const r = anchor.getBoundingClientRect();
     pop.style.left = `${Math.max(8, Math.min(r.left, innerWidth - pop.offsetWidth - 8))}px`;
-    pop.style.top = `${r.bottom + 6}px`;
+    // Kept on screen, and the keyboard goes with it: its Esc works only from inside it.
+    pop.style.top = `${Math.max(8, Math.min(r.bottom + 6, innerHeight - pop.offsetHeight - 8))}px`;
+    pop.querySelector('input, select, button')?.focus();
     popTimer = setTimeout(() => document.addEventListener('pointerdown', outside, true));
   }
 
@@ -548,7 +584,7 @@ export function createExplorer(root, ctx) {
       } catch (e) { if (!stale()) detail.replaceChildren(el('div', { class: 'ex-error' }, e.message)); return; }
       if (stale()) return;
       const picked = new Set(draft.values);
-      const find = el('input', { type: 'search', placeholder: 'Search values' });
+      const find = el('input', { type: 'search', placeholder: 'Search values', 'aria-label': 'Search values' });
       const boxes = el('div', { class: 'ex-values' });
       const show = () => boxes.replaceChildren(...values.filter(v => String(v).toLowerCase().includes(find.value.toLowerCase())).map(v => {
         const c = el('input', { type: 'checkbox', checked: picked.has(v) });
@@ -590,15 +626,23 @@ export function createExplorer(root, ctx) {
     tick();
     ticker = setInterval(tick, 1000);
   }
+  // Why there is no result, in the view rather than only beside the controls.
+  let failure = null;
+  let inFlight = 0;
   async function run() {
     const my = ++seq;
+    failure = null;
     let q;
     try {
       q = buildQuery(state);
-    } catch (e) { running(false); result = null; info.textContent = e.message; info.className = 'ex-info ex-error'; draw(); return; }
+    } catch (e) { running(false); result = null; failure = e.message; info.textContent = e.message; info.className = 'ex-info ex-error'; draw(); return; }
     if (!q) { running(false); result = null; info.textContent = ''; draw(); return; }
     info.className = 'ex-info';
+    // Nobody is waiting for the older one now. A popup's list of values may be running too, and a
+    // Stop reaches everything this tab runs, so then the older one finishes.
+    if (inFlight && !pop && ctx.cancel) ctx.cancel();
     running(true);
+    inFlight++;
     try {
       let rows = await ctx.run(sqlOf(q), q.where ?? []);
       if (my !== seq) return;
@@ -619,6 +663,7 @@ export function createExplorer(root, ctx) {
       info.textContent = rows.length >= CAP
         ? `First ${n.toLocaleString()} rows: add a filter for all of them${note}`
         : `${n.toLocaleString()} row${n === 1 ? '' : 's'}`;
+      info.classList.toggle('ex-warn', rows.length >= CAP);
       draw();
     } catch (e) {
       if (my !== seq) return;
@@ -627,8 +672,9 @@ export function createExplorer(root, ctx) {
       info.className = 'ex-info ex-error';
       info.textContent = e.cancelled ? 'Stopped.'
         : e.message?.includes('Out of Memory') ? 'Out of memory: add a filter.' : `Error: ${e.message}`;
+      failure = info.textContent;
       draw();
-    }
+    } finally { inFlight--; }
   }
 
   // --- Drawing ---
@@ -638,8 +684,9 @@ export function createExplorer(root, ctx) {
     if (!result) {
       chartBox.hidden = true;
       table.hidden = false;
-      table.replaceChildren(el('div', { class: 'ex-empty' }, fields
-        ? 'Drag columns onto Rows and Columns and measures onto Values, or click a field to add it.' : 'Reading the model…'));
+      table.replaceChildren(failure ? el('div', { class: 'ex-empty ex-error' }, failure)
+        : el('div', { class: 'ex-empty' }, fields
+          ? 'Drag columns onto Rows and Columns and measures onto Values, or click a field to add it. By keyboard: R, C, F or V on a field.' : 'Reading the model…'));
       return;
     }
     const s = result.state, mark = state.mark === 'auto' ? autoMark(s, fields) : state.mark;
@@ -660,7 +707,7 @@ export function createExplorer(root, ctx) {
     table.hidden = true;
     chartBox.hidden = false;
     const chart = ctx.chart(chartBox);
-    chart.setOption(option, true);
+    chart.setOption({ aria: { enabled: true }, ...option }, true);
     chart.resize();
   }
 
@@ -669,6 +716,13 @@ export function createExplorer(root, ctx) {
     const measures = s.values, rowNames = s.rows.map(nameOf);
     const colKeys = [...piv.colKeys, ...(s.cols.length && piv.hasColTotal ? [null] : [])];
     const rowKeys = [...piv.rowKeys, ...(piv.hasRowTotal ? [null] : [])];
+    // Every cell is an element, and nothing here draws only what is in view.
+    const cells = rowKeys.length * Math.max(colKeys.length, 1) * Math.max(measures.length, 1);
+    if (cells > MAX_CELLS) {
+      table.replaceChildren(el('div', { class: 'ex-empty ex-error' },
+        `${rowKeys.length.toLocaleString()} rows by ${colKeys.length.toLocaleString()} columns is too many cells to draw: add a filter, or move a column to Rows.`));
+      return;
+    }
     const tint = ctx.palette()[0];
     const ranges = Object.fromEntries(measures.map(m => [m, extent(piv.rowKeys.flatMap(a => piv.colKeys.map(b => piv.cell(a, b)?.[nameOf(m)])))]));
     const t = el('table', { class: 'explore-table ex-pivot' });

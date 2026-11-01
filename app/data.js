@@ -620,20 +620,21 @@ export function createEngine({
   // The parsing and the guard live in paths.js, where they are tested: doing this with a
   // pair of regexes used to eat a /* */ that was part of a string value — changing the
   // result set with no error at all — and reject a perfectly legal SELECT 'a;b'.
-  async function runSql(sql) {
-    return materialize(prepareReadOnlySql(sql));
+  // `onRows` hears how many rows have arrived, for a result that takes a while.
+  async function runSql(sql, { onRows } = {}) {
+    return materialize(prepareReadOnlySql(sql), onRows);
   }
 
   // A statement's whole result as plain JS, in the shape the results grid renders.
   // Shared by user SQL (above, after the read-only guard) and the engine's own quick
   // peek, which builds its SQL itself.
-  async function materialize(clean) {
+  async function materialize(clean, onRows = () => {}) {
     // Cap what gets turned into JS objects. Everything downstream — the DOM table, the CSV
     // — works off this array, so an uncapped SELECT * on a large table takes the tab out.
     // The batches keep being drained past the cap: numRows is the size of the whole
     // result, and the message that says "stopped at N of M" needs a truthful M.
     const collected = rowCollector(maxRows);
-    const end = await stream(clean, batch => collected.add(batch));
+    const end = await stream(clean, batch => { collected.add(batch); onRows(collected.result().numRows); });
     return { ...collected.result(), asOf: end && Number.isFinite(end.asOf) ? end.asOf : null };
   }
 

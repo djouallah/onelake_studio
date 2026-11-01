@@ -87,6 +87,9 @@ function setStatus(msg, type = '') {
   el.title = msg;
   el.classList.toggle('clickable', type === 'error');
   el.onclick = type === 'error' ? () => el.classList.toggle('expanded') : null;
+  el.onkeydown = type === 'error' ? e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); el.classList.toggle('expanded'); } } : null;
+  if (type === 'error') { el.tabIndex = 0; el.setAttribute('role', 'button'); }
+  else { el.removeAttribute('tabindex'); el.setAttribute('role', 'status'); }
   if (type !== 'error') el.classList.remove('expanded');
 }
 
@@ -328,6 +331,7 @@ async function openModelView(file, text = null, { fromOneLake = text == null } =
     modelView = mountExplore($('modelView'), {
       name: m.name, title: m.file, tmsl: tmslOf(m.bim), compiler: m.exploreCompiler,
       run: runModelSql,
+      cancel: () => engine.cancelLoad(),
       echarts: loadEcharts,
       setStatus,
       saveText: (name, text) => engine.saveText(name, text),
@@ -564,6 +568,12 @@ async function peekIntoView() {
     tableStage = 'peek';
     docAllowed = false;             // a peek is a table, whatever shape it comes back
     renderResults(out);             // this lands the pane in the Data view by itself
+    // These rows are on screen like any others. Export and Profile go by the query, the whole table.
+    lastResult = out;
+    if (activeSqlName) currentSql = `SELECT * FROM ${activeSqlName}`;
+    $('chartBtn').disabled = !out.rows.length;
+    $('csvBtn').disabled = !out.rows.length || !currentSql;
+    $('profileBtn').disabled = !out.rows.length || !currentSql;
     reportOpened('rows', $('activeTable').textContent, Date.now() - t0);
     setStatus(`The first ${out.rows.length} row(s). Query the whole table in the box.`);
   } catch (e) {
@@ -683,11 +693,13 @@ async function runQuery({ sql, doc = true, ext = '' } = {}) {
   docSourceExt = ext;
   let t0 = performance.now();
   // Said at once, and counted, by the page alone: however long the host takes to answer, a click
-  // always shows it landed.
+  // always shows it landed. A result shows when it has all arrived, so how far it has got is said too.
   const asked = performance.now();
+  let rowsSoFar = 0;
   setStatus('Running…');
   const ticker = setInterval(() => {
-    if (!stale() && $('status').textContent.startsWith('Running')) setStatus(`Running… ${elapsed(asked)}`);
+    if (stale() || !$('status').textContent.startsWith('Running')) return;
+    setStatus(`Running… ${elapsed(asked)}${rowsSoFar ? `, ${rowsSoFar.toLocaleString('en')} rows so far` : ''}`);
   }, 1000);
   try {
     await engineReady;   // the box can send a query before the engine is up
@@ -701,7 +713,7 @@ async function runQuery({ sql, doc = true, ext = '' } = {}) {
     if (model) docAllowed = false;
     lastRun.rewritten = !!model;
     t0 = performance.now();
-    const res = await engine.runSql(model ? model.sql : sql);
+    const res = await engine.runSql(model ? model.sql : sql, { onRows: n => { rowsSoFar = n; } });
     if (stale()) return false;
     renderResults(res);
     lastResult = res;
@@ -729,7 +741,8 @@ async function runQuery({ sql, doc = true, ext = '' } = {}) {
       setStatus('Stopped.');
       return false;
     }
-    clearResults('(no result — the query failed)');
+    // The whole message, where it can wrap: the status line holds one line of it.
+    clearResults(e.message, { error: true });
     lastRun.error = e.message;
     setStatus('Query error: ' + e.message, 'error');
     console.error(e);
@@ -744,7 +757,7 @@ async function runQuery({ sql, doc = true, ext = '' } = {}) {
 
 // Empty the whole pane. Every path that ends without a result goes through here, so
 // nothing on screen ever belongs to a query other than the current one.
-function clearResults(hint = '') {
+function clearResults(hint = '', { error = false } = {}) {
   docSeq++;              // an in-flight showDoc() must not paint over this
   if (grid) { grid.destroy(); grid = null; }
   hideChart();
@@ -766,6 +779,7 @@ function clearResults(hint = '') {
   $('viewBar').hidden = !activeInfo;   // the table's tabs come back once the plan goes
   $('resultsHint').hidden = !hint;
   $('resultsHint').textContent = hint;
+  $('resultsHint').classList.toggle('error', error);
   lastResult = null;
   $('csvBtn').disabled = true;
   $('profileBtn').disabled = true;
@@ -865,9 +879,10 @@ function setActiveStats(info) {
 }
 
 function setViewTabs() {
-  $('viewData').classList.toggle('active', viewMode === 'data');
-  $('viewStats').classList.toggle('active', viewMode === 'stats');
-  $('viewHistory').classList.toggle('active', viewMode === 'history');
+  for (const [id, mode] of [['viewData', 'data'], ['viewStats', 'stats'], ['viewHistory', 'history']]) {
+    $(id).classList.toggle('active', viewMode === mode);
+    $(id).setAttribute('aria-pressed', String(viewMode === mode));
+  }
 }
 
 const isDelta = info => !!(info && info.stats && info.stats.format === 'delta');
@@ -981,6 +996,7 @@ async function openPivot() {
       tmsl: tmslOf(m.tmsl), compiler: m.compiler,
       pages: ['pivot'], stateKey: `pivot.${sqlName}`,
       run: runModelSql,
+      cancel: () => engine.cancelLoad(),
       echarts: loadEcharts,
       setStatus,
       saveText: (name, text) => engine.saveText(name, text),
@@ -1217,11 +1233,19 @@ function showBox() {
   if (tablePivot) closePivot();
   return $('sqlEditor');
 }
+// Text put in the box as if typed, so Ctrl+Z brings back what was there. value= and setRangeText
+// both empty a textarea's undo.
+function typeInBox(box, text) {
+  box.focus();
+  if (!document.execCommand('insertText', false, text)) box.setRangeText(text, box.selectionStart, box.selectionEnd, 'end');
+}
 function putInBox(sql) {
   const box = showBox();
-  box.value = sql;
-  nameBoxQuery(null);
   box.focus();
+  box.select();
+  typeInBox(box, sql);
+  clearTimeout(draftTimer);     // what was put here isn't a draft to keep
+  nameBoxQuery(null);
   box.setSelectionRange(0, 0);
 }
 // What was clicked, as SQL to start from: a click isn't a request to type, so the cursor stays where
@@ -1239,15 +1263,19 @@ function openInBox(sql, name) {
   $('activeTable').textContent = name ? `Query: ${name}` : 'Query';
   setStatus(name ? `${name} — Run ▶ (Ctrl+Enter) to run it.` : 'Run ▶ (Ctrl+Enter) runs the statement under the cursor.');
 }
+let leavingBox = false;
 function onBoxKey(e) {
   const box = e.target;
   if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); runBox(); }
   else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') { e.preventDefault(); saveBox(); }
   else if (e.key === 'Tab' && !e.shiftKey) {
+    // Tab indents here, so Esc then Tab is how the keyboard leaves the box.
+    if (leavingBox) { leavingBox = false; return; }
     e.preventDefault();
-    box.setRangeText('  ', box.selectionStart, box.selectionEnd, 'end');
+    typeInBox(box, '  ');
     keepDraft();
   }
+  leavingBox = e.key === 'Escape';
 }
 // The selection when there is one, else the statement under the cursor: { start, end }.
 function boxStatement() {
@@ -1483,7 +1511,7 @@ window.addEventListener('message', async e => {
     // Go to: a name, put at the cursor.
     else if (m.type === 'insert-sql') {
       const box = showBox();
-      box.setRangeText(String(m.text ?? ''), box.selectionStart, box.selectionEnd, 'end');
+      typeInBox(box, String(m.text ?? ''));
       box.focus();
       keepDraft();
     }

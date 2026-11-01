@@ -184,6 +184,7 @@ export function mountExplore(root, ctx) {
       model: async () => ctx.tmsl,
       name: ctx.name,
       run: async text => (await run(compile(text))).rows,
+      cancel: ctx.cancel,
       chart: box => {
         if (!charts.has(box)) { charts.set(box, echarts.init(box, 'studio')); resized.observe(box); }
         return charts.get(box);

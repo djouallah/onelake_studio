@@ -5,7 +5,7 @@
 // (src/exportapp.js) uses the same file, so a chart looks the same in both.
 // =============================================================================
 
-// Series colours, on a dark card (the dashboard's palette).
+// Series colours, each of them mid-toned enough for a dark or a light card.
 export const PALETTE = ['#3987e5', '#d95926', '#199e70', '#c98500', '#d55181', '#4f9a3a', '#9085e9', '#e66767', '#5aa7b8', '#b0762f', '#a86bc4', '#7f8a9c'];
 
 // Registers ECharts theme `name`, its colours read off the page's tokens (`css(name)`).

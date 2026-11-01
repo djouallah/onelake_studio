@@ -37,8 +37,8 @@ const { SQL_KINDS, sqlName, MODEL_CATALOG, modelSqlName } = require('./names');
 const { revalidate } = require('./store');
 
 
-// Rows are read in chunks so a large result starts painting before it has all arrived,
-// and so no single postMessage carries a whole 200k-row grid.
+// Rows are read in chunks so no single postMessage carries a whole 200k-row grid, and so a tab
+// can say how far a large result has got before it has all arrived.
 const BATCH_ROWS = 10_000;
 
 // BigInt does not survive the trip to the webview: VS Code serialises panel messages as

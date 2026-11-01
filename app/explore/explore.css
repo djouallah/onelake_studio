@@ -135,6 +135,8 @@ section.modelOpen #chartBtn { display: none; }
 .ex-check { display: inline-flex; align-items: center; gap: 0.3rem; font-size: 0.78rem; color: var(--muted); }
 .ex-info { font-size: 0.76rem; color: var(--muted); margin-left: auto; }
 .ex-error { color: var(--bad); font-size: 0.8rem; }
+.ex-info.ex-warn { color: var(--warn, var(--bad)); }
+.ex-empty.ex-error { white-space: pre-wrap; overflow-wrap: anywhere; }
 .ex-out { flex: 1 1 auto; min-height: 340px; display: flex; flex-direction: column; position: relative; }
 /* A query running: the last view dimmed under a spinner and how long it has taken. */
 .ex-out.ex-running > .ex-table, .ex-out.ex-running > .ex-chart { opacity: 0.35; transition: opacity 0.2s; }

@@ -28,9 +28,13 @@
       /* explore/explore.css's own tokens (the semantic model view). */
       --card:      var(--panel);
       --input-bg:  var(--vscode-input-background, var(--panel2));
-      --raised:    var(--vscode-list-hoverBackground);
+      /* What a popup stands on: a solid colour, where a theme's hover colour may not be. */
+      --raised:    var(--vscode-menu-background, var(--vscode-editorWidget-background, var(--panel2)));
       --row-line:  var(--border);
-      --faint:     var(--vscode-disabledForeground, var(--muted));
+      /* Text someone has to read, so not the theme's disabled colour. */
+      --faint:     var(--vscode-descriptionForeground, var(--muted));
+      /* A measure against a column, in a colour each theme has made readable. */
+      --measure:   var(--vscode-charts-yellow, #e3b341);
       --disabled:  var(--vscode-disabledForeground, var(--muted));
       --on-accent: var(--vscode-button-foreground);
       --hairline:  var(--border);
@@ -106,7 +110,8 @@
     }
     table.results th {
       position: sticky; top: 0; z-index: 1; vertical-align: bottom;
-      background: var(--vscode-keybindingTable-headerBackground, var(--panel));
+      /* That colour can be translucent, and rows scroll under a sticky header. */
+      background: linear-gradient(var(--vscode-keybindingTable-headerBackground, var(--panel)), var(--vscode-keybindingTable-headerBackground, var(--panel))), var(--vscode-editor-background, var(--panel));
     }
     /* The column type rides under its name in the header. */
     table.results th .cname { display: block; }
@@ -129,6 +134,7 @@
     table.results td.rn.sel { color: var(--text); }
     table.results tr.spacer td { padding: 0; border: 0; background: none; }
     .resultsWrap:focus { outline: none; }
+    .resultsWrap:focus-visible { outline: 1px solid var(--vscode-focusBorder, var(--accent)); outline-offset: -1px; }
     #chartView { display: flex; flex-direction: column; height: 100%; min-height: 320px; }
     #chartView[hidden] { display: none; }
     .chartBar { display: flex; gap: 0.9rem; align-items: center; padding: 0.4rem 0.75rem; flex-wrap: wrap; }
@@ -198,7 +204,8 @@
     #readSrc:hover { color: var(--text); }
     #readSrc.local { color: var(--ok); }
     #statusVer { color: var(--muted); white-space: nowrap; flex: none; }
-    .hint { color: var(--muted); padding: 1.2rem; }
+    .hint { color: var(--muted); padding: 1.2rem; white-space: pre-wrap; overflow-wrap: anywhere; }
+    .hint.error { color: var(--vscode-errorForeground, var(--err)); }
   </style>
 </head>
 <body>
@@ -222,7 +229,7 @@
     <!-- Pivot: the selected table as a one-table model, in Explore's pivot (explore/view.js), in
          place of the results while it is open (app.js: section.pivotOpen). -->
     <div id="pivotView" hidden></div>
-    <textarea id="sqlEditor" spellcheck="false" placeholder="Read-only SQL. Ctrl+Enter runs the statement under the cursor. Try: SHOW ALL TABLES"></textarea>
+    <textarea id="sqlEditor" aria-label="SQL. Ctrl+Enter runs the statement under the cursor. Esc then Tab leaves the box." spellcheck="false" placeholder="Read-only SQL. Ctrl+Enter runs the statement under the cursor. Try: SHOW ALL TABLES"></textarea>
     <div class="resultsWrap">
       <!-- While a TABLE is selected: Stats leads, because statistics cost nothing. -->
       <div class="docBar tabs" id="viewBar" hidden>
@@ -240,20 +247,20 @@
       <article id="docView" class="docView" hidden></article>
       <!-- The grid's filter and row count (grid.js), while a result is on screen. -->
       <div class="gridBar" id="gridBar" hidden>
-        <input id="gridFilter" type="search" placeholder="Filter rows" spellcheck="false">
+        <input id="gridFilter" type="search" aria-label="Filter rows" placeholder="Filter rows" spellcheck="false">
         <span id="gridCount"></span>
       </div>
       <table class="results" id="resultsTable" hidden></table>
     </div>
     <!-- A cell, whole (grid.js: a double click, or Enter). -->
-    <div id="inspector" hidden>
-      <header><span id="inspectorTitle"></span><button id="inspectorCopy">Copy</button><button id="inspectorClose" title="Close (Esc)">×</button></header>
+    <div id="inspector" role="dialog" aria-labelledby="inspectorTitle" hidden>
+      <header><span id="inspectorTitle"></span><button id="inspectorCopy">Copy</button><button id="inspectorClose" title="Close (Esc)" aria-label="Close">×</button></header>
       <pre id="inspectorBody"></pre>
     </div>
   </section>
 
   <div class="statusBar">
-    <div id="status">Ready.</div>
+    <div id="status" role="status" aria-live="polite">Ready.</div>
     <span id="readSrc" hidden></span>
     <span id="statusVer"></span>
   </div>
