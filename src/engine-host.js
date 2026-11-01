@@ -536,6 +536,9 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
       // file's version tag and modification time before it is served. Before the wrap: a
       // build without this setting fails here, with nothing cached, not serving stale files.
       await conn.run('SET cache_httpfs_enable_cache_validation = true;');
+      // The OneLake secret goes with any abfss:// URL, whatever its host, and a statement can join a URL up
+      // from pieces no text check can read. Here is where a read can't get past. Frozen by the lockdown.
+      await conn.run(`SET cache_httpfs_allowed_azure_hosts = 'onelake.dfs.fabric.microsoft.com,onelake.blob.fabric.microsoft.com';`);
       for (const name of ['AzureDfsStorageFileSystem', 'AzureBlobStorageFileSystem']) {
         // Released builds run a constant call twice and throw on the second although the
         // wrap worked: what is registered afterwards is the answer, not the error.

@@ -56,7 +56,7 @@ const EXTENSIONS = [
   // needs (cache_httpfs_set_offline), which upstream doesn't have. Required: without it a vsix would
   // ship with no disk cache and nothing to read offline, and say so nowhere.
   { name: "cache_httpfs", required: true,
-    url: (duckdb, platform) => `https://github.com/djouallah/duck-read-cache-fs/releases/download/onelake-${duckdb}-4/cache_httpfs.${platform}.duckdb_extension` },
+    url: (duckdb, platform) => `https://github.com/djouallah/duck-read-cache-fs/releases/download/onelake-${duckdb}-5/cache_httpfs.${platform}.duckdb_extension` },
 ];
 
 const target = process.argv[2];

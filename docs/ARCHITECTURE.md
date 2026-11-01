@@ -296,7 +296,8 @@ SQL box, no Stop and no Restart.
   them first. In `information_schema.columns` it has one placeholder, `(columns not read yet)`, as a DuckDB view must have
   a column.
 - **A patched build:** the vsix carries a `cache_httpfs` with a Windows fix not yet released upstream
-  (without it, nothing is cached on disk on Windows) and the offline read above. DuckDB loads it as an
+  (without it, nothing is cached on disk on Windows), the offline read above, and a refusal of any Azure URL whose host
+  isn't OneLake's, so the OneLake token can't be sent elsewhere. With the disk cache off, only the guard's text check says that. DuckDB loads it as an
   unsigned extension. A build without it fails, rather than ship with no disk cache.
 - **What a build downloads is held to its hash:** the libraries and DuckDB's extensions, against
   `scripts/downloads.sha256.json`, and DuckDB's native binding against the lockfile. The community extensions `h3` and
