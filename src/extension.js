@@ -14,7 +14,7 @@ const os = require('node:os');
 const { existsSync, statSync } = require('node:fs');
 const { createHash, randomBytes } = require('node:crypto');
 const fsp = require('node:fs/promises');
-const { quoteIdent } = require('./sql');
+const { quoteIdent, sqlStr } = require('./sql');
 const { openPanel, setPanelTitle, closePanel, revealPanel, panelOpen, postToPanel, postLive, panelSettings } = require('./panel');
 const { openPerformance } = require('./performance');
 const { openLogs } = require('./logs');
@@ -29,7 +29,7 @@ const { createFabric, modelFileName, modelAccountDir, modelCopyPath } = require(
 const { LakehouseTree, TREE_FILTERS } = require('./tree');
 const { doubleClicks } = require('./doubleclick');
 const { webviewRoot } = require('./webview');
-const { fmtBytes, sqlKind, sqlName, sqlNameOf, sqlPart, displayName, MODEL_CATALOG, modelSqlName, stripBom, DFS_ORIGIN } = require('./names');
+const { fmtBytes, sqlKind, sqlName, sqlNameOf, fileSqlName, sqlPart, displayName, MODEL_CATALOG, modelSqlName, stripBom, DFS_ORIGIN } = require('./names');
 const { createAgent } = require('./agent');
 const { createSemViews } = require('./semviews');
 const { serveBridge } = require('./bridge');
@@ -558,6 +558,7 @@ function ensureEngine(context, { readme } = {}) {
       // the very token that just expired, and the retry becomes a no-op.
       getToken: opts => hostToken(opts),
       resolveTable: (ref, o) => (resolveSqlTable ? resolveSqlTable(ref, o) : Promise.reject(new Error('OneLake Studio is still starting'))),
+      resolveFile: (ref, o) => (resolveSqlFile ? resolveSqlFile(ref, o) : Promise.reject(new Error('OneLake Studio is still starting'))),
       offlineReason: () => connectivity.reason(),
       checkConnectivity: () => connectivity.check(),
       onRowsRead: location => { if (onelake) onelake.rowsRead(location).catch(() => {}); },
@@ -596,6 +597,7 @@ let exportExplore = null;
 // a semantic model's Direct Lake tables (by GUID) -> their SQL names. Set by activateInner,
 // which owns the store, the Fabric API and the agent's modules.
 let resolveSqlTable = null;
+let resolveSqlFile = null;
 // Every table the store holds with its columns, for the engine's catalog (SHOW ALL TABLES)
 // — read from the store alone, never from OneLake. Set by activateInner.
 let cachedSqlTables = null;
@@ -909,6 +911,7 @@ async function activateInner(context) {
   const sqlTables = createSqlTables({ onelake, paths: async () => (await agent.modules()).paths,
                                       offlineReason: () => connectivity.reason() });
   resolveSqlTable = sqlTables.resolve;
+  resolveSqlFile = sqlTables.resolveFile;
   nameModelTables = sqlTables.nameTables;
   // Semantic views: pointers to model files, kept per account in the extension's storage.
   // A view made or dropped is in the engine's catalog (SHOW ALL TABLES) by the next statement.
@@ -1670,15 +1673,21 @@ async function activateInner(context) {
     }
   };
 
+  // A file or folder of the tree as SQL writes it, in the string DuckDB reads a file from. A file's
+  // `path` runs from its item, and a folder's `dir` from Files/.
+  const fileNameOf = n => sqlStr(fileSqlName(n, n.kind === 'dir' ? n.dir : String(n.path).replace(/^.*?\/Files\/?/, '')));
+  const isFileNode = n => n.kind === 'file' || n.kind === 'dir';
+
   const explorer = vscode.window.createTreeView('onelakeStudio.explorer', {
     treeDataProvider: tree,
     showCollapseAll: true,
-    // A table or a semantic model dragged into an editor is its SQL name, dropped as text.
+    // A table, a file or a semantic model dragged into an editor is its SQL name, dropped as text.
     dragAndDropController: {
       dragMimeTypes: ['text/plain'],
       dropMimeTypes: [],
       handleDrag(nodes, data) {
         const names = nodes.map(n => (n.kind === 'table' && n.table ? sqlNameOf(n, n)
+          : isFileNode(n) ? fileNameOf(n)
           : n.kind === 'semanticModel' && n.model ? modelSqlName(n.workspace, n.model) : null)).filter(Boolean);
         if (names.length) data.set('text/plain', new vscode.DataTransferItem(names.join(',\n')));
       },
@@ -1836,10 +1845,10 @@ async function activateInner(context) {
       }
     }),
 
-    // A table's SQL name, for a query written by hand.
+    // A table's or a file's SQL name, for a query written by hand.
     vscode.commands.registerCommand('onelakeStudio.copySqlName', async n => {
-      if (!n || !n.table) return;
-      const name = sqlNameOf(n, n);
+      if (!n || !(n.table || isFileNode(n))) return;
+      const name = n.table ? sqlNameOf(n, n) : fileNameOf(n);
       await vscode.env.clipboard.writeText(name);
       vscode.window.setStatusBarMessage(`Copied ${name}`, 3000);
     }),

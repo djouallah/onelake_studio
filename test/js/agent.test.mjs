@@ -6,17 +6,7 @@ import { createRequire } from "node:module";
 import { fakeOneLake, richAgent, stubVendor, APP_DIR } from "./agent-fixtures.mjs";
 
 const require = createRequire(import.meta.url);
-const { filesToAbfss } = require("../../src/agent.js");
 const { EXIT } = require("../../src/bridge.js");
-
-test("'Files/…' with --in is the lakehouse's file, by its abfss:// name", () => {
-  const lh = { workspace: "my ws", item: "data.Lakehouse" };
-  assert.equal(filesToAbfss("SELECT * FROM read_parquet('Files/a/x.parquet')", lh),
-    "SELECT * FROM read_parquet('abfss://my ws@onelake.dfs.fabric.microsoft.com/data.Lakehouse/Files/a/x.parquet')");
-  assert.equal(filesToAbfss("SELECT '/Files/it''s.csv'", lh),
-    "SELECT 'abfss://my ws@onelake.dfs.fabric.microsoft.com/data.Lakehouse/Files/it''s.csv'");
-  assert.equal(filesToAbfss("SELECT 'Tables/x', 'my Files/x'", lh), "SELECT 'Tables/x', 'my Files/x'", "only a path that starts there");
-});
 
 test("models and items --fresh: every workspace read now, and one that fails is a note", async () => {
   const { createAgent } = require("../../src/agent.js");
@@ -112,7 +102,7 @@ test("free from the cache: table sizes, more table fields, files, find, model co
 
     r = await agent.run({ args: ["files", "ws", "data", "Files/raw"] });
     assert.equal(r.code, 0, r.err);
-    assert.match(r.out, /\| 2026 \| folder \|/);
+    assert.match(r.out, /\| 2026 \| 'lakehouse\.ws\.data\/Files\/raw\/2026' \| folder \|/);
     assert.match(r.out, /1 file\(s\), 1 folder\(s\), 1\.0 MB in Files\/raw/);
     r = await agent.run({ args: ["files", "ws", "dw"] });
     assert.match(r.err, /has no Files area/);

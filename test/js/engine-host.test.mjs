@@ -92,6 +92,35 @@ test("offline with no disk cache: a read of OneLake is refused at once, and the 
   assert.deepEqual((await engine.call("query", ["SELECT * FROM lakehouse.w.lh.dbo.never_written"])).rows, []);
 });
 
+test("a file's name reaches DuckDB as its URL, one that can't be found never does, and a value stays a value", async t => {
+  const extDir = await mkdtemp(join(tmpdir(), "onelake-ext-"));
+  const asked = [];
+  const engine = createEngineHost({
+    extensionDir: extDir,
+    bundledExtensions: existsSync(BUNDLED) ? BUNDLED : null,
+    offlineReason: () => "no internet",
+    resolveFile: async ref => {
+      asked.push(ref.item);
+      if (ref.item !== "lh") throw new Error(`${ref.written}: there is no lakehouse ${ref.item}`);
+      return { workspace: "ws", item: "lh.Lakehouse" };
+    },
+  });
+  t.after(async () => {
+    await engine.close();
+    await rm(extDir, { recursive: true, force: true }).catch(() => {});
+  });
+
+  // Refused as a read of OneLake, which is what only its URL can be.
+  for (const sql of ["SELECT * FROM 'lakehouse.WS.lh/Files/x.parquet'", "SELECT * FROM read_csv('lakehouse.ws.lh/Files/*.csv', header = true)"]) {
+    await assert.rejects(engine.call("query", [sql]), /This statement: reading rows needs OneLake/, sql);
+  }
+  assert.deepEqual(asked, ["lh", "lh"]);
+  await assert.rejects(engine.call("query", ["SELECT * FROM glob('lakehouse.ws.nosuch/Files/*')"]), /there is no lakehouse nosuch/);
+  await assert.rejects(engine.call("query", ["SELECT * FROM glob('lakehouse.ws.lh/Tables/*')"]), /a table's name is/);
+  const value = "lakehouse.ws.nosuch/Files/x.parquet";
+  assert.equal((await engine.call("query", [`SELECT '${value}' AS v`])).rows[0].v, value);
+});
+
 test("what the read-only guard takes as a read or a write, DuckDB's own parser does too", async t => {
   const extDir = await mkdtemp(join(tmpdir(), "onelake-ext-"));
   const engine = createEngineHost({ extensionDir: extDir, bundledExtensions: existsSync(BUNDLED) ? BUNDLED : null });

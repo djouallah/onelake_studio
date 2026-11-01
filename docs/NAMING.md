@@ -22,7 +22,7 @@ catalog.
 | --- | --- | --- |
 | A table | `<kind>.<workspace>.<item>.<schema>.<table>` | `lakehouse.aemo.data.dbo.dim_duid` |
 | A semantic model | `semanticmodel.<workspace>.<model>` | `semanticmodel.aemo.nem` |
-| A file | its `abfss://` URL | `'abfss://aemo@onelake.dfs.fabric.microsoft.com/data.Lakehouse/Files/x.parquet'` |
+| A file | `'lakehouse.<workspace>.<item>/Files/<path>'` | `'lakehouse.aemo.data/Files/x.parquet'` |
 
 `<kind>` is one of `lakehouse`, `warehouse`, `sqldatabase` or `mirroreddatabase`.
 
@@ -116,12 +116,46 @@ lakehouse can share a name, and a five-part name is never mistaken for a model.
 
 ## Files
 
-**A file uses its `abfss://` URL, and it can be anything.** The name is where the file is, in any
-subfolder under `Files/`:
+**A file is its lakehouse's name, then its path under `Files/`, and it can be anything.** An item is
+always `lakehouse.<workspace>.<item>`: a `.` leads to its tables, and `/Files/` leads to its files. Only a
+lakehouse has `Files/`. The name means one file from anywhere, with no default lakehouse and nothing
+attached.
+
+| Written | Means |
+| --- | --- |
+| `'lakehouse.aemo.data/Files/x.parquet'` | A file. |
+| `'LAKEHOUSE.AEMO.DATA/Files/x.parquet'` | The same file: case does not matter before the `/`. |
+| `'lakehouse.aemo.data/Files/X.parquet'` | A different file: the path is exact. |
+| `'lakehouse."ANZ Retail".data/Files/a b.csv'` | A file: a part is quoted as it is in a table's name, and the path never is. |
+| `'lakehouse.aemo.data/Files/raw/*.csv'` | Every `.csv` directly in `raw/`. `**` goes through its subfolders. |
+| `'zip://lakehouse.aemo.data/Files/a.zip/b.csv'` | An entry in a zip. |
+| `'lakehouse.aemo.data/Files'` | The folder itself, for `glob('lakehouse.aemo.data/Files/*')`. |
+| `'lakehouse.aemo.*/Files/x.parquet'` | Refused: a wildcard goes in the path, and a name means one item. |
+| `'lakehouse.aemo.data/Tables/dbo/t/x.parquet'` | Refused: a table has its five-part name. |
+| `'warehouse.aemo.data/Files/x.parquet'` | Refused: only a lakehouse has `Files/`. |
+| `'Files/x.parquet'` | Not a OneLake file: no workspace or item. |
 
 ```sql
-SELECT * FROM 'abfss://aemo@onelake.dfs.fabric.microsoft.com/data.Lakehouse/Files/x.parquet';
+SELECT * FROM 'lakehouse.aemo.data/Files/x.parquet';
+SELECT * FROM read_csv('lakehouse.aemo.data/Files/raw/*.csv', header = true);
 ```
+
+**The quotes are required.** DuckDB reads a file only from a string, and a bare `/` is a syntax error. They
+also say that this is a file and not a table.
+
+**This one is a parser's work, unlike a table's name.** DuckDB can't read it, so the engine gives it the
+file's `abfss://` URL before the statement runs, finding the workspace and item in the kept listings as it
+does for a table (`fileRefs` in [`src/sql.js`](../src/sql.js), `withFileUrls` in
+[`src/engine-host.js`](../src/engine-host.js)). So that nothing is read from the wrong place:
+
+- **It is only a file where SQL reads one:** after `FROM`, `JOIN`, `DESCRIBE`, `SUMMARIZE` or `PIVOT`, or as
+  the first argument of a table function, alone or in a list. `WHERE p = 'lakehouse.a.b/Files/c'` is a string.
+- **A wrong name fails.** It never reaches DuckDB, which would look on the local disk, and whose `glob()` would
+  answer no rows with no error.
+
+**`abfss://` still reads.** It is what DuckDB reads, and what `glob()` and `filename = true` answer, so what
+they return can be pasted back. A URL by GUIDs reads too. Nothing else shows one: an error and **Logs** say a
+file as it was written.
 
 **A `.bim` or `.yaml` is a file too.** It is a representation of a model, not the model. It can be stored
 anywhere, and a lakehouse can hold thousands of them across its subfolders, even with the same file
@@ -190,7 +224,7 @@ These do not meet the contract yet:
 | Test | What it holds |
 | --- | --- |
 | `test/js/names.test.mjs` | Building names, the `dbo` default, the kind mapping, quoting, and the host and page `sqlPart` staying equal |
-| `test/js/sql.test.mjs` | `tableRefs`: case, quotes, spaces, the sixth part as a column, and what is not a table; `SHOW` rewriting |
+| `test/js/sql.test.mjs` | `tableRefs`: case, quotes, spaces, the sixth part as a column, and what is not a table; `fileRefs`: where a file's name counts, and what is refused; `SHOW` rewriting |
 | `test/js/semantic.test.mjs` | `modelSqlName`, `unopenedModels`, and a model with no workspace refused |
 | `test/js/cli-engine.test.mjs` | Listed names run as SQL; an Import model is refused with the five-part error |
 | `test/js/engine-host.test.mjs` | Tables opened by name across kinds, spaces and case; whole-path listings |

@@ -9,6 +9,6 @@ gets the same access as a person.
 
 | Doc | Read it for |
 | --- | --- |
-| [NAMING.md](NAMING.md) | The contract: five parts for a table, three for a semantic model, `abfss://` for a file, and why. Everything else depends on it. |
+| [NAMING.md](NAMING.md) | The contract: five parts for a table, three for a semantic model, `lakehouse.<workspace>.<item>/Files/<path>` for a file, and why. Everything else depends on it. |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | The rules every change keeps, what is out of scope, how a statement runs, each feature, and where the code is. |
 | [CHANGELOG.md](CHANGELOG.md) | Release notes, newest first. It is also the Marketplace page's Changelog tab. |

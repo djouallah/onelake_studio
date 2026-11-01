@@ -18,10 +18,10 @@
 //                                    --fresh reads every listing first
 //   table <ws> <item> <schema.table> metadata only
 //   model <ws> <model>               relationships, columns, measures with DAX
-//   sql "<sql>" [--in <ws>/<item>]   a table is Kind.workspace.item.schema.table; a semantic model
-//                                    is semanticmodel.ws.model, AGG("m") its measure m; and SHOW
-//                                    SEMANTIC VIEWS / METRICS / DIMENSIONS; --in reads its
-//                                    'Files/…' paths; --show-sql the compiled SQL
+//   sql "<sql>"                      a table is Kind.workspace.item.schema.table; a file is
+//                                    'lakehouse.ws.item/Files/x.parquet'; a semantic model is
+//                                    semanticmodel.ws.model, AGG("m") its measure m; and SHOW
+//                                    SEMANTIC VIEWS / METRICS / DIMENSIONS; --show-sql the compiled SQL
 //   export <ws> <model>              Export to Fabric, as Explore's button: a semantic model
 //   export <ws> <item> <Files/path>  (its local copy, written into its lakehouse) or a model file in Files/
 //
@@ -31,10 +31,10 @@
 const { join } = require('node:path');
 const { pathToFileURL } = require('node:url');
 const fsp = require('node:fs/promises');
-const { fmtBytes, hasFilesArea, isStaging, kindLabel, sqlNameOf, abfssUrl } = require('./names');
+const { fmtBytes, hasFilesArea, isStaging, kindLabel, sqlNameOf, fileSqlName } = require('./names');
 const { mapPool, offlineError } = require('./http');
 const { walkCached } = require('./onelake');
-const { isShowAllTables, ALL_TABLES_COUNTED } = require('./sql');
+const { sqlStr, isShowAllTables, ALL_TABLES_COUNTED } = require('./sql');
 const { EXIT, checkRequest, failureJson } = require('./bridge');
 
 const SIGN_IN_TO_FABRIC = 'expand "Semantic models" in the OneLake tree once to sign in to Fabric';
@@ -53,14 +53,6 @@ const csvOf = (cols, rows) => [cols, ...rows].map(r => r.map(v => {
 }).join(',')).join('\n');
 
 const fence = (lang, text) => '```' + lang + '\n' + String(text).trim() + '\n```';
-
-// 'Files/x.parquet' in SQL run --in a lakehouse is that lakehouse's file, by its abfss:// name:
-// the engine reads OneLake, never the local disk (its lockdown refuses a relative path).
-function filesToAbfss(sql, lh) {
-  const ws = String(lh.workspace).replace(/'/g, "''");
-  const item = String(lh.item).replace(/'/g, "''");
-  return String(sql).replace(/'\/?(Files\/(?:[^']|'')*)'/g, (_, p) => `'${abfssUrl(ws, `${item}/${p}`)}'`);
-}
 
 /**
  * @param {object} o
@@ -345,8 +337,9 @@ function createAgent({ onelake, engine, modelPath, appDir, vendorDir, daxSqlPin,
       if (!hasFilesArea(lh.item)) throw new Error(`${lh.item} has no Files area — only a lakehouse does`);
       const d = String(dir).replace(/^\/?Files\/?/i, '').replace(/\/+$/, '');
       const entries = await look('files', [lh, d], opts);
-      io.table([col('name'), col('type', 'text', ''), col('bytes', 'integer', 'size', v => (v == null ? '' : size(v)))],
-               entries.map(e => [e.name, e.isDir ? 'folder' : 'file', e.isDir || e.bytes == null ? null : Number(e.bytes)]),
+      io.table([col('name'), col('sql_name', 'text', 'in sql'), col('type', 'text', ''), col('bytes', 'integer', 'size', v => (v == null ? '' : size(v)))],
+               entries.map(e => [e.name, sqlStr(fileSqlName(lh, d ? `${d}/${e.name}` : e.name)), e.isDir ? 'folder' : 'file',
+                                 e.isDir || e.bytes == null ? null : Number(e.bytes)]),
                { sort: 2, empty: `Files/${d} is empty.` });
       const n = entries.filter(e => !e.isDir);
       io.out(`\n${n.length} file(s), ${entries.length - n.length} folder(s), ${size(n.reduce((a, e) => a + (e.bytes || 0), 0))}` +
@@ -526,10 +519,6 @@ function createAgent({ onelake, engine, modelPath, appDir, vendorDir, daxSqlPin,
       const { semantic, compiler, paths } = await modules();
       await syncViews(io.note);
       const t0 = Date.now();
-      // A query: its lakehouse may be listed from OneLake when the cache does not have it.
-      const [inWs, inItem] = opts.in ? String(opts.in).split('/') : [];
-      const lhIn = opts.in ? await itemOf(inWs, inItem, await onelake.items(inWs)) : null;
-      if (lhIn) text = filesToAbfss(text, lhIn);
       // A semantic model it names that is not a view yet: opened (its local copy, read from
       // Fabric the first time) and kept, as the panel does.
       for (const ref of semantic.unopenedModels(text)) {
@@ -693,7 +682,7 @@ function createAgent({ onelake, engine, modelPath, appDir, vendorDir, daxSqlPin,
       if (!signedIn()) throw unavailable('OneLake Studio is not signed in — sign in from its view in VS Code.');
       if (opts.fresh && offlineReason()) throw offlineError(offlineReason(), 'An answer newer than the cache');
       await commands[name](rest, {
-        fresh: !!opts.fresh, csv: !!opts.csv, json: !!opts.json, in: opts.in ? String(opts.in) : '',
+        fresh: !!opts.fresh, csv: !!opts.csv, json: !!opts.json,
         explicitLimit, showSql: !!opts.showSql, downloaded: !!opts.downloaded, seen, signal,
       }, answer);
       // An answer off disk says how old it is: the oldest listing it was made of.
@@ -712,4 +701,4 @@ function createAgent({ onelake, engine, modelPath, appDir, vendorDir, daxSqlPin,
   return { run, modules };
 }
 
-module.exports = { createAgent, filesToAbfss };
+module.exports = { createAgent };

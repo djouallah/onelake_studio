@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **A file has a name, as a table does:** `'lakehouse.aemo.data/Files/x.parquet'`, in place of its `abfss://` URL, which
+  still reads. Wildcards go in the path. **Copy SQL Name** and a drag from the tree work on a file or folder, `files` lists
+  each one's name, and an error and **Logs** say it as it was written. A name that can't be found fails rather than
+  answering no rows.
+- **`sql --in` is gone.** `'Files/x.parquet'` read a different file depending on the lakehouse given, and rewrote any
+  string that looked like one, even in a `WHERE`. Write the file's whole name.
 - **A failed query's whole error is in the pane,** rather than one cut-off line in the status bar. A long-running query
   says how many rows have arrived. A table's first rows can be charted, profiled and exported.
 - **The box keeps its undo** when something is put in it, and Esc then Tab leaves it by keyboard.

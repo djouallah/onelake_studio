@@ -105,6 +105,23 @@ test("a table's SQL name is Kind.workspace.item.schema.table, quoted only where 
     assert.ok(n.SQL_KINDS.includes(n.sqlKind(k)), k);
 });
 
+test("a file's SQL name is its lakehouse, as in a table's name, then its path under Files/", () => {
+  assert.equal(n.fileSqlName({ workspace: "aemo", item: "data.Lakehouse" }, "a/x.parquet"), "lakehouse.aemo.data/Files/a/x.parquet");
+  assert.equal(n.fileSqlName({ workspace: "aemo", item: "data.Lakehouse" }), "lakehouse.aemo.data/Files", "the folder itself");
+  assert.equal(n.fileSqlName({ workspace: "ANZ Retail", item: "select.Lakehouse" }, "a b.csv"), 'lakehouse."ANZ Retail"."select"/Files/a b.csv');
+  assert.throws(() => n.fileSqlName({ workspace: "ws", item: "dw.Warehouse" }, "x"), /only a lakehouse/);
+});
+
+test("what DuckDB ran says a file by its name: a lakehouse's Files/ only, and never by GUID", () => {
+  const host = "onelake.dfs.fabric.microsoft.com";
+  assert.equal(n.fileNamesIn(`SELECT * FROM 'abfss://ANZ Retail@${host}/data.Lakehouse/Files/a b.csv'`),
+    `SELECT * FROM 'lakehouse."ANZ Retail".data/Files/a b.csv'`);
+  assert.equal(n.fileNamesIn(`FROM 'zip://abfss://ws@${host}/lh.Lakehouse/Files/a.zip/b.csv'`), "FROM 'zip://lakehouse.ws.lh/Files/a.zip/b.csv'");
+  for (const same of [`abfss://ws@${host}/lh.Lakehouse/Tables/dbo/t/metadata/1.metadata.json`, `abfss://ws@${host}/dw.Warehouse/Files/x`,
+                      `abfss://11111111-0000@${host}/22222222-0000/Files/x`, `abfss://ws@${host}/lh.Lakehouse/Filesystem/x`])
+    assert.equal(n.fileNamesIn(same), same);
+});
+
 test("the host and the panel quote a name the same way (src/names.js and app/paths.js sqlPart)", async () => {
   const p = await import("../../app/paths.js");
   assert.deepEqual([...n.RESERVED].sort(), [...p.RESERVED].sort());

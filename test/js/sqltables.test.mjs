@@ -147,6 +147,16 @@ test("offline, a kept listing cannot say an item does not exist", async () => {
     /lakehouse elsewhere is not cached on this machine, and there is no internet/.test(e.message));
 });
 
+test("a file's lakehouse is found as a table's is: any case, and a miss says the file's name", async () => {
+  const w = world();
+  const file = (workspace, item) => ({ workspace, item, written: `lakehouse.${workspace}.${item}/Files` });
+  assert.deepEqual(await w.sql.resolveFile(file("WS", "OLD")), { workspace: "ws", item: "old.Lakehouse" });
+  w.calls.length = 0;
+  assert.deepEqual(await w.sql.resolveFile(file("ws", "old")), { workspace: "ws", item: "old.Lakehouse" });
+  assert.deepEqual(w.calls, [], "from the cache");
+  await assert.rejects(w.sql.resolveFile(file("ws", "nosuch")), /lakehouse\.ws\.nosuch\/Files: there is no lakehouse nosuch in workspace ws/);
+});
+
 test("past the cache, every read goes to OneLake", async () => {
   const w = world();
   await w.sql.resolve(ref());

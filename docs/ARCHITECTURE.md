@@ -20,7 +20,7 @@ queried with SQL.
 ```sql
 SELECT * FROM lakehouse.aemo.data.dbo.dim_duid;
 SELECT dim_region.Region, AGG("Registered MW") FROM semanticmodel.aemo.nem GROUP BY ALL;
-SELECT * FROM 'abfss://aemo@onelake.dfs.fabric.microsoft.com/data.Lakehouse/Files/x.parquet';
+SELECT * FROM 'lakehouse.aemo.data/Files/x.parquet';
 SHOW ALL TABLES;
 ```
 
@@ -28,7 +28,7 @@ SHOW ALL TABLES;
 
 | Rule | What it means | Where it is held |
 | --- | --- | --- |
-| **One name per object** | A table has five parts and a model has three. A file is its `abfss://` URL. | [NAMING.md](NAMING.md), [`src/names.js`](../src/names.js) |
+| **One name per object** | A table has five parts and a model has three. A file is `'lakehouse.<workspace>.<item>/Files/<path>'`. | [NAMING.md](NAMING.md), [`src/names.js`](../src/names.js) |
 | **SQL only** | A model is read with `AGG("measure")` in SQL. There is no DAX query. | [`app/semantic.js`](../app/semantic.js) |
 | **Read only** | Nothing is written to Fabric or OneLake. The host takes one read per statement, from a tab or the command line, and DuckDB's own parser checks it. The one exception is Export to Fabric, after an OK in VS Code. | `assertReads` and `checkedRead` in [`src/sql.js`](../src/sql.js) |
 | **Cache first** | Every answer from OneLake or Fabric is kept on this machine and served from there first. It is trusted until using it fails, then read again once. | [`src/onelake.js`](../src/onelake.js), [`src/store.js`](../src/store.js) |
@@ -95,6 +95,8 @@ and joins at step 3.
    - `withTables` makes a view for each five-part name: `tableRefs` finds the names,
      `resolve` ([`src/sqltables.js`](../src/sqltables.js)) looks them up in the cached listings, and the
      view is `iceberg_scan` on the table's metadata file.
+   - `withFileUrls` gives DuckDB each file's `abfss://` URL in place of its name: `fileRefs` finds the names, and
+     `resolveFile` looks them up as `resolve` does. A name that can't be found fails here.
    - `catalogStatement` rewrites `SHOW` statements so they report whole paths.
 5. **Run.** The statement goes to the server, and its tab's Stop reaches only that tab's statements
    ([The server](#the-server)). A result past `maxResultRows` (200,000 by default) is counted rather than
@@ -141,7 +143,7 @@ the status bar, and comes back by itself ([`src/connectivity.js`](../src/connect
 | Works offline, if cached | Needs OneLake |
 | --- | --- |
 | The tree, `SHOW ALL TABLES`, `information_schema`, Go To | A column or a file never read |
-| A table's Stats and History, and first rows already read | A wildcard over `abfss://` files |
+| A table's Stats and History, and first rows already read | A wildcard over files |
 | Semantic models: opening them, Explore's Model page, `SHOW SEMANTIC …` | A table whose metadata was never read |
 | Table rows, a model's queries and its Pivot, for what was read | Export to Fabric |
 | `Files/` objects read before | |
@@ -174,7 +176,7 @@ The engine is **DuckDB 2.0 running natively in a process of its own** ([The serv
   `iceberg_scan` on the metadata file the host's cache holds, so the catalog is never asked at query
   time. DuckDB does the Iceberg work itself: snapshots, manifest filtering, position and equality
   deletes, schema evolution.
-- **Reading files:** `Files/` objects are read as `abfss://` URLs.
+- **Reading files:** `Files/` objects are named as in [NAMING.md](NAMING.md#files), and DuckDB reads them as `abfss://` URLs.
 - **Lockdown:** file access is limited to the temp directory, `https://`, `abfss://` and `zip://` over a
   remote archive.
 - **What a statement may be:** from a tab or the command line, one read, or an `EXPLAIN` of one. Never `COPY`,
@@ -325,7 +327,8 @@ once and counts, though the answer still comes through the host.
 - **Errors:** the status line says what DuckDB says, and the cursor goes where it says it is.
 - **Variables:** `SET VARIABLE year = 2024` keeps a value in that tab and `getvariable('year')`
   reads it. **Clear Query Variables** forgets them, in every tab of the window.
-- **From the tree:** a table's right-click has Select Top Rows, Copy SQL Name and Copy Column List.
+- **From the tree:** a table's right-click has Select Top Rows, Copy SQL Name and Copy Column List, and a file's or
+  folder's has Copy SQL Name.
   **Go to a Table, Column or Measure** (Ctrl+Alt+O) searches everything the cache holds. A pick opens it in a
   new tab, and its button puts its name in the box, or copies it with no tab open.
 
@@ -529,7 +532,7 @@ personal skills, and it follows the extension through updates.
 | **New Query**, **Open Query**, **Rename Query…**, **Delete Query**, **Show Queries Folder** | Saved queries, under *Queries* in the tree. |
 | **Go to a Table, Column or Measure…** (Ctrl+Alt+O) | Searches everything the cache holds. |
 | **Clear Query Variables** | Forgets values from `SET VARIABLE`. |
-| **Select Top Rows**, **Copy SQL Name**, **Copy Column List** | A table's right-click. |
+| **Select Top Rows**, **Copy SQL Name**, **Copy Column List** | A table's right-click. Copy SQL Name is on a file's and a folder's too. |
 | **Download Again (from Fabric)** | Replaces a semantic model's local copy. |
 | **Copy App URL** | An app's button. |
 | **Open App** | A double click on an app with a site. |

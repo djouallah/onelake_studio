@@ -9,6 +9,7 @@
 
 const vscode = require('vscode');
 const crypto = require('node:crypto');
+const { fileNamesIn } = require('./names');
 
 const EVERY_MS = 3_000;
 const SHOWN = 1_000;
@@ -37,7 +38,8 @@ function openLogs({ engine, open, copy, clear }) {
     try {
       const e = engine();
       if (!e) { post({ down: 'The engine is not available here.' }); return; }
-      const rows = await e.logs(SHOWN);
+      // A file under its name: DuckDB logs its URL, and a row reopens as what was written.
+      const rows = (await e.logs(SHOWN)).map(r => ({ ...r, sql: fileNamesIn(r.sql), error: r.error && fileNamesIn(r.error) }));
       // Redrawn only when something changed, so a scrolled or expanded table stays as it is.
       const now = `${rows.length}|${rows[0] ? `${rows[0].at}|${rows[0].ms}` : ''}`;
       if (now !== said) { said = now; post({ rows, shown: SHOWN }); }

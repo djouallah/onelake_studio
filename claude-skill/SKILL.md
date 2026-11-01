@@ -21,14 +21,14 @@ node --no-warnings "{{cli}}" <command>
 | `ls <ws>` | its lakehouses/warehouses, and its semantic models (marked *downloaded* if local) |
 | `models [<ws>]` | every semantic model in every workspace (or one), with description, *downloaded* and *staging*, and how many — for "how many models", "which workspace has X". `--downloaded`: only those on this machine, readable with no download |
 | `find <text>` | every cached name containing it — items, tables, columns, semantic models, and a downloaded model's tables, columns and measures — for "which table has customer_id", "where is the Sales model". `--fresh` reads every listing first, which is slow on a large tenant; what it read stays cached if `--timeout` stops it |
-| `files <ws> <item> [<dir>]` | a lakehouse's Files/ listing, with sizes |
+| `files <ws> <item> [<dir>]` | a lakehouse's Files/ listing, with sizes and SQL names |
 | `items [<ws>]` | every lakehouse and warehouse in every workspace (or one), counted by kind, with *staging* |
 | `ls <ws> <item>` | its tables with rows, size, files and last write, and their SQL names (`lakehouse.<ws>.<item>.<schema>.<table>`); `<item>` may omit its `.Lakehouse` suffix |
 | `table <ws> <item> <schema.table>` | rows, files, size, last write, columns — metadata only, no scan |
 | `model <ws> <model>` | relationships, columns, measures with their DAX, and an example query. A model not downloaded yet exits 4: add `--fresh` to download it |
 | `sql "<sql>"` | read-only SQL. A table is `kind.workspace.item.schema.table` — `lakehouse.aemo.data.dbo.dim_duid`; kind is `lakehouse`, `warehouse`, `sqldatabase` or `mirroreddatabase` (any case), a lakehouse without schemas is `dbo`, a part with spaces is `"quoted"` — any table, any workspace, joined freely. Every semantic model is a table too, `semanticmodel.<ws>.<model>`: `AGG("measure")` is the measure; and `SHOW SEMANTIC …` (below) |
 | `sql -` | the SQL from stdin. Prefer it for anything with quotes in it: `AGG("Total Sales")` does not survive every shell, PowerShell's above all |
-| `sql "<sql>" --in <ws>/<item>` | the lakehouse's files as `'Files/…'`: `read_parquet('Files/log.parquet')` |
+| `sql "SELECT * FROM 'lakehouse.<ws>.<item>/Files/x.parquet'"` | a file is `'lakehouse.<ws>.<item>/Files/<path>'`, in single quotes, with its workspace and item spelled as in a table's name. Wildcards go in the path: `read_csv('lakehouse.aemo.data/Files/raw/*.csv', header=true)` |
 | `export <ws> <model>` | Export to Fabric, as Explore's button does it: publishes the model's Explore as a Fabric app. The model must have been downloaded once (opened in the tree, or `model <ws> <model> --fresh`); the export writes its `.yaml` into its lakehouse |
 | `export <ws> <item> <Files/path>` | the same, for a model file (`.bim`, Ossie `.yaml`) in a lakehouse's Files/ |
 

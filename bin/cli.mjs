@@ -25,18 +25,18 @@ const USAGE = {
   models: `  models [<ws>]                       semantic models in every workspace (or one), counted
     --downloaded                      only those on this machine: readable with no download`,
   items: "  items [<ws>]                        lakehouses and warehouses in every workspace (or one)",
-  files: "  files <ws> <item> [<dir>]           a lakehouse's Files/ listing, with sizes",
+  files: "  files <ws> <item> [<dir>]           a lakehouse's Files/ listing, with sizes and SQL names",
   find: `  find <text>                         every cached name containing it: items, tables, columns,
                                         semantic models, a downloaded model's tables/measures;
                                         --fresh reads every listing first`,
   table: "  table <ws> <item> <schema.table>    columns and stats (metadata only)",
   model: "  model <ws> <model>                  relationships, columns, measures with their DAX",
   sql: `  sql "<sql>"                         read-only SQL; a table is kind.workspace.item.schema.table
-                                        (lakehouse.aemo.data.dbo.dim_duid); a downloaded model is a
+                                        (lakehouse.aemo.data.dbo.dim_duid); a file is
+                                        'lakehouse.aemo.data/Files/x.parquet'; a downloaded model is a
                                         table: SELECT d.col, AGG("measure") FROM semanticmodel.ws.model GROUP BY ALL
   sql -                               the SQL from stdin: no shell quoting to get wrong
-    --in <ws>/<item>                  that lakehouse's files as 'Files/…' (read_parquet('Files/x.parquet'))
-    --show-sql                        print the SQL a model query compiles to`,
+    --show-sql                       print the SQL a model query compiles to`,
   export: `  export <ws> <model>                 Export to Fabric, as Explore's button does it: the model's
                                         .yaml in its lakehouse (open it in the tree once first).
                                         VS Code asks where the local copy goes and for the OK;
@@ -64,7 +64,7 @@ ${Object.values(USAGE).join("\n")}
 ${OPTIONS}`;
 
 const SWITCHES = { "--fresh": "fresh", "--csv": "csv", "--json": "json", "--show-sql": "showSql", "--downloaded": "downloaded" };
-const VALUES = { "--limit": "limit", "--in": "in", "--timeout": "timeout" };
+const VALUES = { "--limit": "limit", "--timeout": "timeout" };
 const DEFAULT_TIMEOUT_S = 600;
 
 function parse(argv) {

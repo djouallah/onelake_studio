@@ -358,7 +358,7 @@
         },
         {
           "command": "onelakeStudio.copySqlName",
-          "when": "view == onelakeStudio.explorer && viewItem == table",
+          "when": "view == onelakeStudio.explorer && viewItem =~ /^(table|file|dir)$/",
           "group": "inline"
         },
         {
@@ -368,7 +368,7 @@
         },
         {
           "command": "onelakeStudio.copySqlName",
-          "when": "view == onelakeStudio.explorer && viewItem == table",
+          "when": "view == onelakeStudio.explorer && viewItem =~ /^(table|file|dir)$/",
           "group": "1_copy@1"
         },
         {

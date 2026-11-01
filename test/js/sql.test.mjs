@@ -159,6 +159,67 @@ test("a statement's tables are its five-part names under a kind, however they ar
   assert.equal(refs("DESCRIBE Lakehouse.ws.lh.dbo.t").length, 1);
 });
 
+// fileRefs: the file names a statement reads, which the engine turns into URLs before running it.
+test("a file's name counts only where SQL reads a file, and one that is wrong is refused", () => {
+  const { fileRefs } = require("../../src/sql.js");
+  const KINDS = ["lakehouse", "warehouse", "sqldatabase", "mirroreddatabase"];
+  const refs = sql => fileRefs(sql, KINDS);
+  const F = "'lakehouse.aemo.data/Files/x.parquet'";
+  assert.deepEqual(refs(`SELECT * FROM ${F}`),
+    [{ zip: "", workspace: "aemo", item: "data", path: "/Files/x.parquet", written: "lakehouse.aemo.data/Files", start: 14, end: 14 + F.length, quote: "'" }]);
+  // Every place DuckDB reads one, each as DuckDB's own CLI was seen to read it.
+  for (const sql of [`FROM ${F}`, `from (${F})`, `SELECT 1 FROM ${F} a, ${F} b`, `SELECT 1 FROM t JOIN ${F} ON true`, `DESCRIBE ${F}`, `SUMMARIZE ${F}`,
+    `PIVOT ${F} ON a`, `DESCRIBE FROM ${F}`, `EXPLAIN SELECT * FROM ${F}`, `SELECT 1 FROM read_parquet(${F}, filename = true)`,
+    `SELECT 1 FROM main.read_parquet(${F})`, `SELECT 1 FROM range(1) r, LATERAL read_parquet(${F})`, `SELECT 1 FROM t, glob(${F})`, `FROM (read_parquet(${F}))`,
+    `SELECT 1 FROM read_parquet([${F}])`, `SELECT * FROM (SELECT * FROM ${F})`, `SELECT 1 WHERE EXISTS (FROM ${F})`, `SELECT 1 FROM a JOIN b ON x = 1, ${F}`,
+    `SELECT * FROM "lakehouse.aemo.data/Files/x.parquet"`]) {
+    assert.ok(refs(sql).length >= 1, sql);
+  }
+  assert.equal(refs(`SELECT 1 FROM read_parquet([${F}, ${F}])`).length, 2);
+  assert.equal(refs(`SELECT 1 FROM ${F} a, ${F} b`).length, 2);
+  // Only ever a value: these are strings, and DuckDB gets them as they are.
+  for (const sql of [`SELECT ${F}`, `SELECT 1, ${F}`, `SELECT upper(${F})`, `SELECT 1, upper(${F}) FROM t`, `SELECT 1 FROM t WHERE p = ${F}`, `SELECT 1 FROM t WHERE p IN (${F})`,
+    `SELECT 1 FROM t WHERE f(${F})`, `SELECT * FROM (VALUES (${F})) v(p)`, `SELECT 1 FROM t, read_csv('a.csv', ${F})`, `SELECT 1 FROM t ORDER BY a DESC, ${F}`,
+    `SELECT E${F} FROM t`, `SELECT "from", ${F} FROM t`, `SELECT t.from, ${F} FROM t`, `-- FROM ${F}\nSELECT 1`, `SELECT $$ FROM ${F} $$`]) {
+    assert.deepEqual(refs(sql), [], sql);
+  }
+  // Not names at all, wherever they are.
+  for (const v of ["x.parquet", "lakehouse.parquet", "abfss://ws@h/lh.Lakehouse/Files/x", "/lakehouse/x/Files/y", "other.a.b/Files/x", "https://lakehouse.a.b/Files/x"]) {
+    assert.deepEqual(refs(`SELECT * FROM '${v}'`), [], v);
+  }
+  // As a table's name is spelled, any case before the '/'; a doubled quote is one quote.
+  const anz = refs(`SELECT * FROM 'LAKEHOUSE."ANZ ""R"" a/b"."gold-1"/Files/a/b c/*.csv'`)[0];
+  assert.equal(anz.workspace, 'ANZ "R" a/b');
+  assert.equal(anz.item, "gold-1");
+  assert.equal(anz.path, "/Files/a/b c/*.csv");
+  assert.equal(refs(`SELECT * FROM 'lakehouse.a.b/Files/it''s.csv'`)[0].path, "/Files/it's.csv");
+  assert.equal(refs(`SELECT * FROM 'zip://lakehouse.a.b/Files/a.zip/b.csv'`)[0].zip, "zip://");
+  assert.equal(refs(`SELECT * FROM glob('lakehouse.a.b/Files')`)[0].path, "/Files");
+  // Wrong, so never left to DuckDB, which would look on the disk or answer no rows.
+  for (const [v, why] of [["lakehouse.aemo.data/x.parquet", /a file's name is/], ["lakehouse.aemo/Files/x", /a file's name is/],
+    ["lakehouse.a.b.c/Files/x", /a file's name is/], ["lakehouse.aemo.*/Files/x", /a file's name is/], ["lakehouse.my-ws.data/Files/x", /a file's name is/],
+    ["lakehouse.a.b/files/x", /a file's name is/], ["warehouse.a.b/Files/x", /only a lakehouse/],
+    ["lakehouse.a.b/Tables/dbo/t/x.parquet", /a table's name is lakehouse\.a\.b\.<schema>\.<table>/],
+    ["lakehouse.a.b/Files/../Tables/dbo/t", /can't hold/], ["lakehouse.a.b/Files/./x", /can't hold/]]) {
+    assert.throws(() => refs(`SELECT * FROM glob('${v}')`), why, v);
+  }
+});
+
+test("DuckDB's error says a file as it was written, with its caret still on what it points at", () => {
+  const { namedError } = require("../../src/sql.js");
+  const written = [{ url: "abfss://a@h/d.Lakehouse/Files", name: "LAKEHOUSE.A.D/Files" }];
+  assert.equal(namedError('IO Error: No files found that match the pattern "abfss://a@h/d.Lakehouse/Files/x.parquet"', written),
+    'IO Error: No files found that match the pattern "LAKEHOUSE.A.D/Files/x.parquet"');
+  const before = "SELECT * FROM read_csv('abfss://a@h/d.Lakehouse/Files/x.csv', bad = 1)";
+  const after = "SELECT * FROM read_csv('LAKEHOUSE.A.D/Files/x.csv', bad = 1)";
+  const pointing = (line, at) => `Binder Error: no\n\nLINE 1: ${line}\n${" ".repeat("LINE 1: ".length + at)}^`;
+  // Past the URL, on the function before it, and inside it.
+  assert.equal(namedError(pointing(before, before.indexOf("bad")), written), pointing(after, after.indexOf("bad")));
+  assert.equal(namedError(pointing(before, before.indexOf("read_csv")), written), pointing(after, after.indexOf("read_csv")));
+  assert.equal(namedError(pointing(before, before.indexOf("Lakehouse")), written), pointing(after, after.indexOf("LAKEHOUSE")));
+  assert.equal(namedError("Binder Error: nothing of ours", written), "Binder Error: nothing of ours");
+});
+
 // catalogStatement: the SHOW statements answered with whole schema paths; nothing else.
 test("SHOW ALL TABLES, SHOW SCHEMAS and SHOW TABLES FROM a nested schema are rewritten, nothing else", () => {
   const { catalogStatement, readsCatalog } = require("../../src/sql.js");

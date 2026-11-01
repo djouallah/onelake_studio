@@ -298,6 +298,141 @@ function tableRefs(sql, kinds) {
 }
 
 // -----------------------------------------------------------------------------
+// The files a statement names
+// -----------------------------------------------------------------------------
+// A file is 'lakehouse.<workspace>.<item>/Files/<path>' (docs/NAMING.md). DuckDB can't read that, so
+// the engine gives it the file's abfss:// URL. A string that looks like one is only a file where SQL
+// reads a file: after FROM or JOIN (or a comma among them), after DESCRIBE, SUMMARIZE or PIVOT, or as
+// the first argument of a table function, alone or in a list. Anywhere else it is a value.
+//
+// A name that is wrong throws rather than going to DuckDB, which would look for it on the local disk,
+// and glob() would answer no rows with no error. A string that starts like a name and has no '/' is
+// not one: 'lakehouse.parquet'.
+const READS_FROM = new Set(['from', 'join', 'lateral', 'describe', 'desc', 'summarize', 'pivot', 'unpivot']);
+const NOT_FROM = new Set(['select', 'where', 'group', 'having', 'qualify', 'order', 'limit', 'offset', 'window',
+                          'union', 'intersect', 'except', 'values']);
+const FILE_PART = /"((?:[^"]|"")*)"|([A-Za-z_À-￿][A-Za-z0-9_$À-￿]*)/y;
+
+function fileName(value, kinds) {
+  const zip = /^zip:\/\//i.test(value) ? value.slice(0, 6) : '';
+  const text = value.slice(zip.length);
+  const first = /^[A-Za-z]+(?=\.)/.exec(text);
+  const kind = first && kinds.get(first[0].toLowerCase());
+  if (!kind) return null;
+  const parts = [];
+  let i = 0;
+  for (;;) {
+    FILE_PART.lastIndex = i;
+    const m = FILE_PART.exec(text);
+    if (!m) break;
+    parts.push(m[1] != null ? m[1].replace(/""/g, '"') : m[2]);
+    i = FILE_PART.lastIndex;
+    if (text[i] !== '.') break;
+    i++;
+  }
+  if (!text.includes('/')) return null;
+  const wrong = why => new Error(`'${value}': ${why}`);
+  const shape = "a file's name is lakehouse.<workspace>.<item>/Files/<path>, with a part that isn't a plain name in double quotes";
+  if (text[i] !== '/' || parts.length !== 3) throw wrong(shape);
+  if (kind !== 'lakehouse') throw wrong('only a lakehouse has Files/');
+  const path = text.slice(i);
+  if (/^\/Tables(\/|$)/.test(path)) throw wrong(`a table's name is lakehouse.${text.slice(text.indexOf('.') + 1, i)}.<schema>.<table>`);
+  if (!/^\/Files(\/|$)/.test(path)) throw wrong(shape);
+  if (path.split('/').some(s => s === '.' || s === '..')) throw wrong("a file's path can't hold . or ..");
+  return { zip, workspace: parts[1], item: parts[2], path, written: `${text.slice(0, i)}/Files` };
+}
+
+/**
+ * The file names `sql` reads, in order, each with where its string is. Throws on one that is wrong.
+ * @returns {{start: number, end: number, quote: string, zip: string, workspace: string, item: string, path: string, written: string}[]}
+ */
+function fileRefs(sql, kinds) {
+  const canon = new Map(kinds.map(k => [k.toLowerCase(), k]));
+  const s = String(sql);
+  const n = s.length;
+  const refs = [];
+  let frames = [{ from: false }];
+  // The last token, whether it was a word, and what came before the name it ends (main.read_csv).
+  let prev = '', word = false, beforeName = '';
+  const top = () => frames[frames.length - 1];
+  const inSlot = (f, before) => READS_FROM.has(before) || (before === ',' && f.from) || (before === '(' && f.slot);
+  const readsFile = () => {
+    const f = top();
+    return inSlot(f, prev) || (f.fn && prev === '(') || (f.list && (prev === '[' || prev === ','));
+  };
+  const named = w => {
+    if (prev !== '.') {
+      if (w === 'from' || w === 'join') top().from = true;
+      else if (NOT_FROM.has(w)) top().from = false;
+      beforeName = prev;
+    }
+    prev = w;
+    word = true;
+  };
+  let i = 0;
+  while (i < n) {
+    const c = s[i];
+    const comment = commentEnd(s, i);
+    if (comment !== -1) { i = comment; continue; }
+    if (/\s/.test(c)) { i++; continue; }
+    if (c === "'" || c === '"') {
+      const end = quotedEnd(s, i);
+      const text = s.slice(i + 1, end - 1);
+      const ref = readsFile() ? fileName(text.split(c + c).join(c), canon) : null;
+      if (ref) refs.push({ ...ref, start: i, end, quote: c });
+      // A quoted name is a name, never a keyword.
+      if (c === '"' && prev !== '.') beforeName = prev;
+      prev = c;
+      word = c === '"';
+      i = end;
+      continue;
+    }
+    if (c === '$') {
+      const end = dollarEnd(s, i);
+      if (end !== -1) { prev = c; word = false; i = end; continue; }
+    }
+    IDENT.lastIndex = i;
+    const m = IDENT.exec(s);
+    if (m) { named(m[0].toLowerCase()); i = IDENT.lastIndex; continue; }
+    if (c === '(') {
+      const fn = word && !READS_FROM.has(prev) && !NOT_FROM.has(prev) && inSlot(top(), beforeName);
+      frames.push({ from: false, fn, slot: !fn && inSlot(top(), prev) });
+    } else if (c === '[') {
+      frames.push({ from: false, list: !!top().fn && prev === '(' });
+    } else if ((c === ')' || c === ']') && frames.length > 1) {
+      frames.pop();
+    } else if (c === ';') {
+      frames = [{ from: false }];
+    }
+    prev = c;
+    word = false;
+    i++;
+  }
+  return refs;
+}
+
+// DuckDB's error on a statement with its files' URLs in it, as the statement was written. `written` is
+// [{ url, name }]. Its caret moves with the text, since the page finds that line in what was written.
+function namedError(message, written) {
+  let text = String(message);
+  const line = /(LINE \d+: )([^\n]*)\n( *)\^/.exec(text);
+  if (line) {
+    let excerpt = line[2];
+    let caret = line[3].length - line[1].length;
+    for (const { url, name } of written) {
+      for (let at = excerpt.indexOf(url); at !== -1; at = excerpt.indexOf(url, at + name.length)) {
+        if (caret >= at + url.length) caret += name.length - url.length;
+        else if (caret > at) caret = at;
+        excerpt = excerpt.slice(0, at) + name + excerpt.slice(at + url.length);
+      }
+    }
+    text = text.replace(line[0], () => `${line[1]}${excerpt}\n${' '.repeat(line[1].length + Math.max(caret, 0))}^`);
+  }
+  for (const { url, name } of written) text = text.split(url).join(name);
+  return text;
+}
+
+// -----------------------------------------------------------------------------
 // The catalog, listed with every schema's whole path
 // -----------------------------------------------------------------------------
 // A OneLake table's workspace, item and schema are nested schemas (names.js sqlName), and
@@ -385,4 +520,4 @@ function readsCatalog(sql) {
   return /^\s*show\b/i.test(s) || CATALOG_READS.test(s);
 }
 
-module.exports = { sqlStr, quoteIdent, assertReads, checkedRead, tableRefs, catalogStatement, isShowAllTables, ALL_TABLES_COUNTED, readsCatalog };
+module.exports = { sqlStr, quoteIdent, assertReads, checkedRead, tableRefs, fileRefs, namedError, catalogStatement, isShowAllTables, ALL_TABLES_COUNTED, readsCatalog };

@@ -174,10 +174,12 @@ test("--csv and --json carry raw values; Markdown reads well", async () => {
       assert.match(r.stdout, /1 downloaded semantic model\(s\) in 1 workspace\(s\)/);
 
       r = await cli(["files", "ws", "data", "Files/raw", "--csv"]);
-      assert.deepEqual(csvRows(r.stdout), [["name", "type", "bytes"], ["2026", "folder", ""], ["a.parquet", "file", "1000000"]]);
+      assert.deepEqual(csvRows(r.stdout), [["name", "sql_name", "type", "bytes"],
+        ["2026", "'lakehouse.ws.data/Files/raw/2026'", "folder", ""],
+        ["a.parquet", "'lakehouse.ws.data/Files/raw/a.parquet'", "file", "1000000"]]);
 
       r = await cli(["files", "ws", "data", "Files/empty", "--csv"]);
-      assert.deepEqual(csvRows(r.stdout), [["name", "type", "bytes"]], "empty is the header, not a sentence");
+      assert.deepEqual(csvRows(r.stdout), [["name", "sql_name", "type", "bytes"]], "empty is the header, not a sentence");
 
       r = await cli(["table", "ws", "data", "customers", "--csv"]);
       assert.deepEqual(csvRows(r.stdout), [["column", "type"], ["customer_id", "long"]]);

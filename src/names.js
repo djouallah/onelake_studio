@@ -164,6 +164,19 @@ function sqlNameOf(lh, t) {
   if (!kind) throw new Error(`${lh.item} holds no tables SQL can name`);
   return sqlName({ kind, workspace: lh.workspace, item: displayName(lh.item), schema: t.schema, table: t.table });
 }
+// A lakehouse's file or folder in SQL: lakehouse.<workspace>.<item>/Files/<path>, the item spelled as
+// in its tables' names. `path` is what follows Files/. Quoted as a string where a statement uses it,
+// since DuckDB reads a file only from one.
+function fileSqlName(lh, path = "") {
+  if (!hasFilesArea(lh.item)) throw new Error(`${lh.item} has no Files area: only a lakehouse does`);
+  const rest = strip(path);
+  return `${["lakehouse", lh.workspace, displayName(lh.item)].map(sqlPart).join(".")}/Files${rest ? `/${rest}` : ""}`;
+}
+// The abfss:// URLs of a lakehouse's Files/ in what DuckDB ran, under those names. One by GUIDs names
+// no item, and stays as it is.
+const FILE_URL = /abfss:\/\/([^@'"/]+)@onelake\.dfs\.fabric\.microsoft\.com\/([^/'"]+)\.Lakehouse\/Files(?=[/'"\s]|$)/gi;
+const fileNamesIn = text => String(text).replace(FILE_URL, (_, ws, item) =>
+  `${["lakehouse", ws, item].map(sqlPart).join(".")}/Files`);
 
 function icebergTypeName(t) {
   if (t == null) return "";
@@ -293,7 +306,7 @@ function fmtBytes(n) {
 module.exports = {
   strip, basename, stripBom, encPath, DFS_HOST, DFS_ORIGIN, dfsFileUrl, abfssUrl,
   itemKind, holdsTables, isMirrored, hasFilesArea, kindLabel,
-  SQL_KINDS, sqlKind, displayName, isStaging, RESERVED, sqlPart, sqlName, sqlNameOf, MODEL_CATALOG, modelSqlName,
+  SQL_KINDS, sqlKind, displayName, isStaging, RESERVED, sqlPart, sqlName, sqlNameOf, fileSqlName, fileNamesIn, MODEL_CATALOG, modelSqlName,
   icebergTypeName, icebergFields, snapshotStats, sourceFormat, icebergHistory,
   fmtBytes,
 };

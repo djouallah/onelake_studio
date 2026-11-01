@@ -32,8 +32,8 @@ const fs = require('node:fs');
 const fsp = require('node:fs/promises');
 const { join } = require('node:path');
 const os = require('node:os');
-const { sqlStr, quoteIdent, assertReads, checkedRead, tableRefs, catalogStatement, readsCatalog } = require('./sql');
-const { SQL_KINDS, sqlName, MODEL_CATALOG, modelSqlName } = require('./names');
+const { sqlStr, quoteIdent, assertReads, checkedRead, tableRefs, fileRefs, namedError, catalogStatement, readsCatalog } = require('./sql');
+const { SQL_KINDS, sqlName, abfssUrl, MODEL_CATALOG, modelSqlName } = require('./names');
 const { revalidate } = require('./store');
 
 
@@ -180,6 +180,9 @@ async function trimFileCache(dir, maxBytes, onWarn) {
 // them, plus { metadataLocation } — or { emptySql }, the typed empty SELECT of a table nothing
 // was ever written to. Its second argument is { fresh }: past the cache, once a read has failed.
 //
+// `resolveFile` does the same for a file's SQL name (sql.js fileRefs): given { workspace, item } as
+// SQL wrote them, it answers them as OneLake spells them, the item as its directory.
+//
 // `catalogTables` lists, from the host's cache alone, every table it knows: { kind, workspace,
 // item, schema, table } with { columns: [{ name, type }] } (DuckDB types) or { emptySql } — and
 // every semantic model, { kind: 'semanticmodel', workspace, model }.
@@ -197,7 +200,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
                             memoryLimit = '', threads = 0, spillMaxGB = 0, maxRows = DEFAULT_MAX_ROWS,
                             allowedPaths = [], lockdown = true,
                             httpProxy = '', bundledExtensions = null,
-                            fileCacheDir = null, fileCacheMaxBytes = 0, resolveTable = null,
+                            fileCacheDir = null, fileCacheMaxBytes = 0, resolveTable = null, resolveFile = null,
                             catalogTables = null, offlineReason = () => null, checkConnectivity = null,
                             onRowsRead = () => {}, serve = null, remote = null } = {}) {
   let instance = null;
@@ -746,6 +749,25 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
     return out;
   }
 
+  // The statement with each file it names as DuckDB reads it: its abfss:// URL. `written` is how to
+  // say those URLs as the statement wrote them, in what DuckDB answers.
+  async function withFileUrls(sql, fresh) {
+    const refs = fileRefs(sql, SQL_KINDS);
+    if (!refs.length) return { statement: sql, written: [] };
+    if (!resolveFile) throw new Error('this engine cannot name OneLake files');
+    let statement = '', at = 0;
+    const written = [];
+    for (const ref of refs) {
+      const { workspace, item } = await resolveFile(ref, { fresh });
+      const url = abfssUrl(workspace, `${item}/Files`);
+      const inQuotes = s => s.split(ref.quote).join(ref.quote + ref.quote);
+      statement += `${sql.slice(at, ref.start)}${ref.quote}${inQuotes(ref.zip + url + ref.path.slice('/Files'.length))}${ref.quote}`;
+      at = ref.end;
+      written.push({ url: inQuotes(url), name: inQuotes(ref.written) });
+    }
+    return { statement: statement + sql.slice(at), written };
+  }
+
   // Offline, a statement that reads OneLake is served from the disk cache. Only with no such cache
   // (turned off, or a build that can't) is it refused here, rather than left to time out.
   // A table nothing was ever written to reads no file, and needs no network.
@@ -784,19 +806,22 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
   async function withTables(sql, run, canRetry = () => true, { fresh = false, seen = () => {} } = {}) {
     if (readsCatalog(sql)) await syncCatalog();
     await syncOffline();
-    let named = [];
+    let named = [], files = [];
     try {
       return await revalidate(o => sourcesOf(sql, { ...o, fresh: fresh || !!o.fresh }), async tables => {
         named = tables;
         const read = tables.map(t => t.at).filter(Number.isFinite);
         seen(read.length ? Math.min(...read) : null);
-        refuseOffline(sql, tables);
+        const { statement, written } = await withFileUrls(sql, fresh);
+        files = written;
+        refuseOffline(statement, tables);
         for (const t of tables) await makeView(t);
-        const result = await run(catalogStatement(sql) || sql);
+        const result = await run(catalogStatement(sql) || statement);
         rowsRead(sql, tables);
         return result;
       }, e => READ_FAILURE.test(String(e && e.message)) && canRetry());
     } catch (e) {
+      if (files.length) { try { e.message = namedError(e.message, files); } catch (_) {} }
       const message = String(e && e.message);
       if (NOT_CACHED.test(message)) {
         const what = named.filter(t => t.location);

@@ -51,14 +51,16 @@ function createSqlTables({ onelake, paths, offlineReason = () => null }) {
   const namedFrom = new Map();
   const nameKey = (kind, workspace, item) => [kind, workspace, item].join('\u0000').toLowerCase();
 
-  // The workspace and the item's directory, as OneLake spells them.
+  // The workspace and the item's directory, as OneLake spells them. `ref.name` says what is being
+  // looked for, when it is not a table.
   async function locate(ref, fresh) {
+    const asked = () => ref.name || sqlName(ref);
     const lookUp = async o => {
       const workspaces = await onelake.workspaces(o).catch(() => []);
       const ws = workspaces.find(w => same(w, ref.workspace)) || String(ref.workspace);
       if (ref.dir) return { ws, items: null };
       const items = await onelake.items(ws, o).catch(e => {
-        throw new Error(`${sqlName(ref)}: workspace ${ref.workspace} could not be listed — ${e.message}`);
+        throw new Error(`${asked()}: workspace ${ref.workspace} could not be listed — ${e.message}`);
       });
       return { ws, items };
     };
@@ -68,8 +70,8 @@ function createSqlTables({ onelake, paths, offlineReason = () => null }) {
       if (!hit) {
         // Offline, the kept listing is all there is, so it cannot say the item does not exist.
         const why = offlineReason();
-        throw Object.assign(why ? offlineError(why, `${sqlName(ref)}: ${ref.kind} ${ref.item}`)
-          : new Error(`${sqlName(ref)}: there is no ${ref.kind} ${ref.item} in workspace ${ws}`), { notListed: true });
+        throw Object.assign(why ? offlineError(why, `${asked()}: ${ref.kind} ${ref.item}`)
+          : new Error(`${asked()}: there is no ${ref.kind} ${ref.item} in workspace ${ws}`), { notListed: true });
       }
       return { ws, dir: hit.name };
     }, e => e.notListed && !fresh);
@@ -115,6 +117,13 @@ function createSqlTables({ onelake, paths, offlineReason = () => null }) {
     return same(r.workspace, ref.workspace) && same(r.item, ref.item) ? r : { ...r, ...asWritten };
   }
 
+  // A file's lakehouse, from its SQL name (sql.js fileRefs): the workspace and the item's directory,
+  // as OneLake spells them, found the way a table's are.
+  async function resolveFile(ref, { fresh = false } = {}) {
+    const { ws, dir } = await locate({ kind: 'lakehouse', workspace: ref.workspace, item: ref.item, name: ref.written }, fresh);
+    return { workspace: ws, item: dir };
+  }
+
   // A semantic model's Direct Lake tables, which its expressions name by GUID, as SQL names:
   // [{ workspace, item (GUIDs), schema, table }] -> [name]. Every model is named each time the
   // panel opens, and only an item never seen asks Fabric.
@@ -131,7 +140,7 @@ function createSqlTables({ onelake, paths, offlineReason = () => null }) {
     return out;
   }
 
-  return { resolve, nameTables, forget: () => namedFrom.clear() };
+  return { resolve, resolveFile, nameTables, forget: () => namedFrom.clear() };
 }
 
 module.exports = { createSqlTables };
