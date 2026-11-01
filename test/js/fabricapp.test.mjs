@@ -58,6 +58,24 @@ const publish = (app, over = {}) => app.publish({
   ...over,
 });
 
+test("takenName: an app no export created, asked about with nothing written", async () => {
+  const list = value => [["GET", `/workspaces/${WS}/items?type=AppBackend`, () => res(200, { value })]];
+  const theirs = { id: "other", displayName: "Sales-Model" };
+  const { app, calls } = appWith(list([theirs]));
+  assert.deepEqual(await app.takenName(WS, "sales-model"), theirs, "whatever its case");
+  assert.deepEqual(calls.map(c => c.method), ["GET"]);
+  assert.equal(await app.takenName(WS, "sales-model", "other"), null, "the one this export made");
+  assert.deepEqual(await app.takenName(WS, "sales-model", "deleted-since"), theirs);
+  assert.equal(await appWith(list([])).app.takenName(WS, "sales-model"), null);
+});
+
+test("publish: a later step failing still leaves the item known to be this export's", async () => {
+  const { app } = appWith(happy([["POST", "/__private/secrets", () => res(400, { message: "no" })]]));
+  const heard = [];
+  await assert.rejects(publish(app, { onItem: id => { heard.push(id); } }), /HTTP 400/);
+  assert.deepEqual(heard, [ID]);
+});
+
 test("publish: item, backend, key, settings, secrets, site, function, redirect — in the CLI's order", async () => {
   const { app, calls } = appWith(happy());
   const r = await publish(app);

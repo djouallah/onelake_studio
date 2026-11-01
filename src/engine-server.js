@@ -21,6 +21,7 @@ const net = require('node:net');
 const fs = require('node:fs');
 const fsp = require('node:fs/promises');
 const crypto = require('node:crypto');
+const { dirname, join } = require('node:path');
 const { DuckDBInstance } = require('@duckdb/node-api');
 const { createEngineHost, restartListener } = require('./engine-host');
 const { openClient, loadExtension } = require('./engine-client');
@@ -34,19 +35,38 @@ const sameToken = (a, b) => {
 
 // What the extension remembers (statestore.js): a DuckDB of its own, on a Quack port of its own, so
 // no statement a page sends the engine can reach it, and it holds none of the engine's memory.
+// `theFile` on an error says the file itself is what failed, not something around it.
 async function openState({ stateFile, token, options }) {
+  const aboutTheFile = e => { throw Object.assign(new Error(e.message), { theFile: true }); };
   const db = await DuckDBInstance.create(stateFile, {
     allow_persistent_secrets: 'false', threads: '2', memory_limit: '512MB',
     ...(options.extensionDir ? { extension_directory: options.extensionDir } : {}),
-  });
-  const c = await db.connect();
-  await loadExtension(c, 'httpfs', options);
-  await loadExtension(c, 'quack', options);
-  await c.run('CREATE TABLE IF NOT EXISTS kv (k VARCHAR PRIMARY KEY, ts BIGINT, value VARCHAR);');
-  await c.run('CREATE TABLE IF NOT EXISTS logs (ts BIGINT, win VARCHAR, sql VARCHAR, ms BIGINT, status VARCHAR, error VARCHAR, conn VARCHAR);');
-  const r = await c.runAndReadAll(`SELECT listen_uri FROM quack_serve('quack:127.0.0.1:0', token = ${sqlStr(token)})`);
-  await c.run(`SET allowed_directories = []; SET enable_external_access = false; SET lock_configuration = true;`);
-  return { db, conn: c, uri: r.getRowObjectsJson()[0].listen_uri };
+  }).catch(aboutTheFile);
+  try {
+    const c = await db.connect();
+    await loadExtension(c, 'httpfs', options);
+    await loadExtension(c, 'quack', options);
+    await c.run('CREATE TABLE IF NOT EXISTS kv (k VARCHAR PRIMARY KEY, ts BIGINT, value VARCHAR);').catch(aboutTheFile);
+    await c.run('CREATE TABLE IF NOT EXISTS logs (ts BIGINT, win VARCHAR, sql VARCHAR, ms BIGINT, status VARCHAR, error VARCHAR, conn VARCHAR);').catch(aboutTheFile);
+    const r = await c.runAndReadAll(`SELECT listen_uri FROM quack_serve('quack:127.0.0.1:0', token = ${sqlStr(token)})`);
+    await c.run(`SET allowed_directories = []; SET enable_external_access = false; SET lock_configuration = true;`);
+    return { db, conn: c, uri: r.getRowObjectsJson()[0].listen_uri };
+  } catch (e) {
+    try { db.closeSync(); } catch (_) {}
+    throw e;
+  }
+}
+
+// Another process has the file open: Windows and everywhere else, in DuckDB's words.
+const HELD = /being used by another process|Could not set lock|Conflicting lock/i;
+// State files from when they were named after the install, each left behind by an update.
+const OLD_STATE_FILE = /^[0-9a-f]{16}\.duckdb(\.wal)?$/;
+const STATE_RETRY_MS = 15_000;
+
+async function setAside(file) {
+  for (const f of [file, `${file}.wal`]) {
+    await fsp.rename(f, `${f}.bad`).catch(e => { if (e.code !== 'ENOENT') throw e; });
+  }
 }
 
 async function main({ token, pipe, options, logFile, idleMs = 60_000, stateFile = null, build = null }) {
@@ -57,11 +77,46 @@ async function main({ token, pipe, options, logFile, idleMs = 60_000, stateFile 
   const engine = createEngineHost({ ...options, serve: { token }, onWarn: log,
     onLog: b => log(`booted in ${b.totalMs}ms`) });
 
-  let idle = null, state = null, reaper = null, stopping = false, stateDb = null, stateConn = null, keeper = null;
+  let idle = null, state = null, reaper = null, stopping = false, stateDb = null, stateConn = null, keeper = null, stateRetry = null;
   const clients = new Set();
+
+  // The state file, held for the life of this process. It is only a cache, so one that can't be
+  // opened is set aside and started again. One another process holds isn't broken: that is a server
+  // of the version just updated from, with a window still on it. This one looks again until it goes,
+  // and a window joining after that finds the file (engine-client.js createStateClient).
+  async function keepState() {
+    const open = async () => {
+      const kept = await openState({ stateFile, token, options });
+      delete state.stateError;
+      state.stateUri = kept.uri;
+      stateDb = kept.db;
+      stateConn = kept.conn;
+      keeper = createLogKeeper({ engine, state: kept.conn, log, maxBytes: Math.max(0, Number(options.logMaxGB ?? 1) || 0) * 1024 ** 3 });
+      keeper.start();
+      for (const name of await fsp.readdir(dirname(stateFile)).catch(() => [])) {
+        if (OLD_STATE_FILE.test(name)) await fsp.rm(join(dirname(stateFile), name), { force: true }).catch(() => {});
+      }
+    };
+    const none = e => {
+      log(`no state file: ${e.message}`);
+      state.stateError = `the state file could not be opened: ${e.message}`;
+    };
+    try { await open(); return; }
+    catch (e) {
+      if (HELD.test(e.message)) {
+        none(e);
+        if (!stopping) stateRetry = setTimeout(keepState, options.stateRetryMs || STATE_RETRY_MS);
+        return;
+      }
+      if (!e.theFile) { none(e); return; }
+      log(`the state file could not be opened, so it is set aside and started again: ${e.message}`);
+    }
+    await setAside(stateFile).then(open).catch(none);
+  }
   async function shutdown(why) {
     if (stopping) return;
     stopping = true;
+    clearTimeout(stateRetry);
     log(`stopping: ${why}`);
     server.close();
     // No engine.close(): closing an instance blocks until its statements are done, and a client's
@@ -178,27 +233,21 @@ async function main({ token, pipe, options, logFile, idleMs = 60_000, stateFile 
   booted = engine.boot().then(async s => {
     state = { ...s, build };
     log(`serving ${s.uri}`);
-    if (stateFile) {
-      // Held for the life of this process: nothing else opens the file.
-      const kept = await openState({ stateFile, token, options }).catch(e => {
-        log(`no state file: ${e.message}`);
-        state.stateError = `the state file could not be opened: ${e.message}`;
-        return null;
-      });
-      if (kept) {
-        state.stateUri = kept.uri;
-        stateDb = kept.db;
-        stateConn = kept.conn;
-        keeper = createLogKeeper({ engine, state: kept.conn, log, maxBytes: Math.max(0, Number(options.logMaxGB ?? 1) || 0) * 1024 ** 3 });
-        keeper.start();
-      }
-    }
+    if (stateFile) await keepState();
     reaper = await openClient({ uri: s.uri, token, extensionDir: options.extensionDir, bundledExtensions: options.bundledExtensions })
       .catch(e => { log(`no way to cancel a gone window's queries: ${e.message}`); return null; });
   });
   await booted;
   watchIdle();
   say({ ready: true });
+}
+
+// Why this process ended, in the one place it can be read afterwards: it runs detached, with no
+// stderr anyone sees.
+let crashLog = null;
+function sayWhy(e) {
+  if (!crashLog) return;
+  try { fs.appendFileSync(crashLog, `${new Date().toISOString()} ended: ${(e && e.stack) || e}\n`); } catch (_) {}
 }
 
 let input = '';
@@ -209,12 +258,16 @@ process.stdin.on('data', chunk => {
   if (nl < 0) return;
   process.stdin.removeAllListeners('data');
   process.stdin.destroy();
-  main(JSON.parse(input.slice(0, nl))).catch(e => {
+  const asked = JSON.parse(input.slice(0, nl));
+  crashLog = asked.logFile;
+  main(asked).catch(e => {
+    sayWhy(e);
     try { process.stdout.write(`${JSON.stringify({ error: e.message })}\n`); } catch (_) {}
     process.exit(1);
   });
 });
 process.on('uncaughtException', e => {
+  sayWhy(e);
   try { process.stderr.write(`${e && e.stack}\n`); } catch (_) {}
   process.exit(1);
 });

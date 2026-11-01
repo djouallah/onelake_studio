@@ -4,7 +4,28 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { authedFetch, listPages, mapPool, fabricMessage, useConnectivity } = require("../../src/http.js");
+const { authedFetch, createTokenHold, listPages, mapPool, fabricMessage, useConnectivity } = require("../../src/http.js");
+
+test("a token asked for before a sign-out is not kept after it", () => {
+  let at = 1000;
+  const hold = createTokenHold(60_000, () => at);
+  assert.equal(hold.recent(), null);
+
+  const asked = hold.turn();
+  assert.equal(hold.keep(asked, "tok"), true);
+  assert.equal(hold.recent(), "tok");
+  at += 60_000;
+  assert.equal(hold.recent(), null, "past its time it isn't recent");
+  assert.equal(hold.any(), "tok", "with no internet, it is what there is");
+
+  const late = hold.turn();
+  hold.forget();
+  assert.equal(hold.keep(late, "the account signed out of"), false);
+  assert.equal(hold.any(), null);
+
+  assert.equal(hold.keep(hold.turn(), null), true);
+  assert.equal(hold.any(), null, "no token is kept as none");
+});
 
 const res = (status, { retryAfter, body = "" } = {}) => {
   let cancelled = false;

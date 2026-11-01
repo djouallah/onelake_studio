@@ -191,8 +191,8 @@ every window is a client of it over DuckDB's Quack protocol ([`src/engine-client
   it warm, then exits. If it dies, its tabs close and the next click starts it again. **Sign Out**, **Switch
   Microsoft Account**, a restart and **Clear Cached OneLake Data** stop it for every window, and their tabs close.
 - **What is shared:** one memory budget, and the blocks read, in memory over the disk cache.
-- **Tabs:** each runs its own statements, and its Stop reaches only those. Whatever the tree opens gets a new
-  tab, and so does **New Query**. A tab's `Files/` views carry a tag, so two tabs' views never share a name.
+- **Tabs:** each runs its own statements, and its Stop reaches only those, including one still opening its tables:
+  that one answers at once and never runs. Whatever the tree opens gets a new tab, and so does **New Query**. A tab's `Files/` views carry a tag, so two tabs' views never share a name.
 - **The session token:** a new random one per server, kept in VS Code's secret storage, and reaching the
   server over its stdin. Without it the port on `127.0.0.1` runs nothing. In the client's DuckDB it is a
   named secret, since an `ATTACH`'s `TOKEN` option shows in `duckdb_databases()`.
@@ -207,9 +207,13 @@ every window is a client of it over DuckDB's Quack protocol ([`src/engine-client
   A Quack listener can stop while the process lives on: a statement that can't connect asks over this pipe, the
   server starts it again on the same port and tells every window to attach again, and the statement goes once more.
 - **What is remembered:** the store's entries (listings, table metadata, first rows) and the log are tables in a
-  state file, `engine-server\<id>.duckdb` in the extension's storage, in a second DuckDB in the server on a Quack
+  state file, `engine-server\state-<id>.duckdb` in the extension's storage, in a second DuckDB in the server on a Quack
   port of its own, so a page's SQL can't reach them ([`src/statestore.js`](../src/statestore.js)). The tree therefore
   waits for the server. A JSON store from an older version is imported once and left as it was.
+  - **It is named after the account, not the install,** so an update keeps it. F5 has its own.
+  - **It is only a cache.** A file that can't be opened is set aside as `.bad` and started again. A file another
+    process holds, a server of the version just updated from, isn't broken: the server looks again every 15 seconds,
+    and what is remembered reads as not cached until then.
 
 Still files: a `Files/` object's bytes, saved queries, models and semantic-model pointers.
 
@@ -234,7 +238,7 @@ SQL box, no Stop and no Restart.
 | The bytes of a `Files/` object the host reads (an image, a `.bim`, a SQLite copy, a saved file) | Under the etag its cached listing gave | Only when the file was rewritten |
 | What DuckDB reads: table data and `Files/` objects | DuckDB's disk cache (`cache_httpfs`) | Only when the file was rewritten: a kept copy is checked against the file's version tag and modification time |
 | That a table's rows were read, per snapshot | The state file | Never: a new snapshot is a new entry |
-| A semantic model's definition | `~/OneLakeStudio/semantic-models/<workspace>/<model>.yaml` | On **Download Again** |
+| A semantic model's definition | `~/OneLakeStudio/semantic-models/<account>/<workspace>/<model>.yaml` | On **Download Again** |
 
 - **A kept answer is trusted until using it fails.** Then it is read again once, and the work tried again
   only if the answer changed. Otherwise the first error stands, and so it does offline
@@ -334,8 +338,8 @@ workspace has one model of a name.
 
 **Opening one**
 - **From the tree:** a click reads its TMSL definition (the REST API's `getDefinition`) and keeps it as
-  Apache Ossie (dax-sql's `tmslToOssie`) at `~/OneLakeStudio/semantic-models/<workspace>/<model>.yaml`,
-  then opens that copy.
+  Apache Ossie (dax-sql's `tmslToOssie`) at `~/OneLakeStudio/semantic-models/<account>/<workspace>/<model>.yaml`,
+  then opens that copy. It is under its account because a workspace's name is unique in one tenant only.
 - **From a query:** a statement that names a model not open yet opens it first, in the same way.
 - **Nothing is written to OneLake**, so someone who may only read the workspace can open and query it.
 - **Only Direct Lake over OneLake.** Any other model is refused, and nothing is kept.
@@ -403,7 +407,9 @@ model's Explore, nothing else, as a Fabric app (item type `AppBackend`, named
 - **The app**, in Fabric.
 - **The model's file**, into the `Files/` of its lakehouse, when it was opened from its local copy:
   `<lakehouse>/Files/semantic_model/<model>.yaml` ([`src/onelakewrite.js`](../src/onelakewrite.js)). The
-  app reads the model there. A different file of that name is replaced only when you say so.
+  app reads the model there. A different file of that name is replaced only when you say so, and not being able
+  to tell what is there stops the export. It is written beside the file and renamed into place, so a failure part way
+  leaves what was there.
 - **A local copy of the app:** to the folder approved last time for that model, or else `<the folder VS
   Code has open>/<model>-explore/`, or else one you pick.
 
@@ -421,7 +427,7 @@ model's Explore, nothing else, as a Fabric app (item type `AppBackend`, named
 - **The model is read in place:** the app never holds a copy. Its function reads the model file from
   the lakehouse at run time (its `MODEL_URL` secret), so the app shows the model as it is there.
 - **No silent takeover:** a re-export updates the item the last export created (its id is kept in the
-  local copy). If an app of that name exists and no export created it, the export stops and asks.
+  local copy, as soon as the item exists). If an app of that name exists and no export created it, the export asks.
 - **Local edits are never overwritten unasked.** The local copy's marker keeps a hash of each of its
   files as last published (`site/`, `rayfin/`, `AGENTS.md`, `.gitignore`, without `node_modules` or
   `dist/`). If any changed, the export asks: *Overwrite Local Changes*, *Publish Folder As Is*, or
@@ -547,7 +553,8 @@ every window. The rest apply at once.
   reports for those items.
 - **An item its catalog cannot serve shows an error rather than a table list.** There is no DFS fallback.
   Re-picking the item tries again.
-- **A result past `maxResultRows` is counted rather than carried into the tab.**
+- **A result past `maxResultRows` is counted rather than carried into the tab.** The status line gives both counts,
+  and **Export…** writes every row.
 - **Tabs don't come back after a window reload.** Only the box's last text does (see
   [The SQL box and results](#the-sql-box-and-results)).
 - **A Pivot's shelves are kept per tab,** so a model opened again in a new tab starts with empty shelves.

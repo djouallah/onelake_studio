@@ -23,9 +23,9 @@ const { createStore } = require('./store');
 const { createOneLake, walkCached } = require('./onelake');
 const { createSqlTables } = require('./sqltables');
 const { createConnectivity } = require('./connectivity');
-const { useConnectivity } = require('./http');
+const { useConnectivity, createTokenHold } = require('./http');
 const { createHostMethods } = require('./host');
-const { createFabric, modelFileName } = require('./fabric');
+const { createFabric, modelFileName, modelAccountDir, modelCopyPath } = require('./fabric');
 const { LakehouseTree, TREE_FILTERS } = require('./tree');
 const { doubleClicks } = require('./doubleclick');
 const { webviewRoot } = require('./webview');
@@ -142,16 +142,17 @@ function rememberAccount(session) {
 // retry (catalog.js and the engine ask again with `fresh` after a 401). Anything that can
 // change the answer clears it outright.
 const TOKEN_TTL_MS = 60_000;
-let cachedToken = null;   // { token, at }
+const storageHold = createTokenHold(TOKEN_TTL_MS);
 
-function forgetToken() { cachedToken = null; cachedFabric = null; fabricAudience = null; cachedApp = null; }
+function forgetToken() { storageHold.forget(); fabricHold.forget(); fabricAudience = null; appHold.forget(); }
 
 async function hostToken({ fresh = false } = {}) {
   // No internet: a refresh could only hang, and nothing is about to use the token.
-  if (connectivity.noInternet()) return cachedToken ? cachedToken.token : null;
-  if (!fresh && cachedToken && Date.now() - cachedToken.at < TOKEN_TTL_MS) return cachedToken.token;
+  if (connectivity.noInternet()) return storageHold.any();
+  if (!fresh && storageHold.recent()) return storageHold.recent();
+  const asked = storageHold.turn();
   const token = await getToken({ createIfNone: false });
-  cachedToken = token ? { token, at: Date.now() } : null;
+  storageHold.keep(asked, token);
   return token;
 }
 
@@ -165,7 +166,7 @@ const FABRIC_AUDIENCES = [
   'https://analysis.windows.net/powerbi/api/.default',
 ];
 let fabricAudience = null;
-let cachedFabric = null;   // { token, at }
+const fabricHold = createTokenHold(TOKEN_TTL_MS);
 
 const isCancel = e => /cancel|did not consent/i.test(String((e && e.message) || e));
 
@@ -176,9 +177,8 @@ async function sameAccountSession(aud, createIfNone, storage) {
 }
 
 async function fabricToken({ fresh = false, createIfNone = false } = {}) {
-  if (!fresh && !createIfNone && cachedFabric && Date.now() - cachedFabric.at < TOKEN_TTL_MS) {
-    return cachedFabric.token;
-  }
+  if (!fresh && !createIfNone && fabricHold.recent()) return fabricHold.recent();
+  const asked = fabricHold.turn();
   const storage = await getSession({ createIfNone: false }).catch(() => null);
   if (!storage) return null;
   let lastErr = null;
@@ -186,8 +186,7 @@ async function fabricToken({ fresh = false, createIfNone = false } = {}) {
     try {
       const s = await sameAccountSession(aud, createIfNone, storage);
       if (s) {
-        fabricAudience = aud;
-        cachedFabric = { token: s.accessToken, at: Date.now() };
+        if (fabricHold.keep(asked, s.accessToken)) fabricAudience = aud;
         return s.accessToken;
       }
     } catch (e) {
@@ -203,14 +202,16 @@ async function fabricToken({ fresh = false, createIfNone = false } = {}) {
 // Export to Fabric's token (fabricapp.js): the Fabric API's own audience, never Power BI's —
 // the app item's workload routes are the Fabric API's. The same account as the storage
 // session, as fabricToken asks. `createIfNone` on the button's click, which may prompt.
-let cachedApp = null;   // { token, at }
+const appHold = createTokenHold(TOKEN_TTL_MS);
 async function appToken({ fresh = false, createIfNone = false } = {}) {
-  if (!fresh && !createIfNone && cachedApp && Date.now() - cachedApp.at < TOKEN_TTL_MS) return cachedApp.token;
+  if (!fresh && !createIfNone && appHold.recent()) return appHold.recent();
+  const asked = appHold.turn();
   const storage = await getSession({ createIfNone: false }).catch(() => null);
   if (!storage) return null;
   const s = await sameAccountSession(FABRIC_AUDIENCES[0], createIfNone, storage);
-  cachedApp = s ? { token: s.accessToken, at: Date.now() } : null;
-  return s ? s.accessToken : null;
+  const token = s ? s.accessToken : null;
+  appHold.keep(asked, token);
+  return token;
 }
 
 // The cache-first OneLake layer (onelake.js), built at activation and shared by the tree,
@@ -449,8 +450,11 @@ function sharedEngineServer(context, account) {
   const build = (() => { try { return statSync(script).mtimeMs; } catch (_) { return 0; } })();
   const key = [account || 'none', context.extensionUri.fsPath].join('|');
   const secret = `onelakeStudio.engineSession.${createHash('sha256').update(key).digest('hex').slice(0, 16)}`;
+  // What is remembered belongs to the account, so an update keeps it. F5 has its own: the installed
+  // build's server holds this file open.
+  const stateKey = [account || 'none', context.extensionMode === vscode.ExtensionMode.Production ? '' : 'dev'].join('|');
   return {
-    key, script, build,
+    key, stateKey, script, build,
     stateDir: join(context.globalStorageUri.fsPath, 'engine-server'),
     getToken: () => context.secrets.get(secret),
     setToken: token => context.secrets.store(secret, token),
@@ -905,6 +909,17 @@ async function activateInner(context) {
   semviews = createSemViews({ dir: join(context.globalStorageUri.fsPath, 'semantic-views'), onelake,
                               onChange: () => { if (engine) engine.catalogChanged(); } });
   semviews.useAccount(storeAccount);
+  // A model's local copy is kept per account (fabric.js modelCopyPath). The copies from before
+  // that move once; opening a model waits for it, so it finds its copy where it now is.
+  let modelsAdopted = Promise.resolve(0);
+  function adoptModels() {
+    modelsAdopted = semviews.adoptCopies(modelsFolder(), modelAccountDir(modelsFolder(), queryAccount)).catch(e => {
+      if (out) out.appendLine(`the local copies of models could not be moved: ${e.message}`);
+      return 0;
+    });
+    return modelsAdopted;
+  }
+  adoptModels();
 
   // Called wherever the identity may have moved; a no-op when it has not.
   // One at a time: two callers at once could both see the old account, or one return while
@@ -935,6 +950,7 @@ async function activateInner(context) {
     catalogSnapshot.reset();
     if (engine) engine.catalogChanged();
     semviews.useAccount(key);
+    await adoptModels();
   });
   // What the store holds moved: the engine's catalog is listed again before the next
   // statement that reads it.
@@ -1014,8 +1030,16 @@ async function activateInner(context) {
       try {
         forgetToken();
         const was = hasSession;
-        const session = await getSession({ createIfNone: false }).catch(() => null);
-        // A token refresh that failed for want of internet looks like this. It is not a sign-out.
+        // The provider failing to answer says nothing about who is signed in.
+        let failed = null;
+        const session = await getSession({ createIfNone: false }).catch(e => { failed = e; return null; });
+        if (failed) {
+          if (out) out.appendLine(`the account provider did not answer, so nothing changes — ${(failed && failed.message) || failed}`);
+          return;
+        }
+        // Nor is a token refresh that failed for want of internet a sign-out, and nothing may have
+        // noticed the internet went: asked now, before a session is taken to be gone.
+        if (!session && was && !signedOutByChoice()) await connectivity.check();
         if (!session && connectivity.noInternet()) return;
         await setSignedIn(!!session);
         const before = storeAccount;
@@ -1226,7 +1250,8 @@ async function activateInner(context) {
     return value;
   }
 
-  const modelPath = n => join(modelsFolder(),modelFileName(n.workspace).replace(/\.yaml$/, ''), modelFileName(n.model));
+  const modelPath = n => modelCopyPath(modelsFolder(), queryAccount, n.workspace, n.model);
+  modelsAdopted.then(moved => { if (moved) tree.redraw(); });
 
   // A model's local copy (fetchModel), when there is one: the tree's check mark.
   const modelKey = n => `${n.workspace}|${n.modelId}`;
@@ -1274,17 +1299,18 @@ async function activateInner(context) {
 
   // A semantic model, opened from the tree or named by a query: its definition (Fabric's
   // getDefinition, TMSL), kept as a local copy in Apache Ossie — modelPath(n), ~/OneLakeStudio/
-  // semantic-models/<workspace>/<model>.yaml — and read from there after. Nothing is written to OneLake, so a
+  // semantic-models/<account>/<workspace>/<model>.yaml — and read from there after. Nothing is written to OneLake, so a
   // user who may only read the workspace opens and queries a model all the same; Export to
   // Fabric is the one write (exportExplore). A model that is not Direct Lake over OneLake is
   // refused, and nothing is kept. `fresh` reads Fabric again, over the local copy.
-  // `${workspace}|${model}|${fresh}`, lower-cased -> Promise<{ path, text }>: a fresh read never
-  // joins one that may answer from the local copy.
+  // `${path}|${fresh}`, lower-cased -> Promise<{ path, text }>: a fresh read never joins one that
+  // may answer from the local copy, and one account's never joins another's.
   const fetching = new Map();
   function fetchModel(n, { fresh = false, say = () => {} } = {}) {
-    const key = `${n.workspace}|${n.model}|${!!fresh}`.toLowerCase();
+    const path = modelPath(n);
+    const key = `${path}|${!!fresh}`.toLowerCase();
     if (!fetching.has(key)) fetching.set(key, (async () => {
-      const path = modelPath(n);
+      await modelsAdopted;
       if (!fresh) {
         const kept = await fsp.readFile(path, 'utf8').catch(() => null);
         if (kept != null) return { path, text: kept };
@@ -1522,19 +1548,32 @@ async function activateInner(context) {
         }
       }
 
-      // Approved: the model's .yaml into its lakehouse, where the app will read it. A different
-      // file already there is replaced only when the user says so.
+      // An app of that name that no export created may be someone's own: never replaced unasked.
+      let takeOver = false;
+      const taken = await fabricApp.takenName(plan.workspace, plan.name, before && before.itemId);
+      if (taken) {
+        const pick = await vscode.window.showWarningMessage(
+          `An app named "${taken.displayName}" already exists in this workspace, and Export to Fabric did not create it. Replace it with this Explore?`,
+          { modal: true }, 'Replace It');
+        if (pick !== 'Replace It') throw declined(`Not exported: an app named ${taken.displayName} already exists.`);
+        takeOver = true;
+      }
+
+      // The model's .yaml goes into its lakehouse, where the app will read it. A different file
+      // already there is replaced only when the user says so, and not being able to tell what is
+      // there stops the export here, with nothing written.
+      const atTarget = target && await writer.compare(target.workspace, target.path, text,
+        () => onelake.readBytes(target.workspace, target.path));
+      if (atTarget === 'different') {
+        const pick = await vscode.window.showWarningMessage(
+          `${target.workspace}/${target.path} already exists.`,
+          { modal: true, detail: `Replace it with ${model.name} as opened here, and publish?` }, 'Replace It');
+        if (pick !== 'Replace It') throw declined(`Not exported: ${target.path} is a different file.`);
+      }
+
+      // Every question is answered: from here on it writes.
       if (target) {
-        const there = await writer.stat(target.workspace, target.path).catch(() => null);
-        const same = there && Buffer.from(await onelake.readBytes(target.workspace, target.path).catch(() => new Uint8Array()))
-          .toString('utf8') === String(text);
-        if (there && !same) {
-          const pick = await vscode.window.showWarningMessage(
-            `${target.workspace}/${target.path} already exists.`,
-            { modal: true, detail: `Replace it with ${model.name} as opened here, and publish?` }, 'Replace It');
-          if (pick !== 'Replace It') throw declined(`Not exported: ${target.path} is a different file.`);
-        }
-        if (!same) {
+        if (atTarget !== 'same') {
           await writer.writeFile(target.workspace, target.path, Buffer.from(String(text), 'utf8'));
           if (out) out.appendLine(`export: wrote ${model.workspace}/${model.name} -> ${target.workspace}/${target.path}`);
           const lh = { workspace: target.workspace, item: target.item };
@@ -1546,9 +1585,8 @@ async function activateInner(context) {
       const ext = context.extensionUri.fsPath;
       const fabricAppDir = join(ext, 'fabric_app');
       const appDir = (await webviewRoot(context.extensionUri, { dev })).page.fsPath;
-      // One publish, under a progress notification. `takeOver`: the user said an app of that
-      // name, which no export created, may be replaced.
-      const publish = takeOver => vscode.window.withProgress(
+      // One publish, under a progress notification.
+      const r = await vscode.window.withProgress(
         { location: vscode.ProgressLocation.Notification, title: `Export to Fabric: ${plan.name}` },
         async progress => {
           const say = line => { if (out) out.appendLine(line); progress.report({ message: line.replace(/^app \S+: /, '') }); };
@@ -1575,6 +1613,9 @@ async function activateInner(context) {
               site: async config => zip(await buildDist(outDir, config)),
               fn: { sourceZip, deployMetaData }, redirects: marker.redirects || [],
               itemId: marker.itemId || null, takeOver,
+              // Kept as soon as there is one: if a later step fails, the next export must know this
+              // item is its own rather than ask about an app it made.
+              onItem: id => writeMarker(outDir, { ...marker, itemId: id }),
             });
           } finally { appLog = quiet; }
           // The redirects in rayfin.yml: the template's, or (as is) the folder's own.
@@ -1591,17 +1632,6 @@ async function activateInner(context) {
                                       files: await fingerprint(outDir) });
           return done;
         });
-      let r;
-      try { r = await publish(false); }
-      catch (e) {
-        if (e.code !== 'NAME_TAKEN') throw e;
-        // Never replaced unasked: it may be someone's own app, as the first export's was.
-        const pick = await vscode.window.showWarningMessage(
-          `An app named "${e.item.displayName}" already exists in this workspace, and Export to Fabric did not create it. Replace it with this Explore?`,
-          { modal: true }, 'Replace It');
-        if (pick !== 'Replace It') throw declined(`Not exported: an app named ${e.item.displayName} already exists.`);
-        r = await publish(true);
-      }
       // The Apps of the workspace the app was published to (the lakehouse's, not always the
       // model's), re-read: the app is new, or deployed again.
       tree.refresh({ kind: 'apps', workspace: plan.workspace });

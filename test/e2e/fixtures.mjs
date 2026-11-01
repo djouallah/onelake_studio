@@ -95,7 +95,7 @@ export async function seedAccount({ dataDir, home }) {
 
   const { tmslToOssie } = await import(pathToFileURL(join(VENDOR, "npm", PINS.daxSql, "formats", "ossie.js")).href);
   const { stringify } = await import(pathToFileURL(join(VENDOR, "npm", PINS.yaml, "+esm.js")).href);
-  const model = join(home, "OneLakeStudio", "semantic-models", WORKSPACE, "shop.yaml");
+  const model = join(home, "OneLakeStudio", "semantic-models", ACCOUNT.queries, WORKSPACE, "shop.yaml");
   await mkdir(dirname(model), { recursive: true });
   await writeFile(model, stringify(tmslToOssie(BIM, "shop")));
 

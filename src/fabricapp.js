@@ -100,6 +100,14 @@ function createFabricApp({ getToken, apiBase = FABRIC_API, log = () => {},
     throw new Error(`Creating the app ${name}: Fabric accepted it, but the workspace does not list it`);
   }
 
+  // The app called `name` that an export didn't create, or null. Asked before anything is written,
+  // so the question comes with nothing changed yet.
+  async function takenName(ws, name, itemId = null) {
+    const items = await listItems(ws);
+    if (itemId && items.some(i => i.id === itemId)) return null;
+    return items.find(byName(name)) || null;
+  }
+
   // A long-running operation (202 + Location), to Succeeded.
   async function waitOperation(r, what) {
     const location = r.headers.get('location');
@@ -207,11 +215,14 @@ function createFabricApp({ getToken, apiBase = FABRIC_API, log = () => {},
   /**
    * Publishes the app. `site(config)` answers the site's zip, given the rayfin.config.json
    * the browser reads (it names the backend). Returns { itemId, hostingUrl, created }.
+   * `onItem(id)` hears the item's id as soon as there is one: if a later step fails, a second
+   * export must know this item is its own.
    */
   async function publish({ workspaceId: ws, name, tenantId, catalogUrl, modelUrl, site, fn, redirects: known = [],
-                          itemId = null, takeOver = false }) {
+                          itemId = null, takeOver = false, onItem = () => {} }) {
     const { item, created } = await ensureItem(ws, name, { itemId, takeOver });
     const id = item.id;
+    await onItem(id);
     log(`app ${name}: waiting for its backend`);
     const apiUrl = await backend(ws, id);
     const key = await publishableKey(ws, id);
@@ -246,7 +257,7 @@ function createFabricApp({ getToken, apiBase = FABRIC_API, log = () => {},
     }
   }
 
-  return { publish, deployStatus };
+  return { publish, deployStatus, takenName };
 }
 
 // The tenant a token was issued in (its `tid`), for rayfin.config.json.

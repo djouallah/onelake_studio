@@ -12,6 +12,7 @@
 // Host-side only. The panel never sees a Fabric token.
 // =============================================================================
 
+const { join } = require('node:path');
 const { authedFetch, fabricMessage, listPages, mapPool, retryAfterMs } = require('./http');
 
 const FABRIC_API = 'https://api.fabric.microsoft.com/v1';
@@ -30,6 +31,13 @@ const byName = (a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' });
 function modelFileName(modelName) {
   const safe = String(modelName).replace(/[\\/:*?"<>|#%\u0000-\u001f]/g, '_').replace(/^[.\s]+|[.\s]+$/g, '');
   return `${safe || 'model'}.yaml`;
+}
+
+// Where a model's local copy is kept. Under its account: a workspace's name is unique in one tenant
+// only, so two accounts can each have sales/nem, and neither may read the other's definition.
+const modelAccountDir = (root, account) => join(root, account || 'signed-out');
+function modelCopyPath(root, account, workspace, model) {
+  return join(modelAccountDir(root, account), modelFileName(workspace).replace(/\.yaml$/, ''), modelFileName(model));
 }
 
 /**
@@ -170,4 +178,4 @@ function createFabric({ getFabricToken, apiBase = FABRIC_API,
   return { workspaceId, itemOf, listSemanticModels, listApps, getBim, reset };
 }
 
-module.exports = { createFabric, modelFileName };
+module.exports = { createFabric, modelFileName, modelAccountDir, modelCopyPath };

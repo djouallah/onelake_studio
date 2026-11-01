@@ -706,13 +706,12 @@ async function runQuery({ sql, doc = true, ext = '' } = {}) {
     renderResults(res);
     lastResult = res;
     const ms = Math.round(performance.now() - t0);
-    // Every row held is in the grid (grid.js draws only those in view); res.truncated means the
-    // engine stopped materialising, so the CSV is short too.
+    // Every row held is in the grid (grid.js draws only those in view); res.truncated means there
+    // are more than it holds. Export… runs the query again, so it still writes every row.
     let msg = `${res.rows.length.toLocaleString('en')} row(s) in ${ms} ms`;
     if (res.truncated)
-      msg += `. Stopped at ${res.limit.toLocaleString('en')} rows of ` +
-             `${res.numRows.toLocaleString('en')} — add a LIMIT or narrow the query; ` +
-             `the CSV is capped at the same point`;
+      msg = `The first ${res.rows.length.toLocaleString('en')} of ${res.numRows.toLocaleString('en')} rows, in ${ms} ms. ` +
+            `Narrow the query to see the rest here: Export… writes every row`;
     setStatus(msg, res.truncated ? 'warn' : 'ok');
     $('csvBtn').disabled = res.rows.length === 0;
     $('profileBtn').disabled = res.rows.length === 0 || /^\s*summarize\b/i.test(sql);

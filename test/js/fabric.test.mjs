@@ -7,10 +7,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
+import { join } from "node:path";
 
 const require = createRequire(import.meta.url);
 const fabricModule = require("../../src/fabric.js");
-const { createFabric, modelFileName } = fabricModule;
+const { createFabric, modelFileName, modelCopyPath } = fabricModule;
 
 const WS_ID = "11111111-2222-3333-4444-555555555555";
 
@@ -187,8 +188,17 @@ test("a model's name becomes a safe local file name", () => {
   assert.equal(modelFileName("../../x"), "_.._x.yaml", "slashes cannot survive into a path");
 });
 
+test("a model's local copy is under its account: two tenants can each have sales/nem", () => {
+  const a = modelCopyPath("root", "me@contoso.com", "sales", "nem");
+  const b = modelCopyPath("root", "me@fabrikam.com", "sales", "nem");
+  assert.notEqual(a, b);
+  assert.equal(a, join("root", "me@contoso.com", "sales", "nem.yaml"));
+  assert.equal(modelCopyPath("root", null, "sales", "nem"), join("root", "signed-out", "sales", "nem.yaml"));
+  assert.equal(modelCopyPath("root", "a", "../x", "../../y"), join("root", "a", "_x", "_.._y.yaml"), "nothing climbs out");
+});
+
 test("the module can only read: no write, no existence check, no storage token", () => {
-  assert.deepEqual(Object.keys(fabricModule).sort(), ["createFabric", "modelFileName"]);
+  assert.deepEqual(Object.keys(fabricModule).sort(), ["createFabric", "modelAccountDir", "modelCopyPath", "modelFileName"]);
   const f = createFabric({ getFabricToken: async () => "fab" });
   assert.deepEqual(Object.keys(f).sort(), ["getBim", "itemOf", "listApps", "listSemanticModels", "reset", "workspaceId"]);
 });

@@ -11,6 +11,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
+import { READS, WRITES } from "./sql-disagreements.mjs";
 
 const require = createRequire(import.meta.url);
 const { createEngineHost, isOneLakeMetadata } = require("../../src/engine-host.js");
@@ -89,6 +90,64 @@ test("offline with no disk cache: a read of OneLake is refused at once, and the 
     assert.equal((await engine.call("query", [sql])).rows[0].path, url, sql);
   }
   assert.deepEqual((await engine.call("query", ["SELECT * FROM lakehouse.w.lh.dbo.never_written"])).rows, []);
+});
+
+test("what the read-only guard takes as a read or a write, DuckDB's own parser does too", async t => {
+  const extDir = await mkdtemp(join(tmpdir(), "onelake-ext-"));
+  const engine = createEngineHost({ extensionDir: extDir, bundledExtensions: existsSync(BUNDLED) ? BUNDLED : null });
+  t.after(async () => {
+    await engine.close();
+    await rm(extDir, { recursive: true, force: true }).catch(() => {});
+  });
+  const parsed = async sql => {
+    const { rows } = await engine.call("query", [`SELECT json_serialize_sql('${sql.replace(/'/g, "''")}') AS j`]);
+    return JSON.parse(rows[0].j);
+  };
+  for (const sql of READS) {
+    const j = await parsed(sql);
+    assert.equal(j.error, false, `DuckDB does not read this as a query: ${sql}`);
+    assert.equal(j.statements.length, 1, `DuckDB does not read this as one statement: ${sql}`);
+  }
+  for (const sql of WRITES) {
+    const j = await parsed(sql);
+    assert.ok(j.error === true || j.statements.length !== 1, `DuckDB reads this as one query, so it is no way past the guard: ${sql}`);
+  }
+});
+
+test("Stop reaches a statement still being prepared: it answers at once, and never runs", async t => {
+  const extDir = await mkdtemp(join(tmpdir(), "onelake-ext-"));
+  let release;
+  const held = new Promise(r => { release = r; });
+  let asked = 0;
+  const engine = createEngineHost({
+    extensionDir: extDir,
+    bundledExtensions: existsSync(BUNDLED) ? BUNDLED : null,
+    // The Iceberg catalog, taking its time: 5s, 12s and 114s were measured on a real tenant.
+    resolveTable: async ref => { asked++; await held; return { ...ref, emptySql: "SELECT 1 AS a" }; },
+  });
+  t.after(async () => {
+    release();
+    await engine.close();
+    await rm(extDir, { recursive: true, force: true }).catch(() => {});
+  });
+  await engine.call("query", ["SELECT 1"]);
+
+  const batches = [];
+  const running = engine.call("stream", ["SELECT * FROM lakehouse.w.lh.dbo.t"], b => batches.push(b));
+  while (!asked) await new Promise(r => setTimeout(r, 10));
+  const at = Date.now();
+  await engine.call("cancel");
+  await assert.rejects(running, e => e.cancelled === true);
+  assert.ok(Date.now() - at < 5000, "said at once, not when the catalog answers");
+
+  // The catalog answers late, and nothing is left to run.
+  release();
+  await new Promise(r => setTimeout(r, 300));
+  assert.deepEqual(batches, []);
+
+  // A Stop belongs to what was running when it came.
+  await engine.call("cancel");
+  assert.deepEqual((await engine.call("query", ["SELECT * FROM lakehouse.w.lh.dbo.t"])).rows, [{ a: 1 }]);
 });
 
 const CACHE_BUILD = join(BUNDLED, "cache_httpfs.duckdb_extension");

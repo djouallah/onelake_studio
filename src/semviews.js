@@ -16,9 +16,10 @@
 // =============================================================================
 
 const fsp = require('node:fs/promises');
-const { join, dirname } = require('node:path');
+const { join, dirname, relative, isAbsolute } = require('node:path');
 
 const ABFSS = /^abfss:\/\/([^@/]+)@onelake\.dfs\.fabric\.microsoft\.com\/(.+)$/i;
+const exists = p => fsp.access(p).then(() => true, () => false);
 
 /**
  * @param {object} o
@@ -87,6 +88,29 @@ function createSemViews({ dir, onelake, onChange = () => {} }) {
       await write;
       onChange();
       return { name: String(name), schema: sch, path, text };
+    },
+    // A local copy from before they were kept per account sits in <root>/<workspace>/. The ones
+    // this account opened move into `accountDir`, so they still open offline, and never over one
+    // there. A copy no account points at is left where it is; nothing reads it now. Answers how
+    // many views moved.
+    async adoptCopies(root, accountDir) {
+      let moved = 0;
+      for (const v of await list()) {
+        if (ABFSS.test(v.path)) continue;
+        const rel = relative(root, v.path);
+        const parts = rel.split(/[\\/]/);
+        if (isAbsolute(rel) || parts[0] === '..' || parts.length !== 2) continue;
+        const to = join(accountDir, ...parts);
+        if (!await exists(to)) {
+          if (!await exists(v.path)) continue;
+          await fsp.mkdir(dirname(to), { recursive: true });
+          const went = await fsp.rename(v.path, to).then(() => true, () => false);
+          if (!went) continue;
+        }
+        await this.put(v.name, to, v.schema);
+        moved++;
+      }
+      return moved;
     },
   };
 }

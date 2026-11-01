@@ -867,39 +867,69 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
   // What the page may call, and nothing else. call() appends `emit` after the caller's
   // arguments; only stream() reads it. `owner` is whose connections these are: a tab's Stop
   // reaches that tab's statements and no other's.
-  const methodsOf = owner => ({
-    // Both check the statement first: the page's SQL may read, never write (sql.js).
-    async query(sql) {
-      assertReadOnly(sql);
-      await init();
-      try { return await withAuthRetry(() => withTables(sql, run => runAll(run, owner))); }
-      finally { afterStatement(sql); }
-    },
+  const methodsOf = owner => {
+    // A statement has no connection to interrupt until it is prepared, which can mean minutes on
+    // the Iceberg catalog. A Stop in that time answers it at once, and it never runs. `begin` is
+    // where it would start to, and each try passes through it: one going again after a failure too.
+    let stops = 0;
+    const preparing = new Set();
+    const stopped = () => Object.assign(new Error('INTERRUPT Error: Interrupted!'), { cancelled: true });
+    const stoppable = go => new Promise((resolve, reject) => {
+      const at = stops;
+      preparing.add(reject);
+      const begin = () => {
+        if (stops !== at) throw stopped();
+        preparing.delete(reject);
+      };
+      go(begin).then(resolve, reject).finally(() => preparing.delete(reject));
+    });
+    return {
+      // Both check the statement first: the page's SQL may read, never write (sql.js).
+      async query(sql) {
+        assertReadOnly(sql);
+        return stoppable(async begin => {
+          await init();
+          try {
+            return await withAuthRetry(() => withTables(sql, run => {
+              begin();
+              return runAll(run, owner);
+            }));
+          } finally { afterStatement(sql); }
+        });
+      },
 
-    async stream(sql, emit) {
-      assertReadOnly(sql);
-      await init();
-      // Run again only before its first batch: a late failure comes after batches went out,
-      // and running it again would deliver them twice.
-      let sent = false;
-      const canRetry = () => !sent;
-      try {
-        const numRows = await withAuthRetry(() => withTables(sql, run =>
-          withConn(c => runStreaming(c, run, b => { sent = true; emit(b); }), owner), canRetry), canRetry);
-        return { done: true, numRows };
-      } finally { afterStatement(sql); }
-    },
+      async stream(sql, emit) {
+        assertReadOnly(sql);
+        return stoppable(async begin => {
+          await init();
+          // Run again only before its first batch: a late failure comes after batches went out,
+          // and running it again would deliver them twice.
+          let sent = false;
+          const canRetry = () => !sent;
+          try {
+            const numRows = await withAuthRetry(() => withTables(sql, run => {
+              begin();
+              return withConn(c => runStreaming(c, run, b => { sent = true; emit(b); }), owner);
+            }, canRetry), canRetry);
+            return { done: true, numRows };
+          } finally { afterStatement(sql); }
+        });
+      },
 
-    async cancel() {
-      // A native interrupt. Only the PAGE's queries are interrupted: a secret being
-      // issued on the host's own connection is left to finish.
-      for (const c of owner) { interrupted.add(c); try { c.interrupt(); } catch (_) {} }
-      return true;
-    },
+      async cancel() {
+        stops++;
+        for (const reject of preparing) reject(stopped());
+        preparing.clear();
+        // A native interrupt. Only the PAGE's queries are interrupted: a secret being
+        // issued on the host's own connection is left to finish.
+        for (const c of owner) { interrupted.add(c); try { c.interrupt(); } catch (_) {} }
+        return true;
+      },
 
-    // Which optional formats this session has — the page greys out what it cannot read.
-    async info() { await init(); return { capabilities: { ...capabilities } }; },
-  });
+      // Which optional formats this session has — the page greys out what it cannot read.
+      async info() { await init(); return { capabilities: { ...capabilities } }; },
+    };
+  };
   const methods = methodsOf(live);
 
   async function callOn(table, method, args = [], emit = () => {}) {

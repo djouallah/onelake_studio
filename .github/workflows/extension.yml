@@ -416,7 +416,7 @@ jobs:
           retention-days: 14
 
   publish:
-    needs: package
+    needs: [package, browser]
     if: startsWith(github.ref, 'refs/tags/ext-v')
     runs-on: ubuntu-26.04
     environment: azure

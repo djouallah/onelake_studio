@@ -23,7 +23,7 @@ import {
   fileExt, readerFor, PARQUET_EXTS, DB_EXTS, ZIP_EXTS, isSqliteHeader, isTextExt,
   sqlStr, quoteIdent, prepareReadOnlySql,
   tableKey, fileKey, sanitizeIdent,
-  normalizeValue, fmtBytes,
+  normalizeRow, rowCollector, fmtBytes,
 } from "./paths.js";
 
 // Materialising a result costs one JS object per row, so an unbounded SELECT * is how you
@@ -630,32 +630,13 @@ export function createEngine({
   // Shared by user SQL (above, after the read-only guard) and the engine's own quick
   // peek, which builds its SQL itself.
   async function materialize(clean) {
-    let fields = null, types = null;
-    const rows = [];
-    let numRows = 0, truncated = false;
-
     // Cap what gets turned into JS objects. Everything downstream — the DOM table, the CSV
     // — works off this array, so an uncapped SELECT * on a large table takes the tab out.
     // The batches keep being drained past the cap: numRows is the size of the whole
     // result, and the message that says "stopped at N of M" needs a truthful M.
-    await stream(clean, batch => {
-      if (!fields) {
-        fields = batch.fields.map(f => f.name);
-        types = batch.fields.map(f => f.type);
-      }
-      numRows += batch.numRows;
-      for (const r of batch.rows) {
-        if (rows.length >= maxRows) { truncated = true; break; }
-        rows.push(normalizeRow(r, fields));
-      }
-    });
-    return { fields: fields || [], types: types || [], rows, numRows, truncated, limit: maxRows };
-  }
-
-  function normalizeRow(obj, fields) {
-    const out = {};
-    for (const f of fields) out[f] = normalizeValue(obj[f]);
-    return out;
+    const collected = rowCollector(maxRows);
+    await stream(clean, batch => collected.add(batch));
+    return collected.result();
   }
 
   // The file itself, byte for byte, straight off OneLake. Not reassembled from the query

@@ -27,6 +27,63 @@ const quoteIdent = s => `"${String(s).replace(/"/g, '""')}"`;
 // database file, READ_ONLY. Nothing else: no COPY, INSERT, UPDATE, DELETE, EXPORT, INSTALL,
 // LOAD, SET.
 
+// Where a comment, a quoted text or a $$ string ends, as DuckDB's own scanner reads them. The
+// guard is only as good as this agreement: where they differ, a ';' or a COPY that DuckDB runs is
+// text this file never looks at. Each was seen getting past when it was wrong.
+const IDENT_CHAR = /[A-Za-z0-9_$\u0080-￿]/;
+const DOLLAR_TAG = /\$(?:[A-Za-z_\u0080-￿][A-Za-z0-9_\u0080-￿]*)?\$/y;
+
+// The end of the comment starting at `i`, or -1 when none does. A line comment stops at either
+// line break, and block comments nest.
+function commentEnd(sql, i) {
+  const n = sql.length;
+  if (sql[i] === '-' && sql[i + 1] === '-') {
+    let j = i;
+    while (j < n && sql[j] !== '\n' && sql[j] !== '\r') j++;
+    return j;
+  }
+  if (sql[i] === '/' && sql[i + 1] === '*') {
+    let depth = 1, j = i + 2;
+    while (j < n && depth) {
+      if (sql[j] === '/' && sql[j + 1] === '*') { depth++; j += 2; }
+      else if (sql[j] === '*' && sql[j + 1] === '/') { depth--; j += 2; }
+      else j++;
+    }
+    return Math.min(j, n);
+  }
+  return -1;
+}
+
+// The end of the quoted text opening at `i`. Doubling the quote escapes it, and in an E'…' string
+// a backslash does too. An E that ends a longer word is not one: typee'x'.
+function quotedEnd(sql, i) {
+  const n = sql.length;
+  const q = sql[i];
+  const backslash = q === "'" && /[eE]/.test(sql[i - 1] || '') && !IDENT_CHAR.test(sql[i - 2] || '');
+  let j = i + 1;
+  while (j < n) {
+    if (backslash && sql[j] === '\\') { j += 2; continue; }
+    if (sql[j] === q) {
+      if (sql[j + 1] !== q) return j + 1;
+      j += 2;
+      continue;
+    }
+    j++;
+  }
+  return n;
+}
+
+// The end of the $$ string opening at `i`, or -1 when none does: a '$' inside a word is the word's,
+// and a tag can hold more than ASCII.
+function dollarEnd(sql, i) {
+  if (i > 0 && IDENT_CHAR.test(sql[i - 1])) return -1;
+  DOLLAR_TAG.lastIndex = i;
+  const m = DOLLAR_TAG.exec(sql);
+  if (!m) return -1;
+  const end = sql.indexOf(m[0], i + m[0].length);
+  return end === -1 ? sql.length : end + m[0].length;
+}
+
 // Comments become a space and the INSIDE of every literal, quoted identifier and $$ string
 // is dropped (its quotes kept), so no keyword can hide in one and no name can pose as one.
 // `seps` are the offsets of the ';' outside them. With `keep`, only the comments go.
@@ -37,39 +94,24 @@ function scan(sql, keep = false) {
   let i = 0;
   while (i < n) {
     const c = sql[i];
-    if (c === '-' && sql[i + 1] === '-') {
-      while (i < n && sql[i] !== '\n') i++;
-      out.push(' ');
-      continue;
-    }
-    if (c === '/' && sql[i + 1] === '*') {
-      i += 2;
-      while (i < n && !(sql[i] === '*' && sql[i + 1] === '/')) i++;
-      i += 2;
+    const comment = commentEnd(sql, i);
+    if (comment !== -1) {
+      i = comment;
       out.push(' ');
       continue;
     }
     if (c === "'" || c === '"') {
       const start = i;
-      i++;
-      while (i < n) {
-        if (sql[i] === c) {
-          if (sql[i + 1] === c) { i += 2; continue; }
-          i++;
-          break;
-        }
-        i++;
-      }
+      i = quotedEnd(sql, i);
       if (keep) out.push(sql.slice(start, i));
       else out.push(c, c);
       continue;
     }
     if (c === '$') {
-      const m = /^\$([A-Za-z_][A-Za-z0-9_]*)?\$/.exec(sql.slice(i));
-      if (m) {
+      const end = dollarEnd(sql, i);
+      if (end !== -1) {
         const start = i;
-        const end = sql.indexOf(m[0], i + m[0].length);
-        i = end === -1 ? n : end + m[0].length;
+        i = end;
         out.push(keep ? sql.slice(start, i) : "''");
         continue;
       }
@@ -204,24 +246,12 @@ function tableRefs(sql, kinds) {
   const space = j => { while (j < n && /\s/.test(s[j])) j++; return j; };
   while (i < n) {
     const c = s[i];
-    if (c === '-' && s[i + 1] === '-') { while (i < n && s[i] !== '\n') i++; continue; }
-    if (c === '/' && s[i + 1] === '*') {
-      const end = s.indexOf('*/', i + 2);
-      i = end === -1 ? n : end + 2;
-      continue;
-    }
-    if (c === "'") {
-      i++;
-      while (i < n) { if (s[i] === "'") { if (s[i + 1] === "'") { i += 2; continue; } i++; break; } i++; }
-      continue;
-    }
+    const comment = commentEnd(s, i);
+    if (comment !== -1) { i = comment; continue; }
+    if (c === "'") { i = quotedEnd(s, i); continue; }
     if (c === '$') {
-      const m = /^\$([A-Za-z_][A-Za-z0-9_]*)?\$/.exec(s.slice(i, i + 66));
-      if (m) {
-        const end = s.indexOf(m[0], i + m[0].length);
-        i = end === -1 ? n : end + m[0].length;
-        continue;
-      }
+      const end = dollarEnd(s, i);
+      if (end !== -1) { i = end; continue; }
     }
     if (!startsIdent(i)) { i++; continue; }
     const parts = [ident()];

@@ -7,13 +7,14 @@ import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import net from "node:net";
+import { spawn } from "node:child_process";
 import { join } from "node:path";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 
 const require = createRequire(import.meta.url);
 const { createEngineHost } = require("../../src/engine-host.js");
-const { createRemote, createStateClient, openClient, pipePath } = require("../../src/engine-client.js");
+const { createRemote, createStateClient, openClient, pipePath, stateFileOf } = require("../../src/engine-client.js");
 const { createStateBackend } = require("../../src/statestore.js");
 const { createStore } = require("../../src/store.js");
 
@@ -257,6 +258,98 @@ test("the store's entries live in the server, shared by windows, imported once, 
   const four = storeOf();
   assert.equal(await four.peek("from a file"), undefined);
   assert.equal(await four.peek("listing"), undefined);
+});
+
+// A store on a server of its own, as a window would have it. `key` is the install, `stateKey` the
+// account.
+async function stateServer(t) {
+  const dir = await mkdtemp(join(tmpdir(), "onelake-state-"));
+  t.after(() => rm(dir, { recursive: true, force: true }).catch(() => {}));
+  const stateDir = join(dir, "state");
+  await mkdir(stateDir);
+  let secret;
+  const clients = [];
+  const options = { extensionDir: join(dir, "extensions"), bundledExtensions: existsSync(BUNDLED) ? BUNDLED : null, threads: 2, stateRetryMs: 500 };
+  const open = (key, stateKey) => {
+    const client = createStateClient({ key, stateKey, script: SCRIPT, stateDir, options,
+      getToken: async () => secret, setToken: async s => { secret = s; } });
+    clients.push(client);
+    return { client, store: createStore({ dir: join(dir, "blobs"), backend: createStateBackend({ run: sql => client.run(sql) }) }) };
+  };
+  t.after(async () => { for (const c of clients) { await c.stop().catch(() => {}); c.close(); } });
+  return { dir, stateDir, open };
+}
+
+test("what is remembered survives an update, which moves the install but not the account", async t => {
+  const { dir, stateDir, open } = await stateServer(t);
+  await writeFile(join(stateDir, "0123456789abcdef.duckdb"), "from the version before");
+  await writeFile(join(stateDir, "0123456789abcdef.duckdb.wal"), "from the version before");
+  const before = open(`me|${dir}/onelake-studio-0.2.9`, "me");
+  await before.store.put("listing", ["kept"]);
+  assert.ok(existsSync(stateFileOf(stateDir, "me")));
+  assert.ok(!existsSync(join(stateDir, "0123456789abcdef.duckdb")), "a state file named after an install goes");
+  assert.ok(!existsSync(join(stateDir, "0123456789abcdef.duckdb.wal")));
+  await before.client.stop();
+  await sleep(1000);
+
+  const after = open(`me|${dir}/onelake-studio-0.3.0`, "me");
+  assert.deepEqual(await after.store.peek("listing"), ["kept"]);
+  // Another account has its own.
+  await after.client.stop();
+  await sleep(1000);
+  assert.equal(await open(`you|${dir}/onelake-studio-0.3.0`, "you").store.peek("listing"), undefined);
+});
+
+test("a state file that isn't a database is set aside, and started again", async t => {
+  const { stateDir, open } = await stateServer(t);
+  const file = stateFileOf(stateDir, "me");
+  await writeFile(file, "not a database, and not going to be one");
+  const { store } = open("me|install", "me");
+  await store.put("listing", ["new"]);
+  assert.equal(readFileSync(`${file}.bad`, "utf8"), "not a database, and not going to be one");
+  assert.deepEqual(await open("me|install", "me").store.peek("listing"), ["new"]);
+});
+
+test("a state file another version's server holds isn't touched, and is picked up when it goes", async t => {
+  const { stateDir, open } = await stateServer(t);
+  const file = stateFileOf(stateDir, "me");
+  {
+    const { client, store } = open("me|old", "me");
+    await store.put("listing", ["kept"]);
+    await client.stop();
+    await sleep(1000);
+  }
+  // Another process, as that server is: within one, DuckDB's file lock doesn't conflict.
+  const holder = spawn(process.execPath, ["-e", `
+    const { DuckDBInstance } = require(${JSON.stringify(require.resolve("@duckdb/node-api"))});
+    DuckDBInstance.create(${JSON.stringify(file)}).then(db => { globalThis.db = db; process.stdout.write("held\\n"); setInterval(() => {}, 1000); });
+  `], { stdio: ["ignore", "pipe", "inherit"] });
+  t.after(() => holder.kill());
+  await new Promise(resolve => holder.stdout.once("data", resolve));
+
+  const { store } = open("me|new", "me");
+  assert.equal(await store.peek("listing"), undefined, "nothing to read while it is held");
+  assert.ok(!existsSync(`${file}.bad`), "held isn't broken");
+
+  holder.kill();
+  await new Promise(resolve => holder.once("exit", resolve));
+  let found;
+  for (let i = 0; i < 40 && !found; i++) {
+    await sleep(250);
+    found = await store.peek("listing");
+  }
+  assert.deepEqual(found, ["kept"]);
+});
+
+test("a server that can't start writes down why, where someone can read it", async t => {
+  const dir = await mkdtemp(join(tmpdir(), "onelake-crash-"));
+  t.after(() => rm(dir, { recursive: true, force: true }).catch(() => {}));
+  const logFile = join(dir, "server.log");
+  const child = spawn(process.execPath, [SCRIPT], { stdio: ["pipe", "pipe", "ignore"] });
+  const exited = new Promise(resolve => child.once("exit", resolve));
+  child.stdin.end(`${JSON.stringify({ token: "t", pipe: join(dir, "no", "such", "folder", "pipe"), options: {}, logFile })}\n`);
+  assert.equal(await exited, 1);
+  assert.match(readFileSync(logFile, "utf8"), /ended: .*(ENOENT|EACCES|no such)/i);
 });
 
 test("concurrency: many tabs of two windows on one server, every answer right, and all of it in that server's log", async t => {

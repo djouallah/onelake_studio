@@ -4,6 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
+import { READS, WRITES } from "./sql-disagreements.mjs";
 
 const require = createRequire(import.meta.url);
 const { assertReadOnly, assertReads, isShowAllTables } = require("../../src/sql.js");
@@ -37,9 +38,11 @@ const ALLOWED = [
   "FROM t",
   "SELECT COLUMNS(*)::VARCHAR FROM (\nSELECT 1 AS a\n) LIMIT 500",
   "SELECT * FROM (VALUES ('a', NULL::VARCHAR)) t(column_name, kind)",
+  ...READS,
 ];
 
 const REFUSED = [
+  ...WRITES,
   "SELECT * FROM quack_stop('quack:127.0.0.1:1')",
   "SELECT * FROM \"quack_serve\"('quack:127.0.0.1:1')",
   "COPY (SELECT 1) TO 'abfss://ws@onelake.dfs.fabric.microsoft.com/lh.Lakehouse/Files/x.csv'",
@@ -110,6 +113,10 @@ test("a statement's tables are its five-part names under a kind, however they ar
   // Not tables: fewer parts, another first part, inside a string or a comment.
   assert.deepEqual(refs("SELECT * FROM dbo.t, Lakehouse.a.b.c, x.Lakehouse.a.b.c.d"), []);
   assert.deepEqual(refs("SELECT 'Lakehouse.a.b.c.d' -- Lakehouse.a.b.c.d\n /* Lakehouse.a.b.c.d */"), []);
+  // As DuckDB reads them: nested comments, an E-string, and a line comment a carriage return ends.
+  assert.deepEqual(refs("/* /* */ Lakehouse.a.b.c.d */ SELECT 1"), []);
+  assert.deepEqual(refs("SELECT E'\\' Lakehouse.a.b.c.d'"), []);
+  assert.equal(refs("SELECT 1 -- c\rFROM Lakehouse.a.b.c.d").length, 1);
   // DESCRIBE, EXPLAIN and a view's body name tables too.
   assert.equal(refs("EXPLAIN ANALYZE SELECT count(*) FROM SQLDatabase.ws.db.dbo.t").length, 1);
   assert.equal(refs("DESCRIBE Lakehouse.ws.lh.dbo.t").length, 1);

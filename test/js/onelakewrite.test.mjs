@@ -23,16 +23,20 @@ function writerWith(answer, opts = {}) {
   return { w: createOneLakeWriter({ getToken: async () => "tok", fetchImpl, ...opts }), calls };
 }
 
-test("writeFile: create, append at 0, flush at the length — on the file's DFS path", async () => {
+test("writeFile: written beside the file, then renamed over it, so the file itself is touched once", async () => {
   const { w, calls } = writerWith(() => res(201));
   await w.writeFile("Power BI", "nem.Lakehouse/Files/semantic_model/nem model.bim", Buffer.from("{\"a\":1}"));
   const url = `${DFS}/Power%20BI/nem.Lakehouse/Files/semantic_model/nem%20model.bim`;
+  const tmp = calls[0].url.replace(/\?.*$/, "");
+  assert.match(tmp, /nem%20model\.bim\.[0-9a-f]{8}\.tmp$/);
   assert.deepEqual(calls.map(c => `${c.method} ${c.url}`), [
-    `PUT ${url}?resource=file`,
-    `PATCH ${url}?action=append&position=0`,
-    `PATCH ${url}?action=flush&position=7`,
+    `PUT ${tmp}?resource=file`,
+    `PATCH ${tmp}?action=append&position=0`,
+    `PATCH ${tmp}?action=flush&position=7`,
+    `PUT ${url}`,
   ]);
   assert.equal(String(calls[1].body), "{\"a\":1}");
+  assert.equal(calls[3].headers["x-ms-rename-source"], tmp.replace(DFS, ""), "the rename names its source, encoded");
   for (const c of calls) assert.equal(c.headers.authorization, "Bearer tok");
 });
 
@@ -41,6 +45,38 @@ test("writeFile: OneLake's own message, naming the step that failed", async () =
     ? res(403, { error: { message: "This request is not authorized" } }) : res(201)));
   await assert.rejects(w.writeFile("ws", "lh.Lakehouse/Files/x.bim", Buffer.from("x")),
     /Writing lh\.Lakehouse\/Files\/x\.bim failed at append \(HTTP 403\) — This request is not authorized/);
+});
+
+test("writeFile: a failure part way never reaches the file, and tidies what it made", async () => {
+  for (const failing of ["action=append", "action=flush", "rename"]) {
+    const isRename = (url, init) => init.method === "PUT" && !url.includes("resource=file");
+    const { w, calls } = writerWith((url, init) => {
+      if (failing === "rename" ? isRename(url, init) : url.includes(failing)) return res(500);
+      return res(201);
+    });
+    await assert.rejects(w.writeFile("ws", "lh.Lakehouse/Files/x.bim", Buffer.from("x")), /failed at/);
+    const file = `${DFS}/ws/lh.Lakehouse/Files/x.bim`;
+    assert.ok(!calls.some(c => c.url === file && failing !== "rename"), `${failing}: the file itself was not touched`);
+    const last = calls[calls.length - 1];
+    assert.equal(last.method, "DELETE", failing);
+    assert.match(last.url, /\.tmp$/);
+  }
+});
+
+test("compare: only a 404 means nothing is there, and not being able to tell stops the caller", async () => {
+  const text = "version: 1\n";
+  const read = async () => Buffer.from(text);
+  const { w: none } = writerWith(() => res(404));
+  assert.equal(await none.compare("ws", "x.yaml", text, read), "none");
+  const { w: there } = writerWith(() => res(200, "", { "content-length": "11" }));
+  assert.equal(await there.compare("ws", "x.yaml", text, read), "same");
+  assert.equal(await there.compare("ws", "x.yaml", "other", read), "different");
+  assert.equal(await there.compare("ws", "x.yaml", text, () => { throw new Error("no"); }), "different", "unread is asked about");
+  for (const status of [403, 500]) {
+    const { w: refused, calls } = writerWith(() => res(status));
+    await assert.rejects(refused.compare("ws", "x.yaml", text, read), new RegExp(`HTTP ${status}`));
+    assert.deepEqual(calls.map(c => c.method), ["HEAD"], "nothing written");
+  }
 });
 
 test("a 401 is retried once with a fresh token", async () => {

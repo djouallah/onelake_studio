@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+- **Read only holds against more ways of writing SQL.** Nested comments, `E'…'` strings, a `$` inside a name, a
+  `$` tag that isn't ASCII and a carriage return after `--` could each hide a second statement or a `COPY` from the
+  check. All are refused now.
+- **A result past `maxResultRows` says so.** It used to report the rows it kept as if they were all of them. The
+  status line now gives both counts.
+- **Export to Fabric asks everything first, and can't leave a model half written.** Not being able to read what is
+  already at the model's path stops the export, rather than overwriting it unasked. The question about an app of the
+  same name now comes before anything is written, and the model's file is written beside it and renamed into place. A
+  first export that fails part way is still known as its own next time.
+- **An update keeps what this machine has cached.** Listings, table metadata, first rows and Logs used to start again
+  with each new version, so nothing was there to read offline. A state file that can't be opened is set aside and
+  started again, and the reason a server stopped goes in its log.
+- **A model's local copy is per account.** `~/OneLakeStudio/semantic-models/<account>/<workspace>/<model>.yaml`:
+  two tenants can each have the same workspace and model name, and could read each other's definition. Copies you
+  opened move there by themselves.
+- **Stop works while a table is being opened.** It answers at once and the statement never runs. It used to reach
+  nothing until the statement had started.
+- **Fewer false sign-outs.** The account provider failing, or the internet going without anything noticing, no longer
+  closes the tabs and says you are signed out. A token that arrives after a sign-out isn't kept.
 - **Filter the tree by type.** The filter button on the explorer shows one type, such as semantic models, and only
   the workspaces that hold it. It replaces Group by Type: the tree always lists by workspace.
 - **A table that doesn't exist fails in seconds.** It used to wait about two minutes as if Fabric were converting it,

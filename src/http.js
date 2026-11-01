@@ -23,6 +23,24 @@ function offlineError(reason, what = 'This') {
   return Object.assign(new Error(`${what} is not cached on this machine, and ${why}.`), { offline: true, status: 0 });
 }
 
+// A token held for a moment, so a burst of requests asks the account provider once. An answer that
+// arrives after forget() is not kept: it may be for the account just signed out of. `turn` is taken
+// before asking, and `keep` says whether the answer still stood.
+function createTokenHold(ttlMs, now = Date.now) {
+  let held = null, turn = 0;
+  return {
+    recent: () => (held && now() - held.at < ttlMs ? held.token : null),
+    any: () => (held ? held.token : null),
+    turn: () => turn,
+    keep(askedAt, token) {
+      if (askedAt !== turn) return false;
+      held = token ? { token, at: now() } : null;
+      return true;
+    },
+    forget() { turn++; held = null; },
+  };
+}
+
 // A response that is not going to be read: its body let go, so its socket is free now
 // rather than whenever it is collected.
 function discard(r) {
@@ -130,4 +148,4 @@ async function mapPool(items, fn, limit) {
   return out;
 }
 
-module.exports = { authedFetch, discard, retryAfterMs, fabricMessage, oneLakeMessage, listPages, limiter, mapPool, useConnectivity, offlineError };
+module.exports = { createTokenHold, authedFetch, discard, retryAfterMs, fabricMessage, oneLakeMessage, listPages, limiter, mapPool, useConnectivity, offlineError };

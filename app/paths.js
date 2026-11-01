@@ -288,6 +288,35 @@ export function normalizeValue(v) {
   return v;
 }
 
+export function normalizeRow(obj, fields) {
+  const out = {};
+  for (const f of fields) out[f] = normalizeValue(obj[f]);
+  return out;
+}
+
+// A statement's batches, as the result the grid renders. Rows are kept up to `maxRows`, and every
+// batch still counts: numRows is the whole result, however many arrived as rows. The host stops
+// sending rows at the same number and sends a count after that, so `truncated` compares the two
+// rather than waiting for a row past the cap, which never comes.
+export function rowCollector(maxRows) {
+  let fields = null, types = null, numRows = 0;
+  const rows = [];
+  return {
+    add(batch) {
+      if (!fields) {
+        fields = batch.fields.map(f => f.name);
+        types = batch.fields.map(f => f.type);
+      }
+      numRows += batch.numRows;
+      for (const r of batch.rows) {
+        if (rows.length >= maxRows) break;
+        rows.push(normalizeRow(r, fields));
+      }
+    },
+    result: () => ({ fields: fields || [], types: types || [], rows, numRows, truncated: numRows > rows.length, limit: maxRows }),
+  };
+}
+
 // A 1×1 multiline VARCHAR result is presumed to be a document (read_text over a
 // README, a NOTICE file) and gets offered as rendered markdown. rows.length, not
 // numRows: a truncated result must never qualify. No length threshold — multiline

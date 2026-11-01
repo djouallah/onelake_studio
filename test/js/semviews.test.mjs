@@ -2,12 +2,59 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const require = createRequire(import.meta.url);
 const { createSemViews } = require("../../src/semviews.js");
+
+test("a local copy from before they were per account moves to the account that opened it", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "semviews-"));
+  try {
+    const root = join(dir, "semantic-models");
+    const old = join(root, "sales", "nem.yaml");
+    await mkdir(join(root, "sales"), { recursive: true });
+    await writeFile(old, "from before\n");
+    const v = createSemViews({ dir: join(dir, "store"), onelake: { readBytes: async () => Buffer.from("in OneLake\n") } });
+    v.useAccount("a");
+    await v.put("nem", old, "sales");
+    const cloud = "abfss://ws@onelake.dfs.fabric.microsoft.com/lh.Lakehouse/Files/c.yaml";
+    await v.put("cloud", cloud, "sales");
+
+    const mine = join(root, "me@contoso.com");
+    assert.equal(await v.adoptCopies(root, mine), 1);
+    const moved = join(mine, "sales", "nem.yaml");
+    assert.equal(await readFile(moved, "utf8"), "from before\n");
+    assert.ok(!existsSync(old), "moved, not copied");
+    assert.equal((await v.list()).find(x => x.name === "nem").path, moved);
+    assert.equal((await v.list()).find(x => x.name === "cloud").path, cloud, "a OneLake file stays where it is");
+    assert.equal(await v.adoptCopies(root, mine), 0, "once");
+
+    // Another account with a pointer to the same old copy: what it needs has gone, and it isn't
+    // handed this account's. It reads Fabric again when it next opens the model.
+    const other = createSemViews({ dir: join(dir, "store"), onelake: {} });
+    other.useAccount("b");
+    await writeFile(old, "for the other account\n");
+    await other.put("nem", old, "sales");
+    await rm(old);
+    assert.equal(await other.adoptCopies(root, join(root, "other@fabrikam.com")), 0);
+    assert.ok(!existsSync(join(root, "other@fabrikam.com")));
+
+    // A copy already in the account's folder is kept, and only the pointer moves.
+    const third = createSemViews({ dir: join(dir, "store"), onelake: {} });
+    third.useAccount("c");
+    await writeFile(old, "older\n");
+    await third.put("nem", old, "sales");
+    const theirs = join(root, "c@contoso.com");
+    await mkdir(join(theirs, "sales"), { recursive: true });
+    await writeFile(join(theirs, "sales", "nem.yaml"), "newer\n");
+    assert.equal(await third.adoptCopies(root, theirs), 1);
+    assert.equal(await readFile(join(theirs, "sales", "nem.yaml"), "utf8"), "newer\n");
+    assert.equal(await readFile(old, "utf8"), "older\n");
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
 
 test("a view is a pointer, kept per account, and its .bim is read where it is", async () => {
   const dir = await mkdtemp(join(tmpdir(), "semviews-"));

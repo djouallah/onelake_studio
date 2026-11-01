@@ -332,16 +332,22 @@ function recovery(ask, client) {
   };
 }
 
+const shortHash = text => crypto.createHash('sha256').update(text).digest('hex').slice(0, 16);
+
+// The state file outlives a server and an update, so it isn't named after the install as a server
+// is: what is remembered is what lets the next version work with no internet.
+const stateFileOf = (stateDir, stateKey) => join(stateDir, `state-${shortHash(stateKey)}.duckdb`);
+
 // This window on the server, started if there is none. A server of another build is told to stop
 // and replaced: F5 after a rebuild must not find the old code, nor the state file held by it.
-async function joinServer({ key, script, options, stateDir, build = null, getToken, setToken, idleMs = 60_000 }) {
+async function joinServer({ key, stateKey = key, script, options, stateDir, build = null, getToken, setToken, idleMs = 60_000 }) {
   await fsp.mkdir(stateDir, { recursive: true });
-  const id = crypto.createHash('sha256').update(key).digest('hex').slice(0, 16);
+  const id = shortHash(key);
   const plain = typeof options === 'function' ? await options() : options;
   const asked = {
     pipe: pipePath(key), window: crypto.randomBytes(6).toString('hex'), getToken, setToken,
     lockFile: join(stateDir, `${id}.lock`),
-    server: { script, options: plain, logFile: join(stateDir, `${id}.log`), idleMs, build, stateFile: join(stateDir, `${id}.duckdb`) },
+    server: { script, options: plain, logFile: join(stateDir, `${id}.log`), idleMs, build, stateFile: stateFileOf(stateDir, stateKey) },
   };
   let joined = await acquire(asked);
   if (joined.state.build !== build) {
@@ -425,7 +431,8 @@ function createStateClient(cfg) {
  * What engine-host.js takes as `remote`: a function that joins the server and answers something
  * shaped like a DuckDBInstance: connect() and closeSync(), plus capabilities and tmpDir.
  * @param {object} o
- * @param {string} o.key  the account this server is for
+ * @param {string} o.key  the account and install this server is for
+ * @param {string} [o.stateKey]  what its state file is named after: the account, not the install
  * @param {string} o.script  dist/engine-server.js
  * @param {object|(() => Promise<object>)} o.options  createEngineHost's plain options, for the server's engine
  * @param {string} o.stateDir  for the lock, the server's log and the state file
@@ -554,4 +561,4 @@ function createRemote({ onGone = () => {}, ...cfg }) {
   };
 }
 
-module.exports = { createRemote, createStateClient, openClient, loadExtension, pipePath };
+module.exports = { createRemote, createStateClient, openClient, loadExtension, pipePath, stateFileOf };
