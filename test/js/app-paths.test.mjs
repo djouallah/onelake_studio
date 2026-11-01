@@ -11,6 +11,63 @@ test("a never-written table gets an empty view typed from its Iceberg schema", a
     `SELECT CAST(NULL AS BIGINT) AS "id", CAST(NULL AS VARCHAR) AS "a""b" WHERE false`);
 });
 
+const dbFixture = {
+  alias: "shop",
+  schemas: [{ id: "1", parent: null, name: "main" }, { id: "2", parent: null, name: "sales" },
+            { id: "3", parent: "2", name: "emea" }, { id: "4", parent: null, name: "unused" }],
+  objects: [
+    { schema_id: "2", id: "v1", name: "all_orders", kind: "view", estimate: null, comment: null, sql: "CREATE VIEW" },
+    { schema_id: "2", id: "t2", name: "Orders", kind: "table", estimate: 3, comment: "the orders", sql: "CREATE TABLE" },
+    { schema_id: "2", id: "t1", name: "customers", kind: "table", estimate: 2, comment: null, sql: null },
+    { schema_id: "3", id: "t3", name: "select", kind: "table", estimate: 0, comment: null, sql: null },
+  ],
+  columns: [
+    { owner: "t1", name: "id", type: "INTEGER", nullable: false, dflt: null, comment: null },
+    { owner: "t2", name: "id", type: "INTEGER", nullable: false, dflt: null, comment: null },
+    { owner: "t2", name: "cust", type: "INTEGER", nullable: true, dflt: "3", comment: "who" },
+  ],
+  constraints: [
+    { owner: "t2", type: "PRIMARY KEY", text: "PRIMARY KEY(id)", cols: '["id"]', ref: null },
+    { owner: "t2", type: "FOREIGN KEY", text: "FOREIGN KEY (cust) REFERENCES customers(id)", cols: '["cust"]', ref: "customers" },
+  ],
+  indexes: [{ owner: "t2", name: "ix", sql: "CREATE INDEX ix" }],
+};
+
+test("a database file's catalog: schemas by their whole path, tables before views, names that run", async () => {
+  const { dbCatalog, dbRowsText, dbCountSql } = await import("../../app/paths.js");
+  const c = dbCatalog(dbFixture);
+  assert.deepEqual(c.schemas.map(s => s.name), ["sales", "sales.emea"], "what holds nothing isn't listed");
+  assert.deepEqual(c.schemas[0].objects.map(o => o.name), ["customers", "Orders", "all_orders"]);
+  assert.deepEqual(c.objects.map(o => o.sqlName),
+    ["shop.sales.customers", "shop.sales.Orders", "shop.sales.all_orders", 'shop.sales.emea."select"']);
+  const orders = c.objects[1];
+  assert.deepEqual(orders.columns.map(x => [x.name, x.pk, x.fk, x.nullable, x.dflt]),
+    [["id", true, null, false, null], ["cust", false, "customers", true, "3"]]);
+  assert.deepEqual(orders.constraints.map(x => x.type), ["PRIMARY KEY", "FOREIGN KEY"]);
+  assert.deepEqual(orders.indexes, [{ name: "ix", sql: "CREATE INDEX ix" }]);
+  assert.equal(dbRowsText(orders), "≈ 3", "an estimate says so");
+  assert.equal(dbRowsText(c.objects[2]), "", "a view has no count");
+  assert.equal(dbRowsText({ rows: 1234, rowsExact: true }), "1,234");
+  const sqlite = dbCatalog({ ...dbFixture, estimated: false });
+  assert.equal(sqlite.objects[0].rows, null, "SQLite's estimate means nothing");
+  assert.equal(dbCountSql(c.objects.slice(0, 2)),
+    "SELECT 't1' AS id, count(*) AS n FROM shop.sales.customers UNION ALL SELECT 't2' AS id, count(*) AS n FROM shop.sales.Orders");
+});
+
+test("a database file's tree: what is open, and what a filter keeps", async () => {
+  const { dbCatalog, dbTreeRows } = await import("../../app/paths.js");
+  const c = dbCatalog(dbFixture);
+  const names = o => dbTreeRows(c, o).map(r => r.name);
+  assert.deepEqual(names(), ["sales", "customers", "Orders", "all_orders", "sales.emea", "select"]);
+  assert.deepEqual(names({ closed: new Set(["sales"]) }), ["sales", "sales.emea", "select"]);
+  assert.deepEqual(names({ open: new Set(["t2"]) }), ["sales", "customers", "Orders", "id", "cust", "all_orders", "sales.emea", "select"]);
+  assert.deepEqual(names({ filter: "ORDERS" }), ["sales", "Orders", "all_orders"], "any case, and a table's columns stay shut");
+  assert.deepEqual(names({ filter: "cust", closed: new Set(["sales"]) }), ["sales", "customers", "Orders", "id", "cust"],
+    "a column's match shows it, in a schema that was shut");
+  assert.deepEqual(names({ filter: "nothing" }), []);
+  assert.equal(dbTreeRows(c, { filter: "ORDERS" })[0].count, 2, "a schema counts what is on show");
+});
+
 test("a result past the cap says so: the host sends a count for the rows it stopped sending", async () => {
   const { rowCollector } = await import("../../app/paths.js");
   const fields = [{ name: "a", type: "BIGINT" }];

@@ -5,7 +5,7 @@
 // Run: node --test test/js/engine-host.test.mjs
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -566,6 +566,67 @@ test("native engine host", async t => {
     assert.equal(r.rows[0].s, 42);
     assert.equal(await engine.copyToTemp("ws/lh/Files/n.csv", Buffer.from("ignored")), path,
       "one copy per file per session");
+  });
+
+  await t.test("a database file's catalog says what it holds, DuckDB's and SQLite's", async () => {
+    if (!existsSync(BUNDLED)) return t.skip("no bundled extensions (run fetch-extensions.mjs)");
+    const { dbCatalogSql, dbCatalog, dbCountSql } = await import("../../app/paths.js");
+    const { DuckDBInstance } = require("@duckdb/node-api");
+    const { DatabaseSync } = await import("node:sqlite");
+    const catalogOf = async (alias, estimated) => {
+      const sqls = dbCatalogSql(alias);
+      const answer = async sql => (await engine.call("query", [sql])).rows;
+      return dbCatalog({
+        alias, estimated, schemas: await answer(sqls.schemas), objects: await answer(sqls.objects),
+        columns: await answer(sqls.columns), constraints: await answer(sqls.constraints), indexes: await answer(sqls.indexes),
+      });
+    };
+
+    const duck = join(outside, "shop.duckdb");
+    const made = await DuckDBInstance.create(duck);
+    const c = await made.connect();
+    await c.run(`CREATE SCHEMA sales; CREATE SCHEMA sales.emea; CREATE SCHEMA "odd name"; CREATE SCHEMA empty_one;
+                 CREATE TABLE sales.customers (id INT PRIMARY KEY, name VARCHAR NOT NULL);
+                 CREATE TABLE sales.orders (id INT, cust INT REFERENCES sales.customers (id), CHECK (id > 0));
+                 CREATE INDEX ix ON sales.orders (cust);
+                 CREATE TABLE sales.emea.orders (x INT);
+                 CREATE TABLE "odd name"."select" (x INT);
+                 CREATE VIEW sales.v AS SELECT * FROM sales.orders;
+                 INSERT INTO sales.customers VALUES (1, 'a'), (2, 'b');
+                 COMMENT ON TABLE sales.customers IS 'who';
+                 CHECKPOINT;`);
+    c.closeSync();
+    made.closeSync();
+    await engine.call("attachFile", [{ path: await engine.copyToTemp("ws/lh/Files/shop.duckdb", await readFile(duck)), alias: "shopduck" }]);
+    const d = await catalogOf("shopduck", true);
+    assert.deepEqual(d.schemas.map(s => s.name), ["odd name", "sales", "sales.emea"], "only what holds something, nested by its whole path");
+    const of = name => d.objects.find(o => o.sqlName === name);
+    const customers = of("shopduck.sales.customers");
+    assert.equal(customers.rows, 2);
+    assert.equal(customers.comment, "who");
+    assert.deepEqual(customers.columns.map(x => [x.name, x.type, x.nullable, x.pk]),
+      [["id", "INTEGER", false, true], ["name", "VARCHAR", false, false]]);
+    const orders = of("shopduck.sales.orders");
+    assert.equal(orders.columns.find(x => x.name === "cust").fk, "customers");
+    assert.ok(orders.constraints.some(x => /^CHECK/.test(x.text)));
+    assert.deepEqual(orders.indexes.map(x => x.name), ["ix"]);
+    assert.equal(of("shopduck.sales.v").kind, "view");
+    for (const o of d.objects) await engine.call("query", [`SELECT * FROM ${o.sqlName}`]);   // every name runs as written
+    assert.ok(of('shopduck."odd name"."select"'), d.objects.map(o => o.sqlName).join());
+
+    const lite = join(outside, "shop.sqlite");
+    const s = new DatabaseSync(lite);
+    s.exec(`CREATE TABLE customers (id INTEGER PRIMARY KEY, name TEXT NOT NULL);
+            CREATE VIEW v AS SELECT * FROM customers;
+            INSERT INTO customers (name) VALUES ('a'), ('b'), ('c');`);
+    s.close();
+    await engine.call("attachFile", [{ path: await engine.copyToTemp("ws/lh/Files/shop.sqlite", await readFile(lite)), alias: "shoplite", sqlite: true }]);
+    const l = await catalogOf("shoplite", false);
+    assert.deepEqual(l.objects.map(o => [o.sqlName, o.kind, o.rows]),
+      [["shoplite.main.customers", "table", null], ["shoplite.main.v", "view", null]], "SQLite's estimate isn't shown");
+    const [count] = (await engine.call("query", [dbCountSql(l.objects.filter(o => o.kind === "table"))])).rows;
+    assert.equal(Number(count.n), 3);
+    await engine.call("releaseFiles", [{ attached: ["shopduck", "shoplite"] }]);
   });
 
   await t.test("Export writes every row into the temp directory, around a read only", async () => {

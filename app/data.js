@@ -21,6 +21,7 @@
 import {
   basename, abfssUrl,
   fileExt, readerFor, PARQUET_EXTS, DB_EXTS, ZIP_EXTS, isSqliteHeader, isTextExt,
+  dbCatalogSql, dbCountSql, dbCatalog,
   sqlStr, quoteIdent, prepareReadOnlySql,
   tableKey, fileKey, sanitizeIdent,
   normalizeRow, rowCollector, fmtBytes,
@@ -382,26 +383,25 @@ export function createEngine({
         await callHost("attachFile", [{ path: url, alias }]);
       }
       res.attachments.push(alias);
+      check();
 
-      // Tables AND views — a database file that only exposes views is still queryable.
-      const rows = (await q(
-        `SELECT schema_name AS s, table_name AS t
-           FROM duckdb_tables() WHERE database_name = ${sqlStr(alias)}
-         UNION ALL
-         SELECT schema_name, view_name
-           FROM duckdb_views() WHERE database_name = ${sqlStr(alias)} AND NOT internal
-         ORDER BY 1, 2`)).rows;
-      const tables = rows.map(r => `${quoteIdent(alias)}.${quoteIdent(r.s)}.${quoteIdent(r.t)}`);
+      // Tables AND views — a database file that only exposes views is still queryable. Only
+      // the catalog is asked, which the ATTACH read, so an unreadable or version-incompatible
+      // file has failed by now with the actual cause, and no table's rows are read.
+      const sqls = dbCatalogSql(alias);
+      const answer = async sql => (await q(sql)).rows;
+      const catalog = dbCatalog({
+        alias, estimated: !sqlite,
+        schemas: await answer(sqls.schemas), objects: await answer(sqls.objects), columns: await answer(sqls.columns),
+        constraints: await answer(sqls.constraints), indexes: await answer(sqls.indexes),
+      });
+      if (sqlite) await countSqliteRows(catalog);
 
-      // Describe the first table — this is the probe that forces real block reads, so an
-      // unreadable or version-incompatible file fails HERE with the actual cause.
-      const first = tables[0] || null;
-      const columns = first ? await describe(first) : [];
-
-      const info = { label: file.name, ident: first, columns, fileCount: 1,
+      const first = catalog.objects[0] || null;
+      const info = { label: file.name, ident: first && first.sqlName, columns: first ? first.columns : [], fileCount: 1,
                      posDeletes: 0, eqDeletes: 0, file: true, bytes: file.bytes, ext,
-                     db: true, dbAlias: alias, dbTables: tables, dbEngine: sqlite ? "SQLite" : "DuckDB",
-                     warnings: [] };
+                     db: true, dbAlias: alias, dbTables: catalog.objects.map(o => o.sqlName), dbCatalog: catalog,
+                     dbEngine: sqlite ? "SQLite" : "DuckDB", warnings: [] };
       if (!first)
         info.warnings.push(`${alias} attached but contains no tables or views`);
       loaded.set(key, info);
@@ -415,6 +415,24 @@ export function createEngine({
   }
 
   const SQLITE_MAX_BYTES = 200e6;
+  const SQLITE_COUNT_MAX_TABLES = 200;
+
+  // A SQLite table's real row count, from the local copy. Worth having, not worth failing for:
+  // a file past the cap, or one that won't count, shows its tables with no count.
+  async function countSqliteRows(catalog) {
+    const tables = catalog.objects.filter(o => o.kind === "table");
+    if (!tables.length || tables.length > SQLITE_COUNT_MAX_TABLES) return;
+    try {
+      const byId = new Map(tables.map(o => [o.id, o]));
+      for (const { id, n } of (await q(dbCountSql(tables))).rows) {
+        const o = byId.get(id);
+        if (o) { o.rows = Number(n); o.rowsExact = true; }
+      }
+    } catch (e) {
+      if (e.cancelled) throw e;
+      console.warn(`[database file] row counts: ${e.message}`);
+    }
+  }
 
   // ---------------------------------------------------------------------------
   // Load a table -> read-only VIEW.
@@ -596,12 +614,9 @@ export function createEngine({
     }
     if (db) {
       const n = (dbTables || []).length;
-      if (dbEngine === "SQLite") {
-        return `${label} — SQLite (${fmtBytes(bytes)}) copied into DuckDB, ${n} table(s)` +
-               (n ? `. Query them as ${dbAlias}.<table>` : "");
-      }
-      return `${label} — DuckDB attached read-only as ${dbAlias}, ${n} table(s)/view(s), read on demand` +
-             (n ? `. Query them as ${dbAlias}.<schema>.<table>` : "");
+      const how = dbEngine === "SQLite" ? `SQLite (${fmtBytes(bytes)}), read from a copy on this machine` : "DuckDB, read on demand";
+      return `${label} — ${how}, ${n} table(s)/view(s)` +
+             (n ? `. In SQL: ${dbAlias}.<schema>.<table>` : "");
     }
     if (file) {
       if (PARQUET_EXTS.has(ext)) return `${label} — read on demand`;

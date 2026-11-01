@@ -251,7 +251,7 @@ try {
   await page.evaluate(path => window.postMessage(
     { type: "open-file", workspace: "ws1", item: "A.Lakehouse", path, bytes: 1 }, "*"), SQLITE_PATH);
   await page.waitForFunction(
-    () => /orders/.test(document.getElementById("activeTable").textContent || ""), { timeout: 60000 })
+    () => !document.getElementById("dbRail").hidden, { timeout: 60000 })
     .catch(() => {});
   await page.evaluate(sql => window.postMessage({ type: "run-sql", id: 1, sql }, "*"), "select sum(amount) as total from shop.main.orders");  // as Select Top Rows sends it
   const sqliteOk = await page.waitForFunction(

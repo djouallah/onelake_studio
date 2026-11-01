@@ -1,9 +1,11 @@
 // What a machine holds after an account has used OneLake Studio: its listings and table metadata
 // in the store, written by the real src/store.js and src/onelake.js, a saved query, and a semantic
 // model's local copy. No rows: those are the engine's disk cache, and nothing here can read them.
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const require = createRequire(import.meta.url);
@@ -13,6 +15,20 @@ const { PINS } = require("../../src/vendored.js");
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const VENDOR = join(root, "vendor");
+
+// A SQLite file under Files/, whose bytes the host keeps as it does any file it has read.
+const DB_FILE = "data.Lakehouse/Files/shop.sqlite";
+async function sqliteBytes() {
+  const file = join(await mkdtemp(join(tmpdir(), "onelake-e2e-db-")), "shop.sqlite");
+  const db = new DatabaseSync(file);
+  db.exec(`CREATE TABLE customers (id INTEGER PRIMARY KEY, name TEXT NOT NULL);
+           CREATE TABLE orders (id INTEGER PRIMARY KEY, cust INT, amount REAL);
+           CREATE VIEW big_orders AS SELECT * FROM orders WHERE amount > 3;
+           INSERT INTO customers (name) VALUES ('a'), ('b');
+           INSERT INTO orders (cust, amount) VALUES (1, 2.5), (2, 4), (2, 0);`);
+  db.close();
+  return readFile(file);
+}
 
 export const EXTENSION_ID = "djouallah.onelake-studio";
 export const ACCOUNT = { key: "e2eaccount", queries: "e2e@contoso.com", tenant: "" };
@@ -61,6 +77,7 @@ const BIM = {
 };
 
 export async function seedAccount({ dataDir, home }) {
+  const dbBytes = await sqliteBytes();
   const store = createStore({
     dir: join(dataDir, "data", "User", "globalStorage", EXTENSION_ID, "onelake-store-v1", ACCOUNT.key),
   });
@@ -72,9 +89,9 @@ export async function seedAccount({ dataDir, home }) {
       listWorkspaces: async () => [WORKSPACE],
       listItems: async () => [{ name: LAKEHOUSE.item, kind: "Lakehouse" }],
       listTables: async () => ["orders", "neverread", "Sales", "Product"].map(table => ({ schema: "dbo", table })),
-      listFiles: async () => [],
+      listFiles: async (_, dir) => (dir ? [] : [{ name: "shop.sqlite", path: DB_FILE, isDir: false, bytes: dbBytes.length, version: "v1" }]),
       loadTable: async (_, t) => ({ metadata: metadata(), metadataLocation: location(t.table) }),
-      readBytes: async () => new Uint8Array(),
+      readBytes: async (_, path) => (path === DB_FILE ? dbBytes : new Uint8Array()),
     },
     fabric: {
       listSemanticModels: async () => [{ id: "00000000-0000-0000-0000-000000000003", name: "shop", description: "" }],
@@ -84,6 +101,8 @@ export async function seedAccount({ dataDir, home }) {
   await onelake.workspaces({ fresh: true });
   await onelake.items(WORKSPACE, { fresh: true });
   await onelake.tables(LAKEHOUSE, { fresh: true });
+  await onelake.files(LAKEHOUSE, "", { fresh: true });
+  await onelake.readBytes(WORKSPACE, DB_FILE);
   for (const table of ["orders", "Sales", "Product"]) await onelake.table(LAKEHOUSE, { schema: "dbo", table }, { fresh: true });
   await onelake.itemNamed(WORKSPACE_ID, ITEM_ID, { fresh: true });
   await onelake.models(WORKSPACE, { fresh: true });
@@ -99,7 +118,7 @@ export async function seedAccount({ dataDir, home }) {
   await mkdir(dirname(model), { recursive: true });
   await writeFile(model, stringify(tmslToOssie(BIM, "shop")));
 
-  return { saved };
+  return { saved, dbFile: { workspace: WORKSPACE, item: LAKEHOUSE.item, path: DB_FILE, bytes: dbBytes.length } };
 }
 
 // The extension's globalState, in the workbench's own storage in the browser, as a page reads or

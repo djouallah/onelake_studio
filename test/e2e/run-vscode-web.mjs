@@ -396,7 +396,7 @@ async function runMatrix() {
 }
 
 // What only an account's cache can answer.
-async function cachedRunMatrix({ saved, home }) {
+async function cachedRunMatrix({ saved, home, dbFile }) {
   await step("Run: SHOW ALL TABLES from the cache", async () => {
     const r = await runIt("SHOW ALL TABLES");
     settled("SHOW ALL TABLES", r);
@@ -452,6 +452,51 @@ async function cachedRunMatrix({ saved, home }) {
     check("what was typed is still in the last tab", await before.locator("#sqlEditor").inputValue() === "select 'mine' as typed");
     check("the box's own tab has no Edit SQL", !await (await panel()).locator("#editSqlBtn").isVisible());
   });
+
+  await step("Tree: a database file opens on what it holds", async () => {
+    const rail = () => panel().then(f => f.evaluate(() => {
+      const el = document.getElementById("dbRail");
+      return { shown: !el.hidden, rows: [...el.querySelectorAll(".dbRow")].map(r => r.querySelector(".dbName").textContent) };
+    }));
+    await drive("exec", { command: "onelakeStudio.openFile", args: [dbFile] });
+    const opened = await until("the file's tree", async () => { const r = await rail(); return r.shown && r.rows.length && r; }, 60000);
+    check("the tree lists its schema, tables and view, tables first",
+      opened.rows.join() === "shop.sqlite,main,customers,orders,big_orders", opened.rows.join());
+    const f = await panel();
+    const overview = await f.locator("#dbOverview").innerText();
+    check("the overview names the engine and every table, with real counts",
+      /SQLite/.test(overview) && /big_orders/.test(overview) && /orders\s+Table\s+3\b/.test(overview), overview);
+    const s = await panelState();
+    check("nothing was run, and the box has the first table's SQL to start from",
+      !s.table && /^SELECT \* FROM shop\w*\.main\.customers LIMIT 100$/.test(s.box), s.box);
+
+    await f.locator(".dbRow-table", { hasText: "orders" }).first().click();
+    await until("the table's card", async () => /main\.orders/.test((await panelState()).title), 15000);
+    const card = await f.locator("#statsView").innerText();
+    check("a table's card has its columns, primary key and definition",
+      /amount/.test(card) && /REAL|DOUBLE/.test(card) && /PK/.test(card) && /CREATE TABLE/.test(card), card);
+    check("it has no History", await f.locator("#viewHistory").isHidden());
+
+    await f.locator("#viewData").click();
+    const rows = await cell(/\b2\.5\b/);
+    check("Data shows its rows", !isError(rows), rows.status);
+
+    await f.locator(".dbRow-table", { hasText: "orders" }).first().locator(".dbTwisty").click();
+    const open = await rail();
+    check("its twisty lists the columns", open.rows.includes("amount"), open.rows.join());
+
+    await f.locator(".dbFilter").fill("name");
+    const filtered = await rail();
+    check("the filter finds a column, and what holds it", filtered.rows.join() === "shop.sqlite,main,customers,id,name", filtered.rows.join());
+    await f.locator(".dbFilter").fill("");
+
+    const alias = /FROM (shop\w*)\./.exec(s.box)[1];
+    const r = await runIt(`select sum(amount) as total from ${alias}.main.orders`);
+    check("a query from the box answers, and the tree stays", /\b6\.5\b/.test(r.table) && (await rail()).shown, r.table || r.status);
+
+    await f.locator(".dbRow-file").click();
+    check("the file's row brings the overview back", await f.locator("#dbOverview").isVisible());
+  }, 180000);
 
   await step("Tree: Logs and Performance open, and a statement that ran is in Logs", async () => {
     const tabs = async () => (await drive("state")).tabs.join(", ");
@@ -703,7 +748,7 @@ async function main() {
   // ------------------------------------------------------------------- 3
   console.log("\n=== 3. Signed out, with an account's cache on this machine");
   const cached = await place("cached");
-  const { saved } = await seedAccount(cached);
+  const { saved, dbFile } = await seedAccount(cached);
   // The first start only makes the state to add to: an account known, and signed out.
   await open(cached);
   await step("Cached: the account is on this machine", async () => {
@@ -727,7 +772,7 @@ async function main() {
   });
   await step("Cached: the panel", async () => { await openPanel(); });
   await runMatrix();
-  await cachedRunMatrix({ saved, home: cached.home });
+  await cachedRunMatrix({ saved, home: cached.home, dbFile });
   await planMatrix();
   await cachedPlanMatrix();
   await step("Cached: after all of it", async () => {

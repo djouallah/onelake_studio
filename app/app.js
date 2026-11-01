@@ -9,12 +9,13 @@
 // =============================================================================
 import { createEngine } from './data.js';
 import { isDocResult, textLinesDoc, fileExt, isTextExt, escapeHtml, basename,
-         IMAGE_EXTS, abfssUrl, ageNote } from './paths.js';
+         IMAGE_EXTS, abfssUrl, ageNote, sqlPart } from './paths.js';
 // Static import is safe: docview.js is tiny — the markdown renderer it uses is imported
 // only inside renderMarkdown(), and only for a document that IS markdown.
 import { renderDocument } from './docview.js';
 import { mountGrid, cellText } from './grid.js';
 import { mountChart } from './chart.js';
+import { mountDbBrowser, dbOverviewHtml, dbObjectHtml } from './dbview.js';
 // Static too, and as cheap: the DAX compiler it runs is imported on the first model only.
 import * as semantic from './semantic.js';
 // A .bim's model view. Explore's chart library is loaded when the Pivot first opens.
@@ -141,6 +142,11 @@ function wireUi() {
     const snap = e.target.closest('button[data-snapshot]');
     if (snap) querySnapshot(snap.dataset.snapshot);
   });
+  $('dbOverview').addEventListener('click', e => {
+    const b = e.target.closest('button[data-object]');
+    const o = b && db && db.info.dbCatalog.objects[Number(b.dataset.object)];
+    if (o) selectDbObject(o);
+  });
   $('readSrc').onclick = () => vs.postMessage({ type: 'show-log' });
 }
 
@@ -187,6 +193,7 @@ async function goToLakehouse(workspace, item) {
 // lakehouse behind it offered a Save that could only fail.
 function leaveLakehouse(opts) {
   closeModelView();
+  closeDb();
   ++selSeq;                     // a load still under way belongs to the lakehouse being left
   currentSql = '';
   activeFile = null;
@@ -223,6 +230,7 @@ async function selectFile(file) {
     if (text != null) return openModelView(file, text, { fromOneLake: true });
   }
   closeModelView();
+  closeDb();
   const my = ++selSeq;
   engine.cancelLoad();
   $('activeTable').textContent = file.name;
@@ -238,8 +246,9 @@ async function selectFile(file) {
   try {
     const info = await engine.loadFile(lakehouse, file);
     if (my !== selSeq) return;
-    // A database file with no tables attaches but leaves nothing to preview.
-    if (info.ident) {
+    if (info.db) {
+      openDb(file, info);
+    } else if (info.ident) {
       const preview = previewSql(info.ident, activeDocEligible);
       offerInBox(preview);
       reportLoad(info, await runQuery({ sql: preview, doc: activeDocEligible, ext: activeDocExt }));
@@ -302,6 +311,7 @@ function closeModelView() {
 // Files/ comes with its text already read (selectFile looked), and is still a OneLake file.
 async function openModelView(file, text = null, { fromOneLake = text == null } = {}) {
   closeModelView();
+  closeDb();
   const my = ++selSeq;
   engine.cancelLoad();
   $('activeTable').textContent = file.name;
@@ -464,6 +474,7 @@ let imageUrl = null;
 // blob URL.
 async function selectImage(file) {
   closeModelView();
+  closeDb();
   const my = ++selSeq;
   engine.cancelLoad();
   $('activeTable').textContent = file.name;
@@ -497,10 +508,105 @@ async function selectImage(file) {
 }
 
 // ---------------------------------------------------------------------------
+// A database file: what it holds beside the box and the results (dbview.js), for as long as it
+// is open. A query from the box leaves it there, since the query's tables are what it lists.
+// ---------------------------------------------------------------------------
+let db = null;               // { file, info, browser }
+
+function closeDb() {
+  if (!db) return;
+  db.browser.destroy();
+  db = null;
+  $('dbRail').hidden = true;
+}
+
+function openDb(file, info) {
+  closeDb();
+  $('dbRail').hidden = false;
+  const browser = mountDbBrowser($('dbRail'), {
+    title: file.name, catalog: info.dbCatalog, quote: sqlPart,
+    onOverview: showDbOverview,
+    onPick: selectDbObject,
+    onInsert: insertDbName,
+  });
+  db = { file, info, browser };
+  // Not run: the box starts from the first table, as a table's own tab does.
+  if (info.ident) offerInBox(previewSql(info.ident, false));
+  showDbOverview();
+}
+
+// The whole file, in place of the results. Reads nothing: what it says came with the attach.
+function showDbOverview() {
+  if (!db) return;
+  ++selSeq;                     // whatever was loading for the last click stands down
+  engine.cancelLoad();
+  const { file, info, browser } = db;
+  $('activeTable').textContent = file.name;
+  activeFile = file;
+  activeSqlName = null;
+  activeTableRef = null; tableStage = 'none';
+  currentSql = '';
+  setActiveStats(null);
+  clearResults();
+  $('dbOverview').innerHTML = dbOverviewHtml(info.dbCatalog,
+    { engine: info.dbEngine, size: engine.fmtBytes(info.bytes), alias: info.dbAlias });
+  $('dbOverview').hidden = false;
+  setBusy(false);
+  browser.select('overview');
+  reportLoad(info, true);
+}
+
+// A table or view of the file: as a table in OneLake opens, Stats leading, with no row read
+// until Data is asked for. It has no history to show.
+function selectDbObject(o) {
+  if (!db) return;
+  ++selSeq;
+  engine.cancelLoad();
+  $('activeTable').textContent = `${o.schema}.${o.name}`;
+  activeFile = db.file;
+  activeDocEligible = false;
+  activeDocExt = '';
+  activeSqlName = o.sqlName;
+  activeTableRef = { schema: o.schema, table: o.name };
+  tableStage = 'stats';
+  clearResults('(no rows read yet — open the Data tab)');
+  setActiveStats(null);
+  setActiveStats({ label: o.name, db: o, stats: {}, columns: o.columns });
+  showStats();
+  currentSql = previewSql(o.sqlName, false);
+  offerInBox(currentSql);
+  setBusy(false);
+  db.browser.select(o.id);
+  setStatus(`${o.sqlName} — from the file's catalog, no rows read. Open Data for the first rows.`);
+  if (settings.tableOpensOn === 'data') peekDbObject(o);
+}
+
+// Its first rows, through the box's own path. As for a table in OneLake, Export and Profile then
+// go by the whole table, not these rows.
+async function peekDbObject(o) {
+  const my = selSeq;
+  const ok = await runQuery({ sql: previewSql(o.sqlName, false), doc: false });
+  if (!ok || my !== selSeq) return;
+  tableStage = 'peek';
+  currentSql = `SELECT * FROM ${o.sqlName}`;
+  setStatus(`The first ${lastResult.rows.length} row(s). Query the whole table in the box.`);
+}
+
+// A name from the tree, at the box's cursor. What the box was only offered goes: nothing typed there.
+function insertDbName(name) {
+  const box = showBox();
+  box.focus();
+  if (box.value === offered) box.select();
+  typeInBox(box, name);
+  keepDraft();
+}
+
+// ---------------------------------------------------------------------------
 // A table: statistics, then rows, then a view — each only when asked for
 // ---------------------------------------------------------------------------
 async function selectTable(t) {
   closeModelView();
+  closeDb();
   const my = ++selSeq;
   // A click is also a verdict on whatever is still running: stop it now.
   engine.cancelLoad();
@@ -558,6 +664,7 @@ function reportTableError(e) {
 
 // The Data tab's first click: the first rows, which the selection already started reading.
 async function peekIntoView() {
+  if (activeInfo && activeInfo.db) return peekDbObject(activeInfo.db);
   const my = selSeq, run = ++runSeq;
   const stale = () => my !== selSeq || run !== runSeq;
   const t0 = Date.now();
@@ -766,6 +873,8 @@ function clearResults(hint = '', { error = false } = {}) {
   statsPrev = null;
   $('statsView').hidden = true;
   $('statsView').innerHTML = '';
+  $('dbOverview').hidden = true;
+  $('dbOverview').innerHTML = '';
   setViewTabs();
   $('docBar').hidden = true;
   $('docView').hidden = true;
@@ -871,6 +980,7 @@ function setDocTabs() {
 function setActiveStats(info) {
   activeInfo = (info && info.stats) ? info : null;
   $('viewBar').hidden = !activeInfo;
+  $('viewHistory').hidden = !!(activeInfo && activeInfo.db);
   $('pivotBtn').disabled = !activeInfo || !activeSqlName;
   $('pivotBtn').closest('section').classList.toggle('tableOpen', !!activeInfo);
   if (!activeInfo) dropTablePivot();   // a new selection: the pivot was the last table's
@@ -1040,6 +1150,7 @@ const columnsHtml = info => {
 // A table written as Iceberg: only what the snapshot metadata said — a fact it doesn't
 // carry is an em dash.
 function statsCardHtml(info, delta) {
+  if (info.db) return dbObjectHtml(info.db);
   if (isDelta(info)) return deltaCardHtml(info, delta);
   const s = info.stats || {};
   const deletes = info.posDeletes || info.eqDeletes || s.totalDeleteFiles;
@@ -1208,6 +1319,7 @@ function enterQuery(title) {
   activeDocExt = '';
   tableStage = 'none';
   setActiveStats(null);         // the last table's tabs and pivot are not this query's
+  if (db) db.browser.select(null);
   $('activeTable').textContent = title ? `Query: ${title}` : 'Query';
 }
 

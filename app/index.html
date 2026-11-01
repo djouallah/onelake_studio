@@ -180,14 +180,49 @@
     .docView th, .docView td { border: 1px solid var(--border); padding: 0.3rem 0.6rem; }
 
     /* Stats card — metadata key/value rows. */
-    #statsView th { text-align: left; font-weight: 500; color: var(--muted); }
-    #statsView td { font-variant-numeric: tabular-nums; }
+    #statsView th, #dbOverview th { text-align: left; font-weight: 500; color: var(--muted); }
+    #statsView td, #dbOverview td { font-variant-numeric: tabular-nums; }
     .statsNote { color: var(--muted); font-size: 0.85rem; }
     /* History — one row per commit or snapshot, newest first. */
     #statsView table.history th { color: var(--text); white-space: nowrap; }
     #statsView table.history td { white-space: nowrap; }
     #statsView table.history td.params { white-space: normal; font-family: var(--vscode-editor-font-family); font-size: 0.85em; }
     #statsView td.num { text-align: right; }
+
+    /* The tab's work area: a database file's tree (dbview.js), then everything else. */
+    .tabBody { flex: 1; display: flex; min-width: 0; min-height: 0; }
+    .tabMain { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+    #dbRail {
+      flex: none; width: 19rem; min-width: 10rem; max-width: 60%; resize: horizontal; overflow: auto;
+      display: flex; flex-direction: column; border-right: 1px solid var(--border); background: var(--panel);
+    }
+    .dbFilter {
+      flex: none; margin: 0.4rem 0.5rem; padding: 0.2rem 0.4rem; background: var(--vscode-input-background, var(--panel));
+      color: var(--vscode-input-foreground, var(--text)); border: 1px solid var(--vscode-input-border, var(--border));
+    }
+    .dbTree { flex: 1; min-height: 0; padding-bottom: 0.5rem; }
+    .dbRow { display: flex; align-items: center; gap: 0.3rem; padding-right: 0.4rem; cursor: pointer; white-space: nowrap; line-height: 1.5rem; }
+    .dbRow:hover { background: var(--hover); }
+    .dbRow[aria-selected="true"] { background: var(--sel); color: var(--vscode-list-activeSelectionForeground, var(--text)); }
+    .dbRow:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
+    .dbRow-file { font-weight: 600; }
+    .dbRow-schema { font-weight: 600; margin-top: 0.15rem; }
+    .dbRow-column { cursor: default; }
+    .dbTwisty { flex: none; width: 0.8rem; text-align: center; color: var(--muted); }
+    .dbIcon { flex: none; color: var(--accent2); }
+    .dbName { flex: 0 1 auto; min-width: 2rem; overflow: hidden; text-overflow: ellipsis; }
+    .dbNote { flex: 1 1 0; min-width: 0; text-align: right; color: var(--muted); font-size: 0.8rem; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
+    .dbBadge { flex: none; font-size: 0.65rem; line-height: 1; padding: 0.1rem 0.2rem; border: 1px solid var(--border); border-radius: 2px; color: var(--accent2); }
+    button.dbInsert { flex: none; visibility: hidden; padding: 0 0.3rem; line-height: 1.2rem; background: transparent; border: 0; color: var(--muted); }
+    .dbRow:hover button.dbInsert, .dbRow:focus-visible button.dbInsert { visibility: visible; }
+    button.dbInsert:hover:not(:disabled) { color: var(--text); }
+    /* The whole file and its tables, as cards in place of the results. */
+    table.dbList th, table.dbList td { text-align: left; white-space: nowrap; }
+    #statsView table.dbList th, #dbOverview table.dbList th { color: var(--text); }
+    #dbOverview table.dbList th.num { text-align: right; }
+    table.dbList .num { text-align: right; font-variant-numeric: tabular-nums; }
+    button.dbLink { padding: 0; background: none; border: 0; color: var(--accent2); text-align: left; }
+    button.dbLink:hover:not(:disabled) { background: none; text-decoration: underline; }
 
     /* Status bar: the message, where the last answers came from, and the build. */
     .statusBar {
@@ -224,33 +259,41 @@
       <button id="planBtn" title="Where the statement spends its time (it runs once to measure)">Plan</button>
       <button id="runBtn" class="primary" title="The statement under the cursor, or the selection (Ctrl+Enter)">Run ▶</button>
     </div>
-    <!-- A .bim's semantic model view (explore/view.js), in place of the results. -->
-    <div id="modelView" hidden></div>
-    <!-- Pivot: the selected table as a one-table model, in Explore's pivot (explore/view.js), in
-         place of the results while it is open (app.js: section.pivotOpen). -->
-    <div id="pivotView" hidden></div>
-    <textarea id="sqlEditor" aria-label="SQL. Ctrl+Enter runs the statement under the cursor. Esc then Tab leaves the box." spellcheck="false" placeholder="Read-only SQL. Ctrl+Enter runs the statement under the cursor. Try: SHOW ALL TABLES"></textarea>
-    <div class="resultsWrap">
-      <!-- While a TABLE is selected: Stats leads, because statistics cost nothing. -->
-      <div class="docBar tabs" id="viewBar" hidden>
-        <button id="viewStats" class="tab active">Stats</button><button id="viewHistory" class="tab">History</button><button id="viewData" class="tab">Data</button>
+    <div class="tabBody">
+      <!-- A database file's schemas, tables and columns (dbview.js), for as long as it is open. -->
+      <nav id="dbRail" aria-label="Database contents" hidden></nav>
+      <div class="tabMain">
+        <!-- A .bim's semantic model view (explore/view.js), in place of the results. -->
+        <div id="modelView" hidden></div>
+        <!-- Pivot: the selected table as a one-table model, in Explore's pivot (explore/view.js), in
+             place of the results while it is open (app.js: section.pivotOpen). -->
+        <div id="pivotView" hidden></div>
+        <textarea id="sqlEditor" aria-label="SQL. Ctrl+Enter runs the statement under the cursor. Esc then Tab leaves the box." spellcheck="false" placeholder="Read-only SQL. Ctrl+Enter runs the statement under the cursor. Try: SHOW ALL TABLES"></textarea>
+        <div class="resultsWrap">
+          <!-- While a TABLE is selected: Stats leads, because statistics cost nothing. -->
+          <div class="docBar tabs" id="viewBar" hidden>
+            <button id="viewStats" class="tab active">Stats</button><button id="viewHistory" class="tab">History</button><button id="viewData" class="tab">Data</button>
+          </div>
+          <article id="statsView" class="docView" hidden></article>
+          <!-- A database file's overview (dbview.js), until a table or a query takes the pane. -->
+          <article id="dbOverview" class="docView" hidden></article>
+          <div class="docBar tabs" id="docBar" hidden>
+            <button id="docPretty" class="tab active">Pretty</button><button id="docRaw" class="tab">Raw</button>
+          </div>
+          <!-- Plan: the query's profile and plan tree (explore/profile.js), in place of the results. -->
+          <div id="planView" hidden></div>
+          <!-- Chart: the rows on screen drawn (chart.js), in place of the grid. -->
+          <div id="chartView" hidden></div>
+          <div class="hint" id="resultsHint">Query results appear here.</div>
+          <article id="docView" class="docView" hidden></article>
+          <!-- The grid's filter and row count (grid.js), while a result is on screen. -->
+          <div class="gridBar" id="gridBar" hidden>
+            <input id="gridFilter" type="search" aria-label="Filter rows" placeholder="Filter rows" spellcheck="false">
+            <span id="gridCount"></span>
+          </div>
+          <table class="results" id="resultsTable" hidden></table>
+        </div>
       </div>
-      <article id="statsView" class="docView" hidden></article>
-      <div class="docBar tabs" id="docBar" hidden>
-        <button id="docPretty" class="tab active">Pretty</button><button id="docRaw" class="tab">Raw</button>
-      </div>
-      <!-- Plan: the query's profile and plan tree (explore/profile.js), in place of the results. -->
-      <div id="planView" hidden></div>
-      <!-- Chart: the rows on screen drawn (chart.js), in place of the grid. -->
-      <div id="chartView" hidden></div>
-      <div class="hint" id="resultsHint">Query results appear here.</div>
-      <article id="docView" class="docView" hidden></article>
-      <!-- The grid's filter and row count (grid.js), while a result is on screen. -->
-      <div class="gridBar" id="gridBar" hidden>
-        <input id="gridFilter" type="search" aria-label="Filter rows" placeholder="Filter rows" spellcheck="false">
-        <span id="gridCount"></span>
-      </div>
-      <table class="results" id="resultsTable" hidden></table>
     </div>
     <!-- A cell, whole (grid.js: a double click, or Enter). -->
     <div id="inspector" role="dialog" aria-labelledby="inspectorTitle" hidden>

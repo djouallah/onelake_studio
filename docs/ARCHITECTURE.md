@@ -294,6 +294,13 @@ back to the cloud. A table nothing was ever written to has a check, since it rea
 - **A database file** is recognised by its header, never its extension. A DuckDB file is attached
   read-only and block-read on demand. A SQLite file is copied by the host into the engine's temp
   directory and attached read-only, capped at 200 MB.
+  - **It opens on what it holds** ([`app/dbview.js`](../app/dbview.js)): a tree of its schemas, tables, views and
+    columns beside the SQL box, with a filter, and an overview of the file. This comes from DuckDB's catalog, so no
+    table's rows are read. The tree stays while queries run in that tab.
+  - **A table or view** opens as a table in OneLake does: Stats (columns, keys, indexes, its definition), Data and
+    Pivot. It has no History.
+  - **Row counts:** a DuckDB file's are its own estimate, which still counts deleted rows, and say so. A SQLite file's
+    are counted from its copy, for up to 200 tables, since its estimate means nothing.
 - **CSV, JSON, avro, xlsx and plain text** have no block structure, so DuckDB pulls them whole.
 - **A `.zip`** is listed through its central directory, with a range read at the tail, so the archive
   is not downloaded. Every readable entry becomes a view, and it decompresses when queried.
@@ -601,7 +608,7 @@ every window. The rest apply at once.
 | `src/agent.js`, `src/bridge.js`, `bin/cli.mjs` | The command line. |
 | `src/exportapp.js`, `src/fabricapp.js`, `src/onelakewrite.js` | Export to Fabric. |
 | `src/vendored.js` | The one list of pinned third-party code the webview runs, dax-sql included. |
-| [`app/`](../app/) | A tab's page: `index.html`, `app.js`, `data.js`, `grid.js`, `chart.js`, `docview.js`, `paths.js`, `semantic.js`, `cdn.js`, `host.js`, `vscode-api.js`. |
+| [`app/`](../app/) | A tab's page: `index.html`, `app.js`, `data.js`, `grid.js`, `chart.js`, `docview.js`, `dbview.js`, `paths.js`, `semantic.js`, `cdn.js`, `host.js`, `vscode-api.js`. |
 | [`app/explore/`](../app/explore/) | Explore, shared with the Fabric app. |
 | [`fabric_app/`](../fabric_app/) | The template for an exported app. |
 | [`claude-skill/`](../claude-skill/) | The agent skill. |

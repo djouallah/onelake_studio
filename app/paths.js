@@ -274,6 +274,107 @@ export function isSqliteHeader(bytes) {
   return true;
 }
 
+// What an attached database file holds, from DuckDB's own catalog: no table's rows are read. A
+// schema can sit inside a schema, and the catalog names only the innermost, so a schema's parent
+// is asked for too. Ids are text, as an oid has no use as a number here.
+export const dbCatalogSql = alias => {
+  const db = sqlStr(alias);
+  return {
+    schemas: `SELECT oid::VARCHAR AS id, parent_schema_oid::VARCHAR AS parent, schema_name AS name
+                FROM duckdb_schemas() WHERE database_name = ${db}`,
+    objects: `SELECT schema_oid::VARCHAR AS schema_id, table_oid::VARCHAR AS id, table_name AS name, 'table' AS kind,
+                     estimated_size AS estimate, comment, sql
+                FROM duckdb_tables() WHERE database_name = ${db}
+              UNION ALL
+              SELECT schema_oid::VARCHAR, view_oid::VARCHAR, view_name, 'view', NULL, comment, sql
+                FROM duckdb_views() WHERE database_name = ${db} AND NOT internal`,
+    columns: `SELECT table_oid::VARCHAR AS owner, column_name AS name, data_type AS type, is_nullable AS nullable,
+                     column_default AS dflt, comment
+                FROM duckdb_columns() WHERE database_name = ${db} AND NOT internal
+               ORDER BY table_oid, column_index`,
+    // NOT NULL is left out: each column says so itself.
+    constraints: `SELECT table_oid::VARCHAR AS owner, constraint_type AS type, constraint_text AS text,
+                         to_json(constraint_column_names)::VARCHAR AS cols, referenced_table AS ref
+                    FROM duckdb_constraints() WHERE database_name = ${db} AND constraint_type <> 'NOT NULL'`,
+    indexes: `SELECT table_oid::VARCHAR AS owner, index_name AS name, sql
+                FROM duckdb_indexes() WHERE database_name = ${db}`,
+  };
+};
+
+// The exact row count of each table. A SQLite file's catalog has no count worth showing, and
+// these are read from its local copy.
+export const dbCountSql = tables => tables
+  .map(t => `SELECT ${sqlStr(t.id)} AS id, count(*) AS n FROM ${t.sqlName}`).join(" UNION ALL ");
+
+// What dbCatalogSql's answers say, as schemas holding tables and views: { schemas, objects }. A
+// schema with nothing in it is left out: every DuckDB file has a `main`, used or not.
+export function dbCatalog({ alias, schemas, objects, columns, constraints = [], indexes = [], estimated = true }) {
+  const schemaById = new Map(schemas.map(s => [s.id, s]));
+  const pathOf = id => {
+    const s = schemaById.get(id);
+    return s ? [...(s.parent == null ? [] : pathOf(s.parent)), s.name] : [];
+  };
+  const byOwner = list => {
+    const m = new Map();
+    for (const x of list) { if (!m.has(x.owner)) m.set(x.owner, []); m.get(x.owner).push(x); }
+    return m;
+  };
+  const colsOf = byOwner(columns), consOf = byOwner(constraints), idxOf = byOwner(indexes);
+  const byName = (a, b) => a.name.toLowerCase() < b.name.toLowerCase() ? -1 : a.name.toLowerCase() > b.name.toLowerCase() ? 1 : 0;
+  const groups = new Map();
+  for (const o of objects) {
+    const path = pathOf(o.schema_id);
+    const schema = path.join(".");
+    if (!groups.has(schema)) groups.set(schema, { name: schema, objects: [] });
+    const keys = (consOf.get(o.id) || []).map(c => ({ ...c, cols: JSON.parse(c.cols || "[]") }));
+    const inKey = (type, name) => keys.some(k => k.type === type && k.cols.includes(name));
+    const fkOf = name => keys.find(k => k.type === "FOREIGN KEY" && k.cols.includes(name));
+    groups.get(schema).objects.push({
+      id: o.id, name: o.name, kind: o.kind, schema, comment: o.comment || null, sql: o.sql || null,
+      sqlName: [alias, ...path, o.name].map(sqlPart).join("."),
+      rows: estimated && o.kind === "table" && o.estimate != null ? Number(o.estimate) : null,
+      rowsExact: false,
+      columns: (colsOf.get(o.id) || []).map(c => ({
+        name: c.name, type: c.type, nullable: c.nullable !== false, dflt: c.dflt ?? null, comment: c.comment || null,
+        pk: inKey("PRIMARY KEY", c.name),
+        fk: fkOf(c.name) ? fkOf(c.name).ref : null,
+      })),
+      constraints: keys.map(k => ({ type: k.type, text: k.text })),
+      indexes: (idxOf.get(o.id) || []).map(i => ({ name: i.name, sql: i.sql })),
+    });
+  }
+  const sorted = [...groups.values()].sort(byName);
+  // Tables, then views: what most people came for comes first.
+  for (const g of sorted) g.objects.sort((a, b) => (a.kind === b.kind ? byName(a, b) : a.kind === "table" ? -1 : 1));
+  return { schemas: sorted, objects: sorted.flatMap(g => g.objects) };
+}
+
+// The tree of a database file, as the rows on screen: a schema, its tables and views, the columns
+// of those opened. `filter` keeps what matches by its own name or a column's; a schema with a
+// match is open whatever it was, and so is a table matched only by a column, so the match shows.
+export function dbTreeRows(catalog, { closed = new Set(), open = new Set(), filter = "" } = {}) {
+  const q = String(filter).trim().toLowerCase();
+  const has = s => String(s).toLowerCase().includes(q);
+  const rows = [];
+  for (const s of catalog.schemas) {
+    const objects = q ? s.objects.filter(o => has(o.name) || o.columns.some(c => has(c.name))) : s.objects;
+    if (q && !objects.length) continue;
+    const schemaOpen = q ? true : !closed.has(s.name);
+    rows.push({ key: `schema:${s.name}`, level: 1, type: "schema", name: s.name, count: objects.length, expanded: schemaOpen });
+    if (!schemaOpen) continue;
+    for (const o of objects) {
+      const expanded = open.has(o.id) || (!!q && !has(o.name));
+      rows.push({ key: `object:${o.id}`, level: 2, type: o.kind, name: o.name, object: o, expanded });
+      if (!expanded) continue;
+      for (const c of o.columns) rows.push({ key: `column:${o.id}:${c.name}`, level: 3, type: "column", name: c.name, column: c, object: o });
+    }
+  }
+  return rows;
+}
+
+// A table's row count as shown. An estimate says so: a DuckDB file's still counts deleted rows.
+export const dbRowsText = o => o.rows == null ? "" : `${o.rowsExact ? "" : "≈ "}${Number(o.rows).toLocaleString("en")}`;
+
 // -----------------------------------------------------------------------------
 // Values
 // -----------------------------------------------------------------------------
