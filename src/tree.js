@@ -81,7 +81,7 @@ class LakehouseTree {
     this._unsubRead = onelake.onTableRead ? onelake.onTableRead(r => this._cachedChanged(this._tableNode(r))) : null;
     this._unsubRows = onelake.onRowsRead
       ? onelake.onRowsRead(() => {
-        for (const n of this._nodes.values()) if (n.kind === 'table' && !n.cached) this._cachedChanged(n);
+        for (const n of this._nodes.values()) if ((n.kind === 'table' || n.kind === 'file') && !n.cached) this._cachedChanged(n);
       }) : null;
   }
 
@@ -98,7 +98,9 @@ class LakehouseTree {
 
   _cachedChanged(n) {
     if (!n) return;
-    this.onelake.cached.rows({ workspace: n.workspace, item: n.item }, { schema: n.schema, table: n.table }).then(cached => {
+    (n.kind === 'file'
+      ? this.onelake.cached.file(n.workspace, n)
+      : this.onelake.cached.rows({ workspace: n.workspace, item: n.item }, { schema: n.schema, table: n.table })).then(cached => {
       if (!!n.cached === cached) return;
       n.cached = cached;
       this._emitter.fire(n);
@@ -150,6 +152,7 @@ class LakehouseTree {
          : n.kind === 'apps' ? `apps|${n.workspace}`
          : n.kind === 'queries' ? 'queries'
          : n.kind === 'table' ? `table|${n.workspace}|${n.item}|${n.schema || ''}|${n.table}`
+         : n.kind === 'file' ? `file|${n.workspace}|${n.path}`
          : null;
   }
 
@@ -317,10 +320,16 @@ class LakehouseTree {
         item.command = { command: 'onelakeStudio.signInFabric', title: 'Sign in to the Fabric API' };
         item.tooltip = 'Semantic models come from the Fabric REST API, which needs its own sign-in.';
         break;
+      // As a table: a cloud until it has been read here, a check after.
       case 'file':
-        item.iconPath = new vscode.ThemeIcon('file');
+        item.iconPath = n.cached
+          ? new vscode.ThemeIcon('pass-filled', new vscode.ThemeColor('testing.iconPassed'))
+          : new vscode.ThemeIcon('cloud');
         item.description = n.size;
         item.command = { command: 'onelakeStudio.openFile', title: 'Open file', arguments: [n] };
+        item.tooltip = [n.label, n.cached
+          ? 'Read on this machine. What was read works offline; a part never read needs OneLake.'
+          : 'Not read on this machine yet, so it needs OneLake.'].join('\n');
         break;
       // A listing that failed. Rendered as a node rather than only a toast, because a
       // toast is gone in five seconds and a workspace that silently shows nothing is
@@ -488,13 +497,15 @@ class LakehouseTree {
       const entries = await this.onelake.files(lh, n.dir,
         { fresh: this._isFresh(`files|${n.workspace}|${n.item}|${n.dir || ''}`, n.workspace, n.item) });
       if (!entries.length) return [node('empty', 'Empty', { leaf: true })];
-      return entries.map(e => e.isDir
+      // Each with whether it is cached, as a table is: read from the store, never from OneLake.
+      const cached = await Promise.all(entries.map(e => (e.isDir ? false : this.onelake.cached.file(n.workspace, e).catch(() => false))));
+      return entries.map((e, i) => this._track(e.isDir
         // `path` is workspace-relative (…/Files/a/b); the child directory is what follows
         // Files/, which is what listFiles takes.
-        ? this._track(node('dir', e.name, { ...lh, dir: strip(e.path.replace(/^.*?\/Files\/?/, '')) }))
+        ? node('dir', e.name, { ...lh, dir: strip(e.path.replace(/^.*?\/Files\/?/, '')) })
         // bytes travels with it so the panel can open the file without re-listing the
         // directory it already knows everything about.
-        : node('file', e.name, { ...lh, leaf: true, path: e.path, bytes: e.bytes, size: fmtBytes(e.bytes) }));
+        : node('file', e.name, { ...lh, leaf: true, path: e.path, bytes: e.bytes, size: fmtBytes(e.bytes), version: e.version, cached: cached[i] })));
     }
 
     return [];

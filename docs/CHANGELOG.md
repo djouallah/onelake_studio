@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **A file says whether it has been read here,** as a table does: a cloud until then, a green check after. A file rewritten
+  in OneLake goes back to the cloud.
 - **What is cached about OneLake is real tables, and is never evicted.** Workspaces, items, tables, columns, history,
   `Files/` listings, models and apps are rows in the SQLite file, so a size limit can't take what offline depends on. The
   limit now applies only to tables' first rows.

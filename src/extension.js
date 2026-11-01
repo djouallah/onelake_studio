@@ -580,6 +580,7 @@ function ensureEngine(context, { readme } = {}) {
       offlineReason: () => connectivity.reason(),
       checkConnectivity: () => connectivity.check(),
       onRowsRead: location => { if (onelake) onelake.rowsRead(location).catch(() => {}); },
+      onFileRead: url => { if (onelake) onelake.fileRead(url).catch(() => {}); },
       catalogTables: () => (cachedSqlTables ? cachedSqlTables() : Promise.resolve([])),
     });
   } catch (e) {

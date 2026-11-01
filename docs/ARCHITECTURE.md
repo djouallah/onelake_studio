@@ -296,7 +296,9 @@ mirrored databases, their tables and files, semantic models and apps. *Queries*,
 **A table's icon** says whether it is cached, as a model's does: a cloud until a statement has read its
 rows at its current snapshot, a check after (`cached.rows` in [`src/onelake.js`](../src/onelake.js)). What is
 kept is the part of each file that was read, so a check doesn't promise every column. A new snapshot goes
-back to the cloud. A table nothing was ever written to has a check, since it reads no file.
+back to the cloud. A table nothing was ever written to has a check, since it reads no file. **A file's icon** says the
+same, per version of the file (`cached.file`): a statement or a tab read it, or the host kept it whole, and a file
+rewritten in OneLake goes back to the cloud. A wildcard marks no one file.
 
 **Clicking a table** opens it in a new tab: Data, Stats, History and Pivot. The SQL box gets
 `SELECT * FROM <its name> LIMIT 100` to start from, not run. A file does the same with what its preview runs.

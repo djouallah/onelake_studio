@@ -32,7 +32,7 @@ const fs = require('node:fs');
 const fsp = require('node:fs/promises');
 const { join } = require('node:path');
 const os = require('node:os');
-const { sqlStr, quoteIdent, assertReads, checkedRead, tableRefs, fileRefs, namedError, catalogStatement, readsCatalog } = require('./sql');
+const { sqlStr, quoteIdent, assertReads, checkedRead, tableRefs, fileRefs, filesReadBy, namedError, catalogStatement, readsCatalog } = require('./sql');
 const { SQL_KINDS, sqlName, abfssUrl, MODEL_CATALOG, modelSqlName } = require('./names');
 const { revalidate } = require('./store');
 
@@ -190,7 +190,8 @@ async function trimFileCache(dir, maxBytes, onWarn) {
 // what the tree has seen without a single request to OneLake.
 //
 // `checkConnectivity` asks whether the internet is still there, once a read has failed. `onRowsRead`
-// gets a table's metadata location when a statement has read its rows.
+// gets a table's metadata location when a statement has read its rows, and `onFileRead` a file's
+// abfss:// URL when a statement has read that.
 //
 // The shared engine splits this in two. `serve: { token }` is the
 // server's side (engine-server.js): the boot below, then Quack listening with that token. `remote`
@@ -202,7 +203,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
                             httpProxy = '', bundledExtensions = null,
                             fileCacheDir = null, fileCacheMaxBytes = 0, resolveTable = null, resolveFile = null,
                             catalogTables = null, offlineReason = () => null, checkConnectivity = null,
-                            onRowsRead = () => {}, serve = null, remote = null } = {}) {
+                            onRowsRead = () => {}, onFileRead = () => {}, serve = null, remote = null } = {}) {
   let instance = null;
   let served = null;            // serve: the address Quack answers on
   // The connection for the host's OWN statements — the secret, extension loading. Page
@@ -788,13 +789,15 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
   const READS_NO_ROWS = /^(?:\s|--[^\n]*\n|\/\*[\s\S]*?\*\/)*(?:describe|desc|explain(?!\s*(?:\(\s*)?analy[sz]e))\b/i;
   // Said once per location: every statement passes here.
   const rowsSaid = new Set();
-  function rowsRead(sql, tables) {
+  function rowsRead(sql, tables, statement) {
     if (READS_NO_ROWS.test(sql)) return;
     for (const { location } of tables) {
       if (!location || rowsSaid.has(location)) continue;
       rowsSaid.add(location);
       try { onRowsRead(location); } catch (_) {}
     }
+    // Not kept in rowsSaid: a file can be rewritten under one URL, and its version is what is noted.
+    for (const url of filesReadBy(statement)) { try { onFileRead(url); } catch (_) {} }
   }
 
   // A statement run with what it needs: the catalog when it reads the catalog, the views of the
@@ -817,7 +820,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
         refuseOffline(statement, tables);
         for (const t of tables) await makeView(t);
         const result = await run(catalogStatement(sql) || statement);
-        rowsRead(sql, tables);
+        rowsRead(sql, tables, statement);
         return result;
       }, e => READ_FAILURE.test(String(e && e.message)) && canRetry());
     } catch (e) {

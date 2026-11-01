@@ -159,6 +159,22 @@ test("a statement's tables are its five-part names under a kind, however they ar
   assert.equal(refs("DESCRIBE Lakehouse.ws.lh.dbo.t").length, 1);
 });
 
+test("filesReadBy: the OneLake files a statement reads, and not one that is only a value", () => {
+  const { filesReadBy } = require("../../src/sql.js");
+  const A = "abfss://w@onelake.dfs.fabric.microsoft.com/i.Lakehouse/Files/a.parquet";
+  const Z = "abfss://w@onelake.dfs.fabric.microsoft.com/i.Lakehouse/Files/a.zip";
+  assert.deepEqual(filesReadBy(`SELECT * FROM '${A}'`), [A]);
+  assert.deepEqual(filesReadBy(`SELECT * FROM read_parquet('${A}')`), [A]);
+  assert.deepEqual(filesReadBy(`CREATE OR REPLACE VIEW "v" AS SELECT * FROM read_csv_auto('${A}')`), [A]);
+  assert.deepEqual(filesReadBy(`ATTACH '${A}' AS x (READ_ONLY)`), [A]);
+  assert.deepEqual(filesReadBy(`SELECT 1 FROM t JOIN '${A}' ON true JOIN '${A}' ON true`), [A], "once each");
+  assert.deepEqual(filesReadBy(`SELECT * FROM read_csv('zip://${Z}/b.csv')`), [Z], "a zip's entry is its zip");
+  assert.deepEqual(filesReadBy(`SELECT * FROM read_csv('${A}/*.csv')`), [], "a wildcard names no one file");
+  assert.deepEqual(filesReadBy(`SELECT '${A}' AS path`), [], "a value");
+  assert.deepEqual(filesReadBy(`VALUES ('${A}')`), [], "a value");
+  assert.deepEqual(filesReadBy("SELECT * FROM 'https://x/y.csv'"), []);
+});
+
 // fileRefs: the file names a statement reads, which the engine turns into URLs before running it.
 test("a file's name counts only where SQL reads a file, and one that is wrong is refused", () => {
   const { fileRefs } = require("../../src/sql.js");

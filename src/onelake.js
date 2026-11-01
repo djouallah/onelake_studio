@@ -144,6 +144,7 @@ function createOneLake({ catalog, store, prefetchEnabled = () => true, onHit = (
     apps: ws => `apps\u0000${ws}`,
     itemNamed: (wsId, itemId) => `item-named\u0000${wsId}\u0000${itemId}`.toLowerCase(),
     bytes: (ws, path, version) => `bytes\u0000${ws}\u0000${path}\u0000${version}`,
+    fileRead: (ws, path, version) => `file-read\u0000${ws}\u0000${names.strip(path)}\u0000${version}`,
     deltaCommits: (lh, t) => `delta-commits\u0000${lh.workspace}\u0000${lh.item}\u0000${t.schema || ''}\u0000${t.table}`,
     // Immutable: the table as of one Delta version, under where the table lives.
     deltaState: (at, v) => `delta-state\u0000${at.workspace}\u0000${at.dir}\u0000${v}`,
@@ -394,6 +395,18 @@ function createOneLake({ catalog, store, prefetchEnabled = () => true, onHit = (
     await store.put(keys.rows(location), true);
     for (const fn of [...rowsReadSubs]) { try { fn(location); } catch (_) {} }
   }
+  // The same for a file, under the version its listing gives: a file rewritten since is not this one.
+  // A URL no listing knows, by GUIDs say, has no node in the tree to tell.
+  async function fileRead(url) {
+    const m = /^abfss:\/\/([^@/]+)@[^/]+\/(.+)$/i.exec(String(url));
+    if (!m) return;
+    const version = await versionOf(m[1], m[2]);
+    if (!version) return;
+    const k = keys.fileRead(m[1], m[2], version);
+    if (await store.peek(k) !== undefined) return;
+    await store.put(k, true);
+    for (const fn of [...rowsReadSubs]) { try { fn(url); } catch (_) {} }
+  }
 
   // ---------------------------------------------------------------------------
   // Prefetch: when the user opens a Tables node, read every table's metadata behind them,
@@ -456,6 +469,11 @@ function createOneLake({ catalog, store, prefetchEnabled = () => true, onHit = (
       return await store.peek(keys.rows(meta.metadataLocation)) !== undefined
         || await store.peek(keys.peek(meta.metadataLocation)) !== undefined;
     },
+    // Whether this version of a file has been read here: by a statement, what it read of the file, or
+    // by the host, the whole file. `entry` is its line in a listing.
+    file: async (ws, entry) => !!entry.version && (
+      await store.peek(keys.fileRead(ws, entry.path, entry.version)) !== undefined
+      || await store.hasBlob(keys.bytes(ws, entry.path, entry.version))),
   };
   // Whether a table's rows can't be read from here at all: offline, with none of them read before.
   // Online they are one read away.
@@ -464,7 +482,7 @@ function createOneLake({ catalog, store, prefetchEnabled = () => true, onHit = (
   return {
     rowsOutOfReach,
     workspaces, items, tables, files, table, deltaState, deltaHistory, peek, prefetch, refreshTables,
-    models, apps, itemNamed, readBytes, cached, rowsRead, onRowsRead,
+    models, apps, itemNamed, readBytes, cached, rowsRead, fileRead, onRowsRead,
     onChanged: fn => listen('changed', key => fn(decode(key))),
     onTableRead,
     onRefreshFailed: fn => listen('refresh-failed', (key, e) => fn(decode(key), e)),

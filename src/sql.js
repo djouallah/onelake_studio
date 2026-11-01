@@ -413,6 +413,19 @@ function fileRefs(sql, kinds) {
 
 // DuckDB's error on a statement with its files' URLs in it, as the statement was written. `written` is
 // [{ url, name }]. Its caret moves with the text, since the page finds that line in what was written.
+// The OneLake files a statement reads, as DuckDB is given them: an abfss:// URL after FROM, JOIN or
+// ATTACH, or as a function's argument, and not one that is only a value, as a model's path can be. A
+// zip's entry is its zip, and a wildcard names no one file.
+function filesReadBy(sql) {
+  const found = new Set();
+  const at = /(?:\b(?:from|join|attach)\s+\(?\s*'|\b(?!values\b)\w+\s*\(\s*\[?\s*')(zip:\/\/)?(abfss:\/\/[^']+)'/gi;
+  for (const [, zip, url] of String(sql).matchAll(at)) {
+    if (/[*?[]/.test(url)) continue;
+    found.add(zip ? url.replace(/(\.zip)\/.*$/i, '$1') : url);
+  }
+  return [...found];
+}
+
 function namedError(message, written) {
   let text = String(message);
   const line = /(LINE \d+: )([^\n]*)\n( *)\^/.exec(text);
@@ -520,4 +533,4 @@ function readsCatalog(sql) {
   return /^\s*show\b/i.test(s) || CATALOG_READS.test(s);
 }
 
-module.exports = { sqlStr, quoteIdent, assertReads, checkedRead, tableRefs, fileRefs, namedError, catalogStatement, isShowAllTables, ALL_TABLES_COUNTED, readsCatalog };
+module.exports = { sqlStr, quoteIdent, assertReads, checkedRead, tableRefs, fileRefs, filesReadBy, namedError, catalogStatement, isShowAllTables, ALL_TABLES_COUNTED, readsCatalog };

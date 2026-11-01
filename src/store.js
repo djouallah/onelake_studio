@@ -237,6 +237,9 @@ function createStore({ dir, backend = null, ttlMs = DEFAULT_TTL_MS, maxBytes = D
     }
   }
 
+  // Whether it is kept, with no read of it: the tree asks this of every file it draws.
+  const hasBlob = key => (blobDir ? fs.access(blobOf(key)).then(() => true, () => false) : Promise.resolve(false));
+
   async function putBlob(key, bytes) {
     if (!blobDir || !await usable || !(bytes.length <= blobMaxBytes * 0.5)) return;
     const file = blobOf(key);
@@ -280,7 +283,7 @@ function createStore({ dir, backend = null, ttlMs = DEFAULT_TTL_MS, maxBytes = D
   }
 
   return {
-    get, put, peek, known, clear, forget, size, getBlob, putBlob,
+    get, put, peek, known, clear, forget, size, getBlob, hasBlob, putBlob,
     on: (ev, fn) => { events.on(ev, fn); return () => events.off(ev, fn); },
   };
 }
