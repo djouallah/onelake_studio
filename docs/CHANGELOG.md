@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **Open OneLake Studio is off the explorer's "..." menu.** The explorer was already open, and **New Query** opens a tab.
+  It stays in the Command Palette.
 - **A DuckDB or SQLite file opens on what it holds:** a tree of its schemas, tables, views and columns beside the SQL box,
   with a filter and an overview of the file, and no rows read. Picking a table shows its columns, keys, indexes and
   definition, with Data and Pivot beside them. A file used to preview its first table, with the rest named nowhere.

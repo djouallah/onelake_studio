@@ -523,7 +523,7 @@ personal skills, and it follows the extension through updates.
 
 | Command | What it does |
 | --- | --- |
-| **Open OneLake Studio** | Brings the last tab forward, or opens one, signing in if needed. |
+| **Open OneLake Studio** | Brings the last tab forward, or opens one, signing in if needed. In the Command Palette only: the tree opens a tab with **New Query**. |
 | **Sign in to OneLake** | Signs in and fills the explorer, without opening a tab. |
 | **Sign in to the Fabric API** | Asks for the second token, for semantic models and apps. |
 | **Switch Microsoft Account** | Asks which account to use, closes every tab and opens a new one, so the previous account's tables do not survive the switch. |

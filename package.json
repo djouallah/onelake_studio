@@ -300,11 +300,6 @@
           "group": "0_view@1"
         },
         {
-          "command": "onelakeStudio.open",
-          "when": "view == onelakeStudio.explorer",
-          "group": "0_view@2"
-        },
-        {
           "command": "onelakeStudio.signIn",
           "when": "view == onelakeStudio.explorer && onelakeStudio.signedIn && !onelakeStudio.hasSession",
           "group": "1_account@0"
