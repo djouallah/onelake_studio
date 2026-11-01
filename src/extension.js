@@ -38,7 +38,6 @@ const { PINS } = require('./vendored');
 const { planExport, writeExport, buildDist, writeMarker, readMarker, fingerprint, localChanges, vendorSize, zip, rayfinYml } = require('./exportapp');
 const { createFabricApp, tenantOf } = require('./fabricapp');
 const { NAME, placeOf, tabTitle } = require('./title');
-const { createCatalogSnapshot } = require('./catalogsnapshot');
 const { createOneLakeWriter } = require('./onelakewrite');
 const { mapPool } = require('./http');
 
@@ -963,13 +962,6 @@ async function activateInner(context) {
   // Called wherever the identity may have moved; a no-op when it has not.
   // One at a time: two callers at once could both see the old account, or one return while
   // the other was still moving the store.
-  const catalogSnapshot = createCatalogSnapshot({
-    walk: () => walkTables(),
-    read: () => onelake.keptCatalog.read(),
-    write: list => onelake.keptCatalog.write(list),
-    onMoved: () => { if (engine) engine.catalogChanged(); },
-    onError: e => { if (out) out.appendLine(`the cached tables could not be walked — ${e.message}`); },
-  });
   rebindStore = serialized(async function rebindStore() {
     const session = await getSession({ createIfNone: false }).catch(() => null);
     rememberAccount(session);
@@ -990,14 +982,13 @@ async function activateInner(context) {
     queryAccount = queryAccountOf(session) || (knownAccount() || {}).queries || null;
     await adoptLooseQueries().catch(() => {});
     tree.queriesChanged();
-    catalogSnapshot.reset();
     if (engine) engine.catalogChanged();
     semviews.useAccount(key);
     await adoptModels();
   });
   // What the store holds moved: the engine's catalog is listed again before the next
   // statement that reads it.
-  const catalogMoved = () => { catalogSnapshot.moved(); if (engine) engine.catalogChanged(); };
+  const catalogMoved = () => { if (engine) engine.catalogChanged(); };
   context.subscriptions.push({ dispose: onelake.onChanged(catalogMoved) },
                              { dispose: onelake.onTableRead(catalogMoved) });
   context.subscriptions.push({ dispose: onelake.onRefreshFailed((what, e) => {
@@ -1482,10 +1473,9 @@ async function activateInner(context) {
     }
     return found;
   }
-  cachedSqlTables = () => catalogSnapshot.list();
+  cachedSqlTables = walkTables;
   onStoreCleared = () => {
     onelake.forgetKept();
-    catalogSnapshot.reset();
     namesKept = null;
     if (engine) engine.catalogChanged();
     postLive({ type: 'reset' });

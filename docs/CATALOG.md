@@ -1,6 +1,6 @@
 # The OneLake catalog: specification
 
-**Status: design, built in waves (below). Wave 1 is in the code.** Where it differs from
+**Status: design, built in waves (below). Waves 1 and 2 are in the code.** Where it differs from
 [ARCHITECTURE.md](ARCHITECTURE.md), this describes what is planned and that describes what runs today.
 [NAMING.md](NAMING.md) does not change.
 
@@ -186,7 +186,7 @@ Whatever isn't held says so at once.
 | Goes | Stays |
 | --- | --- |
 | The `kv` JSON entries for metadata | The state file, for the log |
-| `catalogsnapshot.js` | The server, Quack, the control pipe |
+| The server's listing work behind the store | The server, Quack, the control pipe |
 | The `prefetchMetadata` walk, now queue jobs | The read-only guard and the lockdown |
 | The cache-first plumbing for listings in `onelake.js` | NAMING.md's names |
 | The extension's `--fresh` calls to OneLake and Fabric | `iceberg_scan`, `azure`, `httpfs`, `cache_httpfs` |

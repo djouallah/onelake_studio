@@ -217,12 +217,15 @@ every window is a client of it over DuckDB's Quack protocol ([`src/engine-client
   what it is sent.
   A Quack listener can stop while the process lives on: a statement that can't connect asks over this pipe, the
   server starts it again on the same port and tells every window to attach again, and the statement goes once more.
-- **What is remembered:** the store's entries (listings, table metadata, first rows) are in a SQLite file,
-  `engine-server\catalog-<id>.sqlite` in the extension's storage ([`src/catalogfile.js`](../src/catalogfile.js)). Each
-  window opens it itself with Node's `node:sqlite`, so it needs no server and no DuckDB, and a page's SQL can't reach it,
-  as it is outside the folders DuckDB may open. WAL lets a window read while another writes, and another window's Clear
-  is noticed within a few seconds. A file that isn't a database is set aside as `.bad` and started again. It is named
-  after the account, not the install, so an update keeps it, and F5 has its own.
+- **What is remembered:** a SQLite file, `engine-server\catalog-<id>.sqlite` in the extension's storage
+  ([`src/catalogfile.js`](../src/catalogfile.js)). Listings and table metadata are real tables there (`workspace`, `item`,
+  `lake_table`, `lake_column`, `snapshot`, `lake_object`, `semantic_model`, `app`, [`src/catalogtables.js`](../src/catalogtables.js)),
+  and a `listing` table says what was read and when, so an empty listing is an answer. The rest, first rows above all, is a
+  key and a value. Only first rows are evicted, past `metadataCacheMaxMB`, as offline depends on the rest. Each window
+  opens the file itself with Node's `node:sqlite`, so it needs no server and no DuckDB, and a page's SQL can't reach it, as
+  it is outside the folders DuckDB may open. WAL lets a window read while another writes, and another window's Clear is
+  noticed within a few seconds. A file that isn't a database is set aside as `.bad` and started again. It is named after
+  the account, not the install, so an update keeps it, and F5 has its own.
   What an older version kept in the state file or a JSON store comes across once, behind the tree.
 - **The log** is a table in a state file, `engine-server\state-<id>.duckdb`, in a second DuckDB in the server on a Quack
   port of its own, so a page's SQL can't reach it.
@@ -277,8 +280,6 @@ SQL box, no Stop and no Restart.
 - **Survives a sign-out:** signing back in finds it warm. Only **Clear Cached OneLake Data** deletes it.
 - **The catalog is cached too:** `SHOW ALL TABLES` and `information_schema` list what the tree has seen
   with no request to OneLake.
-- **The catalog's list is kept as one entry** ([`src/catalogsnapshot.js`](../src/catalogsnapshot.js)), since listing it
-  walks the store table by table. A first listing answers from the kept list and walks behind the caller.
 - **A patched build:** the vsix carries a `cache_httpfs` with a Windows fix not yet released upstream
   (without it, nothing is cached on disk on Windows) and the offline read above. DuckDB loads it as an
   unsigned extension. A build without it fails, rather than ship with no disk cache.
@@ -300,7 +301,7 @@ back to the cloud. A table nothing was ever written to has a check, since it rea
 **Clicking a table** opens it in a new tab: Data, Stats, History and Pivot. The SQL box gets
 `SELECT * FROM <its name> LIMIT 100` to start from, not run. A file does the same with what its preview runs.
 - **Data** is hidden offline on a table with none of its rows read here, since all it could show is an error. The status
-  line says why. It comes back with the connection, and whenever the tab holds a query's result.
+  line says why. It comes back with the connection.
 - **Stats and History** come from the table's metadata, with no data read. A table written as Delta
   also has its own log read for what Iceberg has no word for ([`src/deltalog.js`](../src/deltalog.js)).
 - **Time travel:** on an Iceberg table, History's Query puts a snapshot's rows in the SQL box, and
@@ -571,7 +572,7 @@ personal skills, and it follows the extension through updates.
 | `onelakeStudio.prefetchMetadata` | on | Reads every table's metadata in the background once a lakehouse's Tables node is opened, so the first click is a disk read. |
 | `onelakeStudio.diskCacheMaxGB` | 64 | How much of what DuckDB reads from OneLake, tables and `Files/`, is kept on disk, per account. `0` turns the disk cache off. |
 | `onelakeStudio.cacheDirectory` | empty | Where the disk cache is kept, as a full path. Empty is VS Code's storage for this extension. A new folder starts empty. |
-| `onelakeStudio.metadataCacheMaxMB` | 256 | How much of the listings, table metadata and first rows is kept on disk, per account. |
+| `onelakeStudio.metadataCacheMaxMB` | 256 | How much of tables' first rows is kept on disk, per account. Listings and table metadata aren't limited. |
 | `onelakeStudio.engineMemoryLimit` | empty | Most memory DuckDB may use, e.g. `4GB`. Empty is a quarter of the machine's RAM. |
 | `onelakeStudio.engineThreads` | 0 | How many threads DuckDB may use. `0` is every core. |
 | `onelakeStudio.engineSpillMaxGB` | 0 | How much a query bigger than memory may spill to the temp folder. `0` is DuckDB's default. |
@@ -607,7 +608,7 @@ every window. The rest apply at once.
 | `src/names.js` | What items hold tables, and how a table or model is named. |
 | `src/sql.js` | The read-only guard, `tableRefs`, and `SHOW` rewriting. |
 | `src/engine-host.js` | The native DuckDB engine: what the server boots, and how a window prepares and runs a statement. |
-| `src/catalog.js`, `src/onelake.js`, `src/store.js`, `src/catalogsnapshot.js` | OneLake requests, cache first, the store, and the catalog's kept list. |
+| `src/catalog.js`, `src/onelake.js`, `src/store.js` | OneLake requests, cache first, and the store. |
 | `src/sqltables.js` | A table's SQL name found in OneLake, and a model's GUIDs named. |
 | `src/connectivity.js` | Whether this window is offline, and why. |
 | `src/http.js` | How the host asks OneLake and the Fabric API for anything. |
@@ -619,7 +620,7 @@ every window. The rest apply at once.
 | `app/querytext.js` | The SQL box's statements, error positions and variables. |
 | `src/panel.js`, `src/host.js`, `src/html.js`, `src/webview.js` | A tab's webview, its channel, and its page. |
 | `src/performance.js`, `src/logs.js` | The Performance and Logs tabs. |
-| `src/catalogfile.js` | What is remembered, in SQLite. |
+| `src/catalogfile.js`, `src/catalogtables.js` | What is remembered, in SQLite, and the catalog's tables there. |
 | `src/engine-server.js`, `src/engine-client.js`, `src/enginelog.js` | The server: its process, a window's side of it, and its log. |
 | `src/agent.js`, `src/bridge.js`, `bin/cli.mjs` | The command line. |
 | `src/exportapp.js`, `src/fabricapp.js`, `src/onelakewrite.js` | Export to Fabric. |

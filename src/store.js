@@ -26,6 +26,17 @@ const DEFAULT_MAX_BYTES = 256 * 1024 * 1024;
 const DEFAULT_BLOB_MAX_BYTES = 1024 * 1024 * 1024;
 const MEMO_MAX = 2000;       // hot entries kept in memory, so a re-render reads no disk
 
+// Whether two answers say the same thing. An answer read back from the catalog's tables has its fields
+// in the tables' order and leaves out what was empty, and neither is a change.
+function canonical(v) {
+  if (Array.isArray(v)) return v.map(canonical);
+  if (!v || typeof v !== 'object') return v;
+  const out = {};
+  for (const k of Object.keys(v).sort()) if (v[k] != null) out[k] = canonical(v[k]);
+  return out;
+}
+const sameAnswer = (a, b) => JSON.stringify(canonical(a)) === JSON.stringify(canonical(b));
+
 /**
  * @param {object} o
  * @param {string|null} o.dir    where entries live; null keeps everything in memory only
@@ -123,7 +134,7 @@ function createStore({ dir, backend = null, ttlMs = DEFAULT_TTL_MS, maxBytes = D
         try {
           const before = await read(key);
           const ent = await write(key, await fetcher());
-          if (before && before.json !== ent.json) events.emit('changed', key, ent.value);
+          if (before && !sameAnswer(before.value, ent.value)) events.emit('changed', key, ent.value);
           return ent;
         } finally {
           inflight.delete(key);
@@ -290,9 +301,9 @@ async function revalidate(read, use, isStale) {
   catch (e) {
     if (!isStale(e)) throw e;
     const now = await read({ fresh: true }).catch(() => { throw e; });
-    if (JSON.stringify(now) === JSON.stringify(kept)) throw e;
+    if (sameAnswer(now, kept)) throw e;
     return use(now);
   }
 }
 
-module.exports = { createStore, revalidate };
+module.exports = { createStore, revalidate, sameAnswer };

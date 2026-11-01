@@ -76,8 +76,7 @@ function summarize(metadata, metadataLocation) {
 // Everything a cache holds (`cached`: onelake's own, above), read from it alone: every workspace
 // with its items, their tables and each table's metadata (null when it was never read), and its
 // semantic models — or null with no workspace listing. `unseen` counts the listings not cached
-// yet. The metadata is a file each, and a large cache holds thousands: read a few at a time.
-// The one walk over the cache: the engine's catalog (extension.js cachedSqlTables, which the
+// yet. The one walk over the cache: the engine's catalog (extension.js cachedSqlTables, which the
 // Go to reads too) and the command line's find.
 async function walkCached(cached) {
   const ws = await cached.workspaces();
@@ -470,8 +469,6 @@ function createOneLake({ catalog, store, prefetchEnabled = () => true, onHit = (
     onTableRead,
     onRefreshFailed: fn => listen('refresh-failed', (key, e) => fn(decode(key), e)),
     useStore,
-    // The engine's catalog as one entry (catalogsnapshot.js), kept with the account's answers.
-    keptCatalog: { read: () => store.peek('catalog snapshot'), write: list => store.put('catalog snapshot', list) },
     clear: () => { catalog.reset(); return store.clear(); },
     // Another window cleared the cache: what this one holds in memory goes too.
     forgetKept: () => { catalog.reset(); store.forget(); },
