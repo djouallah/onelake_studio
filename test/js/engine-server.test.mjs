@@ -14,8 +14,11 @@ import { fileURLToPath } from "node:url";
 
 const require = createRequire(import.meta.url);
 const { createEngineHost } = require("../../src/engine-host.js");
-const { createRemote, createStateClient, stopServer, openClient, pipePath, stateFileOf, stateFileUnusable, LOST } = require("../../src/engine-client.js");
+const { createRemote, stopServer, openClient, pipePath, LOST } = require("../../src/engine-client.js");
 const { createCatalogFile } = require("../../src/catalogfile.js");
+const { createLogFile, logFileOf } = require("../../src/logfile.js");
+const { openOldState } = require("../../src/oldstate.js");
+const { DuckDBInstance } = require("@duckdb/node-api");
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
 const SCRIPT = join(root, "src", "engine-server.js");
@@ -63,7 +66,7 @@ async function setup(t, { key = "test", idleMs = 60_000 } = {}) {
     return readFileSync(join(state, readdirSync(state).find(f => f.endsWith(".log"))), "utf8");
   };
   const probe = () => openClient({ uri: /serving (quack:\S+)/.exec(log())[1], token: secret, extensionDir: options.extensionDir, bundledExtensions: options.bundledExtensions });
-  return { open, gone, log, probe, secret: () => secret, pipe: pipePath(`${key}-${dir}`) };
+  return { open, gone, log, probe, secret: () => secret, key: `${key}-${dir}`, pipe: pipePath(`${key}-${dir}`) };
 }
 
 test("two windows join one server, and what one makes the other reads", async t => {
@@ -248,80 +251,52 @@ test("the OneLake token reaches no log, and history survives the server", async 
   assert.ok((await b.logs(1000)).some(r => r.sql.includes("before the restart")), "still there");
 });
 
-test("what an older version kept in its state file comes across once, and leaves it", async t => {
+test("what an older version kept in its DuckDB state file comes across, its log too", async t => {
   const dir = await mkdtemp(join(tmpdir(), "onelake-state-"));
   t.after(() => rm(dir, { recursive: true, force: true }).catch(() => {}));
-  let secret;
-  const client = createStateClient({ key: `state-${dir}`, script: SCRIPT, stateDir: join(dir, "state"),
-    options: { extensionDir: join(dir, "extensions"), bundledExtensions: existsSync(BUNDLED) ? BUNDLED : null, threads: 2 },
-    getToken: async () => secret, setToken: async s => { secret = s; } });
-  t.after(async () => { await client.stop().catch(() => {}); client.close(); });
-  await client.run("CREATE TABLE kv (k VARCHAR PRIMARY KEY, ts BIGINT, value VARCHAR)");
-  await client.run(`INSERT INTO kv VALUES ('workspaces', 123, '["a","b''s"]'), ('(imported)', 0, ''), ('rows␟abfss://x', 5, 'true')`);
+  const file = join(dir, "state.duckdb");
+  const db = await DuckDBInstance.create(file);
+  const c = await db.connect();
+  await c.run("CREATE TABLE kv (k VARCHAR PRIMARY KEY, ts BIGINT, value VARCHAR)");
+  await c.run(`INSERT INTO kv VALUES ('workspaces', 123, '["a","b''s"]'), ('(imported)', 0, ''), ('rows␟abfss://x', 5, 'true')`);
+  await c.run("CREATE TABLE logs (ts BIGINT, win VARCHAR, sql VARCHAR, ms BIGINT, status VARCHAR, error VARCHAR, conn VARCHAR)");
+  await c.run("INSERT INTO logs VALUES (1000, 'w', 'SELECT 1', 7, 'ok', NULL, 'c')");
+  c.closeSync();
+  db.closeSync();
 
   const backend = createCatalogFile({ file: join(dir, "catalog.sqlite") });
   t.after(() => backend.close());
-  assert.equal(await backend.importKept({ run: sql => client.run(sql) }), 2);
+  const old = await openOldState(file);
+  assert.equal(await backend.importKept({ run: old.run }), 2);
+  const logs = createLogFile({ file: join(dir, "logs.sqlite") });
+  t.after(() => logs.close());
+  logs.add(await old.logs());
+  old.close();
   assert.deepEqual(await backend.read("workspaces"), { at: 123, json: '["a","b\'s"]' });
   assert.deepEqual(await backend.read("rows\0abfss://x"), { at: 5, json: "true" });
-  assert.equal(await backend.read("(imported)"), null);
-  assert.deepEqual(await client.run("SELECT 1 FROM information_schema.tables WHERE table_name = 'kv'"), [], "the state file no longer holds it");
+  assert.deepEqual(logs.read(10).map(r => [r.ts, r.sql, r.ms, r.status]), [[1000, "SELECT 1", 7, "ok"]]);
+
+  const none = await openOldState(join(dir, "other.duckdb"));
+  assert.deepEqual(await none.logs(), [], "a file with no log has nothing to bring");
+  none.close();
 });
 
 test("stopServer stops a server this window isn't joined to, and starts none", async t => {
-  const { dir, open } = await stateServer(t);
-  const listening = key => new Promise(resolve => {
-    const up = net.connect(pipePath(key));
+  const { open, secret, key, pipe } = await setup(t);
+  const listening = path => new Promise(resolve => {
+    const up = net.connect(path);
     up.once("connect", () => { up.destroy(); resolve(true); });
     up.once("error", () => resolve(false));
   });
-  const nobody = `nobody-${dir}`;
+  const nobody = `nobody-${key}`;
   await stopServer({ key: nobody, getToken: async () => undefined });
-  assert.equal(await listening(nobody), false, "nothing was started");
+  assert.equal(await listening(pipePath(nobody)), false, "nothing was started");
 
-  const key = `stop-${dir}`;
-  const { client } = open(key, "me");
-  assert.deepEqual(await client.run("SELECT 1 AS up"), [{ up: 1 }]);
-  await stopServer({ key, getToken: async () => tokenOf(key) });
+  await open().call("query", ["SELECT 1"]);
+  await stopServer({ key, getToken: async () => secret() });
   await sleep(1000);
-  assert.equal(await listening(key), false, "it went");
+  assert.equal(await listening(pipe), false, "it went");
 });
-
-// Something kept in the state file, as its log is, and read as a window's client reads it. It can't be
-// reached while another server holds the file, and that reads as nothing there.
-const keptIn = client => ({
-  put: async (k, v) => {
-    await client.run("CREATE TABLE IF NOT EXISTS kept (k VARCHAR PRIMARY KEY, value VARCHAR)");
-    await client.run(`INSERT OR REPLACE INTO kept VALUES ('${k}', '${JSON.stringify(v)}')`);
-  },
-  peek: async k => {
-    try {
-      const rows = await client.run(`SELECT value FROM kept WHERE k = '${k}'`);
-      return rows.length ? JSON.parse(rows[0].value) : undefined;
-    } catch (_) { return undefined; }
-  },
-});
-
-// The state file on a server of its own, as a window would have it. `key` is the install, `stateKey`
-// the account.
-const stateSecrets = new Map();
-const tokenOf = key => stateSecrets.get(key);
-async function stateServer(t) {
-  const dir = await mkdtemp(join(tmpdir(), "onelake-state-"));
-  t.after(() => rm(dir, { recursive: true, force: true }).catch(() => {}));
-  const stateDir = join(dir, "state");
-  await mkdir(stateDir);
-  const clients = [];
-  const options = { extensionDir: join(dir, "extensions"), bundledExtensions: existsSync(BUNDLED) ? BUNDLED : null, threads: 2, stateRetryMs: 500 };
-  const open = (key, stateKey, more = {}) => {
-    const client = createStateClient({ key, stateKey, script: SCRIPT, stateDir, options, ...more,
-      getToken: async () => stateSecrets.get(key), setToken: async s => { stateSecrets.set(key, s); } });
-    clients.push(client);
-    return { client, store: keptIn(client) };
-  };
-  t.after(async () => { for (const c of clients) { await c.stop().catch(() => {}); c.close(); } });
-  return { dir, stateDir, open };
-}
 
 test("a server's words for a lost connection are the ones a window looks for", async t => {
   const { open, secret, log } = await setup(t);
@@ -338,33 +313,13 @@ test("a server's words for a lost connection are the ones a window looks for", a
   c.closeSync();
 });
 
-test("what is remembered survives an update, which moves the install but not the account", async t => {
-  const { dir, stateDir, open } = await stateServer(t);
-  await writeFile(join(stateDir, "0123456789abcdef.duckdb"), "from the version before");
-  await writeFile(join(stateDir, "0123456789abcdef.duckdb.wal"), "from the version before");
-  const before = open(`me|${dir}/onelake-studio-0.2.9`, "me");
-  await before.store.put("listing", ["kept"]);
-  assert.ok(existsSync(stateFileOf(stateDir, "me")));
-  assert.ok(!existsSync(join(stateDir, "0123456789abcdef.duckdb")), "a state file named after an install goes");
-  assert.ok(!existsSync(join(stateDir, "0123456789abcdef.duckdb.wal")));
-  await before.client.stop();
-  await sleep(1000);
-
-  const after = open(`me|${dir}/onelake-studio-0.3.0`, "me");
-  assert.deepEqual(await after.store.peek("listing"), ["kept"]);
-  // Another account has its own.
-  await after.client.stop();
-  await sleep(1000);
-  assert.equal(await open(`you|${dir}/onelake-studio-0.3.0`, "you").store.peek("listing"), undefined);
-});
-
 test("the log survives an update too, and the server's own log keeps one name and only its end", async t => {
   const dir = await mkdtemp(join(tmpdir(), "onelake-state-"));
   t.after(() => rm(dir, { recursive: true, force: true }).catch(() => {}));
   const stateDir = join(dir, "state");
   await mkdir(stateDir);
   await writeFile(join(stateDir, "0123456789abcdef.log"), "from the version before");
-  const serverLog = stateFileOf(stateDir, "me").replace(/\.duckdb$/, ".log");
+  const serverLog = logFileOf(stateDir, "me").replace(/\.sqlite$/, ".log");
   await writeFile(serverLog, `${"line\n".repeat(500_000)}the end\n`);
   const secrets = new Map();
   const open = key => {
@@ -394,89 +349,6 @@ test("the log survives an update too, and the server's own log keeps one name an
   assert.ok(text.startsWith("line\n"), "from a whole line");
   assert.ok(text.includes("the end"));
   assert.equal(text.match(/starting: pid/g).length, 2, "both versions in the one file");
-});
-
-test("a newer build takes the state file at once, and the server it came from goes", async t => {
-  const { stateDir, open } = await stateServer(t);
-  const older = open("me|old", "me", { build: 1 });
-  await older.store.put("listing", ["kept"]);
-
-  const newer = open("me|new", "me", { build: 2 });
-  assert.deepEqual(await newer.store.peek("listing"), ["kept"], "with no wait");
-  await newer.store.put("written", ["by the newer"]);
-  assert.ok(!existsSync(`${stateFileOf(stateDir, "me")}.bad`));
-
-  const gone = await new Promise(resolve => {
-    const up = net.connect(pipePath("me|old"));
-    up.once("connect", () => { up.destroy(); resolve(false); });
-    up.once("error", () => resolve(true));
-  });
-  assert.equal(gone, true);
-  const holder = JSON.parse(readFileSync(`${stateFileOf(stateDir, "me")}.holder`, "utf8"));
-  assert.equal(holder.build, 2);
-});
-
-test("an older build never takes the state file from a newer one", async t => {
-  const { open } = await stateServer(t);
-  const newer = open("me|new", "me", { build: 2 });
-  await newer.store.put("listing", ["kept"]);
-
-  const older = open("me|old", "me", { build: 1, idleMs: 2000 });
-  assert.equal(await older.store.peek("listing"), undefined);
-  assert.deepEqual(await newer.client.run("SELECT count(*)::INT AS n FROM kept WHERE k = 'listing'"), [{ n: 1 }]);
-});
-
-test("only a file that isn't a database is set aside", () => {
-  for (const said of ["The file \"x\" exists, but it is not a valid DuckDB database file!",
-    "IO Error: Corrupt database file: computed checksum 1 does not match stored checksum 2",
-    "Failure while replaying WAL file \"x.wal\": Serialization Error"]) {
-    assert.equal(stateFileUnusable(said), true, said);
-  }
-  for (const said of ["IO Error: Trying to read a database file with version number 99, but we can only read version 65",
-    "IO Error: Cannot open file \"x\": Access is denied.", "IO Error: Could not write file \"x\": There is not enough space on the disk."]) {
-    assert.equal(stateFileUnusable(said), false, said);
-  }
-});
-
-test("a state file that isn't a database is set aside, and started again", async t => {
-  const { stateDir, open } = await stateServer(t);
-  const file = stateFileOf(stateDir, "me");
-  await writeFile(file, "not a database, and not going to be one");
-  const { store } = open("me|install", "me");
-  await store.put("listing", ["new"]);
-  assert.equal(readFileSync(`${file}.bad`, "utf8"), "not a database, and not going to be one");
-  assert.deepEqual(await open("me|install", "me").store.peek("listing"), ["new"]);
-});
-
-test("a state file another version's server holds isn't touched, and is picked up when it goes", async t => {
-  const { stateDir, open } = await stateServer(t);
-  const file = stateFileOf(stateDir, "me");
-  {
-    const { client, store } = open("me|old", "me");
-    await store.put("listing", ["kept"]);
-    await client.stop();
-    await sleep(1000);
-  }
-  // Another process, as that server is: within one, DuckDB's file lock doesn't conflict.
-  const holder = spawn(process.execPath, ["-e", `
-    const { DuckDBInstance } = require(${JSON.stringify(require.resolve("@duckdb/node-api"))});
-    DuckDBInstance.create(${JSON.stringify(file)}).then(db => { globalThis.db = db; process.stdout.write("held\\n"); setInterval(() => {}, 1000); });
-  `], { stdio: ["ignore", "pipe", "inherit"] });
-  t.after(() => holder.kill());
-  await new Promise(resolve => holder.stdout.once("data", resolve));
-
-  const { store } = open("me|new", "me");
-  assert.equal(await store.peek("listing"), undefined, "nothing to read while it is held");
-  assert.ok(!existsSync(`${file}.bad`), "held isn't broken");
-
-  holder.kill();
-  await new Promise(resolve => holder.once("exit", resolve));
-  let found;
-  for (let i = 0; i < 40 && !found; i++) {
-    await sleep(250);
-    found = await store.peek("listing");
-  }
-  assert.deepEqual(found, ["kept"]);
 });
 
 test("a server that can't start writes down why, where someone can read it", async t => {

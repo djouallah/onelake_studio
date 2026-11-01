@@ -155,7 +155,7 @@ test("what an older version kept in a JSON file comes across once, and a view is
     const again = createSemViews({ catalogFor, dir: jsonDir, onelake: {} });
     again.useAccount("a");
     assert.deepEqual((await again.list()).map(x => [x.name, x.schema]), [["nem", "AEMO"], ["other", "aemo"]], "once, so it stays replaced");
-    assert.equal(JSON.parse(await readFile(join(jsonDir, "a.json"), "utf8")).length, 1, "and the old file is left as it was");
+    assert.ok(!existsSync(join(jsonDir, "a.json")), "and the old file goes");
 
     // Clear Cached leaves them, as it leaves the models' local copies.
     await catalogFor("a").clear();

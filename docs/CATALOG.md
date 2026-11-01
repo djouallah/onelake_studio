@@ -49,7 +49,7 @@ can answer.
 ## The catalog
 
 **One file per account:** `engine-server\catalog-<id>.sqlite` in the extension's storage. An update keeps it,
-and F5 has its own, as the state file does today.
+and F5 has its own.
 
 | Table | Holds |
 | --- | --- |
@@ -86,8 +86,8 @@ Every row says when it was last read from OneLake.
 | Iceberg's `metadata.json`, manifest lists and manifests | The disk cache | `iceberg_scan` reads them as files. The catalog holds the facts from them. |
 | A model's `.yaml` | `~/OneLakeStudio/semantic-models/` | A file people and the command line use. Its path is in the catalog. |
 | Saved queries | `~/OneLakeStudio/queries/` | Not metadata. |
-| Bytes of a `Files/` object the host reads | A blob on disk | Data, with its etag in `lake_object`. |
-| The log | The state file, `state-<id>.duckdb` | Not catalog data. Could move later. |
+| The log | `logs-<id>.sqlite`, a file of its own | Not metadata. |
+| Bytes of a `Files/` object the host reads | The cache folder, under `host\` | Data. |
 
 ## The sync worker
 
@@ -183,7 +183,7 @@ Whatever isn't held says so at once.
 
 | Goes | Stays |
 | --- | --- |
-| Keys and JSON values: `kv` and `meta` are gone | The state file, for the log |
+| The DuckDB state file, the JSON store and JSON pointers, and `kv` and `meta` | A second SQLite file, for the log |
 | The server's listing work behind the store | The server, Quack, the control pipe |
 | The `prefetchMetadata` walk, now queue jobs | The read-only guard and the lockdown |
 | The cache-first plumbing for listings in `onelake.js` | NAMING.md's names |
@@ -222,7 +222,7 @@ Each wave works on its own, and is proved before the next starts.
 
 **On its own, whenever:** Iceberg's files in a folder eviction skips. It probably needs a change in the `cache_httpfs` fork.
 
-**Only if needed:** `data_file`, and moving the log out of DuckDB, which would let the state DuckDB go.
+**Only if needed:** `data_file`.
 
 ## How it is tested
 

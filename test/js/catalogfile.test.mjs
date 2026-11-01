@@ -462,10 +462,8 @@ test("a Clear before any import keeps the old files from coming back", async t =
 test("a state file's entries come across a page at a time, and it can fail and be tried again", async t => {
   const { dir, open } = await setup(t);
   const rows = Array.from({ length: 1203 }, (_, i) => ({ k: `items␟w${String(i).padStart(5, "0")}`, ts: String(i), value: JSON.stringify([{ name: `n${i}` }]) }));
-  let dropped = false;
   const fake = async sql => {
     if (/information_schema/.test(sql)) return [{ found: 1 }];
-    if (/^DROP/.test(sql)) { dropped = true; return []; }
     if (/SELECT 1 AS done/.test(sql)) return [];
     const after = /k > '([^']*)'/.exec(sql)[1];
     return rows.filter(r => r.k > after).slice(0, 500);
@@ -477,7 +475,6 @@ test("a state file's entries come across a page at a time, and it can fail and b
   assert.equal(await backend.importKept({ run: fake, jsonDir: join(dir, "none") }), 1203);
   assert.deepEqual(await store.peek("items\0w01202"), [{ name: "n1202" }]);
   assert.deepEqual(await store.known("items\0w00007"), { value: [{ name: "n7" }], at: 7 });
-  assert.equal(dropped, true);
 });
 test("a state file that already took the JSON files, or was cleared since, keeps them out", async t => {
   const { dir, open } = await setup(t);

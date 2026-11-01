@@ -10,8 +10,8 @@
 // window wrote or cleared is noticed by a look at the file every few seconds, since no pipe joins
 // windows here. It also holds which window sweeps the tenant (syncworker.js), as a lease.
 //
-// What an older version kept, in the state file or in JSON files, comes across once, and a file from
-// an older version moves to these tables as it opens.
+// What an older version kept, in a DuckDB state file or in JSON files, comes across once, and a file
+// from an older version moves to these tables as it opens. Those old files then go.
 //
 // A file's bytes stay files (store.js blobs): they can be half a gigabyte, and a row is text.
 // =============================================================================
@@ -37,6 +37,7 @@ const UNUSABLE = /not a database|malformed/i;
 const shortHash = text => crypto.createHash('sha256').update(text).digest('hex').slice(0, 16);
 // Both outlive a server and an update, so they are named after the account, not the install: what is
 // remembered is what lets the next version work with no internet.
+// An older version's: what it held comes across once (oldstate.js), and it goes.
 const stateFileOf = (stateDir, stateKey) => join(stateDir, `state-${shortHash(stateKey)}.duckdb`);
 const catalogFileOf = (stateDir, stateKey) => join(stateDir, `catalog-${shortHash(stateKey)}.sqlite`);
 
@@ -267,7 +268,7 @@ function createCatalogFile({ file, onCleared = () => {}, clearedEveryMs = CLEARE
         tables.addView(view);
       });
     },
-    /** The pointers an older version kept in a JSON file, once. It is left as it was. */
+    /** The pointers an older version kept in a JSON file, once. The file then goes. */
     importViews(jsonFile) {
       database();
       if (state().views_imported) return;
@@ -277,6 +278,7 @@ function createCatalogFile({ file, onCleared = () => {}, clearedEveryMs = CLEARE
         if (Array.isArray(kept)) for (const v of kept) if (v && v.name && v.path) tables.addView(v);
         statement('UPDATE catalog_state SET views_imported = 1 WHERE id = 1').run();
       });
+      try { fs.rmSync(jsonFile, { force: true }); } catch (_) {}
     },
 
     imported() { database(); return !!state().imported; },
@@ -294,7 +296,6 @@ function createCatalogFile({ file, onCleared = () => {}, clearedEveryMs = CLEARE
       const old = run ? await fromStateFile(run) : { rows: 0, jsonToo: true };
       const json = old.jsonToo && jsonDir ? await fromJson(jsonDir) : 0;
       statement('UPDATE catalog_state SET imported = 1 WHERE id = 1').run();
-      if (run) await run('DROP TABLE IF EXISTS kv');
       return old.rows + json;
     },
     close() {

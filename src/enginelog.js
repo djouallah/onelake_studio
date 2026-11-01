@@ -4,13 +4,11 @@
 // =============================================================================
 // The record is DuckDB's own: with its Quack log on, each request a client makes is a row with the
 // statement, the time to its first rows and any error (engine-host.js turns it on). That log lives in memory,
-// so the server moves it into a table in the state file, which outlives the process and answers the
-// Logs tab with no scan of anything large. Nothing here looks at a statement as it runs.
+// so the server moves it into its own SQLite file (logfile.js), which outlives the process and answers
+// the Logs tab with no scan of anything large. Nothing here looks at a statement as it runs.
 //
 // `SELECT * FROM duckdb_logs` still answers in a SQL box, for what hasn't been emptied yet.
 // =============================================================================
-
-const { sqlStr } = require('./sql');
 
 const EVERY_MS = 2_000;
 const TRIM_EVERY_MS = 60 * 60 * 1000;
@@ -58,11 +56,11 @@ const cut = s => { const t = String(s).split('\0').join(''); return t.length > S
 /**
  * @param {object} o
  * @param {{readLog: Function, emptyLog: Function}} o.engine
- * @param {any} o.state  a connection to the state file
+ * @param {ReturnType<import('./logfile').createLogFile>} o.logs
  * @param {number} o.maxBytes  how much to keep; 0 keeps none
  * @param {(line: string) => void} [o.log]
  */
-function createLogKeeper({ engine, state, maxBytes, log = () => {} }) {
+function createLogKeeper({ engine, logs, maxBytes, log = () => {} }) {
   let last = 0n, moved = 0, chain = Promise.resolve(), timers = [];
   let asked = 0;              // statements someone asked for, since this process started
 
@@ -77,11 +75,11 @@ function createLogKeeper({ engine, state, maxBytes, log = () => {} }) {
       const st = statementOf(parseRequest(r.message));
       if (st) {
         if (!isSetup(st.sql)) asked++;
-        const at = Number(us / 1000n);
-        fresh.push(`(${at}, ${sqlStr(st.window)}, ${sqlStr(cut(st.sql))}, ${st.ms}, ${sqlStr(st.status)}, ${st.error == null ? 'NULL' : sqlStr(cut(st.error))}, ${sqlStr(st.conn)})`);
+        fresh.push({ at: Number(us / 1000n), window: st.window, sql: cut(st.sql), ms: st.ms, status: st.status,
+                     error: st.error == null ? null : cut(st.error), conn: st.conn });
       }
     }
-    if (maxBytes > 0 && fresh.length) await state.run(`INSERT INTO logs VALUES ${fresh.join(',\n')};`);
+    if (maxBytes > 0) logs.add(fresh);
     if (moved > EMPTY_PAST_ROWS) {
       await engine.emptyLog();
       moved = 0;
@@ -95,13 +93,8 @@ function createLogKeeper({ engine, state, maxBytes, log = () => {} }) {
   };
   const flush = () => turn(move);
 
-  // The oldest go, down to half, so this isn't at the limit again at once.
   async function trim() {
-    if (!(maxBytes > 0)) return;
-    await state.run(`DELETE FROM logs WHERE ts <= (
-      SELECT max(ts) FROM (SELECT ts, sum(length(sql) + coalesce(length(error), 0)) OVER (ORDER BY ts DESC) AS kept FROM logs)
-      WHERE kept > ${Math.floor(maxBytes / 2)})
-      AND (SELECT sum(length(sql) + coalesce(length(error), 0)) FROM logs) > ${Math.floor(maxBytes)};`);
+    if (maxBytes > 0) logs.trim(maxBytes);
   }
 
   return {
@@ -115,15 +108,14 @@ function createLogKeeper({ engine, state, maxBytes, log = () => {} }) {
     /** The newest statements, up to date. */
     async read(limit = 1000) {
       await flush().catch(() => {});
-      const r = await state.runAndReadAll(`SELECT ts, win, sql, ms, status, error FROM logs ORDER BY ts DESC LIMIT ${Math.max(1, Math.floor(limit))}`);
-      return r.getRowObjectsJson().map(x => ({ at: Number(x.ts), window: x.win, sql: x.sql, ms: Number(x.ms), status: x.status, error: x.error, setup: isSetup(x.sql) }));
+      return logs.read(Math.max(1, Math.floor(limit))).map(x => ({ at: Number(x.ts), window: x.win, sql: x.sql, ms: Number(x.ms), status: x.status, error: x.error, setup: isSetup(x.sql) }));
     },
     /** How many statements someone has asked for so far, up to date: Performance's queries per second. */
     async statements() {
       await flush().catch(() => {});
       return asked;
     },
-    clear: () => turn(async () => { await state.run('DELETE FROM logs;'); await engine.emptyLog(); moved = 0; }),
+    clear: () => turn(async () => { logs.clear(); await engine.emptyLog(); moved = 0; }),
   };
 }
 

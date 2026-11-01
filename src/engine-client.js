@@ -33,7 +33,8 @@ const { spawn } = require('node:child_process');
 const { join } = require('node:path');
 const { DuckDBInstance } = require('@duckdb/node-api');
 const { sqlStr } = require('./sql');
-const { shortHash, stateFileOf } = require('./catalogfile');
+const { shortHash } = require('./catalogfile');
+const { logFileOf } = require('./logfile');
 
 const CONNECT_MS = 5_000;
 const BOOT_MS = 180_000;       // a first boot may be downloading its extensions
@@ -113,7 +114,7 @@ async function withLock(file, fn) {
 
 // The server's process: detached, so it outlives this window. execPath is the editor's Electron,
 // which runs as plain Node with this variable set.
-function spawnServer({ script, token, pipe, options, logFile, idleMs, stateFile, build }) {
+function spawnServer({ script, token, pipe, options, logFile, idleMs, logsFile, build }) {
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [script], {
       env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
@@ -137,7 +138,7 @@ function spawnServer({ script, token, pipe, options, logFile, idleMs, stateFile,
       if (said.error) reject(new Error(`the engine could not start: ${said.error}`));
       else resolve(said);
     });
-    child.stdin.end(`${JSON.stringify({ token, pipe, options, logFile, idleMs, stateFile, build })}\n`);
+    child.stdin.end(`${JSON.stringify({ token, pipe, options, logFile, idleMs, logsFile, build })}\n`);
   });
 }
 
@@ -333,21 +334,17 @@ function recovery(ask, client) {
   };
 }
 
-// DuckDB's words for a file that will never open, the only kind worth setting aside. A disk error
-// or a file from a newer DuckDB isn't one: what it holds is still there for later.
-const stateFileUnusable = message => /not a valid DuckDB database file|corrupt|checksum|replaying WAL/i.test(String(message));
-
 // This window on the server, started if there is none. A server of another build is told to stop
-// and replaced: F5 after a rebuild must not find the old code, nor the state file held by it.
+// and replaced: F5 after a rebuild must not find the old code.
 async function joinServer({ key, stateKey = key, script, options, stateDir, build = null, getToken, setToken, idleMs = 60_000 }) {
   await fsp.mkdir(stateDir, { recursive: true });
   const id = shortHash(key);
-  const stateFile = stateFileOf(stateDir, stateKey);
+  const logsFile = logFileOf(stateDir, stateKey);
   const plain = typeof options === 'function' ? await options() : options;
   const asked = {
     pipe: pipePath(key), window: crypto.randomBytes(6).toString('hex'), getToken, setToken,
     lockFile: join(stateDir, `${id}.lock`),
-    server: { script, options: plain, logFile: stateFile.replace(/\.duckdb$/, '.log'), idleMs, build, stateFile },
+    server: { script, options: plain, logFile: logsFile.replace(/\.sqlite$/, '.log'), idleMs, build, logsFile },
   };
   let joined = await acquire(asked);
   if (joined.state.build !== build) {
@@ -383,80 +380,14 @@ async function stopServer({ key, getToken }) {
 }
 
 /**
- * The server's second DuckDB: the log, and what an older version kept, in one file per account. It
- * answers on a Quack port of its own, so no statement a page sends can reach it. Joined on first use.
- * @param {object} cfg  as createRemote's
- * @returns {{ run: (sql: string) => Promise<object[]>, stop: () => Promise<void>, close: () => void }}
- */
-function createStateClient(cfg) {
-  let joined = null, joining = null;
-  function drop(j) {
-    if (joined === j) joined = null;
-    j.sock.destroy();
-    j.client.stopGrowing();
-    try { j.client.admin.closeSync(); } catch (_) {}
-    try { j.client.local.closeSync(); } catch (_) {}
-  }
-  function connected() {
-    if (joined) return Promise.resolve(joined);
-    if (!joining) {
-      joining = (async () => {
-        const { sock, state, token, options } = await joinServer(cfg);
-        if (!state.stateUri) { sock.destroy(); throw new Error(state.stateError || 'the engine has no state file open'); }
-        const client = await openClient({ uri: state.stateUri, token, extensionDir: options.extensionDir, bundledExtensions: options.bundledExtensions })
-          .catch(e => { sock.destroy(); throw e; });
-        const ask = controlChannel(sock, m => {
-          if (m.reattach) client.reattach().catch(() => {});
-        });
-        const me = { sock, client, recover: recovery(ask, client) };
-        sock.on('error', () => {});
-        sock.on('close', () => drop(me));
-        joined = me;
-        return me;
-      })().finally(() => { joining = null; });
-    }
-    return joining;
-  }
-  return {
-    async run(sql) {
-      const { client, recover } = await connected();
-      const once = async () => {
-        const c = await client.local.connect();
-        const way = client.route(sql);
-        try { return (await c.runAndReadAll(way.text)).getRowObjectsJson(); }
-        finally {
-          way.release();
-          try { c.closeSync(); } catch (_) {}
-        }
-      };
-      return once().catch(async e => {
-        if (!LOST.test(String(e && e.message))) throw e;
-        await recover();
-        return once();
-      });
-    },
-    async stop() {
-      const j = joined;
-      if (!j) return;
-      await new Promise(resolve => {
-        const timer = setTimeout(resolve, 5_000);
-        j.sock.once('close', () => { clearTimeout(timer); resolve(); });
-        j.sock.write(`${JSON.stringify({ stop: true })}\n`);
-      });
-    },
-    close() { if (joined) drop(joined); },
-  };
-}
-
-/**
  * What engine-host.js takes as `remote`: a function that joins the server and answers something
  * shaped like a DuckDBInstance: connect() and closeSync(), plus capabilities and tmpDir.
  * @param {object} o
  * @param {string} o.key  the account and install this server is for
- * @param {string} [o.stateKey]  what its state file is named after: the account, not the install
+ * @param {string} [o.stateKey]  what its log file is named after: the account, not the install
  * @param {string} o.script  dist/engine-server.js
  * @param {object|(() => Promise<object>)} o.options  createEngineHost's plain options, for the server's engine
- * @param {string} o.stateDir  for the lock, the server's log and the state file
+ * @param {string} o.stateDir  for the lock and the server's logs
  * @param {*} [o.build]  which build this is; a server of another is replaced
  * @param {() => Promise<string|undefined>} o.getToken  the session token, from secret storage
  * @param {(t: string) => Promise<void>} o.setToken
@@ -584,4 +515,4 @@ function createRemote({ onGone = () => {}, ...cfg }) {
   };
 }
 
-module.exports = { createRemote, createStateClient, stopServer, openClient, loadExtension, pipePath, stateFileOf, stateFileUnusable, LOST };
+module.exports = { createRemote, stopServer, openClient, loadExtension, pipePath, LOST };

@@ -226,25 +226,21 @@ every window is a client of it over DuckDB's Quack protocol ([`src/engine-client
   it is outside the folders DuckDB may open. WAL lets a window read while another writes, and another window's Clear is
   noticed within a few seconds. A file that isn't a database is set aside as `.bad` and started again. It is named after
   the account, not the install, so an update keeps it, and F5 has its own.
-  What an older version kept in the state file or a JSON store comes across once, behind the tree.
-- **The log** is a table in a state file, `engine-server\state-<id>.duckdb`, in a second DuckDB in the server on a Quack
-  port of its own, so a page's SQL can't reach it.
-  - **It is named after the account, not the install,** so an update keeps it. F5 has its own.
-  - **A newer build takes it at once.** A server of the version just updated from may still hold the file, for a window
-    not reloaded yet. The new server asks it to go, over its pipe with the key in `state-<id>.duckdb.holder`, before any
-    window sees the gap: closing the file isn't enough while that window's sessions are attached. A statement running
-    there stops, and until it is reloaded the window starts its own server again, without the file. An older build
-    never takes it: it looks again every 15 seconds, and what is remembered reads as not cached until then.
-  - **Only a file that isn't a database is thrown out,** set aside as `.bad` and started again. Any other failure, such
-    as a disk error or a file from a newer DuckDB, leaves it where it is and runs without it, and the Logs tab says why.
-  - **The server's own log is `state-<id>.log`,** beside it and also named after the account. Its last 1 MB is kept.
+  What an older version kept, in a DuckDB state file or a JSON store, comes across once, behind the tree, and those files
+  go. That is the one time a window loads DuckDB with nothing to run.
+- **The log** is a SQLite file of its own, `engine-server\logs-<id>.sqlite` ([`src/logfile.js`](../src/logfile.js)), as it
+  isn't metadata: **Clear Cached OneLake Data** leaves it. The server writes it. It is named after the account, and F5 has
+  its own.
+- **The server's own log is `logs-<id>.log`,** a plain text file beside it, so it can be read when nothing else can. Its last
+  1 MB is kept.
 
-Still files: a `Files/` object's bytes, saved queries and models.
+Outside those two files there is **one cache folder**, `file-cache-v1\<account>`: what DuckDB reads, and under `host\` the
+bytes of a `Files/` object the host reads. Saved queries and models' `.yaml` copies are yours, under `~/OneLakeStudio`.
 
 **Logs** ([`src/logs.js`](../src/logs.js)), a node in the tree, with one tab per window. The record is DuckDB's own: its `Quack` log has a row per
 statement with the time to its first rows and any error, for every tab, window and the command line. A large
 result's later rows aren't in that time, since DuckDB doesn't log them. It is kept in memory
-(file storage can't be read back on Windows, since DuckDB locks its own file), and the server moves it to the state
+(file storage can't be read back on Windows, since DuckDB locks its own file), and the server moves it to the log
 file every two seconds ([`src/enginelog.js`](../src/enginelog.js)), up to `onelakeStudio.logMaxGB`, the oldest going first.
 It holds your SQL and its errors in plain text, and never the OneLake token. A row reopens its SQL in a new tab, not run.
 `SELECT * FROM duckdb_logs` answers in a SQL box for what is still in memory.
@@ -259,7 +255,7 @@ SQL box, no Stop and no Restart.
 | --- | --- | --- |
 | Listings (workspaces, items, tables, `Files/`, semantic models), table metadata, first rows | The catalog file, [`src/catalogfile.js`](../src/catalogfile.js) | Served at once, refreshed in the background past its window |
 | The name behind a Direct Lake model's item GUIDs | The catalog file | Only when using it fails |
-| The bytes of a `Files/` object the host reads (an image, a `.bim`, a SQLite copy, a saved file) | Under the etag its cached listing gave | Only when the file was rewritten |
+| The bytes of a `Files/` object the host reads (an image, a `.bim`, a SQLite copy, a saved file) | The cache folder, under the etag its cached listing gave | Only when the file was rewritten |
 | What DuckDB reads: table data and `Files/` objects | DuckDB's disk cache (`cache_httpfs`) | Only when the file was rewritten: a kept copy is checked against the file's version tag and modification time |
 | That a table's rows were read, per snapshot | The catalog file | Never: a new snapshot is a new entry |
 | A semantic model's definition | `~/OneLakeStudio/semantic-models/<account>/<workspace>/<model>.yaml` | On **Download Again** |
@@ -632,7 +628,7 @@ every window. The rest apply at once.
 | `src/panel.js`, `src/host.js`, `src/html.js`, `src/webview.js` | A tab's webview, its channel, and its page. |
 | `src/performance.js`, `src/logs.js` | The Performance and Logs tabs. |
 | `src/catalogfile.js`, `src/catalogtables.js`, `src/syncworker.js` | What is remembered, in SQLite, the catalog's tables there, and what keeps them current. |
-| `src/engine-server.js`, `src/engine-client.js`, `src/enginelog.js` | The server: its process, a window's side of it, and its log. |
+| `src/engine-server.js`, `src/engine-client.js`, `src/enginelog.js`, `src/logfile.js` | The server: its process, a window's side of it, and its log. |
 | `src/agent.js`, `src/bridge.js`, `bin/cli.mjs` | The command line. |
 | `src/exportapp.js`, `src/fabricapp.js`, `src/onelakewrite.js` | Export to Fabric. |
 | `src/vendored.js` | The one list of pinned third-party code the webview runs, dax-sql included. |

@@ -22,6 +22,7 @@ const { createCatalog } = require('./catalog');
 const { createStore } = require('./store');
 const { createCatalogFile, catalogFileOf, stateFileOf } = require('./catalogfile');
 const { createSyncWorker } = require('./syncworker');
+const { createLogFile, logFileOf } = require('./logfile');
 const { createOneLake, walkCached } = require('./onelake');
 const { createSqlTables } = require('./sqltables');
 const { createConnectivity } = require('./connectivity');
@@ -474,31 +475,44 @@ function catalogFileFor(context, account) {
   }
   return catalogFiles.get(account);
 }
-// What an older version kept for this account comes across once, behind a tree already drawn. Only an
-// old state file needs the server, and it is read this one time.
-async function importKept(context, account, jsonDir) {
+// What an older version kept for this account comes across, behind a tree already drawn, and its files
+// go: the DuckDB state file, and the JSON store. That store's blobs move to the cache folder. A failure
+// leaves them where they are, and the next window tries again.
+async function importKept(context, account, jsonDir, cacheDir) {
   const kept = catalogFiles.get(account);
-  let client = null;
+  let old = null;
   try {
-    if (!kept || kept.imported()) return;
+    if (!kept) return;
     const server = sharedEngineServer(context, account);
-    if (existsSync(stateFileOf(server.stateDir, server.stateKey))) {
-      const { createStateClient } = require('./engine-client');
-      client = createStateClient({
-        ...server,
-        options: async () => {
-          const { readme } = await webviewRoot(context.extensionUri, { dev: context.extensionMode === vscode.ExtensionMode.Development });
-          return engineBootOptions(context, account, readme.fsPath);
-        },
-      });
+    const stateFile = stateFileOf(server.stateDir, server.stateKey);
+    if (existsSync(stateFile)) {
+      const { openOldState } = require('./oldstate');
+      old = await openOldState(stateFile);
     }
-    const came = await kept.importKept({ run: client && (sql => client.run(sql)), jsonDir });
-    if (out) out.appendLine(`the catalog file took ${came} entries from an older version`);
-    if (came) onStoreCleared();
+    const came = await kept.importKept({ run: old && old.run, jsonDir });
+    if (old) {
+      const logs = createLogFile({ file: logFileOf(server.stateDir, server.stateKey) });
+      try { logs.add(await old.logs()); } finally { logs.close(); }
+      old.close();
+      old = null;
+      for (const f of [stateFile, `${stateFile}.wal`, `${stateFile}.holder`, `${stateFile}.bad`, `${stateFile}.wal.bad`, stateFile.replace(/\.duckdb$/, '.log')]) {
+        await fsp.rm(f, { force: true }).catch(() => {});
+      }
+    }
+    if (existsSync(jsonDir)) {
+      const blobs = join(jsonDir, 'blobs');
+      if (existsSync(blobs)) await fsp.cp(blobs, join(cacheDir, 'blobs'), { recursive: true, force: false });
+      await fsp.rm(jsonDir, { recursive: true, force: true });
+      await fsp.rmdir(dirname(jsonDir)).catch(() => {});
+    }
+    if (came) {
+      if (out) out.appendLine(`the catalog file took ${came} entries from an older version`);
+      onStoreCleared();
+    }
   } catch (e) {
     if (out) out.appendLine(`what an older version kept could not be read, and is tried again next time — ${e.message}`);
   } finally {
-    if (client) client.close();
+    if (old) old.close();
   }
 }
 // Sign Out and the like stop the server of every account this window has used, joined to it or not.
@@ -904,10 +918,11 @@ async function activateInner(context) {
   // ever shown another account's listings, and switching back finds its cache still warm.
   const storeRoot = join(context.globalStorageUri.fsPath, 'onelake-store-v1');
   const jsonStoreOf = key => join(storeRoot, key || 'signed-out');
+  // The bytes of a Files/ object the host reads, in the one cache folder beside what DuckDB reads.
+  const hostCacheOf = key => join(fileCacheRoot, key || 'signed-out', 'host');
   const storeFor = key => {
-    const dir = jsonStoreOf(key);
     const backend = catalogFileFor(context, key);
-    return createStore({ dir, backend, ttlMs: catalogTtlMs });
+    return createStore({ dir: hostCacheOf(key), backend, ttlMs: catalogTtlMs });
   };
   stopServers = async () => {
     const { stopServer } = require('./engine-client');
@@ -972,7 +987,7 @@ async function activateInner(context) {
     // new account's answers into the old account's store.
     fileCacheAccount = key;   // the engine picks it up when it is next built
     onelake.useStore(storeFor(key));
-    importKept(context, key, jsonStoreOf(key));
+    importKept(context, key, jsonStoreOf(key), hostCacheOf(key));
     syncWorker.reset();
     namesKept = null;
     // Workspace and item GUIDs belong to the account's tenant: listed again for the new one.
@@ -2138,7 +2153,7 @@ async function activateInner(context) {
   // Behind the tree. An older version's cache comes across, and the account provider is asked who is
   // signed in. A provider that has stalled gets a few seconds, and what it says after that is taken as
   // a session change.
-  importKept(context, storeAccount, jsonStoreOf(storeAccount));
+  importKept(context, storeAccount, jsonStoreOf(storeAccount), hostCacheOf(storeAccount));
   (async () => {
     const answered = await inTime(getSession({ createIfNone: false }).then(() => true, () => true), SESSION_WAIT_MS, () => sessionChanged());
     if (answered) await sessionChanged();

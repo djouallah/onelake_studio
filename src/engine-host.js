@@ -386,7 +386,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
         const r = await conn.runAndReadAll(`SELECT listen_uri FROM quack_serve('quack:127.0.0.1:0', token = ${sqlStr(serve.token)})`);
         served = r.getRowObjectsJson()[0].listen_uri;
         // DuckDB's own log of what Quack is asked: one row a statement, with its time and any error,
-        // in memory. engine-server.js moves it into the state file, so it outlives this process.
+        // in memory. engine-server.js moves it into the log file, so it outlives this process.
         // Writing it to a file isn't an option: on Windows DuckDB then can't read its own file back.
         await conn.run(`CALL enable_logging(['Quack'], storage = 'memory');`);
         mark('quack');
@@ -1083,7 +1083,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
              memoryLimit: limits.memory_limit, threads: limits.threads };
   }
 
-  // serve: DuckDB's log since `sinceUs` (enginelog.js moves it to the state file), and its emptying.
+  // serve: DuckDB's log since `sinceUs` (enginelog.js moves it to the log file), and its emptying.
   const readLog = sinceUs => withConn(async c => (await c.runAndReadAll(
     `SELECT epoch_us(timestamp) AS us, message FROM duckdb_logs WHERE type = 'Quack' AND epoch_us(timestamp) > ${BigInt(sinceUs)} ORDER BY timestamp`)).getRowObjectsJson(), agentLive);
   const emptyLog = () => withConn(c => c.run('CALL truncate_duckdb_logs();'), agentLive);
