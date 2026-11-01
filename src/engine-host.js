@@ -248,6 +248,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
   let tmpSeq = 0;
   let tmpDir = null;
 
+  let unsignedAllowed = false;
   async function init() {
     if (closed) throw new Error('the engine was closed');
     if (ready) return ready;
@@ -291,7 +292,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
       // built (scripts/pinned-downloads.mjs); the lockdown below then refuses every LOAD, so nothing
       // the page sends can load anything else.
       const cacheBuild = fileCacheDir && bundledExtensions && join(bundledExtensions, 'cache_httpfs.duckdb_extension');
-      if (cacheBuild && fs.existsSync(cacheBuild)) config.allow_unsigned_extensions = 'true';
+      if (cacheBuild && fs.existsSync(cacheBuild)) { config.allow_unsigned_extensions = 'true'; unsignedAllowed = true; }
       if (fileCacheDir) {
         await fsp.mkdir(fileCacheDir, { recursive: true })
           .catch(e => onWarn(`could not make the disk cache's folder ${fileCacheDir} — ${e.message}`));
@@ -458,7 +459,9 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
   // proxy DuckDB cannot use still has its extensions.
   async function load(ext, repo, required = false) {
     try {
-      const shipped = bundledExtensions && join(bundledExtensions, `${ext}.duckdb_extension`);
+      // A community extension by path loads only as unsigned. With that not allowed (the disk cache
+      // off) it comes from its repository, signature checked, with nothing to say about it.
+      const shipped = bundledExtensions && (!repo || unsignedAllowed) && join(bundledExtensions, `${ext}.duckdb_extension`);
       let loaded = false;
       if (shipped && fs.existsSync(shipped)) {
         try { await conn.run(`LOAD ${sqlStr(shipped.replace(/\\/g, '/'))};`); loaded = true; }
