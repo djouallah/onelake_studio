@@ -17,6 +17,7 @@
 //                                    semantic models, and a downloaded model's tables and measures;
 //                                    --fresh reads every listing first
 //   table <ws> <item> <schema.table> metadata only
+//   exists <ws> <item> <schema.table>  yes (0), no with the closest names (1), or not cached (4)
 //   model <ws> <model>               relationships, columns, measures with DAX
 //   sql "<sql>"                      a table is Kind.workspace.item.schema.table; a file is
 //                                    'lakehouse.ws.item/Files/x.parquet'; a semantic model is
@@ -36,6 +37,7 @@ const fsp = require('node:fs/promises');
 const { fmtBytes, hasFilesArea, isStaging, kindLabel, sqlNameOf, fileSqlName } = require('./names');
 const { mapPool, offlineError } = require('./http');
 const { walkCached } = require('./onelake');
+const { readJob } = require('./syncworker');
 const { sqlStr, isShowAllTables, ALL_TABLES_COUNTED } = require('./sql');
 const { EXIT, checkRequest, failureJson } = require('./bridge');
 
@@ -69,6 +71,8 @@ const fence = (lang, text) => '```' + lang + '\n' + String(text).trim() + '\n```
  *   a semantic model's definition read from Fabric again, into its local copy (modelPath)
  * @param {(x: {workspace: string, model: string}) => Promise<object>} [o.openModel]
  *   a semantic model a query names, opened from its local copy and kept as a view
+ * @param {(job: object, o?: object) => Promise<any>} [o.readNow]  what --fresh reads: the sync worker's
+ *   first job (syncworker.js), so the worker is the one thing asking for listings
  * @param {() => boolean} [o.signedIn]       false: every question is answered UNAVAILABLE
  * @param {() => string|null} [o.offlineReason]  why OneLake cannot be asked now: answers come from the cache
  * @param {{ status: () => Promise<object>, log: (o: {limit?: number, text?: string}) => string[] }} [o.diagnostics]
@@ -87,7 +91,33 @@ function printedLines(value, prefix = '') {
   return [`${prefix}: ${value}`];
 }
 
+// How far apart two names are, in single edits.
+function editDistance(a, b) {
+  let row = Array.from({ length: b.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= a.length; i++) {
+    const next = [i];
+    for (let j = 1; j <= b.length; j++) {
+      next[j] = Math.min(row[j] + 1, next[j - 1] + 1, row[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    }
+    row = next;
+  }
+  return row[b.length];
+}
+// The names nearest what was asked for, whole or by a dotted part (dbo.orders for orderz, data.Lakehouse
+// for dta), and none that are nothing like it.
+function closestNames(wanted, names, most = 5) {
+  const q = String(wanted).toLowerCase();
+  const far = Math.max(2, Math.ceil(q.length / 2));
+  const score = name => {
+    const s = name.toLowerCase();
+    return s.includes(q) || q.includes(s) ? 0 : Math.min(editDistance(q, s), ...s.split('.').map(p => editDistance(q, p)));
+  };
+  return names.map(name => ({ name, d: score(name) })).filter(x => x.d <= far)
+    .sort((a, b) => a.d - b.d || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0)).slice(0, most).map(x => x.name);
+}
+
 function createAgent({ onelake, engine, modelPath, appDir, vendorDir, daxSqlPin, yamlPin, semviews,
+                       readNow = (job, o) => readJob(onelake, job, o),
                        exportApp = null, fetchModel = null, openModel = null, nameTables = null,
                        signedIn = () => true, offlineReason = () => null, diagnostics = null }) {
   let mods = null;
@@ -160,10 +190,17 @@ function createAgent({ onelake, engine, modelPath, appDir, vendorDir, daxSqlPin,
       };
     } catch (_) { return null; }
   }
-  // One listing: from disk, or — with --fresh only — from OneLake/Fabric. `seen` collects
-  // when each answer was stored, for the "as of" note.
-  async function look(kind, args, { fresh, seen }) {
-    if (fresh) return onelake[kind](...args, { fresh: true });
+  // One listing: from disk, or — with --fresh only — a job for the sync worker ahead of the rest. `seen`
+  // collects when each answer was stored, for the "as of" note.
+  const JOBS = {
+    workspaces: () => ({ kind: 'workspaces' }),
+    items: workspace => ({ kind: 'items', workspace }),
+    models: workspace => ({ kind: 'models', workspace }),
+    tables: lh => ({ kind: 'tables', workspace: lh.workspace, item: lh.item }),
+    files: (lh, dir) => ({ kind: 'files', workspace: lh.workspace, item: lh.item, dir }),
+  };
+  async function look(kind, args, { fresh, seen, signal }) {
+    if (fresh) return readNow(JOBS[kind](...args), { signal });
     const e = await onelake.cached[kind](...args);
     if (!e) {
       const [what, how] = typeof IN_TREE[kind] === 'function' ? IN_TREE[kind](...args) : IN_TREE[kind];
@@ -181,13 +218,34 @@ function createAgent({ onelake, engine, modelPath, appDir, vendorDir, daxSqlPin,
 
   // `items`: the workspace's listing — the cache's, for a listing command; a query passes the
   // one it may fetch.
-  async function itemOf(ws, name, items) {
+  function namedItem(items, name) {
     const lc = String(name).toLowerCase();
-    const hit = items.find(i => i.name.toLowerCase() === lc) ||
-                items.find(i => i.name.toLowerCase().replace(/\.[^.]+$/, '') === lc);
+    return items.find(i => i.name.toLowerCase() === lc) ||
+           items.find(i => i.name.toLowerCase().replace(/\.[^.]+$/, '') === lc);
+  }
+  async function itemOf(ws, name, items) {
+    const hit = namedItem(items, name);
     if (!hit) throw new Error(`no item "${name}" in ${ws} — \`ls ${ws}\` lists them`);
     return { workspace: ws, item: hit.name };
   }
+
+  const nameOfTable = t => (t.schema ? `${t.schema}.${t.table}` : t.table);
+  // A listing's tables that a name means: schema.table, or bare in whichever schemas have it.
+  const tablesNamed = (tables, name) => {
+    const q = String(name).toLowerCase();
+    return tables.filter(t => nameOfTable(t).toLowerCase() === q || t.table.toLowerCase() === q);
+  };
+  // A listing was read and this isn't in it, which is an answer. `detail` is --json's.
+  function noSuch(what, name, where, names, at) {
+    const closest = closestNames(name, names);
+    return Object.assign(new Error(`no ${what} "${name}" in ${where}, as of ${ago(at)}` +
+      (closest.length ? ` — closest: ${closest.join(', ')}` : '')),
+    { detail: { exists: false, closest, listingAsOf: iso(at) } });
+  }
+  // A listing as `{ value, at }`, or null: from disk, or with --fresh read now.
+  const listing = async (kind, args, opts) => (opts.fresh
+    ? { value: await look(kind, args, opts), at: Date.now() }
+    : onelake.cached[kind](...args));
 
   async function modelOf(ws, name, opts) {
     const hit = (await look('models', [ws], opts)).find(m => m.name.toLowerCase() === String(name).toLowerCase());
@@ -463,10 +521,17 @@ function createAgent({ onelake, engine, modelPath, appDir, vendorDir, daxSqlPin,
       const lh = await itemOf(ws, item, await look('items', [ws], opts));
       const t = await tableOf(lh, name);
       let m;
-      if (opts.fresh) m = await onelake.table(lh, t, { fresh: true, onWait: io.note });
+      if (opts.fresh) m = await readNow({ kind: 'table', ...lh, ...t }, { onWait: io.note, signal: opts.signal });
       else {
         const e = await onelake.cached.table(lh, t);
-        if (!e) throw notCached(...IN_TREE.table(lh, t));
+        if (!e) {
+          // Listed with its metadata not read is not cached. Not in a listing we hold is a no.
+          const listed = await onelake.cached.tables(lh);
+          if (listed && !tablesNamed(listed.value, name).length) {
+            throw noSuch('table', name, `${lh.workspace}/${lh.item}`, listed.value.map(nameOfTable), listed.at);
+          }
+          throw notCached(...IN_TREE.table(lh, t));
+        }
         opts.seen.push(e.at);
         m = { ...e.value, at: e.at, cached: true };
       }
@@ -486,6 +551,28 @@ function createAgent({ onelake, engine, modelPath, appDir, vendorDir, daxSqlPin,
       ]));
       io.out('');
       io.table([col('column'), col('type')], (m.schemaFields || []).map(f => [f.name, f.type]), { limit: Infinity });
+    },
+
+    // Whether a table is there, from the listings alone, so it needs no table's metadata. A no comes
+    // only from a listing that was read: what was never read is not cached, never a false no.
+    async exists([ws, item, name], opts, io) {
+      const known = await onelake.cached.workspaces();
+      const workspace = known && known.value.find(w => w.toLowerCase() === ws.toLowerCase());
+      if (known && !workspace && !opts.fresh) throw noSuch('workspace', ws, 'this tenant', known.value, known.at);
+      const w = workspace || ws;
+      const items = await listing('items', [w], opts);
+      if (!items) throw notCached(...IN_TREE.items(w));
+      const hit = namedItem(items.value, item);
+      if (!hit) throw noSuch('item', item, w, items.value.map(i => i.name), items.at);
+      const lh = { workspace: w, item: hit.name };
+      const tables = await listing('tables', [lh], opts);
+      if (!tables) throw notCached(...IN_TREE.tables(lh));
+      const hits = tablesNamed(tables.value, name);
+      if (!hits.length) throw noSuch('table', name, `${w}/${hit.name}`, tables.value.map(nameOfTable), tables.at);
+      if (!opts.fresh) opts.seen.push(tables.at);
+      const named = hits.map(nameOfTable);
+      io.data({ exists: true, workspace: w, item: hit.name, tables: named, sqlNames: hits.map(t => sqlNameOf(lh, t)), listingAsOf: iso(tables.at) });
+      io.out(`yes: ${named.join(', ')} in ${w}/${hit.name}, as of ${ago(tables.at)}`);
     },
 
     async model([ws, name], opts, io) {
@@ -692,7 +779,7 @@ function createAgent({ onelake, engine, modelPath, appDir, vendorDir, daxSqlPin,
         const code = exitOf(e || {});
         const retry = code === EXIT.NOT_CACHED && !e.offline ? (e.retry || '--fresh') : undefined;
         const hint = e && e.status === 401 ? ` — ${SIGN_IN_TO_FABRIC}` : '';
-        if (format === 'json') return { out: failureJson(code, message + hint, { retry, notes }), err: '', code };
+        if (format === 'json') return { out: failureJson(code, message + hint, { retry, notes, detail: e && e.detail }), err: '', code };
         return { out: '', err: [...notes, `error: ${message}${hint}`].join('\n'), code };
       },
     };

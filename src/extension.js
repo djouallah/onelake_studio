@@ -1399,6 +1399,7 @@ async function activateInner(context) {
   const dev = context.extensionMode === vscode.ExtensionMode.Development;
   const agent = createAgent({
     onelake, semviews,
+    readNow: (job, o) => syncWorker.first(job, o),
     modelPath: (ws, model) => modelPath({ workspace: ws, model }),
     engine: async () => {
       const { readme } = await webviewRoot(context.extensionUri, { dev });

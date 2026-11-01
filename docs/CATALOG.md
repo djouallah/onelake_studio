@@ -1,6 +1,6 @@
 # The OneLake catalog: specification
 
-**Status: design, built in waves (below). Waves 1 to 3 are in the code.** Where it differs from
+**Status: design, built in waves (below). Waves 1 to 4 are in the code.** Where it differs from
 [ARCHITECTURE.md](ARCHITECTURE.md), this describes what is planned and that describes what runs today.
 [NAMING.md](NAMING.md) does not change.
 
@@ -135,10 +135,10 @@ fails with an `IO Error`, for that table's listing and metadata.
 
 ## The command line
 
-**`src/agent.js` makes no OneLake or Fabric call.** `ls`, `items`, `models`, `find` and `table` read the
-catalog with the same code as the tree.
+**Without `--fresh`, `src/agent.js` makes no OneLake or Fabric call.** `ls`, `items`, `models`, `files`, `find`,
+`table` and `exists` read the catalog with the same code as the tree. `status` and `log` ask nothing either.
 
-**Does a table exist:**
+**Does a table exist (`exists`):** from the listings alone, so it needs no table's metadata.
 
 | The catalog holds | The answer | Exit |
 | --- | --- | --- |
@@ -146,8 +146,12 @@ catalog with the same code as the tree.
 | The listing, without the table | No, with the closest names and how old the listing is | 1 |
 | No such listing | Not cached, never a false no | 4 |
 
-**`--fresh` is a top-priority job.** It waits for the job and answers from the catalog, so one thing talks to
-OneLake and everyone sees one answer. Offline it fails at once.
+**`--fresh` is a top-priority job.** It goes ahead of what the worker has next, one request at a time, and what it
+reads goes into the catalog, so everyone sees one answer. It isn't held to five listings every 15 seconds, as someone is
+waiting. Offline it fails at once, and so it does while OneLake has asked for a pause.
+
+**What doesn't go through the worker:** `sql --fresh`, whose statement reads its tables' metadata, and `model --fresh`,
+which downloads a model's file. Neither is a listing.
 
 **Target:** tens of milliseconds for a metadata command with VS Code open.
 
@@ -185,10 +189,11 @@ Whatever isn't held says so at once.
 | --- | --- |
 | The DuckDB state file, the JSON store and JSON pointers, and `kv` and `meta` | A second SQLite file, for the log |
 | The server's listing work behind the store | The server, Quack, the control pipe |
-| The `prefetchMetadata` walk, now queue jobs | The read-only guard and the lockdown |
-| The cache-first plumbing for listings in `onelake.js` | NAMING.md's names |
-| The extension's `--fresh` calls to OneLake and Fabric | `iceberg_scan`, `azure`, `httpfs`, `cache_httpfs` |
-| The tree's wait for the server | Export to Fabric and the Fabric app, both untouched |
+| The command line's own `--fresh` calls for listings | The read-only guard and the lockdown |
+| The tree's wait for the server | NAMING.md's names |
+| | The `prefetchMetadata` walk, and `onelake.js` as the way to a listing, which a click still takes |
+| | `iceberg_scan`, `azure`, `httpfs`, `cache_httpfs` |
+| | Export to Fabric and the Fabric app, both untouched |
 
 **ARCHITECTURE.md changes when this ships:** *The host does the work* no longer covers listings and metadata, *The
 cache* and *Offline* describe the catalog, and the tree no longer waits for the server.
@@ -219,6 +224,7 @@ Each wave works on its own, and is proved before the next starts.
 | **2. Real tables** | JSON listings become the catalog's tables, and the tree, `resolve`, Stats, History, Go To and `SHOW ALL TABLES` query them. `catalogsnapshot.js` goes, and rows are never evicted. | Every offline test passes from the tables, and no listing is stored as JSON. |
 | **3. The sync worker** | In a window's extension host, with a lease for the tenant sweep. Windows hear from the file when rows change. | A table added in Fabric appears with no click, the tree stays usable during a sync from empty, and offline it asks nothing. |
 | **4. The command line** | Every metadata command reads the catalog, and `--fresh` is a top-priority job. | Every metadata command answers with the network refused, and a table-exists check is timed warm and cold. |
+| **5. A sync that costs little** | The worker reads only what is likely to have changed or to be wanted, so it never ends up reading the whole of OneLake. Today a pinned workspace's lakehouses are listed again every `catalogTtlMinutes`, and the rest of the tenant once a day, whoever is using it. | What the worker asked for and how much came back are counted in `status`, with a ceiling, and it stays under that on a real tenant. |
 
 **On its own, whenever:** Iceberg's files in a folder eviction skips. It probably needs a change in the `cache_httpfs` fork.
 

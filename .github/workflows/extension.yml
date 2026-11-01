@@ -159,7 +159,7 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: 24
-      - run: node --test test/js/bridge.test.mjs test/js/agent.test.mjs test/js/cli.test.mjs test/js/cli-contract.test.mjs test/js/cli-docs.test.mjs
+      - run: node --test test/js/bridge.test.mjs test/js/agent.test.mjs test/js/cli.test.mjs test/js/cli-contract.test.mjs test/js/cli-catalog.test.mjs test/js/cli-docs.test.mjs
 
   # What every vsix carries whatever its platform, built once and kept in the cache for the
   # six package legs, which then restore it rather than build it six times: the webview's and

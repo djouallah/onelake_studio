@@ -30,6 +30,8 @@ const USAGE = {
                                         semantic models, a downloaded model's tables/measures;
                                         --fresh reads every listing first`,
   table: "  table <ws> <item> <schema.table>    columns and stats (metadata only)",
+  exists: `  exists <ws> <item> <schema.table>   whether a table is there, from the listings: yes (exit 0),
+                                        no with the closest names (exit 1), not cached (exit 4)`,
   model: "  model <ws> <model>                  relationships, columns, measures with their DAX",
   sql: `  sql "<sql>"                         read-only SQL; a table is kind.workspace.item.schema.table
                                         (lakehouse.aemo.data.dbo.dim_duid); a file is
@@ -52,13 +54,13 @@ const OPTIONS = `  --limit N                           rows printed (default 100
   --csv                               one table, raw values, on stdout
   --json                              { ok, columns, rows, total, truncated, complete, cachedAt, notes }
                                         or { ok: false, error: { code, message, retry }, notes }
-  --fresh                             ask OneLake/Fabric now, and for sql, read its tables' metadata first: listings and metadata come only
+  --fresh                             ask OneLake/Fabric now, ahead of the background's listings, and for sql, read its tables' metadata first: listings and metadata come only
                                         from the cache otherwise, and say so when it has nothing
   --timeout SEC                       give up and stop the query (default 600; 0 waits; export waits)
   --                                  what follows is not an option
   -h, --help  --version
 
-exit codes: 0 answered (--json: complete, truncated say how much)  1 failed  2 wrong call
+exit codes: 0 answered (--json: complete, truncated say how much)  1 failed, or no such table  2 wrong call
             3 VS Code not open or not signed in  4 not cached (--fresh)  5 you declined  6 timed out`;
 
 const HELP = `onelake — ask OneLake Studio (VS Code must be open, signed in). Read only, but

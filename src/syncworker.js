@@ -28,6 +28,23 @@ const PAUSE_MS = 60_000;             // everything waits this long after OneLake
 const SWEEP_IDLE_MS = 10 * 60 * 1000;
 const MAX_FAILURES = 20;
 
+const lhOf = t => ({ workspace: t.workspace, item: t.item });
+
+/**
+ * One job: a listing, or a table's metadata, read from OneLake or Fabric and written to the catalog.
+ * @param {ReturnType<import('./onelake').createOneLake>} onelake
+ * @param {{ kind: string, workspace?: string, item?: string, dir?: string, schema?: string, table?: string }} t
+ */
+function readJob(onelake, t, { onWait } = {}) {
+  return t.kind === 'workspaces' ? onelake.workspaces({ fresh: true })
+    : t.kind === 'items' ? onelake.items(t.workspace, { fresh: true })
+    : t.kind === 'tables' ? onelake.tables(lhOf(t), { fresh: true })
+    : t.kind === 'files' ? onelake.files(lhOf(t), t.dir || '', { fresh: true })
+    : t.kind === 'models' ? onelake.models(t.workspace, { fresh: true })
+    : t.kind === 'table' ? onelake.table(lhOf(t), { schema: t.schema, table: t.table }, { fresh: true, onWait })
+    : onelake.apps(t.workspace, { fresh: true });
+}
+
 /**
  * @param {object} o
  * @param {ReturnType<import('./onelake').createOneLake>} o.onelake
@@ -48,20 +65,43 @@ function createSyncWorker({ onelake, opened = () => [], pinned = () => [], ttlMs
   const retryAt = new Map();
   const failures = [];               // the latest, for `status`
 
-  const idOf = t => [t.kind, t.workspace, t.item, t.dir].join('\u0000');
-  const lhOf = t => ({ workspace: t.workspace, item: t.item });
+  const idOf = t => [t.kind, t.workspace, t.item, t.dir, t.schema, t.table].join('\u0000');
   const kept = t => (t.kind === 'workspaces' ? onelake.cached.workspaces()
     : t.kind === 'items' ? onelake.cached.items(t.workspace)
     : t.kind === 'tables' ? onelake.cached.tables(lhOf(t))
     : t.kind === 'files' ? onelake.cached.files(lhOf(t), t.dir || '')
     : t.kind === 'models' ? onelake.cached.models(t.workspace)
     : onelake.cached.apps(t.workspace));
-  const read = t => (t.kind === 'workspaces' ? onelake.workspaces({ fresh: true })
-    : t.kind === 'items' ? onelake.items(t.workspace, { fresh: true })
-    : t.kind === 'tables' ? onelake.tables(lhOf(t), { fresh: true })
-    : t.kind === 'files' ? onelake.files(lhOf(t), t.dir || '', { fresh: true })
-    : t.kind === 'models' ? onelake.models(t.workspace, { fresh: true })
-    : onelake.apps(t.workspace, { fresh: true }));
+
+  // One request at a time, and whoever is waiting goes ahead of the background's next one.
+  const waiting = [], behind = [];
+  let pumping = false;
+  function inTurn(line, read) {
+    return new Promise((resolve, reject) => { line.push({ read, resolve, reject }); pump(); });
+  }
+  async function pump() {
+    if (pumping) return;
+    pumping = true;
+    for (let job; (job = waiting.shift() || behind.shift());) {
+      try { job.resolve(await job.read()); } catch (e) { job.reject(e); }
+    }
+    pumping = false;
+  }
+
+  // Noted, and whether everything now waits: OneLake asked it to, or gave no answer at all. A table's
+  // metadata can fail with no status for reasons of its own, which say nothing about OneLake.
+  function failed(t, e) {
+    retryAt.set(idOf(t), now() + RETRY_MS);
+    const where = `${t.kind} ${[t.workspace, t.item, t.dir, t.schema, t.table].filter(Boolean).join('/')}`.trim();
+    const error = String((e && e.message) || e);
+    log(`sync: ${where} failed — ${error}`);
+    failures.push({ at: now(), where, error });
+    if (failures.length > MAX_FAILURES) failures.shift();
+    if (!(e && (e.status === 429 || e.status === 503 || (!e.status && t.kind !== 'table')))) return false;
+    pausedUntil = now() + PAUSE_MS;
+    log(`sync: paused for ${PAUSE_MS / 1000}s after that`);
+    return true;
+  }
 
   async function due(t, maxAge) {
     if ((retryAt.get(idOf(t)) || 0) > now()) return false;
@@ -72,21 +112,11 @@ function createSyncWorker({ onelake, opened = () => [], pinned = () => [], ttlMs
   // One listing read and written, or why not. False stops the tick.
   async function run(t, mine) {
     try {
-      await read(t);
+      await inTurn(behind, () => readJob(onelake, t));
       retryAt.delete(idOf(t));
     } catch (e) {
       if (e && e.offline) return false;
-      retryAt.set(idOf(t), now() + RETRY_MS);
-      const where = `${t.kind} ${[t.workspace, t.item, t.dir].filter(Boolean).join('/')}`.trim();
-      const error = String((e && e.message) || e);
-      log(`sync: ${where} failed — ${error}`);
-      failures.push({ at: now(), where, error });
-      if (failures.length > MAX_FAILURES) failures.shift();
-      if (e && (e.status === 429 || e.status === 503 || !e.status)) {
-        pausedUntil = now() + PAUSE_MS;
-        log(`sync: paused for ${PAUSE_MS / 1000}s after that`);
-        return false;
-      }
+      if (failed(t, e)) return false;
     }
     return mine === turn && !isOffline();
   }
@@ -176,6 +206,29 @@ function createSyncWorker({ onelake, opened = () => [], pinned = () => [], ttlMs
 
   return {
     tick,
+    /**
+     * Someone is waiting for this: read now, ahead of what the background has next, and answered with
+     * what went into the catalog. It keeps to the worker's rules: one request at a time, and while
+     * OneLake has asked for a pause it fails at once rather than asks again.
+     * @param {object} t  a job, as readJob takes
+     * @param {{ signal?: AbortSignal, onWait?: (s: string) => void }} [o]
+     */
+    first(t, { signal, onWait } = {}) {
+      return inTurn(waiting, async () => {
+        if (signal && signal.aborted) throw new Error('nobody is waiting for this any more');
+        if (now() < pausedUntil) {
+          throw Object.assign(new Error(`OneLake asked for a pause, which ends in ${Math.ceil((pausedUntil - now()) / 1000)}s: try again then`), { status: 429 });
+        }
+        try {
+          const value = await readJob(onelake, t, { onWait });
+          retryAt.delete(idOf(t));
+          return value;
+        } catch (e) {
+          if (!(e && e.offline)) failed(t, e);
+          throw e;
+        }
+      });
+    },
     /** How far it has got, reading only what is kept: for `status`. */
     async progress() {
       const due = {};
@@ -197,4 +250,4 @@ function createSyncWorker({ onelake, opened = () => [], pinned = () => [], ttlMs
   };
 }
 
-module.exports = { createSyncWorker };
+module.exports = { createSyncWorker, readJob };

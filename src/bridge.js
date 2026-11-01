@@ -29,8 +29,8 @@ const EXIT = { OK: 0, FAILED: 1, USAGE: 2, UNAVAILABLE: 3, NOT_CACHED: 4, DECLIN
 const exitName = code => Object.keys(EXIT).find(k => EXIT[k] === code) || 'FAILED';
 
 // The --json answer to anything that failed: the same on both sides of the pipe.
-const failureJson = (code, message, { retry, notes = [] } = {}) => JSON.stringify(
-  { ok: false, error: { code: exitName(code), message, ...(retry ? { retry } : {}) }, notes });
+const failureJson = (code, message, { retry, notes = [], detail } = {}) => JSON.stringify(
+  { ok: false, error: { code: exitName(code), message, ...(retry ? { retry } : {}), ...detail }, notes });
 
 const LISTING = ['fresh', 'csv', 'json', 'limit'];
 const COMMANDS = {
@@ -40,6 +40,7 @@ const COMMANDS = {
   files: { usage: 'files <ws> <item> [<dir>]', min: 2, max: 3, flags: LISTING },
   find: { usage: 'find <text>', min: 1, max: 1, flags: LISTING },
   table: { usage: 'table <ws> <item> <schema.table>', min: 3, max: 3, flags: ['fresh', 'csv', 'json'] },
+  exists: { usage: 'exists <ws> <item> <schema.table>', min: 3, max: 3, flags: ['fresh', 'json'] },
   model: { usage: 'model <ws> <model>', min: 2, max: 2, flags: ['fresh', 'json'] },
   sql: { usage: 'sql "<query>"', min: 1, max: 1, flags: ['csv', 'json', 'limit', 'showSql', 'fresh'] },
   export: { usage: 'export <ws> <model>, or export <ws> <item> <Files/path>', min: 2, max: 3, flags: ['json'] },

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **`exists` on the command line.** Whether a table is there, from the listings alone: yes, no with the closest names, or not
+  cached, and never a false no. `table` gives the same no for a table its listing lacks.
+- **`--fresh` goes through the sync worker,** ahead of what it has next, one request at a time. It fails at once while OneLake
+  has asked for a pause.
 - **`status` and `log` on the command line.** `status` says how a window is doing: its build, session, startup timeline, catalog,
   sync, and where its files are. `log` answers with its own log, whose lines now have the time. Both answer signed out too.
 - **Only SQLite and one cache folder.** Metadata is in one SQLite file, and data is in one cache folder. The DuckDB state

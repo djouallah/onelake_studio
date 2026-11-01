@@ -268,3 +268,64 @@ test("being offline isn't noted as a failure of the listing", async t => {
   await assert.rejects(store.get("workspaces", async () => { throw Object.assign(new Error("offline"), { offline: true }); }));
   assert.equal(store.failureOf("workspaces"), null);
 });
+
+test("someone waiting goes ahead of what the background has next, one request at a time", async () => {
+  const { world, onelake } = setup();
+  const release = [];
+  const seen = [];
+  let running = 0, most = 0;
+  const hold = name => async () => {
+    running++;
+    most = Math.max(most, running);
+    seen.push(name);
+    await new Promise(r => release.push(r));
+    running--;
+    return name === "items" ? [] : ["a", "b"];
+  };
+  const held = { ...onelake, workspaces: hold("workspaces"), items: hold("items") };
+  const worker = createSyncWorker({ onelake: held, ttlMs: () => 5 * MIN, isOffline: () => false, now: () => world.now, pinned: () => ["p1", "p2"], jobsPerTick: 2 });
+  const tick = worker.tick();
+  while (!release.length) await new Promise(r => setImmediate(r));
+  assert.deepEqual(seen, ["items"], "the first of the background's");
+  const asked = worker.first({ kind: "workspaces" });
+  await new Promise(r => setImmediate(r));
+  assert.deepEqual(seen, ["items"], "nothing runs beside it");
+  release.shift()();
+  while (seen.length < 2) await new Promise(r => setImmediate(r));
+  assert.deepEqual(seen, ["items", "workspaces"], "the one waiting, ahead of the background's second");
+  release.shift()();
+  assert.deepEqual(await asked, ["a", "b"]);
+  while (seen.length < 3) await new Promise(r => setImmediate(r));
+  release.shift()();
+  await tick;
+  assert.deepEqual(seen, ["items", "workspaces", "items"]);
+  assert.equal(most, 1);
+});
+
+test("first: a pause fails at once, its own 429 starts one, and a table's own failure doesn't", async () => {
+  const { world, worker, onelake } = setup();
+  world.fail = n => (n === "workspaces" ? Object.assign(new Error("HTTP 429"), { status: 429 }) : null);
+  await assert.rejects(worker.first({ kind: "workspaces" }), /HTTP 429/);
+  world.calls.length = 0;
+  await assert.rejects(worker.first({ kind: "items", workspace: "a" }), /OneLake asked for a pause, which ends in 60s/);
+  assert.deepEqual(world.calls, [], "nothing asked");
+  world.now += 2 * MIN;
+  world.fail = () => null;
+  assert.deepEqual(await worker.first({ kind: "workspaces" }), ["a", "b"]);
+
+  const bad = createSyncWorker({ onelake: { ...onelake, table: async () => { throw new Error("the table metadata has no current-snapshot-id"); } },
+    ttlMs: () => 5 * MIN, isOffline: () => false, now: () => world.now });
+  const job = { kind: "table", workspace: "a", item: "gold.Lakehouse", schema: "dbo", table: "t" };
+  await assert.rejects(bad.first(job), /current-snapshot-id/);
+  const p = await bad.progress();
+  assert.equal(p.pausedUntil, null, "that says nothing about OneLake");
+  assert.equal(p.failures[0].where, "table a/gold.Lakehouse/dbo/t");
+});
+
+test("first: nobody waiting any more is not read", async () => {
+  const { world, worker } = setup();
+  const gone = new AbortController();
+  gone.abort();
+  await assert.rejects(worker.first({ kind: "workspaces" }, { signal: gone.signal }), /nobody is waiting/);
+  assert.deepEqual(world.calls, []);
+});
