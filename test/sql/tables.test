@@ -1,12 +1,12 @@
 # A table is read by its SQL name, kind.workspace.item.schema.table, whatever is open: the
 # engine opens it as the statement names it. Every cached table here is empty.
 
-# First, before anything here opens it: a cached table named where the engine cannot see
-# the name (inside a string) fails, never answers no rows.
+# A table named where the engine cannot see the name (inside a string) is refused, and
+# never answers no rows.
 statement error
 SELECT * FROM query_table('lakehouse.cat2.lh.dbo.t')
 ----
-is not open
+Read only
 
 query TT
 SELECT column_name, column_type FROM (DESCRIBE lakehouse.cat2.lh.dbo.t)
