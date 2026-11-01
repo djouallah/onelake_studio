@@ -59,13 +59,19 @@ let tabText = NAME;
 const titleOf = number => (number > 1 ? `${tabText} (${number})` : tabText);
 function setPanelTitle(text) {
   tabText = text;
-  for (const tab of tabs) tab.panel.title = titleOf(tab.number);
+  for (const tab of tabs) tab.panel.title = tab.name || titleOf(tab.number);
 }
+// A tab opened on something says what it is, as a file's tab does. Only the rest are numbered.
 function nextNumber() {
-  const taken = new Set([...tabs].map(t => t.number));
+  const taken = new Set([...tabs].filter(t => !t.name).map(t => t.number));
   let n = 1;
   while (taken.has(n)) n++;
   return n;
+}
+function nameActiveTab(name) {
+  if (!active || !name) return;
+  active.name = name;
+  active.panel.title = name;
 }
 
 // The page cannot be told to open anything until its script is listening. A click in the
@@ -245,4 +251,4 @@ function revealPanel() {
 // Whether there is a panel to put a name in.
 const panelOpen = () => tabs.size > 0;
 
-module.exports = { openPanel, setPanelTitle, closePanel, revealPanel, panelOpen, postToPanel, postLive, panelSettings };
+module.exports = { openPanel, setPanelTitle, nameActiveTab, closePanel, revealPanel, panelOpen, postToPanel, postLive, panelSettings };

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **A tab says what it holds.** One opened on a table, file, semantic model or saved query is named after it, in place of
+  OneLake Studio.
 - **One click, everywhere.** An app in the tree opens on one click, like a table, a file, a query or a model. A double
   click anywhere counts as one, so it opens one tab and Run runs once. A grid cell stays as it was: one click selects it,
   and a double click or Enter shows it whole.

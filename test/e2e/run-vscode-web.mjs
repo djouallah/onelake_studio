@@ -473,6 +473,8 @@ async function cachedRunMatrix({ saved, home, dbFile }) {
       return /^SELECT \* FROM \S*orders LIMIT 100$/.test(x.box) && /orders/.test(x.title) && x;
     }, 30000);
     check("it wasn't run", !/select \* from/i.test(s.status), s.status);
+    const tabs = (await drive("state")).tabs;
+    check("its tab is named after the table", tabs.includes("orders"), tabs.join(", "));
     check("what was typed is still in the last tab", await before.locator("#sqlEditor").inputValue() === "select 'mine' as typed");
     check("the box's own tab has no Edit SQL", !await (await panel()).locator("#editSqlBtn").isVisible());
   });
@@ -486,6 +488,8 @@ async function cachedRunMatrix({ saved, home, dbFile }) {
     const opened = await until("the file's tree", async () => { const r = await rail(); return r.shown && r.rows.length && r; }, 60000);
     check("the tree lists its schema, tables and view, tables first",
       opened.rows.join() === "shop.sqlite,main,customers,orders,big_orders", opened.rows.join());
+    const named = (await drive("state")).tabs;
+    check("its tab is named after the file", named.includes("shop.sqlite"), named.join(", "));
     const f = await panel();
     const overview = await f.locator("#dbOverview").innerText();
     check("the overview names the engine and every table, with real counts",

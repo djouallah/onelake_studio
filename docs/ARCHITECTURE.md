@@ -118,9 +118,10 @@ The decision outlives the window: the next VS Code start asks for no session, se
 prompts for nothing, until **Sign in to OneLake** or **Switch Microsoft Account** is chosen.
 
 **The title says where this window reads from** ([`src/title.js`](../src/title.js)): the sidebar's header and
-the title of each tab with a SQL box read OneLake Studio and then `offline` or the tenant in use. The tenant is the
+the title of a tab with a SQL box read OneLake Studio and then `offline` or the tenant in use. The tenant is the
 `onelakeStudio.tenantId` setting when it is set, since a guest's own domain would name the wrong tenant, and
-otherwise the account's domain. Refresh and Open are in the view's "..." menu so it fits.
+otherwise the account's domain. Refresh and Open are in the view's "..." menu so it fits. A tab opened on a table, file,
+semantic model or saved query is named after it instead, as a file's tab is in an editor.
 
 ## Offline
 
@@ -219,8 +220,9 @@ every window is a client of it over DuckDB's Quack protocol ([`src/engine-client
   waits for the server. A JSON store from an older version is imported once and left as it was.
   - **It is named after the account, not the install,** so an update keeps it. F5 has its own.
   - **A newer build takes it at once.** A server of the version just updated from may still hold the file, for a window
-    not reloaded yet. The new server asks it for the file over its pipe, using the key in `state-<id>.duckdb.holder`,
-    before any window sees the gap. That window then reads online and isn't logged until it is reloaded. An older build
+    not reloaded yet. The new server asks it to go, over its pipe with the key in `state-<id>.duckdb.holder`, before any
+    window sees the gap: closing the file isn't enough while that window's sessions are attached. A statement running
+    there stops, and until it is reloaded the window starts its own server again, without the file. An older build
     never takes it: it looks again every 15 seconds, and what is remembered reads as not cached until then.
   - **Only a file that isn't a database is thrown out,** set aside as `.bad` and started again. Any other failure, such
     as a disk error or a file from a newer DuckDB, leaves it where it is and runs without it, and the Logs tab says why.

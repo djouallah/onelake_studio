@@ -402,7 +402,7 @@ test("the log survives an update too, and the server's own log keeps one name an
   assert.equal(text.match(/starting: pid/g).length, 2, "both versions in the one file");
 });
 
-test("a newer build takes the state file at once, and the server it came from stays up", async t => {
+test("a newer build takes the state file at once, and the server it came from goes", async t => {
   const { stateDir, open } = await stateServer(t);
   const older = open("me|old", "me", { build: 1 });
   await older.store.put("listing", ["kept"]);
@@ -412,10 +412,12 @@ test("a newer build takes the state file at once, and the server it came from st
   await newer.store.put("written", ["by the newer"]);
   assert.ok(!existsSync(`${stateFileOf(stateDir, "me")}.bad`));
 
-  const up = net.connect(pipePath("me|old"));
-  await new Promise((resolve, reject) => { up.once("connect", resolve); up.once("error", reject); });
-  up.destroy();
-  await assert.rejects(older.client.run("SELECT 1"), "its window has no state file now");
+  const gone = await new Promise(resolve => {
+    const up = net.connect(pipePath("me|old"));
+    up.once("connect", () => { up.destroy(); resolve(false); });
+    up.once("error", () => resolve(true));
+  });
+  assert.equal(gone, true);
   const holder = JSON.parse(readFileSync(`${stateFileOf(stateDir, "me")}.holder`, "utf8"));
   assert.equal(holder.build, 2);
 });

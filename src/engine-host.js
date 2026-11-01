@@ -1196,10 +1196,9 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
 }
 
 // Stopping one that has already gone is fine: Quack answers that it found none.
-const stopListener = (conn, uri) => conn.run(`SELECT * FROM quack_stop(${sqlStr(uri)});`);
 async function restartListener(conn, uri, token) {
-  await stopListener(conn, uri);
+  await conn.run(`SELECT * FROM quack_stop(${sqlStr(uri)});`);
   await conn.run(`SELECT * FROM quack_serve(${sqlStr(uri)}, token = ${sqlStr(token)});`);
 }
 
-module.exports = { createEngineHost, jsonSafe, isOneLakeMetadata, restartListener, stopListener, AUTH_FAILURE, READ_FAILURE, NOT_CACHED };
+module.exports = { createEngineHost, jsonSafe, isOneLakeMetadata, restartListener, AUTH_FAILURE, READ_FAILURE, NOT_CACHED };

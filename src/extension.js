@@ -15,7 +15,7 @@ const { existsSync, statSync } = require('node:fs');
 const { createHash, randomBytes } = require('node:crypto');
 const fsp = require('node:fs/promises');
 const { quoteIdent, sqlStr } = require('./sql');
-const { openPanel, setPanelTitle, closePanel, revealPanel, panelOpen, postToPanel, postLive, panelSettings } = require('./panel');
+const { openPanel, setPanelTitle, nameActiveTab, closePanel, revealPanel, panelOpen, postToPanel, postLive, panelSettings } = require('./panel');
 const { openPerformance } = require('./performance');
 const { openLogs } = require('./logs');
 const { createCatalog } = require('./catalog');
@@ -1095,10 +1095,11 @@ async function activateInner(context) {
     () => show(context, options));
 
   // Whether the panel is there to take it. Each one gets a tab of its own, so a click adds to what is
-  // open and stops nothing.
-  async function openInPanel(msg) {
+  // open and stops nothing. `tabName` is what the tab says: the table, file, model or saved query.
+  async function openInPanel(msg, tabName = msg.table || msg.modelName || msg.name || (msg.path && msg.path.split('/').pop())) {
     if (!await showWithProgress({ createIfNone: true, newTab: true })) return false;
     postToPanel(msg);
+    nameActiveTab(tabName);
     return true;
   }
 
@@ -1831,7 +1832,7 @@ async function activateInner(context) {
     vscode.commands.registerCommand('onelakeStudio.selectTop', async n => {
       if (!n || !n.table) return;
       const top = vscode.workspace.getConfiguration('onelakeStudio').get('selectTopRows', 1000);
-      await openInPanel({ type: 'run-sql', sql: `SELECT *\nFROM ${sqlNameOf(n, n)}\nLIMIT ${Number.isInteger(top) && top > 0 ? top : 1000};\n` });
+      await openInPanel({ type: 'run-sql', sql: `SELECT *\nFROM ${sqlNameOf(n, n)}\nLIMIT ${Number.isInteger(top) && top > 0 ? top : 1000};\n` }, n.table);
     }),
     // A table's columns, comma-separated and quoted where SQL needs it, from its metadata (read
     // from OneLake if the cache does not have it yet).
