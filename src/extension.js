@@ -374,10 +374,6 @@ function tableTtlMs() {
 }
 
 // How much the store of listings and table metadata may hold, per account.
-function storeMaxBytes() {
-  const mb = vscode.workspace.getConfiguration('onelakeStudio').get('metadataCacheMaxMB', 256);
-  return (Number.isFinite(mb) && mb > 0 ? mb : 256) * 1024 * 1024;
-}
 
 // The disk cache's folder for all accounts: `file-cache-v1` under the folder the setting names,
 // or under the extension's storage. Always our own subfolder, so deleting an old cache can
@@ -467,11 +463,11 @@ function sharedEngineServer(context, account) {
 const catalogFiles = new Map();
 // What is kept was replaced under this window: another window's Clear, or an import. Set by activateInner.
 let onStoreCleared = () => {};
-function catalogFileFor(context, account, maxBytes) {
+function catalogFileFor(context, account) {
   if (!catalogFiles.has(account)) {
     const { stateDir, stateKey } = sharedEngineServer(context, account);
     catalogFiles.set(account, createCatalogFile({
-      file: catalogFileOf(stateDir, stateKey), maxBytes,
+      file: catalogFileOf(stateDir, stateKey),
       onCleared: () => onStoreCleared(),
       log: line => out && out.appendLine(line),
     }));
@@ -910,8 +906,8 @@ async function activateInner(context) {
   const jsonStoreOf = key => join(storeRoot, key || 'signed-out');
   const storeFor = key => {
     const dir = jsonStoreOf(key);
-    const backend = catalogFileFor(context, key, storeMaxBytes);
-    return createStore({ dir, backend, ttlMs: catalogTtlMs, maxBytes: storeMaxBytes() });
+    const backend = catalogFileFor(context, key);
+    return createStore({ dir, backend, ttlMs: catalogTtlMs });
   };
   stopServers = async () => {
     const { stopServer } = require('./engine-client');
@@ -944,7 +940,7 @@ async function activateInner(context) {
   nameModelTables = sqlTables.nameTables;
   // Semantic views: pointers to model files, kept per account in the extension's storage.
   // A view made or dropped is in the engine's catalog (SHOW ALL TABLES) by the next statement.
-  semviews = createSemViews({ catalogFor: key => catalogFileFor(context, key, storeMaxBytes),
+  semviews = createSemViews({ catalogFor: key => catalogFileFor(context, key),
                               dir: join(context.globalStorageUri.fsPath, 'semantic-views'), onelake,
                               onChange: () => { if (engine) engine.catalogChanged(); } });
   semviews.useAccount(storeAccount);
@@ -1019,7 +1015,7 @@ async function activateInner(context) {
     canFabric: () => fabricToken().then(t => !!t, () => false),
     isOffline: () => connectivity.offline(),
     lease: () => {
-      try { return catalogFileFor(context, storeAccount, storeMaxBytes).lease(syncOwner, 90_000); } catch (_) { return false; }
+      try { return catalogFileFor(context, storeAccount).lease(syncOwner, 90_000); } catch (_) { return false; }
     },
     log: line => out && out.appendLine(line),
   });
@@ -1820,7 +1816,7 @@ async function activateInner(context) {
       // Everything deleted here is re-read from OneLake at OneLake's speed, which is the
       // whole reason the cache exists — so it is asked first.
       const pick = await vscode.window.showWarningMessage(
-        `Delete ${fmtBytes(size)} of cached OneLake listings, table metadata, first rows, files and table data? They will be read from OneLake again.`,
+        `Delete ${fmtBytes(size)} of cached OneLake listings, table metadata, files and table data? They will be read from OneLake again.`,
         { modal: true }, 'Delete');
       if (pick !== 'Delete') return;
       await onelake.clear();
@@ -2132,7 +2128,6 @@ async function activateInner(context) {
           if (pick === remove) await removeDir(old);
         }
       }
-      if (e.affectsConfiguration('onelakeStudio.metadataCacheMaxMB')) onelake.useStore(storeFor(storeAccount));
       if (e.affectsConfiguration('onelakeStudio.tableOpensOn') ||
           e.affectsConfiguration('onelakeStudio.gridThousandsSeparator')) {
         postLive({ type: 'settings', ...panelSettings() });

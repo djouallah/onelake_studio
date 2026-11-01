@@ -2,12 +2,12 @@
 // =============================================================================
 // catalogtables.js — the catalog's tables, in the catalog file
 // =============================================================================
-// A listing or a table's metadata arrives as a store entry (store.js) and is kept as rows. store.js
+// Everything store.js is asked to keep arrives as an entry under a key, and is kept as rows. store.js
 // and onelake.js still ask by key and get the same answer, so what changes is what is on disk: tables
-// that can be queried, and that no budget evicts.
+// that can be queried, and that nothing evicts. No table holds a key: a key says which row.
 //
-// `listing` says a listing was read and when, so an empty listing is an answer and a missing one means
-// never read. A table can have metadata with no listing, or stay when a listing no longer names it:
+// `listing_read` says a listing was read and when, so an empty listing is an answer and a missing one
+// means never read. A table can have metadata with no listing, or stay when a listing no longer names it:
 // lake_table.listed_pos says whether the listing names it.
 //
 // Whatever a key's value holds beyond the columns goes in `extra`, so nothing is lost. Numbers that can
@@ -15,7 +15,13 @@
 // =============================================================================
 
 const SCHEMA = `
-  CREATE TABLE IF NOT EXISTS listing (k TEXT PRIMARY KEY, ts INTEGER NOT NULL) WITHOUT ROWID;
+  CREATE TABLE IF NOT EXISTS catalog_state (
+    id INTEGER PRIMARY KEY CHECK (id = 1), cleared TEXT, imported INTEGER NOT NULL DEFAULT 0,
+    views_imported INTEGER NOT NULL DEFAULT 0, lease_owner TEXT, lease_until REAL);
+  CREATE TABLE IF NOT EXISTS listing_read (
+    kind TEXT NOT NULL, workspace TEXT NOT NULL, item TEXT NOT NULL, schema_name TEXT NOT NULL, table_name TEXT NOT NULL,
+    dir TEXT NOT NULL, ts INTEGER NOT NULL,
+    PRIMARY KEY (kind, workspace, item, schema_name, table_name, dir)) WITHOUT ROWID;
   CREATE TABLE IF NOT EXISTS workspace (name TEXT PRIMARY KEY, pos INTEGER NOT NULL) WITHOUT ROWID;
   CREATE TABLE IF NOT EXISTS item (
     workspace TEXT NOT NULL, name TEXT NOT NULL, kind TEXT, pos INTEGER NOT NULL, extra TEXT,
@@ -69,13 +75,31 @@ const SCHEMA = `
     workspace TEXT NOT NULL, path TEXT NOT NULL, version TEXT NOT NULL, ts INTEGER NOT NULL,
     PRIMARY KEY (workspace, path, version)) WITHOUT ROWID;
   CREATE TABLE IF NOT EXISTS semantic_view (name TEXT NOT NULL, schema_name TEXT, path TEXT NOT NULL, created TEXT);
-  CREATE TABLE IF NOT EXISTS sync_state (k TEXT PRIMARY KEY, ts INTEGER NOT NULL, error TEXT NOT NULL) WITHOUT ROWID;
+  CREATE TABLE IF NOT EXISTS sync_failure (
+    kind TEXT NOT NULL, workspace TEXT NOT NULL, item TEXT NOT NULL, schema_name TEXT NOT NULL, table_name TEXT NOT NULL,
+    dir TEXT NOT NULL, ts INTEGER NOT NULL, error TEXT NOT NULL,
+    PRIMARY KEY (kind, workspace, item, schema_name, table_name, dir)) WITHOUT ROWID;
   CREATE INDEX IF NOT EXISTS lake_table_listed ON lake_table (workspace, item, listed_pos);
-  CREATE INDEX IF NOT EXISTS listing_ts ON listing (ts);
+  CREATE INDEX IF NOT EXISTS listing_read_ts ON listing_read (ts);
 `;
 // What Clear Cached empties. Not semantic_view: as the models' local copies do, what was opened stays.
-const TABLES = ['listing', 'workspace', 'item', 'lake_table', 'lake_column', 'snapshot', 'lake_object', 'semantic_model', 'app',
-  'delta_commit', 'delta_state', 'delta_property', 'item_name', 'catalog_prefix', 'rows_read', 'file_read', 'sync_state'];
+const TABLES = ['listing_read', 'workspace', 'item', 'lake_table', 'lake_column', 'snapshot', 'lake_object', 'semantic_model', 'app',
+  'delta_commit', 'delta_state', 'delta_property', 'item_name', 'catalog_prefix', 'rows_read', 'file_read', 'sync_failure'];
+
+// Each kind of store key (onelake.js keys): the column each part after its kind goes in, where a row
+// says which entry it is about.
+const KEY_PARTS = {
+  workspaces: [], items: ['workspace'], tables: ['workspace', 'item'], files: ['workspace', 'item', 'dir'],
+  models: ['workspace'], apps: ['workspace'], table: ['workspace', 'item', 'schema_name', 'table_name'],
+  'delta-commits': ['workspace', 'item', 'schema_name', 'table_name'], 'delta-state': ['workspace', 'dir', 'table_name'],
+  'item-named': ['workspace', 'item'], irc: ['item'], rows: ['dir'], 'file-read': ['workspace', 'dir', 'table_name'],
+};
+const WHICH = 'kind = ? AND workspace = ? AND item = ? AND schema_name = ? AND table_name = ? AND dir = ?';
+function whichOf(kind, parts) {
+  const at = { workspace: '', item: '', schema_name: '', table_name: '', dir: '' };
+  KEY_PARTS[kind].forEach((column, i) => { at[column] = parts[i]; });
+  return [kind, at.workspace, at.item, at.schema_name, at.table_name, at.dir];
+}
 
 const isObject = v => !!v && typeof v === 'object' && !Array.isArray(v);
 const listOf = v => Array.isArray(v) && v.every(isObject);
@@ -109,19 +133,20 @@ function createCatalogTables({ statement }) {
   const all = (sql, ...args) => statement(sql).all(...args.map(bind));
   const one = (sql, ...args) => statement(sql).get(...args.map(bind));
 
-  const listed = k => { const r = one('SELECT ts FROM listing WHERE k = ?', k); return r ? r.ts : null; };
+  const listed = (kind, parts) => one(`SELECT ts FROM listing_read WHERE ${WHICH}`, ...whichOf(kind, parts))?.ts ?? null;
+  const stampListing = (kind, parts, at) => run('INSERT OR REPLACE INTO listing_read VALUES (?, ?, ?, ?, ?, ?, ?)', ...whichOf(kind, parts), at);
 
   // A listing with its own rows, which a new one replaces outright.
-  const listingOf = ({ fits, put, rows }) => ({
+  const listingOf = (kind, { fits, put, rows }) => ({
     fits,
-    has: (k, p) => listed(k) != null,
-    get(k, p) {
-      const at = listed(k);
-      return at == null ? null : { at, value: rows(p) };
+    has: parts => listed(kind, parts) != null,
+    get(parts) {
+      const at = listed(kind, parts);
+      return at == null ? null : { at, value: rows(parts) };
     },
-    put(k, p, value, at) {
-      put(p, value);
-      run('INSERT OR REPLACE INTO listing VALUES (?, ?)', k, at);
+    put(parts, value, at) {
+      put(parts, value);
+      stampListing(kind, parts, at);
     },
   });
 
@@ -139,7 +164,7 @@ function createCatalogTables({ statement }) {
     'formatVersion', 'partitionColumns', 'vorderProp', 'format', 'deltaVersion', 'history'];
 
   const routes = {
-    workspaces: listingOf({
+    workspaces: listingOf('workspaces', {
       fits: v => Array.isArray(v) && v.every(w => typeof w === 'string'),
       put(p, value) {
         run('DELETE FROM workspace');
@@ -147,7 +172,7 @@ function createCatalogTables({ statement }) {
       },
       rows: () => all('SELECT name FROM workspace ORDER BY pos').map(r => r.name),
     }),
-    items: listingOf({
+    items: listingOf('items', {
       fits: listOf,
       put([ws], value) {
         run('DELETE FROM item WHERE workspace = ?', ws);
@@ -156,7 +181,7 @@ function createCatalogTables({ statement }) {
       },
       rows: ([ws]) => all('SELECT name, kind, extra FROM item WHERE workspace = ? ORDER BY pos', ws).map(r => rowOf(r, ITEM)),
     }),
-    tables: listingOf({
+    tables: listingOf('tables', {
       fits: listOf,
       put([ws, item], value) {
         run('UPDATE lake_table SET listed_pos = NULL WHERE workspace = ? AND item = ?', ws, item);
@@ -171,7 +196,7 @@ function createCatalogTables({ statement }) {
         WHERE workspace = ? AND item = ? AND listed_pos IS NOT NULL ORDER BY listed_pos`, ws, item)
         .map(r => ({ schema: r.schema_name, table: r.name, ...parsed(r.extra) })),
     }),
-    files: listingOf({
+    files: listingOf('files', {
       fits: listOf,
       put([ws, item, dir], value) {
         run('DELETE FROM lake_object WHERE workspace = ? AND item = ? AND dir = ?', ws, item, dir);
@@ -183,7 +208,7 @@ function createCatalogTables({ statement }) {
         WHERE workspace = ? AND item = ? AND dir = ? ORDER BY pos`, ws, item, dir)
         .map(r => ({ ...rowOf(r, OBJECT), isDir: !!r.is_dir })),
     }),
-    models: listingOf({
+    models: listingOf('models', {
       fits: listOf,
       put([ws], value) {
         run('DELETE FROM semantic_model WHERE workspace = ?', ws);
@@ -193,7 +218,7 @@ function createCatalogTables({ statement }) {
       rows: ([ws]) => all('SELECT id, name, description, extra FROM semantic_model WHERE workspace = ? ORDER BY pos', ws)
         .map(r => rowOf(r, MODEL)),
     }),
-    apps: listingOf({
+    apps: listingOf('apps', {
       fits: listOf,
       put([ws], value) {
         run('DELETE FROM app WHERE workspace = ?', ws);
@@ -204,7 +229,7 @@ function createCatalogTables({ statement }) {
       rows: ([ws]) => all('SELECT id, name, description, url, deployed_at, access, extra FROM app WHERE workspace = ? ORDER BY pos', ws)
         .map(r => rowOf(r, APP)),
     }),
-    'delta-commits': listingOf({
+    'delta-commits': listingOf('delta-commits', {
       fits: listOf,
       put([ws, item, schema, name], value) {
         run('DELETE FROM delta_commit WHERE workspace = ? AND item = ? AND schema_name = ? AND table_name = ?', ws, item, schema, name);
@@ -217,8 +242,8 @@ function createCatalogTables({ statement }) {
     }),
     'delta-state': {
       fits: v => isObject(v) && (v.properties == null || isObject(v.properties)),
-      has: (k, [ws, dir, at]) => !!one('SELECT 1 AS found FROM delta_state WHERE workspace = ? AND dir = ? AND at_version = ?', ws, dir, at),
-      get(k, [ws, dir, at]) {
+      has: ([ws, dir, at]) => !!one('SELECT 1 AS found FROM delta_state WHERE workspace = ? AND dir = ? AND at_version = ?', ws, dir, at),
+      get([ws, dir, at]) {
         const r = one('SELECT * FROM delta_state WHERE workspace = ? AND dir = ? AND at_version = ?', ws, dir, at);
         if (!r) return null;
         const properties = {};
@@ -232,7 +257,7 @@ function createCatalogTables({ statement }) {
           sizeBytes: r.size_bytes, numFiles: r.num_files, deletedRows: r.deleted_rows, ...parsed(r.extra),
         } };
       },
-      put(k, [ws, dir, at], v, ts) {
+      put([ws, dir, at], v, ts) {
         run('INSERT OR REPLACE INTO delta_state VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
           ws, dir, at, ts, number(v.version), number(v.asOf), text(v.source), text(v.id), number(v.createdTime),
           json(v.partitionColumns), number(v.minReaderVersion), number(v.minWriterVersion), json(v.features),
@@ -245,47 +270,47 @@ function createCatalogTables({ statement }) {
     },
     'item-named': {
       fits: isObject,
-      has: (k, [w, i]) => !!one('SELECT 1 AS found FROM item_name WHERE workspace_id = ? AND item_id = ?', w, i),
-      get(k, [w, i]) {
+      has: ([w, i]) => !!one('SELECT 1 AS found FROM item_name WHERE workspace_id = ? AND item_id = ?', w, i),
+      get([w, i]) {
         const r = one('SELECT ts, workspace, item, extra FROM item_name WHERE workspace_id = ? AND item_id = ?', w, i);
         return r ? { at: r.ts, value: rowOf(r, { workspace: 'workspace', item: 'item' }) } : null;
       },
-      put(k, [w, i], v, ts) {
+      put([w, i], v, ts) {
         run('INSERT OR REPLACE INTO item_name VALUES (?, ?, ?, ?, ?, ?)', w, i, ts, text(v.workspace), text(v.item), restOf(v, ['workspace', 'item']));
       },
     },
     irc: {
       fits: v => typeof v === 'string',
-      has: (k, [w]) => !!one('SELECT 1 AS found FROM catalog_prefix WHERE item_key = ?', w),
-      get(k, [w]) {
+      has: ([w]) => !!one('SELECT 1 AS found FROM catalog_prefix WHERE item_key = ?', w),
+      get([w]) {
         const r = one('SELECT ts, prefix FROM catalog_prefix WHERE item_key = ?', w);
         return r ? { at: r.ts, value: r.prefix } : null;
       },
-      put(k, [w], v, ts) { run('INSERT OR REPLACE INTO catalog_prefix VALUES (?, ?, ?)', w, ts, v); },
+      put([w], v, ts) { run('INSERT OR REPLACE INTO catalog_prefix VALUES (?, ?, ?)', w, ts, v); },
     },
     rows: {
       fits: v => v === true,
-      has: (k, [location]) => !!one('SELECT 1 AS found FROM rows_read WHERE location = ?', location),
-      get(k, [location]) {
+      has: ([location]) => !!one('SELECT 1 AS found FROM rows_read WHERE location = ?', location),
+      get([location]) {
         const r = one('SELECT ts FROM rows_read WHERE location = ?', location);
         return r ? { at: r.ts, value: true } : null;
       },
-      put(k, [location], v, ts) { run('INSERT OR REPLACE INTO rows_read VALUES (?, ?)', location, ts); },
+      put([location], v, ts) { run('INSERT OR REPLACE INTO rows_read VALUES (?, ?)', location, ts); },
     },
     'file-read': {
       fits: v => v === true,
-      has: (k, [ws, path, version]) => !!one('SELECT 1 AS found FROM file_read WHERE workspace = ? AND path = ? AND version = ?', ws, path, version),
-      get(k, [ws, path, version]) {
+      has: ([ws, path, version]) => !!one('SELECT 1 AS found FROM file_read WHERE workspace = ? AND path = ? AND version = ?', ws, path, version),
+      get([ws, path, version]) {
         const r = one('SELECT ts FROM file_read WHERE workspace = ? AND path = ? AND version = ?', ws, path, version);
         return r ? { at: r.ts, value: true } : null;
       },
-      put(k, [ws, path, version], v, ts) { run('INSERT OR REPLACE INTO file_read VALUES (?, ?, ?, ?)', ws, path, version, ts); },
+      put([ws, path, version], v, ts) { run('INSERT OR REPLACE INTO file_read VALUES (?, ?, ?, ?)', ws, path, version, ts); },
     },
     table: {
       fits: v => isObject(v) && (v.schemaFields == null || listOf(v.schemaFields)) && (v.stats == null || isObject(v.stats)),
-      has: (k, [ws, item, schema, name]) => !!one(`SELECT 1 AS found FROM lake_table
+      has: ([ws, item, schema, name]) => !!one(`SELECT 1 AS found FROM lake_table
         WHERE workspace = ? AND item = ? AND schema_name = ? AND name = ? AND meta_ts IS NOT NULL`, ws, item, schema, name),
-      get(k, [ws, item, schema, name]) {
+      get([ws, item, schema, name]) {
         const r = one(`SELECT * FROM lake_table WHERE workspace = ? AND item = ? AND schema_name = ? AND name = ?
           AND meta_ts IS NOT NULL`, ws, item, schema, name);
         if (!r) return null;
@@ -320,7 +345,7 @@ function createCatalogTables({ statement }) {
         };
         return { at: r.meta_ts, value };
       },
-      put(k, [ws, item, schema, name], v, at) {
+      put([ws, item, schema, name], v, at) {
         const s = v.stats || {};
         run(`INSERT INTO lake_table (workspace, item, schema_name, name, meta_ts, is_empty, total_records, metadata_location,
             format, meta_extra, has_stats, codec, total_bytes, data_files, delete_files, operation, snapshot_ts, snapshot_count,
@@ -352,39 +377,54 @@ function createCatalogTables({ statement }) {
     },
   };
 
-  // A store key's route and its parts, or null for what isn't catalog data. The key's separator is a
-  // NUL or, from the state file, the character that stood in for one.
-  const SIZES = { workspaces: 0, items: 1, tables: 2, files: 3, models: 1, apps: 1, table: 4,
-    'delta-commits': 4, 'delta-state': 3, 'item-named': 2, irc: 1, rows: 1, 'file-read': 3 };
+  // A store key's kind, route and parts, or null for what has no table. The key's separator is a NUL
+  // or, from an older version's file, the character that stood in for one.
   function routeOf(key) {
     const [kind, ...parts] = String(key).split(/[\0␟]/);
-    if (!Object.hasOwn(SIZES, kind) || parts.length !== SIZES[kind]) return null;
-    return { route: routes[kind], parts };
+    if (!Object.hasOwn(KEY_PARTS, kind) || parts.length !== KEY_PARTS[kind].length) return null;
+    return { kind, route: routes[kind], parts };
   }
 
   return {
-    read(k, key) {
+    read(key) {
       const r = routeOf(key);
-      return r ? r.route.get(k, r.parts) : null;
+      return r ? r.route.get(r.parts) : null;
     },
-    /** Written, or false if this value doesn't fit its table or isn't catalog data. */
-    write(k, key, value, at) {
+    /** Written, or false if this value doesn't fit its table or it has none. */
+    write(key, value, at) {
       const r = routeOf(key);
       if (!r || !r.route.fits(value)) return false;
-      r.route.put(k, r.parts, value, at);
+      r.route.put(r.parts, value, at);
       return true;
     },
-    has(k, key) {
+    has(key) {
       const r = routeOf(key);
-      return !!r && r.route.has(k, r.parts);
+      return !!r && r.route.has(r.parts);
     },
-    isCatalogData: key => !!routeOf(key),
+    /** That a listing an older version kept the time of was read then. */
+    stamp(key, at) {
+      const r = routeOf(key);
+      if (r) stampListing(r.kind, r.parts, at);
+    },
+    noteFailure(key, at, error) {
+      const r = routeOf(key);
+      if (r) run('INSERT OR REPLACE INTO sync_failure VALUES (?, ?, ?, ?, ?, ?, ?, ?)', ...whichOf(r.kind, r.parts), at, error);
+    },
+    clearFailure(key) {
+      const r = routeOf(key);
+      if (r) run(`DELETE FROM sync_failure WHERE ${WHICH}`, ...whichOf(r.kind, r.parts));
+    },
+    failureOf(key) {
+      const r = routeOf(key);
+      const row = r && one(`SELECT ts, error FROM sync_failure WHERE ${WHICH}`, ...whichOf(r.kind, r.parts));
+      return row ? { at: row.ts, error: row.error } : null;
+    },
     /** The store's keys of what was written at or after `ts`, with the latest time among them. */
     changedSince(ts) {
       const keys = [];
       let latest = ts;
-      for (const r of all('SELECT k, ts FROM listing WHERE ts >= ?', ts)) {
-        keys.push(String(r.k).replace(/␟/g, '\0'));
+      for (const r of all('SELECT * FROM listing_read WHERE ts >= ?', ts)) {
+        keys.push([r.kind, ...KEY_PARTS[r.kind].map(column => r[column])].join('\0'));
         latest = Math.max(latest, r.ts);
       }
       for (const r of all('SELECT workspace, item, schema_name, name, meta_ts FROM lake_table WHERE meta_ts >= ?', ts)) {

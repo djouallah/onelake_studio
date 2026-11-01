@@ -182,7 +182,7 @@ function createStore({ dir, backend = null, ttlMs = DEFAULT_TTL_MS, maxBytes = D
     return { value: ent.value, at: ent.at, cached: false, stale: false };
   }
 
-  // A value the caller computed itself (a table's first rows), and its read-back.
+  // A value the caller worked out itself (that a table's rows were read), and its read-back.
   const put = (key, value) => write(key, value).then(() => {});
   const peek = async key => { const e = await read(key); return e ? e.value : undefined; };
   // The same, with when it was stored: { value, at }, or null. Never fetches, never refreshes.

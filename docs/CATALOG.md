@@ -87,7 +87,7 @@ Every row says when it was last read from OneLake.
 | Saved queries | `~/OneLakeStudio/queries/` | Not metadata. |
 | Bytes of a `Files/` object the host reads | A blob on disk | Data, with its etag in `lake_object`. |
 | The log | The state file, `state-<id>.duckdb` | Not catalog data. Could move later. |
-| First rows | A `kv` table in the catalog file | Data, not metadata, and the one thing there a budget may evict. |
+| A table's first rows | The disk cache | Data, not metadata. DuckDB reads them, and the cache holds what it read. |
 
 ## The sync worker
 
@@ -183,7 +183,7 @@ Whatever isn't held says so at once.
 
 | Goes | Stays |
 | --- | --- |
-| The `kv` JSON entries for metadata | The state file, for the log |
+| Keys and JSON values: `kv` and `meta` are gone | The state file, for the log |
 | The server's listing work behind the store | The server, Quack, the control pipe |
 | The `prefetchMetadata` walk, now queue jobs | The read-only guard and the lockdown |
 | The cache-first plumbing for listings in `onelake.js` | NAMING.md's names |

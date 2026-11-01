@@ -257,12 +257,12 @@ test("what an older version kept in its state file comes across once, and leaves
     getToken: async () => secret, setToken: async s => { secret = s; } });
   t.after(async () => { await client.stop().catch(() => {}); client.close(); });
   await client.run("CREATE TABLE kv (k VARCHAR PRIMARY KEY, ts BIGINT, value VARCHAR)");
-  await client.run(`INSERT INTO kv VALUES ('listing', 123, '["a","b''s"]'), ('(imported)', 0, ''), ('rows␟abfss://x', 5, 'true')`);
+  await client.run(`INSERT INTO kv VALUES ('workspaces', 123, '["a","b''s"]'), ('(imported)', 0, ''), ('rows␟abfss://x', 5, 'true')`);
 
   const backend = createCatalogFile({ file: join(dir, "catalog.sqlite") });
   t.after(() => backend.close());
   assert.equal(await backend.importKept({ run: sql => client.run(sql) }), 2);
-  assert.deepEqual(await backend.read("listing"), { at: 123, json: '["a","b\'s"]' });
+  assert.deepEqual(await backend.read("workspaces"), { at: 123, json: '["a","b\'s"]' });
   assert.deepEqual(await backend.read("rows\0abfss://x"), { at: 5, json: "true" });
   assert.equal(await backend.read("(imported)"), null);
   assert.deepEqual(await client.run("SELECT 1 FROM information_schema.tables WHERE table_name = 'kv'"), [], "the state file no longer holds it");

@@ -586,29 +586,6 @@
             "patternErrorMessage": "A full path, e.g. D:\\OneLakeCache or /data/onelake-cache.",
             "markdownDescription": "Where the disk cache is kept, as a full path, for a bigger disk than the one VS Code stores its data on. Empty is VS Code's storage for this extension. A new folder starts empty; you are asked whether to delete the old one. Listings and table metadata stay in VS Code's storage. Applies the next time the engine starts."
           },
-          "onelakeStudio.metadataCacheMaxMB": {
-            "type": "number",
-            "default": 256,
-            "minimum": 1,
-            "scope": "machine",
-            "order": 6,
-            "markdownDescription": "How much of tables' first rows is kept on disk, in MB, per Microsoft account. The oldest are dropped past this size. Listings and table metadata aren't limited: working offline depends on them."
-          }
-        }
-      },
-      {
-        "title": "Engine",
-        "order": 2,
-        "properties": {
-          "onelakeStudio.engineMemoryLimit": {
-            "type": "string",
-            "default": "",
-            "scope": "machine",
-            "order": 1,
-            "pattern": "^$|^\\d+(\\.\\d+)?\\s*(KB|MB|GB|TB|KiB|MiB|GiB|TiB)$",
-            "patternErrorMessage": "A DuckDB memory size, e.g. 4GB or 512MB.",
-            "markdownDescription": "Most memory DuckDB may use, e.g. `4GB`. Empty means a quarter of this machine's RAM. Bigger queries spill to a temp directory instead of failing. Applies the next time the engine starts."
-          },
           "onelakeStudio.engineThreads": {
             "type": "integer",
             "default": 0,

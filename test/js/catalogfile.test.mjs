@@ -34,20 +34,20 @@ async function setup(t) {
 test("an answer is kept, and survives the window that wrote it", async t => {
   const { open } = await setup(t);
   const one = open();
-  await one.store.put("listing", ["a", "b's"]);
+  await one.store.put("workspaces", ["a", "b's"]);
   one.backend.close();
-  assert.deepEqual(await open().store.peek("listing"), ["a", "b's"]);
-  assert.equal(await open().store.peek("absent"), undefined);
+  assert.deepEqual(await open().store.peek("workspaces"), ["a", "b's"]);
+  assert.equal(await open().store.peek("items\0absent"), undefined);
 });
 
 test("when it was kept comes back too, so a kept answer still ages", async t => {
   const { open } = await setup(t);
   let clock = 1000;
   const first = createStore({ dir: null, backend: open().backend, now: () => clock });
-  await first.put("k", { n: 1 });
+  await first.put("workspaces", ["x"]);
   clock = 5000;
   const later = createStore({ dir: null, backend: open().backend, now: () => clock });
-  assert.deepEqual(await later.known("k"), { value: { n: 1 }, at: 1000 });
+  assert.deepEqual(await later.known("workspaces"), { value: ["x"], at: 1000 });
 });
 
 test("a key with a NUL in it, as onelake.js makes them", async t => {
@@ -60,15 +60,15 @@ test("a key with a NUL in it, as onelake.js makes them", async t => {
 test("two windows see each other's answers, and a reader isn't held up by a writer", async t => {
   const { open, file } = await setup(t);
   const one = open(), two = open();
-  await one.store.put("listing", ["kept"]);
-  assert.deepEqual(await two.store.peek("listing"), ["kept"]);
+  await one.store.put("workspaces", ["kept"]);
+  assert.deepEqual(await two.store.peek("workspaces"), ["kept"]);
 
   const writer = new DatabaseSync(file);
   t.after(() => writer.close());
   writer.exec("BEGIN IMMEDIATE");
-  writer.exec("INSERT OR REPLACE INTO kv VALUES ('held', 1, '1')");
+  writer.exec("INSERT OR REPLACE INTO workspace VALUES ('held', 9)");
   const began = Date.now();
-  assert.deepEqual(await createStore({ dir: null, backend: open().backend }).peek("listing"), ["kept"]);
+  assert.deepEqual(await createStore({ dir: null, backend: open().backend }).peek("workspaces"), ["kept"]);
   assert.ok(Date.now() - began < 400, "it did not wait for the writer");
   writer.exec("COMMIT");
 });
@@ -80,54 +80,22 @@ test("Clear reaches what another window holds in memory", async t => {
   let twoStore = null;
   const two = open({ clearedEveryMs: 20, onCleared: () => { told++; twoStore.forget(); } });
   twoStore = two.store;
-  await one.store.put("listing", ["kept"]);
-  assert.deepEqual(await two.store.peek("listing"), ["kept"]);
+  await one.store.put("workspaces", ["kept"]);
+  assert.deepEqual(await two.store.peek("workspaces"), ["kept"]);
   await one.store.clear();
   await sleep(200);
   assert.equal(told, 1);
-  assert.equal(await two.store.peek("listing"), undefined);
+  assert.equal(await two.store.peek("workspaces"), undefined);
 });
 
 test("a window isn't told of its own Clear", async t => {
   const { open } = await setup(t);
   let told = 0;
   const { store } = open({ clearedEveryMs: 20, onCleared: () => { told++; } });
-  await store.put("k", 1);
+  await store.put("workspaces", ["x"]);
   await store.clear();
   await sleep(100);
   assert.equal(told, 0);
-});
-
-test("past the budget, the oldest first rows go, down to 80%, and nothing else does", async t => {
-  const { open } = await setup(t);
-  const { backend } = open({ maxBytes: () => 2000 });
-  await backend.write("workspaces", 1, JSON.stringify(["old but kept"]));
-  await backend.write("item-named\0a\0b", 1, JSON.stringify({ workspace: "w", item: "i" }));
-  await backend.write("rows\0loc", 1, "true");
-  const peek = i => `peek\0_${String(i).padStart(3, "0")}`;
-  for (let i = 0; i < 200; i++) await backend.write(peek(i), i + 10, JSON.stringify("x".repeat(98)));
-  assert.equal(await backend.read(peek(0)), null);
-  // The look at the budget comes on the 200th write, three of which weren't first rows: at peek(196).
-  assert.equal(await backend.read(peek(180)), null);
-  assert.equal((await backend.read(peek(181))).at, 191);
-  assert.equal((await backend.read(peek(199))).at, 209);
-  assert.deepEqual(JSON.parse((await backend.read("workspaces")).json), ["old but kept"]);
-  assert.ok(await backend.read("item-named\0a\0b"));
-  assert.ok(await backend.read("rows\0loc"));
-});
-
-// What onelake.js really stores, built by the code that builds it.
-const WS = "ANZ Retail", ITEM = "gold-1.Lakehouse";
-const icebergMeta = (over = {}) => ({
-  "current-snapshot-id": 2, "current-schema-id": 0, "format-version": 2, "default-spec-id": 0,
-  schemas: [{ "schema-id": 0, fields: [{ id: 1, name: "id", type: "long" }, { id: 2, name: "ts", type: "timestamp" }] }],
-  "partition-specs": [{ "spec-id": 0, fields: [{ name: "day", transform: "day" }] }],
-  properties: { "write.parquet.compression-codec": "zstd" },
-  snapshots: [
-    { "snapshot-id": 1, "timestamp-ms": 1000, "schema-id": 0, summary: { operation: "append", "added-records": "5", "total-records": "5", "engine-name": "x", "engine-version": "1" } },
-    { "snapshot-id": 2, "timestamp-ms": 2000, "schema-id": 0, summary: { operation: "append", "total-records": "9007199254740993", "total-files-size": "123", "total-data-files": "4", "total-delete-files": "0" } },
-  ],
-  ...over,
 });
 
 test("every kind of listing comes back as it went in, from real rows", async t => {
@@ -154,7 +122,6 @@ test("every kind of listing comes back as it went in, from real rows", async t =
   // They are tables, not values.
   const db = new DatabaseSync(file);
   t.after(() => db.close());
-  assert.equal(db.prepare("SELECT count(*) AS n FROM kv").get().n, 0);
   assert.deepEqual(db.prepare("SELECT name FROM workspace ORDER BY pos").all().map(r => r.name), ["b", "a", "ANZ Retail"]);
   assert.deepEqual({ ...db.prepare("SELECT workspace, schema_name, name FROM lake_table WHERE name = 'order'").get() },
     { workspace: WS, schema_name: "sales", name: "order" });
@@ -225,7 +192,7 @@ test("a table read by name before any listing isn't listed by it", async t => {
   assert.ok(await backend.read(`table\0${WS}\0${ITEM}\0dbo\0early`));
 });
 
-test("all the metadata is tables: kv holds a table's first rows and nothing else", async t => {
+test("all the metadata is real tables, and there is no table of keys and values", async t => {
   const { open, file } = await setup(t);
   const { backend } = open();
   const state = { version: 12, asOf: 10, source: "checkpoint", id: "abc", createdTime: 1700000000000, partitionColumns: ["day"],
@@ -240,7 +207,6 @@ test("all the metadata is tables: kv holds a table's first rows and nothing else
     [`file-read\0${WS}\0${ITEM}/Files/a.parquet\0etag`]: true,
   };
   for (const [k, v] of Object.entries(entries)) await backend.write(k, 9, JSON.stringify(v));
-  await backend.write("peek\0loc", 9, '{"rows":[]}');
   for (const [k, v] of Object.entries(entries)) {
     const kept = await backend.read(k);
     assert.equal(kept.at, 9, k);
@@ -248,7 +214,12 @@ test("all the metadata is tables: kv holds a table's first rows and nothing else
   }
   const db = new DatabaseSync(file);
   t.after(() => db.close());
-  assert.deepEqual(db.prepare("SELECT k FROM kv").all().map(r => r.k), ["peek␟loc"]);
+  const tables = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all().map(r => r.name);
+  for (const gone of ["kv", "meta", "listing", "sync_state"]) assert.ok(!tables.includes(gone), gone);
+  for (const table of tables) {
+    const columns = db.prepare(`SELECT name FROM pragma_table_info('${table}')`).all().map(r => r.name);
+    assert.ok(!columns.includes("k") && !columns.includes("value") || table === "delta_property", `${table}: ${columns}`);
+  }
   assert.deepEqual(db.prepare("SELECT version, last_modified FROM delta_commit ORDER BY pos").all().map(r => [r.version, r.last_modified]),
     [[12, 1700000000000], [11, null]]);
   assert.equal(db.prepare("SELECT value FROM delta_property WHERE name = 'delta.columnMapping.mode'").get().value, "name");
@@ -263,15 +234,17 @@ test("all the metadata is tables: kv holds a table's first rows and nothing else
   }
 });
 
-test("a value that doesn't fit its table is kept all the same", async t => {
+test("a value with no table, or that doesn't fit its table, isn't kept", async t => {
   const { open } = await setup(t);
-  const { backend } = open();
-  await backend.write(`items\0${WS}`, 1, JSON.stringify(["an older shape"]));
-  assert.deepEqual(JSON.parse((await backend.read(`items\0${WS}`)).json), ["an older shape"]);
-  await backend.write(`items\0${WS}`, 2, JSON.stringify([{ name: "now", kind: "Lakehouse" }]));
-  assert.deepEqual(JSON.parse((await backend.read(`items\0${WS}`)).json), [{ name: "now", kind: "Lakehouse" }]);
+  const { backend, store } = open();
+  await assert.rejects(backend.write("peek\0loc", 1, '{"rows":[]}'), /no table for peek/);
+  await assert.rejects(backend.write("no such kind", 1, "1"), /no table/);
+  await assert.rejects(backend.write(`items\0${WS}`, 1, JSON.stringify(["an older shape"])), /no table/);
+  assert.equal(await backend.read(`items\0${WS}`), null);
+  await store.put("peek\0loc", { rows: [] });
+  assert.deepEqual(await store.peek("peek\0loc"), { rows: [] }, "the store still holds it in memory, as when any write fails");
+  assert.equal(await open().store.peek("peek\0loc"), undefined);
 });
-
 test("Clear empties the tables too, and the size says so", async t => {
   const { open } = await setup(t);
   const { backend, store } = open();
@@ -285,34 +258,54 @@ test("Clear empties the tables too, and the size says so", async t => {
   assert.equal(await open().store.peek(`table\0${WS}\0${ITEM}\0dbo\0t`), undefined);
 });
 
-test("a file from before the tables moves over once, keeping what isn't catalog data", async t => {
+test("a file from an older version moves over once, and its old tables go", async t => {
   const { open, file, dir } = await setup(t);
   await mkdir(dir, { recursive: true });
   const old = new DatabaseSync(file);
-  old.exec("CREATE TABLE kv (k TEXT PRIMARY KEY, ts INTEGER NOT NULL, value TEXT NOT NULL); CREATE TABLE meta (k TEXT PRIMARY KEY, v TEXT NOT NULL);");
+  old.exec(`CREATE TABLE kv (k TEXT PRIMARY KEY, ts INTEGER NOT NULL, value TEXT NOT NULL);
+    CREATE TABLE meta (k TEXT PRIMARY KEY, v TEXT NOT NULL);
+    CREATE TABLE listing (k TEXT PRIMARY KEY, ts INTEGER NOT NULL) WITHOUT ROWID;
+    CREATE TABLE sync_state (k TEXT PRIMARY KEY, ts INTEGER NOT NULL, error TEXT NOT NULL) WITHOUT ROWID;
+    CREATE TABLE workspace (name TEXT PRIMARY KEY, pos INTEGER NOT NULL) WITHOUT ROWID;
+    INSERT INTO workspace VALUES ('from a table', 0);
+    INSERT INTO listing VALUES ('workspaces', 2);
+    INSERT INTO meta VALUES ('imported', '1'), ('views-imported', '1'), ('cleared', 'abc');
+    INSERT INTO sync_state VALUES ('workspaces', 1, 'old');
+    PRAGMA user_version = 3;`);
   const add = old.prepare("INSERT INTO kv VALUES (?, ?, ?)");
-  add.run("workspaces", 3, '["a"]');
-  add.run(`items␟a`, 4, '[{"name":"i.Lakehouse","kind":"Lakehouse"}]');
+  add.run("items␟a", 4, '[{"name":"i.Lakehouse","kind":"Lakehouse"}]');
   add.run("peek␟loc", 5, '{"rows":[]}');
   add.run("catalog snapshot", 6, "[]");
-  add.run("rows␟loc", 7, "true");
+  add.run("rows␟other", 7, "true");
   add.run("item-named␟a␟b", 8, '{"workspace":"w","item":"i"}');
   old.close();
 
   const { backend } = open();
-  assert.deepEqual(await backend.read("workspaces"), { at: 3, json: '["a"]' });
+  assert.deepEqual(await backend.read("workspaces"), { at: 2, json: '["from a table"]' });
   assert.equal((await backend.read("items\0a")).at, 4);
-  assert.deepEqual(await backend.read("peek\0loc"), { at: 5, json: '{"rows":[]}' });
+  assert.deepEqual(await backend.read("rows\0loc"), { at: 5, json: "true" }, "first rows kept say that its rows were read");
+  assert.equal(await backend.read("peek\0loc"), null);
   assert.equal(await backend.read("catalog snapshot"), null);
-  assert.deepEqual(await backend.read("rows\0loc"), { at: 7, json: "true" });
+  assert.deepEqual(await backend.read("rows\0other"), { at: 7, json: "true" });
   assert.deepEqual(await backend.read("item-named\0a\0b"), { at: 8, json: '{"workspace":"w","item":"i"}' });
+  assert.equal(backend.imported(), true, "what it had imported stays imported");
   backend.close();
   const db = new DatabaseSync(file);
   t.after(() => db.close());
-  assert.deepEqual(db.prepare("SELECT k FROM kv").all().map(r => r.k), ["peek␟loc"]);
-  assert.equal(db.prepare("PRAGMA user_version").get().user_version, 3);
+  const tables = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all().map(r => r.name);
+  for (const gone of ["kv", "meta", "listing", "sync_state"]) assert.ok(!tables.includes(gone), gone);
+  assert.equal(db.prepare("PRAGMA user_version").get().user_version, 4);
+  assert.equal(db.prepare("SELECT cleared FROM catalog_state").get().cleared, "abc");
 });
 
+test("a new file has its one state row", async t => {
+  const { open, file } = await setup(t);
+  await open().store.put("workspaces", ["kept"]);
+  const db = new DatabaseSync(file);
+  t.after(() => db.close());
+  assert.deepEqual(db.prepare("SELECT count(*) AS n FROM catalog_state").get().n, 1);
+  assert.throws(() => db.exec("INSERT INTO catalog_state (id) VALUES (2)"), /CHECK/);
+});
 test("an import puts catalog data in the tables, and leaves newer rows alone", async t => {
   const { dir, open, file } = await setup(t);
   const jsonDir = join(dir, "json");
@@ -385,8 +378,8 @@ test("a file that isn't a database is set aside, and started again", async t => 
   await writeFile(file, "not a database, and not going to be one, however long this text may run on");
   const said = [];
   const { store } = open({ log: line => said.push(line) });
-  await store.put("listing", ["new"]);
-  assert.deepEqual(await store.peek("listing"), ["new"]);
+  await store.put("workspaces", ["new"]);
+  assert.deepEqual(await store.peek("workspaces"), ["new"]);
   assert.match(readFileSync(`${file}.bad`, "utf8"), /not a database/);
   assert.match(said.join(), /set aside/);
 });
@@ -409,37 +402,35 @@ test("the JSON store is imported once, what is newer stays, and what Clear takes
   const { dir, open } = await setup(t);
   const jsonDir = join(dir, "json");
   await mkdir(jsonDir);
-  await writeFile(join(jsonDir, "a.json"), JSON.stringify({ key: "from a file", at: 123, value: { kept: true, q: "it's" } }));
-  await writeFile(join(jsonDir, "b.json"), JSON.stringify({ key: "newer here", at: 1, value: "old" }));
+  await writeFile(join(jsonDir, "a.json"), JSON.stringify({ key: "items\0from a file", at: 123, value: [{ name: "it's" }] }));
+  await writeFile(join(jsonDir, "b.json"), JSON.stringify({ key: "workspaces", at: 1, value: ["old"] }));
   await writeFile(join(jsonDir, "c.json"), "not json");
 
   const { backend, store } = open();
-  await store.put("newer here", "new");
+  await store.put("workspaces", ["new"]);
   assert.equal(backend.imported(), false);
   assert.equal(await backend.importKept({ jsonDir }), 2);
   assert.equal(backend.imported(), true);
-  assert.deepEqual(await store.known("from a file"), { value: { kept: true, q: "it's" }, at: 123 });
-  assert.equal(await store.peek("newer here"), "new");
+  assert.deepEqual(await store.known("items\0from a file"), { value: [{ name: "it's" }], at: 123 });
+  assert.deepEqual(await store.peek("workspaces"), ["new"]);
 
   await store.clear();
   assert.equal(await open().backend.importKept({ jsonDir }), 0);
-  assert.equal(await open().store.peek("from a file"), undefined);
+  assert.equal(await open().store.peek("items\0from a file"), undefined);
 });
-
 test("a Clear before any import keeps the old files from coming back", async t => {
   const { dir, open } = await setup(t);
   const jsonDir = join(dir, "json");
   await mkdir(jsonDir);
-  await writeFile(join(jsonDir, "a.json"), JSON.stringify({ key: "old", at: 1, value: 1 }));
+  await writeFile(join(jsonDir, "a.json"), JSON.stringify({ key: "items\0old", at: 1, value: [{ name: "n" }] }));
   const { backend, store } = open();
   await store.clear();
   assert.equal(await backend.importKept({ jsonDir }), 0);
-  assert.equal(await store.peek("old"), undefined);
+  assert.equal(await store.peek("items\0old"), undefined);
 });
-
 test("a state file's entries come across a page at a time, and it can fail and be tried again", async t => {
   const { dir, open } = await setup(t);
-  const rows = Array.from({ length: 1203 }, (_, i) => ({ k: `k${String(i).padStart(5, "0")}`, ts: String(i), value: JSON.stringify(i) }));
+  const rows = Array.from({ length: 1203 }, (_, i) => ({ k: `items␟w${String(i).padStart(5, "0")}`, ts: String(i), value: JSON.stringify([{ name: `n${i}` }]) }));
   let dropped = false;
   const fake = async sql => {
     if (/information_schema/.test(sql)) return [{ found: 1 }];
@@ -453,16 +444,15 @@ test("a state file's entries come across a page at a time, and it can fail and b
   assert.equal(backend.imported(), false, "nothing is marked when it fails");
 
   assert.equal(await backend.importKept({ run: fake, jsonDir: join(dir, "none") }), 1203);
-  assert.equal(await store.peek("k01202"), 1202);
-  assert.deepEqual(await store.known("k00007"), { value: 7, at: 7 });
+  assert.deepEqual(await store.peek("items\0w01202"), [{ name: "n1202" }]);
+  assert.deepEqual(await store.known("items\0w00007"), { value: [{ name: "n7" }], at: 7 });
   assert.equal(dropped, true);
 });
-
 test("a state file that already took the JSON files, or was cleared since, keeps them out", async t => {
   const { dir, open } = await setup(t);
   const jsonDir = join(dir, "json");
   await mkdir(jsonDir);
-  await writeFile(join(jsonDir, "a.json"), JSON.stringify({ key: "cleared long ago", at: 1, value: 1 }));
+  await writeFile(join(jsonDir, "a.json"), JSON.stringify({ key: "items\0gone", at: 1, value: [{ name: "n" }] }));
   const fake = async sql => {
     if (/information_schema/.test(sql)) return [{ found: 1 }];
     if (/SELECT 1 AS done/.test(sql)) return [{ done: 1 }];
@@ -470,10 +460,9 @@ test("a state file that already took the JSON files, or was cleared since, keeps
   };
   const { backend, store } = open();
   assert.equal(await backend.importKept({ run: fake, jsonDir }), 0);
-  assert.equal(await store.peek("cleared long ago"), undefined);
+  assert.equal(await store.peek("items\0gone"), undefined);
 });
-
-test("a state file with no kv left has nothing to import, and isn't an error", async t => {
+test("a state file with nothing left has nothing to import, and isn't an error", async t => {
   const { open } = await setup(t);
   const { backend } = open();
   const fake = async sql => (/information_schema/.test(sql) ? [] : []);
@@ -491,12 +480,12 @@ test("the file's name is the account's, not the install's, and is not the state 
 test("reading what is remembered loads no DuckDB", async t => {
   const { file, open } = await setup(t);
   const { store } = open();
-  await store.put("listing", ["kept"]);
+  await store.put("workspaces", ["kept"]);
   const script = `
     const { createCatalogFile } = require(${JSON.stringify(require.resolve("../../src/catalogfile.js"))});
     const { createStore } = require(${JSON.stringify(require.resolve("../../src/store.js"))});
     const backend = createCatalogFile({ file: ${JSON.stringify(file)} });
-    createStore({ dir: null, backend }).peek("listing").then(value => {
+    createStore({ dir: null, backend }).peek("workspaces").then(value => {
       backend.close();
       console.log(JSON.stringify({ value, duckdb: Object.keys(require.cache).filter(f => /duckdb/i.test(f)) }));
     });

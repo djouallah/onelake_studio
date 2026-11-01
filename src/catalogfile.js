@@ -1,20 +1,18 @@
 'use strict';
 // =============================================================================
-// catalogfile.js — what the extension remembers, in SQLite
+// catalogfile.js — the catalog, in SQLite
 // =============================================================================
-// The store's entries (store.js) live in one SQLite file per account, read and written with Node's own
-// node:sqlite. No DuckDB is loaded for it and no server has to be running, so the tree draws from it
-// before anything else has started.
-//
-// All metadata is in the catalog's tables (catalogtables.js), which are never evicted. A table's first
-// rows are data, and are a key and a value in `kv` with a budget. So is an entry from an older version
-// that doesn't fit its table, until it is next read again.
+// All metadata lives in one SQLite file per account, in real tables (catalogtables.js), read and written
+// with Node's own node:sqlite. No DuckDB is loaded for it and no server has to be running, so the tree
+// draws from it before anything else has started. Nothing here is evicted. Data isn't here at all: that
+// is OneLake, and the disk cache.
 //
 // Each window opens the file itself, and WAL lets it read while another window writes. What another
 // window wrote or cleared is noticed by a look at the file every few seconds, since no pipe joins
 // windows here. It also holds which window sweeps the tenant (syncworker.js), as a lease.
 //
-// What an older version kept, in the state file's kv table or in JSON files, is imported once.
+// What an older version kept, in the state file or in JSON files, comes across once, and a file from
+// an older version moves to these tables as it opens.
 //
 // A file's bytes stay files (store.js blobs): they can be half a gigabyte, and a row is text.
 // =============================================================================
@@ -26,18 +24,15 @@ const { dirname, join } = require('node:path');
 const { sqlStr } = require('./sql');
 const { createCatalogTables, CATALOG_SCHEMA } = require('./catalogtables');
 
-const SCHEMA_VERSION = 3;        // 2: listings and table metadata out of kv. 3: the rest of the metadata too
-const FIRST_ROWS = 'peek␟';      // onelake.js keys.peek, as keyOf writes it
-// A list only ever kept to save walking the catalog one entry at a time, which SQLite doesn't need.
-const NO_LONGER_KEPT = 'catalog snapshot';
+const SCHEMA_VERSION = 4;
 const BATCH_BYTES = 1024 * 1024;
 const PAGE_ROWS = 500;
-const PRUNE_EVERY = 200;         // writes between looks at the budget
 const BUSY_MS = 500;             // this runs on the extension host, so it never waits long for a writer
 const CLEARED_EVERY_MS = 3_000;
 const OLD_IMPORTED = '(imported)';
-// A store's key can hold a NUL (onelake.js). The state file had to avoid it, and its keys come here as they are.
-const keyOf = key => String(key).replace(/\0/g, '␟');
+// A table's first rows, as an older version kept them under its snapshot. They are data, so what comes
+// across is that this snapshot's rows were read: the disk cache has what they were read from.
+const OLD_FIRST_ROWS = /^peek[\0␟]/;
 // SQLite's words for a file that will never open. A locked file or a full disk isn't one.
 const UNUSABLE = /not a database|malformed/i;
 
@@ -51,8 +46,6 @@ const SCHEMA = `
   PRAGMA busy_timeout = ${BUSY_MS};
   PRAGMA journal_mode = WAL;
   PRAGMA synchronous = NORMAL;
-  CREATE TABLE IF NOT EXISTS kv (k TEXT PRIMARY KEY, ts INTEGER NOT NULL, value TEXT NOT NULL);
-  CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT NOT NULL);
   ${CATALOG_SCHEMA}
 `;
 
@@ -63,17 +56,16 @@ function setAside(file) {
 }
 
 /**
- * What store.js takes as `backend`: read, write, clear, size.
+ * What store.js takes as `backend`: read, write, clear, size. A key is the store's (onelake.js); what it
+ * asks for lives in that key's table.
  * @param {object} o
  * @param {string} o.file  catalogFileOf
- * @param {() => number} [o.maxBytes]  budget; the oldest go first past it
  * @param {() => void} [o.onCleared]  another window emptied the file
  * @param {number} [o.clearedEveryMs]
  * @param {(line: string) => void} [o.log]  why the file can't be opened, once
  */
-function createCatalogFile({ file, maxBytes = () => 256 * 1024 * 1024, onCleared = () => {},
-                             clearedEveryMs = CLEARED_EVERY_MS, log = () => {} }) {
-  let db = null, poll = null, seen = null, said = false, writes = 0;
+function createCatalogFile({ file, onCleared = () => {}, clearedEveryMs = CLEARED_EVERY_MS, log = () => {} }) {
+  let db = null, poll = null, seen = null, said = false;
   let statements = new Map();
   let dataVersion = null, changedFrom = 0;
   const subscribers = new Set();
@@ -95,8 +87,7 @@ function createCatalogFile({ file, maxBytes = () => 256 * 1024 * 1024, onCleared
     return statements.get(sql);
   };
   const tables = createCatalogTables({ statement });
-  const metaOf = k => statement('SELECT v FROM meta WHERE k = ?').get(k)?.v ?? null;
-  const setMeta = (k, v) => statement('INSERT OR REPLACE INTO meta VALUES (?, ?)').run(k, v);
+  const state = () => statement('SELECT * FROM catalog_state WHERE id = 1').get() || {};
 
   function database() {
     if (db) return db;
@@ -122,12 +113,12 @@ function createCatalogFile({ file, maxBytes = () => 256 * 1024 * 1024, onCleared
       throw e;
     }
     migrate();
-    seen = metaOf('cleared');
+    seen = state().cleared ?? null;
     changedFrom = Date.now();
     lookForChanges();
     poll = setInterval(() => {
       try {
-        const now = metaOf('cleared');
+        const now = state().cleared ?? null;
         if (now !== seen) { seen = now; onCleared(); }
         lookForChanges();
       } catch (_) {}
@@ -142,58 +133,56 @@ function createCatalogFile({ file, maxBytes = () => 256 * 1024 * 1024, onCleared
     catch (e) { database().exec('ROLLBACK'); throw e; }
   }
 
-  // One entry where it belongs: the catalog's tables if it fits them, and otherwise kv. In a transaction
-  // of the caller's. A kept value that isn't JSON can't be catalog data.
+  // An entry an older version kept, where it now belongs. One that doesn't fit its table, or has none,
+  // is left behind: it is only a cache, and is read again when it is needed. In a caller's transaction.
   function place(k, ts, value) {
-    let parsed;
-    try { parsed = JSON.parse(value); } catch (_) { parsed = undefined; }
-    if (parsed !== undefined && tables.write(k, k, parsed, ts)) {
-      statement('DELETE FROM kv WHERE k = ?').run(k);
+    if (OLD_FIRST_ROWS.test(k)) {
+      tables.write(k.replace(OLD_FIRST_ROWS, 'rows\0'), true, ts);
       return;
     }
-    statement('INSERT OR REPLACE INTO kv VALUES (?, ?, ?)').run(k, ts, value);
+    let parsed;
+    try { parsed = JSON.parse(value); } catch (_) { return; }
+    tables.write(k, parsed, ts);
   }
 
-  // A file from before the tables: what it holds moves to where it now belongs, once.
+  const version = () => Number(db.prepare('PRAGMA user_version').get().user_version);
+
+  // The tables an older version of this file had, moved to these and gone. Once, for one window.
   function migrate() {
-    if (Number(database().prepare('PRAGMA user_version').get().user_version) >= SCHEMA_VERSION) return;
+    if (version() >= SCHEMA_VERSION) return;
     inOne(() => {
-      for (const r of database().prepare('SELECT k, ts, value FROM kv').all()) {
-        if (r.k === NO_LONGER_KEPT) statement('DELETE FROM kv WHERE k = ?').run(r.k);
-        else if (tables.isCatalogData(r.k)) place(r.k, r.ts, r.value);
+      if (version() >= SCHEMA_VERSION) return;
+      const has = t => !!db.prepare("SELECT 1 AS found FROM sqlite_master WHERE type = 'table' AND name = ?").get(t);
+      db.exec('INSERT OR IGNORE INTO catalog_state (id) VALUES (1)');
+      if (has('kv')) {
+        for (const r of db.prepare('SELECT k, ts, value FROM kv').all()) place(r.k, r.ts, r.value);
+        db.exec('DROP TABLE kv');
       }
-      database().exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
+      if (has('listing')) {
+        for (const r of db.prepare('SELECT k, ts FROM listing').all()) tables.stamp(r.k, r.ts);
+        db.exec('DROP TABLE listing');
+      }
+      if (has('sync_state')) db.exec('DROP TABLE sync_state');
+      if (has('meta')) {
+        const old = k => db.prepare('SELECT v FROM meta WHERE k = ?').get(k)?.v ?? null;
+        db.prepare('UPDATE catalog_state SET cleared = ?, imported = ?, views_imported = ? WHERE id = 1')
+          .run(old('cleared'), old('imported') != null ? 1 : 0, old('views-imported') != null ? 1 : 0);
+        db.exec('DROP TABLE meta');
+      }
+      db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     });
-  }
-
-  const firstRowsBytes = () => Number(statement(`SELECT coalesce(sum(length(value)), 0) AS total FROM kv
-    WHERE k >= '${FIRST_ROWS}' AND k < '${FIRST_ROWS}￿'`).get().total);
-
-  // Only first rows go, oldest first and down to 80%, so the next write does not land straight back
-  // here. Everything else here is what offline depends on.
-  function prune() {
-    const limit = maxBytes();
-    if (firstRowsBytes() <= limit) return;
-    statement(`DELETE FROM kv WHERE k IN (
-      SELECT k FROM (SELECT k, sum(length(value)) OVER (ORDER BY ts DESC, k) AS kept FROM kv
-                     WHERE k >= '${FIRST_ROWS}' AND k < '${FIRST_ROWS}￿') WHERE kept > ?)`)
-      .run(Math.floor(limit * 0.8));
   }
 
   // What an older version kept. What is already here is newer, and stays.
   function addRows(rows) {
     if (!rows.length) return;
-    const inKv = statement('SELECT 1 AS found FROM kv WHERE k = ?');
     inOne(() => {
-      for (const r of rows) {
-        if (r.k === NO_LONGER_KEPT || tables.has(r.k, r.k) || inKv.get(r.k)) continue;
-        place(r.k, r.ts, r.value);
-      }
+      for (const r of rows) if (!tables.has(r.k)) place(r.k, r.ts, r.value);
     });
   }
 
-  // The state file's kv, a page at a time. False if it says the JSON files were imported into it, or
-  // cleared since: what was taken doesn't come back from them.
+  // The state file's old table, a page at a time. False if it says the JSON files were imported into
+  // it, or cleared since: what was taken doesn't come back from them.
   async function fromStateFile(run) {
     const found = await run(`SELECT 1 AS found FROM information_schema.tables WHERE table_name = 'kv'`);
     if (!found.length) return { rows: 0, jsonToo: true };
@@ -217,7 +206,7 @@ function createCatalogFile({ file, maxBytes = () => 256 * 1024 * 1024, onCleared
       try { e = JSON.parse(await fsp.readFile(join(dir, n), 'utf8')); } catch (_) { continue; }
       if (!e || typeof e.key !== 'string') continue;
       const value = JSON.stringify(e.value);
-      batch.push({ k: keyOf(e.key), ts: Math.floor(Number(e.at) || 0), value });
+      batch.push({ k: e.key, ts: Math.floor(Number(e.at) || 0), value });
       bytes += value.length;
       if (bytes > BATCH_BYTES) flush();
     }
@@ -227,28 +216,20 @@ function createCatalogFile({ file, maxBytes = () => 256 * 1024 * 1024, onCleared
 
   return {
     async read(key) {
-      const k = keyOf(key);
       database();
-      const kept = tables.read(k, k);
-      if (kept) return { at: Number(kept.at), json: JSON.stringify(kept.value) };
-      const row = statement('SELECT ts, value FROM kv WHERE k = ?').get(k);
-      return row ? { at: Number(row.ts), json: row.value } : null;
+      const kept = tables.read(key);
+      return kept ? { at: Number(kept.at), json: JSON.stringify(kept.value) } : null;
     },
+    /** Fails on what has no table: every key the store is asked to keep has one. */
     async write(key, at, json) {
       inOne(() => {
-        place(keyOf(key), Math.floor(at), json);
-        statement('DELETE FROM sync_state WHERE k = ?').run(keyOf(key));
+        if (!tables.write(key, JSON.parse(json), Math.floor(at))) throw new Error(`the catalog has no table for ${String(key).split('\0')[0]}`);
+        tables.clearFailure(key);
       });
-      if (++writes % PRUNE_EVERY === 0) prune();
     },
     /** A read of this entry failed: the last good answer is still served, and this says why it is old. */
-    noteFailure(key, at, error) {
-      statement('INSERT OR REPLACE INTO sync_state VALUES (?, ?, ?)').run(keyOf(key), Math.floor(at), String(error));
-    },
-    failureOf(key) {
-      const row = statement('SELECT ts, error FROM sync_state WHERE k = ?').get(keyOf(key));
-      return row ? { at: Number(row.ts), error: row.error } : null;
-    },
+    noteFailure(key, at, error) { tables.noteFailure(key, Math.floor(at), String(error)); },
+    failureOf(key) { database(); return tables.failureOf(key); },
     /** Hears the store's keys of what another window wrote. Answers how to stop. */
     subscribe(fn) {
       subscribers.add(fn);
@@ -258,10 +239,9 @@ function createCatalogFile({ file, maxBytes = () => 256 * 1024 * 1024, onCleared
     lease(owner, ms, now = Date.now()) {
       let mine = false;
       inOne(() => {
-        let held = null;
-        try { held = JSON.parse(metaOf('sync_lease')); } catch (_) {}
-        if (held && held.owner !== owner && held.until > now) return;
-        setMeta('sync_lease', JSON.stringify({ owner, until: now + ms }));
+        const held = state();
+        if (held.lease_owner != null && held.lease_owner !== owner && held.lease_until > now) return;
+        statement('UPDATE catalog_state SET lease_owner = ?, lease_until = ? WHERE id = 1').run(owner, now + ms);
         mine = true;
       });
       return mine;
@@ -269,17 +249,15 @@ function createCatalogFile({ file, maxBytes = () => 256 * 1024 * 1024, onCleared
     async clear() {
       seen = crypto.randomBytes(8).toString('hex');
       inOne(() => {
-        statement('DELETE FROM kv').run();
         tables.clear();
-        setMeta('cleared', seen);
         // What was cleared doesn't come back from an older version's files.
-        setMeta('imported', '1');
+        statement('UPDATE catalog_state SET cleared = ?, imported = 1 WHERE id = 1').run(seen);
       });
     },
     // The file, or nothing if it holds nothing: an empty one still has its pages.
     async size() {
       database();
-      if (!tables.anything() && !statement('SELECT EXISTS (SELECT 1 FROM kv) AS found').get().found) return 0;
+      if (!tables.anything()) return 0;
       return Number(statement('SELECT page_count * page_size AS bytes FROM pragma_page_count(), pragma_page_size()').get().bytes);
     },
 
@@ -294,16 +272,17 @@ function createCatalogFile({ file, maxBytes = () => 256 * 1024 * 1024, onCleared
     },
     /** The pointers an older version kept in a JSON file, once. It is left as it was. */
     importViews(jsonFile) {
-      if (metaOf('views-imported') != null) return;
+      database();
+      if (state().views_imported) return;
       let kept = [];
       try { kept = JSON.parse(fs.readFileSync(jsonFile, 'utf8')); } catch (_) {}
       inOne(() => {
         if (Array.isArray(kept)) for (const v of kept) if (v && v.name && v.path) tables.addView(v);
-        setMeta('views-imported', '1');
+        statement('UPDATE catalog_state SET views_imported = 1 WHERE id = 1').run();
       });
     },
 
-    imported: () => metaOf('imported') != null,
+    imported() { database(); return !!state().imported; },
     /**
      * What an older version kept, once. Newer rows here are left alone, so this can run behind a tree
      * that is already reading and fetching. A failure marks nothing, and the next window tries again.
@@ -313,12 +292,13 @@ function createCatalogFile({ file, maxBytes = () => 256 * 1024 * 1024, onCleared
      * @returns {Promise<number>} how many entries came across
      */
     async importKept({ run = null, jsonDir = null } = {}) {
-      if (metaOf('imported') != null) return 0;
-      const state = run ? await fromStateFile(run) : { rows: 0, jsonToo: true };
-      const json = state.jsonToo && jsonDir ? await fromJson(jsonDir) : 0;
-      setMeta('imported', '1');
+      database();
+      if (state().imported) return 0;
+      const old = run ? await fromStateFile(run) : { rows: 0, jsonToo: true };
+      const json = old.jsonToo && jsonDir ? await fromJson(jsonDir) : 0;
+      statement('UPDATE catalog_state SET imported = 1 WHERE id = 1').run();
       if (run) await run('DROP TABLE IF EXISTS kv');
-      return state.rows + json;
+      return old.rows + json;
     },
     close() {
       clearInterval(poll);

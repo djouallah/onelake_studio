@@ -220,8 +220,8 @@ every window is a client of it over DuckDB's Quack protocol ([`src/engine-client
 - **What is remembered:** a SQLite file, `engine-server\catalog-<id>.sqlite` in the extension's storage
   ([`src/catalogfile.js`](../src/catalogfile.js)). All metadata is real tables there: listings, table metadata, Delta state
   and commits, the models opened, and what has been read ([`src/catalogtables.js`](../src/catalogtables.js)). A `listing`
-  table says what was read and when, so an empty listing is an answer. A table's first rows are data, not metadata: a key
-  and a value in `kv`, and the only thing evicted, past `metadataCacheMaxMB`, as offline depends on the rest. Each window
+  table says what was read and when, so an empty listing is an answer. Nothing is evicted, as offline depends on it. Data isn't kept here: a table's first
+  rows come from DuckDB, whose disk cache holds what it read. Each window
   opens the file itself with Node's `node:sqlite`, so it needs no server and no DuckDB, and a page's SQL can't reach it, as
   it is outside the folders DuckDB may open. WAL lets a window read while another writes, and another window's Clear is
   noticed within a few seconds. A file that isn't a database is set aside as `.bad` and started again. It is named after
@@ -257,7 +257,7 @@ SQL box, no Stop and no Restart.
 
 | What | Where it is kept | When it is read again |
 | --- | --- | --- |
-| Listings (workspaces, items, tables, `Files/`, semantic models), table metadata, first rows | The catalog file, [`src/catalogfile.js`](../src/catalogfile.js) | Served at once, refreshed in the background past its window |
+| Listings (workspaces, items, tables, `Files/`, semantic models), table metadata | The catalog file, [`src/catalogfile.js`](../src/catalogfile.js) | Served at once, refreshed in the background past its window |
 | The name behind a Direct Lake model's item GUIDs | The catalog file | Only when using it fails |
 | The bytes of a `Files/` object the host reads (an image, a `.bim`, a SQLite copy, a saved file) | Under the etag its cached listing gave | Only when the file was rewritten |
 | What DuckDB reads: table data and `Files/` objects | DuckDB's disk cache (`cache_httpfs`) | Only when the file was rewritten: a kept copy is checked against the file's version tag and modification time |
@@ -584,7 +584,6 @@ personal skills, and it follows the extension through updates.
 | `onelakeStudio.prefetchMetadata` | on | Reads every table's metadata in the background once a lakehouse's Tables node is opened, so the first click is a disk read. |
 | `onelakeStudio.diskCacheMaxGB` | 64 | How much of what DuckDB reads from OneLake, tables and `Files/`, is kept on disk, per account. `0` turns the disk cache off. |
 | `onelakeStudio.cacheDirectory` | empty | Where the disk cache is kept, as a full path. Empty is VS Code's storage for this extension. A new folder starts empty. |
-| `onelakeStudio.metadataCacheMaxMB` | 256 | How much of tables' first rows is kept on disk, per account. Listings and table metadata aren't limited. |
 | `onelakeStudio.engineMemoryLimit` | empty | Most memory DuckDB may use, e.g. `4GB`. Empty is a quarter of the machine's RAM. |
 | `onelakeStudio.engineThreads` | 0 | How many threads DuckDB may use. `0` is every core. |
 | `onelakeStudio.engineSpillMaxGB` | 0 | How much a query bigger than memory may spill to the temp folder. `0` is DuckDB's default. |
