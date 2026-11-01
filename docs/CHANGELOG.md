@@ -1,13 +1,38 @@
 # Changelog
 
-## Unreleased
+## 0.2.10
 
+- **What is cached stays true.** A connection that drops during a listing no longer empties that listing. A Delta table
+  dropped and made again can be read. A table cached as empty is looked at again rather than answering no rows for up to a
+  day. The disk cache's limit is held while the engine runs, not only when it starts, and **Clear Cached OneLake Data** gives the
+  space back.
+- **Read only holds in more places.** Statements that got past the guard are refused, among them a second statement behind a
+  Unicode space, `query()`, and functions that write from a `SELECT`. Nothing loads after the engine's lockdown.
+- **The OneLake token goes only to OneLake.** An Azure URL naming any other host is refused, however the statement builds it.
+- **Switching account is clean.** One account's listings can't land in another's cache, and Sign In closes what the last
+  account had open. Logs and Performance close with it.
+- **Offline doesn't wait.** A tab opens with no wait on the account provider, and a first click knows there is no internet.
+  Export to Fabric says it needs a connection before asking anything.
+- **Export to Fabric asks more before it overwrites:** another model's app, a file changed in OneLake since, or a publish that
+  never finished. It refuses a table its lakehouse doesn't hold, and a failed re-export can't clear a live app's sign-in.
+- **Fixes:**
+  - A rename that changes only a saved query's case no longer deletes it.
+  - History's **Query** button is back on an Iceberg table, with the snapshot's full id.
+  - Two models whose names clean to the same text keep a local copy each. A model with `#`, `%` or `/` in its name is
+    downloaded once more.
+  - Delta History no longer counts rewritten rows as added.
+  - Explore's date filters take in the whole last day on a timestamp column, and its CSV has no totals' marks.
+  - A result landing leaves focus in the SQL box. Stop holds while a statement is being prepared, and a Plan can be stopped.
+  - The SQL box reads comments, quotes and `$` as DuckDB does, and sends what you wrote unchanged.
+  - Long integers keep their digits in the inspector and in a JSON document, and `NaN` shows as `NaN`.
+- **Faster on large tenants.** Walking the catalog is one pass rather than a query per table, a first statement doesn't wait
+  behind the catalog's listing, and a new window doesn't ask for a Delta table's log again if another just did.
 - **A folder that is no table says so.** A folder under `Tables/` with neither a Delta log nor Iceberg metadata, such as
   files another tool left there, shows as *not a valid table* in the tree, `ls` and `find`, and `SHOW ALL TABLES` leaves it out.
   Reading it fails at once, with no wait for a conversion that would never come.
 - **A Direct Lake model over a SQL endpoint opens.** Its tables are read from OneLake, from the item behind the endpoint, and
-  nothing connects to the endpoint. If Fabric doesn't show the endpoint, they are read from the one item in the model's own
-  workspace holding them all, and a message says so. If no one item does, it is refused.
+  nothing connects to the endpoint. If Fabric doesn't show an endpoint in the model's own workspace, they are read from the one
+  item there holding them all, and a message says so. Otherwise it is refused.
 - **A Delta table is read with `delta_scan`,** from its own log. Reading it through Fabric's Iceberg conversion could give one
   column another's values with no error, when a file's own column ids disagreed with the conversion's, as seen on a real table.
   Iceberg tables stay on `iceberg_scan`. Its log is kept in the cache folder and the parts of files it reads in the disk cache, so what
