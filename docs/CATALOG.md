@@ -192,6 +192,17 @@ file. So a Delta table reads through one path, online and offline ([`src/deltami
 Rewriting the log to absolute paths was tried and isn't the way: `delta_scan` takes a path as absolute only if it starts with `/`, and a
 rewrite would mean producing Delta's metadata ourselves. A table's log is in a folder of its own, so the disk cache's eviction doesn't touch it.
 
+Measured on the real `scada` table, 22 million rows, with the engine's lockdown on and a space in the folder's name:
+
+| Read | Took | Result |
+|---|---|---|
+| Whole table, online, cold, through the mount | 10.9s, 47 MB kept | The same as `delta_scan` on OneLake itself |
+| The same, offline, a new process with no token | 0.18s | The same |
+| One year, online, cold | 4.3s, 4.5 MB kept | The same |
+| A year not read, offline | 0.03s | Refused: not cached on this machine |
+
+Mounting onto a local folder or a `file://` path is refused by the lockdown.
+
 **No file downloader, because of what was measured** on generated local Delta tables of 40 files and 131 MB:
 
 - `LIMIT 5` opened all 40 files and read 37 MB, with `read_parquet` too, and at one thread as at eight.
