@@ -433,6 +433,9 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
         const paths = [ca, ...allowedPaths.filter(Boolean).map(p => String(p).replace(/\\/g, '/'))];
         await conn.run(`SET allowed_directories = [${dirs.map(sqlStr).join(', ')}];`);
         await conn.run(`SET allowed_paths = [${paths.map(sqlStr).join(', ')}];`);
+        // What is needed loaded above, and an extension loaded later could only be one planted in a
+        // folder allowed here, with unsigned ones allowed for ours.
+        await conn.run('SET autoload_known_extensions = false; SET autoinstall_known_extensions = false;');
         await conn.run('SET enable_external_access = false;');
         await conn.run('SET lock_configuration = true;');
       }

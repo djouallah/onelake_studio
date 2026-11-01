@@ -22,7 +22,7 @@ import {
   basename, abfssUrl, fileSqlName, fileSource,
   fileExt, readerFor, PARQUET_EXTS, DB_EXTS, ZIP_EXTS, isSqliteHeader, isTextExt,
   dbCatalogSql, dbCountSql, dbCatalog,
-  sqlStr, quoteIdent, prepareReadOnlySql,
+  sqlStr, quoteIdent,
   tableKey, fileKey, sanitizeIdent,
   normalizeRow, rowCollector, fmtBytes,
 } from "./paths.js";
@@ -643,14 +643,12 @@ export function createEngine({
   }
 
   // ---------------------------------------------------------------------------
-  // Read-only SQL. One statement, must start with a read keyword.
+  // Read-only SQL. The host's guard says what may run (src/sql.js), and the text goes to it as written:
+  // a scanner here changed string values with no error.
   // ---------------------------------------------------------------------------
-  // The parsing and the guard live in paths.js, where they are tested: doing this with a
-  // pair of regexes used to eat a /* */ that was part of a string value — changing the
-  // result set with no error at all — and reject a perfectly legal SELECT 'a;b'.
   // `onRows` hears how many rows have arrived, for a result that takes a while.
   async function runSql(sql, { onRows } = {}) {
-    return materialize(prepareReadOnlySql(sql), onRows);
+    return materialize(String(sql), onRows);
   }
 
   // A statement's whole result as plain JS, in the shape the results grid renders.

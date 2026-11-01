@@ -184,10 +184,10 @@ The engine is **DuckDB 2.0 running natively in a process of its own** ([The serv
   snapshots, deletes, schema evolution.
 - **Reading files:** `Files/` objects are named as in [NAMING.md](NAMING.md#files), and DuckDB reads them as `abfss://` URLs.
 - **Lockdown:** file access is limited to the temp directory, `https://`, `abfss://` and `zip://` over a
-  remote archive.
+  remote archive. Nothing loads after it: every extension is loaded before, and autoload is off.
 - **What a statement may be:** from a tab or the command line, one read, or an `EXPLAIN` of one. Never `COPY`,
-  `INSERT`, `EXPORT`, `PRAGMA`, anything that creates, drops or attaches, a Quack function, or the disk cache's or
-  the log's own switches.
+  `INSERT`, `EXPORT`, `PRAGMA`, anything that creates, drops or attaches, a Quack function, the disk cache's or
+  the log's own switches, `query()`, a function that writes, or an Azure URL whose host isn't OneLake's.
 - **How a tab sets up a file:** by host methods, `fileView`, `attachFile` and `releaseFiles`, not by SQL. A tab takes
   away only what it made, and what it made goes when it closes. A view's source is one read too, and an attach is
   always `READ_ONLY`, from OneLake or a copy the host made.

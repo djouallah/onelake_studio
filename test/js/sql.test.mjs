@@ -7,7 +7,7 @@ import { createRequire } from "node:module";
 import { READS, WRITES } from "./sql-disagreements.mjs";
 
 const require = createRequire(import.meta.url);
-const { assertReads, checkedRead, isShowAllTables } = require("../../src/sql.js");
+const { assertReads, checkedRead, isShowAllTables, readsCatalog } = require("../../src/sql.js");
 
 const ALLOWED = [
   "SELECT 42",
@@ -28,6 +28,11 @@ const ALLOWED = [
   "FROM t",
   "SELECT COLUMNS(*)::VARCHAR FROM (\nSELECT 1 AS a\n) LIMIT 500",
   "SELECT * FROM (VALUES ('a', NULL::VARCHAR)) t(column_name, kind)",
+  // A value can mention what a statement may not call.
+  "SELECT 'a query (b)', 'write_blob(x)' AS note",
+  "SELECT * FROM read_text('abfss://ANZ Retail@onelake.dfs.fabric.microsoft.com/lh.Lakehouse/Files/x.txt')",
+  "SELECT * FROM read_text('abfss://ws@westus-onelake.blob.fabric.microsoft.com/lh.Lakehouse/Files/x.txt')",
+  "SELECT 'abfss://x/m.json'",
   ...READS,
 ];
 
@@ -55,6 +60,17 @@ const REFUSED = [
   "SELECT * FROM enable_logging(['Quack'])",
   "SELECT * FROM quack_stop('quack:127.0.0.1:1')",
   "SELECT * FROM \"quack_serve\"('quack:127.0.0.1:1')",
+  "SELECT * FROM query('SELECT * FROM quack' || '_stop(''quack:127.0.0.1:1'')')",
+  "SELECT * FROM QUERY ('SELECT 1')",
+  "SELECT * FROM \"query\"('SELECT 1')",
+  "SELECT * FROM main.query_table('t' || 'x')",
+  "SELECT write_blob('x', 'abc'::BLOB)",
+  "SELECT \"write_blob\"('x', 'abc'::BLOB)",
+  "SELECT write_log('forged', level := 'error', log_type := 'Quack')",
+  "SELECT * FROM read_text('abfss://x@attacker.invalid/y.txt')",
+  "SELECT * FROM read_text('abfss://x y@attacker.invalid/y.txt')",
+  "SELECT * FROM read_text('az://x@attacker.invalid/y.txt')",
+  "SELECT * FROM read_text('zip://abfss://x@onelake.dfs.fabric.microsoft.com.attacker.invalid/y.zip/z')",
   "COPY (SELECT 1) TO 'abfss://ws@onelake.dfs.fabric.microsoft.com/lh.Lakehouse/Files/x.csv'",
   "EXPLAIN ANALYZE COPY (SELECT 1) TO 'abfss://ws@onelake.dfs.fabric.microsoft.com/x.csv'",
   "EXPLAIN (ANALYZE, FORMAT json) COPY (SELECT 1) TO 'x.csv'",
@@ -123,6 +139,18 @@ test("a PIVOT, which the parser can't write as JSON, runs with its comments gone
   await assert.rejects(checkedRead("SELECT 'pivot' AS a", parser(NOT_SELECT)), /Read only/, "the word in a string is no PIVOT");
 });
 
+test("a PIVOT's parser says it can be a query: what can't be one as a subquery is no read", async () => {
+  const asked = [];
+  const answer = async sql => { asked.push(sql); return asked.length === 1 ? NOT_SELECT : SYNTAX; };
+  await assert.rejects(checkedRead("SELECT 1 FROM (PIVOT t ON a)", answer), /Read only/);
+  assert.equal(asked[1], "SELECT * FROM (SELECT 1 FROM (PIVOT t ON a)\n)");
+});
+
+test("a statement that names the catalog, a subquery's SHOW too, has it synced first", () => {
+  for (const sql of ["SHOW ALL TABLES", "SELECT * FROM (SHOW ALL TABLES)", "SELECT * FROM information_schema.tables"]) assert.ok(readsCatalog(sql), sql);
+  for (const sql of ["SELECT 1", "SELECT 'SHOW TABLES'"]) assert.ok(!readsCatalog(sql), sql);
+});
+
 test("the command line's refusal names what it refused", () => {
   assert.throws(() => assertReads("DROP TABLE memory.main.not_a_table"),
     { message: "Read only: OneLake Studio never writes, and DROP is not a read." });
@@ -157,6 +185,9 @@ test("a statement's tables are its five-part names under a kind, however they ar
   // DESCRIBE, EXPLAIN and a view's body name tables too.
   assert.equal(refs("EXPLAIN ANALYZE SELECT count(*) FROM SQLDatabase.ws.db.dbo.t").length, 1);
   assert.equal(refs("DESCRIBE Lakehouse.ws.lh.dbo.t").length, 1);
+  // A comment between its parts, and a Unicode space around it, are as DuckDB reads them.
+  assert.equal(refs("SELECT * FROM lakehouse.aemo /*c*/ .data.dbo.t").length, 1);
+  assert.equal(refs("SELECT * FROM lakehouse.aemo.data.dbo.t ").length, 1);
 });
 
 test("filesReadBy: the OneLake files a statement reads, and not one that is only a value", () => {
@@ -191,12 +222,18 @@ test("a file's name counts only where SQL reads a file, and one that is wrong is
     `SELECT * FROM "lakehouse.aemo.data/Files/x.parquet"`]) {
     assert.ok(refs(sql).length >= 1, sql);
   }
+  // A call's parentheses can hold a query, which reads as any other.
+  assert.equal(refs(`SELECT 1 WHERE a IN (SELECT b FROM ${F})`).length, 1);
+  // Nor does a value's FROM say anything of what comes after it.
+  assert.deepEqual(refs(`SELECT 1 FROM t WHERE p IS DISTINCT FROM 'lakehouse.sales/2024'`), []);
   assert.equal(refs(`SELECT 1 FROM read_parquet([${F}, ${F}])`).length, 2);
   assert.equal(refs(`SELECT 1 FROM ${F} a, ${F} b`).length, 2);
   // Only ever a value: these are strings, and DuckDB gets them as they are.
   for (const sql of [`SELECT ${F}`, `SELECT 1, ${F}`, `SELECT upper(${F})`, `SELECT 1, upper(${F}) FROM t`, `SELECT 1 FROM t WHERE p = ${F}`, `SELECT 1 FROM t WHERE p IN (${F})`,
     `SELECT 1 FROM t WHERE f(${F})`, `SELECT * FROM (VALUES (${F})) v(p)`, `SELECT 1 FROM t, read_csv('a.csv', ${F})`, `SELECT 1 FROM t ORDER BY a DESC, ${F}`,
-    `SELECT E${F} FROM t`, `SELECT "from", ${F} FROM t`, `SELECT t.from, ${F} FROM t`, `-- FROM ${F}\nSELECT 1`, `SELECT $$ FROM ${F} $$`]) {
+    `SELECT E${F} FROM t`, `SELECT "from", ${F} FROM t`, `SELECT t.from, ${F} FROM t`, `-- FROM ${F}\nSELECT 1`, `SELECT $$ FROM ${F} $$`,
+    `SELECT 1 FROM t WHERE p IS DISTINCT FROM ${F}`, `SELECT trim(LEADING 'l' FROM ${F})`, `SELECT a IS DISTINCT FROM b, ${F} AS p FROM t`,
+    `SELECT 1 FROM t WHERE p IS NOT DISTINCT FROM ${F}`, `SELECT substring(${F} FROM 1 FOR 2)`]) {
     assert.deepEqual(refs(sql), [], sql);
   }
   // Not names at all, wherever they are.

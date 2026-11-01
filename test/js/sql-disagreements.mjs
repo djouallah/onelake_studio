@@ -12,6 +12,9 @@ export const WRITES = [
   `SELECT 1 AS a$b$ ; ${COPY}`,                     // a '$' inside a word opens nothing
   `SELECT $é$'$é$ AS a ; ${COPY} --'`,              // a tag can hold more than ASCII
   `SELECT 1 -- c\r; ${COPY}`,                       // a carriage return ends a line comment
+  `SELECT $$'$$ AS a ; ${COPY} --'`,           // a Unicode space is a space, so a $$ can open after one
+  `SELECT  $$'' pivot '$$; CREATE OR REPLACE VIEW lakehouse.a.b.c.t AS SELECT 'POISONED' v; --'`,
+  "WITH values AS (SELECT 1 a) DELETE FROM t WHERE a IN (SELECT a FROM (PIVOT (SELECT 2 a, 2 b) ON a USING sum(b) GROUP BY a))",
 ];
 
 // Each looks like more than one statement, or a write, to the same scanner, and is one read.
@@ -23,4 +26,7 @@ export const READS = [
   "SELECT $$a; COPY$$ AS a",
   "SELECT $é$a; COPY$é$ AS a",
   "SELECT 1 AS a -- COPY\r\nFROM range(1)",
+  "SELECT $$a; COPY$$ AS a",
+  "SELECT $$a$$;",
+  "(SELECT 1) UNION ALL (SELECT 2)",
 ];

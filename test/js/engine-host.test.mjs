@@ -149,6 +149,13 @@ test("what the read-only guard takes as a read or a write, DuckDB's own parser d
     "/* a comment */ PIVOT (SELECT 'x' AS k, 1 AS v) ON k USING sum(v)"])).rows, [{ x: 1 }]);
   assert.deepEqual((await engine.call("query", [
     "SELECT * FROM (PIVOT (SELECT 'x' AS k, 1 AS v) ON k IN ('x') USING sum(v))"])).rows, [{ x: 1 }]);
+  assert.deepEqual((await engine.call("query", [
+    "WITH x AS (SELECT 'x' AS k, 1 AS v) PIVOT x ON k USING sum(v)"])).rows, [{ x: 1 }]);
+  await assert.rejects(engine.call("query", ["SELECT * FROM query('SELECT * FROM quack' || '_stop(''quack:127.0.0.1:1'')')"]), /Read only/);
+  await assert.rejects(engine.call("query", ["SELECT write_log('forged', level := 'error', log_type := 'Quack')"]), /Read only/);
+  // Nothing loads after the lockdown, with unsigned extensions allowed for ours.
+  assert.deepEqual((await engine.call("query", [
+    "SELECT current_setting('autoload_known_extensions') AS a, current_setting('autoinstall_known_extensions') AS b"])).rows, [{ a: false, b: false }]);
   await assert.rejects(engine.call("query", ["PRAGMA database_list"]), /PRAGMA is not a read/);
   await assert.rejects(engine.call("query", ["SELECT cache_httpfs_set_offline(true)"]), /Read only/);
   await assert.rejects(engine.call("query", ["SELECT * FROM truncate_duckdb_logs()"]), /Read only/);

@@ -17,10 +17,8 @@ const quoteIdent = s => `"${String(s).replace(/"/g, '""')}"`;
 // -----------------------------------------------------------------------------
 // Read only, enforced where the engine is
 // -----------------------------------------------------------------------------
-// The extension never writes to OneLake or Fabric, and that is not left to the page's own
-// guard (paths.js prepareReadOnlySql), which checks only the first keyword — so
-// `EXPLAIN ANALYZE COPY (…) TO 'abfss://…'`, which RUNS the copy, went through it. Every
-// statement the page or the command line sends is checked here, before DuckDB runs it.
+// The extension never writes to OneLake or Fabric. Every statement the page or the command line
+// sends is checked here, before DuckDB runs it.
 //
 // What passes: one statement that reads. Nothing else: no COPY, INSERT, UPDATE, DELETE, EXPORT,
 // INSTALL, LOAD, SET, CREATE, DROP, ATTACH or DETACH. What a tab sets up to read a file is a host
@@ -33,8 +31,12 @@ const quoteIdent = s => `"${String(s).replace(/"/g, '""')}"`;
 // Where a comment, a quoted text or a $$ string ends, as DuckDB's own scanner reads them. The
 // guard is only as good as this agreement: where they differ, a ';' or a COPY that DuckDB runs is
 // text this file never looks at. Each was seen getting past when it was wrong.
-const IDENT_CHAR = /[A-Za-z0-9_$\u0080-￿]/;
-const DOLLAR_TAG = /\$(?:[A-Za-z_\u0080-￿][A-Za-z0-9_\u0080-￿]*)?\$/y;
+// DuckDB takes the Unicode spaces (U+00A0, U+2000 to U+200B, U+202F, U+205F, U+3000, U+FEFF) for spaces
+// before it reads anything else, so they are never part of a word.
+const LETTERS = '\\u00c0-\\u1fff\\u200c-\\u202e\\u2030-\\u205e\\u2060-\\u2fff\\u3001-\\ufefe\\uff00-\\uffff';
+const HIGH = `\\u0080-\\u009f\\u00a1-\\u00bf${LETTERS}`;
+const IDENT_CHAR = new RegExp(`[A-Za-z0-9_$${HIGH}]`);
+const DOLLAR_TAG = new RegExp(`\\$(?:[A-Za-z_${HIGH}][A-Za-z0-9_${HIGH}]*)?\\$`, 'y');
 
 // The end of the comment starting at `i`, or -1 when none does. A line comment stops at either
 // line break, and block comments nest.
@@ -89,7 +91,9 @@ function dollarEnd(sql, i) {
 
 // Comments become a space and the INSIDE of every literal, quoted identifier and $$ string
 // is dropped (its quotes kept), so no keyword can hide in one and no name can pose as one.
-// `seps` are the offsets of the ';' outside them. With `keep`, only the comments go.
+// `seps` are the offsets of the ';' outside them. With `keep`, only the comments go. With NAMES, the
+// inside of a quoted name stays too, and a string's goes: a function's name can be quoted.
+const NAMES = 'names';
 function scan(sql, keep = false) {
   const out = [];
   const seps = [];
@@ -106,7 +110,7 @@ function scan(sql, keep = false) {
     if (c === "'" || c === '"') {
       const start = i;
       i = quotedEnd(sql, i);
-      if (keep) out.push(sql.slice(start, i));
+      if (keep === true || (keep === NAMES && c === '"')) out.push(sql.slice(start, i));
       else out.push(c, c);
       continue;
     }
@@ -115,7 +119,9 @@ function scan(sql, keep = false) {
       if (end !== -1) {
         const start = i;
         i = end;
-        out.push(keep ? sql.slice(start, i) : "''");
+        // Two pieces when it goes: `seps` counts them, as characters.
+        if (keep === true) out.push(sql.slice(start, i));
+        else out.push("'", "'");
         continue;
       }
     }
@@ -145,17 +151,21 @@ function topLevelWords(text) {
 }
 
 function isRead(text) {
-  const first = (/^\s*([A-Za-z_]+)/.exec(text) || [, ''])[1].toLowerCase();
+  // (SELECT 1) UNION ALL (SELECT 2) starts with a parenthesis.
+  const first = (/^[\s(]*([A-Za-z_]+)/.exec(text) || [, ''])[1].toLowerCase();
   if (first !== 'with') return READS.has(first);
-  // The statement after the CTEs is the first top-level word that can start one (a CTE
-  // named like a keyword has to be quoted, and quoted names are gone by now).
-  const main = topLevelWords(text).slice(1).find(w => STARTS.has(w) && w !== 'with');
+  // The statement after the CTEs is the first top-level word that can start one, other than a
+  // CTE's own name: `values` is a legal one, bare.
+  const words = topLevelWords(text).slice(1);
+  const main = words.find((w, i) => STARTS.has(w) && w !== 'with' && words[i + 1] !== 'as');
   return !!main && READS.has(main);
 }
 
 const refuse = why => {
   throw new Error(`Read only: OneLake Studio never writes, and ${why}.`);
 };
+
+const ONELAKE_HOST = /^(?:[a-z0-9-]+-)?onelake\.(?:dfs|blob)\.fabric\.microsoft\.com$/i;
 
 // The statement's text with comments and the insides of quotes gone, or refused: more than one
 // statement, an empty one, or Quack.
@@ -168,6 +178,17 @@ function oneStatement(sql) {
   if (/\bquack_\w+|\bscan_data_from_quack_client\b/i.test(kept)) refuse('Quack is not for statements');
   // The disk cache's switches and the engine's log are the host's, on a server every tab shares.
   if (/\bcache_httpfs_\w+|\b(?:enable_logging|disable_logging|truncate_duckdb_logs)\b/i.test(kept)) refuse('the engine\'s own switches are not for statements');
+  // Each of these writes from a SELECT. Named as a function, a string's insides being gone, so a value can mention one.
+  const called = scan(String(sql), NAMES).text;
+  if (/\b(?:write_blob|write_log)"?\s*\(/i.test(called)) refuse('this function writes');
+  // query('…' || '…') runs SQL no name above can be found in, DuckDB having joined the text up first.
+  if (/\bquery(?:_table)?"?\s*\(/i.test(called)) refuse('query() runs what no check here can read');
+  // The OneLake secret goes with any abfss:// URL, whatever its host. A URL joined up from pieces gets past
+  // this, and the disk cache refuses it there too.
+  for (const [, authority] of kept.matchAll(/\b(?:abfss?|az|azure):\/\/([^/'"\r\n]*)/gi)) {
+    const host = authority.slice(authority.lastIndexOf('@') + 1);
+    if (host.includes('.') && !ONELAKE_HOST.test(host)) refuse(`${host} is not OneLake`);
+  }
   const s = text.trim().replace(/;+\s*$/, '').trim();
   if (!s) refuse('this statement is empty');
   return s;
@@ -208,11 +229,16 @@ async function parsedRead(sql, serialize, strict) {
     if (strict) throw new Error(parsed.error_message);
     return sql;
   }
-  // A PIVOT is a read this answer can't speak for: it can parse into more than one statement. So it
-  // runs with the comments gone, and no text this file took for a comment can be anything else.
   const text = scan(String(sql)).text;
-  if (PIVOT.test(text)) return withoutComments(sql);
-  notARead(text.trim());
+  if (!PIVOT.test(text)) notARead(text.trim());
+  // A PIVOT is a read this answer can't speak for: it can parse into more than one statement. As a
+  // subquery it says the same, while what isn't a query there fails to parse, as a DELETE with a PIVOT
+  // in it does. It runs with the comments gone, and no text this file took for a comment can be
+  // anything else.
+  const kept = withoutComments(sql);
+  const nested = await serialize(`SELECT * FROM (${kept}\n)`);
+  if (nested.error && !NOT_A_SELECT.test(nested.error_message)) notARead(text.trim());
+  return kept;
 }
 
 /**
@@ -242,7 +268,17 @@ async function checkedRead(sql, serialize, { strict = false } = {}) {
 // undone. A sixth part on is a column of that table. Comments and string literals are
 // skipped, so a name in either is not a table. Any statement: a SELECT, a DESCRIBE, an
 // EXPLAIN, a CREATE VIEW over one.
-const IDENT = /[A-Za-z_À-￿][A-Za-z0-9_$À-￿]*/y;
+const IDENT = new RegExp(`[A-Za-z_${LETTERS}][A-Za-z0-9_$${LETTERS}]*`, 'y');
+// The spaces and comments between two parts of a name.
+function pastSpace(s, j) {
+  for (const n = s.length; j < n;) {
+    const comment = commentEnd(s, j);
+    if (comment !== -1) j = comment;
+    else if (/[\s​]/.test(s[j])) j++;
+    else break;
+  }
+  return j;
+}
 function tableRefs(sql, kinds) {
   const canon = new Map(kinds.map(k => [k.toLowerCase(), k]));
   const s = String(sql);
@@ -269,7 +305,7 @@ function tableRefs(sql, kinds) {
     i = IDENT.lastIndex;
     return m[0];
   };
-  const space = j => { while (j < n && /\s/.test(s[j])) j++; return j; };
+  const space = j => pastSpace(s, j);
   while (i < n) {
     const c = s[i];
     const comment = commentEnd(s, i);
@@ -311,7 +347,7 @@ function tableRefs(sql, kinds) {
 const READS_FROM = new Set(['from', 'join', 'lateral', 'describe', 'desc', 'summarize', 'pivot', 'unpivot']);
 const NOT_FROM = new Set(['select', 'where', 'group', 'having', 'qualify', 'order', 'limit', 'offset', 'window',
                           'union', 'intersect', 'except', 'values']);
-const FILE_PART = /"((?:[^"]|"")*)"|([A-Za-z_À-￿][A-Za-z0-9_$À-￿]*)/y;
+const FILE_PART = new RegExp(`"((?:[^"]|"")*)"|([A-Za-z_${LETTERS}][A-Za-z0-9_$${LETTERS}]*)`, 'y');
 
 function fileName(value, kinds) {
   const zip = /^zip:\/\//i.test(value) ? value.slice(0, 6) : '';
@@ -360,10 +396,20 @@ function fileRefs(sql, kinds) {
     const f = top();
     return inSlot(f, prev) || (f.fn && prev === '(') || (f.list && (prev === '[' || prev === ','));
   };
+  // `a IS DISTINCT FROM b` and trim(x FROM y) read no file. A call's parentheses can hold a query, with
+  // its own FROM: IN (SELECT …), or IN (FROM …).
+  const valueFrom = () => prev === 'distinct' || (top().call && !top().query && prev !== '(');
   const named = w => {
+    if (w === 'from' && prev !== '.' && valueFrom()) {
+      beforeName = prev;
+      prev = 'value from';
+      word = true;
+      return;
+    }
     if (prev !== '.') {
       if (w === 'from' || w === 'join') top().from = true;
       else if (NOT_FROM.has(w)) top().from = false;
+      if (w === 'select' || w === 'with') top().query = true;
       beforeName = prev;
     }
     prev = w;
@@ -396,7 +442,7 @@ function fileRefs(sql, kinds) {
     if (m) { named(m[0].toLowerCase()); i = IDENT.lastIndex; continue; }
     if (c === '(') {
       const fn = word && !READS_FROM.has(prev) && !NOT_FROM.has(prev) && inSlot(top(), beforeName);
-      frames.push({ from: false, fn, slot: !fn && inSlot(top(), prev) });
+      frames.push({ from: false, fn, slot: !fn && inSlot(top(), prev), call: word });
     } else if (c === '[') {
       frames.push({ from: false, list: !!top().fn && prev === '(' });
     } else if ((c === ')' || c === ']') && frames.length > 1) {
@@ -495,7 +541,7 @@ SELECT database_name, path AS schema_name,
 FROM p ORDER BY database_name, schema_name`;
 
 // A dotted name as SQL wrote it -> its parts, quotes undone; null when it is not one.
-const PART = /^\s*(?:"((?:[^"]|"")*)"|([A-Za-z_][A-Za-z0-9_$]*))\s*/;
+const PART = new RegExp(`^\\s*(?:"((?:[^"]|"")*)"|([A-Za-z_${LETTERS}][A-Za-z0-9_$${LETTERS}]*))\\s*`);
 function dottedParts(text) {
   const parts = [];
   let rest = text;
@@ -535,7 +581,8 @@ ORDER BY o.name`;
 const CATALOG_READS = /\b(information_schema|pg_catalog|pg_tables|pg_views|pg_class|pg_namespace|duckdb_(tables|views|columns|schemas|databases|constraints|indexes)|show_tables|show_tables_expanded|show_databases)\b/i;
 function readsCatalog(sql) {
   const s = scan(String(sql)).text;
-  return /^\s*show\b/i.test(s) || CATALOG_READS.test(s);
+  // A SHOW can be a subquery: SELECT * FROM (SHOW ALL TABLES).
+  return /\bshow\b/i.test(s) || CATALOG_READS.test(s);
 }
 
 module.exports = { sqlStr, quoteIdent, assertReads, checkedRead, tableRefs, fileRefs, filesReadBy, namedError, catalogStatement, isShowAllTables, ALL_TABLES_COUNTED, COLUMNS_NOT_READ, readsCatalog };
