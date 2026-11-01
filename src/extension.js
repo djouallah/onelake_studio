@@ -20,6 +20,7 @@ const { openPerformance } = require('./performance');
 const { openLogs } = require('./logs');
 const { createCatalog } = require('./catalog');
 const { createStore } = require('./store');
+const { createCatalogFile, catalogFileOf, stateFileOf } = require('./catalogfile');
 const { createOneLake, walkCached } = require('./onelake');
 const { createSqlTables } = require('./sqltables');
 const { createConnectivity } = require('./connectivity');
@@ -461,34 +462,52 @@ function sharedEngineServer(context, account) {
     setToken: token => context.secrets.store(secret, token),
   };
 }
-// What the store keeps, on the shared engine (statestore.js), per account: the same client for each
-// store made for it.
-const stateClients = new Map();
-// Another window cleared the cache (statestore.js announce). Set by activateInner.
+// What the store keeps, in SQLite (catalogfile.js), per account: the same file for each store made
+// for it. Opening one needs no server and no DuckDB, which is why the tree can draw first.
+const catalogFiles = new Map();
+// What is kept was replaced under this window: another window's Clear, or an import. Set by activateInner.
 let onStoreCleared = () => {};
-function sharedStateBackend(context, account, importFrom, maxBytes) {
-  const { createStateClient } = require('./engine-client');
-  const { createStateBackend } = require('./statestore');
-  if (!stateClients.has(account)) {
-    stateClients.set(account, createStateClient({
-      ...sharedEngineServer(context, account),
+function catalogFileFor(context, account, maxBytes) {
+  if (!catalogFiles.has(account)) {
+    const { stateDir, stateKey } = sharedEngineServer(context, account);
+    catalogFiles.set(account, createCatalogFile({
+      file: catalogFileOf(stateDir, stateKey), maxBytes,
       onCleared: () => onStoreCleared(),
-      // The tree may need the server before any statement does, so it can be the one starting it.
-      options: async () => {
-        const { readme } = await webviewRoot(context.extensionUri, { dev: context.extensionMode === vscode.ExtensionMode.Development });
-        return engineBootOptions(context, account, readme.fsPath);
-      },
+      log: line => out && out.appendLine(line),
     }));
   }
-  // A store that can't reach it reads as nothing cached, so why goes where someone will find it.
-  let said = false;
-  const run = sql => stateClients.get(account).run(sql).catch(e => {
-    if (!said && out) out.appendLine(`the engine's state file can't be reached: ${e.message}`);
-    said = true;
-    throw e;
-  });
-  return createStateBackend({ run, importFrom, maxBytes, announce: () => stateClients.get(account).announceCleared() });
+  return catalogFiles.get(account);
 }
+// What an older version kept for this account comes across once, behind a tree already drawn. Only an
+// old state file needs the server, and it is read this one time.
+async function importKept(context, account, jsonDir) {
+  const kept = catalogFiles.get(account);
+  let client = null;
+  try {
+    if (!kept || kept.imported()) return;
+    const server = sharedEngineServer(context, account);
+    if (existsSync(stateFileOf(server.stateDir, server.stateKey))) {
+      const { createStateClient } = require('./engine-client');
+      client = createStateClient({
+        ...server,
+        options: async () => {
+          const { readme } = await webviewRoot(context.extensionUri, { dev: context.extensionMode === vscode.ExtensionMode.Development });
+          return engineBootOptions(context, account, readme.fsPath);
+        },
+      });
+    }
+    const came = await kept.importKept({ run: client && (sql => client.run(sql)), jsonDir });
+    if (out) out.appendLine(`the catalog file took ${came} entries from an older version`);
+    if (came) onStoreCleared();
+  } catch (e) {
+    if (out) out.appendLine(`what an older version kept could not be read, and is tried again next time — ${e.message}`);
+  } finally {
+    if (client) client.close();
+  }
+}
+// Sign Out and the like stop the server of every account this window has used, joined to it or not.
+// Set by activateInner, which has the context.
+let stopServers = async () => {};
 function sharedEngineRemote(context, options) {
   const { createRemote } = require('./engine-client');
   return createRemote({
@@ -581,8 +600,8 @@ async function resetEngine({ stop = true } = {}) {
   const e = engine;
   engine = null;
   if (e) await e.close({ stop }).catch(() => {});
-  // A window with only the tree open holds the server through the store.
-  if (stop) for (const c of stateClients.values()) await c.stop().catch(() => {});
+  // A window with only the tree open isn't joined to the server, and another window may have one.
+  if (stop) await stopServers().catch(() => {});
 }
 
 // Points the store and the engine's disk cache at the account now signed in; a no-op when
@@ -887,18 +906,24 @@ async function activateInner(context) {
   // first (onelake.js). One directory per identity — a hashed account id — so nobody is
   // ever shown another account's listings, and switching back finds its cache still warm.
   const storeRoot = join(context.globalStorageUri.fsPath, 'onelake-store-v1');
+  const jsonStoreOf = key => join(storeRoot, key || 'signed-out');
   const storeFor = key => {
-    const dir = join(storeRoot, key || 'signed-out');
-    const backend = sharedStateBackend(context, key, dir, storeMaxBytes);
+    const dir = jsonStoreOf(key);
+    const backend = catalogFileFor(context, key, storeMaxBytes);
     return createStore({ dir, backend, ttlMs: catalogTtlMs, maxBytes: storeMaxBytes() });
   };
-  // Everything waits on these two answers at activation, commands included, so a provider that has
-  // stalled gets a few seconds, and what it says after that is taken as a session change.
-  const firstSession = await inTime(getSession({ createIfNone: false }), SESSION_WAIT_MS, () => sessionChanged());
-  rememberAccount(firstSession);
-  let storeAccount = accountKey(firstSession) || (knownAccount() || {}).key || null;
+  stopServers = async () => {
+    const { stopServer } = require('./engine-client');
+    for (const account of catalogFiles.keys()) await stopServer(sharedEngineServer(context, account)).catch(() => {});
+  };
+  // Nothing here waits for the account provider, whose answer can take seconds. The tree opens on the
+  // last account's rows, with no session asked for, and sessionChanged at the end of this function
+  // moves it if a session says otherwise.
+  signedIn = !!knownAccount();
+  vscode.commands.executeCommand('setContext', 'onelakeStudio.signedIn', signedIn);
+  let storeAccount = (knownAccount() || {}).key || null;
   // The saved queries' account (queriesFolder): its own folder, by its sign-in name.
-  let queryAccount = queryAccountOf(firstSession) || (knownAccount() || {}).queries || null;
+  let queryAccount = (knownAccount() || {}).queries || null;
   fileCacheRoot = fileCacheRootFor(context);
   fileCacheAccount = storeAccount;
   onelake = createOneLake({
@@ -956,6 +981,7 @@ async function activateInner(context) {
     // new account's answers into the old account's store.
     fileCacheAccount = key;   // the engine picks it up when it is next built
     onelake.useStore(storeFor(key));
+    importKept(context, key, jsonStoreOf(key));
     namesKept = null;
     // Workspace and item GUIDs belong to the account's tenant: listed again for the new one.
     fabric.reset();
@@ -992,9 +1018,23 @@ async function activateInner(context) {
   // on from last time it would look like missing workspaces, and read them all at startup.
   let treeFilter = null;
 
+  // The tree's first answer: how long it took, and that it needed no DuckDB. The engine, and anything
+  // else that can wait, comes after this.
+  const began = performance.now();
+  let drawn = false;
+  const treeDrawn = () => {
+    if (drawn) return;
+    drawn = true;
+    // A Node-API addon loads once, and only when something needs it.
+    const native = Object.keys(require.cache).some(f => /node-bindings/.test(f));
+    if (out) out.appendLine(`tree drawn ${Math.round(performance.now() - began)}ms into activation: DuckDB ${native ? 'loaded' : 'not loaded'}, ${engine ? 'an engine' : 'no engine'} here`);
+    warmIfWanted();
+  };
+
   const tree = new LakehouseTree({
     onelake,
     favorites,
+    onDrawn: treeDrawn,
     filter: () => treeFilter,
     fabric,
     // Offline, a workspace's models are whatever listing is kept: there is no sign-in to offer.
@@ -1080,12 +1120,6 @@ async function activateInner(context) {
       }
     });
   }
-
-  await setSignedIn(!!await inTime(getToken({ createIfNone: false }), SESSION_WAIT_MS, () => sessionChanged()));
-  showOffline(connectivity.reason());
-  // After a Sign Out nothing is sent, not even this; a window that lost a session to no internet
-  // needs it, to find that session when the internet returns.
-  if (!signedOutByChoice()) connectivity.check();
 
   // Opening a table means: make sure a panel exists, then tell it what to show. The panel
   // buffers the message if DuckDB is still booting. Boot is multi-second work with no
@@ -1701,8 +1735,10 @@ async function activateInner(context) {
   refreshTitle();
 
   // The engine, started once this window shows it will want one, so the first statement does
-  // not wait for its boot: not at activation, which every window goes through. An engine
-  // already there is left alone: ensureEngine could close its panel over a moved account.
+  // not wait for its boot: not at activation, which every window goes through, and not before the
+  // tree has drawn and the session is known. An engine already there is left alone: ensureEngine
+  // could close its panel over a moved account.
+  let sessionAsked = false;
   let warming = false;
   const warmEngine = async () => {
     if (warming || engine || !signedIn) return;
@@ -1720,9 +1756,8 @@ async function activateInner(context) {
     }
   };
   const warmIfWanted = () => {
-    if (explorer.visible) warmEngine();
+    if (drawn && sessionAsked && explorer.visible) warmEngine();
   };
-  warmIfWanted();
 
   context.subscriptions.push(
     tree,
@@ -2094,13 +2129,27 @@ async function activateInner(context) {
     }),
   );
 
+  // Behind the tree. An older version's cache comes across, and the account provider is asked who is
+  // signed in. A provider that has stalled gets a few seconds, and what it says after that is taken as
+  // a session change.
+  importKept(context, storeAccount, jsonStoreOf(storeAccount));
+  (async () => {
+    const answered = await inTime(getSession({ createIfNone: false }).then(() => true, () => true), SESSION_WAIT_MS, () => sessionChanged());
+    if (answered) await sessionChanged();
+    sessionAsked = true;
+    showOffline(connectivity.reason());
+    // After a Sign Out nothing is sent, not even this; a window that lost a session to no internet
+    // needs it, to find that session when the internet returns.
+    if (!signedOutByChoice()) connectivity.check();
+    warmIfWanted();
+  })().catch(e => { if (out) out.appendLine(`the account provider could not be asked — ${(e && e.message) || e}`); });
 }
 
 function deactivate() {
   // The burst timers hold the process open if they are live at shutdown.
   clearTimeout(postTimer);
   clearTimeout(idleTimer);
-  for (const c of stateClients.values()) c.close();
+  for (const f of catalogFiles.values()) f.close();
   // The engine holds a native database handle and a temp directory; closing it is what
   // releases both.
   return engine ? engine.close() : undefined;

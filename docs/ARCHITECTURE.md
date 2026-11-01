@@ -165,9 +165,12 @@ internet once, and if it has gone the statement runs again from what is kept.
 The engine is **DuckDB 2.0 running natively in a process of its own** ([The server](#the-server),
 [`src/engine-host.js`](../src/engine-host.js)), not a WebAssembly build in the page.
 
-- **When it starts:** as soon as the tree needs what is remembered, signed in or not. The window joins it
-  in the background and lists the cached catalog, so a first statement does not wait for either. That
-  statement still waits for its tab to open.
+- **When it starts:** behind the tree, once it has drawn and the session is known, if the tree is on screen. The window
+  joins it in the background and lists the cached catalog, so a first statement does not wait for either. That statement
+  still waits for its tab to open.
+- **What the tree waits for:** nothing here. It draws from the catalog file before sign-in, with no server running and
+  no DuckDB loaded, and the log says how long that took (`tree drawn`). A sign-in then moves it, if the account differs
+  from the last one.
 - **What a statement waits for:** each tab defines every kept semantic model when it opens, which can
   ask Fabric for an item's name. Only a statement that can name a model waits for that: one with
   `semantic` in it.
@@ -214,10 +217,15 @@ every window is a client of it over DuckDB's Quack protocol ([`src/engine-client
   what it is sent.
   A Quack listener can stop while the process lives on: a statement that can't connect asks over this pipe, the
   server starts it again on the same port and tells every window to attach again, and the statement goes once more.
-- **What is remembered:** the store's entries (listings, table metadata, first rows) and the log are tables in a
-  state file, `engine-server\state-<id>.duckdb` in the extension's storage, in a second DuckDB in the server on a Quack
-  port of its own, so a page's SQL can't reach them ([`src/statestore.js`](../src/statestore.js)). The tree therefore
-  waits for the server. A JSON store from an older version is imported once and left as it was.
+- **What is remembered:** the store's entries (listings, table metadata, first rows) are in a SQLite file,
+  `engine-server\catalog-<id>.sqlite` in the extension's storage ([`src/catalogfile.js`](../src/catalogfile.js)). Each
+  window opens it itself with Node's `node:sqlite`, so it needs no server and no DuckDB, and a page's SQL can't reach it,
+  as it is outside the folders DuckDB may open. WAL lets a window read while another writes, and another window's Clear
+  is noticed within a few seconds. A file that isn't a database is set aside as `.bad` and started again. It is named
+  after the account, not the install, so an update keeps it, and F5 has its own.
+  What an older version kept in the state file or a JSON store comes across once, behind the tree.
+- **The log** is a table in a state file, `engine-server\state-<id>.duckdb`, in a second DuckDB in the server on a Quack
+  port of its own, so a page's SQL can't reach it.
   - **It is named after the account, not the install,** so an update keeps it. F5 has its own.
   - **A newer build takes it at once.** A server of the version just updated from may still hold the file, for a window
     not reloaded yet. The new server asks it to go, over its pipe with the key in `state-<id>.duckdb.holder`, before any
@@ -246,11 +254,11 @@ SQL box, no Stop and no Restart.
 
 | What | Where it is kept | When it is read again |
 | --- | --- | --- |
-| Listings (workspaces, items, tables, `Files/`, semantic models), table metadata, first rows | The state file, [`src/statestore.js`](../src/statestore.js) | Served at once, refreshed in the background past its window |
-| The name behind a Direct Lake model's item GUIDs | The state file | Only when using it fails |
+| Listings (workspaces, items, tables, `Files/`, semantic models), table metadata, first rows | The catalog file, [`src/catalogfile.js`](../src/catalogfile.js) | Served at once, refreshed in the background past its window |
+| The name behind a Direct Lake model's item GUIDs | The catalog file | Only when using it fails |
 | The bytes of a `Files/` object the host reads (an image, a `.bim`, a SQLite copy, a saved file) | Under the etag its cached listing gave | Only when the file was rewritten |
 | What DuckDB reads: table data and `Files/` objects | DuckDB's disk cache (`cache_httpfs`) | Only when the file was rewritten: a kept copy is checked against the file's version tag and modification time |
-| That a table's rows were read, per snapshot | The state file | Never: a new snapshot is a new entry |
+| That a table's rows were read, per snapshot | The catalog file | Never: a new snapshot is a new entry |
 | A semantic model's definition | `~/OneLakeStudio/semantic-models/<account>/<workspace>/<model>.yaml` | On **Download Again** |
 
 - **A kept answer is trusted until using it fails.** Then it is read again once, and the work tried again
@@ -263,7 +271,8 @@ SQL box, no Stop and no Restart.
   - **A table's read fails** (DuckDB's `IO Error`): the table's listing and metadata are read again. A
     statement's own mistake asks OneLake nothing.
   - **A model's local copy** is not covered: it changes only on **Download Again**.
-- **Clearing reaches every window:** the server tells each one, and what it holds in memory goes too.
+- **Clearing reaches every window:** each one notices it in the catalog file within a few seconds, and what it holds in
+  memory goes too.
 - **Per Microsoft account:** switching accounts never serves one account's data to another.
 - **Survives a sign-out:** signing back in finds it warm. Only **Clear Cached OneLake Data** deletes it.
 - **The catalog is cached too:** `SHOW ALL TABLES` and `information_schema` list what the tree has seen
@@ -585,7 +594,7 @@ every window. The rest apply at once.
 - **Tabs don't come back after a window reload.** Only the box's last text does (see
   [The SQL box and results](#the-sql-box-and-results)).
 - **A Pivot's shelves are kept per tab,** so a model opened again in a new tab starts with empty shelves.
-- **Requires desktop VS Code 1.90+** on x64 or arm64 Windows, macOS or Linux.
+- **Requires desktop VS Code 1.101+** on x64 or arm64 Windows, macOS or Linux, for its built-in SQLite.
 
 ## Where the code is
 
@@ -608,7 +617,8 @@ every window. The rest apply at once.
 | `app/querytext.js` | The SQL box's statements, error positions and variables. |
 | `src/panel.js`, `src/host.js`, `src/html.js`, `src/webview.js` | A tab's webview, its channel, and its page. |
 | `src/performance.js`, `src/logs.js` | The Performance and Logs tabs. |
-| `src/engine-server.js`, `src/engine-client.js`, `src/statestore.js`, `src/enginelog.js` | The server: its process, a window's side of it, what it remembers, and its log. |
+| `src/catalogfile.js` | What is remembered, in SQLite. |
+| `src/engine-server.js`, `src/engine-client.js`, `src/enginelog.js` | The server: its process, a window's side of it, and its log. |
 | `src/agent.js`, `src/bridge.js`, `bin/cli.mjs` | The command line. |
 | `src/exportapp.js`, `src/fabricapp.js`, `src/onelakewrite.js` | Export to Fabric. |
 | `src/vendored.js` | The one list of pinned third-party code the webview runs, dax-sql included. |

@@ -10,8 +10,8 @@
 //   window -> server   { token, window }   then the socket stays open: it says the window is alive
 //   server -> window   { ok, uri, capabilities, tmpDir }
 //   window -> server   { stop: true }      Sign Out, a restart, Clear Cached OneLake Data
-//   window -> server   { id, stats | logs | clearLogs | storageToken | offline | listen | cleared }, answered { id, value | error }
-//   server -> window   { reattach: true } | { cleared: true }   its own news, with no id
+//   window -> server   { id, stats | logs | clearLogs | storageToken | offline | listen }, answered { id, value | error }
+//   server -> window   { reattach: true }   its own news, with no id
 //   server -> server   { releaseState: key }   answered { released: true }, then it exits: a newer build wants the state file
 //
 // A window gone is a window whose queries nobody is waiting for: Quack lets them run on, so they
@@ -35,9 +35,9 @@ const sameToken = (a, b) => {
   return x.length === y.length && crypto.timingSafeEqual(x, y);
 };
 
-// What the extension remembers (statestore.js): a DuckDB of its own, on a Quack port of its own, so
-// no statement a page sends the engine can reach it, and it holds none of the engine's memory.
-// `theFile` on an error says the file itself is what failed, not something around it.
+// The log, and what an older version kept here (catalogfile.js imports it): a DuckDB of its own, on a
+// Quack port of its own, so no statement a page sends the engine can reach it, and it holds none of
+// the engine's memory. `theFile` on an error says the file itself is what failed, not something around it.
 async function openState({ stateFile, token, options }) {
   const aboutTheFile = e => { throw Object.assign(new Error(e.message), { theFile: true }); };
   const db = await DuckDBInstance.create(stateFile, {
@@ -48,7 +48,6 @@ async function openState({ stateFile, token, options }) {
     const c = await db.connect();
     await loadExtension(c, 'httpfs', options);
     await loadExtension(c, 'quack', options);
-    await c.run('CREATE TABLE IF NOT EXISTS kv (k VARCHAR PRIMARY KEY, ts BIGINT, value VARCHAR);').catch(aboutTheFile);
     await c.run('CREATE TABLE IF NOT EXISTS logs (ts BIGINT, win VARCHAR, sql VARCHAR, ms BIGINT, status VARCHAR, error VARCHAR, conn VARCHAR);').catch(aboutTheFile);
     const r = await c.runAndReadAll(`SELECT listen_uri FROM quack_serve('quack:127.0.0.1:0', token = ${sqlStr(token)})`);
     await c.run(`SET allowed_directories = []; SET enable_external_access = false; SET lock_configuration = true;`);
@@ -220,8 +219,6 @@ async function main({ token, pipe, options, logFile, idleMs = 60_000, stateFile 
     if (msg.storageToken) { await engine.setStorageToken(String(msg.storageToken)); return true; }
     if (msg.offline != null) { await engine.setOffline(!!msg.offline); return true; }
     if (msg.listen) { await listenAgain(!!msg.listen.force); return true; }
-    // The state file was emptied: every window also holds what it read from it, in memory.
-    if (msg.cleared) { for (const c of clients) { if (!c.sock.destroyed) c.sock.write(`${JSON.stringify({ cleared: true })}\n`); } return true; }
     if (msg.stats) return { ...await engine.stats(), statements: keeper ? await keeper.statements() : 0 };
     if (msg.logs) {
       if (keeper) return keeper.read(msg.logs.limit);

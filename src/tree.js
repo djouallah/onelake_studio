@@ -52,10 +52,12 @@ class LakehouseTree {
    * @param {(n: object) => string|null} [deps.unsupportedModel]  what kind of model a click found it cannot open, if it did
    * @param {{ list: () => Promise<{name: string, path: string}[]> }} [deps.queries]  the saved queries
    * @param {() => string|null} [deps.filter]  the one type to show (TREE_FILTERS' `only`), if any
+   * @param {() => void} [deps.onDrawn]  its top level was just answered, with what it holds
    */
   constructor({ onelake, fabric = null, hasFabric = async () => false, isSignedIn, log = () => {},
                 favorites = { get: () => [] }, cachedModel = () => null, unsupportedModel = () => null,
-                queries = { list: async () => [] }, filter = () => null }) {
+                queries = { list: async () => [] }, filter = () => null, onDrawn = () => {} }) {
+    this.onDrawn = onDrawn;
     this.queries = queries;
     this.onelake = onelake;
     this.filter = filter;
@@ -347,6 +349,8 @@ class LakehouseTree {
         { leaf: true, detail, parent: n });
       // At the top, what doesn't need OneLake stays reachable: saved queries above all.
       return n ? [error] : [error, ...this._local()];
+    } finally {
+      if (!n) this.onDrawn();
     }
   }
 

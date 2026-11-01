@@ -797,6 +797,9 @@ async function main() {
     check("the workspace is listed", rows.some(x => x.includes(WORKSPACE)), rows.join(" | "));
     check("the saved queries are listed", rows.some(x => /quer/i.test(x)), rows.join(" | "));
     check("nothing prompted", (await dialogsSeen()).length === 0);
+    const drew = await until("the tree's line in the log", async () => /tree drawn \d+ms into activation: DuckDB not loaded/.exec(await outputLog()), 30000).catch(() => null);
+    check("the tree drew with no DuckDB loaded", !!drew, drew ? drew[0] : await outputLog());
+    if (drew) console.log(`  ${drew[0]}`);
   });
   await step("Cached: the panel", async () => { await openPanel(); });
   await runMatrix();

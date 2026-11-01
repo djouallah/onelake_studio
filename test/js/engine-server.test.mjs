@@ -14,9 +14,8 @@ import { fileURLToPath } from "node:url";
 
 const require = createRequire(import.meta.url);
 const { createEngineHost } = require("../../src/engine-host.js");
-const { createRemote, createStateClient, openClient, pipePath, stateFileOf, stateFileUnusable, LOST } = require("../../src/engine-client.js");
-const { createStateBackend } = require("../../src/statestore.js");
-const { createStore } = require("../../src/store.js");
+const { createRemote, createStateClient, stopServer, openClient, pipePath, stateFileOf, stateFileUnusable, LOST } = require("../../src/engine-client.js");
+const { createCatalogFile } = require("../../src/catalogfile.js");
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
 const SCRIPT = join(root, "src", "engine-server.js");
@@ -249,58 +248,76 @@ test("the OneLake token reaches no log, and history survives the server", async 
   assert.ok((await b.logs(1000)).some(r => r.sql.includes("before the restart")), "still there");
 });
 
-test("the store's entries live in the server, shared by windows, imported once, and survive a stop", async t => {
+test("what an older version kept in its state file comes across once, and leaves it", async t => {
   const dir = await mkdtemp(join(tmpdir(), "onelake-state-"));
   t.after(() => rm(dir, { recursive: true, force: true }).catch(() => {}));
-  const jsonDir = join(dir, "json");
-  await mkdir(jsonDir);
-  await writeFile(join(jsonDir, "a.json"), JSON.stringify({ key: "from a file", at: 123, value: { kept: true, q: "it's" } }));
   let secret;
-  const cfg = { key: `state-${dir}`, script: SCRIPT, stateDir: join(dir, "state"),
+  const client = createStateClient({ key: `state-${dir}`, script: SCRIPT, stateDir: join(dir, "state"),
     options: { extensionDir: join(dir, "extensions"), bundledExtensions: existsSync(BUNDLED) ? BUNDLED : null, threads: 2 },
-    getToken: async () => secret, setToken: async s => { secret = s; } };
-  const clients = [];
-  const storeOf = () => {
-    const client = createStateClient(cfg);
-    clients.push(client);
-    return createStore({ dir: join(dir, "blobs"), backend: createStateBackend({ run: sql => client.run(sql), importFrom: jsonDir }) });
-  };
-  t.after(async () => { for (const c of clients) { await c.stop().catch(() => {}); c.close(); } });
+    getToken: async () => secret, setToken: async s => { secret = s; } });
+  t.after(async () => { await client.stop().catch(() => {}); client.close(); });
+  await client.run("CREATE TABLE kv (k VARCHAR PRIMARY KEY, ts BIGINT, value VARCHAR)");
+  await client.run(`INSERT INTO kv VALUES ('listing', 123, '["a","b''s"]'), ('(imported)', 0, ''), ('rows␟abfss://x', 5, 'true')`);
 
-  const one = storeOf(), two = storeOf();
-  assert.deepEqual(await one.known("from a file"), { value: { kept: true, q: "it's" }, at: 123 });
-  await one.put("listing", ["a", "b's"]);
-  assert.deepEqual(await two.peek("listing"), ["a", "b's"]);
-
-  // A kept answer outlives the server, and the next one starts by itself.
-  await clients[0].stop();
-  await clients[1].stop();
-  await sleep(1000);
-  const three = storeOf();
-  assert.deepEqual(await three.peek("listing"), ["a", "b's"]);
-
-  // What Clear takes doesn't come back from the old files.
-  await three.clear();
-  const four = storeOf();
-  assert.equal(await four.peek("from a file"), undefined);
-  assert.equal(await four.peek("listing"), undefined);
+  const backend = createCatalogFile({ file: join(dir, "catalog.sqlite") });
+  t.after(() => backend.close());
+  assert.equal(await backend.importKept({ run: sql => client.run(sql) }), 2);
+  assert.deepEqual(await backend.read("listing"), { at: 123, json: '["a","b\'s"]' });
+  assert.deepEqual(await backend.read("rows\0abfss://x"), { at: 5, json: "true" });
+  assert.equal(await backend.read("(imported)"), null);
+  assert.deepEqual(await client.run("SELECT 1 FROM information_schema.tables WHERE table_name = 'kv'"), [], "the state file no longer holds it");
 });
 
-// A store on a server of its own, as a window would have it. `key` is the install, `stateKey` the
-// account.
+test("stopServer stops a server this window isn't joined to, and starts none", async t => {
+  const { dir, open } = await stateServer(t);
+  const listening = key => new Promise(resolve => {
+    const up = net.connect(pipePath(key));
+    up.once("connect", () => { up.destroy(); resolve(true); });
+    up.once("error", () => resolve(false));
+  });
+  const nobody = `nobody-${dir}`;
+  await stopServer({ key: nobody, getToken: async () => undefined });
+  assert.equal(await listening(nobody), false, "nothing was started");
+
+  const key = `stop-${dir}`;
+  const { client } = open(key, "me");
+  assert.deepEqual(await client.run("SELECT 1 AS up"), [{ up: 1 }]);
+  await stopServer({ key, getToken: async () => tokenOf(key) });
+  await sleep(1000);
+  assert.equal(await listening(key), false, "it went");
+});
+
+// Something kept in the state file, as its log is, and read as a window's client reads it. It can't be
+// reached while another server holds the file, and that reads as nothing there.
+const keptIn = client => ({
+  put: async (k, v) => {
+    await client.run("CREATE TABLE IF NOT EXISTS kept (k VARCHAR PRIMARY KEY, value VARCHAR)");
+    await client.run(`INSERT OR REPLACE INTO kept VALUES ('${k}', '${JSON.stringify(v)}')`);
+  },
+  peek: async k => {
+    try {
+      const rows = await client.run(`SELECT value FROM kept WHERE k = '${k}'`);
+      return rows.length ? JSON.parse(rows[0].value) : undefined;
+    } catch (_) { return undefined; }
+  },
+});
+
+// The state file on a server of its own, as a window would have it. `key` is the install, `stateKey`
+// the account.
+const stateSecrets = new Map();
+const tokenOf = key => stateSecrets.get(key);
 async function stateServer(t) {
   const dir = await mkdtemp(join(tmpdir(), "onelake-state-"));
   t.after(() => rm(dir, { recursive: true, force: true }).catch(() => {}));
   const stateDir = join(dir, "state");
   await mkdir(stateDir);
-  const secrets = new Map();
   const clients = [];
   const options = { extensionDir: join(dir, "extensions"), bundledExtensions: existsSync(BUNDLED) ? BUNDLED : null, threads: 2, stateRetryMs: 500 };
   const open = (key, stateKey, more = {}) => {
     const client = createStateClient({ key, stateKey, script: SCRIPT, stateDir, options, ...more,
-      getToken: async () => secrets.get(key), setToken: async s => { secrets.set(key, s); } });
+      getToken: async () => stateSecrets.get(key), setToken: async s => { stateSecrets.set(key, s); } });
     clients.push(client);
-    return { client, store: createStore({ dir: join(dir, "blobs"), backend: createStateBackend({ run: sql => client.run(sql) }) }) };
+    return { client, store: keptIn(client) };
   };
   t.after(async () => { for (const c of clients) { await c.stop().catch(() => {}); c.close(); } });
   return { dir, stateDir, open };
@@ -319,29 +336,6 @@ test("a server's words for a lost connection are the ones a window looks for", a
   await assert.rejects(c.run("SELECT * FROM quack_query('quack:127.0.0.1:9', 'SELECT 1')"),
     e => { assert.match(e.message, LOST); return true; });
   c.closeSync();
-});
-
-test("Clear Cached reaches what other windows hold in memory", async t => {
-  const dir = await mkdtemp(join(tmpdir(), "onelake-state-"));
-  t.after(() => rm(dir, { recursive: true, force: true }).catch(() => {}));
-  let secret;
-  const clients = [];
-  const windowOf = () => {
-    let store = null;
-    const client = createStateClient({ key: `clear-${dir}`, script: SCRIPT, stateDir: join(dir, "state"),
-      options: { extensionDir: join(dir, "extensions"), bundledExtensions: existsSync(BUNDLED) ? BUNDLED : null, threads: 2 },
-      getToken: async () => secret, setToken: async s => { secret = s; }, onCleared: () => store.forget() });
-    clients.push(client);
-    store = createStore({ dir: join(dir, "blobs"), backend: createStateBackend({ run: sql => client.run(sql), announce: () => client.announceCleared() }) });
-    return store;
-  };
-  t.after(async () => { for (const c of clients) { await c.stop().catch(() => {}); c.close(); } });
-  const one = windowOf(), two = windowOf();
-  await one.put("listing", ["kept"]);
-  assert.deepEqual(await two.peek("listing"), ["kept"]);
-  await one.clear();
-  await sleep(300);
-  assert.equal(await two.peek("listing"), undefined);
 });
 
 test("what is remembered survives an update, which moves the install but not the account", async t => {
@@ -429,7 +423,7 @@ test("an older build never takes the state file from a newer one", async t => {
 
   const older = open("me|old", "me", { build: 1, idleMs: 2000 });
   assert.equal(await older.store.peek("listing"), undefined);
-  assert.deepEqual(await newer.client.run("SELECT count(*)::INT AS n FROM kv WHERE k = 'listing'"), [{ n: 1 }]);
+  assert.deepEqual(await newer.client.run("SELECT count(*)::INT AS n FROM kept WHERE k = 'listing'"), [{ n: 1 }]);
 });
 
 test("only a file that isn't a database is set aside", () => {

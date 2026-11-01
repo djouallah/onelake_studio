@@ -61,4 +61,9 @@ if (typeof ext.activate !== "function" || typeof ext.deactivate !== "function") 
   console.error("refusing: dist/extension.js does not export activate and deactivate");
   process.exit(1);
 }
+// The tree draws before DuckDB loads, so opening the bundle must not load it.
+if (Object.keys(require.cache).some(f => /node-bindings|duckdb\.node/.test(f))) {
+  console.error("refusing: loading dist/extension.js loads DuckDB, which the tree must not wait for");
+  process.exit(1);
+}
 console.log(`bundled ${(code.length / 1024).toFixed(0)} KB into dist/extension.js — it loads and exports activate`);

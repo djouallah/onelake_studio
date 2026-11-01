@@ -33,6 +33,7 @@ const { spawn } = require('node:child_process');
 const { join } = require('node:path');
 const { DuckDBInstance } = require('@duckdb/node-api');
 const { sqlStr } = require('./sql');
+const { shortHash, stateFileOf } = require('./catalogfile');
 
 const CONNECT_MS = 5_000;
 const BOOT_MS = 180_000;       // a first boot may be downloading its extensions
@@ -332,12 +333,6 @@ function recovery(ask, client) {
   };
 }
 
-const shortHash = text => crypto.createHash('sha256').update(text).digest('hex').slice(0, 16);
-
-// The state file outlives a server and an update, so it isn't named after the install as a server
-// is: what is remembered is what lets the next version work with no internet.
-const stateFileOf = (stateDir, stateKey) => join(stateDir, `state-${shortHash(stateKey)}.duckdb`);
-
 // DuckDB's words for a file that will never open, the only kind worth setting aside. A disk error
 // or a file from a newer DuckDB isn't one: what it holds is still there for later.
 const stateFileUnusable = message => /not a valid DuckDB database file|corrupt|checksum|replaying WAL/i.test(String(message));
@@ -368,13 +363,32 @@ async function joinServer({ key, stateKey = key, script, options, stateDir, buil
 }
 
 /**
- * The server's second DuckDB: what the extension remembers, in one file per account. It answers
- * on a Quack port of its own, so no statement a page sends can reach it. Joined on first use, and
- * again after the server went: signing out stops the server, and the tree still reads the cache.
+ * Stops this account and install's server if one is running, and starts nothing. A window with only
+ * the tree open isn't joined to it, and Sign Out still has to take its token away.
+ * @param {{ key: string, getToken: () => Promise<string|undefined> }} o
+ */
+async function stopServer({ key, getToken }) {
+  const pipe = pipePath(key);
+  if (!await pipeHeld(pipe)) return;
+  const token = await getToken();
+  if (!token) return;
+  const joined = await connectControl(pipe, token, crypto.randomBytes(6).toString('hex'), CONNECT_MS);
+  if (!joined) return;
+  await new Promise(resolve => {
+    const timer = setTimeout(resolve, 5_000);
+    joined.sock.once('close', () => { clearTimeout(timer); resolve(); });
+    joined.sock.write(`${JSON.stringify({ stop: true })}\n`);
+  });
+  joined.sock.destroy();
+}
+
+/**
+ * The server's second DuckDB: the log, and what an older version kept, in one file per account. It
+ * answers on a Quack port of its own, so no statement a page sends can reach it. Joined on first use.
  * @param {object} cfg  as createRemote's
  * @returns {{ run: (sql: string) => Promise<object[]>, stop: () => Promise<void>, close: () => void }}
  */
-function createStateClient({ onCleared = () => {}, ...cfg }) {
+function createStateClient(cfg) {
   let joined = null, joining = null;
   function drop(j) {
     if (joined === j) joined = null;
@@ -393,9 +407,8 @@ function createStateClient({ onCleared = () => {}, ...cfg }) {
           .catch(e => { sock.destroy(); throw e; });
         const ask = controlChannel(sock, m => {
           if (m.reattach) client.reattach().catch(() => {});
-          if (m.cleared) onCleared();
         });
-        const me = { sock, client, ask, recover: recovery(ask, client) };
+        const me = { sock, client, recover: recovery(ask, client) };
         sock.on('error', () => {});
         sock.on('close', () => drop(me));
         joined = me;
@@ -431,8 +444,6 @@ function createStateClient({ onCleared = () => {}, ...cfg }) {
         j.sock.write(`${JSON.stringify({ stop: true })}\n`);
       });
     },
-    // The state file was emptied: every window is told, this one too.
-    async announceCleared() { if (joined) await joined.ask({ cleared: true }); },
     close() { if (joined) drop(joined); },
   };
 }
@@ -573,4 +584,4 @@ function createRemote({ onGone = () => {}, ...cfg }) {
   };
 }
 
-module.exports = { createRemote, createStateClient, openClient, loadExtension, pipePath, stateFileOf, stateFileUnusable, LOST };
+module.exports = { createRemote, createStateClient, stopServer, openClient, loadExtension, pipePath, stateFileOf, stateFileUnusable, LOST };

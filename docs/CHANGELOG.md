@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **The tree opens at once.** It draws from what this machine holds before sign-in, with no server running and no DuckDB
+  loaded, and the rest follows behind it. Listings, table metadata and first rows moved from the DuckDB state file to a
+  SQLite file, and come across by themselves the first time. It needs VS Code 1.101 or later.
 - **A tab says what it holds.** One opened on a table, file, semantic model or saved query is named after it, in place of
   OneLake Studio.
 - **One click, everywhere.** An app in the tree opens on one click, like a table, a file, a query or a model. A double

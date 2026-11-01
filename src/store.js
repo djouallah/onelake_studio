@@ -8,7 +8,7 @@
 // disk at once, and when that answer is older than the TTL it is fetched again behind the
 // caller, with a 'changed' event if, and only if, it really changed.
 //
-// In the extension the entries live in the server's state file (`backend`, statestore.js). With no
+// In the extension the entries live in the account's SQLite file (`backend`, catalogfile.js). With no
 // backend, as the tests drive it, each is a JSON file in `dir`, written to a temp name and renamed
 // into place. Either way it is per account (the caller picks it), so one identity is never served
 // another's listings. A Files/ object's bytes are files in `dir` whichever it is (blobs, below).
@@ -29,8 +29,8 @@ const MEMO_MAX = 2000;       // hot entries kept in memory, so a re-render reads
 /**
  * @param {object} o
  * @param {string|null} o.dir    where entries live; null keeps everything in memory only
- * @param {object} [o.backend]   where entries live instead, on the shared engine (statestore.js):
- *                               read, write, clear, size. Blobs stay under `dir`.
+ * @param {object} [o.backend]   where entries live instead (catalogfile.js): read, write, clear,
+ *                               size. Blobs stay under `dir`.
  * @param {number|(() => number)} [o.ttlMs]  how old an answer may be before it is refreshed behind
  * @param {number} [o.maxBytes]  disk budget; the oldest entries go first past it
  * @param {number} [o.blobMaxBytes]  the same, for the file bytes kept by getBlob/putBlob
