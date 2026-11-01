@@ -944,7 +944,8 @@ async function activateInner(context) {
   nameModelTables = sqlTables.nameTables;
   // Semantic views: pointers to model files, kept per account in the extension's storage.
   // A view made or dropped is in the engine's catalog (SHOW ALL TABLES) by the next statement.
-  semviews = createSemViews({ dir: join(context.globalStorageUri.fsPath, 'semantic-views'), onelake,
+  semviews = createSemViews({ catalogFor: key => catalogFileFor(context, key, storeMaxBytes),
+                              dir: join(context.globalStorageUri.fsPath, 'semantic-views'), onelake,
                               onChange: () => { if (engine) engine.catalogChanged(); } });
   semviews.useAccount(storeAccount);
   // A model's local copy is kept per account (fabric.js modelCopyPath). The copies from before

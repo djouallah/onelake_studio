@@ -60,7 +60,11 @@ and F5 has its own, as the state file does today.
 | `snapshot` | table, version or snapshot id, time, operation, row and column changes, for History |
 | `data_file` | table, `abfss_path`, role, bytes, rows, begin and end version |
 | `lake_object` | a `Files/` entry: item, path, whether it is a folder, bytes, etag, last modified |
-| `semantic_model` | workspace, name, its local file's path, when opened |
+| `semantic_model`, `app` | A workspace's listings from Fabric |
+| `semantic_view` | The models opened here: name, workspace, its file's path, when |
+| `delta_commit`, `delta_state`, `delta_property` | A Delta table's commits, and its state and properties as of a version |
+| `item_name`, `catalog_prefix` | The names behind a Direct Lake model's GUIDs, and an item's prefix in OneLake's catalog |
+| `rows_read`, `file_read` | That a table's snapshot or a file's version was read here |
 | `sync_state` | what was synced, when, its last error, when it is next due |
 
 Every row says when it was last read from OneLake.
@@ -83,7 +87,7 @@ Every row says when it was last read from OneLake.
 | Saved queries | `~/OneLakeStudio/queries/` | Not metadata. |
 | Bytes of a `Files/` object the host reads | A blob on disk | Data, with its etag in `lake_object`. |
 | The log | The state file, `state-<id>.duckdb` | Not catalog data. Could move later. |
-| First rows | A `kv` table in the catalog file | Not catalog data, and the one thing there a budget may evict. |
+| First rows | A `kv` table in the catalog file | Data, not metadata, and the one thing there a budget may evict. |
 
 ## The sync worker
 

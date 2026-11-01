@@ -9,6 +9,25 @@ import { join } from "node:path";
 
 const require = createRequire(import.meta.url);
 const { createSemViews } = require("../../src/semviews.js");
+const { createCatalogFile } = require("../../src/catalogfile.js");
+
+// Each account's catalog file, as the extension has them.
+const opened = [];
+const catalogsIn = dir => {
+  const files = new Map();
+  return account => {
+    if (!files.has(account)) {
+      const f = createCatalogFile({ file: join(dir, "catalogs", `${account}.sqlite`) });
+      files.set(account, f);
+      opened.push(f);
+    }
+    return files.get(account);
+  };
+};
+const done = async dir => {
+  for (const f of opened.splice(0)) f.close();
+  await rm(dir, { recursive: true, force: true });
+};
 
 test("a local copy from before they were per account moves to the account that opened it", async () => {
   const dir = await mkdtemp(join(tmpdir(), "semviews-"));
@@ -17,7 +36,7 @@ test("a local copy from before they were per account moves to the account that o
     const old = join(root, "sales", "nem.yaml");
     await mkdir(join(root, "sales"), { recursive: true });
     await writeFile(old, "from before\n");
-    const v = createSemViews({ dir: join(dir, "store"), onelake: { readBytes: async () => Buffer.from("in OneLake\n") } });
+    const v = createSemViews({ catalogFor: catalogsIn(dir), onelake: { readBytes: async () => Buffer.from("in OneLake\n") } });
     v.useAccount("a");
     await v.put("nem", old, "sales");
     const cloud = "abfss://ws@onelake.dfs.fabric.microsoft.com/lh.Lakehouse/Files/c.yaml";
@@ -34,7 +53,7 @@ test("a local copy from before they were per account moves to the account that o
 
     // Another account with a pointer to the same old copy: what it needs has gone, and it isn't
     // handed this account's. It reads Fabric again when it next opens the model.
-    const other = createSemViews({ dir: join(dir, "store"), onelake: {} });
+    const other = createSemViews({ catalogFor: catalogsIn(dir), onelake: {} });
     other.useAccount("b");
     await writeFile(old, "for the other account\n");
     await other.put("nem", old, "sales");
@@ -43,7 +62,7 @@ test("a local copy from before they were per account moves to the account that o
     assert.ok(!existsSync(join(root, "other@fabrikam.com")));
 
     // A copy already in the account's folder is kept, and only the pointer moves.
-    const third = createSemViews({ dir: join(dir, "store"), onelake: {} });
+    const third = createSemViews({ catalogFor: catalogsIn(dir), onelake: {} });
     third.useAccount("c");
     await writeFile(old, "older\n");
     await third.put("nem", old, "sales");
@@ -53,7 +72,7 @@ test("a local copy from before they were per account moves to the account that o
     assert.equal(await third.adoptCopies(root, theirs), 1);
     assert.equal(await readFile(join(theirs, "sales", "nem.yaml"), "utf8"), "newer\n");
     assert.equal(await readFile(old, "utf8"), "older\n");
-  } finally { await rm(dir, { recursive: true, force: true }); }
+  } finally { await done(dir); }
 });
 
 test("a view is a pointer, kept per account, and its .bim is read where it is", async () => {
@@ -63,7 +82,7 @@ test("a view is a pointer, kept per account, and its .bim is read where it is", 
     await writeFile(bim, '{"model":{}}');
     const reads = [];
     const onelake = { readBytes: async (ws, path) => { reads.push([ws, path]); return Buffer.from('{"model":{"x":1}}'); } };
-    const v = createSemViews({ dir: join(dir, "store"), onelake });
+    const v = createSemViews({ catalogFor: catalogsIn(dir), onelake });
     v.useAccount("a");
     assert.deepEqual(await v.list(), []);
 
@@ -86,7 +105,7 @@ test("a view is a pointer, kept per account, and its .bim is read where it is", 
 
     v.useAccount("b");
     assert.deepEqual(await v.list(), [], "another account has its own views");
-  } finally { await rm(dir, { recursive: true, force: true }); }
+  } finally { await done(dir); }
 });
 
 test("two workspaces' models of one name are two views", async () => {
@@ -94,13 +113,13 @@ test("two workspaces' models of one name are two views", async () => {
   try {
     const bim = join(dir, "aemo.bim");
     await writeFile(bim, '{"model":{}}');
-    const v = createSemViews({ dir: join(dir, "store"), onelake: { readBytes: async () => Buffer.from("{}") } });
+    const v = createSemViews({ catalogFor: catalogsIn(dir), onelake: { readBytes: async () => Buffer.from("{}") } });
     v.useAccount("a");
     await v.put("aemo", bim, "prod");
     await v.put("aemo", bim, "Test WS");
     await v.put("AEMO", bim, "PROD");
     assert.deepEqual((await v.list()).map(x => x.schema).sort(), ["PROD", "Test WS"], "one per workspace, whatever the case");
-  } finally { await rm(dir, { recursive: true, force: true }); }
+  } finally { await done(dir); }
 });
 
 test("views kept at once are all kept", async () => {
@@ -108,9 +127,41 @@ test("views kept at once are all kept", async () => {
   try {
     const bim = join(dir, "m.bim");
     await writeFile(bim, '{"model":{}}');
-    const v = createSemViews({ dir: join(dir, "store"), onelake: { readBytes: async () => Buffer.from("{}") } });
+    const v = createSemViews({ catalogFor: catalogsIn(dir), onelake: { readBytes: async () => Buffer.from("{}") } });
     v.useAccount("a");
     await Promise.all(["a", "b", "c", "d", "e"].map(n => v.put(n, bim, "ws")));
     assert.deepEqual((await v.list()).map(x => x.name).sort(), ["a", "b", "c", "d", "e"]);
-  } finally { await rm(dir, { recursive: true, force: true }); }
+  } finally { await done(dir); }
+});
+
+test("what an older version kept in a JSON file comes across once, and a view is in the catalog file", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "semviews-"));
+  try {
+    const jsonDir = join(dir, "old");
+    await mkdir(jsonDir);
+    const bim = join(dir, "m.bim");
+    await writeFile(bim, '{"model":{}}');
+    const kept = [{ name: "nem", schema: "aemo", path: bim, created: "2026-01-01T00:00:00.000Z" }];
+    await writeFile(join(jsonDir, "a.json"), JSON.stringify(kept));
+    await writeFile(join(jsonDir, "signed-out.json"), "not json");
+    const catalogFor = catalogsIn(dir);
+    const v = createSemViews({ catalogFor, dir: jsonDir, onelake: {} });
+    v.useAccount("a");
+    assert.deepEqual(await v.list(), kept);
+    assert.equal((await v.texts())[0].text, '{"model":{}}');
+
+    await v.put("nem", bim, "AEMO");
+    await v.put("other", bim, "aemo");
+    const again = createSemViews({ catalogFor, dir: jsonDir, onelake: {} });
+    again.useAccount("a");
+    assert.deepEqual((await again.list()).map(x => [x.name, x.schema]), [["nem", "AEMO"], ["other", "aemo"]], "once, so it stays replaced");
+    assert.equal(JSON.parse(await readFile(join(jsonDir, "a.json"), "utf8")).length, 1, "and the old file is left as it was");
+
+    // Clear Cached leaves them, as it leaves the models' local copies.
+    await catalogFor("a").clear();
+    assert.equal((await again.list()).length, 2);
+
+    again.useAccount(null);
+    assert.deepEqual(await again.list(), [], "a file that isn't JSON holds none");
+  } finally { await done(dir); }
 });

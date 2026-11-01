@@ -6,8 +6,9 @@
 // node:sqlite. No DuckDB is loaded for it and no server has to be running, so the tree draws from it
 // before anything else has started.
 //
-// Listings and table metadata are the catalog's tables (catalogtables.js), which are never evicted.
-// Everything else, first rows above all, is a key and a value in `kv`, and only first rows have a budget.
+// All metadata is in the catalog's tables (catalogtables.js), which are never evicted. A table's first
+// rows are data, and are a key and a value in `kv` with a budget. So is an entry from an older version
+// that doesn't fit its table, until it is next read again.
 //
 // Each window opens the file itself, and WAL lets it read while another window writes. What another
 // window wrote or cleared is noticed by a look at the file every few seconds, since no pipe joins
@@ -25,7 +26,7 @@ const { dirname, join } = require('node:path');
 const { sqlStr } = require('./sql');
 const { createCatalogTables, CATALOG_SCHEMA } = require('./catalogtables');
 
-const SCHEMA_VERSION = 2;        // 2: listings and table metadata moved out of kv into tables
+const SCHEMA_VERSION = 3;        // 2: listings and table metadata out of kv. 3: the rest of the metadata too
 const FIRST_ROWS = 'peek␟';      // onelake.js keys.peek, as keyOf writes it
 // A list only ever kept to save walking the catalog one entry at a time, which SQLite doesn't need.
 const NO_LONGER_KEPT = 'catalog snapshot';
@@ -280,6 +281,26 @@ function createCatalogFile({ file, maxBytes = () => 256 * 1024 * 1024, onCleared
       database();
       if (!tables.anything() && !statement('SELECT EXISTS (SELECT 1 FROM kv) AS found').get().found) return 0;
       return Number(statement('SELECT page_count * page_size AS bytes FROM pragma_page_count(), pragma_page_size()').get().bytes);
+    },
+
+    // The semantic models opened here, for semviews.js.
+    views: () => tables.views(),
+    /** Replaces whichever views `same` picks with this one, in one step. */
+    keepView(view, same) {
+      inOne(() => {
+        for (const v of tables.views()) if (same(v)) tables.removeView(v.id);
+        tables.addView(view);
+      });
+    },
+    /** The pointers an older version kept in a JSON file, once. It is left as it was. */
+    importViews(jsonFile) {
+      if (metaOf('views-imported') != null) return;
+      let kept = [];
+      try { kept = JSON.parse(fs.readFileSync(jsonFile, 'utf8')); } catch (_) {}
+      inOne(() => {
+        if (Array.isArray(kept)) for (const v of kept) if (v && v.name && v.path) tables.addView(v);
+        setMeta('views-imported', '1');
+      });
     },
 
     imported: () => metaOf('imported') != null,

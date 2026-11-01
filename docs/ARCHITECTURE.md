@@ -218,10 +218,10 @@ every window is a client of it over DuckDB's Quack protocol ([`src/engine-client
   A Quack listener can stop while the process lives on: a statement that can't connect asks over this pipe, the
   server starts it again on the same port and tells every window to attach again, and the statement goes once more.
 - **What is remembered:** a SQLite file, `engine-server\catalog-<id>.sqlite` in the extension's storage
-  ([`src/catalogfile.js`](../src/catalogfile.js)). Listings and table metadata are real tables there (`workspace`, `item`,
-  `lake_table`, `lake_column`, `snapshot`, `lake_object`, `semantic_model`, `app`, [`src/catalogtables.js`](../src/catalogtables.js)),
-  and a `listing` table says what was read and when, so an empty listing is an answer. The rest, first rows above all, is a
-  key and a value. Only first rows are evicted, past `metadataCacheMaxMB`, as offline depends on the rest. Each window
+  ([`src/catalogfile.js`](../src/catalogfile.js)). All metadata is real tables there: listings, table metadata, Delta state
+  and commits, the models opened, and what has been read ([`src/catalogtables.js`](../src/catalogtables.js)). A `listing`
+  table says what was read and when, so an empty listing is an answer. A table's first rows are data, not metadata: a key
+  and a value in `kv`, and the only thing evicted, past `metadataCacheMaxMB`, as offline depends on the rest. Each window
   opens the file itself with Node's `node:sqlite`, so it needs no server and no DuckDB, and a page's SQL can't reach it, as
   it is outside the folders DuckDB may open. WAL lets a window read while another writes, and another window's Clear is
   noticed within a few seconds. A file that isn't a database is set aside as `.bad` and started again. It is named after
@@ -239,7 +239,7 @@ every window is a client of it over DuckDB's Quack protocol ([`src/engine-client
     as a disk error or a file from a newer DuckDB, leaves it where it is and runs without it, and the Logs tab says why.
   - **The server's own log is `state-<id>.log`,** beside it and also named after the account. Its last 1 MB is kept.
 
-Still files: a `Files/` object's bytes, saved queries, models and semantic-model pointers.
+Still files: a `Files/` object's bytes, saved queries and models.
 
 **Logs** ([`src/logs.js`](../src/logs.js)), a node in the tree, with one tab per window. The record is DuckDB's own: its `Quack` log has a row per
 statement with the time to its first rows and any error, for every tab, window and the command line. A large
@@ -393,8 +393,9 @@ workspace has one model of a name.
 - **The local copy is the cache.** Later clicks open it without asking Fabric, and the tree marks the
   model with a check. The command line reads and writes the same copies. **Download Again** reads
   Fabric again and replaces the copy, after asking.
-- **Every model opened is remembered** as a pointer (name, file path, when) in one file per Microsoft
-  account ([`src/semviews.js`](../src/semviews.js)), so it survives a restart.
+- **Every model opened is remembered** as a pointer (name, file path, when) in the account's catalog file
+  ([`src/semviews.js`](../src/semviews.js)), so it survives a restart. **Clear Cached OneLake Data** leaves it, as it leaves
+  the local copy.
 - **Permissions:** reading a definition needs Contributor or above on the workspace, or write on the
   model.
 

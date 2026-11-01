@@ -48,11 +48,34 @@ const SCHEMA = `
     workspace TEXT NOT NULL, pos INTEGER NOT NULL, id TEXT, name TEXT, description TEXT, url TEXT,
     deployed_at TEXT, access TEXT, extra TEXT,
     PRIMARY KEY (workspace, pos)) WITHOUT ROWID;
+  CREATE TABLE IF NOT EXISTS delta_commit (
+    workspace TEXT NOT NULL, item TEXT NOT NULL, schema_name TEXT NOT NULL, table_name TEXT NOT NULL,
+    pos INTEGER NOT NULL, version REAL, last_modified REAL, extra TEXT,
+    PRIMARY KEY (workspace, item, schema_name, table_name, pos)) WITHOUT ROWID;
+  CREATE TABLE IF NOT EXISTS delta_state (
+    workspace TEXT NOT NULL, dir TEXT NOT NULL, at_version TEXT NOT NULL, ts INTEGER NOT NULL,
+    version REAL, as_of REAL, source TEXT, id TEXT, created_time REAL, partition_columns TEXT,
+    min_reader REAL, min_writer REAL, features TEXT, size_bytes REAL, num_files REAL, deleted_rows REAL, extra TEXT,
+    PRIMARY KEY (workspace, dir, at_version)) WITHOUT ROWID;
+  CREATE TABLE IF NOT EXISTS delta_property (
+    workspace TEXT NOT NULL, dir TEXT NOT NULL, at_version TEXT NOT NULL, name TEXT NOT NULL, value TEXT,
+    PRIMARY KEY (workspace, dir, at_version, name)) WITHOUT ROWID;
+  CREATE TABLE IF NOT EXISTS item_name (
+    workspace_id TEXT NOT NULL, item_id TEXT NOT NULL, ts INTEGER NOT NULL, workspace TEXT, item TEXT, extra TEXT,
+    PRIMARY KEY (workspace_id, item_id)) WITHOUT ROWID;
+  CREATE TABLE IF NOT EXISTS catalog_prefix (item_key TEXT PRIMARY KEY, ts INTEGER NOT NULL, prefix TEXT NOT NULL) WITHOUT ROWID;
+  CREATE TABLE IF NOT EXISTS rows_read (location TEXT PRIMARY KEY, ts INTEGER NOT NULL) WITHOUT ROWID;
+  CREATE TABLE IF NOT EXISTS file_read (
+    workspace TEXT NOT NULL, path TEXT NOT NULL, version TEXT NOT NULL, ts INTEGER NOT NULL,
+    PRIMARY KEY (workspace, path, version)) WITHOUT ROWID;
+  CREATE TABLE IF NOT EXISTS semantic_view (name TEXT NOT NULL, schema_name TEXT, path TEXT NOT NULL, created TEXT);
   CREATE TABLE IF NOT EXISTS sync_state (k TEXT PRIMARY KEY, ts INTEGER NOT NULL, error TEXT NOT NULL) WITHOUT ROWID;
   CREATE INDEX IF NOT EXISTS lake_table_listed ON lake_table (workspace, item, listed_pos);
   CREATE INDEX IF NOT EXISTS listing_ts ON listing (ts);
 `;
-const TABLES = ['listing', 'workspace', 'item', 'lake_table', 'lake_column', 'snapshot', 'lake_object', 'semantic_model', 'app', 'sync_state'];
+// What Clear Cached empties. Not semantic_view: as the models' local copies do, what was opened stays.
+const TABLES = ['listing', 'workspace', 'item', 'lake_table', 'lake_column', 'snapshot', 'lake_object', 'semantic_model', 'app',
+  'delta_commit', 'delta_state', 'delta_property', 'item_name', 'catalog_prefix', 'rows_read', 'file_read', 'sync_state'];
 
 const isObject = v => !!v && typeof v === 'object' && !Array.isArray(v);
 const listOf = v => Array.isArray(v) && v.every(isObject);
@@ -109,6 +132,8 @@ function createCatalogTables({ statement }) {
   const SNAPSHOT = { version: 'version', timestamp: 'timestamp', operation: 'operation', rowsAdded: 'rows_added',
     rowsRemoved: 'rows_removed', filesAdded: 'files_added', filesRemoved: 'files_removed', bytesAdded: 'bytes_added',
     totalRows: 'total_rows', engine: 'engine', columns: 'columns' };
+  const DELTA_STATE = ['version', 'asOf', 'source', 'id', 'createdTime', 'partitionColumns', 'properties',
+    'minReaderVersion', 'minWriterVersion', 'features', 'sizeBytes', 'numFiles', 'deletedRows'];
   const TOP = ['empty', 'schemaFields', 'totalRecords', 'stats', 'metadataLocation', 'format'];
   const STATS = ['codec', 'totalFilesSize', 'totalDataFiles', 'totalDeleteFiles', 'operation', 'snapshotTs', 'snapshotCount',
     'formatVersion', 'partitionColumns', 'vorderProp', 'format', 'deltaVersion', 'history'];
@@ -179,6 +204,83 @@ function createCatalogTables({ statement }) {
       rows: ([ws]) => all('SELECT id, name, description, url, deployed_at, access, extra FROM app WHERE workspace = ? ORDER BY pos', ws)
         .map(r => rowOf(r, APP)),
     }),
+    'delta-commits': listingOf({
+      fits: listOf,
+      put([ws, item, schema, name], value) {
+        run('DELETE FROM delta_commit WHERE workspace = ? AND item = ? AND schema_name = ? AND table_name = ?', ws, item, schema, name);
+        value.forEach((c, pos) => run('INSERT INTO delta_commit VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+          ws, item, schema, name, pos, number(c.version), number(c.lastModified), restOf(c, ['version', 'lastModified'])));
+      },
+      rows: ([ws, item, schema, name]) => all(`SELECT version, last_modified, extra FROM delta_commit
+        WHERE workspace = ? AND item = ? AND schema_name = ? AND table_name = ? ORDER BY pos`, ws, item, schema, name)
+        .map(r => ({ version: r.version, lastModified: r.last_modified, ...parsed(r.extra) })),
+    }),
+    'delta-state': {
+      fits: v => isObject(v) && (v.properties == null || isObject(v.properties)),
+      has: (k, [ws, dir, at]) => !!one('SELECT 1 AS found FROM delta_state WHERE workspace = ? AND dir = ? AND at_version = ?', ws, dir, at),
+      get(k, [ws, dir, at]) {
+        const r = one('SELECT * FROM delta_state WHERE workspace = ? AND dir = ? AND at_version = ?', ws, dir, at);
+        if (!r) return null;
+        const properties = {};
+        for (const p of all('SELECT name, value FROM delta_property WHERE workspace = ? AND dir = ? AND at_version = ?', ws, dir, at)) {
+          properties[p.name] = p.value;
+        }
+        return { at: r.ts, value: {
+          version: r.version, asOf: r.as_of, source: r.source, id: r.id, createdTime: r.created_time,
+          partitionColumns: parsed(r.partition_columns), properties,
+          minReaderVersion: r.min_reader, minWriterVersion: r.min_writer, features: parsed(r.features),
+          sizeBytes: r.size_bytes, numFiles: r.num_files, deletedRows: r.deleted_rows, ...parsed(r.extra),
+        } };
+      },
+      put(k, [ws, dir, at], v, ts) {
+        run('INSERT OR REPLACE INTO delta_state VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+          ws, dir, at, ts, number(v.version), number(v.asOf), text(v.source), text(v.id), number(v.createdTime),
+          json(v.partitionColumns), number(v.minReaderVersion), number(v.minWriterVersion), json(v.features),
+          number(v.sizeBytes), number(v.numFiles), number(v.deletedRows), restOf(v, DELTA_STATE));
+        run('DELETE FROM delta_property WHERE workspace = ? AND dir = ? AND at_version = ?', ws, dir, at);
+        for (const [name, value] of Object.entries(v.properties || {})) {
+          run('INSERT INTO delta_property VALUES (?, ?, ?, ?, ?)', ws, dir, at, name, text(value));
+        }
+      },
+    },
+    'item-named': {
+      fits: isObject,
+      has: (k, [w, i]) => !!one('SELECT 1 AS found FROM item_name WHERE workspace_id = ? AND item_id = ?', w, i),
+      get(k, [w, i]) {
+        const r = one('SELECT ts, workspace, item, extra FROM item_name WHERE workspace_id = ? AND item_id = ?', w, i);
+        return r ? { at: r.ts, value: rowOf(r, { workspace: 'workspace', item: 'item' }) } : null;
+      },
+      put(k, [w, i], v, ts) {
+        run('INSERT OR REPLACE INTO item_name VALUES (?, ?, ?, ?, ?, ?)', w, i, ts, text(v.workspace), text(v.item), restOf(v, ['workspace', 'item']));
+      },
+    },
+    irc: {
+      fits: v => typeof v === 'string',
+      has: (k, [w]) => !!one('SELECT 1 AS found FROM catalog_prefix WHERE item_key = ?', w),
+      get(k, [w]) {
+        const r = one('SELECT ts, prefix FROM catalog_prefix WHERE item_key = ?', w);
+        return r ? { at: r.ts, value: r.prefix } : null;
+      },
+      put(k, [w], v, ts) { run('INSERT OR REPLACE INTO catalog_prefix VALUES (?, ?, ?)', w, ts, v); },
+    },
+    rows: {
+      fits: v => v === true,
+      has: (k, [location]) => !!one('SELECT 1 AS found FROM rows_read WHERE location = ?', location),
+      get(k, [location]) {
+        const r = one('SELECT ts FROM rows_read WHERE location = ?', location);
+        return r ? { at: r.ts, value: true } : null;
+      },
+      put(k, [location], v, ts) { run('INSERT OR REPLACE INTO rows_read VALUES (?, ?)', location, ts); },
+    },
+    'file-read': {
+      fits: v => v === true,
+      has: (k, [ws, path, version]) => !!one('SELECT 1 AS found FROM file_read WHERE workspace = ? AND path = ? AND version = ?', ws, path, version),
+      get(k, [ws, path, version]) {
+        const r = one('SELECT ts FROM file_read WHERE workspace = ? AND path = ? AND version = ?', ws, path, version);
+        return r ? { at: r.ts, value: true } : null;
+      },
+      put(k, [ws, path, version], v, ts) { run('INSERT OR REPLACE INTO file_read VALUES (?, ?, ?, ?)', ws, path, version, ts); },
+    },
     table: {
       fits: v => isObject(v) && (v.schemaFields == null || listOf(v.schemaFields)) && (v.stats == null || isObject(v.stats)),
       has: (k, [ws, item, schema, name]) => !!one(`SELECT 1 AS found FROM lake_table
@@ -252,7 +354,8 @@ function createCatalogTables({ statement }) {
 
   // A store key's route and its parts, or null for what isn't catalog data. The key's separator is a
   // NUL or, from the state file, the character that stood in for one.
-  const SIZES = { workspaces: 0, items: 1, tables: 2, files: 3, models: 1, apps: 1, table: 4 };
+  const SIZES = { workspaces: 0, items: 1, tables: 2, files: 3, models: 1, apps: 1, table: 4,
+    'delta-commits': 4, 'delta-state': 3, 'item-named': 2, irc: 1, rows: 1, 'file-read': 3 };
   function routeOf(key) {
     const [kind, ...parts] = String(key).split(/[\0␟]/);
     if (!Object.hasOwn(SIZES, kind) || parts.length !== SIZES[kind]) return null;
@@ -291,7 +394,13 @@ function createCatalogTables({ statement }) {
       return { keys, latest };
     },
     clear() { for (const t of TABLES) run(`DELETE FROM ${t}`); },
-    anything: () => !!one('SELECT EXISTS (SELECT 1 FROM listing) OR EXISTS (SELECT 1 FROM lake_table) AS found').found,
+    anything: () => !!one(`SELECT ${TABLES.map(t => `EXISTS (SELECT 1 FROM ${t})`).join(' OR ')} AS found`).found,
+    // The semantic models opened here, oldest first: { name, schema, path, created }. A view is replaced
+    // by removing it and adding it again, which also moves it to the end.
+    views: () => all('SELECT rowid AS id, name, schema_name, path, created FROM semantic_view ORDER BY rowid')
+      .map(r => ({ id: r.id, name: r.name, schema: r.schema_name, path: r.path, created: r.created })),
+    removeView: id => run('DELETE FROM semantic_view WHERE rowid = ?', id),
+    addView: v => run('INSERT INTO semantic_view VALUES (?, ?, ?, ?)', text(v.name) ?? '', text(v.schema), text(v.path) ?? '', text(v.created)),
   };
 }
 

@@ -225,6 +225,44 @@ test("a table read by name before any listing isn't listed by it", async t => {
   assert.ok(await backend.read(`table\0${WS}\0${ITEM}\0dbo\0early`));
 });
 
+test("all the metadata is tables: kv holds a table's first rows and nothing else", async t => {
+  const { open, file } = await setup(t);
+  const { backend } = open();
+  const state = { version: 12, asOf: 10, source: "checkpoint", id: "abc", createdTime: 1700000000000, partitionColumns: ["day"],
+    properties: { "delta.columnMapping.mode": "name", "delta.appendOnly": "true" }, minReaderVersion: 2, minWriterVersion: 5,
+    features: ["columnMapping", "deletionVectors"], sizeBytes: null, numFiles: null, deletedRows: 3 };
+  const entries = {
+    [`delta-commits\0${WS}\0${ITEM}\0dbo\0t`]: [{ version: 12, lastModified: 1700000000000 }, { version: 11, lastModified: null }],
+    "delta-state\0ws\0i.Lakehouse/Tables/t\u000012": state,
+    "item-named\0aaaa\0bbbb": { workspace: WS, item: ITEM },
+    "irc\0ws/i": "ws-guid/item-guid",
+    "rows\0abfss://x/metadata/1.metadata.json": true,
+    [`file-read\0${WS}\0${ITEM}/Files/a.parquet\0etag`]: true,
+  };
+  for (const [k, v] of Object.entries(entries)) await backend.write(k, 9, JSON.stringify(v));
+  await backend.write("peek\0loc", 9, '{"rows":[]}');
+  for (const [k, v] of Object.entries(entries)) {
+    const kept = await backend.read(k);
+    assert.equal(kept.at, 9, k);
+    assert.deepEqual(JSON.parse(kept.json), v, k);
+  }
+  const db = new DatabaseSync(file);
+  t.after(() => db.close());
+  assert.deepEqual(db.prepare("SELECT k FROM kv").all().map(r => r.k), ["peek␟loc"]);
+  assert.deepEqual(db.prepare("SELECT version, last_modified FROM delta_commit ORDER BY pos").all().map(r => [r.version, r.last_modified]),
+    [[12, 1700000000000], [11, null]]);
+  assert.equal(db.prepare("SELECT value FROM delta_property WHERE name = 'delta.columnMapping.mode'").get().value, "name");
+  assert.equal(db.prepare("SELECT deleted_rows AS n FROM delta_state").get().n, 3);
+  assert.equal(db.prepare("SELECT prefix FROM catalog_prefix").get().prefix, "ws-guid/item-guid");
+  assert.equal(db.prepare("SELECT workspace FROM item_name").get().workspace, WS);
+  assert.equal(db.prepare("SELECT count(*) AS n FROM rows_read").get().n, 1);
+  assert.equal(db.prepare("SELECT version FROM file_read").get().version, "etag");
+  await backend.clear();
+  for (const t of ["delta_commit", "delta_state", "delta_property", "item_name", "catalog_prefix", "rows_read", "file_read"]) {
+    assert.equal(db.prepare(`SELECT count(*) AS n FROM ${t}`).get().n, 0, t);
+  }
+});
+
 test("a value that doesn't fit its table is kept all the same", async t => {
   const { open } = await setup(t);
   const { backend } = open();
@@ -257,6 +295,8 @@ test("a file from before the tables moves over once, keeping what isn't catalog 
   add.run(`items␟a`, 4, '[{"name":"i.Lakehouse","kind":"Lakehouse"}]');
   add.run("peek␟loc", 5, '{"rows":[]}');
   add.run("catalog snapshot", 6, "[]");
+  add.run("rows␟loc", 7, "true");
+  add.run("item-named␟a␟b", 8, '{"workspace":"w","item":"i"}');
   old.close();
 
   const { backend } = open();
@@ -264,11 +304,13 @@ test("a file from before the tables moves over once, keeping what isn't catalog 
   assert.equal((await backend.read("items\0a")).at, 4);
   assert.deepEqual(await backend.read("peek\0loc"), { at: 5, json: '{"rows":[]}' });
   assert.equal(await backend.read("catalog snapshot"), null);
+  assert.deepEqual(await backend.read("rows\0loc"), { at: 7, json: "true" });
+  assert.deepEqual(await backend.read("item-named\0a\0b"), { at: 8, json: '{"workspace":"w","item":"i"}' });
   backend.close();
   const db = new DatabaseSync(file);
   t.after(() => db.close());
   assert.deepEqual(db.prepare("SELECT k FROM kv").all().map(r => r.k), ["peek␟loc"]);
-  assert.equal(db.prepare("PRAGMA user_version").get().user_version, 2);
+  assert.equal(db.prepare("PRAGMA user_version").get().user_version, 3);
 });
 
 test("an import puts catalog data in the tables, and leaves newer rows alone", async t => {
