@@ -104,7 +104,7 @@ function page(nonce) {
 const vs = acquireVsCodeApi();
 const $ = id => document.getElementById(id);
 const el = (tag, props = {}, ...kids) => { const e = document.createElement(tag); Object.assign(e, props); e.append(...kids); return e; };
-const COLS = [['at', 'When'], ['status', 'Status'], ['ms', 'ms', 'n'], ['here', 'From'], ['sql', 'Statement']];
+const COLS = [['at', 'When'], ['status', 'Status'], ['ms', 'ms', 'n'], ['sql', 'Statement']];
 let rows = [], shown = 0, sort = { col: 'at', desc: true };
 const open = new Set();
 const when = at => {
@@ -143,7 +143,6 @@ function draw() {
         el('td', { textContent: when(r.at) }),
         el('td', { className: 's-' + r.status, textContent: r.status }),
         el('td', { className: 'n', textContent: r.ms.toLocaleString() }),
-        el('td', { textContent: r.here ? 'this window' : 'another window' }),
         sql,
         el('td', {},
           el('button', { textContent: 'Open', title: 'A new tab with this SQL in its box, not run', onclick: () => vs.postMessage({ open: r.sql }) }), ' ',

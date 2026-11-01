@@ -169,11 +169,9 @@ test("the log: every window's statements, as DuckDB recorded them", async t => {
   const quoted = of("it''s a");
   assert.equal(quoted.sql, "SELECT 'it''s a \"quote\", {x: ''y''}' AS txt,\n  2 AS second", "the SQL as it was written");
   assert.equal(quoted.status, "ok");
-  assert.equal(quoted.here, true);
   assert.ok(!/onelake:/.test(quoted.sql), "no tag");
   const failed = of("no_such_table");
   assert.equal(failed.status, "error");
-  assert.equal(failed.here, false, "from the other window");
   assert.match(failed.error, /no_such_table/);
   assert.equal(of("range(100000000000000)").status, "stopped");
   assert.ok(of("range(200000)").ms >= 0, "to its first rows");
@@ -311,8 +309,6 @@ test("concurrency: many tabs of two windows on one server, every answer right, a
   const missing = [...ran].filter(id => !inLog.has(id));
   assert.deepEqual(missing, [], "each statement is in the server's log");
   assert.ok([...inLog.values()].every(r => r.status === "ok" && r.ms >= 0));
-  // Each from the window that sent it.
-  assert.ok([...inLog].every(([id, r]) => r.here === id.startsWith("a")), "the log knows whose it was");
   assert.equal(logged.find(r => r.sql.includes("no_such_concurrent_table")).status, "error");
   assert.equal(logged.find(r => r.sql.includes("range(100000000000000)")).status, "stopped");
 

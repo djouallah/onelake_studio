@@ -450,7 +450,6 @@ function createRemote({ onGone = () => {}, ...cfg }) {
 
     const ask = controlChannel(sock, m => { if (m.reattach && !closing) client.reattach().catch(() => {}); });
     const recover = recovery(ask, client);
-    const mine = r => ({ ...r, here: r.window === window });
 
     let seq = 0;
     // Statements can work while `control` is stale: an attach made after the listener came back knows
@@ -481,7 +480,7 @@ function createRemote({ onGone = () => {}, ...cfg }) {
       setStorageToken: token => ask({ storageToken: token }),
       setOffline: now => ask({ offline: now }),
       stats: () => ask({ stats: true }),
-      logs: async limit => (await ask({ logs: { limit } })).map(mine),
+      logs: limit => ask({ logs: { limit } }),
       clearLogs: () => ask({ clearLogs: true }),
       async connect() {
         const c = await local.connect();
