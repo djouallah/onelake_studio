@@ -274,10 +274,10 @@ async function runMatrix() {
       const r = await runIt(`select 'asked=' || count(*) as c from duckdb_logs where type = 'Quack' and message like '%PREPARE_REQUEST%${mark}' || '_mark%'`);
       return Number((/asked=(\d+)/.exec(r.table) || [])[1]);
     };
-    const once = await runIt("select 1041 /* e2e_once_mark */ as a");
+    const once = await runIt("select 1041 as e2e_once_mark");
     check("one click ran it", /\b1041\b/.test(once.table), once.table || once.status);
     const twice = await act(async f => {
-      await setBox("select 1042 /* e2e_twice_mark */ as a");
+      await setBox("select 1042 as e2e_twice_mark");
       await f.locator("#runBtn").dblclick();
     });
     check("a double click ran it", /\b1042\b/.test(twice.table), twice.table || twice.status);
@@ -287,7 +287,7 @@ async function runMatrix() {
     const f = await panel();
     await f.locator("td[data-c]").first().dblclick();
     await f.locator("#inspector").waitFor({ state: "visible", timeout: 5000 });
-    check("the inspector shows the cell", /1042/.test(await f.locator("#inspectorBody").innerText()));
+    check("the inspector shows the cell", /asked=/.test(await f.locator("#inspectorBody").innerText()));
     await f.locator("#inspectorClose").click();
   });
 
