@@ -242,7 +242,7 @@ test("a model's local copy is under its account: two tenants can each have sales
 test("the module can only read: no write, no existence check, no storage token", () => {
   assert.deepEqual(Object.keys(fabricModule).sort(), ["createFabric", "modelAccountDir", "modelCopyPath", "modelFileName"]);
   const f = createFabric({ getFabricToken: async () => "fab" });
-  assert.deepEqual(Object.keys(f).sort(), ["getBim", "itemOf", "listApps", "listSemanticModels", "reset", "workspaceId"]);
+  assert.deepEqual(Object.keys(f).sort(), ["getBim", "itemOf", "itemOfSqlEndpoint", "listApps", "listItems", "listSemanticModels", "reset", "workspaceId"]);
 });
 
 test("a 401 is retried once with a fresh token", async () => {

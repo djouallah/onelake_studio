@@ -35,7 +35,7 @@ const deps = ({ endpoint = null, items = {} } = {}) => {
     workspaceId: async () => HOME_ID,
     listItems: async () => Object.keys(items).map((dir, i) => {
       const [name, type] = dir.split(".");
-      return { id: `id-${i}`, name, type };
+      return { id: `cccccccc-0000-0000-0000-00000000000${i}`, name, type };
     }),
   }, onelake: {
     items: async () => Object.keys(items).map(name => ({ name, kind: name.split(".")[1] })),
@@ -80,7 +80,7 @@ test("an endpoint Fabric doesn't show: the one item in the model's workspace hol
   } }));
   assert.equal(r.refused, undefined);
   assert.match(r.notes[0], /cannot be found.*storage in home/);
-  assert.deepEqual(lakehousesOf(bim), [{ workspace: HOME_ID, item: "id-1" }]);
+  assert.deepEqual(lakehousesOf(bim), [{ workspace: HOME_ID, item: "cccccccc-0000-0000-0000-000000000001" }]);
 });
 
 test("no guessing: none, two, or a listing that can't be read is refused, and nothing moves", async () => {
