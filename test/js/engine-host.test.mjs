@@ -707,7 +707,7 @@ test("offline, a Delta table says so at once, disk cache or not, and an empty on
   });
   await engine.warm();
   await assert.rejects(engine.call("query", ["SELECT * FROM lakehouse.w.lh.dbo.t"]),
-    e => e.offline === true && /lakehouse\.w\.lh\.dbo\.t: a Delta table's rows can't be read offline yet, as there is no internet/.test(e.message));
+    e => e.offline === true && /lakehouse\.w\.lh\.dbo\.t: this Delta table hasn't been read here, and there is no internet/.test(e.message));
   const r = await engine.call("query", ["SELECT * FROM lakehouse.w.lh.dbo.never_written"]);
   assert.equal(r.rows.length, 0);
 });

@@ -125,6 +125,7 @@ async function main({ token, pipe, options, logFile, idleMs = 60_000, logsFile =
     await booted;
     if (msg.storageToken) { await engine.setStorageToken(String(msg.storageToken)); return true; }
     if (msg.offline != null) { await engine.setOffline(!!msg.offline); return true; }
+    if (msg.mount) { await engine.mountTable(msg.mount); return true; }
     if (msg.listen) { await listenAgain(!!msg.listen.force); return true; }
     if (msg.stats) return { ...await engine.stats(), statements: keeper ? await keeper.statements() : 0 };
     if (msg.logs) {

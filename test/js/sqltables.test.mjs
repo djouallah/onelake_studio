@@ -186,3 +186,24 @@ test("a Delta table is read from its own folder, and an Iceberg one from its met
   assert.equal(r.deltaTable, null);
   assert.equal(r.metadataLocation, location);
 });
+
+test("a Delta table says where its log is kept here, and is asked for again when the statement is", async () => {
+  const { createSqlTables } = require("../../src/sqltables.js");
+  const asked = [];
+  const onelake = {
+    workspaces: async () => ["ws"],
+    items: async () => [{ name: "lh.Lakehouse", kind: "Lakehouse" }],
+    tables: async () => [{ schema: "dbo", table: "t" }],
+    table: async () => ({ empty: false, format: "delta", at: 1,
+      metadataLocation: "abfss://ws@onelake.dfs.fabric.microsoft.com/lh.Lakehouse/Tables/dbo/t/metadata/v3.metadata.json" }),
+  };
+  const deltaLogs = { ensure: async (at, o) => { asked.push([at, o]); return "C:/cache/delta/abc"; } };
+  const sql = createSqlTables({ onelake, paths: async () => ({}), deltaLogs });
+  const ref = { kind: "lakehouse", workspace: "ws", item: "lh", schema: "dbo", table: "t" };
+  const r = await sql.resolve(ref);
+  assert.equal(r.deltaLocal, "C:/cache/delta/abc");
+  assert.equal(r.deltaTable, "abfss://ws@onelake.dfs.fabric.microsoft.com/lh.Lakehouse/Tables/dbo/t");
+  assert.deepEqual(asked[0], [{ workspace: "ws", dir: "lh.Lakehouse/Tables/dbo/t" }, { fresh: false }]);
+  await sql.resolve(ref, { fresh: true });
+  assert.equal(asked[1][1].fresh, true);
+});

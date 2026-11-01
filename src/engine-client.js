@@ -440,6 +440,7 @@ function createRemote({ onGone = () => {}, ...cfg }) {
       connectLocal: () => local.connect(),
       setStorageToken: token => ask({ storageToken: token }),
       setOffline: now => ask({ offline: now }),
+      mount: m => ask({ mount: m }),
       stats: () => ask({ stats: true }),
       logs: limit => ask({ logs: { limit } }),
       clearLogs: () => ask({ clearLogs: true }),

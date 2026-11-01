@@ -27,6 +27,7 @@ const { createCatalog } = require('./catalog');
 const { createStore } = require('./store');
 const { createCatalogFile, catalogFileOf, stateFileOf } = require('./catalogfile');
 const { createSyncWorker } = require('./syncworker');
+const { createDeltaMirror } = require('./deltamirror');
 const { createDiagLog, outputLogOf } = require('./diaglog');
 const { createLogFile, logFileOf } = require('./logfile');
 const { createOneLake, walkCached } = require('./onelake');
@@ -975,7 +976,16 @@ async function activateInner(context) {
     isOffline: () => connectivity.offline(),
   });
   out.mark('catalog ready');
-  const sqlTables = createSqlTables({ onelake, paths: async () => (await agent.modules()).paths,
+  // A Delta table's log, in the cache folder (deltamirror.js). There's nowhere to keep it with the disk cache off.
+  const deltaLogs = createDeltaMirror({
+    catalog, ttlMs: catalogTtlMs, isOffline: () => connectivity.offline(),
+    base: () => {
+      const dir = fileCacheDirFor(fileCacheAccount);
+      const keeps = Number(vscode.workspace.getConfiguration('onelakeStudio').get('diskCacheMaxGB', 64)) > 0;
+      return dir && keeps ? join(dir, 'delta') : null;
+    },
+  });
+  const sqlTables = createSqlTables({ onelake, paths: async () => (await agent.modules()).paths, deltaLogs,
                                       offlineReason: () => connectivity.reason() });
   resolveSqlTable = sqlTables.resolve;
   resolveSqlFile = sqlTables.resolveFile;

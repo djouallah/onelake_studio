@@ -177,7 +177,8 @@ The engine is **DuckDB 2.0 running natively in a process of its own** ([The serv
 - **Catalogs:** one attached `:memory:` catalog per kind (`lakehouse`, `warehouse`, `sqldatabase`,
   `mirroreddatabase`), and one for `semanticmodel`. The workspace, item and schema are nested schemas.
 - **Reading OneLake:** through DuckDB's `delta`, `iceberg` and `azure` extensions. A Delta table is read with
-  `delta_scan` on its folder, from its own log, and never through Fabric's Iceberg conversion, whose column ids can
+  `delta_scan` on a local copy of its log ([`src/deltamirror.js`](../src/deltamirror.js)), with the Parquet files served from OneLake through
+  the disk cache by a mount in our `cache_httpfs`, and never through Fabric's Iceberg conversion, whose column ids can
   disagree with the files'. An Iceberg table is read with `iceberg_scan` on the metadata file the host's cache holds.
   Which it is, and where, comes from the cache, so the catalog is never asked at query time. DuckDB does the work itself:
   snapshots, deletes, schema evolution.
@@ -626,6 +627,7 @@ every window. The rest apply at once.
 | `src/connectivity.js` | Whether this window is offline, and why. |
 | `src/http.js` | How the host asks OneLake and the Fabric API for anything. |
 | `src/deltalog.js` | A Delta table's own log, for Stats and History. |
+| `src/deltamirror.js` | A Delta table's log kept in the cache folder, for `delta_scan` to run on. |
 | `src/fabric.js` | A workspace's semantic models and apps, and a model's definition. |
 | `src/semviews.js` | The models opened, per account. |
 | `src/tree.js`, `src/doubleclick.js` | The explorer, and a double click in it counting as one click. |

@@ -453,7 +453,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
 
   const capabilities = {
     excel: false, zipfs: false, h3: false, avro: false, httpfs: false, sqlite_scanner: false,
-    iceberg: false, azure: false, delta: false, cache_httpfs: false, fileCache: false, quack: false,
+    iceberg: false, azure: false, delta: false, cache_httpfs: false, fileCache: false, mount: false, quack: false,
   };
 
   // An optional extension that will not load costs one file format, which is not a
@@ -537,6 +537,26 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
     } catch (e) {
       onWarn(`reading kept data offline is unavailable — ${e.message}`);
     }
+    // Asked with nothing mounted: a build without mounts reads a Delta table from OneLake itself.
+    try {
+      await conn.run(`SELECT cache_httpfs_unmount('');`);
+      capabilities.mount = true;
+    } catch (e) {
+      onWarn(`reading a Delta table through the disk cache is unavailable — ${e.message}`);
+    }
+  }
+
+  // A Delta table's folder here, with the files it names served from where they really are. Only a folder
+  // in this engine's disk cache, and only OneLake: the lockdown is what it reads past.
+  const mountsMade = new Map();
+  function mountTable({ local, remote: where }) {
+    const inside = fileCacheDir && String(local).replace(/\\/g, '/').toLowerCase().startsWith(`${fileCacheDir.replace(/\\/g, '/').toLowerCase()}/`);
+    if (!inside || !isOneLakeTable(where)) throw new Error(`this engine can't serve ${local} from ${where}`);
+    if (mountsMade.get(local) === where) return Promise.resolve();
+    return admin(async () => {
+      await conn.run(`SELECT cache_httpfs_mount(${sqlStr(local)}, ${sqlStr(where)});`);
+      mountsMade.set(local, where);
+    });
   }
 
   // The disk cache serves what it keeps with no call to OneLake while this window is offline. A
@@ -623,22 +643,28 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
   async function sourceOf(ref, o) {
     if (!resolveTable) throw new Error('this engine cannot name OneLake tables');
     const r = await resolveTable(ref, o);
-    let source;
+    let source, mount = null;
     if (r.emptySql != null) source = String(r.emptySql);
     else if (r.deltaTable != null) {
       if (!isOneLakeTable(r.deltaTable)) throw new Error(`OneLake gave ${sqlName(r)} no readable folder (${String(r.deltaTable).slice(0, 120)})`);
-      source = `SELECT * FROM delta_scan(${sqlStr(r.deltaTable)})`;
+      // On the copy of its log, with the files it names served from OneLake through the disk cache, when
+      // both are here. Otherwise on OneLake itself, which is the same online and nothing offline.
+      const local = r.deltaLocal && capabilities.mount ? String(r.deltaLocal).replace(/\\/g, '/') : null;
+      source = `SELECT * FROM delta_scan(${sqlStr(local || r.deltaTable)})`;
+      if (local) mount = { local, remote: r.deltaTable };
     } else if (isOneLakeMetadata(r.metadataLocation)) source = `SELECT * FROM iceberg_scan(${sqlStr(r.metadataLocation)})`;
     else {
       throw new Error(`OneLake gave ${sqlName(r)} no readable metadata location` +
         (r.metadataLocation ? ` (${String(r.metadataLocation).slice(0, 120)})` : ''));
     }
-    return { name: sqlName(r), path: [r.kind, r.workspace, r.item, r.schema || 'dbo'], source, location: r.emptySql == null ? r.metadataLocation : null, at: r.at };
+    return { name: sqlName(r), path: [r.kind, r.workspace, r.item, r.schema || 'dbo'], source, mount, location: r.emptySql == null ? r.metadataLocation : null, at: r.at };
   }
-  async function makeView({ name, path: parts, source }) {
+  async function makeView({ name, path: parts, source, mount }) {
     if (/\bdelta_scan\(/.test(source) && !capabilities.delta) {
       throw new Error(`${name} is a Delta table, and DuckDB's delta extension isn't available on this platform.`);
     }
+    // Before anything may read through it. On the shared engine that's the server's, as the offline switch is.
+    if (mount) await (remote ? instance.mount(mount) : mountTable(mount));
     const key = name.toLowerCase();
     // On a shared engine another window may have changed the view since, so what this window
     // remembers making says nothing. A statement costs little there, sent in one call.
@@ -793,14 +819,15 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
   function refuseOffline(sql, tables) {
     const why = offlineReason();
     if (!why) return;
-    // delta_scan reads a table's log for itself, past the disk cache, so that needs OneLake.
-    const delta = tables.find(t => /\bdelta_scan\(/.test(t.source));
-    if (delta) {
-      throw Object.assign(new Error(`${delta.name}: a Delta table's rows can't be read offline yet, as ${why === 'no internet' ? 'there is no internet' : 'you are not signed in'}. ` +
+    // delta_scan on OneLake itself reads the table's log from there, past the disk cache. So no copy of
+    // its log here means none of it can be read.
+    const noLog = tables.find(t => /\bdelta_scan\(\s*'abfss:/.test(t.source));
+    if (noLog) {
+      throw Object.assign(new Error(`${noLog.name}: this Delta table hasn't been read here, and ${why === 'no internet' ? 'there is no internet' : 'you are not signed in'}. ` +
         'What this machine has cached still works: tables, columns, stats and first rows.'), { offline: true });
     }
     if (capabilities.offlineRead) return;
-    const reading = tables.find(t => /\biceberg_scan\(/.test(t.source));
+    const reading = tables.find(t => /\b(?:iceberg|delta)_scan\(/.test(t.source));
     if (!reading && !READS_ONELAKE.test(sql)) return;
     const what = reading ? reading.name : 'This statement';
     throw Object.assign(new Error(`${what}: reading rows needs OneLake, and ${why === 'no internet' ? 'there is no internet' : 'you are not signed in'}. ` +
@@ -1216,7 +1243,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
   }
 
   const api = { call, close, copyToTemp, exportTo, agentQuery, catalogChanged, warm, maxRows, forTab, boot, stats,
-                readLog, emptyLog, relisten, setStorageToken, setOffline, logs, clearLogs };
+                readLog, emptyLog, relisten, setStorageToken, setOffline, mountTable, logs, clearLogs };
   return api;
 }
 

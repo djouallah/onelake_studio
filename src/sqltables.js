@@ -56,7 +56,7 @@ function deltaTableOf(meta) {
   return at ? abfssUrl(at.workspace, at.dir) : loc;
 }
 
-function createSqlTables({ onelake, paths, offlineReason = () => null }) {
+function createSqlTables({ onelake, paths, offlineReason = () => null, deltaLogs = null }) {
   // An item's name in SQL -> the GUIDs that named it, for what nameTables answered: a compiled
   // model query holds that name for as long as the panel does.
   const namedFrom = new Map();
@@ -105,9 +105,12 @@ function createSqlTables({ onelake, paths, offlineReason = () => null }) {
       throw new Error(e.message + (near.length ? ` — closest: ${near.join(', ')}` : ''));
     }
     const named = { kind: ref.kind, workspace: ws, item: displayName(dir), schema: t.schema || 'dbo', table: t.table, at: meta.at };
-    return meta.empty
-      ? { ...named, emptySql: (await paths()).emptyTableSql(meta.schemaFields) }
-      : { ...named, metadataLocation: meta.metadataLocation, deltaTable: deltaTableOf(meta) };
+    if (meta.empty) return { ...named, emptySql: (await paths()).emptyTableSql(meta.schemaFields) };
+    const deltaTable = deltaTableOf(meta);
+    // Where its log is kept here, for delta_scan to run on (deltamirror.js).
+    const at = deltaTable && deltaLogs ? tableDirOf(meta.metadataLocation) : null;
+    const deltaLocal = at ? await deltaLogs.ensure(at, { fresh }) : null;
+    return { ...named, metadataLocation: meta.metadataLocation, deltaTable, deltaLocal };
   }
 
   // A table's SQL name, found in OneLake. The parts are matched as DuckDB matches names, ignoring

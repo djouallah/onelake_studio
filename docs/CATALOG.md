@@ -88,6 +88,7 @@ Every row says when it was last read from OneLake.
 | Saved queries | `~/OneLakeStudio/queries/` | Not metadata. |
 | The log | `logs-<id>.sqlite`, a file of its own | Not metadata. |
 | Bytes of a `Files/` object the host reads | The cache folder, under `host\` | Data. |
+| A Delta table's log and deletion vectors | The cache folder, under `delta\` | `delta_scan` reads them as files. |
 
 ## The sync worker
 
@@ -180,8 +181,16 @@ the conversion's, and `iceberg_scan` gave one column another's values with no er
 format and Stats come from.
 
 **`delta_scan` reads the log itself, past DuckDB's file system.** On the real table, DuckDB's file log held the Parquet files and no log
-file. So the parts of files it reads can be cached, and the log can't, and it isn't offline yet. Offline needs the log kept in the cache
-folder, and the Parquet files it then names found under their `abfss://` paths, which is a change to the `cache_httpfs` fork.
+file. So a Delta table reads through one path, online and offline ([`src/deltamirror.js`](../src/deltamirror.js)):
+
+1. **Its log is kept in the cache folder:** the latest checkpoint, the commits after it, and any deletion vectors, copied as they are and
+   never rewritten. It's asked for again past `catalogTtlMinutes`, and when a read fails.
+2. **`delta_scan` runs on that folder.** It reads no log from OneLake, online or offline.
+3. **A mount serves the Parquet files it names.** The log's paths are relative, so `delta_scan` asks for them under the local folder.
+   `cache_httpfs_mount` in our fork of `cache_httpfs` serves them from OneLake, through the disk cache and under their `abfss://` paths.
+
+Rewriting the log to absolute paths was tried and isn't the way: `delta_scan` takes a path as absolute only if it starts with `/`, and a
+rewrite would mean producing Delta's metadata ourselves. A table's log is in a folder of its own, so the disk cache's eviction doesn't touch it.
 
 **No file downloader, because of what was measured** on generated local Delta tables of 40 files and 131 MB:
 
@@ -203,7 +212,7 @@ folder, and the Parquet files it then names found under their `abfss://` paths, 
 | Answered from | What |
 | --- | --- |
 | The catalog alone | The tree, Go To, `SHOW ALL TABLES`, Stats, History, a wildcard's list of files, the command line's metadata |
-| The catalog and the disk cache | Rows, Pivot and a model's queries, for what has been read of an Iceberg table. A Delta table's aren't offline yet, beyond its first rows kept |
+| The catalog and the disk cache | Rows, Pivot and a model's queries, for what has been read |
 
 Whatever isn't held says so at once.
 
