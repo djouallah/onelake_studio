@@ -96,18 +96,6 @@
         "category": "OneLake Studio"
       },
       {
-        "command": "onelakeStudio.groupByType",
-        "title": "Group by Type",
-        "category": "OneLake Studio",
-        "icon": "$(list-tree)"
-      },
-      {
-        "command": "onelakeStudio.ungroupByType",
-        "title": "Group by Workspace",
-        "category": "OneLake Studio",
-        "icon": "$(list-flat)"
-      },
-      {
         "command": "onelakeStudio.installClaudeSkill",
         "title": "Install Agent Skill (Claude Code, GitHub Copilot)",
         "category": "OneLake Studio"
@@ -291,16 +279,6 @@
     "menus": {
       "view/title": [
         {
-          "command": "onelakeStudio.groupByType",
-          "when": "view == onelakeStudio.explorer && onelakeStudio.signedIn && !onelakeStudio.groupedByType",
-          "group": "0_view@0"
-        },
-        {
-          "command": "onelakeStudio.ungroupByType",
-          "when": "view == onelakeStudio.explorer && onelakeStudio.signedIn && onelakeStudio.groupedByType",
-          "group": "0_view@0"
-        },
-        {
           "command": "onelakeStudio.goTo",
           "when": "view == onelakeStudio.explorer && onelakeStudio.signedIn",
           "group": "navigation@0"
@@ -478,14 +456,6 @@
         {
           "command": "onelakeStudio.gridCopyJson",
           "when": "false"
-        },
-        {
-          "command": "onelakeStudio.groupByType",
-          "when": "onelakeStudio.signedIn && !onelakeStudio.groupedByType"
-        },
-        {
-          "command": "onelakeStudio.ungroupByType",
-          "when": "onelakeStudio.signedIn && onelakeStudio.groupedByType"
         },
         {
           "command": "onelakeStudio.openTable",

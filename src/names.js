@@ -102,11 +102,6 @@ const kindLabel = kind => {
   const k = String(kind || "");
   return KIND_LABELS[k.toLowerCase()] || k;
 };
-// ...and as a heading over several of them: "Lakehouses", "SQL databases".
-const kindLabelPlural = kind => {
-  const l = kindLabel(kind) || "Other";
-  return /s$/i.test(l) ? l : `${l}s`;
-};
 
 // -----------------------------------------------------------------------------
 // A table's SQL name: kind.workspace.item.schema.table
@@ -297,7 +292,7 @@ function fmtBytes(n) {
 
 module.exports = {
   strip, basename, stripBom, encPath, DFS_HOST, DFS_ORIGIN, dfsFileUrl, abfssUrl,
-  itemKind, holdsTables, isMirrored, hasFilesArea, kindLabel, kindLabelPlural,
+  itemKind, holdsTables, isMirrored, hasFilesArea, kindLabel,
   SQL_KINDS, sqlKind, displayName, isStaging, RESERVED, sqlPart, sqlName, sqlNameOf, MODEL_CATALOG, modelSqlName,
   icebergTypeName, icebergFields, snapshotStats, sourceFormat, icebergHistory,
   fmtBytes,

@@ -19,7 +19,6 @@ test("a mirrored database is listed under the suffix OneLake gives it, and named
   assert.ok(n.isMirrored("sales.MountedRelationalDatabase"));
   assert.ok(!n.isMirrored("sales.Lakehouse"));
   assert.equal(n.kindLabel("MountedRelationalDatabase"), "Mirrored database");
-  assert.equal(n.kindLabelPlural("MountedRelationalDatabase"), "Mirrored databases");
 });
 
 test("a table is Delta when its Iceberg metadata is XTable's conversion of a Delta log", () => {

@@ -260,7 +260,7 @@ SQL box, no Stop and no Restart.
 
 The tree ([`src/tree.js`](../src/tree.js)) lists workspaces, then lakehouses, warehouses, SQL and
 mirrored databases, their tables and files, semantic models and apps. *Queries*, **Logs** and
-**Performance** come after them. Workspaces can be pinned, and the tree can group by type.
+**Performance** come after them. Workspaces can be pinned.
 
 **A table's icon** says whether it is cached, as a model's does: a cloud until a statement has read its
 rows at its current snapshot, a check after (`cached.rows` in [`src/onelake.js`](../src/onelake.js)). What is
@@ -502,7 +502,6 @@ personal skills, and it follows the extension through updates.
 | **Settings** | Opens VS Code's Settings page, filtered to this extension. In the explorer's "..." menu. |
 | **Logs**, **Performance** | Nodes in the tree. See [The server](#the-server). |
 | **Refresh** | Re-reads a workspace, item or folder from OneLake in the foreground. |
-| **Group by Type** / **Group by Workspace** | A toggle in the explorer's "..." menu. Remembered. |
 | **Pin to Favorites** / **Unpin from Favorites** | Moves a workspace in or out of the tree's favorites group. |
 | **Show Read Log** | Every OneLake request the host made, with sizes and timings. DuckDB's own reads aren't in it. |
 | **Clear Cached OneLake Data** | Empties the on-disk cache and reports what it freed. In the explorer's "..." menu. |

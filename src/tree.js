@@ -18,8 +18,7 @@
 // =============================================================================
 
 const vscode = require('vscode');
-const { fmtBytes, hasFilesArea, isMirrored, kindLabel, kindLabelPlural, strip, sqlNameOf } = require('./names');
-const { mapPool } = require('./http');
+const { fmtBytes, hasFilesArea, isMirrored, kindLabel, strip, sqlNameOf } = require('./names');
 
 // A node is a plain object; getTreeItem turns it into what VS Code renders. Keeping the
 // domain data on the node (rather than encoding it into a label) is what lets a click hand
@@ -28,17 +27,6 @@ const node = (kind, label, extra) => ({ kind, label, ...extra });
 
 // A table node's SQL name (lakehouse.ws.item.schema.table), or null for an item SQL cannot name.
 const sqlNameOrNull = n => { try { return sqlNameOf(n, n); } catch (_) { return null; } };
-
-// `fn` over every workspace, four at a time; the ones that failed come back by name.
-async function eachOf(names, fn) {
-  const failed = [];
-  await mapPool(names, async ws => { try { await fn(ws); } catch (e) { failed.push({ ws, e }); } }, 4);
-  return failed;
-}
-// ...and those, as one node rather than a tree that silently shows less.
-const unlisted = failed => node('error', `${failed.length} workspace(s) could not be listed`, {
-  leaf: true, detail: failed.map(f => `${f.ws}: ${(f.e && f.e.message) || f.e}`).join('\n'),
-});
 
 class LakehouseTree {
   /**
@@ -51,14 +39,12 @@ class LakehouseTree {
    * @param {(n: object) => string|null} [deps.cachedModel]  where a model's local copy is, if it has one
    * @param {(n: object) => string|null} [deps.unsupportedModel]  what kind of model a click found it cannot open, if it did
    * @param {{ list: () => Promise<{name: string, path: string}[]> }} [deps.queries]  the saved queries
-   * @param {() => boolean} [deps.groupByType]  a workspace's items under one heading per type
    */
   constructor({ onelake, fabric = null, hasFabric = async () => false, isSignedIn, log = () => {},
                 favorites = { get: () => [] }, cachedModel = () => null, unsupportedModel = () => null,
-                queries = { list: async () => [] }, groupByType = () => false }) {
+                queries = { list: async () => [] } }) {
     this.queries = queries;
     this.onelake = onelake;
-    this.groupByType = groupByType;
     this.cachedModel = cachedModel;
     this.unsupportedModel = unsupportedModel;
     this.favorites = favorites;
@@ -106,13 +92,6 @@ class LakehouseTree {
   _changed(c) {
     if (c.kind === 'table') return this._cachedChanged(this._tableNode(c));
     if (c.kind === 'workspaces') return this._emitter.fire(undefined);
-    // Grouped by type, a workspace's items are spread over the top-level headings, and its
-    // models sit under the one Semantic models heading.
-    if (this.groupByType() && c.kind === 'items') return this._emitter.fire(undefined);
-    if (this.groupByType() && (c.kind === 'models' || c.kind === 'apps')) {
-      const all = this._nodes.get(c.kind === 'models' ? 'allModels' : 'allApps');
-      return all ? this._emitter.fire(all) : undefined;
-    }
     const id = c.kind === 'items' ? `workspace|${c.workspace}`
              : c.kind === 'tables' ? `tables|${c.workspace}|${c.item}`
              : c.kind === 'files' ? `dir|${c.workspace}|${c.item}|${c.dir || ''}`
@@ -150,9 +129,7 @@ class LakehouseTree {
          : n.kind === 'dir' ? `dir|${n.workspace}|${n.item}|${n.dir || ''}`
          : n.kind === 'models' ? `models|${n.workspace}`
          : n.kind === 'semanticModel' ? `model|${n.workspace}|${n.modelId}`
-         : n.kind === 'allModels' ? 'allModels'
          : n.kind === 'apps' ? `apps|${n.workspace}`
-         : n.kind === 'allApps' ? 'allApps'
          : n.kind === 'queries' ? 'queries'
          : n.kind === 'table' ? `table|${n.workspace}|${n.item}|${n.schema || ''}|${n.table}`
          : null;
@@ -236,19 +213,11 @@ class LakehouseTree {
         item.command = { command: 'onelakeStudio.openQuery', title: 'Open query', arguments: [n] };
         item.tooltip = n.path;
         break;
-      // Grouped by type: every item of one type across workspaces, and every semantic model.
-      case 'allModels':
-        item.iconPath = new vscode.ThemeIcon('graph');
-        break;
-      case 'kindGroup':
-        item.iconPath = new vscode.ThemeIcon('folder-library');
-        item.description = String(n.count);
-        break;
       case 'item':
         item.iconPath = new vscode.ThemeIcon(isMirrored(n.item) ? 'mirror' : 'database');
         // The suffix OneLake names the directory with is Fabric's internal type; kindLabel
         // turns the few that read badly ("SQLDbNative") into what the portal calls them.
-        item.description = n.showWorkspace ? n.workspace : n.kindLabel;
+        item.description = n.kindLabel;
         break;
       case 'tables':
         item.iconPath = new vscode.ThemeIcon('list-tree');
@@ -282,8 +251,7 @@ class LakehouseTree {
         const refused = this.unsupportedModel(n);
         if (refused) {
           item.iconPath = new vscode.ThemeIcon('circle-slash', new vscode.ThemeColor('disabledForeground'));
-          item.description = [n.showWorkspace ? n.workspace : '', `${refused.replace(/^an? /, '')} · not supported`]
-            .filter(Boolean).join(' · ');
+          item.description = `${refused.replace(/^an? /, '')} · not supported`;
           item.command = { command: 'onelakeStudio.openSemanticModel', title: 'Open semantic model', arguments: [n] };
           item.tooltip = (n.description ? `${n.description}\n\n` : '') +
             `${n.model} is ${refused}. OneLake Studio opens Direct Lake models over OneLake only.`;
@@ -293,7 +261,7 @@ class LakehouseTree {
         item.iconPath = there
           ? new vscode.ThemeIcon('pass-filled', new vscode.ThemeColor('testing.iconPassed'))
           : new vscode.ThemeIcon('cloud');
-        item.description = n.showWorkspace ? n.workspace : '';
+        item.description = '';
         item.command = { command: 'onelakeStudio.openSemanticModel', title: 'Open semantic model', arguments: [n] };
         item.tooltip = (n.description ? `${n.description}\n\n` : '') + (there
           ? `Downloaded to ${there}. Click to open it; Download Again reads it from Fabric again.`
@@ -303,7 +271,6 @@ class LakehouseTree {
       // A workspace's Fabric apps (AppBackend items), however they were made — from the
       // Fabric API. Its URL and last deploy, a button to copy the URL, and a double click to open it.
       case 'apps':
-      case 'allApps':
         item.iconPath = new vscode.ThemeIcon('rocket');
         break;
       // Its icon says who can load its site: an orange open lock when anyone with the URL
@@ -314,7 +281,7 @@ class LakehouseTree {
           ? new vscode.ThemeIcon('unlock', new vscode.ThemeColor('list.warningForeground'))
           : n.access === 'protected' ? new vscode.ThemeIcon('lock') : new vscode.ThemeIcon('globe');
         const host = n.url ? n.url.replace(/^https?:\/\//, '') : 'not deployed';
-        item.description = [n.access === 'public' ? 'public' : '', n.showWorkspace ? n.workspace : '', host]
+        item.description = [n.access === 'public' ? 'public' : '', host]
           .filter(Boolean).join(' · ');
         item.tooltip = [n.url || 'No site deployed',
           n.access === 'public' ? 'Public: anyone with the URL can load the site, without signing in.'
@@ -374,7 +341,6 @@ class LakehouseTree {
       if (!names.length) return [node('empty', 'No workspaces — is this the right tenant?', { leaf: true })];
       const queries = this._track(node('queries', 'Queries', {}));
       const engineViews = [node('logs', 'Logs', { leaf: true }), node('performance', 'Performance', { leaf: true })];
-      if (this.groupByType()) return [...await this._byType(names), queries, ...engineViews];
       const pinned = new Set(this.favorites.get());
       const favs = names.filter(w => pinned.has(w));
       return [
@@ -416,43 +382,6 @@ class LakehouseTree {
         kids.push(this._track(node('apps', 'Apps', { workspace: n.workspace })));
       }
       return kids;
-    }
-
-    // Grouped by type: the heading already holds its items, gathered by _byType.
-    if (n.kind === 'kindGroup') {
-      return n.entries.map(({ workspace, it }) => this._item(workspace, it, { showWorkspace: true }));
-    }
-
-    // Grouped by type: every workspace's semantic models, a few workspaces at a time.
-    if (n.kind === 'allModels') {
-      if (!await this.hasFabric()) return [node('fabricSignIn', 'Sign in to list semantic models', { leaf: true, group: 'models' })];
-      const names = await this.onelake.workspaces();
-      const rows = [];
-      const failed = await eachOf(names, async ws => {
-        const models = await this.onelake.models(ws, { fresh: this._isFresh(`models|${ws}`, ws) });
-        for (const m of models) rows.push({ ws, m });
-      });
-      rows.sort((a, b) => a.m.name.localeCompare(b.m.name) || a.ws.localeCompare(b.ws));
-      const kids = rows.map(({ ws, m }) => this._track(node('semanticModel', m.name, {
-        workspace: ws, model: m.name, modelId: m.id, description: m.description, leaf: true, showWorkspace: true,
-      })));
-      if (failed.length) kids.push(unlisted(failed));
-      return kids.length ? kids : [node('empty', 'No semantic models', { leaf: true })];
-    }
-
-    // Grouped by type: every workspace's apps, a few workspaces at a time.
-    if (n.kind === 'allApps') {
-      if (!await this.hasFabric()) return [node('fabricSignIn', 'Sign in to list apps', { leaf: true, group: 'apps' })];
-      const names = await this.onelake.workspaces();
-      const rows = [];
-      const failed = await eachOf(names, async ws => {
-        const apps = await this.onelake.apps(ws, { fresh: this._isFresh(`apps|${ws}`, ws) });
-        for (const a of apps) rows.push({ ws, a });
-      });
-      rows.sort((x, y) => x.a.name.localeCompare(y.a.name) || x.ws.localeCompare(y.ws));
-      const kids = rows.map(({ ws, a }) => this._app(ws, a, { showWorkspace: true }));
-      if (failed.length) kids.push(unlisted(failed));
-      return kids.length ? kids : [node('empty', 'No apps', { leaf: true })];
     }
 
     if (n.kind === 'apps') {
@@ -532,10 +461,10 @@ class LakehouseTree {
     return [];
   }
 
-  _app(workspace, a, { showWorkspace = false } = {}) {
+  _app(workspace, a) {
     return node('fabricApp', a.name, {
       workspace, appId: a.id, url: a.url, deployedAt: a.deployedAt, access: a.access, description: a.description,
-      leaf: true, showWorkspace,
+      leaf: true,
     });
   }
 
@@ -546,38 +475,11 @@ class LakehouseTree {
       { ...lh, leaf: true, schema: t.schema || '', table: t.table, cached: cached[i] })));
   }
 
-  // An item, named without its suffix: its type beside it under a workspace, its workspace
-  // beside it under a type heading. The node is the same either way, so its expansion
-  // survives the toggle.
-  _item(workspace, it, { showWorkspace = false } = {}) {
+  // An item, named without its suffix, with its type beside it.
+  _item(workspace, it) {
     return node('item', it.name.replace(/\.[^.]+$/, ''), {
-      workspace, item: it.name, kindLabel: kindLabel(it.kind), showWorkspace,
+      workspace, item: it.name, kindLabel: kindLabel(it.kind),
     });
-  }
-
-  // Grouped by type: the top level is one heading per type — "Lakehouses 7", "Warehouses 2" —
-  // over every workspace's items, then the semantic models. The one place the tree reads
-  // across workspaces: the first time, each workspace's item listing once (cache-first, a
-  // few at a time); after that it is drawn from disk like everything else.
-  async _byType(names) {
-    const byKind = new Map();   // kind -> [{ workspace, it }]
-    const failed = await eachOf(names, async ws => {
-      const items = await this.onelake.items(ws, { fresh: this._isFresh(`items|${ws}`, ws) });
-      for (const it of items) {
-        if (!byKind.has(it.kind)) byKind.set(it.kind, []);
-        byKind.get(it.kind).push({ workspace: ws, it });
-      }
-    });
-    const heads = [...byKind].map(([kind, entries]) => node('kindGroup', kindLabelPlural(kind), {
-      group: kind, count: entries.length, expanded: true,
-      entries: entries.sort((x, y) => x.it.name.localeCompare(y.it.name) || x.workspace.localeCompare(y.workspace)),
-    })).sort((x, y) => x.label.localeCompare(y.label));
-    if (this.fabric) {
-      heads.push(this._track(node('allModels', 'Semantic models', {})));
-      heads.push(this._track(node('allApps', 'Apps', {})));
-    }
-    if (failed.length) heads.push(unlisted(failed));
-    return heads.length ? heads : [node('empty', 'Nothing here holds tables', { leaf: true })];
   }
 }
 
