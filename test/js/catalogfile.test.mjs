@@ -107,8 +107,9 @@ test("past the budget, the oldest first rows go, down to 80%, and nothing else d
   const peek = i => `peek\0_${String(i).padStart(3, "0")}`;
   for (let i = 0; i < 200; i++) await backend.write(peek(i), i + 10, JSON.stringify("x".repeat(98)));
   assert.equal(await backend.read(peek(0)), null);
-  assert.equal(await backend.read(peek(183)), null);
-  assert.equal((await backend.read(peek(184))).at, 194);
+  // The look at the budget comes on the 200th write, three of which weren't first rows: at peek(196).
+  assert.equal(await backend.read(peek(180)), null);
+  assert.equal((await backend.read(peek(181))).at, 191);
   assert.equal((await backend.read(peek(199))).at, 209);
   assert.deepEqual(JSON.parse((await backend.read("workspaces")).json), ["old but kept"]);
   assert.ok(await backend.read("item-named\0a\0b"));
