@@ -231,6 +231,7 @@ function createCatalogFile({ file, onCleared = () => {}, clearedEveryMs = CLEARE
     /** A read of this entry failed: the last good answer is still served, and this says why it is old. */
     noteFailure(key, at, error) { tables.noteFailure(key, Math.floor(at), String(error)); },
     failureOf(key) { database(); return tables.failureOf(key); },
+    latestRead(dir) { database(); return tables.latestRead(dir); },
     /** Hears the store's keys of what another window wrote. Answers how to stop. */
     subscribe(fn) {
       subscribers.add(fn);

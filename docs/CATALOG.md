@@ -198,6 +198,10 @@ A table opens on Stats by default, which reads nothing. When a table changes, no
 
 Whatever isn't held says so at once.
 
+**A table that moved on since it was read:** its metadata was read again online, and its new snapshot's rows never were. Offline, a
+statement and the Data tab read the last snapshot that was read, and its age is when that was read. Stats shows the newest metadata
+held. Back online, it's the current snapshot again.
+
 ## What goes, and what stays
 
 | Goes | Stays |

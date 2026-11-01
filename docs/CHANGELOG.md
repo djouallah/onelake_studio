@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **A table that moved on still opens offline.** If its new snapshot was never read, a statement and the Data tab read the one
+  that was, and say how old it is.
 - **`exists` on the command line.** Whether a table is there, from the listings alone: yes, no with the closest names, or not
   cached, and never a false no. `table` gives the same no for a table its listing lacks.
 - **`--fresh` goes through the sync worker,** ahead of what it has next, one request at a time. It fails at once while OneLake

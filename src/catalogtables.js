@@ -430,6 +430,12 @@ function createCatalogTables({ statement }) {
       const row = r && one(`SELECT ts, error FROM sync_failure WHERE ${WHICH}`, ...whichOf(r.kind, r.parts));
       return row ? { at: row.ts, error: row.error } : null;
     },
+    /** The last snapshot read under a table's metadata folder: { location, at }, or null. */
+    latestRead(dir) {
+      const r = one(`SELECT location, ts FROM (SELECT location, ts FROM rows_read UNION ALL SELECT location, ts FROM first_rows)
+        WHERE location >= ? AND location < ? ORDER BY ts DESC, location DESC LIMIT 1`, dir, `${dir}\uffff`);
+      return r ? { location: r.location, at: r.ts } : null;
+    },
     /** The store's keys of what was written at or after `ts`, with the latest time among them. */
     changedSince(ts) {
       const keys = [];

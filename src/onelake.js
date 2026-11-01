@@ -256,8 +256,19 @@ function createOneLake({ catalog, store, prefetchEnabled = () => true, onHit = (
     // The store says 'changed' only when an answer it had moved; a table read for the first
     // time (a prefetch, a click) is news too — the tree and the engine's catalog both want it.
     if (!r.cached) for (const fn of [...tableReadSubs]) { try { fn({ ...lh, ...t, value: r.value }); } catch (_) {} }
-    return { ...r.value, at: r.at, cached: r.cached };
+    return readable({ ...r.value, at: r.at, cached: r.cached });
   }
+  // Offline, what was read keeps working. A table can have moved on since: its metadata read again, and
+  // its new snapshot's never read, with an older one's files on this machine. A statement then reads that
+  // one, and `at` says how old it is. Online the current snapshot is one read away.
+  async function readable(meta) {
+    if (!isOffline() || !meta.metadataLocation || await rowsKept(meta.metadataLocation)) return meta;
+    const older = await olderRead(meta.metadataLocation);
+    return older ? { ...meta, metadataLocation: older.location, at: older.at, olderSnapshot: true } : meta;
+  }
+  const rowsKept = async location => await store.peek(keys.rows(location)) !== undefined
+    || await store.peek(keys.peek(location)) !== undefined;
+  const olderRead = location => store.latestRead(String(location).slice(0, String(location).lastIndexOf('/') + 1));
   const tableReadSubs = new Set();
   const onTableRead = fn => { tableReadSubs.add(fn); return () => tableReadSubs.delete(fn); };
 
@@ -467,8 +478,9 @@ function createOneLake({ catalog, store, prefetchEnabled = () => true, onHit = (
       if (!meta) return false;
       if (meta.empty) return true;
       if (!meta.metadataLocation) return false;
-      return await store.peek(keys.rows(meta.metadataLocation)) !== undefined
-        || await store.peek(keys.peek(meta.metadataLocation)) !== undefined;
+      if (await rowsKept(meta.metadataLocation)) return true;
+      // Offline, an older snapshot's rows are what a statement reads (readable).
+      return !!isOffline() && !!await olderRead(meta.metadataLocation);
     },
     // Whether this version of a file has been read here: by a statement, what it read of the file, or
     // by the host, the whole file. `entry` is its line in a listing.

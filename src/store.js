@@ -294,6 +294,13 @@ function createStore({ dir, backend = null, ttlMs = DEFAULT_TTL_MS, maxBytes = D
     return kept + list.reduce((n, e) => n + e.bytes, 0);
   }
 
+  // The last snapshot read under a table's metadata folder, from the catalog itself, as a statement can
+  // have read another since anything here was kept: { location, at }, or null.
+  async function latestRead(dir) {
+    if (!backend || !backend.latestRead) return null;
+    try { return backend.latestRead(dir); } catch (_) { return null; }
+  }
+
   async function size() {
     const kept = backend ? await backend.size().catch(() => 0) : 0;
     if (!await usable) return kept;
@@ -303,7 +310,7 @@ function createStore({ dir, backend = null, ttlMs = DEFAULT_TTL_MS, maxBytes = D
   }
 
   return {
-    get, put, peek, known, failureOf, clear, forget, size, getBlob, hasBlob, putBlob,
+    get, put, peek, known, failureOf, latestRead, clear, forget, size, getBlob, hasBlob, putBlob,
     on: (ev, fn) => { events.on(ev, fn); return () => events.off(ev, fn); },
   };
 }
