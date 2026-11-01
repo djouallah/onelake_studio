@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **`status` and `log` on the command line.** `status` says how a window is doing: its build, session, startup timeline, catalog,
+  sync, and where its files are. `log` answers with its own log, whose lines now have the time. Both answer signed out too.
 - **Only SQLite and one cache folder.** Metadata is in one SQLite file, and data is in one cache folder. The DuckDB state
   file, the old JSON files and the separate store of file bytes come across once and go. **Logs** moved to a small SQLite file
   of its own, and that is the whole reason a second DuckDB ran in the server, which no longer does.

@@ -92,6 +92,7 @@ function createCatalogFile({ file, onCleared = () => {}, clearedEveryMs = CLEARE
 
   function database() {
     if (db) return db;
+    const began = Date.now();
     try {
       // Here and not at the top: a runtime without it costs what is remembered, not the activation.
       const { DatabaseSync } = require('node:sqlite');
@@ -114,6 +115,7 @@ function createCatalogFile({ file, onCleared = () => {}, clearedEveryMs = CLEARE
       throw e;
     }
     migrate();
+    log(`catalog: opened ${file}, schema ${version()}, in ${Date.now() - began}ms`);
     seen = state().cleared ?? null;
     changedFrom = Date.now();
     lookForChanges();
@@ -149,6 +151,7 @@ function createCatalogFile({ file, onCleared = () => {}, clearedEveryMs = CLEARE
     if (version() >= SCHEMA_VERSION) return;
     inOne(() => {
       if (version() >= SCHEMA_VERSION) return;
+      log(`catalog: moving from schema ${version()} to ${SCHEMA_VERSION}`);
       const has = t => !!db.prepare("SELECT 1 AS found FROM sqlite_master WHERE type = 'table' AND name = ?").get(t);
       db.exec('INSERT OR IGNORE INTO catalog_state (id) VALUES (1)');
       if (has('kv')) {
@@ -271,7 +274,7 @@ function createCatalogFile({ file, onCleared = () => {}, clearedEveryMs = CLEARE
     /** The pointers an older version kept in a JSON file, once. The file then goes. */
     importViews(jsonFile) {
       database();
-      if (state().views_imported) return;
+      if (state().views_imported) return null;
       let kept = [];
       try { kept = JSON.parse(fs.readFileSync(jsonFile, 'utf8')); } catch (_) {}
       inOne(() => {
@@ -279,6 +282,16 @@ function createCatalogFile({ file, onCleared = () => {}, clearedEveryMs = CLEARE
         statement('UPDATE catalog_state SET views_imported = 1 WHERE id = 1').run();
       });
       try { fs.rmSync(jsonFile, { force: true }); } catch (_) {}
+      return Array.isArray(kept) ? kept.length : 0;
+    },
+
+    /** What is in it, for `status` and the log. */
+    describe() {
+      database();
+      const size = f => { try { return fs.statSync(f).size; } catch (_) { return 0; } };
+      const { imported, views_imported: viewsImported, lease_until: leaseUntil } = state();
+      return { file, bytes: size(file) + size(`${file}-wal`), schema: version(), imported: !!imported, viewsImported: !!viewsImported,
+               leaseUntil: leaseUntil ?? null, rows: { ...tables.counts() } };
     },
 
     imported() { database(); return !!state().imported; },

@@ -42,6 +42,10 @@ const USAGE = {
                                         VS Code asks where the local copy goes and for the OK;
                                         the app opens on Explore's default view
   export <ws> <item> <Files/path>     the same, for a model file (.bim, Ossie .yaml) in Files/`,
+  status: `  status                              this window: its build, session, startup timeline, catalog,
+                                        sync, and where its files are. Answers signed out too`,
+  log: `  log [<text>]                        this window's own log, the lines holding <text> if given,
+                                        newest last (default 200; --limit N)`,
 };
 
 const OPTIONS = `  --limit N                           rows printed (default 100; --csv prints all unless given)

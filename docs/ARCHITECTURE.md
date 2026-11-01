@@ -231,6 +231,10 @@ every window is a client of it over DuckDB's Quack protocol ([`src/engine-client
 - **The log** is a SQLite file of its own, `engine-server\logs-<id>.sqlite` ([`src/logfile.js`](../src/logfile.js)), as it
   isn't metadata: **Clear Cached OneLake Data** leaves it. The server writes it. It is named after the account, and F5 has
   its own.
+- **A window's own log** is the OneLake Studio Output channel: what the extension did, with the time on each line, under
+  `start:`, `session:`, `move:`, `catalog:` and `sync:`. `start:` is in ms since the extension host started, and VS Code asking for
+  the tree and the tree's answer are two lines, which says whose time it was. The command line's `status` and `log` answer from
+  it, signed in or not, with no request to OneLake ([`src/diaglog.js`](../src/diaglog.js)).
 - **The server's own log is `logs-<id>.log`,** a plain text file beside it, so it can be read when nothing else can. Its last
   1 MB is kept.
 
@@ -631,6 +635,7 @@ every window. The rest apply at once.
 | `src/catalogfile.js`, `src/catalogtables.js`, `src/syncworker.js` | What is remembered, in SQLite, the catalog's tables there, and what keeps them current. |
 | `src/engine-server.js`, `src/engine-client.js`, `src/enginelog.js`, `src/logfile.js` | The server: its process, a window's side of it, and its log. |
 | `src/agent.js`, `src/bridge.js`, `bin/cli.mjs` | The command line. |
+| `src/diaglog.js` | A window's own log. |
 | `src/exportapp.js`, `src/fabricapp.js`, `src/onelakewrite.js` | Export to Fabric. |
 | `src/vendored.js` | The one list of pinned third-party code the webview runs, dax-sql included. |
 | [`app/`](../app/) | A tab's page: `index.html`, `app.js`, `data.js`, `grid.js`, `chart.js`, `docview.js`, `dbview.js`, `paths.js`, `semantic.js`, `cdn.js`, `host.js`, `vscode-api.js`. |

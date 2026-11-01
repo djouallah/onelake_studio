@@ -27,17 +27,21 @@ const exists = p => fsp.access(p).then(() => true, () => false);
  * @param {string} [o.dir]                        where an older version's JSON files are
  * @param {{ readBytes(ws: string, path: string): Promise<Uint8Array> }} o.onelake
  * @param {() => void} [o.onChange]               a view was kept or dropped
+ * @param {(line: string) => void} [o.log]
  */
 // One view: its name in its schema, ignoring case.
 const sameView = (v, name, schema) =>
   v.name.toLowerCase() === String(name).toLowerCase() &&
   String(v.schema || '').toLowerCase() === String(schema || '').toLowerCase();
 
-function createSemViews({ catalogFor, dir = null, onelake, onChange = () => {} }) {
+function createSemViews({ catalogFor, dir = null, onelake, onChange = () => {}, log = () => {} }) {
   let account = null;
   const catalog = () => {
     const file = catalogFor(account);
-    if (dir) file.importViews(join(dir, `${account || 'signed-out'}.json`));
+    if (dir) {
+      const came = file.importViews(join(dir, `${account || 'signed-out'}.json`));
+      if (came != null) log(`move: model pointers: ${came} came across from the JSON file, which is gone`);
+    }
     return file;
   };
 

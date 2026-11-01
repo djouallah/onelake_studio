@@ -22,6 +22,7 @@ const { createCatalog } = require('./catalog');
 const { createStore } = require('./store');
 const { createCatalogFile, catalogFileOf, stateFileOf } = require('./catalogfile');
 const { createSyncWorker } = require('./syncworker');
+const { createDiagLog } = require('./diaglog');
 const { createLogFile, logFileOf } = require('./logfile');
 const { createOneLake, walkCached } = require('./onelake');
 const { createSqlTables } = require('./sqltables');
@@ -490,37 +491,42 @@ function catalogFileFor(context, account) {
 // leaves them where they are, and the next window tries again.
 async function importKept(context, account, jsonDir, cacheDir) {
   const kept = catalogFiles.get(account);
-  let old = null;
+  const say = line => { if (out) out.appendLine(`move: ${line}`); };
+  let old = null, doing = 'the state file';
   try {
     if (!kept) return;
     const server = sharedEngineServer(context, account);
     const stateFile = stateFileOf(server.stateDir, server.stateKey);
-    if (existsSync(stateFile)) {
+    const hadState = existsSync(stateFile), hadJson = existsSync(jsonDir);
+    if (hadState) {
       const { openOldState } = require('./oldstate');
       old = await openOldState(stateFile);
     }
     const came = await kept.importKept({ run: old && old.run, jsonDir });
+    if (came) say(`${came} entries came across`);
     if (old) {
       const logs = createLogFile({ file: logFileOf(server.stateDir, server.stateKey) });
-      try { logs.add(await old.logs()); } finally { logs.close(); }
+      const rows = await old.logs();
+      try { logs.add(rows); } finally { logs.close(); }
       old.close();
       old = null;
       for (const f of [stateFile, `${stateFile}.wal`, `${stateFile}.holder`, `${stateFile}.bad`, `${stateFile}.wal.bad`, stateFile.replace(/\.duckdb$/, '.log')]) {
         await fsp.rm(f, { force: true }).catch(() => {});
       }
-    }
-    if (existsSync(jsonDir)) {
+      say(`state file: ${rows.length} log rows came across, and it is gone`);
+    } else say('state file: nothing to move');
+    doing = 'the JSON store';
+    if (hadJson) {
       const blobs = join(jsonDir, 'blobs');
-      if (existsSync(blobs)) await fsp.cp(blobs, join(cacheDir, 'blobs'), { recursive: true, force: false });
+      const hadBlobs = existsSync(blobs);
+      if (hadBlobs) await fsp.cp(blobs, join(cacheDir, 'blobs'), { recursive: true, force: false });
       await fsp.rm(jsonDir, { recursive: true, force: true });
       await fsp.rmdir(dirname(jsonDir)).catch(() => {});
-    }
-    if (came) {
-      if (out) out.appendLine(`the catalog file took ${came} entries from an older version`);
-      onStoreCleared();
-    }
+      say(`JSON store: ${hadBlobs ? 'its blobs moved to the cache folder, and ' : ''}it is gone`);
+    } else say('JSON store: nothing to move');
+    if (came) onStoreCleared();
   } catch (e) {
-    if (out) out.appendLine(`what an older version kept could not be read, and is tried again next time — ${e.message}`);
+    say(`${doing} could not be read, and is tried again next time — ${e.message}`);
   } finally {
     if (old) old.close();
   }
@@ -864,7 +870,8 @@ async function installSkill(context) {
 
 async function activate(context) {
   memento = context.globalState;
-  out = vscode.window.createOutputChannel('OneLake Studio');
+  out = createDiagLog(vscode.window.createOutputChannel('OneLake Studio'));
+  out.mark('activation begins');
   context.subscriptions.push(out, { dispose: () => connectivity.dispose() });
 
   // The read indicator, visible even when the panel's tab is not. Hidden until the first
@@ -903,6 +910,7 @@ async function activate(context) {
     // nothing on screen depends on it.
     refreshSkill(context).catch(e => out.appendLine(`agent skill not refreshed: ${e.message}`));
     out.appendLine(`activated ${version} ${commit}${dev ? ' (dev)' : ''} — signed in: ${signedIn}`);
+    out.mark('activation done');
   } catch (e) {
     out.appendLine(`ACTIVATION FAILED: ${(e && e.stack) || e}`);
     showError(`OneLake Studio failed to activate: ${(e && e.message) || e}`);
@@ -967,6 +975,7 @@ async function activateInner(context) {
   // A view made or dropped is in the engine's catalog (SHOW ALL TABLES) by the next statement.
   semviews = createSemViews({ catalogFor: key => catalogFileFor(context, key),
                               dir: join(context.globalStorageUri.fsPath, 'semantic-views'), onelake,
+                              log: line => out && out.appendLine(line),
                               onChange: () => { if (engine) engine.catalogChanged(); } });
   semviews.useAccount(storeAccount);
   // A model's local copy is kept per account (fabric.js modelCopyPath). The copies from before
@@ -987,9 +996,10 @@ async function activateInner(context) {
         await fsp.rm(before, { recursive: true, force: true });
         await fsp.rmdir(oldModels).catch(() => {});
       }
+      if (out) out.appendLine(moved ? `move: model copies: moved to ${here}, with ${moved - 1} views pointed there` : 'move: model copies: nothing to move');
       return moved;
     })().catch(e => {
-      if (out) out.appendLine(`the local copies of models could not be moved: ${e.message}`);
+      if (out) out.appendLine(`move: the local copies of models could not be moved, and are tried again next time — ${e.message}`);
       return 0;
     });
     return modelsAdopted;
@@ -1067,9 +1077,16 @@ async function activateInner(context) {
   // else that can wait, comes after this.
   const began = performance.now();
   let drawn = false;
+  let asked = false;
+  const treeAsked = () => {
+    if (asked) return;
+    asked = true;
+    if (out) out.mark('VS Code asked for the tree');
+  };
   const treeDrawn = () => {
     if (drawn) return;
     drawn = true;
+    if (out) out.mark('tree answered');
     // A Node-API addon loads once, and only when something needs it.
     const native = Object.keys(require.cache).some(f => /node-bindings/.test(f));
     if (out) out.appendLine(`tree drawn ${Math.round(performance.now() - began)}ms into activation: DuckDB ${native ? 'loaded' : 'not loaded'}, ${engine ? 'an engine' : 'no engine'} here`);
@@ -1079,6 +1096,7 @@ async function activateInner(context) {
   const tree = new LakehouseTree({
     onelake,
     favorites,
+    onAsked: treeAsked,
     onDrawn: treeDrawn,
     filter: () => treeFilter,
     fabric,
@@ -1129,6 +1147,7 @@ async function activateInner(context) {
     if (!connectivity.noInternet() && !hasSession) sessionChanged();
   };
 
+  let lastProviderAnswer = null;
   function sessionChanged() {
     return accountTurn(async () => {
       try {
@@ -1137,6 +1156,9 @@ async function activateInner(context) {
         // The provider failing to answer says nothing about who is signed in.
         let failed = null;
         const session = await getSession({ createIfNone: false }).catch(e => { failed = e; return null; });
+        const answer = failed ? 'did not answer' : session ? 'has a session' : 'has no session';
+        if (answer !== lastProviderAnswer && out) out.appendLine(`session: the account provider ${answer}${signedOutByChoice() ? ' (signed out by choice)' : ''}`);
+        lastProviderAnswer = answer;
         if (failed) {
           if (out) out.appendLine(`the account provider did not answer, so nothing changes — ${(failed && failed.message) || failed}`);
           return;
@@ -1386,6 +1408,37 @@ async function activateInner(context) {
     nameTables: list => nameModelTables(list),
     signedIn: () => signedIn,
     offlineReason: () => connectivity.reason(),
+    diagnostics: {
+      log: o => out.lines(o),
+      async status() {
+        const server = sharedEngineServer(context, storeAccount);
+        const stateFile = stateFileOf(server.stateDir, server.stateKey);
+        let catalog;
+        try { catalog = catalogFileFor(context, storeAccount).describe(); }
+        catch (e) { catalog = { error: e.message }; }
+        return {
+          build: buildInfo,
+          window: { pid: process.pid, node: process.versions.node, vscode: vscode.version, upMs: Math.round(process.uptime() * 1000) },
+          session: { signedIn, hasSession, signedOutByChoice: signedOutByChoice(), offline: connectivity.reason(),
+                     lastProviderAnswer, account: storeAccount, queries: queryAccount },
+          start: out.timeline(),
+          engine: { running: !!engine },
+          catalog,
+          sync: await syncWorker.progress(),
+          files: {
+            logs: logFileOf(server.stateDir, server.stateKey),
+            cache: fileCacheRoot,
+            models: modelAccountDir(modelsFolder(), queryAccount),
+            output: context.logUri.fsPath,
+          },
+          stillHere: {
+            stateFile: existsSync(stateFile),
+            jsonStore: existsSync(jsonStoreOf(storeAccount)),
+            oldModels: existsSync(oldModels),
+          },
+        };
+      },
+    },
   });
   context.subscriptions.push(serveBridge({
     handle: (req, ctx) => {
@@ -2184,7 +2237,11 @@ async function activateInner(context) {
     const answered = await inTime(getSession({ createIfNone: false }).then(s => ({ s }), () => ({ s: null })), SESSION_WAIT_MS, () => sessionChanged());
     // At startup the account provider can still be starting, and says there is no session when there
     // is: seen as a window that called itself signed out for seconds. Taken as true only a moment on.
-    if (answered && !answered.s && knownAccount() && !signedOutByChoice()) await new Promise(r => setTimeout(r, SESSION_SETTLE_MS));
+    if (out) out.mark(answered ? `the account provider answered: ${answered.s ? 'a session' : 'no session'}` : `the account provider gave no answer in ${SESSION_WAIT_MS}ms`);
+    if (answered && !answered.s && knownAccount() && !signedOutByChoice()) {
+      if (out) out.appendLine(`session: waiting ${SESSION_SETTLE_MS}ms before believing there is none`);
+      await new Promise(r => setTimeout(r, SESSION_SETTLE_MS));
+    }
     if (answered) await sessionChanged();
     sessionAsked = true;
     showOffline(connectivity.reason());
@@ -2193,6 +2250,11 @@ async function activateInner(context) {
     if (!signedOutByChoice()) connectivity.check();
     warmIfWanted();
     syncWorker.start();
+    if (out) {
+      out.mark('sync started');
+      const { rows } = catalogFileFor(context, storeAccount).describe();
+      out.appendLine(`catalog: ${Object.entries(rows).filter(([, n]) => n).map(([t, n]) => `${n} ${t}`).join(', ') || 'empty'}`);
+    }
   })().catch(e => { if (out) out.appendLine(`the account provider could not be asked — ${(e && e.message) || e}`); });
 }
 

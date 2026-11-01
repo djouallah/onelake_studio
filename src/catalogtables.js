@@ -454,6 +454,8 @@ function createCatalogTables({ statement }) {
         SELECT location FROM (SELECT location, sum(length(rows_json)) OVER (ORDER BY ts DESC, location) AS kept FROM first_rows)
         WHERE kept > ?)`, Math.floor(maxBytes * 0.8));
     },
+    /** How many rows each table holds. */
+    counts: () => Object.fromEntries(TABLES.map(t => [t, one(`SELECT count(*) AS n FROM ${t}`).n])),
     anything: () => !!one(`SELECT ${TABLES.map(t => `EXISTS (SELECT 1 FROM ${t})`).join(' OR ')} AS found`).found,
     // The semantic models opened here, oldest first: { name, schema, path, created }. A view is replaced
     // by removing it and adding it again, which also moves it to the end.

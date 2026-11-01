@@ -24,6 +24,8 @@
 //                                    SEMANTIC VIEWS / METRICS / DIMENSIONS; --show-sql the compiled SQL
 //   export <ws> <model>              Export to Fabric, as Explore's button: a semantic model
 //   export <ws> <item> <Files/path>  (its local copy, written into its lakehouse) or a model file in Files/
+//   status                           this window: build, session, startup, catalog, sync, its files
+//   log [<text>]                     this window's own log
 //
 // No `vscode` import: the extension passes in what it owns.
 // =============================================================================
@@ -69,10 +71,25 @@ const fence = (lang, text) => '```' + lang + '\n' + String(text).trim() + '\n```
  *   a semantic model a query names, opened from its local copy and kept as a view
  * @param {() => boolean} [o.signedIn]       false: every question is answered UNAVAILABLE
  * @param {() => string|null} [o.offlineReason]  why OneLake cannot be asked now: answers come from the cache
+ * @param {{ status: () => Promise<object>, log: (o: {limit?: number, text?: string}) => string[] }} [o.diagnostics]
+ *   this window on itself: for debugging it, signed in or not, with nothing asked of OneLake
  */
+// What `status` knows, as `a.b: value` lines. A list of objects is a line each.
+function printedLines(value, prefix = '') {
+  if (Array.isArray(value)) {
+    if (!value.length) return [`${prefix}: none`];
+    if (value.some(v => v && typeof v === 'object')) return value.map(v => `${prefix}: ${JSON.stringify(v)}`);
+    return [`${prefix}: ${value.join(', ')}`];
+  }
+  if (value && typeof value === 'object') {
+    return Object.entries(value).flatMap(([k, v]) => printedLines(v, prefix ? `${prefix}.${k}` : k));
+  }
+  return [`${prefix}: ${value}`];
+}
+
 function createAgent({ onelake, engine, modelPath, appDir, vendorDir, daxSqlPin, yamlPin, semviews,
                        exportApp = null, fetchModel = null, openModel = null, nameTables = null,
-                       signedIn = () => true, offlineReason = () => null }) {
+                       signedIn = () => true, offlineReason = () => null, diagnostics = null }) {
   let mods = null;
   async function modules() {
     if (mods) return mods;
@@ -280,6 +297,18 @@ function createAgent({ onelake, engine, modelPath, appDir, vendorDir, daxSqlPin,
   // (--json's `notes`), and incomplete() when something it should have read, it did not.
   // ---------------------------------------------------------------------------
   const commands = {
+    async status(_, opts, io) {
+      if (!diagnostics) throw new Error('this is not available here');
+      const s = await diagnostics.status();
+      io.data(s);
+      io.out(printedLines(s).join('\n'));
+    },
+    async log([text], opts, io) {
+      if (!diagnostics) throw new Error('this is not available here');
+      const lines = diagnostics.log({ limit: opts.explicitLimit ?? 200, text });
+      io.data({ lines });
+      io.out(lines.join('\n') || '(nothing)');
+    },
     async ls([ws, item], opts, io) {
       if (!ws) {
         io.table([col('workspace')], (await look('workspaces', [], opts)).map(w => [w]), { sort: 1 });
@@ -679,7 +708,8 @@ function createAgent({ onelake, engine, modelPath, appDir, vendorDir, daxSqlPin,
     try {
       const wrong = checkRequest({ args, opts });
       if (wrong) throw usage(wrong);
-      if (!signedIn()) throw unavailable('OneLake Studio is not signed in — sign in from its view in VS Code.');
+      // Whether a window is signed in is one of the things these two are asked to find out.
+      if (!signedIn() && name !== 'status' && name !== 'log') throw unavailable('OneLake Studio is not signed in — sign in from its view in VS Code.');
       if (opts.fresh && offlineReason()) throw offlineError(offlineReason(), 'An answer newer than the cache');
       await commands[name](rest, {
         fresh: !!opts.fresh, csv: !!opts.csv, json: !!opts.json,

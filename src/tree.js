@@ -54,11 +54,13 @@ class LakehouseTree {
    * @param {(n: object) => string|null} [deps.unsupportedModel]  what kind of model a click found it cannot open, if it did
    * @param {{ list: () => Promise<{name: string, path: string}[]> }} [deps.queries]  the saved queries
    * @param {() => string|null} [deps.filter]  the one type to show (TREE_FILTERS' `only`), if any
+   * @param {() => void} [deps.onAsked]  VS Code asked for its top level
    * @param {() => void} [deps.onDrawn]  its top level was just answered, with what it holds
    */
   constructor({ onelake, fabric = null, hasFabric = async () => false, isSignedIn, log = () => {},
                 favorites = { get: () => [] }, cachedModel = () => null, unsupportedModel = () => null,
-                queries = { list: async () => [] }, filter = () => null, onDrawn = () => {} }) {
+                queries = { list: async () => [] }, filter = () => null, onAsked = () => {}, onDrawn = () => {} }) {
+    this.onAsked = onAsked;
     this.onDrawn = onDrawn;
     this.queries = queries;
     this.onelake = onelake;
@@ -372,6 +374,7 @@ class LakehouseTree {
   async getChildren(n) {
     if (!this.isSignedIn()) return [];   // the welcome view covers this state
     if (n) n.opened = true;
+    else this.onAsked();
     try {
       return await this._children(n);
     } catch (e) {

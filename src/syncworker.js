@@ -26,6 +26,7 @@ const DAY_MS = 24 * 3600 * 1000;
 const RETRY_MS = 3600 * 1000;        // one listing that fails isn't asked again for this long
 const PAUSE_MS = 60_000;             // everything waits this long after OneLake asks it to
 const SWEEP_IDLE_MS = 10 * 60 * 1000;
+const MAX_FAILURES = 20;
 
 /**
  * @param {object} o
@@ -43,7 +44,9 @@ function createSyncWorker({ onelake, opened = () => [], pinned = () => [], ttlMs
                             isOffline, lease = () => true, log = () => {}, now = Date.now, everyMs = EVERY_MS,
                             jobsPerTick = JOBS_PER_TICK }) {
   let timer = null, busy = false, turn = 0, pausedUntil = 0, sweepAfter = 0;
+  let leased = null, sweepBegan = null, lastRun = null;
   const retryAt = new Map();
+  const failures = [];               // the latest, for `status`
 
   const idOf = t => [t.kind, t.workspace, t.item, t.dir].join('\u0000');
   const lhOf = t => ({ workspace: t.workspace, item: t.item });
@@ -74,8 +77,16 @@ function createSyncWorker({ onelake, opened = () => [], pinned = () => [], ttlMs
     } catch (e) {
       if (e && e.offline) return false;
       retryAt.set(idOf(t), now() + RETRY_MS);
-      log(`sync: ${t.kind} ${[t.workspace, t.item, t.dir].filter(Boolean).join('/')} failed — ${(e && e.message) || e}`);
-      if (e && (e.status === 429 || e.status === 503 || !e.status)) { pausedUntil = now() + PAUSE_MS; return false; }
+      const where = `${t.kind} ${[t.workspace, t.item, t.dir].filter(Boolean).join('/')}`.trim();
+      const error = String((e && e.message) || e);
+      log(`sync: ${where} failed — ${error}`);
+      failures.push({ at: now(), where, error });
+      if (failures.length > MAX_FAILURES) failures.shift();
+      if (e && (e.status === 429 || e.status === 503 || !e.status)) {
+        pausedUntil = now() + PAUSE_MS;
+        log(`sync: paused for ${PAUSE_MS / 1000}s after that`);
+        return false;
+      }
     }
     return mine === turn && !isOffline();
   }
@@ -115,10 +126,13 @@ function createSyncWorker({ onelake, opened = () => [], pinned = () => [], ttlMs
     busy = true;
     const mine = turn;
     let left = jobsPerTick;
-    const drain = async listings => {
+    const began = now();
+    const ran = { open: 0, pinned: 0, tenant: 0 };
+    const drain = async (kind, listings) => {
       for await (const t of listings) {
         if (mine !== turn || isOffline()) return false;
         left--;
+        ran[kind]++;
         if (!await run(t, mine)) return false;
         if (left <= 0) return false;
       }
@@ -131,19 +145,46 @@ function createSyncWorker({ onelake, opened = () => [], pinned = () => [], ttlMs
         if (opened().length && await due(root, ttl)) yield root;
         for (const t of opened()) if (await due(t, ttl)) yield t;
       })();
-      if (!await drain(mineOpen) || !await drain(pinnedListings(ttl))) return;
+      if (!await drain('open', mineOpen) || !await drain('pinned', pinnedListings(ttl))) return;
       // A tenant with nothing due isn't walked every few seconds.
-      if (now() < sweepAfter || !lease()) return;
-      if (await drain(tenantListings())) sweepAfter = now() + SWEEP_IDLE_MS;
+      if (now() < sweepAfter) return;
+      const held = lease();
+      if (held !== leased) {
+        leased = held;
+        log(held ? 'sync: this window sweeps the tenant' : 'sync: another window sweeps the tenant');
+      }
+      if (!held) return;
+      const done = await drain('tenant', tenantListings());
+      if (ran.tenant && sweepBegan == null) { sweepBegan = began; log('sync: tenant sweep started'); }
+      if (done) {
+        sweepAfter = now() + SWEEP_IDLE_MS;
+        if (sweepBegan != null) log(`sync: tenant sweep finished in ${Math.round((now() - sweepBegan) / 1000)}s`);
+        sweepBegan = null;
+      }
     } catch (e) {
       log(`sync: ${(e && e.message) || e}`);
     } finally {
       busy = false;
+      const count = ran.open + ran.pinned + ran.tenant;
+      if (count) {
+        lastRun = { at: now(), ms: now() - began, ...ran };
+        const what = Object.entries(ran).filter(([, n]) => n).map(([k, n]) => `${n} ${k}`).join(', ');
+        log(`sync: ${count} listing(s) in ${lastRun.ms}ms: ${what}`);
+      }
     }
   }
 
   return {
     tick,
+    /** How far it has got, reading only what is kept: for `status`. */
+    async progress() {
+      const due = {};
+      try {
+        for await (const t of tenantListings()) due[t.kind] = (due[t.kind] || 0) + 1;
+      } catch (_) {}
+      return { running: !!timer, lease: leased, tenantDue: due, sweeping: sweepBegan != null, opened: opened().length,
+               pinned: pinned().length, pausedUntil: pausedUntil > now() ? pausedUntil : null, lastRun, failures: [...failures] };
+    },
     start() {
       if (timer) return;
       timer = setInterval(() => { tick(); }, everyMs);

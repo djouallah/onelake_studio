@@ -804,6 +804,12 @@ async function main() {
     const drew = await until("the tree's line in the log", async () => /tree drawn \d+ms into activation: DuckDB not loaded/.exec(await outputLog()), 30000).catch(() => null);
     check("the tree drew with no DuckDB loaded", !!drew, drew ? drew[0] : await outputLog());
     if (drew) console.log(`  ${drew[0]}`);
+    // What moved is said behind the tree, so it may not be there yet.
+    await until("what moved", async () => /move: state file: /.test(await outputLog()) && /move: JSON store: /.test(await outputLog()) && /move: model copies: /.test(await outputLog()), 30000).catch(() => {});
+    const started = (await outputLog()).split("\n").filter(l => /start: |move: |session: |catalog: /.test(l));
+    console.log(started.map(l => `  ${l}`).join("\n"));
+    check("VS Code asking and the tree answering are two lines", started.some(l => /start: VS Code asked for the tree at \d+ms/.test(l)) && started.some(l => /start: tree answered at \d+ms/.test(l)), started.join(" | "));
+    check("what moved is said, each time", started.some(l => /move: state file: /.test(l)) && started.some(l => /move: JSON store: /.test(l)) && started.some(l => /move: model copies: /.test(l)), started.join(" | "));
   });
   await step("Cached: the panel", async () => { await openPanel(); });
   await runMatrix();
