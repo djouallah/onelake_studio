@@ -82,11 +82,13 @@ async function itemsHolding(tables, workspace, { fabric, onelake }) {
   if (!holders.length) return [];
   const wsId = await fabric.workspaceId(workspace);
   const known = await fabric.listItems(workspace);
-  return holders.map(h => {
+  const found = holders.map(h => {
     const name = displayName(h.name);
     const hit = known.find(k => k.name === name && sqlKind(k.type) === sqlKind(h.kind));
     return hit ? { workspace: wsId, item: hit.id, name } : null;
-  }).filter(Boolean);
+  });
+  // A holder Fabric doesn't list, as one renamed since the listing, is still another holder.
+  return found.includes(null) ? null : found;
 }
 
 /**
@@ -103,6 +105,14 @@ async function readFromOneLake(bim, workspace, { fabric, onelake }) {
     if (!tables.length) continue;
     let item = await fabric.itemOfSqlEndpoint(at.workspace, at.endpoint);
     if (!item) {
+      // An endpoint in another workspace says where its tables are. Ones of the same name here are other tables.
+      const home = await fabric.workspaceId(workspace);
+      if (lc(home) !== lc(at.workspace)) {
+        return {
+          refused: 'Direct Lake over a SQL endpoint that cannot be found',
+          why: `endpoint ${at.endpoint} is in workspace ${at.workspace}, which isn't this model's, and it cannot be found there`,
+        };
+      }
       const holders = await itemsHolding(tables, workspace, { fabric, onelake });
       if (!holders || holders.length !== 1) {
         return {

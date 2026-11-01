@@ -346,7 +346,8 @@ function createOneLake({ catalog, store, prefetchEnabled = () => true, onHit = (
     if (kept) return { ...kept, cached: true };
     const s = await deltalog.readDeltaState({ readText, readFresh, readCheckpoint: checkpointReader(at, readText, run) },
       at.dir, version);
-    await store.put(k, s);
+    // Only what the log said. Nothing found is kept nowhere: a version's state never changes, this might.
+    if (s.source) await store.put(k, s);
     return { ...s, cached: false };
   }
 

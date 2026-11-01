@@ -102,7 +102,7 @@ export function buildQuery(s, { cap = CAP, today = localToday() } = {}) {
   const select = {};
   for (const id of [...dims, ...s.values]) {
     const name = nameOf(id);
-    if (name in select) throw new Error(`two fields are named ${name}: keep one of them`);
+    if (Object.hasOwn(select, name)) throw new Error(`two fields are named ${name}: keep one of them`);
     const a = aggOf(id);
     select[name] = a ? { [a.agg]: a.col } : id;
   }
@@ -155,8 +155,12 @@ export function modelSql(q, column, from = 'model', plain = null) {
     const val = v => sqlVal(v, type);
     const named = vs => vs.filter(v => v != null), blank = vs => vs.some(v => v == null);
     const list = vs => `(${vs.map(val).join(', ')})`;
+    // A DATE as an upper bound on a timestamp means its midnight, and leaves that day's rows out.
+    const dayAfter = v => (val(v).startsWith('DATE ') && !isNaN(Date.parse(v))
+      ? val(new Date(Date.parse(`${v}T00:00:00Z`) + 864e5).toISOString().slice(0, 10)) : null);
     switch (op) {
-      case 'between': return `${c} BETWEEN ${val(a[0])} AND ${val(a[1])}`;
+      case 'between': return dayAfter(a[1]) ? `${c} >= ${val(a[0])} AND ${c} < ${dayAfter(a[1])}` : `${c} BETWEEN ${val(a[0])} AND ${val(a[1])}`;
+      case '<=': return dayAfter(a[0]) ? `${c} < ${dayAfter(a[0])}` : `${c} <= ${val(a[0])}`;
       case 'blank': return `${c} IS NULL`;
       case 'notBlank': return `${c} IS NOT NULL`;
       case 'in': {
@@ -604,6 +608,8 @@ export function createExplorer(root, ctx) {
 
   // --- Running ---
   function changed() {
+    // From here, what comes back of an older query answers shelves that are gone.
+    seq++;
     save();
     renderShelves();
     renderFields();
@@ -724,7 +730,8 @@ export function createExplorer(root, ctx) {
       return;
     }
     const tint = ctx.palette()[0];
-    const ranges = Object.fromEntries(measures.map(m => [m, extent(piv.rowKeys.flatMap(a => piv.colKeys.map(b => piv.cell(a, b)?.[nameOf(m)])))]));
+    // Only for the highlight, which reads them: every cell is two string keys here.
+    const ranges = !highlight ? {} : Object.fromEntries(measures.map(m => [m, extent(piv.rowKeys.flatMap(a => piv.colKeys.map(b => piv.cell(a, b)?.[nameOf(m)])))]));
     const t = el('table', { class: 'explore-table ex-pivot' });
     const head = el('thead');
     // One header line per column field, then the measures' names when there are several (or no column field).
@@ -871,10 +878,11 @@ export function createExplorer(root, ctx) {
     // The shelves as one SELECT over the model, and its conditions, or null. As the pivot runs
     // it by default (its first CAP rows: what Show SQL fills its box with, so its text is the
     // query the pivot ran); `cap: 0` for all its rows (Download CSV).
-    // `plain`: as SQL over one table (modelSql's).
-    query: ({ cap = CAP, plain = null } = {}) => {
+    // `plain`: as SQL over one table (modelSql's). `totals: false` leaves the totals' rows and
+    // their marking columns out, for a file of just the rows (Download CSV).
+    query: ({ cap = CAP, plain = null, totals = true } = {}) => {
       try {
-        const q = fields && buildQuery(state, { cap });
+        const q = fields && buildQuery(totals ? state : { ...state, totals: false }, { cap });
         return q && { sql: plain ? modelSql(q, columnOf, null, plain) : sqlOf(q), where: q.where ?? [] };
       } catch { return null; }
     },

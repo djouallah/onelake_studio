@@ -132,6 +132,16 @@ test("publish again: the item an earlier export created, by its id, its redirect
   assert.deepEqual(JSON.parse(calls.find(c => c.url.endsWith("/projectRuntimeSettings")).body).auth.allowedRedirectUris, [HOST]);
 });
 
+test("publish again from a folder that knows no redirects: the live app keeps its own while the rest goes up", async () => {
+  const { app, calls } = appWith(happy([
+    ["GET", `/workspaces/${WS}/items?type=AppBackend`, () => res(200, { value: [{ id: ID, displayName: "Sales-Model" }] })],
+    ["GET", "/__private/deploy/status", () => res(200, { hostingUrl: HOST, lastSuccessfulDeploymentAt: "2026-10-28T07:32:09.0000000Z" })],
+  ]));
+  await publish(app, { redirects: [], itemId: ID });
+  const first = calls.find(c => c.url.endsWith("/projectRuntimeSettings") && c.method === "POST");
+  assert.deepEqual(JSON.parse(first.body).auth.allowedRedirectUris, [HOST]);
+});
+
 test("a 202 create is followed; a 5xx create is looked for by name, never sent twice", async () => {
   const lro = appWith(happy([
     ["GET", "/operations/op-1", () => res(200, { status: "Succeeded" })],

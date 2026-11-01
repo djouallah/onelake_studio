@@ -47,6 +47,8 @@ const BATCH_ROWS = 10_000;
 // for the app — exact when it fits in a double, a decimal string when it does not — so
 // apply it here, at the boundary, rather than shipping a value that cannot be sent.
 function jsonSafe(v) {
+  // JSON has no word for these, and would say null.
+  if (typeof v === 'number') return Number.isFinite(v) ? v : String(v);
   if (typeof v === 'bigint')
     return (v >= BigInt(Number.MIN_SAFE_INTEGER) && v <= BigInt(Number.MAX_SAFE_INTEGER))
       ? Number(v) : v.toString();

@@ -46,6 +46,10 @@ const EXTERNAL_ACCESS_HINT = ' If this happens for every workspace, the tenant s
 const sentence = said => (said ? ` — ${said}${/[.!?]$/.test(said) ? '' : '.'}` : '.');
 const forbidden = status => (status === 403 ? EXTERNAL_ACCESS_HINT : '');
 
+// A snapshot's id is 64 bits, and parsed as a number it comes out rounded, naming a snapshot that isn't
+// there: read as text.
+const snapshotIdsAsText = text => text.replace(/("(?:current-|parent-)?snapshot-id"\s*:\s*)(-?\d+)/g, '$1"$2"');
+
 // Where a table's folder can be: a lakehouse without schemas keeps it directly under Tables/.
 const tableDirs = (lh, t) => [t.schema ? `${lh.item}/Tables/${t.schema}/${t.table}` : null, `${lh.item}/Tables/${t.table}`]
   .filter(Boolean);
@@ -81,7 +85,7 @@ function createCatalog({ getToken, dfsOrigin = DFS_ORIGIN, tableOrigin = TABLE_O
     } });
   }
 
-  async function getJson(url, what) {
+  async function getJson(url, what, before = null) {
     const r = await authedFetch(url);
     if (!r.ok) {
       const said = await oneLakeMessage(r);
@@ -89,7 +93,7 @@ function createCatalog({ getToken, dfsOrigin = DFS_ORIGIN, tableOrigin = TABLE_O
       e.status = r.status;
       throw e;
     }
-    return { json: await okJson(r, what), cont: r.headers.get('x-ms-continuation') || '' };
+    return { json: await okJson(r, what, before), cont: r.headers.get('x-ms-continuation') || '' };
   }
 
   // Each filesystem at the account root is a workspace, so the whole catalog comes from
@@ -267,7 +271,7 @@ function createCatalog({ getToken, dfsOrigin = DFS_ORIGIN, tableOrigin = TABLE_O
     let url = urlOf(await ircPrefixFor(lh));
     for (let attempt = 0; ; attempt++) {
       try {
-        const { json } = await getJson(url, `Reading ${label} from the Iceberg catalog`);
+        const { json } = await getJson(url, `Reading ${label} from the Iceberg catalog`, snapshotIdsAsText);
         if (!json || !json.metadata) throw new Error(`${label}: the catalog returned no metadata document`);
         return { metadataLocation: json['metadata-location'] || null, metadata: json.metadata };
       } catch (e) {

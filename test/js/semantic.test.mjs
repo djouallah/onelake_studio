@@ -28,6 +28,19 @@ test("only a statement about a semantic model waits for the views", async () => 
   }
 });
 
+test("Explore's upper bound on a date takes in that whole day, on a timestamp too", async () => {
+  const { modelSql, buildQuery } = await import("../../app/explore/explore.js");
+  const column = id => (id === "t.d" ? { table: "t", name: "d", type: "date" } : id === "t.s" ? { table: "t", name: "s", type: "text" } : null);
+  const where = (...w) => modelSql({ select: { d: "t.d" }, where: w }, column);
+  assert.match(where(["t.d", "<=", "2026-01-31"]), /"?d"? < DATE '2026-02-01'/);
+  assert.match(where(["t.d", "between", "2026-01-01", "2026-12-31"]), /"?d"? >= DATE '2026-01-01' AND .*"?d"? < DATE '2027-01-01'/);
+  // A date in text is compared as text, and nothing else moves.
+  assert.match(where(["t.s", "<=", "2026-01-31"]), /<= '2026-01-31'/);
+  assert.match(where(["t.d", ">=", "2026-01-31"]), />= DATE '2026-01-31'/);
+  // A column named as one of an object's own methods is a column.
+  assert.ok(buildQuery({ rows: ["t.constructor"], cols: [], values: [], filters: [] }));
+});
+
 // A semantic model's one SQL name, and the ones a statement names that are not open yet.
 test("a model is semanticmodel.ws.model, and a statement's unopened models are found", async () => {
   const { modelSqlName, unopenedModels, defineView } = await import("../../app/semantic.js");

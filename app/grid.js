@@ -74,7 +74,8 @@ export function groupedText(t) {
 export function inspectText(v) {
   if (v != null && typeof v === 'object') return JSON.stringify(v, null, 2);
   const t = cellText(v);
-  if (/^\s*[[{]/.test(t)) { try { return JSON.stringify(JSON.parse(t), null, 2); } catch (_) { /* not JSON */ } }
+  // Parsed, an integer past 2^53 would come back as another number: such text stays as it is.
+  if (/^\s*[[{]/.test(t) && !/\d{16}/.test(t)) { try { return JSON.stringify(JSON.parse(t), null, 2); } catch (_) { /* not JSON */ } }
   return t;
 }
 
@@ -136,7 +137,7 @@ export function mountGrid(table, wrap, res, { ui, copyText, say = () => {}, grou
       html += `<tr data-r="${r}" aria-rowindex="${r + 2}" class="${r % 2 ? 'odd' : ''}"><td class="rn${inRows ? ' sel' : ''}">${r + 1}</td>`;
       for (let c = 0; c < fields.length; c++) {
         const v = row[fields[c]];
-        const cls = (typeof v === 'number' ? 'num' : '') + (selected(r, c) ? ' sel' : '');
+        const cls = (typeof v === 'number' ? 'num' : '') + (inRows && c >= g.c0 && c <= g.c1 ? ' sel' : '');
         const text = cellText(v);
         const shown = grouped() && NUMERIC_TYPE.test(types[c] || '') ? groupedText(text) : text;
         html += `<td data-c="${c}" class="${cls}">${escapeHtml(shown)}</td>`;
@@ -302,7 +303,13 @@ export function mountGrid(table, wrap, res, { ui, copyText, say = () => {}, grou
       delete table.dataset.vscodeContext;
       ui.filter.oninput = null;
       ui.filter.parentElement.hidden = true;
-      closeInspector();
+      // What is still to come of this grid would draw its rows under the next one.
+      clearTimeout(typing);
+      cancelAnimationFrame(frame);
+      // Hidden, with focus left alone: a result landing doesn't take it from the SQL box. Its handlers
+      // hold every row of this result.
+      ui.inspector.root.hidden = true;
+      ui.inspector.copy.onclick = ui.inspector.close.onclick = ui.inspector.root.onkeydown = null;
     },
   };
 }

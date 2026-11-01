@@ -402,8 +402,9 @@ workspace has one model of a name.
   expression names the endpoint, and the local copy holds the OneLake URL of the item behind it instead, so nothing
   connects to the endpoint and it works offline as any model does. The endpoint's workspace is in its host name, and a
   lakehouse or mirrored database says which endpoint is its own.
-- **An endpoint Fabric doesn't show** is deleted or isn't yours to see, which look alike. Its tables are read from the
-  model's own workspace if exactly one item there holds them all, and a message says so. Otherwise it is refused.
+- **An endpoint Fabric doesn't show** is deleted or isn't yours to see, which look alike. If it is in the model's own
+  workspace, its tables are read from there when exactly one item holds them all, and a message says so. Otherwise it is
+  refused: tables of the same name in another workspace are other tables.
 - **The local copy is the cache.** Later clicks open it without asking Fabric, and the tree marks the
   model with a check. The command line reads and writes the same copies. **Download Again** reads
   Fabric again and replaces the copy, after asking.

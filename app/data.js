@@ -539,6 +539,8 @@ export function createEngine({
       fileCount: stats.totalDataFiles,
       posDeletes: 0, eqDeletes: 0,
       totalRecords: resolved.totalRecords, stats, warnings: [],
+      // History's Query: an Iceberg snapshot's rows, read from this file.
+      metadataLocation: resolved.metadataLocation,
     };
     status(describeLoad(info));
     return info;

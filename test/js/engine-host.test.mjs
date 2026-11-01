@@ -14,7 +14,7 @@ import { fileURLToPath } from "node:url";
 import { READS, WRITES } from "./sql-disagreements.mjs";
 
 const require = createRequire(import.meta.url);
-const { createEngineHost, sameSources, isOneLakeMetadata, isOneLakeTable, duckdbPath, READ_FAILURE, AUTH_FAILURE } = require("../../src/engine-host.js");
+const { createEngineHost, jsonSafe, sameSources, isOneLakeMetadata, isOneLakeTable, duckdbPath, READ_FAILURE, AUTH_FAILURE } = require("../../src/engine-host.js");
 
 // What fetch-extensions.mjs put next to the extension, when CI ran it for this platform.
 const BUNDLED = join(fileURLToPath(new URL(".", import.meta.url)), "..", "..", "duckdb-extensions");
@@ -694,6 +694,13 @@ test("only a OneLake table folder is read with delta_scan", () => {
     "abfss://ws@evil.example.com/x/t", "abfss://ws@onelake.dfs.fabric.microsoft.com/lh/Tables/t\nATTACH 'x'", "abfss://ws@onelake.dfs.fabric.microsoft.com/"]) {
     assert.equal(isOneLakeTable(bad), false, String(bad));
   }
+});
+
+test("a number JSON has no word for says what it is, and doesn't become NULL", () => {
+  assert.equal(jsonSafe(NaN), "NaN");
+  assert.equal(jsonSafe(-Infinity), "-Infinity");
+  assert.equal(jsonSafe(1.5), 1.5);
+  assert.deepEqual(jsonSafe([1, NaN]), [1, "NaN"]);
 });
 
 test("a statement's tables read the same whenever they were read, unless what they read moved", () => {

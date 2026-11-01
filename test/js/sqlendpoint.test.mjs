@@ -12,7 +12,7 @@ const { readFromOneLake, sqlEndpointOf, guidOfLabel } = require("../../src/sqlen
 // 11111111-2222-3333-4444-555555555555, as a Fabric SQL host writes it.
 const WS_ID = "11111111-2222-3333-4444-555555555555";
 const WS_LABEL = "ceircejceiztgrcekvkvkvkvku";
-const HOME_ID = "22222222-2222-2222-2222-222222222222";
+const HOME_ID = WS_ID;
 const ENDPOINT = "aaaaaaaa-0000-0000-0000-000000000001";
 const LAKE = "bbbbbbbb-0000-0000-0000-000000000002";
 const HOST = `xpkymsttihxelp6vuo2w5ywt2u-${WS_LABEL}.datawarehouse.fabric.microsoft.com`;
@@ -28,12 +28,12 @@ const model = (over = {}) => ({ model: {
 } });
 
 // The model's own workspace, `home`: what it lists and what Fabric calls it.
-const deps = ({ endpoint = null, items = {} } = {}) => {
+const deps = ({ endpoint = null, items = {}, home = HOME_ID, hidden = [] } = {}) => {
   const asked = [];
   return { asked, fabric: {
     itemOfSqlEndpoint: async (ws, id) => { asked.push([ws, id]); return endpoint; },
-    workspaceId: async () => HOME_ID,
-    listItems: async () => Object.keys(items).map((dir, i) => {
+    workspaceId: async () => home,
+    listItems: async () => Object.keys(items).filter(dir => !hidden.includes(dir)).map((dir, i) => {
       const [name, type] = dir.split(".");
       return { id: `cccccccc-0000-0000-0000-00000000000${i}`, name, type };
     }),
@@ -102,6 +102,25 @@ test("no guessing: none, two, or a listing that can't be read is refused, and no
     assert.match(r.why, why, name);
     assert.deepEqual(lakehousesOf(bim), [], name);
   }
+});
+
+test("no guessing: an endpoint in another workspace isn't looked for here, whatever holds tables of those names", async () => {
+  const bim = model();
+  const items = { "storage.Lakehouse": [t("dbo", "duid"), t("aemo", "price")] };
+  const r = await readFromOneLake(bim, "home", deps({ items, home: "22222222-2222-2222-2222-222222222222" }));
+  assert.match(r.refused, /cannot be found/);
+  assert.match(r.why, /isn't this model's/);
+  assert.deepEqual(lakehousesOf(bim), []);
+});
+
+test("no guessing: a second holder Fabric doesn't list, as one renamed since the listing, still counts", async () => {
+  const bim = model();
+  const r = await readFromOneLake(bim, "home", deps({ hidden: ["old.Lakehouse"], items: {
+    "new.Lakehouse": [t("dbo", "duid"), t("aemo", "price")],
+    "old.Lakehouse": [t("dbo", "duid"), t("aemo", "price")],
+  } }));
+  assert.match(r.refused, /cannot be found/);
+  assert.deepEqual(lakehousesOf(bim), []);
 });
 
 test("an Import or DirectQuery table reading a Sql.Database is left alone, and nobody is asked", async () => {

@@ -201,6 +201,7 @@ export function mountExplore(root, ctx) {
   const typed = () => ta.value.trim().replace(/;+\s*$/, '');
   function clearResults() { out.innerHTML = ''; info.textContent = ''; }
   function fillSql() {
+    ++outSeq;   // a run in flight answers the text this replaces
     showPlanNode(null);
     ta.value = explorer?.query()?.sql ?? '';
     clearResults();
@@ -224,13 +225,14 @@ export function mountExplore(root, ctx) {
   }
   // Ctrl+Enter reaches runSql while a run or a plan is still going; only the latest may write.
   let outSeq = 0;
-  async function busy(button, label, work) {
+  async function busy(button, label, work, current) {
     // Its idle label, from before any run: a second Ctrl+Enter must not keep 'Running…'.
     const was = (button.dataset.idle ??= button.textContent);
     for (const b of [runBtn, planBtn]) b.disabled = true;
     button.textContent = label;
     try { return await work(); }
     catch (e) {
+      if (!current()) return;
       if (e.cancelled) { info.textContent = 'Stopped.'; return; }
       info.textContent = e.message?.includes('Out of Memory') ? 'Out of memory: add a filter.' : `Error: ${e.message}`;
       setStatus(`Query error: ${e.message}`, 'error');
@@ -266,7 +268,7 @@ export function mountExplore(root, ctx) {
           : `${total.toLocaleString()} rows`) + ` · ${elapsed(t0)}`;
         setStatus(`${ctx.name}: ${info.textContent}.`, 'ok');
       } finally { clearInterval(ticker); }
-    });
+    }, () => my === outSeq);
   }
 
   // --- Show plan: the profile (EXPLAIN ANALYZE, which runs the query once more) and the tree ---
@@ -310,7 +312,7 @@ export function mountExplore(root, ctx) {
 
   // --- Download CSV: the pivot's query (the shelves, all rows), or the box's SQL once open ---
   async function download() {
-    const base = sqlMode ? typed() : explorer?.query({ cap: 0 })?.sql;
+    const base = sqlMode ? typed() : explorer?.query({ cap: 0, totals: false })?.sql;
     if (!base) { setStatus(sqlMode ? 'Enter a SQL query' : 'Put a field on the shelves first', 'error'); return; }
     csvBtn.disabled = true;
     csvBtn.textContent = 'Exporting…';

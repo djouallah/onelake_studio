@@ -29,12 +29,12 @@ function createOneLakeWriter({ getToken, dfsOrigin = DFS_ORIGIN, fetchImpl = (..
 
   const urlOf = (ws, path) => dfsFileUrl(ws, path, dfsOrigin);
 
-  // The file's size, or null when there is none.
+  // The file's size and version, or null when there is none.
   async function stat(ws, path) {
     const r = await call(urlOf(ws, path), { method: 'HEAD' });
     if (r.status === 404) return null;
     if (!r.ok) throw Object.assign(new Error(`Reading ${path} failed (HTTP ${r.status})`), { status: r.status });
-    return { bytes: Number(r.headers.get('content-length')) || 0 };
+    return { bytes: Number(r.headers.get('content-length')) || 0, etag: r.headers.get('etag') };
   }
 
   // What is at `path` against `text`: 'none', 'same' or 'different'. Only a 404 means nothing is
@@ -46,8 +46,11 @@ function createOneLakeWriter({ getToken, dfsOrigin = DFS_ORIGIN, fetchImpl = (..
     return there && Buffer.from(there).toString('utf8') === String(text) ? 'same' : 'different';
   }
 
-  async function writeFile(ws, path, bytes) {
+  // `over`: what stat said is there, null for nothing, when a question was asked on it. Anything else
+  // there by the time it lands fails the rename, and is left as it is.
+  async function writeFile(ws, path, bytes, { over } = {}) {
     const body = Buffer.from(bytes);
+    const onlyIf = over === undefined ? {} : over === null ? { 'if-none-match': '*' } : over.etag ? { 'if-match': over.etag } : {};
     const url = urlOf(ws, path);
     const tmp = urlOf(ws, `${path}.${randomBytes(4).toString('hex')}.tmp`);
     const step = async (what, target, init) => {
@@ -66,7 +69,7 @@ function createOneLakeWriter({ getToken, dfsOrigin = DFS_ORIGIN, fetchImpl = (..
       }
       await step('flush', `${tmp}?action=flush&position=${body.length}`, { method: 'PATCH', headers: { 'content-length': '0' } });
       // A rename replaces what is at the destination, in one step.
-      await step('rename', url, { method: 'PUT', headers: { 'content-length': '0', 'x-ms-rename-source': new URL(tmp).pathname } });
+      await step('rename', url, { method: 'PUT', headers: { 'content-length': '0', 'x-ms-rename-source': new URL(tmp).pathname, ...onlyIf } });
     } catch (e) {
       // What was there is untouched, and this says what went wrong: the temp file is only tidied.
       await call(tmp, { method: 'DELETE' }).catch(() => {});

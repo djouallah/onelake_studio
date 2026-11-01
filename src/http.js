@@ -121,8 +121,9 @@ const oneLakeMessage = r => bodyMessage(r, j => j && j.error && j.error.message)
 
 // The body of an answer that said OK. One that can't be read fails, as the connection going part way
 // or the timeout, which covers the body too: taken for an empty answer, it would be kept, over what was known.
-async function okJson(r, what) {
-  try { return await r.json(); }
+// `before`: the text, changed before it is parsed.
+async function okJson(r, what, before = null) {
+  try { return before ? JSON.parse(before(await r.text())) : await r.json(); }
   catch (e) {
     if (connectivity) connectivity.networkFailed();
     throw new Error(`${what}: the answer was cut off — ${(e && e.message) || e}`);

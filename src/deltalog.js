@@ -50,6 +50,8 @@ function parseCommit(text) {
     else if (a.add) {
       c.add.files++;
       c.add.bytes += Number(a.add.size) || 0;
+      // Rewritten, as OPTIMIZE does: no row of it is new.
+      if (a.add.dataChange === false) continue;
       // `stats` is a JSON string, and numRecords in it is optional (or null).
       let n = null;
       try { n = JSON.parse(a.add.stats || 'null')?.numRecords; } catch (_) {}
@@ -74,7 +76,8 @@ function historyEntry(version, c, lastModified) {
     version: String(version),
     timestamp: num(ci.timestamp) ?? num(ci.inCommitTimestamp) ?? lastModified ?? null,
     operation: ci.operation || (c.metaData && !c.add.files ? 'METADATA' : c.add.files || c.remove.files ? 'WRITE' : null),
-    rowsAdded: num(m.numOutputRows) ?? num(m.numTargetRowsInserted) ?? (c.add.files && c.add.rowsKnown ? c.add.rows : null),
+    // A MERGE's numOutputRows is every row of the files it rewrote: what it inserted comes first.
+    rowsAdded: num(m.numTargetRowsInserted) ?? num(m.numOutputRows) ?? (c.add.files && c.add.rowsKnown ? c.add.rows : null),
     rowsRemoved: num(m.numDeletedRows) ?? num(m.numTargetRowsDeleted),
     rowsUpdated: num(m.numUpdatedRows) ?? num(m.numTargetRowsUpdated),
     filesAdded: num(m.numFiles) ?? num(m.numAddedFiles) ?? num(m.numTargetFilesAdded) ?? c.add.files,
@@ -135,10 +138,10 @@ async function readDeltaState({ readText, readFresh = readText, readCheckpoint }
   // file here it is rewritten at each checkpoint, so it is never read from a cache.
   const last = await readJson(readFresh, `${logDir}/_last_checkpoint`);
   const cp = last && num(last.version);
-  if (cp == null) {
-    return { version, asOf: null, source: null, ...tableFacts(null, null),
-             sizeBytes: null, numFiles: null, deletedRows: null };
-  }
+  const unknown = { version, asOf: null, source: null, ...tableFacts(null, null),
+                    sizeBytes: null, numFiles: null, deletedRows: null };
+  // A later checkpoint than the version asked about says what the table is by then, not what it was.
+  if (cp == null || cp > version) return unknown;
   const parts = num(last.parts);
   const paths = last.v2Checkpoint && last.v2Checkpoint.path
     ? [`${logDir}/${leaf(last.v2Checkpoint.path)}`]
@@ -146,7 +149,12 @@ async function readDeltaState({ readText, readFresh = readText, readCheckpoint }
       ? Array.from({ length: parts }, (_, i) =>
           `${logDir}/${pad(cp)}.checkpoint.${String(i + 1).padStart(10, '0')}.${String(parts).padStart(10, '0')}.parquet`)
       : [`${logDir}/${pad(cp)}.checkpoint.parquet`];
-  const s = await readCheckpoint(paths);
+  // A checkpoint can be gone by the time it's asked for: log retention takes them too.
+  const s = await readCheckpoint(paths).catch(e => {
+    if (notFound(e) || /\b404\b|No files found/i.test(String(e && e.message))) return null;
+    throw e;
+  });
+  if (!s) return unknown;
   // Not _last_checkpoint's sizeInBytes (the checkpoint file's own size) nor its file count
   // (of an older version than the rest of the card): the Iceberg side has both for `version`.
   return { version, asOf: cp, source: 'checkpoint', ...tableFacts(s.metaData, s.protocol),

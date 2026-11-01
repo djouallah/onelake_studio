@@ -68,7 +68,7 @@ export function modelName(fileName) {
 // Lake model's shared expression holds its lakehouse's OneLake URL, by GUIDs; each table's
 // partition names that expression, and the schema and table it reads.
 // The bim's shared expressions that name a lakehouse: expression name -> { workspace, item }.
-function lakeExpressions(bim) {
+export function lakeExpressions(bim) {
   const text = e => (Array.isArray(e) ? e.join("\n") : String(e ?? ""));
   const url = /onelake\.dfs\.fabric\.microsoft\.com\/([0-9a-f-]{36})\/([0-9a-f-]{36})/i;
   const found = new Map();

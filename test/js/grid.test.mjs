@@ -6,6 +6,11 @@ import { formatRows, inspectText, sortedRows, cellText, groupedText } from "../.
 const fields = ["a", "b"];
 const rows = [{ a: 1, b: "x|y" }, { a: 2, b: "line\nbreak" }, { a: null, b: { k: [1] } }];
 
+test("the inspector leaves text as it is when parsing it would change a number", () => {
+  assert.equal(inspectText('{"id":1234567890123456789}'), '{"id":1234567890123456789}');
+  assert.equal(inspectText('{"id":12}'), '{\n  "id": 12\n}');
+});
+
 test("a selection copies as TSV, with headers, CSV, Markdown or JSON", () => {
   assert.equal(formatRows(fields, rows, "tsv"), '1\tx|y\r\n2\tline break\r\n\t{"k":[1]}');
   assert.equal(formatRows(fields, rows.slice(0, 1), "tsv-headers"), "a\tb\r\n1\tx|y");

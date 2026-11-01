@@ -123,6 +123,37 @@ test("history: one listing, then only the page asked for", async () => {
   assert.equal(next[0].version, "14");
 });
 
+test("a checkpoint later than the version asked about, or gone, says nothing of it", async () => {
+  const later = fakeLog({ "_last_checkpoint": JSON.stringify({ version: 50 }) });
+  const d = await readDeltaState(later.io, DIR, 40);
+  assert.equal(d.source, null);
+  assert.equal(d.asOf, null);
+  assert.ok(!later.reads.some(r => r.startsWith("checkpoint:")), "and it isn't read");
+
+  const gone = fakeLog({ "_last_checkpoint": JSON.stringify({ version: 10 }) });
+  for (const message of ["HTTP 404", "IO Error: No files found that match the pattern"]) {
+    const s = await readDeltaState({ ...gone.io, readCheckpoint: async () => { throw new Error(message); } }, DIR, 11);
+    assert.equal(s.source, null, message);
+  }
+  await assert.rejects(readDeltaState({ ...gone.io, readCheckpoint: async () => { throw new Error("HTTP 403"); } }, DIR, 11), /403/);
+});
+
+test("rows that were only rewritten aren't rows added", async () => {
+  const rewritten = { add: { path: "a", size: 10, dataChange: false, stats: JSON.stringify({ numRecords: 1000000 }) } };
+  const { io } = fakeLog({
+    [`${pad(2)}.json`]: lines({ commitInfo: { timestamp: 3, operation: "MERGE",
+      operationMetrics: { numOutputRows: "1000000", numTargetRowsInserted: "3" } } }),
+    [`${pad(1)}.json`]: lines({ commitInfo: { timestamp: 2, operation: "OPTIMIZE", operationMetrics: {} } }, rewritten, { remove: { path: "b", size: 10 } }),
+    // A Warehouse's compaction: no commitInfo, and the same files again.
+    [`${pad(0)}.json`]: lines(rewritten, { remove: { path: "c", size: 10 } }),
+  });
+  const [merge, optimize, compaction] = await readHistoryPage(io.readText, DIR, await listCommits(io.list, DIR));
+  assert.equal(merge.rowsAdded, 3);
+  assert.equal(optimize.rowsAdded, 0);
+  assert.equal(optimize.filesAdded, 1);
+  assert.equal(compaction.rowsAdded, 0);
+});
+
 test("a commit's metrics come from commitInfo, or from its actions when there is none", async () => {
   const { io } = fakeLog({
     [`${pad(1)}.json`]: lines({ commitInfo: { timestamp: 2, operation: "MERGE", engineInfo: "Apache-Spark/3.5",

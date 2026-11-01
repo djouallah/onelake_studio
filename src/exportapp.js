@@ -110,6 +110,15 @@ function planExport(text, fileName, name, { compiler, semantic }, where) {
       : `${fileName} names no lakehouse: its Direct Lake expression must hold https://onelake.dfs.fabric.microsoft.com/<workspace id>/<lakehouse id>`);
   }
   const [lake] = lakes;
+  // A table reading another expression, a Sql.Database say, isn't in that lakehouse under its name.
+  const lakeExprs = semantic.lakeExpressions(bim);
+  const elsewhere = ((bim.model ?? bim).tables ?? []).filter(t => {
+    const s = t.partitions?.[0]?.source;
+    return s?.entityName && s.expressionSource && !lakeExprs.has(s.expressionSource);
+  });
+  if (elsewhere.length) {
+    throw new Error(`${fileName} has tables its lakehouse doesn't hold: ${elsewhere.map(t => t.name).join(', ')} read another expression, and the app reads one catalog`);
+  }
   const sources = sourcesOf(doc);
   if (!sources.size) throw new Error(`${fileName} has no table the app can read: none names its source as schema.table`);
   // The page names a table's view v_<table> and finds it again with \w+; the function opens
@@ -286,10 +295,11 @@ async function fingerprint(outDir) {
 }
 
 // The paths added, removed or changed since `marker.files` was taken; [] when nothing moved,
-// or when the marker predates the record (an earlier export's).
+// or when the marker predates the record (an earlier export's, which says when it published).
+// A publish that failed part way has an item and no record, and says so rather than nothing.
 async function localChanges(outDir, marker) {
   const was = marker && marker.files;
-  if (!was) return [];
+  if (!was) return marker && marker.itemId && !marker.exportedAt ? ['(the last publish did not finish, so any file may have changed)'] : [];
   const now = await fingerprint(outDir);
   return [...new Set([...Object.keys(was), ...Object.keys(now)])].filter(p => was[p] !== now[p]).sort();
 }

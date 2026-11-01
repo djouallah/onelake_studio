@@ -13,6 +13,7 @@
 // =============================================================================
 
 const { join } = require('node:path');
+const { createHash } = require('node:crypto');
 const { authedFetch, fabricMessage, listPages, mapPool, okJson, retryAfterMs } = require('./http');
 
 const FABRIC_API = 'https://api.fabric.microsoft.com/v1';
@@ -28,9 +29,13 @@ const byName = (a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' });
 
 // A model's display name as a file name: the characters Windows or a path would choke on
 // become `_`, and a name that is nothing but those still gets a file.
+// Cleaned, two names could come out as one, and one file would then answer for both models, so a name
+// that changed carries a mark of what it was.
 function modelFileName(modelName) {
-  const safe = String(modelName).replace(/[\\/:*?"<>|#%\u0000-\u001f]/g, '_').replace(/^[.\s]+|[.\s]+$/g, '');
-  return `${safe || 'model'}.yaml`;
+  const name = String(modelName);
+  const safe = name.replace(/[\\/:*?"<>|#%\u0000-\u001f]/g, '_').replace(/^[.\s]+|[.\s]+$/g, '');
+  const mark = safe === name ? '' : `~${createHash('sha256').update(name).digest('hex').slice(0, 6)}`;
+  return `${safe || 'model'}${mark}.yaml`;
 }
 
 // Where a model's local copy is kept. Under its account: a workspace's name is unique in one tenant

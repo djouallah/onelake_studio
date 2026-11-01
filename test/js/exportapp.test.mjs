@@ -52,6 +52,22 @@ test("the plan: its own -explore name, the lakehouse's catalog, the model's URL 
   assert.equal(dfsUrl("ws", "/a b.Lakehouse/Files/m#1.yaml"), "https://onelake.dfs.fabric.microsoft.com/ws/a%20b.Lakehouse/Files/m%231.yaml");
 });
 
+test("the plan: a table reading another expression isn't in the lakehouse, whatever it is called", () => {
+  const bim = bimOf(URL_);
+  bim.model.expressions.push({ name: "Other", kind: "m", expression: 'Sql.Database("x.datawarehouse.fabric.microsoft.com", "y")' });
+  bim.model.tables[0].partitions = [{ source: { type: "entity", entityName: "fct_sales", schemaName: "mart", expressionSource: "Other" } }];
+  assert.throws(() => planExport(JSON.stringify(bim), "sales.bim", "sales", mods(bim, bim), WHERE), /doesn't hold: fct_sales/);
+});
+
+test("a publish that never finished says so, rather than that nothing changed", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "onelake-export-"));
+  try {
+    assert.equal((await localChanges(dir, { itemId: "item" })).length, 1);
+    assert.deepEqual(await localChanges(dir, { itemId: "item", exportedAt: "2026-01-01T00:00:00Z" }), [], "a marker from before the record");
+    assert.deepEqual(await localChanges(dir, {}), []);
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
 test("the plan: a .bim's Direct Lake partitions are its tables, and a table with none is a warning", () => {
   const bim = bimOf(URL_);
   bim.model.tables = [

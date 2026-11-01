@@ -225,9 +225,15 @@ test("a long-running operation that never finishes gives up", async () => {
 
 test("a model's name becomes a safe local file name", () => {
   assert.equal(modelFileName("Sales Model"), "Sales Model.yaml");
-  assert.equal(modelFileName('a/b\\c:d*e?"f<g>h|i'), "a_b_c_d_e__f_g_h_i.yaml");
-  assert.equal(modelFileName(".."), "model.yaml", "nothing but dots is still a file");
-  assert.equal(modelFileName("../../x"), "_.._x.yaml", "slashes cannot survive into a path");
+  assert.match(modelFileName('a/b\\c:d*e?"f<g>h|i'), /^a_b_c_d_e__f_g_h_i~[0-9a-f]{6}\.yaml$/);
+  assert.match(modelFileName(".."), /^model~[0-9a-f]{6}\.yaml$/, "nothing but dots is still a file");
+  assert.match(modelFileName("../../x"), /^_\.\._x~[0-9a-f]{6}\.yaml$/, "slashes cannot survive into a path");
+});
+
+test("two models whose names clean to one thing keep a file each", () => {
+  for (const [a, b] of [["sales#1", "sales_1"], ["a/b", "a_b"], ["x.", "x"], ["a%b", "a#b"]]) {
+    assert.notEqual(modelFileName(a), modelFileName(b), `${a} and ${b}`);
+  }
 });
 
 test("a model's local copy is under its account: two tenants can each have sales/nem", () => {
@@ -236,7 +242,8 @@ test("a model's local copy is under its account: two tenants can each have sales
   assert.notEqual(a, b);
   assert.equal(a, join("root", "me@contoso.com", "sales", "nem.yaml"));
   assert.equal(modelCopyPath("root", null, "sales", "nem"), join("root", "signed-out", "sales", "nem.yaml"));
-  assert.equal(modelCopyPath("root", "a", "../x", "../../y"), join("root", "a", "_x", "_.._y.yaml"), "nothing climbs out");
+  const climbed = modelCopyPath("root", "a", "../x", "../../y");
+  assert.ok(climbed.startsWith(join("root", "a", "_x")) && !climbed.split(/[\\/]/).includes(".."), `nothing climbs out: ${climbed}`);
 });
 
 test("the module can only read: no write, no existence check, no storage token", () => {

@@ -40,6 +40,19 @@ test("writeFile: written beside the file, then renamed over it, so the file itse
   for (const c of calls) assert.equal(c.headers.authorization, "Bearer tok");
 });
 
+test("writeFile: what was asked about is what it replaces, and a file changed or made since stays", async () => {
+  const headersOfRename = async o => {
+    const { w, calls } = writerWith(() => res(201));
+    await w.writeFile("ws", "lh.Lakehouse/Files/x.yaml", Buffer.from("x"), o);
+    return calls.at(-1).headers;
+  };
+  assert.equal((await headersOfRename({ over: { etag: '"abc"' } }))["if-match"], '"abc"');
+  assert.equal((await headersOfRename({ over: null }))["if-none-match"], "*");
+  const free = await headersOfRename();
+  assert.equal(free["if-match"], undefined);
+  assert.equal(free["if-none-match"], undefined);
+});
+
 test("writeFile: OneLake's own message, naming the step that failed", async () => {
   const { w } = writerWith((url) => (url.includes("action=append")
     ? res(403, { error: { message: "This request is not authorized" } }) : res(201)));

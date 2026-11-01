@@ -47,3 +47,19 @@ test("query variables: SET VARIABLE is kept, getvariable() is bound, a typed val
     "WHERE y = (2024) AND n = getvariable('none')");
   assert.deepEqual(["42", "-1.5e3", "abc", "'x'", "o'k", "NULL"].map(q.literal), ["42", "-1.5e3", "'abc'", "'x'", "'o''k'", "NULL"]);
 });
+
+test("a statement ends where DuckDB says it does", () => {
+  const texts = t => q.statements(t).map(s => t.slice(s.start, s.end));
+  assert.deepEqual(texts("SELECT col$a$b; SELECT 2"), ["SELECT col$a$b", "SELECT 2"], "a '$' in a word opens nothing");
+  assert.deepEqual(texts("/* /* */ ; */ SELECT 1; SELECT 2"), ["SELECT 1", "SELECT 2"], "block comments nest");
+  assert.deepEqual(texts("SELECT E'it\\'s; x'; SELECT 2"), ["SELECT E'it\\'s; x'", "SELECT 2"], "a backslash escapes in an E-string");
+  assert.deepEqual(texts("SELECT 1 -- c\r; SELECT 2"), ["SELECT 1 -- c", "SELECT 2"], "a carriage return ends a line comment");
+});
+
+test("a variable named in a comment isn't asked for, and a statement with none stays as written", () => {
+  assert.deepEqual(q.variablesIn("SELECT 1 -- AND y = getvariable('year')\n/* getvariable('n') */"), []);
+  assert.deepEqual(q.variablesIn("SELECT getvariable('a') -- getvariable('b')"), ["a"]);
+  const untouched = "SELECT 1 /* a note */";
+  assert.equal(q.bindVariables(untouched, new Map()), untouched);
+  assert.equal(q.bindVariables("SELECT getvariable('a') -- getvariable('b')\n", new Map([["a", "1"], ["b", "2"]])).trim(), "SELECT (1)");
+});

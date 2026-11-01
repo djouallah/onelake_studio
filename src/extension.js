@@ -1731,6 +1731,14 @@ async function activateInner(context) {
       let appLog = m => out && out.appendLine(m);
       const fabricApp = createFabricApp({ getToken: appToken, log: m => appLog(m) });
 
+      // Two models' names can make one app's: this folder's app is another model's.
+      if (before && before.model && before.model !== plan.modelPath) {
+        const pick = await vscode.window.showWarningMessage(
+          `${plan.name} is the app of another model. Replace it with this one?`,
+          { modal: true, detail: `Now: ${before.model}\nThis export: ${plan.modelPath}` }, 'Replace It');
+        if (pick !== 'Replace It') throw declined(`Not exported: ${plan.name} is another model's app.`);
+      }
+
       // Edited since it was last published (by you, or an agent)? Asked, never overwritten.
       let asIs = false;
       const changed = await localChanges(outDir, before);
@@ -1753,7 +1761,8 @@ async function activateInner(context) {
           // A marker from before deployedAt was kept: this machine's clock, with slack.
           : before.exportedAt ? Date.parse(before.exportedAt) + 5 * 60_000 : NaN;
         const theirs = live && Date.parse(live.lastSuccessfulDeploymentAt);
-        if (theirs > ours) {
+        // A marker saying neither is a publish that never finished: any deploy is someone else's.
+        if (theirs && !(theirs <= ours)) {
           const pick = await vscode.window.showWarningMessage(
             `${plan.name} was deployed again on ${new Date(theirs).toLocaleString()}, not from this folder. Overwrite it?`,
             { modal: true, detail: live.hostingUrl || '' }, 'Overwrite It');
@@ -1775,8 +1784,10 @@ async function activateInner(context) {
       // The model's .yaml goes into its lakehouse, where the app will read it. A different file
       // already there is replaced only when the user says so, and not being able to tell what is
       // there stops the export here, with nothing written.
+      const seen = target ? await writer.stat(target.workspace, target.path) : undefined;
+      // Past the cache: what's there now is the question, and a kept copy is what was there.
       const atTarget = target && await writer.compare(target.workspace, target.path, text,
-        () => onelake.readBytes(target.workspace, target.path));
+        () => catalog.readBytes(target.workspace, target.path));
       if (atTarget === 'different') {
         const pick = await vscode.window.showWarningMessage(
           `${target.workspace}/${target.path} already exists.`,
@@ -1787,7 +1798,7 @@ async function activateInner(context) {
       // Every question is answered: from here on it writes.
       if (target) {
         if (atTarget !== 'same') {
-          await writer.writeFile(target.workspace, target.path, Buffer.from(String(text), 'utf8'));
+          await writer.writeFile(target.workspace, target.path, Buffer.from(String(text), 'utf8'), { over: seen });
           if (out) out.appendLine(`export: wrote ${model.workspace}/${model.name} -> ${target.workspace}/${target.path}`);
           const lh = { workspace: target.workspace, item: target.item };
           await onelake.files(lh, 'semantic_model', { fresh: true }).catch(() => {});

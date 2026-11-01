@@ -38,7 +38,8 @@ export async function renderMarkdown(text) {
     _md = { marked: m.marked || m.default, purify };
   }
   const html = _md.marked.parse(String(text), { gfm: true, async: false });
-  return _md.purify.sanitize(html);
+  // A document's id must not stand in for one of the page's own, and its styles must not cover the page.
+  return _md.purify.sanitize(html, { SANITIZE_NAMED_PROPS: true, FORBID_ATTR: ['style'], FORBID_TAGS: ['style'] });
 }
 
 // Returns { html, kind } — the kind is what the tab reports it did, so "Pretty"
@@ -46,8 +47,11 @@ export async function renderMarkdown(text) {
 // see docKind for why a .yml cannot be told from markdown without it.
 export async function renderDocument(text, ext = '') {
   const kind = docKind(text, ext);
-  if (kind === 'json')
+  // Parsed, an integer past 2^53 would come back as another number: such text is shown as it is.
+  if (kind === 'json' && !/\d{16}/.test(text))
     return { kind, html: `<pre class="doc">${escapeHtml(JSON.stringify(JSON.parse(String(text).trim()), null, 2))}</pre>` };
+  if (kind === 'json')
+    return { kind, html: `<pre class="doc">${escapeHtml(text)}</pre>` };
   if (kind === 'text')
     return { kind, html: `<pre class="doc">${escapeHtml(text)}</pre>` };
   return { kind, html: await renderMarkdown(text) };

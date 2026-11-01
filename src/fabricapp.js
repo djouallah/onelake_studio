@@ -226,7 +226,11 @@ function createFabricApp({ getToken, apiBase = FABRIC_API, log = () => {},
     log(`app ${name}: waiting for its backend`);
     const apiUrl = await backend(ws, id);
     const key = await publishableKey(ws, id);
-    const redirects = [...new Set(known.filter(Boolean))];
+    // These settings are the whole list, and a failure below leaves them as they are. A folder new to
+    // this app knows no redirects, and a live app's sign-in must not lose the one it has.
+    const live = created ? null : await deployStatus(ws, id).catch(() => null);
+    const liveOrigin = live && live.hostingUrl ? new URL(live.hostingUrl).origin : null;
+    const redirects = [...new Set([...known, liveOrigin].filter(Boolean))];
     await postSettings(ws, id, redirects);
     await postSecret(ws, id, 'CATALOG_URL', catalogUrl);
     await postSecret(ws, id, 'MODEL_URL', modelUrl);

@@ -112,6 +112,7 @@ function wireUi() {
   }, true);
   // Disable on the way out: the load ends at its next checkpoint, not this instant.
   $('stopBtn').onclick = () => {
+    stops++;
     engine.cancelLoad();
     $('stopBtn').disabled = true;
     setStatus('Stopping…');
@@ -423,6 +424,7 @@ async function openModels(sql) {
 let modelRuns = 0;
 async function runModelSql(sql) {
   modelRuns++;
+  const my = selSeq;
   setBusy(true, { stoppable: true });
   try {
     await engineReady;
@@ -433,8 +435,9 @@ async function runModelSql(sql) {
     }
     return res;
   } finally {
-    // A Pivot's newer query may still be running when an older one ends, and it keeps its Stop.
-    if (--modelRuns === 0) setBusy(false);
+    // A Pivot's newer query may still be running when an older one ends, and it keeps its Stop. So
+    // does whatever took the pane since: a click's load, or a query from the box.
+    if (--modelRuns === 0 && my === selSeq && !running) setBusy(false);
   }
 }
 
@@ -739,7 +742,15 @@ const pageCss = name => getComputedStyle(document.documentElement).getPropertyVa
 // than start another on every click.
 let planning = 0;
 const holdPlan = on => { planning += on ? 1 : -1; };
-const held = work => async () => { holdPlan(true); try { return await work(); } finally { holdPlan(false); } };
+const held = (work, my) => async () => {
+  holdPlan(true);
+  setBusy(true, { stoppable: true });
+  try { return await work(); }
+  finally {
+    holdPlan(false);
+    if (my === selSeq) setBusy(false);
+  }
+};
 // Returns whether the plan is on screen; what went wrong is in lastRun.
 async function showPlan(text) {
   lastRun = { error: null, rewritten: false };
@@ -750,6 +761,7 @@ async function showPlan(text) {
   setStatus('Planning…');
   const my = selSeq;
   holdPlan(true);
+  setBusy(true, { stoppable: true });
   try {
     await engineReady;
     await viewsFor(text);
@@ -770,10 +782,10 @@ async function showPlan(text) {
           return profileJson((await engine.runSql(profileSql(sql, { set: false }))).rows[0]?.explain_value);
         } catch (e) {
           // Past the EXPLAIN, the box has its answer: the view and this line say it.
-          if (my === selSeq) setStatus('Plan failed: ' + e.message, 'error');
+          if (my === selSeq) setStatus(e.cancelled ? 'Stopped.' : 'Plan failed: ' + e.message, e.cancelled ? undefined : 'error');
           throw e;
         }
-      }),
+      }, my),
       tree: async () => {
         const pre = document.createElement('pre');
         pre.className = 'sm-plan';
@@ -799,6 +811,7 @@ async function showPlan(text) {
     return false;
   } finally {
     holdPlan(false);
+    if (my === selSeq) setBusy(false);
   }
 }
 
@@ -806,6 +819,7 @@ async function showPlan(text) {
 // whether the query succeeded, so a caller with its own message can keep quiet; what went
 // wrong is in lastRun.
 let running = 0;   // queries under way: a kept result waits for them rather than stop them
+let stops = 0;     // presses of Stop: one before a statement reaches the host has nothing to cancel yet
 async function runQuery({ sql, doc = true, ext = '' } = {}) {
   sql = String(sql ?? '');
   currentSql = sql;
@@ -816,7 +830,7 @@ async function runQuery({ sql, doc = true, ext = '' } = {}) {
   // click lands, and a cancel sent before the statement reaches the host stops nothing,
   // so the result itself has to stand down rather than paint over the click's view.
   // The box runs a query even while one is under way: the newer one owns the pane.
-  const my = selSeq, run = ++runSeq;
+  const my = selSeq, run = ++runSeq, stopsAtStart = stops;
   const stale = () => my !== selSeq || run !== runSeq;
   setBusy(true, { stoppable: true });
   docAllowed = doc;
@@ -843,6 +857,7 @@ async function runQuery({ sql, doc = true, ext = '' } = {}) {
     if (model) docAllowed = false;
     lastRun.rewritten = !!model;
     t0 = performance.now();
+    if (stops !== stopsAtStart) throw Object.assign(new Error('Stopped'), { cancelled: true });
     const res = await engine.runSql(model ? model.sql : sql, { onRows: n => { rowsSoFar = n; } });
     if (stale()) return false;
     renderResults(res);
@@ -1452,6 +1467,8 @@ async function runBox({ plan = false } = {}) {
     }
     const sql = await bindBoxVariables(written);
     if (sql == null) { setStatus('Cancelled: the query needs that variable.'); return; }
+    // Before anything is cancelled: this Plan would be refused, and would have stopped the one under way.
+    if (plan && planning) { setStatus('A plan is still being measured: wait for it, then plan again.', 'warn'); return; }
     enterQuery(activeQuery);
     const ok = plan ? await showPlan(sql) : await runQuery({ sql });
     // The cursor goes where DuckDB says the error is, as the statement is written. Not a

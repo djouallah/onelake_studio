@@ -90,6 +90,18 @@ test("an OK whose body can't be read is a failure, never an empty listing", asyn
   } finally { restore(); }
 });
 
+test("a snapshot's 64-bit id comes back whole", async () => {
+  const body = '{"metadata-location":"abfss://x/m.json","metadata":{"current-snapshot-id":1234567890123456789,"snapshots":[{"snapshot-id":1234567890123456789,"parent-snapshot-id":-1,"sequence-number":5}]}}';
+  const { catalog, restore } = catalogWith([[/\/config/, () => res(200, { overrides: { prefix: "p" } })], [/tables\/t$/, () => ({ ...res(200, {}), text: async () => body })]]);
+  try {
+    const { metadata } = await catalog.loadTable({ workspace: "ws", item: "lh.Lakehouse" }, { schema: "dbo", table: "t" });
+    assert.equal(metadata["current-snapshot-id"], "1234567890123456789");
+    assert.equal(metadata.snapshots[0]["snapshot-id"], "1234567890123456789");
+    assert.equal(metadata.snapshots[0]["parent-snapshot-id"], "-1");
+    assert.equal(metadata.snapshots[0]["sequence-number"], 5, "nothing else changes");
+  } finally { restore(); }
+});
+
 test("only the item kinds that hold tables are listed, using names.js's rules", async () => {
   const { catalog, restore } = catalogWith([
     [/resource=filesystem/, () => res(200, {
