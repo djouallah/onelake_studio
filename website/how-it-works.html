@@ -182,7 +182,7 @@
 <pre><code>SELECT dim_region.Region, AGG("Registered MW") AS mw
 FROM semanticmodel.aemo.nem
 GROUP BY ALL;</code></pre>
-      <p>Opening a model reads its definition from the Fabric REST API and keeps it on this machine, so later opens ask Fabric nothing. dax-sql compiles its measures to SQL, and DuckDB reads the tables behind them from the lakehouse the model names. Only Direct Lake over OneLake is supported, and reading a definition needs Contributor or above on the workspace, or write on the model.</p>
+      <p>Opening a model reads its definition from the Fabric REST API and keeps it on this machine, so later opens ask Fabric nothing. dax-sql compiles its measures to SQL, and DuckDB reads the tables behind them from the lakehouse the model names. Only Direct Lake is supported, over OneLake or a SQL endpoint, whose tables are read from OneLake all the same, and reading a definition needs Contributor or above on the workspace, or write on the model.</p>
       <p class="more"><a href="docs/architecture.html#semantic-models">Semantic models</a> and <a href="docs/architecture.html#explore">Explore</a>, in full</p>
     </section>
 

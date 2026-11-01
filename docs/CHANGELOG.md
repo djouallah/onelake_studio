@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **A Direct Lake model over a SQL endpoint opens.** Its tables are read from OneLake, from the item behind the endpoint, and
+  nothing connects to the endpoint. If Fabric doesn't show the endpoint, they are read from the one item in the model's own
+  workspace holding them all, and a message says so. If no one item does, it is refused.
 - **A Delta table is read with `delta_scan`,** from its own log. Reading it through Fabric's Iceberg conversion could give one
   column another's values with no error, when a file's own column ids disagreed with the conversion's, as seen on a real table.
   Iceberg tables stay on `iceberg_scan`. Its log is kept in the cache folder and the parts of files it reads in the disk cache, so what

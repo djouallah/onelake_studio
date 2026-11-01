@@ -36,6 +36,7 @@ const { createConnectivity } = require('./connectivity');
 const { useConnectivity, createTokenHold, inTime } = require('./http');
 const { createHostMethods } = require('./host');
 const { createFabric, modelFileName, modelAccountDir, modelCopyPath } = require('./fabric');
+const { readFromOneLake } = require('./sqlendpoint');
 const { LakehouseTree, TREE_FILTERS } = require('./tree');
 const { firstClicks } = require('./doubleclick');
 const { webviewRoot } = require('./webview');
@@ -1401,7 +1402,7 @@ async function activateInner(context) {
   // and a second click says so again without reading the definition from Fabric again.
   const unsupportedModels = new Map();
   const unsupportedNote = (n, mode) =>
-    `${n.model} is ${mode}. OneLake Studio opens Direct Lake models over OneLake only.`;
+    `${n.model} is ${mode}. OneLake Studio opens Direct Lake models whose tables it can find in OneLake.`;
 
   // The command line (cli.mjs) rings here: its questions are answered by THIS extension —
   // its sign-in, its cache, its engine — so an agent in a terminal reads what the tree and
@@ -1472,8 +1473,9 @@ async function activateInner(context) {
   // getDefinition, TMSL), kept as a local copy in Apache Ossie — modelPath(n), ~/OneLakeStudio/
   // semantic-models/<account>/<workspace>/<model>.yaml — and read from there after. Nothing is written to OneLake, so a
   // user who may only read the workspace opens and queries a model all the same; Export to
-  // Fabric is the one write (exportExplore). A model that is not Direct Lake over OneLake is
-  // refused, and nothing is kept. `fresh` reads Fabric again, over the local copy.
+  // Fabric is the one write (exportExplore). A model over a SQL endpoint is kept as one over the
+  // item behind it (sqlendpoint.js). A model with no tables in OneLake is refused, and nothing is
+  // kept. `fresh` reads Fabric again, over the local copy.
   // `${path}|${fresh}`, lower-cased -> Promise<{ path, text }>: a fresh read never joins one that
   // may answer from the local copy, and one account's never joins another's.
   const fetching = new Map();
@@ -1492,13 +1494,19 @@ async function activateInner(context) {
       try { doc = JSON.parse(stripBom(Buffer.from(bim).toString('utf8'))); }
       catch (e) { throw new Error(`its definition is not TMSL: ${e.message}`); }
       const { semantic, compiler } = await agent.modules();
-      if (!semantic.lakehousesOf(doc).length) {
-        const mode = semantic.storageMode(doc);
+      const read = await readFromOneLake(doc, n.workspace, { fabric, onelake });
+      if (read.refused || !semantic.lakehousesOf(doc).length) {
+        const mode = read.refused || semantic.storageMode(doc);
+        if (read.why && out) out.appendLine(`${n.workspace}/${n.model}: ${read.why}`);
         unsupportedModels.set(modelKey(n), mode);
         tree.modelChanged(n);
         throw Object.assign(new Error(unsupportedNote(n, mode)), { unsupported: true });
       }
       unsupportedModels.delete(modelKey(n));
+      for (const note of read.notes) {
+        if (out) out.appendLine(`${n.workspace}/${n.model}: ${note}`);
+        vscode.window.showInformationMessage(`${n.model}: ${note}`);
+      }
       // lineWidth 0: a long DAX expression stays on its lines, not folded to the page's width.
       const text = compiler.stringifyYaml(compiler.tmslToOssie(doc, n.model), { lineWidth: 0 });
       await fsp.mkdir(dirname(path), { recursive: true });
@@ -1558,7 +1566,7 @@ async function activateInner(context) {
           await opened;
         });
     } catch (e) {
-      // Not Direct Lake over OneLake is not a failure: say what the model is, quietly.
+      // A model with no tables in OneLake is not a failure: say what the model is, quietly.
       if (e && e.unsupported) {
         if (out) out.appendLine(`not opening ${n.workspace}/${n.model}: ${e.message}`);
         vscode.window.showInformationMessage(e.message);

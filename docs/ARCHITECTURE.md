@@ -392,7 +392,13 @@ workspace has one model of a name.
   then opens that copy. It is under its account because a workspace's name is unique in one tenant only.
 - **From a query:** a statement that names a model not open yet opens it first, in the same way.
 - **Nothing is written to OneLake**, so someone who may only read the workspace can open and query it.
-- **Only Direct Lake over OneLake.** Any other model is refused, and nothing is kept.
+- **Only Direct Lake.** Any other model is refused, and nothing is kept.
+- **A model over a SQL endpoint is read from OneLake too** ([`src/sqlendpoint.js`](../src/sqlendpoint.js)). Its
+  expression names the endpoint, and the local copy holds the OneLake URL of the item behind it instead, so nothing
+  connects to the endpoint and it works offline as any model does. The endpoint's workspace is in its host name, and a
+  lakehouse or mirrored database says which endpoint is its own.
+- **An endpoint Fabric doesn't show** is deleted or isn't yours to see, which look alike. Its tables are read from the
+  model's own workspace if exactly one item there holds them all, and a message says so. Otherwise it is refused.
 - **The local copy is the cache.** Later clicks open it without asking Fabric, and the tree marks the
   model with a check. The command line reads and writes the same copies. **Download Again** reads
   Fabric again and replaces the copy, after asking.
@@ -629,6 +635,7 @@ every window. The rest apply at once.
 | `src/deltalog.js` | A Delta table's own log, for Stats and History. |
 | `src/deltamirror.js` | A Delta table's log kept in the cache folder, for `delta_scan` to run on. |
 | `src/fabric.js` | A workspace's semantic models and apps, and a model's definition. |
+| `src/sqlendpoint.js` | A Direct Lake model over a SQL endpoint, pointed at the item behind it. |
 | `src/semviews.js` | The models opened, per account. |
 | `src/tree.js`, `src/doubleclick.js` | The explorer, and a double click in it counting as one click. |
 | `src/title.js` | What the sidebar's header and a tab's title say. |

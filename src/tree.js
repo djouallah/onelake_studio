@@ -273,15 +273,15 @@ class LakehouseTree {
       // OneLake; after that it opens from that copy, and the icon says which: a cloud until
       // then, a check once it is there.
       case 'semanticModel': {
-        // A click already found it is not Direct Lake over OneLake: say what it is, and a
-        // click says why again.
+        // A click already found its tables are not in OneLake: say what it is, and a click says
+        // why again.
         const refused = this.unsupportedModel(n);
         if (refused) {
           item.iconPath = new vscode.ThemeIcon('circle-slash', new vscode.ThemeColor('disabledForeground'));
           item.description = `${refused.replace(/^an? /, '')} · not supported`;
           item.command = { command: 'onelakeStudio.openSemanticModel', title: 'Open semantic model', arguments: [n] };
           item.tooltip = (n.description ? `${n.description}\n\n` : '') +
-            `${n.model} is ${refused}. OneLake Studio opens Direct Lake models over OneLake only.`;
+            `${n.model} is ${refused}. OneLake Studio opens Direct Lake models whose tables it can find in OneLake.`;
           break;
         }
         const there = this.cachedModel(n);

@@ -55,6 +55,48 @@ test("itemOf: a Direct Lake expression's GUIDs, as the names the tree and OneLak
   } finally { restore(); }
 });
 
+test("itemOfSqlEndpoint: the item behind it, or null when Fabric doesn't show it", async () => {
+  const END = "aaaaaaaa-0000-0000-0000-000000000001";
+  const owner = id => ({ id: "owner", properties: { sqlEndpointProperties: { id } } });
+  const run = async (answers, check) => {
+    const { fabric, restore } = fabricWith(answers);
+    try { await check(fabric); } finally { restore(); }
+  };
+  const endpoint = [`/items/${END}`, () => res(200, { id: END, type: "SQLEndpoint" })];
+
+  await run([endpoint,
+    [`/workspaces/${WS_ID}/lakehouses`, () => res(200, { value: [owner("other"), owner(END.toUpperCase())] })],
+  ], async f => assert.deepEqual(await f.itemOfSqlEndpoint(WS_ID, END), { workspace: WS_ID, item: "owner" }));
+
+  await run([endpoint,
+    [`/workspaces/${WS_ID}/lakehouses`, () => res(200, { value: [] })],
+    [`/workspaces/${WS_ID}/mirroredDatabases`, () => res(200, { value: [owner(END)] })],
+  ], async f => assert.deepEqual(await f.itemOfSqlEndpoint(WS_ID, END), { workspace: WS_ID, item: "owner" }));
+
+  await run([[`/items/${END}`, () => res(200, { id: END, type: "Warehouse" })]],
+    async f => assert.deepEqual(await f.itemOfSqlEndpoint(WS_ID, END), { workspace: WS_ID, item: END }));
+
+  await run([endpoint, [`/workspaces/${WS_ID}/lakehouses`, () => res(200, { value: [] })],
+    [`/workspaces/${WS_ID}/mirroredDatabases`, () => res(200, { value: [] })],
+  ], async f => assert.equal(await f.itemOfSqlEndpoint(WS_ID, END), null, "an endpoint nothing owns"));
+
+  await run([], async f => assert.equal(await f.itemOfSqlEndpoint(WS_ID, END), null, "404"));
+  await run([[`/items/${END}`, () => res(403, {})]],
+    async f => assert.equal(await f.itemOfSqlEndpoint(WS_ID, END), null, "403"));
+  await run([[`/items/${END}`, () => res(500, {})]],
+    async f => assert.rejects(f.itemOfSqlEndpoint(WS_ID, END), /HTTP 500/, "any other failure says so"));
+});
+
+test("a workspace's items, with their ids", async () => {
+  const { fabric, restore } = fabricWith([
+    [/\/v1\/workspaces$/, () => res(200, { value: [{ id: WS_ID, displayName: "Sales" }] })],
+    [`/workspaces/${WS_ID}/items`, () => res(200, { value: [{ id: "i", displayName: "nem", type: "Lakehouse", extra: 1 }] })],
+  ]);
+  try {
+    assert.deepEqual(await fabric.listItems("Sales"), [{ id: "i", name: "nem", type: "Lakehouse" }]);
+  } finally { restore(); }
+});
+
 test("a workspace name maps to its GUID through one paged listing, memoised", async () => {
   const { fabric, calls, restore } = fabricWith([
     [/continuationToken=c2/, () => res(200, { value: [{ id: WS_ID, displayName: "Sales" }] })],

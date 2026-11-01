@@ -99,6 +99,36 @@ function createFabric({ getFabricToken, apiBase = FABRIC_API,
     return { workspace: ws[0], item: `${it.displayName}.${it.type}` };
   }
 
+  // The item behind a SQL endpoint, by GUIDs: a lakehouse or a mirrored database says which endpoint
+  // is its own, and a warehouse is read by its own id. null: Fabric does not show it to this
+  // account, which is how a deleted one and someone else's look alike.
+  async function itemOfSqlEndpoint(wsId, endpointId) {
+    const base = `/workspaces/${encodeURIComponent(wsId)}`;
+    const same = id => String(id || '').toLowerCase() === String(endpointId).toLowerCase();
+    try {
+      const r = await fabricJson(`${apiBase}${base}/items/${encodeURIComponent(endpointId)}`, 'Reading the SQL endpoint');
+      const it = await r.json().catch(() => ({}));
+      if (!it.type) return null;
+      if (it.type !== 'SQLEndpoint') return { workspace: wsId, item: endpointId };
+      for (const kind of ['lakehouses', 'mirroredDatabases']) {
+        const list = await listAll(`${base}/${kind}`, `Listing ${kind}`);
+        const hit = list.find(x => same(x.properties?.sqlEndpointProperties?.id));
+        if (hit) return { workspace: wsId, item: hit.id };
+      }
+      return null;
+    } catch (e) {
+      if (e.status === 403 || e.status === 404) return null;
+      throw e;
+    }
+  }
+
+  // A workspace's items with their ids: [{ id, name, type }].
+  async function listItems(workspace) {
+    const id = await workspaceId(workspace);
+    const list = await listAll(`/workspaces/${id}/items`, `Listing items in ${workspace}`);
+    return list.map(i => ({ id: i.id, name: i.displayName, type: i.type }));
+  }
+
   // [{ id, name, description }] by name.
   async function listSemanticModels(workspace) {
     const id = await workspaceId(workspace);
@@ -175,7 +205,7 @@ function createFabric({ getFabricToken, apiBase = FABRIC_API,
 
   function reset() { wsIds = null; }
 
-  return { workspaceId, itemOf, listSemanticModels, listApps, getBim, reset };
+  return { workspaceId, itemOf, itemOfSqlEndpoint, listItems, listSemanticModels, listApps, getBim, reset };
 }
 
 module.exports = { createFabric, modelFileName, modelAccountDir, modelCopyPath };

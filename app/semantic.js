@@ -88,8 +88,8 @@ export function lakehousesOf(bim) {
 }
 
 // What kind of model it is, as a phrase for saying why it cannot be opened: "an Import
-// model", "a DirectQuery model", "a composite model", or Direct Lake over the SQL endpoint
-// (a directLake partition but no OneLake URL to read it from). A partition without a mode
+// model", "a DirectQuery model", "a composite model", or Direct Lake over a SQL endpoint the
+// host could not read from OneLake (src/sqlendpoint.js). A partition without a mode
 // (or "default") takes the model's defaultMode, which is Import when absent.
 export function storageMode(bim) {
   const fallback = lc(bim?.model?.defaultMode || "import");
