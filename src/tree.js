@@ -102,6 +102,13 @@ class LakehouseTree {
 
   _cachedChanged(n) {
     if (!n) return;
+    if (n.kind === 'table') {
+      this.onelake.cached.notValid({ workspace: n.workspace, item: n.item }, { schema: n.schema, table: n.table }).then(why => {
+        if ((n.notValid || null) === why) return;
+        n.notValid = why;
+        this._emitter.fire(n);
+      }, () => {});
+    }
     (n.kind === 'file'
       ? this.onelake.cached.file(n.workspace, n)
       : this.onelake.cached.rows({ workspace: n.workspace, item: n.item }, { schema: n.schema, table: n.table })).then(cached => {
@@ -254,10 +261,16 @@ class LakehouseTree {
         break;
       // As a model: a cloud until it is on this machine, a check once it is.
       case 'table':
+        item.command = { command: 'onelakeStudio.openTable', title: 'Open table', arguments: [n] };
+        if (n.notValid) {
+          item.iconPath = new vscode.ThemeIcon('warning', new vscode.ThemeColor('list.warningForeground'));
+          item.description = 'not a valid table';
+          item.tooltip = n.notValid;
+          break;
+        }
         item.iconPath = n.cached
           ? new vscode.ThemeIcon('pass-filled', new vscode.ThemeColor('testing.iconPassed'))
           : new vscode.ThemeIcon('cloud');
-        item.command = { command: 'onelakeStudio.openTable', title: 'Open table', arguments: [n] };
         item.tooltip = [sqlNameOrNull(n) || (n.schema ? `${n.schema}.${n.table}` : n.table), n.cached
           ? 'Read on this machine. What was read works offline; a column or a file never read needs OneLake.'
           : 'Not read on this machine yet, so its rows need OneLake.'].join('\n');
@@ -549,8 +562,9 @@ class LakehouseTree {
   // Each with whether it is cached — read from the store, never from OneLake.
   async _tables(lh, list) {
     const cached = await Promise.all(list.map(t => this.onelake.cached.rows(lh, t).catch(() => false)));
+    const notValid = await Promise.all(list.map(t => this.onelake.cached.notValid(lh, t).catch(() => null)));
     return list.map((t, i) => this._track(node('table', t.table,
-      { ...lh, leaf: true, schema: t.schema || '', table: t.table, cached: cached[i] })));
+      { ...lh, leaf: true, schema: t.schema || '', table: t.table, cached: cached[i], notValid: notValid[i] })));
   }
 
   // An item, named without its suffix, with its type beside it.

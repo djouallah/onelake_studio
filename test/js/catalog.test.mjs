@@ -326,14 +326,33 @@ test("a table with its folder is waited on, and the folder is asked about once",
   ], { backoffMs: [1, 1, 1], onWait: m => said.push(m) });
   assert.equal(out.metadataLocation, "abfss://x/m.json");
   assert.match(said.join("\n"), /Waiting for Fabric to generate Iceberg metadata for mart\.t/);
-  assert.equal(calls.filter(u => /resource=filesystem/.test(u)).length, 1, calls.join("\n"));
+  // The folder, then its Delta log: no more on the attempts after.
+  assert.equal(calls.filter(u => /resource=filesystem/.test(u)).length, 2, calls.join("\n"));
 });
 
 test("a table directly under Tables/ counts as having its folder", async () => {
   let asked = 0;
   const { out } = await loading([
     [/\/tables\/t$/, () => (++asked < 2 ? res(404, {}) : CONVERTED())],
-    [/directory=lh\.Lakehouse%2FTables%2Ft(&|$)/, () => res(200, { paths: [] })],
+    [/directory=lh\.Lakehouse%2FTables%2Ft(%2F_delta_log)?(&|$)/, () => res(200, { paths: [] })],
+  ], { backoffMs: [1] });
+  assert.equal(out.metadataLocation, "abfss://x/m.json");
+});
+
+test("a folder with neither a Delta log nor Iceberg metadata fails at once, as not a valid table", async () => {
+  const { out, calls } = await loading([
+    [/directory=lh\.Lakehouse%2FTables%2Fmart%2Ft(&|$)/, () => res(200, { paths: [{ name: "x.parquet" }] })],
+  ]);
+  assert.equal(out.notValid, true);
+  assert.equal(out.message, "mart.t is not a valid OneLake table: its folder has neither a Delta log nor Iceberg metadata");
+  assert.equal(calls.filter(u => /\/tables\/t$/.test(u)).length, 1, calls.join("\n"));
+});
+
+test("a table with only Iceberg metadata in its folder is waited on", async () => {
+  let asked = 0;
+  const { out } = await loading([
+    [/\/tables\/t$/, () => (++asked < 2 ? res(404, {}) : CONVERTED())],
+    [/directory=lh\.Lakehouse%2FTables%2Fmart%2Ft(%2Fmetadata)?(&|$)/, () => res(200, { paths: [] })],
   ], { backoffMs: [1] });
   assert.equal(out.metadataLocation, "abfss://x/m.json");
 });

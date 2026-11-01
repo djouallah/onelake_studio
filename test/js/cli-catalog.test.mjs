@@ -186,6 +186,44 @@ test("table says no for what its listing lacks, and not cached for what it lists
   assert.match(r.err, /metadata is not cached yet/);
 });
 
+test("a folder that is no table: kept in the catalog, marked by ls and find, and a no from exists and table", async t => {
+  const { open } = await catalogFile(t);
+  const { catalog, fabric } = answering();
+  catalog.loadTable = async () => {
+    throw Object.assign(new Error("mart.customers is not a valid OneLake table: its folder has neither a Delta log nor Iceberg metadata"),
+      { notValid: true, status: 404 });
+  };
+  const reading = createOneLake({ catalog, fabric, prefetchEnabled: () => false, store: open() });
+  await assert.rejects(reading.table({ workspace: "sales", item: LAKEHOUSE }, { schema: "mart", table: "customers" }), /not a valid/);
+
+  const { agent, asked } = agentOn(open());
+  await withAgent(agent, async ({ cli }) => {
+    let r = await cli(["exists", "sales", "gold", "mart.customers", "--json"]);
+    assert.equal(r.code, EXIT.FAILED, r.stdout);
+    const { error } = JSON.parse(r.stdout);
+    assert.equal(error.exists, false);
+    assert.equal(error.notValid, true);
+    assert.match(error.message, /not a valid OneLake table/);
+
+    r = await cli(["exists", "sales", "gold", "customers", "--json"]);
+    assert.equal(r.code, EXIT.OK, "bare: the one of that name that is a table");
+    assert.deepEqual(JSON.parse(r.stdout).data.tables, ["dbo.customers"]);
+
+    r = await cli(["table", "sales", "gold", "mart.customers"]);
+    assert.equal(r.code, EXIT.FAILED);
+    assert.match(r.stderr, /not a valid OneLake table/);
+
+    r = await cli(["ls", "sales", "gold"]);
+    assert.equal(r.code, EXIT.OK, r.stderr);
+    assert.match(r.stdout, /mart\.customers \| not a valid table/);
+
+    r = await cli(["find", "customers"]);
+    assert.equal(r.code, EXIT.OK, r.stderr);
+    assert.match(r.stdout, /not a valid table/);
+  });
+  assert.deepEqual(asked, [], "nothing asked of OneLake");
+});
+
 test("--fresh is a job of the worker's, whose answer is what the catalog then holds", async t => {
   const { open } = await catalogFile(t);
   const store = open();

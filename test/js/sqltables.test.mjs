@@ -139,6 +139,13 @@ test("a table with no folder says so plainly, with the closest listed names", as
   await assert.rejects(w.sql.resolve(named("no_such_table_xyz")), e => e.message === "no table dbo.no_such_table_xyz in ws/old");
 });
 
+test("a folder that is no table says so as it is, with nothing added", async () => {
+  const w = world();
+  const why = "dbo.t is not a valid OneLake table: its folder has neither a Delta log nor Iceberg metadata";
+  w.catalog.loadTable = async () => { throw Object.assign(new Error(why), { status: 404, notValid: true }); };
+  await assert.rejects(w.sql.resolve(ref()), e => e.message === why && e.notValid === true);
+});
+
 test("offline, a kept listing cannot say an item does not exist", async () => {
   const w = world();
   await w.sql.resolve(ref());

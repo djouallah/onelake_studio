@@ -212,6 +212,39 @@ test("a table's metadata keeps its own window, and a Refresh of its lakehouse re
   assert.deepEqual(catalog.calls, ["load a", "load a"]);
 });
 
+test("a folder that is no table is kept as an answer, read again when used, and offline stands", async () => {
+  let valid = false, loads = 0, offline = false;
+  const catalog = { ...fakeCatalog(), loadTable: async () => {
+    loads++;
+    if (valid) return { metadata: metadata(), metadataLocation: LOC };
+    throw Object.assign(new Error("dbo.x is not a valid OneLake table"), { notValid: true, status: 404 });
+  } };
+  const ol = createOneLake({ catalog, store: createStore({ dir: null }), prefetchEnabled: () => false, isOffline: () => offline });
+  const said = [];
+  ol.onTableRead(r => said.push(r.table));
+  const t = { schema: "dbo", table: "x" };
+  const notValid = e => e.notValid === true && /not a valid/.test(e.message);
+
+  assert.equal(await ol.cached.notValid(lh, t), null, "nothing known");
+  await assert.rejects(ol.table(lh, t), notValid);
+  assert.match(await ol.cached.notValid(lh, t), /not a valid/, "the tree can draw it with nothing asked");
+  assert.deepEqual(said, ["x"], "news the first time");
+
+  await assert.rejects(ol.table(lh, t), notValid);
+  assert.equal(loads, 2, "used again: asked again");
+  assert.deepEqual(said, ["x"], "the same answer is no news");
+
+  offline = true;
+  await assert.rejects(ol.table(lh, t), notValid);
+  assert.equal(loads, 2, "offline, the kept answer stands");
+  offline = false;
+
+  valid = true;
+  assert.equal((await ol.table(lh, t)).metadataLocation, LOC, "it became a table");
+  assert.equal(await ol.cached.notValid(lh, t), null);
+  assert.deepEqual(said, ["x", "x"]);
+});
+
 test("a forced table listing also clears the catalog's own memo for that item", async () => {
   const catalog = fakeCatalog();
   const ol = createOneLake({ catalog, store: createStore({ dir: null }) });

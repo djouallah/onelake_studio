@@ -246,16 +246,26 @@ function createOneLake({ catalog, store, prefetchEnabled = () => true, onHit = (
   // catalog in the foreground, once.
   async function table(lh, t, { fresh = false, onWait } = {}) {
     const load = f => get(keys.table(lh, t), async () => {
-      const { metadata, metadataLocation } = await catalog.loadTable(lh, t, { onWait });
-      return summarize(metadata, metadataLocation);
+      try {
+        const { metadata, metadataLocation } = await catalog.loadTable(lh, t, { onWait });
+        return summarize(metadata, metadataLocation);
+      } catch (e) {
+        // An answer, not a failure: the tree draws it from here, offline too.
+        if (e.notValid) return { format: 'none', notValid: e.message };
+        throw e;
+      }
     }, { fresh: f, ...(tableTtlMs != null ? { ttl: tableTtlMs } : {}) });
     let r = await load(fresh);
+    const wasNotValid = r.cached && !!r.value.notValid;
     // A summary kept before tables had a format is read again once, rather than drawn
-    // without one until its TTL runs out.
-    if (r.cached && (r.at < refreshedSince(lh) || !r.value.format)) r = await load(true);
+    // without one until its TTL runs out. A folder that was no table may have become one, so using
+    // that answer reads it again, as using any kept answer that fails does.
+    if (r.cached && (r.at < refreshedSince(lh) || !r.value.format || r.value.notValid)) r = await load(true);
     // The store says 'changed' only when an answer it had moved; a table read for the first
     // time (a prefetch, a click) is news too — the tree and the engine's catalog both want it.
-    if (!r.cached) for (const fn of [...tableReadSubs]) { try { fn({ ...lh, ...t, value: r.value }); } catch (_) {} }
+    // A folder found again to be no table is no news.
+    if (!r.cached && !(wasNotValid && r.value.notValid)) for (const fn of [...tableReadSubs]) { try { fn({ ...lh, ...t, value: r.value }); } catch (_) {} }
+    if (r.value.notValid) throw Object.assign(new Error(r.value.notValid), { notValid: true });
     return readable({ ...r.value, at: r.at, cached: r.cached });
   }
   // Offline, what was read keeps working. A table can have moved on since: its metadata read again, and
@@ -445,9 +455,10 @@ function createOneLake({ catalog, store, prefetchEnabled = () => true, onHit = (
       for (let job; (job = queue.shift());) {
         try {
           // Already known: nothing to do. The store refreshes stale entries on read, so a
-          // prefetch never needs to force one.
+          // prefetch never needs to force one. A folder that was no table is asked about again,
+          // or the tree would go on marking it after it became one.
           const kept = await store.peek(job.k);
-          if (kept === undefined || (kept && !kept.format)) await table(job.lh, job.t);
+          if (kept === undefined || (kept && (!kept.format || kept.notValid))) await table(job.lh, job.t);
         } catch (_) {
           // A table that will not resolve says why when it is clicked; a prefetch that
           // failed has cost nothing the click would not have paid anyway.
@@ -469,6 +480,11 @@ function createOneLake({ catalog, store, prefetchEnabled = () => true, onHit = (
     models: ws => store.known(keys.models(ws)),
     apps: ws => store.known(keys.apps(ws)),
     table: (lh, t) => store.known(keys.table(lh, t)),
+    // Why this is not a valid table, if it was found not to be one, or null.
+    notValid: async (lh, t) => {
+      const kept = await store.known(keys.table(lh, t));
+      return (kept && kept.value.notValid) || null;
+    },
     // Whether this table's rows have been read here at its current snapshot. Not whether all of them
     // were: what is kept is the part of each file a statement read. A table nothing was ever written
     // to reads no file. Its first rows kept are rows read, for what was read before this was noted.

@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **A folder that is no table says so.** A folder under `Tables/` with neither a Delta log nor Iceberg metadata, such as
+  files another tool left there, shows as *not a valid table* in the tree, `ls` and `find`, and `SHOW ALL TABLES` leaves it out.
+  Reading it fails at once, with no wait for a conversion that would never come.
 - **A Direct Lake model over a SQL endpoint opens.** Its tables are read from OneLake, from the item behind the endpoint, and
   nothing connects to the endpoint. If Fabric doesn't show the endpoint, they are read from the one item in the model's own
   workspace holding them all, and a message says so. If no one item does, it is refused.

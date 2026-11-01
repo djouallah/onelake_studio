@@ -407,12 +407,13 @@ function createAgent({ onelake, engine, modelPath, appDir, vendorDir, daxSqlPin,
         const e = await onelake.cached.table(lh, t);
         const m = e ? e.value : null, s = (m && m.stats) || {};
         if (m) known++;
-        rows.push([t.schema ? `${t.schema}.${t.table}` : t.table, sqlNameOf(lh, t),
+        // It has no name to read it by.
+        rows.push([t.schema ? `${t.schema}.${t.table}` : t.table, m && m.notValid ? null : sqlNameOf(lh, t),
           m && m.totalRecords != null ? Number(m.totalRecords) : null,
           s.totalFilesSize != null ? Number(s.totalFilesSize) : null,
           s.totalDataFiles != null ? Number(s.totalDataFiles) : null, iso(s.snapshotTs)]);
       }
-      io.table([col('table'), col('sql_name', 'text', 'in sql'), col('rows', 'integer', 'rows', count), COLS.bytes,
+      io.table([col('table'), col('sql_name', 'text', 'in sql', v => (v == null ? 'not a valid table' : v)), col('rows', 'integer', 'rows', count), COLS.bytes,
                 col('files', 'integer', 'files', v => (v == null ? '—' : v)), COLS.lastWrite], rows, { sort: 2 });
       io.out(`\n${tables.length} table(s), ${known} with metadata cached` +
         (known < tables.length ? ' — open the rest in the tree for their sizes' : ''));
@@ -452,7 +453,7 @@ function createAgent({ onelake, engine, modelPath, appDir, vendorDir, daxSqlPin,
           if (has(it.name)) rows.push([it.kind.toLowerCase(), w, it.name]);
           for (const t of it.tables || []) {
             const tn = t.schema ? `${t.schema}.${t.table}` : t.table;
-            if (has(t.table)) rows.push(['table', `${w}/${it.name}`, tn]);
+            if (has(t.table)) rows.push([t.meta && t.meta.notValid ? 'not a valid table' : 'table', `${w}/${it.name}`, tn]);
             if (!t.meta) noColumns++;
             for (const f of (t.meta && t.meta.schemaFields) || []) {
               if (has(f.name)) rows.push(['column', `${w}/${it.name} ${tn}`, `${f.name} (${f.type})`]);
@@ -532,6 +533,7 @@ function createAgent({ onelake, engine, modelPath, appDir, vendorDir, daxSqlPin,
           }
           throw notCached(...IN_TREE.table(lh, t));
         }
+        if (e.value.notValid) throw new Error(e.value.notValid);
         opts.seen.push(e.at);
         m = { ...e.value, at: e.at, cached: true };
       }
@@ -567,8 +569,12 @@ function createAgent({ onelake, engine, modelPath, appDir, vendorDir, daxSqlPin,
       const lh = { workspace: w, item: hit.name };
       const tables = await listing('tables', [lh], opts);
       if (!tables) throw notCached(...IN_TREE.tables(lh));
-      const hits = tablesNamed(tables.value, name);
-      if (!hits.length) throw noSuch('table', name, `${w}/${hit.name}`, tables.value.map(nameOfTable), tables.at);
+      const listed = tablesNamed(tables.value, name);
+      if (!listed.length) throw noSuch('table', name, `${w}/${hit.name}`, tables.value.map(nameOfTable), tables.at);
+      // Listed, and found to be a folder with no table in it, once its metadata was read.
+      const why = await Promise.all(listed.map(t => onelake.cached.table(lh, t).then(e => (e && e.value.notValid) || null)));
+      const hits = listed.filter((t, i) => !why[i]);
+      if (!hits.length) throw Object.assign(new Error(why[0]), { detail: { exists: false, notValid: true, closest: [], listingAsOf: iso(tables.at) } });
       if (!opts.fresh) opts.seen.push(tables.at);
       const named = hits.map(nameOfTable);
       io.data({ exists: true, workspace: w, item: hit.name, tables: named, sqlNames: hits.map(t => sqlNameOf(lh, t)), listingAsOf: iso(tables.at) });

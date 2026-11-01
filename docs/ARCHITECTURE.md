@@ -310,7 +310,9 @@ rows at its current snapshot, a check after (`cached.rows` in [`src/onelake.js`]
 kept is the part of each file that was read, so a check doesn't promise every column. A new snapshot goes
 back to the cloud. A table nothing was ever written to has a check, since it reads no file. **A file's icon** says the
 same, per version of the file (`cached.file`): a statement or a tab read it, or the host kept it whole, and a file
-rewritten in OneLake goes back to the cloud. A wildcard marks no one file.
+rewritten in OneLake goes back to the cloud. A wildcard marks no one file. **A folder under `Tables/`** with neither a
+Delta log nor Iceberg metadata has a warning and says *not a valid table*. That is kept like any table's metadata, so it
+shows offline, and it is asked again when the table is opened or its Tables node is, so a folder that becomes a table stops saying so.
 
 **Clicking a table** opens it in a new tab: Data, Stats, History and Pivot. The SQL box gets
 `SELECT * FROM <its name> LIMIT 100` to start from, not run. A file does the same with what its preview runs.
@@ -554,6 +556,8 @@ personal skills, and it follows the extension through updates.
 - **`--show-sql`** prints the SQL a model query compiles to.
 - **A missing table fails at once.** A 400 or 404 from the catalog checks for the table's folder under `Tables/`.
   With no folder there is no conversion to wait for, and the error names the closest listed tables.
+- **A folder that is no table fails at once.** With neither `_delta_log` nor `metadata/` in it, it is not a valid OneLake
+  table. `ls` and `find` say so, `exists` says no, and `SHOW ALL TABLES` leaves it out.
 - **`export`** is the one write: the same code path as Explore's button, with the same questions asked
   in VS Code.
 

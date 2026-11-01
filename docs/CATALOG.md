@@ -139,11 +139,13 @@ fails with an `IO Error`, for that table's listing and metadata.
 **Without `--fresh`, `src/agent.js` makes no OneLake or Fabric call.** `ls`, `items`, `models`, `files`, `find`,
 `table` and `exists` read the catalog with the same code as the tree. `status` and `log` ask nothing either.
 
-**Does a table exist (`exists`):** from the listings alone, so it needs no table's metadata.
+**Does a table exist (`exists`):** from the listings alone, so it needs no table's metadata, though what is held about one
+counts.
 
 | The catalog holds | The answer | Exit |
 | --- | --- | --- |
 | The table | Yes, and how old that is | 0 |
+| The table, found to be a folder with neither a Delta log nor Iceberg metadata | No: it is not a valid table | 1 |
 | The listing, without the table | No, with the closest names and how old the listing is | 1 |
 | No such listing | Not cached, never a false no | 4 |
 

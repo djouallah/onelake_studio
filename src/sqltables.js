@@ -100,6 +100,7 @@ function createSqlTables({ onelake, paths, offlineReason = () => null, deltaLogs
     let meta;
     try { meta = await onelake.table(lh, t, { fresh }); }
     catch (e) {
+      if (e.notValid) throw e;
       if (!e.noTable) throw new Error(`${sqlName(ref)}: ${e.message}`);
       const near = closestTables(ref.table, listing || []);
       throw new Error(e.message + (near.length ? ` — closest: ${near.join(', ')}` : ''));

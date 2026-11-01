@@ -275,10 +275,16 @@ function createCatalog({ getToken, dfsOrigin = DFS_ORIGIN, tableOrigin = TABLE_O
         // conversion in progress.
         if (await stalePrefix(lh, e)) { url = urlOf(await ircPrefixFor(lh)); attempt--; continue; }
         const notYet = e.status === 400 || e.status === 404;
-        // A table waiting for its conversion has its folder. With none there is nothing to wait for.
-        if (notYet && attempt === 0 && await folderGone(lh, t)) {
+        // A table waiting for its conversion has its folder, with a Delta log or Iceberg metadata in
+        // it. With neither there is nothing to wait for.
+        const found = notYet && attempt === 0 ? await whatIsThere(lh, t) : 'table';
+        if (found === 'nothing') {
           throw Object.assign(new Error(`no table ${label} in ${lh.workspace}/${displayName(lh.item)}`),
             { status: 404, noTable: true });
+        }
+        if (found === 'no format') {
+          throw Object.assign(new Error(`${label} is not a valid OneLake table: its folder has neither a Delta log nor Iceberg metadata`),
+            { status: 404, notValid: true });
         }
         const busy = e.status === 429 || e.status >= 500;
         if (!(notYet || busy) || attempt >= backoffMs.length) {
@@ -294,13 +300,18 @@ function createCatalog({ getToken, dfsOrigin = DFS_ORIGIN, tableOrigin = TABLE_O
     }
   }
 
-  // True only when OneLake says neither folder is there. A check that can't tell (a 403, no
-  // connection) leaves the table waited on, as it would be with no check.
-  async function folderGone(lh, t) {
+  // What OneLake says is at a table's address: 'nothing', a folder with 'no format' in it, or a
+  // 'table'. A check that can't tell (a 403, no connection) says 'table', which leaves it waited
+  // on, as it would be with no check.
+  async function whatIsThere(lh, t) {
     try {
-      for (const dir of tableDirs(lh, t)) if (await dirExists(lh.workspace, dir)) return false;
-      return true;
-    } catch (_) { return false; }
+      for (const dir of tableDirs(lh, t)) {
+        if (!await dirExists(lh.workspace, dir)) continue;
+        return await dirExists(lh.workspace, `${dir}/_delta_log`) || await dirExists(lh.workspace, `${dir}/metadata`)
+          ? 'table' : 'no format';
+      }
+      return 'nothing';
+    } catch (_) { return 'table'; }
   }
 
   // Why a table has no Iceberg metadata, in Fabric's own words where it left any: the

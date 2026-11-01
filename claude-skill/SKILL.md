@@ -25,7 +25,7 @@ node --no-warnings "{{cli}}" <command>
 | `items [<ws>]` | every lakehouse and warehouse in every workspace (or one), counted by kind, with *staging* |
 | `ls <ws> <item>` | its tables with rows, size, files and last write, and their SQL names (`lakehouse.<ws>.<item>.<schema>.<table>`); `<item>` may omit its `.Lakehouse` suffix |
 | `table <ws> <item> <schema.table>` | rows, files, size, last write, columns — metadata only, no scan |
-| `exists <ws> <item> <schema.table>` | whether a table is there, in milliseconds, from the listings. Exit 0 yes, exit 1 no with the closest names (`--json`: `error.exists` is false, and `error.closest`), exit 4 never listed, so unknown. A bare name finds it in any schema. Prefer it to `table` or a query for this |
+| `exists <ws> <item> <schema.table>` | whether a table is there, in milliseconds, from the listings. Exit 0 yes, exit 1 no with the closest names (`--json`: `error.exists` is false, and `error.closest`), exit 4 never listed, so unknown. A folder found to have neither a Delta log nor Iceberg metadata is a no too (`error.notValid`). A bare name finds it in any schema. Prefer it to `table` or a query for this |
 | `model <ws> <model>` | relationships, columns, measures with their DAX, and an example query. A model not downloaded yet exits 4: add `--fresh` to download it |
 | `sql "<sql>"` | read-only SQL. A table is `kind.workspace.item.schema.table` — `lakehouse.aemo.data.dbo.dim_duid`; kind is `lakehouse`, `warehouse`, `sqldatabase` or `mirroreddatabase` (any case), a lakehouse without schemas is `dbo`, a part with spaces is `"quoted"` — any table, any workspace, joined freely. Every semantic model is a table too, `semanticmodel.<ws>.<model>`: `AGG("measure")` is the measure; and `SHOW SEMANTIC …` (below) |
 | `sql -` | the SQL from stdin. Prefer it for anything with quotes in it: `AGG("Total Sales")` does not survive every shell, PowerShell's above all |
@@ -47,7 +47,7 @@ Branch on the exit code, never on the wording:
 | exit | code | means | what to do |
 |---|---|---|---|
 | 0 | `OK` | answered, though perhaps not all of it: see below | use it |
-| 1 | `FAILED` | the query or OneLake failed, a `--csv` had more rows than a query keeps, or `exists` or `table` found no such table in a listing | fix the query, or report it |
+| 1 | `FAILED` | the query or OneLake failed, a `--csv` had more rows than a query keeps, `exists` or `table` found no such table in a listing, or it is *not a valid table*: a folder under `Tables/` with neither a Delta log nor Iceberg metadata, which can't be read | fix the query, or report it |
 | 2 | `USAGE` | a wrong command, option or argument | fix the call |
 | 3 | `UNAVAILABLE` | VS Code not open, not signed in, or Fabric refused the sign-in | ask the user |
 | 4 | `NOT_CACHED` | not in the cache; offline (no internet, or nobody signed in), `--fresh` and a table or file never read end here too, and `retry` is absent | ask, or add `--fresh` unless offline |

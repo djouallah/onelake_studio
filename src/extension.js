@@ -1592,6 +1592,7 @@ async function activateInner(context) {
         const kind = sqlKind(it.kind);
         if (!kind) continue;
         for (const t of it.tables || []) {
+          if (t.meta && t.meta.notValid) continue;
           const fields = t.meta && t.meta.schemaFields;
           // itemDir: the item as the tree knows it (data.Lakehouse), to open the table there.
           const named = { kind, workspace: w.name, item: displayName(it.name), itemDir: it.name, schema: t.schema || 'dbo', table: t.table };

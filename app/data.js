@@ -485,6 +485,8 @@ export function createEngine({
       // A load the user stopped is not a failure, and app.js tells the two apart by
       // e.cancelled alone — re-dressing a Stop as a metadata error would paint it red.
       if (e.cancelled) throw e;
+      // Says all there is to say, and no conversion is coming.
+      if (e.notValid) throw e;
       // The catalog is the only source now, so its own words ARE the diagnosis; the old
       // wrapper replaced them with a guess. Only "not there yet" earns the conversion
       // story appended, because that is the one cause a user can act on — and the catalog

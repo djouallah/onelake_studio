@@ -224,7 +224,8 @@ function createSyncWorker({ onelake, opened = () => [], pinned = () => [], ttlMs
           retryAt.delete(idOf(t));
           return value;
         } catch (e) {
-          if (!(e && e.offline)) failed(t, e);
+          // A folder that is no table is an answer, and says nothing about OneLake.
+          if (!(e && (e.offline || e.notValid))) failed(t, e);
           throw e;
         }
       });
