@@ -74,15 +74,15 @@ function createCatalogFile({ file, maxBytes = () => 256 * 1024 * 1024, onCleared
 
   function database() {
     if (db) return db;
-    // Here and not at the top: a runtime without it costs what is remembered, not the activation.
-    const { DatabaseSync } = require('node:sqlite');
-    fs.mkdirSync(dirname(file), { recursive: true });
-    const opened = () => {
-      const d = new DatabaseSync(file);
-      try { d.exec(SCHEMA); return d; }
-      catch (e) { try { d.close(); } catch (_) {} throw e; }
-    };
     try {
+      // Here and not at the top: a runtime without it costs what is remembered, not the activation.
+      const { DatabaseSync } = require('node:sqlite');
+      fs.mkdirSync(dirname(file), { recursive: true });
+      const opened = () => {
+        const d = new DatabaseSync(file);
+        try { d.exec(SCHEMA); return d; }
+        catch (e) { try { d.close(); } catch (_) {} throw e; }
+      };
       try { db = opened(); }
       catch (e) {
         if (!UNUSABLE.test(e.message)) throw e;
