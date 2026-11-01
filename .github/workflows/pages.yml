@@ -1,5 +1,5 @@
-# The website, website/ with the icon and the screenshot copied in, so neither is stored twice.
-# It has no build step. A push that doesn't touch it deploys nothing.
+# The website: website/, the icon and the screenshot, and docs/*.md rendered to pages, built by
+# scripts/build-website.mjs. A push that doesn't touch it deploys nothing.
 name: Pages
 
 on:
@@ -7,8 +7,9 @@ on:
     branches: [main]
     paths:
       - "website/**"
+      - "docs/**"
       - "media/icon.png"
-      - "docs/summary.png"
+      - "scripts/build-website.mjs"
       - ".github/workflows/pages.yml"
   workflow_dispatch:
 
@@ -24,10 +25,15 @@ jobs:
     runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - run: cp media/icon.png docs/summary.png website/
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 24
+      # Only the renderer: the extension's own dependencies aren't needed here.
+      - run: npm install --no-save --no-package-lock --ignore-scripts --prefix scripts marked@18.1.1
+      - run: node scripts/build-website.mjs
       - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
-          path: website
+          path: .tmp/site
 
   deploy:
     needs: build

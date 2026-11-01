@@ -13,58 +13,76 @@
     <div class="wrap">
       <a class="brand" href="./"><img src="icon.png" alt="" width="28" height="28">OneLake Studio</a>
       <nav class="site-nav" aria-label="Main">
-        <a href="architecture.html">Architecture</a>
-        <a href="https://github.com/djouallah/onelake_studio/tree/main/docs">Docs</a>
+        <a href="how-it-works.html">How it works</a>
+        <a href="docs/">Docs</a>
         <a href="https://github.com/djouallah/onelake_studio">GitHub</a>
       </nav>
     </div>
   </header>
 
-  <main class="wrap">
+  <main class="wrap wide">
     <section class="intro">
       <h1>A Fabric tenant, as one database</h1>
-      <p class="lead">OneLake Studio is a VS Code extension that makes a whole Microsoft Fabric tenant act as one database, queried with SQL. It runs on your machine, is read only, and works offline.</p>
+      <p class="lead">OneLake Studio is a VS Code extension. Browse OneLake and query any table, file or semantic model with SQL, on your machine, read only and offline.</p>
       <div class="actions">
         <a class="button primary" href="https://marketplace.visualstudio.com/items?itemName=djouallah.onelake-studio">Install from the Marketplace</a>
-        <a class="button" href="architecture.html">Read the architecture</a>
+        <a class="button" href="docs/">Read the docs</a>
       </div>
+      <a class="shot" href="img/query.png"><img src="img/query.png" alt="The OneLake Studio tree of workspaces beside a tab running SHOW ALL TABLES, which lists tables across a warehouse and a SQL database." width="2122" height="1101"></a>
     </section>
 
-    <section>
-      <h2>Every object has one name</h2>
-      <p>Any statement can join across items, workspaces and kinds with no setup. A Power BI semantic model is one more table, and <code>AGG("measure")</code> computes its measure.</p>
+    <section class="feature">
+      <div>
+        <h2>One name for every object</h2>
+        <p>Any statement can join across items, workspaces and kinds with no setup. A Power BI semantic model is one more table, and <code>AGG("measure")</code> computes its measure.</p>
+      </div>
 <pre><code>SELECT * FROM lakehouse.aemo.data.dbo.dim_duid;
-SELECT dim_region.Region, AGG("Registered MW") FROM semanticmodel.aemo.nem GROUP BY ALL;
-SELECT * FROM 'lakehouse.aemo.data/Files/x.parquet';
-SHOW ALL TABLES;</code></pre>
+
+SELECT dim_region.Region, AGG("Registered MW")
+FROM semanticmodel.aemo.nem GROUP BY ALL;</code></pre>
     </section>
 
-    <section>
-      <h2>What you can do</h2>
-      <div class="split">
-        <ul>
-          <li><strong>Browse OneLake.</strong> Workspaces, lakehouses, warehouses, SQL and mirrored databases, their tables and files, in one tree.</li>
-          <li><strong>Query with SQL.</strong> Write it in a tab's SQL box, and the results show in that tab.</li>
-          <li><strong>Look at a table in a click.</strong> Columns, row count, first rows, and Delta or Iceberg stats and history.</li>
-          <li><strong>Open lakehouse files.</strong> Parquet, CSV, JSON, Excel, DuckDB and SQLite, even inside a zip.</li>
-          <li><strong>Explore a semantic model.</strong> Its tables and relationships, and a drag-and-drop pivot as a table or a chart, with the SQL behind it.</li>
-          <li><strong>Ask Claude Code or GitHub Copilot.</strong> One command, and your assistant can list your data, read a model's measures and compute them.</li>
-          <li><strong>Work offline.</strong> What you've read keeps working with no internet: browse it, query it, pivot it.</li>
-        </ul>
-        <img src="summary.png" alt="The OneLake Studio tree: a favorite workspace with a lakehouse, its tables and files, and its semantic models." width="930" height="961">
+    <section class="feature">
+      <div>
+        <h2>A semantic model, in a pivot</h2>
+        <p>See its tables and relationships, then drag fields into a table or a chart, with the SQL behind it.</p>
+      </div>
+      <div class="shots">
+        <a class="shot" href="img/pivot.png"><img src="img/pivot.png" alt="The Pivot page: fields on the left, and a line chart of Total Amount by date." width="1879" height="1057" loading="lazy"></a>
+        <a class="shot" href="img/model.png"><img src="img/model.png" alt="The Model page: a fact table joined to its date and zone dimensions." width="1458" height="300" loading="lazy"></a>
       </div>
     </section>
 
-    <section>
-      <h2>Get started</h2>
-      <ol>
-        <li>Install it from Extensions in VS Code (<code>Ctrl+Shift+X</code>), the Marketplace, or the command line:
+    <section class="feature stacked">
+      <div>
+        <h2>A table in a click</h2>
+        <p>Columns, row count, first rows, and Delta or Iceberg stats and history.</p>
+      </div>
+      <div class="shots pair">
+        <a class="shot" href="img/stats.png"><img src="img/stats.png" alt="A Delta table's Stats tab: format, version, rows, data files, size and last write." width="610" height="640" loading="lazy"></a>
+        <a class="shot" href="img/history.png"><img src="img/history.png" alt="A Delta table's History tab: each commit with its time, operation, rows added, files and engine." width="1613" height="745" loading="lazy"></a>
+      </div>
+    </section>
+
+    <section class="feature stacked">
+      <div>
+        <h2>See where the time went</h2>
+        <p>A query's plan shows a timeline of each step and its most expensive operators.</p>
+      </div>
+      <a class="shot" href="img/profile.png"><img src="img/profile.png" alt="A query profile: a timeline of planning, scan, aggregate and join steps, above a table of the most expensive operators." width="2351" height="552" loading="lazy"></a>
+    </section>
+
+    <section class="notes">
+      <p><strong>Ask Claude Code or GitHub Copilot.</strong> One command, and your assistant can list your data, read a model's measures and compute them.</p>
+      <p><strong>Work offline.</strong> What you've read keeps working with no internet: browse it, query it, pivot it.</p>
+    </section>
+
+    <section class="install">
+      <h2>Install</h2>
 <pre><code>code --install-extension djouallah.onelake-studio</code></pre>
-        </li>
-        <li>Click the OneLake Studio icon in the activity bar and sign in. It uses the Microsoft account VS Code already has, with no app registration.</li>
-      </ol>
-      <p>It needs desktop VS Code 1.101 or later on Windows, macOS or Linux, x64 or arm64.</p>
-      <p><strong>Read only.</strong> The one exception is Export to Fabric, which is experimental. After an OK in VS Code, it publishes a model's Explore as a Fabric app and writes the model's definition into its lakehouse.</p>
+      <p>Then click the OneLake Studio icon in the activity bar and sign in with the Microsoft account VS Code already has.</p>
+      <p class="more">Needs desktop VS Code 1.101 or later on Windows, macOS or Linux, x64 or arm64.</p>
+      <p class="more">Read only. The one exception is Export to Fabric, which is experimental and asks for an OK first.</p>
     </section>
   </main>
 
