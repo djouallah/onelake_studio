@@ -8,6 +8,11 @@
 // the refresh token is not issued and every restart is a fresh sign-in.
 // =============================================================================
 
+// How long the extension host had been up when this file began loading: the start of the first line of
+// the startup timeline, which `activate` writes down once there is a log.
+const upMs = () => Math.round(process.uptime() * 1000);
+const bundleBegan = upMs();
+
 const vscode = require('vscode');
 const { join, basename, dirname, isAbsolute } = require('node:path');
 const os = require('node:os');
@@ -22,7 +27,7 @@ const { createCatalog } = require('./catalog');
 const { createStore } = require('./store');
 const { createCatalogFile, catalogFileOf, stateFileOf } = require('./catalogfile');
 const { createSyncWorker } = require('./syncworker');
-const { createDiagLog } = require('./diaglog');
+const { createDiagLog, outputLogOf } = require('./diaglog');
 const { createLogFile, logFileOf } = require('./logfile');
 const { createOneLake, walkCached } = require('./onelake');
 const { createSqlTables } = require('./sqltables');
@@ -43,6 +48,7 @@ const { createFabricApp, tenantOf } = require('./fabricapp');
 const { NAME, placeOf, tabTitle } = require('./title');
 const { createOneLakeWriter } = require('./onelakewrite');
 const { mapPool } = require('./http');
+const bundleLoaded = upMs();
 
 // OneLake accepts tokens in the storage
 // audience only, and this one covers both the data reads and the Iceberg catalog. It is
@@ -871,8 +877,10 @@ async function installSkill(context) {
 async function activate(context) {
   memento = context.globalState;
   out = createDiagLog(vscode.window.createOutputChannel('OneLake Studio'));
+  out.mark('bundle began loading', bundleBegan);
+  out.mark('bundle loaded', bundleLoaded);
   out.mark('activation begins');
-  context.subscriptions.push(out, { dispose: () => connectivity.dispose() });
+  context.subscriptions.push(out, { dispose: () => connectivity.dispose() }, { dispose: out.watchFreezes() });
 
   // The read indicator, visible even when the panel's tab is not. Hidden until the first
   // burst — a status bar item with nothing to say is noise.
@@ -966,6 +974,7 @@ async function activateInner(context) {
     fabric,
     isOffline: () => connectivity.offline(),
   });
+  out.mark('catalog ready');
   const sqlTables = createSqlTables({ onelake, paths: async () => (await agent.modules()).paths,
                                       offlineReason: () => connectivity.reason() });
   resolveSqlTable = sqlTables.resolve;
@@ -1429,7 +1438,7 @@ async function activateInner(context) {
             logs: logFileOf(server.stateDir, server.stateKey),
             cache: fileCacheRoot,
             models: modelAccountDir(modelsFolder(), queryAccount),
-            output: context.logUri.fsPath,
+            output: outputLogOf(dirname(context.logUri.fsPath), 'OneLake Studio'),
           },
           stillHere: {
             stateFile: existsSync(stateFile),
@@ -1830,6 +1839,7 @@ async function activateInner(context) {
     },
   });
   explorerView = explorer;
+  out.mark('tree registered');
   refreshTitle();
 
   // The engine, started once this window shows it will want one, so the first statement does
@@ -2232,6 +2242,7 @@ async function activateInner(context) {
   // Behind the tree. An older version's cache comes across, and the account provider is asked who is
   // signed in. A provider that has stalled gets a few seconds, and what it says after that is taken as
   // a session change.
+  out.mark('activation code ran');
   importKept(context, storeAccount, jsonStoreOf(storeAccount), hostCacheOf(storeAccount));
   (async () => {
     const answered = await inTime(getSession({ createIfNone: false }).then(s => ({ s }), () => ({ s: null })), SESSION_WAIT_MS, () => sessionChanged());

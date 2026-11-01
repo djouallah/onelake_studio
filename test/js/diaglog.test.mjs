@@ -2,13 +2,13 @@
 // nothing asked of OneLake.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { createDiagLog } = require("../../src/diaglog.js");
+const { createDiagLog, outputLogOf } = require("../../src/diaglog.js");
 const { createAgent } = require("../../src/agent.js");
 const { createCatalogFile } = require("../../src/catalogfile.js");
 const { createSyncWorker } = require("../../src/syncworker.js");
@@ -47,6 +47,47 @@ test("a step of starting says how long the process had been up, and is kept for 
   log.mark("VS Code asked for the tree");
   assert.match(c.lines[0], /start: activation begins at 4274ms$/);
   assert.deepEqual(log.timeline(), [{ step: "activation begins", ms: 4274 }, { step: "VS Code asked for the tree", ms: 6900 }]);
+});
+
+test("a step from before there was a log says when it happened", () => {
+  const log = createDiagLog(channel(), { upMs: () => 9000, now: () => new Date(0) });
+  log.mark("bundle loaded", 1234);
+  assert.deepEqual(log.timeline(), [{ step: "bundle loaded", ms: 1234 }]);
+});
+
+test("a frozen thread is said, and a quiet one is not", async () => {
+  const log = createDiagLog(channel(), { upMs: () => 5, now: () => new Date(0) });
+  const stop = log.watchFreezes({ everyMs: 5, overMs: 300, forMs: 60_000 });
+  await new Promise(r => setTimeout(r, 30));
+  assert.deepEqual(log.timeline(), [], "timers on time");
+  const until = performance.now() + 400;
+  while (performance.now() < until);
+  await new Promise(r => setTimeout(r, 30));
+  stop();
+  assert.equal(log.timeline().length, 1, JSON.stringify(log.timeline()));
+  assert.match(log.timeline()[0].step, /^the extension host was frozen for \d+ms, ending$/);
+});
+
+test("the watch on freezes ends by itself", async () => {
+  const log = createDiagLog(channel(), { upMs: () => 5, now: () => new Date(0) });
+  log.watchFreezes({ everyMs: 2, overMs: 300, forMs: 10 });
+  await new Promise(r => setTimeout(r, 40));
+  const until = performance.now() + 400;
+  while (performance.now() < until);
+  await new Promise(r => setTimeout(r, 20));
+  assert.deepEqual(log.timeline(), [], "stopped before the freeze");
+});
+
+test("the Output channel's file is found under its dated folder", async t => {
+  const dir = await mkdtemp(join(tmpdir(), "onelake-out-"));
+  t.after(() => rm(dir, { recursive: true, force: true }).catch(() => {}));
+  assert.equal(outputLogOf(dir, "OneLake Studio"), null, "not there yet");
+  assert.equal(outputLogOf(join(dir, "nowhere"), "OneLake Studio"), null);
+  const dated = join(dir, "output_logging_20261101T134720");
+  await mkdir(dated);
+  await writeFile(join(dated, "1-Other.log"), "");
+  await writeFile(join(dated, "4-OneLake Studio.log"), "");
+  assert.equal(outputLogOf(dir, "OneLake Studio"), join(dated, "4-OneLake Studio.log"));
 });
 
 const agentWith = (more = {}) => createAgent({
