@@ -431,6 +431,15 @@ async function dirBytes(dir) {
   }
   return n;
 }
+// The same with its subfolders, for what is kept in them: models by workspace.
+async function treeBytes(dir) {
+  let n = 0;
+  for (const e of await fsp.readdir(dir, { withFileTypes: true }).catch(() => [])) {
+    if (e.isDirectory()) n += await treeBytes(join(dir, e.name));
+    else n += (await fsp.stat(join(dir, e.name)).catch(() => ({ size: 0 }))).size;
+  }
+  return n;
+}
 const removeDir = dir => (dir ? fsp.rm(dir, { recursive: true, force: true }).catch(() => {}) : Promise.resolve());
 // The editor's proxy, for DuckDB's own downloads and reads: VS Code's `http.proxy` setting
 // first, then the environment variables the editor itself would honour.
@@ -725,7 +734,7 @@ const NEW_QUERY_SQL = [
 ].join('\n');
 
 function modelsFolder() {
-  return join(os.homedir(), 'OneLakeStudio', 'semantic-models');
+  return join(fileCacheRoot, 'models');
 }
 
 // Where a CSV or a OneLake file the panel saves goes: the editor's own save dialog,
@@ -964,8 +973,21 @@ async function activateInner(context) {
   let modelsAdopted = Promise.resolve(0);
   // What Go To can name, kept for a moment (completionNames below). Here, since an account moving clears it.
   let namesKept = null;
+  // A model's local copy is data, so it is in the cache folder. Where an older version kept them, the
+  // whole of this account's folder moves, and each view is pointed at its new place.
+  const oldModels = join(os.homedir(), 'OneLakeStudio', 'semantic-models');
   function adoptModels() {
-    modelsAdopted = semviews.adoptCopies(modelsFolder(), modelAccountDir(modelsFolder(), queryAccount)).catch(e => {
+    modelsAdopted = (async () => {
+      const here = modelAccountDir(modelsFolder(), queryAccount), before = modelAccountDir(oldModels, queryAccount);
+      let moved = await semviews.adoptCopies(oldModels, before);
+      if (existsSync(before)) {
+        await fsp.cp(before, here, { recursive: true, force: false });
+        moved += await semviews.adoptCopies(before, here) + 1;
+        await fsp.rm(before, { recursive: true, force: true });
+        await fsp.rmdir(oldModels).catch(() => {});
+      }
+      return moved;
+    })().catch(e => {
       if (out) out.appendLine(`the local copies of models could not be moved: ${e.message}`);
       return 0;
     });
@@ -1823,7 +1845,8 @@ async function activateInner(context) {
     vscode.commands.registerCommand('onelakeStudio.clearCache', async () => {
       const fileCacheDir = fileCacheDirFor(storeAccount);
       const fileBytes = await dirBytes(fileCacheDir);
-      const size = await onelake.size() + fileBytes;
+      const modelsDir = modelAccountDir(modelsFolder(), queryAccount);
+      const size = await onelake.size() + fileBytes + await treeBytes(modelsDir);
       if (!size) {
         vscode.window.showInformationMessage('OneLake Studio: the cache is empty.');
         return;
@@ -1831,10 +1854,12 @@ async function activateInner(context) {
       // Everything deleted here is re-read from OneLake at OneLake's speed, which is the
       // whole reason the cache exists — so it is asked first.
       const pick = await vscode.window.showWarningMessage(
-        `Delete ${fmtBytes(size)} of cached OneLake listings, table metadata, files and table data? They will be read from OneLake again.`,
+        `Delete ${fmtBytes(size)} of cached OneLake listings, table metadata, files, table data and semantic model copies? They will be read from OneLake and Fabric again.`,
         { modal: true }, 'Delete');
       if (pick !== 'Delete') return;
       await onelake.clear();
+      await removeDir(modelsDir);
+      tree.redraw();
       // The engine has the disk cache's files open: it goes first, and is rebuilt on the
       // next open. The panel's tables live in that engine, so the panel goes with it.
       if (fileBytes) {

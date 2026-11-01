@@ -83,8 +83,8 @@ const SCHEMA = `
   CREATE INDEX IF NOT EXISTS lake_table_listed ON lake_table (workspace, item, listed_pos);
   CREATE INDEX IF NOT EXISTS listing_read_ts ON listing_read (ts);
 `;
-// What Clear Cached empties. Not semantic_view: as the models' local copies do, what was opened stays.
-const TABLES = ['listing_read', 'workspace', 'item', 'lake_table', 'lake_column', 'snapshot', 'lake_object', 'semantic_model', 'app',
+// What Clear Cached empties.
+const TABLES = ['semantic_view', 'listing_read', 'workspace', 'item', 'lake_table', 'lake_column', 'snapshot', 'lake_object', 'semantic_model', 'app',
   'delta_commit', 'delta_state', 'delta_property', 'item_name', 'catalog_prefix', 'rows_read', 'first_rows', 'file_read', 'sync_failure'];
 
 // Each kind of store key (onelake.js keys): the column each part after its kind goes in, where a row

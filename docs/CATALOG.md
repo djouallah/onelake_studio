@@ -84,7 +84,7 @@ Every row says when it was last read from OneLake.
 | What | Where | Why |
 | --- | --- | --- |
 | Iceberg's `metadata.json`, manifest lists and manifests | The disk cache | `iceberg_scan` reads them as files. The catalog holds the facts from them. |
-| A model's `.yaml` | `~/OneLakeStudio/semantic-models/` | A file people and the command line use. Its path is in the catalog. |
+| A model's `.yaml` | The cache folder, under `models\` | A file: data, with its path in the catalog. |
 | Saved queries | `~/OneLakeStudio/queries/` | Not metadata. |
 | The log | `logs-<id>.sqlite`, a file of its own | Not metadata. |
 | Bytes of a `Files/` object the host reads | The cache folder, under `host\` | Data. |

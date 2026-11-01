@@ -127,4 +127,4 @@ VS Code extension); nothing is written to Fabric or OneLake.
   waits for their OK, so the command waits too. It prints the app's URL, or exits 5 and says why
   nothing was published. The app opens on Explore's default view.
 - The same downloads are shared with the OneLake Studio VS Code extension
-  (`~/OneLakeStudio/semantic-models/<account>/<ws>/<model>.yaml`).
+  (in the extension's cache folder, under `models/<account>/<ws>/<model>.yaml`).

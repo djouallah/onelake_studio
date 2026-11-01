@@ -157,9 +157,9 @@ test("what an older version kept in a JSON file comes across once, and a view is
     assert.deepEqual((await again.list()).map(x => [x.name, x.schema]), [["nem", "AEMO"], ["other", "aemo"]], "once, so it stays replaced");
     assert.ok(!existsSync(join(jsonDir, "a.json")), "and the old file goes");
 
-    // Clear Cached leaves them, as it leaves the models' local copies.
+    // Clear Cached takes them, with the models' local copies they point at, and the JSON doesn't come back.
     await catalogFor("a").clear();
-    assert.equal((await again.list()).length, 2);
+    assert.deepEqual(await again.list(), []);
 
     again.useAccount(null);
     assert.deepEqual(await again.list(), [], "a file that isn't JSON holds none");

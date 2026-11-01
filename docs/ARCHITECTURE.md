@@ -234,8 +234,9 @@ every window is a client of it over DuckDB's Quack protocol ([`src/engine-client
 - **The server's own log is `logs-<id>.log`,** a plain text file beside it, so it can be read when nothing else can. Its last
   1 MB is kept.
 
-Outside those two files there is **one cache folder**, `file-cache-v1\<account>`: what DuckDB reads, and under `host\` the
-bytes of a `Files/` object the host reads. Saved queries and models' `.yaml` copies are yours, under `~/OneLakeStudio`.
+Outside those files there is **one cache folder**, `file-cache-v1`: what DuckDB reads and, under `<account>\host\`, the bytes
+of a `Files/` object the host reads, and a semantic model's `.yaml` copy under `models\`. Saved queries are yours, under
+`~/OneLakeStudio/queries`.
 
 **Logs** ([`src/logs.js`](../src/logs.js)), a node in the tree, with one tab per window. The record is DuckDB's own: its `Quack` log has a row per
 statement with the time to its first rows and any error, for every tab, window and the command line. A large
@@ -258,7 +259,7 @@ SQL box, no Stop and no Restart.
 | The bytes of a `Files/` object the host reads (an image, a `.bim`, a SQLite copy, a saved file) | The cache folder, under the etag its cached listing gave | Only when the file was rewritten |
 | What DuckDB reads: table data and `Files/` objects | DuckDB's disk cache (`cache_httpfs`) | Only when the file was rewritten: a kept copy is checked against the file's version tag and modification time |
 | That a table's rows were read, per snapshot | The catalog file | Never: a new snapshot is a new entry |
-| A semantic model's definition | `~/OneLakeStudio/semantic-models/<account>/<workspace>/<model>.yaml` | On **Download Again** |
+| A semantic model's definition | The cache folder, `models/<account>/<workspace>/<model>.yaml` | On **Download Again** |
 
 - **A kept answer is trusted until using it fails.** Then it is read again once, and the work tried again
   only if the answer changed. Otherwise the first error stands, and so it does offline
@@ -381,7 +382,7 @@ workspace has one model of a name.
 
 **Opening one**
 - **From the tree:** a click reads its TMSL definition (the REST API's `getDefinition`) and keeps it as
-  Apache Ossie (dax-sql's `tmslToOssie`) at `~/OneLakeStudio/semantic-models/<account>/<workspace>/<model>.yaml`,
+  Apache Ossie (dax-sql's `tmslToOssie`) in the cache folder, at `models/<account>/<workspace>/<model>.yaml`,
   then opens that copy. It is under its account because a workspace's name is unique in one tenant only.
 - **From a query:** a statement that names a model not open yet opens it first, in the same way.
 - **Nothing is written to OneLake**, so someone who may only read the workspace can open and query it.
@@ -390,8 +391,8 @@ workspace has one model of a name.
   model with a check. The command line reads and writes the same copies. **Download Again** reads
   Fabric again and replaces the copy, after asking.
 - **Every model opened is remembered** as a pointer (name, file path, when) in the account's catalog file
-  ([`src/semviews.js`](../src/semviews.js)), so it survives a restart. **Clear Cached OneLake Data** leaves it, as it leaves
-  the local copy.
+  ([`src/semviews.js`](../src/semviews.js)), so it survives a restart. **Clear Cached OneLake Data** takes it, with the
+  local copy.
 - **Permissions:** reading a definition needs Contributor or above on the workspace, or write on the
   model.
 
