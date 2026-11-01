@@ -14,7 +14,7 @@ import { fileURLToPath } from "node:url";
 import { READS, WRITES } from "./sql-disagreements.mjs";
 
 const require = createRequire(import.meta.url);
-const { createEngineHost, isOneLakeMetadata, isOneLakeTable, duckdbPath, READ_FAILURE, AUTH_FAILURE } = require("../../src/engine-host.js");
+const { createEngineHost, sameSources, isOneLakeMetadata, isOneLakeTable, duckdbPath, READ_FAILURE, AUTH_FAILURE } = require("../../src/engine-host.js");
 
 // What fetch-extensions.mjs put next to the extension, when CI ran it for this platform.
 const BUNDLED = join(fileURLToPath(new URL(".", import.meta.url)), "..", "..", "duckdb-extensions");
@@ -687,6 +687,13 @@ test("only a OneLake table folder is read with delta_scan", () => {
     "abfss://ws@evil.example.com/x/t", "abfss://ws@onelake.dfs.fabric.microsoft.com/lh/Tables/t\nATTACH 'x'", "abfss://ws@onelake.dfs.fabric.microsoft.com/"]) {
     assert.equal(isOneLakeTable(bad), false, String(bad));
   }
+});
+
+test("a statement's tables read the same whenever they were read, unless what they read moved", () => {
+  const t = { name: "n", source: "SELECT 1", logMoves: 0 };
+  assert.ok(sameSources([{ ...t, at: 1 }], [{ ...t, at: 2 }]));
+  assert.ok(!sameSources([{ ...t, at: 1 }], [{ ...t, at: 2, logMoves: 1 }]), "a Delta table's log has changed under the same folder");
+  assert.ok(!sameSources([{ ...t, at: 1 }], [{ ...t, at: 1, source: "SELECT 2" }]));
 });
 
 test("a kept log's folder is spelled the way the lockdown keeps it", () => {

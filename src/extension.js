@@ -971,6 +971,7 @@ async function activateInner(context) {
     onHit: logRead,
     prefetchEnabled: () => vscode.workspace.getConfiguration('onelakeStudio').get('prefetchMetadata', true),
     tableTtlMs,
+    listingTtlMs: catalogTtlMs,
     // A workspace's semantic models are a listing too, kept in the same store.
     fabric,
     isOffline: () => connectivity.offline(),
@@ -1927,7 +1928,7 @@ async function activateInner(context) {
     // costing me on disk".
     vscode.commands.registerCommand('onelakeStudio.clearCache', async () => {
       const fileCacheDir = fileCacheDirFor(storeAccount);
-      const fileBytes = await dirBytes(fileCacheDir);
+      const fileBytes = await dirBytes(fileCacheDir) + (fileCacheDir ? await treeBytes(join(fileCacheDir, 'delta')) : 0);
       const modelsDir = modelAccountDir(modelsFolder(), queryAccount);
       const size = await onelake.size() + fileBytes + await treeBytes(modelsDir);
       if (!size) {
@@ -1942,15 +1943,13 @@ async function activateInner(context) {
       if (pick !== 'Delete') return;
       await onelake.clear();
       await removeDir(modelsDir);
-      tree.redraw();
-      // The engine has the disk cache's files open: it goes first, and is rebuilt on the
-      // next open. The panel's tables live in that engine, so the panel goes with it.
-      if (fileBytes) {
-        closePanel();
-        await resetEngine();
-        await removeDir(fileCacheDir);
-      }
-      postLive({ type: 'reset' });
+      // This window hears nothing of its own Clear from the file.
+      onStoreCleared();
+      // The engine has the disk cache's files open and lists what was cleared: it goes first, and is
+      // rebuilt on the next open. The panel's tables live in that engine, so the panel goes with it.
+      closePanel();
+      await resetEngine();
+      await removeDir(fileCacheDir);
       tree.redraw();
       vscode.window.showInformationMessage(
         `OneLake Studio: cleared ${fmtBytes(size)} of cached OneLake data.`);

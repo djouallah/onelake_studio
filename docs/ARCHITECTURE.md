@@ -277,6 +277,9 @@ SQL box, no Stop and no Restart.
   - **A table's read fails** (DuckDB's `IO Error`): the table's listing and metadata are read again. A
     statement's own mistake asks OneLake nothing.
   - **A model's local copy** is not covered: it changes only on **Download Again**.
+  - **A table kept as empty** can't fail, so it is read again past `catalogTtlMinutes`, before a statement uses it.
+- **An answer that was cut off is a failure, not an empty listing:** what was kept stays, and shows *refresh failed*.
+- **The disk cache's limit** is held when the server starts and every hour after, so one long scan can pass it for a while.
 - **Clearing reaches every window:** each one notices it in the catalog file within a few seconds, and what it holds in
   memory goes too.
 - **The catalog keeps itself current** ([`src/syncworker.js`](../src/syncworker.js)), behind everything, in a window's

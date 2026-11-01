@@ -80,7 +80,7 @@ test("a local copy is the host's: the page gets a path, the bytes never cross", 
   const { calls, ask } = fixture();
   const [r] = await ask("onelake.localCopy", [{ workspace: "ws", path: "lh/Files/db.sqlite" }]);
   assert.equal(r.value, "/tmp/copy");
-  assert.deepEqual(calls.find(c => c[0] === "copy"), ["copy", "ws/lh/Files/db.sqlite", 3]);
+  assert.deepEqual(calls.find(c => c[0] === "copy"), ["copy", "ws/lh/Files/db.sqlite@", 3]);
 });
 
 test("a failure is posted, never dropped, and a Stop says so", async () => {

@@ -104,7 +104,7 @@ async function walkCached(cached) {
 }
 
 function createOneLake({ catalog, store, prefetchEnabled = () => true, onHit = () => {},
-                         tableTtlMs = undefined, fabric = null, isOffline = () => false }) {
+                         tableTtlMs = undefined, listingTtlMs = 5 * 60 * 1000, fabric = null, isOffline = () => false }) {
   // The store is the account's: a different sign-in swaps it (useStore) and every listener
   // follows, so nothing above this module has to know an account changed.
   const subs = [];   // { ev, fn, off }
@@ -261,6 +261,10 @@ function createOneLake({ catalog, store, prefetchEnabled = () => true, onHit = (
     // without one until its TTL runs out. A folder that was no table may have become one, so using
     // that answer reads it again, as using any kept answer that fails does.
     if (r.cached && (r.at < refreshedSince(lh) || !r.value.format || r.value.notValid)) r = await load(true);
+    // A table with nothing in it answers with no rows and no error, so nothing would ever say that
+    // answer had gone old: a first write is looked for as a listing's new table is.
+    const emptyFor = typeof listingTtlMs === 'function' ? listingTtlMs() : listingTtlMs;
+    if (r.cached && r.value.empty && Date.now() - r.at > emptyFor) r = await load(true).catch(() => r);
     // The store says 'changed' only when an answer it had moved; a table read for the first
     // time (a prefetch, a click) is news too — the tree and the engine's catalog both want it.
     // A folder found again to be no table is no news.
@@ -518,7 +522,7 @@ function createOneLake({ catalog, store, prefetchEnabled = () => true, onHit = (
   return {
     rowsOutOfReach, listingFailure,
     workspaces, items, tables, files, table, deltaState, deltaHistory, peek, prefetch, refreshTables,
-    models, apps, itemNamed, readBytes, cached, rowsRead, fileRead, onRowsRead,
+    models, apps, itemNamed, readBytes, versionOf, cached, rowsRead, fileRead, onRowsRead,
     onChanged: fn => listen('changed', key => fn(decode(key))),
     onTableRead,
     onRefreshFailed: fn => listen('refresh-failed', (key, e) => fn(decode(key), e)),

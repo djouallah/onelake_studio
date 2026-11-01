@@ -80,6 +80,16 @@ test("a 404 part way through pagination is refused, not silently truncated", asy
   } finally { restore(); }
 });
 
+test("an OK whose body can't be read is a failure, never an empty listing", async () => {
+  const cut = () => ({ ...res(200, {}), json: async () => { throw new Error("terminated"); } });
+  const { catalog, restore } = catalogWith([[/resource=account/, cut], [/resource=filesystem/, cut]]);
+  try {
+    await assert.rejects(() => catalog.listWorkspaces(), /cut off/);
+    await assert.rejects(() => catalog.listItems("ws"), /cut off/);
+    await assert.rejects(() => catalog.listFiles({ workspace: "ws", item: "lh.Lakehouse" }), /cut off/);
+  } finally { restore(); }
+});
+
 test("only the item kinds that hold tables are listed, using names.js's rules", async () => {
   const { catalog, restore } = catalogWith([
     [/resource=filesystem/, () => res(200, {

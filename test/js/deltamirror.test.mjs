@@ -26,7 +26,7 @@ function world(t, files = {}) {
         const [first, ...more] = path.slice(prefix.length).split("/");
         seen.set(first, more.length > 0);
       }
-      return [...seen].map(([name, isDir]) => ({ name: `${dir}/${name}`, isDir, bytes: 1 }));
+      return [...seen].map(([name, isDir]) => ({ name: `${dir}/${name}`, isDir, bytes: isDir ? 0 : Buffer.byteLength(w.files[`${dir}/${name}`]), lastModified: w.lastModified ?? null }));
     },
     async readBytes(ws, path) {
       w.read.push(path);
@@ -83,6 +83,36 @@ test("a commit already held isn't read again, and within its age OneLake isn't a
   assert.deepEqual(w.read, [], "and nothing new to read");
   await w.mirror.ensure(w.table, { fresh: true });
   assert.equal(w.listed.length, 2, "asked for, whatever its age");
+});
+
+test("a table dropped and made again starts over: what's held of the old log goes", async t => {
+  const w = await world(t, {
+    [`${LOG}/${v(0, "json")}`]: "old commit 0", [`${LOG}/${v(1, "json")}`]: "old commit 1", [`${LOG}/${v(2, "json")}`]: "old commit 2",
+    [`${LOG}/_last_checkpoint`]: '{"version":2}',
+  });
+  const local = await w.mirror.ensure(w.table);
+  const was = w.mirror.moves(w.table);
+
+  w.files = { [`${LOG}/${v(0, "json")}`]: "new", [`${LOG}/${v(1, "json")}`]: "newer" };
+  await w.mirror.ensure(w.table, { fresh: true });
+  assert.deepEqual(await names(local), [v(0, "json"), v(1, "json")], "its last checkpoint and later commits are gone too");
+  assert.equal(await readFile(join(local, "_delta_log", v(0, "json")), "utf8"), "new");
+  assert.equal(await readFile(join(local, "_delta_log", v(1, "json")), "utf8"), "newer");
+  assert.equal(w.mirror.moves(w.table), was + 1, "so a read that failed is worth another try");
+
+  w.read.length = 0;
+  await w.mirror.ensure(w.table, { fresh: true });
+  assert.deepEqual(w.read, [], "and what's now held is what's there");
+  assert.equal(w.mirror.moves(w.table), was + 1);
+});
+
+test("a commit of the same size written after the copy is another file", async t => {
+  const w = await world(t, { [`${LOG}/${v(0, "json")}`]: "aaa" });
+  const local = await w.mirror.ensure(w.table);
+  w.files[`${LOG}/${v(0, "json")}`] = "bbb";
+  w.lastModified = Date.now() + 60_000;
+  await w.mirror.ensure(w.table, { fresh: true });
+  assert.equal(await readFile(join(local, "_delta_log", v(0, "json")), "utf8"), "bbb");
 });
 
 test("deletion vectors and a checkpoint's sidecars come across, before the commits that name them", async t => {

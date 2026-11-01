@@ -32,9 +32,10 @@ const fs = require('node:fs');
 const fsp = require('node:fs/promises');
 const { join } = require('node:path');
 const os = require('node:os');
+const { randomBytes } = require('node:crypto');
 const { sqlStr, quoteIdent, assertReads, checkedRead, tableRefs, fileRefs, filesReadBy, namedError, catalogStatement, readsCatalog, COLUMNS_NOT_READ } = require('./sql');
 const { SQL_KINDS, sqlName, abfssUrl, MODEL_CATALOG, modelSqlName } = require('./names');
-const { revalidate } = require('./store');
+const { revalidate, sameAnswer } = require('./store');
 
 
 // Rows are read in chunks so no single postMessage carries a whole 200k-row grid, and so a tab
@@ -153,6 +154,11 @@ function proxySettings(proxyUrl) {
   } catch (_) { return null; }
 }
 
+const FILE_CACHE_TRIM_MS = 60 * 60 * 1000;
+
+// Whether a statement's tables read the same as they did: when they were read from OneLake isn't that.
+const sameSources = (a, b) => sameAnswer(a.map(({ at, ...t }) => t), b.map(({ at, ...t }) => t));
+
 // The disk cache held under its budget: oldest first — cache_httpfs touches a file each time
 // it serves it, so the oldest is the least recently used — down to 80%. Nothing waits for it:
 // one stat per file was over a second of a boot at 14,000 files, and a file removed under a
@@ -255,8 +261,9 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
     }
   }
 
-  let tmpSeq = 0;
   let tmpDir = null;
+  // Every window's temp files are in the server's one folder.
+  const tmpName = () => randomBytes(8).toString('hex');
 
   let unsignedAllowed = false;
   async function init() {
@@ -307,6 +314,8 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
         await fsp.mkdir(fileCacheDir, { recursive: true })
           .catch(e => onWarn(`could not make the disk cache's folder ${fileCacheDir} — ${e.message}`));
         trimFileCache(fileCacheDir, fileCacheMaxBytes, onWarn);
+        // A server can run for days, and one long scan can pass the budget by any amount.
+        if (serve) setInterval(() => trimFileCache(fileCacheDir, fileCacheMaxBytes, onWarn), FILE_CACHE_TRIM_MS).unref();
       }
       mark('temp+disk cache');
       instance = await DuckDBInstance.create(':memory:', config);
@@ -661,7 +670,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
       throw new Error(`OneLake gave ${sqlName(r)} no readable metadata location` +
         (r.metadataLocation ? ` (${String(r.metadataLocation).slice(0, 120)})` : ''));
     }
-    return { name: sqlName(r), path: [r.kind, r.workspace, r.item, r.schema || 'dbo'], source, mount, location: r.emptySql == null ? r.metadataLocation : null, at: r.at };
+    return { name: sqlName(r), path: [r.kind, r.workspace, r.item, r.schema || 'dbo'], source, mount, location: r.emptySql == null ? r.metadataLocation : null, logMoves: r.logMoves, at: r.at };
   }
   async function makeView({ name, path: parts, source, mount }) {
     if (/\bdelta_scan\(/.test(source) && !capabilities.delta) {
@@ -875,7 +884,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
         const result = await run(catalogStatement(sql) || statement);
         rowsRead(sql, tables, statement);
         return result;
-      }, e => READ_FAILURE.test(String(e && e.message)) && canRetry());
+      }, e => READ_FAILURE.test(String(e && e.message)) && canRetry(), sameSources);
     } catch (e) {
       if (files.length) { try { e.message = namedError(e.message, files); } catch (_) {} }
       const message = String(e && e.message);
@@ -1213,7 +1222,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
     await init();
     if (copies.has(key)) return copies.get(key);
     if (typeof bytes === 'function') bytes = await bytes();
-    const file = join(tmpDir, `copy_${++tmpSeq}_${String(key).replace(/[^\w.-]/g, '_').slice(-80)}`);
+    const file = join(tmpDir, `copy_${tmpName()}_${String(key).replace(/[^\w.-]/g, '_').slice(-80)}`);
     await fsp.writeFile(file, bytes);
     const path = file.replace(/\\/g, '/');
     copies.set(key, path);
@@ -1235,7 +1244,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
       if (format === 'xlsx' && !capabilities.excel) throw new Error('the excel extension is not loaded in this session');
       // Strict: it goes inside a COPY of ours, so a read that closes the parenthesis isn't one.
       const read = await checkedRead(sql, serialize, { strict: true });
-      const file = join(tmpDir, `export_${++tmpSeq}.${format}`).replace(/\\/g, '/');
+      const file = join(tmpDir, `export_${tmpName()}.${format}`).replace(/\\/g, '/');
       await ensureAuth();
       await withAuthRetry(() => withTables(read, statement => {
         const run = String(statement).trim().replace(/;+\s*$/, '');
@@ -1257,4 +1266,4 @@ async function restartListener(conn, uri, token) {
   await conn.run(`SELECT * FROM quack_serve(${sqlStr(uri)}, token = ${sqlStr(token)});`);
 }
 
-module.exports = { createEngineHost, jsonSafe, isOneLakeMetadata, isOneLakeTable, duckdbPath, restartListener, AUTH_FAILURE, READ_FAILURE, NOT_CACHED };
+module.exports = { createEngineHost, jsonSafe, sameSources, isOneLakeMetadata, isOneLakeTable, duckdbPath, restartListener, AUTH_FAILURE, READ_FAILURE, NOT_CACHED };

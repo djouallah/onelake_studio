@@ -82,6 +82,7 @@ const SCHEMA = `
     PRIMARY KEY (kind, workspace, item, schema_name, table_name, dir)) WITHOUT ROWID;
   CREATE INDEX IF NOT EXISTS lake_table_listed ON lake_table (workspace, item, listed_pos);
   CREATE INDEX IF NOT EXISTS listing_read_ts ON listing_read (ts);
+  CREATE INDEX IF NOT EXISTS lake_table_meta_ts ON lake_table (meta_ts);
 `;
 // What Clear Cached empties.
 const TABLES = ['semantic_view', 'listing_read', 'workspace', 'item', 'lake_table', 'lake_column', 'snapshot', 'lake_object', 'semantic_model', 'app',
@@ -436,19 +437,17 @@ function createCatalogTables({ statement }) {
         WHERE location >= ? AND location < ? ORDER BY ts DESC, location DESC LIMIT 1`, dir, `${dir}\uffff`);
       return r ? { location: r.location, at: r.ts } : null;
     },
-    /** The store's keys of what was written at or after `ts`, with the latest time among them. */
+    /** The store's keys of what was written at or after `ts`, the latest time among them, and which keys have it. */
     changedSince(ts) {
-      const keys = [];
-      let latest = ts;
+      const found = [];
       for (const r of all('SELECT * FROM listing_read WHERE ts >= ?', ts)) {
-        keys.push([r.kind, ...KEY_PARTS[r.kind].map(column => r[column])].join('\0'));
-        latest = Math.max(latest, r.ts);
+        found.push({ key: [r.kind, ...KEY_PARTS[r.kind].map(column => r[column])].join('\0'), at: r.ts });
       }
       for (const r of all('SELECT workspace, item, schema_name, name, meta_ts FROM lake_table WHERE meta_ts >= ?', ts)) {
-        keys.push(['table', r.workspace, r.item, r.schema_name, r.name].join('\0'));
-        latest = Math.max(latest, r.meta_ts);
+        found.push({ key: ['table', r.workspace, r.item, r.schema_name, r.name].join('\0'), at: r.meta_ts });
       }
-      return { keys, latest };
+      const latest = found.reduce((most, f) => Math.max(most, f.at), ts);
+      return { keys: found.map(f => f.key), latest, atLatest: new Set(found.filter(f => f.at === latest).map(f => f.key)) };
     },
     clear() { for (const t of TABLES) run(`DELETE FROM ${t}`); },
     // First rows are the one thing here with a limit, as they are data and offline doesn't rest on them:

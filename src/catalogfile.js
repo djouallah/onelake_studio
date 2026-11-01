@@ -68,7 +68,7 @@ function createCatalogFile({ file, onCleared = () => {}, clearedEveryMs = CLEARE
                              firstRowsMaxBytes = FIRST_ROWS_MAX_BYTES }) {
   let db = null, poll = null, seen = null, said = false, writes = 0;
   let statements = new Map();
-  let dataVersion = null, changedFrom = 0;
+  let dataVersion = null, changedFrom = 0, toldAt = new Set();
   const subscribers = new Set();
 
   // What another connection committed: this connection's own writes don't move data_version.
@@ -78,9 +78,13 @@ function createCatalogFile({ file, onCleared = () => {}, clearedEveryMs = CLEARE
     const first = dataVersion == null;
     dataVersion = version;
     if (first) return;
-    const { keys, latest } = tables.changedSince(changedFrom);
+    const { keys, latest, atLatest } = tables.changedSince(changedFrom);
+    if (!keys.length) return;
+    // What has the time looked from was told last time. Any commit moves data_version, a lease's too.
+    const news = keys.filter(k => !toldAt.has(k));
     changedFrom = latest;
-    if (keys.length) for (const fn of [...subscribers]) { try { fn(keys); } catch (_) {} }
+    toldAt = atLatest;
+    if (news.length) for (const fn of [...subscribers]) { try { fn(news); } catch (_) {} }
   }
 
   const statement = sql => {
@@ -255,6 +259,8 @@ function createCatalogFile({ file, onCleared = () => {}, clearedEveryMs = CLEARE
         // What was cleared doesn't come back from an older version's files.
         statement('UPDATE catalog_state SET cleared = ?, imported = 1 WHERE id = 1').run(seen);
       });
+      // The space too. Another window's read in the way only leaves it in the file, for the next rows.
+      try { database().exec('VACUUM'); database().exec('PRAGMA wal_checkpoint(TRUNCATE)'); } catch (_) {}
     },
     // The file, or nothing if it holds nothing: an empty one still has its pages.
     async size() {

@@ -13,7 +13,7 @@
 // =============================================================================
 
 const { join } = require('node:path');
-const { authedFetch, fabricMessage, listPages, mapPool, retryAfterMs } = require('./http');
+const { authedFetch, fabricMessage, listPages, mapPool, okJson, retryAfterMs } = require('./http');
 
 const FABRIC_API = 'https://api.fabric.microsoft.com/v1';
 const FETCH_TIMEOUT_MS = 60_000;
@@ -65,7 +65,7 @@ function createFabric({ getFabricToken, apiBase = FABRIC_API,
 
   // Fabric's list calls page with continuationToken and say so in the body.
   const listAll = (path, what) => listPages(`${apiBase}${path}`,
-    async url => (await fabricJson(url, what)).json().catch(() => ({})), { what, maxPages: MAX_PAGES });
+    async url => okJson(await fabricJson(url, what), what), { what, maxPages: MAX_PAGES });
 
   // The tree knows a workspace by the name OneLake's DFS listing gives it; the Fabric API
   // knows it by GUID. One listing maps every name, memoised until a refresh.
@@ -107,7 +107,7 @@ function createFabric({ getFabricToken, apiBase = FABRIC_API,
     const same = id => String(id || '').toLowerCase() === String(endpointId).toLowerCase();
     try {
       const r = await fabricJson(`${apiBase}${base}/items/${encodeURIComponent(endpointId)}`, 'Reading the SQL endpoint');
-      const it = await r.json().catch(() => ({}));
+      const it = await okJson(r, 'Reading the SQL endpoint');
       if (!it.type) return null;
       if (it.type !== 'SQLEndpoint') return { workspace: wsId, item: endpointId };
       for (const kind of ['lakehouses', 'mirroredDatabases']) {

@@ -54,6 +54,34 @@ test("a table's metadata is reduced to what the panel shows, with its location",
   assert.ok(!("snapshots" in s), "the snapshot history is not what gets stored");
 });
 
+test("a table kept as empty is looked at again past the listing's age, and a failure leaves that answer", async () => {
+  const catalog = fakeCatalog();
+  let loc = "first", clock = 1000, failing = false;
+  catalog.loadTable = async (l, t) => {
+    catalog.calls.push(`load ${t.table}`);
+    if (failing) throw Object.assign(new Error("busy"), { status: 500 });
+    const m = loc === "first" ? metadata({ "current-snapshot-id": -1, snapshots: [] }) : metadata();
+    return { metadata: m, metadataLocation: LOC };
+  };
+  const realNow = Date.now;
+  Date.now = () => clock;
+  try {
+    const ol = createOneLake({ catalog, store: createStore({ dir: null, now: () => clock }), listingTtlMs: 100, tableTtlMs: 1e9 });
+    const t = { schema: "dbo", table: "e" };
+    assert.equal((await ol.table(lh, t)).empty, true);
+    clock += 50;
+    assert.equal((await ol.table(lh, t)).empty, true);
+    assert.equal(catalog.calls.filter(c => c === "load e").length, 1, "within its age");
+    clock += 100;
+    failing = true;
+    assert.equal((await ol.table(lh, t)).empty, true, "nothing better came back");
+    failing = false;
+    loc = "written";
+    clock += 200;
+    assert.equal((await ol.table(lh, t)).empty, false, "its first write is seen");
+  } finally { Date.now = realNow; }
+});
+
 test("a table converted from Delta says so, with the Delta version it was converted from", () => {
   const xt = JSON.stringify({ sourceTableFormat: "DELTA", sourceIdentifier: "4" });
   const s = summarize(metadata({ properties: { XTABLE_METADATA: xt } }), LOC);

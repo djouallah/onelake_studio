@@ -132,8 +132,10 @@ function createHostMethods({ onelake, engine, onStatus = () => {}, saveFile = nu
     // engine's temp directory; the page gets the path, never the bytes.
     'onelake.localCopy': async x => {
       const ws = String(x.workspace), path = String(x.path);
-      // Bytes are read only when this session has no copy yet.
-      return engine.copyToTemp(`${ws}/${path}`, () => onelake.readBytes(ws, path));
+      // Bytes are read only when this session has no copy of this version yet: a file rewritten since is
+      // another file, as its version comes from the kept listing.
+      const version = onelake.versionOf ? await onelake.versionOf(ws, path) : '';
+      return engine.copyToTemp(`${ws}/${path}@${version}`, () => onelake.readBytes(ws, path));
     },
     // Save, through the editor's save dialog: text the page made (a CSV), or a OneLake
     // file the host reads itself — its bytes never cross into the page to be saved.

@@ -9,7 +9,7 @@
 // =============================================================================
 
 const { strip, basename, displayName, holdsTables, itemKind, DFS_ORIGIN, dfsFileUrl } = require('./names');
-const { authedFetch: send, limiter, mapPool, oneLakeMessage } = require('./http');
+const { authedFetch: send, limiter, mapPool, oneLakeMessage, okJson } = require('./http');
 
 const TABLE_ORIGIN = 'https://onelake.table.fabric.microsoft.com';
 const MAX_PARALLEL = 8;
@@ -89,7 +89,7 @@ function createCatalog({ getToken, dfsOrigin = DFS_ORIGIN, tableOrigin = TABLE_O
       e.status = r.status;
       throw e;
     }
-    return { json: await r.json().catch(() => ({})), cont: r.headers.get('x-ms-continuation') || '' };
+    return { json: await okJson(r, what), cont: r.headers.get('x-ms-continuation') || '' };
   }
 
   // Each filesystem at the account root is a workspace, so the whole catalog comes from
@@ -134,7 +134,7 @@ function createCatalog({ getToken, dfsOrigin = DFS_ORIGIN, tableOrigin = TABLE_O
         e.status = r.status;
         throw e;
       }
-      const j = await r.json().catch(() => ({}));
+      const j = await okJson(r, `Listing ${strip(directory) || ws}`);
       for (const p of (j.paths || [])) {
         out.push({
           name: p.name,

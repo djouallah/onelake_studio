@@ -323,15 +323,16 @@ function createStore({ dir, backend = null, ttlMs = DEFAULT_TTL_MS, maxBytes = D
  * @param {(o: {fresh?: boolean}) => Promise<A>} read  the answer: the kept one, or with `fresh` OneLake's
  * @param {(answer: A) => Promise<R>} use
  * @param {(e: any) => boolean} isStale  whether this failure can mean the answer was out of date
+ * @param {(a: A, b: A) => boolean} [same]  whether two answers say the same thing
  * @returns {Promise<R>}
  */
-async function revalidate(read, use, isStale) {
+async function revalidate(read, use, isStale, same = sameAnswer) {
   const kept = await read({});
   try { return await use(kept); }
   catch (e) {
     if (!isStale(e)) throw e;
     const now = await read({ fresh: true }).catch(() => { throw e; });
-    if (sameAnswer(now, kept)) throw e;
+    if (same(now, kept)) throw e;
     return use(now);
   }
 }

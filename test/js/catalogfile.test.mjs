@@ -98,6 +98,43 @@ test("a window isn't told of its own Clear", async t => {
   assert.equal(told, 0);
 });
 
+test("a listing cut off leaves what was known, and says why it is old", async t => {
+  const { open } = await setup(t);
+  const { store, backend } = open();
+  await store.put("workspaces", ["kept"]);
+  await assert.rejects(store.get("workspaces", async () => { throw new Error("Listing workspaces: the answer was cut off"); }, { fresh: true }), /cut off/);
+  assert.deepEqual(await open().store.peek("workspaces"), ["kept"]);
+  assert.match(backend.failureOf("workspaces").error, /cut off/);
+});
+
+test("another window's commit tells what changed once, however many commits come after", async t => {
+  const { open } = await setup(t);
+  const heard = [];
+  const one = open();
+  const two = open({ clearedEveryMs: 10 });
+  two.backend.subscribe(keys => heard.push(...keys));
+  two.backend.failureOf("workspaces");
+  await sleep(30);
+  await one.store.put("workspaces", ["a"]);
+  await sleep(60);
+  assert.deepEqual(heard, ["workspaces"]);
+  for (let i = 0; i < 3; i++) {
+    one.backend.lease("window one", 1000 + i);
+    await sleep(30);
+  }
+  assert.deepEqual(heard, ["workspaces"], "a lease moved the file, and no listing");
+});
+
+test("Clear gives the space back", async t => {
+  const { open, file } = await setup(t);
+  const { store } = open();
+  for (let i = 0; i < 20; i++) await store.put(`peek\0loc${i}`, { rows: "x".repeat(100_000) });
+  const size = () => readFileSync(file).length + (existsSync(`${file}-wal`) ? readFileSync(`${file}-wal`).length : 0);
+  const before = size();
+  await store.clear();
+  assert.ok(size() < before / 5, `${before} -> ${size()}`);
+});
+
 test("past the limit, the oldest first rows go, down to 80%, and nothing else does", async t => {
   const { open } = await setup(t);
   const { backend } = open({ firstRowsMaxBytes: 2000 });

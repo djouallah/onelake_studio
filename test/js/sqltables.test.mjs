@@ -204,11 +204,12 @@ test("a Delta table says where its log is kept here, and is asked for again when
     table: async () => ({ empty: false, format: "delta", at: 1,
       metadataLocation: "abfss://ws@onelake.dfs.fabric.microsoft.com/lh.Lakehouse/Tables/dbo/t/metadata/v3.metadata.json" }),
   };
-  const deltaLogs = { ensure: async (at, o) => { asked.push([at, o]); return "C:/cache/delta/abc"; } };
+  const deltaLogs = { ensure: async (at, o) => { asked.push([at, o]); return "C:/cache/delta/abc"; }, moves: () => 3 };
   const sql = createSqlTables({ onelake, paths: async () => ({}), deltaLogs });
   const ref = { kind: "lakehouse", workspace: "ws", item: "lh", schema: "dbo", table: "t" };
   const r = await sql.resolve(ref);
   assert.equal(r.deltaLocal, "C:/cache/delta/abc");
+  assert.equal(r.logMoves, 3);
   assert.equal(r.deltaTable, "abfss://ws@onelake.dfs.fabric.microsoft.com/lh.Lakehouse/Tables/dbo/t");
   assert.deepEqual(asked[0], [{ workspace: "ws", dir: "lh.Lakehouse/Tables/dbo/t" }, { fresh: false }]);
   await sql.resolve(ref, { fresh: true });

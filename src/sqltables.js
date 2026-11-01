@@ -111,7 +111,7 @@ function createSqlTables({ onelake, paths, offlineReason = () => null, deltaLogs
     // Where its log is kept here, for delta_scan to run on (deltamirror.js).
     const at = deltaTable && deltaLogs ? tableDirOf(meta.metadataLocation) : null;
     const deltaLocal = at ? await deltaLogs.ensure(at, { fresh }) : null;
-    return { ...named, metadataLocation: meta.metadataLocation, deltaTable, deltaLocal };
+    return { ...named, metadataLocation: meta.metadataLocation, deltaTable, deltaLocal, logMoves: deltaLocal ? deltaLogs.moves(at) : 0 };
   }
 
   // A table's SQL name, found in OneLake. The parts are matched as DuckDB matches names, ignoring

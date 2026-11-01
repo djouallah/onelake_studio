@@ -50,6 +50,7 @@ async function writeWhole(file, bytes) {
 function createDeltaMirror({ catalog, base, ttlMs, isOffline = () => false, now = Date.now }) {
   const checked = new Map();    // local folder -> when OneLake was last asked about it
   const inflight = new Map();   // local folder -> the copy under way
+  const moved = new Map();      // local folder -> how many times its log has changed here
 
   const ttl = () => (typeof ttlMs === 'function' ? ttlMs() : ttlMs);
   const folderOf = ({ workspace, dir }) => {
@@ -81,7 +82,15 @@ function createDeltaMirror({ catalog, base, ttlMs, isOffline = () => false, now 
     const logDir = join(local, LOG);
     await fsp.mkdir(logDir, { recursive: true });
     const held = new Set(await fsp.readdir(logDir).catch(() => []));
-    const missing = wanted.filter(e => !held.has(e.base));
+    // A table dropped and made again starts its log over, so a version held can be another file by now.
+    const current = async e => {
+      if (!held.has(e.base)) return false;
+      const st = await fsp.stat(join(logDir, e.base)).catch(() => null);
+      return !!st && st.size === e.bytes && !(e.lastModified > st.mtimeMs);
+    };
+    const holds = await Promise.all(wanted.map(current));
+    const missing = wanted.filter((_, i) => !holds[i]);
+    if (missing.length) moved.set(local, (moved.get(local) || 0) + 1);
 
     if (missing.length) {
       // What a commit needs before the commit: deletion vectors, and a checkpoint's sidecars.
@@ -103,8 +112,11 @@ function createDeltaMirror({ catalog, base, ttlMs, isOffline = () => false, now 
       // In order, one at a time: a failure leaves a log that's only behind, with no gap in it.
       for (const e of missing) await copy(workspace, `${remoteLog}/${e.base}`, join(logDir, e.base));
     }
-    if (named.some(e => !e.isDir && e.base === LAST_CHECKPOINT) && (missing.length || !held.has(LAST_CHECKPOINT))) {
-      await copy(workspace, `${remoteLog}/${LAST_CHECKPOINT}`, join(logDir, LAST_CHECKPOINT));
+    if (named.some(e => !e.isDir && e.base === LAST_CHECKPOINT)) {
+      if (missing.length || !held.has(LAST_CHECKPOINT)) await copy(workspace, `${remoteLog}/${LAST_CHECKPOINT}`, join(logDir, LAST_CHECKPOINT));
+    } else if (held.has(LAST_CHECKPOINT)) {
+      // A log started over has no checkpoint yet, and one left here names a file that's gone.
+      await fsp.rm(join(logDir, LAST_CHECKPOINT), { force: true });
     }
     // What's before the checkpoint is no longer read. Going is an optimisation, never a failure.
     const keep = new Set(wanted.map(e => e.base));
@@ -140,7 +152,11 @@ function createDeltaMirror({ catalog, base, ttlMs, isOffline = () => false, now 
     }
   }
 
-  return { ensure };
+  // How many times this table's log has changed here: a read that failed is worth another try only if
+  // it has, since its folder's name stays the same.
+  const moves = table => moved.get(folderOf(table)) || 0;
+
+  return { ensure, moves };
 }
 
 module.exports = { createDeltaMirror };

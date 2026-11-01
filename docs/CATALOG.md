@@ -186,7 +186,8 @@ format and Stats come from.
 file. So a Delta table reads through one path, online and offline ([`src/deltamirror.js`](../src/deltamirror.js)):
 
 1. **Its log is kept in the cache folder:** the latest checkpoint, the commits after it, and any deletion vectors, copied as they are and
-   never rewritten. It's asked for again past `catalogTtlMinutes`, and when a read fails.
+   never rewritten. It's asked for again past `catalogTtlMinutes`, and when a read fails. A file whose size differs from the
+   listing's, or that was written after the copy, is copied again: a table dropped and made again starts its log over.
 2. **`delta_scan` runs on that folder.** It reads no log from OneLake, online or offline.
 3. **A mount serves the Parquet files it names.** The log's paths are relative, so `delta_scan` asks for them under the local folder.
    `cache_httpfs_mount` in our fork of `cache_httpfs` serves them from OneLake, through the disk cache and under their `abfss://` paths.
