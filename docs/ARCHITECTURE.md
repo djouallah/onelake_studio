@@ -280,7 +280,7 @@ SQL box, no Stop and no Restart.
 - **The catalog keeps itself current** ([`src/syncworker.js`](../src/syncworker.js)), behind everything, in a window's
   extension host, where VS Code's sign-in, proxy and certificates are. Each window refreshes what it has open and pinned
   workspaces past `catalogTtlMinutes`. One window, holding a lease in the catalog file, reads the rest of the tenant's
-  listings once a day: workspaces, items, table lists, and models if a Fabric token is already there. That is five
+  listings every 12 hours: workspaces, items, table lists, and models if a Fabric token is already there. That is five
   listings every 15 seconds, one at a time, and a 429 or no answer stops it for a minute. It reads no table's metadata, and
   offline it asks nothing. A listing that can't be read shows *refresh failed* beside the last good answer. A window hears
   what another wrote from the file within a few seconds, and its tree redraws.

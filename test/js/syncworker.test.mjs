@@ -54,14 +54,14 @@ test("a sweep is gentle: a few listings a tick, carrying on from where it got to
   assert.deepEqual(world.calls.slice(4), ["tables b"]);
 });
 
-test("nothing is read again until a day has passed", async () => {
+test("nothing is read again until 12 hours have passed", async () => {
   const { world, worker } = setup();
   await worker.tick();
   world.calls.length = 0;
-  world.now += 12 * 60 * MIN;
+  world.now += 11 * 60 * MIN;
   await worker.tick();
   assert.deepEqual(world.calls, []);
-  world.now += 13 * 60 * MIN;
+  world.now += 61 * MIN;
   await worker.tick();
   assert.ok(world.calls.includes("workspaces"));
   assert.ok(world.calls.includes("tables b"));

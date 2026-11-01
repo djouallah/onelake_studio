@@ -6,7 +6,7 @@
 // itself. This is what changes the catalog with nobody asking:
 //
 //   what this window opened, and pinned workspaces   past the listing TTL, in every window
-//   the rest of the tenant's listings                once a day, by one window only
+//   the rest of the tenant's listings                every 12 hours, by one window only
 //
 // It runs in a window, not the server, for VS Code's own sign-in, proxy and certificates. A lease in
 // the catalog file says which window sweeps the tenant, and another takes over when that one goes.
@@ -22,7 +22,7 @@ const { isStaging, holdsTables } = require('./names');
 
 const EVERY_MS = 15_000;
 const JOBS_PER_TICK = 5;
-const DAY_MS = 24 * 3600 * 1000;
+const SWEEP_EVERY_MS = 12 * 3600 * 1000;
 const RETRY_MS = 3600 * 1000;        // one listing that fails isn't asked again for this long
 const PAUSE_MS = 60_000;             // everything waits this long after OneLake asks it to
 const SWEEP_IDLE_MS = 10 * 60 * 1000;
@@ -135,19 +135,19 @@ function createSyncWorker({ onelake, opened = () => [], pinned = () => [], ttlMs
 
   async function* tenantListings() {
     const root = { kind: 'workspaces' };
-    if (await due(root, DAY_MS)) yield root;
+    if (await due(root, SWEEP_EVERY_MS)) yield root;
     const listed = await onelake.cached.workspaces().catch(() => null);
     const fabric = await canFabric().catch(() => false);
     for (const workspace of (listed && listed.value) || []) {
       const items = { kind: 'items', workspace };
-      if (await due(items, DAY_MS)) yield items;
+      if (await due(items, SWEEP_EVERY_MS)) yield items;
       const held = await onelake.cached.items(workspace).catch(() => null);
       for (const it of (held && held.value) || []) {
         const tables = { kind: 'tables', workspace, item: it.name };
-        if (holdsTables(it.name) && !isStaging(it.name) && await due(tables, DAY_MS)) yield tables;
+        if (holdsTables(it.name) && !isStaging(it.name) && await due(tables, SWEEP_EVERY_MS)) yield tables;
       }
       const models = { kind: 'models', workspace };
-      if (fabric && await due(models, DAY_MS)) yield models;
+      if (fabric && await due(models, SWEEP_EVERY_MS)) yield models;
     }
   }
 

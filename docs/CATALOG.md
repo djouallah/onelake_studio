@@ -100,7 +100,7 @@ DuckDB and no server. A lease in the catalog file says which window sweeps the t
 | --- | --- | --- |
 | Whoever is waiting | A listing the catalog has never held, or a Refresh | Now, by the reader itself |
 | Each window | What it has opened, and pinned workspaces | `catalogTtlMinutes` |
-| The window with the lease | The rest of the tenant: workspaces, items and table lists, and models if a Fabric token is already there | Once a day |
+| The window with the lease | The rest of the tenant: workspaces, items and table lists, and models if a Fabric token is already there | Every 12 hours |
 
 - **Table metadata is read only for lakehouses opened,** as `prefetchMetadata` does, so the tenant's manifests are not
   walked. A staging item is never swept.
@@ -156,6 +156,19 @@ which downloads a model's file. Neither is a listing.
 **Target:** tens of milliseconds for a metadata command with VS Code open.
 
 ## Reading data
+
+**Nothing downloads a file on its own.** The sync worker reads listings only. Bytes move when someone asks for them:
+
+| What asks | What comes down | Kept in | Limit |
+| --- | --- | --- | --- |
+| Opening a lakehouse's Tables node | Each table's Iceberg metadata, two at a time (`prefetchMetadata`), and no rows | The catalog | None |
+| The Data tab, or a statement | The parts of files that statement reads | The cache folder | `diskCacheMaxGB`, oldest first |
+| The Data tab's first 100 rows | The same reads, and the rows | `first_rows` | 256 MB, oldest first |
+| Opening a `Files/` object in a tab | The whole file, or a range if only a range is asked for | The cache folder, `host\` | 1 GB in all, and a file over 512 MB isn't kept |
+| Opening a model | Its `.yaml` | The cache folder, `models\` | None |
+| The History tab on a Delta table | Its log files | The cache folder, `host\` | The same 1 GB |
+
+A table opens on Stats by default, which reads nothing. When a table changes, nothing downloads until someone reads it again.
 
 **DuckDB keeps reading the bytes,** through `iceberg_scan` over `abfss://`, `azure` and `cache_httpfs`.
 
@@ -224,7 +237,7 @@ Each wave works on its own, and is proved before the next starts.
 | **2. Real tables** | JSON listings become the catalog's tables, and the tree, `resolve`, Stats, History, Go To and `SHOW ALL TABLES` query them. `catalogsnapshot.js` goes, and rows are never evicted. | Every offline test passes from the tables, and no listing is stored as JSON. |
 | **3. The sync worker** | In a window's extension host, with a lease for the tenant sweep. Windows hear from the file when rows change. | A table added in Fabric appears with no click, the tree stays usable during a sync from empty, and offline it asks nothing. |
 | **4. The command line** | Every metadata command reads the catalog, and `--fresh` is a top-priority job. | Every metadata command answers with the network refused, and a table-exists check is timed warm and cold. |
-| **5. A sync that costs little** | The worker reads only what is likely to have changed or to be wanted, so it never ends up reading the whole of OneLake. Today a pinned workspace's lakehouses are listed again every `catalogTtlMinutes`, and the rest of the tenant once a day, whoever is using it. | What the worker asked for and how much came back are counted in `status`, with a ceiling, and it stays under that on a real tenant. |
+| **5. What the sync costs** | The rest of the tenant is read every 12 hours, and what downloads bytes is written down (*Reading data*). | The worker has met no 429 on a real tenant at that pace. |
 
 **On its own, whenever:** Iceberg's files in a folder eviction skips. It probably needs a change in the `cache_httpfs` fork.
 

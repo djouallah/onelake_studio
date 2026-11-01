@@ -12,7 +12,7 @@
   file, the old JSON files and the separate store of file bytes come across once and go. **Logs** moved to a small SQLite file
   of its own, and that is the whole reason a second DuckDB ran in the server, which no longer does.
 - **The catalog keeps itself current.** What you have open and pinned workspaces refresh on their own, so a table added in
-  Fabric appears with no click. Once a day, the listings of the rest of the tenant are read too, a few at a time, so the
+  Fabric appears with no click. Every 12 hours, the listings of the rest of the tenant are read too, a few at a time, so the
   tree, `find`, Go To and `SHOW ALL TABLES` know what you never opened. A table whose columns were never read is listed
   with none. A listing that can't be read says *refresh failed* beside the last good answer, and windows hear what another
   window read.
