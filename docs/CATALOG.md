@@ -172,7 +172,16 @@ which downloads a model's file. Neither is a listing.
 
 A table opens on Stats by default, which reads nothing. When a table changes, nothing downloads until someone reads it again.
 
-**DuckDB keeps reading the bytes,** through `iceberg_scan` over `abfss://`, `azure` and `cache_httpfs`.
+**DuckDB keeps reading the bytes:** a Delta table with `delta_scan`, and an Iceberg table with `iceberg_scan`, over `abfss://`, `azure`
+and `cache_httpfs`.
+
+**A Delta table is never read through Fabric's Iceberg conversion.** Measured on a real table: a file's own column ids disagreed with
+the conversion's, and `iceberg_scan` gave one column another's values with no error. The conversion's metadata is still where a table's
+format and Stats come from.
+
+**`delta_scan` reads the log itself, past DuckDB's file system.** On the real table, DuckDB's file log held the Parquet files and no log
+file. So the parts of files it reads can be cached, and the log can't, and it isn't offline yet. Offline needs the log kept in the cache
+folder, and the Parquet files it then names found under their `abfss://` paths, which is a change to the `cache_httpfs` fork.
 
 **No file downloader, because of what was measured** on generated local Delta tables of 40 files and 131 MB:
 
@@ -194,7 +203,7 @@ A table opens on Stats by default, which reads nothing. When a table changes, no
 | Answered from | What |
 | --- | --- |
 | The catalog alone | The tree, Go To, `SHOW ALL TABLES`, Stats, History, a wildcard's list of files, the command line's metadata |
-| The catalog and the disk cache | Rows, Pivot and a model's queries, for what has been read |
+| The catalog and the disk cache | Rows, Pivot and a model's queries, for what has been read of an Iceberg table. A Delta table's aren't offline yet, beyond its first rows kept |
 
 Whatever isn't held says so at once.
 

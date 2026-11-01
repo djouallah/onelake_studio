@@ -14,7 +14,7 @@ import { fileURLToPath } from "node:url";
 import { READS, WRITES } from "./sql-disagreements.mjs";
 
 const require = createRequire(import.meta.url);
-const { createEngineHost, isOneLakeMetadata, READ_FAILURE, AUTH_FAILURE } = require("../../src/engine-host.js");
+const { createEngineHost, isOneLakeMetadata, isOneLakeTable, READ_FAILURE, AUTH_FAILURE } = require("../../src/engine-host.js");
 
 // What fetch-extensions.mjs put next to the extension, when CI ran it for this platform.
 const BUNDLED = join(fileURLToPath(new URL(".", import.meta.url)), "..", "..", "duckdb-extensions");
@@ -417,6 +417,7 @@ test("native engine host", async t => {
     assert.match(r.rows[0].v, /^v2\./, `running ${r.rows[0].v}`);
     const { capabilities: caps } = await engine.call("info");
     for (const ext of ["iceberg", "azure", "httpfs"]) assert.ok(caps[ext], `${ext} loaded`);
+    assert.ok(caps.delta, "delta loaded: how a Delta table is read");
   });
 
   await t.test("a table is read by its SQL name, opened by the statement that names it", async () => {
@@ -679,6 +680,38 @@ test("native engine host", async t => {
 
 // The metadata location arrives from the page and is spliced into iceberg_scan(...), so
 // only the shape the catalog returns may pass; everything else takes the ATTACH path.
+test("only a OneLake table folder is read with delta_scan", () => {
+  assert.ok(isOneLakeTable("abfss://ws@onelake.dfs.fabric.microsoft.com/lh.Lakehouse/Tables/dbo/t"));
+  assert.ok(isOneLakeTable("abfss://ANZ Retail Demo@onelake.dfs.fabric.microsoft.com/lh.Lakehouse/Tables/dbo/t"));
+  for (const bad of [null, "", 42, "C:/Users/x", "file:///C:/x", "https://onelake.dfs.fabric.microsoft.com/ws/lh/Tables/t",
+    "abfss://ws@evil.example.com/x/t", "abfss://ws@onelake.dfs.fabric.microsoft.com/lh/Tables/t\nATTACH 'x'", "abfss://ws@onelake.dfs.fabric.microsoft.com/"]) {
+    assert.equal(isOneLakeTable(bad), false, String(bad));
+  }
+});
+
+test("offline, a Delta table says so at once, disk cache or not, and an empty one still answers", async t => {
+  const extDir = await mkdtemp(join(tmpdir(), "onelake-delta-offline-"));
+  const engine = createEngineHost({
+    extensionDir: extDir,
+    bundledExtensions: existsSync(BUNDLED) ? BUNDLED : null,
+    offlineReason: () => "no internet",
+    catalogTables: async () => [],
+    resolveTable: async ref => (ref.table === "never_written"
+      ? { ...ref, emptySql: "SELECT 1 AS a WHERE false" }
+      : { ...ref, metadataLocation: "abfss://w@onelake.dfs.fabric.microsoft.com/lh.Lakehouse/Tables/dbo/t/metadata/1.metadata.json",
+          deltaTable: "abfss://w@onelake.dfs.fabric.microsoft.com/lh.Lakehouse/Tables/dbo/t" }),
+  });
+  t.after(async () => {
+    await engine.close();
+    await rm(extDir, { recursive: true, force: true }).catch(() => {});
+  });
+  await engine.warm();
+  await assert.rejects(engine.call("query", ["SELECT * FROM lakehouse.w.lh.dbo.t"]),
+    e => e.offline === true && /lakehouse\.w\.lh\.dbo\.t: a Delta table's rows can't be read offline yet, as there is no internet/.test(e.message));
+  const r = await engine.call("query", ["SELECT * FROM lakehouse.w.lh.dbo.never_written"]);
+  assert.equal(r.rows.length, 0);
+});
+
 test("only a OneLake metadata.json is read with iceberg_scan", () => {
   assert.ok(isOneLakeMetadata(
     "abfss://ws@onelake.dfs.fabric.microsoft.com/lh.Lakehouse/Tables/dbo/t/metadata/00001-ab.metadata.json"));

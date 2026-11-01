@@ -106,6 +106,9 @@ const NOT_CACHED = /is not cached on this machine/;
 // breaks and NULs are not.
 const ONELAKE_METADATA = /^abfss:\/\/[^@/\r\n\0]+@onelake\.dfs\.fabric\.microsoft\.com\/[^\r\n\0]+\.metadata\.json$/i;
 const isOneLakeMetadata = s => typeof s === 'string' && ONELAKE_METADATA.test(s);
+// A Delta table's folder, spliced into delta_scan(...) as that is: only this shape may pass.
+const ONELAKE_TABLE = /^abfss:\/\/[^@/\r\n\0]+@onelake\.dfs\.fabric\.microsoft\.com\/[^\r\n\0]*[^/\r\n\0]$/i;
+const isOneLakeTable = s => typeof s === 'string' && ONELAKE_TABLE.test(s);
 
 // 25% of RAM unless told otherwise. DuckDB's own default is 80%, which is a fine answer
 // for a process that owns the machine and a bad one for the extension host, which every
@@ -328,7 +331,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
       // these three failing means the extension cannot do its job, and saying so beats
       // a later "Failed to open file" that names nothing.
       for (const ext of ['iceberg', 'azure', 'httpfs']) await load(ext, '', true);
-      for (const ext of ['avro', 'excel', 'sqlite_scanner']) await load(ext, '');
+      for (const ext of ['avro', 'excel', 'sqlite_scanner', 'delta']) await load(ext, '');
       for (const ext of ['h3', 'zipfs']) await load(ext, 'community');
       if (fileCacheDir) await enableFileCache(fileCacheDir);
       mark('extensions');
@@ -450,7 +453,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
 
   const capabilities = {
     excel: false, zipfs: false, h3: false, avro: false, httpfs: false, sqlite_scanner: false,
-    iceberg: false, azure: false, cache_httpfs: false, fileCache: false, quack: false,
+    iceberg: false, azure: false, delta: false, cache_httpfs: false, fileCache: false, quack: false,
   };
 
   // An optional extension that will not load costs one file format, which is not a
@@ -605,11 +608,13 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
     }
   }
 
-  // A table, ready to be selected from by its SQL name: a view over iceberg_scan on its
-  // metadata file, whose location the host's store holds (the catalog's loadTable answer,
-  // cached on disk). The catalog is not asked at query time when the store has the answer —
-  // it answered a loadTable in 5s, 12s and 114s on a real tenant. DuckDB applies deletes and
-  // the Warehouse field-id mapping, and the snapshot is the one the Stats card showed.
+  // A table, ready to be selected from by its SQL name. A Delta table is a view over delta_scan on its
+  // folder, which reads the table's own log: Fabric's Iceberg conversion of a Delta table isn't to be
+  // read, as its column ids can disagree with the ones in the files, and DuckDB then gives one column
+  // another's values. An Iceberg table is a view over iceberg_scan on its metadata file. Where each is
+  // comes from what the host's store holds (the catalog's loadTable answer, cached on disk). The
+  // catalog is not asked at query time when the store has the answer — it answered a loadTable in 5s,
+  // 12s and 114s on a real tenant.
   //
   // `made` is what each view reads now (by its lower-cased name, as DuckDB matches names): a
   // view is made again only when its table moved to a new snapshot.
@@ -620,7 +625,10 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
     const r = await resolveTable(ref, o);
     let source;
     if (r.emptySql != null) source = String(r.emptySql);
-    else if (isOneLakeMetadata(r.metadataLocation)) source = `SELECT * FROM iceberg_scan(${sqlStr(r.metadataLocation)})`;
+    else if (r.deltaTable != null) {
+      if (!isOneLakeTable(r.deltaTable)) throw new Error(`OneLake gave ${sqlName(r)} no readable folder (${String(r.deltaTable).slice(0, 120)})`);
+      source = `SELECT * FROM delta_scan(${sqlStr(r.deltaTable)})`;
+    } else if (isOneLakeMetadata(r.metadataLocation)) source = `SELECT * FROM iceberg_scan(${sqlStr(r.metadataLocation)})`;
     else {
       throw new Error(`OneLake gave ${sqlName(r)} no readable metadata location` +
         (r.metadataLocation ? ` (${String(r.metadataLocation).slice(0, 120)})` : ''));
@@ -628,6 +636,9 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
     return { name: sqlName(r), path: [r.kind, r.workspace, r.item, r.schema || 'dbo'], source, location: r.emptySql == null ? r.metadataLocation : null, at: r.at };
   }
   async function makeView({ name, path: parts, source }) {
+    if (/\bdelta_scan\(/.test(source) && !capabilities.delta) {
+      throw new Error(`${name} is a Delta table, and DuckDB's delta extension isn't available on this platform.`);
+    }
     const key = name.toLowerCase();
     // On a shared engine another window may have changed the view since, so what this window
     // remembers making says nothing. A statement costs little there, sent in one call.
@@ -781,7 +792,14 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
   const READS_ONELAKE = /(?:\b(?:from|join)\s+\(?\s*'|\b(?!values\b)\w+\s*\(\s*\[?\s*')(?:zip:\/\/)?(?:abfss?|az|azure):\/\//i;
   function refuseOffline(sql, tables) {
     const why = offlineReason();
-    if (!why || capabilities.offlineRead) return;
+    if (!why) return;
+    // delta_scan reads a table's log for itself, past the disk cache, so that needs OneLake.
+    const delta = tables.find(t => /\bdelta_scan\(/.test(t.source));
+    if (delta) {
+      throw Object.assign(new Error(`${delta.name}: a Delta table's rows can't be read offline yet, as ${why === 'no internet' ? 'there is no internet' : 'you are not signed in'}. ` +
+        'What this machine has cached still works: tables, columns, stats and first rows.'), { offline: true });
+    }
+    if (capabilities.offlineRead) return;
     const reading = tables.find(t => /\biceberg_scan\(/.test(t.source));
     if (!reading && !READS_ONELAKE.test(sql)) return;
     const what = reading ? reading.name : 'This statement';
@@ -1208,4 +1226,4 @@ async function restartListener(conn, uri, token) {
   await conn.run(`SELECT * FROM quack_serve(${sqlStr(uri)}, token = ${sqlStr(token)});`);
 }
 
-module.exports = { createEngineHost, jsonSafe, isOneLakeMetadata, restartListener, AUTH_FAILURE, READ_FAILURE, NOT_CACHED };
+module.exports = { createEngineHost, jsonSafe, isOneLakeMetadata, isOneLakeTable, restartListener, AUTH_FAILURE, READ_FAILURE, NOT_CACHED };

@@ -35,6 +35,9 @@ const EXTENSIONS = [
   { name: "azure", repo: "https://extensions.duckdb.org", required: true },
   { name: "httpfs", repo: "https://extensions.duckdb.org", required: true },
   { name: "avro", repo: "https://extensions.duckdb.org", required: true },
+  // How a Delta table's rows are read. Not required as DuckDB has no build of it for windows_arm64, and a
+  // Delta table says so there rather than being read another way.
+  { name: "delta", repo: "https://extensions.duckdb.org", required: false },
   // The shared engine's client and server (engine-client.js).
   { name: "quack", repo: "https://extensions.duckdb.org", required: true },
   { name: "excel", repo: "https://extensions.duckdb.org", required: false },

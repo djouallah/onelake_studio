@@ -78,3 +78,16 @@ test("its file is the account's, and is not the catalog", () => {
   assert.notEqual(logFileOf("d", "me"), catalogFileOf("d", "me"));
   assert.match(logFileOf("d", "me"), /logs-[0-9a-f]{16}\.sqlite$/);
 });
+
+test("a database that died is said once it shows, and nothing else is taken for it", async () => {
+  const { createLogKeeper } = require("../../src/enginelog.js");
+  const said = [], fatal = [];
+  let error = new Error("IO Error: a hiccup");
+  const keeper = createLogKeeper({ engine: { readLog: async () => { throw error; } }, logs: {}, maxBytes: 1, log: l => said.push(l), onFatal: m => fatal.push(m) });
+  await keeper.flush().catch(() => {});
+  assert.equal(fatal.length, 0, "a failure costs only that turn");
+  error = new Error('FATAL Error: Failed: database has been invalidated because of a previous fatal error.');
+  await keeper.flush().catch(() => {});
+  assert.equal(fatal.length, 1);
+  assert.ok(said.some(l => /the log could not be kept: FATAL/.test(l)));
+});

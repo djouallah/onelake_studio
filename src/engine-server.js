@@ -61,7 +61,10 @@ async function main({ token, pipe, options, logFile, idleMs = 60_000, logsFile =
   // What the engine runs goes to the log file, where the Logs tab reads it.
   async function keepLog() {
     logs = createLogFile({ file: logsFile, log });
-    keeper = createLogKeeper({ engine, logs, log, maxBytes: Math.max(0, Number(options.logMaxGB ?? 1) || 0) * 1024 ** 3 });
+    // A database that has died takes every window's statements with it. Gone, the windows hear so and the
+    // next statement starts a new one.
+    keeper = createLogKeeper({ engine, logs, log, maxBytes: Math.max(0, Number(options.logMaxGB ?? 1) || 0) * 1024 ** 3,
+      onFatal: () => { shutdown('the database died of a fatal error'); } });
     keeper.start();
     for (const name of await fsp.readdir(dirname(logsFile)).catch(() => [])) {
       if (OLD_STATE_FILE.test(name)) await fsp.rm(join(dirname(logsFile), name), { force: true }).catch(() => {});

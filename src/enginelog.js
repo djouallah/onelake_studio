@@ -53,14 +53,18 @@ const isSetup = sql => /^\s*(create|drop|attach|detach)\b/i.test(sql);
 
 const cut = s => { const t = String(s).split('\0').join(''); return t.length > SQL_MAX ? `${t.slice(0, SQL_MAX)}\n… (cut)` : t; };
 
+// After a fatal error DuckDB refuses every statement, whoever sends it, until the process is gone.
+const FATAL = /database has been invalidated/i;
+
 /**
  * @param {object} o
  * @param {{readLog: Function, emptyLog: Function}} o.engine
  * @param {ReturnType<import('./logfile').createLogFile>} o.logs
  * @param {number} o.maxBytes  how much to keep; 0 keeps none
  * @param {(line: string) => void} [o.log]
+ * @param {(message: string) => void} [o.onFatal]  the database has died under this process, for good
  */
-function createLogKeeper({ engine, logs, maxBytes, log = () => {} }) {
+function createLogKeeper({ engine, logs, maxBytes, log = () => {}, onFatal = () => {} }) {
   let last = 0n, moved = 0, chain = Promise.resolve(), timers = [];
   let asked = 0;              // statements someone asked for, since this process started
 
@@ -88,7 +92,11 @@ function createLogKeeper({ engine, logs, maxBytes, log = () => {} }) {
   // One at a time, and a failure costs only that turn.
   const turn = fn => {
     const run = chain.then(fn);
-    chain = run.catch(e => log(`the log could not be kept: ${(e && e.message) || e}`));
+    chain = run.catch(e => {
+      const message = String((e && e.message) || e);
+      log(`the log could not be kept: ${message}`);
+      if (FATAL.test(message)) onFatal(message);
+    });
     return run;
   };
   const flush = () => turn(move);

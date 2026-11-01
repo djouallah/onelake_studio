@@ -252,7 +252,7 @@ function createOneLake({ catalog, store, prefetchEnabled = () => true, onHit = (
     let r = await load(fresh);
     // A summary kept before tables had a format is read again once, rather than drawn
     // without one until its TTL runs out.
-    if (r.cached && (r.at < refreshedSince(lh) || !('format' in r.value))) r = await load(true);
+    if (r.cached && (r.at < refreshedSince(lh) || !r.value.format)) r = await load(true);
     // The store says 'changed' only when an answer it had moved; a table read for the first
     // time (a prefetch, a click) is news too — the tree and the engine's catalog both want it.
     if (!r.cached) for (const fn of [...tableReadSubs]) { try { fn({ ...lh, ...t, value: r.value }); } catch (_) {} }
@@ -447,7 +447,7 @@ function createOneLake({ catalog, store, prefetchEnabled = () => true, onHit = (
           // Already known: nothing to do. The store refreshes stale entries on read, so a
           // prefetch never needs to force one.
           const kept = await store.peek(job.k);
-          if (kept === undefined || (kept && !('format' in kept))) await table(job.lh, job.t);
+          if (kept === undefined || (kept && !kept.format)) await table(job.lh, job.t);
         } catch (_) {
           // A table that will not resolve says why when it is clicked; a prefetch that
           // failed has cost nothing the click would not have paid anyway.

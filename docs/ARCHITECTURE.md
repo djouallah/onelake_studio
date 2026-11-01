@@ -93,8 +93,8 @@ and joins at step 3.
    - A statement that reads the catalog (`SHOW ALL TABLES`, `information_schema`) gets the catalog
      synced from the cache first.
    - `withTables` makes a view for each five-part name: `tableRefs` finds the names,
-     `resolve` ([`src/sqltables.js`](../src/sqltables.js)) looks them up in the cached listings, and the
-     view is `iceberg_scan` on the table's metadata file.
+     `resolve` ([`src/sqltables.js`](../src/sqltables.js)) looks them up in the cached listings. The view
+     is `delta_scan` on a Delta table's folder, and `iceberg_scan` on an Iceberg table's metadata file.
    - `withFileUrls` gives DuckDB each file's `abfss://` URL in place of its name: `fileRefs` finds the names, and
      `resolveFile` looks them up as `resolve` does. A name that can't be found fails here.
    - `catalogStatement` rewrites `SHOW` statements so they report whole paths.
@@ -176,10 +176,11 @@ The engine is **DuckDB 2.0 running natively in a process of its own** ([The serv
   `semantic` in it.
 - **Catalogs:** one attached `:memory:` catalog per kind (`lakehouse`, `warehouse`, `sqldatabase`,
   `mirroreddatabase`), and one for `semanticmodel`. The workspace, item and schema are nested schemas.
-- **Reading OneLake:** through DuckDB's `iceberg` and `azure` extensions. A table is read with
-  `iceberg_scan` on the metadata file the host's cache holds, so the catalog is never asked at query
-  time. DuckDB does the Iceberg work itself: snapshots, manifest filtering, position and equality
-  deletes, schema evolution.
+- **Reading OneLake:** through DuckDB's `delta`, `iceberg` and `azure` extensions. A Delta table is read with
+  `delta_scan` on its folder, from its own log, and never through Fabric's Iceberg conversion, whose column ids can
+  disagree with the files'. An Iceberg table is read with `iceberg_scan` on the metadata file the host's cache holds.
+  Which it is, and where, comes from the cache, so the catalog is never asked at query time. DuckDB does the work itself:
+  snapshots, deletes, schema evolution.
 - **Reading files:** `Files/` objects are named as in [NAMING.md](NAMING.md#files), and DuckDB reads them as `abfss://` URLs.
 - **Lockdown:** file access is limited to the temp directory, `https://`, `abfss://` and `zip://` over a
   remote archive.

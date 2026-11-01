@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **A Delta table is read with `delta_scan`,** from its own log. Reading it through Fabric's Iceberg conversion could give one
+  column another's values with no error, when a file's own column ids disagreed with the conversion's, as seen on a real table.
+  Iceberg tables stay on `iceberg_scan`. For now a Delta table's rows can't be read offline, beyond its first rows kept, and on
+  Windows ARM, which has no build of DuckDB's `delta`, they can't be read at all.
+- **An engine that dies of a fatal error is replaced.** It used to stay up refusing every statement from every window.
 - **A table that moved on still opens offline.** If its new snapshot was never read, a statement and the Data tab read the one
   that was, and say how old it is.
 - **`exists` on the command line.** Whether a table is there, from the listings alone: yes, no with the closest names, or not

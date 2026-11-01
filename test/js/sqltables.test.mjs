@@ -164,3 +164,25 @@ test("past the cache, every read goes to OneLake", async () => {
   await w.sql.resolve(ref(), { fresh: true });
   for (const what of ["workspaces", "items", "tables", "load"]) assert.equal(count(w, what), 1, `${what}: ${w.calls}`);
 });
+
+test("a Delta table is read from its own folder, and an Iceberg one from its metadata", async c => {
+  const { createSqlTables } = require("../../src/sqltables.js");
+  let format = "delta", location = "abfss://ANZ Retail Demo@onelake.dfs.fabric.microsoft.com/lh.Lakehouse/Tables/dbo/t/metadata/v3.metadata.json";
+  const onelake = {
+    workspaces: async () => ["ws"],
+    items: async () => [{ name: "lh.Lakehouse", kind: "Lakehouse" }],
+    tables: async () => [{ schema: "dbo", table: "t" }],
+    table: async () => ({ empty: false, format, metadataLocation: location, at: 1 }),
+  };
+  const sql = createSqlTables({ onelake, paths: async () => ({}) });
+  const ref = { kind: "lakehouse", workspace: "ws", item: "lh", schema: "dbo", table: "t" };
+  assert.equal((await sql.resolve(ref)).deltaTable, "abfss://ANZ Retail Demo@onelake.dfs.fabric.microsoft.com/lh.Lakehouse/Tables/dbo/t");
+  format = null;
+  assert.ok((await sql.resolve(ref)).deltaTable, "not known to be Iceberg is not read as Iceberg");
+  location = "https://onelake.dfs.fabric.microsoft.com/ws/lh.Lakehouse/Tables/dbo/t/metadata/v3.metadata.json";
+  assert.equal((await sql.resolve(ref)).deltaTable, "abfss://ws@onelake.dfs.fabric.microsoft.com/lh.Lakehouse/Tables/dbo/t");
+  format = "iceberg";
+  const r = await sql.resolve(ref);
+  assert.equal(r.deltaTable, null);
+  assert.equal(r.metadataLocation, location);
+});

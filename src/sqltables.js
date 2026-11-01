@@ -10,7 +10,8 @@
 
 const { revalidate } = require('./store');
 const { offlineError } = require('./http');
-const { sqlKind, sqlName, displayName } = require('./names');
+const { sqlKind, sqlName, displayName, abfssUrl } = require('./names');
+const { tableDirOf } = require('./deltalog');
 
 const same = (a, b) => String(a).toLowerCase() === String(b).toLowerCase();
 
@@ -45,6 +46,16 @@ function closestTables(name, listing, max = 3) {
  * @param {() => Promise<{emptyTableSql(fields: object[]): string}>} o.paths  app/paths.js, loaded when needed
  * @param {() => string|null} [o.offlineReason]  why OneLake cannot be asked now
  */
+// A table not written as Iceberg is read as Delta, from its own folder, which is where its converted
+// metadata is kept. A summary from before tables had a format is read again before it comes here.
+function deltaTableOf(meta) {
+  if (meta.format === 'iceberg') return null;
+  const loc = String(meta.metadataLocation || '');
+  if (/^abfss:/i.test(loc)) return loc.replace(/\/metadata\/[^/]+$/, '');
+  const at = tableDirOf(loc);
+  return at ? abfssUrl(at.workspace, at.dir) : loc;
+}
+
 function createSqlTables({ onelake, paths, offlineReason = () => null }) {
   // An item's name in SQL -> the GUIDs that named it, for what nameTables answered: a compiled
   // model query holds that name for as long as the panel does.
@@ -96,7 +107,7 @@ function createSqlTables({ onelake, paths, offlineReason = () => null }) {
     const named = { kind: ref.kind, workspace: ws, item: displayName(dir), schema: t.schema || 'dbo', table: t.table, at: meta.at };
     return meta.empty
       ? { ...named, emptySql: (await paths()).emptyTableSql(meta.schemaFields) }
-      : { ...named, metadataLocation: meta.metadataLocation };
+      : { ...named, metadataLocation: meta.metadataLocation, deltaTable: deltaTableOf(meta) };
   }
 
   // A table's SQL name, found in OneLake. The parts are matched as DuckDB matches names, ignoring
