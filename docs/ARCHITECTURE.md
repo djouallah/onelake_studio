@@ -646,6 +646,7 @@ every window. The rest apply at once.
 | [`scripts/`](../scripts/) | Packaging: bundle, stage-webview, vendor, function-bundle, fetch-extensions, check-binding, fetch-binding, fetch-retry, make-icon. |
 | [`media/`](../media/) | Icons. |
 | `docs/` | This file, the naming contract, the changelog, an index and a screenshot. |
+| [`website/`](../website/) | The public website: static HTML, deployed by `.github/workflows/pages.yml`. |
 
 `dist/`, `webview/`, `vendor/`, `duckdb-extensions/`, `fabric-function/` and `blog/` are ignored by git.
 The first five are build output or fetched at package time, so do not edit them.

@@ -42,5 +42,7 @@ CLAUDE.md
 blog/**
 docs/**
 !docs/CHANGELOG.md
+# The website, deployed by its own workflow.
+website/**
 # fetch-extensions.mjs's record of what it fetched, for a cached tree.
 duckdb-extensions/.stamp.json

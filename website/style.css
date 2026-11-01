@@ -1,0 +1,366 @@
+:root {
+  color-scheme: light dark;
+  --bg: #ffffff;
+  --surface: #f4f6fa;
+  --text: #171b24;
+  --muted: #5a6373;
+  --line: #d9dee8;
+  --accent: #1d4ed8;
+  --on-accent: #ffffff;
+  --box: #eaf1fe;
+  --box-line: #2563eb;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #10131a;
+    --surface: #191d27;
+    --text: #e8ebf1;
+    --muted: #a0a9b8;
+    --line: #2d3442;
+    --accent: #7db0fb;
+    --on-accent: #0c1220;
+    --box: #182642;
+    --box-line: #60a5fa;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 17px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+
+a {
+  color: var(--accent);
+}
+
+.wrap {
+  max-width: 860px;
+  margin: 0 auto;
+  padding: 0 16px;
+}
+
+/* Header */
+
+.site-header {
+  border-bottom: 1px solid var(--line);
+}
+
+.site-header .wrap {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 24px;
+  padding-top: 12px;
+  padding-bottom: 12px;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-right: auto;
+  color: var(--text);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.brand img {
+  display: block;
+  border-radius: 6px;
+}
+
+.site-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 20px;
+  font-size: 15px;
+}
+
+.site-nav a {
+  color: var(--muted);
+  text-decoration: none;
+}
+
+.site-nav a:hover,
+.site-nav a[aria-current="page"] {
+  color: var(--text);
+}
+
+/* Text */
+
+h1,
+h2,
+h3 {
+  line-height: 1.25;
+}
+
+h1 {
+  margin: 0 0 16px;
+  font-size: 40px;
+  letter-spacing: -0.02em;
+}
+
+h2 {
+  margin: 56px 0 12px;
+  font-size: 25px;
+  letter-spacing: -0.01em;
+}
+
+h3 {
+  margin: 28px 0 8px;
+  font-size: 18px;
+}
+
+p,
+ul,
+ol {
+  margin: 0 0 16px;
+}
+
+ul,
+ol {
+  padding-left: 22px;
+}
+
+li {
+  margin-bottom: 8px;
+}
+
+code,
+pre {
+  font-family: ui-monospace, "Cascadia Code", Consolas, Menlo, monospace;
+  font-size: 0.875em;
+}
+
+code {
+  overflow-wrap: anywhere;
+}
+
+pre {
+  margin: 0 0 16px;
+  padding: 14px 16px;
+  overflow-x: auto;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  line-height: 1.55;
+}
+
+pre code {
+  font-size: 1em;
+  overflow-wrap: normal;
+}
+
+.lead {
+  max-width: 44em;
+  font-size: 20px;
+  line-height: 1.5;
+}
+
+.more {
+  color: var(--muted);
+  font-size: 15px;
+}
+
+/* Intro */
+
+.intro {
+  padding-top: 56px;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 24px 0;
+}
+
+.button {
+  display: inline-block;
+  padding: 9px 16px;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  font-size: 16px;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.button.primary {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+.split {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 340px;
+  gap: 32px;
+  align-items: start;
+}
+
+.split ul {
+  margin-bottom: 0;
+}
+
+.split img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+/* Tables */
+
+.table-box {
+  margin: 0 0 16px;
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 15px;
+}
+
+th,
+td {
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  vertical-align: top;
+}
+
+th {
+  background: var(--surface);
+  font-weight: 600;
+}
+
+tr:last-child td {
+  border-bottom: 0;
+}
+
+.names code {
+  overflow-wrap: normal;
+  white-space: nowrap;
+}
+
+/* Diagram */
+
+.diagram {
+  max-width: 600px;
+  margin: 24px 0;
+}
+
+.diagram svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.diagram .boundary {
+  fill: none;
+  stroke: var(--muted);
+  stroke-dasharray: 5 4;
+}
+
+.diagram .node {
+  fill: var(--box);
+  stroke: var(--box-line);
+  stroke-width: 1.25;
+}
+
+.diagram .node.remote {
+  fill: var(--surface);
+  stroke: var(--muted);
+}
+
+.diagram .edge {
+  fill: none;
+  stroke: var(--muted);
+  stroke-width: 1.25;
+}
+
+.diagram .head {
+  fill: var(--muted);
+}
+
+.diagram text {
+  fill: var(--text);
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-size: 15px;
+}
+
+.diagram text.title {
+  font-weight: 600;
+}
+
+.diagram text.note {
+  fill: var(--muted);
+  font-size: 12.5px;
+}
+
+.parts dt {
+  font-weight: 600;
+}
+
+.parts dd {
+  margin: 0 0 12px;
+}
+
+/* Footer */
+
+.site-footer {
+  margin-top: 72px;
+  padding: 24px 0 40px;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.site-footer p {
+  margin: 0;
+}
+
+@media (max-width: 720px) {
+  body {
+    font-size: 16px;
+  }
+
+  h1 {
+    font-size: 32px;
+  }
+
+  h2 {
+    margin-top: 44px;
+    font-size: 22px;
+  }
+
+  .intro {
+    padding-top: 36px;
+  }
+
+  .lead {
+    font-size: 18px;
+  }
+
+  .split {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .split img {
+    max-width: 340px;
+  }
+}

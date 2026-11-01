@@ -45,7 +45,8 @@ Needs desktop VS Code 1.101+ on Windows, macOS or Linux (x64 or arm64).
 **Read only.** The one exception is *Export to Fabric*, which publishes an app and writes the
 model's definition into its lakehouse. Opening a semantic model keeps it on your machine only.
 
-Commands, settings and release notes: [docs/](https://github.com/djouallah/onelake_studio/tree/main/docs).
+How it works: [the website](https://djouallah.github.io/onelake_studio/). Commands, settings and release
+notes: [docs/](https://github.com/djouallah/onelake_studio/tree/main/docs).
 
 > A personal project, not a Microsoft product or supported by Microsoft. Results computed from a
 > semantic model aren't guaranteed to match Power BI.

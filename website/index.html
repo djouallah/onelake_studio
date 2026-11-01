@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OneLake Studio</title>
+  <meta name="description" content="A VS Code extension that makes a whole Microsoft Fabric tenant act as one database, queried with SQL.">
+  <link rel="icon" href="icon.png">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="site-header">
+    <div class="wrap">
+      <a class="brand" href="./"><img src="icon.png" alt="" width="28" height="28">OneLake Studio</a>
+      <nav class="site-nav" aria-label="Main">
+        <a href="architecture.html">Architecture</a>
+        <a href="https://github.com/djouallah/onelake_studio/tree/main/docs">Docs</a>
+        <a href="https://github.com/djouallah/onelake_studio">GitHub</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <section class="intro">
+      <h1>A Fabric tenant, as one database</h1>
+      <p class="lead">OneLake Studio is a VS Code extension that makes a whole Microsoft Fabric tenant act as one database, queried with SQL. It runs on your machine, is read only, and works offline.</p>
+      <div class="actions">
+        <a class="button primary" href="https://marketplace.visualstudio.com/items?itemName=djouallah.onelake-studio">Install from the Marketplace</a>
+        <a class="button" href="architecture.html">Read the architecture</a>
+      </div>
+    </section>
+
+    <section>
+      <h2>Every object has one name</h2>
+      <p>Any statement can join across items, workspaces and kinds with no setup. A Power BI semantic model is one more table, and <code>AGG("measure")</code> computes its measure.</p>
+<pre><code>SELECT * FROM lakehouse.aemo.data.dbo.dim_duid;
+SELECT dim_region.Region, AGG("Registered MW") FROM semanticmodel.aemo.nem GROUP BY ALL;
+SELECT * FROM 'lakehouse.aemo.data/Files/x.parquet';
+SHOW ALL TABLES;</code></pre>
+    </section>
+
+    <section>
+      <h2>What you can do</h2>
+      <div class="split">
+        <ul>
+          <li><strong>Browse OneLake.</strong> Workspaces, lakehouses, warehouses, SQL and mirrored databases, their tables and files, in one tree.</li>
+          <li><strong>Query with SQL.</strong> Write it in a tab's SQL box, and the results show in that tab.</li>
+          <li><strong>Look at a table in a click.</strong> Columns, row count, first rows, and Delta or Iceberg stats and history.</li>
+          <li><strong>Open lakehouse files.</strong> Parquet, CSV, JSON, Excel, DuckDB and SQLite, even inside a zip.</li>
+          <li><strong>Explore a semantic model.</strong> Its tables and relationships, and a drag-and-drop pivot as a table or a chart, with the SQL behind it.</li>
+          <li><strong>Ask Claude Code or GitHub Copilot.</strong> One command, and your assistant can list your data, read a model's measures and compute them.</li>
+          <li><strong>Work offline.</strong> What you've read keeps working with no internet: browse it, query it, pivot it.</li>
+        </ul>
+        <img src="summary.png" alt="The OneLake Studio tree: a favorite workspace with a lakehouse, its tables and files, and its semantic models." width="930" height="961">
+      </div>
+    </section>
+
+    <section>
+      <h2>Get started</h2>
+      <ol>
+        <li>Install it from Extensions in VS Code (<code>Ctrl+Shift+X</code>), the Marketplace, or the command line:
+<pre><code>code --install-extension djouallah.onelake-studio</code></pre>
+        </li>
+        <li>Click the OneLake Studio icon in the activity bar and sign in. It uses the Microsoft account VS Code already has, with no app registration.</li>
+      </ol>
+      <p>It needs desktop VS Code 1.101 or later on Windows, macOS or Linux, x64 or arm64.</p>
+      <p><strong>Read only.</strong> The one exception is Export to Fabric, which is experimental. After an OK in VS Code, it publishes a model's Explore as a Fabric app and writes the model's definition into its lakehouse.</p>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="wrap">
+      <p>A personal project, not a Microsoft product or supported by Microsoft. Results computed from a semantic model aren't guaranteed to match Power BI. MIT License.</p>
+    </div>
+  </footer>
+</body>
+</html>
