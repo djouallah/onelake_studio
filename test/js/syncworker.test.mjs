@@ -182,6 +182,7 @@ test("one tick at a time, and a reset stops what is under way", async () => {
                listItems: async () => { calls.push("items"); return []; } } });
   const worker = createSyncWorker({ onelake, ttlMs: () => MIN, isOffline: () => false });
   const first = worker.tick();
+  for (let i = 0; i < 100 && !calls.length; i++) await new Promise(r => setTimeout(r, 5));
   await worker.tick();
   assert.deepEqual(calls, ["workspaces"]);
   worker.reset();
