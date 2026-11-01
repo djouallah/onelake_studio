@@ -11,7 +11,7 @@
 //
 // The methods are DuckDB's (query, stream, cancel, info, and what a tab sets up to read a file:
 // fileView, attachFile, releaseFiles — engine-host.js) and OneLake's,
-// answered cache first by onelake.js: a table's metadata, its first rows from the engine, the identifier to
+// answered cache first by onelake.js: a table's metadata and first rows, the identifier to
 // select a table from, a Files/ listing, a file's bytes, a local copy of a file. The page
 // holds no credential and makes no request of its own; this map is the whole of what it
 // can reach.

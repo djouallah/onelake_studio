@@ -2,10 +2,9 @@
 // =============================================================================
 // catalogfile.js — the catalog, in SQLite
 // =============================================================================
-// All metadata lives in one SQLite file per account, in real tables (catalogtables.js), read and written
-// with Node's own node:sqlite. No DuckDB is loaded for it and no server has to be running, so the tree
-// draws from it before anything else has started. Nothing here is evicted. Data isn't here at all: that
-// is OneLake, and the disk cache.
+// All metadata lives in one SQLite file per account (catalogtables.js), read and written with Node's own
+// node:sqlite. No DuckDB is loaded for it and no server has to be running, so the tree draws from it
+// before anything else has started. Only a table's first rows are ever evicted.
 //
 // Each window opens the file itself, and WAL lets it read while another window writes. What another
 // window wrote or cleared is noticed by a look at the file every few seconds, since no pipe joins
@@ -30,9 +29,8 @@ const PAGE_ROWS = 500;
 const BUSY_MS = 500;             // this runs on the extension host, so it never waits long for a writer
 const CLEARED_EVERY_MS = 3_000;
 const OLD_IMPORTED = '(imported)';
-// A table's first rows, as an older version kept them under its snapshot. They are data, so what comes
-// across is that this snapshot's rows were read: the disk cache has what they were read from.
-const OLD_FIRST_ROWS = /^peek[\0␟]/;
+const FIRST_ROWS_MAX_BYTES = 256 * 1024 * 1024;
+const TRIM_EVERY = 200;          // writes between looks at that
 // SQLite's words for a file that will never open. A locked file or a full disk isn't one.
 const UNUSABLE = /not a database|malformed/i;
 
@@ -63,9 +61,11 @@ function setAside(file) {
  * @param {() => void} [o.onCleared]  another window emptied the file
  * @param {number} [o.clearedEveryMs]
  * @param {(line: string) => void} [o.log]  why the file can't be opened, once
+ * @param {number} [o.firstRowsMaxBytes]
  */
-function createCatalogFile({ file, onCleared = () => {}, clearedEveryMs = CLEARED_EVERY_MS, log = () => {} }) {
-  let db = null, poll = null, seen = null, said = false;
+function createCatalogFile({ file, onCleared = () => {}, clearedEveryMs = CLEARED_EVERY_MS, log = () => {},
+                             firstRowsMaxBytes = FIRST_ROWS_MAX_BYTES }) {
+  let db = null, poll = null, seen = null, said = false, writes = 0;
   let statements = new Map();
   let dataVersion = null, changedFrom = 0;
   const subscribers = new Set();
@@ -136,10 +136,6 @@ function createCatalogFile({ file, onCleared = () => {}, clearedEveryMs = CLEARE
   // An entry an older version kept, where it now belongs. One that doesn't fit its table, or has none,
   // is left behind: it is only a cache, and is read again when it is needed. In a caller's transaction.
   function place(k, ts, value) {
-    if (OLD_FIRST_ROWS.test(k)) {
-      tables.write(k.replace(OLD_FIRST_ROWS, 'rows\0'), true, ts);
-      return;
-    }
     let parsed;
     try { parsed = JSON.parse(value); } catch (_) { return; }
     tables.write(k, parsed, ts);
@@ -226,6 +222,7 @@ function createCatalogFile({ file, onCleared = () => {}, clearedEveryMs = CLEARE
         if (!tables.write(key, JSON.parse(json), Math.floor(at))) throw new Error(`the catalog has no table for ${String(key).split('\0')[0]}`);
         tables.clearFailure(key);
       });
+      if (++writes % TRIM_EVERY === 0) inOne(() => tables.trimFirstRows(firstRowsMaxBytes));
     },
     /** A read of this entry failed: the last good answer is still served, and this says why it is old. */
     noteFailure(key, at, error) { tables.noteFailure(key, Math.floor(at), String(error)); },

@@ -65,6 +65,7 @@ and F5 has its own, as the state file does today.
 | `delta_commit`, `delta_state`, `delta_property` | A Delta table's commits, and its state and properties as of a version |
 | `item_name`, `catalog_prefix` | The names behind a Direct Lake model's GUIDs, and an item's prefix in OneLake's catalog |
 | `rows_read`, `file_read` | That a table's snapshot or a file's version was read here |
+| `first_rows` | A table's first rows, per snapshot, so its Data tab opens at once. The one thing with a limit: 256 MB, oldest first |
 | `sync_state` | what was synced, when, its last error, when it is next due |
 
 Every row says when it was last read from OneLake.
@@ -87,7 +88,6 @@ Every row says when it was last read from OneLake.
 | Saved queries | `~/OneLakeStudio/queries/` | Not metadata. |
 | Bytes of a `Files/` object the host reads | A blob on disk | Data, with its etag in `lake_object`. |
 | The log | The state file, `state-<id>.duckdb` | Not catalog data. Could move later. |
-| A table's first rows | The disk cache | Data, not metadata. DuckDB reads them, and the cache holds what it read. |
 
 ## The sync worker
 

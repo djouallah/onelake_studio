@@ -8,9 +8,10 @@
 // The tree, the panel and anything else that asks all share one answer per key, one
 // request per key in flight, and one 'changed' event when OneLake's answer moves.
 //
-// A table's first rows are data, so they aren't kept here: the engine reads them, and the disk cache
-// holds what it read. A Files/ object's bytes are kept under the version its cached listing gave
-// (readBytes).
+// A table's first rows are kept too, under the table's metadata-location: a snapshot is
+// immutable, so rows read from it can never be stale, and a table opened once opens
+// again — even after a restart — without a single request to OneLake. A Files/ object's
+// bytes are kept the same way, under the version its cached listing gave (readBytes).
 // A workspace's semantic models and apps (Fabric's API, not OneLake) are listings like the others.
 //
 // No `vscode` import: catalog.js does the HTTP, store.js the disk, and the tests drive
@@ -137,6 +138,7 @@ function createOneLake({ catalog, store, prefetchEnabled = () => true, onHit = (
     tables: lh => `tables\u0000${lh.workspace}\u0000${lh.item}`,
     files: (lh, dir) => `files\u0000${lh.workspace}\u0000${lh.item}\u0000${dir || ''}`,
     table: (lh, t) => `table\u0000${lh.workspace}\u0000${lh.item}\u0000${t.schema || ''}\u0000${t.table}`,
+    peek: loc => `peek\u0000${loc}`,
     rows: loc => `rows\u0000${loc}`,
     models: ws => `models\u0000${ws}`,
     apps: ws => `apps\u0000${ws}`,
@@ -367,8 +369,8 @@ function createOneLake({ catalog, store, prefetchEnabled = () => true, onHit = (
   }
 
   /**
-   * The table's first rows, read by the engine, whose disk cache keeps them. `run(sql)` is the
-   * engine's query — passed in, because the engine belongs to the window and this module does not.
+   * The table's first rows, read once per snapshot. `run(sql)` is the engine's query —
+   * passed in, because the engine belongs to the window and this module does not.
    */
   async function peek(lh, t, run) {
     const meta = await table(lh, t);
@@ -377,9 +379,13 @@ function createOneLake({ catalog, store, prefetchEnabled = () => true, onHit = (
       return { fields: cols.map(f => ({ name: f.name, type: f.type })), rows: [], numRows: 0, cached: true };
     }
     if (!meta.metadataLocation) throw new Error('the catalog gave this table no metadata location');
+    const k = keys.peek(meta.metadataLocation);
+    const hit = await store.peek(k);
+    if (hit) return { ...hit, cached: true };
     const res = await run(`SELECT * FROM ${names.sqlNameOf(lh, t)} LIMIT ${PEEK_ROWS}`);
-    await rowsRead(meta.metadataLocation);
-    return { fields: res.fields, rows: res.rows, numRows: res.numRows, cached: false };
+    const out = { fields: res.fields, rows: res.rows, numRows: res.numRows };
+    await store.put(k, out);
+    return { ...out, cached: false };
   }
 
   // A statement has read this table's rows, at this snapshot: what it read works offline from now on.
@@ -454,14 +460,15 @@ function createOneLake({ catalog, store, prefetchEnabled = () => true, onHit = (
     table: (lh, t) => store.known(keys.table(lh, t)),
     // Whether this table's rows have been read here at its current snapshot. Not whether all of them
     // were: what is kept is the part of each file a statement read. A table nothing was ever written
-    // to reads no file.
+    // to reads no file. Its first rows kept are rows read, for what was read before this was noted.
     rows: async (lh, t) => {
       const kept = await store.known(keys.table(lh, t));
       const meta = kept && kept.value;
       if (!meta) return false;
       if (meta.empty) return true;
       if (!meta.metadataLocation) return false;
-      return await store.peek(keys.rows(meta.metadataLocation)) !== undefined;
+      return await store.peek(keys.rows(meta.metadataLocation)) !== undefined
+        || await store.peek(keys.peek(meta.metadataLocation)) !== undefined;
     },
     // Whether this version of a file has been read here: by a statement, what it read of the file, or
     // by the host, the whole file. `entry` is its line in a listing.

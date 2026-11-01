@@ -220,8 +220,8 @@ every window is a client of it over DuckDB's Quack protocol ([`src/engine-client
 - **What is remembered:** a SQLite file, `engine-server\catalog-<id>.sqlite` in the extension's storage
   ([`src/catalogfile.js`](../src/catalogfile.js)). All metadata is real tables there: listings, table metadata, Delta state
   and commits, the models opened, and what has been read ([`src/catalogtables.js`](../src/catalogtables.js)). A `listing`
-  table says what was read and when, so an empty listing is an answer. Nothing is evicted, as offline depends on it. Data isn't kept here: a table's first
-  rows come from DuckDB, whose disk cache holds what it read. Each window
+  table says what was read and when, so an empty listing is an answer. A table's first rows are here too, with a limit of 256 MB, oldest first. Nothing else is
+  evicted, as offline depends on it. Each window
   opens the file itself with Node's `node:sqlite`, so it needs no server and no DuckDB, and a page's SQL can't reach it, as
   it is outside the folders DuckDB may open. WAL lets a window read while another writes, and another window's Clear is
   noticed within a few seconds. A file that isn't a database is set aside as `.bad` and started again. It is named after
@@ -257,7 +257,7 @@ SQL box, no Stop and no Restart.
 
 | What | Where it is kept | When it is read again |
 | --- | --- | --- |
-| Listings (workspaces, items, tables, `Files/`, semantic models), table metadata | The catalog file, [`src/catalogfile.js`](../src/catalogfile.js) | Served at once, refreshed in the background past its window |
+| Listings (workspaces, items, tables, `Files/`, semantic models), table metadata, first rows | The catalog file, [`src/catalogfile.js`](../src/catalogfile.js) | Served at once, refreshed in the background past its window |
 | The name behind a Direct Lake model's item GUIDs | The catalog file | Only when using it fails |
 | The bytes of a `Files/` object the host reads (an image, a `.bim`, a SQLite copy, a saved file) | Under the etag its cached listing gave | Only when the file was rewritten |
 | What DuckDB reads: table data and `Files/` objects | DuckDB's disk cache (`cache_httpfs`) | Only when the file was rewritten: a kept copy is checked against the file's version tag and modification time |

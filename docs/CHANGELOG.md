@@ -11,8 +11,7 @@
   in OneLake goes back to the cloud.
 - **What is cached about OneLake is real tables, and is never evicted.** Workspaces, items, tables, columns, history,
   `Files/` listings, models, apps, Delta state and commits, and the models you opened are rows in the SQLite file, and nothing
-  evicts them, so `metadataCacheMaxMB` is gone. A table's first rows are no longer kept there: they come from the disk
-  cache, so a table's Data tab now goes through the engine.
+  evicts them. A table's first rows have a fixed limit of 256 MB, so `metadataCacheMaxMB` is gone.
 - **No Data tab where it could only fail.** Offline, a table with none of its rows read here opens on Stats and has no Data
   tab, and the status line says why. It comes back with the connection.
 - **The tree opens at once.** It draws from what this machine holds before sign-in, with no server running and no DuckDB

@@ -71,6 +71,7 @@ const SCHEMA = `
     PRIMARY KEY (workspace_id, item_id)) WITHOUT ROWID;
   CREATE TABLE IF NOT EXISTS catalog_prefix (item_key TEXT PRIMARY KEY, ts INTEGER NOT NULL, prefix TEXT NOT NULL) WITHOUT ROWID;
   CREATE TABLE IF NOT EXISTS rows_read (location TEXT PRIMARY KEY, ts INTEGER NOT NULL) WITHOUT ROWID;
+  CREATE TABLE IF NOT EXISTS first_rows (location TEXT PRIMARY KEY, ts INTEGER NOT NULL, rows_json TEXT NOT NULL) WITHOUT ROWID;
   CREATE TABLE IF NOT EXISTS file_read (
     workspace TEXT NOT NULL, path TEXT NOT NULL, version TEXT NOT NULL, ts INTEGER NOT NULL,
     PRIMARY KEY (workspace, path, version)) WITHOUT ROWID;
@@ -84,7 +85,7 @@ const SCHEMA = `
 `;
 // What Clear Cached empties. Not semantic_view: as the models' local copies do, what was opened stays.
 const TABLES = ['listing_read', 'workspace', 'item', 'lake_table', 'lake_column', 'snapshot', 'lake_object', 'semantic_model', 'app',
-  'delta_commit', 'delta_state', 'delta_property', 'item_name', 'catalog_prefix', 'rows_read', 'file_read', 'sync_failure'];
+  'delta_commit', 'delta_state', 'delta_property', 'item_name', 'catalog_prefix', 'rows_read', 'first_rows', 'file_read', 'sync_failure'];
 
 // Each kind of store key (onelake.js keys): the column each part after its kind goes in, where a row
 // says which entry it is about.
@@ -92,7 +93,7 @@ const KEY_PARTS = {
   workspaces: [], items: ['workspace'], tables: ['workspace', 'item'], files: ['workspace', 'item', 'dir'],
   models: ['workspace'], apps: ['workspace'], table: ['workspace', 'item', 'schema_name', 'table_name'],
   'delta-commits': ['workspace', 'item', 'schema_name', 'table_name'], 'delta-state': ['workspace', 'dir', 'table_name'],
-  'item-named': ['workspace', 'item'], irc: ['item'], rows: ['dir'], 'file-read': ['workspace', 'dir', 'table_name'],
+  'item-named': ['workspace', 'item'], irc: ['item'], rows: ['dir'], peek: ['dir'], 'file-read': ['workspace', 'dir', 'table_name'],
 };
 const WHICH = 'kind = ? AND workspace = ? AND item = ? AND schema_name = ? AND table_name = ? AND dir = ?';
 function whichOf(kind, parts) {
@@ -297,6 +298,16 @@ function createCatalogTables({ statement }) {
       },
       put([location], v, ts) { run('INSERT OR REPLACE INTO rows_read VALUES (?, ?)', location, ts); },
     },
+    // A table's first rows, under its snapshot: as many columns as it has, of any type, so as JSON.
+    peek: {
+      fits: isObject,
+      has: ([location]) => !!one('SELECT 1 AS found FROM first_rows WHERE location = ?', location),
+      get([location]) {
+        const r = one('SELECT ts, rows_json FROM first_rows WHERE location = ?', location);
+        return r ? { at: r.ts, value: JSON.parse(r.rows_json) } : null;
+      },
+      put([location], v, ts) { run('INSERT OR REPLACE INTO first_rows VALUES (?, ?, ?)', location, ts, JSON.stringify(v)); },
+    },
     'file-read': {
       fits: v => v === true,
       has: ([ws, path, version]) => !!one('SELECT 1 AS found FROM file_read WHERE workspace = ? AND path = ? AND version = ?', ws, path, version),
@@ -434,6 +445,15 @@ function createCatalogTables({ statement }) {
       return { keys, latest };
     },
     clear() { for (const t of TABLES) run(`DELETE FROM ${t}`); },
+    // First rows are the one thing here with a limit, as they are data and offline doesn't rest on them:
+    // the disk cache holds them too. Oldest first, down to 80%.
+    trimFirstRows(maxBytes) {
+      const { total } = one('SELECT coalesce(sum(length(rows_json)), 0) AS total FROM first_rows');
+      if (total <= maxBytes) return;
+      run(`DELETE FROM first_rows WHERE location IN (
+        SELECT location FROM (SELECT location, sum(length(rows_json)) OVER (ORDER BY ts DESC, location) AS kept FROM first_rows)
+        WHERE kept > ?)`, Math.floor(maxBytes * 0.8));
+    },
     anything: () => !!one(`SELECT ${TABLES.map(t => `EXISTS (SELECT 1 FROM ${t})`).join(' OR ')} AS found`).found,
     // The semantic models opened here, oldest first: { name, schema, path, created }. A view is replaced
     // by removing it and adding it again, which also moves it to the end.

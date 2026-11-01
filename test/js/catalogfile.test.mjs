@@ -98,6 +98,38 @@ test("a window isn't told of its own Clear", async t => {
   assert.equal(told, 0);
 });
 
+test("past the limit, the oldest first rows go, down to 80%, and nothing else does", async t => {
+  const { open } = await setup(t);
+  const { backend } = open({ firstRowsMaxBytes: 2000 });
+  await backend.write("workspaces", 1, JSON.stringify(["old but kept"]));
+  await backend.write("item-named\0a\0b", 1, JSON.stringify({ workspace: "w", item: "i" }));
+  await backend.write("rows\0loc", 1, "true");
+  const peek = i => `peek\0_${String(i).padStart(3, "0")}`;
+  for (let i = 0; i < 197; i++) await backend.write(peek(i), i + 10, JSON.stringify({ rows: "x".repeat(89) }));
+  // The look comes on the 200th write, three of which weren't first rows: at peek(196). Each is 100 characters.
+  assert.equal(await backend.read(peek(0)), null);
+  assert.equal(await backend.read(peek(180)), null);
+  assert.equal((await backend.read(peek(181))).at, 191);
+  assert.equal((await backend.read(peek(196))).at, 206);
+  assert.deepEqual(JSON.parse((await backend.read("workspaces")).json), ["old but kept"]);
+  assert.ok(await backend.read("item-named\0a\0b"));
+  assert.ok(await backend.read("rows\0loc"));
+});
+
+// What onelake.js really stores, built by the code that builds it.
+const WS = "ANZ Retail", ITEM = "gold-1.Lakehouse";
+const icebergMeta = (over = {}) => ({
+  "current-snapshot-id": 2, "current-schema-id": 0, "format-version": 2, "default-spec-id": 0,
+  schemas: [{ "schema-id": 0, fields: [{ id: 1, name: "id", type: "long" }, { id: 2, name: "ts", type: "timestamp" }] }],
+  "partition-specs": [{ "spec-id": 0, fields: [{ name: "day", transform: "day" }] }],
+  properties: { "write.parquet.compression-codec": "zstd" },
+  snapshots: [
+    { "snapshot-id": 1, "timestamp-ms": 1000, "schema-id": 0, summary: { operation: "append", "added-records": "5", "total-records": "5", "engine-name": "x", "engine-version": "1" } },
+    { "snapshot-id": 2, "timestamp-ms": 2000, "schema-id": 0, summary: { operation: "append", "total-records": "9007199254740993", "total-files-size": "123", "total-data-files": "4", "total-delete-files": "0" } },
+  ],
+  ...over,
+});
+
 test("every kind of listing comes back as it went in, from real rows", async t => {
   const { open, file } = await setup(t);
   const { backend } = open();
@@ -205,6 +237,7 @@ test("all the metadata is real tables, and there is no table of keys and values"
     "irc\0ws/i": "ws-guid/item-guid",
     "rows\0abfss://x/metadata/1.metadata.json": true,
     [`file-read\0${WS}\0${ITEM}/Files/a.parquet\0etag`]: true,
+    "peek\0abfss://x/metadata/1.metadata.json": { fields: [{ name: "id", type: "BIGINT" }], rows: [{ id: 1 }], numRows: 1 },
   };
   for (const [k, v] of Object.entries(entries)) await backend.write(k, 9, JSON.stringify(v));
   for (const [k, v] of Object.entries(entries)) {
@@ -237,13 +270,12 @@ test("all the metadata is real tables, and there is no table of keys and values"
 test("a value with no table, or that doesn't fit its table, isn't kept", async t => {
   const { open } = await setup(t);
   const { backend, store } = open();
-  await assert.rejects(backend.write("peek\0loc", 1, '{"rows":[]}'), /no table for peek/);
   await assert.rejects(backend.write("no such kind", 1, "1"), /no table/);
   await assert.rejects(backend.write(`items\0${WS}`, 1, JSON.stringify(["an older shape"])), /no table/);
   assert.equal(await backend.read(`items\0${WS}`), null);
-  await store.put("peek\0loc", { rows: [] });
-  assert.deepEqual(await store.peek("peek\0loc"), { rows: [] }, "the store still holds it in memory, as when any write fails");
-  assert.equal(await open().store.peek("peek\0loc"), undefined);
+  await store.put("no such kind", { rows: [] });
+  assert.deepEqual(await store.peek("no such kind"), { rows: [] }, "the store still holds it in memory, as when any write fails");
+  assert.equal(await open().store.peek("no such kind"), undefined);
 });
 test("Clear empties the tables too, and the size says so", async t => {
   const { open } = await setup(t);
@@ -283,8 +315,7 @@ test("a file from an older version moves over once, and its old tables go", asyn
   const { backend } = open();
   assert.deepEqual(await backend.read("workspaces"), { at: 2, json: '["from a table"]' });
   assert.equal((await backend.read("items\0a")).at, 4);
-  assert.deepEqual(await backend.read("rows\0loc"), { at: 5, json: "true" }, "first rows kept say that its rows were read");
-  assert.equal(await backend.read("peek\0loc"), null);
+  assert.deepEqual(await backend.read("peek\0loc"), { at: 5, json: '{"rows":[]}' });
   assert.equal(await backend.read("catalog snapshot"), null);
   assert.deepEqual(await backend.read("rows\0other"), { at: 7, json: "true" });
   assert.deepEqual(await backend.read("item-named\0a\0b"), { at: 8, json: '{"workspace":"w","item":"i"}' });

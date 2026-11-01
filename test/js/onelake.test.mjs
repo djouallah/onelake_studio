@@ -251,7 +251,7 @@ test("a table's rows are out of reach only offline, and only if none were read h
   assert.equal(await ol.rowsOutOfReach(lh, t), false, "read before, so there is something to show");
 });
 
-test("reading a table's first rows counts as its rows read", async () => {
+test("first rows already kept count as rows read", async () => {
   const ol = createOneLake({ catalog: fakeCatalog(), store: createStore({ dir: null }) });
   const t = { schema: "dbo", table: "a" };
   await ol.peek(lh, t, async () => ({ fields: [], rows: [], numRows: 0 }));
@@ -267,16 +267,17 @@ test("a table nothing was ever written to reads no file, so it is cached once kn
   assert.equal(await ol.cached.rows(lh, t), true);
 });
 
-test("the first rows are data, so they come from the engine each time and aren't kept here", async () => {
+test("the first rows are read once per snapshot, and the engine is not asked again", async () => {
   const catalog = fakeCatalog();
   const ol = createOneLake({ catalog, store: createStore({ dir: null }) });
   const sql = [];
   const run = async q => { sql.push(q); return { fields: [{ name: "id", type: "BIGINT" }], rows: [{ id: 1 }], numRows: 1 }; };
   const t = { schema: "dbo", table: "a" };
   const p1 = await ol.peek(lh, t, run);
-  await ol.peek(lh, t, run);
+  const p2 = await ol.peek(lh, t, run);
   assert.deepEqual(p1.rows, [{ id: 1 }]);
-  assert.equal(sql.length, 2);
+  assert.equal(p2.cached, true);
+  assert.equal(sql.length, 1);
   assert.equal(sql[0], "SELECT * FROM lakehouse.ws.lh.dbo.a LIMIT 100");
 });
 
