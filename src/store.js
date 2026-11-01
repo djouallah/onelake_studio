@@ -54,6 +54,15 @@ function createStore({ dir, backend = null, ttlMs = DEFAULT_TTL_MS, maxBytes = D
   // refresh failures are reported under their own name so nobody has to remember that.
   const inflight = new Map();   // key -> Promise<entry>
   const memo = new Map();       // key -> { value, at, json }   (insertion order = LRU)
+  // What another window wrote: what this one holds of it goes, and its listeners hear.
+  if (backend && backend.subscribe) {
+    backend.subscribe(keys => {
+      for (const key of keys) {
+        memo.delete(key);
+        events.emit('changed', key);
+      }
+    });
+  }
   let tmpSeq = 0;
   let total = 0;                // bytes on disk, from the sweep plus writes since
 
@@ -136,6 +145,12 @@ function createStore({ dir, backend = null, ttlMs = DEFAULT_TTL_MS, maxBytes = D
           const ent = await write(key, await fetcher());
           if (before && !sameAnswer(before.value, ent.value)) events.emit('changed', key, ent.value);
           return ent;
+        } catch (e) {
+          // Why what is kept is old, for the tree to say. Being offline says nothing about the listing.
+          if (backend && backend.noteFailure && !(e && e.offline)) {
+            try { backend.noteFailure(key, now(), (e && e.message) || e); } catch (_) {}
+          }
+          throw e;
         } finally {
           inflight.delete(key);
         }
@@ -172,6 +187,11 @@ function createStore({ dir, backend = null, ttlMs = DEFAULT_TTL_MS, maxBytes = D
   const peek = async key => { const e = await read(key); return e ? e.value : undefined; };
   // The same, with when it was stored: { value, at }, or null. Never fetches, never refreshes.
   const known = async key => { const e = await read(key); return e ? { value: e.value, at: e.at } : null; };
+  // Why the last read of this entry failed: { at, error }, or null. Read at once, for drawing a node.
+  const failureOf = key => {
+    if (!backend || !backend.failureOf) return null;
+    try { return backend.failureOf(key); } catch (_) { return null; }
+  };
 
   // ---------------------------------------------------------------------------
   // Disk budget
@@ -283,7 +303,7 @@ function createStore({ dir, backend = null, ttlMs = DEFAULT_TTL_MS, maxBytes = D
   }
 
   return {
-    get, put, peek, known, clear, forget, size, getBlob, hasBlob, putBlob,
+    get, put, peek, known, failureOf, clear, forget, size, getBlob, hasBlob, putBlob,
     on: (ev, fn) => { events.on(ev, fn); return () => events.off(ev, fn); },
   };
 }

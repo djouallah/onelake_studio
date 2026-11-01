@@ -48,9 +48,11 @@ const SCHEMA = `
     workspace TEXT NOT NULL, pos INTEGER NOT NULL, id TEXT, name TEXT, description TEXT, url TEXT,
     deployed_at TEXT, access TEXT, extra TEXT,
     PRIMARY KEY (workspace, pos)) WITHOUT ROWID;
+  CREATE TABLE IF NOT EXISTS sync_state (k TEXT PRIMARY KEY, ts INTEGER NOT NULL, error TEXT NOT NULL) WITHOUT ROWID;
   CREATE INDEX IF NOT EXISTS lake_table_listed ON lake_table (workspace, item, listed_pos);
+  CREATE INDEX IF NOT EXISTS listing_ts ON listing (ts);
 `;
-const TABLES = ['listing', 'workspace', 'item', 'lake_table', 'lake_column', 'snapshot', 'lake_object', 'semantic_model', 'app'];
+const TABLES = ['listing', 'workspace', 'item', 'lake_table', 'lake_column', 'snapshot', 'lake_object', 'semantic_model', 'app', 'sync_state'];
 
 const isObject = v => !!v && typeof v === 'object' && !Array.isArray(v);
 const listOf = v => Array.isArray(v) && v.every(isObject);
@@ -274,6 +276,20 @@ function createCatalogTables({ statement }) {
       return !!r && r.route.has(k, r.parts);
     },
     isCatalogData: key => !!routeOf(key),
+    /** The store's keys of what was written at or after `ts`, with the latest time among them. */
+    changedSince(ts) {
+      const keys = [];
+      let latest = ts;
+      for (const r of all('SELECT k, ts FROM listing WHERE ts >= ?', ts)) {
+        keys.push(String(r.k).replace(/␟/g, '\0'));
+        latest = Math.max(latest, r.ts);
+      }
+      for (const r of all('SELECT workspace, item, schema_name, name, meta_ts FROM lake_table WHERE meta_ts >= ?', ts)) {
+        keys.push(['table', r.workspace, r.item, r.schema_name, r.name].join('\0'));
+        latest = Math.max(latest, r.meta_ts);
+      }
+      return { keys, latest };
+    },
     clear() { for (const t of TABLES) run(`DELETE FROM ${t}`); },
     anything: () => !!one('SELECT EXISTS (SELECT 1 FROM listing) OR EXISTS (SELECT 1 FROM lake_table) AS found').found,
   };

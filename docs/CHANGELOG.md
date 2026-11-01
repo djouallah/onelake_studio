@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **The catalog keeps itself current.** What you have open and pinned workspaces refresh on their own, so a table added in
+  Fabric appears with no click. Once a day, the listings of the rest of the tenant are read too, a few at a time, so the
+  tree and `find` know what you never opened. A listing that can't be read says *refresh failed* beside the last good
+  answer, and windows hear what another window read.
 - **A file says whether it has been read here,** as a table does: a cloud until then, a green check after. A file rewritten
   in OneLake goes back to the cloud.
 - **What is cached about OneLake is real tables, and is never evicted.** Workspaces, items, tables, columns, history,

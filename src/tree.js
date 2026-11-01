@@ -36,6 +36,8 @@ const isFabricFilter = only => only === 'models' || only === 'apps';
 // domain data on the node (rather than encoding it into a label) is what lets a click hand
 // the panel a { workspace, item, schema, table } with nothing to parse back out.
 const node = (kind, label, extra) => ({ kind, label, ...extra });
+// The nodes a listing is behind.
+const LISTS = new Set(['workspace', 'tables', 'dir', 'models', 'apps']);
 
 // A table node's SQL name (lakehouse.ws.item.schema.table), or null for an item SQL cannot name.
 const sqlNameOrNull = n => { try { return sqlNameOf(n, n); } catch (_) { return null; } };
@@ -342,11 +344,34 @@ class LakehouseTree {
         item.iconPath = new vscode.ThemeIcon('info');
         break;
     }
+    // What is listed is still on show, and this says why it may be old.
+    if (LISTS.has(n.kind) && this.onelake.listingFailure) {
+      const failed = this.onelake.listingFailure(n);
+      if (failed) {
+        item.description = [item.description, 'refresh failed'].filter(Boolean).join(' · ');
+        item.tooltip = `Last refresh failed: ${failed.error}\nWhat is shown is the last good answer.`;
+      }
+    }
     return item;
+  }
+
+  // What this window has opened, for the sync worker to keep current: a node whose children were asked
+  // for, as a listing.
+  opened() {
+    const out = [];
+    for (const n of this._nodes.values()) {
+      if (!n.opened) continue;
+      if (n.kind === 'workspace') out.push({ kind: 'items', workspace: n.workspace });
+      else if (n.kind === 'tables') out.push({ kind: 'tables', workspace: n.workspace, item: n.item });
+      else if (n.kind === 'dir') out.push({ kind: 'files', workspace: n.workspace, item: n.item, dir: n.dir || '' });
+      else if (n.kind === 'models' || n.kind === 'apps') out.push({ kind: n.kind, workspace: n.workspace });
+    }
+    return out;
   }
 
   async getChildren(n) {
     if (!this.isSignedIn()) return [];   // the welcome view covers this state
+    if (n) n.opened = true;
     try {
       return await this._children(n);
     } catch (e) {

@@ -456,6 +456,7 @@ function createOneLake({ catalog, store, prefetchEnabled = () => true, onHit = (
     tables: lh => store.known(keys.tables(lh)),
     files: (lh, dir = '') => store.known(keys.files(lh, dir)),
     models: ws => store.known(keys.models(ws)),
+    apps: ws => store.known(keys.apps(ws)),
     table: (lh, t) => store.known(keys.table(lh, t)),
     // Whether this table's rows have been read here at its current snapshot. Not whether all of them
     // were: what is kept is the part of each file a statement read. A table nothing was ever written
@@ -478,9 +479,16 @@ function createOneLake({ catalog, store, prefetchEnabled = () => true, onHit = (
   // Whether a table's rows can't be read from here at all: offline, with none of them read before.
   // Online they are one read away.
   const rowsOutOfReach = async (lh, t) => !!isOffline() && !await cached.rows(lh, t);
+  // Why a listing couldn't be read again, with what was kept still on show: { at, error }, or null.
+  const listingFailure = n => store.failureOf(
+    n.kind === 'workspace' || n.kind === 'items' ? keys.items(n.workspace)
+      : n.kind === 'tables' ? keys.tables(n)
+      : n.kind === 'dir' ? keys.files(n, n.dir)
+      : n.kind === 'models' ? keys.models(n.workspace)
+      : keys.apps(n.workspace));
 
   return {
-    rowsOutOfReach,
+    rowsOutOfReach, listingFailure,
     workspaces, items, tables, files, table, deltaState, deltaHistory, peek, prefetch, refreshTables,
     models, apps, itemNamed, readBytes, cached, rowsRead, fileRead, onRowsRead,
     onChanged: fn => listen('changed', key => fn(decode(key))),

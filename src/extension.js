@@ -21,6 +21,7 @@ const { openLogs } = require('./logs');
 const { createCatalog } = require('./catalog');
 const { createStore } = require('./store');
 const { createCatalogFile, catalogFileOf, stateFileOf } = require('./catalogfile');
+const { createSyncWorker } = require('./syncworker');
 const { createOneLake, walkCached } = require('./onelake');
 const { createSqlTables } = require('./sqltables');
 const { createConnectivity } = require('./connectivity');
@@ -975,6 +976,7 @@ async function activateInner(context) {
     fileCacheAccount = key;   // the engine picks it up when it is next built
     onelake.useStore(storeFor(key));
     importKept(context, key, jsonStoreOf(key));
+    syncWorker.reset();
     namesKept = null;
     // Workspace and item GUIDs belong to the account's tenant: listed again for the new one.
     fabric.reset();
@@ -1005,6 +1007,22 @@ async function activateInner(context) {
     get: () => context.globalState.get(favKey(), []),
     set: list => context.globalState.update(favKey(), [...new Set(list)].sort((a, b) => a.localeCompare(b))),
   };
+
+  // Keeps the catalog current behind everything (syncworker.js). Started once the session is known.
+  const syncOwner = randomBytes(8).toString('hex');
+  const syncWorker = createSyncWorker({
+    onelake,
+    opened: () => (explorerView && explorerView.visible ? tree.opened() : []),
+    pinned: () => favorites.get(),
+    ttlMs: catalogTtlMs,
+    canFabric: () => fabricToken().then(t => !!t, () => false),
+    isOffline: () => connectivity.offline(),
+    lease: () => {
+      try { return catalogFileFor(context, storeAccount, storeMaxBytes).lease(syncOwner, 90_000); } catch (_) { return false; }
+    },
+    log: line => out && out.appendLine(line),
+  });
+  context.subscriptions.push({ dispose: () => syncWorker.stop() });
 
   // The explorer's filter: one type only, until the picker says otherwise. Not remembered: left
   // on from last time it would look like missing workspaces, and read them all at startup.
@@ -1070,6 +1088,7 @@ async function activateInner(context) {
     postLive({ type: 'connectivity' });
     if (engine) engine.catalogChanged();
     tree.redraw();
+    if (!reason) syncWorker.tick();
     // A window that started with no internet may have been told there was no session. Nothing says
     // so when the internet comes back, so ask.
     if (!connectivity.noInternet() && !hasSession) sessionChanged();
@@ -2134,6 +2153,7 @@ async function activateInner(context) {
     // needs it, to find that session when the internet returns.
     if (!signedOutByChoice()) connectivity.check();
     warmIfWanted();
+    syncWorker.start();
   })().catch(e => { if (out) out.appendLine(`the account provider could not be asked — ${(e && e.message) || e}`); });
 }
 

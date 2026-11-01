@@ -276,6 +276,13 @@ SQL box, no Stop and no Restart.
   - **A model's local copy** is not covered: it changes only on **Download Again**.
 - **Clearing reaches every window:** each one notices it in the catalog file within a few seconds, and what it holds in
   memory goes too.
+- **The catalog keeps itself current** ([`src/syncworker.js`](../src/syncworker.js)), behind everything, in a window's
+  extension host, where VS Code's sign-in, proxy and certificates are. Each window refreshes what it has open and pinned
+  workspaces past `catalogTtlMinutes`. One window, holding a lease in the catalog file, reads the rest of the tenant's
+  listings once a day: workspaces, items, table lists, and models if a Fabric token is already there. That is five
+  listings every 15 seconds, one at a time, and a 429 or no answer stops it for a minute. It reads no table's metadata, and
+  offline it asks nothing. A listing that can't be read shows *refresh failed* beside the last good answer. A window hears
+  what another wrote from the file within a few seconds, and its tree redraws.
 - **Per Microsoft account:** switching accounts never serves one account's data to another.
 - **Survives a sign-out:** signing back in finds it warm. Only **Clear Cached OneLake Data** deletes it.
 - **The catalog is cached too:** `SHOW ALL TABLES` and `information_schema` list what the tree has seen
@@ -622,7 +629,7 @@ every window. The rest apply at once.
 | `app/querytext.js` | The SQL box's statements, error positions and variables. |
 | `src/panel.js`, `src/host.js`, `src/html.js`, `src/webview.js` | A tab's webview, its channel, and its page. |
 | `src/performance.js`, `src/logs.js` | The Performance and Logs tabs. |
-| `src/catalogfile.js`, `src/catalogtables.js` | What is remembered, in SQLite, and the catalog's tables there. |
+| `src/catalogfile.js`, `src/catalogtables.js`, `src/syncworker.js` | What is remembered, in SQLite, the catalog's tables there, and what keeps them current. |
 | `src/engine-server.js`, `src/engine-client.js`, `src/enginelog.js` | The server: its process, a window's side of it, and its log. |
 | `src/agent.js`, `src/bridge.js`, `bin/cli.mjs` | The command line. |
 | `src/exportapp.js`, `src/fabricapp.js`, `src/onelakewrite.js` | Export to Fabric. |

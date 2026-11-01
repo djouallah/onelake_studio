@@ -1,6 +1,6 @@
 # The OneLake catalog: specification
 
-**Status: design, built in waves (below). Waves 1 and 2 are in the code.** Where it differs from
+**Status: design, built in waves (below). Waves 1 to 3 are in the code.** Where it differs from
 [ARCHITECTURE.md](ARCHITECTURE.md), this describes what is planned and that describes what runs today.
 [NAMING.md](NAMING.md) does not change.
 
@@ -12,7 +12,7 @@ parts have one job each:
 | Part | Its job | Runs in | Touches the network |
 | --- | --- | --- | --- |
 | **The catalog** | Knows what exists: workspaces, items, tables, columns, files | A SQLite file | Never |
-| **The sync worker** | Keeps the catalog up to date, in the background | The server | Yes: the one reader of OneLake and Fabric metadata |
+| **The sync worker** | Keeps the catalog up to date, in the background | The window's extension host | Yes: listings from OneLake and Fabric |
 | **The engine** | Runs SQL and reads the bytes | DuckDB, in the server | Yes: reads data, with a disk cache |
 
 Anything that wants metadata reads the catalog. Nothing waits on OneLake to answer a question the catalog
@@ -22,22 +22,19 @@ can answer.
  Tree        Tabs        Command line
     \          |          /
      \         |         /
-   +-----------------------+
-   |  Window               |
-   |  sign-in, read-only   |
-   |  guard, names         |
-   +-----------------------+
+   +-----------------------------+          OneLake,
+   |  Window                     | ------>  Fabric REST API
+   |  sign-in, read-only guard,  |          (listings, metadata)
+   |  names, sync worker         |
+   +-----------------------------+
       |                  |
-      | reads            | statements, sync requests, token
+      | reads, writes    | statements, token
       v                  v
- +-----------+      +----------------------------------+
- |  Catalog  | <--- |  Server                          |
- |  SQLite   | only |  sync worker: writes the catalog |
- +-----------+ writer  engine: DuckDB and disk cache   |
-                    +----------------------------------+
-                              |
-                              v
-                     OneLake, Fabric REST API
+ +-----------+      +-----------------------+
+ |  Catalog  |      |  Server               | ------>  OneLake
+ |  SQLite   |      |  engine: DuckDB and   |          (rows, files)
+ +-----------+      |  disk cache           |
+                    +-----------------------+
 ```
 
 ## What must always hold
@@ -68,8 +65,8 @@ and F5 has its own, as the state file does today.
 
 Every row says when it was last read from OneLake.
 
-- **Who writes:** only the sync worker, in WAL mode, with short transactions, so a reader is not held up.
-- **Who reads:** each window opens the file directly, read-only.
+- **Who writes and reads:** each window opens the file itself, in WAL mode, with short transactions, so a reader is
+  not held up. Every window hears what another wrote from the file, within a few seconds.
 - **A tab's SQL can't reach it:** the file is outside the folders DuckDB may open.
 - **Rows are never evicted by age or size.** Offline depends on them.
 - **A table missing from a complete listing is marked dropped,** and removed when a later sync confirms it.
@@ -90,28 +87,25 @@ Every row says when it was last read from OneLake.
 
 ## The sync worker
 
-**One per account, in the server.** Windows never ask OneLake or Fabric for metadata. They read the catalog
-and ask the worker for a sync.
+**It runs in a window's extension host, not the server** ([`src/syncworker.js`](../src/syncworker.js)). That is where
+VS Code's sign-in, proxy and certificates already are, so no token or network path has to move, and syncing needs no
+DuckDB and no server. A lease in the catalog file says which window sweeps the tenant, and another takes over within
+90 seconds when that one goes.
 
-**The queue** holds one job per listing: the workspaces, a workspace's items, an item's tables, a `Files/`
-folder, a table's metadata.
-
-| Priority | What | How often |
+| Who | What | How often |
 | --- | --- | --- |
-| 1 | What a person or `--fresh` is waiting for | Now |
-| 2 | What was opened or expanded, and pinned workspaces | `catalogTtlMinutes`, `tableMetadataTtlHours` |
-| 3 | Everything else: workspaces, items and table lists across the tenant | Once a day |
+| Whoever is waiting | A listing the catalog has never held, or a Refresh | Now, by the reader itself |
+| Each window | What it has opened, and pinned workspaces | `catalogTtlMinutes` |
+| The window with the lease | The rest of the tenant: workspaces, items and table lists, and models if a Fabric token is already there | Once a day |
 
-- **Table metadata is read only for lakehouses opened,** as `prefetchMetadata` does today, so the tenant's
-  manifests are not walked. `data_file` is filled when a table is read or its Stats opens.
-- **Limits:** a few requests at a time, with a back-off on a 429.
-- **It tells windows** over the control pipe when rows change, and the tree redraws what changed.
-- **Tokens:** a live window pushes the OneLake and Fabric tokens over the control pipe, and refreshes them. With no
-  token or no window, the queue waits.
-- **Offline:** the queue pauses, and resumes by itself. Nothing waits on a timeout.
-- **A failure** is kept in `sync_state` and shown on its node. The last good rows are still served.
-- **The editor's proxy and CA bundle** have to reach the server's `fetch`, since these requests move out of the
-  extension host.
+- **Table metadata is read only for lakehouses opened,** as `prefetchMetadata` does, so the tenant's manifests are not
+  walked. A staging item is never swept.
+- **Limits:** one request at a time and five listings every 15 seconds, so a large tenant fills in over minutes. A 429, a
+  503 or no answer at all stops everything for a minute, and a listing that fails isn't asked again for an hour.
+- **Every window hears** what another wrote: a look at the file every few seconds (`PRAGMA data_version`), and the tree
+  redraws what changed.
+- **Offline:** it asks nothing, and carries on by itself. Nothing waits on a timeout.
+- **A failure** is kept in `sync_state` and shown on its node as *refresh failed*. The last good rows are still served.
 
 ## Opening
 
@@ -219,7 +213,7 @@ Each wave works on its own, and is proved before the next starts.
 | --- | --- | --- |
 | **1. SQLite replaces `kv`** | The same keys and JSON values in the SQLite file, written by each window, and an import from the state file. The tree draws from it first. | With no server, signed out and offline, the tree draws with DuckDB not loaded, and activation to a drawn tree is timed. |
 | **2. Real tables** | JSON listings become the catalog's tables, and the tree, `resolve`, Stats, History, Go To and `SHOW ALL TABLES` query them. `catalogsnapshot.js` goes, and rows are never evicted. | Every offline test passes from the tables, and no listing is stored as JSON. |
-| **3. The sync worker** | One per account in the server, and the only writer. Metadata requests move there, with the proxy and CA bundle, and windows are told when rows change. | A table added in Fabric appears with no click, the tree stays usable during a sync from empty, and offline pauses the queue. |
+| **3. The sync worker** | In a window's extension host, with a lease for the tenant sweep. Windows hear from the file when rows change. | A table added in Fabric appears with no click, the tree stays usable during a sync from empty, and offline it asks nothing. |
 | **4. The command line** | Every metadata command reads the catalog, and `--fresh` is a top-priority job. | Every metadata command answers with the network refused, and a table-exists check is timed warm and cold. |
 
 **On its own, whenever:** Iceberg's files in a folder eviction skips. It probably needs a change in the `cache_httpfs` fork.

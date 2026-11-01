@@ -9,8 +9,9 @@
 // Listings and table metadata are the catalog's tables (catalogtables.js), which are never evicted.
 // Everything else, first rows above all, is a key and a value in `kv`, and only first rows have a budget.
 //
-// Each window opens the file itself, and WAL lets it read while another window writes. Another
-// window's Clear is noticed by a look at the file every few seconds, since no pipe joins windows here.
+// Each window opens the file itself, and WAL lets it read while another window writes. What another
+// window wrote or cleared is noticed by a look at the file every few seconds, since no pipe joins
+// windows here. It also holds which window sweeps the tenant (syncworker.js), as a lease.
 //
 // What an older version kept, in the state file's kv table or in JSON files, is imported once.
 //
@@ -73,6 +74,20 @@ function createCatalogFile({ file, maxBytes = () => 256 * 1024 * 1024, onCleared
                              clearedEveryMs = CLEARED_EVERY_MS, log = () => {} }) {
   let db = null, poll = null, seen = null, said = false, writes = 0;
   let statements = new Map();
+  let dataVersion = null, changedFrom = 0;
+  const subscribers = new Set();
+
+  // What another connection committed: this connection's own writes don't move data_version.
+  function lookForChanges() {
+    const version = Number(statement('PRAGMA data_version').get().data_version);
+    if (version === dataVersion) return;
+    const first = dataVersion == null;
+    dataVersion = version;
+    if (first) return;
+    const { keys, latest } = tables.changedSince(changedFrom);
+    changedFrom = latest;
+    if (keys.length) for (const fn of [...subscribers]) { try { fn(keys); } catch (_) {} }
+  }
 
   const statement = sql => {
     if (!statements.has(sql)) statements.set(sql, database().prepare(sql));
@@ -107,10 +122,13 @@ function createCatalogFile({ file, maxBytes = () => 256 * 1024 * 1024, onCleared
     }
     migrate();
     seen = metaOf('cleared');
+    changedFrom = Date.now();
+    lookForChanges();
     poll = setInterval(() => {
       try {
         const now = metaOf('cleared');
         if (now !== seen) { seen = now; onCleared(); }
+        lookForChanges();
       } catch (_) {}
     }, clearedEveryMs);
     if (poll.unref) poll.unref();
@@ -216,8 +234,36 @@ function createCatalogFile({ file, maxBytes = () => 256 * 1024 * 1024, onCleared
       return row ? { at: Number(row.ts), json: row.value } : null;
     },
     async write(key, at, json) {
-      inOne(() => place(keyOf(key), Math.floor(at), json));
+      inOne(() => {
+        place(keyOf(key), Math.floor(at), json);
+        statement('DELETE FROM sync_state WHERE k = ?').run(keyOf(key));
+      });
       if (++writes % PRUNE_EVERY === 0) prune();
+    },
+    /** A read of this entry failed: the last good answer is still served, and this says why it is old. */
+    noteFailure(key, at, error) {
+      statement('INSERT OR REPLACE INTO sync_state VALUES (?, ?, ?)').run(keyOf(key), Math.floor(at), String(error));
+    },
+    failureOf(key) {
+      const row = statement('SELECT ts, error FROM sync_state WHERE k = ?').get(keyOf(key));
+      return row ? { at: Number(row.ts), error: row.error } : null;
+    },
+    /** Hears the store's keys of what another window wrote. Answers how to stop. */
+    subscribe(fn) {
+      subscribers.add(fn);
+      return () => subscribers.delete(fn);
+    },
+    /** Whether `owner` is the one to sweep the tenant for the next `ms`: it held it, or nobody does. */
+    lease(owner, ms, now = Date.now()) {
+      let mine = false;
+      inOne(() => {
+        let held = null;
+        try { held = JSON.parse(metaOf('sync_lease')); } catch (_) {}
+        if (held && held.owner !== owner && held.until > now) return;
+        setMeta('sync_lease', JSON.stringify({ owner, until: now + ms }));
+        mine = true;
+      });
+      return mine;
     },
     async clear() {
       seen = crypto.randomBytes(8).toString('hex');
