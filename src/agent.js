@@ -92,7 +92,6 @@ function printedLines(value, prefix = '') {
   return [`${prefix}: ${value}`];
 }
 
-// How far apart two names are, in single edits.
 // The names nearest what was asked for, whole or by a dotted part (dbo.orders for orderz, data.Lakehouse
 // for dta), and none that are nothing like it.
 function closestNames(wanted, names, most = 5) {
