@@ -145,6 +145,7 @@ function rememberAccount(session) {
 // change the answer clears it outright.
 const TOKEN_TTL_MS = 60_000;
 const SESSION_WAIT_MS = 5_000;
+const SESSION_SETTLE_MS = 3_000;
 const storageHold = createTokenHold(TOKEN_TTL_MS);
 
 function forgetToken() { storageHold.forget(); fabricHold.forget(); fabricAudience = null; appHold.forget(); }
@@ -2180,7 +2181,10 @@ async function activateInner(context) {
   // a session change.
   importKept(context, storeAccount, jsonStoreOf(storeAccount), hostCacheOf(storeAccount));
   (async () => {
-    const answered = await inTime(getSession({ createIfNone: false }).then(() => true, () => true), SESSION_WAIT_MS, () => sessionChanged());
+    const answered = await inTime(getSession({ createIfNone: false }).then(s => ({ s }), () => ({ s: null })), SESSION_WAIT_MS, () => sessionChanged());
+    // At startup the account provider can still be starting, and says there is no session when there
+    // is: seen as a window that called itself signed out for seconds. Taken as true only a moment on.
+    if (answered && !answered.s && knownAccount() && !signedOutByChoice()) await new Promise(r => setTimeout(r, SESSION_SETTLE_MS));
     if (answered) await sessionChanged();
     sessionAsked = true;
     showOffline(connectivity.reason());
