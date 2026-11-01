@@ -314,7 +314,8 @@ test("a server's words for a lost connection are the ones a window looks for", a
     extensionDir: null, bundledExtensions: existsSync(BUNDLED) ? BUNDLED : null });
   t.after(() => { try { client.local.closeSync(); } catch (_) {} });
   const c = await client.local.connect();
-  // A port nobody answers on.
+  // A port nobody answers on, with a token for it: without one DuckDB doesn't try.
+  await c.run("CREATE SECRET nobody (TYPE quack, TOKEN 'x', SCOPE 'quack:127.0.0.1:9')");
   await assert.rejects(c.run("SELECT * FROM quack_query('quack:127.0.0.1:9', 'SELECT 1')"),
     e => { assert.match(e.message, LOST); return true; });
   c.closeSync();

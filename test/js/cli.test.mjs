@@ -58,7 +58,7 @@ const WRONG = [
   [["sql", "SELECT", "AGG(Archive", "Files)"], /sql got 3 arguments, so the shell split the query\. Send it on stdin: sql -/],
   [["sql", "SELECT 1", "--in", "noslash"], /--in takes <ws>\/<item>/],
   [["sql", "SELECT 1", "--in", "a/b/c"], /--in takes <ws>\/<item>/],
-  [["sql", "SELECT 1", "--fresh"], /--fresh is not an option of sql/],
+  [["sql", "SELECT 1", "--downloaded"], /--downloaded is not an option of sql/],
   [["ls", "--downloaded"], /--downloaded is not an option of ls/],
   [["model", "a", "b", "--csv"], /--csv is not an option of model/],
   [["export", "a"], /usage: export/],
