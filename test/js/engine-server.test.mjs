@@ -273,7 +273,7 @@ test("what an older version kept in its DuckDB state file comes across, its log 
   logs.add(await old.logs());
   old.close();
   assert.deepEqual(await backend.read("workspaces"), { at: 123, value: ["a", "b's"] });
-  assert.deepEqual(await backend.read("rows\0abfss://x"), { at: 5, json: "true" });
+  assert.deepEqual(await backend.read("rows\0abfss://x"), { at: 5, value: true });
   assert.deepEqual(logs.read(10).map(r => [r.ts, r.sql, r.ms, r.status]), [[1000, "SELECT 1", 7, "ok"]]);
 
   const none = await openOldState(join(dir, "other.duckdb"));
