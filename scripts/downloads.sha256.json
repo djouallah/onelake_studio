@@ -108,5 +108,10 @@
   "https://github.com/djouallah/duck-read-cache-fs/releases/download/onelake-v2.0.0-2/cache_httpfs.osx_amd64.duckdb_extension": "6695f7b5ff8b442a6cf7813d74dabfbcdcdc5684042ddf17ab73e8e730a2d614",
   "https://github.com/djouallah/duck-read-cache-fs/releases/download/onelake-v2.0.0-2/cache_httpfs.osx_arm64.duckdb_extension": "ac6387ab2941cc9dad04bc97e4e5c8b9b6fcc8e05536d850b6b14719dd06d110",
   "https://github.com/djouallah/duck-read-cache-fs/releases/download/onelake-v2.0.0-2/cache_httpfs.windows_amd64.duckdb_extension": "2faa5da7f68560ed36e53cd468dc0014add209ef546992999eb1a23f1069e07c",
-  "https://github.com/djouallah/duck-read-cache-fs/releases/download/onelake-v2.0.0-2/cache_httpfs.windows_arm64.duckdb_extension": "f7190effade1f2ee21e5b80d4324efd81461aa810c56799f6f3f5d2510a031ea"
+  "https://github.com/djouallah/duck-read-cache-fs/releases/download/onelake-v2.0.0-2/cache_httpfs.windows_arm64.duckdb_extension": "f7190effade1f2ee21e5b80d4324efd81461aa810c56799f6f3f5d2510a031ea",
+  "https://github.com/djouallah/duck-read-cache-fs/releases/download/onelake-v2.0.0-4/cache_httpfs.linux_amd64.duckdb_extension": "22bf7983f8d9a547a40cef48072f69c46419366c9c2fa5fe1341593121d9c42f",
+  "https://github.com/djouallah/duck-read-cache-fs/releases/download/onelake-v2.0.0-4/cache_httpfs.linux_arm64.duckdb_extension": "f0b4089e1b7fad7d1ca6ac95eae68503d175731a2085789c71f98a6d8e314741",
+  "https://github.com/djouallah/duck-read-cache-fs/releases/download/onelake-v2.0.0-4/cache_httpfs.osx_amd64.duckdb_extension": "70da417c1f16cc035549a51b9ec80646bbc673951ae65907db591c5089f64b83",
+  "https://github.com/djouallah/duck-read-cache-fs/releases/download/onelake-v2.0.0-4/cache_httpfs.osx_arm64.duckdb_extension": "883ff74a93f2cad6499e361f657f0872b7843a7373606480ada8bbf021fe7e54",
+  "https://github.com/djouallah/duck-read-cache-fs/releases/download/onelake-v2.0.0-4/cache_httpfs.windows_amd64.duckdb_extension": "cba7cc5e4aa8d989cbb8b68d4a66dac3fa20bf4da5811477dc1de4b387b9870f"
 }
