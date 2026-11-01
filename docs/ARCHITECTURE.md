@@ -218,9 +218,13 @@ every window is a client of it over DuckDB's Quack protocol ([`src/engine-client
   port of its own, so a page's SQL can't reach them ([`src/statestore.js`](../src/statestore.js)). The tree therefore
   waits for the server. A JSON store from an older version is imported once and left as it was.
   - **It is named after the account, not the install,** so an update keeps it. F5 has its own.
-  - **It is only a cache.** A file that can't be opened is set aside as `.bad` and started again. A file another
-    process holds, a server of the version just updated from, isn't broken: the server looks again every 15 seconds,
-    and what is remembered reads as not cached until then.
+  - **A newer build takes it at once.** A server of the version just updated from may still hold the file, for a window
+    not reloaded yet. The new server asks it for the file over its pipe, using the key in `state-<id>.duckdb.holder`,
+    before any window sees the gap. That window then reads online and isn't logged until it is reloaded. An older build
+    never takes it: it looks again every 15 seconds, and what is remembered reads as not cached until then.
+  - **Only a file that isn't a database is thrown out,** set aside as `.bad` and started again. Any other failure, such
+    as a disk error or a file from a newer DuckDB, leaves it where it is and runs without it, and the Logs tab says why.
+  - **The server's own log is `state-<id>.log`,** beside it and also named after the account. Its last 1 MB is kept.
 
 Still files: a `Files/` object's bytes, saved queries, models and semantic-model pointers.
 
@@ -313,9 +317,8 @@ back to the cloud. A table nothing was ever written to has a check, since it rea
   answer is kept). Public means anyone with the URL loads the site without signing in, shown as an
   orange open lock. Protected means Fabric asks for a sign-in and permission on the app first, shown
   as a lock.
-- That is two reads per app when *Apps* is expanded, then cached. A button copies the URL, and a double
-  click opens it in the browser ([`src/doubleclick.js`](../src/doubleclick.js): VS Code has no such event, so
-  it is two clicks on one app within half a second). Nothing is changed.
+- That is two reads per app when *Apps* is expanded, then cached. A button copies the URL, and a click opens it in
+  the browser. Nothing is changed.
 
 ## The SQL box and results
 
@@ -542,8 +545,7 @@ personal skills, and it follows the extension through updates.
 | **Select Top Rows**, **Copy SQL Name**, **Copy Column List** | A table's right-click. Copy SQL Name is on a file's and a folder's too. |
 | **Download Again (from Fabric)** | Replaces a semantic model's local copy. |
 | **Copy App URL** | An app's button. |
-| **Open App** | A double click on an app with a site. |
-| **Open Table**, **Open File**, **Open Semantic Model** | A click in the tree. |
+| **Open App**, **Open Table**, **Open File**, **Open Semantic Model** | A click in the tree. A double click counts as one ([`src/doubleclick.js`](../src/doubleclick.js)). |
 | **Copy**, **Copy with Headers**, **Copy as CSV**, **Copy as Markdown**, **Copy as JSON**, **Open as CSV Document**, **Open as JSON Document** | The grid's right-click. |
 
 ## Settings
@@ -599,7 +601,7 @@ every window. The rest apply at once.
 | `src/deltalog.js` | A Delta table's own log, for Stats and History. |
 | `src/fabric.js` | A workspace's semantic models and apps, and a model's definition. |
 | `src/semviews.js` | The models opened, per account. |
-| `src/tree.js`, `src/doubleclick.js` | The explorer, and what counts as a double click in it. |
+| `src/tree.js`, `src/doubleclick.js` | The explorer, and a double click in it counting as one click. |
 | `src/title.js` | What the sidebar's header and a tab's title say. |
 | `app/querytext.js` | The SQL box's statements, error positions and variables. |
 | `src/panel.js`, `src/host.js`, `src/html.js`, `src/webview.js` | A tab's webview, its channel, and its page. |

@@ -12,6 +12,7 @@
 //   window -> server   { stop: true }      Sign Out, a restart, Clear Cached OneLake Data
 //   window -> server   { id, stats | logs | clearLogs | storageToken | offline | listen | cleared }, answered { id, value | error }
 //   server -> window   { reattach: true } | { cleared: true }   its own news, with no id
+//   server -> server   { releaseState: key }   answered { released: true }: a newer build takes the state file
 //
 // A window gone is a window whose queries nobody is waiting for: Quack lets them run on, so they
 // are cancelled here. With no window left the server waits `idleMs`, so a window reload finds it
@@ -24,8 +25,8 @@ const fsp = require('node:fs/promises');
 const crypto = require('node:crypto');
 const { dirname, join } = require('node:path');
 const { DuckDBInstance } = require('@duckdb/node-api');
-const { createEngineHost, restartListener } = require('./engine-host');
-const { openClient, loadExtension } = require('./engine-client');
+const { createEngineHost, restartListener, stopListener } = require('./engine-host');
+const { openClient, loadExtension, stateFileUnusable } = require('./engine-client');
 const { createLogKeeper } = require('./enginelog');
 const { sqlStr } = require('./sql');
 
@@ -60,9 +61,10 @@ async function openState({ stateFile, token, options }) {
 
 // Another process has the file open: Windows and everywhere else, in DuckDB's words.
 const HELD = /being used by another process|Could not set lock|Conflicting lock/i;
-// State files from when they were named after the install, each left behind by an update.
-const OLD_STATE_FILE = /^[0-9a-f]{16}\.duckdb(\.wal)?$/;
+// State files and logs from when they were named after the install, each left behind by an update.
+const OLD_STATE_FILE = /^[0-9a-f]{16}\.(duckdb(\.wal)?|log)$/;
 const STATE_RETRY_MS = 15_000;
+const LOG_KEEP_BYTES = 1024 * 1024;
 
 async function setAside(file) {
   for (const f of [file, `${file}.wal`]) {
@@ -70,7 +72,34 @@ async function setAside(file) {
   }
 }
 
+// The log outlives every update, so only its end is kept, from a whole line.
+function trimLog(file) {
+  try {
+    if (fs.statSync(file).size <= LOG_KEEP_BYTES) return;
+    const end = fs.readFileSync(file).subarray(-LOG_KEEP_BYTES);
+    fs.writeFileSync(file, end.subarray(end.indexOf('\n') + 1));
+  } catch (_) {}
+}
+
+// Whoever has the file open says where it can be asked for it. The key can do nothing but that.
+async function askHolder(stateFile, build) {
+  let holder = null;
+  try { holder = JSON.parse(await fsp.readFile(`${stateFile}.holder`, 'utf8')); } catch (_) { return false; }
+  if (!(holder.build < build)) return false;
+  return new Promise(resolve => {
+    const sock = net.connect(holder.pipe);
+    const timer = setTimeout(() => sock.destroy(), 5_000);
+    let said = '';
+    sock.setEncoding('utf8');
+    sock.on('connect', () => sock.write(`${JSON.stringify({ releaseState: holder.releaseKey })}\n`));
+    sock.on('data', chunk => { said += chunk; });
+    sock.on('error', () => {});
+    sock.on('close', () => { clearTimeout(timer); resolve(said.includes('"released":true')); });
+  });
+}
+
 async function main({ token, pipe, options, logFile, idleMs = 60_000, stateFile = null, build = null }) {
+  trimLog(logFile);
   const log = line => { try { fs.appendFileSync(logFile, `${new Date().toISOString()} ${line}\n`); } catch (_) {} };
   const say = o => process.stdout.write(`${JSON.stringify(o)}\n`);
   log(`starting: pid ${process.pid}`);
@@ -80,11 +109,15 @@ async function main({ token, pipe, options, logFile, idleMs = 60_000, stateFile 
 
   let idle = null, state = null, reaper = null, stopping = false, stateDb = null, stateConn = null, keeper = null, stateRetry = null;
   const clients = new Set();
+  const releaseKey = crypto.randomBytes(16).toString('hex');
+  const lookAgain = () => { if (!stopping) stateRetry = setTimeout(keepState, options.stateRetryMs || STATE_RETRY_MS); };
 
-  // The state file, held for the life of this process. It is only a cache, so one that can't be
-  // opened is set aside and started again. One another process holds isn't broken: that is a server
-  // of the version just updated from, with a window still on it. This one looks again until it goes,
-  // and a window joining after that finds the file (engine-client.js createStateClient).
+  // The state file, held for the life of this process or until a newer build asks for it. Only a
+  // file that isn't a database any more is set aside and started again. Any other failure leaves it
+  // alone, since it may be fine to the next build or after the next start. One another process holds
+  // isn't broken: that is a server of the version just updated from, which gives it up when it is
+  // older than this one, and otherwise this one looks again until it goes. A window joining after
+  // that finds the file (engine-client.js createStateClient).
   async function keepState() {
     const open = async () => {
       const kept = await openState({ stateFile, token, options });
@@ -94,6 +127,7 @@ async function main({ token, pipe, options, logFile, idleMs = 60_000, stateFile 
       stateConn = kept.conn;
       keeper = createLogKeeper({ engine, state: kept.conn, log, maxBytes: Math.max(0, Number(options.logMaxGB ?? 1) || 0) * 1024 ** 3 });
       keeper.start();
+      await fsp.writeFile(`${stateFile}.holder`, JSON.stringify({ pipe, build, releaseKey })).catch(() => {});
       for (const name of await fsp.readdir(dirname(stateFile)).catch(() => [])) {
         if (OLD_STATE_FILE.test(name)) await fsp.rm(join(dirname(stateFile), name), { force: true }).catch(() => {});
       }
@@ -106,13 +140,30 @@ async function main({ token, pipe, options, logFile, idleMs = 60_000, stateFile 
     catch (e) {
       if (HELD.test(e.message)) {
         none(e);
-        if (!stopping) stateRetry = setTimeout(keepState, options.stateRetryMs || STATE_RETRY_MS);
+        if (await askHolder(stateFile, build)) { await keepState(); return; }
+        lookAgain();
         return;
       }
-      if (!e.theFile) { none(e); return; }
+      if (!e.theFile || !stateFileUnusable(e.message)) { none(e); return; }
       log(`the state file could not be opened, so it is set aside and started again: ${e.message}`);
     }
     await setAside(stateFile).then(open).catch(none);
+  }
+  // A newer build asked. The window still on this one goes on without what is remembered until it is
+  // reloaded, and what it runs meanwhile stays in DuckDB's log, moved if this server gets the file back.
+  async function releaseState() {
+    log('a newer build asked for the state file');
+    const db = stateDb, conn = stateConn;
+    keeper.stop();
+    await keeper.flush().catch(() => {});
+    await engine.emptyLog().catch(() => {});   // moved already: the next keeper starts from the beginning
+    await stopListener(conn, state.stateUri).catch(() => {});
+    keeper = stateDb = stateConn = null;
+    delete state.stateUri;
+    state.stateError = 'a newer version of the extension has the state file: reload this window';
+    try { conn.closeSync(); } catch (_) {}
+    try { db.closeSync(); } catch (_) {}
+    lookAgain();
   }
   async function shutdown(why) {
     if (stopping) return;
@@ -179,7 +230,11 @@ async function main({ token, pipe, options, logFile, idleMs = 60_000, stateFile 
     // The state file was emptied: every window also holds what it read from it, in memory.
     if (msg.cleared) { for (const c of clients) { if (!c.sock.destroyed) c.sock.write(`${JSON.stringify({ cleared: true })}\n`); } return true; }
     if (msg.stats) return { ...await engine.stats(), statements: keeper ? await keeper.statements() : 0 };
-    if (msg.logs) return keeper ? keeper.read(msg.logs.limit) : [];
+    if (msg.logs) {
+      if (keeper) return keeper.read(msg.logs.limit);
+      if (state.stateError) throw new Error(state.stateError);
+      return [];
+    }
     if (msg.clearLogs) { if (keeper) await keeper.clear(); return true; }
     throw new Error('the engine was asked something it does not know');
   }
@@ -203,6 +258,12 @@ async function main({ token, pipe, options, logFile, idleMs = 60_000, stateFile 
         let msg = {};
         try { msg = JSON.parse(line); } catch (_) {}
         if (!who) {
+          if (msg.releaseState != null) {
+            if (!stateDb || !sameToken(msg.releaseState, releaseKey)) { sock.destroy(); return; }
+            await releaseState().catch(e => log(`could not give up the state file: ${e.message}`));
+            sock.end(`${JSON.stringify({ released: !stateDb })}\n`);
+            return;
+          }
           if (!sameToken(msg.token, token)) { sock.destroy(); return; }
           who = { window: String(msg.window || ''), sock };
           clients.add(who);

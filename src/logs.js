@@ -109,6 +109,10 @@ const el = (tag, props = {}, ...kids) => { const e = document.createElement(tag)
 const COLS = [['at', 'When'], ['status', 'Status'], ['ms', 'ms', 'n'], ['sql', 'Statement']];
 let rows = [], shown = 0, sort = { col: 'at', desc: true };
 const open = new Set();
+// A double click is one click, as in the tree.
+document.addEventListener('click', e => {
+  if (e.detail > 1 && !e.target.closest('input, textarea, select')) { e.preventDefault(); e.stopPropagation(); }
+}, true);
 const when = at => {
   const d = new Date(at), today = new Date().toDateString() === d.toDateString();
   return (today ? '' : d.toLocaleDateString() + ' ') + d.toLocaleTimeString();

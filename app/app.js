@@ -104,6 +104,11 @@ const README_SQL = cfg.readmeUrl
   : '';
 
 function wireUi() {
+  // A double click is one click, as in the tree: the second does nothing, so Run runs once and a
+  // removed chip doesn't take the next. dblclick is its own event, for the grid's inspector.
+  document.addEventListener('click', e => {
+    if (e.detail > 1 && !e.target.closest('input, textarea, select')) { e.preventDefault(); e.stopPropagation(); }
+  }, true);
   // Disable on the way out: the load ends at its next checkpoint, not this instant.
   $('stopBtn').onclick = () => {
     engine.cancelLoad();

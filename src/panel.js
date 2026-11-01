@@ -113,7 +113,7 @@ let opening = null;
 
 function openPanel(context, opts = {}) {
   if (active && !opts.newTab) { revealPanel(); return Promise.resolve(active.panel); }
-  // Two quick clicks are two tabs: the second waits for the first's.
+  // Quick clicks on two things are two tabs: the second waits for the first's.
   if (opening && opts.newTab) return opening.catch(() => {}).then(() => openPanel(context, opts));
   if (!opening) {
     opening = openPanelUncontended(context, opts).finally(() => { opening = null; });

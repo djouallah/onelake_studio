@@ -27,7 +27,7 @@ const { useConnectivity, createTokenHold, inTime } = require('./http');
 const { createHostMethods } = require('./host');
 const { createFabric, modelFileName, modelAccountDir, modelCopyPath } = require('./fabric');
 const { LakehouseTree, TREE_FILTERS } = require('./tree');
-const { doubleClicks } = require('./doubleclick');
+const { firstClicks } = require('./doubleclick');
 const { webviewRoot } = require('./webview');
 const { fmtBytes, sqlKind, sqlName, sqlNameOf, fileSqlName, sqlPart, displayName, MODEL_CATALOG, modelSqlName, stripBom, DFS_ORIGIN } = require('./names');
 const { createAgent } = require('./agent');
@@ -680,7 +680,10 @@ async function show(context, { newTab = false, ...options } = {}) {
 
 // Where a semantic model's local copy is kept (fetchModel), for the tree, the command line
 // and the panel alike: <folder>/<workspace>/<model>.yaml.
-const appDoubleClick = doubleClicks();
+
+// One click acts on a tree node, and a double click is one click (doubleclick.js).
+const treeClick = firstClicks();
+const onClick = fn => n => (treeClick(n) ? fn(n) : undefined);
 
 // What a new query (the Queries node's +) starts with. SHOW ALL TABLES is answered from the
 // cache (cachedSqlTables), so it lists only the tables seen in the tree.
@@ -1815,14 +1818,14 @@ async function activateInner(context) {
       });
     }),
 
-    vscode.commands.registerCommand('onelakeStudio.openTable', n => openInPanel({
+    vscode.commands.registerCommand('onelakeStudio.openTable', onClick(n => openInPanel({
       type: 'open-table',
       workspace: n.workspace, item: n.item, schema: n.schema, table: n.table,
-    })),
+    }))),
 
-    vscode.commands.registerCommand('onelakeStudio.openFile', n => openInPanel({
+    vscode.commands.registerCommand('onelakeStudio.openFile', onClick(n => openInPanel({
       type: 'open-file', workspace: n.workspace, item: n.item, path: n.path, bytes: n.bytes,
-    })),
+    }))),
 
     // A table's first rows, as a query in the SQL box, run at once.
     vscode.commands.registerCommand('onelakeStudio.selectTop', async n => {
@@ -1854,11 +1857,11 @@ async function activateInner(context) {
     }),
 
     // Saved queries (queriesFolder): open one in the SQL box, rename, delete, show the folder.
-    vscode.commands.registerCommand('onelakeStudio.openQuery', async n => {
+    vscode.commands.registerCommand('onelakeStudio.openQuery', onClick(async n => {
       if (!n || !n.path) return;
       if (!existsSync(n.path)) { tree.queriesChanged(); return showError(`${n.label} is no longer in ${queriesFolder()}`); }
       await openInPanel({ type: 'query', name: n.label, sql: await fsp.readFile(n.path, 'utf8') });
-    }),
+    })),
     vscode.commands.registerCommand('onelakeStudio.renameQuery', async n => {
       if (!n || !n.path) return;
       const picked = await askQueryName('Rename Query', n.label);
@@ -1916,25 +1919,25 @@ async function activateInner(context) {
 
     // The tree's "Sign in to list semantic models" node. A command of its own, because the
     // Fabric API's consent is a separate prompt and must only ever follow a click.
-    vscode.commands.registerCommand('onelakeStudio.signInFabric', async () => {
+    vscode.commands.registerCommand('onelakeStudio.signInFabric', onClick(async () => {
       try {
         if (await fabricToken({ createIfNone: true })) tree.redraw();
       } catch (e) {
         showError(`Could not sign in to the Fabric API: ${(e && e.message) || e}`);
       }
-    }),
+    })),
 
-    vscode.commands.registerCommand('onelakeStudio.openSemanticModel', n => openModel(n)),
-    // An app in the tree: its URL, copied by its button and opened by a double click. Nothing is changed.
+    vscode.commands.registerCommand('onelakeStudio.openSemanticModel', onClick(n => openModel(n))),
+    // An app in the tree: its URL, copied by its button and opened by a click. Nothing is changed.
     vscode.commands.registerCommand('onelakeStudio.copyAppUrl', async n => {
       if (!n || !n.url) return;
       await vscode.env.clipboard.writeText(n.url);
       vscode.window.setStatusBarMessage(`Copied ${n.url}`, 3000);
     }),
-    vscode.commands.registerCommand('onelakeStudio.openApp', n => {
+    vscode.commands.registerCommand('onelakeStudio.openApp', onClick(n => {
       if (!n || !/^https:\/\//i.test(n.url || '')) return;
-      if (appDoubleClick(n.url)) vscode.env.openExternal(vscode.Uri.parse(n.url));
-    }),
+      vscode.env.openExternal(vscode.Uri.parse(n.url));
+    })),
     vscode.commands.registerCommand('onelakeStudio.redownloadSemanticModel', n => openModel(n, { fresh: true })),
 
     vscode.commands.registerCommand('onelakeStudio.open', async () => {

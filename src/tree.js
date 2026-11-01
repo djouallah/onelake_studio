@@ -305,7 +305,7 @@ class LakehouseTree {
           n.access === 'public' ? 'Public: anyone with the URL can load the site, without signing in.'
             : n.access === 'protected' ? 'Protected: Fabric asks for a sign-in and permission on the app first.' : '',
           n.deployedAt ? `Last deployed ${new Date(n.deployedAt).toLocaleString()}` : '',
-          n.url ? 'Double-click to open it in the browser.' : '',
+          n.url ? 'Click to open it in the browser.' : '',
           n.description].filter(Boolean).join('\n');
         if (n.url) item.command = { command: 'onelakeStudio.openApp', title: 'Open App', arguments: [n] };
         break;

@@ -338,16 +338,21 @@ const shortHash = text => crypto.createHash('sha256').update(text).digest('hex')
 // is: what is remembered is what lets the next version work with no internet.
 const stateFileOf = (stateDir, stateKey) => join(stateDir, `state-${shortHash(stateKey)}.duckdb`);
 
+// DuckDB's words for a file that will never open, the only kind worth setting aside. A disk error
+// or a file from a newer DuckDB isn't one: what it holds is still there for later.
+const stateFileUnusable = message => /not a valid DuckDB database file|corrupt|checksum|replaying WAL/i.test(String(message));
+
 // This window on the server, started if there is none. A server of another build is told to stop
 // and replaced: F5 after a rebuild must not find the old code, nor the state file held by it.
 async function joinServer({ key, stateKey = key, script, options, stateDir, build = null, getToken, setToken, idleMs = 60_000 }) {
   await fsp.mkdir(stateDir, { recursive: true });
   const id = shortHash(key);
+  const stateFile = stateFileOf(stateDir, stateKey);
   const plain = typeof options === 'function' ? await options() : options;
   const asked = {
     pipe: pipePath(key), window: crypto.randomBytes(6).toString('hex'), getToken, setToken,
     lockFile: join(stateDir, `${id}.lock`),
-    server: { script, options: plain, logFile: join(stateDir, `${id}.log`), idleMs, build, stateFile: stateFileOf(stateDir, stateKey) },
+    server: { script, options: plain, logFile: stateFile.replace(/\.duckdb$/, '.log'), idleMs, build, stateFile },
   };
   let joined = await acquire(asked);
   if (joined.state.build !== build) {
@@ -568,4 +573,4 @@ function createRemote({ onGone = () => {}, ...cfg }) {
   };
 }
 
-module.exports = { createRemote, createStateClient, openClient, loadExtension, pipePath, stateFileOf, LOST };
+module.exports = { createRemote, createStateClient, openClient, loadExtension, pipePath, stateFileOf, stateFileUnusable, LOST };

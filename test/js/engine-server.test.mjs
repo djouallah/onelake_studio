@@ -14,7 +14,7 @@ import { fileURLToPath } from "node:url";
 
 const require = createRequire(import.meta.url);
 const { createEngineHost } = require("../../src/engine-host.js");
-const { createRemote, createStateClient, openClient, pipePath, stateFileOf, LOST } = require("../../src/engine-client.js");
+const { createRemote, createStateClient, openClient, pipePath, stateFileOf, stateFileUnusable, LOST } = require("../../src/engine-client.js");
 const { createStateBackend } = require("../../src/statestore.js");
 const { createStore } = require("../../src/store.js");
 
@@ -293,12 +293,12 @@ async function stateServer(t) {
   t.after(() => rm(dir, { recursive: true, force: true }).catch(() => {}));
   const stateDir = join(dir, "state");
   await mkdir(stateDir);
-  let secret;
+  const secrets = new Map();
   const clients = [];
   const options = { extensionDir: join(dir, "extensions"), bundledExtensions: existsSync(BUNDLED) ? BUNDLED : null, threads: 2, stateRetryMs: 500 };
-  const open = (key, stateKey) => {
-    const client = createStateClient({ key, stateKey, script: SCRIPT, stateDir, options,
-      getToken: async () => secret, setToken: async s => { secret = s; } });
+  const open = (key, stateKey, more = {}) => {
+    const client = createStateClient({ key, stateKey, script: SCRIPT, stateDir, options, ...more,
+      getToken: async () => secrets.get(key), setToken: async s => { secrets.set(key, s); } });
     clients.push(client);
     return { client, store: createStore({ dir: join(dir, "blobs"), backend: createStateBackend({ run: sql => client.run(sql) }) }) };
   };
@@ -362,6 +362,84 @@ test("what is remembered survives an update, which moves the install but not the
   await after.client.stop();
   await sleep(1000);
   assert.equal(await open(`you|${dir}/onelake-studio-0.3.0`, "you").store.peek("listing"), undefined);
+});
+
+test("the log survives an update too, and the server's own log keeps one name and only its end", async t => {
+  const dir = await mkdtemp(join(tmpdir(), "onelake-state-"));
+  t.after(() => rm(dir, { recursive: true, force: true }).catch(() => {}));
+  const stateDir = join(dir, "state");
+  await mkdir(stateDir);
+  await writeFile(join(stateDir, "0123456789abcdef.log"), "from the version before");
+  const serverLog = stateFileOf(stateDir, "me").replace(/\.duckdb$/, ".log");
+  await writeFile(serverLog, `${"line\n".repeat(500_000)}the end\n`);
+  const secrets = new Map();
+  const open = key => {
+    const w = createEngineHost({
+      remote: createRemote({ key, stateKey: "me", script: SCRIPT, stateDir,
+        options: { extensionDir: join(dir, "extensions"), bundledExtensions: existsSync(BUNDLED) ? BUNDLED : null, threads: 2 },
+        getToken: async () => secrets.get(key), setToken: async s => { secrets.set(key, s); } }),
+    });
+    t.after(() => w.close({ stop: true }).catch(() => {}));
+    return w;
+  };
+
+  const before = open(`me|${dir}/onelake-studio-0.2.9`);
+  await before.call("query", ["SELECT 'before the update' AS said"]);
+  await before.close({ stop: true });
+  await sleep(1000);
+  const after = open(`me|${dir}/onelake-studio-0.3.0`);
+  await after.call("query", ["SELECT 'after the update' AS said"]);
+  await sleep(300);
+  const rows = await after.logs(100);
+  assert.ok(rows.some(r => r.sql.includes("before the update")), "still there");
+  assert.ok(rows.some(r => r.sql.includes("after the update")));
+
+  assert.deepEqual(readdirSync(stateDir).filter(f => f.endsWith(".log")), [serverLog.split(/[\\/]/).pop()]);
+  const text = readFileSync(serverLog, "utf8");
+  assert.ok(text.length < 1.1 * 1024 * 1024, "only its end is kept");
+  assert.ok(text.startsWith("line\n"), "from a whole line");
+  assert.ok(text.includes("the end"));
+  assert.equal(text.match(/starting: pid/g).length, 2, "both versions in the one file");
+});
+
+test("a newer build takes the state file at once, and the server it came from stays up", async t => {
+  const { stateDir, open } = await stateServer(t);
+  const older = open("me|old", "me", { build: 1 });
+  await older.store.put("listing", ["kept"]);
+
+  const newer = open("me|new", "me", { build: 2 });
+  assert.deepEqual(await newer.store.peek("listing"), ["kept"], "with no wait");
+  await newer.store.put("written", ["by the newer"]);
+  assert.ok(!existsSync(`${stateFileOf(stateDir, "me")}.bad`));
+
+  const up = net.connect(pipePath("me|old"));
+  await new Promise((resolve, reject) => { up.once("connect", resolve); up.once("error", reject); });
+  up.destroy();
+  await assert.rejects(older.client.run("SELECT 1"), "its window has no state file now");
+  const holder = JSON.parse(readFileSync(`${stateFileOf(stateDir, "me")}.holder`, "utf8"));
+  assert.equal(holder.build, 2);
+});
+
+test("an older build never takes the state file from a newer one", async t => {
+  const { open } = await stateServer(t);
+  const newer = open("me|new", "me", { build: 2 });
+  await newer.store.put("listing", ["kept"]);
+
+  const older = open("me|old", "me", { build: 1, idleMs: 2000 });
+  assert.equal(await older.store.peek("listing"), undefined);
+  assert.deepEqual(await newer.client.run("SELECT count(*)::INT AS n FROM kv WHERE k = 'listing'"), [{ n: 1 }]);
+});
+
+test("only a file that isn't a database is set aside", () => {
+  for (const said of ["The file \"x\" exists, but it is not a valid DuckDB database file!",
+    "IO Error: Corrupt database file: computed checksum 1 does not match stored checksum 2",
+    "Failure while replaying WAL file \"x.wal\": Serialization Error"]) {
+    assert.equal(stateFileUnusable(said), true, said);
+  }
+  for (const said of ["IO Error: Trying to read a database file with version number 99, but we can only read version 65",
+    "IO Error: Cannot open file \"x\": Access is denied.", "IO Error: Could not write file \"x\": There is not enough space on the disk."]) {
+    assert.equal(stateFileUnusable(said), false, said);
+  }
 });
 
 test("a state file that isn't a database is set aside, and started again", async t => {

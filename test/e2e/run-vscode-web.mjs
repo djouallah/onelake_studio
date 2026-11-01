@@ -267,6 +267,30 @@ async function runMatrix() {
     check("the box keeps its text", r.box === "select 102 as by_button", r.box);
   });
 
+  await step("Run: a double click is one click, and a cell still opens whole", async () => {
+    // What DuckDB was asked, by a mark split so that asking doesn't count as one.
+    const asked = async mark => {
+      await page.waitForTimeout(1000);
+      const r = await runIt(`select 'asked=' || count(*) as c from duckdb_logs where type = 'Quack' and message like '%PREPARE_REQUEST%${mark}' || '_mark%'`);
+      return Number((/asked=(\d+)/.exec(r.table) || [])[1]);
+    };
+    const once = await runIt("select 1041 /* e2e_once_mark */ as a");
+    check("one click ran it", /\b1041\b/.test(once.table), once.table || once.status);
+    const twice = await act(async f => {
+      await setBox("select 1042 /* e2e_twice_mark */ as a");
+      await f.locator("#runBtn").dblclick();
+    });
+    check("a double click ran it", /\b1042\b/.test(twice.table), twice.table || twice.status);
+    const [one, two] = [await asked("e2e_once"), await asked("e2e_twice")];
+    check("as many statements as one click", one > 0 && two === one, `${one} and ${two}`);
+
+    const f = await panel();
+    await f.locator("td[data-c]").first().dblclick();
+    await f.locator("#inspector").waitFor({ state: "visible", timeout: 5000 });
+    check("the inspector shows the cell", /1042/.test(await f.locator("#inspectorBody").innerText()));
+    await f.locator("#inspectorClose").click();
+  });
+
   await step("Run: the statement under the cursor", async () => {
     const text = "select 111 as one;\nselect 222 as two;\nselect 333 as three;";
     const r = await runIt(text, { cursor: text.indexOf("222") });

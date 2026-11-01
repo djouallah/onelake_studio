@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **One click, everywhere.** An app in the tree opens on one click, like a table, a file, a query or a model. A double
+  click anywhere counts as one, so it opens one tab and Run runs once. A grid cell stays as it was: one click selects it,
+  and a double click or Enter shows it whole.
+- **An update keeps Logs and what is remembered, with no gap.** The new version takes them over from the old one at once,
+  rather than waiting for its last window to close, and only a file that isn't a database is ever thrown out.
 - **Open OneLake Studio is off the explorer's "..." menu.** The explorer was already open, and **New Query** opens a tab.
   It stays in the Command Palette.
 - **A DuckDB or SQLite file opens on what it holds:** a tree of its schemas, tables, views and columns beside the SQL box,
