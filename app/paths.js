@@ -115,6 +115,14 @@ export function fileExt(name) {
 export const readerFor = ext =>
   Object.prototype.hasOwnProperty.call(FILE_READERS, ext) ? FILE_READERS[ext] : null;
 
+// What DuckDB reads from a string by its extension alone, as checked against DuckDB 2.0. A SQL box
+// says only the file's name for these, and its reader for the rest.
+const READS_BARE = new Set(["parquet", "csv", "tsv", "json", "jsonl", "csv.gz"]);
+export const fileSource = (ext, name) => {
+  const reader = readerFor(ext);
+  return READS_BARE.has(ext) || !reader ? sqlStr(name) : reader(sqlStr(name));
+};
+
 // -----------------------------------------------------------------------------
 // SQL text
 // -----------------------------------------------------------------------------
@@ -137,6 +145,13 @@ export const RESERVED = new Set(("all analyse analyze and anti any array as asc 
 export const sqlPart = v => {
   const s = String(v);
   return /^[A-Za-z_][A-Za-z0-9_]*$/.test(s) && !RESERVED.has(s.toLowerCase()) ? s : quoteIdent(s);
+};
+// A file's SQL name (src/names.js fileSqlName; a test holds them equal), from its workspace and its
+// path from the item, "data.Lakehouse/Files/x.parquet". null for a path no lakehouse holds.
+export const fileSqlName = (ws, path) => {
+  const m = /^([^/]+)\.Lakehouse\/Files(?:\/(.*))?$/i.exec(strip(path));
+  if (!m) return null;
+  return `${["lakehouse", ws, m[1]].map(sqlPart).join(".")}/Files${m[2] ? `/${m[2]}` : ""}`;
 };
 
 // CSV: a cell is quoted when it holds a quote, a comma or a line break of either kind.

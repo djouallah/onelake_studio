@@ -6,8 +6,8 @@
   with a filter and an overview of the file, and no rows read. Picking a table shows its columns, keys, indexes and
   definition, with Data and Pivot beside them. A file used to preview its first table, with the rest named nowhere.
 - **A file has a name, as a table does:** `'lakehouse.aemo.data/Files/x.parquet'`, in place of its `abfss://` URL, which
-  still reads. Wildcards go in the path. **Copy SQL Name** and a drag from the tree work on a file or folder, `files` lists
-  each one's name, and an error and **Logs** say it as it was written. A name that can't be found fails rather than
+  still reads. Wildcards go in the path. Opening a file puts it in the SQL box. **Copy SQL Name** and a drag from the tree
+  work on a file or folder, `files` lists each one's name, and an error and **Logs** say it as it was written. A name that can't be found fails rather than
   answering no rows.
 - **`sql --in` is gone.** `'Files/x.parquet'` read a different file depending on the lakehouse given, and rewrote any
   string that looked like one, even in a `WHERE`. Write the file's whole name.

@@ -249,7 +249,7 @@ async function selectFile(file) {
     if (info.db) {
       openDb(file, info);
     } else if (info.ident) {
-      const preview = previewSql(info.ident, activeDocEligible);
+      const preview = previewSql(info.source || info.ident, activeDocEligible);
       offerInBox(preview);
       reportLoad(info, await runQuery({ sql: preview, doc: activeDocEligible, ext: activeDocExt }));
     } else {

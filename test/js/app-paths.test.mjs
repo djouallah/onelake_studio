@@ -11,6 +11,20 @@ test("a never-written table gets an empty view typed from its Iceberg schema", a
     `SELECT CAST(NULL AS BIGINT) AS "id", CAST(NULL AS VARCHAR) AS "a""b" WHERE false`);
 });
 
+test("a SQL box says a file by its name, with its reader only where DuckDB needs one", async () => {
+  const { fileSqlName, fileSource } = await import("../../app/paths.js");
+  assert.equal(fileSqlName("aemo", "data.Lakehouse/Files/a/x.parquet"), "lakehouse.aemo.data/Files/a/x.parquet");
+  assert.equal(fileSqlName("ANZ Retail", "select.Lakehouse/Files/a b.csv"), 'lakehouse."ANZ Retail"."select"/Files/a b.csv');
+  assert.equal(fileSqlName("ws", "dw.Warehouse/Tables/x"), null);
+  const name = "lakehouse.aemo.data/Files/x";
+  for (const ext of ["parquet", "csv", "tsv", "json", "jsonl", "csv.gz"]) assert.equal(fileSource(ext, name), `'${name}'`, ext);
+  assert.equal(fileSource("pq", name), `read_parquet(['${name}'])`);
+  assert.equal(fileSource("xlsx", name), `read_xlsx('${name}')`);
+  assert.equal(fileSource("avro", name), `read_avro('${name}')`);
+  assert.ok(fileSource("log", name).includes(`read_csv('${name}'`), "a text file reads as lines");
+  assert.equal(fileSource("csv", "lakehouse.a.b/Files/it's.csv"), "'lakehouse.a.b/Files/it''s.csv'");
+});
+
 const dbFixture = {
   alias: "shop",
   schemas: [{ id: "1", parent: null, name: "main" }, { id: "2", parent: null, name: "sales" },

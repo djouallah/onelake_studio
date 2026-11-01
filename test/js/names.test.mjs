@@ -127,6 +127,8 @@ test("the host and the panel quote a name the same way (src/names.js and app/pat
   assert.deepEqual([...n.RESERVED].sort(), [...p.RESERVED].sort());
   for (const s of [...p.RESERVED, "Order", "sales", "_x1", "1st", "a b", 'a"b', "café", "", 42])
     assert.equal(p.sqlPart(s), n.sqlPart(s), String(s));
+  for (const [ws, item, rest] of [["aemo", "data", "a/x.parquet"], ["ANZ Retail", "gold_1", "a b.csv"], ["ws", "select", "x"], ["ws", "lh", ""]])
+    assert.equal(p.fileSqlName(ws, `${item}.Lakehouse/Files${rest ? `/${rest}` : ""}`), n.fileSqlName({ workspace: ws, item: `${item}.Lakehouse` }, rest));
   // The model views are named alike on both sides: a model called `order` is quoted.
   const semantic = await import("../../app/semantic.js");
   assert.equal(semantic.modelSqlName("ws", "order"), n.modelSqlName("ws", "order"));

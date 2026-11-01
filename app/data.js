@@ -19,7 +19,7 @@
 // host (its cache-first store, its signed reads); DuckDB, also in the host, reads tables
 // and Files/ objects by their abfss:// names with the host's own credential.
 import {
-  basename, abfssUrl,
+  basename, abfssUrl, fileSqlName, fileSource,
   fileExt, readerFor, PARQUET_EXTS, DB_EXTS, ZIP_EXTS, isSqliteHeader, isTextExt,
   dbCatalogSql, dbCountSql, dbCatalog,
   sqlStr, quoteIdent, prepareReadOnlySql,
@@ -265,7 +265,10 @@ export function createEngine({
       await fileView(name, `SELECT * FROM ${reader(sqlStr(url))}`);
       res.names.push(name);
       const columns = await describe(ident);
-      const info = { label, ident, columns, fileCount: 1, posDeletes: 0, eqDeletes: 0,
+      // `source` is what a SQL box says: the view is this tab's own, and its name means nothing to
+      // anyone. The box's SQL goes through the same read.
+      const sqlName = fileSqlName(lh.workspace, file.path);
+      const info = { label, ident, source: sqlName && fileSource(ext, sqlName), columns, fileCount: 1, posDeletes: 0, eqDeletes: 0,
                      file: true, bytes: file.bytes, ext, warnings: [] };
       loaded.set(key, info);
       status(describeLoad(info));
@@ -304,6 +307,7 @@ export function createEngine({
         readable = readable.slice(0, ZIP_MAX_VIEWS);
       }
       const views = [];
+      let firstEntry = null;   // the entry views[0] reads
       for (const e of readable) {
         // One view per entry, each inflating its entry to bind — the loop that most
         // needs a way out.
@@ -315,6 +319,7 @@ export function createEngine({
         try {
           await fileView(name, `SELECT * FROM ${reader(sqlStr(`zip://${url}/${e.n}`))}`);
           views.push(quoteIdent(name));
+          if (!firstEntry) firstEntry = e.n;
           res.names.push(name);
         } catch (err) {
           if (err && err.cancelled) throw err;   // a stop is not a bad entry
@@ -323,7 +328,9 @@ export function createEngine({
       }
       const first = views[0] || null;
       const columns = first ? await describe(first) : [];
-      const info = { label: file.name, ident: first, columns, fileCount: entries.length,
+      const sqlName = fileSqlName(lh.workspace, file.path);
+      const info = { label: file.name, ident: first, source: firstEntry && sqlName ? readerFor(fileExt(firstEntry))(sqlStr(`zip://${sqlName}/${firstEntry}`)) : null,
+                     columns, fileCount: entries.length,
                      posDeletes: 0, eqDeletes: 0, file: true, bytes: file.bytes, ext: "zip",
                      zip: true, zipViews: views, warnings };
       if (!first && !warnings.length)
