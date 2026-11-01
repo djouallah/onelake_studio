@@ -188,7 +188,7 @@ function unzip(buf) {
   return out;
 }
 
-test("the zip: every entry at the root, deflated, read back byte for byte", () => {
+test("the zip: every entry at the root, deflated, read back byte for byte", async () => {
   const files = new Map([["index.html", Buffer.from("<!doctype html>")], ["a/b.js", Buffer.from("x".repeat(5000))],
                          ["é.txt", Buffer.alloc(0)]]);
   const back = unzip(await zip(files));

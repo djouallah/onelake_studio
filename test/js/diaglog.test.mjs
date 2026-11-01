@@ -136,7 +136,7 @@ test("the catalog describes itself, and says when it opens and moves", async t =
   const file = join(dir, "catalog.sqlite");
   const backend = createCatalogFile({ file, log: l => said.push(l) });
   t.after(async () => { backend.close(); await rm(dir, { recursive: true, force: true }).catch(() => {}); });
-  await backend.write("workspaces", 1, JSON.stringify(["a", "b"]));
+  await backend.write("workspaces", 1, ["a", "b"]);
   const d = backend.describe();
   assert.equal(d.file, file);
   assert.equal(d.schema, 4);
