@@ -40,6 +40,7 @@ function world(t, files = {}) {
     const base = await mkdtemp(join(tmpdir(), "onelake-mirror-"));
     t.after(() => rm(base, { recursive: true, force: true }).catch(() => {}));
     w.base = base;
+    w.catalog = catalog;
     w.mirror = createDeltaMirror({ catalog, base: () => base, ttlMs: 1000, isOffline: () => w.offline, now: () => w.clock });
     w.table = { workspace: "ws", dir: DIR };
     return w;
@@ -83,6 +84,20 @@ test("a commit already held isn't read again, and within its age OneLake isn't a
   assert.deepEqual(w.read, [], "and nothing new to read");
   await w.mirror.ensure(w.table, { fresh: true });
   assert.equal(w.listed.length, 2, "asked for, whatever its age");
+});
+
+test("a new window goes by when any window last asked, so it doesn't ask again within that", async t => {
+  const w = await world(t, { [`${LOG}/${v(0, "json")}`]: "0" });
+  await w.mirror.ensure(w.table);
+  w.listed.length = 0;
+  const another = createDeltaMirror({ catalog: w.catalog, base: () => w.base, ttlMs: 1000, now: () => w.clock });
+  w.clock += 500;
+  await another.ensure(w.table);
+  assert.deepEqual(w.listed, [], "within its age");
+  const third = createDeltaMirror({ catalog: w.catalog, base: () => w.base, ttlMs: 1000, now: () => w.clock });
+  w.clock += 2000;
+  await third.ensure(w.table);
+  assert.deepEqual(w.listed, [LOG], "past it");
 });
 
 test("a table dropped and made again starts over: what's held of the old log goes", async t => {

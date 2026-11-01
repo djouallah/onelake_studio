@@ -53,7 +53,7 @@ function createStore({ dir, backend = null, ttlMs = DEFAULT_TTL_MS, maxBytes = D
   // 'error' is special to EventEmitter — emitted with no listener it throws. Background
   // refresh failures are reported under their own name so nobody has to remember that.
   const inflight = new Map();   // key -> Promise<entry>
-  const memo = new Map();       // key -> { value, at, json }   (insertion order = LRU)
+  const memo = new Map();       // key -> { value, at }   (insertion order = LRU)
   // What another window wrote: what this one holds of it goes, and its listeners hear.
   if (backend && backend.subscribe) {
     backend.subscribe(keys => {
@@ -88,7 +88,7 @@ function createStore({ dir, backend = null, ttlMs = DEFAULT_TTL_MS, maxBytes = D
     if (backend) {
       // No answer either way when it can't be reached: not cached is what that means to a caller.
       const e = await backend.read(key).catch(() => null);
-      return e ? remember(key, { value: JSON.parse(e.json), at: e.at, json: e.json }) : null;
+      return e ? remember(key, { value: e.value, at: e.at }) : null;
     }
     if (!await usable) return null;
     try {
@@ -96,18 +96,17 @@ function createStore({ dir, backend = null, ttlMs = DEFAULT_TTL_MS, maxBytes = D
       // A hash collision is not going to happen, but a file that names another key is a
       // file this read must not serve.
       if (!e || e.key !== key) return null;
-      return remember(key, { value: e.value, at: e.at, json: JSON.stringify(e.value) });
+      return remember(key, { value: e.value, at: e.at });
     } catch (_) {
       return null;   // absent, or unreadable: either way, not an answer
     }
   }
 
   async function write(key, value) {
-    const json = JSON.stringify(value);
-    const ent = remember(key, { value, at: now(), json });
+    const ent = remember(key, { value, at: now() });
     if (backend) {
       // Memory still holds it, as when a file could not be written.
-      await backend.write(key, ent.at, json).catch(() => {});
+      await backend.write(key, ent.at, value).catch(() => {});
       return ent;
     }
     if (!await usable) return ent;
@@ -187,6 +186,19 @@ function createStore({ dir, backend = null, ttlMs = DEFAULT_TTL_MS, maxBytes = D
   const peek = async key => { const e = await read(key); return e ? e.value : undefined; };
   // The same, with when it was stored: { value, at }, or null. Never fetches, never refreshes.
   const known = async key => { const e = await read(key); return e ? { value: e.value, at: e.at } : null; };
+  // When it was stored, or null, with no reading of a whole listing for that.
+  const keptAt = async key => {
+    const hot = memo.get(key);
+    if (hot) return hot.at;
+    if (backend && backend.keptAt) { try { return backend.keptAt(key); } catch (_) { return null; } }
+    const e = await read(key);
+    return e ? e.at : null;
+  };
+  // Every table's metadata at one go, or null where that isn't how it is kept.
+  const allTables = async () => {
+    if (!backend || !backend.allTables) return null;
+    try { return backend.allTables(); } catch (_) { return null; }
+  };
   // Why the last read of this entry failed: { at, error }, or null. Read at once, for drawing a node.
   const failureOf = key => {
     if (!backend || !backend.failureOf) return null;
@@ -310,7 +322,7 @@ function createStore({ dir, backend = null, ttlMs = DEFAULT_TTL_MS, maxBytes = D
   }
 
   return {
-    get, put, peek, known, failureOf, latestRead, clear, forget, size, getBlob, hasBlob, putBlob,
+    get, put, peek, known, keptAt, allTables, failureOf, latestRead, clear, forget, size, getBlob, hasBlob, putBlob,
     on: (ev, fn) => { events.on(ev, fn); return () => events.off(ev, fn); },
   };
 }

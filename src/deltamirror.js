@@ -137,11 +137,17 @@ function createDeltaMirror({ catalog, base, ttlMs, isOffline = () => false, now 
     if (!local) return null;
     const held = await exists(join(local, LOG));
     if (isOffline()) return held ? local : null;
-    if (held && !fresh && now() - (checked.get(local) ?? -Infinity) <= ttl()) return local;
+    // Past this window's own memory too: its log folder's time says when any window last asked.
+    const askedAt = checked.get(local) ?? (held ? (await fsp.stat(join(local, LOG)).catch(() => null))?.mtimeMs : null) ?? -Infinity;
+    if (held && !fresh && now() - askedAt <= ttl()) return local;
     let running = inflight.get(local);
     if (!running) {
-      running = refresh(table, local).then(found => { checked.set(local, now()); return found; })
-        .finally(() => inflight.delete(local));
+      running = refresh(table, local).then(async found => {
+        const at = now();
+        checked.set(local, at);
+        if (found) await fsp.utimes(join(local, LOG), new Date(at), new Date(at)).catch(() => {});
+        return found;
+      }).finally(() => inflight.delete(local));
       inflight.set(local, running);
     }
     try {

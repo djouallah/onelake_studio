@@ -222,12 +222,12 @@ function createCatalogFile({ file, onCleared = () => {}, clearedEveryMs = CLEARE
     async read(key) {
       database();
       const kept = tables.read(key);
-      return kept ? { at: Number(kept.at), json: JSON.stringify(kept.value) } : null;
+      return kept ? { at: Number(kept.at), value: kept.value } : null;
     },
     /** Fails on what has no table: every key the store is asked to keep has one. */
-    async write(key, at, json) {
+    async write(key, at, value) {
       inOne(() => {
-        if (!tables.write(key, JSON.parse(json), Math.floor(at))) throw new Error(`the catalog has no table for ${String(key).split('\0')[0]}`);
+        if (!tables.write(key, value, Math.floor(at))) throw new Error(`the catalog has no table for ${String(key).split('\0')[0]}`);
         tables.clearFailure(key);
       });
       if (++writes % TRIM_EVERY === 0) inOne(() => tables.trimFirstRows(firstRowsMaxBytes));
@@ -235,6 +235,8 @@ function createCatalogFile({ file, onCleared = () => {}, clearedEveryMs = CLEARE
     /** A read of this entry failed: the last good answer is still served, and this says why it is old. */
     noteFailure(key, at, error) { tables.noteFailure(key, Math.floor(at), String(error)); },
     failureOf(key) { database(); return tables.failureOf(key); },
+    keptAt(key) { database(); return tables.keptAt(key); },
+    allTables() { database(); return tables.allTables(); },
     latestRead(dir) { database(); return tables.latestRead(dir); },
     /** Hears the store's keys of what another window wrote. Answers how to stop. */
     subscribe(fn) {

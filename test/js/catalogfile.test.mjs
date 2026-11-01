@@ -98,6 +98,31 @@ test("a window isn't told of its own Clear", async t => {
   assert.equal(told, 0);
 });
 
+test("every table at one go is what reading each gives, and an entry's age comes with no read of it", async t => {
+  const { open } = await setup(t);
+  const { backend } = open();
+  const key = "table\0w\0i.Lakehouse\0dbo\0t";
+  await backend.write(key, 3, summarize({
+    "current-snapshot-id": 1, "current-schema-id": 0, "format-version": 2,
+    schemas: [{ "schema-id": 0, fields: [{ id: 1, name: "b", type: "long" }, { id: 2, name: "a", type: "string" }] }],
+    snapshots: [{ "snapshot-id": 1, "timestamp-ms": 1, summary: { "total-records": "2" } }],
+  }, "loc"));
+  await backend.write("table\0w\0i.Lakehouse\0dbo\0nothing", 4, { format: "none", notValid: "no" });
+  const one = (await backend.read(key)).value;
+  const all = backend.allTables();
+  const got = all.get("w\0i.Lakehouse\0dbo\0t");
+  const noHistory = v => ({ ...v, stats: { ...v.stats, history: null } });
+  assert.deepEqual(noHistory(got), noHistory(one));
+  assert.deepEqual(got.schemaFields.map(f => f.name), ["b", "a"], "in the table's order");
+  assert.equal(all.get("w\0i.Lakehouse\0dbo\0nothing").notValid, "no");
+
+  await backend.write("tables\0w\0i.Lakehouse", 7, [{ schema: "dbo", table: "t" }]);
+  assert.equal(backend.keptAt("tables\0w\0i.Lakehouse"), 7);
+  assert.equal(backend.keptAt(key), 3);
+  assert.equal(backend.keptAt("tables\0w\0other"), null);
+  assert.equal(backend.keptAt("no such kind"), null);
+});
+
 test("a listing cut off leaves what was known, and says why it is old", async t => {
   const { open } = await setup(t);
   const { store, backend } = open();
@@ -138,17 +163,17 @@ test("Clear gives the space back", async t => {
 test("past the limit, the oldest first rows go, down to 80%, and nothing else does", async t => {
   const { open } = await setup(t);
   const { backend } = open({ firstRowsMaxBytes: 2000 });
-  await backend.write("workspaces", 1, JSON.stringify(["old but kept"]));
-  await backend.write("item-named\0a\0b", 1, JSON.stringify({ workspace: "w", item: "i" }));
-  await backend.write("rows\0loc", 1, "true");
+  await backend.write("workspaces", 1, ["old but kept"]);
+  await backend.write("item-named\0a\0b", 1, { workspace: "w", item: "i" });
+  await backend.write("rows\0loc", 1, true);
   const peek = i => `peek\0_${String(i).padStart(3, "0")}`;
-  for (let i = 0; i < 197; i++) await backend.write(peek(i), i + 10, JSON.stringify({ rows: "x".repeat(89) }));
+  for (let i = 0; i < 197; i++) await backend.write(peek(i), i + 10, { rows: "x".repeat(89) });
   // The look comes on the 200th write, three of which weren't first rows: at peek(196). Each is 100 characters.
   assert.equal(await backend.read(peek(0)), null);
   assert.equal(await backend.read(peek(180)), null);
   assert.equal((await backend.read(peek(181))).at, 191);
   assert.equal((await backend.read(peek(196))).at, 206);
-  assert.deepEqual(JSON.parse((await backend.read("workspaces")).json), ["old but kept"]);
+  assert.deepEqual((await backend.read("workspaces")).value, ["old but kept"]);
   assert.ok(await backend.read("item-named\0a\0b"));
   assert.ok(await backend.read("rows\0loc"));
 });
@@ -181,12 +206,12 @@ test("every kind of listing comes back as it went in, from real rows", async t =
     [`models\0${WS}`]: [{ id: "1", name: "m", description: "" }],
     [`apps\0${WS}`]: [{ id: "2", name: "a", description: "", url: "https://x", deployedAt: "", access: "public" }],
   };
-  for (const [k, v] of Object.entries(answers)) await backend.write(k, 7, JSON.stringify(v));
+  for (const [k, v] of Object.entries(answers)) await backend.write(k, 7, v);
   for (const [k, v] of Object.entries(answers)) {
     const kept = await backend.read(k);
     assert.equal(kept.at, 7, k);
-    assert.deepEqual(JSON.parse(kept.json), v, k);
-    assert.equal(sameAnswer(JSON.parse(kept.json), v), true, k);
+    assert.deepEqual(kept.value, v, k);
+    assert.equal(sameAnswer(kept.value, v), true, k);
   }
   // They are tables, not values.
   const db = new DatabaseSync(file);
@@ -219,12 +244,12 @@ test("a table's metadata comes back the same, with its columns and history in ta
   for (const value of [summarize(icebergMeta(), loc),
     summarize(icebergMeta({ properties: { XTABLE_METADATA: JSON.stringify({ sourceTableFormat: "DELTA", sourceIdentifier: 42 }), "delta.parquet.vorder.enabled": "true" } }), loc),
     summarize(icebergMeta({ "current-snapshot-id": -1, snapshots: [] }), loc)]) {
-    await backend.write(key, 9, JSON.stringify(value));
+    await backend.write(key, 9, value);
     const kept = await backend.read(key);
     assert.equal(kept.at, 9);
-    assert.equal(sameAnswer(JSON.parse(kept.json), value), true, `${kept.json}\n${JSON.stringify(value)}`);
+    assert.equal(sameAnswer(kept.value, value), true, `${kept.json}\n${JSON.stringify(value)}`);
   }
-  await backend.write(key, 9, JSON.stringify(summarize(icebergMeta(), loc)));
+  await backend.write(key, 9, summarize(icebergMeta(), loc));
   const db = new DatabaseSync(file);
   t.after(() => db.close());
   assert.deepEqual(db.prepare("SELECT name, type FROM lake_column ORDER BY pos").all().map(r => [r.name, r.type]), [["id", "long"], ["ts", "timestamp"]]);
@@ -235,18 +260,18 @@ test("a table's metadata comes back the same, with its columns and history in ta
 test("a summary kept before tables had a format is still noticed as one", async t => {
   const { open } = await setup(t);
   const { backend } = open();
-  await backend.write(`table\0${WS}\0${ITEM}\0dbo\0old`, 1, JSON.stringify({ empty: true, schemaFields: [], totalRecords: 0, stats: null, metadataLocation: "x" }));
-  assert.equal("format" in JSON.parse((await backend.read(`table\0${WS}\0${ITEM}\0dbo\0old`)).json), false);
+  await backend.write(`table\0${WS}\0${ITEM}\0dbo\0old`, 1, { empty: true, schemaFields: [], totalRecords: 0, stats: null, metadataLocation: "x" });
+  assert.equal("format" in (await backend.read(`table\0${WS}\0${ITEM}\0dbo\0old`)).value, false);
 });
 
 test("a table a new listing no longer names leaves it, and its metadata stays", async t => {
   const { open } = await setup(t);
   const { backend } = open();
   const listing = `tables\0${WS}\0${ITEM}`;
-  await backend.write(listing, 1, JSON.stringify([{ schema: "dbo", table: "kept" }, { schema: "dbo", table: "gone" }, { schema: "dbo", table: "gone2" }]));
-  await backend.write(`table\0${WS}\0${ITEM}\0dbo\0gone`, 1, JSON.stringify(summarize(icebergMeta(), "loc")));
-  await backend.write(listing, 2, JSON.stringify([{ schema: "dbo", table: "kept" }, { schema: "dbo", table: "new" }]));
-  assert.deepEqual(JSON.parse((await backend.read(listing)).json).map(t => t.table), ["kept", "new"]);
+  await backend.write(listing, 1, [{ schema: "dbo", table: "kept" }, { schema: "dbo", table: "gone" }, { schema: "dbo", table: "gone2" }]);
+  await backend.write(`table\0${WS}\0${ITEM}\0dbo\0gone`, 1, summarize(icebergMeta(), "loc"));
+  await backend.write(listing, 2, [{ schema: "dbo", table: "kept" }, { schema: "dbo", table: "new" }]);
+  assert.deepEqual((await backend.read(listing)).value.map(t => t.table), ["kept", "new"]);
   assert.ok(await backend.read(`table\0${WS}\0${ITEM}\0dbo\0gone`));
   assert.equal(await backend.read(`table\0${WS}\0${ITEM}\0dbo\0gone2`), null);
 });
@@ -254,10 +279,10 @@ test("a table a new listing no longer names leaves it, and its metadata stays", 
 test("a table read by name before any listing isn't listed by it", async t => {
   const { open } = await setup(t);
   const { backend } = open();
-  await backend.write(`table\0${WS}\0${ITEM}\0dbo\0early`, 1, JSON.stringify(summarize(icebergMeta(), "loc")));
+  await backend.write(`table\0${WS}\0${ITEM}\0dbo\0early`, 1, summarize(icebergMeta(), "loc"));
   assert.equal(await backend.read(`tables\0${WS}\0${ITEM}`), null);
-  await backend.write(`tables\0${WS}\0${ITEM}`, 2, "[]");
-  assert.deepEqual(JSON.parse((await backend.read(`tables\0${WS}\0${ITEM}`)).json), []);
+  await backend.write(`tables\0${WS}\0${ITEM}`, 2, []);
+  assert.deepEqual((await backend.read(`tables\0${WS}\0${ITEM}`)).value, []);
   assert.ok(await backend.read(`table\0${WS}\0${ITEM}\0dbo\0early`));
 });
 
@@ -276,11 +301,11 @@ test("all the metadata is real tables, and there is no table of keys and values"
     [`file-read\0${WS}\0${ITEM}/Files/a.parquet\0etag`]: true,
     "peek\0abfss://x/metadata/1.metadata.json": { fields: [{ name: "id", type: "BIGINT" }], rows: [{ id: 1 }], numRows: 1 },
   };
-  for (const [k, v] of Object.entries(entries)) await backend.write(k, 9, JSON.stringify(v));
+  for (const [k, v] of Object.entries(entries)) await backend.write(k, 9, v);
   for (const [k, v] of Object.entries(entries)) {
     const kept = await backend.read(k);
     assert.equal(kept.at, 9, k);
-    assert.deepEqual(JSON.parse(kept.json), v, k);
+    assert.deepEqual(kept.value, v, k);
   }
   const db = new DatabaseSync(file);
   t.after(() => db.close());
@@ -307,8 +332,8 @@ test("all the metadata is real tables, and there is no table of keys and values"
 test("a value with no table, or that doesn't fit its table, isn't kept", async t => {
   const { open } = await setup(t);
   const { backend, store } = open();
-  await assert.rejects(backend.write("no such kind", 1, "1"), /no table/);
-  await assert.rejects(backend.write(`items\0${WS}`, 1, JSON.stringify(["an older shape"])), /no table/);
+  await assert.rejects(backend.write("no such kind", 1, 1), /no table/);
+  await assert.rejects(backend.write(`items\0${WS}`, 1, ["an older shape"]), /no table/);
   assert.equal(await backend.read(`items\0${WS}`), null);
   await store.put("no such kind", { rows: [] });
   assert.deepEqual(await store.peek("no such kind"), { rows: [] }, "the store still holds it in memory, as when any write fails");
@@ -350,12 +375,12 @@ test("a file from an older version moves over once, and its old tables go", asyn
   old.close();
 
   const { backend } = open();
-  assert.deepEqual(await backend.read("workspaces"), { at: 2, json: '["from a table"]' });
+  assert.deepEqual(await backend.read("workspaces"), { at: 2, value: ["from a table"] });
   assert.equal((await backend.read("items\0a")).at, 4);
-  assert.deepEqual(await backend.read("peek\0loc"), { at: 5, json: '{"rows":[]}' });
+  assert.deepEqual(await backend.read("peek\0loc"), { at: 5, value: { rows: [] } });
   assert.equal(await backend.read("catalog snapshot"), null);
-  assert.deepEqual(await backend.read("rows\0other"), { at: 7, json: "true" });
-  assert.deepEqual(await backend.read("item-named\0a\0b"), { at: 8, json: '{"workspace":"w","item":"i"}' });
+  assert.deepEqual(await backend.read("rows\0other"), { at: 7, value: true });
+  assert.deepEqual(await backend.read("item-named\0a\0b"), { at: 8, value: { workspace: "w", item: "i" } });
   assert.equal(backend.imported(), true, "what it had imported stays imported");
   backend.close();
   const db = new DatabaseSync(file);
@@ -384,7 +409,7 @@ test("an import puts catalog data in the tables, and leaves newer rows alone", a
   await store.put("workspaces", ["new"]);
   await backend.importKept({ jsonDir });
   assert.deepEqual(await store.peek("workspaces"), ["new"]);
-  assert.deepEqual(JSON.parse((await backend.read(`items\0${WS}`)).json), [{ name: "i", kind: "Lakehouse" }]);
+  assert.deepEqual((await backend.read(`items\0${WS}`)).value, [{ name: "i", kind: "Lakehouse" }]);
   const db = new DatabaseSync(file);
   t.after(() => db.close());
   assert.equal(db.prepare("SELECT count(*) AS n FROM item").get().n, 1);
@@ -422,7 +447,7 @@ test("walking a large catalog is quick enough to do on every listing", async t =
   const list = Array.from({ length: 5000 }, (_, i) => ({ schema: "dbo", table: `t${i}` }));
   await store.put(`tables\0w\0i.Lakehouse`, list);
   const meta = summarize(icebergMeta(), "loc");
-  for (const t of list) await backend.write(`table\0w\0i.Lakehouse\0dbo\0${t.table}`, 1, JSON.stringify(meta));
+  for (const t of list) await backend.write(`table\0w\0i.Lakehouse\0dbo\0${t.table}`, 1, meta);
   const cached = {
     workspaces: () => walkStore.known("workspaces"),
     items: w => walkStore.known(`items\0${w}`),

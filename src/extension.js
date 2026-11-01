@@ -143,7 +143,11 @@ function knownAccount() {
 }
 function rememberAccount(session) {
   const key = accountKey(session);
-  if (key && memento) memento.update(LAST_ACCOUNT_KEY, { key, queries: queryAccountOf(session), tenant: tenantSetting() });
+  if (!key || !memento) return;
+  const now = { key, queries: queryAccountOf(session), tenant: tenantSetting() };
+  // Every click comes through here, and this goes to disk.
+  const was = memento.get(LAST_ACCOUNT_KEY);
+  if (!was || was.key !== now.key || was.queries !== now.queries || was.tenant !== now.tenant) memento.update(LAST_ACCOUNT_KEY, now);
 }
 
 // getSession is an RPC into the account provider; asked once per request, that lookup —
@@ -156,16 +160,22 @@ const SESSION_WAIT_MS = 5_000;
 const SESSION_SETTLE_MS = 3_000;
 const storageHold = createTokenHold(TOKEN_TTL_MS);
 
-function forgetToken() { storageHold.forget(); fabricHold.forget(); fabricAudience = null; appHold.forget(); }
+function forgetToken() { storageHold.forget(); fabricHold.forget(); fabricAudience = null; appHold.forget(); tokenAsked = null; }
 
+// What is being asked of the account provider, for the burst behind the first to share.
+let tokenAsked = null;
 async function hostToken({ fresh = false } = {}) {
   // No internet: a refresh could only hang, and nothing is about to use the token.
   if (connectivity.noInternet()) return storageHold.any();
   if (!fresh && storageHold.recent()) return storageHold.recent();
+  if (!fresh && tokenAsked) return tokenAsked;
   const asked = storageHold.turn();
-  const token = await getToken({ createIfNone: false });
-  storageHold.keep(asked, token);
-  return token;
+  const asking = getToken({ createIfNone: false }).then(token => {
+    storageHold.keep(asked, token);
+    return token;
+  }).finally(() => { if (tokenAsked === asking) tokenAsked = null; });
+  if (!fresh) tokenAsked = asking;
+  return asking;
 }
 
 // The Fabric REST API — semantic models live there, not in OneLake. It takes a token in
@@ -679,7 +689,7 @@ async function show(context, { newTab = false, ...options } = {}) {
   // With an account's cache to show, or after a Sign Out, no click prompts for a sign-in: it opens
   // on what is held.
   const noPrompt = !!knownAccount() || signedOutByChoice();
-  const token = noPrompt && connectivity.noInternet() ? null : await getToken(noPrompt ? { createIfNone: false } : options);
+  const token = noPrompt ? await hostToken() : await getToken(options);
   if (!token && !noPrompt) {
     const why = lastAuthError ? `Sign-in failed: ${lastAuthError.message || lastAuthError}`
                               : 'Sign-in was cancelled.';
@@ -1055,6 +1065,9 @@ async function activateInner(context) {
     // No session is not another account: the last one's cache is what there is to show.
     const key = accountKey(session) || (knownAccount() || {}).key || null;
     if (key === storeAccount) return;
+    // Its file's handle and its look every few seconds, for an account this window has left. It opens
+    // again if that account comes back.
+    if (catalogFiles.has(storeAccount)) catalogFiles.get(storeAccount).close();
     storeAccount = key;
     // In one step with the account, before anything below waits: a read in between would write the
     // new account's answers into the old account's store.
@@ -1438,7 +1451,8 @@ async function activateInner(context) {
       if (!eng) throw new Error(resetting ? 'the engine is restarting: try again in a moment' : 'DuckDB could not be loaded on this platform — see OneLake Studio: Show Read Log');
       return eng;
     },
-    appDir: (await webviewRoot(context.extensionUri, { dev })).page.fsPath,
+    // When a module is first needed, as finding it asks the editor something, and the tree waits for nothing.
+    appDir: async () => (await webviewRoot(context.extensionUri, { dev })).page.fsPath,
     vendorDir: join(context.extensionUri.fsPath, 'vendor'),
     daxSqlPin: PINS.daxSql,
     yamlPin: PINS.yaml,
@@ -1834,7 +1848,7 @@ async function activateInner(context) {
             done = await fabricApp.publish({
               workspaceId: plan.workspace, name: plan.name, tenantId: tenantOf(token),
               catalogUrl: plan.catalogUrl, modelUrl: plan.modelUrl,
-              site: async config => zip(await buildDist(outDir, config)),
+              site: async config => await zip(await buildDist(outDir, config)),
               fn: { sourceZip, deployMetaData }, redirects: marker.redirects || [],
               itemId: marker.itemId || null, takeOver,
               // Kept as soon as there is one: if a later step fails, the next export must know this

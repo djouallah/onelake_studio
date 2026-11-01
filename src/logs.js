@@ -38,12 +38,13 @@ function openLogs({ engine, open, copy, clear }) {
     try {
       const e = engine();
       if (!e) { post({ down: 'The engine is not available here.' }); return; }
-      // A file under its name: DuckDB logs its URL, and a row reopens as what was written.
-      const rows = (await e.logs(SHOWN)).map(r => ({ ...r, sql: fileNamesIn(r.sql), error: r.error && fileNamesIn(r.error) }));
+      const kept = await e.logs(SHOWN);
       // Redrawn only when something changed, so a scrolled or expanded table stays as it is.
-      const now = `${rows.length}|${rows[0] ? `${rows[0].at}|${rows[0].ms}` : ''}`;
-      if (now !== said) { said = now; post({ rows, shown: SHOWN }); }
-      else post({ down: null });
+      const now = `${kept.length}|${kept[0] ? `${kept[0].at}|${kept[0].ms}` : ''}`;
+      if (now === said) { post({ down: null }); return; }
+      said = now;
+      // A file under its name: DuckDB logs its URL, and a row reopens as what was written.
+      post({ rows: kept.map(r => ({ ...r, sql: fileNamesIn(r.sql), error: r.error && fileNamesIn(r.error) })), shown: SHOWN });
     } catch (err) {
       said = '';
       post({ down: `The engine did not answer: ${(err && err.message) || err}` });

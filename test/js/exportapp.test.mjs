@@ -191,7 +191,7 @@ function unzip(buf) {
 test("the zip: every entry at the root, deflated, read back byte for byte", () => {
   const files = new Map([["index.html", Buffer.from("<!doctype html>")], ["a/b.js", Buffer.from("x".repeat(5000))],
                          ["é.txt", Buffer.alloc(0)]]);
-  const back = unzip(zip(files));
+  const back = unzip(await zip(files));
   assert.deepEqual([...back.keys()], ["index.html", "a/b.js", "é.txt"]);
   for (const [k, v] of files) assert.ok(back.get(k).equals(v), k);
   assert.equal(crc32(Buffer.from("123456789")), 0xcbf43926);
@@ -243,7 +243,7 @@ test("the folder: fabric_app's site and function, Studio's Explore, no model; di
       "vendored packages ship byte for byte");
     assert.ok(!(await readdir(join(outDir, "dist"))).includes("vendor"), "the packages are kept once, in site/vendor/");
     assert.equal(await read("dist/rayfin.config.json"), files.get("rayfin.config.json").toString());
-    assert.ok(unzip(zip(files)).get("app.js").equals(files.get("app.js")));
+    assert.ok(unzip(await zip(files)).get("app.js").equals(files.get("app.js")));
 
     // Exported again: the same folder is rewritten, what is not the export's stays, and an
     // earlier export's model/ copy goes.

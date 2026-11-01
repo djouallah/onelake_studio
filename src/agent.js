@@ -113,8 +113,9 @@ function createAgent({ onelake, engine, modelPath, appDir, vendorDir, daxSqlPin,
   async function modules() {
     if (mods) return mods;
     const load = p => import(pathToFileURL(p).href);
+    const dir = typeof appDir === 'function' ? await appDir() : appDir;
     const [paths, semantic, c, t, o, y] = await Promise.all([
-      load(join(appDir, 'paths.js')), load(join(appDir, 'semantic.js')),
+      load(join(dir, 'paths.js')), load(join(dir, 'semantic.js')),
       load(join(vendorDir, 'npm', daxSqlPin, 'src', 'index.js')),
       load(join(vendorDir, 'npm', daxSqlPin, 'formats', 'tmsl.js')),
       load(join(vendorDir, 'npm', daxSqlPin, 'formats', 'ossie.js')),
@@ -628,7 +629,8 @@ function createAgent({ onelake, engine, modelPath, appDir, vendorDir, daxSqlPin,
 
     async sql([text], opts, io) {
       const { semantic, compiler, paths } = await modules();
-      await syncViews(io.note);
+      // Every kept model is compiled for that, so only a statement that can name one waits for it, as in a tab.
+      if (/semantic/i.test(text)) await syncViews(io.note);
       const t0 = Date.now();
       // A semantic model it names that is not a view yet: opened (its local copy, read from
       // Fabric the first time) and kept, as the panel does.

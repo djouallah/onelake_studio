@@ -30,6 +30,7 @@
 const { join, dirname } = require('node:path');
 const fsp = require('node:fs/promises');
 const zlib = require('node:zlib');
+const deflateRaw = require('node:util').promisify(zlib.deflateRaw);
 const { createHash } = require('node:crypto');
 const { TABLE_ORIGIN } = require('./catalog');
 const { dfsFileUrl, stripBom } = require('./names');
@@ -354,15 +355,15 @@ function crc32(buf) {
   return (c ^ -1) >>> 0;
 }
 
-/** files: Map or [[path, bytes]] -> a zip's bytes. */
-function zip(files) {
+/** files: Map or [[path, bytes]] -> a zip's bytes. Deflated off the thread every other extension shares. */
+async function zip(files) {
   const local = [], central = [];
   let offset = 0;
   const DOS_TIME = 0, DOS_DATE = (2026 - 1980) << 9 | 1 << 5 | 1;   // a fixed date: the same files zip the same
   for (const [path, data] of files) {
     const name = Buffer.from(path, 'utf8');
     const raw = Buffer.from(data);
-    const packed = zlib.deflateRawSync(raw, { level: 9 });
+    const packed = await deflateRaw(raw, { level: 9 });
     const crc = crc32(raw);
     const head = Buffer.alloc(30);
     head.writeUInt32LE(0x04034b50, 0); head.writeUInt16LE(20, 4); head.writeUInt16LE(0x0800, 6);

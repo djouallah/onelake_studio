@@ -82,6 +82,8 @@ async function walkCached(cached) {
   const ws = await cached.workspaces();
   if (!ws) return null;
   const out = { at: ws.at, workspaces: [], unseen: { workspaces: 0, items: 0 } };
+  // At one go, where they are rows: a query per table is thousands, on the thread that draws the tree.
+  const allMeta = cached.allTables ? await cached.allTables() : null;
   const metaOf = [];
   for (const w of ws.value) {
     const models = await cached.models(w);
@@ -97,6 +99,10 @@ async function walkCached(cached) {
       entry.items.push({ ...it, tables });
     }
     out.workspaces.push(entry);
+  }
+  if (allMeta) {
+    for (const { lh, t } of metaOf) t.meta = allMeta.get([lh.workspace, lh.item, t.schema || '', t.table].join('\u0000')) ?? null;
+    return out;
   }
   const metas = await mapPool(metaOf, ({ lh, t }) => cached.table(lh, { schema: t.schema, table: t.table }), 16);
   metaOf.forEach(({ t }, i) => { t.meta = metas[i] ? metas[i].value : null; });
@@ -485,6 +491,7 @@ function createOneLake({ catalog, store, prefetchEnabled = () => true, onHit = (
     models: ws => store.known(keys.models(ws)),
     apps: ws => store.known(keys.apps(ws)),
     table: (lh, t) => store.known(keys.table(lh, t)),
+    allTables: () => store.allTables(),
     // Why this is not a valid table, if it was found not to be one, or null.
     notValid: async (lh, t) => {
       const kept = await store.known(keys.table(lh, t));
@@ -509,6 +516,13 @@ function createOneLake({ catalog, store, prefetchEnabled = () => true, onHit = (
       await store.peek(keys.fileRead(ws, entry.path, entry.version)) !== undefined
       || await store.hasBlob(keys.bytes(ws, entry.path, entry.version))),
   };
+  // When a listing was last read, or null. For the worker, which asks that of every listing in the tenant.
+  const listingAt = t => store.keptAt(t.kind === 'workspaces' ? keys.workspaces()
+    : t.kind === 'items' ? keys.items(t.workspace)
+    : t.kind === 'tables' ? keys.tables(t)
+    : t.kind === 'files' ? keys.files(t, t.dir || '')
+    : t.kind === 'models' ? keys.models(t.workspace)
+    : keys.apps(t.workspace));
   // Whether a table's rows can't be read from here at all: offline, with none of them read before.
   // Online they are one read away.
   const rowsOutOfReach = async (lh, t) => !!isOffline() && !await cached.rows(lh, t);
@@ -521,7 +535,7 @@ function createOneLake({ catalog, store, prefetchEnabled = () => true, onHit = (
       : keys.apps(n.workspace));
 
   return {
-    rowsOutOfReach, listingFailure,
+    rowsOutOfReach, listingFailure, listingAt,
     workspaces, items, tables, files, table, deltaState, deltaHistory, peek, prefetch, refreshTables,
     models, apps, itemNamed, readBytes, versionOf, cached, rowsRead, fileRead, onRowsRead,
     onChanged: fn => listen('changed', key => fn(decode(key))),

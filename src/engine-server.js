@@ -53,7 +53,7 @@ async function main({ token, pipe, options, logFile, idleMs = 60_000, logsFile =
   log(`starting: pid ${process.pid}`);
 
   const engine = createEngineHost({ ...options, serve: { token }, onWarn: log,
-    onLog: b => log(`booted in ${b.totalMs}ms`) });
+    onLog: b => log(`booted in ${b.totalMs}ms: ${b.stages.map(s => `${s.stage} ${s.ms}ms`).join(', ')}`) });
 
   let idle = null, state = null, reaper = null, stopping = false, logs = null, keeper = null;
   const clients = new Set();

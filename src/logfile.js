@@ -71,8 +71,12 @@ function createLogFile({ file, log = () => {} }) {
     clear() { database().exec('DELETE FROM logs'); },
     // The oldest go, down to half, so this isn't at the limit again at once.
     trim(maxBytes) {
-      const size = 'length(sql) + coalesce(length(error), 0)';
-      const { total } = database().prepare(`SELECT coalesce(sum(${size}), 0) AS total FROM logs`).get();
+      // The pages in use say it fits with nothing read. The sum below reads up to a gigabyte's rows, on the
+      // one thread the server has to answer its windows.
+      const { live } = database().prepare('SELECT (page_count - freelist_count) * page_size AS live FROM pragma_page_count(), pragma_freelist_count(), pragma_page_size()').get();
+      if (live <= maxBytes) return;
+      const size = 'octet_length(sql) + coalesce(octet_length(error), 0)';
+      const { total } = db.prepare(`SELECT coalesce(sum(${size}), 0) AS total FROM logs`).get();
       if (total <= maxBytes) return;
       db.prepare(`DELETE FROM logs WHERE ts <= (
         SELECT max(ts) FROM (SELECT ts, sum(${size}) OVER (ORDER BY ts DESC) AS kept FROM logs) WHERE kept > ?)`)

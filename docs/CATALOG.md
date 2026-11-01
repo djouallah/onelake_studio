@@ -71,7 +71,8 @@ and F5 has its own.
 Every row says when it was last read from OneLake.
 
 - **Who writes and reads:** each window opens the file itself, in WAL mode, with short transactions, so a reader is
-  not held up. Every window hears what another wrote from the file, within a few seconds.
+  not held up. Every window hears what another wrote from the file, within a few seconds. A walk over every table is one
+  pass over `lake_table` and `lake_column` (`allTables`), not a query per table.
 - **A tab's SQL can't reach it:** the file is outside the folders DuckDB may open.
 - **Rows are never evicted by age or size.** Offline depends on them.
 - **A table missing from a complete listing is marked dropped,** and removed when a later sync confirms it.

@@ -141,6 +141,7 @@ function createCatalogTables({ statement }) {
   // A listing with its own rows, which a new one replaces outright.
   const listingOf = (kind, { fits, put, rows }) => ({
     fits,
+    keptAt: parts => listed(kind, parts),
     has: parts => listed(kind, parts) != null,
     get(parts) {
       const at = listed(kind, parts);
@@ -164,6 +165,35 @@ function createCatalogTables({ statement }) {
   const TOP = ['empty', 'schemaFields', 'totalRecords', 'stats', 'metadataLocation', 'format'];
   const STATS = ['codec', 'totalFilesSize', 'totalDataFiles', 'totalDeleteFiles', 'operation', 'snapshotTs', 'snapshotCount',
     'formatVersion', 'partitionColumns', 'vorderProp', 'format', 'deltaVersion', 'history'];
+
+  // A lake_table row and its columns as the value it was kept as. `history` reads its snapshots, if it has any.
+  const tableValue = (r, columns, history) => ({
+    empty: !!r.is_empty,
+    schemaFields: columns.map(c => rowOf(c, { name: 'name', type: 'type' })),
+    totalRecords: r.total_records,
+    stats: !r.has_stats ? null : {
+      codec: r.codec,
+      totalFilesSize: r.total_bytes,
+      totalDataFiles: r.data_files,
+      totalDeleteFiles: r.delete_files,
+      operation: r.operation,
+      snapshotTs: r.snapshot_ts,
+      snapshotCount: r.snapshot_count,
+      formatVersion: r.format_version,
+      partitionColumns: parsed(r.partition_columns),
+      vorderProp: r.vorder == null ? null : !!r.vorder,
+      format: r.format,
+      deltaVersion: r.delta_version,
+      history: !r.has_history ? null : history().map(s => {
+        const entry = rowOf({ ...s, columns: null }, SNAPSHOT);
+        return { ...entry, columns: parsed(s.columns) };
+      }),
+      ...parsed(r.stats_extra),
+    },
+    metadataLocation: r.metadata_location ?? undefined,
+    ...(r.format != null ? { format: r.format } : {}),
+    ...parsed(r.meta_extra),
+  });
 
   const routes = {
     workspaces: listingOf('workspaces', {
@@ -327,35 +357,9 @@ function createCatalogTables({ statement }) {
           AND meta_ts IS NOT NULL`, ws, item, schema, name);
         if (!r) return null;
         const where = 'WHERE workspace = ? AND item = ? AND schema_name = ? AND table_name = ? ORDER BY pos';
-        const value = {
-          empty: !!r.is_empty,
-          schemaFields: all(`SELECT name, type, extra FROM lake_column ${where}`, ws, item, schema, name)
-            .map(c => rowOf(c, { name: 'name', type: 'type' })),
-          totalRecords: r.total_records,
-          stats: !r.has_stats ? null : {
-            codec: r.codec,
-            totalFilesSize: r.total_bytes,
-            totalDataFiles: r.data_files,
-            totalDeleteFiles: r.delete_files,
-            operation: r.operation,
-            snapshotTs: r.snapshot_ts,
-            snapshotCount: r.snapshot_count,
-            formatVersion: r.format_version,
-            partitionColumns: parsed(r.partition_columns),
-            vorderProp: r.vorder == null ? null : !!r.vorder,
-            format: r.format,
-            deltaVersion: r.delta_version,
-            history: !r.has_history ? null : all(`SELECT * FROM snapshot ${where}`, ws, item, schema, name).map(s => {
-              const entry = rowOf({ ...s, columns: null }, SNAPSHOT);
-              return { ...entry, columns: parsed(s.columns) };
-            }),
-            ...parsed(r.stats_extra),
-          },
-          metadataLocation: r.metadata_location ?? undefined,
-          ...(r.format != null ? { format: r.format } : {}),
-          ...parsed(r.meta_extra),
-        };
-        return { at: r.meta_ts, value };
+        const columns = all(`SELECT name, type, extra FROM lake_column ${where}`, ws, item, schema, name);
+        const history = () => all(`SELECT * FROM snapshot ${where}`, ws, item, schema, name);
+        return { at: r.meta_ts, value: tableValue(r, columns, history) };
       },
       put([ws, item, schema, name], v, at) {
         const s = v.stats || {};
@@ -413,6 +417,32 @@ function createCatalogTables({ statement }) {
       const r = routeOf(key);
       return !!r && r.route.has(r.parts);
     },
+    /** When this entry was read, or null, with its rows left where they are. */
+    keptAt(key) {
+      const r = routeOf(key);
+      if (!r) return null;
+      if (Object.hasOwn(r.route, 'keptAt')) return r.route.keptAt(r.parts);
+      const kept = r.route.get(r.parts);
+      return kept ? kept.at : null;
+    },
+    /**
+     * Every table's metadata, in one pass: a Map of workspace\0item\0schema\0table to its value, as a key's
+     * read gives it, without the snapshots of its history, which nothing that walks them reads.
+     */
+    allTables() {
+      const columns = new Map();
+      const keyOf = r => [r.workspace, r.item, r.schema_name, r.table_name ?? r.name].join('\0');
+      for (const c of all('SELECT workspace, item, schema_name, table_name, name, type, extra FROM lake_column ORDER BY workspace, item, schema_name, table_name, pos')) {
+        const k = keyOf(c);
+        if (!columns.has(k)) columns.set(k, []);
+        columns.get(k).push(c);
+      }
+      const out = new Map();
+      for (const r of all('SELECT * FROM lake_table WHERE meta_ts IS NOT NULL')) {
+        out.set(keyOf(r), tableValue(r, columns.get(keyOf(r)) || [], () => []));
+      }
+      return out;
+    },
     /** That a listing an older version kept the time of was read then. */
     stamp(key, at) {
       const r = routeOf(key);
@@ -453,10 +483,11 @@ function createCatalogTables({ statement }) {
     // First rows are the one thing here with a limit, as they are data and offline doesn't rest on them:
     // the disk cache holds them too. Oldest first, down to 80%.
     trimFirstRows(maxBytes) {
-      const { total } = one('SELECT coalesce(sum(length(rows_json)), 0) AS total FROM first_rows');
+      // octet_length needs no reading of the text, which length has to do, on the thread that draws the tree.
+      const { total } = one('SELECT coalesce(sum(octet_length(rows_json)), 0) AS total FROM first_rows');
       if (total <= maxBytes) return;
       run(`DELETE FROM first_rows WHERE location IN (
-        SELECT location FROM (SELECT location, sum(length(rows_json)) OVER (ORDER BY ts DESC, location) AS kept FROM first_rows)
+        SELECT location FROM (SELECT location, sum(octet_length(rows_json)) OVER (ORDER BY ts DESC, location) AS kept FROM first_rows)
         WHERE kept > ?)`, Math.floor(maxBytes * 0.8));
     },
     /** How many rows each table holds. */

@@ -36,6 +36,7 @@ const { randomBytes } = require('node:crypto');
 const { sqlStr, quoteIdent, assertReads, checkedRead, tableRefs, fileRefs, filesReadBy, namedError, catalogStatement, readsCatalog, COLUMNS_NOT_READ } = require('./sql');
 const { SQL_KINDS, sqlName, abfssUrl, MODEL_CATALOG, modelSqlName } = require('./names');
 const { revalidate, sameAnswer } = require('./store');
+const { mapPool } = require('./http');
 
 
 // Rows are read in chunks so no single postMessage carries a whole 200k-row grid, and so a tab
@@ -157,6 +158,8 @@ function proxySettings(proxyUrl) {
 }
 
 const FILE_CACHE_TRIM_MS = 60 * 60 * 1000;
+const TABLES_AT_ONCE = 4;
+const LIST_BATCH = 200;
 
 // Whether a statement's tables read the same as they did: when they were read from OneLake isn't that.
 const sameSources = (a, b) => sameAnswer(a.map(({ at, ...t }) => t), b.map(({ at, ...t }) => t));
@@ -741,15 +744,18 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
     let list;
     try { list = await catalogTables(); }
     catch (e) { catalogStale = true; onWarn(`the cached tables could not be listed in DuckDB — ${e.message}`); return; }
-    await admin(async () => {
-      const want = new Map();
-      for (const t of list || []) {
-        const { name, path } = placeOf(t);
-        const key = name.toLowerCase();
-        if (!want.has(key)) want.set(key, { t, name, path });
-      }
+    const want = new Map();
+    for (const t of list || []) {
+      const { name, path } = placeOf(t);
+      const key = name.toLowerCase();
+      if (!want.has(key)) want.set(key, { t, name, path });
+    }
+    // A few at a time, each its own turn: a whole tenant is seconds, and a statement's view shouldn't
+    // wait behind that for a turn of its own.
+    const entries = [...want];
+    for (let at = 0; at < entries.length; at += LIST_BATCH) await admin(async () => {
       const todo = [];
-      for (const [key, { t, name, path: parts }] of want) {
+      for (const [key, { t, name, path: parts }] of entries.slice(at, at + LIST_BATCH)) {
         if (made.has(key) && !listed.has(key)) continue;
         const source = listedSource(t, name);
         if (source == null || made.get(key) === source) continue;
@@ -777,6 +783,8 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
           } catch (e) { onWarn(`${x.name} could not be listed in DuckDB — ${e.message}`); }
         }
       }
+    });
+    await admin(async () => {
       for (const [key, name] of [...listed]) {
         if (want.has(key)) continue;
         if (!remote) try { await conn.run(`DROP VIEW IF EXISTS ${name};`); } catch (_) {}
@@ -799,14 +807,15 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
   // reads what it names with nothing opened first.
   async function sourcesOf(sql, o) {
     const seen = new Set();
-    const out = [];
+    const refs = [];
     for (const ref of tableRefs(sql, SQL_KINDS)) {
       const key = [ref.kind, ref.workspace, ref.item, ref.schema, ref.table].join('\0').toLowerCase();
       if (seen.has(key)) continue;
       seen.add(key);
-      out.push(await sourceOf(ref, o));
+      refs.push(ref);
     }
-    return out;
+    // A model's query names many, and past its age each can ask OneLake for its log.
+    return mapPool(refs, ref => sourceOf(ref, o), TABLES_AT_ONCE);
   }
 
   // The statement with each file it names as DuckDB reads it: its abfss:// URL. `written` is how to

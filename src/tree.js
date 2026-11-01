@@ -84,8 +84,12 @@ class LakehouseTree {
     // snapshot, and when a statement reads its rows.
     this._unsubRead = onelake.onTableRead ? onelake.onTableRead(r => this._cachedChanged(this._tableNode(r))) : null;
     this._unsubRows = onelake.onRowsRead
-      ? onelake.onRowsRead(() => {
-        for (const n of this._nodes.values()) if ((n.kind === 'table' || n.kind === 'file') && !n.cached) this._cachedChanged(n);
+      ? onelake.onRowsRead(where => {
+        // Only what was read: every statement comes through here, and a lakehouse can have thousands of nodes.
+        let text = where == null ? null : String(where);
+        try { if (text) text = decodeURIComponent(text); } catch (_) {}
+        const named = n => text == null || (n.kind === 'file' ? text.endsWith(`/${n.path}`) : text.includes(`/${n.table}/`));
+        for (const n of this._nodes.values()) if ((n.kind === 'table' || n.kind === 'file') && !n.cached && named(n)) this._cachedChanged(n);
       }) : null;
   }
 

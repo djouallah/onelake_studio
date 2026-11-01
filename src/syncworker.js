@@ -105,8 +105,9 @@ function createSyncWorker({ onelake, opened = () => [], pinned = () => [], ttlMs
 
   async function due(t, maxAge) {
     if ((retryAt.get(idOf(t)) || 0) > now()) return false;
-    const k = await kept(t).catch(() => null);
-    return !k || now() - k.at > maxAge;
+    // Its time alone where that can be had: a tick asks this of every listing in the tenant.
+    const at = await (onelake.listingAt ? onelake.listingAt(t) : kept(t).then(k => k && k.at)).catch(() => null);
+    return at == null || now() - at > maxAge;
   }
 
   // One listing read and written, or why not. False stops the tick.

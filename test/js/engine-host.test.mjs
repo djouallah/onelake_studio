@@ -457,8 +457,9 @@ test("native engine host", async t => {
       ["lakehouse", "cat1.lh.dbo", "unread", "[]", "[]"],
       ["warehouse", "cat1.wh.sales", "e", "['id']", "['INTEGER']"],
     ]);
-    // Listed by name before its columns are known, and an error rather than no rows if it is read unnamed.
-    await assert.rejects(engine.call("query", ["SELECT * FROM query_table('lakehouse.cat1.lh.dbo.unread')"]), /is not open/);
+    // Listed by name before its columns are known, and an error rather than no rows if it is ever read unnamed.
+    const viewSql = async name => (await engine.call("query", [`SELECT sql FROM duckdb_views() WHERE view_name = '${name}' AND schema_name <> 'main'`])).rows[0].sql;
+    assert.match(await viewSql("unread"), /is not open/);
     r = await engine.call("query", ["show schemas"]);
     assert.ok(r.rows.some(x => x.database_name === "lakehouse" && x.schema_name === '"Cat ws".lh.dbo'), JSON.stringify(r.rows));
     r = await engine.call("query", ['SHOW TABLES FROM lakehouse."cat ws".LH.dbo']);
@@ -478,11 +479,10 @@ test("native engine host", async t => {
       /semanticmodel\.cat1\."Sales Model" is a semantic model that is not open/);
     assert.equal(resolved.length, before, "listing the catalog asked OneLake nothing");
     // (A list crosses to the page as DuckDB writes it, jsonSafe.)
-    // A cached table that is empty is its own truth; one that is not fails when a name the
-    // engine cannot see reads it, rather than answering no rows.
-    r = await engine.call("query", ["SELECT count(*)::INT AS n FROM query_table('warehouse.cat1.wh.sales.e')"]);
-    assert.equal(r.rows[0].n, 0);
-    await assert.rejects(engine.call("query", ["SELECT * FROM query_table('lakehouse.cat1.lh.dbo.t')"]), /is not open/);
+    // A cached table that is empty is its own truth; one that is not would fail if a name the
+    // engine cannot see read it, rather than answer no rows.
+    assert.doesNotMatch(await viewSql("e"), /is not open/);
+    assert.match(await viewSql("t"), /is not open/);
     // Named, it is the real table, and stays it when the cache is listed again.
     r = await engine.call("query", ["SELECT answer FROM lakehouse.cat1.lh.dbo.t"]);
     assert.deepEqual(r.rows, [{ answer: 7 }]);

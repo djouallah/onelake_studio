@@ -103,7 +103,7 @@ test("a 401 is retried once with a fresh token", async () => {
 
 test("stat: the size, or null when there is no file", async () => {
   const { w, calls } = writerWith(url => (url.includes("gone") ? res(404) : res(200, "", { "content-length": "42" })));
-  assert.deepEqual(await w.stat("ws", "lh.Lakehouse/Files/a.bim"), { bytes: 42 });
+  assert.equal((await w.stat("ws", "lh.Lakehouse/Files/a.bim")).bytes, 42);
   assert.equal(calls[0].method, "HEAD");
   assert.equal(await w.stat("ws", "lh.Lakehouse/Files/gone.bim"), null);
 });
