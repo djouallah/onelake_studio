@@ -291,27 +291,29 @@ export function isSqliteHeader(bytes) {
 
 // What an attached database file holds, from DuckDB's own catalog: no table's rows are read. A
 // schema can sit inside a schema, and the catalog names only the innermost, so a schema's parent
-// is asked for too. Ids are text, as an oid has no use as a number here.
+// is asked for too. Ids are text, as an oid has no use as a number here. A table is found by its
+// schema and name: a SQLite file's tables get a new oid each time the catalog is asked.
 export const dbCatalogSql = alias => {
   const db = sqlStr(alias);
+  const own = name => `schema_oid::VARCHAR || '/' || ${name}`;
   return {
     schemas: `SELECT oid::VARCHAR AS id, parent_schema_oid::VARCHAR AS parent, schema_name AS name
                 FROM duckdb_schemas() WHERE database_name = ${db}`,
-    objects: `SELECT schema_oid::VARCHAR AS schema_id, table_oid::VARCHAR AS id, table_name AS name, 'table' AS kind,
+    objects: `SELECT schema_oid::VARCHAR AS schema_id, ${own('table_name')} AS id, table_name AS name, 'table' AS kind,
                      estimated_size AS estimate, comment, sql
                 FROM duckdb_tables() WHERE database_name = ${db}
               UNION ALL
-              SELECT schema_oid::VARCHAR, view_oid::VARCHAR, view_name, 'view', NULL, comment, sql
+              SELECT schema_oid::VARCHAR, ${own('view_name')}, view_name, 'view', NULL, comment, sql
                 FROM duckdb_views() WHERE database_name = ${db} AND NOT internal`,
-    columns: `SELECT table_oid::VARCHAR AS owner, column_name AS name, data_type AS type, is_nullable AS nullable,
+    columns: `SELECT ${own('table_name')} AS owner, column_name AS name, data_type AS type, is_nullable AS nullable,
                      column_default AS dflt, comment
                 FROM duckdb_columns() WHERE database_name = ${db} AND NOT internal
-               ORDER BY table_oid, column_index`,
+               ORDER BY schema_oid, table_name, column_index`,
     // NOT NULL is left out: each column says so itself.
-    constraints: `SELECT table_oid::VARCHAR AS owner, constraint_type AS type, constraint_text AS text,
+    constraints: `SELECT ${own('table_name')} AS owner, constraint_type AS type, constraint_text AS text,
                          to_json(constraint_column_names)::VARCHAR AS cols, referenced_table AS ref
                     FROM duckdb_constraints() WHERE database_name = ${db} AND constraint_type <> 'NOT NULL'`,
-    indexes: `SELECT table_oid::VARCHAR AS owner, index_name AS name, sql
+    indexes: `SELECT ${own('table_name')} AS owner, index_name AS name, sql
                 FROM duckdb_indexes() WHERE database_name = ${db}`,
   };
 };
