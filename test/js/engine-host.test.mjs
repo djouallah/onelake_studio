@@ -111,7 +111,22 @@ test("what the read-only guard takes as a read or a write, DuckDB's own parser d
   for (const sql of WRITES) {
     const j = await parsed(sql);
     assert.ok(j.error === true || j.statements.length !== 1, `DuckDB reads this as one query, so it is no way past the guard: ${sql}`);
+    await assert.rejects(engine.call("query", [sql]), /Read only/, sql);
   }
+  // What the parser can't write as JSON still reads, under both walls.
+  assert.equal((await engine.call("query", ["EXPLAIN SELECT 1"])).rows.length > 0, true);
+  assert.equal((await engine.call("query", ["EXPLAIN ANALYZE SELECT 1 -- with a comment"])).rows.length > 0, true);
+  assert.deepEqual((await engine.call("query", [
+    "/* a comment */ PIVOT (SELECT 'x' AS k, 1 AS v) ON k USING sum(v)"])).rows, [{ x: 1 }]);
+  assert.deepEqual((await engine.call("query", [
+    "SELECT * FROM (PIVOT (SELECT 'x' AS k, 1 AS v) ON k IN ('x') USING sum(v))"])).rows, [{ x: 1 }]);
+  await assert.rejects(engine.call("query", ["PRAGMA database_list"]), /PRAGMA is not a read/);
+  await assert.rejects(engine.call("query", ["SELECT cache_httpfs_set_offline(true)"]), /Read only/);
+  await assert.rejects(engine.call("query", ["SELECT * FROM truncate_duckdb_logs()"]), /Read only/);
+  // A mistake is DuckDB's own to report, with where it is.
+  await assert.rejects(engine.call("query", ["SELECT 1 FROM"]), /syntax error/i);
+  // An export goes inside a COPY of ours, so a read that closes its parenthesis isn't one.
+  await assert.rejects(engine.exportTo("SELECT 1) TO 'x.csv' (FORMAT csv) --", "csv"), /syntax error/i);
 });
 
 test("Stop reaches a statement still being prepared: it answers at once, and never runs", async t => {

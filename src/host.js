@@ -9,7 +9,8 @@
 //                  { type: 'result', id, value }           (exactly one of these two)
 //                  { type: 'error',  id, message, cancelled }
 //
-// The methods are DuckDB's (query, stream, cancel, info — engine-host.js) and OneLake's,
+// The methods are DuckDB's (query, stream, cancel, info, and what a tab sets up to read a file:
+// fileView, attachFile, releaseFiles — engine-host.js) and OneLake's,
 // answered cache first by onelake.js: a table's metadata and first rows, the identifier to
 // select a table from, a Files/ listing, a file's bytes, a local copy of a file. The page
 // holds no credential and makes no request of its own; this map is the whole of what it
@@ -29,7 +30,7 @@ const RANGE = /^bytes=\d+-\d*$/;
 
 // The engine's own methods the page may call. Everything else on the engine — opening a
 // table by metadata location, writing a temp file — is the host's to do, below.
-const ENGINE_METHODS = new Set(['query', 'stream', 'cancel', 'info']);
+const ENGINE_METHODS = new Set(['query', 'stream', 'cancel', 'info', 'fileView', 'attachFile', 'releaseFiles']);
 
 /**
  * @param {object} o

@@ -49,7 +49,7 @@ export function createEngine({
   let canZip = false;
 
   const loaded = new Map();         // cache key -> info
-  const resources = new Map();      // cache key -> { ident, views[], attachments[], ... }, for release()
+  const resources = new Map();      // cache key -> { names[], attachments[], ... }, for release()
   const viewNames = new Map();      // view identifier -> the cache key that owns it
   // A table is read in tiers and each one's answer is kept: statTable (metadata only) ->
   // peekTable (first rows); a query names it, and the host makes its view. These hold no
@@ -116,6 +116,10 @@ export function createEngine({
   // must be able to interrupt it mid-scan.
   const stream = (sql, onBatch = () => {}) => callHost("stream", [sql], onBatch);
 
+  // A Files/ object as a view, over one read of it. In batches for the same reason: a reader with
+  // no block structure pulls the file whole in here, and Stop must be able to kill that.
+  const fileView = (name, source) => callHost("fileView", [name, source], () => {});
+
   // ---------------------------------------------------------------------------
   // OneLake, through the host
   // ---------------------------------------------------------------------------
@@ -141,7 +145,7 @@ export function createEngine({
   // against its cache key so it can be handed back when the tab no longer needs it.
   function track(key) {
     let r = resources.get(key);
-    if (!r) { r = { ident: null, attachments: [] }; resources.set(key, r); }
+    if (!r) { r = { names: [], attachments: [] }; resources.set(key, r); }
     return r;
   }
 
@@ -165,13 +169,10 @@ export function createEngine({
       // a successor load appends to these arrays while the drops below wait their turn
       // on the serial queue — iterating the live arrays here is how a superseded load
       // once dropped state its successor had just created.
-      const gen = r.gen, ident = r.ident;
-      const views = [...(r.views || [])], attachments = [...(r.attachments || [])];
-      if (ident) { try { await q(`DROP VIEW IF EXISTS ${ident}`); } catch (_) {} }
-      // Zip archives create one view per readable entry; ident is just the first.
-      for (const v of views) { try { await q(`DROP VIEW IF EXISTS ${v}`); } catch (_) {} }
-      // Attached database files: DETACH releases the underlying URL handle.
-      for (const a of attachments) { try { await q(`DETACH ${quoteIdent(a)}`); } catch (_) {} }
+      const gen = r.gen;
+      // The view of each file or zip entry, and the attached database files: letting go of one
+      // releases its URL handle.
+      try { await callHost("releaseFiles", [{ views: [...r.names], attached: [...r.attachments] }]); } catch (_) {}
       // A successor may have claimed the key while the drops above were queued; the
       // record, the cache entry and the view names are then ITS state, not this
       // teardown's to delete.
@@ -257,12 +258,11 @@ export function createEngine({
     // host's credential. Nothing to register, nothing to drop.
     const url = abfssUrl(lh.workspace, file.path);
 
-    const ident = quoteIdent(uniqueView(key, file.path.replace(/^.*?\/Files\//, "")));
+    const name = uniqueView(key, file.path.replace(/^.*?\/Files\//, ""));
+    const ident = quoteIdent(name);
     try {
-      // stream(): a non-parquet reader pulls the file WHOLE inside this one statement,
-      // and Stop must be able to kill it.
-      await stream(`CREATE OR REPLACE VIEW ${ident} AS SELECT * FROM ${reader(sqlStr(url))}`);
-      res.ident = ident;
+      await fileView(name, `SELECT * FROM ${reader(sqlStr(url))}`);
+      res.names.push(name);
       const columns = await describe(ident);
       const info = { label, ident, columns, fileCount: 1, posDeletes: 0, eqDeletes: 0,
                      file: true, bytes: file.bytes, ext, warnings: [] };
@@ -288,7 +288,6 @@ export function createEngine({
     const status = statusFor(gen);
     const res = track(key);
     res.gen = gen;
-    res.views = [];
     const url = abfssUrl(lh.workspace, file.path);
     try {
       const entries = (await q(
@@ -311,18 +310,17 @@ export function createEngine({
         const reader = readerFor(fileExt(e.n));
         // Owner "<key>::<entry>": two entries whose names sanitize to the same identifier
         // must get distinct views, and uniqueView only dedupes across distinct owners.
-        const ident = quoteIdent(uniqueView(`${key}::${e.n}`, e.n));
+        const name = uniqueView(`${key}::${e.n}`, e.n);
         try {
-          await stream(`CREATE OR REPLACE VIEW ${ident} AS SELECT * FROM ${reader(sqlStr(`zip://${url}/${e.n}`))}`);
-          views.push(ident);
-          res.views.push(ident);
+          await fileView(name, `SELECT * FROM ${reader(sqlStr(`zip://${url}/${e.n}`))}`);
+          views.push(quoteIdent(name));
+          res.names.push(name);
         } catch (err) {
           if (err && err.cancelled) throw err;   // a stop is not a bad entry
           warnings.push(`${e.n}: ${err.message}`);
         }
       }
       const first = views[0] || null;
-      res.ident = first;
       const columns = first ? await describe(first) : [];
       const info = { label: file.name, ident: first, columns, fileCount: entries.length,
                      posDeletes: 0, eqDeletes: 0, file: true, bytes: file.bytes, ext: "zip",
@@ -379,9 +377,9 @@ export function createEngine({
         statusFor(gen)(`Copying ${file.name} (${fmtBytes(file.bytes)}) — SQLite is read from a local copy…`);
         const local = await callHost("onelake.localCopy", [{ workspace: lh.workspace, path: file.path }]);
         check();
-        await q(`ATTACH ${sqlStr(local)} AS ${quoteIdent(alias)} (TYPE sqlite, READ_ONLY)`);
+        await callHost("attachFile", [{ path: local, alias, sqlite: true }]);
       } else {
-        await q(`ATTACH ${sqlStr(url)} AS ${quoteIdent(alias)} (READ_ONLY)`);
+        await callHost("attachFile", [{ path: url, alias }]);
       }
       res.attachments.push(alias);
 

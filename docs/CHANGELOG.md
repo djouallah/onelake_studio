@@ -26,8 +26,9 @@
 - **A table that doesn't exist fails in seconds.** It used to wait about two minutes as if Fabric were converting it,
   then suggest writing to it. The error now says there is no such table and names the closest ones. A table
   still waiting for its conversion still waits.
-- **The command line takes reads only.** `DROP`, `DETACH`, `CREATE VIEW`, `CREATE SCHEMA` and `ATTACH` are refused at
-  once. The SQL box keeps what a tab needs to set up its reads.
+- **The SQL box and the command line take reads only.** `DROP`, `DETACH`, `CREATE VIEW`, `CREATE SCHEMA`, `ATTACH` and
+  `PRAGMA` are refused at once, so nothing typed can reach another tab. `pragma_*` functions still read. DuckDB's own
+  parser now checks every statement too. What a tab opens from `Files/` goes when the tab closes.
 - **`find --fresh`** reads every listing, then searches. `find` also says when it searched a table by name only.
 - **The command line's answers fit an agent better.** `SHOW ALL TABLES` in Markdown gives a column count rather than
   every column. `sql` marks `NULL` in Markdown, and `--csv` writes an empty string as `""`. `models --downloaded` lists

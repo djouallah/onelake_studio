@@ -20,12 +20,15 @@ const quoteIdent = s => `"${String(s).replace(/"/g, '""')}"`;
 // The extension never writes to OneLake or Fabric, and that is not left to the page's own
 // guard (paths.js prepareReadOnlySql), which checks only the first keyword — so
 // `EXPLAIN ANALYZE COPY (…) TO 'abfss://…'`, which RUNS the copy, went through it. Every
-// statement the page sends is checked here, before DuckDB sees it.
+// statement the page or the command line sends is checked here, before DuckDB runs it.
 //
-// What passes: one statement that reads, and the few the page itself issues to set up what
-// it reads — views and schemas in the in-memory catalog, their drops, and ATTACH/DETACH of a
-// database file, READ_ONLY. Nothing else: no COPY, INSERT, UPDATE, DELETE, EXPORT, INSTALL,
-// LOAD, SET.
+// What passes: one statement that reads. Nothing else: no COPY, INSERT, UPDATE, DELETE, EXPORT,
+// INSTALL, LOAD, SET, CREATE, DROP, ATTACH or DETACH. What a tab sets up to read a file is a host
+// method (engine-host.js fileView, attachFile), so no statement can reach another tab's.
+//
+// There are two walls. assertReads reads the text with this file's own scanner, which refuses at
+// once. checkedRead then asks DuckDB's parser, in a DuckDB that holds nothing, what the statement is,
+// so that being wrong about SQL's lexing isn't enough to write.
 
 // Where a comment, a quoted text or a $$ string ends, as DuckDB's own scanner reads them. The
 // guard is only as good as this agreement: where they differ, a ';' or a COPY that DuckDB runs is
@@ -124,7 +127,7 @@ function scan(sql, keep = false) {
 }
 
 const READS = new Set(['select', 'with', 'from', 'values', 'table', 'describe', 'desc', 'show',
-                       'summarize', 'pivot', 'unpivot', 'pragma']);
+                       'summarize', 'pivot', 'unpivot']);
 // What a statement can start with once a WITH's CTEs are done: DuckDB takes
 // `WITH … INSERT INTO`, so the WITH alone says nothing about what runs.
 const STARTS = new Set([...READS, 'insert', 'update', 'delete', 'merge', 'copy']);
@@ -161,17 +164,22 @@ function oneStatement(sql) {
   if (seps.some(i => text.slice(i + 1).trim() !== '')) refuse('runs one statement at a time');
   // Quack is how the shared engine's windows reach it, and its functions start, stop and connect
   // servers. Read with the quotes' insides kept, since a function's name can be quoted.
-  if (/\bquack_\w+|\bscan_data_from_quack_client\b/i.test(scan(String(sql), true).text)) refuse('Quack is not for statements');
+  const kept = scan(String(sql), true).text;
+  if (/\bquack_\w+|\bscan_data_from_quack_client\b/i.test(kept)) refuse('Quack is not for statements');
+  // The disk cache's switches and the engine's log are the host's, on a server every tab shares.
+  if (/\bcache_httpfs_\w+|\b(?:enable_logging|disable_logging|truncate_duckdb_logs)\b/i.test(kept)) refuse('the engine\'s own switches are not for statements');
   const s = text.trim().replace(/;+\s*$/, '').trim();
   if (!s) refuse('this statement is empty');
   return s;
 }
 
+// EXPLAIN [ANALYZE] q, or EXPLAIN (ANALYZE, FORMAT json|html) q — Explore's Show plan. The option
+// list is EXPLAIN's own words only; what follows must still be a read.
+const EXPLAIN = /^explain\s*(?:\(\s*((?:analy[sz]e|format\s+(?:json|html|text|graphviz))(?:\s*,\s*(?:analy[sz]e|format\s+(?:json|html|text|graphviz)))*)\s*\)\s*|analy[sz]e\s+)?([\s\S]*)$/i;
+
 function readsOrExplains(s) {
   if (isRead(s)) return true;
-  // EXPLAIN [ANALYZE] q, or EXPLAIN (ANALYZE, FORMAT json|html) q — Explore's Show plan. The
-  // option list is EXPLAIN's own words only; what follows must still be a read.
-  const explained = /^explain\s*(?:\(\s*((?:analy[sz]e|format\s+(?:json|html|text|graphviz))(?:\s*,\s*(?:analy[sz]e|format\s+(?:json|html|text|graphviz)))*)\s*\)\s*|analy[sz]e\s+)?([\s\S]*)$/i.exec(s);
+  const explained = EXPLAIN.exec(s);
   if (!explained) return false;
   if (isRead(explained[2])) return true;
   refuse('EXPLAIN runs only over a query');
@@ -179,32 +187,50 @@ function readsOrExplains(s) {
 
 const notARead = s => refuse(`${(/^[A-Za-z_]+/.exec(s) || ['this'])[0].toUpperCase()} is not a read`);
 
-/** Throws unless `sql` is one statement that only reads: the command line's guard. */
+/** Throws unless `sql` is, by this file's own reading of it, one statement that only reads. */
 function assertReads(sql) {
   const s = oneStatement(sql);
   if (!readsOrExplains(s)) notARead(s);
 }
 
-/** Throws unless `sql` is one statement the page may send: a read, or what sets up its reads. */
-function assertReadOnly(sql) {
-  const s = oneStatement(sql);
-  if (readsOrExplains(s)) return;
-  if (/^create\s+(or\s+replace\s+)?((temp|temporary)\s+)?view\s/i.test(s)) {
-    const body = /\sas\s([\s\S]*)$/i.exec(s);
-    if (body && isRead(body[1])) return;
-    refuse('a view is only ever a query');
+// DuckDB's parser on a query, by its json_serialize_sql: it answers for SELECT and what is written
+// as one (SHOW, DESCRIBE, SUMMARIZE, VALUES, FROM), and says so for anything else.
+const NOT_A_SELECT = /Only SELECT statements/i;
+const PIVOT = /\b(?:un)?pivot\b/i;
+async function parsedRead(sql, serialize, strict) {
+  const parsed = await serialize(sql);
+  if (!parsed.error) {
+    if (parsed.statements.length !== 1) refuse('runs one statement at a time');
+    return sql;
   }
-  if (/^create\s+schema\s/i.test(s) && !/\sas\s/i.test(s)) return;
-  if (/^drop\s+(view|table|schema)\s/i.test(s)) return;
-  if (/^detach\s/i.test(s)) return;
-  if (/^attach\s/i.test(s)) {
-    // READ_ONLY in the option list — outside any quotes, which scan() has emptied, so an
-    // alias spelled "READ_ONLY" does not count — and not switched off.
-    const opts = /\(([^()]*)\)\s*$/.exec(s);
-    if (opts && /\bread_only\b(?!\s*=?\s*(false|0)\b)/i.test(opts[1])) return;
-    refuse('a database is attached READ_ONLY');
+  if (!NOT_A_SELECT.test(parsed.error_message)) {
+    // It doesn't parse, so nothing in it can run: DuckDB's own error, with where it is, says why.
+    if (strict) throw new Error(parsed.error_message);
+    return sql;
   }
-  notARead(s);
+  // A PIVOT is a read this answer can't speak for: it can parse into more than one statement. So it
+  // runs with the comments gone, and no text this file took for a comment can be anything else.
+  const text = scan(String(sql)).text;
+  if (PIVOT.test(text)) return withoutComments(sql);
+  notARead(text.trim());
+}
+
+/**
+ * What to run for `sql`, once DuckDB's parser agrees it is one read. Throws otherwise.
+ * @param {string} sql
+ * @param {(sql: string) => Promise<object>} serialize  DuckDB's json_serialize_sql on it, parsed
+ * @param {object} [o]
+ * @param {boolean} [o.strict]  it goes inside a statement of ours, so one that doesn't parse stops here
+ * @returns {Promise<string>}
+ */
+async function checkedRead(sql, serialize, { strict = false } = {}) {
+  assertReads(sql);
+  const kept = withoutComments(sql);
+  const explained = EXPLAIN.exec(kept);
+  if (!explained) return parsedRead(sql, serialize, strict);
+  // Run as what was checked, under the words the pattern above allows.
+  const body = explained[2];
+  return kept.slice(0, kept.length - body.length) + await parsedRead(body, serialize, strict);
 }
 
 // -----------------------------------------------------------------------------
@@ -359,4 +385,4 @@ function readsCatalog(sql) {
   return /^\s*show\b/i.test(s) || CATALOG_READS.test(s);
 }
 
-module.exports = { sqlStr, quoteIdent, assertReadOnly, assertReads, tableRefs, catalogStatement, isShowAllTables, ALL_TABLES_COUNTED, readsCatalog };
+module.exports = { sqlStr, quoteIdent, assertReads, checkedRead, tableRefs, catalogStatement, isShowAllTables, ALL_TABLES_COUNTED, readsCatalog };

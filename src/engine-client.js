@@ -484,6 +484,8 @@ function createRemote({ onGone = () => {}, ...cfg }) {
       tmpDir: state.tmpDir,
       // Asked over the control pipe, so they cost no Quack request and leave nothing in its log. The
       // token goes this way for that reason: a statement sent over Quack is in the log.
+      // A connection on this window's own DuckDB, for what needs no server: asking its parser.
+      connectLocal: () => local.connect(),
       setStorageToken: token => ask({ storageToken: token }),
       setOffline: now => ask({ offline: now }),
       stats: () => ask({ stats: true }),

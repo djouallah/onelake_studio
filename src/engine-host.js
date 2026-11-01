@@ -13,6 +13,12 @@
 //   stream(sql)   the same, as batches of ~10k rows, then { numRows }
 //   cancel()      interrupt the page's running statements
 //   info()        { capabilities } — which optional formats loaded
+//   fileView(name, source)      a Files/ object as a view of this tab's, over a read
+//   attachFile({ path, alias, sqlite })  a database file, READ_ONLY
+//   releaseFiles({ views, attached })    what this tab made and is done with
+//
+// query() and stream() take one read and nothing else (sql.js). The other three are how a tab sets
+// up what it reads, so a statement can't reach another tab's views.
 //
 // The rest is the HOST's: copyToTemp(), a file the host fetched written where the lockdown
 // lets DuckDB open it, and exportTo(), a query's whole result written there. Neither takes a
@@ -26,7 +32,7 @@ const fs = require('node:fs');
 const fsp = require('node:fs/promises');
 const { join } = require('node:path');
 const os = require('node:os');
-const { sqlStr, quoteIdent, assertReadOnly, assertReads, tableRefs, catalogStatement, readsCatalog } = require('./sql');
+const { sqlStr, quoteIdent, assertReads, checkedRead, tableRefs, catalogStatement, readsCatalog } = require('./sql');
 const { SQL_KINDS, sqlName, MODEL_CATALOG, modelSqlName } = require('./names');
 const { revalidate } = require('./store');
 
@@ -351,7 +357,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
       if (serve) {
         await load('quack', '', true);
         await conn.run('SET enable_external_file_cache = true;');
-        // A window's own guard (assertReadOnly) refuses these already. This is one more wall, and
+        // A window's own guard (sql.js assertReads) refuses these already. This is one more wall, and
         // a text match, so not the only one: the session token is what keeps others out.
         await conn.run(`CREATE MACRO memory.main.studio_authorize(token, query) AS
           CASE WHEN regexp_matches(lower(query), 'quack_(serve|stop)') THEN NULL ELSE query END;`);
@@ -713,11 +719,6 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
     await init();
     await syncCatalog();
   }
-  // A DROP (sql.js lets views, tables and schemas go) may have taken views `made` still
-  // counts as there: every one is made again when next named, and the catalog listed again.
-  function afterStatement(sql) {
-    if (/^\s*drop\s/i.test(sql)) { made.clear(); catalogStale = true; }
-  }
 
   // Every table a statement names by its SQL name, so a saved query, or one typed from scratch,
   // reads what it names with nothing opened first.
@@ -807,6 +808,17 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
     }
   }
 
+  // What DuckDB's parser says `sql` is (sql.js checkedRead), in a DuckDB that holds nothing where
+  // there is one: this window's client, so it costs no Quack request and leaves no line in Logs.
+  async function serialize(sql) {
+    const c = await (instance.connectLocal ? instance.connectLocal() : instance.connect());
+    try {
+      const r = await c.runAndReadAll(`SELECT json_serialize_sql(${sqlStr(sql)}) AS parsed`);
+      const { parsed } = r.getRowObjectsJson()[0];
+      return typeof parsed === 'string' ? JSON.parse(parsed) : parsed;
+    } finally { try { c.closeSync(); } catch (_) {} }
+  }
+
   // Every statement, streamed chunk by chunk off its own connection. `onBatch` gets one
   // batch per ~BATCH_ROWS rows: the columns (DuckDB's own type names) on every batch, and
   // rows as plain JSON-safe objects.
@@ -883,38 +895,90 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
       };
       go(begin).then(resolve, reject).finally(() => preparing.delete(reject));
     });
+    // A statement of this tab's, in batches. Run again only before its first batch: a late failure
+    // comes after batches went out, and running it again would deliver them twice.
+    async function streamed(statement, emit, begin) {
+      let sent = false;
+      const canRetry = () => !sent;
+      const numRows = await withAuthRetry(() => withTables(statement, run => {
+        begin();
+        return withConn(c => runStreaming(c, run, b => { sent = true; emit(b); }), owner);
+      }, canRetry), canRetry);
+      return { done: true, numRows };
+    }
+    // What this tab made, the only things it may take away.
+    const views = new Set(), attached = new Set();
+    async function release({ views: goingViews = [], attached: goingAttached = [] } = {}) {
+      const drop = async (kept, name, statement) => {
+        if (!kept.delete(String(name))) return;
+        await withConn(c => c.run(statement), owner).catch(() => {});
+      };
+      for (const v of goingViews) await drop(views, v, `DROP VIEW IF EXISTS ${quoteIdent(v)};`);
+      for (const a of goingAttached) await drop(attached, a, `DETACH ${quoteIdent(a)};`);
+      return true;
+    }
     return {
-      // Both check the statement first: the page's SQL may read, never write (sql.js).
+      // The page's SQL may read, never write: refused here at once, then asked of DuckDB's parser.
       async query(sql) {
-        assertReadOnly(sql);
+        assertReads(sql);
         return stoppable(async begin => {
           await init();
-          try {
-            return await withAuthRetry(() => withTables(sql, run => {
-              begin();
-              return runAll(run, owner);
-            }));
-          } finally { afterStatement(sql); }
+          const statement = await checkedRead(sql, serialize);
+          return withAuthRetry(() => withTables(statement, run => {
+            begin();
+            return runAll(run, owner);
+          }));
         });
       },
 
       async stream(sql, emit) {
-        assertReadOnly(sql);
+        assertReads(sql);
         return stoppable(async begin => {
           await init();
-          // Run again only before its first batch: a late failure comes after batches went out,
-          // and running it again would deliver them twice.
-          let sent = false;
-          const canRetry = () => !sent;
-          try {
-            const numRows = await withAuthRetry(() => withTables(sql, run => {
-              begin();
-              return withConn(c => runStreaming(c, run, b => { sent = true; emit(b); }), owner);
-            }, canRetry), canRetry);
-            return { done: true, numRows };
-          } finally { afterStatement(sql); }
+          return streamed(await checkedRead(sql, serialize), emit, begin);
         });
       },
+
+      // A Files/ object as a view: `source` is one read of it. In batches, since a reader that has
+      // no block structure pulls the file whole in here, and Stop must be able to kill that.
+      async fileView(name, source, emit) {
+        const view = String(name);
+        if (!view) throw new Error('a view has a name');
+        assertReads(source);
+        return stoppable(async begin => {
+          await init();
+          const read = await checkedRead(source, serialize, { strict: true });
+          const done = await streamed(`CREATE OR REPLACE VIEW ${quoteIdent(view)} AS ${read}`, emit, begin);
+          views.add(view);
+          return done;
+        });
+      },
+
+      // A database file, read only: one in OneLake, or a copy the host made (copyToTemp).
+      async attachFile({ path, alias, sqlite = false }) {
+        const where = String(path), as = String(alias);
+        if (!as) throw new Error('a database has an alias');
+        if (!/^abfss:\/\//i.test(where) && ![...copies.values()].includes(where)) {
+          throw new Error(`${where}: a database is attached from OneLake`);
+        }
+        return stoppable(async begin => {
+          await init();
+          const statement = `ATTACH ${sqlStr(where)} AS ${quoteIdent(as)} (${sqlite ? 'TYPE sqlite, ' : ''}READ_ONLY)`;
+          await withAuthRetry(() => withTables(statement, run => {
+            begin();
+            return runAll(run, owner);
+          }));
+          attached.add(as);
+          return true;
+        });
+      },
+
+      async releaseFiles(what) {
+        if (!instance) return true;
+        return release(what || {});
+      },
+      // The tab is closing: whatever it made goes with it.
+      releaseAll: () => (instance ? release({ views: [...views], attached: [...attached] }) : Promise.resolve(true)),
 
       async cancel() {
         stops++;
@@ -950,7 +1014,14 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
     const mine = new Set();
     tabs.add(mine);
     const table = methodsOf(mine);
-    return { ...api, call: (method, args, emit) => callOn(table, method, args, emit), dispose: () => tabs.delete(mine) };
+    return {
+      ...api,
+      call: (method, args, emit) => callOn(table, method, args, emit),
+      dispose() {
+        tabs.delete(mine);
+        return table.releaseAll().catch(() => {});
+      },
+    };
   }
   const running = () => [...live, ...agentLive, ...[...tabs].flatMap(t => [...t])];
 
@@ -1003,14 +1074,14 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
     try {
       assertReads(sql);
       await init();
-      return await withAuthRetry(() => withTables(sql, run => {
+      const statement = await checkedRead(sql, serialize);
+      return await withAuthRetry(() => withTables(statement, run => {
         if (signal && signal.aborted) throw new Error('the command line went away');
         return runAll(run, owner);
       }));
     } catch (e) { throw scrub(e, authToken || token); }
     finally {
       if (signal) signal.removeEventListener('abort', stop);
-      afterStatement(sql);
     }
   }
 
@@ -1064,13 +1135,15 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
   async function exportTo(sql, format) {
     const token = authToken;
     try {
-      assertReadOnly(sql);
+      assertReads(sql);
       if (!EXPORTS[format]) throw new Error(`no export format ${format}`);
       await init();
       if (format === 'xlsx' && !capabilities.excel) throw new Error('the excel extension is not loaded in this session');
+      // Strict: it goes inside a COPY of ours, so a read that closes the parenthesis isn't one.
+      const read = await checkedRead(sql, serialize, { strict: true });
       const file = join(tmpDir, `export_${++tmpSeq}.${format}`).replace(/\\/g, '/');
       await ensureAuth();
-      await withAuthRetry(() => withTables(sql, statement => {
+      await withAuthRetry(() => withTables(read, statement => {
         const run = String(statement).trim().replace(/;+\s*$/, '');
         // The paren on a line of its own: a statement may end with a -- comment.
         return withConn(c => c.run(`COPY (${run}\n) TO ${sqlStr(file)} (${EXPORTS[format]})`), agentLive);

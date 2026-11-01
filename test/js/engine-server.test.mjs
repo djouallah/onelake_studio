@@ -72,10 +72,36 @@ test("two windows join one server, and what one makes the other reads", async t 
   const a = open(), b = open();
   assert.deepEqual((await a.call("query", ["SELECT 42 AS answer"])).rows, [{ answer: 42 }]);
   assert.deepEqual((await b.call("query", ["SELECT 43 AS answer;"])).rows, [{ answer: 43 }]);
-  await a.call("query", ["CREATE OR REPLACE VIEW made_by_a AS SELECT 'a' AS who"]);
+  await a.call("fileView", ["made_by_a", "SELECT 'a' AS who"]);
   assert.deepEqual((await b.call("query", ["SELECT * FROM made_by_a"])).rows, [{ who: "a" }]);
   assert.equal(log().match(/starting: pid/g).length, 1, "one server");
   assert.ok(!log().includes(secret()), "the session token is not in the log");
+});
+
+test("a tab's files are its own: no statement or other tab can take them, and they go when it closes", async t => {
+  const window = (await setup(t)).open();
+  const one = window.forTab(), two = window.forTab();
+  await one.call("fileView", ["ones_view", "SELECT 1 AS a"]);
+  const still = async () => (await two.call("query", ["SELECT * FROM ones_view"])).rows;
+  assert.deepEqual(await still(), [{ a: 1 }]);
+
+  for (const sql of ["DROP VIEW ones_view", "DROP SCHEMA lakehouse CASCADE", "DETACH lakehouse",
+                     "CREATE OR REPLACE VIEW ones_view AS SELECT 2 AS a", "ATTACH ':memory:' AS x (READ_ONLY)"]) {
+    await assert.rejects(two.call("query", [sql]), /Read only/, sql);
+  }
+  await two.call("releaseFiles", [{ views: ["ones_view"] }]);
+  assert.deepEqual(await still(), [{ a: 1 }], "another tab's release takes nothing");
+
+  await assert.rejects(one.call("fileView", ["v", "COPY (SELECT 1) TO 'x.csv'"]), /Read only/);
+  await assert.rejects(one.call("attachFile", [{ path: "/etc/passwd", alias: "x" }]), /attached from OneLake/);
+
+  await one.call("releaseFiles", [{ views: ["ones_view"] }]);
+  await assert.rejects(still(), /ones_view/);
+
+  await one.call("fileView", ["ones_view", "SELECT 3 AS a"]);
+  assert.deepEqual(await still(), [{ a: 3 }]);
+  await one.dispose();
+  await assert.rejects(still(), /ones_view/, "a tab that closes takes what it made");
 });
 
 test("a statement streams, and an error reads as the statement rather than our wrapper", async t => {
@@ -143,7 +169,7 @@ test("stats: the server's process, its memory, and how many statements someone a
   assert.notEqual(before.pid, process.pid, "the server's process, not this one");
   assert.ok(before.cpuUs > 0 && before.memoryBytes >= 0 && before.memoryLimit && Number(before.threads) === 2);
   for (let i = 0; i < 3; i++) await a.call("query", [`SELECT ${i} AS n`]);
-  await a.call("query", ["CREATE OR REPLACE VIEW only_setup AS SELECT 1 AS one"]);
+  await a.call("fileView", ["only_setup", "SELECT 1 AS one"]);
   const after = await a.stats();
   assert.equal(after.statements - before.statements, 3, "setup isn't counted");
   assert.equal((await a.stats()).statements, after.statements, "asking adds nothing");

@@ -40,7 +40,7 @@ test("a table's metadata carries its SQL name", async () => {
   assert.equal(msg.value.sqlName, "lakehouse.ws.lh.dbo.t");
 });
 
-test("the engine is reachable through query, stream, cancel and info only", async () => {
+test("the engine is reachable through its page methods only", async () => {
   const { ask } = fixture();
   for (const m of ["query", "cancel", "info"]) {
     const [r] = await ask(m, ["select 1"]);

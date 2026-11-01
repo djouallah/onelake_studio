@@ -1,27 +1,17 @@
-// sql.js assertReadOnly: the host's own check that nothing the page sends can write. The
-// allowed list is exactly what app/data.js, semantic.js and explore/ send, plus user SQL that
-// reads; the refused list is every way a write has been, or could be, dressed up as a read.
+// sql.js: the host's own check that nothing the page or the command line sends can write. The
+// allowed list is what app/data.js, semantic.js and explore/ send, plus user SQL that reads; the
+// refused list is every way a write has been, or could be, dressed up as a read.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import { READS, WRITES } from "./sql-disagreements.mjs";
 
 const require = createRequire(import.meta.url);
-const { assertReadOnly, assertReads, isShowAllTables } = require("../../src/sql.js");
+const { assertReads, checkedRead, isShowAllTables } = require("../../src/sql.js");
 
 const ALLOWED = [
   "SELECT 42",
   "select content from read_text('C:/ext/README.md')",
-  `CREATE OR REPLACE VIEW "data" AS SELECT * FROM read_parquet(['abfss://ws@onelake.dfs.fabric.microsoft.com/lh.Lakehouse/Files/data.parquet'])`,
-  `CREATE OR REPLACE VIEW lakehouse.ws.lh.dbo.t AS SELECT * FROM iceberg_scan('abfss://ws@onelake.dfs.fabric.microsoft.com/x.metadata.json')`,
-  `CREATE OR REPLACE VIEW lakehouse.ws.lh.dbo.t AS SELECT CAST(NULL AS INTEGER) AS "a" WHERE false`,
-  `ATTACH 'abfss://ws@onelake.dfs.fabric.microsoft.com/lh.Lakehouse/Files/a.duckdb' AS "a" (READ_ONLY)`,
-  `ATTACH 'C:/tmp/copy_1_a.db' AS "a" (TYPE sqlite, READ_ONLY)`,
-  `DETACH "a"`,
-  `DROP VIEW IF EXISTS lakehouse.ws.lh.dbo.t`,
-  `DROP TABLE IF EXISTS "__del_1"`,
-  `DROP SCHEMA IF EXISTS "s" CASCADE`,
-  `CREATE SCHEMA IF NOT EXISTS "nem"`,
   "SELECT 'COPY (SELECT 1) TO x; INSERT'",
   `SELECT "insert", "copy" FROM t`,
   "SELECT copy, update FROM t;",
@@ -41,8 +31,28 @@ const ALLOWED = [
   ...READS,
 ];
 
+// What a tab sets up to read a file is a host method now, so none of these is a statement's to do.
+const SETUP = [
+  `CREATE OR REPLACE VIEW "data" AS SELECT * FROM read_parquet(['abfss://ws@onelake.dfs.fabric.microsoft.com/lh.Lakehouse/Files/data.parquet'])`,
+  `CREATE OR REPLACE VIEW lakehouse.ws.lh.dbo.t AS SELECT * FROM iceberg_scan('abfss://ws@onelake.dfs.fabric.microsoft.com/x.metadata.json')`,
+  `ATTACH 'abfss://ws@onelake.dfs.fabric.microsoft.com/lh.Lakehouse/Files/a.duckdb' AS "a" (READ_ONLY)`,
+  `ATTACH 'C:/tmp/copy_1_a.db' AS "a" (TYPE sqlite, READ_ONLY)`,
+  `DETACH "a"`,
+  `DROP VIEW IF EXISTS lakehouse.ws.lh.dbo.t`,
+  `DROP TABLE IF EXISTS "__del_1"`,
+  `DROP SCHEMA IF EXISTS "s" CASCADE`,
+  `CREATE SCHEMA IF NOT EXISTS "nem"`,
+];
+
 const REFUSED = [
   ...WRITES,
+  ...SETUP,
+  "PRAGMA enable_external_access = true",
+  "PRAGMA database_list",
+  "SELECT cache_httpfs_clear_cache()",
+  'SELECT "cache_httpfs_set_offline"(true)',
+  "SELECT * FROM truncate_duckdb_logs()",
+  "SELECT * FROM enable_logging(['Quack'])",
   "SELECT * FROM quack_stop('quack:127.0.0.1:1')",
   "SELECT * FROM \"quack_serve\"('quack:127.0.0.1:1')",
   "COPY (SELECT 1) TO 'abfss://ws@onelake.dfs.fabric.microsoft.com/lh.Lakehouse/Files/x.csv'",
@@ -69,21 +79,48 @@ const REFUSED = [
 ];
 
 test("everything the page sends to read is allowed", () => {
-  for (const sql of ALLOWED) assert.doesNotThrow(() => assertReadOnly(sql), sql);
+  for (const sql of ALLOWED) assert.doesNotThrow(() => assertReads(sql), sql);
 });
 
 test("everything that could write is refused, and says it is read only", () => {
-  for (const sql of REFUSED) assert.throws(() => assertReadOnly(sql), /Read only/, sql);
+  for (const sql of REFUSED) assert.throws(() => assertReads(sql), /Read only/, sql);
 });
 
-// The command line's guard: reads only. What the page sends to set up its reads is the page's.
-const PAGE_ONLY = ALLOWED.filter(sql => /^(CREATE|ATTACH|DETACH|DROP)\b/.test(sql));
+// The second wall, with DuckDB's parser played by a fake: what it says stands, whatever the scanner
+// took the text for. engine-host.test.mjs runs the real one.
+const parser = answer => async () => answer;
+const ONE_SELECT = { error: false, statements: [{}] };
+const NOT_SELECT = { error: true, error_type: "not implemented", error_message: "Only SELECT statements can be serialized to json!" };
+const SYNTAX = { error: true, error_type: "parser", error_message: 'syntax error at or near "FROM"' };
 
-test("the command line takes what reads, and none of what the page sets up", () => {
-  assert.ok(PAGE_ONLY.length >= 8, "the list above is what it was");
-  for (const sql of ALLOWED.filter(s => !PAGE_ONLY.includes(s))) assert.doesNotThrow(() => assertReads(sql), sql);
-  for (const sql of PAGE_ONLY) assert.throws(() => assertReads(sql), /Read only/, sql);
-  for (const sql of REFUSED) assert.throws(() => assertReads(sql), /Read only/, sql);
+test("the parser has the last word on what the scanner took for a read", async () => {
+  assert.equal(await checkedRead("SELECT 1", parser(ONE_SELECT)), "SELECT 1");
+  await assert.rejects(checkedRead("SELECT 1", parser(NOT_SELECT)), /Read only/);
+  await assert.rejects(checkedRead("SELECT 1", parser({ error: false, statements: [{}, {}] })), /one statement at a time/);
+  await assert.rejects(checkedRead("EXPLAIN SELECT 1", parser(NOT_SELECT)), /Read only/);
+  await assert.rejects(checkedRead("COPY t TO 'x'", parser(ONE_SELECT)), /COPY is not a read/, "and the scanner refuses first");
+});
+
+test("a statement that doesn't parse goes to DuckDB for its own error, unless it goes inside one of ours", async () => {
+  assert.equal(await checkedRead("SELECT 1 FROM", parser(SYNTAX)), "SELECT 1 FROM");
+  await assert.rejects(checkedRead("SELECT 1 FROM", parser(SYNTAX), { strict: true }), /syntax error/);
+});
+
+test("EXPLAIN runs as what was checked: its own words, and the query the parser read", async () => {
+  const asked = [];
+  const answer = async sql => { asked.push(sql); return ONE_SELECT; };
+  assert.equal(await checkedRead("/* why */ EXPLAIN ANALYZE SELECT 1 -- this\n;", answer), "EXPLAIN ANALYZE SELECT 1");
+  assert.equal(await checkedRead("EXPLAIN (ANALYZE, FORMAT json) SELECT 1", answer), "EXPLAIN (ANALYZE, FORMAT json) SELECT 1");
+  assert.deepEqual(asked, ["SELECT 1", "SELECT 1"]);
+});
+
+test("a PIVOT, which the parser can't write as JSON, runs with its comments gone", async () => {
+  for (const sql of ["/* c */ PIVOT t ON a -- c", "WITH x AS (SELECT 1 a) PIVOT x ON a", "SELECT * FROM (PIVOT t ON a)"]) {
+    const run = await checkedRead(sql, parser(NOT_SELECT));
+    assert.doesNotMatch(run, /\/\*|--/, sql);
+    assert.match(run, /PIVOT/, sql);
+  }
+  await assert.rejects(checkedRead("SELECT 'pivot' AS a", parser(NOT_SELECT)), /Read only/, "the word in a string is no PIVOT");
 });
 
 test("the command line's refusal names what it refused", () => {

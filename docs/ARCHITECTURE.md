@@ -30,7 +30,7 @@ SHOW ALL TABLES;
 | --- | --- | --- |
 | **One name per object** | A table has five parts and a model has three. A file is its `abfss://` URL. | [NAMING.md](NAMING.md), [`src/names.js`](../src/names.js) |
 | **SQL only** | A model is read with `AGG("measure")` in SQL. There is no DAX query. | [`app/semantic.js`](../app/semantic.js) |
-| **Read only** | Nothing is written to Fabric or OneLake. The host refuses any statement that could write, and the command line takes reads only. The one exception is Export to Fabric, after an OK in VS Code. | `assertReadOnly` and `assertReads` in [`src/sql.js`](../src/sql.js) |
+| **Read only** | Nothing is written to Fabric or OneLake. The host takes one read per statement, from a tab or the command line, and DuckDB's own parser checks it. The one exception is Export to Fabric, after an OK in VS Code. | `assertReads` and `checkedRead` in [`src/sql.js`](../src/sql.js) |
 | **Cache first** | Every answer from OneLake or Fabric is kept on this machine and served from there first. It is trusted until using it fails, then read again once. | [`src/onelake.js`](../src/onelake.js), [`src/store.js`](../src/store.js) |
 | **Works offline** | A feature that reads data works from what this machine holds, with no network. What isn't held says so at once, never on a timeout. Only writing to Fabric needs a connection: Export to Fabric. The exported Fabric app is online by design, and this rule doesn't apply to it. | [`src/connectivity.js`](../src/connectivity.js), [`src/http.js`](../src/http.js), `cache_httpfs_set_offline` in [`src/engine-host.js`](../src/engine-host.js) |
 | **The host does the work** | Sign-in, the read-only guard and OneLake's listings, metadata and `Files/` bytes are in the host, and DuckDB's reads are in the server it starts. A tab is a view: it holds no token and makes no network request. | [`src/host.js`](../src/host.js), [`src/panel.js`](../src/panel.js), [`src/engine-client.js`](../src/engine-client.js) |
@@ -85,8 +85,10 @@ and joins at step 3.
    The host opens it from its local copy, reading it from Fabric the first time.
 2. **Compile.** `semantic.statement` has dax-sql rewrite a model query as plain SQL over five-part table
    names. A statement that names no model passes through unchanged.
-3. **Check.** `assertReadOnly` in the host refuses more than one statement, and anything that could
-   write.
+3. **Check.** `assertReads` in the host refuses more than one statement, and anything that isn't a read.
+   `checkedRead` then asks DuckDB's parser, in this window's own empty DuckDB, what the statement is, so that
+   misreading SQL's lexing isn't enough to write. `PIVOT` is the one read the parser can't speak for, and runs with
+   its comments gone. A statement that doesn't parse goes on, for DuckDB's own error and where it is.
 4. **Prepare.** `withTables` in [`src/engine-host.js`](../src/engine-host.js) does three things:
    - A statement that reads the catalog (`SHOW ALL TABLES`, `information_schema`) gets the catalog
      synced from the cache first.
@@ -174,11 +176,13 @@ The engine is **DuckDB 2.0 running natively in a process of its own** ([The serv
 - **Reading files:** `Files/` objects are read as `abfss://` URLs.
 - **Lockdown:** file access is limited to the temp directory, `https://`, `abfss://` and `zip://` over a
   remote archive.
-- **What the page may run:** one statement: a read, a view, a schema, a `READ_ONLY` attach, or the `DROP`
-  or `DETACH` of one. Never `COPY`, `INSERT`, `EXPORT`, anything else that writes, or a Quack function.
-- **What the command line may run:** one read, or an `EXPLAIN` of one. The views, schemas, attaches and drops above
-  are how a page sets up what it reads, and on a shared server they would reach every tab.
-- **What the page reaches:** the host, through one message channel, only by `query`, `stream`, `cancel`,
+- **What a statement may be:** from a tab or the command line, one read, or an `EXPLAIN` of one. Never `COPY`,
+  `INSERT`, `EXPORT`, `PRAGMA`, anything that creates, drops or attaches, a Quack function, or the disk cache's or
+  the log's own switches.
+- **How a tab sets up a file:** by host methods, `fileView`, `attachFile` and `releaseFiles`, not by SQL. A tab takes
+  away only what it made, and what it made goes when it closes. A view's source is one read too, and an attach is
+  always `READ_ONLY`, from OneLake or a copy the host made.
+- **What the page reaches:** the host, through one message channel, only by those, `query`, `stream`, `cancel`,
   `info` and the methods in [`src/host.js`](../src/host.js).
 
 ## The server
@@ -558,7 +562,6 @@ every window. The rest apply at once.
 - **Tabs don't come back after a window reload.** Only the box's last text does (see
   [The SQL box and results](#the-sql-box-and-results)).
 - **A Pivot's shelves are kept per tab,** so a model opened again in a new tab starts with empty shelves.
-- **What a closed tab made stays on the server until it exits:** its `Files/` views and attached database files.
 - **Requires desktop VS Code 1.90+** on x64 or arm64 Windows, macOS or Linux.
 
 ## Where the code is

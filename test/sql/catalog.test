@@ -104,8 +104,10 @@ SELECT count(*) FROM duckdb_columns()
 statement ok
 SELECT count(*) FROM duckdb_databases()
 
-statement ok
+statement error
 PRAGMA database_list
+----
+PRAGMA is not a read
 
 statement ok
-PRAGMA show_tables
+SELECT count(*) FROM pragma_database_list
