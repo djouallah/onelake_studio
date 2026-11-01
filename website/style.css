@@ -242,6 +242,11 @@ pre code {
   margin-top: 72px;
 }
 
+/* Text on the other side, with the picture still in the wider column. */
+.feature:nth-of-type(odd) {
+  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+}
+
 .feature:nth-of-type(odd) > :first-child {
   order: 1;
 }
@@ -490,6 +495,7 @@ tr:last-child td {
   }
 
   .feature,
+  .feature:nth-of-type(odd),
   .notes,
   .shots.pair {
     grid-template-columns: minmax(0, 1fr);

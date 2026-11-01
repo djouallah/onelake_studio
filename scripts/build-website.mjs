@@ -59,7 +59,11 @@ function render(doc, source, broken) {
   const marked = new Marked({
     gfm: true,
     walkTokens(token) {
-      if (token.type === "link") token.href = rewrite(token.href, doc, broken);
+      if (token.type !== "link") return;
+      // A link that reads as a file name on GitHub reads as the doc's title here.
+      const named = DOCS.find(d => d.md === token.text);
+      if (named) token.tokens = [{ type: "text", raw: named.title, text: named.title, escaped: false }];
+      token.href = rewrite(token.href, doc, broken);
     },
     renderer: {
       heading({ tokens, depth }) {
@@ -81,7 +85,7 @@ function render(doc, source, broken) {
 function page(doc) {
   const docLinks = DOCS.map(d =>
     `<a href="${d.page}"${d === doc ? ' aria-current="page"' : ""}>${d.title}</a>`).join("\n          ");
-  const sections = doc.sections.map(s =>
+  const sections = doc.sections.length < 2 ? "" : doc.sections.map(s =>
     `<a href="#${s.id}">${escapeHtml(s.text)}</a>`).join("\n          ");
   return `<!doctype html>
 <html lang="en">
