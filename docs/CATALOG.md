@@ -1,6 +1,6 @@
 # The OneLake catalog: specification
 
-**Status: design, built in waves (below). Waves 1 to 4 are in the code.** Where it differs from
+**Status: built in waves (below). Waves 1 to 5 are in the code.** Where it differs from
 [ARCHITECTURE.md](ARCHITECTURE.md), this describes what is planned and that describes what runs today.
 [NAMING.md](NAMING.md) does not change.
 
@@ -154,6 +154,8 @@ waiting. Offline it fails at once, and so it does while OneLake has asked for a 
 which downloads a model's file. Neither is a listing.
 
 **Target:** tens of milliseconds for a metadata command with VS Code open.
+
+**Measured on a real tenant, 4,988 tables, with VS Code open:** a table-exists check over the pipe is 59ms yes, and 69 to 140ms no with the closest names, in a lakehouse of 521 and of 2,014 tables. `ls` is 63ms, and `find` over everything is 253ms. A new `node` process adds about 170ms before any of that.
 
 ## Reading data
 
