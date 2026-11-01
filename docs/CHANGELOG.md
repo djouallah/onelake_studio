@@ -2,7 +2,8 @@
 
 ## Unreleased
 
-- **Group by Type is gone.** The tree lists by workspace.
+- **Filter the tree by type.** The filter button on the explorer shows one type, such as semantic models, and only
+  the workspaces that hold it. It replaces Group by Type: the tree always lists by workspace.
 - **A table that doesn't exist fails in seconds.** It used to wait about two minutes as if Fabric were converting it,
   then suggest writing to it. The error now says there is no such table and names the closest ones. A table
   still waiting for its conversion still waits.

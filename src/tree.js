@@ -9,9 +9,9 @@
 //
 // Every level is lazy, and every level is cache first: a listing ever read is drawn from
 // disk at once (onelake.js) and re-read behind the user once it is old, redrawing only the
-// node whose listing actually changed. Nothing walks ahead of the user across workspaces;
-// the one read-ahead is a table's metadata once its Tables node is open, because the next
-// click is about to want it.
+// node whose listing actually changed. Nothing walks ahead of the user across workspaces
+// unless the user picks a filter; the one read-ahead is a table's metadata once its Tables
+// node is open, because the next click is about to want it.
 //
 // Clicking a table does NOT read any data — it hands the selection to the panel, which
 // opens it the way it always has: metadata only, statistics first, rows when asked for.
@@ -19,6 +19,18 @@
 
 const vscode = require('vscode');
 const { fmtBytes, hasFilesArea, isMirrored, kindLabel, strip, sqlNameOf } = require('./names');
+const { mapPool } = require('./http');
+
+// What the explorer's filter offers: an item type as kindLabel says it, or a Fabric listing.
+const TREE_FILTERS = [
+  { label: 'Lakehouses', only: 'Lakehouse' },
+  { label: 'Warehouses', only: 'Warehouse' },
+  { label: 'SQL databases', only: 'SQL database' },
+  { label: 'Mirrored databases', only: 'Mirrored database' },
+  { label: 'Semantic models', only: 'models' },
+  { label: 'Apps', only: 'apps' },
+];
+const isFabricFilter = only => only === 'models' || only === 'apps';
 
 // A node is a plain object; getTreeItem turns it into what VS Code renders. Keeping the
 // domain data on the node (rather than encoding it into a label) is what lets a click hand
@@ -39,12 +51,14 @@ class LakehouseTree {
    * @param {(n: object) => string|null} [deps.cachedModel]  where a model's local copy is, if it has one
    * @param {(n: object) => string|null} [deps.unsupportedModel]  what kind of model a click found it cannot open, if it did
    * @param {{ list: () => Promise<{name: string, path: string}[]> }} [deps.queries]  the saved queries
+   * @param {() => string|null} [deps.filter]  the one type to show (TREE_FILTERS' `only`), if any
    */
   constructor({ onelake, fabric = null, hasFabric = async () => false, isSignedIn, log = () => {},
                 favorites = { get: () => [] }, cachedModel = () => null, unsupportedModel = () => null,
-                queries = { list: async () => [] } }) {
+                queries = { list: async () => [] }, filter = () => null }) {
     this.queries = queries;
     this.onelake = onelake;
+    this.filter = filter;
     this.cachedModel = cachedModel;
     this.unsupportedModel = unsupportedModel;
     this.favorites = favorites;
@@ -92,6 +106,8 @@ class LakehouseTree {
   _changed(c) {
     if (c.kind === 'table') return this._cachedChanged(this._tableNode(c));
     if (c.kind === 'workspaces') return this._emitter.fire(undefined);
+    // Filtered, a listing decides which workspaces show at all.
+    if (this.filter() && ['items', 'models', 'apps'].includes(c.kind)) return this._emitter.fire(undefined);
     const id = c.kind === 'items' ? `workspace|${c.workspace}`
              : c.kind === 'tables' ? `tables|${c.workspace}|${c.item}`
              : c.kind === 'files' ? `dir|${c.workspace}|${c.item}|${c.dir || ''}`
@@ -181,7 +197,9 @@ class LakehouseTree {
     if (n.kind !== 'error' && n.kind !== 'empty') {
       item.id = [n.kind, n.group, n.workspace, n.item, n.schema, n.table, n.dir, n.path]
         .map(v => (v == null ? '' : String(v))).join('|') + (n.modelId ? `|${n.modelId}` : '')
-        + (n.appId ? `|${n.appId}` : '');
+        + (n.appId ? `|${n.appId}` : '')
+        // A filter opens its groups and workspaces without touching what was open before it.
+        + (n.filter ? `|${n.filter}` : '');
     }
     switch (n.kind) {
       // The two top-level groups: the workspaces someone pinned, and everything else.
@@ -341,12 +359,19 @@ class LakehouseTree {
       if (!names.length) return [node('empty', 'No workspaces — is this the right tenant?', { leaf: true })];
       const queries = this._track(node('queries', 'Queries', {}));
       const engineViews = [node('logs', 'Logs', { leaf: true }), node('performance', 'Performance', { leaf: true })];
+      const only = this.filter();
+      if (isFabricFilter(only) && !await this.hasFabric()) {
+        const what = only === 'models' ? 'semantic models' : 'apps';
+        return [node('fabricSignIn', `Sign in to list ${what}`, { leaf: true, group: only }), queries, ...engineViews];
+      }
+      const shown = only ? await this._holding(names, only) : names;
+      if (!shown.length) return [node('empty', 'No workspace holds this type', { leaf: true }), queries, ...engineViews];
       const pinned = new Set(this.favorites.get());
-      const favs = names.filter(w => pinned.has(w));
+      const favs = shown.filter(w => pinned.has(w));
       return [
-        node('group', 'Favorites', { group: 'favorites', expanded: true, count: favs.length }),
+        node('group', 'Favorites', { group: 'favorites', expanded: true, count: favs.length, filter: only, names: shown }),
         node('group', favs.length ? 'Other workspaces' : 'Workspaces',
-             { group: 'others', expanded: !favs.length, count: names.length - favs.length }),
+             { group: 'others', expanded: !favs.length || !!only, count: shown.length - favs.length, filter: only, names: shown }),
         queries,
         ...engineViews,
       ];
@@ -359,25 +384,27 @@ class LakehouseTree {
     }
 
     if (n.kind === 'group') {
-      const names = await this.onelake.workspaces();
       const pinned = new Set(this.favorites.get());
-      const mine = names.filter(w => (n.group === 'favorites') === pinned.has(w));
+      const mine = n.names.filter(w => (n.group === 'favorites') === pinned.has(w));
       if (!mine.length) {
-        return [node('empty', n.group === 'favorites'
-          ? 'Pin a workspace with its ☆ button to keep it here'
+        return [node('empty', n.filter ? 'None here holds this type'
+          : n.group === 'favorites' ? 'Pin a workspace with its ☆ button to keep it here'
           : 'Every workspace is pinned', { leaf: true })];
       }
-      return mine.map(name => this._track(node('workspace', name, { workspace: name, pinned: pinned.has(name) })));
+      return mine.map(name => this._track(node('workspace', name,
+        { workspace: name, pinned: pinned.has(name), filter: n.filter, expanded: !!n.filter })));
     }
 
     if (n.kind === 'workspace') {
-      const items = await this.onelake.items(n.workspace,
-        { fresh: this._isFresh(`items|${n.workspace}`, n.workspace) });
+      const only = this.filter();
+      // Filtered to a Fabric listing, the workspace holds just that, with no heading to open.
+      if (isFabricFilter(only)) return this._children({ kind: only, workspace: n.workspace });
+      const items = await this._items(n.workspace, only);
       const kids = items.length
         ? items.map(it => this._item(n.workspace, it))
-        : [node('empty', 'Nothing here holds tables', { leaf: true })];
+        : [node('empty', only ? 'Nothing here of this type' : 'Nothing here holds tables', { leaf: true })];
       // Last, and closed: listing it is a Fabric API call, on a token sign-in never asked for.
-      if (this.fabric) {
+      if (this.fabric && !only) {
         kids.push(this._track(node('models', 'Semantic models', { workspace: n.workspace })));
         kids.push(this._track(node('apps', 'Apps', { workspace: n.workspace })));
       }
@@ -481,6 +508,27 @@ class LakehouseTree {
       workspace, item: it.name, kindLabel: kindLabel(it.kind),
     });
   }
+
+  // A workspace's items, or only those of the type a filter picked.
+  async _items(ws, only) {
+    const items = await this.onelake.items(ws, { fresh: this._isFresh(`items|${ws}`, ws) });
+    return only ? items.filter(it => kindLabel(it.kind) === only) : items;
+  }
+
+  // Filtered: the workspaces that hold that type. The one place the tree reads across workspaces,
+  // and only because the user asked: each listing cache-first, four at a time. A workspace that
+  // can't be listed stays, so opening it says why rather than the tree silently showing less.
+  async _holding(names, only) {
+    const holds = await mapPool(names, async ws => {
+      try {
+        const list = only === 'models' ? await this.onelake.models(ws, { fresh: this._isFresh(`models|${ws}`, ws) })
+          : only === 'apps' ? await this.onelake.apps(ws, { fresh: this._isFresh(`apps|${ws}`, ws) })
+          : await this._items(ws, only);
+        return list.length > 0;
+      } catch (_) { return true; }
+    }, 4);
+    return names.filter((_, i) => holds[i]);
+  }
 }
 
-module.exports = { LakehouseTree };
+module.exports = { LakehouseTree, TREE_FILTERS };

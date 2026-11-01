@@ -26,7 +26,7 @@ const { createConnectivity } = require('./connectivity');
 const { useConnectivity } = require('./http');
 const { createHostMethods } = require('./host');
 const { createFabric, modelFileName } = require('./fabric');
-const { LakehouseTree } = require('./tree');
+const { LakehouseTree, TREE_FILTERS } = require('./tree');
 const { doubleClicks } = require('./doubleclick');
 const { webviewRoot } = require('./webview');
 const { fmtBytes, sqlKind, sqlName, sqlNameOf, sqlPart, displayName, MODEL_CATALOG, modelSqlName, stripBom, DFS_ORIGIN } = require('./names');
@@ -955,9 +955,14 @@ async function activateInner(context) {
     set: list => context.globalState.update(favKey(), [...new Set(list)].sort((a, b) => a.localeCompare(b))),
   };
 
+  // The explorer's filter: one type only, until the picker says otherwise. Not remembered: left
+  // on from last time it would look like missing workspaces, and read them all at startup.
+  let treeFilter = null;
+
   const tree = new LakehouseTree({
     onelake,
     favorites,
+    filter: () => treeFilter,
     fabric,
     // Offline, a workspace's models are whatever listing is kept: there is no sign-in to offer.
     hasFabric: async () => connectivity.offline() || !!await fabricToken().catch(() => null),
@@ -1830,6 +1835,16 @@ async function activateInner(context) {
     // Every query variable forgotten (the page keeps them): the next getvariable() asks again.
     vscode.commands.registerCommand('onelakeStudio.clearVariables', () => postLive({ type: 'clear-variables' })),
     vscode.commands.registerCommand('onelakeStudio.goTo', () => goTo()),
+    vscode.commands.registerCommand('onelakeStudio.filterTree', async () => {
+      const pick = await vscode.window.showQuickPick(
+        [{ label: 'Everything', only: null }, ...TREE_FILTERS]
+          .map(f => ({ ...f, description: f.only === treeFilter ? 'showing' : '' })),
+        { placeHolder: 'Show only…' });
+      if (!pick) return;
+      treeFilter = pick.only;
+      explorer.description = pick.only ? pick.label : undefined;
+      tree.redraw();
+    }),
     // The grid's context menu (package.json webview/context): the page builds the text.
     ...[['gridCopy', 'tsv'], ['gridCopyHeaders', 'tsv-headers'], ['gridCopyCsv', 'csv'],
         ['gridCopyMarkdown', 'markdown'], ['gridCopyJson', 'json']].map(([id, as]) =>

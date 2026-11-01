@@ -11,7 +11,7 @@ a unique name, queried with SQL. Read only, cache first, and it works offline.
 ## What you can do
 
 - **Browse OneLake.** Workspaces, lakehouses, warehouses, SQL and mirrored databases, their tables
-  and files, in one tree. Pin workspaces.
+  and files, in one tree. Pin workspaces, or filter to one type, such as semantic models.
 - **Query with SQL.** Every table has one name, `lakehouse.workspace.item.schema.table`, and every
   semantic model is `semanticmodel.workspace.model`. The type comes first because a lakehouse and
   a warehouse can share a name. Join across items and workspaces;
