@@ -391,6 +391,7 @@ test("native engine host", async t => {
   // What the host's cache holds: listed in DuckDB's catalog without resolveTable ever asked.
   let cached = [
     { kind: "lakehouse", workspace: "cat1", item: "lh", schema: "dbo", table: "t", columns: [{ name: "a", type: "BIGINT" }] },
+    { kind: "lakehouse", workspace: "cat1", item: "lh", schema: "dbo", table: "unread" },
     { kind: "lakehouse", workspace: "Cat ws", item: "lh", schema: "dbo", table: "t",
       columns: [{ name: "b", type: "VARCHAR" }, { name: "c", type: "DECIMAL(10,2)" }] },
     { kind: "warehouse", workspace: "cat1", item: "wh", schema: "sales", table: "e",
@@ -445,8 +446,11 @@ test("native engine host", async t => {
     assert.deepEqual(ours(r.rows).map(x => [x.database, x.schema, x.name, x.column_names, x.column_types]), [
       ["lakehouse", '"Cat ws".lh.dbo', "t", "['b', 'c']", "['VARCHAR', 'DECIMAL(10,2)']"],
       ["lakehouse", "cat1.lh.dbo", "t", "['a']", "['BIGINT']"],
+      ["lakehouse", "cat1.lh.dbo", "unread", "[]", "[]"],
       ["warehouse", "cat1.wh.sales", "e", "['id']", "['INTEGER']"],
     ]);
+    // Listed by name before its columns are known, and an error rather than no rows if it is read unnamed.
+    await assert.rejects(engine.call("query", ["SELECT * FROM query_table('lakehouse.cat1.lh.dbo.unread')"]), /is not open/);
     r = await engine.call("query", ["show schemas"]);
     assert.ok(r.rows.some(x => x.database_name === "lakehouse" && x.schema_name === '"Cat ws".lh.dbo'), JSON.stringify(r.rows));
     r = await engine.call("query", ['SHOW TABLES FROM lakehouse."cat ws".LH.dbo']);
@@ -481,7 +485,12 @@ test("native engine host", async t => {
     cached = cached.filter(x => x.workspace !== "Cat ws");
     engine.catalogChanged();
     r = await engine.call("query", ["SHOW ALL TABLES"]);
-    assert.deepEqual(ours(r.rows).map(x => x.schema), ["cat1.lh.dbo", "cat1.wh.sales"]);
+    assert.deepEqual(ours(r.rows).map(x => [x.schema, x.name]), [["cat1.lh.dbo", "t"], ["cat1.lh.dbo", "unread"], ["cat1.wh.sales", "e"]]);
+    // Its columns read since: the same entry, now with them.
+    cached = cached.map(x => (x.table === "unread" ? { ...x, columns: [{ name: "now", type: "BIGINT" }] } : x));
+    engine.catalogChanged();
+    r = await engine.call("query", ["SHOW ALL TABLES"]);
+    assert.equal(ours(r.rows).find(x => x.name === "unread").column_names, "['now']");
   });
 
   await t.test("a statement needs no Microsoft account", async () => {

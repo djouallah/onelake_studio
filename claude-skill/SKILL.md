@@ -56,7 +56,8 @@ A failure leaves stdout empty and says why on stderr. What each format gives you
 - **Markdown** (the default) is for reading. The listings (`ls`, `models`, `items`, `files`, `table`) format theirs:
   `1,234`, `2.5 MB`, `—`. `sql` prints raw values: `1234567.891`, `NULL` for a null, and a blank for an empty string.
   Row counts and "first 100 shown" are in it. `SHOW ALL TABLES` gives each table's column count here; `--json`,
-  `--csv` or `table` give the columns.
+  `--csv` or `table` give the columns. A count of 0 means its columns haven't been read yet, not that it has none:
+  `table <ws> <item> <schema.table> --fresh` reads them, and a query that names the table works as usual.
 - **`--csv`** is one table of raw values (bytes, ISO times, an empty cell for NULL, `""` for an empty string) with
   always a header row, all its rows unless `--limit` says otherwise. It never leaves rows out unasked: past what a
   query keeps, it fails. `ls <ws>` and `model` are several tables, so they take no `--csv`. Many CSV readers lose the

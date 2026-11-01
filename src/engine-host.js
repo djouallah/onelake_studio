@@ -32,7 +32,7 @@ const fs = require('node:fs');
 const fsp = require('node:fs/promises');
 const { join } = require('node:path');
 const os = require('node:os');
-const { sqlStr, quoteIdent, assertReads, checkedRead, tableRefs, fileRefs, filesReadBy, namedError, catalogStatement, readsCatalog } = require('./sql');
+const { sqlStr, quoteIdent, assertReads, checkedRead, tableRefs, fileRefs, filesReadBy, namedError, catalogStatement, readsCatalog, COLUMNS_NOT_READ } = require('./sql');
 const { SQL_KINDS, sqlName, abfssUrl, MODEL_CATALOG, modelSqlName } = require('./names');
 const { revalidate } = require('./store');
 
@@ -669,7 +669,8 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
     if (t.emptySql != null) return String(t.emptySql);
     const cols = (t.columns || []).map(c =>
       `CAST(NULL AS ${DUCK_TYPE.test(String(c.type)) ? c.type : 'VARCHAR'}) AS ${quoteIdent(c.name)}`);
-    if (!cols.length) return null;
+    // A list needs a name and nothing more, so a table is listed before its columns are known.
+    if (!cols.length) cols.push(`NULL::VARCHAR AS ${quoteIdent(COLUMNS_NOT_READ)}`);
     return `SELECT ${cols.join(', ')} WHERE error(${sqlStr(`${name} is not open: name it in a query to read it`)}) IS NULL`;
   }
   // One listing at a time: a second statement waits for the one under way, not past it.
@@ -701,7 +702,10 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
         const schemas = [];
         for (let k = 2; k <= path.length; k++) schemas.push(`CREATE SCHEMA IF NOT EXISTS ${path.slice(0, k).join('.')};`);
         // On a shared engine this name may be another window's real view: a listing never replaces it.
-        todo.push({ key, name, source, schemas, view: `CREATE ${remote ? 'VIEW IF NOT EXISTS' : 'OR REPLACE VIEW'} ${name} AS ${source};` });
+        // Unless this window listed it with no columns and now has them. Any window's statement that
+        // names the table makes its view again first, so this can't leave one reading the wrong thing.
+        const filling = String(made.get(key)).includes(COLUMNS_NOT_READ);
+        todo.push({ key, name, source, schemas, view: `CREATE ${remote && !filling ? 'VIEW IF NOT EXISTS' : 'OR REPLACE VIEW'} ${name} AS ${source};` });
       }
       const listedAs = x => { made.set(x.key, x.source); listed.set(x.key, x.name); };
       // In one call: a call per statement cost over a second at 300 entries. Run again one by

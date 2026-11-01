@@ -472,16 +472,21 @@ const ALL_TABLES_FROM = `FROM o JOIN p ON p.database_oid = o.database_oid AND p.
 JOIN duckdb_columns() c ON c.database_oid = o.database_oid AND c.table_oid = o.oid
 GROUP BY ALL ORDER BY database, schema, name`;
 
+// A table listed before its columns were read. A view has to have a column, so it has this one, which
+// no listing shows: it lists with none.
+const COLUMNS_NOT_READ = '(columns not read yet)';
+const REAL_COLUMN = `FILTER (WHERE c.column_name <> ${sqlStr(COLUMNS_NOT_READ)})`;
+
 const SHOW_ALL_TABLES = `${CATALOG_CTES}
 SELECT p.database_name AS database, p.path AS schema, o.name,
-       list(c.column_name ORDER BY c.column_index) AS column_names,
-       list(c.data_type ORDER BY c.column_index) AS column_types,
+       coalesce(list(c.column_name ORDER BY c.column_index) ${REAL_COLUMN}, []) AS column_names,
+       coalesce(list(c.data_type ORDER BY c.column_index) ${REAL_COLUMN}, []) AS column_types,
        first(o.temporary) AS temporary
 ${ALL_TABLES_FROM}`;
 
 // The same tables with how many columns each has, for an answer that can't afford the columns.
 const ALL_TABLES_COUNTED = `${CATALOG_CTES}
-SELECT p.database_name AS database, p.path AS schema, o.name, count(*) AS columns
+SELECT p.database_name AS database, p.path AS schema, o.name, count(*) ${REAL_COLUMN} AS columns
 ${ALL_TABLES_FROM}`;
 
 const SHOW_SCHEMAS = `${CATALOG_CTES}
@@ -533,4 +538,4 @@ function readsCatalog(sql) {
   return /^\s*show\b/i.test(s) || CATALOG_READS.test(s);
 }
 
-module.exports = { sqlStr, quoteIdent, assertReads, checkedRead, tableRefs, fileRefs, filesReadBy, namedError, catalogStatement, isShowAllTables, ALL_TABLES_COUNTED, readsCatalog };
+module.exports = { sqlStr, quoteIdent, assertReads, checkedRead, tableRefs, fileRefs, filesReadBy, namedError, catalogStatement, isShowAllTables, ALL_TABLES_COUNTED, COLUMNS_NOT_READ, readsCatalog };

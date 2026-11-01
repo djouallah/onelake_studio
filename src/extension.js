@@ -1463,9 +1463,8 @@ async function activateInner(context) {
 
   const same = (a, b) => String(a).toLowerCase() === String(b).toLowerCase();
 
-  // Every table the store has seen, with its columns, as its SQL name's parts: a walk of the
-  // cache alone (the command line's `find` walks it the same way). A table whose columns were
-  // never read is left out — a view needs columns, and opening its lakehouse reads them.
+  // Every table the store has seen, with its columns if they were read, as its SQL name's parts: a
+  // walk of the cache alone (the command line's `find` walks it the same way).
   async function walkTables() {
     const { paths } = await agent.modules();
     const found = [];
@@ -1478,9 +1477,9 @@ async function activateInner(context) {
         if (!kind) continue;
         for (const t of it.tables || []) {
           const fields = t.meta && t.meta.schemaFields;
-          if (!fields || !fields.length) continue;
           // itemDir: the item as the tree knows it (data.Lakehouse), to open the table there.
           const named = { kind, workspace: w.name, item: displayName(it.name), itemDir: it.name, schema: t.schema || 'dbo', table: t.table };
+          if (!fields || !fields.length) { found.push(named); continue; }
           found.push(t.meta.empty
             ? { ...named, emptySql: paths.emptyTableSql(fields) }
             : { ...named, columns: fields.map(f => ({ name: f.name, type: paths.icebergToDuckType(f.type) })) });
