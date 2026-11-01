@@ -6,7 +6,7 @@
 // ones exist, so they survive a restart and the panel and the command line see the same
 // list. A view is a pointer — { name, schema, path, created } — kept in the account's catalog file
 // (catalogfile.js); its model file stays where it is and is read from there. Nothing is ever
-// written to Fabric or OneLake. An older version's JSON file is read once and left as it was.
+// written to Fabric or OneLake. An older version's JSON file is read once and then deleted.
 //
 // A path is a local model file (a semantic model's local copy) or an abfss:// URL of one in a
 // lakehouse's Files/. A view is kept when a model is opened — a click, or a query that names it. A model file is a .bim (TMSL) or an Apache Ossie

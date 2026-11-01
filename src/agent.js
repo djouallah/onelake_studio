@@ -38,6 +38,7 @@ const { fmtBytes, hasFilesArea, isStaging, kindLabel, sqlNameOf, fileSqlName } =
 const { mapPool, offlineError } = require('./http');
 const { walkCached } = require('./onelake');
 const { readJob } = require('./syncworker');
+const { editDistance } = require('./sqltables');
 const { sqlStr, isShowAllTables, ALL_TABLES_COUNTED } = require('./sql');
 const { EXIT, checkRequest, failureJson } = require('./bridge');
 
@@ -92,17 +93,6 @@ function printedLines(value, prefix = '') {
 }
 
 // How far apart two names are, in single edits.
-function editDistance(a, b) {
-  let row = Array.from({ length: b.length + 1 }, (_, i) => i);
-  for (let i = 1; i <= a.length; i++) {
-    const next = [i];
-    for (let j = 1; j <= b.length; j++) {
-      next[j] = Math.min(row[j] + 1, next[j - 1] + 1, row[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
-    }
-    row = next;
-  }
-  return row[b.length];
-}
 // The names nearest what was asked for, whole or by a dotted part (dbo.orders for orderz, data.Lakehouse
 // for dta), and none that are nothing like it.
 function closestNames(wanted, names, most = 5) {

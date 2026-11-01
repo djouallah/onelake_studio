@@ -232,9 +232,9 @@ function snapshotStats(meta, snap) {
   };
 }
 
-// Which format the table is WRITTEN in. OneLake keeps both sets of metadata side by side
-// and the engine always reads the Iceberg one, but only one of them is the original: the
-// other is Fabric's conversion (Apache XTable), and the conversion signs its output.
+// Which format the table is WRITTEN in, which decides how its rows are read. OneLake keeps both sets of
+// metadata side by side, but only one of them is the original: the other is Fabric's conversion (Apache
+// XTable), and the conversion signs its output.
 // Probed 2026-10-29 on a lakehouse holding both kinds:
 //
 //   written as Delta    -> Iceberg properties carry XTABLE_METADATA, sourceTableFormat DELTA

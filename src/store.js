@@ -304,7 +304,7 @@ function createStore({ dir, backend = null, ttlMs = DEFAULT_TTL_MS, maxBytes = D
   async function size() {
     const kept = backend ? await backend.size().catch(() => 0) : 0;
     if (!await usable) return kept;
-    // With a backend the JSON files were imported, and only a Clear still has them to delete.
+    // With a backend, all `dir` holds is blobs.
     const here = backend && blobDir ? await entries(blobDir, '.bin') : await everything();
     return kept + here.reduce((n, e) => n + e.bytes, 0);
   }

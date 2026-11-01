@@ -258,7 +258,7 @@ function createCatalog({ getToken, dfsOrigin = DFS_ORIGIN, tableOrigin = TABLE_O
   }
 
   // One table's Iceberg metadata: the catalog's loadTable, which hands back the document
-  // inline along with metadata-location — the file the engine reads with iceberg_scan.
+  // inline along with metadata-location — the file iceberg_scan reads, for an Iceberg table.
   // `onWait` hears why a call is taking long (conversion pending, catalog busy), so the
   // panel can say so instead of showing a spinner with no story.
   async function loadTable(lh, t, { onWait = () => {} } = {}) {

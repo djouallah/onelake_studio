@@ -97,6 +97,19 @@ test("deletion vectors and a checkpoint's sidecars come across, before the commi
   assert.ok(w.read.indexOf(`${DIR}/deletion_vector_ab.bin`) < w.read.indexOf(`${LOG}/${v(0, "json")}`));
 });
 
+test("a deletion vector under a random prefix comes across too, and a partition's folder isn't looked in", async t => {
+  const w = await world(t, {
+    [`${LOG}/${v(0, "json")}`]: "0", [`${DIR}/ab/deletion_vector_cd.bin`]: "dv", [`${DIR}/ab/part-1.parquet`]: "data",
+    [`${DIR}/year=2023/part-2.parquet`]: "data", [`${DIR}/metadata/v1.metadata.json`]: "{}",
+  });
+  const local = await w.mirror.ensure(w.table);
+  assert.equal(await readFile(join(local, "ab", "deletion_vector_cd.bin"), "utf8"), "dv");
+  assert.ok(!w.read.includes(`${DIR}/ab/part-1.parquet`), "a data file is never copied");
+  assert.ok(w.listed.includes(`${DIR}/ab`));
+  assert.ok(!w.listed.includes(`${DIR}/year=2023`) && !w.listed.includes(`${DIR}/metadata`));
+  assert.ok(w.read.indexOf(`${DIR}/ab/deletion_vector_cd.bin`) < w.read.indexOf(`${LOG}/${v(0, "json")}`));
+});
+
 test("offline: what's held is used with nothing asked, and what isn't is no folder", async t => {
   const w = await world(t, { [`${LOG}/${v(0, "json")}`]: "0" });
   const local = await w.mirror.ensure(w.table);

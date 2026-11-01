@@ -24,6 +24,10 @@ const LAST_CHECKPOINT = '_last_checkpoint';
 const VERSIONED = /^(\d{20})\.(?:json|checkpoint(?:\.[^/]+)?\.(?:parquet|json))$/;
 const CHECKPOINT = /^(\d{20})\.checkpoint/;
 const DELETION_VECTOR = /^deletion_vector_[^/]+\.bin$/;
+// A writer that randomizes file prefixes keeps deletion vectors one folder down, under a short name. A partition's
+// folder has an `=` in it, and `_delta_log` and `metadata` are neither short nor bare.
+const PREFIX_FOLDER = /^[A-Za-z0-9]{1,4}$/;
+const PREFIXES_AT_ONCE = 8;
 
 const baseOf = name => String(name).split('/').pop();
 const exists = p => fsp.access(p).then(() => true, () => false);
@@ -54,6 +58,15 @@ function createDeltaMirror({ catalog, base, ttlMs, isOffline = () => false, now 
   };
   const copy = async (workspace, from, to) => writeWhole(to, await catalog.readBytes(workspace, from));
 
+  async function copyVectors(workspace, entries, from, to) {
+    for (const e of entries) {
+      const name = baseOf(e.name);
+      if (e.isDir || !DELETION_VECTOR.test(name) || await exists(join(to, name))) continue;
+      await fsp.mkdir(to, { recursive: true });
+      await copy(workspace, `${from}/${name}`, join(to, name));
+    }
+  }
+
   async function refresh({ workspace, dir }, local) {
     const remoteLog = `${dir}/${LOG}`;
     const listed = await catalog.listDir(workspace, remoteLog);
@@ -72,11 +85,12 @@ function createDeltaMirror({ catalog, base, ttlMs, isOffline = () => false, now 
 
     if (missing.length) {
       // What a commit needs before the commit: deletion vectors, and a checkpoint's sidecars.
-      for (const e of await catalog.listDir(workspace, dir)) {
-        const name = baseOf(e.name);
-        if (!e.isDir && DELETION_VECTOR.test(name) && !await exists(join(local, name))) {
-          await copy(workspace, `${dir}/${name}`, join(local, name));
-        }
+      const top = await catalog.listDir(workspace, dir);
+      await copyVectors(workspace, top, dir, local);
+      const prefixes = top.filter(e => e.isDir && PREFIX_FOLDER.test(baseOf(e.name))).map(e => baseOf(e.name));
+      for (let i = 0; i < prefixes.length; i += PREFIXES_AT_ONCE) {
+        await Promise.all(prefixes.slice(i, i + PREFIXES_AT_ONCE).map(async name =>
+          copyVectors(workspace, await catalog.listDir(workspace, `${dir}/${name}`), `${dir}/${name}`, join(local, name))));
       }
       if (named.some(e => e.isDir && e.base === SIDECARS)) {
         const sidecars = join(logDir, SIDECARS);

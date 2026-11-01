@@ -49,7 +49,6 @@ const { planExport, writeExport, buildDist, writeMarker, readMarker, fingerprint
 const { createFabricApp, tenantOf } = require('./fabricapp');
 const { NAME, placeOf, tabTitle } = require('./title');
 const { createOneLakeWriter } = require('./onelakewrite');
-const { mapPool } = require('./http');
 const bundleLoaded = upMs();
 
 // OneLake accepts tokens in the storage

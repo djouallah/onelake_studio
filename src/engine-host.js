@@ -3,9 +3,9 @@
 // engine-host.js — real DuckDB, and a window's way to it
 // =============================================================================
 // DuckDB runs natively in the server's process (engine-server.js, `serve` below), on every core, and
-// a window's engine is this same code joined to it (`remote`). It reads OneLake itself through its `iceberg` and `azure` extensions: snapshot resolution, manifest
-// filtering, position and equality deletes, schema evolution and the Warehouse column mapping
-// are all DuckDB's.
+// a window's engine is this same code joined to it (`remote`). It reads OneLake itself through its `azure` extension, a Delta table with `delta` and an Iceberg table
+// with `iceberg`: snapshot resolution, file filtering, deletes, schema evolution and column mapping are
+// all DuckDB's.
 //
 // WHAT THE PAGE MAY CALL (call(), from host.js), and nothing else:
 //
@@ -328,9 +328,10 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
         if (proxy.password) await conn.run(`SET http_proxy_password = ${sqlStr(proxy.password)};`);
       }
       //
-      // REQUIRED, and treated differently from the rest: `iceberg` and `azure` are how a
-      // table or a Files/ object is read at all (abfss://), and `httpfs` is the https the
-      // Iceberg catalog and public URLs need. An optional extension that will not load costs one file format;
+      // REQUIRED, and treated differently from the rest: `azure` is how anything is read from OneLake
+      // (abfss://), `iceberg` is an Iceberg table and the catalog's own reads, and `httpfs` is the https the
+      // Iceberg catalog and public URLs need. An optional extension that will not load costs one kind of thing,
+      // and `delta` says so when a Delta table is opened (makeView);
       // these three failing means the extension cannot do its job, and saying so beats
       // a later "Failed to open file" that names nothing.
       for (const ext of ['iceberg', 'azure', 'httpfs']) await load(ext, '', true);
@@ -585,9 +586,9 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
   // OneLake, spoken by DuckDB itself
   // ---------------------------------------------------------------------------
   // DuckDB reads OneLake with one azure secret holding the VS Code token: tables with
-  // iceberg_scan on their metadata file, Files/ objects by their abfss:// names. No
-  // catalog is ever asked at query time — the host's store already holds each table's
-  // metadata location.
+  // delta_scan on a copy of their log or iceberg_scan on their metadata file, Files/ objects by their
+  // abfss:// names. No catalog is ever asked at query time — the host's store already holds where each
+  // table is.
 
   // Reissues the storage secret when the token has changed. Returns null rather
   // than throwing when there is no credential to be had, because

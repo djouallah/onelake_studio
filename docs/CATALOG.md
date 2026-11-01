@@ -128,8 +128,8 @@ Neither holds up the tree.
 ## How a statement runs
 
 As [ARCHITECTURE.md](ARCHITECTURE.md#what-happens-when-a-statement-runs) describes, with one change: `resolve`
-and `resolveFile` query the catalog, in the window. The view is still `iceberg_scan` on the table's metadata
-location. `SHOW ALL TABLES` and `information_schema` are answered from the catalog.
+and `resolveFile` query the catalog, in the window. The view is `delta_scan` on a Delta table's kept log, or
+`iceberg_scan` on an Iceberg table's metadata location. `SHOW ALL TABLES` and `information_schema` are answered from the catalog.
 
 A name not in a kept listing asks the worker for that listing before it is called missing. So does a read that
 fails with an `IO Error`, for that table's listing and metadata.
@@ -262,7 +262,8 @@ run on 1.144 only, so whether 1.101 itself has it is still to be shown.
 | Activation to a drawn tree | The real meaning of "opens at once" | Measure, and see what the bundle loads at activation |
 | A manifest evicted while its data is held | That table fails offline. It can happen today too: eviction goes oldest-first, and block names are hashes | Give Iceberg's files a folder eviction skips, which probably needs a change in the `cache_httpfs` fork |
 | Whether `iceberg_metadata` gives `data_file`'s columns, and whether Fabric's per-file stats are really zero (`names.js:197`) | If it is costly, `data_file` waits. Nothing else depends on it | Try it on real tables |
-| A Delta table with deletion vectors or column mapping, read through Fabric's Iceberg conversion | No test covers it today, and this design doesn't change it | Try it on real tables |
+| A Delta table with deletion vectors, read through the mount | `delta_scan` handles them, and their copy is tested only with a fake OneLake | Try it on a real table |
+| A Delta log that moved past what was read | Offline, a read that worked can ask for new files that aren't cached, and is refused | Nothing yet: it fails with an error, and never gives wrong rows |
 
 ## Waves
 

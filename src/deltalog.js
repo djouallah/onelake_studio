@@ -2,12 +2,12 @@
 // =============================================================================
 // deltalog.js — a Delta table's own log, for its Stats and History
 // =============================================================================
-// The engine reads every table through its Iceberg metadata, and that does not change
-// here. But a table WRITTEN as Delta has its truth in _delta_log: the Iceberg side is
-// Fabric's conversion of one Delta version, and it drops what Iceberg has no word for —
-// who wrote each commit and why, the protocol and its features, the table properties
-// (V-Order among them). This reads those from the log itself, and as little of it as
-// answers the question — every file is a request to OneLake:
+// A table WRITTEN as Delta has its truth in _delta_log: the Iceberg side is Fabric's
+// conversion of one Delta version, and it drops what Iceberg has no word for — who wrote
+// each commit and why, the protocol and its features, the table properties (V-Order among
+// them). This reads those from the log itself, and as little of it as answers the
+// question — every file is a request to OneLake. Its rows are delta_scan's (deltamirror.js):
+//
 //
 //   state    the Delta version the Iceberg metadata was converted from is already known,
 //            so its N.crc is ONE request: size, file count, metadata and protocol. A writer
