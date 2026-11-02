@@ -6,8 +6,9 @@ import { DatabaseSync } from 'node:sqlite';
 import { DuckDBInstance } from '@duckdb/node-api';
 import { PublicClientApplication } from '@azure/msal-node';
 
-// The public client Microsoft's own ADOMD library signs in with. No app registration is ours.
-const CLIENT_ID = 'cf710c6e-dfcc-4fa8-a093-d47294e44c66';
+// The Azure CLI's public client, and the default of Microsoft's Azure Identity SDK. No app registration is ours.
+// The ADOMD client refused the browser's localhost redirect (AADSTS50011).
+const CLIENT_ID = '04b07795-8ddb-461a-bbee-02f9e1bf7b46';
 const AUTHORITY = 'https://login.microsoftonline.com/organizations';
 
 const ONELAKE = 'https://storage.azure.com/.default';
