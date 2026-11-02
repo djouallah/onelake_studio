@@ -320,6 +320,14 @@ export function unopenedModels(sql) {
   return out;
 }
 
+// A model's SQL name read back: { workspace, model }, or null when it is not one.
+const WHOLE_NAME = new RegExp(`^(${PART_RE})${DOT_RE}(${PART_RE})${DOT_RE}(${PART_RE})$`);
+export function modelNameParts(sqlName) {
+  const m = WHOLE_NAME.exec(String(sqlName).trim());
+  const unq = x => (x[0] === '"' ? x.slice(1, -1).replace(/""/g, '"') : x);
+  return m && lc(unq(m[1])) === MODEL_CATALOG ? { workspace: unq(m[2]), model: unq(m[3]) } : null;
+}
+
 export function dropView(name) {
   const v = views && views.get(name);
   if (!v) return;

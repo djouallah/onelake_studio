@@ -29,7 +29,7 @@ SHOW ALL TABLES;
 | Rule | What it means | Where it is held |
 | --- | --- | --- |
 | **One name per object** | A table has five parts and a model has three. A file is `'lakehouse.<workspace>.<item>/Files/<path>'`. | [NAMING.md](NAMING.md), [`src/names.js`](../src/names.js) |
-| **SQL only** | A model is read with `AGG("measure")` in SQL. There is no DAX query. | [`app/semantic.js`](../app/semantic.js) |
+| **SQL only** | A model is read with `AGG("measure")` in SQL. There is no DAX query. Excel's MDX is a second way in, and is compiled to that same SQL. | [`app/semantic.js`](../app/semantic.js), [`src/xmla/`](../src/xmla/) |
 | **Read only** | Nothing is written to Fabric or OneLake. The host takes one read per statement, from a tab or the command line, and DuckDB's own parser checks it. The one exception is Export to Fabric, after an OK in VS Code. | `assertReads` and `checkedRead` in [`src/sql.js`](../src/sql.js) |
 | **Cache first** | Every answer from OneLake or Fabric is kept on this machine and served from there first. It is trusted until using it fails, then read again once. | [`src/onelake.js`](../src/onelake.js), [`src/store.js`](../src/store.js) |
 | **Works offline** | A feature that reads data works from what this machine holds, with no network. What isn't held says so at once, never on a timeout. Only writing to Fabric needs a connection: Export to Fabric. The exported Fabric app is online by design, and this rule doesn't apply to it. | [`src/connectivity.js`](../src/connectivity.js), [`src/http.js`](../src/http.js), `cache_httpfs_set_offline` in [`src/engine-host.js`](../src/engine-host.js) |
@@ -50,12 +50,12 @@ Results computed from a semantic model are not guaranteed to match Power BI.
 ## How the parts fit
 
 ```
- Tree            Tabs, Explore           Command line, agent skill
- (VS Code)       (webview, app/)         (bin/cli.mjs)
-      |                 |                        |
-      |          one message channel       local pipe or socket
-      |            (src/host.js)            (src/bridge.js, src/agent.js)
-      v                 v                        v
+ Tree            Tabs, Explore           Command line, agent skill     Excel
+ (VS Code)       (webview, app/)         (bin/cli.mjs)                 (PivotTable)
+      |                 |                        |                         |
+      |          one message channel       local pipe or socket      XMLA on 127.0.0.1
+      |            (src/host.js)            (src/bridge.js, src/agent.js)  (src/xmla/)
+      v                 v                        v                         v
  +-------------------------------------------------------------+
  |  Extension host (src/), one per window                      |
  |  sign-in  |  cache-first OneLake  |  the read-only guard    |
@@ -571,10 +571,38 @@ personal skills, and it follows the extension through updates.
 - **`export`** is the one write: the same code path as Explore's button, with the same questions asked
   in VS Code.
 
+## Open in Excel
+
+**Open in Excel** on a semantic model opens a new workbook with a PivotTable live on the model, on Windows and
+the Excel desktop app. Excel's provider speaks XMLA over HTTP, so [`src/xmla/`](../src/xmla/) answers it from the window:
+
+```
+Excel (MSOLAP) --SOAP over http://127.0.0.1--> extension host
+  Discover -> rowsets built from the model's TMSL
+  Execute  -> MDX -> model SELECTs -> dax-sql -> the guard -> the server -> a cell set
+```
+
+- **A model is one cube.** A table is a dimension, a column an attribute hierarchy, a measure a member of `[Measures]`.
+  What's hidden stays out, as in Power BI's field list ([`cube.js`](../src/xmla/cube.js)).
+- **Not an MDX engine.** A PivotTable writes a narrow, regular subset, and [`mdx.js`](../src/xmla/mdx.js) reads only that:
+  the statements captured from Excel are its tests. Anything else is refused by name, never guessed at. That covers
+  calculated members written in Excel, Show Details, value and Top 10 filters, and "show items with no data".
+- **One model SELECT per grain.** Totals and subtotals are computed by dax-sql at their own grain, not added up, so a
+  distinct count or a ratio is right on every line ([`cellset.js`](../src/xmla/cellset.js)). The price is a query per
+  combination of subtotals, capped at 256.
+- **The port.** The one port the extension opens, and only once **Open in Excel** has been used. It binds `127.0.0.1`,
+  and a request must name a token kept in VS Code's secret storage. A browser can still send a request there, so anything
+  with an `Origin` is refused, and a `Host` that isn't this address, which is what DNS rebinding would show.
+- **A saved workbook** keeps its port and token, so it refreshes whenever VS Code is open, in any window: one
+  window serves at a time, as with the command line's bridge. With VS Code closed it fails with a connection error.
+  On another machine it doesn't refresh, since the token belongs to this install.
+- **Number formats** aren't applied: Excel doesn't ask this server for them (`CELL PROPERTIES VALUE` only).
+
 ## Commands
 
 | Command | What it does |
 | --- | --- |
+| **Open in Excel** | A semantic model's right-click, on Windows. See [Open in Excel](#open-in-excel). |
 | **Open OneLake Studio** | Brings the last tab forward, or opens one, signing in if needed. In the Command Palette only: the tree opens a tab with **New Query**. |
 | **Sign in to OneLake** | Signs in and fills the explorer, without opening a tab. |
 | **Sign in to the Fabric API** | Asks for the second token, for semantic models and apps. |

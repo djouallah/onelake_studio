@@ -42,6 +42,8 @@ const { firstClicks } = require('./doubleclick');
 const { webviewRoot } = require('./webview');
 const { fmtBytes, sqlKind, sqlName, sqlNameOf, fileSqlName, sqlPart, displayName, MODEL_CATALOG, modelSqlName, stripBom, DFS_ORIGIN } = require('./names');
 const { createAgent } = require('./agent');
+const { serveXmla } = require('./xmla/server');
+const { openInExcel } = require('./xmla/excel');
 const { createSemViews } = require('./semviews');
 const { serveBridge } = require('./bridge');
 const { PINS } = require('./vendored');
@@ -1520,6 +1522,74 @@ async function activateInner(context) {
     log: m => out && out.appendLine(m),
   }));
 
+  // Open in Excel (src/xmla): the endpoint a PivotTable connects to. Its port and token outlive a
+  // reload, since a saved workbook holds them, and F5 has its own so it doesn't lose the port to
+  // the installed build. Not opened until the command has been used once; after that, whenever a
+  // window starts, so a saved workbook refreshes with VS Code open.
+  const xmlaPortKey = `xmlaPort${dev ? '.dev' : ''}`, xmlaTokenKey = `xmlaToken${dev ? '.dev' : ''}`;
+  const randomPort = () => 49152 + (randomBytes(2).readUInt16LE(0) % 16384);
+  let xmlaServer = null, xmlaAddress = null;
+  async function startXmla({ create = false } = {}) {
+    if (process.platform !== 'win32') return null;
+    if (xmlaAddress) return xmlaAddress;
+    let port = context.globalState.get(xmlaPortKey);
+    let token = await context.secrets.get(xmlaTokenKey);
+    if (!port || !token) {
+      if (!create) return null;
+      port = port || randomPort();
+      token = token || randomBytes(24).toString('hex');
+      await context.secrets.store(xmlaTokenKey, token);
+      await context.globalState.update(xmlaPortKey, port);
+    }
+    const serve = p => {
+      xmlaAddress = { port: p, token };
+      xmlaServer = serveXmla({
+        port: p, token, log: m => out && out.appendLine(m),
+        backend: { cube: c => agent.excelCube(c), query: (sql, o) => agent.excelQuery(sql, o) },
+        // Something else took it: a new port. A workbook saved on the old one stops refreshing.
+        onPortLost: () => {
+          const next = randomPort();
+          context.globalState.update(xmlaPortKey, next);
+          serve(next);
+        },
+      });
+    };
+    serve(port);
+    return xmlaAddress;
+  }
+  context.subscriptions.push({ dispose: () => { if (xmlaServer) xmlaServer.dispose(); } });
+  startXmla().catch(e => out && out.appendLine(`xmla: ${e.message}`));
+
+  // A model's right-click: its local copy (read from Fabric the first time), then a new workbook
+  // with a PivotTable on it. One progress notification until Excel is on screen.
+  async function openModelInExcel(n) {
+    if (!n || n.kind !== 'semanticModel') return;
+    const refused = unsupportedModels.get(modelKey(n));
+    if (refused) {
+      vscode.window.showInformationMessage(unsupportedNote(n, refused));
+      return;
+    }
+    try {
+      await vscode.window.withProgress(
+        { location: vscode.ProgressLocation.Notification, title: `Opening ${n.model} in Excel` },
+        async progress => {
+          const say = message => progress.report({ message });
+          await fetchModel(n, { say });
+          const { port, token } = await startXmla({ create: true });
+          say('starting Excel…');
+          await openInExcel({ port, token, catalog: modelSqlName(n.workspace, n.model), name: n.model });
+        });
+    } catch (e) {
+      if (e && e.unsupported) {
+        if (out) out.appendLine(`not opening ${n.workspace}/${n.model}: ${e.message}`);
+        vscode.window.showInformationMessage(e.message);
+        return;
+      }
+      if (out) out.appendLine(`opening ${n.model} in Excel failed — ${(e && e.stack) || e}`);
+      showError(`Could not open ${n.model} in Excel: ${(e && e.message) || e}`);
+    }
+  }
+
   // A semantic model, opened from the tree or named by a query: its definition (Fabric's
   // getDefinition, TMSL), kept as a local copy in Apache Ossie — modelPath(n), ~/OneLakeStudio/
   // semantic-models/<account>/<workspace>/<model>.yaml — and read from there after. Nothing is written to OneLake, so a
@@ -2173,6 +2243,7 @@ async function activateInner(context) {
       vscode.env.openExternal(vscode.Uri.parse(n.url));
     })),
     vscode.commands.registerCommand('onelakeStudio.redownloadSemanticModel', n => openModel(n, { fresh: true })),
+    vscode.commands.registerCommand('onelakeStudio.openInExcel', n => openModelInExcel(n)),
 
     vscode.commands.registerCommand('onelakeStudio.open', async () => {
       try {
