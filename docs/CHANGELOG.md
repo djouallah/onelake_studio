@@ -1,11 +1,24 @@
 # Changelog
 
-## Unreleased
+## 0.2.11
 
+- **OneLake Studio is a Windows app too, with no VS Code.** The same tree, tabs, SQL, Explore and Pivot, in a window of its
+  own, with a menu bar, About, a tree that can be put away (Ctrl+B), and the keys a Windows app has. It signs in with no
+  app registration, and with VS Code on the machine it reads the same cache. It says when a newer version is out. Download
+  it from the website.
+- **Open in Excel:** a button on a semantic model's Pivot opens a new workbook with a PivotTable connected to the model,
+  on Windows. It runs on the local engine, so it works offline.
+- **Keep offline:** a switch beside a model's tabs keeps its tables on this machine, and new snapshots come down by
+  themselves within the hour. It runs in an engine of its own and never stops for a query.
+- **The command line works with VS Code closed**, on Windows, with `signin`, `signout`, and `serve <model.yaml|.bim>`
+  for Excel on a model file.
 - **The tables you use are looked after.** A table read 3 times in 14 days stays within an hour of OneLake, and when nothing
   else is running each new snapshot is read whole, so it works offline, every column. Anyone's statement stops that, and it
   carries on later from where it got to. `onelakeStudio.keepUsedTablesGB`, 10 GB by default, is how much may be kept this way,
   and a bigger table says so in its tooltip.
+- **Fixes:**
+  - A model joining a date to a timestamp no longer reads blank: the engine runs in UTC, as OneLake's timestamps are.
+  - A statement after a Stop no longer hangs.
 
 ## 0.2.10
 
