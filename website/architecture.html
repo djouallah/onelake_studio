@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Architecture: OneLake Studio</title>
-  <meta name="description" content="The parts of the OneLake Studio app and who does what: the window, the Node process, the catalog and its sync, the DuckDB servers, Excel's XMLA endpoint, the command line and the exported Fabric app.">
+  <meta name="description" content="The parts of the OneLake Studio app and what each does: the window, the Node process, the local catalog and its sync, the DuckDB servers, Excel's XMLA endpoint, the command line and the exported Fabric app.">
   <link rel="icon" href="icon.png">
   <link rel="stylesheet" href="style.css">
 </head>
@@ -25,7 +25,7 @@
   <main class="wrap">
     <section class="intro">
       <h1>Architecture</h1>
-      <p class="lead">The app is the VS Code extension in a window of its own. One Node process signs in, names tables, keeps the catalog and answers Excel. DuckDB runs beside it in processes of its own. The window only draws.</p>
+      <p class="lead">The app is the VS Code extension running in its own window. It runs several processes on your machine. This page shows what each one does and how they connect.</p>
     </section>
 
     <section>
@@ -33,7 +33,7 @@
       <figure class="diagram wide">
         <svg viewBox="0 0 680 566" role="img" aria-labelledby="parts-title parts-desc">
           <title id="parts-title">The parts of the OneLake Studio app</title>
-          <desc id="parts-desc">On this machine, the app window, Excel and the command line talk to the Node process: the window over HTTP on 127.0.0.1, Excel over XMLA on 127.0.0.1, the command line over a local pipe. The Node process sends statements to the query server, starts the keep-offline engine, and reads and writes the catalog, a SQLite file. Both DuckDB engines read through one disk cache from OneLake. The Node process keeps the catalog current from the Fabric REST API and OneLake. Export to Fabric publishes a Fabric app through the Fabric REST API.</desc>
+          <desc id="parts-desc">On this machine, the app window, Excel and the command line talk to the Node process: the window over HTTP on 127.0.0.1, Excel over XMLA on 127.0.0.1, the command line over a local pipe. The Node process sends statements to the query server, starts the keep-offline engine, and reads and writes the local catalog, a SQLite file. Both DuckDB engines read through one disk cache from OneLake. The Node process keeps the local catalog current from the Fabric REST API and OneLake. Export to Fabric publishes a Fabric app through the Fabric REST API.</desc>
           <defs>
             <marker id="head" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto">
               <path class="head" d="M0 0 8 4 0 8z"/>
@@ -62,7 +62,7 @@
 
           <rect class="node" x="15" y="140" width="650" height="80" rx="5"/>
           <text class="title" x="340" y="170" text-anchor="middle">Node process: the extension</text>
-          <text class="note" x="340" y="194" text-anchor="middle">sign-in · read-only guard · names · sync worker</text>
+          <text class="note" x="340" y="194" text-anchor="middle">sign-in · read-only check · names · sync worker</text>
           <text class="note" x="340" y="210" text-anchor="middle">Excel's XMLA endpoint · Export to Fabric</text>
 
           <path class="edge" d="M125 220V289" marker-end="url(#head)"/>
@@ -81,8 +81,8 @@
           <text class="title" x="355" y="316" text-anchor="middle">Keep-offline engine</text>
           <text class="note" x="355" y="337" text-anchor="middle">DuckDB: one thread</text>
           <rect class="node" x="500" y="290" width="165" height="64" rx="5"/>
-          <text class="title" x="582" y="316" text-anchor="middle">Catalog</text>
-          <text class="note" x="582" y="337" text-anchor="middle">SQLite: all metadata</text>
+          <text class="title" x="582" y="316" text-anchor="middle">Local catalog</text>
+          <text class="note" x="582" y="337" text-anchor="middle">SQLite file: metadata</text>
 
           <path class="edge" d="M125 354V399" marker-end="url(#head)"/>
           <path class="edge" d="M355 354V399" marker-end="url(#head)"/>
@@ -119,19 +119,19 @@
       <div class="table-box">
         <table>
           <thead>
-            <tr><th>Part</th><th>Its job</th><th>Runs in</th><th>Network</th></tr>
+            <tr><th>Part</th><th>What it does</th><th>Runs in</th><th>Network</th></tr>
           </thead>
           <tbody>
-            <tr><td><strong>Shell</strong></td><td>Shows the splash, starts the Node process and opens the window. Keeps the window's size and place, and a second start shows the first window.</td><td><code>onelake-studio.exe</code>, Tauri</td><td>None</td></tr>
-            <tr><td><strong>Window</strong></td><td>Draws the tree, the tabs, the menus, the dialogs and the status bar. A tab is the extension's own page, in an iframe. It never holds the OneLake token.</td><td>WebView2, which is Edge</td><td>127.0.0.1 only</td></tr>
-            <tr><td><strong>Node process</strong></td><td>The extension, unchanged: sign-in, the read-only guard, naming and resolving tables, the sync worker, Excel's endpoint and Export to Fabric.</td><td><code>node.exe</code>, <code>dist/desktop.js</code></td><td>Fabric REST API, OneLake listings and metadata</td></tr>
-            <tr><td><strong>Catalog</strong></td><td>All metadata: listings, table metadata, Delta commits, the models opened and what was read. The tree draws from it before sign-in.</td><td>A SQLite file, read with <code>node:sqlite</code></td><td>Never</td></tr>
-            <tr><td><strong>Query server</strong></td><td>Runs every tab's SQL. Each tab is a client over DuckDB's Quack protocol, and they share one memory budget and the blocks read.</td><td>DuckDB 2.0, in a process of its own</td><td>OneLake: rows and files</td></tr>
-            <tr><td><strong>Keep-offline engine</strong></td><td>Reads the tables of a model kept offline, whole, so they answer from disk. It never stops for a query, and exits when nothing is left to read.</td><td>DuckDB, a second process: one thread, 1 GB</td><td>OneLake</td></tr>
-            <tr><td><strong>Disk cache</strong></td><td>The bytes DuckDB reads, read again only when a file was rewritten. Per Microsoft account, and shared by both engines.</td><td>Files, <code>cache_httpfs</code></td><td>None</td></tr>
-            <tr><td><strong>Excel's endpoint</strong></td><td>Answers Excel's PivotTables over XMLA, from the semantic model, on the query server.</td><td>The Node process, HTTP on 127.0.0.1</td><td>None</td></tr>
-            <tr><td><strong>Command line</strong></td><td>Hands its arguments to the running app, which answers with its own sign-in, cache and engine. With nothing running, a process of its own answers.</td><td><code>bin/cli.mjs</code></td><td>Through the app</td></tr>
-            <tr><td><strong>Fabric app</strong></td><td>A model's Pivot, exported: it opens in a browser with a Fabric sign-in and reads the model's tables there.</td><td>Fabric, and the browser</td><td>OneLake</td></tr>
+            <tr><td>Shell</td><td>Starts the Node process and opens the window. Remembers the window's size and position. If you start the app twice, it shows the window that is already open.</td><td><code>onelake-studio.exe</code>, Tauri</td><td>None</td></tr>
+            <tr><td>Window</td><td>Draws the tree, tabs, menus, dialogs and status bar. Each tab is the extension's page inside an iframe. It does not have the OneLake token.</td><td>WebView2, which is Edge</td><td>127.0.0.1 only</td></tr>
+            <tr><td>Node process</td><td>The extension's code, unchanged. It handles sign-in, blocks anything that writes, turns names into tables, keeps the local catalog up to date, serves Excel, and runs Export to Fabric.</td><td><code>node.exe</code>, <code>dist/desktop.js</code></td><td>Fabric REST API, OneLake lists and metadata</td></tr>
+            <tr><td>Local catalog</td><td>A SQLite file on your machine. It stores all metadata: lists of workspaces, items and tables, table metadata, Delta history, opened models, and what was read. The tree reads it, even before you sign in.</td><td>A SQLite file, read with <code>node:sqlite</code></td><td>None</td></tr>
+            <tr><td>Query server</td><td>Runs the SQL from every tab. Tabs connect to it with DuckDB's Quack protocol, and share one memory limit and the data already read.</td><td>DuckDB 2.0, in a separate process</td><td>OneLake: rows and files</td></tr>
+            <tr><td>Keep-offline engine</td><td>Downloads every table of a model set to Keep offline, so it works without internet. Queries never wait for it. It stops when there is nothing left to download.</td><td>DuckDB, a second process: one thread, 1 GB</td><td>OneLake</td></tr>
+            <tr><td>Disk cache</td><td>Stores the bytes DuckDB reads from OneLake. A file is downloaded again only if it changed. One cache per Microsoft account, used by both DuckDB processes.</td><td>Files, <code>cache_httpfs</code></td><td>None</td></tr>
+            <tr><td>Excel's endpoint</td><td>Lets Excel PivotTables query a semantic model over XMLA. The queries run on the query server.</td><td>The Node process, HTTP on 127.0.0.1</td><td>None</td></tr>
+            <tr><td>Command line</td><td>Sends its command to the running app, which answers with its own sign-in, cache and engine. If the app isn't running, the command line starts its own process.</td><td><code>bin/cli.mjs</code></td><td>Through the app</td></tr>
+            <tr><td>Fabric app</td><td>A model's Pivot, published with Export to Fabric. It runs in the browser after a Fabric sign-in and reads the model's tables there.</td><td>Fabric, and the browser</td><td>OneLake</td></tr>
           </tbody>
         </table>
       </div>
@@ -139,75 +139,75 @@
 
     <section>
       <h2 id="sync">Sync</h2>
-      <p>Nothing waits on OneLake for an answer the catalog already holds. The catalog is one SQLite file per account, and the tree, <code>SHOW ALL TABLES</code> and Go To all read it.</p>
+      <p>Lists of what exists come from the local catalog, not from OneLake. The local catalog is one SQLite file per account on your machine. The tree, <code>SHOW ALL TABLES</code> and Go To read it.</p>
       <ul>
-        <li><strong>What's open stays current.</strong> The sync worker, in the Node process, refreshes the workspaces open and pinned once their listings are older than <code>catalogTtlMinutes</code>.</li>
-        <li><strong>The rest of the tenant, slowly.</strong> One process, holding a lease in the catalog file, reads every other listing each 12 hours: five every 15 seconds, one at a time, and a 429 stops it for a minute.</li>
-        <li><strong>Tables in use are kept.</strong> A table read 3 times in 14 days has its metadata read every hour, and when nothing else is running each new snapshot is read whole, so it works offline, every column.</li>
-        <li><strong>Offline asks nothing.</strong> With no connection or no session, no request is sent, and what was read keeps answering.</li>
+        <li>Workspaces you have open or pinned are refreshed when their lists are older than <code>catalogTtlMinutes</code>.</li>
+        <li>Every 12 hours, one process reads the lists for the rest of the tenant: five requests every 15 seconds. If Fabric answers 429, it waits a minute.</li>
+        <li>A table read 3 times in 14 days has its metadata checked every hour. When nothing else is running, each new version is downloaded in full, so it works offline.</li>
+        <li>With no internet or no sign-in, no request is sent, and everything already read still works.</li>
       </ul>
-      <p class="more"><a href="catalog.html">The catalog, in full</a></p>
+      <p class="more"><a href="catalog.html">The local catalog in detail</a></p>
     </section>
 
     <section>
       <h2 id="servers">The servers</h2>
-      <p>DuckDB runs outside the Node process, in a server that the first tab needing it starts. The Node process keeps the read-only guard and the names, and sends the server only statements it has checked.</p>
+      <p>DuckDB runs in a separate process. The Node process checks each statement before sending it: it must only read, and every name must resolve to a table.</p>
       <ul>
-        <li><strong>Quack</strong> carries statements, through a pool of attaches. Stop finds a statement by a tag and cancels only that tab's.</li>
-        <li><strong>The control pipe</strong>, an OS pipe, carries the OneLake token, the offline switch, and what Logs and Performance ask for, since Quack logs what it is sent.</li>
-        <li><strong>The keep-offline engine</strong> is a second server, so reading a model's tables whole never holds the connection a query needs. The two share only the disk cache.</li>
-        <li><strong>The server runs in UTC</strong>, as OneLake stores its timestamps in UTC, so a date table joins its facts.</li>
+        <li>Statements go over Quack. Stop cancels only its own tab's statements.</li>
+        <li>The OneLake token, the offline switch, and the data for the Logs and Performance tabs go over a separate OS pipe, because Quack logs everything it receives.</li>
+        <li>Keep offline uses a second DuckDB process, so downloading a model's tables never slows a query. The two processes share only the disk cache.</li>
+        <li>The server runs in UTC, because OneLake stores timestamps in UTC. Otherwise dates wouldn't match between tables.</li>
       </ul>
-      <p class="more"><a href="design.html#the-server">The server</a> and <a href="design.html#keep-offline">keep offline</a>, in full</p>
+      <p class="more"><a href="design.html#the-server">The server</a> and <a href="design.html#keep-offline">Keep offline</a> in detail</p>
     </section>
 
     <section>
       <h2 id="xmla">Excel's XMLA endpoint</h2>
-      <p>Excel's provider speaks XMLA over HTTP, so the Node process answers it itself. A model is one cube: a table is a dimension, a column an attribute hierarchy, a measure a member of <code>[Measures]</code>.</p>
+      <p>Excel talks to a semantic model using XMLA over HTTP, and the Node process answers. Excel sees the model as one cube: each table is a dimension, each column a hierarchy, and each measure is in <code>[Measures]</code>.</p>
 <pre><code>Excel (MSOLAP) --XMLA over http://127.0.0.1--> Node process
   Discover -> the model's tables, columns and measures, as a cube
-  Execute  -> MDX -> model SQL -> dax-sql -> the guard -> query server</code></pre>
+  Execute  -> MDX -> model SQL -> dax-sql -> read-only check -> query server</code></pre>
       <ul>
-        <li><strong>Not an MDX engine.</strong> It reads the MDX a PivotTable writes, and refuses anything else by name, never by a guess.</li>
-        <li><strong>Totals at their own grain.</strong> A subtotal is computed, not added up, so a distinct count or a ratio is right on every line.</li>
-        <li><strong>Opened only when used.</strong> The port opens the first time Open in Excel is used, binds 127.0.0.1, and needs a token. A request from a browser is refused.</li>
+        <li>It understands only the MDX that Excel PivotTables send. Anything else gets an error that says what isn't supported.</li>
+        <li>Subtotals and totals are calculated, not summed, so distinct counts and ratios are correct on every row.</li>
+        <li>The port opens the first time you use Open in Excel. It listens on 127.0.0.1 only and needs a token. Requests from a browser are refused.</li>
       </ul>
-      <p class="more"><a href="design.html#open-in-excel">Open in Excel, in full</a></p>
+      <p class="more"><a href="design.html#open-in-excel">Open in Excel in detail</a></p>
     </section>
 
     <section>
       <h2 id="export">Export to Fabric</h2>
-      <p>The one write, and it asks first: where it writes, before anything is written. It puts the model's file in its lakehouse's <code>Files/</code>, and publishes the app through the Fabric REST API.</p>
+      <p>Export to Fabric is the only feature that writes, and it asks before writing anything. It copies the model's file into the lakehouse's <code>Files/</code> folder and publishes the app with the Fabric REST API.</p>
       <ul>
-        <li><strong>The model isn't copied.</strong> The app's function reads it from the lakehouse at run time, so the app shows the model as it is there.</li>
-        <li><strong>The tables are read in the browser.</strong> The function signs a read-only link for each table the model names, and refuses any other. DuckDB-WASM reads them in the page.</li>
-        <li><strong>Protected.</strong> The page loads only for people who may open the app in Fabric.</li>
+        <li>The app doesn't hold a copy of the model. It reads the model from the lakehouse each time it runs.</li>
+        <li>The app's function creates a read-only link for each table in the model, and for no other table. The browser reads the tables with DuckDB-WASM.</li>
+        <li>Only people who can open the app in Fabric can load the page.</li>
       </ul>
-      <p class="more"><a href="design.html#export-to-fabric">Export to Fabric, in full</a></p>
+      <p class="more"><a href="design.html#export-to-fabric">Export to Fabric in detail</a></p>
     </section>
 
     <section>
       <h2 id="ports">Ports and tokens</h2>
-      <p>Everything listens on 127.0.0.1 only, and nothing answers without its token.</p>
+      <p>Everything listens on 127.0.0.1 only, and every connection needs a token.</p>
       <div class="table-box">
         <table>
           <thead>
-            <tr><th>Who</th><th>How</th><th>Its guard</th></tr>
+            <tr><th>Who</th><th>How</th><th>Protection</th></tr>
           </thead>
           <tbody>
-            <tr><td>Window</td><td>HTTP: events out, POSTs back</td><td>The first request's token becomes an <code>HttpOnly</code>, <code>SameSite=Strict</code> cookie. Another <code>Host</code> or <code>Origin</code> is refused.</td></tr>
-            <tr><td>Query server</td><td>Quack, on a local port</td><td>A new random session token per server. Without it, the port runs nothing.</td></tr>
-            <tr><td>Excel</td><td>XMLA over HTTP</td><td>A token in its address. Anything with an <code>Origin</code> is refused.</td></tr>
-            <tr><td>Command line</td><td>A local pipe</td><td>No port at all.</td></tr>
+            <tr><td>Window</td><td>HTTP: events from the app, POST requests back</td><td>The token from the first request is kept in an <code>HttpOnly</code>, <code>SameSite=Strict</code> cookie. Requests with a different <code>Host</code> or <code>Origin</code> are refused.</td></tr>
+            <tr><td>Query server</td><td>Quack, on a local port</td><td>Each server gets a new random session token. Without it, the server runs nothing.</td></tr>
+            <tr><td>Excel</td><td>XMLA over HTTP</td><td>A token in the address. Requests with an <code>Origin</code> header are refused.</td></tr>
+            <tr><td>Command line</td><td>A local pipe</td><td>No network port.</td></tr>
           </tbody>
         </table>
       </div>
-      <p>Sign-in is MSAL as the Azure CLI's public client, so there is nothing to register. Its token cache is encrypted for this Windows user, and the OneLake token reaches DuckDB as a storage secret.</p>
+      <p>Sign-in uses MSAL with the Azure CLI's public client ID, so no app registration is needed. The token cache is encrypted for your Windows user. DuckDB gets the OneLake token as a storage secret.</p>
     </section>
 
     <section>
       <h2 id="vscode">In VS Code</h2>
-      <p>The same parts, with VS Code as the shell and the window: it draws the tree and the tabs, and its Microsoft account provider signs in. On one machine, the app, the extension and the command line read one catalog and one cache.</p>
+      <p>The parts are the same, except VS Code is the window and its Microsoft account provider does the sign-in. On one machine, the app, the extension and the command line share the local catalog and the cache.</p>
       <p class="more"><a href="design.html">The design document</a></p>
     </section>
   </main>

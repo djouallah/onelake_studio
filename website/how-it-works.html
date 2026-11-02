@@ -50,7 +50,7 @@
 
     <section>
       <h2 id="parts">How the parts fit</h2>
-      <p>The tree, the tabs, the command line and Excel go to one process that signs in, guards and names. It keeps the metadata in a SQLite catalog, and DuckDB reads the data in a server of its own. <a href="architecture.html">Architecture</a> shows each part, who does what, and how they talk.</p>
+      <p>The tree, tabs, command line and Excel all talk to one process that handles sign-in, the read-only check and names. Metadata is stored in a local catalog, a SQLite file, and DuckDB reads the data in a separate process. The <a href="architecture.html">Architecture</a> page shows each part and how they connect.</p>
     </section>
 
     <section>
