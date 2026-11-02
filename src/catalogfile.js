@@ -246,6 +246,9 @@ function createCatalogFile({ file, onCleared = () => {}, clearedEveryMs = CLEARE
     latestKept(t) { database(); return tables.latestKept(t); },
     noteKept(t, kept) { inOne(() => tables.noteKept(t, kept)); },
     keptSince(at) { database(); return tables.keptSince(at); },
+    // Which semantic models are kept offline (modeldata.js).
+    offlineModels() { database(); return tables.offlineModels(); },
+    setOffline(catalog, model, on, at) { inOne(() => tables.setOffline(catalog, model, on, at)); },
     pruneUse(fromDay, fromAt) { inOne(() => tables.pruneUse(fromDay, fromAt)); },
     /** Hears the store's keys of what another window wrote. Answers how to stop. */
     subscribe(fn) {

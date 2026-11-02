@@ -359,7 +359,7 @@ async function keeping({ tables = [inUseTable("t")], ...more } = {}) {
   return { ...s, usage, keep };
 }
 
-test("while a model's data is downloading, the idle job holds off, and stops what it's reading", async () => {
+test("while a model kept offline is coming down, the idle job holds off, and stops what it's reading", async () => {
   const { world, worker, keep } = await keeping();
   keep.held = () => true;
   await worker.tick();

@@ -73,7 +73,7 @@ function readJob(onelake, t, { onWait } = {}) {
  * @param {() => boolean} o.keep.ready  whether an engine is up: one is never started for this
  * @param {() => Promise<boolean>} o.keep.othersRunning  whether anyone has a statement running
  * @param {(name: string, o: { signal: AbortSignal }) => Promise<any>} o.keep.read
- * @param {() => boolean} [o.keep.held]  whether this holds off: a model's data is being downloaded
+ * @param {() => boolean} [o.keep.held]  whether this holds off: a model kept offline is coming down
  * @param {(line: string) => void} [o.log]
  * @param {() => number} [o.now]
  */
@@ -232,7 +232,7 @@ function createSyncWorker({ onelake, opened = () => [], pinned = () => [], ttlMs
   async function lookAround() {
     if (!keepOn()) return stopKeeping('off');
     if (isOffline()) return stopKeeping('offline');
-    // Someone asked for a model's data (modeldata.js): it may be reading these same bytes.
+    // A model kept offline is coming down (modeldata.js): it may be reading these same bytes.
     if (keep.held && keep.held()) return stopKeeping('someone');
     const others = await keep.othersRunning().catch(() => false);
     if (others) busyAt = now();

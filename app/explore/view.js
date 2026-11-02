@@ -43,8 +43,9 @@ const PREVIEW_ROWS = 500;
 //                    what to say when it is done
 //   openInExcel()    (optional) the Open in Excel button: this model in a new workbook, as a live
 //                    PivotTable (src/xmla); answers what to say when it is open
-//   downloadData()   (optional) the Download Data button: every table of this model on this machine
-//                    (src/modeldata.js); answers what to say when it is done
+//   keepOffline      (optional) { state(), set(on) }: the Keep offline switch beside the tabs, every
+//                    table of this model on this machine (src/modeldata.js); both answer what it shows:
+//                    { on, say, tone, meter, tip, busy }
 //   editSql(sql)     (optional) the Edit SQL button: the shelves' query, all its rows, handed
 //                    to the host's own SQL editor, which runs it and saves its CSV, so Show SQL
 //                    and Download CSV are left out
@@ -55,6 +56,71 @@ const PREVIEW_ROWS = 500;
 //                    the first is the one it opens on. One page: no page tabs.
 //   stateKey         (optional) where its shelves are kept (default: explore.<name>)
 // Returns { destroy }.
+
+// The Keep offline switch: what it shows is the host's to say, and it asks often only while
+// something is coming down. A refusal stays on the line until the switch is next touched.
+const OFFLINE_BUSY_MS = 2000, OFFLINE_QUIET_MS = 30_000;
+function offlineSwitch({ state, set }) {
+  const id = `keep-offline-${Math.random().toString(36).slice(2, 8)}`;
+  const toggle = el('button', { type: 'button', class: 'keep-switch', role: 'switch', id, 'aria-checked': 'false', 'aria-label': 'Keep offline' });
+  const label = el('label', { for: id }, 'Keep offline');
+  const fill = el('i', {});
+  const meter = el('span', { class: 'keep-meter', 'aria-hidden': 'true', hidden: true }, fill);
+  const say = el('span', { class: 'keep-say' });
+  const root = el('div', { class: 'keep-offline' }, toggle, label, meter, say);
+  let timer = null, gone = false, refusal = null, setting = false, asking = 0;
+  const OFF_TIP = 'Keep every table of this model on this machine, so it answers from disk and with no connection';
+
+  function draw(s) {
+    toggle.setAttribute('aria-checked', String(!!s.on));
+    say.textContent = s.say || '';
+    say.className = `keep-say${s.tone ? ` ${s.tone}` : ''}`;
+    meter.hidden = s.meter == null;
+    if (s.meter != null) fill.style.width = `${s.meter}%`;
+    const tip = s.tip || (s.on ? '' : OFF_TIP);
+    toggle.title = tip;
+    label.title = tip;
+    say.title = tip;
+  }
+  function again(busy) {
+    clearTimeout(timer);
+    if (!gone) timer = setTimeout(look, busy ? OFFLINE_BUSY_MS : OFFLINE_QUIET_MS);
+  }
+  async function look() {
+    if (gone || setting) return;
+    const mine = ++asking;
+    let s = null;
+    try { s = await state(); } catch (_) { /* the next look can say */ }
+    if (gone || setting || mine !== asking) return;
+    if (s) draw(refusal && !s.on ? refusal : s);
+    again(!!(s && s.busy));
+  }
+  toggle.addEventListener('click', async () => {
+    const on = toggle.getAttribute('aria-checked') !== 'true';
+    setting = true;
+    refusal = null;
+    clearTimeout(timer);
+    toggle.disabled = true;
+    draw({ on, say: on ? 'Checking its tables…' : '', tone: '' });
+    let s = null;
+    try {
+      s = await set(on);
+      if (s.refused) refusal = s;
+    } catch (e) {
+      s = { on: !on, say: e.message, tone: 'bad', busy: false };
+      refusal = s.on ? null : s;
+    }
+    setting = false;
+    toggle.disabled = false;
+    if (gone) return;
+    draw(s);
+    again(!!s.busy);
+  });
+  draw({ on: false });
+  look();
+  return { root, destroy() { gone = true; clearTimeout(timer); } };
+}
+
 export function mountExplore(root, ctx) {
   const setStatus = ctx.setStatus || (() => {});
   const btn = (text, onclick, primary) => el('button', { type: 'button', class: `btn-explore${primary ? ' primary' : ''}`, onclick }, text);
@@ -87,8 +153,7 @@ export function mountExplore(root, ctx) {
   };
   const excelBtn = ctx.openInExcel
     ? hostBtn('Open in Excel', 'Opening…', ctx.openInExcel, 'This model in a new Excel workbook, as a live PivotTable') : null;
-  const dataBtn = ctx.downloadData
-    ? hostBtn('Download Data', 'Downloading…', ctx.downloadData, 'Every table of this model on this machine, so it answers from disk and with no connection') : null;
+  const keepOffline = ctx.keepOffline ? offlineSwitch(ctx.keepOffline) : null;
   const editBtn = ctx.editSql ? btn('Edit SQL', () => {
     const sql = explorer?.query({ cap: 0, plain: ctx.plainSql ?? null })?.sql;
     if (sql) ctx.editSql(sql); else setStatus('Put a field on the shelves first', 'error');
@@ -96,7 +161,7 @@ export function mountExplore(root, ctx) {
   if (editBtn) editBtn.title = 'This query in the SQL box, to take further by hand (the pivot is kept)';
   const closeBtn = ctx.close ? btn('Close', ctx.close) : null;
   const actions = el('div', { class: 'explore-actions', hidden: true },
-    ...(editBtn ? [editBtn, closeBtn] : [sqlToggle, closeBtn, csvBtn]), dataBtn, excelBtn, exportBtn);
+    ...(editBtn ? [editBtn, closeBtn] : [sqlToggle, closeBtn, csvBtn]), excelBtn, exportBtn);
   const modelPage = el('div', { class: 'model-page' });
   const pivotPage = el('div', { class: 'explore-page', hidden: true });
 
@@ -119,6 +184,7 @@ export function mountExplore(root, ctx) {
   root.replaceChildren(
     el('div', { class: 'subtab-bar' },
       el('div', { class: 'subtabs', role: 'tablist', 'aria-label': 'Semantic model pages', hidden: pages.length < 2 }, tabs),
+      keepOffline?.root,
       actions,
       ctx.title == null ? null : el('span', { class: 'sm-title' }, `${ctx.title} · semantic model `, el('code', {}, ctx.name))),
     modelPage, pivotPage, sqlPage);
@@ -382,6 +448,7 @@ export function mountExplore(root, ctx) {
     sql: () => (sqlMode ? typed() : explorer?.query()?.sql ?? ''),
     destroy() {
       destroyed = true;
+      keepOffline?.destroy();
       explorer?.destroy();
       results.clear();
       resized.disconnect();

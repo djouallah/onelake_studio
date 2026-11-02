@@ -59,7 +59,7 @@ const ENGINE_METHODS = new Set(['query', 'stream', 'cancel', 'info', 'fileView',
  *        a semantic model a query names, opened from its local copy (read from Fabric the first
  *        time) and kept as a view: { name, schema, path, text }
  */
-function createHostMethods({ onelake, engine, onStatus = () => {}, saveFile = null, semviews = null, exportExplore = null, openInExcel = null, downloadData = null,
+function createHostMethods({ onelake, engine, onStatus = () => {}, saveFile = null, semviews = null, exportExplore = null, openInExcel = null, offlineState = null, setOffline = null,
                              nameTables = null, exportResult = null, openDocument = null, copyText = null, saveQuery = null, saveDraft = null, askVariable = null, openModel = null, modelsDir = null }) {
   const views = () => { if (!semviews) throw new Error('semantic views are not available here'); return semviews; };
   return {
@@ -86,11 +86,16 @@ function createHostMethods({ onelake, engine, onStatus = () => {}, saveFile = nu
       if (!x || !x.workspace || !x.model) throw new Error('Open in Excel needs a semantic model');
       return openInExcel({ workspace: String(x.workspace), model: String(x.model) });
     },
-    // Download Data (modeldata.js): every table of a semantic model, by its names alone.
-    'model.downloadData': async x => {
-      if (!downloadData) throw new Error('Download Data is not available here');
-      if (!x || !x.workspace || !x.model) throw new Error('Download Data needs a semantic model');
-      return downloadData({ workspace: String(x.workspace), model: String(x.model) });
+    // Keep offline (modeldata.js): a semantic model's tables on this machine, by its names alone.
+    'model.offlineState': async x => {
+      if (!offlineState) throw new Error('Keep offline is not available here');
+      if (!x || !x.workspace || !x.model) throw new Error('Keep offline needs a semantic model');
+      return offlineState({ workspace: String(x.workspace), model: String(x.model) });
+    },
+    'model.setOffline': async x => {
+      if (!setOffline) throw new Error('Keep offline is not available here');
+      if (!x || !x.workspace || !x.model) throw new Error('Keep offline needs a semantic model');
+      return setOffline({ workspace: String(x.workspace), model: String(x.model), on: x.on === true });
     },
     // Semantic models (semviews.js): the ones this machine keeps, with their text, and one the
     // page just opened kept — its name in its schema, the model's workspace, so SQL names it

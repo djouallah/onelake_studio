@@ -44,13 +44,17 @@ test("Open in Excel: a page names a model and nothing else, and hears how it wen
   await assert.rejects(createHostMethods({ onelake: {}, engine: {} })["excel.open"]({ workspace: "ws", model: "m" }), /not available here/);
 });
 
-test("Download Data: a page names a model and nothing else, and hears how it went", async () => {
+test("Keep offline: a page names a model and on or off, and nothing else", async () => {
   const asked = [];
-  const methods = createHostMethods({ onelake: {}, engine: {}, downloadData: async x => { asked.push(x); return "down"; } });
-  assert.equal(await methods["model.downloadData"]({ workspace: "ws", model: "m", tables: ["x"] }), "down");
-  assert.deepEqual(asked, [{ workspace: "ws", model: "m" }]);
-  await assert.rejects(methods["model.downloadData"]({ model: "m" }), /needs a semantic model/);
-  await assert.rejects(createHostMethods({ onelake: {}, engine: {} })["model.downloadData"]({ workspace: "ws", model: "m" }), /not available here/);
+  const methods = createHostMethods({ onelake: {}, engine: {},
+    offlineState: async x => { asked.push(["state", x]); return { on: false }; },
+    setOffline: async x => { asked.push(["set", x]); return { on: x.on }; } });
+  assert.deepEqual(await methods["model.offlineState"]({ workspace: "ws", model: "m", tables: ["x"] }), { on: false });
+  assert.deepEqual(await methods["model.setOffline"]({ workspace: "ws", model: "m", on: true, tables: ["x"] }), { on: true });
+  assert.deepEqual(await methods["model.setOffline"]({ workspace: "ws", model: "m", on: "yes" }), { on: false }, "only true is on");
+  assert.deepEqual(asked, [["state", { workspace: "ws", model: "m" }], ["set", { workspace: "ws", model: "m", on: true }], ["set", { workspace: "ws", model: "m", on: false }]]);
+  await assert.rejects(methods["model.setOffline"]({ model: "m", on: true }), /needs a semantic model/);
+  await assert.rejects(createHostMethods({ onelake: {}, engine: {} })["model.offlineState"]({ workspace: "ws", model: "m" }), /not available here/);
 });
 
 test("a table's metadata carries its SQL name", async () => {

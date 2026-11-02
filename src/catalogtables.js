@@ -84,6 +84,7 @@ const SCHEMA = `
     location TEXT NOT NULL, ts INTEGER NOT NULL, total REAL NOT NULL, bytes REAL NOT NULL, ms INTEGER NOT NULL,
     error TEXT, retry_at REAL NOT NULL,
     PRIMARY KEY (workspace, item, schema_name, table_name, location)) WITHOUT ROWID;
+  CREATE TABLE IF NOT EXISTS model_offline (key TEXT PRIMARY KEY, catalog TEXT NOT NULL, model TEXT NOT NULL, ts INTEGER NOT NULL) WITHOUT ROWID;
   CREATE TABLE IF NOT EXISTS semantic_view (name TEXT NOT NULL, schema_name TEXT, path TEXT NOT NULL, created TEXT);
   CREATE TABLE IF NOT EXISTS sync_failure (
     kind TEXT NOT NULL, workspace TEXT NOT NULL, item TEXT NOT NULL, schema_name TEXT NOT NULL, table_name TEXT NOT NULL,
@@ -95,7 +96,7 @@ const SCHEMA = `
 `;
 // What Clear Cached empties.
 const TABLES = ['semantic_view', 'listing_read', 'workspace', 'item', 'lake_table', 'lake_column', 'snapshot', 'lake_object', 'semantic_model', 'app',
-  'delta_commit', 'delta_state', 'delta_property', 'item_name', 'catalog_prefix', 'rows_read', 'first_rows', 'file_read', 'sync_failure', 'table_use', 'table_kept'];
+  'delta_commit', 'delta_state', 'delta_property', 'item_name', 'catalog_prefix', 'rows_read', 'first_rows', 'file_read', 'sync_failure', 'table_use', 'table_kept', 'model_offline'];
 
 // Each kind of store key (onelake.js keys): the column each part after its kind goes in, where a row
 // says which entry it is about.
@@ -514,6 +515,14 @@ function createCatalogTables({ statement }) {
     noteKept(t, k) {
       run('INSERT OR REPLACE INTO table_kept VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', t.workspace, t.item, t.schema || '', t.table,
         k.location, Math.floor(k.at), k.total, k.bytes, Math.floor(k.ms), k.error ?? null, k.retryAt ?? 0);
+    },
+    /** The semantic models kept offline (modeldata.js): { catalog (its SQL name), model }. */
+    offlineModels() {
+      return all('SELECT catalog, model FROM model_offline ORDER BY ts').map(r => ({ catalog: r.catalog, model: r.model }));
+    },
+    setOffline(catalog, model, on, at) {
+      if (on) run('INSERT OR REPLACE INTO model_offline VALUES (?, ?, ?, ?)', String(catalog).toLowerCase(), catalog, model, Math.floor(at));
+      else run('DELETE FROM model_offline WHERE key = ?', String(catalog).toLowerCase());
     },
     /** How much came down for tables read whole since `at`. */
     keptSince(at) {

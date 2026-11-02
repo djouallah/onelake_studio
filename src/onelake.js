@@ -461,6 +461,8 @@ function createOneLake({ catalog, store, prefetchEnabled = () => true, onHit = (
     latestKept: t => store.usage('latestKept', t),
     noteKept: (t, kept) => store.usage('noteKept', t, kept),
     keptSince: at => store.usage('keptSince', at) || 0,
+    offlineModels: () => store.usage('offlineModels') || [],
+    setOffline: (catalog, model, on, at) => store.usage('setOffline', catalog, model, on, at),
     prune: () => store.usage('pruneUse', inUseFrom(), Date.now() - IN_USE_DAYS * DAY_MS),
   };
 

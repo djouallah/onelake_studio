@@ -369,7 +369,10 @@ async function openModelView(file, text = null, { fromOneLake = text == null } =
         : undefined,
       // Any model, wherever its file is, by its SQL name. On Windows: Excel's provider is Windows only.
       openInExcel: cfg.windows ? () => engine.openInExcel({ workspace: m.schema, model: m.view }) : undefined,
-      downloadData: () => engine.downloadData({ workspace: m.schema, model: m.view }),
+      keepOffline: {
+        state: () => engine.offlineState({ workspace: m.schema, model: m.view }),
+        set: on => engine.setOffline({ workspace: m.schema, model: m.view, on }),
+      },
     });
     setStatus(`${file.name} is the semantic model ${m.name}` +
               (m.directLake ? ` — ${m.directLake} Direct Lake table(s), opened from OneLake as a query needs them` : '') +

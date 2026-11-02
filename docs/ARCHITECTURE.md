@@ -575,20 +575,24 @@ personal skills, and it follows the extension through updates.
 - **`export`** is the one write: the same code path as Explore's button, with the same questions asked
   in VS Code.
 
-## Download Data
+## Keep offline
 
-**Download Data**, a button on a semantic model's Pivot, brings every table the model reads to this machine, so it
-answers from disk and with no connection ([`src/modeldata.js`](../src/modeldata.js)). Each table is read whole through
-the engine, as the idle job does it (`keepTable`): every column of every file goes through the disk cache, and no row
-comes back.
+**Keep offline**, a switch beside a semantic model's tabs, keeps every table the model reads on this machine and current,
+so it answers from disk and with no connection ([`src/modeldata.js`](../src/modeldata.js)). Each table is read whole
+through the engine, as the idle job does it (`keepTable`): every column of every file goes through the disk cache, and
+no row comes back.
 
 - **It was asked for,** so it differs from the idle job: it starts at once, has no time limit, and statements run beside
   it. The idle job holds off meanwhile, or the two would read the same bytes twice.
-- **It reads the snapshot each table is at now.** What's already whole at that snapshot is skipped.
-- **Stop it from its notification.** A table stopped part way keeps what it read, and the next click carries on.
-- **It goes on with the tab closed,** in this window, and a second click joins it.
-- **More than the disk cache holds is refused** (`diskCacheMaxGB`), since it would evict itself.
-- **It's for that snapshot.** New data comes down when a statement reads it, or through the idle job if the table is in use.
+- **It stays on.** It's a row in the catalog per model, so it outlasts a restart and goes on with the tab closed. Each
+  table's metadata is read past the cache every hour, and a new snapshot comes down when it appears.
+- **Every window shows the same.** What the switch says is worked out from the catalog (`table_kept`), and one window reads:
+  the one with the catalog's lease. An engine is never started for it.
+- **Off stops it, and deletes nothing.** A table stopped part way keeps what it read, and switching on again carries on.
+  The disk cache clears the oldest as it does for everything else.
+- **More than the disk cache holds stays off** (`diskCacheMaxGB`), counting the other models kept offline, since it would
+  evict itself. **Clear Cached OneLake Data** switches them all off.
+- **A table that fails** is named beside the switch and tried again in an hour. With no connection it waits, and carries on.
 
 ## Open in Excel
 
