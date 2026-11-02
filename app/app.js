@@ -367,10 +367,8 @@ async function openModelView(file, text = null, { fromOneLake = text == null } =
           ? { file: file.name, name: m.view, text: bim, state, workspace: lakehouse.workspace, path: file.path }
           : { file: file.name, name: m.view, text: bim, state, model: { workspace: file.modelWorkspace, name: m.view } })
         : undefined,
-      // A semantic model from the tree, on Windows: Excel's provider is Windows only.
-      openInExcel: cfg.windows && file.modelWorkspace
-        ? () => engine.openInExcel({ workspace: file.modelWorkspace, model: m.view })
-        : undefined,
+      // Any model, wherever its file is, by its SQL name. On Windows: Excel's provider is Windows only.
+      openInExcel: cfg.windows ? () => engine.openInExcel({ workspace: m.schema, model: m.view }) : undefined,
     });
     setStatus(`${file.name} is the semantic model ${m.name}` +
               (m.directLake ? ` — ${m.directLake} Direct Lake table(s), opened from OneLake as a query needs them` : '') +

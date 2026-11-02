@@ -690,7 +690,7 @@ export function createEngine({
   // Export to Fabric: the model's text and the Explore shelves to the host, which writes the
   // app's folder and publishes it (src/exportapp.js); answers what to tell the user.
   const exportExplore = x => callHost("fabric.exportExplore", [x]);
-  // Open in Excel: a semantic model from the tree, by its names (src/xmla); answers what to tell the user.
+  // Open in Excel: a semantic model, by its names (src/xmla); answers what to tell the user.
   const openInExcel = x => callHost("excel.open", [x]);
   // A semantic model's Direct Lake tables (named by GUID) as SQL names (semantic.js).
   const nameTables = list => callHost("onelake.nameTables", [list]);

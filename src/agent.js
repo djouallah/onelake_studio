@@ -813,24 +813,25 @@ function createAgent({ onelake, engine, modelPath, appDir, vendorDir, daxSqlPin,
   }
 
   // modules(): the compiler, for the extension's own uses of it too (Export to Fabric).
-  // Open in Excel (src/xmla): a model as a cube, from its local copy, and a model SELECT run as
-  // `sql` runs one, through the same guard. A model that changed on disk is read again, so a
-  // Download Again reaches an open workbook at its next refresh.
+  // Open in Excel (src/xmla): a model as a cube, and a model SELECT run as `sql` runs one, through
+  // the same guard. A model is wherever its view says: a local copy, or a file in a lakehouse's
+  // Files/. One whose text changed is read again, so a Download Again reaches an open workbook at
+  // its next refresh.
   const cubes = new Map();   // lower-cased SQL name -> { text, cube }
   async function excelCube(catalog) {
     const { semantic, compiler } = await modules();
     const ref = semantic.modelNameParts(catalog);
     if (!ref) throw new Error(`${catalog} does not name a semantic model`);
-    const path = modelPath(ref.workspace, ref.model);
-    if (!await exists(path)) {
-      throw new Error(`${catalog} is not downloaded on this machine: open it from the OneLake Studio tree`);
-    }
-    const text = await fsp.readFile(path, 'utf8');
+    const view = await semviews.text(ref.model, ref.workspace);
+    if (view && view.error) throw new Error(`${catalog} could not be read: ${view.error}`);
+    const path = view ? view.path : modelPath(ref.workspace, ref.model);
+    if (!view && !await exists(path)) throw new Error(`${catalog} is not on this machine: open it in OneLake Studio first`);
+    const text = view ? view.text : await fsp.readFile(path, 'utf8');
     const key = catalog.toLowerCase();
     const kept = cubes.get(key);
     if (kept && kept.text === text && semantic.hasView([semantic.MODEL_CATALOG, ref.workspace, ref.model])) return kept.cube;
     const m = await semantic.registerModel(path.split(/[\\/]/).pop(), text, compiler, ref.workspace, ref.model);
-    await semviews.put(m.view, path, ref.workspace);
+    if (!view) await semviews.put(m.view, path, ref.workspace);
     defined.add(m.name.toLowerCase());
     const cube = buildCube(catalog, m.bim, m.name);
     cubes.set(key, { text, cube });

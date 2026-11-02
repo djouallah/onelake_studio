@@ -29,6 +29,32 @@ const done = async dir => {
   await rm(dir, { recursive: true, force: true });
 };
 
+test("one view by its name: read from where it is, a local copy or a lakehouse's Files/", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "semviews-one-"));
+  try {
+    const local = join(dir, "Sales.bim");
+    await writeFile(local, "the local model");
+    const url = "abfss://ws@onelake.dfs.fabric.microsoft.com/lh.Lakehouse/Files/m/Ops.bim";
+    const read = [];
+    const views = createSemViews({ catalogFor: catalogsIn(dir), onelake: { readBytes: async (ws, path) => {
+      read.push([ws, path]);
+      if (path.includes("Gone")) throw new Error("not there");
+      return Buffer.from("the OneLake model");
+    } } });
+    await views.put("Sales", local, "ws");
+    await views.put("Ops", url, "ws");
+    assert.equal((await views.text("sales", "WS")).text, "the local model", "by name, ignoring case");
+    const ops = await views.text("Ops", "ws");
+    assert.equal(ops.text, "the OneLake model");
+    assert.equal(ops.path, url);
+    assert.deepEqual(read.at(-1), ["ws", "lh.Lakehouse/Files/m/Ops.bim"]);
+    assert.equal(await views.text("Ops", "elsewhere"), null, "its workspace is part of its name");
+    assert.equal(await views.text("Nope", "ws"), null);
+    await rm(local);
+    assert.match((await views.text("Sales", "ws")).error, /ENOENT/);
+  } finally { await done(dir); }
+});
+
 test("a local copy from before they were per account moves to the account that opened it", async () => {
   const dir = await mkdtemp(join(tmpdir(), "semviews-"));
   try {

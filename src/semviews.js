@@ -73,6 +73,13 @@ function createSemViews({ catalogFor, dir = null, onelake, onChange = () => {}, 
       }
       return out;
     },
+    // One view with its text, or null when none is kept; one that cannot be read says why.
+    async text(name, schema) {
+      const v = (await list()).find(x => sameView(x, name, schema));
+      if (!v) return null;
+      try { return { ...v, text: await readBim(v.path) }; }
+      catch (e) { return { ...v, error: e.message }; }
+    },
     // Remembered (replacing the one of that name in that schema); the text is read first, so a
     // path that does not read is never stored.
     async put(name, path, schema = null) {

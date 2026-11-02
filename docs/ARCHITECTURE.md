@@ -577,8 +577,9 @@ personal skills, and it follows the extension through updates.
 
 ## Open in Excel
 
-**Open in Excel**, a button on the Pivot of a semantic model opened from the tree, opens a new workbook with a
-PivotTable live on the model, on Windows and the Excel desktop app. It opens with no fields placed, whatever the
+**Open in Excel**, a button on a semantic model's Pivot, opens a new workbook with a PivotTable live on the model,
+on Windows and the Excel desktop app. Any model that has a Pivot has it, a local copy or a file in a lakehouse's
+`Files/`: the model is found by its SQL name, through its kept view. It opens with no fields placed, whatever the
 Pivot's shelves hold. Excel's provider speaks XMLA over HTTP, so [`src/xmla/`](../src/xmla/) answers it from the window:
 
 ```

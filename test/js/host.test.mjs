@@ -40,7 +40,7 @@ test("Open in Excel: a page names a model and nothing else, and hears how it wen
   const methods = createHostMethods({ onelake: {}, engine: {}, openInExcel: async x => { asked.push(x); return "open"; } });
   assert.equal(await methods["excel.open"]({ workspace: "ws", model: "m", port: 1, token: "t" }), "open");
   assert.deepEqual(asked, [{ workspace: "ws", model: "m" }]);
-  await assert.rejects(methods["excel.open"]({ workspace: "ws" }), /opened from the tree/);
+  await assert.rejects(methods["excel.open"]({ workspace: "ws" }), /needs a semantic model/);
   await assert.rejects(createHostMethods({ onelake: {}, engine: {} })["excel.open"]({ workspace: "ws", model: "m" }), /not available here/);
 });
 

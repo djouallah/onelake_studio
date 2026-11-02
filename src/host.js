@@ -80,10 +80,10 @@ function createHostMethods({ onelake, engine, onStatus = () => {}, saveFile = nu
                              ...(x.workspace && x.path ? { workspace: String(x.workspace), path: String(x.path) } : { model }),
                              state: x.state && typeof x.state === 'object' ? x.state : null });
     },
-    // Open in Excel (src/xmla): a semantic model opened from the tree, by its names alone.
+    // Open in Excel (src/xmla): a semantic model, by its names alone.
     'excel.open': async x => {
       if (!openInExcel) throw new Error('Open in Excel is not available here');
-      if (!x || !x.workspace || !x.model) throw new Error('Open in Excel needs a semantic model opened from the tree');
+      if (!x || !x.workspace || !x.model) throw new Error('Open in Excel needs a semantic model');
       return openInExcel({ workspace: String(x.workspace), model: String(x.model) });
     },
     // Semantic models (semviews.js): the ones this machine keeps, with their text, and one the
