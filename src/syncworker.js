@@ -251,7 +251,8 @@ function createSyncWorker({ onelake, opened = () => [], pinned = () => [], ttlMs
       return;
     }
     // Not the table's doing: what it read is kept, so the next try carries on from there.
-    if (['someone', 'offline', 'off'].includes(k.stoppedFor) || e.offline || e.cancelled || /interrupt/i.test(String(e.message))) {
+    // One this stopped for being slow is interrupted too, and that one is the table's.
+    if (k.stoppedFor !== 'slow' && (k.stoppedFor || e.offline || e.cancelled || /interrupt/i.test(String(e.message)))) {
       log(`sync: stopped keeping ${k.name}${k.stoppedFor === 'someone' ? ': a statement is running' : ''}`);
       return;
     }
