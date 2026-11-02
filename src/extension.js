@@ -943,7 +943,7 @@ async function activateInner(context) {
         tree.redraw();
         warmIfWanted();
         vscode.window.showInformationMessage(
-          'Signed out of OneLake Studio. What this machine has cached is still here. VS Code keeps the account: its Accounts menu removes it.');
+          `Signed out of OneLake Studio. What this machine has cached is still here.${vscode.env.appName === 'OneLake Studio' ? '' : ' VS Code keeps the account: its Accounts menu removes it.'}`);
       } catch (e) {
         showError(`Could not sign out: ${(e && e.message) || e}`);
       }

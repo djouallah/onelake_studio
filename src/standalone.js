@@ -31,13 +31,17 @@ const { DFS_ORIGIN, modelSqlName } = require('./names');
 const EXTENSION_ID = 'djouallah.onelake-studio';
 const SETTLE_MS = 2_000;
 
-// Where VS Code keeps this extension's files, for whichever VS Code this install is under.
+// Where VS Code keeps this extension's files, for whichever VS Code this install is under, so the extension,
+// the command line and the desktop app read one cache. With no VS Code, the app's own folder.
 // ONELAKE_STUDIO_HOME keeps it all somewhere else.
-function pathsOf(extensionDir, env = process.env) {
+function pathsOf(extensionDir, env = process.env, exists = existsSync) {
   if (env.ONELAKE_STUDIO_HOME) return { home: env.ONELAKE_STUDIO_HOME, settingsFile: join(env.ONELAKE_STUDIO_HOME, 'settings.json') };
   const product = /[\\/]\.vscode-insiders[\\/]/i.test(extensionDir) ? 'Code - Insiders' : 'Code';
   const user = join(env.APPDATA || '', product, 'User');
-  return { home: join(user, 'globalStorage', EXTENSION_ID), settingsFile: join(user, 'settings.json') };
+  const vscodeHome = join(user, 'globalStorage', EXTENSION_ID);
+  if (exists(vscodeHome) || /[\\/]\.vscode(-insiders)?[\\/]/i.test(extensionDir)) return { home: vscodeHome, settingsFile: join(user, 'settings.json') };
+  const own = join(env.LOCALAPPDATA || env.APPDATA || '', 'OneLake Studio', 'data');
+  return { home: own, settingsFile: join(own, 'settings.json') };
 }
 
 // VS Code's settings.json allows comments and trailing commas. Text in a string is left alone.
@@ -220,4 +224,4 @@ async function workspaceOf(lakes, onelake, file) {
   return item.workspace;
 }
 
-module.exports = { createStandalone, pathsOf, parseSettings, keptIn };
+module.exports = { createStandalone, pathsOf, parseSettings, readSettings, keptIn };

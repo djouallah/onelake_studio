@@ -1,0 +1,29 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>OneLake Studio</title>
+<style>
+  :root { color-scheme: light dark; font: 14px 'Segoe UI', system-ui, sans-serif; }
+  body { margin: 0; height: 100vh; display: flex; align-items: center; justify-content: center; background: Canvas; color: CanvasText; }
+  main { text-align: center; max-width: 560px; padding: 24px; }
+  h1 { font-weight: 400; font-size: 26px; margin: 0 0 8px; }
+  p { opacity: .75; margin: 0; overflow-wrap: anywhere; }
+  .bad { color: #d14; opacity: 1; }
+</style>
+</head>
+<body>
+<main>
+  <h1>OneLake Studio</h1>
+  <p id="say">Starting…</p>
+</main>
+<script>
+  // Called by the window when the app's Node process couldn't start.
+  window.failed = message => {
+    const say = document.getElementById('say');
+    say.textContent = `OneLake Studio could not start: ${message}`;
+    say.className = 'bad';
+  };
+</script>
+</body>
+</html>

@@ -58,12 +58,13 @@ function createMsalSession({ tenant, store, openBrowser = openInBrowser, msal = 
   }
 
   /** As VS Code's provider answers: a session, or null when asking would need a person. */
-  async function session(scopes, { createIfNone = false, account = null } = {}) {
+  async function session(scopes, { createIfNone = false, account = null, clearSessionPreference = false } = {}) {
     const wanted = scopesFor(scopes);
     const pca = application();
     const accounts = await pca.getTokenCache().getAllAccounts();
     const found = account ? accounts.find(a => a.homeAccountId === account.id) : accounts[0];
-    if (found) {
+    // Switch Account asks for a choice, not for whoever was last.
+    if (found && !clearSessionPreference) {
       try { return sessionOf(await pca.acquireTokenSilent({ scopes: wanted, account: found })); }
       catch (e) {
         // No answer says nothing about who is signed in. Anything else needs them to sign in again.
@@ -71,11 +72,17 @@ function createMsalSession({ tenant, store, openBrowser = openInBrowser, msal = 
       }
     }
     if (!createIfNone) return null;
-    return sessionOf(await pca.acquireTokenInteractive({
+    const r = await pca.acquireTokenInteractive({
       scopes: wanted, openBrowser,
       ...(account ? { loginHint: account.label } : { prompt: 'select_account' }),
       successTemplate: DONE_PAGE, errorTemplate: FAILED_PAGE,
-    }));
+    });
+    // One account at a time: the one just signed in as is the one asked for next.
+    if (!account) {
+      const cache = pca.getTokenCache();
+      for (const a of await cache.getAllAccounts()) if (a.homeAccountId !== r.account.homeAccountId) await cache.removeAccount(a);
+    }
+    return sessionOf(r);
   }
 
   return {

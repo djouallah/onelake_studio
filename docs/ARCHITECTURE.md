@@ -537,6 +537,33 @@ The function's deploy package (an esbuild bundle plus its metadata) is built onc
 [`scripts/function-bundle.mjs`](../scripts/function-bundle.mjs) with Rayfin's own packager, from
 `fabric_app/rayfin`. It ships in the vsix under `fabric-function/`.
 
+## The desktop app
+
+**The app is the extension.** Its Node process ([`src/desktop/main.js`](../src/desktop/main.js)) runs
+[`src/extension.js`](../src/extension.js) as it is, bundled with `vscode` pointing at
+[`src/desktop/vscode.js`](../src/desktop/vscode.js): the part of VS Code's API the extension uses, and no more. So every
+command, menu, tab and message is the same code in both, and a change to the extension is a change to the app.
+
+- **The window** ([`desktop/ui/`](../desktop/ui/)) draws what VS Code otherwise would: the tree, the tab strip, menus,
+  dialogs, Go To, Settings and the status bar. What it shows comes from the extension and its `package.json`: the tree's
+  nodes, the tabs' pages, the menus and their `when` clauses, the settings.
+- **A tab** is the same page as the extension's, in an iframe, with `acquireVsCodeApi` and VS Code's theme variables given
+  to it in its own CSP.
+- **The connection** is an HTTP server on `127.0.0.1` ([`src/desktop/server.js`](../src/desktop/server.js)): messages out
+  as server-sent events, back as POSTs. The first request's token becomes an `HttpOnly`, `SameSite=Strict` cookie, and
+  anything without it, with another `Host` or another `Origin`, is refused. A page reaches only its own files.
+- **What needs Windows** ([`src/desktop/dialogs.js`](../src/desktop/dialogs.js)): the save and folder dialogs, the clipboard
+  and Explorer, through PowerShell, as Open in Excel is.
+- **Sign-in** is the command line's: MSAL as the Azure CLI's public client, with the token cache under DPAPI, and the same
+  `signin` for both. No app registration.
+- **The same data:** with VS Code on the machine, its folder for this extension, so the extension, the command line and the
+  app read one cache. With none, `%LOCALAPPDATA%\OneLake Studio\data`. Settings are VS Code's where there are any, under
+  what the app's Settings tab changes.
+- **The shell** is Tauri ([`desktop/src-tauri/`](../desktop/src-tauri/)): it shows a splash, starts the Node process, and
+  opens the page it names. Closing the window closes the process's stdin, and it ends. The installer is per user.
+- **CI's `desktop` job** drives the window in Edge, which is what WebView2 is, on the real engine, then builds the
+  installer, installs it and starts it once. Its screenshots and the installer are the run's artifacts.
+
 ## The command line and the agent skill
 
 **[`bin/cli.mjs`](../bin/cli.mjs) is a doorbell first.** It hands its arguments to the running extension over a
@@ -745,6 +772,7 @@ every window. The rest apply at once.
 | `src/catalogfile.js`, `src/catalogtables.js`, `src/syncworker.js` | What is remembered, in SQLite, the catalog's tables there, and what keeps them current and looks after tables in use. |
 | `src/engine-server.js`, `src/engine-client.js`, `src/enginelog.js`, `src/logfile.js` | The server: its process, a window's side of it, and its log. |
 | `src/agent.js`, `src/bridge.js`, `bin/cli.mjs` | The command line. |
+| `src/desktop/`, `desktop/` | The desktop app: VS Code's API for the extension, its server, its window and its Tauri shell. |
 | `src/standalone.js`, `src/msalsession.js`, `src/tokenstore.js` | The command line with VS Code closed: `core.js` with no editor, its sign-in, and its token cache. |
 | `src/diaglog.js` | A window's own log. |
 | `src/exportapp.js`, `src/fabricapp.js`, `src/onelakewrite.js` | Export to Fabric. |

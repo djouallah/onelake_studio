@@ -1,0 +1,40 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>OneLake Studio</title>
+<link rel="stylesheet" id="theme" href="/theme.css">
+<link rel="stylesheet" href="/ui/codicons/codicon.css">
+<link rel="stylesheet" href="/ui/shell.css">
+</head>
+<body>
+<div id="main">
+  <aside id="side">
+    <header id="side-head">
+      <span id="side-title">OneLake Studio</span>
+      <span id="side-description"></span>
+      <span id="side-actions"></span>
+    </header>
+    <div id="welcome" hidden></div>
+    <div id="tree" role="tree" tabindex="0"></div>
+  </aside>
+  <div id="sash"></div>
+  <section id="work">
+    <nav id="tabs" role="tablist"></nav>
+    <div id="pages">
+      <div id="empty">
+        <h1>OneLake Studio</h1>
+        <p>Click a table or a semantic model in the tree, or start a query.</p>
+        <p><button id="empty-query" class="primary">New Query</button></p>
+      </div>
+    </div>
+  </section>
+</div>
+<footer id="status"><span id="status-left"></span><span id="status-right"></span></footer>
+<div id="toasts"></div>
+<div id="overlay" hidden></div>
+<div id="menu" hidden role="menu"></div>
+<div id="lost" hidden>OneLake Studio stopped responding. Close this window and open it again.</div>
+<script type="module" src="/ui/shell.js"></script>
+</body>
+</html>
