@@ -52,10 +52,18 @@ function createHandler({ token, port, backend, log = () => {} }) {
     });
     req.on('end', async () => {
       const gone = new AbortController();
-      res.on('close', () => { if (!res.writableFinished) gone.abort(); });
+      let asked = 'a request';
+      const t0 = Date.now();
+      // Excel gave up on it: cancelled, or closed. Its statement stops, and this says so.
+      res.on('close', () => {
+        if (res.writableFinished) return;
+        log(`xmla: Excel dropped ${asked} after ${Date.now() - t0}ms`);
+        gone.abort();
+      });
       let session = null;
       try {
         const r = parseRequest(Buffer.concat(chunks).toString('utf8'));
+        asked = r.requestType || (r.statement ? `the statement ${r.statement.replace(/\s+/g, ' ').slice(0, 200)}` : 'a request');
         session = r.begin ? randomUUID() : r.sessionId;
         reply(200, 'text/xml; charset=utf-8', await answer(r, session, gone.signal));
       } catch (e) {

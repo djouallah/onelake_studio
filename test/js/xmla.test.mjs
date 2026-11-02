@@ -425,6 +425,32 @@ test("a session: begun, carried, ended; and a failure is a fault Excel can show"
   });
 });
 
+test("Excel dropping a request stops its statement, and the log says which", async () => {
+  const said = [];
+  let aborted = null;
+  const stopped = new Promise(r => { aborted = r; });
+  const backend = {
+    cube: async () => cube(),
+    query: (sql, { signal }) => new Promise((_, reject) => {
+      signal.addEventListener("abort", () => { aborted(); reject(new Error("stopped")); });
+    }),
+  };
+  const token = "t";
+  let port = 0;
+  const server = http.createServer((req, res) => createHandler({ token, port, backend, log: m => said.push(m) })(req, res));
+  await new Promise(r => server.listen(0, "127.0.0.1", r));
+  port = server.address().port;
+  try {
+    const req = http.request({ host: "127.0.0.1", port, method: "POST", path: `/${token}/`, headers: { "Content-Type": "text/xml" } });
+    req.on("error", () => {});
+    req.end(ENVELOPE(`<Execute><Command><Statement>SELECT  FROM [Model] WHERE ([Measures].[Orders])</Statement></Command><Properties><PropertyList><Catalog>${CATALOG}</Catalog></PropertyList></Properties></Execute>`));
+    await new Promise(r => setTimeout(r, 200));
+    req.destroy();
+    await stopped;
+    assert.ok(said.some(m => /Excel dropped the statement SELECT {2}FROM \[Model\]|Excel dropped the statement SELECT FROM \[Model\]/.test(m)), said.join("\n"));
+  } finally { server.closeAllConnections(); await new Promise(r => server.close(r)); }
+});
+
 test("through the port: a model's cube and a statement's answer", async () => {
   const f = fakeQuery(() => [{ m0: 400 }]);
   const backend = { cube: async c => { assert.equal(c, CATALOG); return cube(); }, query: f.query };
