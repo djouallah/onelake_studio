@@ -84,6 +84,7 @@ try {
     const frame = page.frameLocator("#pages iframe").first();
     const box = frame.locator("#sqlEditor");
     await box.waitFor({ timeout: 60_000 });
+    assert.equal(await page.locator("#empty").isVisible(), false, "the start page is drawn over the tab");
     await box.fill("SELECT 42 AS answer");
     await frame.locator("#runBtn").click();
     await frame.locator("table").getByText("42", { exact: true }).waitFor({ timeout: 180_000 });

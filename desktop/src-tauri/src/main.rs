@@ -62,6 +62,9 @@ fn main() {
                 .title("OneLake Studio")
                 .inner_size(1360.0, 860.0)
                 .min_inner_size(640.0, 420.0)
+                // Tauri's own file drop takes every drag on Windows, so a page's drag and drop (the pivot's
+                // fields, the tree's tables) would never get its drop.
+                .disable_drag_drop_handler()
                 .visible(smoke.is_none())
                 .build()?;
             let handle = app.handle().clone();

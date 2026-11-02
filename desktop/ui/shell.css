@@ -1,4 +1,5 @@
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }   /* over any display a rule gives, as #empty's flex */
 html, body { height: 100%; margin: 0; overflow: hidden; }
 body { display: flex; flex-direction: column; background: var(--vscode-editor-background); color: var(--vscode-foreground); font: var(--vscode-font-size)/1.4 var(--vscode-font-family); user-select: none; }
 button { font: inherit; color: inherit; }
@@ -76,7 +77,6 @@ input, select { font: inherit; color: var(--vscode-input-foreground); background
 @keyframes spin { to { transform: rotate(360deg); } }
 
 #overlay { position: fixed; inset: 0; z-index: 40; display: flex; justify-content: center; background: rgba(0,0,0,.25); }
-#overlay[hidden] { display: none; }
 .dialog { margin-top: 12vh; align-self: flex-start; width: 460px; max-width: calc(100vw - 32px); background: var(--vscode-editorWidget-background); border: 1px solid var(--vscode-editorWidget-border); box-shadow: 0 4px 16px var(--vscode-widget-shadow); border-radius: 6px; padding: 18px 20px; user-select: text; }
 .dialog .message { font-weight: 600; overflow-wrap: anywhere; }
 .dialog .detail { margin-top: 8px; color: var(--vscode-descriptionForeground); white-space: pre-wrap; overflow-wrap: anywhere; max-height: 40vh; overflow: auto; }
