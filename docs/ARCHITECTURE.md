@@ -698,7 +698,13 @@ every window. The rest apply at once.
 | Folder or file | What it holds |
 | --- | --- |
 | [`src/`](../src/) | The extension host and the server. Ship bundled, with `@duckdb/node-api`, as `dist/extension.js` and `dist/engine-server.js`. |
-| `src/extension.js` | Activation and commands. |
+| `src/extension.js` | What is VS Code's: activation, commands, the tree's view, dialogs and the status bar. It hands the rest in. |
+| `src/core.js` | What a window builds that isn't about how it looks: the store, the catalog, the command line, Excel, and what happens when the account moves. Nothing it loads needs VS Code. |
+| `src/signin.js`, `src/settings.js`, `src/readlog.js` | When a session is asked for, and its tokens. What the settings mean. What a window says about its reads. |
+| `src/engines.js` | The engine this window reads with, the background engine, and the catalog files. |
+| `src/queries.js`, `src/models.js` | Saved queries on disk. A model's local copy, and what the cache can name. |
+| `src/exportflow.js` | Export to Fabric, from its first question to the published app. |
+| `src/skill.js`, `src/diskuse.js` | The agent skill's file. How much a folder holds. |
 | `src/names.js` | What items hold tables, and how a table or model is named. |
 | `src/sql.js` | The read-only guard, `tableRefs`, and `SHOW` rewriting. |
 | `src/engine-host.js` | The native DuckDB engine: what the server boots, and how a window prepares and runs a statement. |
