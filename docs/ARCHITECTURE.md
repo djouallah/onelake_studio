@@ -792,7 +792,7 @@ every window. The rest apply at once.
 | [`fabric_app/`](../fabric_app/) | The template for an exported app. |
 | [`claude-skill/`](../claude-skill/) | The agent skill. |
 | [`test/`](../test/) | `js/`: the `node --test` suite and browser runners. Its `cli*.test.mjs` run `bin/cli.mjs` as a process. `sql/`: SQL statements and their answers (sqllogictest), run through the agent's `sql`. `e2e/`: the vsix in a real VS Code server and headless Chrome, signed out, and signed in with no internet. |
-| [`scripts/`](../scripts/) | Packaging: bundle, stage-webview, vendor, function-bundle, fetch-extensions, check-binding, fetch-binding, fetch-retry, make-icon. The website: build-website. |
+| [`scripts/`](../scripts/) | Packaging: bundle, stage-webview, vendor, function-bundle, fetch-extensions, check-binding, fetch-binding, fetch-retry, make-icon. The website: build-website, and website-shots, which takes its screenshots in the installed app. |
 | [`media/`](../media/) | Icons. |
 | `docs/` | This file, the naming contract, the catalog specification and the changelog, which the website renders as pages of its own; an index and a screenshot for GitHub. |
 | [`website/`](../website/) | The public website: static HTML and its screenshots, built with the docs by `scripts/build-website.mjs` and deployed by `.github/workflows/pages.yml`. |

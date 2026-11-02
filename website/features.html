@@ -44,8 +44,23 @@ FROM semanticmodel.aemo.nem GROUP BY ALL;</code></pre>
         <p>See its tables and relationships, then drag fields into a table or a chart, with the SQL behind it.</p>
       </div>
       <div class="shots">
-        <a class="shot" href="img/pivot.png"><img src="img/pivot.png" alt="The Pivot page: fields on the left, and a line chart of Total Amount by date." width="1879" height="1057" loading="lazy"></a>
-        <a class="shot" href="img/model.png"><img src="img/model.png" alt="The Model page: a fact table joined to its date and zone dimensions." width="1458" height="300" loading="lazy"></a>
+        <a class="shot" href="img/pivot.png"><img src="img/pivot.png" alt="The app with a semantic model's Pivot open: its fields on the left, and an area chart of Mwh by date for each region." width="2720" height="1720" loading="lazy"></a>
+        <a class="shot" href="img/model.png"><img src="img/model.png" alt="The model's diagram: a summary fact table joined to its calendar, duid and mstime dimensions." width="1062" height="358" loading="lazy"></a>
+      </div>
+    </section>
+
+    <section class="feature">
+      <div>
+        <h2>Open in Excel</h2>
+        <p>One click on a model's Pivot opens a new workbook with a PivotTable on the model, its measures and its dimensions. It runs on your machine, so it works offline too. On Windows.</p>
+      </div>
+      <a class="shot" href="img/excel.png"><img src="img/excel.png" alt="Excel with a PivotTable on the semantic model: Mwh by fuel and region, and the PivotTable Fields list." width="2392" height="1202" loading="lazy"></a>
+    </section>
+
+    <section class="feature stacked">
+      <div>
+        <h2>Export to Fabric</h2>
+        <p>Publish a model's Pivot as a Fabric app of its own. It opens in the browser with a Fabric sign-in, and pivots the model there, with nothing to install. The model isn't copied: the app reads it in its lakehouse.</p>
       </div>
     </section>
 
@@ -55,8 +70,8 @@ FROM semanticmodel.aemo.nem GROUP BY ALL;</code></pre>
         <p>Columns, row count, first rows, and Delta or Iceberg stats and history.</p>
       </div>
       <div class="shots pair">
-        <a class="shot" href="img/stats.png"><img src="img/stats.png" alt="A Delta table's Stats tab: format, version, rows, data files, size and last write." width="610" height="640" loading="lazy"></a>
-        <a class="shot" href="img/history.png"><img src="img/history.png" alt="A Delta table's History tab: each commit with its time, operation, rows added, files and engine." width="1613" height="745" loading="lazy"></a>
+        <a class="shot" href="img/stats.png"><img src="img/stats.png" alt="A Delta table's Stats tab: format, version, 128 million rows, data files, size and last write." width="658" height="606" loading="lazy"></a>
+        <a class="shot" href="img/history.png"><img src="img/history.png" alt="A Delta table's History tab: each commit with its time, operation, rows added, files and engine." width="1936" height="992" loading="lazy"></a>
       </div>
     </section>
 
@@ -65,7 +80,7 @@ FROM semanticmodel.aemo.nem GROUP BY ALL;</code></pre>
         <h2>See where the time went</h2>
         <p>A query's plan shows a timeline of each step and its most expensive operators.</p>
       </div>
-      <a class="shot" href="img/profile.png"><img src="img/profile.png" alt="A query profile: a timeline of planning, scan, aggregate and join steps, above a table of the most expensive operators." width="2351" height="552" loading="lazy"></a>
+      <a class="shot" href="img/profile.png"><img src="img/profile.png" alt="A query's plan: a join over 128 million rows in under 10 seconds, a timeline of its steps, and its most expensive operators." width="1936" height="1310" loading="lazy"></a>
     </section>
 
     <section class="notes">

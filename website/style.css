@@ -259,7 +259,7 @@ pre code {
 
 /* The two columns are the images' own proportions, so they come out the same height. */
 .shots.pair {
-  grid-template-columns: minmax(0, 953fr) minmax(0, 2165fr);
+  grid-template-columns: minmax(0, 1086fr) minmax(0, 1952fr);
   align-items: start;
 }
 
