@@ -6,10 +6,15 @@
 //   node test/e2e/run-standalone.mjs <the vsix, unpacked>/extension
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import { createRequire } from "node:module";
+import { DatabaseSync } from "node:sqlite";
 import { existsSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
+const require = createRequire(import.meta.url);
+const { createCatalogFile, catalogFileOf } = require("../../src/catalogfile.js");
 
 const extension = process.argv[2];
 assert.ok(existsSync(join(extension, "dist", "standalone.js")), "no dist/standalone.js in the vsix");
@@ -105,9 +110,19 @@ try {
     assert.match(r.stderr, /--workspace/, said(r));
   });
 
-  await step("serve answers Excel's questions on a model file", async () => {
+  // What opening a model while signed in leaves in the catalog: the names behind its GUIDs.
+  {
+    const file = catalogFileOf(join(home, "engine-server"), "e2eaccount|");
+    createCatalogFile({ file }).close();
+    const db = new DatabaseSync(file);
+    db.prepare("INSERT OR REPLACE INTO item_name VALUES (?, ?, ?, ?, ?, ?)")
+      .run("11111111-1111-1111-1111-111111111111", "22222222-2222-2222-2222-222222222222", Date.now(), "shop", "data.Lakehouse", null);
+    db.close();
+  }
+
+  await step("serve names a model from what's kept, with no connection, and answers Excel's questions", async () => {
     const file = join(home, "sales.bim");
-    server = spawn(process.execPath, ["--no-warnings", cli, "serve", file, "--workspace", "shop", "--json"], { env, stdio: ["ignore", "pipe", "pipe"] });
+    server = spawn(process.execPath, ["--no-warnings", cli, "serve", file, "--json"], { env, stdio: ["ignore", "pipe", "pipe"] });
     let stderr = "";
     server.stderr.setEncoding("utf8").on("data", d => { stderr += d; });
     const line = await new Promise((resolve, reject) => {

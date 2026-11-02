@@ -30,7 +30,6 @@ const { DFS_ORIGIN, modelSqlName } = require('./names');
 
 const EXTENSION_ID = 'djouallah.onelake-studio';
 const SETTLE_MS = 2_000;
-const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // Where VS Code keeps this extension's files, for whichever VS Code this install is under.
 // ONELAKE_STUDIO_HOME keeps it all somewhere else.
@@ -196,7 +195,7 @@ function createStandalone({ extensionDir = join(__dirname, '..'), env = process.
       const { semantic, compiler } = await core.agent.modules();
       const lakes = semantic.lakehousesOf(semantic.bimOf(path, text, compiler));
       const model = name || basename(path, extname(path));
-      const where = workspace || await workspaceOf(lakes, core.fabric, file);
+      const where = workspace || await workspaceOf(lakes, core.onelake, file);
       const catalog = modelSqlName(where, model);
       await core.semviews.put(model, path, where);
       const { measures } = await core.agent.excelCube(catalog);
@@ -211,13 +210,12 @@ function createStandalone({ extensionDir = join(__dirname, '..'), env = process.
 }
 
 // The workspace a model file's tables are in, when it names just one: a model's name is its workspace's
-// and its own, wherever the file is.
-async function workspaceOf(lakes, fabric, file) {
+// and its own, wherever the file is. From what's kept if it can be, so it works with no connection.
+async function workspaceOf(lakes, onelake, file) {
   const named = [...new Set(lakes.map(l => l.workspace))];
   const ask = `give it with --workspace`;
   if (named.length !== 1) throw new Error(`${file} reads ${named.length ? `${named.length} workspaces` : 'no lakehouse'}: ${ask}`);
-  if (!GUID.test(named[0])) return named[0];
-  const item = await fabric.itemOf(named[0], lakes[0].item)
+  const item = await onelake.itemNamed(named[0], lakes[0].item)
     .catch(e => { throw new Error(`the name of ${file}'s workspace could not be read (${e.message}): ${ask}`); });
   return item.workspace;
 }
