@@ -59,7 +59,7 @@ const ENGINE_METHODS = new Set(['query', 'stream', 'cancel', 'info', 'fileView',
  *        a semantic model a query names, opened from its local copy (read from Fabric the first
  *        time) and kept as a view: { name, schema, path, text }
  */
-function createHostMethods({ onelake, engine, onStatus = () => {}, saveFile = null, semviews = null, exportExplore = null, openInExcel = null,
+function createHostMethods({ onelake, engine, onStatus = () => {}, saveFile = null, semviews = null, exportExplore = null, openInExcel = null, downloadData = null,
                              nameTables = null, exportResult = null, openDocument = null, copyText = null, saveQuery = null, saveDraft = null, askVariable = null, openModel = null, modelsDir = null }) {
   const views = () => { if (!semviews) throw new Error('semantic views are not available here'); return semviews; };
   return {
@@ -85,6 +85,12 @@ function createHostMethods({ onelake, engine, onStatus = () => {}, saveFile = nu
       if (!openInExcel) throw new Error('Open in Excel is not available here');
       if (!x || !x.workspace || !x.model) throw new Error('Open in Excel needs a semantic model');
       return openInExcel({ workspace: String(x.workspace), model: String(x.model) });
+    },
+    // Download Data (modeldata.js): every table of a semantic model, by its names alone.
+    'model.downloadData': async x => {
+      if (!downloadData) throw new Error('Download Data is not available here');
+      if (!x || !x.workspace || !x.model) throw new Error('Download Data needs a semantic model');
+      return downloadData({ workspace: String(x.workspace), model: String(x.model) });
     },
     // Semantic models (semviews.js): the ones this machine keeps, with their text, and one the
     // page just opened kept — its name in its schema, the model's workspace, so SQL names it

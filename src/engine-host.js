@@ -1220,7 +1220,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
     }
   }
 
-  // A table in use, read whole, behind everything (syncworker.js): every column goes through the disk
+  // A table read whole, behind everything (syncworker.js, modeldata.js): every column goes through the disk
   // cache and no row comes back. Not a page method, and nobody reading it, so it doesn't count as use.
   const keepTable = (name, { signal } = {}) => agentQuery(`EXPLAIN ANALYZE SELECT * FROM ${name}`, { signal, used: false, mark: KEEP_MARK });
 

@@ -73,6 +73,7 @@ function readJob(onelake, t, { onWait } = {}) {
  * @param {() => boolean} o.keep.ready  whether an engine is up: one is never started for this
  * @param {() => Promise<boolean>} o.keep.othersRunning  whether anyone has a statement running
  * @param {(name: string, o: { signal: AbortSignal }) => Promise<any>} o.keep.read
+ * @param {() => boolean} [o.keep.held]  whether this holds off: a model's data is being downloaded
  * @param {(line: string) => void} [o.log]
  * @param {() => number} [o.now]
  */
@@ -231,6 +232,8 @@ function createSyncWorker({ onelake, opened = () => [], pinned = () => [], ttlMs
   async function lookAround() {
     if (!keepOn()) return stopKeeping('off');
     if (isOffline()) return stopKeeping('offline');
+    // Someone asked for a model's data (modeldata.js): it may be reading these same bytes.
+    if (keep.held && keep.held()) return stopKeeping('someone');
     const others = await keep.othersRunning().catch(() => false);
     if (others) busyAt = now();
     if (others) stopKeeping('someone');
@@ -266,7 +269,7 @@ function createSyncWorker({ onelake, opened = () => [], pinned = () => [], ttlMs
   // One at a time, by whichever window has the lease, with nobody at work. Not waited for: a table can
   // take minutes.
   async function considerKeeping() {
-    if (keeping || !keepOn() || now() - busyAt < KEEP_IDLE_MS) return;
+    if (keeping || !keepOn() || now() - busyAt < KEEP_IDLE_MS || (keep.held && keep.held())) return;
     const next = await nextToKeep(keep.limitBytes());
     if (!next || keeping || !holdsLease()) return;
     const k = { ...next, began: now(), stop: new AbortController(), stoppedFor: null };

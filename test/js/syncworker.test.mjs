@@ -359,6 +359,23 @@ async function keeping({ tables = [inUseTable("t")], ...more } = {}) {
   return { ...s, usage, keep };
 }
 
+test("while a model's data is downloading, the idle job holds off, and stops what it's reading", async () => {
+  const { world, worker, keep } = await keeping();
+  keep.held = () => true;
+  await worker.tick();
+  assert.equal(keep.reads.length, 0, "it doesn't start");
+  keep.held = () => false;
+  world.now += 3 * MIN;
+  await worker.tick();
+  assert.equal(keep.reads.length, 1);
+  assert.equal((await worker.progress()).used.keeping, "lakehouse.a.gold.dbo.t");
+  keep.held = () => true;
+  await worker.tick();
+  await settled();
+  assert.equal((await worker.progress()).used.keeping, null, "it gave way");
+  assert.equal(keep.reads.length, 1, "and starts nothing else");
+});
+
 test("a table in use is read again every hour, by the window with the lease", async () => {
   const { world, worker } = setup({ usage: fakeUsage([inUseTable("t")]) });
   await worker.tick();

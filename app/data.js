@@ -692,6 +692,8 @@ export function createEngine({
   const exportExplore = x => callHost("fabric.exportExplore", [x]);
   // Open in Excel: a semantic model, by its names (src/xmla); answers what to tell the user.
   const openInExcel = x => callHost("excel.open", [x]);
+  // Download Data: every table of a semantic model on this machine (src/modeldata.js); answers what to tell the user.
+  const downloadData = x => callHost("model.downloadData", [x]);
   // A semantic model's Direct Lake tables (named by GUID) as SQL names (semantic.js).
   const nameTables = list => callHost("onelake.nameTables", [list]);
   // Export: the host asks for a format and a file and writes every row of `sql`.
@@ -709,5 +711,5 @@ export function createEngine({
 
   return { init, reset, statTable, peekTable, rowsOutOfReach, deltaState, deltaHistory,
            loadFile, readFileBytes, saveText, saveOneLakeFile, runSql, describeLoad, fmtBytes, cancelLoad,
-           semanticViews, semanticKeep, semanticOpen, exportExplore, openInExcel, nameTables, saveQuery, saveDraft, askVariable, copyText, exportResult, openDocument };
+           semanticViews, semanticKeep, semanticOpen, exportExplore, openInExcel, downloadData, nameTables, saveQuery, saveDraft, askVariable, copyText, exportResult, openDocument };
 }

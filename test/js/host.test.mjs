@@ -44,6 +44,15 @@ test("Open in Excel: a page names a model and nothing else, and hears how it wen
   await assert.rejects(createHostMethods({ onelake: {}, engine: {} })["excel.open"]({ workspace: "ws", model: "m" }), /not available here/);
 });
 
+test("Download Data: a page names a model and nothing else, and hears how it went", async () => {
+  const asked = [];
+  const methods = createHostMethods({ onelake: {}, engine: {}, downloadData: async x => { asked.push(x); return "down"; } });
+  assert.equal(await methods["model.downloadData"]({ workspace: "ws", model: "m", tables: ["x"] }), "down");
+  assert.deepEqual(asked, [{ workspace: "ws", model: "m" }]);
+  await assert.rejects(methods["model.downloadData"]({ model: "m" }), /needs a semantic model/);
+  await assert.rejects(createHostMethods({ onelake: {}, engine: {} })["model.downloadData"]({ workspace: "ws", model: "m" }), /not available here/);
+});
+
 test("a table's metadata carries its SQL name", async () => {
   const { ask } = fixture();
   const [msg] = await ask("onelake.table", [{ workspace: "ws", item: "lh.Lakehouse", schema: "dbo", table: "t" }]);

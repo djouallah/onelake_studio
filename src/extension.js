@@ -44,6 +44,7 @@ const { fmtBytes, sqlKind, sqlName, sqlNameOf, fileSqlName, sqlPart, displayName
 const { createAgent } = require('./agent');
 const { serveXmla } = require('./xmla/server');
 const { openInExcel } = require('./xmla/excel');
+const { createModelData } = require('./modeldata');
 const { createSemViews } = require('./semviews');
 const { serveBridge } = require('./bridge');
 const { PINS } = require('./vendored');
@@ -674,6 +675,8 @@ let semviews = null;
 let exportExplore = null;
 // Open in Excel (src/xmla), the page's excel.open; set by activateInner, as above.
 let openExcel = null;
+// Download Data (modeldata.js), the page's model.downloadData; set by activateInner, as above.
+let downloadData = null;
 // A table's SQL name (lakehouse.ws.item.schema.table) -> what it reads, for the engine; and
 // a semantic model's Direct Lake tables (by GUID) -> their SQL names. Set by activateInner,
 // which owns the store, the Fabric API and the agent's modules.
@@ -726,6 +729,7 @@ async function show(context, { newTab = false, ...options } = {}) {
       exportExplore: x => (exportExplore ? exportExplore(x).catch(e => { if (e.declined) return e.message; throw e; })
         : Promise.reject(new Error('OneLake Studio is still starting'))),
       openInExcel: x => (openExcel ? openExcel(x) : Promise.reject(new Error('OneLake Studio is still starting'))),
+      downloadData: x => (downloadData ? downloadData(x) : Promise.reject(new Error('OneLake Studio is still starting'))),
       nameTables: list => (nameModelTables ? nameModelTables(list) : Promise.reject(new Error('OneLake Studio is still starting'))),
       copyText: text => vscode.env.clipboard.writeText(text),
       exportResult: x => exportResult(tabEngine, x),
@@ -1121,6 +1125,8 @@ async function activateInner(context) {
     return Math.min(keep, disk / 2) * 1e9;
   };
 
+  // Download Data (modeldata.js): set below, once what it needs exists. The idle job holds off for it.
+  let modelData = null;
   // Keeps the catalog current behind everything (syncworker.js). Started once the session is known.
   const syncOwner = randomBytes(8).toString('hex');
   const syncWorker = createSyncWorker({
@@ -1138,6 +1144,7 @@ async function activateInner(context) {
       ready: () => !!engine && !resetting,
       othersRunning: () => (engine ? engine.othersRunning() : Promise.resolve(false)),
       read: (name, o) => (engine ? engine.keepTable(name, o) : Promise.reject(Object.assign(new Error('no engine'), { cancelled: true }))),
+      held: () => !!modelData && modelData.busy(),
     },
     log: line => out && out.appendLine(line),
   });
@@ -1524,6 +1531,26 @@ async function activateInner(context) {
     },
     log: m => out && out.appendLine(m),
   }));
+
+  // Download Data, on a model's Pivot: every table it reads, on this machine (modeldata.js). Stopped
+  // from its notification, and it goes on with the tab closed. Answers what the Pivot's status line says.
+  modelData = createModelData({
+    tablesOf: c => agent.modelTables(c),
+    resolve: (ref, o) => resolveSqlTable(ref, o),
+    cachedTable: t => onelake.cached.table({ workspace: t.workspace, item: t.item }, t),
+    read: (name, o) => agent.readWhole(name, o),
+    usage: onelake.usage,
+    offlineReason: () => connectivity.reason(),
+    maxBytes: () => Math.max(0, Number(vscode.workspace.getConfiguration('onelakeStudio').get('diskCacheMaxGB', 64)) || 0) * 1024 ** 3,
+    log: m => out && out.appendLine(m),
+  });
+  downloadData = ({ workspace, model }) => vscode.window.withProgress(
+    { location: vscode.ProgressLocation.Notification, title: `Downloading ${model}'s data`, cancellable: true },
+    (progress, cancelled) => {
+      const stop = new AbortController();
+      cancelled.onCancellationRequested(() => stop.abort());
+      return modelData.download(modelSqlName(workspace, model), model, { signal: stop.signal, say: message => progress.report({ message }) });
+    });
 
   // Open in Excel (src/xmla): the endpoint a PivotTable connects to. Its port and token outlive a
   // reload, since a saved workbook holds them, and F5 has its own so it doesn't lose the port to
