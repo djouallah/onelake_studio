@@ -844,15 +844,14 @@ function createAgent({ onelake, engine, modelPath, appDir, vendorDir, daxSqlPin,
     return (await engine()).agentQuery(st.sql, { signal });
   }
 
-  // Keep offline (modeldata.js): the tables a model reads, by their SQL names, and one read whole.
+  // Keep offline (modeldata.js): the tables a model reads, by their SQL names.
   async function modelTables(catalog) {
     const { semantic } = await modules();
     const { sqlName } = await excelCube(catalog);
     return semantic.lakeTablesOf(sqlName).map(t => t.ident);
   }
-  const readWhole = async (name, o) => (await engine()).keepTable(name, o);
 
-  return { run, modules, excelCube, excelQuery, modelTables, readWhole };
+  return { run, modules, excelCube, excelQuery, modelTables };
 }
 
 module.exports = { createAgent };

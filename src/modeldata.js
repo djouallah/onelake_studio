@@ -2,13 +2,15 @@
 // =============================================================================
 // modeldata.js — Keep offline: a semantic model's tables stay on this machine, current
 // =============================================================================
-// Reading a table whole through the engine is what fills the disk cache: every column of every file,
+// Reading a table whole through an engine is what fills the disk cache: every column of every file,
 // and no row comes back (engine-host.js keepTable). After it the model answers from disk, and with
-// no connection. The idle job in syncworker.js reads the same way, but it was nobody's request: it
-// waits for two quiet minutes, and stays under a budget. This one was asked for, so it starts at once
-// and has no time limit. It still gives way to anyone's statement, within seconds, and comes back once
-// they're done: reading whole takes all of a connection, and left to run beside a query it held one
-// for 3 minutes, and starved the host until the window thought it was offline.
+// no connection.
+//
+// This is a background job. Once switched on it needs nothing from anyone: it goes on with the tab
+// closed, comes back with the next window, and never stops for a query. What keeps it out of a query's
+// way is that it isn't in the query's engine. `read` runs in an engine process of its own, on one
+// thread (extension.js backgroundEngine), which holds few requests open however large the table,
+// and leaves the rest of the connection free. They share only the disk cache.
 //
 // What's on is a row in the catalog, and what's been read is too (table_kept), so what a Pivot shows
 // is worked out from those, and is the same in every window. One window does the reading: the one
@@ -23,8 +25,6 @@ const EVERY_MS = 15_000;
 const FRESH_MS = 3600 * 1000;      // a table kept offline is no further behind OneLake than this
 const RETRY_MS = 3600 * 1000;      // one that failed isn't read again for this long
 const MEMO_MS = 5 * 60 * 1000;     // a Pivot asks every few seconds, and this asks nothing that often
-const WATCH_MS = 3_000;            // how soon someone's statement stops a read
-const QUIET_MS = 15_000;           // and how long after the last one seen it comes back
 
 const tablesWord = n => `${n} table${n === 1 ? '' : 's'}`;
 const lc = s => String(s).toLowerCase();
@@ -34,19 +34,19 @@ const lc = s => String(s).toLowerCase();
  * @param {(catalog: string) => Promise<string[]>} o.tablesOf  a model's tables, by their SQL names
  * @param {(ref: object, o: { fresh: boolean }) => Promise<object>} o.resolve  sqltables.js resolve
  * @param {(t: object) => Promise<{ value: object }|null>} o.cachedTable  a table's kept metadata
- * @param {(name: string, o: { signal: AbortSignal }) => Promise<any>} o.read  a table, read whole
+ * @param {(name: string, o: { signal: AbortSignal, onColumn: Function }) => Promise<any>} o.read  a table, read whole
  * @param {object} o.usage  what's on and what's been read whole (onelake.js)
  * @param {() => string|null} o.offlineReason
- * @param {() => boolean} o.ready  whether an engine is up: one is never started for this
- * @param {() => Promise<boolean>} o.othersRunning  whether anyone has a statement running
+ * @param {() => boolean} o.ready  whether reading can start: not while the engines are being stopped
  * @param {() => boolean} o.lease  whether this window is the one to do the reading
  * @param {() => number} o.maxBytes  what the disk cache may hold. 0 is no disk cache
+ * @param {() => void} [o.onIdle]  nothing is left to read for now: what read it can go
  * @param {(line: string) => void} [o.log]
  * @param {() => number} [o.now]
  */
-function createModelData({ tablesOf, resolve, cachedTable, read, usage, offlineReason, ready, othersRunning, lease, maxBytes,
-                           log = () => {}, now = Date.now, everyMs = EVERY_MS, watchMs = WATCH_MS }) {
-  let timer = null, current = null, ticking = false, quietAfter = 0;
+function createModelData({ tablesOf, resolve, cachedTable, read, usage, offlineReason, ready, lease, maxBytes,
+                           onIdle = () => {}, log = () => {}, now = Date.now, everyMs = EVERY_MS }) {
+  let timer = null, current = null, ticking = false, reading = false;
   const named = new Map();      // lower-cased model -> { at, idents }
   const located = new Map();    // a table's SQL name -> { at, t }
   const freshAt = new Map();    // lower-cased model -> when its tables were last read past the cache
@@ -104,7 +104,9 @@ function createModelData({ tablesOf, resolve, cachedTable, read, usage, offlineR
     const down = tables.filter(isDown);
     const missing = tables.filter(t => !isDown(t));
     const total = tables.reduce((n, t) => n + t.size, 0);
-    const held = down.reduce((n, t) => n + t.size, 0);
+    // Part of the table being read, by its columns. Only the window reading knows, and only roughly.
+    const part = current && current.table ? missing.find(t => t.name === current.table) : null;
+    const held = down.reduce((n, t) => n + t.size, 0) + (part ? part.size * current.fraction : 0);
     if (offline) {
       return { on: true, say: `No connection · ${down.length} of ${tablesWord(count)} here`, tone: 'warn', busy: false,
                tip: 'The rest comes down when the connection is back. What is here still answers.' };
@@ -120,16 +122,12 @@ function createModelData({ tablesOf, resolve, cachedTable, read, usage, offlineR
                tip: 'Every table is here at its latest data. Works with no connection.' };
     }
     const meter = total > 0 ? Math.round((held / total) * 100) : 0;
-    if (now() < quietAfter) {
-      return { on: true, say: `Paused for your query · ${down.length} of ${tablesWord(count)} here`, tone: '', meter, busy: true,
-               tip: 'A query is running, so this gave way to it. It carries on by itself when the query is done.' };
-    }
     if (missing.every(t => usage.latestKept(t.t))) {
       return { on: true, say: `New data · ${tablesWord(missing.length)} · ${fmtBytes(missing.reduce((n, t) => n + t.size, 0))}`,
-               tone: '', meter, busy: true, tip: 'A table changed, and the new data is coming down. Queries use what is here until then.' };
+               tone: '', meter, busy: true, tip: 'A table changed, and the new data is coming down in the background. Queries use what is here until then.' };
     }
     return { on: true, say: `${down.length} of ${tablesWord(count)} · ${fmtBytes(held)} of ${fmtBytes(total)}`, tone: '', meter, busy: true,
-             tip: 'Coming down now. Turn it off to stop; what came down stays.' };
+             tip: 'Coming down in the background, at a pace that leaves your queries room. It goes on with this tab closed. Turn it off to stop; what came down stays.' };
   }
 
   /** Switched on or off. Answers what to show: too much for the disk cache stays off, and says why. */
@@ -170,8 +168,10 @@ function createModelData({ tablesOf, resolve, cachedTable, read, usage, offlineR
     for (const t of todo) {
       if (job.stop.signal.aborted) return false;
       const began = now();
+      job.table = t.name;
+      job.fraction = 0;
       try {
-        await read(t.name, { signal: job.stop.signal });
+        await read(t.name, { signal: job.stop.signal, onColumn: (done, of) => { job.fraction = of > 0 ? done / of : 0; } });
         // Nothing of the idle job's daily budget went on this: nobody asked that job for it.
         usage.noteKept(t.t, { location: t.location, at: now(), total: t.size, bytes: 0, ms: now() - began, error: null, retryAt: 0 });
         log(`keep offline: ${t.name}, ${fmtBytes(t.size)}, in ${Math.round((now() - began) / 1000)}s`);
@@ -185,23 +185,24 @@ function createModelData({ tablesOf, resolve, cachedTable, read, usage, offlineR
     return true;
   }
 
-  // Who else is at work, and whether what's under way goes on. Nothing waits for it.
-  async function lookAround() {
-    const others = await othersRunning().catch(() => false);
-    if (others) quietAfter = now() + QUIET_MS;
-    if (current && (others || offlineReason() || !isOn(current.catalog))) current.stop.abort();
+  function idle() {
+    if (!reading) return;
+    reading = false;
+    try { onIdle(); } catch (_) {}
   }
 
-  // Whichever model has something to read, one at a time. Not waited for: a table can take minutes.
+  // Whichever model has something to read, one at a time. Not waited for: a table can take hours.
   async function tick() {
-    if (current) return lookAround();
-    if (ticking || offlineReason() || !ready()) return undefined;
+    if (current) {
+      if (offlineReason() || !isOn(current.catalog)) current.stop.abort();
+      return;
+    }
+    if (ticking) return;
+    if (offlineReason() || !ready()) { idle(); return; }
     ticking = true;
     try {
       const models = usage.offlineModels();
-      if (!models.length) return undefined;
-      await lookAround();
-      if (now() < quietAfter || !lease()) return undefined;
+      if (!models.length || !lease()) { idle(); return; }
       for (const m of models) {
         const key = lc(m.catalog);
         const fresh = now() - (freshAt.get(key) || 0) > FRESH_MS;
@@ -209,19 +210,17 @@ function createModelData({ tablesOf, resolve, cachedTable, read, usage, offlineR
         if (fresh) freshAt.set(key, now());
         const todo = tables.filter(t => { const k = keptOf(t); return !k || (k.error && k.retryAt <= now()); });
         if (!todo.length) continue;
-        const job = { catalog: m.catalog, stop: new AbortController() };
+        const job = { catalog: m.catalog, stop: new AbortController(), table: null, fraction: 0 };
         current = job;
+        reading = true;
         log(`keep offline: ${m.model}: ${tablesWord(todo.length)} to read`);
-        const watching = setInterval(() => { lookAround().catch(() => {}); }, watchMs);
-        if (watching.unref) watching.unref();
         readThem(job, todo).catch(() => false).then(through => {
-          clearInterval(watching);
           if (current === job) current = null;
           if (through) tick().catch(() => {});
         });
-        return undefined;
+        return;
       }
-      return undefined;
+      idle();
     } finally { ticking = false; }
   }
 

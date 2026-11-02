@@ -16,7 +16,7 @@ const HOUR = 3600 * 1000;
 const settled = async () => { for (let i = 0; i < 12; i++) await new Promise(r => setImmediate(r)); };
 
 function setup({ tables = [FACT, DIM], room = 1e9, sizes = { fact: 4000, dim: 10 }, others = {}, ...more } = {}) {
-  const world = { now: 1_000_000, offline: null, up: true, lease: true, version: 1, gone: new Set(), others: false };
+  const world = { now: 1_000_000, offline: null, up: true, lease: true, version: 1, gone: new Set() };
   const asked = [], reads = [], kept = new Map(), lines = [], models = new Map();
   const key = (t, location) => `${t.table}|${location}`;
   const usage = {
@@ -35,14 +35,13 @@ function setup({ tables = [FACT, DIM], room = 1e9, sizes = { fact: 4000, dim: 10
       return ref.table === "empty" ? { listed, emptySql: "SELECT 1" } : { listed, metadataLocation: `at/${ref.table}/v${world.version}` };
     },
     cachedTable: async t => ({ value: { stats: { totalFilesSize: sizes[t.table] ?? 1 } } }),
-    read: (name, { signal }) => new Promise((resolve, reject) => {
-      reads.push({ name, resolve, reject });
+    read: (name, { signal, onColumn }) => new Promise((resolve, reject) => {
+      reads.push({ name, resolve, reject, onColumn });
       signal.addEventListener("abort", () => reject(new Error("INTERRUPT Error: Interrupted!")));
     }),
     usage,
     offlineReason: () => world.offline,
     ready: () => world.up,
-    othersRunning: async () => world.others,
     lease: () => world.lease,
     maxBytes: () => room,
     log: l => lines.push(l),
@@ -248,42 +247,55 @@ test("the engine going away isn't the table's fault, and notes nothing", async (
   assert.equal(reads.length, 2, "the next tick tries again");
 });
 
-test("anyone's statement stops it within a look, says so, and it comes back once they're done", async () => {
-  const { data, world, reads, kept } = setup();
+test("it says how far through a table it is, by its columns, without waiting for the table", async () => {
+  const { data, reads } = setup({ tables: [FACT] });
+  await data.set(CATALOG, MODEL, true);
+  await settled();
+  assert.equal((await data.state(CATALOG)).meter, 0);
+  reads[0].onColumn(1, 4);
+  const quarter = await data.state(CATALOG);
+  assert.equal(quarter.meter, 25);
+  assert.match(quarter.say, /^0 of 1 table · /);
+  reads[0].onColumn(4, 4);
+  assert.equal((await data.state(CATALOG)).meter, 100);
+  reads[0].resolve();
+  await settled();
+  assert.match((await data.state(CATALOG)).say, /^✓/);
+});
+
+test("once nothing is left to read, what read it can go, and comes back for new data", async () => {
+  let idle = 0;
+  const { data, world, reads } = setup({ tables: [DIM], onIdle: () => { idle++; } });
+  await data.tick();
+  assert.equal(idle, 0, "nothing was reading");
+  await data.set(CATALOG, MODEL, true);
+  await settled();
+  assert.equal(idle, 0, "still reading");
+  reads[0].resolve();
+  await settled();
+  assert.equal(idle, 1);
+  await data.tick();
+  assert.equal(idle, 1, "said once");
+  world.version = 2;
+  world.now += HOUR + 1;
+  await data.tick();
+  await settled();
+  assert.equal(reads.length, 2);
+  reads[1].resolve();
+  await settled();
+  assert.equal(idle, 2);
+});
+
+test("switched off, what read it can go at the next look", async () => {
+  let idle = 0;
+  const { data, reads } = setup({ tables: [DIM], onIdle: () => { idle++; } });
   await data.set(CATALOG, MODEL, true);
   await settled();
   assert.equal(reads.length, 1);
-  world.others = true;
+  await data.set(CATALOG, MODEL, false);
+  await settled();
   await data.tick();
-  await settled();
-  assert.equal(data.busy(), false, "it gave way");
-  assert.equal(kept.size, 0, "stopped isn't whole, and isn't a failure");
-  const paused = await data.state(CATALOG);
-  assert.match(paused.say, /^Paused for your query · 0 of 2 tables here$/);
-  assert.equal(paused.busy, true);
-  await data.tick();
-  await settled();
-  assert.equal(reads.length, 1, "not while the statement runs");
-  world.others = false;
-  world.now += 5_000;
-  await data.tick();
-  await settled();
-  assert.equal(reads.length, 1, "nor the moment it ends: the next one is often right behind it");
-  world.now += 16_000;
-  await data.tick();
-  await settled();
-  assert.equal(reads.length, 2, "and then it carries on");
-  assert.equal(reads[1].name, FACT);
-  assert.doesNotMatch((await data.state(CATALOG)).say, /Paused/);
-});
-
-test("a statement already running when it's switched on goes first", async () => {
-  const { data, world, reads } = setup();
-  world.others = true;
-  const said = await data.set(CATALOG, MODEL, true);
-  assert.equal(said.on, true);
-  await settled();
-  assert.deepEqual(reads, []);
+  assert.equal(idle, 1);
 });
 
 test("a table that can't be found is named, and the others come down", async () => {
@@ -319,7 +331,7 @@ test("only the window with the lease reads, and only with an engine up; any wind
   world.up = false;
   await data.tick();
   await settled();
-  assert.deepEqual(reads, [], "an engine is never started for this");
+  assert.deepEqual(reads, [], "not while the engines are being stopped");
   world.up = true;
   await data.tick();
   await settled();

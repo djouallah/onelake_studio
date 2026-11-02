@@ -33,7 +33,12 @@ const { createLogFile, logFileOf } = require('./logfile');
 const { createOneLake, walkCached } = require('./onelake');
 const { createSqlTables } = require('./sqltables');
 const { createConnectivity, probeOf } = require('./connectivity');
-const { useConnectivity, createTokenHold, inTime } = require('./http');
+const { useConnectivity, inTime } = require('./http');
+const { createSignIn } = require('./signin');
+const { createReadLog } = require('./readlog');
+const { createSettings } = require('./settings');
+const { dirBytes, treeBytes, removeDir } = require('./diskuse');
+const { SKILL_MARKER, skillFile, writeSkill, refreshSkill } = require('./skill');
 const { createHostMethods } = require('./host');
 const { createFabric, modelFileName, modelAccountDir, modelCopyPath } = require('./fabric');
 const { readFromOneLake } = require('./sqlendpoint');
@@ -54,12 +59,6 @@ const { NAME, placeOf, tabTitle } = require('./title');
 const { createOneLakeWriter } = require('./onelakewrite');
 const bundleLoaded = upMs();
 
-// OneLake accepts tokens in the storage
-// audience only, and this one covers both the data reads and the Iceberg catalog. It is
-// the only scope sign-in asks for; the Fabric API's (below) is asked for separately, and
-// only once someone expands a workspace's semantic models.
-const SCOPES = ['https://storage.azure.com/user_impersonation', 'offline_access'];
-
 // The onelakeStudio.tenantId setting: the tenant to sign in to, or '' for the home one.
 const tenantSetting = () => vscode.workspace.getConfiguration('onelakeStudio').get('tenantId', '').trim();
 
@@ -69,18 +68,6 @@ function withTenant(scopes) {
   return tenant ? [...scopes, `VSCODE_TENANT:${tenant}`] : scopes;
 }
 
-function scopesFor() { return withTenant(SCOPES); }
-
-// `options` is passed straight through: the command handler asks with createIfNone (and,
-// for a switch, clearSessionPreference), while the per-request calls ask for neither.
-// That matters — reads come in bursts, and a prompt per request would be unusable.
-//
-// VS Code owns the account, so Sign Out cannot remove it: it makes this extension stop asking for
-// it, until something asks with createIfNone, which only a sign-in does (show() never prompts
-// after a Sign Out, or while an account's cache is known). The decision outlives the window: a new
-// one asks for no session and sends nothing to OneLake until someone signs in.
-const SIGNED_OUT_KEY = 'onelakeStudio.signedOut';
-const LAST_ACCOUNT_KEY = 'onelakeStudio.lastAccount';
 const QUERY_DRAFT_KEY = 'onelakeStudio.queryDraft';
 // A query variable's value, for the SQL box: what was typed, or null when dismissed.
 const askQueryVariable = name => vscode.window.showInputBox({
@@ -88,15 +75,6 @@ const askQueryVariable = name => vscode.window.showInputBox({
   placeHolder: 'a number, or text (quoted for you)', ignoreFocusOut: true,
 }).then(typed => (typed === undefined ? null : typed));
 let memento = null;   // context.globalState, set first thing at activation
-const signedOutByChoice = () => !!(memento && memento.get(SIGNED_OUT_KEY, false));
-function getSession(options) {
-  const signingIn = !!(options && options.createIfNone);
-  if (!signingIn && signedOutByChoice()) return Promise.resolve(null);
-  return vscode.authentication.getSession('microsoft', scopesFor(), options).then(s => {
-    if (s && signingIn && memento) memento.update(SIGNED_OUT_KEY, false);
-    return s;
-  });
-}
 
 // Whether this window can ask OneLake anything: offline is noticed, not switched (connectivity.js).
 // Any answer from OneLake's front door at all means there is internet.
@@ -107,137 +85,17 @@ const connectivity = createConnectivity({
 });
 useConnectivity(connectivity);
 
-// Why the last sign-in produced no token. A null used to mean "cancelled" whatever the
-// cause, so a wrong tenant or a provider failure told the user they had cancelled.
-let lastAuthError = null;
+const { getSession, getToken, hostToken, fabricToken, appToken, forgetToken, signedOutByChoice,
+        accountKey, queryAccountOf, knownAccount, rememberAccount, lastAuthError, markSignedOut } = createSignIn({
+  session: (scopes, options) => vscode.authentication.getSession('microsoft', withTenant(scopes), options),
+  memento: () => memento,
+  tenant: tenantSetting,
+  connectivity,
+  log: line => out && out.appendLine(line),
+});
 
-function getToken(options) {
-  return getSession(options).then(
-    s => { lastAuthError = null; return (s && s.accessToken) || null; },
-    e => {
-      lastAuthError = e;
-      if (out) out.appendLine(`sign-in failed: ${(e && e.message) || e}`);
-      return null;
-    });
-}
-
-// Which identity the cache and the engine currently belong to. Hashed, so the
-// directory name says nothing about who the user is.
-function accountKey(session) {
-  if (!session || !session.account) return null;
-  const tenant = tenantSetting();
-  return require('node:crypto').createHash('sha256')
-    .update(`${session.account.id}|${tenant}`).digest('hex').slice(0, 16);
-}
-
-// Which account the saved queries belong to, as their folder's name: its sign-in name and the
-// tenant setting, readable on disk (unlike accountKey's hash) — the queries are the user's own.
-function queryAccountOf(session) {
-  if (!session || !session.account) return null;
-  const tenant = tenantSetting();
-  return `${session.account.label}${tenant ? ` (${tenant})` : ''}`.replace(/[\\/:*?"<>|]+/g, '_');
-}
-
-// The account this machine last signed in with, in the tenant the setting names now, so its cache
-// can still be shown with no session: { key, queries }, or null.
-function knownAccount() {
-  const last = memento && memento.get(LAST_ACCOUNT_KEY, null);
-  return last && last.tenant === tenantSetting() ? last : null;
-}
-function rememberAccount(session) {
-  const key = accountKey(session);
-  if (!key || !memento) return;
-  const now = { key, queries: queryAccountOf(session), tenant: tenantSetting() };
-  // Every click comes through here, and this goes to disk.
-  const was = memento.get(LAST_ACCOUNT_KEY);
-  if (!was || was.key !== now.key || was.queries !== now.queries || was.tenant !== now.tenant) memento.update(LAST_ACCOUNT_KEY, now);
-}
-
-// getSession is an RPC into the account provider; asked once per request, that lookup —
-// not OneLake, not DuckDB — was most of a burst's wait. So the token is held briefly in
-// memory: long enough to collapse a burst, short enough that a stale one costs a single
-// retry (catalog.js and the engine ask again with `fresh` after a 401). Anything that can
-// change the answer clears it outright.
-const TOKEN_TTL_MS = 60_000;
 const SESSION_WAIT_MS = 5_000;
 const SESSION_SETTLE_MS = 3_000;
-const storageHold = createTokenHold(TOKEN_TTL_MS);
-
-function forgetToken() { storageHold.forget(); fabricHold.forget(); fabricAudience = null; appHold.forget(); tokenAsked = null; }
-
-// What is being asked of the account provider, for the burst behind the first to share.
-let tokenAsked = null;
-async function hostToken({ fresh = false } = {}) {
-  // No internet: a refresh could only hang, and nothing is about to use the token.
-  if (connectivity.noInternet()) return storageHold.any();
-  if (!fresh && storageHold.recent()) return storageHold.recent();
-  if (!fresh && tokenAsked) return tokenAsked;
-  const asked = storageHold.turn();
-  const asking = getToken({ createIfNone: false }).then(token => {
-    storageHold.keep(asked, token);
-    return token;
-  }).finally(() => { if (tokenAsked === asking) tokenAsked = null; });
-  if (!fresh) tokenAsked = asking;
-  return asking;
-}
-
-// The Fabric REST API — semantic models live there, not in OneLake. It takes a token in
-// its own audience, or in Power BI's, which it also accepts; whichever VS Code's account
-// provider will issue is remembered for the session. Asked for the SAME account the
-// storage session belongs to, so the tree can never list one user's models and write into
-// another user's lakehouse.
-const FABRIC_AUDIENCES = [
-  'https://api.fabric.microsoft.com/.default',
-  'https://analysis.windows.net/powerbi/api/.default',
-];
-let fabricAudience = null;
-const fabricHold = createTokenHold(TOKEN_TTL_MS);
-
-const isCancel = e => /cancel|did not consent/i.test(String((e && e.message) || e));
-
-// A session in `aud` for the account the storage session belongs to, never another one.
-async function sameAccountSession(aud, createIfNone, storage) {
-  return vscode.authentication.getSession('microsoft',
-    withTenant([aud, 'offline_access']), { createIfNone, account: storage.account });
-}
-
-async function fabricToken({ fresh = false, createIfNone = false } = {}) {
-  if (!fresh && !createIfNone && fabricHold.recent()) return fabricHold.recent();
-  const asked = fabricHold.turn();
-  const storage = await getSession({ createIfNone: false }).catch(() => null);
-  if (!storage) return null;
-  let lastErr = null;
-  for (const aud of fabricAudience ? [fabricAudience] : FABRIC_AUDIENCES) {
-    try {
-      const s = await sameAccountSession(aud, createIfNone, storage);
-      if (s) {
-        if (fabricHold.keep(asked, s.accessToken)) fabricAudience = aud;
-        return s.accessToken;
-      }
-    } catch (e) {
-      lastErr = e;
-      if (out) out.appendLine(`fabric sign-in (${aud}) failed: ${(e && e.message) || e}`);
-      if (isCancel(e)) return null;   // said no once; do not ask again for the other audience
-    }
-  }
-  if (lastErr) throw lastErr;
-  return null;
-}
-
-// Export to Fabric's token (fabricapp.js): the Fabric API's own audience, never Power BI's —
-// the app item's workload routes are the Fabric API's. The same account as the storage
-// session, as fabricToken asks. `createIfNone` on the button's click, which may prompt.
-const appHold = createTokenHold(TOKEN_TTL_MS);
-async function appToken({ fresh = false, createIfNone = false } = {}) {
-  if (!fresh && !createIfNone && appHold.recent()) return appHold.recent();
-  const asked = appHold.turn();
-  const storage = await getSession({ createIfNone: false }).catch(() => null);
-  if (!storage) return null;
-  const s = await sameAccountSession(FABRIC_AUDIENCES[0], createIfNone, storage);
-  const token = s ? s.accessToken : null;
-  appHold.keep(asked, token);
-  return token;
-}
 
 // The cache-first OneLake layer (onelake.js), built at activation and shared by the tree,
 // the panel and everything else that reads OneLake.
@@ -260,143 +118,24 @@ function showError(msg) {
   });
 }
 
-// One line per OneLake answer: a request the catalog made (`net`, with its time and
-// status), or an answer the store served from disk (`hit`) — the two things a slow click
-// can be made of.
-function logRead(e) {
-  tally(e);
-  if (!out) return;
-  const where = e.cache === 'hit' ? 'disk' : 'OneLake';
-  const status = e.cache === 'hit' ? '' : String(e.status || '');
-  const size = e.bytes ? ` ${(e.bytes / 1024).toFixed(0)}KB` : '';
-  const path = e.path.length > 72 ? '…' + e.path.slice(-71) : e.path;
-  out.appendLine(
-    `${String(e.ms || 0).padStart(6)}ms  ${(e.cache === 'hit' ? 'hit' : 'net').padEnd(4)} ${status.padEnd(3)}` +
-    `${size.padStart(9)}  ${where.padEnd(8)} ${path}` + (e.error ? `  !! ${e.error}` : ''));
-}
-
-// The click, measured end to end. The per-read lines say where each request's time went;
-// this line is the number the user actually lived through — click to on-screen — which
-// includes everything the reads cannot see: the catalog, the worker, the rendering. When
-// an OPEN line is seconds and the read lines under it are milliseconds, the time went to
-// one of those, and that difference is the diagnosis.
-// The other half of a slow boot. The read log above is OneLake answering; these are the
-// engine's own stages — creating the DuckDB instance, loading its extensions
-// (from the vsix, or downloaded on first run). The engine host and the page both report
-// here, so a boot whose reads are all fast hits and whose total is slow says which it was.
-function logBoot(m) {
-  if (!out) return;
-  const stages = Array.isArray(m.stages) ? m.stages : [];
-  out.appendLine(
-    `${String(Number(m.totalMs) || 0).padStart(6)}ms  BOOT ${String(m.what || 'engine ready').slice(0, 80)}` +
-    (m.quiet ? ' (engine reconnected)' : ''));
-  for (const s of stages) {
-    out.appendLine(`${String(Number(s.ms) || 0).padStart(6)}ms       ${s.stage}`);
-  }
-  // Which optional formats this session has is decided at boot and nowhere visible
-  // after it — this line is the answer to "why is .xlsx greyed out".
-  if (m.capabilities) {
-    const missing = Object.entries(m.capabilities).filter(([, v]) => !v).map(([k]) => k);
-    if (missing.length) out.appendLine(`        formats unavailable this session: ${missing.join(', ')}`);
-  }
-}
-
-// The engine's catalog listed from the cache, which a first SHOW ALL TABLES waits for.
-function logCatalog(m) {
-  if (out) out.appendLine(`${String(m.ms).padStart(6)}ms  CATALOG ${m.count} tables and models listed`);
-}
-
-// Who is waiting for the page to say a file is on screen (a semantic model's progress
-// notification, which stays up until then): { label, resolve }.
-const openedWaiters = new Set();
-function whenOpened(label, ms = 60_000) {
-  return new Promise(resolve => {
-    const timer = setTimeout(() => { openedWaiters.delete(w); resolve(false); }, ms);
-    const w = { label, resolve: v => { clearTimeout(timer); resolve(v); } };
-    openedWaiters.add(w);
-  });
-}
-
-// The panel won't open anything after all, so nobody waits out the timeout.
-function nothingWillOpen() {
-  for (const w of openedWaiters) w.resolve(false);
-  openedWaiters.clear();
-}
-
-function logOpened(m) {
-  for (const w of openedWaiters) {
-    if (w.label === m.label) { openedWaiters.delete(w); w.resolve(true); }
-  }
-  if (!out) return;
-  const what = m.kind === 'table' ? 'metadata + stats on screen'
-             : m.kind === 'rows' ? 'rows on screen'
-             : 'file on screen';
-  const label = String(m.label || '').slice(0, 80);
-  out.appendLine(
-    `${String(Number(m.ms) || 0).padStart(6)}ms  OPEN ${label} — click to ${what}`);
-}
-
-// ---------------------------------------------------------------------------
-// What the panel's indicator shows
-// ---------------------------------------------------------------------------
-// The provenance of a read is only knowable here, and it was only ever written to an
-// output channel — which is not where anyone looks when something feels slow. So it goes
-// on screen, in the panel's status bar.
-//
-// Not per read: opening a table is hundreds of them, and an indicator that flickers once
-// per request reports the mechanism instead of the answer. They are gathered into a burst
-// — everything between one idle gap and the next — so what shows up is "the thing you just
-// waited for", which is the question being asked.
-const BURST_IDLE_MS = 500;    // this much quiet ends a burst
-const POST_EVERY_MS = 250;    // ...and it is reported no more often than this while running
-
-let burst = null;
-let postTimer = null, idleTimer = null;
-function tally(e) {
-  if (!burst) burst = { reads: 0, hits: 0, misses: 0, skips: 0, stores: 0,
-                        cacheBytes: 0, netBytes: 0, storeBytes: 0, netMs: 0 };
-  burst.reads++;
-  if (e.cache === 'hit') { burst.hits++; burst.cacheBytes += e.bytes || 0; }
-  else { burst.misses++; burst.netBytes += e.bytes || 0; burst.netMs += e.ms || 0; }
-  if (!postTimer) postTimer = setTimeout(() => { postTimer = null; postReads(); }, POST_EVERY_MS);
-  clearTimeout(idleTimer);
-  // The settled number is the one worth reading, and it is also the one that arrives after
-  // the last response — so the burst is reported once more when the reads stop, and the
-  // next read after that starts a new one.
-  idleTimer = setTimeout(() => { postReads(); burst = null; }, BURST_IDLE_MS);
-}
-
-function postReads() {
-  if (!burst) return;
-  postLive({ type: 'reads', ...burst });
+const { logRead, logBoot, logCatalog, logOpened, whenOpened, nothingWillOpen, stop: stopReadLog } = createReadLog({
+  log: line => out && out.appendLine(line),
+  post: message => postLive(message),
   // The same burst, in the editor's own status bar — the panel's indicator is invisible
   // the moment its tab is hidden, which is exactly when a long wait is being sat through
   // from somewhere else.
-  if (statusItem) {
+  onBurst: burst => {
+    if (!statusItem) return;
     statusItem.text = `$(database) OneLake ${burst.hits} from disk · ${burst.misses} from OneLake`;
     statusItem.tooltip = `OneLake Studio — last burst: ${burst.reads} answer(s), ` +
       `${burst.hits} from disk, ${burst.misses} from OneLake ` +
       `(${(burst.netMs / 1000).toFixed(1)}s). Click for the read log.`;
     statusItem.show();
-  }
-}
+  },
+});
 
-// How long a catalog answer is served from disk with no network check at all. The user's
-// number, because it IS the trade: bigger means table opens skip the catalog's
-// seconds-per-call for longer, and a new snapshot takes that much longer to show up.
-function catalogTtlMs() {
-  const min = vscode.workspace.getConfiguration('onelakeStudio').get('catalogTtlMinutes', 5);
-  return Number.isFinite(min) && min >= 0 ? Math.round(min * 60 * 1000) : 5 * 60 * 1000;
-}
-
-// The same, for a table's metadata (the catalog's loadTable — the slow call): a day by
-// default. A new snapshot shows after that, or at once after a Refresh of its lakehouse.
-function tableTtlMs() {
-  const h = vscode.workspace.getConfiguration('onelakeStudio').get('tableMetadataTtlHours', 24);
-  return Number.isFinite(h) && h >= 0 ? Math.round(h * 3600 * 1000) : 24 * 3600 * 1000;
-}
-
-// How much the store of listings and table metadata may hold, per account.
+const settings = createSettings((key, fallback) => vscode.workspace.getConfiguration('onelakeStudio').get(key, fallback));
+const { catalogTtlMs, tableTtlMs, keepLimitBytes } = settings;
 
 // The disk cache's folder for all accounts: `file-cache-v1` under the folder the setting names,
 // or under the extension's storage. Always our own subfolder, so deleting an old cache can
@@ -443,26 +182,6 @@ let fileCacheRoot = null;
 let fileCacheAccount = null;
 const fileCacheDirFor = key => (fileCacheRoot && key ? join(fileCacheRoot, key) : null);
 
-// The size of a directory's files, and their removal — for the disk cache.
-async function dirBytes(dir) {
-  if (!dir) return 0;
-  let n = 0;
-  for (const name of await fsp.readdir(dir).catch(() => [])) {
-    const st = await fsp.stat(join(dir, name)).catch(() => null);
-    if (st && st.isFile()) n += st.size;
-  }
-  return n;
-}
-// The same with its subfolders, for what is kept in them: models by workspace.
-async function treeBytes(dir) {
-  let n = 0;
-  for (const e of await fsp.readdir(dir, { withFileTypes: true }).catch(() => [])) {
-    if (e.isDirectory()) n += await treeBytes(join(dir, e.name));
-    else n += (await fsp.stat(join(dir, e.name)).catch(() => ({ size: 0 }))).size;
-  }
-  return n;
-}
-const removeDir = dir => (dir ? fsp.rm(dir, { recursive: true, force: true }).catch(() => {}) : Promise.resolve());
 // The editor's proxy, for DuckDB's own downloads and reads: VS Code's `http.proxy` setting
 // first, then the environment variables the editor itself would honour.
 function editorProxy() {
@@ -475,14 +194,15 @@ function editorProxy() {
 // every tab of every window as a client over Quack. Its session token lives in the editor's secret
 // storage, where the next window finds it.
 // One server per account and install. A rebuild of the same install replaces it (`build`).
-function sharedEngineServer(context, account) {
+function sharedEngineServer(context, account, { background = false } = {}) {
   const script = join(context.extensionUri.fsPath, 'dist', 'engine-server.js');
   const build = (() => { try { return statSync(script).mtimeMs; } catch (_) { return 0; } })();
-  const key = [account || 'none', context.extensionUri.fsPath].join('|');
+  const key = [account || 'none', context.extensionUri.fsPath, ...(background ? ['background'] : [])].join('|');
   const secret = `onelakeStudio.engineSession.${createHash('sha256').update(key).digest('hex').slice(0, 16)}`;
   // What is remembered belongs to the account, so an update keeps it. F5 has its own: the installed
   // build's server holds this file open.
-  const stateKey = [account || 'none', context.extensionMode === vscode.ExtensionMode.Production ? '' : 'dev'].join('|');
+  const stateKey = [account || 'none', context.extensionMode === vscode.ExtensionMode.Production ? '' : 'dev',
+    ...(background ? ['background'] : [])].join('|');
   return {
     key, stateKey, script, build,
     stateDir: join(context.globalStorageUri.fsPath, 'engine-server'),
@@ -592,6 +312,60 @@ function engineBootOptions(context, account, readme) {
   };
 }
 
+// What an engine asks of this window, whichever engine it is.
+function engineCallbacks() {
+  return {
+    // A failed optional extension is worth a line where someone will find it.
+    onWarn: w => out && out.appendLine(w),
+    // DuckDB talks to OneLake itself, on the same cached, silent token — reads must
+    // never prompt.
+    // Options pass through so the engine's auth retry can say { fresh: true } and
+    // actually get PAST this cache — asking it again inside the 60s window returns
+    // the very token that just expired, and the retry becomes a no-op.
+    getToken: opts => hostToken(opts),
+    resolveTable: (ref, o) => (resolveSqlTable ? resolveSqlTable(ref, o) : Promise.reject(new Error('OneLake Studio is still starting'))),
+    resolveFile: (ref, o) => (resolveSqlFile ? resolveSqlFile(ref, o) : Promise.reject(new Error('OneLake Studio is still starting'))),
+    offlineReason: () => connectivity.reason(),
+    checkConnectivity: () => connectivity.check(),
+    onRowsRead: location => { if (onelake) onelake.rowsRead(location).catch(() => {}); },
+    onFileRead: url => { if (onelake) onelake.fileRead(url).catch(() => {}); },
+    onTablesUsed: list => { if (onelake) onelake.usage.note(list); },
+    catalogTables: () => (cachedSqlTables ? cachedSqlTables() : Promise.resolve([])),
+  };
+}
+
+// The engine a background job reads with (modeldata.js): a process of its own, so nothing it does is
+// in the way of a query, on one thread with few requests per read, so it holds little of the
+// connection however large the table. It shares only the disk cache, and exits when it's done.
+const BACKGROUND_ENGINE = { threads: 1, memoryLimit: '1GB', fileCacheFanout: 2 };
+let background = null, backgroundAccount = null;
+function closeBackgroundEngine({ stop = false } = {}) {
+  const b = background;
+  background = null;
+  return b ? b.close({ stop }).catch(() => {}) : Promise.resolve();
+}
+function backgroundEngine(context) {
+  if (resetting) return null;
+  if (background && backgroundAccount !== fileCacheAccount) closeBackgroundEngine({ stop: true });
+  if (background) return background;
+  backgroundAccount = fileCacheAccount;
+  fileCacheRoot = fileCacheRootFor(context);
+  const { createEngineHost } = require('./engine-host');
+  const { createRemote } = require('./engine-client');
+  const options = { ...engineBootOptions(context, fileCacheAccount, null), ...BACKGROUND_ENGINE };
+  const made = createEngineHost({
+    ...options,
+    ...engineCallbacks(),
+    remote: createRemote({
+      ...sharedEngineServer(context, fileCacheAccount, { background: true }), options,
+      // Nothing is on screen over it. The next tick starts another, and carries on.
+      onGone: () => { if (background === made) background = null; },
+    }),
+  });
+  background = made;
+  return made;
+}
+
 // `readme` is the one file outside DuckDB's own directories the engine may read (the
 // landing query) — see the lockdown in engine-host.js.
 function ensureEngine(context, { readme } = {}) {
@@ -613,25 +387,10 @@ function ensureEngine(context, { readme } = {}) {
     const booting = engineBootOptions(context, fileCacheAccount, readme);
     engine = createEngineHost({
       ...booting,
+      ...engineCallbacks(),
       remote: sharedEngineRemote(context, booting),
       onLog: logBoot,
       onCatalog: logCatalog,
-      // A failed optional extension is worth a line where someone will find it.
-      onWarn: w => out && out.appendLine(w),
-      // DuckDB talks to OneLake itself, on the same cached, silent token — reads must
-      // never prompt.
-      // Options pass through so the engine's auth retry can say { fresh: true } and
-      // actually get PAST this cache — asking it again inside the 60s window returns
-      // the very token that just expired, and the retry becomes a no-op.
-      getToken: opts => hostToken(opts),
-      resolveTable: (ref, o) => (resolveSqlTable ? resolveSqlTable(ref, o) : Promise.reject(new Error('OneLake Studio is still starting'))),
-      resolveFile: (ref, o) => (resolveSqlFile ? resolveSqlFile(ref, o) : Promise.reject(new Error('OneLake Studio is still starting'))),
-      offlineReason: () => connectivity.reason(),
-      checkConnectivity: () => connectivity.check(),
-      onRowsRead: location => { if (onelake) onelake.rowsRead(location).catch(() => {}); },
-      onFileRead: url => { if (onelake) onelake.fileRead(url).catch(() => {}); },
-      onTablesUsed: list => { if (onelake) onelake.usage.note(list); },
-      catalogTables: () => (cachedSqlTables ? cachedSqlTables() : Promise.resolve([])),
     });
   } catch (e) {
     out && out.appendLine(`native DuckDB unavailable: ${e.message}`);
@@ -653,6 +412,8 @@ async function resetEngine({ stop = true } = {}) {
     const e = engine;
     engine = null;
     if (e) await e.close({ stop }).catch(() => {});
+    // Sign Out and Clear Cached stop what's reading too: it holds the token, and those files.
+    if (stop) await closeBackgroundEngine({ stop: true });
     // A window with only the tree open isn't joined to the server, and another window may have one.
     if (stop) await stopServers().catch(() => {});
   } finally { resetting--; }
@@ -699,7 +460,7 @@ async function show(context, { newTab = false, ...options } = {}) {
   const noPrompt = !!knownAccount() || signedOutByChoice();
   const token = noPrompt ? await hostToken() : await getToken(options);
   if (!token && !noPrompt) {
-    const why = lastAuthError ? `Sign-in failed: ${lastAuthError.message || lastAuthError}`
+    const why = lastAuthError() ? `Sign-in failed: ${lastAuthError().message || lastAuthError()}`
                               : 'Sign-in was cancelled.';
     vscode.window.showWarningMessage(
       `OneLake Studio needs a Microsoft account to reach OneLake. ${why}`);
@@ -865,34 +626,6 @@ function buildCommit(context, dev) {
 // ---------------------------------------------------------------------------
 // The agent skill (Claude Code, GitHub Copilot)
 // ---------------------------------------------------------------------------
-// bin/cli.mjs is this extension's modules from a shell; claude-skill/SKILL.md tells an agent
-// when and how to run it. Installing writes the skill to ~/.claude/skills/onelake/ — read by
-// Claude Code and by GitHub Copilot in VS Code, so one copy serves both — with the
-// path of THIS install's cli.mjs filled in — a path that changes with every update, so a skill
-// this extension wrote (it carries the marker) is rewritten at each activation. One the user
-// wrote themselves, without the marker, is never touched unless they ask.
-const SKILL_MARKER = 'Installed by the OneLake Studio extension';
-const skillFile = () => join(os.homedir(), '.claude', 'skills', 'onelake', 'SKILL.md');
-
-async function writeSkill(context) {
-  const template = await fsp.readFile(join(context.extensionUri.fsPath, 'claude-skill', 'SKILL.md'), 'utf8');
-  const cli = join(context.extensionUri.fsPath, 'bin', 'cli.mjs').replace(/\\/g, '/');
-  const text = template.split('{{cli}}').join(cli);
-  const file = skillFile();
-  const before = await fsp.readFile(file, 'utf8').catch(() => null);
-  if (before === text) return false;
-  await fsp.mkdir(dirname(file), { recursive: true });
-  await fsp.writeFile(file, text);
-  return true;
-}
-
-async function refreshSkill(context) {
-  const before = await fsp.readFile(skillFile(), 'utf8').catch(() => null);
-  if (before && before.includes(SKILL_MARKER) && await writeSkill(context)) {
-    if (out) out.appendLine(`agent skill updated at ${skillFile()}`);
-  }
-}
-
 async function installSkill(context) {
   const existing = await fsp.readFile(skillFile(), 'utf8').catch(() => null);
   if (existing && !existing.includes(SKILL_MARKER)) {
@@ -900,7 +633,7 @@ async function installSkill(context) {
       `${skillFile()} exists and was not written by OneLake Studio. Replace it?`, { modal: true }, 'Replace');
     if (pick !== 'Replace') return;
   }
-  await writeSkill(context);
+  await writeSkill(context.extensionUri.fsPath);
   vscode.window.showInformationMessage(
     'OneLake Studio: Claude Code and GitHub Copilot can now answer questions about your OneLake data and semantic models, ' +
     'through this extension while VS Code is open. It needs Node.js on PATH.',
@@ -951,7 +684,7 @@ async function activate(context) {
     await activateInner(context);
     // After an update the skill still names the previous install's cli.mjs. Not awaited:
     // nothing on screen depends on it.
-    refreshSkill(context).catch(e => out.appendLine(`agent skill not refreshed: ${e.message}`));
+    refreshSkill(context.extensionUri.fsPath, line => out.appendLine(line)).catch(e => out.appendLine(`agent skill not refreshed: ${e.message}`));
     out.appendLine(`activated ${version} ${commit}${dev ? ' (dev)' : ''} — signed in: ${signedIn}`);
     out.mark('activation done');
   } catch (e) {
@@ -987,7 +720,10 @@ async function activateInner(context) {
   };
   stopServers = async () => {
     const { stopServer } = require('./engine-client');
-    for (const account of catalogFiles.keys()) await stopServer(sharedEngineServer(context, account)).catch(() => {});
+    for (const account of catalogFiles.keys()) {
+      await stopServer(sharedEngineServer(context, account)).catch(() => {});
+      await stopServer(sharedEngineServer(context, account, { background: true })).catch(() => {});
+    }
   };
   // Nothing here waits for the account provider, whose answer can take seconds. The tree opens on the
   // last account's rows, with no session asked for, and sessionChanged at the end of this function
@@ -1020,7 +756,7 @@ async function activateInner(context) {
     catalog, ttlMs: catalogTtlMs, isOffline: () => connectivity.offline(),
     base: () => {
       const dir = fileCacheDirFor(fileCacheAccount);
-      const keeps = Number(vscode.workspace.getConfiguration('onelakeStudio').get('diskCacheMaxGB', 64)) > 0;
+      const keeps = settings.keepsDiskCache();
       return dir && keeps ? join(dir, 'delta') : null;
     },
   });
@@ -1116,15 +852,6 @@ async function activateInner(context) {
   const favorites = {
     get: () => context.globalState.get(favKey(), []),
     set: list => context.globalState.update(favKey(), [...new Set(list)].sort((a, b) => a.localeCompare(b))),
-  };
-
-  // How much of the tables in use may be kept on this machine with nobody asking: never more than half
-  // the disk cache, as it evicts the oldest first and what someone read comes before this.
-  const keepLimitBytes = () => {
-    const config = vscode.workspace.getConfiguration('onelakeStudio');
-    const keep = Math.max(0, Number(config.get('keepUsedTablesGB', 10)) || 0);
-    const disk = Math.max(0, Number(config.get('diskCacheMaxGB', 64)) || 0);
-    return Math.min(keep, disk / 2) * 1e9;
   };
 
   // Keep offline (modeldata.js): set below, once what it needs exists. The idle job holds off for it.
@@ -1534,24 +1261,28 @@ async function activateInner(context) {
     log: m => out && out.appendLine(m),
   }));
 
-  // Keep offline, on a model's tabs: every table it reads stays on this machine (modeldata.js). It
-  // goes on with the tab closed, and is remembered per model in the catalog.
+  // Keep offline, on a model's tabs: a background job that keeps every table it reads on this
+  // machine (modeldata.js), in an engine of its own. Remembered per model in the catalog, it goes on
+  // with the tab closed, and comes back with the next window.
   modelData = createModelData({
     tablesOf: c => agent.modelTables(c),
     resolve: (ref, o) => resolveSqlTable(ref, o),
     cachedTable: t => onelake.cached.table({ workspace: t.workspace, item: t.item }, t),
-    read: (name, o) => agent.readWhole(name, o),
+    read: (name, o) => {
+      const reader = backgroundEngine(context);
+      return reader ? reader.keepTable(name, o) : Promise.reject(Object.assign(new Error('the engines are being stopped'), { cancelled: true }));
+    },
+    onIdle: () => { closeBackgroundEngine(); },
     usage: onelake.usage,
     offlineReason: () => connectivity.reason(),
-    ready: () => !!engine && !resetting,
-    othersRunning: () => (engine ? engine.othersRunning() : Promise.resolve(false)),
+    ready: () => !resetting,
     lease: () => {
       try { return catalogFileFor(context, storeAccount).lease(syncOwner, 90_000); } catch (_) { return false; }
     },
-    maxBytes: () => Math.max(0, Number(vscode.workspace.getConfiguration('onelakeStudio').get('diskCacheMaxGB', 64)) || 0) * 1024 ** 3,
+    maxBytes: settings.diskCacheBytes,
     log: m => out && out.appendLine(m),
   });
-  context.subscriptions.push({ dispose: () => modelData.stop() });
+  context.subscriptions.push({ dispose: () => { modelData.stop(); closeBackgroundEngine(); } });
   keepOffline = {
     state: ({ workspace, model }) => modelData.state(modelSqlName(workspace, model)),
     set: ({ workspace, model, on }) => modelData.set(modelSqlName(workspace, model), model, on),
@@ -2123,7 +1854,7 @@ async function activateInner(context) {
         engine: () => ensureEngine(context, { readme: readme.fsPath }),
         disk: async () => ({
           bytes: await dirBytes(fileCacheDirFor(storeAccount)),
-          limit: Math.max(0, Number(vscode.workspace.getConfiguration('onelakeStudio').get('diskCacheMaxGB', 64)) || 0) * 1024 ** 3,
+          limit: settings.diskCacheBytes(),
         }),
       });
     }),
@@ -2301,7 +2032,7 @@ async function activateInner(context) {
     // since its secret holds the token by value; what is cached stays on show.
     vscode.commands.registerCommand('onelakeStudio.signOut', () => accountTurn(async () => {
       try {
-        await context.globalState.update(SIGNED_OUT_KEY, true);
+        await markSignedOut();
         forgetToken();
         await setSignedIn(false);
         closeAllTabs();
@@ -2463,9 +2194,7 @@ async function activateInner(context) {
 }
 
 function deactivate() {
-  // The burst timers hold the process open if they are live at shutdown.
-  clearTimeout(postTimer);
-  clearTimeout(idleTimer);
+  stopReadLog();
   for (const f of catalogFiles.values()) f.close();
   // The engine holds a native database handle and a temp directory; closing it is what
   // releases both.
