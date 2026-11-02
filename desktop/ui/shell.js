@@ -1,7 +1,9 @@
 // The window: the tree, the tabs and what VS Code would otherwise draw around them. Everything it
 // shows comes from the extension (src/desktop/vscode.js): the tree's nodes, the tabs' pages, and the
-// menus and commands its package.json declares. This file decides how they look, and nothing else.
+// menus and commands its package.json declares. This file decides how they look, and what every
+// Windows app has around them: a menu bar, the keys, About, a tree that can be put away.
 import { when } from './when.js';
+import { chordOf, BROWSER_KEYS } from './keys.js';
 
 const VIEW = 'onelakeStudio.explorer';
 const dark = true;   // the app is dark, whatever Windows is
@@ -63,7 +65,12 @@ const ctx = extra => ({ ...contexts, ...extra });
 // Menus
 // ---------------------------------------------------------------------------
 const menu = $('menu');
-function closeMenu() { menu.hidden = true; menu.replaceChildren(); }
+let menuOwner = null;   // the menu bar's title whose menu is open, if it's one of those
+function setMenuOwner(i) {
+  menuOwner = i;
+  [...$('menubar').children].forEach((b, k) => b.classList.toggle('open', k === i));
+}
+function closeMenu() { menu.hidden = true; menu.replaceChildren(); setMenuOwner(null); }
 
 // A contributed menu's entries that apply, in their groups and order: [[{ command, title, icon }]].
 function entries(where, context, { inline = null } = {}) {
@@ -84,19 +91,51 @@ function entries(where, context, { inline = null } = {}) {
   return groups;
 }
 
-function openMenu(x, y, groups, run) {
+// An entry is a contributed command ({ command, title }) or the window's own ({ title, run, key,
+// checked, disabled }).
+function openMenu(x, y, groups, run, owner = null) {
   closeMenu();
+  groups = groups.filter(g => g.length);
   if (!groups.length) return;
   groups.forEach((g, i) => {
     if (i) menu.append(h('hr'));
-    for (const e of g) menu.append(h('div', { class: 'entry', role: 'menuitem', onclick: () => { closeMenu(); run(e.command); } }, e.title));
+    for (const e of g) {
+      menu.append(h('div', {
+        class: `entry${e.disabled ? ' disabled' : ''}`, role: 'menuitem', 'aria-disabled': e.disabled ? 'true' : null,
+        onclick: e.disabled ? null : () => { closeMenu(); if (e.run) e.run(); else run(e.command); },
+        onpointermove: ev => highlight(ev.currentTarget),
+      },
+      h('span', { class: `check codicon${e.checked ? ' codicon-check' : ''}` }),
+      h('span', { class: 'title' }, e.title),
+      e.key ? h('span', { class: 'key' }, e.key) : null));
+    }
   });
   menu.hidden = false;
   const r = menu.getBoundingClientRect();
   menu.style.left = `${Math.max(4, Math.min(x, innerWidth - r.width - 4))}px`;
   menu.style.top = `${Math.max(4, Math.min(y, innerHeight - r.height - 4))}px`;
+  setMenuOwner(owner);
 }
-addEventListener('pointerdown', e => { if (!menu.contains(e.target)) closeMenu(); });
+function highlight(entry) {
+  for (const e of menu.querySelectorAll('.entry.on')) e.classList.remove('on');
+  if (entry) entry.classList.add('on');
+}
+// The open menu, by keyboard: arrows, Enter, Escape, and left or right to the menu bar's next menu.
+function menuKey(e) {
+  if (menu.hidden) return false;
+  const items = [...menu.querySelectorAll('.entry:not(.disabled)')];
+  const at = items.findIndex(i => i.classList.contains('on'));
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    const d = e.key === 'ArrowDown' ? 1 : -1;
+    if (items.length) highlight(items[at < 0 ? (d > 0 ? 0 : items.length - 1) : (at + d + items.length) % items.length]);
+  } else if (e.key === 'Enter' || e.key === ' ') {
+    if (items[at]) items[at].click();
+  } else if (e.key === 'Escape') closeMenu();
+  else if ((e.key === 'ArrowLeft' || e.key === 'ArrowRight') && menuOwner != null) openBarMenu(menuOwner + (e.key === 'ArrowRight' ? 1 : -1), true);
+  else return false;
+  return true;
+}
+addEventListener('pointerdown', e => { if (!menu.contains(e.target) && !$('menubar').contains(e.target)) closeMenu(); });
 addEventListener('blur', closeMenu);
 
 const runCommand = id => call('command', id).catch(e => toast({ level: 'error', message: e.message, items: [] }));
@@ -241,7 +280,18 @@ let current = null;
 function addTab(id, title, page, { viewType = null } = {}) {
   const el = h('div', { class: 'tab', role: 'tab', title,
     onclick: () => activate(id),
-    onauxclick: e => { if (e.button === 1) closeTab(id); } },
+    onauxclick: e => { if (e.button === 1) closeTab(id); },
+    oncontextmenu: e => {
+      e.preventDefault();
+      const all = [...tabs.keys()];
+      const right = all.slice(all.indexOf(id) + 1);
+      openMenu(e.clientX, e.clientY, [[
+        { title: 'Close', key: 'Ctrl+W', run: () => closeTab(id) },
+        { title: 'Close Others', run: () => closeTabs(all.filter(k => k !== id)), disabled: all.length < 2 },
+        { title: 'Close to the Right', run: () => closeTabs(right), disabled: !right.length },
+        { title: 'Close All', run: () => closeTabs(all) },
+      ]], runCommand);
+    } },
   h('span', { class: 'name' }, title),
   h('button', { class: 'icon close', title: 'Close', onclick: e => { e.stopPropagation(); closeTab(id); } }, h('span', { class: 'codicon codicon-close' })));
   $('tabs').append(el);
@@ -267,6 +317,16 @@ function closeTab(id) {
   if (!t) return;
   if (t.viewType) { call('tab.closed', id).catch(() => {}); return; }   // the app says when it's gone
   dropTab(id);
+}
+
+const closeTabs = ids => ids.forEach(closeTab);
+
+// Ctrl+Tab and Ctrl+PageDown: the next tab, in the order they're shown; the keys go on to it.
+function cycle(d) {
+  const all = [...tabs.keys()];
+  if (!all.length) return;
+  activate(all[(all.indexOf(current) + d + all.length) % all.length]);
+  tabs.get(current).page.focus();
 }
 
 function dropTab(id) {
@@ -331,8 +391,7 @@ addEventListener('message', e => {
   else if (d.olsMenu) {
     const r = from.page.getBoundingClientRect();
     openMenu(r.left + d.x, r.top + d.y, entries('webview/context', ctx({ webviewId: from.viewType, ...d.context })), runCommand);
-  } else if (d.olsKey === 'ctrl+alt+o') runCommand('onelakeStudio.goTo');
-  else if (d.olsFocus) closeMenu();
+  } else if (d.olsFocus) closeMenu();
 });
 
 // ---------------------------------------------------------------------------
@@ -343,8 +402,8 @@ function drawStatus() {
   const left = [], right = [];
   for (const i of [...statusItems.values()].sort((a, b) => (b.priority || 0) - (a.priority || 0))) {
     if (!i.shown) continue;
-    const el = h('span', { class: `item${i.command ? ' clickable' : ''}`, title: i.tooltip || null,
-      onclick: i.command ? () => runCommand(i.command) : null }, withIcons(i.text));
+    const click = i.run || (i.command ? () => runCommand(i.command) : null);
+    const el = h('span', { class: `item${click ? ' clickable' : ''}`, title: i.tooltip || null, onclick: click }, withIcons(i.text));
     (i.alignment === 2 ? right : left).push(el);
   }
   for (const p of progress.values()) if (!p.notify) left.push(h('span', { class: 'item' }, h('span', { class: 'codicon codicon-loading spin' }), ` ${p.title}${p.message ? `: ${p.message}` : ''}`));
@@ -552,6 +611,7 @@ function on(m) {
     case 'pick-items': pickers.get(m.id)?.items(m.items); break;
     case 'pick-busy': pickers.get(m.id)?.busy(m.busy); break;
     case 'pick-close': pickers.delete(m.id); break;
+    case 'update': updateAvailable(m); break;
   }
 }
 
@@ -567,37 +627,211 @@ events.onerror = () => {
   lostTimer = setTimeout(() => { if (events.readyState !== EventSource.OPEN) $('lost').hidden = false; }, 4000);
 };
 
+// How the window was left, kept by the app: the tree's width, whether it shows, the zoom.
+const TREE_WIDTH = 300;
+let ui = { width: TREE_WIDTH, tree: true, zoom: 1 };
+const keepUi = () => call('window.set', ui).catch(() => {});
+
 boot = await call('boot');
 for (const c of boot.contributes.commands || []) commandsById.set(c.command, { title: c.title, icon: c.icon });
 Object.assign(contexts, boot.contexts);
 for (const i of boot.statusItems) statusItems.set(i.id, i);
+ui = { ...ui, ...boot.window };
 drawStatus();
 drawHeader();
+drawBar();
+$('side').style.width = `${ui.width}px`;
+showTree(ui.tree, false);
+if (ui.zoom !== 1) call('app.zoom', ui.zoom).catch(() => {});
 reload();
 
 $('empty-query').addEventListener('click', () => runCommand('onelakeStudio.newQuery'));
 
-addEventListener('keydown', e => {
-  const k = e.key.toLowerCase();
-  if (e.ctrlKey && e.altKey && k === 'o') { e.preventDefault(); runCommand('onelakeStudio.goTo'); }
-  else if (e.ctrlKey && k === 'w' && current) { e.preventDefault(); closeTab(current); }
-  else if (k === 'f5' || (e.ctrlKey && k === 'r')) e.preventDefault();   // a reload would lose every tab
-  else if (k === 'escape') closeMenu();
-});
-addEventListener('contextmenu', e => { if (!(e.target instanceof HTMLInputElement)) e.preventDefault(); });
+// ---------------------------------------------------------------------------
+// The tree, shown or put away
+// ---------------------------------------------------------------------------
+function showTree(on, keep = true) {
+  ui.tree = on;
+  $('side').hidden = !on;
+  $('sash').hidden = !on;
+  $('activity-tree').classList.toggle('on', on);
+  $('activity-tree').setAttribute('aria-pressed', String(on));
+  if (keep) keepUi();
+}
+$('activity-tree').addEventListener('click', () => showTree(!ui.tree));
 
-// The sidebar's width, dragged.
+// The tree's width, dragged. Dragged under MIN it's put away, as VS Code's sidebar is; dragged back out,
+// it's there again. A double-click gives back the width it started with.
+const MIN = 120;
 const sash = $('sash');
 sash.addEventListener('pointerdown', e => {
   sash.setPointerCapture(e.pointerId);
   sash.classList.add('moving');
   document.querySelectorAll('#pages iframe').forEach(f => { f.style.pointerEvents = 'none'; });
-  const move = ev => { $('side').style.width = `${Math.max(160, Math.min(innerWidth * 0.7, ev.clientX))}px`; };
+  const left = $('activity').getBoundingClientRect().right;
+  const move = ev => {
+    const width = ev.clientX - left;
+    $('side').hidden = width < MIN;
+    if (width >= MIN) {
+      ui.width = Math.round(Math.max(160, Math.min(innerWidth * 0.7, width)));
+      $('side').style.width = `${ui.width}px`;
+    }
+  };
   const up = () => {
     sash.classList.remove('moving');
     document.querySelectorAll('#pages iframe').forEach(f => { f.style.pointerEvents = ''; });
     sash.removeEventListener('pointermove', move);
+    showTree(!$('side').hidden);
   };
   sash.addEventListener('pointermove', move);
   sash.addEventListener('pointerup', up, { once: true });
+});
+sash.addEventListener('dblclick', () => {
+  ui.width = TREE_WIDTH;
+  $('side').style.width = `${ui.width}px`;
+  keepUi();
+});
+
+// ---------------------------------------------------------------------------
+// Zoom
+// ---------------------------------------------------------------------------
+const ZOOMS = [0.5, 0.67, 0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2];
+function zoom(step) {
+  const at = ZOOMS.indexOf(ui.zoom);
+  ui.zoom = step === 0 ? 1 : ZOOMS[Math.max(0, Math.min(ZOOMS.length - 1, (at < 0 ? ZOOMS.indexOf(1) : at) + step))];
+  call('app.zoom', ui.zoom).catch(() => {});
+  keepUi();
+}
+
+// ---------------------------------------------------------------------------
+// The menu bar
+// ---------------------------------------------------------------------------
+const signedIn = () => !!contexts['onelakeStudio.signedIn'];
+// Sign in, Switch Account and Sign Out, as the tree's "..." menu offers them now.
+const accountEntries = () => entries('view/title', ctx({ view: VIEW })).flat()
+  .filter(e => e.group === '1_account' && e.command !== 'onelakeStudio.openSettings');
+
+const BAR = [
+  { title: 'File', groups: () => [
+    [{ title: 'New Query', key: 'Ctrl+N', command: 'onelakeStudio.newQuery' },
+     { title: 'Go to a Table, Column or Measure…', key: 'Ctrl+Alt+O', command: 'onelakeStudio.goTo', disabled: !signedIn() }],
+    [{ title: 'Close Tab', key: 'Ctrl+W', run: () => closeTab(current), disabled: !current },
+     { title: 'Close All Tabs', run: () => closeTabs([...tabs.keys()]), disabled: !tabs.size }],
+    [{ title: 'Settings', key: 'Ctrl+,', command: 'onelakeStudio.openSettings' }],
+    accountEntries(),
+    [{ title: 'Exit', key: 'Alt+F4', run: () => call('app.exit').catch(() => {}) }],
+  ] },
+  { title: 'View', groups: () => [
+    [{ title: 'Tree', key: 'Ctrl+B', checked: ui.tree, run: () => showTree(!ui.tree) }],
+    [{ title: 'Filter by Type…', command: 'onelakeStudio.filterTree', disabled: !signedIn() },
+     { title: 'Refresh', command: 'onelakeStudio.refresh', disabled: !signedIn() }],
+    [{ title: 'Zoom In', key: 'Ctrl+=', run: () => zoom(1) },
+     { title: 'Zoom Out', key: 'Ctrl+-', run: () => zoom(-1) },
+     { title: 'Reset Zoom', key: 'Ctrl+0', run: () => zoom(0) }],
+  ] },
+  { title: 'Help', groups: () => [
+    [{ title: 'Website', run: () => call('app.open', boot.homepage).catch(() => {}) },
+     { title: 'Install Agent Skill (Claude Code, GitHub Copilot)', command: 'onelakeStudio.installClaudeSkill' }],
+    [{ title: 'Logs', command: 'onelakeStudio.showLogs' },
+     { title: 'Read Log', command: 'onelakeStudio.showLog' },
+     { title: 'Performance', command: 'onelakeStudio.showPerformance' }],
+    [{ title: 'Check for Updates…', run: checkForUpdates }],
+    [{ title: 'About OneLake Studio', run: about }],
+  ] },
+];
+
+function drawBar() {
+  $('menubar').replaceChildren(...BAR.map((m, i) => h('button', {
+    role: 'menuitem', 'aria-haspopup': 'true',
+    onpointerdown: e => { if (e.button === 0) { if (menuOwner === i) closeMenu(); else openBarMenu(i); } },
+    onpointerenter: () => { if (menuOwner != null && menuOwner !== i) openBarMenu(i); },
+  }, m.title)));
+}
+
+function openBarMenu(i, byKey = false) {
+  i = (i + BAR.length) % BAR.length;
+  const r = $('menubar').children[i].getBoundingClientRect();
+  openMenu(r.left, r.bottom, BAR[i].groups(), runCommand, i);
+  if (byKey) highlight(menu.querySelector('.entry:not(.disabled)'));
+}
+
+// ---------------------------------------------------------------------------
+// About, and updates
+// ---------------------------------------------------------------------------
+function about() {
+  const text = [`Version ${boot.version}`, `Commit ${boot.commit}`, `Data ${boot.home}`, `License ${boot.license}`].join('\n');
+  return overlay(close => {
+    const ok = h('button', { class: 'primary', onclick: () => close(null) }, 'OK');
+    setTimeout(() => ok.focus());   // OK, as in any About box, not the first button
+    return h('div', { class: 'dialog about', role: 'dialog', 'aria-label': 'About OneLake Studio',
+      onkeydown: e => { if (e.key === 'Escape') close(null); } },
+    h('div', { class: 'about-head' }, h('span', { class: 'mark' }), h('span', { class: 'message' }, 'OneLake Studio')),
+    h('div', { class: 'detail' }, text),
+    h('div', { class: 'actions' },
+      h('button', { class: 'secondary', onclick: () => call('app.open', boot.homepage).catch(() => {}) }, 'Website'),
+      h('button', { class: 'secondary', onclick: () => navigator.clipboard.writeText(`OneLake Studio\n${text}`).catch(() => {}) }, 'Copy'),
+      ok));
+  });
+}
+
+function updateAvailable(u) {
+  statusItems.set('ols-update', {
+    id: 'ols-update', alignment: 2, priority: 1000, shown: true,
+    text: `$(arrow-circle-up) Update to ${u.latest}`,
+    tooltip: `OneLake Studio ${u.latest} is out. This is ${u.version}. Click to download it.`,
+    run: () => call('app.open', u.download).catch(() => {}),
+  });
+  drawStatus();
+}
+
+async function checkForUpdates() {
+  const checking = toast({ level: 'info', message: 'Checking for updates…', spinner: true });
+  try {
+    const u = await call('app.update');
+    checking.finish(null);
+    if (!u.newer) { toast({ level: 'info', message: `OneLake Studio ${u.version} is the latest.` }); return; }
+    updateAvailable(u);
+    toast({ level: 'info', message: `OneLake Studio ${u.latest} is out. This is ${u.version}.`, items: ['Download'] },
+      v => { if (v === 'Download') call('app.open', u.download).catch(() => {}); });
+  } catch (e) {
+    checking.finish(null);
+    toast({ level: 'warning', message: `Could not check for updates: ${e.message}` });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Keys: the same wherever the focus is, as a tab's page sends its keys here first (server.js, bridge)
+// ---------------------------------------------------------------------------
+const KEYS = {
+  'ctrl+n': () => runCommand('onelakeStudio.newQuery'),
+  'ctrl+alt+o': () => runCommand('onelakeStudio.goTo'),
+  'ctrl+w': () => { if (current) closeTab(current); },
+  'ctrl+tab': () => cycle(1),
+  'ctrl+pagedown': () => cycle(1),
+  'ctrl+shift+tab': () => cycle(-1),
+  'ctrl+pageup': () => cycle(-1),
+  'ctrl+b': () => showTree(!ui.tree),
+  'ctrl+,': () => runCommand('onelakeStudio.openSettings'),
+  'ctrl+=': () => zoom(1),
+  'ctrl++': () => zoom(1),
+  'ctrl+shift++': () => zoom(1),
+  'ctrl+-': () => zoom(-1),
+  'ctrl+0': () => zoom(0),
+  'f10': () => openBarMenu(0, true),
+  'alt+f': () => openBarMenu(0, true),
+  'alt+v': () => openBarMenu(1, true),
+  'alt+h': () => openBarMenu(2, true),
+};
+
+/** Is this key the window's? Then it's done here, and the page and the browser leave it. */
+window.olsKeydown = e => {
+  if (menuKey(e)) return true;
+  const chord = chordOf(e);
+  if (KEYS[chord]) { KEYS[chord](); return true; }
+  return BROWSER_KEYS.has(chord);
+};
+addEventListener('keydown', e => { if (window.olsKeydown(e)) e.preventDefault(); });
+addEventListener('contextmenu', e => {
+  const editable = e.target instanceof Element && e.target.closest('input, textarea');
+  if (!editable && !String(getSelection())) e.preventDefault();
 });

@@ -36,6 +36,10 @@ const cookieOf = req => {
 // What makes a page written for a webview run in an iframe here: acquireVsCodeApi, the messages to
 // and from the window, and the right-click and the keys the window has to know of. In the page's own
 // CSP, by its nonce.
+//
+// A key goes to the window's own handler first (the page is the window's origin, so it can call it):
+// a shortcut works wherever the focus is, and the browser's own (F5, Ctrl+P, Ctrl+F) never run. A
+// right-click outside the extension's menus shows nothing, unless it's on text to cut, copy or paste.
 function bridge(id, nonce) {
   const script = `(() => {
   const id = ${JSON.stringify(String(id))};
@@ -49,15 +53,19 @@ function bridge(id, nonce) {
   });
   addEventListener('contextmenu', e => {
     const at = e.target instanceof Element ? e.target.closest('[data-vscode-context]') : null;
-    if (!at) return;
+    if (!at) {
+      const editable = e.target instanceof Element && e.target.closest('input, textarea, [contenteditable=""], [contenteditable="true"]');
+      if (!editable && !String(getSelection())) e.preventDefault();
+      return;
+    }
     let context = {};
     try { context = JSON.parse(at.dataset.vscodeContext); } catch (_) {}
     e.preventDefault();
     send({ olsMenu: id, x: e.clientX, y: e.clientY, context });
   }, true);   // before the page's own handler, which may redraw what was clicked
   addEventListener('keydown', e => {
-    if (e.ctrlKey && e.altKey && e.key.toLowerCase() === 'o') { e.preventDefault(); send({ olsKey: 'ctrl+alt+o' }); }
-  });
+    try { if (parent.olsKeydown && parent.olsKeydown(e)) e.preventDefault(); } catch (_) {}
+  }, true);
   addEventListener('pointerdown', () => send({ olsFocus: id }), true);
 })();`;
   return `<script nonce="${nonce}">${script}</script>`;

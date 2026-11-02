@@ -13,7 +13,17 @@ button.icon:hover { background: var(--vscode-list-hoverBackground); }
 :focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
 input, select { font: inherit; color: var(--vscode-input-foreground); background: var(--vscode-input-background); border: 1px solid var(--vscode-input-border); padding: 4px 6px; border-radius: 2px; user-select: text; }
 
+#menubar { display: flex; flex: none; align-items: center; height: 30px; padding: 0 4px; background: var(--vscode-sideBar-background); border-bottom: 1px solid var(--vscode-panel-border); }
+#menubar button { background: none; border: 0; border-radius: 4px; padding: 3px 8px; cursor: default; }
+#menubar button:hover, #menubar button.open { background: var(--vscode-list-hoverBackground); }
+
 #main { flex: 1; display: flex; min-height: 0; }
+#activity { width: 48px; flex: none; display: flex; flex-direction: column; background: var(--vscode-sideBar-background); border-right: 1px solid var(--vscode-panel-border); }
+#activity button { width: 48px; height: 48px; display: flex; align-items: center; justify-content: center; background: none; border: 0; border-left: 2px solid transparent; color: var(--vscode-descriptionForeground); cursor: pointer; }
+#activity button:hover { color: var(--vscode-foreground); }
+#activity button.on { color: var(--vscode-foreground); border-left-color: var(--vscode-focusBorder); }
+.mark { display: inline-block; width: 24px; height: 24px; flex: none; background: currentColor;
+        -webkit-mask: url(/res/media/onelake.svg) center / 24px no-repeat; mask: url(/res/media/onelake.svg) center / 24px no-repeat; }
 #side { width: 300px; min-width: 160px; max-width: 70vw; display: flex; flex-direction: column; background: var(--vscode-sideBar-background); }
 #sash { width: 4px; cursor: col-resize; border-left: 1px solid var(--vscode-panel-border); flex: none; }
 #sash:hover, #sash.moving { background: var(--vscode-focusBorder); }
@@ -94,7 +104,14 @@ input, select { font: inherit; color: var(--vscode-input-foreground); background
 .pick.on .description { color: inherit; opacity: .8; }
 
 #menu { position: fixed; z-index: 50; min-width: 200px; max-width: 420px; padding: 4px; background: var(--vscode-menu-background); border: 1px solid var(--vscode-editorWidget-border); box-shadow: 0 2px 8px var(--vscode-widget-shadow); border-radius: 5px; }
-#menu .entry { padding: 3px 22px 3px 10px; border-radius: 3px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-#menu .entry:hover { background: var(--vscode-list-activeSelectionBackground); color: var(--vscode-list-activeSelectionForeground); }
+#menu .entry { display: flex; align-items: center; padding: 3px 14px 3px 2px; border-radius: 3px; cursor: pointer; white-space: nowrap; }
+#menu .entry.on { background: var(--vscode-list-activeSelectionBackground); color: var(--vscode-list-activeSelectionForeground); }
+#menu .entry.disabled { color: var(--vscode-disabledForeground); cursor: default; }
+#menu .entry .check { width: 22px; flex: none; text-align: center; font-size: 14px; }
+#menu .entry .title { flex: 1; overflow: hidden; text-overflow: ellipsis; }
+#menu .entry .key { margin-left: 28px; flex: none; color: var(--vscode-descriptionForeground); font-size: 12px; }
+#menu .entry.on .key { color: inherit; }
+.about-head { display: flex; align-items: center; gap: 10px; font-size: 16px; }
+.about .detail { user-select: text; }
 #menu hr { border: 0; border-top: 1px solid var(--vscode-editorWidget-border); margin: 4px 0; }
 #lost { position: fixed; left: 50%; top: 12px; transform: translateX(-50%); z-index: 60; background: var(--vscode-errorForeground); color: #fff; padding: 6px 14px; border-radius: 4px; }

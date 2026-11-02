@@ -3,8 +3,8 @@
 // main.js — the desktop app's Node process
 // =============================================================================
 // Starts src/extension.js with `vscode` pointing at vscode.js, serves the window (server.js), and says
-// on stdout where: one line of JSON, for the Tauri shell to navigate to. It ends when its stdin does,
-// which is when the shell does.
+// on stdout where: one line of JSON, for the Tauri shell to navigate to. Each line after that is something
+// only the shell can do: exit, zoom. It ends when its stdin does, which is when the shell does.
 // =============================================================================
 
 const { join, dirname } = require('node:path');
@@ -16,10 +16,19 @@ const { pathsOf, readSettings, keptIn } = require('../standalone');
 const { createMsalSession } = require('../msalsession');
 const { createTokenStore } = require('../tokenstore');
 const extension = require('../extension');
+const { checkUpdate } = require('./update');
 
 const { desktop } = vscode;
 
 const WELCOME = 'Browse OneLake with your Microsoft account. There is nothing to register.';
+
+// To the Tauri shell, after the first line: { do: 'exit' } or { do: 'zoom', factor }.
+const shell = request => process.stdout.write(`${JSON.stringify(request)}\n`);
+
+// The commit this build was packaged at, as the status bar's stamp reads it.
+function commitOf(extensionDir) {
+  try { return String(JSON.parse(readFileSync(join(extensionDir, 'webview', 'build.json'), 'utf8')).commit || 'unknown'); } catch (_) { return 'unknown'; }
+}
 
 async function main() {
   const extensionDir = join(__dirname, '..');
@@ -38,6 +47,9 @@ async function main() {
   // VS Code's settings where there are any, so the app reads the same tenant and the same cache, and
   // whatever is changed in the app's Settings tab over them.
   const appSettings = keptIn(join(home, 'app-settings.json'));
+  // How the window was left: the tree's width, whether it shows, the zoom. Not the page's localStorage:
+  // its origin's port is new each start.
+  const windowState = keptIn(join(home, 'window-state.json'));
   const base = readSettings(settingsFile);
   const setting = (key, fallback) => {
     const mine = appSettings.get(key);
@@ -96,6 +108,8 @@ async function main() {
       case 'boot':
         return {
           contributes: packageJSON.contributes, welcome: WELCOME, version: packageJSON.version,
+          commit: commitOf(extensionDir), home, homepage: packageJSON.homepage, license: packageJSON.license,
+          window: windowState.get('window', {}),
           contexts: desktop.contexts, views: [...desktop.views.keys()],
           statusItems: [...desktop.statusItems.values()].filter(i => i.shown).map(i => ({ id: i.id, alignment: i.alignment, priority: i.priority, text: i.text, tooltip: i.tooltip, command: i.command, shown: true })),
         };
@@ -136,6 +150,11 @@ async function main() {
         await appSettings.update(args[0], args[1]);
         desktop.settingChanged(args[0]);
         return null;
+      case 'window.set': await windowState.update('window', args[0]); return null;
+      case 'app.exit': shell({ do: 'exit' }); return null;
+      case 'app.zoom': shell({ do: 'zoom', factor: Number(args[0]) || 1 }); return null;
+      case 'app.open': return dialogs.openExternal(String(args[0]));
+      case 'app.update': return checkUpdate(packageJSON.version);
       default: throw new Error(`no method ${method}`);
     }
   }
@@ -163,6 +182,9 @@ async function main() {
 
   await extension.activate(context);
   process.stdout.write(`${JSON.stringify({ url: server.url(), home, log: logFile })}\n`);
+
+  // A newer release, said in the status bar. Offline, or anything else wrong: nothing is said.
+  checkUpdate(packageJSON.version).then(u => { if (u.newer) server.push({ t: 'update', ...u }); }).catch(() => {});
 
   let leaving = false;
   async function leave() {

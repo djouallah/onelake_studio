@@ -10,6 +10,8 @@ import http from "node:http";
 
 const require = createRequire(import.meta.url);
 const { when } = await import("../../desktop/ui/when.js");
+const { chordOf, BROWSER_KEYS } = await import("../../desktop/ui/keys.js");
+const { newer, checkUpdate, DOWNLOAD } = require("../../src/desktop/update.js");
 const { createServer, pageFor } = require("../../src/desktop/server.js");
 const vscode = require("../../src/desktop/vscode.js");
 const { filterOf } = require("../../src/desktop/dialogs.js");
@@ -184,4 +186,33 @@ test("a quick pick: the window's choice is its selection", () => {
 
 test("a save dialog's filters, as Windows writes them", () => {
   assert.equal(filterOf({ CSV: ["csv"], Excel: ["xlsx", "xls"] }), "CSV|*.csv|Excel|*.xlsx;*.xls");
+});
+
+test("keys: named as the window's shortcuts are, and the browser's own do nothing", () => {
+  assert.equal(chordOf({ ctrlKey: true, shiftKey: true, key: "Tab" }), "ctrl+shift+tab");
+  assert.equal(chordOf({ ctrlKey: true, key: "B" }), "ctrl+b");
+  assert.equal(chordOf({ ctrlKey: true, altKey: true, key: "o" }), "ctrl+alt+o");
+  assert.equal(chordOf({ key: "F5" }), "f5");
+  for (const k of ["f5", "ctrl+r", "ctrl+p", "ctrl+f", "alt+arrowleft"]) assert.ok(BROWSER_KEYS.has(k), k);
+  // What a tab's page does itself stays the page's: copy, select all, run, the grid's arrows.
+  for (const k of ["ctrl+c", "ctrl+shift+c", "ctrl+v", "ctrl+a", "ctrl+z", "ctrl+enter", "arrowdown"]) assert.ok(!BROWSER_KEYS.has(k), k);
+});
+
+test("a tab's keys go to the window first, and a right-click off the menus shows the browser's only on text", () => {
+  const page = pageFor("<head></head><body>", "1", true);
+  assert.match(page, /parent\.olsKeydown\(e\)/);
+  assert.match(page, /input, textarea/);
+});
+
+test("updates: the latest release's tag against this version", async () => {
+  assert.equal(newer("0.2.11", "0.2.10"), true);
+  assert.equal(newer("0.10.0", "0.9.9"), true);
+  assert.equal(newer("0.2.10", "0.2.10"), false);
+  assert.equal(newer("0.2.9", "0.2.10"), false);
+  const answering = (status, body) => async () => ({ ok: status === 200, status, json: async () => body });
+  assert.deepEqual(await checkUpdate("0.2.10", answering(200, { tag_name: "ext-v0.2.11" })),
+    { version: "0.2.10", latest: "0.2.11", newer: true, download: DOWNLOAD });
+  assert.equal((await checkUpdate("0.2.10", answering(200, { tag_name: "ext-v0.2.10" }))).newer, false);
+  await assert.rejects(checkUpdate("0.2.10", answering(403, {})), /403/);
+  await assert.rejects(checkUpdate("0.2.10", answering(200, { tag_name: "v1" })), /latest release is v1/);
 });

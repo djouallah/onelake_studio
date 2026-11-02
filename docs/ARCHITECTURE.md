@@ -547,6 +547,11 @@ command, menu, tab and message is the same code in both, and a change to the ext
 - **The window** ([`desktop/ui/`](../desktop/ui/)) draws what VS Code otherwise would: the tree, the tab strip, menus,
   dialogs, Go To, Settings and the status bar. What it shows comes from the extension and its `package.json`: the tree's
   nodes, the tabs' pages, the menus and their `when` clauses, the settings.
+- **It behaves as a Windows app does**: a menu bar (File, View, Help, About), the tree put away with Ctrl+B or its
+  button on the left, a tab's right-click (Close Others, Close All), Ctrl+Tab. A tab's page hands every key to the
+  window first, so a shortcut works wherever the focus is, and the browser's own (F5, Ctrl+P, Ctrl+F) do nothing.
+  The tree's width, whether it shows, and the zoom are kept in `window-state.json` in the data folder, not in the
+  page's storage, whose origin's port is new each start.
 - **A tab** is the same page as the extension's, in an iframe, with `acquireVsCodeApi` and VS Code's theme variables given
   to it in its own CSP.
 - **The connection** is an HTTP server on `127.0.0.1` ([`src/desktop/server.js`](../src/desktop/server.js)): messages out
@@ -560,7 +565,12 @@ command, menu, tab and message is the same code in both, and a change to the ext
   app read one cache. With none, `%LOCALAPPDATA%\OneLake Studio\data`. Settings are VS Code's where there are any, under
   what the app's Settings tab changes.
 - **The shell** is Tauri ([`desktop/src-tauri/`](../desktop/src-tauri/)): it shows a splash, starts the Node process, and
-  opens the page it names. Closing the window closes the process's stdin, and it ends. The installer is per user.
+  opens the page it names. Each line the process says after that is something only the shell can do: exit, zoom.
+  Closing the window closes the process's stdin, and it ends; if the process ends first, the splash comes back with
+  Restart. A second start shows the first window, and the window's size and place are kept. The installer is per user.
+- **Updates:** at start, and on Help › Check for Updates, the latest release's tag is compared with this version
+  ([`src/desktop/update.js`](../src/desktop/update.js)). A newer one is said in the status bar, with a link to the
+  installer. Offline, nothing is said. The app downloads and installs nothing itself.
 - **CI's `desktop` job** drives the window in Edge, which is what WebView2 is, on the real engine, then builds the
   installer, installs it and starts it once. Its screenshots and the installer are the run's artifacts.
 
