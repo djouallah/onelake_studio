@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.12
+
+- **Fixes:**
+  - The Windows app's installer closes the running app first, all of it, so an update no longer stops halfway on a file
+    in use and leaves no app behind.
+
 ## 0.2.11
 
 - **OneLake Studio is a Windows app too, with no VS Code.** The same tree, tabs, SQL, Explore and Pivot, in a window of its
