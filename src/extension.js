@@ -30,22 +30,23 @@ const { createSyncWorker } = require('./syncworker');
 const { createDeltaMirror } = require('./deltamirror');
 const { createDiagLog, outputLogOf } = require('./diaglog');
 const { createLogFile, logFileOf } = require('./logfile');
-const { createOneLake, walkCached } = require('./onelake');
+const { createOneLake } = require('./onelake');
 const { createSqlTables } = require('./sqltables');
 const { createConnectivity, probeOf } = require('./connectivity');
 const { useConnectivity, inTime } = require('./http');
 const { createSignIn } = require('./signin');
 const { createReadLog } = require('./readlog');
 const { createSettings } = require('./settings');
+const { createQueries, queryStem } = require('./queries');
+const { createModels } = require('./models');
 const { dirBytes, treeBytes, removeDir } = require('./diskuse');
 const { SKILL_MARKER, skillFile, writeSkill, refreshSkill } = require('./skill');
 const { createHostMethods } = require('./host');
-const { createFabric, modelFileName, modelAccountDir, modelCopyPath } = require('./fabric');
-const { readFromOneLake } = require('./sqlendpoint');
+const { createFabric, modelFileName, modelAccountDir } = require('./fabric');
 const { LakehouseTree, TREE_FILTERS } = require('./tree');
 const { firstClicks } = require('./doubleclick');
 const { webviewRoot } = require('./webview');
-const { fmtBytes, sqlKind, sqlName, sqlNameOf, fileSqlName, sqlPart, displayName, MODEL_CATALOG, modelSqlName, stripBom, DFS_ORIGIN } = require('./names');
+const { fmtBytes, sqlName, sqlNameOf, fileSqlName, sqlPart, modelSqlName, DFS_ORIGIN } = require('./names');
 const { createAgent } = require('./agent');
 const { serveXmla } = require('./xmla/server');
 const { openInExcel } = require('./xmla/excel');
@@ -695,7 +696,7 @@ async function activate(context) {
 }
 
 async function activateInner(context) {
-  const queriesRoot = () => join(os.homedir(), 'OneLakeStudio', 'queries');
+  const queriesRoot = join(os.homedir(), 'OneLakeStudio', 'queries');
 
   // Every OneLake request the extension makes goes through here, on the VS Code token,
   // and each one is a line in the read log.
@@ -736,6 +737,12 @@ async function activateInner(context) {
   let sessionAsked = false;
   // The saved queries' account (queriesFolder): its own folder, by its sign-in name.
   let queryAccount = (knownAccount() || {}).queries || null;
+  const { queriesFolder, adoptLooseQueries, listQueries, queryPath, saveQuery: keepQuery } = createQueries({
+    root: () => queriesRoot, account: () => queryAccount,
+    log: line => out && out.appendLine(line),
+    onChange: () => tree.queriesChanged(),
+  });
+  saveQuery = keepQuery;
   fileCacheRoot = fileCacheRootFor(context);
   fileCacheAccount = storeAccount;
   onelake = createOneLake({
@@ -772,34 +779,18 @@ async function activateInner(context) {
                               log: line => out && out.appendLine(line),
                               onChange: () => { if (engine) engine.catalogChanged(); } });
   semviews.useAccount(storeAccount);
-  // A model's local copy is kept per account (fabric.js modelCopyPath). The copies from before
-  // that move once; opening a model waits for it, so it finds its copy where it now is.
-  let modelsAdopted = Promise.resolve(0);
-  // What Go To can name, kept for a moment (completionNames below). Here, since an account moving clears it.
-  let namesKept = null;
   // A model's local copy is data, so it is in the cache folder. Where an older version kept them, the
   // whole of this account's folder moves, and each view is pointed at its new place.
   const oldModels = join(os.homedir(), 'OneLakeStudio', 'semantic-models');
-  function adoptModels() {
-    modelsAdopted = (async () => {
-      const here = modelAccountDir(modelsFolder(), queryAccount), before = modelAccountDir(oldModels, queryAccount);
-      let moved = await semviews.adoptCopies(oldModels, before);
-      if (existsSync(before)) {
-        await fsp.cp(before, here, { recursive: true, force: false });
-        moved += await semviews.adoptCopies(before, here) + 1;
-        await fsp.rm(before, { recursive: true, force: true });
-        await fsp.rmdir(oldModels).catch(() => {});
-      }
-      if (out) out.appendLine(moved ? `move: model copies: moved to ${here}, with ${moved - 1} views pointed there` : 'move: model copies: nothing to move');
-      return moved;
-    })().catch(e => {
-      if (out) out.appendLine(`move: the local copies of models could not be moved, and are tried again next time — ${e.message}`);
-      return 0;
-    });
-    return modelsAdopted;
-  }
+  const { adoptModels, adopted: modelsAdopted, modelPath, modelKey, cachedModel, unsupportedModels, unsupportedNote,
+          fetchModel, walkTables, openSqlModel: openModelForQuery, completionNames, forgetNames } = createModels({
+    onelake, fabric, semviews, modules: () => agent.modules(), modelsFolder, account: () => queryAccount, oldModels,
+    notify: message => vscode.window.showInformationMessage(message),
+    onModelChanged: n => tree.modelChanged(n),
+    log: line => out && out.appendLine(line),
+  });
+  openSqlModel = openModelForQuery;
   adoptModels();
-
   // Called wherever the identity may have moved; a no-op when it has not.
   // One at a time: two callers at once could both see the old account, or one return while
   // the other was still moving the store.
@@ -824,7 +815,7 @@ async function activateInner(context) {
     importKept(context, key, jsonStoreOf(key), hostCacheOf(key));
     syncWorker.reset();
     if (modelData) modelData.reset();
-    namesKept = null;
+    forgetNames();
     // Workspace and item GUIDs belong to the account's tenant: listed again for the new one.
     fabric.reset();
     sqlTables.forget();
@@ -1017,42 +1008,7 @@ async function activateInner(context) {
     return true;
   }
 
-  // Saved queries: one .sql file each in ~/OneLakeStudio/queries/<account>/, beside the
-  // downloaded models. They name their tables lakehouse.workspace.item.schema.table — names
-  // that mean something in one tenant only — so each account (and tenant, when the
-  // onelakeStudio.tenantId setting picks one) has its own, and signing in elsewhere shows
-  // that account's. The tree lists them, and each opens in the panel's SQL box.
-  // With no account known, there are none.
-  function queriesFolder() {
-    return queryAccount ? join(queriesRoot(), queryAccount) : null;
-  }
-  // Queries saved before they were kept per account sit loose in the root: they go to the
-  // first account signed in, the one most likely to have saved them. Never over one there.
-  async function adoptLooseQueries() {
-    const dir = queriesFolder();
-    if (!dir) return;
-    const loose = (await fsp.readdir(queriesRoot(), { withFileTypes: true }).catch(() => []))
-      .filter(e => e.isFile() && /\.sql$/i.test(e.name));
-    if (!loose.length) return;
-    await fsp.mkdir(dir, { recursive: true });
-    for (const e of loose) {
-      if (existsSync(join(dir, e.name))) continue;
-      await fsp.rename(join(queriesRoot(), e.name), join(dir, e.name)).catch(() => {});
-    }
-    if (out) out.appendLine(`saved queries: ${loose.length} moved into ${dir}`);
-  }
   adoptLooseQueries().then(() => tree.queriesChanged(), () => {});
-  async function listQueries() {
-    const dir = queriesFolder();
-    if (!dir) return [];
-    const files = await fsp.readdir(dir).catch(() => []);
-    return files.filter(f => /\.sql$/i.test(f))
-      .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }))
-      .map(f => ({ name: f.replace(/\.sql$/i, ''), path: join(dir, f) }));
-  }
-  // A name as a file name: what Windows refuses becomes _, and the .sql is ours to add.
-  const queryStem = name => String(name).trim().replace(/[\\/:*?"<>|]+/g, '_').replace(/\.sql$/i, '');
-  const queryPath = name => join(queriesFolder(), `${queryStem(name)}.sql`);
   const askQueryName = (title, value) => vscode.window.showInputBox({
     title, value, prompt: `Kept in ${queriesFolder()}`,
     validateInput: v => (queryStem(v) ? null : 'A query needs a name'),
@@ -1065,30 +1021,6 @@ async function activateInner(context) {
       { modal: true }, 'Replace');
     return pick === 'Replace';
   }
-  // A new query kept under Queries as the next free "Query N", with nothing asked (Rename in
-  // the tree names it). Answers { name, path }.
-  async function saveNewQuery(sql) {
-    if (!queriesFolder()) throw new Error('sign in to save queries — they are kept per account');
-    await fsp.mkdir(queriesFolder(), { recursive: true });
-    const taken = new Set((await listQueries()).map(q => q.name.toLowerCase()));
-    let n = 1;
-    while (taken.has(`query ${n}`)) n++;
-    const stem = `Query ${n}`;
-    const path = queryPath(stem);
-    await fsp.writeFile(path, String(sql ?? ''), 'utf8');
-    tree.queriesChanged();
-    return { name: stem, path };
-  }
-
-  saveQuery = async ({ name, sql }) => {
-    if (!name || !queriesFolder()) return saveNewQuery(sql);
-    const path = queryPath(name);
-    await fsp.mkdir(queriesFolder(), { recursive: true });
-    await fsp.writeFile(path, sql, 'utf8');
-    tree.queriesChanged();
-    return { name, path };
-  };
-
   // Go to: every table, column, semantic model and measure the cache holds, in one search. A
   // pick opens it (a column or a measure: its table or model), or, with the panel open, its
   // button puts its SQL name at the SQL box's cursor.
@@ -1146,54 +1078,7 @@ async function activateInner(context) {
     qp.onDidHide(() => qp.dispose());
   }
 
-  // What Go to can name, from the cache alone (cachedSqlTables, below): every cached table
-  // with its columns, every semantic model, and the measures and columns of a model kept as a
-  // view (its local file; one in OneLake gives its name only). Read again after a minute.
-  function completionNames() {
-    if (namesKept && Date.now() - namesKept.at < 60_000) return namesKept.value;
-    const value = (async () => {
-      const found = cachedSqlTables ? await cachedSqlTables() : [];
-      const tables = found.filter(f => f.kind !== MODEL_CATALOG && f.table).map(f => ({ ...f, columns: f.columns || [] }));
-      const models = new Map();
-      for (const f of found) {
-        if (f.kind !== MODEL_CATALOG) continue;
-        const key = `${f.workspace}|${f.model}`.toLowerCase();
-        const m = models.get(key);
-        if (m) m.modelId = m.modelId || f.modelId;
-        else models.set(key, { workspace: f.workspace, model: f.model, modelId: f.modelId, measures: [], columns: [] });
-      }
-      for (const v of await semviews.list().catch(() => [])) {
-        const m = v.schema && v.path && models.get(`${v.schema}|${v.name}`.toLowerCase());
-        if (!m) continue;
-        try {
-          const { semantic, compiler } = await agent.modules();
-          const bim = semantic.bimOf(v.path, await fsp.readFile(v.path, 'utf8'), compiler);
-          for (const t of (bim.model || bim).tables || []) {
-            for (const x of t.measures || []) m.measures.push(x.name);
-            for (const c of t.columns || []) if (!c.isHidden) m.columns.push({ table: t.name, name: c.name });
-          }
-        } catch (_) { /* a file in OneLake, or one that cannot be read: its name alone */ }
-      }
-      return { tables, models: [...models.values()] };
-    })();
-    namesKept = { at: Date.now(), value };
-    value.catch(() => { namesKept = null; });
-    return value;
-  }
-
-  const modelPath = n => modelCopyPath(modelsFolder(), queryAccount, n.workspace, n.model);
-  modelsAdopted.then(moved => { if (moved) tree.redraw(); });
-
-  // A model's local copy (fetchModel), when there is one: the tree's check mark.
-  const modelKey = n => `${n.workspace}|${n.modelId}`;
-  const cachedModel = n => (existsSync(modelPath(n)) ? modelPath(n) : null);
-
-  // Models a click found it cannot open (Import, DirectQuery, Direct Lake over a SQL endpoint),
-  // for this session: key -> what kind it is. The tree marks them,
-  // and a second click says so again without reading the definition from Fabric again.
-  const unsupportedModels = new Map();
-  const unsupportedNote = (n, mode) =>
-    `${n.model} is ${mode}. OneLake Studio opens Direct Lake models whose tables it can find in OneLake.`;
+  modelsAdopted().then(moved => { if (moved) tree.redraw(); });
 
   // The command line (cli.mjs) rings here: its questions are answered by THIS extension —
   // its sign-in, its cache, its engine — so an agent in a terminal reads what the tree and
@@ -1342,58 +1227,6 @@ async function activateInner(context) {
     }
   };
 
-  // A semantic model, opened from the tree or named by a query: its definition (Fabric's
-  // getDefinition, TMSL), kept as a local copy in Apache Ossie — modelPath(n), ~/OneLakeStudio/
-  // semantic-models/<account>/<workspace>/<model>.yaml — and read from there after. Nothing is written to OneLake, so a
-  // user who may only read the workspace opens and queries a model all the same; Export to
-  // Fabric is the one write (exportExplore). A model over a SQL endpoint is kept as one over the
-  // item behind it (sqlendpoint.js). A model with no tables in OneLake is refused, and nothing is
-  // kept. `fresh` reads Fabric again, over the local copy.
-  // `${path}|${fresh}`, lower-cased -> Promise<{ path, text }>: a fresh read never joins one that
-  // may answer from the local copy, and one account's never joins another's.
-  const fetching = new Map();
-  function fetchModel(n, { fresh = false, say = () => {} } = {}) {
-    const path = modelPath(n);
-    const key = `${path}|${!!fresh}`.toLowerCase();
-    if (!fetching.has(key)) fetching.set(key, (async () => {
-      await modelsAdopted;
-      if (!fresh) {
-        const kept = await fsp.readFile(path, 'utf8').catch(() => null);
-        if (kept != null) return { path, text: kept };
-      }
-      say('reading its definition from Fabric…');
-      const bim = await fabric.getBim(n.workspace, n.modelId);
-      let doc;
-      try { doc = JSON.parse(stripBom(Buffer.from(bim).toString('utf8'))); }
-      catch (e) { throw new Error(`its definition is not TMSL: ${e.message}`); }
-      const { semantic, compiler } = await agent.modules();
-      const read = await readFromOneLake(doc, n.workspace, { fabric, onelake });
-      if (read.refused || !semantic.lakehousesOf(doc).length) {
-        const mode = read.refused || semantic.storageMode(doc);
-        if (read.why && out) out.appendLine(`${n.workspace}/${n.model}: ${read.why}`);
-        unsupportedModels.set(modelKey(n), mode);
-        tree.modelChanged(n);
-        throw Object.assign(new Error(unsupportedNote(n, mode)), { unsupported: true });
-      }
-      unsupportedModels.delete(modelKey(n));
-      for (const note of read.notes) {
-        if (out) out.appendLine(`${n.workspace}/${n.model}: ${note}`);
-        vscode.window.showInformationMessage(`${n.model}: ${note}`);
-      }
-      // lineWidth 0: a long DAX expression stays on its lines, not folded to the page's width.
-      const text = compiler.stringifyYaml(compiler.tmslToOssie(doc, n.model), { lineWidth: 0 });
-      await fsp.mkdir(dirname(path), { recursive: true });
-      // Whole or not at all: this file is what later opens trust, with nothing to say it was cut short.
-      const partial = `${path}.${process.pid}.tmp`;
-      await fsp.writeFile(partial, text);
-      await fsp.rename(partial, path).catch(async e => { await fsp.rm(partial, { force: true }).catch(() => {}); throw e; });
-      if (out) out.appendLine(`downloaded ${n.workspace}/${n.model} -> ${path} (${fmtBytes(Buffer.byteLength(text))})`);
-      tree.modelChanged(n);
-      return { path, text };
-    })().finally(() => fetching.delete(key)));
-    return fetching.get(key);
-  }
-
   // The one OneLake writer (onelakewrite.js): Export to Fabric's .yaml, and nothing else.
   const writer = createOneLakeWriter({ getToken: hostToken });
 
@@ -1453,67 +1286,13 @@ async function activateInner(context) {
     }
   }
 
-  const same = (a, b) => String(a).toLowerCase() === String(b).toLowerCase();
-
-  // Every table the store has seen, with its columns if they were read, as its SQL name's parts: a
-  // walk of the cache alone (the command line's `find` walks it the same way).
-  async function walkTables() {
-    const { paths } = await agent.modules();
-    const found = [];
-    const all = await walkCached(onelake.cached);
-    for (const w of (all && all.workspaces) || []) {
-      // Its semantic models, as the Fabric listing has them: semanticmodel.ws.model.
-      for (const m of w.models) found.push({ kind: MODEL_CATALOG, workspace: w.name, model: m.name, modelId: m.id });
-      for (const it of w.items) {
-        const kind = sqlKind(it.kind);
-        if (!kind) continue;
-        for (const t of it.tables || []) {
-          if (t.meta && t.meta.notValid) continue;
-          const fields = t.meta && t.meta.schemaFields;
-          // itemDir: the item as the tree knows it (data.Lakehouse), to open the table there.
-          const named = { kind, workspace: w.name, item: displayName(it.name), itemDir: it.name, schema: t.schema || 'dbo', table: t.table };
-          if (!fields || !fields.length) { found.push(named); continue; }
-          found.push(t.meta.empty
-            ? { ...named, emptySql: paths.emptyTableSql(fields) }
-            : { ...named, columns: fields.map(f => ({ name: f.name, type: paths.icebergToDuckType(f.type) })) });
-        }
-      }
-    }
-    // And every model kept as a view: Fabric's, or a model file opened from a lakehouse's Files/.
-    for (const v of await semviews.list()) {
-      if (v.schema) found.push({ kind: MODEL_CATALOG, workspace: v.schema, model: v.name });
-    }
-    return found;
-  }
   cachedSqlTables = walkTables;
   onStoreCleared = () => {
     onelake.forgetKept();
-    namesKept = null;
+    forgetNames();
     if (engine) engine.catalogChanged();
     postLive({ type: 'reset' });
     tree.redraw();
-  };
-
-  // A semantic model a query names that no view has yet: found in its workspace's model
-  // listing (the cache's, else Fabric's), its local copy kept (fetchModel), and kept as a view.
-  // Answers the view as semviews keeps it, with its text: { name, schema, path, text }.
-  openSqlModel = async ({ workspace, model }) => {
-    const full = modelSqlName(workspace, model);
-    const workspaces = await onelake.workspaces().catch(() => []);
-    const ws = workspaces.find(w => same(w, workspace)) || String(workspace);
-    const pick = list => (list || []).find(m => same(m.name, model));
-    const kept = await onelake.cached.models(ws);
-    let hit = pick(kept && kept.value);
-    // Not in the kept listing is not an answer yet: a model made since. Past the cache.
-    if (!hit) {
-      hit = pick(await onelake.models(ws, { fresh: true }).catch(e => {
-        throw new Error(`${full}: the semantic models of ${ws} could not be listed — ${e.message}`);
-      }));
-    }
-    if (!hit) throw new Error(`${full}: there is no semantic model ${model} in workspace ${ws}`);
-    const { path } = await fetchModel({ workspace: ws, model: hit.name, modelId: hit.id });
-    if (out) out.appendLine(`opened ${full} for a query, from ${path}`);
-    return semviews.put(hit.name, path, ws);
   };
 
   // Export to Fabric, from Explore: the model's Explore as a Fabric app (exportapp.js), its
