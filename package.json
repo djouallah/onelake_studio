@@ -562,6 +562,14 @@
             "order": 2,
             "markdownDescription": "How old a table's Iceberg metadata (its snapshot, schema and stats, from the catalog's slowest call) may be before it is refreshed, in hours. A table you have opened before opens from disk without asking the catalog; past this age it is refreshed behind you and a new snapshot shows one open later. **Refresh** on its lakehouse (or the whole tree) re-reads it at once."
           },
+          "onelakeStudio.keepUsedTablesGB": {
+            "type": "number",
+            "default": 10,
+            "minimum": 0,
+            "scope": "machine",
+            "order": 3,
+            "markdownDescription": "A table statements keep reading (3 times in 14 days) is kept up to date, and a new snapshot of it is read whole in the background when nothing else is running, so it works offline, every column. This is how much may be kept that way, and may come down in a day, and it is never more than half of `#onelakeStudio.diskCacheMaxGB#`. A bigger table is not downloaded. `0` turns the download off, and its metadata is still kept up to date."
+          },
           "onelakeStudio.prefetchMetadata": {
             "type": "boolean",
             "default": true,

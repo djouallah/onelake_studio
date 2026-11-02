@@ -627,6 +627,7 @@ function ensureEngine(context, { readme } = {}) {
       checkConnectivity: () => connectivity.check(),
       onRowsRead: location => { if (onelake) onelake.rowsRead(location).catch(() => {}); },
       onFileRead: url => { if (onelake) onelake.fileRead(url).catch(() => {}); },
+      onTablesUsed: list => { if (onelake) onelake.usage.note(list); },
       catalogTables: () => (cachedSqlTables ? cachedSqlTables() : Promise.resolve([])),
     });
   } catch (e) {
@@ -1106,6 +1107,15 @@ async function activateInner(context) {
     set: list => context.globalState.update(favKey(), [...new Set(list)].sort((a, b) => a.localeCompare(b))),
   };
 
+  // How much of the tables in use may be kept on this machine with nobody asking: never more than half
+  // the disk cache, as it evicts the oldest first and what someone read comes before this.
+  const keepLimitBytes = () => {
+    const config = vscode.workspace.getConfiguration('onelakeStudio');
+    const keep = Math.max(0, Number(config.get('keepUsedTablesGB', 10)) || 0);
+    const disk = Math.max(0, Number(config.get('diskCacheMaxGB', 64)) || 0);
+    return Math.min(keep, disk / 2) * 1e9;
+  };
+
   // Keeps the catalog current behind everything (syncworker.js). Started once the session is known.
   const syncOwner = randomBytes(8).toString('hex');
   const syncWorker = createSyncWorker({
@@ -1117,6 +1127,12 @@ async function activateInner(context) {
     isOffline: () => connectivity.offline(),
     lease: () => {
       try { return catalogFileFor(context, storeAccount).lease(syncOwner, 90_000); } catch (_) { return false; }
+    },
+    keep: {
+      limitBytes: keepLimitBytes,
+      ready: () => !!engine && !resetting,
+      othersRunning: () => (engine ? engine.othersRunning() : Promise.resolve(false)),
+      read: (name, o) => (engine ? engine.keepTable(name, o) : Promise.reject(Object.assign(new Error('no engine'), { cancelled: true }))),
     },
     log: line => out && out.appendLine(line),
   });
@@ -1159,6 +1175,7 @@ async function activateInner(context) {
     cachedModel: n => cachedModel(n),
     queries: { list: () => listQueries() },
     unsupportedModel: n => unsupportedModels.get(modelKey(n)) || null,
+    keepLimitBytes,
     // A listing failure becomes an error NODE, but the stack behind it goes here.
     log: m => out && out.appendLine(m),
   });

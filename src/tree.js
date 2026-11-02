@@ -56,10 +56,13 @@ class LakehouseTree {
    * @param {() => string|null} [deps.filter]  the one type to show (TREE_FILTERS' `only`), if any
    * @param {() => void} [deps.onAsked]  VS Code asked for its top level
    * @param {() => void} [deps.onDrawn]  its top level was just answered, with what it holds
+   * @param {() => number} [deps.keepLimitBytes]  how much of the tables in use is kept with nobody asking
    */
   constructor({ onelake, fabric = null, hasFabric = async () => false, isSignedIn, log = () => {},
                 favorites = { get: () => [] }, cachedModel = () => null, unsupportedModel = () => null,
-                queries = { list: async () => [] }, filter = () => null, onAsked = () => {}, onDrawn = () => {} }) {
+                queries = { list: async () => [] }, filter = () => null, onAsked = () => {}, onDrawn = () => {},
+                keepLimitBytes = () => 0 }) {
+    this.keepLimitBytes = keepLimitBytes;
     this.onAsked = onAsked;
     this.onDrawn = onDrawn;
     this.queries = queries;
@@ -102,6 +105,29 @@ class LakehouseTree {
 
   _tableNode(t) {
     return this._nodes.get(`table|${t.workspace}|${t.item}|${t.schema || ''}|${t.table}`);
+  }
+
+  // What the pointer resting on a table says. Asked for then, as a lakehouse can draw thousands.
+  async resolveTreeItem(item, n) {
+    if (n.kind === 'table' && !n.notValid) item.tooltip = await this._tableTooltip(n);
+    return item;
+  }
+
+  async _tableTooltip(n) {
+    const lines = [sqlNameOrNull(n) || (n.schema ? `${n.schema}.${n.table}` : n.table), n.cached
+      ? 'Read on this machine. What was read works offline; a column or a file never read needs OneLake.'
+      : 'Not read on this machine yet, so its rows need OneLake.'];
+    const t = { workspace: n.workspace, item: n.item, schema: n.schema, table: n.table };
+    const reads = this.onelake.usage.readsInUse(t);
+    if (!reads) return lines.join('\n');
+    lines.push(`Read ${reads} times in the last 14 days, so it is kept up to date.`);
+    const meta = (await this.onelake.cached.table(t, t).catch(() => null))?.value;
+    const kept = meta && meta.metadataLocation ? this.onelake.usage.kept(t, meta.metadataLocation) : null;
+    const size = Number(meta && meta.stats && meta.stats.totalFilesSize) || 0;
+    const limit = this.keepLimitBytes();
+    if (kept && !kept.error) lines.push('Read whole at its current snapshot, every column.');
+    else if (limit > 0 && size > limit) lines.push(`${fmtBytes(size)} is over the ${fmtBytes(limit)} kept automatically, so only what was read is on this machine.`);
+    return lines.join('\n');
   }
 
   _cachedChanged(n) {
@@ -275,9 +301,7 @@ class LakehouseTree {
         item.iconPath = n.cached
           ? new vscode.ThemeIcon('pass-filled', new vscode.ThemeColor('testing.iconPassed'))
           : new vscode.ThemeIcon('cloud');
-        item.tooltip = [sqlNameOrNull(n) || (n.schema ? `${n.schema}.${n.table}` : n.table), n.cached
-          ? 'Read on this machine. What was read works offline; a column or a file never read needs OneLake.'
-          : 'Not read on this machine yet, so its rows need OneLake.'].join('\n');
+        // Left to resolveTreeItem: what it says comes from the catalog.
         break;
       case 'dir':
         item.iconPath = new vscode.ThemeIcon('folder');

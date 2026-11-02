@@ -774,3 +774,38 @@ test("only a OneLake metadata.json is read with iceberg_scan", () => {
     "abfss://ws@onelake.dfs.fabric.microsoft.com/lh/Tables/t/data/part.parquet",
   ]) assert.equal(isOneLakeMetadata(bad), false, String(bad));
 });
+
+test("a statement that reads a table says it was used, and a table being kept doesn't", async t => {
+  const extDir = await mkdtemp(join(tmpdir(), "onelake-ext-"));
+  const used = [];
+  const listed = ref => ({ workspace: ref.workspace, item: `${ref.item}.Lakehouse`, schema: ref.schema, table: ref.table });
+  const engine = createEngineHost({
+    extensionDir: extDir, bundledExtensions: existsSync(BUNDLED) ? BUNDLED : null,
+    resolveTable: async ref => ({ ...ref, listed: listed(ref), emptySql: "SELECT 1 AS a" }),
+    onTablesUsed: list => used.push(list.map(u => `${u.item}/${u.table}`)),
+  });
+  t.after(async () => { await engine.close(); await rm(extDir, { recursive: true, force: true }).catch(() => {}); });
+  const name = "lakehouse.w.i.dbo.t";
+
+  await engine.call("query", [`SELECT * FROM ${name}`]);
+  assert.deepEqual(used, [["i.Lakehouse/t"]]);
+  await engine.call("query", [`SELECT * FROM ${name}`]);
+  assert.equal(used.length, 2, "every statement, not once per table");
+  await engine.call("query", [`SELECT * FROM ${name} JOIN lakehouse.w.i.dbo.u USING (a)`]);
+  assert.deepEqual(used[2], ["i.Lakehouse/t", "i.Lakehouse/u"]);
+  used.length = 0;
+  await engine.call("query", [`DESCRIBE ${name}`]);
+  await engine.call("query", [`EXPLAIN SELECT * FROM ${name}`]);
+  await assert.rejects(engine.call("query", [`SELECT nope FROM ${name}`]));
+  assert.deepEqual(used, [], "naming it reads nothing, and a failure read nothing");
+  await engine.call("query", [`EXPLAIN ANALYZE SELECT * FROM ${name}`]);
+  assert.equal(used.length, 1, "a Plan runs it");
+  used.length = 0;
+
+  const kept = await engine.keepTable(name);
+  assert.match(JSON.stringify(kept.rows), /Total Time|QUERY PROFILING|Query Profiling/i, "it ran, and what came back is a plan");
+  assert.deepEqual(used, [], "or a table would keep itself in use for ever");
+  const gone = new AbortController();
+  gone.abort();
+  await assert.rejects(engine.keepTable(name, { signal: gone.signal }), /nobody is waiting/);
+});

@@ -13,7 +13,7 @@ import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 
 const require = createRequire(import.meta.url);
-const { createEngineHost } = require("../../src/engine-host.js");
+const { createEngineHost, KEEP_MARK } = require("../../src/engine-host.js");
 const { createRemote, stopServer, openClient, pipePath, LOST } = require("../../src/engine-client.js");
 const { createCatalogFile } = require("../../src/catalogfile.js");
 const { createLogFile, logFileOf } = require("../../src/logfile.js");
@@ -489,4 +489,27 @@ test("stop ends the server for every window, and with no window left it goes by 
   await c.close();
   await sleep(2500);
   assert.match(two.log(), /stopping: no window left/);
+});
+
+test("the server says whether anyone is at work, from any window, a table being kept aside", async t => {
+  const { open } = await setup(t);
+  const a = open(), b = open();
+  await a.call("query", ["SELECT 1"]);
+  await b.call("query", ["SELECT 1"]);
+  assert.equal(await a.othersRunning(), false);
+
+  const stop = new AbortController();
+  const kept = a.agentQuery(LONG, { signal: stop.signal, used: false, mark: KEEP_MARK }).catch(e => e);
+  await sleep(1000);
+  assert.equal(await a.othersRunning(), false, "a table being kept isn't someone at work");
+  assert.equal(await b.othersRunning(), false);
+
+  const tab = b.forTab();
+  const running = tab.call("query", [LONG]).catch(() => {});
+  await sleep(1000);
+  assert.equal(await a.othersRunning(), true, "another window's statement");
+  await tab.call("cancel");
+  await running;
+  stop.abort();
+  assert.match(String((await kept).message), /interrupt/i, "the signal stops it");
 });

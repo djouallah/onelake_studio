@@ -159,6 +159,9 @@ function proxySettings(proxyUrl) {
 
 const FILE_CACHE_TRIM_MS = 60 * 60 * 1000;
 const TABLES_AT_ONCE = 4;
+// In front of a statement that keeps a table in use: what Logs shows, and how the server tells it from
+// anyone's own. No % or _, as it goes in a LIKE.
+const KEEP_MARK = '/* OneLake Studio keeps this table on this machine, as it is in use */ ';
 const LIST_BATCH = 200;
 
 // Whether a statement's tables read the same as they did: when they were read from OneLake isn't that.
@@ -208,7 +211,8 @@ async function trimFileCache(dir, maxBytes, onWarn) {
 //
 // `checkConnectivity` asks whether the internet is still there, once a read has failed. `onRowsRead`
 // gets a table's metadata location when a statement has read its rows, and `onFileRead` a file's
-// abfss:// URL when a statement has read that.
+// abfss:// URL when a statement has read that. `onTablesUsed` gets the tables each such statement
+// read, as listings name them, however many times.
 //
 // The shared engine splits this in two. `serve: { token }` is the
 // server's side (engine-server.js): the boot below, then Quack listening with that token. `remote`
@@ -220,7 +224,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
                             httpProxy = '', bundledExtensions = null,
                             fileCacheDir = null, fileCacheMaxBytes = 0, resolveTable = null, resolveFile = null,
                             catalogTables = null, offlineReason = () => null, checkConnectivity = null,
-                            onRowsRead = () => {}, onFileRead = () => {}, serve = null, remote = null } = {}) {
+                            onRowsRead = () => {}, onFileRead = () => {}, onTablesUsed = () => {}, serve = null, remote = null } = {}) {
   let instance = null;
   let served = null;            // serve: the address Quack answers on
   // The connection for the host's OWN statements — the secret, extension loading. Page
@@ -681,7 +685,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
       throw new Error(`OneLake gave ${sqlName(r)} no readable metadata location` +
         (r.metadataLocation ? ` (${String(r.metadataLocation).slice(0, 120)})` : ''));
     }
-    return { name: sqlName(r), path: [r.kind, r.workspace, r.item, r.schema || 'dbo'], source, mount, location: r.emptySql == null ? r.metadataLocation : null, logMoves: r.logMoves, at: r.at };
+    return { name: sqlName(r), path: [r.kind, r.workspace, r.item, r.schema || 'dbo'], source, mount, location: r.emptySql == null ? r.metadataLocation : null, logMoves: r.logMoves, at: r.at, listed: r.listed };
   }
   async function makeView({ name, path: parts, source, mount }) {
     if (/\bdelta_scan\(/.test(source) && !capabilities.delta) {
@@ -868,8 +872,12 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
   const READS_NO_ROWS = /^(?:\s|--[^\n]*\n|\/\*[\s\S]*?\*\/)*(?:describe|desc|explain(?!\s*(?:\(\s*)?analy[sz]e))\b/i;
   // Said once per location: every statement passes here.
   const rowsSaid = new Set();
-  function rowsRead(sql, tables, statement) {
+  function rowsRead(sql, tables, statement, used) {
     if (READS_NO_ROWS.test(sql)) return;
+    if (used) {
+      const list = tables.map(t => t.listed).filter(Boolean);
+      if (list.length) { try { onTablesUsed(list); } catch (_) {} }
+    }
     for (const { location } of tables) {
       if (!location || rowsSaid.has(location)) continue;
       rowsSaid.add(location);
@@ -884,8 +892,9 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
   // catalogStatement). Its tables come from the cache, and are read again if it fails on them
   // (store.js revalidate). `canRetry`: false once running it again would repeat what it sent.
   // `fresh` asks OneLake for them first. `seen` hears when the oldest of them was read from OneLake,
-  // which is how old the answer may be: a table's metadata is trusted for a day by default.
-  async function withTables(sql, run, canRetry = () => true, { fresh = false, seen = () => {} } = {}) {
+  // which is how old the answer may be: a table's metadata is trusted for a day by default. `used`:
+  // whether this is someone reading these tables, which is what says they are in use.
+  async function withTables(sql, run, canRetry = () => true, { fresh = false, seen = () => {}, used = true } = {}) {
     if (readsCatalog(sql)) await syncCatalog();
     await syncOffline();
     let named = [], files = [];
@@ -899,7 +908,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
         refuseOffline(statement, tables);
         for (const t of tables) await makeView(t);
         const result = await run(catalogStatement(sql) || statement);
-        rowsRead(sql, tables, statement);
+        rowsRead(sql, tables, statement, used);
         return result;
       }, e => READ_FAILURE.test(String(e && e.message)) && canRetry(), sameSources);
     } catch (e) {
@@ -914,7 +923,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
         // what is kept. The statement isn't asked twice: the retry finds this window offline.
         if (!offlineReason() && capabilities.offlineRead && checkConnectivity && canRetry()) {
           await checkConnectivity();
-          if (offlineReason()) return withTables(sql, run, canRetry, { fresh, seen });
+          if (offlineReason()) return withTables(sql, run, canRetry, { fresh, seen, used });
         }
         // A read the check above could not see, and the reason it failed.
         const why = offlineReason();
@@ -1179,8 +1188,8 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
   // The command line's query (agent.js): the same engine as the page's, on connections the
   // page's Stop does not reach. Its guard is stricter, reads only: the page's setup statements
   // are the page's. Not a page method. `signal`: the command line went away, so its query
-  // stops (only its own: another agent's goes on).
-  async function agentQuery(sql, { signal, fresh = false } = {}) {
+  // stops (only its own: another agent's goes on). `mark` goes in front of what runs, for Logs to show.
+  async function agentQuery(sql, { signal, fresh = false, used = true, mark = '' } = {}) {
     const token = authToken;
     const mine = new Set();
     const owner = {
@@ -1192,17 +1201,32 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
     try {
       assertReads(sql);
       await init();
-      const statement = await checkedRead(sql, serialize);
+      const statement = mark + await checkedRead(sql, serialize);
       let asOf = null;
       const res = await withAuthRetry(() => withTables(statement, run => {
-        if (signal && signal.aborted) throw new Error('the command line went away');
+        if (signal && signal.aborted) throw new Error('nobody is waiting for this any more');
         return runAll(run, owner);
-      }, undefined, { fresh, seen: at => { asOf = at; } }));
+      }, undefined, { fresh, used, seen: at => { asOf = at; } }));
       return { ...res, asOf };
     } catch (e) { throw scrub(e, authToken || token); }
     finally {
       if (signal) signal.removeEventListener('abort', stop);
     }
+  }
+
+  // A table in use, read whole, behind everything (syncworker.js): every column goes through the disk
+  // cache and no row comes back. Not a page method, and nobody reading it, so it doesn't count as use.
+  const keepTable = (name, { signal } = {}) => agentQuery(`EXPLAIN ANALYZE SELECT * FROM ${name}`, { signal, used: false, mark: KEEP_MARK });
+
+  // Whether anyone has a statement running on this server, a table being kept aside. Over the control
+  // pipe: over Quack, this would be a line in Logs every few seconds. Not a page method.
+  async function othersRunning() {
+    await init();
+    if (remote) return instance.othersRunning();
+    const [{ n }] = await withConn(async c => (await c.runAndReadAll(
+      `SELECT count(*)::INTEGER AS n FROM quack_active_connections()
+       WHERE state = 'active' AND query LIKE '%onelake:%' AND query NOT LIKE ${sqlStr(`%${KEEP_MARK.trim()}%`)}`)).getRowObjectsJson(), agentLive);
+    return n > 0;
   }
 
   // `stop`: on a shared engine, stop the server too, for every window. Without it this window
@@ -1272,7 +1296,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
     } catch (e) { throw scrub(e, authToken || token); }
   }
 
-  const api = { call, close, copyToTemp, exportTo, agentQuery, catalogChanged, warm, maxRows, forTab, boot, stats,
+  const api = { call, close, copyToTemp, exportTo, agentQuery, keepTable, othersRunning, catalogChanged, warm, maxRows, forTab, boot, stats,
                 readLog, emptyLog, relisten, setStorageToken, setOffline, mountTable, logs, clearLogs };
   return api;
 }
@@ -1283,4 +1307,4 @@ async function restartListener(conn, uri, token) {
   await conn.run(`SELECT * FROM quack_serve(${sqlStr(uri)}, token = ${sqlStr(token)});`);
 }
 
-module.exports = { createEngineHost, jsonSafe, sameSources, isOneLakeMetadata, isOneLakeTable, duckdbPath, restartListener, AUTH_FAILURE, READ_FAILURE, NOT_CACHED };
+module.exports = { createEngineHost, KEEP_MARK, jsonSafe, sameSources, isOneLakeMetadata, isOneLakeTable, duckdbPath, restartListener, AUTH_FAILURE, READ_FAILURE, NOT_CACHED };

@@ -98,3 +98,22 @@ test("a folder has no such icon", async () => {
   assert.equal(d.kind, "dir");
   assert.equal(tree.getTreeItem(d).iconPath.id, "folder");
 });
+
+test("a table's tooltip says how it is used, and is asked for when the pointer rests on it", async () => {
+  const GB = 1e9;
+  let reads = 12, kept = null;
+  const onelake = { onChanged: () => () => {}, usage: { readsInUse: () => reads, kept: () => kept },
+                    cached: { table: async () => ({ value: { metadataLocation: "v1", stats: { totalFilesSize: 38 * GB } } }) } };
+  const tree = new LakehouseTree({ onelake, isSignedIn: () => true, keepLimitBytes: () => 10 * GB });
+  const n = { kind: "table", label: "t", workspace: "w", item: "i.Lakehouse", schema: "dbo", table: "t", leaf: true, cached: true };
+  const said = async () => (await tree.resolveTreeItem(tree.getTreeItem(n), n)).tooltip;
+  assert.equal(tree.getTreeItem(n).tooltip, undefined, "VS Code asks only for what is left undefined");
+  assert.match(await said(), /Read 12 times in the last 14 days/);
+  assert.match(await said(), /38\.00 GB is over the 10\.00 GB kept automatically/);
+  kept = { error: null };
+  assert.match(await said(), /Read whole at its current snapshot/);
+  assert.doesNotMatch(await said(), /over the/);
+  reads = 0;
+  assert.doesNotMatch(await said(), /Read whole|times in the last/);
+  assert.match(await said(), /lakehouse\.w\.i\.dbo\.t/);
+});

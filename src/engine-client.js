@@ -442,6 +442,7 @@ function createRemote({ onGone = () => {}, ...cfg }) {
       setOffline: now => ask({ offline: now }),
       mount: m => ask({ mount: m }),
       stats: () => ask({ stats: true }),
+      othersRunning: () => ask({ othersRunning: true }),
       logs: limit => ask({ logs: { limit } }),
       clearLogs: () => ask({ clearLogs: true }),
       async connect() {

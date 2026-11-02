@@ -289,6 +289,10 @@ SQL box, no Stop and no Restart.
   listings every 15 seconds, one at a time, and a 429 or no answer stops it for a minute. It reads no table's metadata, and
   offline it asks nothing. A listing that can't be read shows *refresh failed* beside the last good answer. A window hears
   what another wrote from the file within a few seconds, and its tree redraws.
+- **A table statements keep reading is looked after** ([CATALOG.md](CATALOG.md#tables-in-use)). Read 3 times in 14 days, it is
+  *in use*. Its metadata is read every hour, and when nobody is running anything each new snapshot is read whole, through
+  the engine, under `onelakeStudio.keepUsedTablesGB`. Anyone's statement stops that, and what it read stays. It works offline
+  from then on, every column. A table over the limit isn't downloaded, and says so in its tooltip.
 - **Per Microsoft account:** switching accounts never serves one account's data to another.
 - **Survives a sign-out:** signing back in finds it warm. Only **Clear Cached OneLake Data** deletes it.
 - **The catalog is cached too:** `SHOW ALL TABLES` and `information_schema` list every table the catalog file knows with
@@ -311,7 +315,8 @@ mirrored databases, their tables and files, semantic models and apps. *Queries*,
 
 **A table's icon** says whether it is cached, as a model's does: a cloud until a statement has read its
 rows at its current snapshot, a check after (`cached.rows` in [`src/onelake.js`](../src/onelake.js)). What is
-kept is the part of each file that was read, so a check doesn't promise every column. A new snapshot goes
+kept is the part of each file that was read, so a check doesn't promise every column, unless its tooltip says it was read
+whole. A new snapshot goes
 back to the cloud. A table nothing was ever written to has a check, since it reads no file. **A file's icon** says the
 same, per version of the file (`cached.file`): a statement or a tab read it, or the host kept it whole, and a file
 rewritten in OneLake goes back to the cloud. A wildcard marks no one file. **A folder under `Tables/`** with neither a
@@ -599,6 +604,7 @@ personal skills, and it follows the extension through updates.
 | `onelakeStudio.tenantId` | empty | Directory (tenant) GUID to sign in against. Empty is your home tenant. Set it to reach a tenant you are a guest in. |
 | `onelakeStudio.catalogTtlMinutes` | 5 | How old a listing may be before it is refreshed. The last known answer is always served from disk first. |
 | `onelakeStudio.tableMetadataTtlHours` | 24 | How old a table's Iceberg metadata may be before it is refreshed. **Refresh** on its lakehouse re-reads it at once. |
+| `onelakeStudio.keepUsedTablesGB` | 10 | How much of the tables statements keep reading is read whole in the background and kept, and may come down in a day. Never over half of `diskCacheMaxGB`. `0` turns it off, and their metadata is still read every hour. |
 | `onelakeStudio.prefetchMetadata` | on | Reads every table's metadata in the background once a lakehouse's Tables node is opened, so the first click is a disk read. |
 | `onelakeStudio.diskCacheMaxGB` | 64 | How much of what DuckDB reads from OneLake, tables and `Files/`, is kept on disk, per account. `0` turns the disk cache off. |
 | `onelakeStudio.cacheDirectory` | empty | Where the disk cache is kept, as a full path. Empty is VS Code's storage for this extension. A new folder starts empty. |
@@ -651,7 +657,7 @@ every window. The rest apply at once.
 | `app/querytext.js` | The SQL box's statements, error positions and variables. |
 | `src/panel.js`, `src/host.js`, `src/html.js`, `src/webview.js` | A tab's webview, its channel, and its page. |
 | `src/performance.js`, `src/logs.js` | The Performance and Logs tabs. |
-| `src/catalogfile.js`, `src/catalogtables.js`, `src/syncworker.js` | What is remembered, in SQLite, the catalog's tables there, and what keeps them current. |
+| `src/catalogfile.js`, `src/catalogtables.js`, `src/syncworker.js` | What is remembered, in SQLite, the catalog's tables there, and what keeps them current and looks after tables in use. |
 | `src/engine-server.js`, `src/engine-client.js`, `src/enginelog.js`, `src/logfile.js` | The server: its process, a window's side of it, and its log. |
 | `src/agent.js`, `src/bridge.js`, `bin/cli.mjs` | The command line. |
 | `src/diaglog.js` | A window's own log. |

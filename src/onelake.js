@@ -26,6 +26,13 @@ const { revalidate } = require('./store');
 
 const PEEK_ROWS = 100;
 const PREFETCH_WORKERS = 2;
+// A table is in use when statements read it this often in this long (syncworker.js).
+const IN_USE_READS = 3;
+const IN_USE_DAYS = 14;
+const IN_USE_MOST = 20;
+const DAY_MS = 24 * 3600 * 1000;
+const dayOf = ms => Math.floor(ms / DAY_MS);
+const inUseFrom = () => dayOf(Date.now()) - IN_USE_DAYS + 1;
 
 // The parts of an Iceberg metadata document the panel shows, worked out once here so a
 // multi-megabyte document with a long snapshot history is not what gets stored or posted.
@@ -440,6 +447,23 @@ function createOneLake({ catalog, store, prefetchEnabled = () => true, onHit = (
     for (const fn of [...rowsReadSubs]) { try { fn(url); } catch (_) {} }
   }
 
+  // How much tables are used, and what was read of them whole. A table here is as a listing names it:
+  // { workspace, item, schema, table }, with the item's folder.
+  const usage = {
+    note: list => store.usage('noteUse', list, dayOf(Date.now())),
+    inUse: () => store.usage('tablesInUse', inUseFrom(), IN_USE_READS, IN_USE_MOST) || [],
+    // How often it was read, if that makes it in use, and otherwise 0.
+    readsInUse: t => {
+      const reads = store.usage('readsOf', t, inUseFrom()) || 0;
+      return reads >= IN_USE_READS ? reads : 0;
+    },
+    kept: (t, location) => store.usage('keptAs', t, location),
+    latestKept: t => store.usage('latestKept', t),
+    noteKept: (t, kept) => store.usage('noteKept', t, kept),
+    keptSince: at => store.usage('keptSince', at) || 0,
+    prune: () => store.usage('pruneUse', inUseFrom(), Date.now() - IN_USE_DAYS * DAY_MS),
+  };
+
   // ---------------------------------------------------------------------------
   // Prefetch: when the user opens a Tables node, read every table's metadata behind them,
   // two at a time, skipping what the store already has. The first click in a lakehouse is
@@ -522,6 +546,7 @@ function createOneLake({ catalog, store, prefetchEnabled = () => true, onHit = (
     : t.kind === 'tables' ? keys.tables(t)
     : t.kind === 'files' ? keys.files(t, t.dir || '')
     : t.kind === 'models' ? keys.models(t.workspace)
+    : t.kind === 'table' ? keys.table(t, t)
     : keys.apps(t.workspace));
   // Whether a table's rows can't be read from here at all: offline, with none of them read before.
   // Online they are one read away.
@@ -537,7 +562,7 @@ function createOneLake({ catalog, store, prefetchEnabled = () => true, onHit = (
   return {
     rowsOutOfReach, listingFailure, listingAt,
     workspaces, items, tables, files, table, deltaState, deltaHistory, peek, prefetch, refreshTables,
-    models, apps, itemNamed, readBytes, versionOf, cached, rowsRead, fileRead, onRowsRead,
+    models, apps, itemNamed, readBytes, versionOf, cached, rowsRead, fileRead, onRowsRead, usage,
     onChanged: fn => listen('changed', key => fn(decode(key))),
     onTableRead,
     onRefreshFailed: fn => listen('refresh-failed', (key, e) => fn(decode(key), e)),

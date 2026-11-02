@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- **The tables you use are looked after.** A table read 3 times in 14 days stays within an hour of OneLake, and when nothing
+  else is running each new snapshot is read whole, so it works offline, every column. Anyone's statement stops that, and it
+  carries on later from where it got to. `onelakeStudio.keepUsedTablesGB`, 10 GB by default, is how much may be kept this way,
+  and a bigger table says so in its tooltip.
+
 ## 0.2.10
 
 - **What is cached stays true.** A connection that drops during a listing no longer empties that listing. A Delta table

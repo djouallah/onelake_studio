@@ -12,7 +12,7 @@ import { DatabaseSync } from "node:sqlite";
 const require = createRequire(import.meta.url);
 const { createCatalogFile, catalogFileOf, stateFileOf } = require("../../src/catalogfile.js");
 const { createStore, sameAnswer } = require("../../src/store.js");
-const { summarize, walkCached } = require("../../src/onelake.js");
+const { summarize, walkCached, createOneLake } = require("../../src/onelake.js");
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
@@ -584,4 +584,65 @@ test("reading what is remembered loads no DuckDB", async t => {
   assert.equal(r.status, 0, r.stderr);
   assert.deepEqual(JSON.parse(r.stdout), { value: ["kept"], duckdb: [] });
   assert.ok(existsSync(file));
+});
+
+test("which tables are in use: the most read first, over the last 14 days, across windows", async t => {
+  const { open, file } = await setup(t);
+  const { store } = open();
+  const onelake = createOneLake({ catalog: { reset() {} }, store, prefetchEnabled: () => false });
+  const a = { workspace: "w", item: "i.Lakehouse", schema: "dbo", table: "a" }, b = { ...a, table: "b" }, c = { ...a, table: "c" };
+  for (let i = 0; i < 4; i++) onelake.usage.note([a]);
+  for (let i = 0; i < 3; i++) onelake.usage.note([b]);
+  for (let i = 0; i < 2; i++) onelake.usage.note([c]);
+  assert.deepEqual(onelake.usage.inUse().map(u => [u.table, u.reads]), [["a", 4], ["b", 3]], "two reads aren't use");
+  assert.equal(onelake.usage.readsInUse(a), 4);
+  assert.equal(onelake.usage.readsInUse(c), 0);
+
+  const other = createOneLake({ catalog: { reset() {} }, store: open().store, prefetchEnabled: () => false });
+  assert.equal(other.usage.inUse().length, 2, "another window hears it from the file");
+
+  // Past 14 days it doesn't count, and the sweep takes it away.
+  const db = new DatabaseSync(file);
+  t.after(() => db.close());
+  db.prepare("UPDATE table_use SET day = day - 14 WHERE table_name = 'a'").run();
+  assert.deepEqual(onelake.usage.inUse().map(u => u.table), ["b"]);
+  assert.equal(db.prepare("SELECT count(*) AS n FROM table_use WHERE table_name = 'a'").get().n, 1);
+  onelake.usage.prune();
+  assert.equal(db.prepare("SELECT count(*) AS n FROM table_use WHERE table_name = 'a'").get().n, 0);
+});
+
+test("what was read whole is per snapshot, and only what finished counts for the day", async t => {
+  const { open } = await setup(t);
+  const { store } = open();
+  const onelake = createOneLake({ catalog: { reset() {} }, store, prefetchEnabled: () => false });
+  const { usage } = onelake;
+  const a = { workspace: "w", item: "i.Lakehouse", schema: "dbo", table: "a" };
+  assert.equal(usage.kept(a, "v1"), null);
+  assert.equal(usage.latestKept(a), null);
+  usage.noteKept(a, { location: "v1", at: 1000, total: 500, bytes: 500, ms: 10, error: null, retryAt: 0 });
+  usage.noteKept(a, { location: "v2", at: 2000, total: 900, bytes: 0, ms: 10, error: "not finished", retryAt: 9000 });
+  assert.deepEqual(usage.kept(a, "v1"), { at: 1000, total: 500, bytes: 500, ms: 10, error: null, retryAt: 0 });
+  assert.equal(usage.kept(a, "v2").retryAt, 9000);
+  assert.deepEqual(usage.latestKept(a), { at: 1000, total: 500 }, "the last one that finished");
+  assert.equal(usage.keptSince(0), 500);
+  assert.equal(usage.keptSince(1001), 0);
+  usage.noteKept(a, { location: "v2", at: 3000, total: 900, bytes: 400, ms: 10, error: null, retryAt: 0 });
+  assert.equal(usage.keptSince(0), 900, "the last attempt at a snapshot replaces the one before");
+  assert.equal(usage.kept(a, "v2").error, null);
+});
+
+test("Clear takes what says which tables are in use, and a table's time reads with nothing else", async t => {
+  const { open, file } = await setup(t);
+  const { store, backend } = open();
+  const onelake = createOneLake({ catalog: { reset() {} }, store, prefetchEnabled: () => false });
+  const a = { workspace: "w", item: "i.Lakehouse", schema: "dbo", table: "a" };
+  await store.put("table\0w\0i.Lakehouse\0dbo\0a", summarize(icebergMeta(), "loc"));
+  assert.ok(backend.keptAt("table\0w\0i.Lakehouse\0dbo\0a") > 0);
+  onelake.usage.note([a]);
+  onelake.usage.noteKept(a, { location: "v1", at: 1000, total: 1, bytes: 1, ms: 1, error: null, retryAt: 0 });
+  await store.clear();
+  const db = new DatabaseSync(file);
+  t.after(() => db.close());
+  for (const name of ["table_use", "table_kept"]) assert.equal(db.prepare(`SELECT count(*) AS n FROM ${name}`).get().n, 0, name);
+  assert.equal(backend.keptAt("table\0w\0i.Lakehouse\0dbo\0a"), null);
 });

@@ -238,6 +238,15 @@ function createCatalogFile({ file, onCleared = () => {}, clearedEveryMs = CLEARE
     keptAt(key) { database(); return tables.keptAt(key); },
     allTables() { database(); return tables.allTables(); },
     latestRead(dir) { database(); return tables.latestRead(dir); },
+    // Which tables are in use, and what was read of them whole (syncworker.js).
+    noteUse(list, day) { inOne(() => tables.noteUse(list, day)); },
+    tablesInUse(fromDay, minReads, most) { database(); return tables.tablesInUse(fromDay, minReads, most); },
+    readsOf(t, fromDay) { database(); return tables.readsOf(t, fromDay); },
+    keptAs(t, location) { database(); return tables.keptAs(t, location); },
+    latestKept(t) { database(); return tables.latestKept(t); },
+    noteKept(t, kept) { inOne(() => tables.noteKept(t, kept)); },
+    keptSince(at) { database(); return tables.keptSince(at); },
+    pruneUse(fromDay, fromAt) { inOne(() => tables.pruneUse(fromDay, fromAt)); },
     /** Hears the store's keys of what another window wrote. Answers how to stop. */
     subscribe(fn) {
       subscribers.add(fn);

@@ -15,7 +15,8 @@ const { createCatalogFile } = require("../../src/catalogfile.js");
 const MIN = 60_000, DAY = 24 * 60 * MIN;
 
 function setup({ workspaces = ["a", "b"], jobsPerTick = 100, ...more } = {}) {
-  const world = { now: 1_000_000, offline: false, calls: [], fail: () => null, tables: () => [{ schema: "dbo", table: "t" }] };
+  const world = { now: 1_000_000, offline: false, calls: [], fail: () => null, tables: () => [{ schema: "dbo", table: "t" }],
+                  location: t => `abfss://w@h/${t.table}/metadata/1.metadata.json`, summary: () => ({ "total-files-size": "1000", "total-data-files": "2", operation: "overwrite" }) };
   const call = (name, value) => {
     world.calls.push(name);
     const e = world.fail(name);
@@ -29,6 +30,8 @@ function setup({ workspaces = ["a", "b"], jobsPerTick = 100, ...more } = {}) {
                                                { name: "StagingLakehouseForDataflows_1.Lakehouse", kind: "Lakehouse" }]),
     listTables: async lh => call(`tables ${lh.workspace}`, world.tables()),
     listFiles: async (lh, dir) => call(`files ${lh.workspace}/${dir}`, []),
+    loadTable: async (lh, t) => call(`table ${t.table}`, { metadataLocation: world.location(t), metadata: {
+      "current-snapshot-id": 1, snapshots: [{ "snapshot-id": 1, summary: world.summary(t) }] } }),
   };
   const fabric = { reset() {}, listSemanticModels: async ws => call(`models ${ws}`, []), listApps: async ws => call(`apps ${ws}`, []) };
   const onelake = createOneLake({ catalog, fabric, prefetchEnabled: () => false, isOffline: () => world.offline,
@@ -328,4 +331,251 @@ test("first: nobody waiting any more is not read", async () => {
   gone.abort();
   await assert.rejects(worker.first({ kind: "workspaces" }, { signal: gone.signal }), /nobody is waiting/);
   assert.deepEqual(world.calls, []);
+});
+
+// Tables in use: which they are, what was kept of them, and how a table is read whole.
+const inUseTable = (table, workspace = "a") => ({ workspace, item: "gold.Lakehouse", schema: "dbo", table, reads: 5 });
+function fakeUsage(tables) {
+  const rows = new Map();
+  return { rows, inUse: () => tables, kept: (t, location) => rows.get(location) || null, noteKept: (t, k) => { rows.set(k.location, k); },
+           latestKept: () => [...rows.values()].filter(r => !r.error).at(-1) || null,
+           keptSince: at => [...rows.values()].filter(r => !r.error && r.at >= at).reduce((n, r) => n + r.bytes, 0), prune() {} };
+}
+function fakeKeep() {
+  const k = { limit: 10_000, up: true, others: false, reads: [] };
+  return Object.assign(k, { limitBytes: () => k.limit, ready: () => k.up, othersRunning: async () => k.others,
+    read: (name, { signal }) => new Promise((resolve, reject) => {
+      k.reads.push({ name, resolve, reject });
+      signal.addEventListener("abort", () => reject(new Error("INTERRUPT Error: Interrupted!")));
+    }) });
+}
+const settled = () => new Promise(r => setImmediate(r));
+// Past the wait for nobody to be at work, with the table's metadata read.
+async function keeping({ tables = [inUseTable("t")], ...more } = {}) {
+  const usage = fakeUsage(tables), keep = fakeKeep();
+  const s = setup({ usage, keep, ...more });
+  await s.worker.tick();
+  s.world.now += 3 * MIN;
+  return { ...s, usage, keep };
+}
+
+test("a table in use is read again every hour, by the window with the lease", async () => {
+  const { world, worker } = setup({ usage: fakeUsage([inUseTable("t")]) });
+  await worker.tick();
+  assert.equal(world.calls.filter(c => c === "table t").length, 1);
+  world.now += 59 * MIN;
+  await worker.tick();
+  assert.equal(world.calls.filter(c => c === "table t").length, 1, "not before");
+  world.now += 2 * MIN;
+  await worker.tick();
+  assert.equal(world.calls.filter(c => c === "table t").length, 2);
+
+  const other = setup({ usage: fakeUsage([inUseTable("t")]), lease: () => false });
+  await other.worker.tick();
+  assert.ok(!other.world.calls.includes("table t"));
+});
+
+test("with no table due, no lease is taken for them", async () => {
+  let leases = 0;
+  const { world, worker } = setup({ usage: fakeUsage([inUseTable("t")]), lease: () => { leases++; return true; } });
+  await worker.tick();
+  const after = leases;
+  world.now += MIN;
+  await worker.tick();
+  assert.equal(leases, after, "a lease is a write, which every window hears");
+});
+
+test("the sweep starts with the workspaces in use", async () => {
+  const { world, worker } = setup({ usage: fakeUsage([inUseTable("t", "b")]) });
+  await worker.tick();
+  assert.deepEqual(world.calls.filter(c => c.startsWith("items")), ["items b", "items a"]);
+});
+
+test("a table in use is read whole once nobody has run anything for two minutes, one at a time", async () => {
+  const { world, worker, usage, keep } = await keeping({ tables: [inUseTable("t"), inUseTable("u")] });
+  assert.equal(keep.reads.length, 0);
+  world.now -= 2 * MIN;
+  await worker.tick();
+  assert.equal(keep.reads.length, 0, "not yet: it has been a minute");
+  world.now += 2 * MIN;
+  await worker.tick();
+  assert.deepEqual(keep.reads.map(r => r.name), ["lakehouse.a.gold.dbo.t"]);
+  world.now += MIN;
+  await worker.tick();
+  assert.equal(keep.reads.length, 1, "one at a time");
+  keep.reads[0].resolve();
+  await settled();
+  const kept = usage.rows.get(world.location({ table: "t" }));
+  assert.equal(kept.error, null);
+  assert.equal(kept.total, 1000);
+  await worker.tick();
+  assert.equal(keep.reads[1].name, "lakehouse.a.gold.dbo.u");
+  keep.reads[1].resolve();
+  await settled();
+  await worker.tick();
+  assert.equal(keep.reads.length, 2, "what is held at this snapshot isn't read again");
+  worker.stop();
+});
+
+test("a new snapshot is read whole again, once the hour's look finds it", async () => {
+  const { world, worker, keep } = await keeping();
+  await worker.tick();
+  keep.reads[0].resolve();
+  await settled();
+  world.location = t => `abfss://w@h/${t.table}/metadata/2.metadata.json`;
+  world.now += 61 * MIN;
+  await worker.tick();
+  assert.equal(keep.reads.length, 2);
+  worker.stop();
+});
+
+test("someone's statement stops it, nothing is noted, and it carries on after two quiet minutes", async () => {
+  const { world, worker, usage, keep } = await keeping();
+  await worker.tick();
+  assert.equal(keep.reads.length, 1);
+  keep.others = true;
+  await worker.tick();
+  await settled();
+  assert.equal(usage.rows.size, 0);
+  keep.others = false;
+  world.now += MIN;
+  await worker.tick();
+  assert.equal(keep.reads.length, 1, "not yet");
+  world.now += 2 * MIN;
+  await worker.tick();
+  assert.equal(keep.reads.length, 2);
+  worker.stop();
+});
+
+test("while someone is at work nothing starts", async () => {
+  const { worker, keep } = await keeping();
+  keep.others = true;
+  await worker.tick();
+  assert.equal(keep.reads.length, 0);
+});
+
+test("one that takes too long stops, and waits six hours before it carries on", async () => {
+  const { world, worker, usage, keep } = await keeping();
+  await worker.tick();
+  world.now += 11 * MIN;
+  await worker.tick();
+  await settled();
+  const row = usage.rows.get(world.location({ table: "t" }));
+  assert.match(row.error, /not finished after 11 minutes/);
+  assert.equal(row.bytes, 0, "it counts for nothing today");
+  world.now += 5 * 60 * MIN;
+  await worker.tick();
+  assert.equal(keep.reads.length, 1);
+  world.now += 61 * MIN;
+  await worker.tick();
+  assert.equal(keep.reads.length, 2);
+  worker.stop();
+});
+
+test("a read that fails waits too, and says so in status", async () => {
+  const { world, worker, usage, keep } = await keeping();
+  await worker.tick();
+  keep.reads[0].reject(new Error("IO Error: no such file"));
+  await settled();
+  assert.match(usage.rows.get(world.location({ table: "t" })).error, /no such file/);
+  await worker.tick();
+  assert.equal(keep.reads.length, 1);
+  assert.equal((await worker.progress()).failures.at(-1).where, "keep lakehouse.a.gold.dbo.t");
+});
+
+test("going offline stops it with nothing noted, and offline nothing starts", async () => {
+  const { world, worker, usage, keep } = await keeping();
+  await worker.tick();
+  world.offline = true;
+  await worker.tick();
+  await settled();
+  assert.equal(usage.rows.size, 0);
+  world.now += 3 * MIN;
+  await worker.tick();
+  assert.equal(keep.reads.length, 1);
+});
+
+test("nothing is read whole with no engine, no lease, or a limit of nothing", async () => {
+  for (const [why, change, more] of [
+    ["no engine", k => { k.up = false; }, {}],
+    ["a limit of nothing", k => { k.limit = 0; }, {}],
+    ["no lease", () => {}, { lease: () => false }],
+  ]) {
+    const { worker, keep } = await keeping(more);
+    change(keep);
+    await worker.tick();
+    assert.equal(keep.reads.length, 0, why);
+  }
+});
+
+test("too big, of no known size, or of too many files: not read whole, and a smaller one still is", async () => {
+  const sizes = { big: { "total-files-size": "20000", "total-data-files": "2" }, unknown: { "total-data-files": "2" },
+                  many: { "total-files-size": "1000", "total-data-files": "2001" }, small: { "total-files-size": "1000", "total-data-files": "2" } };
+  const usage = fakeUsage(Object.keys(sizes).map(n => inUseTable(n))), keep = fakeKeep();
+  const { world, worker } = setup({ usage, keep });
+  world.summary = t => sizes[t.table];
+  await worker.tick();
+  world.now += 3 * MIN;
+  await worker.tick();
+  assert.deepEqual(keep.reads.map(r => r.name), ["lakehouse.a.gold.dbo.small"]);
+  worker.stop();
+});
+
+test("the tables in use share one limit, the most read first", async () => {
+  const usage = fakeUsage([inUseTable("first"), inUseTable("second"), inUseTable("third")]), keep = fakeKeep();
+  const { world, worker } = setup({ usage, keep });
+  world.summary = t => ({ "total-files-size": t.table === "second" ? "6000" : "5000", "total-data-files": "2" });
+  await worker.tick();
+  world.now += 3 * MIN;
+  await worker.tick();
+  keep.reads[0].resolve();
+  await settled();
+  world.now += DAY;
+  await worker.tick();
+  assert.deepEqual(keep.reads.map(r => r.name), ["lakehouse.a.gold.dbo.first", "lakehouse.a.gold.dbo.third"], "second no longer fits");
+  worker.stop();
+});
+
+test("a table rewritten all day stops at the day's limit, and one only appended to doesn't", async () => {
+  const rewrite = async (operation, expected) => {
+    const { world, worker, keep } = await keeping();
+    world.summary = () => ({ "total-files-size": "6000", "total-data-files": "2", operation });
+    for (let i = 2; i <= 3; i++) {
+      world.location = t => `abfss://w@h/${t.table}/metadata/${i}.metadata.json`;
+      world.now += 61 * MIN;
+      await worker.tick();
+      if (keep.reads.length === i - 1) { keep.reads[i - 2].resolve(); await settled(); }
+    }
+    world.location = t => `abfss://w@h/${t.table}/metadata/4.metadata.json`;
+    world.now += 61 * MIN;
+    await worker.tick();
+    assert.equal(keep.reads.length, expected, operation);
+    worker.stop();
+  };
+  await rewrite("overwrite", 1);
+  await rewrite("append", 3);
+});
+
+test("status says how much is kept, and what is under way", async () => {
+  const { worker, keep } = await keeping();
+  await worker.tick();
+  let p = await worker.progress();
+  assert.equal(p.used.tables, 1);
+  assert.equal(p.used.keeping, "lakehouse.a.gold.dbo.t");
+  keep.reads[0].resolve();
+  await settled();
+  p = await worker.progress();
+  assert.equal(p.used.keeping, null);
+  assert.equal(p.used.keptBytes, 1000);
+  assert.equal(p.used.last.table, "lakehouse.a.gold.dbo.t");
+  worker.stop();
+});
+
+test("a reset stops what is under way and notes nothing about it", async () => {
+  const { worker, usage, keep } = await keeping();
+  await worker.tick();
+  assert.equal(keep.reads.length, 1);
+  worker.reset();
+  await settled();
+  assert.equal(usage.rows.size, 0);
 });

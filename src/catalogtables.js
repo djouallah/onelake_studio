@@ -75,6 +75,15 @@ const SCHEMA = `
   CREATE TABLE IF NOT EXISTS file_read (
     workspace TEXT NOT NULL, path TEXT NOT NULL, version TEXT NOT NULL, ts INTEGER NOT NULL,
     PRIMARY KEY (workspace, path, version)) WITHOUT ROWID;
+  CREATE TABLE IF NOT EXISTS table_use (
+    workspace TEXT NOT NULL, item TEXT NOT NULL, schema_name TEXT NOT NULL, table_name TEXT NOT NULL,
+    day INTEGER NOT NULL, reads INTEGER NOT NULL,
+    PRIMARY KEY (workspace, item, schema_name, table_name, day)) WITHOUT ROWID;
+  CREATE TABLE IF NOT EXISTS table_kept (
+    workspace TEXT NOT NULL, item TEXT NOT NULL, schema_name TEXT NOT NULL, table_name TEXT NOT NULL,
+    location TEXT NOT NULL, ts INTEGER NOT NULL, total REAL NOT NULL, bytes REAL NOT NULL, ms INTEGER NOT NULL,
+    error TEXT, retry_at REAL NOT NULL,
+    PRIMARY KEY (workspace, item, schema_name, table_name, location)) WITHOUT ROWID;
   CREATE TABLE IF NOT EXISTS semantic_view (name TEXT NOT NULL, schema_name TEXT, path TEXT NOT NULL, created TEXT);
   CREATE TABLE IF NOT EXISTS sync_failure (
     kind TEXT NOT NULL, workspace TEXT NOT NULL, item TEXT NOT NULL, schema_name TEXT NOT NULL, table_name TEXT NOT NULL,
@@ -86,7 +95,7 @@ const SCHEMA = `
 `;
 // What Clear Cached empties.
 const TABLES = ['semantic_view', 'listing_read', 'workspace', 'item', 'lake_table', 'lake_column', 'snapshot', 'lake_object', 'semantic_model', 'app',
-  'delta_commit', 'delta_state', 'delta_property', 'item_name', 'catalog_prefix', 'rows_read', 'first_rows', 'file_read', 'sync_failure'];
+  'delta_commit', 'delta_state', 'delta_property', 'item_name', 'catalog_prefix', 'rows_read', 'first_rows', 'file_read', 'sync_failure', 'table_use', 'table_kept'];
 
 // Each kind of store key (onelake.js keys): the column each part after its kind goes in, where a row
 // says which entry it is about.
@@ -350,6 +359,8 @@ function createCatalogTables({ statement }) {
     },
     table: {
       fits: v => isObject(v) && (v.schemaFields == null || listOf(v.schemaFields)) && (v.stats == null || isObject(v.stats)),
+      keptAt: ([ws, item, schema, name]) => one(`SELECT meta_ts FROM lake_table
+        WHERE workspace = ? AND item = ? AND schema_name = ? AND name = ?`, ws, item, schema, name)?.meta_ts ?? null,
       has: ([ws, item, schema, name]) => !!one(`SELECT 1 AS found FROM lake_table
         WHERE workspace = ? AND item = ? AND schema_name = ? AND name = ? AND meta_ts IS NOT NULL`, ws, item, schema, name),
       get([ws, item, schema, name]) {
@@ -466,6 +477,51 @@ function createCatalogTables({ statement }) {
       const r = one(`SELECT location, ts FROM (SELECT location, ts FROM rows_read UNION ALL SELECT location, ts FROM first_rows)
         WHERE location >= ? AND location < ? ORDER BY ts DESC, location DESC LIMIT 1`, dir, `${dir}\uffff`);
       return r ? { location: r.location, at: r.ts } : null;
+    },
+    /** A statement read these tables' rows on this day. Their names and a count: never its text. */
+    noteUse(list, day) {
+      for (const t of list) {
+        run(`INSERT INTO table_use VALUES (?, ?, ?, ?, ?, 1)
+          ON CONFLICT (workspace, item, schema_name, table_name, day) DO UPDATE SET reads = reads + 1`,
+          t.workspace, t.item, t.schema || '', t.table, day);
+      }
+    },
+    /** The tables read at least `minReads` times since `fromDay`, the most read first. */
+    tablesInUse(fromDay, minReads, most) {
+      return all(`SELECT workspace, item, schema_name, table_name, sum(reads) AS reads FROM table_use WHERE day >= ?
+        GROUP BY workspace, item, schema_name, table_name HAVING sum(reads) >= ?
+        ORDER BY sum(reads) DESC, max(day) DESC, workspace, item, schema_name, table_name LIMIT ?`, fromDay, minReads, most)
+        .map(r => ({ workspace: r.workspace, item: r.item, schema: r.schema_name, table: r.table_name, reads: r.reads }));
+    },
+    readsOf(t, fromDay) {
+      return one(`SELECT coalesce(sum(reads), 0) AS reads FROM table_use
+        WHERE workspace = ? AND item = ? AND schema_name = ? AND table_name = ? AND day >= ?`,
+        t.workspace, t.item, t.schema || '', t.table, fromDay).reads;
+    },
+    /** The last attempt to read this table whole at this snapshot, or null. */
+    keptAs(t, location) {
+      const r = one(`SELECT ts, total, bytes, ms, error, retry_at FROM table_kept
+        WHERE workspace = ? AND item = ? AND schema_name = ? AND table_name = ? AND location = ?`,
+        t.workspace, t.item, t.schema || '', t.table, location);
+      return r ? { at: r.ts, total: r.total, bytes: r.bytes, ms: r.ms, error: r.error, retryAt: r.retry_at } : null;
+    },
+    /** The last time this table was read whole, at any snapshot: { at, total }, or null. */
+    latestKept(t) {
+      const r = one(`SELECT ts, total FROM table_kept WHERE workspace = ? AND item = ? AND schema_name = ? AND table_name = ? AND error IS NULL
+        ORDER BY ts DESC LIMIT 1`, t.workspace, t.item, t.schema || '', t.table);
+      return r ? { at: r.ts, total: r.total } : null;
+    },
+    noteKept(t, k) {
+      run('INSERT OR REPLACE INTO table_kept VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', t.workspace, t.item, t.schema || '', t.table,
+        k.location, Math.floor(k.at), k.total, k.bytes, Math.floor(k.ms), k.error ?? null, k.retryAt ?? 0);
+    },
+    /** How much came down for tables read whole since `at`. */
+    keptSince(at) {
+      return one('SELECT coalesce(sum(bytes), 0) AS bytes FROM table_kept WHERE error IS NULL AND ts >= ?', Math.floor(at)).bytes;
+    },
+    pruneUse(fromDay, fromAt) {
+      run('DELETE FROM table_use WHERE day < ?', fromDay);
+      run('DELETE FROM table_kept WHERE ts < ?', Math.floor(fromAt));
     },
     /** The store's keys of what was written at or after `ts`, the latest time among them, and which keys have it. */
     changedSince(ts) {

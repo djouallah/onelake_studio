@@ -105,7 +105,8 @@ function createSqlTables({ onelake, paths, offlineReason = () => null, deltaLogs
       const near = closestTables(ref.table, listing || []);
       throw new Error(e.message + (near.length ? ` — closest: ${near.join(', ')}` : ''));
     }
-    const named = { kind: ref.kind, workspace: ws, item: displayName(dir), schema: t.schema || 'dbo', table: t.table, at: meta.at };
+    const named = { kind: ref.kind, workspace: ws, item: displayName(dir), schema: t.schema || 'dbo', table: t.table, at: meta.at,
+                    listed: { workspace: ws, item: dir, schema: t.schema || '', table: t.table } };
     if (meta.empty) return { ...named, emptySql: (await paths()).emptyTableSql(meta.schemaFields) };
     const deltaTable = deltaTableOf(meta);
     // Where its log is kept here, for delta_scan to run on (deltamirror.js).

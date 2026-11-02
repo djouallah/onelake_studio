@@ -313,6 +313,13 @@ function createStore({ dir, backend = null, ttlMs = DEFAULT_TTL_MS, maxBytes = D
     try { return backend.latestRead(dir); } catch (_) { return null; }
   }
 
+  // What has no key: how much tables are used (catalogfile.js). Null where that isn't kept, or can't be
+  // reached: it only ever makes the background quieter.
+  const usage = (method, ...args) => {
+    if (!backend || !backend[method]) return null;
+    try { return backend[method](...args); } catch (_) { return null; }
+  };
+
   async function size() {
     const kept = backend ? await backend.size().catch(() => 0) : 0;
     if (!await usable) return kept;
@@ -322,7 +329,7 @@ function createStore({ dir, backend = null, ttlMs = DEFAULT_TTL_MS, maxBytes = D
   }
 
   return {
-    get, put, peek, known, keptAt, allTables, failureOf, latestRead, clear, forget, size, getBlob, hasBlob, putBlob,
+    get, put, peek, known, keptAt, allTables, failureOf, latestRead, usage, clear, forget, size, getBlob, hasBlob, putBlob,
     on: (ev, fn) => { events.on(ev, fn); return () => events.off(ev, fn); },
   };
 }

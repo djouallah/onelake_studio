@@ -12,7 +12,7 @@ parts have one job each:
 | Part | Its job | Runs in | Touches the network |
 | --- | --- | --- | --- |
 | **The catalog** | Knows what exists: workspaces, items, tables, columns, files | A SQLite file | Never |
-| **The sync worker** | Keeps the catalog up to date, in the background | The window's extension host | Yes: listings from OneLake and Fabric |
+| **The sync worker** | Keeps the catalog up to date, in the background, and decides what else is worth reading | The window's extension host | Yes: listings and metadata from OneLake and Fabric |
 | **The engine** | Runs SQL and reads the bytes | DuckDB, in the server | Yes: reads data, with a disk cache |
 
 Anything that wants metadata reads the catalog. Nothing waits on OneLake to answer a question the catalog
@@ -66,6 +66,8 @@ and F5 has its own.
 | `item_name`, `catalog_prefix` | The names behind a Direct Lake model's GUIDs, and an item's prefix in OneLake's catalog |
 | `rows_read`, `file_read` | That a table's snapshot or a file's version was read here |
 | `first_rows` | A table's first rows, per snapshot, so its Data tab opens at once. The one thing with a limit: 256 MB, oldest first |
+| `table_use` | How many statements read a table, per day: its name and a count, never the statement. Gone after 14 days |
+| `table_kept` | Reading a table whole, per snapshot: when, how big, how long, why it failed and when to try again. Gone after 14 days |
 | `sync_state` | what was synced, when, its last error, when it is next due |
 
 Every row says when it was last read from OneLake.
@@ -102,16 +104,60 @@ DuckDB and no server. A lease in the catalog file says which window sweeps the t
 | --- | --- | --- |
 | Whoever is waiting | A listing the catalog has never held, or a Refresh | Now, by the reader itself |
 | Each window | What it has opened, and pinned workspaces | `catalogTtlMinutes` |
-| The window with the lease | The rest of the tenant: workspaces, items and table lists, and models if a Fabric token is already there | Every 12 hours |
+| The window with the lease | The rest of the tenant: workspaces, items and table lists, and models if a Fabric token is already there. Workspaces in use go first | Every 12 hours |
+| The window with the lease | The metadata of the 20 tables most in use | Every hour |
+| The window with the lease | One table in use, read whole, through the engine (see [Tables in use](#tables-in-use)) | When nobody is running anything |
 
-- **Table metadata is read only for lakehouses opened,** as `prefetchMetadata` does, so the tenant's manifests are not
-  walked. A staging item is never swept.
+- **Table metadata is read only for lakehouses opened,** as `prefetchMetadata` does, **and for tables in use,** so the
+  tenant's manifests are not walked. A staging item is never swept.
 - **Limits:** one request at a time and five listings every 15 seconds, so a large tenant fills in over minutes. A 429, a
   503 or no answer at all stops everything for a minute, and a listing that fails isn't asked again for an hour.
 - **Every window hears** what another wrote: a look at the file every few seconds (`PRAGMA data_version`), and the tree
   redraws what changed.
 - **Offline:** it asks nothing, and carries on by itself. Nothing waits on a timeout.
 - **A failure** is kept in `sync_state` and shown on its node as *refresh failed*. The last good rows are still served.
+
+## Tables in use
+
+**A table is in use when statements read it 3 times in 14 days.** Every statement that reads its rows counts, from a tab
+or the command line, and a model's query counts for the tables it reads. `DESCRIBE` and a plain `EXPLAIN` read none.
+
+**What such a table is short of isn't its repeat:** a repeat already reads from disk. It is short of a current snapshot,
+and of the parts of it nothing has read. So the worker does two things for it:
+
+1. **Its metadata is read every hour**, so a statement never waits for that and isn't answered from a snapshot a day old.
+2. **It is read whole**, once at each snapshot, so every column works offline. The worker decides and DuckDB reads:
+   `EXPLAIN ANALYZE SELECT * FROM <table>` goes through the disk cache as any statement does, and no row reaches a client. It
+   is a line in **Logs**, under a comment that says why. When it finishes, the table's icon goes to a check.
+
+**It is the last thing to run:**
+
+- **One at a time,** by the window with the lease, on an engine already up. It never starts one.
+- **Only once nobody has run anything for 2 minutes,** on any window or the command line. The server says so over the
+  control pipe, so asking leaves no line in Logs.
+- **Anyone's statement stops it, within 3 seconds.** What it read stays on disk, so the next try carries on from there.
+  It tries again after 2 more quiet minutes.
+- **After 10 minutes it stops, and waits 6 hours,** so a slow connection isn't kept busy. A read that fails waits as long.
+
+**What it may bring down**, under `onelakeStudio.keepUsedTablesGB`, 10 GB by default, and never over half of
+`diskCacheMaxGB`. The disk cache evicts the oldest first, and what someone read comes before this.
+
+| Limit | Why |
+| --- | --- |
+| The tables in use, most read first, fit in it together | One big table can't push out the rest |
+| What comes down in 24 hours fits in it too | A table rewritten daily comes down whole each day. An append counts for what it grew by |
+| A table of no known size isn't read | Never guess |
+| Nor is one of more than 2,000 files | Each open asks OneLake for the file's version |
+
+A table over the limit says so in its tooltip. `0` turns the reading off, and the hourly metadata stays on.
+
+**The costs of this:**
+
+- **A table in use is read whole once,** at its current snapshot, even if what you read of it was already held.
+- **It runs on the engine's own threads and memory,** and DuckDB's are shared, so it can be heard on a laptop until someone
+  runs something.
+- **"Read whole" is what happened, not what is still there.** The cache's blocks are opaque, so eviction can take them
+  afterwards with nothing to say so.
 
 ## Opening
 
@@ -163,7 +209,8 @@ which downloads a model's file. Neither is a listing.
 
 ## Reading data
 
-**Nothing downloads a file on its own.** The sync worker reads listings only. Bytes move when someone asks for them:
+**Nothing downloads a file on its own, unless a table is in use** ([Tables in use](#tables-in-use)). Otherwise the sync
+worker reads listings only. Bytes move when someone asks for them:
 
 | What asks | What comes down | Kept in | Limit |
 | --- | --- | --- | --- |
@@ -173,8 +220,9 @@ which downloads a model's file. Neither is a listing.
 | Opening a `Files/` object in a tab | The whole file, or a range if only a range is asked for | The cache folder, `host\` | 1 GB in all, and a file over 512 MB isn't kept |
 | Opening a model | Its `.yaml` | The cache folder, `models\` | None |
 | The History tab on a Delta table | Its log files | The cache folder, `host\` | The same 1 GB |
+| A table in use, at a snapshot not yet read whole | Every column of it | The cache folder | `keepUsedTablesGB` |
 
-A table opens on Stats by default, which reads nothing. When a table changes, nothing downloads until someone reads it again.
+A table opens on Stats by default, which reads nothing. When a table not in use changes, nothing downloads until someone reads it again.
 
 **DuckDB keeps reading the bytes:** a Delta table with `delta_scan`, and an Iceberg table with `iceberg_scan`, over `abfss://`, `azure`
 and `cache_httpfs`.
