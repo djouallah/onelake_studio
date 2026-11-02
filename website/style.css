@@ -226,9 +226,16 @@ pre code {
   font-weight: 600;
 }
 
-.install {
-  max-width: 44em;
-  margin-top: 72px;
+.get {
+  margin-top: 48px;
+}
+
+.get h2 {
+  margin: 0;
+}
+
+.get .steps {
+  margin: 20px 0 16px;
 }
 
 /* Screenshots */
@@ -304,6 +311,10 @@ pre code {
   margin-bottom: 0;
 }
 
+.read-only {
+  margin-top: 72px;
+}
+
 /* Docs */
 
 .doc-layout {
@@ -322,17 +333,10 @@ pre code {
   font-size: 15px;
 }
 
-.doc-nav,
 .doc-sections {
   display: flex;
   flex-direction: column;
   gap: 6px;
-}
-
-.doc-sections {
-  margin-top: 16px;
-  padding-top: 16px;
-  border-top: 1px solid var(--line);
   font-size: 14px;
 }
 
@@ -341,13 +345,8 @@ pre code {
   text-decoration: none;
 }
 
-.doc-side a:hover,
-.doc-side a[aria-current="page"] {
+.doc-side a:hover {
   color: var(--text);
-}
-
-.doc-side a[aria-current="page"] {
-  font-weight: 600;
 }
 
 .doc {
@@ -496,6 +495,22 @@ tr:last-child td {
   margin: 0;
 }
 
+.footer-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 20px;
+  margin-bottom: 12px;
+}
+
+.footer-nav a {
+  color: var(--muted);
+}
+
+.footer-nav a:hover,
+.footer-nav a[aria-current="page"] {
+  color: var(--text);
+}
+
 @media (max-width: 720px) {
   body {
     font-size: 16px;
@@ -543,12 +558,6 @@ tr:last-child td {
     position: static;
     max-height: none;
     padding: 20px 0 0;
-  }
-
-  .doc-nav {
-    flex-direction: row;
-    flex-wrap: wrap;
-    gap: 4px 16px;
   }
 
   .doc-sections {

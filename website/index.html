@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>OneLake Studio</title>
-  <meta name="description" content="A Windows app that makes a whole Microsoft Fabric tenant act as one database, queried with SQL.">
+  <meta name="description" content="Browse and query your Microsoft Fabric data with SQL. A Windows app and a VS Code extension.">
   <link rel="icon" href="icon.png">
   <link rel="stylesheet" href="style.css">
 </head>
@@ -13,8 +13,9 @@
     <div class="wrap">
       <a class="brand" href="./"><img src="icon.png" alt="" width="28" height="28">OneLake Studio</a>
       <nav class="site-nav" aria-label="Main">
+        <a href="features.html">Features</a>
         <a href="how-it-works.html">How it works</a>
-        <a href="docs/">Docs</a>
+        <a href="changelog.html">Changelog</a>
         <a href="https://github.com/djouallah/onelake_studio">GitHub</a>
       </nav>
     </div>
@@ -22,74 +23,43 @@
 
   <main class="wrap wide">
     <section class="intro">
-      <h1>A Fabric tenant, as one database</h1>
-      <p class="lead">Browse OneLake and query any table, file or semantic model with SQL, on your machine, read only and offline.</p>
+      <h1>OneLake Studio</h1>
+      <p class="lead">Browse and query your Microsoft Fabric data with SQL. A Windows app, and a VS Code extension.</p>
+    </section>
+
+    <section class="get">
+      <h2>The app</h2>
       <ol class="steps">
         <li><a class="button primary" href="https://github.com/djouallah/onelake_studio/releases/latest/download/OneLake-Studio-Setup.exe">Download for Windows</a></li>
         <li>Run it.</li>
         <li>Sign in with your Microsoft account.</li>
       </ol>
+      <p class="more">Windows warns about the download? The installer isn't signed yet: click <em>More info</em>, then <em>Run anyway</em>. It installs for you alone, with no admin rights, and needs nothing else on the machine.</p>
+    </section>
+
+    <section class="get">
+      <h2>The VS Code extension</h2>
+      <ol class="steps">
+        <li><a class="button" href="https://marketplace.visualstudio.com/items?itemName=djouallah.onelake-studio">Install from the Marketplace</a></li>
+        <li>Click the OneLake Studio icon in the activity bar.</li>
+        <li>Sign in.</li>
+      </ol>
+      <p class="more">Or run <code>code --install-extension djouallah.onelake-studio</code>. Needs desktop VS Code 1.101 or later on Windows x64, or macOS or Linux on x64 or arm64. The app and the extension share what you've read on one machine.</p>
+    </section>
+
+    <section class="get">
       <a class="shot" href="img/query.png"><img src="img/query.png" alt="The OneLake Studio tree of workspaces beside a tab running SHOW ALL TABLES, which lists tables across a warehouse and a SQL database." width="2122" height="1101"></a>
-    </section>
-
-    <section class="feature">
-      <div>
-        <h2>One name for every object</h2>
-        <p>Any statement can join across items, workspaces and kinds with no setup. A Power BI semantic model is one more table, and <code>AGG("measure")</code> computes its measure.</p>
-      </div>
-<pre><code>SELECT * FROM lakehouse.aemo.data.dbo.dim_duid;
-
-SELECT dim_region.Region, AGG("Registered MW")
-FROM semanticmodel.aemo.nem GROUP BY ALL;</code></pre>
-    </section>
-
-    <section class="feature">
-      <div>
-        <h2>A semantic model, in a pivot</h2>
-        <p>See its tables and relationships, then drag fields into a table or a chart, with the SQL behind it.</p>
-      </div>
-      <div class="shots">
-        <a class="shot" href="img/pivot.png"><img src="img/pivot.png" alt="The Pivot page: fields on the left, and a line chart of Total Amount by date." width="1879" height="1057" loading="lazy"></a>
-        <a class="shot" href="img/model.png"><img src="img/model.png" alt="The Model page: a fact table joined to its date and zone dimensions." width="1458" height="300" loading="lazy"></a>
-      </div>
-    </section>
-
-    <section class="feature stacked">
-      <div>
-        <h2>A table in a click</h2>
-        <p>Columns, row count, first rows, and Delta or Iceberg stats and history.</p>
-      </div>
-      <div class="shots pair">
-        <a class="shot" href="img/stats.png"><img src="img/stats.png" alt="A Delta table's Stats tab: format, version, rows, data files, size and last write." width="610" height="640" loading="lazy"></a>
-        <a class="shot" href="img/history.png"><img src="img/history.png" alt="A Delta table's History tab: each commit with its time, operation, rows added, files and engine." width="1613" height="745" loading="lazy"></a>
-      </div>
-    </section>
-
-    <section class="feature stacked">
-      <div>
-        <h2>See where the time went</h2>
-        <p>A query's plan shows a timeline of each step and its most expensive operators.</p>
-      </div>
-      <a class="shot" href="img/profile.png"><img src="img/profile.png" alt="A query profile: a timeline of planning, scan, aggregate and join steps, above a table of the most expensive operators." width="2351" height="552" loading="lazy"></a>
-    </section>
-
-    <section class="notes">
-      <p><strong>Ask Claude Code or GitHub Copilot.</strong> One command, and your assistant can list your data, read a model's measures and compute them.</p>
-      <p><strong>Work offline.</strong> What you've read keeps working with no internet: browse it, query it, pivot it.</p>
-    </section>
-
-    <section class="install">
-      <h2>More about installing</h2>
-      <p><strong>Windows warns about the download?</strong> The installer isn't signed yet. Click <em>More info</em>, then <em>Run anyway</em>. It installs for you alone, with no admin rights, and needs nothing else on the machine.</p>
-      <p><strong>Prefer VS Code?</strong> The same thing is a VS Code extension, on Windows, macOS and Linux:</p>
-<pre><code>code --install-extension djouallah.onelake-studio</code></pre>
-      <p class="more">Then click the OneLake Studio icon in the activity bar and sign in. Needs desktop VS Code 1.101 or later on Windows x64, or macOS or Linux on x64 or arm64. The app and the extension share what you've read on one machine.</p>
-      <p class="more">Read only. The one exception is Export to Fabric, which is experimental and asks for an OK first.</p>
+      <p><a href="features.html">See what it does</a></p>
     </section>
   </main>
 
   <footer class="site-footer">
     <div class="wrap">
+      <nav class="footer-nav" aria-label="Reference">
+        <a href="naming.html">Naming</a>
+        <a href="architecture.html">Architecture</a>
+        <a href="catalog.html">Catalog</a>
+      </nav>
       <p>A personal project, not a Microsoft product or supported by Microsoft. Results computed from a semantic model aren't guaranteed to match Power BI. MIT License.</p>
     </div>
   </footer>

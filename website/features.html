@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Features: OneLake Studio</title>
+  <meta name="description" content="What OneLake Studio does: one SQL name for every table and semantic model, a pivot over a model, a table in a click, query plans, and offline use.">
+  <link rel="icon" href="icon.png">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="site-header">
+    <div class="wrap">
+      <a class="brand" href="./"><img src="icon.png" alt="" width="28" height="28">OneLake Studio</a>
+      <nav class="site-nav" aria-label="Main">
+        <a href="features.html" aria-current="page">Features</a>
+        <a href="how-it-works.html">How it works</a>
+        <a href="changelog.html">Changelog</a>
+        <a href="https://github.com/djouallah/onelake_studio">GitHub</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="wrap wide">
+    <section class="intro">
+      <h1>Features</h1>
+      <p class="lead">Browse OneLake and query any table, file or semantic model with SQL, on your machine, read only and offline. The same in the app and in the VS Code extension.</p>
+    </section>
+
+    <section class="feature">
+      <div>
+        <h2>One name for every object</h2>
+        <p>Any statement can join across items, workspaces and kinds with no setup. A Power BI semantic model is one more table, and <code>AGG("measure")</code> computes its measure.</p>
+      </div>
+<pre><code>SELECT * FROM lakehouse.aemo.data.dbo.dim_duid;
+
+SELECT dim_region.Region, AGG("Registered MW")
+FROM semanticmodel.aemo.nem GROUP BY ALL;</code></pre>
+    </section>
+
+    <section class="feature">
+      <div>
+        <h2>A semantic model, in a pivot</h2>
+        <p>See its tables and relationships, then drag fields into a table or a chart, with the SQL behind it.</p>
+      </div>
+      <div class="shots">
+        <a class="shot" href="img/pivot.png"><img src="img/pivot.png" alt="The Pivot page: fields on the left, and a line chart of Total Amount by date." width="1879" height="1057" loading="lazy"></a>
+        <a class="shot" href="img/model.png"><img src="img/model.png" alt="The Model page: a fact table joined to its date and zone dimensions." width="1458" height="300" loading="lazy"></a>
+      </div>
+    </section>
+
+    <section class="feature stacked">
+      <div>
+        <h2>A table in a click</h2>
+        <p>Columns, row count, first rows, and Delta or Iceberg stats and history.</p>
+      </div>
+      <div class="shots pair">
+        <a class="shot" href="img/stats.png"><img src="img/stats.png" alt="A Delta table's Stats tab: format, version, rows, data files, size and last write." width="610" height="640" loading="lazy"></a>
+        <a class="shot" href="img/history.png"><img src="img/history.png" alt="A Delta table's History tab: each commit with its time, operation, rows added, files and engine." width="1613" height="745" loading="lazy"></a>
+      </div>
+    </section>
+
+    <section class="feature stacked">
+      <div>
+        <h2>See where the time went</h2>
+        <p>A query's plan shows a timeline of each step and its most expensive operators.</p>
+      </div>
+      <a class="shot" href="img/profile.png"><img src="img/profile.png" alt="A query profile: a timeline of planning, scan, aggregate and join steps, above a table of the most expensive operators." width="2351" height="552" loading="lazy"></a>
+    </section>
+
+    <section class="notes">
+      <p><strong>Ask Claude Code or GitHub Copilot.</strong> One command, and your assistant can list your data, read a model's measures and compute them.</p>
+      <p><strong>Work offline.</strong> What you've read keeps working with no internet: browse it, query it, pivot it.</p>
+    </section>
+
+    <p class="more read-only">Read only. The one exception is Export to Fabric, which is experimental and asks for an OK first.</p>
+  </main>
+
+  <footer class="site-footer">
+    <div class="wrap">
+      <nav class="footer-nav" aria-label="Reference">
+        <a href="naming.html">Naming</a>
+        <a href="architecture.html">Architecture</a>
+        <a href="catalog.html">Catalog</a>
+      </nav>
+      <p>A personal project, not a Microsoft product or supported by Microsoft. Results computed from a semantic model aren't guaranteed to match Power BI. MIT License.</p>
+    </div>
+  </footer>
+</body>
+</html>

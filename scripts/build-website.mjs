@@ -1,6 +1,6 @@
-// Builds the public website into .tmp/site: website/ as it is, the icon and the screenshot copied
-// in so neither is stored twice, and docs/*.md rendered to docs/*.html so the markdown stays the
-// only copy. A broken link or anchor in a doc fails the build, so it never deploys.
+// Builds the public website into .tmp/site: website/ as it is, the icon copied in so it isn't
+// stored twice, and docs/*.md rendered to pages beside the others so the markdown
+// stays the only copy. A broken link or anchor in a doc fails the build, so it never deploys.
 //
 // marked is installed by .github/workflows/pages.yml, not package.json: nothing else needs it.
 // Run: node scripts/build-website.mjs
@@ -15,7 +15,6 @@ const OUT = join(ROOT, ".tmp", "site");
 const GITHUB = "https://github.com/djouallah/onelake_studio";
 
 const DOCS = [
-  { md: "README.md", page: "index.html", title: "Overview" },
   { md: "NAMING.md", page: "naming.html", title: "Naming" },
   { md: "ARCHITECTURE.md", page: "architecture.html", title: "Architecture" },
   { md: "CATALOG.md", page: "catalog.html", title: "Catalog" },
@@ -82,9 +81,16 @@ function render(doc, source, broken) {
   doc.html = marked.parse(source);
 }
 
+// The docs used to live under docs/: their old addresses still land on the same page.
+const moved = to => `<!doctype html>
+<meta charset="utf-8">
+<meta http-equiv="refresh" content="0; url=${to}">
+<link rel="canonical" href="${to}">
+<a href="${to}">Moved</a>
+`;
+
 function page(doc) {
-  const docLinks = DOCS.map(d =>
-    `<a href="${d.page}"${d === doc ? ' aria-current="page"' : ""}>${d.title}</a>`).join("\n          ");
+  const current = href => href === doc.page ? ' aria-current="page"' : "";
   const sections = doc.sections.length < 2 ? "" : doc.sections.map(s =>
     `<a href="#${s.id}">${escapeHtml(s.text)}</a>`).join("\n          ");
   return `<!doctype html>
@@ -92,38 +98,43 @@ function page(doc) {
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>${doc.title}: OneLake Studio docs</title>
-  <link rel="icon" href="../icon.png">
-  <link rel="stylesheet" href="../style.css">
+  <title>${doc.title}: OneLake Studio</title>
+  <link rel="icon" href="icon.png">
+  <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <header class="site-header">
     <div class="wrap">
-      <a class="brand" href="../"><img src="../icon.png" alt="" width="28" height="28">OneLake Studio</a>
+      <a class="brand" href="./"><img src="icon.png" alt="" width="28" height="28">OneLake Studio</a>
       <nav class="site-nav" aria-label="Main">
-        <a href="../how-it-works.html">How it works</a>
-        <a href="./" aria-current="page">Docs</a>
+        <a href="features.html">Features</a>
+        <a href="how-it-works.html">How it works</a>
+        <a href="changelog.html"${current("changelog.html")}>Changelog</a>
         <a href="${GITHUB}">GitHub</a>
       </nav>
     </div>
   </header>
 
-  <div class="wrap wide doc-layout">
+  ${sections ? `<div class="wrap wide doc-layout">
     <aside class="doc-side">
-      <nav class="doc-nav" aria-label="Docs">
-          ${docLinks}
-      </nav>
-      ${sections ? `<nav class="doc-sections" aria-label="On this page">
+      <nav class="doc-sections" aria-label="On this page">
           ${sections}
-      </nav>` : ""}
+      </nav>
     </aside>
     <main class="doc">
 ${doc.html}
     </main>
-  </div>
+  </div>` : `<main class="wrap doc">
+${doc.html}
+  </main>`}
 
   <footer class="site-footer">
     <div class="wrap">
+      <nav class="footer-nav" aria-label="Reference">
+        <a href="naming.html"${current("naming.html")}>Naming</a>
+        <a href="architecture.html"${current("architecture.html")}>Architecture</a>
+        <a href="catalog.html"${current("catalog.html")}>Catalog</a>
+      </nav>
       <p>A personal project, not a Microsoft product or supported by Microsoft. Results computed from a semantic model aren't guaranteed to match Power BI. MIT License.</p>
     </div>
   </footer>
@@ -148,7 +159,11 @@ if (broken.length) {
 await rm(OUT, { recursive: true, force: true });
 await cp(join(ROOT, "website"), OUT, { recursive: true });
 await cp(join(ROOT, "media", "icon.png"), join(OUT, "icon.png"));
-await cp(join(ROOT, "docs", "summary.png"), join(OUT, "summary.png"));
 await mkdir(join(OUT, "docs"), { recursive: true });
-for (const doc of DOCS) await writeFile(join(OUT, "docs", doc.page), page(doc));
+await writeFile(join(OUT, "docs", "index.html"), moved("../"));
+for (const doc of DOCS) {
+  if (existsSync(join(OUT, doc.page))) throw new Error(`${doc.md} and website/${doc.page} are both ${doc.page}`);
+  await writeFile(join(OUT, doc.page), page(doc));
+  await writeFile(join(OUT, "docs", doc.page), moved(`../${doc.page}`));
+}
 console.log(`Built ${DOCS.length} docs into ${OUT}`);

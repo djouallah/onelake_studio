@@ -13,8 +13,9 @@
     <div class="wrap">
       <a class="brand" href="./"><img src="icon.png" alt="" width="28" height="28">OneLake Studio</a>
       <nav class="site-nav" aria-label="Main">
+        <a href="features.html">Features</a>
         <a href="how-it-works.html" aria-current="page">How it works</a>
-        <a href="docs/">Docs</a>
+        <a href="changelog.html">Changelog</a>
         <a href="https://github.com/djouallah/onelake_studio">GitHub</a>
       </nav>
     </div>
@@ -43,7 +44,7 @@
       </div>
       <p>Fabric guarantees that a workspace's name is unique in the tenant, an item's name is unique for its type in a workspace, and a table's name is unique in its schema. So a name means exactly one object, which is what makes a join across workspaces safe. If a name could mean two objects, a query could read the wrong data with no error.</p>
       <p>Five parts are real SQL, not a parser trick. The kind is a DuckDB catalog, the workspace, item and schema are schemas nested inside it, and the table is a view over <code>iceberg_scan</code> of its current metadata.</p>
-      <p class="more"><a href="docs/naming.html">The naming contract</a></p>
+      <p class="more"><a href="naming.html">The naming contract</a></p>
     </section>
 
     <section>
@@ -120,7 +121,7 @@
         <dt>OneLake and the Fabric REST API</dt>
         <dd>A table is read with <code>iceberg_scan</code> on the metadata file the cache holds, so the catalog is never asked at query time. Semantic models come from the Fabric REST API, which needs a second token. VS Code's Microsoft account provider gives both, with no app registration.</dd>
       </dl>
-      <p class="more"><a href="docs/architecture.html#how-the-parts-fit">How the parts fit</a> and <a href="docs/architecture.html#the-server">the server</a>, in full</p>
+      <p class="more"><a href="architecture.html#how-the-parts-fit">How the parts fit</a> and <a href="architecture.html#the-server">the server</a>, in full</p>
     </section>
 
     <section>
@@ -132,7 +133,7 @@
         <li><strong>Prepare.</strong> The engine makes a view for each five-part name, from the cached listings, and gives DuckDB each file's <code>abfss://</code> URL in place of its name. A name that can't be found fails here.</li>
         <li><strong>Run.</strong> The statement goes to the server, and its tab's Stop reaches only that tab's statements. A result past <code>maxResultRows</code>, 200,000 by default, is counted rather than carried into the tab.</li>
       </ol>
-      <p class="more"><a href="docs/architecture.html#what-happens-when-a-statement-runs">The steps in full</a></p>
+      <p class="more"><a href="architecture.html#what-happens-when-a-statement-runs">The steps in full</a></p>
     </section>
 
     <section>
@@ -152,7 +153,7 @@
           </tbody>
         </table>
       </div>
-      <p class="more"><a href="docs/architecture.html#rules-every-change-keeps">The rules, and where each is held in the code</a></p>
+      <p class="more"><a href="architecture.html#rules-every-change-keeps">The rules, and where each is held in the code</a></p>
     </section>
 
     <section>
@@ -173,7 +174,7 @@
         </table>
       </div>
       <p>Metadata is kept in the catalog file. The bytes DuckDB reads are kept in its disk cache, <code>cache_httpfs</code>, and are read again only when a file was rewritten. The cache is per Microsoft account, so switching accounts never serves one account's data to another. It survives a sign-out, and only <strong>Clear Cached OneLake Data</strong> deletes it.</p>
-      <p class="more"><a href="docs/architecture.html#offline">Offline</a> and <a href="docs/architecture.html#the-cache">the cache</a>, in full</p>
+      <p class="more"><a href="architecture.html#offline">Offline</a> and <a href="architecture.html#the-cache">the cache</a>, in full</p>
     </section>
 
     <section>
@@ -183,14 +184,14 @@
 FROM semanticmodel.aemo.nem
 GROUP BY ALL;</code></pre>
       <p>Opening a model reads its definition from the Fabric REST API and keeps it on this machine, so later opens ask Fabric nothing. dax-sql compiles its measures to SQL, and DuckDB reads the tables behind them from the lakehouse the model names. Only Direct Lake is supported, over OneLake or a SQL endpoint, whose tables are read from OneLake all the same, and reading a definition needs Contributor or above on the workspace, or write on the model.</p>
-      <p class="more"><a href="docs/architecture.html#semantic-models">Semantic models</a> and <a href="docs/architecture.html#explore">Explore</a>, in full</p>
+      <p class="more"><a href="architecture.html#semantic-models">Semantic models</a> and <a href="architecture.html#explore">Explore</a>, in full</p>
     </section>
 
     <section>
       <h2 id="agents">Agents</h2>
       <p>An agent gets the same access as a person. The command line asks the running extension over a local pipe or socket, and the extension answers with its own sign-in, cache, engine and compiler, so VS Code must be open and signed in. <strong>Install Agent Skill</strong> sets it up for Claude Code and GitHub Copilot in VS Code.</p>
       <p>The answer alone goes to stdout and notes go to stderr. <code>--json</code> gives a structured answer, and exit codes say what happened, such as <code>3</code> for VS Code not open or not signed in, and <code>4</code> for not cached.</p>
-      <p class="more"><a href="docs/architecture.html#the-command-line-and-the-agent-skill">The command line and the agent skill</a></p>
+      <p class="more"><a href="architecture.html#the-command-line-and-the-agent-skill">The command line and the agent skill</a></p>
     </section>
 
     <section>
@@ -203,12 +204,17 @@ GROUP BY ALL;</code></pre>
         <li>ER diagrams for lakehouse tables: they declare no keys.</li>
         <li>vscode.dev: the engine is a native library, so this needs desktop VS Code.</li>
       </ul>
-      <p class="more"><a href="docs/architecture.html">The full architecture document</a></p>
+      <p class="more"><a href="architecture.html">The full architecture document</a></p>
     </section>
   </main>
 
   <footer class="site-footer">
     <div class="wrap">
+      <nav class="footer-nav" aria-label="Reference">
+        <a href="naming.html">Naming</a>
+        <a href="architecture.html">Architecture</a>
+        <a href="catalog.html">Catalog</a>
+      </nav>
       <p>A personal project, not a Microsoft product or supported by Microsoft. Results computed from a semantic model aren't guaranteed to match Power BI. MIT License.</p>
     </div>
   </footer>
