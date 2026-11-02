@@ -163,7 +163,7 @@ try {
     assert.match(listed.stderr, /not signed in/, said(listed));
     const read = await run(["sql", "SELECT 44 AS n", "--csv"]);
     assert.equal(read.code, 0, said(read));
-    assert.match(read.stdout, /44/, said(read));
+    assert.ok(read.stdout.includes("44"), said(read));
   });
   console.log("all passed");
 } finally {
