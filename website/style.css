@@ -425,6 +425,10 @@ tr:last-child td {
   margin: 24px 0;
 }
 
+.diagram.wide {
+  max-width: 760px;
+}
+
 .diagram svg {
   display: block;
   width: 100%;
