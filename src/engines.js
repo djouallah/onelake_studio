@@ -15,6 +15,7 @@ const { createLogFile, logFileOf } = require('./logfile');
  * @param {string} o.extensionDir  where this install's files are
  * @param {string} o.storageDir  what this install keeps
  * @param {boolean} o.production  an installed build, not a checkout's: a checkout keeps its own state
+ * @param {string} [o.serverTag]  a server apart from the editor's, sharing what is remembered as the background engine's does
  * @param {{ get: Function, store: Function }} o.secrets  where a server's session token is kept
  * @param {object} o.settings  settings.js
  * @param {() => string} o.httpProxy  a proxy the person set, or ''
@@ -25,7 +26,7 @@ const { createLogFile, logFileOf } = require('./logfile');
  * @param {() => void} o.onStoreCleared  what is kept was replaced under this window: another window's Clear, or an import
  * @param {(line: string) => void} o.log
  */
-function createEngines({ extensionDir, storageDir, production, secrets, settings, httpProxy, engineCallbacks, logBoot, logCatalog,
+function createEngines({ extensionDir, storageDir, production, serverTag = '', secrets, settings, httpProxy, engineCallbacks, logBoot, logCatalog,
                          closePanel, closeAllTabs, warn, showError, onStoreCleared, log }) {
   // The disk cache's folder for all accounts: `file-cache-v1` under the folder the setting names,
   // or under the extension's storage. Always our own subfolder, so deleting an old cache can
@@ -72,7 +73,7 @@ function createEngines({ extensionDir, storageDir, production, secrets, settings
   function sharedEngineServer(account, { background = false } = {}) {
     const script = join(extensionDir, 'dist', 'engine-server.js');
     const build = (() => { try { return statSync(script).mtimeMs; } catch (_) { return 0; } })();
-    const key = [account || 'none', extensionDir, ...(background ? ['background'] : [])].join('|');
+    const key = [account || 'none', extensionDir, ...(serverTag ? [serverTag] : []), ...(background ? ['background'] : [])].join('|');
     const secret = `onelakeStudio.engineSession.${createHash('sha256').update(key).digest('hex').slice(0, 16)}`;
     // What is remembered belongs to the account, so an update keeps it. F5 has its own: the installed
     // build's server holds this file open.

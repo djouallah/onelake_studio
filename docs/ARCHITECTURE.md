@@ -539,10 +539,29 @@ The function's deploy package (an esbuild bundle plus its metadata) is built onc
 
 ## The command line and the agent skill
 
-**[`bin/cli.mjs`](../bin/cli.mjs) is a doorbell.** It hands its arguments to the running extension over a
+**[`bin/cli.mjs`](../bin/cli.mjs) is a doorbell first.** It hands its arguments to the running extension over a
 local pipe or socket ([`src/bridge.js`](../src/bridge.js)). The extension answers
-([`src/agent.js`](../src/agent.js)) with its own sign-in, cache, engine and compiler, so VS Code must be
-open and signed in. `--help` and a wrong call do not need it.
+([`src/agent.js`](../src/agent.js)) with its own sign-in, cache, engine and compiler.
+
+**With VS Code closed,** on Windows with Node 22.5 or later, the same answer comes from
+[`src/standalone.js`](../src/standalone.js), which is [`src/core.js`](../src/core.js) with no editor around it:
+
+- **Sign-in:** `signin` opens the browser, once, as the Azure CLI's public client through MSAL
+  ([`src/msalsession.js`](../src/msalsession.js)). No app registration. A tenant's admin can block that client, and only
+  this is affected: the extension's sign-in stays VS Code's. The token cache is encrypted for this Windows user
+  with DPAPI ([`src/tokenstore.js`](../src/tokenstore.js)).
+- **The same cache:** a session's account id is MSAL's `homeAccountId` in both, so one person has one account key, and the
+  files are VS Code's for this extension. The tenant and the proxy come from VS Code's `settings.json`.
+- **Its own engine:** VS Code's server has its session token in VS Code's secret storage, so this one is a server of its
+  own, sharing the catalog, the log and the disk cache as the background engine does. Its token is in a file in this user's
+  profile, and opens a local port, no more.
+- **Nothing stays running:** no sync and no idle job. The process ends with the answer, and its server a minute after.
+- **Not here:** `export`, which asks for an OK in VS Code. Exit code 3 says so.
+
+**`serve <model.yaml|.bim>`** is always that, as it stays running: Excel's endpoint ([Open in Excel](#open-in-excel)) on a
+model file, with no VS Code. The model takes the name `semanticmodel.<workspace>.<model>`, from where its tables are and the
+file's name, or `--workspace` and `--name`, as [NAMING.md](NAMING.md#files) says of a model made from a file. Excel's
+PivotTables are its only client. **`--open`** opens a new workbook on it.
 
 **The skill** is [`claude-skill/SKILL.md`](../claude-skill/SKILL.md). **Install Agent Skill** writes it to
 `~/.claude/skills/onelake/`, where Claude Code and GitHub Copilot in VS Code (agent mode) look for
@@ -555,7 +574,7 @@ personal skills, and it follows the extension through updates.
 | 0 | Answered. With `--json`, `complete` and `truncated` say how much. |
 | 1 | Failed. |
 | 2 | Wrong call. |
-| 3 | VS Code is not open, or not signed in. |
+| 3 | Not signed in, or `export` with VS Code closed. |
 | 4 | Not cached. `--fresh` asks OneLake or Fabric now, unless offline, when it fails the same way. |
 | 5 | You declined an export. |
 | 6 | Timed out. |
@@ -725,6 +744,7 @@ every window. The rest apply at once.
 | `src/catalogfile.js`, `src/catalogtables.js`, `src/syncworker.js` | What is remembered, in SQLite, the catalog's tables there, and what keeps them current and looks after tables in use. |
 | `src/engine-server.js`, `src/engine-client.js`, `src/enginelog.js`, `src/logfile.js` | The server: its process, a window's side of it, and its log. |
 | `src/agent.js`, `src/bridge.js`, `bin/cli.mjs` | The command line. |
+| `src/standalone.js`, `src/msalsession.js`, `src/tokenstore.js` | The command line with VS Code closed: `core.js` with no editor, its sign-in, and its token cache. |
 | `src/diaglog.js` | A window's own log. |
 | `src/exportapp.js`, `src/fabricapp.js`, `src/onelakewrite.js` | Export to Fabric. |
 | `src/vendored.js` | The one list of pinned third-party code the webview runs, dax-sql included. |

@@ -38,7 +38,7 @@ test("this follows what it should: the engine's lazy requires are in it", async 
 });
 
 test("signin.js and settings.js, which the extension hands in, need no editor either", async () => {
-  for (const f of ["signin.js", "settings.js", "readlog.js", "skill.js", "diskuse.js", "connectivity.js"]) {
+  for (const f of ["signin.js", "settings.js", "readlog.js", "skill.js", "diskuse.js", "connectivity.js", "standalone.js"]) {
     const seen = await reach(join(src, f));
     const editor = [...seen].filter(([, requires]) => requires.includes("vscode")).map(([x]) => relative(src, x));
     assert.deepEqual(editor, [], f);

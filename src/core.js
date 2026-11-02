@@ -61,6 +61,9 @@ const accountTurn = serialized(body => body());
  * @param {string} o.extensionDir  where this install's files are
  * @param {string} o.storageDir  what this install keeps
  * @param {boolean} o.production  an installed build
+ * @param {string} [o.serverTag]  engines.js
+ * @param {boolean} [o.servesCommandLine]  answers on the bridge
+ * @param {boolean} [o.servesExcel]  opens Excel's port as it starts, once it has been used
  * @param {boolean} o.dev  run from a checkout, whose Excel endpoint is its own
  * @param {{ get: Function, update: Function }} o.memento  what outlives a window
  * @param {{ get: Function, store: Function }} o.secrets
@@ -82,7 +85,7 @@ const accountTurn = serialized(body => body());
  * @param {(step: string) => void} o.mark  a step of starting up
  */
 function createCore({
-  signIn, connectivity, settings, readLog, extensionDir, storageDir, production, dev, memento, secrets, httpProxy,
+  signIn, connectivity, settings, readLog, extensionDir, storageDir, production, serverTag = '', servesCommandLine = true, servesExcel = true, dev, memento, secrets, httpProxy,
   readmePath, pageDir, build, editorVersion, outputLog, windowLog, exportUi, view, closePanel, closeAllTabs, post,
   notify, warn, showError, setContext, onAccountChange, subscribe, log, mark,
 }) {
@@ -134,7 +137,7 @@ function createCore({
   }
 
   const engines = createEngines({
-    extensionDir, storageDir, production, secrets, settings, httpProxy,
+    extensionDir, storageDir, production, serverTag, secrets, settings, httpProxy,
     engineCallbacks, logBoot, logCatalog, closePanel, closeAllTabs, warn, showError,
     onStoreCleared: () => onStoreCleared(),
     log,
@@ -409,7 +412,7 @@ function createCore({
       },
     },
   });
-  subscribe(serveBridge({
+  if (servesCommandLine) subscribe(serveBridge({
     handle: (req, ctx) => {
       log(`command line: ${(req && req.args || []).join(' ').slice(0, 120)}`);
       return agent.run(req, ctx);
@@ -480,7 +483,7 @@ function createCore({
     return xmlaAddress;
   }
   subscribe({ dispose: () => { if (xmlaServer) xmlaServer.dispose(); } });
-  startXmla().catch(e => log(`xmla: ${e.message}`));
+  if (servesExcel) startXmla().catch(e => log(`xmla: ${e.message}`));
 
   // The button on a model's Pivot: a new workbook with a PivotTable on it. A failure is thrown
   // back to the Pivot's status line, and logged. Answers what that line says when it's open.
@@ -552,7 +555,7 @@ function createCore({
   return {
     engines, onelake, semviews, rebindStore, exportExplore, openExcel, keepOffline, openSqlModel, nameModelTables, saveQuery,
     onStoreCleared: () => onStoreCleared(),
-    fabric, sqlTables, syncWorker, favorites, queries, models,
+    fabric, sqlTables, syncWorker, favorites, queries, models, agent, startExcel: startXmla,
     accountTurn, sessionChanged, setSignedIn, start,
     signedIn: () => signedIn, hasSession: () => hasSession, sessionAsked: () => sessionAsked,
     storeAccount: () => storeAccount, queryAccount: () => queryAccount,

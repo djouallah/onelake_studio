@@ -34,6 +34,11 @@ execSync("npx --yes esbuild@0.28.1 src/engine-server.js --bundle --platform=node
   " --target=node20 --external:@duckdb/node-bindings --log-level=warning" +
   " --outfile=dist/engine-server.js", { cwd: here, stdio: "inherit" });
 
+// The command line with VS Code closed (standalone.js), with the sign-in library MSAL inside it.
+execSync("npx --yes esbuild@0.28.1 src/standalone.js --bundle --platform=node --format=cjs" +
+  " --target=node20 --external:@duckdb/node-bindings --log-level=warning" +
+  " --outfile=dist/standalone.js", { cwd: here, stdio: "inherit" });
+
 // The bundle must hold node-api, not point at it — node-api is no longer in the vsix.
 const code = readFileSync(out, "utf8");
 if (/require\(["']@duckdb\/node-api["']\)/.test(code)) {

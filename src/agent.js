@@ -794,7 +794,7 @@ function createAgent({ onelake, engine, modelPath, appDir, vendorDir, daxSqlPin,
       const wrong = checkRequest({ args, opts });
       if (wrong) throw usage(wrong);
       // Whether a window is signed in is one of the things these two are asked to find out.
-      if (!signedIn() && name !== 'status' && name !== 'log') throw unavailable('OneLake Studio is not signed in — sign in from its view in VS Code.');
+      if (!signedIn() && name !== 'status' && name !== 'log') throw unavailable('OneLake Studio is not signed in — sign in from its view in VS Code, or run this command line\'s signin.');
       if (opts.fresh && offlineReason()) throw offlineError(offlineReason(), 'An answer newer than the cache');
       await commands[name](rest, {
         fresh: !!opts.fresh, csv: !!opts.csv, json: !!opts.json,

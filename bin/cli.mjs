@@ -1,18 +1,19 @@
 #!/usr/bin/env node
 // =============================================================================
-// bin/cli.mjs — ask the running OneLake Studio extension, from a shell
+// bin/cli.mjs — ask OneLake Studio, from a shell
 // =============================================================================
-// A doorbell, nothing more: the arguments go to the extension over a local pipe
-// (src/bridge.js), the extension answers with its own sign-in, cache and engine
-// (src/agent.js), and this prints the answer — the answer alone on stdout, notes on stderr,
-// and the exit code an agent can branch on (EXIT, in bridge.js).
+// A doorbell first: the arguments go to the extension over a local pipe (src/bridge.js), the
+// extension answers with its own sign-in, cache and engine (src/agent.js), and this prints the
+// answer — the answer alone on stdout, notes on stderr, and the exit code an agent can branch on
+// (EXIT, in bridge.js). With VS Code closed, on Windows, the same answer comes from dist/standalone.js,
+// on a sign-in of its own (signin). `serve` is always that: it stays, for Excel to connect to.
 // Written for an agent to run. Read only, but for export, which you confirm in VS Code.
-// Needs VS Code open with the extension signed in; --help and a wrong call do not.
 //
 //   node bin/cli.mjs --help
 // =============================================================================
 import { createRequire } from "node:module";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 
 const require = createRequire(import.meta.url);
 const { askBridge, EXIT, failureJson, checkRequest, MAX_REQUEST } = require("../src/bridge.js");
@@ -48,6 +49,14 @@ const USAGE = {
                                         sync, and where its files are. Answers signed out too`,
   log: `  log [<text>]                        this window's own log, the lines holding <text> if given,
                                         newest last (default 200; --limit N)`,
+  signin: `  signin                              with VS Code closed: sign in, in the browser, once. Needs no
+                                        app registration, and the answers come from the same cache`,
+  signout: "  signout                             forgets that sign-in. VS Code's own is its own",
+  serve: `  serve <model.yaml|.bim>             an OLAP server on a model file, for Excel's PivotTables, until
+                                        stopped. Prints how to connect; a refresh sees an edit to the file
+    --workspace <ws>                  its workspace, if it can't be read from where its tables are
+    --name <model>                    its name, if not the file's: semanticmodel.<ws>.<model>
+    --open                            and a new workbook on it, in Excel`,
 };
 
 const OPTIONS = `  --limit N                           rows printed (default 100; --csv prints all unless given)
@@ -61,16 +70,16 @@ const OPTIONS = `  --limit N                           rows printed (default 100
   -h, --help  --version
 
 exit codes: 0 answered (--json: complete, truncated say how much)  1 failed, or no such table  2 wrong call
-            3 VS Code not open or not signed in  4 not cached (--fresh)  5 you declined  6 timed out`;
+            3 not signed in (signin), or no VS Code for export  4 not cached (--fresh)  5 you declined  6 timed out`;
 
-const HELP = `onelake — ask OneLake Studio (VS Code must be open, signed in). Read only, but
-for export, which waits for your OK in VS Code.
+const HELP = `onelake — ask OneLake Studio: VS Code if it is open, and if not, on Windows, this
+on a sign-in of its own. Read only, but for export, which waits for your OK in VS Code.
 
 ${Object.values(USAGE).join("\n")}
 ${OPTIONS}`;
 
-const SWITCHES = { "--fresh": "fresh", "--csv": "csv", "--json": "json", "--show-sql": "showSql", "--downloaded": "downloaded" };
-const VALUES = { "--limit": "limit", "--timeout": "timeout" };
+const SWITCHES = { "--fresh": "fresh", "--csv": "csv", "--json": "json", "--show-sql": "showSql", "--downloaded": "downloaded", "--open": "open" };
+const VALUES = { "--limit": "limit", "--timeout": "timeout", "--workspace": "workspace", "--name": "name" };
 const DEFAULT_TIMEOUT_S = 600;
 
 function parse(argv) {
@@ -127,11 +136,60 @@ function withinTimeout(promise, ms) {
   return Promise.race([promise, late]).finally(() => clearTimeout(timer));
 }
 
+// The answer with VS Code closed: Windows for now, as its token cache is DPAPI's, and a Node with
+// node:sqlite, as what is remembered is in SQLite. null without either, or from a checkout not bundled.
+function standalone() {
+  const file = fileURLToPath(new URL("../dist/standalone.js", import.meta.url));
+  const [major, minor] = process.versions.node.split(".").map(Number);
+  if (process.platform !== "win32" || major < 22 || (major === 22 && minor < 5) || !existsSync(file)) return null;
+  return require(file).createStandalone({ say: m => process.stderr.write(`${m}\n`) });
+}
+
+// Everything it opened holds the process, and what's written to a pipe has to get there first.
+async function leave(alone) {
+  await Promise.race([alone.close().catch(() => {}), new Promise(r => setTimeout(r, 5000))]);
+  await new Promise(r => process.stdout.write("", r));
+  process.exit(process.exitCode || 0);
+}
+
+const LOCAL = { signin: [0, "signin"], signout: [0, "signout"], serve: [1, "serve <model.yaml|.bim>"] };
+
+async function local(name) {
+  const [wanted, usage] = LOCAL[name];
+  if (args.length - 1 !== wanted) return fail(EXIT.USAGE, `usage: ${usage}`);
+  const alone = standalone();
+  if (!alone) return fail(EXIT.UNAVAILABLE, `${name} needs an installed OneLake Studio on Windows, and Node 22.5 or later`);
+  const answered = fields => { if (opts.json) console.log(JSON.stringify({ ok: true, command: name, ...fields })); };
+  try {
+    if (name === "signin") {
+      process.stderr.write("Signing in: finish it in the browser…\n");
+      const account = await alone.signin();
+      answered({ account });
+      if (!opts.json) console.log(`signed in as ${account}`);
+    } else if (name === "signout") {
+      await alone.signout();
+      answered({});
+      if (!opts.json) console.log("signed out");
+    } else {
+      const served = await alone.serve({ file: args[1], workspace: opts.workspace, name: opts.name, open: !!opts.open });
+      answered(served);
+      if (!opts.json) console.log(`serving ${served.catalog}\n\nconnection string:\n${served.connection}`);
+      process.stderr.write("Serving until this is stopped (Ctrl+C).\n");
+      await new Promise(r => { process.once("SIGINT", r); process.once("SIGTERM", r); });
+    }
+  } catch (e) {
+    fail(e.code === EXIT.UNAVAILABLE ? EXIT.UNAVAILABLE : EXIT.FAILED, e.message);
+  }
+  await leave(alone);
+}
+
 async function ask() {
   if (wrong) return fail(EXIT.USAGE, wrong);
+  if (Object.hasOwn(LOCAL, args[0])) return local(args[0]);
   const seconds = opts.timeout != null ? Number(opts.timeout) : args[0] === "export" ? 0 : DEFAULT_TIMEOUT_S;
   if (!(seconds >= 0)) return fail(EXIT.USAGE, `--timeout takes seconds, not "${opts.timeout}"`);
   const timeoutMs = seconds * 1000;
+  let alone = null;
   const { timeout: _client, ...sent } = opts;
   const bad = checkRequest({ args, opts: sent });
   if (bad) return fail(EXIT.USAGE, bad);
@@ -145,7 +203,15 @@ async function ask() {
       return fail(EXIT.USAGE, `the request is over ${MAX_REQUEST / 1048576} MB: too long to send`);
     }
     if (args[0] === "export" && !opts.json) process.stderr.write("Export to Fabric: confirm it in VS Code…\n");
-    const r = await askBridge(request, undefined, { timeoutMs });
+    let r;
+    try {
+      r = await askBridge(request, undefined, { timeoutMs });
+    } catch (e) {
+      if (e.code !== "NO_EXTENSION" || !(alone = standalone())) throw e;
+      const stop = new AbortController();
+      r = await withinTimeout(alone.answer(request, { signal: stop.signal }), timeoutMs).catch(x => { stop.abort(); throw x; });
+      if (r.code === EXIT.UNAVAILABLE && args[0] !== "export") process.stderr.write(`Sign in with: node "${fileURLToPath(import.meta.url)}" signin\n`);
+    }
     if (r.out) process.stdout.write(r.out + "\n");
     if (r.err) process.stderr.write(r.err + "\n");
     process.exitCode = r.code || 0;
@@ -155,6 +221,7 @@ async function ask() {
   } finally {
     // Whatever was still reading stdin has no more to do.
     process.stdin.destroy();
+    if (alone) await leave(alone);
   }
 }
 

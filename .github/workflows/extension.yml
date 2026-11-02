@@ -159,7 +159,7 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: 24
-      - run: node --test test/js/bridge.test.mjs test/js/agent.test.mjs test/js/cli.test.mjs test/js/cli-contract.test.mjs test/js/cli-catalog.test.mjs test/js/cli-docs.test.mjs
+      - run: node --test test/js/bridge.test.mjs test/js/agent.test.mjs test/js/cli.test.mjs test/js/cli-contract.test.mjs test/js/cli-catalog.test.mjs test/js/cli-docs.test.mjs test/js/standalone.test.mjs
 
   # What every vsix carries whatever its platform, built once and kept in the cache for the
   # five package legs, which then restore it rather than build it five times: the webview's and
@@ -283,6 +283,7 @@ jobs:
           files=$(unzip -Z1 "$vsix")
           grep -qx 'extension/dist/extension.js' <<<"$files" || { echo "no dist/extension.js in the vsix"; exit 1; }
           grep -qx 'extension/dist/engine-server.js' <<<"$files" || { echo "no dist/engine-server.js in the vsix"; exit 1; }
+          grep -qx 'extension/dist/standalone.js' <<<"$files" || { echo "no dist/standalone.js in the vsix"; exit 1; }
           grep -qx 'extension/src/bridge.js' <<<"$files" || { echo "no src/bridge.js — bin/cli.mjs needs it"; exit 1; }
           # Export to Fabric writes its app from fabric_app/ and Studio's Explore (webview/explore),
           # and deploys the prebuilt function.
@@ -414,8 +415,32 @@ jobs:
           overwrite: true
           retention-days: 14
 
+  # The command line with VS Code closed, from the vsix a person installs, where it runs: Windows, its
+  # DPAPI, a named pipe, its own engine server, and Excel's endpoint on a model file.
+  standalone:
+    needs: package
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 24
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: vsix-win32-x64
+          path: ${{ runner.temp }}/vsix
+      - name: Unpack the vsix
+        shell: pwsh
+        run: |
+          $vsix = Get-ChildItem "$env:RUNNER_TEMP/vsix" -Filter *.vsix | Select-Object -First 1
+          $zip = Join-Path $env:RUNNER_TEMP 'extension.zip'
+          Copy-Item $vsix.FullName $zip
+          Expand-Archive $zip -DestinationPath "$env:RUNNER_TEMP/unpacked"
+      - run: node test/e2e/run-standalone.mjs "${{ runner.temp }}/unpacked/extension"
+
   publish:
-    needs: [package, browser]
+    needs: [package, browser, standalone]
     if: startsWith(github.ref, 'refs/tags/ext-v')
     runs-on: ubuntu-26.04
     environment: azure

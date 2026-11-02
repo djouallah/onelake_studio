@@ -8,8 +8,8 @@ description: Answer questions about Microsoft Fabric OneLake data and Power BI s
 # OneLake and semantic models, from the shell
 
 One command, read only but for `export`. It asks the OneLake Studio extension running in VS Code, which answers
-with its own sign-in and cache — so VS Code must be open with OneLake Studio signed in (if the
-command says it is not running, ask the user to open it). Needs Node.js on PATH:
+with its own sign-in and cache. With VS Code closed, on Windows with Node 22.5 or later, it answers by itself from the
+same cache, after one `signin` (exit code 3 says so). Needs Node.js on PATH:
 
 ```
 node --no-warnings "{{cli}}" <command>
@@ -40,6 +40,18 @@ Options: `--limit N` (rows printed, default 100), `--csv`, `--json`, `--fresh` (
 `--timeout SEC` (give up and stop the query; default 600, `0` waits; `export` waits unless told otherwise),
 `--` (what follows is not an option: `find -- -x`). `<command> --help` says what one command takes.
 
+## An OLAP server on a model file
+
+`serve <model.yaml|.bim>` starts an endpoint Excel's PivotTables connect to, on this machine only, and stays running until
+it is stopped, so start it in the background. It works with VS Code closed, on Windows, after `signin`. It prints how to
+connect, and `--json` prints `{ ok, catalog, port, url, connection, measures, opened }`.
+
+- `--open` opens a new workbook on it, in the Excel desktop app.
+- The model takes the name `semanticmodel.<workspace>.<model>`: the workspace its tables are in and the file's name, or
+  `--workspace` and `--name`. It replaces whatever this machine holds under that name.
+- Excel's PivotTables are the only client: it reads what they write, and refuses other MDX by name. It's not DAX.
+- A refresh in Excel sees an edit to the file.
+
 ## Reading the answer
 
 Branch on the exit code, never on the wording:
@@ -49,7 +61,7 @@ Branch on the exit code, never on the wording:
 | 0 | `OK` | answered, though perhaps not all of it: see below | use it |
 | 1 | `FAILED` | the query or OneLake failed, a `--csv` had more rows than a query keeps, `exists` or `table` found no such table in a listing, or it is *not a valid table*: a folder under `Tables/` with neither a Delta log nor Iceberg metadata, which can't be read | fix the query, or report it |
 | 2 | `USAGE` | a wrong command, option or argument | fix the call |
-| 3 | `UNAVAILABLE` | VS Code not open, not signed in, or Fabric refused the sign-in | ask the user |
+| 3 | `UNAVAILABLE` | Not signed in, Fabric refused the sign-in, or `export` with VS Code closed | ask the user to run `signin`, or open VS Code for `export` |
 | 4 | `NOT_CACHED` | not in the cache; offline (no internet, or nobody signed in), `--fresh` and a table or file never read end here too, and `retry` is absent | ask, or add `--fresh` unless offline |
 | 5 | `DECLINED` | the user said no to an export | stop |
 | 6 | `TIMEOUT` | `--timeout` reached, and the query stopped | narrow it, or give it longer |

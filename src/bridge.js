@@ -47,7 +47,7 @@ const COMMANDS = {
   status: { usage: 'status', max: 0, flags: ['json'] },
   log: { usage: 'log [<text>]', max: 1, flags: ['json', 'limit'] },
 };
-const FLAG_NAME = { fresh: '--fresh', csv: '--csv', json: '--json', limit: '--limit', showSql: '--show-sql', downloaded: '--downloaded' };
+const FLAG_NAME = { fresh: '--fresh', csv: '--csv', json: '--json', limit: '--limit', showSql: '--show-sql', downloaded: '--downloaded', workspace: '--workspace', name: '--name', open: '--open' };
 
 /** What is wrong with a request, or null: asked before the extension is, and by it. */
 function checkRequest({ args, opts = {} }) {
