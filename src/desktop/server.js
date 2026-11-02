@@ -54,7 +54,7 @@ function bridge(id, nonce) {
     try { context = JSON.parse(at.dataset.vscodeContext); } catch (_) {}
     e.preventDefault();
     send({ olsMenu: id, x: e.clientX, y: e.clientY, context });
-  });
+  }, true);   // before the page's own handler, which may redraw what was clicked
   addEventListener('keydown', e => {
     if (e.ctrlKey && e.altKey && e.key.toLowerCase() === 'o') { e.preventDefault(); send({ olsKey: 'ctrl+alt+o' }); }
   });
