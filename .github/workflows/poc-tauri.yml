@@ -1,0 +1,82 @@
+# A throwaway: builds poc/tauri, installs it as a person would, and runs it once. See its README.
+name: Tauri PoC
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - poc/tauri/**
+      - .github/workflows/poc-tauri.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    defaults:
+      run:
+        shell: pwsh
+        working-directory: poc/tauri
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 24
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: |
+            ~/.cargo/registry
+            poc/tauri/src-tauri/target
+          key: poc-tauri-${{ hashFiles('poc/tauri/src-tauri/Cargo.toml') }}
+
+      - name: The sidecar, with its own Node
+        run: |
+          npm install --prefix src-tauri/sidecar --omit=dev --no-audit --no-fund
+          Copy-Item (Get-Command node).Source src-tauri/sidecar/node.exe
+
+      - name: Build the installer
+        run: |
+          npx --yes @tauri-apps/cli@2.12.4 icon ../../media/icon.png
+          npx --yes @tauri-apps/cli@2.12.4 build
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: onelake-studio-poc-setup
+          path: poc/tauri/src-tauri/target/release/bundle/nsis/*.exe
+
+      - name: Install it and run it once
+        run: |
+          $setup = Get-Item src-tauri/target/release/bundle/nsis/*.exe
+          Start-Process $setup.FullName -ArgumentList '/S' -Wait
+          $dir = "$env:LOCALAPPDATA\OneLake Studio PoC"
+          $exe = Get-ChildItem $dir -Filter onelake-studio-poc.exe -Recurse | Select-Object -First 1
+          if (-not $exe) { Get-ChildItem $dir -Recurse -Depth 1; throw "the installed app was not found in $dir" }
+
+          $result = "$env:RUNNER_TEMP\smoke.json"
+          $app = Start-Process $exe.FullName -ArgumentList '--smoke', "`"$result`"" -PassThru
+          $null = $app.Handle   # without this, ExitCode comes back empty
+          $finished = $app.WaitForExit(180000)
+          Get-Content "$env:TEMP\onelake-poc-sidecar.log" -ErrorAction SilentlyContinue
+          if (-not $finished) { $app.Kill(); throw 'the app did not finish within three minutes' }
+          if (-not (Test-Path $result)) { throw "the app exited with $($app.ExitCode) and wrote no result" }
+          $answer = Get-Content $result -Raw
+          Write-Host $answer
+          if ($app.ExitCode -ne 0) { throw "the check failed: $answer" }
+
+          $mb = { param($path) [math]::Round(((Get-ChildItem $path -Recurse -File | Measure-Object Length -Sum).Sum) / 1MB) }
+          $sidecar = Join-Path $exe.DirectoryName 'sidecar'
+          @"
+          | What | Size |
+          | --- | --- |
+          | Installer | $([math]::Round($setup.Length / 1MB)) MB |
+          | Installed | $(& $mb $dir) MB |
+          | Tauri's own executable | $([math]::Round($exe.Length / 1MB)) MB |
+          | The sidecar (Node and its packages) | $(& $mb $sidecar) MB |
+
+          ``````json
+          $answer
+          ``````
+          "@ | Out-File -Append $env:GITHUB_STEP_SUMMARY

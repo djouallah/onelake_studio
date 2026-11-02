@@ -1,0 +1,26 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "OneLake Studio PoC",
+  "mainBinaryName": "onelake-studio-poc",
+  "version": "0.0.1",
+  "identifier": "com.onelakestudio.poc",
+  "build": {
+    "frontendDist": "../ui"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      { "title": "OneLake Studio PoC", "width": 900, "height": 700 }
+    ],
+    "security": { "csp": null }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.ico"],
+    "resources": ["sidecar/**/*"],
+    "windows": {
+      "nsis": { "installMode": "currentUser" }
+    }
+  }
+}

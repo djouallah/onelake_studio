@@ -1,0 +1,50 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>OneLake Studio PoC</title>
+<style>
+  :root { color-scheme: light dark; font: 14px "Segoe UI", sans-serif; }
+  body { margin: 16px; }
+  button { margin: 0 8px 8px 0; padding: 6px 12px; }
+  textarea { width: 100%; height: 72px; box-sizing: border-box; font-family: Consolas, monospace; }
+  pre { padding: 12px; border: 1px solid #8888; overflow: auto; white-space: pre-wrap; }
+</style>
+</head>
+<body>
+<h3>OneLake Studio PoC</h3>
+<button id="engine">Check engine</button>
+<button id="broker">Sign in (Windows account)</button>
+<button id="browser">Sign in (browser)</button>
+<textarea id="sql">SELECT version() AS duckdb, current_date AS today;</textarea>
+<button id="run">Run</button>
+<pre id="out">Ready.</pre>
+<script>
+const { invoke } = window.__TAURI__.core;
+const out = document.getElementById('out');
+
+const ask = async request => JSON.parse(await invoke('rpc', { request: JSON.stringify(request) }));
+
+async function show(label, work) {
+  out.textContent = `${label}…`;
+  try { out.textContent = JSON.stringify(await work(), null, 2); }
+  catch (e) { out.textContent = `Failed: ${e}`; }
+}
+
+const engine = async () => ({ ...await ask({ method: 'engine' }), sinceStartMs: await invoke('since_start_ms') });
+const signIn = async mode => ask({ method: 'signIn', mode, hwnd: await invoke('window_handle') });
+
+document.getElementById('engine').onclick = () => show('Checking', engine);
+document.getElementById('broker').onclick = () => show('Signing in', () => signIn('broker'));
+document.getElementById('browser').onclick = () => show('Signing in', () => signIn('browser'));
+document.getElementById('run').onclick = () =>
+  show('Running', () => ask({ method: 'sql', sql: document.getElementById('sql').value }));
+
+(async () => {
+  if (!await invoke('is_smoke')) return;
+  const result = await engine().catch(e => ({ ok: false, error: String(e) }));
+  await invoke('smoke_done', { result: JSON.stringify(result), ok: result.ok === true });
+})();
+</script>
+</body>
+</html>

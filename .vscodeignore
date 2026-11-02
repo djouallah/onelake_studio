@@ -1,6 +1,7 @@
 .vscode/**
 .github/**
 .claude/**
+poc/**
 .gitignore
 node_modules/**
 # ...except the engine's binding. DuckDB runs natively in the extension host, and its
