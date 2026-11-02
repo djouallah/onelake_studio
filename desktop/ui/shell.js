@@ -4,7 +4,7 @@
 import { when } from './when.js';
 
 const VIEW = 'onelakeStudio.explorer';
-const dark = matchMedia('(prefers-color-scheme: dark)').matches;
+const dark = true;   // the app is dark, whatever Windows is
 document.getElementById('theme').href = `/theme.css?dark=${dark ? 1 : 0}`;
 const $ = id => document.getElementById(id);
 

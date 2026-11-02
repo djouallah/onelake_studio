@@ -207,6 +207,30 @@ pre code {
   color: var(--on-accent);
 }
 
+.steps {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px 28px;
+  margin: 28px 0 32px;
+  padding-left: 1.2em;
+  font-size: 18px;
+}
+
+.steps li {
+  padding-left: 4px;
+}
+
+.steps li::marker {
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.install {
+  max-width: 44em;
+  margin-top: 72px;
+}
+
 /* Screenshots */
 
 .shot {

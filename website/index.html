@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>OneLake Studio</title>
-  <meta name="description" content="A VS Code extension that makes a whole Microsoft Fabric tenant act as one database, queried with SQL.">
+  <meta name="description" content="A Windows app that makes a whole Microsoft Fabric tenant act as one database, queried with SQL.">
   <link rel="icon" href="icon.png">
   <link rel="stylesheet" href="style.css">
 </head>
@@ -23,11 +23,12 @@
   <main class="wrap wide">
     <section class="intro">
       <h1>A Fabric tenant, as one database</h1>
-      <p class="lead">OneLake Studio is a VS Code extension. Browse OneLake and query any table, file or semantic model with SQL, on your machine, read only and offline.</p>
-      <div class="actions">
-        <a class="button primary" href="https://marketplace.visualstudio.com/items?itemName=djouallah.onelake-studio">Install from the Marketplace</a>
-        <a class="button" href="docs/">Read the docs</a>
-      </div>
+      <p class="lead">Browse OneLake and query any table, file or semantic model with SQL, on your machine, read only and offline.</p>
+      <ol class="steps">
+        <li><a class="button primary" href="https://github.com/djouallah/onelake_studio/releases/latest/download/OneLake-Studio-Setup.exe">Download for Windows</a></li>
+        <li>Run it.</li>
+        <li>Sign in with your Microsoft account.</li>
+      </ol>
       <a class="shot" href="img/query.png"><img src="img/query.png" alt="The OneLake Studio tree of workspaces beside a tab running SHOW ALL TABLES, which lists tables across a warehouse and a SQL database." width="2122" height="1101"></a>
     </section>
 
@@ -78,10 +79,11 @@ FROM semanticmodel.aemo.nem GROUP BY ALL;</code></pre>
     </section>
 
     <section class="install">
-      <h2>Install</h2>
+      <h2>More about installing</h2>
+      <p><strong>Windows warns about the download?</strong> The installer isn't signed yet. Click <em>More info</em>, then <em>Run anyway</em>. It installs for you alone, with no admin rights, and needs nothing else on the machine.</p>
+      <p><strong>Prefer VS Code?</strong> The same thing is a VS Code extension, on Windows, macOS and Linux:</p>
 <pre><code>code --install-extension djouallah.onelake-studio</code></pre>
-      <p>Then click the OneLake Studio icon in the activity bar and sign in with the Microsoft account VS Code already has.</p>
-      <p class="more">Needs desktop VS Code 1.101 or later on Windows x64, or macOS or Linux on x64 or arm64.</p>
+      <p class="more">Then click the OneLake Studio icon in the activity bar and sign in. Needs desktop VS Code 1.101 or later on Windows x64, or macOS or Linux on x64 or arm64. The app and the extension share what you've read on one machine.</p>
       <p class="more">Read only. The one exception is Export to Fabric, which is experimental and asks for an OK first.</p>
     </section>
   </main>
