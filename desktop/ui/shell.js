@@ -639,10 +639,6 @@ for (const i of boot.statusItems) statusItems.set(i.id, i);
 ui = { ...ui, ...boot.window };
 drawStatus();
 drawHeader();
-drawBar();
-$('side').style.width = `${ui.width}px`;
-showTree(ui.tree, false);
-if (ui.zoom !== 1) call('app.zoom', ui.zoom).catch(() => {});
 reload();
 
 $('empty-query').addEventListener('click', () => runCommand('onelakeStudio.newQuery'));
@@ -835,3 +831,9 @@ addEventListener('contextmenu', e => {
   const editable = e.target instanceof Element && e.target.closest('input, textarea');
   if (!editable && !String(getSelection())) e.preventDefault();
 });
+
+// The window as it was left. Last, as it needs every const above it.
+drawBar();
+$('side').style.width = `${ui.width}px`;
+showTree(ui.tree, false);
+if (ui.zoom !== 1) call('app.zoom', ui.zoom).catch(() => {});
