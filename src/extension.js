@@ -201,8 +201,8 @@ function sharedEngineServer(context, account, { background = false } = {}) {
   const secret = `onelakeStudio.engineSession.${createHash('sha256').update(key).digest('hex').slice(0, 16)}`;
   // What is remembered belongs to the account, so an update keeps it. F5 has its own: the installed
   // build's server holds this file open.
-  const stateKey = [account || 'none', context.extensionMode === vscode.ExtensionMode.Production ? '' : 'dev',
-    ...(background ? ['background'] : [])].join('|');
+  // The background engine has the same one, so what it runs is in Logs with everything else.
+  const stateKey = [account || 'none', context.extensionMode === vscode.ExtensionMode.Production ? '' : 'dev'].join('|');
   return {
     key, stateKey, script, build,
     stateDir: join(context.globalStorageUri.fsPath, 'engine-server'),

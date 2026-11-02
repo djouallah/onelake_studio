@@ -592,7 +592,7 @@ no row comes back.
 - **It stays on.** It's a row in the catalog per model, so it goes on with the tab closed and comes back with the next
   window. Each table's metadata is read past the cache every hour, and a new snapshot comes down when it appears.
 - **Every window shows the same.** What the switch says is worked out from the catalog (`table_kept`), and one window reads:
-  the one with the catalog's lease. Its statements are in that server's log, not in **Logs**.
+  the one with the catalog's lease. Its statements are in **Logs**, a line per column, as the two servers share a log file.
 - **Off stops it, and deletes nothing.** A table stopped part way keeps what it read, and switching on again carries on.
   The disk cache clears the oldest as it does for everything else.
 - **More than the disk cache holds stays off** (`diskCacheMaxGB`), counting the other models kept offline, since it would

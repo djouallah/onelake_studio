@@ -161,7 +161,7 @@ const FILE_CACHE_TRIM_MS = 60 * 60 * 1000;
 const TABLES_AT_ONCE = 4;
 // In front of a statement that keeps a table in use: what Logs shows, and how the server tells it from
 // anyone's own. No % or _, as it goes in a LIKE.
-const KEEP_MARK = '/* OneLake Studio keeps this table on this machine, as it is in use */ ';
+const KEEP_MARK = '/* OneLake Studio keeps this table on this machine */ ';
 const LIST_BATCH = 200;
 
 // Whether a statement's tables read the same as they did: when they were read from OneLake isn't that.

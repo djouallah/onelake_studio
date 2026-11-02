@@ -39,6 +39,16 @@ test("what the engine ran is kept, newest first, and outlives the process", asyn
   assert.equal(open().read(1).length, 1);
 });
 
+test("two servers share one log: the query engine's and the background engine's, each seeing both", async t => {
+  const { open } = await setup(t);
+  const queries = open(), background = open();
+  queries.add([row(1, "a query")]);
+  background.add([row(2, "/* OneLake Studio keeps this table on this machine */ a column")]);
+  queries.add([row(3, "another query")]);
+  assert.deepEqual(queries.read(10).map(r => r.ts), [3, 2, 1]);
+  assert.deepEqual(background.read(10).map(r => r.ts), [3, 2, 1]);
+});
+
 test("clear empties it", async t => {
   const { open } = await setup(t);
   const f = open();
