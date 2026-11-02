@@ -143,11 +143,15 @@ function createModelData({ tablesOf, resolve, cachedTable, read, usage, offlineR
     if (!(room > 0)) return refuse('The disk cache is off: onelakeStudio.diskCacheMaxGB');
     named.delete(lc(catalog));
     const online = !offlineReason();
+    // From what's kept, so switching back on answers at once: nothing was deleted, and what's there
+    // goes on answering. Whether anything newer has come is the next tick's to find out, behind it.
     let found;
-    try { found = await survey(catalog, { fresh: online }); }
-    catch (e) { return refuse((e && e.message) || String(e)); }
+    try {
+      found = await survey(catalog);
+      // Unless what's kept can't say: a table never seen, or one gone from the listing.
+      if (online && (found.failed.length || !found.tables.length)) found = await survey(catalog, { fresh: true });
+    } catch (e) { return refuse((e && e.message) || String(e)); }
     if (online && !found.tables.length && !found.failed.length) return refuse(`${model} reads no tables in OneLake`);
-    if (online) freshAt.set(lc(catalog), now());
     let total = found.tables.reduce((n, t) => n + t.size, 0);
     for (const m of usage.offlineModels()) {
       if (lc(m.catalog) === lc(catalog)) continue;
@@ -205,7 +209,7 @@ function createModelData({ tablesOf, resolve, cachedTable, read, usage, offlineR
       if (!models.length || !lease()) { idle(); return; }
       for (const m of models) {
         const key = lc(m.catalog);
-        const fresh = now() - (freshAt.get(key) || 0) > FRESH_MS;
+        const fresh = !freshAt.has(key) || now() - freshAt.get(key) > FRESH_MS;
         const { tables } = await survey(m.catalog, { fresh }).catch(() => ({ tables: [] }));
         if (fresh) freshAt.set(key, now());
         const todo = tables.filter(t => { const k = keptOf(t); return !k || (k.error && k.retryAt <= now()); });

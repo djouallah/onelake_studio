@@ -613,6 +613,7 @@ no row comes back.
 - **Every window shows the same.** What the switch says is worked out from the catalog (`table_kept`), and one window reads:
   the one with the catalog's lease. Its statements are in **Logs**, a line per column, as the two servers share a log file.
 - **Off stops it, and deletes nothing.** A table stopped part way keeps what it read, and switching on again carries on.
+  Back on answers at once from what's kept, asking OneLake nothing: whether anything is newer is looked for behind it, on the hourly clock.
   The disk cache clears the oldest as it does for everything else.
 - **More than the disk cache holds stays off** (`diskCacheMaxGB`), counting the other models kept offline, since it would
   evict itself. **Clear Cached OneLake Data** switches them all off.

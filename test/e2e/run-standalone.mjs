@@ -31,12 +31,12 @@ function run(args) {
 const step = async (what, fn) => { await fn(); console.log(`ok - ${what}`); };
 const said = r => `exit ${r.code}\n${r.stdout}\n${r.stderr}`;
 
-// Named by display names, so naming its tables asks Fabric nothing.
+// By GUIDs, as Fabric defines a model.
 const BIM = {
   compatibilityLevel: 1604,
   model: {
     defaultMode: "directLake",
-    expressions: [{ name: "DatabaseQuery", kind: "m", expression: 'let Source = AzureStorage.DataLake("https://onelake.dfs.fabric.microsoft.com/shop/data.Lakehouse") in Source' }],
+    expressions: [{ name: "DatabaseQuery", kind: "m", expression: 'let Source = AzureStorage.DataLake("https://onelake.dfs.fabric.microsoft.com/11111111-1111-1111-1111-111111111111/22222222-2222-2222-2222-222222222222") in Source' }],
     tables: [{
       name: "fct_sales",
       partitions: [{ name: "fct_sales", mode: "directLake", source: { type: "entity", entityName: "fct_sales", schemaName: "dbo", expressionSource: "DatabaseQuery" } }],
@@ -99,9 +99,15 @@ try {
     assert.match(r.stdout, /\b43\b/, said(r));
   });
 
-  await step("a model file with no workspace asked for one is named after where its tables are", async () => {
+  await step("a workspace it can't name, with no connection, is asked for", async () => {
+    const r = await run(["serve", join(home, "sales.bim")]);
+    assert.equal(r.code, 1, said(r));
+    assert.match(r.stderr, /--workspace/, said(r));
+  });
+
+  await step("serve answers Excel's questions on a model file", async () => {
     const file = join(home, "sales.bim");
-    server = spawn(process.execPath, ["--no-warnings", cli, "serve", file, "--json"], { env, stdio: ["ignore", "pipe", "pipe"] });
+    server = spawn(process.execPath, ["--no-warnings", cli, "serve", file, "--workspace", "shop", "--json"], { env, stdio: ["ignore", "pipe", "pipe"] });
     let stderr = "";
     server.stderr.setEncoding("utf8").on("data", d => { stderr += d; });
     const line = await new Promise((resolve, reject) => {

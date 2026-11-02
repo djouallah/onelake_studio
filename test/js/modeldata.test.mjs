@@ -80,11 +80,12 @@ test("off to begin with, and off asks nothing", async () => {
 test("switched on: every table at its latest, one at a time, saying how far, then all here", async () => {
   const { data, asked, reads, kept } = setup();
   const first = await data.set(CATALOG, MODEL, true);
-  assert.deepEqual(asked.slice(0, 2), [["fact", true], ["dim", true]], "past the cache");
+  assert.deepEqual(asked.slice(0, 2), [["fact", false], ["dim", false]], "from what's kept, so it answers at once");
   assert.equal(first.on, true);
   assert.equal(first.busy, true);
   assert.match(first.say, /^0 of 2 tables · /);
   await settled();
+  assert.ok(asked.some(([table, fresh]) => table === "fact" && fresh), "and past the cache, behind it");
   assert.deepEqual(reads.map(r => r.name), [FACT], "one at a time");
   assert.equal(data.busy(), true);
   reads[0].resolve();
@@ -134,6 +135,40 @@ test("switched back on, it carries on from what's here", async () => {
   await data.set(CATALOG, MODEL, true);
   await settled();
   assert.deepEqual(reads.map(r => r.name), [FACT, DIM, DIM], "the fact table isn't read again");
+});
+
+test("switched back on with everything here, it says so at once: nothing is read, and nothing waits on OneLake", async () => {
+  const { data, world, reads, asked } = setup();
+  await data.set(CATALOG, MODEL, true);
+  await settled();
+  reads[0].resolve();
+  await settled();
+  reads[1].resolve();
+  await settled();
+  await data.set(CATALOG, MODEL, false);
+  world.version = 2;
+  asked.length = 0;
+  const back = await data.set(CATALOG, MODEL, true);
+  assert.equal(back.on, true);
+  assert.match(back.say, /^✓ .* on this machine$/);
+  assert.equal(back.busy, false);
+  await settled();
+  assert.ok(asked.every(([, fresh]) => !fresh), "OneLake isn't asked");
+  assert.equal(reads.length, 2, "and nothing comes down again");
+  // What's newer is looked for on the usual clock, behind what's already answering.
+  world.now += HOUR + 1;
+  await data.tick();
+  await settled();
+  assert.equal(reads.length, 3);
+  assert.match((await data.state(CATALOG)).say, /^New data · 2 tables · /);
+});
+
+test("switched on, a table the kept listing can't find is looked for past the cache", async () => {
+  const { data, world, asked } = setup({ tables: [DIM] });
+  world.gone.add("dim");
+  const said = await data.set(CATALOG, MODEL, true);
+  assert.deepEqual(asked.slice(0, 2), [["dim", false], ["dim", true]]);
+  assert.equal(said.on, true);
 });
 
 test("while it's on, new data comes down: within the hour, and says so", async () => {
