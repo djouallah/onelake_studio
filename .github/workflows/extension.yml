@@ -2,7 +2,8 @@
 #
 # Every push to main and every pull request runs test, engine and cli-os, then package, so a change is
 # packaged for every platform and checked exactly as a release would be. Only an ext-v* tag
-# reaches the publish job.
+# reaches the publish job. A change to the website alone (Pages builds it) runs nothing here;
+# docs/CHANGELOG.md is in the package, so a change to it still does.
 #
 # Release:
 #   bump "version" in package.json, refresh package-lock.json
@@ -66,8 +67,24 @@ name: Extension
 on:
   push:
     branches: [main]
-    tags: ["ext-v*"]
+    tags: ["ext-v*"]    # a tag runs whatever it touched: path filters don't apply to tags
+    paths:
+      - "**"
+      - "!website/**"
+      - "!docs/**"
+      - "docs/CHANGELOG.md"
+      - "!scripts/build-website.mjs"
+      - "!scripts/website-shots.mjs"
+      - "!.github/workflows/pages.yml"
   pull_request:
+    paths:
+      - "**"
+      - "!website/**"
+      - "!docs/**"
+      - "docs/CHANGELOG.md"
+      - "!scripts/build-website.mjs"
+      - "!scripts/website-shots.mjs"
+      - "!.github/workflows/pages.yml"
   workflow_dispatch:
 
 permissions:
