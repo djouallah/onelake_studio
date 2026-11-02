@@ -582,8 +582,11 @@ so it answers from disk and with no connection ([`src/modeldata.js`](../src/mode
 through the engine, as the idle job does it (`keepTable`): every column of every file goes through the disk cache, and
 no row comes back.
 
-- **It was asked for,** so it differs from the idle job: it starts at once, has no time limit, and statements run beside
-  it. The idle job holds off meanwhile, or the two would read the same bytes twice.
+- **It was asked for,** so it differs from the idle job: it starts at once, with no two quiet minutes first, and has no
+  time limit. The idle job holds off meanwhile, or the two would read the same bytes twice.
+- **It gives way to anyone's statement,** within 3 seconds, and comes back 15 seconds after the last one. Reading whole
+  takes all of a connection: left to run beside a query, it held one for 3 minutes on a 50 Mbit/s line, and starved the
+  host's own requests.
 - **It stays on.** It's a row in the catalog per model, so it outlasts a restart and goes on with the tab closed. Each
   table's metadata is read past the cache every hour, and a new snapshot comes down when it appears.
 - **Every window shows the same.** What the switch says is worked out from the catalog (`table_kept`), and one window reads:

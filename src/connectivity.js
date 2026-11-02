@@ -20,6 +20,20 @@ const PROBE_EVERY_MS = 30_000;
  * @param {(reason: string|null) => void} [o.onChange]  offline or back, with why
  * @param {number} [o.everyMs]
  */
+// The probe: whether OneLake answers at all. A refusal or no route is known at once. No answer in time
+// isn't yet: a line a download is filling can take longer than that, and that line is online, so it gets
+// a longer second try before anything is called offline.
+const PROBE_MS = 5_000, PROBE_AGAIN_MS = 20_000;
+function probeOf(ask) {
+  return async () => {
+    try { await ask(PROBE_MS); return true; }
+    catch (e) {
+      if (!e || (e.name !== 'TimeoutError' && e.name !== 'AbortError')) return false;
+    }
+    return ask(PROBE_AGAIN_MS).then(() => true, () => false);
+  };
+}
+
 function createConnectivity({ probe, onChange = () => {}, everyMs = PROBE_EVERY_MS }) {
   let noInternet = false;
   let hasSession = true;
@@ -68,4 +82,4 @@ function createConnectivity({ probe, onChange = () => {}, everyMs = PROBE_EVERY_
   };
 }
 
-module.exports = { createConnectivity };
+module.exports = { createConnectivity, probeOf };

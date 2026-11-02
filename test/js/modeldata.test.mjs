@@ -16,7 +16,7 @@ const HOUR = 3600 * 1000;
 const settled = async () => { for (let i = 0; i < 12; i++) await new Promise(r => setImmediate(r)); };
 
 function setup({ tables = [FACT, DIM], room = 1e9, sizes = { fact: 4000, dim: 10 }, others = {}, ...more } = {}) {
-  const world = { now: 1_000_000, offline: null, up: true, lease: true, version: 1, gone: new Set() };
+  const world = { now: 1_000_000, offline: null, up: true, lease: true, version: 1, gone: new Set(), others: false };
   const asked = [], reads = [], kept = new Map(), lines = [], models = new Map();
   const key = (t, location) => `${t.table}|${location}`;
   const usage = {
@@ -42,6 +42,7 @@ function setup({ tables = [FACT, DIM], room = 1e9, sizes = { fact: 4000, dim: 10
     usage,
     offlineReason: () => world.offline,
     ready: () => world.up,
+    othersRunning: async () => world.others,
     lease: () => world.lease,
     maxBytes: () => room,
     log: l => lines.push(l),
@@ -245,6 +246,44 @@ test("the engine going away isn't the table's fault, and notes nothing", async (
   await data.tick();
   await settled();
   assert.equal(reads.length, 2, "the next tick tries again");
+});
+
+test("anyone's statement stops it within a look, says so, and it comes back once they're done", async () => {
+  const { data, world, reads, kept } = setup();
+  await data.set(CATALOG, MODEL, true);
+  await settled();
+  assert.equal(reads.length, 1);
+  world.others = true;
+  await data.tick();
+  await settled();
+  assert.equal(data.busy(), false, "it gave way");
+  assert.equal(kept.size, 0, "stopped isn't whole, and isn't a failure");
+  const paused = await data.state(CATALOG);
+  assert.match(paused.say, /^Paused for your query · 0 of 2 tables here$/);
+  assert.equal(paused.busy, true);
+  await data.tick();
+  await settled();
+  assert.equal(reads.length, 1, "not while the statement runs");
+  world.others = false;
+  world.now += 5_000;
+  await data.tick();
+  await settled();
+  assert.equal(reads.length, 1, "nor the moment it ends: the next one is often right behind it");
+  world.now += 16_000;
+  await data.tick();
+  await settled();
+  assert.equal(reads.length, 2, "and then it carries on");
+  assert.equal(reads[1].name, FACT);
+  assert.doesNotMatch((await data.state(CATALOG)).say, /Paused/);
+});
+
+test("a statement already running when it's switched on goes first", async () => {
+  const { data, world, reads } = setup();
+  world.others = true;
+  const said = await data.set(CATALOG, MODEL, true);
+  assert.equal(said.on, true);
+  await settled();
+  assert.deepEqual(reads, []);
 });
 
 test("a table that can't be found is named, and the others come down", async () => {

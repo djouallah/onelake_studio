@@ -32,7 +32,7 @@ const { createDiagLog, outputLogOf } = require('./diaglog');
 const { createLogFile, logFileOf } = require('./logfile');
 const { createOneLake, walkCached } = require('./onelake');
 const { createSqlTables } = require('./sqltables');
-const { createConnectivity } = require('./connectivity');
+const { createConnectivity, probeOf } = require('./connectivity');
 const { useConnectivity, createTokenHold, inTime } = require('./http');
 const { createHostMethods } = require('./host');
 const { createFabric, modelFileName, modelAccountDir, modelCopyPath } = require('./fabric');
@@ -102,7 +102,7 @@ function getSession(options) {
 // Any answer from OneLake's front door at all means there is internet.
 let onOfflineChange = () => {};
 const connectivity = createConnectivity({
-  probe: () => fetch(`${DFS_ORIGIN}/`, { method: 'HEAD', signal: AbortSignal.timeout(5000) }).then(() => true, () => false),
+  probe: probeOf(ms => fetch(`${DFS_ORIGIN}/`, { method: 'HEAD', signal: AbortSignal.timeout(ms) })),
   onChange: reason => onOfflineChange(reason),
 });
 useConnectivity(connectivity);
@@ -1544,6 +1544,7 @@ async function activateInner(context) {
     usage: onelake.usage,
     offlineReason: () => connectivity.reason(),
     ready: () => !!engine && !resetting,
+    othersRunning: () => (engine ? engine.othersRunning() : Promise.resolve(false)),
     lease: () => {
       try { return catalogFileFor(context, storeAccount).lease(syncOwner, 90_000); } catch (_) { return false; }
     },

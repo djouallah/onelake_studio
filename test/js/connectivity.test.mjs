@@ -4,7 +4,25 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { createConnectivity } = require("../../src/connectivity.js");
+const { createConnectivity, probeOf } = require("../../src/connectivity.js");
+
+test("the probe: a line too busy to answer in time gets a longer try, and a refusal is known at once", async () => {
+  const timeout = () => Object.assign(new Error("timed out"), { name: "TimeoutError" });
+  const asked = [];
+  const answers = (...them) => probeOf(async ms => {
+    asked.push(ms);
+    const a = them.shift();
+    if (a) throw a;
+  });
+  assert.equal(await answers(null)(), true);
+  assert.deepEqual(asked.splice(0), [5000], "an answer needs no second try");
+  assert.equal(await answers(timeout(), null)(), true, "a full line is online");
+  assert.deepEqual(asked.splice(0), [5000, 20000]);
+  assert.equal(await answers(timeout(), timeout())(), false, "no answer twice is no internet");
+  asked.length = 0;
+  assert.equal(await answers(new TypeError("fetch failed"))(), false, "no route is known at once");
+  assert.deepEqual(asked, [5000]);
+});
 
 function setup(answer = true, everyMs = 60_000) {
   const w = { answer, probes: 0, changes: [] };

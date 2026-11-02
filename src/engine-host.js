@@ -1222,7 +1222,17 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
 
   // A table read whole, behind everything (syncworker.js, modeldata.js): every column goes through the disk
   // cache and no row comes back. Not a page method, and nobody reading it, so it doesn't count as use.
-  const keepTable = (name, { signal } = {}) => agentQuery(`EXPLAIN ANALYZE SELECT * FROM ${name}`, { signal, used: false, mark: KEEP_MARK });
+  // A column at a time: stopped, a statement's reads in flight still finish, and with every column of
+  // every row group in flight that held the connection for over a minute (measured 81s) after the Stop.
+  const keepTable = async (name, { signal } = {}) => {
+    const o = { signal, used: false, mark: KEEP_MARK };
+    const { rows } = await agentQuery(`DESCRIBE ${name}`, o);
+    let kept = null;
+    for (const { column_name: column } of rows) {
+      kept = await agentQuery(`EXPLAIN ANALYZE SELECT ${quoteIdent(column)} FROM ${name}`, o);
+    }
+    return kept;
+  };
 
   // Whether anyone has a statement running on this server, a table being kept aside. Over the control
   // pipe: over Quack, this would be a line in Logs every few seconds. Not a page method.

@@ -127,8 +127,9 @@ and of the parts of it nothing has read. So the worker does two things for it:
 
 1. **Its metadata is read every hour**, so a statement never waits for that and isn't answered from a snapshot a day old.
 2. **It is read whole**, once at each snapshot, so every column works offline. The worker decides and DuckDB reads:
-   `EXPLAIN ANALYZE SELECT * FROM <table>` goes through the disk cache as any statement does, and no row reaches a client. It
-   is a line in **Logs**, under a comment that says why. When it finishes, the table's icon goes to a check.
+   `EXPLAIN ANALYZE SELECT <column> FROM <table>`, a column at a time, goes through the disk cache as any statement does, and
+   no row reaches a client. Each is a line in **Logs**, under a comment that says why. When it finishes, the table's icon goes
+   to a check.
 
 **It is the last thing to run:**
 
