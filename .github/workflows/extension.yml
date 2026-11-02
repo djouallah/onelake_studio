@@ -491,7 +491,9 @@ jobs:
           retention-days: 14
       - name: Build the installer
         working-directory: desktop
+        # The cached target keeps the last version's installer, under its own name: only this build's goes on.
         run: |
+          Remove-Item -Recurse -Force src-tauri/target/release/bundle -ErrorAction SilentlyContinue
           npx --yes @tauri-apps/cli@2.12.4 icon ../media/icon.png
           npx --yes @tauri-apps/cli@2.12.4 build
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
