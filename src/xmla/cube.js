@@ -9,6 +9,8 @@
 // Power BI leaves out of a field list: anything hidden, or not available in MDX.
 // =============================================================================
 
+const { plainValue } = require('./order.js');
+
 const CUBE = 'Model';
 const NO_MEASURES = '__No measures defined';
 const lc = s => String(s).toLowerCase();
@@ -79,9 +81,10 @@ function buildCube(catalog, bim, sqlName) {
            groups: [...groups], byName, defaultMeasure: measures[0] || placeholder };
 }
 
-// A member's key in its unique name: a value as text, a blank as nothing at all.
-const keyOf = v => (v == null ? '' : String(v));
-const captionOf = key => (key === '' ? '(Blank)' : key);
+// A member's key in its unique name: a value as text, a blank as nothing at all. A date column
+// holds midnights, and shows as the date it is.
+const keyOf = v => (v == null ? '' : String(plainValue(v)));
+const captionOf = key => (key === '' ? '(Blank)' : key.replace(/^(\d{4}-\d{2}-\d{2}) 00:00:00$/, '$1'));
 
 // `path`: a member's keys from the first level down. [] is the All member.
 function memberUnique(h, path) {

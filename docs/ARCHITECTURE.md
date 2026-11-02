@@ -209,6 +209,9 @@ every window is a client of it over DuckDB's Quack protocol ([`src/engine-client
 - **The session token:** a new random one per server, kept in VS Code's secret storage, and reaching the
   server over its stdin. Without it the port on `127.0.0.1` runs nothing. In the client's DuckDB it is a
   named secret, since an `ATTACH`'s `TOKEN` option shows in `duckdb_databases()`.
+- **UTC:** the server runs in UTC whatever this machine's zone, as OneLake stores its timestamps in UTC and DAX has
+  none. In a local zone a `DATE` is local midnight, so a date table's timestamp never equals a fact table's date,
+  and a model joining them reads blank. So `current_date` and `now()` are UTC's too.
 - **What stays in the window:** the read-only guard, the sign-in, and naming and resolving tables.
 - **How a statement goes:** through a pool of attaches, up to eight a window, since one runs one statement at
   a time and its socket stays open. With all of them busy it goes by `quack_query()`, which costs a new socket:

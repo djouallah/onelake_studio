@@ -373,6 +373,12 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
       await conn.run(`SET temp_directory = ${sqlStr(tmp)};`);
       if (spillMaxGB > 0) await conn.run(`SET max_temp_directory_size = ${sqlStr(`${spillMaxGB}GB`)};`);
 
+      // OneLake's timestamps are UTC, and DAX has no time zones. In this machine's zone a DATE is
+      // its local midnight, so a date table's timestamp never equals a fact table's date, and a
+      // model joining the two reads blank everywhere east or west of Greenwich.
+      try { await conn.run(`SET GLOBAL TimeZone = 'UTC';`); }
+      catch (e) { onWarn(`could not set DuckDB's time zone to UTC, so dates may not join — ${e.message}`); }
+
       // One catalog per kind of item, for the tables' SQL names (lakehouse.ws.item.schema.t):
       // the workspace, item and schema are nested schemas in it, made as a statement names
       // them (withTables). Before the lockdown, which leaves nothing to attach with.

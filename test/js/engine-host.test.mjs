@@ -19,6 +19,21 @@ const { createEngineHost, jsonSafe, sameSources, isOneLakeMetadata, isOneLakeTab
 // What fetch-extensions.mjs put next to the extension, when CI ran it for this platform.
 const BUNDLED = join(fileURLToPath(new URL(".", import.meta.url)), "..", "..", "duckdb-extensions");
 
+test("the engine runs in UTC, whatever this machine's zone: a date joins a timestamp at its midnight", async t => {
+  const extDir = await mkdtemp(join(tmpdir(), "onelake-ext-"));
+  const zone = process.env.TZ;
+  process.env.TZ = "Europe/Paris";
+  const engine = createEngineHost({ extensionDir: extDir, bundledExtensions: existsSync(BUNDLED) ? BUNDLED : null });
+  t.after(async () => {
+    if (zone === undefined) delete process.env.TZ; else process.env.TZ = zone;
+    await engine.close();
+    await rm(extDir, { recursive: true, force: true }).catch(() => {});
+  });
+  const { rows } = await engine.agentQuery("SELECT current_setting('TimeZone') AS zone, TIMESTAMPTZ '2024-01-15 00:00:00+00' = DATE '2024-01-15' AS joins");
+  assert.equal(rows[0].zone, "UTC");
+  assert.equal(rows[0].joins, true);
+});
+
 test("warm() boots the engine and lists the catalog ahead of the first statement", async t => {
   const extDir = await mkdtemp(join(tmpdir(), "onelake-ext-"));
   let listings = 0;

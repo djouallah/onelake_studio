@@ -326,6 +326,19 @@ from [Model] \r
 cell properties value\r
 `;
 
+test("a zoned timestamp is the UTC it's stored in: one key, a date's caption, a literal in a filter, in order", async () => {
+  // How the engine hands back a date table's column on a machine at +01, and at +02 in summer.
+  const f = fakeQuery(sql => (sql.includes("GROUP BY") ? [{ c0: "2024-07-01 02:00:00+02", m0: 2 }, { c0: "2024-01-15 01:00:00+01", m0: 1 }, { c0: "2024-01-15 11:30:00+01", m0: 3 }] : [{ m0: 6 }]));
+  const xml = await execute(`SELECT NON EMPTY Hierarchize({DrilldownLevel({[Calendar].[day].[All]})}) ON COLUMNS FROM [Model] WHERE ([Measures].[Orders])`, { cube: cube(), query: f.query });
+  assert.deepEqual(tags(axisOf(xml, "Axis0"), "UName"), [
+    "[Calendar].[day].[All]", "[Calendar].[day].&[2024-01-15 00:00:00]", "[Calendar].[day].&[2024-01-15 10:30:00]", "[Calendar].[day].&[2024-07-01 00:00:00]",
+  ]);
+  assert.deepEqual(tags(axisOf(xml, "Axis0"), "Caption"), ["All", "2024-01-15", "2024-01-15 10:30:00", "2024-07-01"]);
+  const g = fakeQuery(() => []);
+  await execute(`SELECT FROM [Model] WHERE ([Measures].[Orders], [Calendar].[day].&[2024-01-15 00:00:00])`, { cube: cube(), query: g.query });
+  assert.deepEqual(g.asked, [`SELECT AGG("Orders") AS "m0" FROM ${CATALOG} WHERE "Calendar"."day" IN (TIMESTAMP '2024-01-15 00:00:00')`]);
+});
+
 test("a slicer's two statements are read as the templates they are", () => {
   assert.deepEqual(slicerTemplate(SLICER_COUNT), { kind: "count", measure: "[Measures].__XLolapslicermembercount", level: "[Product].[size].[size]" });
   const items = slicerTemplate(SLICER_ITEMS);

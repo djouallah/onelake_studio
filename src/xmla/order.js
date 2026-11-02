@@ -3,8 +3,21 @@
 
 const NUMERIC = new Set(['int64', 'double', 'decimal']);
 
+// A timestamp with a zone comes back in this machine's offset, which changes with the season. As
+// the UTC it is stored in, it says one thing, sorts as text, and is a literal again in a filter.
+const ZONED = /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(\.\d+)?[+-]\d{2}(:?\d{2})?$/;
+function plainValue(v) {
+  if (typeof v !== 'string' || !ZONED.test(v)) return v;
+  const iso = v.replace(' ', 'T').replace(/([+-]\d{2})$/, '$1:00').replace(/([+-]\d{2})(\d{2})$/, '$1:$2');
+  const ms = Date.parse(iso);
+  if (Number.isNaN(ms)) return v;
+  const [day, time] = new Date(ms).toISOString().replace('Z', '').split('T');
+  return `${day} ${time.replace(/\.000$/, '')}`;
+}
+
 // What a value is ordered by. A big integer or a decimal comes back as text, so the column says.
-function sortKey(value, column) {
+function sortKey(raw, column) {
+  const value = plainValue(raw);
   if (value == null) return null;
   if (typeof value === 'number' || typeof value === 'boolean') return Number(value);
   if (NUMERIC.has(column.dataType) || (column.sortBy && !Number.isNaN(Number(value)) && value !== '')) {
@@ -32,4 +45,4 @@ function compareKeys(a, b) {
   return a.length - b.length;
 }
 
-module.exports = { sortKey, compareKeys };
+module.exports = { plainValue, sortKey, compareKeys };
