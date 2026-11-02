@@ -538,8 +538,11 @@ jobs:
         run: |
           $tag = '${{ github.ref_name }}'
           Copy-Item (Get-Item desktop/src-tauri/target/release/bundle/nsis/*.exe).FullName "$env:RUNNER_TEMP/OneLake-Studio-Setup.exe"
+          $version = $tag -replace '^ext-v',''
+          node scripts/release-notes.mjs $version > "$env:RUNNER_TEMP/notes.md"
+          if ($LASTEXITCODE -ne 0) { throw "docs/CHANGELOG.md has no section for $version" }
           gh release view $tag 2>$null | Out-Null
-          if ($LASTEXITCODE -ne 0) { gh release create $tag --title "OneLake Studio $($tag -replace '^ext-v','')" --notes "OneLake Studio for Windows, and the VS Code extension." }
+          if ($LASTEXITCODE -ne 0) { gh release create $tag --title "OneLake Studio $version" --notes-file "$env:RUNNER_TEMP/notes.md" }
           gh release upload $tag "$env:RUNNER_TEMP/OneLake-Studio-Setup.exe" --clobber
 
   publish:
