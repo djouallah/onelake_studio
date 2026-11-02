@@ -52,6 +52,7 @@ input, select { font: inherit; color: var(--vscode-input-foreground); background
 .text-page { margin: 0; padding: 12px 20px; font: var(--vscode-editor-font-size)/1.45 var(--vscode-editor-font-family); white-space: pre; }
 .settings-page { padding: 16px 24px 40px; }
 .settings-page h2 { font-weight: 400; margin: 0 0 16px; }
+.settings-page h3 { font-weight: 600; margin: 24px 0 8px; }
 .setting { max-width: 720px; margin-bottom: 18px; }
 .setting .name { font-weight: 600; margin-bottom: 2px; }
 .setting .about { color: var(--vscode-descriptionForeground); margin-bottom: 6px; }

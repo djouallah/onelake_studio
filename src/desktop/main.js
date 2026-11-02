@@ -128,7 +128,8 @@ async function main() {
       case 'pick.button': desktop.pickButton(args[0], args[1]); return null;
       case 'pick.hide': desktop.pickHidden(args[0]); return null;
       case 'settings.get': {
-        const props = (packageJSON.contributes.configuration || {}).properties || {};
+        // One section or a list of them, as VS Code takes either.
+        const props = Object.assign({}, ...[].concat(packageJSON.contributes.configuration || []).map(s => s.properties || {}));
         return Object.fromEntries(Object.entries(props).map(([k, p]) => [k, setting(k, p.default)]));
       }
       case 'settings.set':

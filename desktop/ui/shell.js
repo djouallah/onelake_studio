@@ -289,22 +289,26 @@ function textTab(title, content) {
 async function settingsTab() {
   const existing = [...tabs.values()].find(t => t.settings);
   if (existing) { activate(existing.id); return; }
-  const props = (boot.contributes.configuration || {}).properties || {};
+  // One section or a list of them, as VS Code takes either; each under its title.
+  const sections = [].concat(boot.contributes.configuration || []);
   const values = await call('settings.get');
   const page = h('div', { class: 'page settings-page' }, h('h2', {}, 'Settings'));
-  for (const [key, p] of Object.entries(props)) {
-    const name = key.replace(/^onelakeStudio\./, '').replace(/([a-z])([A-Z])/g, '$1 $2').replace(/^./, c => c.toUpperCase());
-    const set = v => call('settings.set', key, v).catch(e => toast({ level: 'error', message: e.message, items: [] }));
-    let input;
-    if (p.type === 'boolean') input = h('label', {}, h('input', { type: 'checkbox', checked: values[key] ? true : null, onchange: e => set(e.target.checked) }), ' On');
-    else if (p.enum) input = h('select', { onchange: e => set(e.target.value) }, p.enum.map(v => h('option', { value: v, selected: v === values[key] ? true : null }, v)));
-    else if (p.type === 'number' || p.type === 'integer') {
-      input = h('input', { type: 'number', value: values[key], min: p.minimum, max: p.maximum, onchange: e => {
-        const n = Number(e.target.value);
-        if (e.target.value !== '' && Number.isFinite(n)) set(n);
-      } });
-    } else input = h('input', { type: 'text', value: values[key] ?? '', spellcheck: 'false', onchange: e => set(e.target.value) });
-    page.append(h('div', { class: 'setting' }, h('div', { class: 'name' }, name), h('div', { class: 'about' }, plain(p.markdownDescription || p.description || '')), input));
+  for (const section of sections) {
+    if (sections.length > 1 && section.title) page.append(h('h3', {}, section.title));
+    for (const [key, p] of Object.entries(section.properties || {})) {
+      const name = key.replace(/^onelakeStudio\./, '').replace(/([a-z])([A-Z])/g, '$1 $2').replace(/^./, c => c.toUpperCase());
+      const set = v => call('settings.set', key, v).catch(e => toast({ level: 'error', message: e.message, items: [] }));
+      let input;
+      if (p.type === 'boolean') input = h('label', {}, h('input', { type: 'checkbox', checked: values[key] ? true : null, onchange: e => set(e.target.checked) }), ' On');
+      else if (p.enum) input = h('select', { onchange: e => set(e.target.value) }, p.enum.map(v => h('option', { value: v, selected: v === values[key] ? true : null }, v)));
+      else if (p.type === 'number' || p.type === 'integer') {
+        input = h('input', { type: 'number', value: values[key], min: p.minimum, max: p.maximum, onchange: e => {
+          const n = Number(e.target.value);
+          if (e.target.value !== '' && Number.isFinite(n)) set(n);
+        } });
+      } else input = h('input', { type: 'text', value: values[key] ?? '', spellcheck: 'false', onchange: e => set(e.target.value) });
+      page.append(h('div', { class: 'setting' }, h('div', { class: 'name' }, name), h('div', { class: 'about' }, plain(p.markdownDescription || p.description || '')), input));
+    }
   }
   const id = `local-${++localTabs}`;
   addTab(id, 'Settings', page);
