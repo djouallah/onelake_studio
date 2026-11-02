@@ -672,6 +672,8 @@ let semviews = null;
 // Export to Fabric (exportapp.js), the page's fabric.exportExplore; set by activateInner,
 // which owns the agent's modules.
 let exportExplore = null;
+// Open in Excel (src/xmla), the page's excel.open; set by activateInner, as above.
+let openExcel = null;
 // A table's SQL name (lakehouse.ws.item.schema.table) -> what it reads, for the engine; and
 // a semantic model's Direct Lake tables (by GUID) -> their SQL names. Set by activateInner,
 // which owns the store, the Fabric API and the agent's modules.
@@ -723,6 +725,7 @@ async function show(context, { newTab = false, ...options } = {}) {
       // A refusal is what Explore's info line says, not a failure of the export.
       exportExplore: x => (exportExplore ? exportExplore(x).catch(e => { if (e.declined) return e.message; throw e; })
         : Promise.reject(new Error('OneLake Studio is still starting'))),
+      openInExcel: x => (openExcel ? openExcel(x) : Promise.reject(new Error('OneLake Studio is still starting'))),
       nameTables: list => (nameModelTables ? nameModelTables(list) : Promise.reject(new Error('OneLake Studio is still starting'))),
       copyText: text => vscode.env.clipboard.writeText(text),
       exportResult: x => exportResult(tabEngine, x),
@@ -1560,40 +1563,21 @@ async function activateInner(context) {
   context.subscriptions.push({ dispose: () => { if (xmlaServer) xmlaServer.dispose(); } });
   startXmla().catch(e => out && out.appendLine(`xmla: ${e.message}`));
 
-  // A model's right-click: its local copy (read from Fabric the first time), then a new workbook
-  // with a PivotTable on it. One progress notification until Excel is on screen.
-  async function openModelInExcel(n) {
-    if (!n || n.kind !== 'semanticModel') return;
-    const refused = unsupportedModels.get(modelKey(n));
-    if (refused) {
-      vscode.window.showInformationMessage(unsupportedNote(n, refused));
-      return;
-    }
+  // The button on a model's Pivot: a new workbook with a PivotTable on it. A failure is thrown
+  // back to the Pivot's status line, and logged. Answers what that line says when it's open.
+  openExcel = async ({ workspace, model }) => {
     try {
-      await vscode.window.withProgress(
-        { location: vscode.ProgressLocation.Notification, title: `Opening ${n.model} in Excel` },
-        async progress => {
-          const say = message => progress.report({ message });
-          await fetchModel(n, { say });
-          const { port, token } = await startXmla({ create: true });
-          say('starting Excel…');
-          const catalog = modelSqlName(n.workspace, n.model);
-          const { measures } = await agent.excelCube(catalog);
-          await openInExcel({ port, token, catalog, name: n.model });
-          if (!measures.length) {
-            vscode.window.showInformationMessage(`${n.model} has no measures, so its PivotTable can list its fields' values but has no numbers to show. Excel only adds up a model's measures.`);
-          }
-        });
+      const { port, token } = await startXmla({ create: true });
+      const catalog = modelSqlName(workspace, model);
+      const { measures } = await agent.excelCube(catalog);
+      await openInExcel({ port, token, catalog, name: model });
+      return measures.length ? `${model} is open in Excel`
+        : `${model} is open in Excel. It has no measures, so its PivotTable lists its fields' values and has no numbers: Excel only adds up a model's measures.`;
     } catch (e) {
-      if (e && e.unsupported) {
-        if (out) out.appendLine(`not opening ${n.workspace}/${n.model}: ${e.message}`);
-        vscode.window.showInformationMessage(e.message);
-        return;
-      }
-      if (out) out.appendLine(`opening ${n.model} in Excel failed — ${(e && e.stack) || e}`);
-      showError(`Could not open ${n.model} in Excel: ${(e && e.message) || e}`);
+      if (out) out.appendLine(`opening ${model} in Excel failed — ${(e && e.stack) || e}`);
+      throw e;
     }
-  }
+  };
 
   // A semantic model, opened from the tree or named by a query: its definition (Fabric's
   // getDefinition, TMSL), kept as a local copy in Apache Ossie — modelPath(n), ~/OneLakeStudio/
@@ -2248,8 +2232,6 @@ async function activateInner(context) {
       vscode.env.openExternal(vscode.Uri.parse(n.url));
     })),
     vscode.commands.registerCommand('onelakeStudio.redownloadSemanticModel', n => openModel(n, { fresh: true })),
-    vscode.commands.registerCommand('onelakeStudio.openInExcel', n => openModelInExcel(n)),
-
     vscode.commands.registerCommand('onelakeStudio.open', async () => {
       try {
         await showWithProgress({ createIfNone: true });

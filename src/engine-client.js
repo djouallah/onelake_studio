@@ -241,9 +241,24 @@ async function openClient({ uri, token, extensionDir, bundledExtensions, lockdow
   // The text to run `sql`, and what gives back what it took.
   function route(sql) {
     const free = attaches.find(a => !a.busy);
-    if (!free) { grow(); return { text: query(sql), release() {} }; }
+    if (!free) { grow(); return { text: query(sql), release() {}, retire() {} }; }
     free.busy = true;
-    return { text: `SELECT * FROM ${free.name}.query(${sqlStr(sql)})`, release() { free.busy = false; } };
+    return {
+      text: `SELECT * FROM ${free.name}.query(${sqlStr(sql)})`,
+      release() { free.busy = false; },
+      // After a Stop. Its reads on the server take time to wind down, and a statement sent down the
+      // same connection before they have waited on them, about 80s measured, then failed as
+      // interrupted itself. So it isn't used again: the next statement gets a connection of its own.
+      retire() {
+        attaches.splice(attaches.indexOf(free), 1);
+        (async () => {
+          const c = await local.connect();
+          try { await c.run(`DETACH ${free.name};`); }
+          finally { try { c.closeSync(); } catch (_) {} }
+        })().catch(() => {});
+        grow();
+      },
+    };
   }
   const stopGrowing = () => { closed = true; };
   // After the server's listener was started again: what was attached knows a session it has lost.
@@ -448,7 +463,7 @@ function createRemote({ onGone = () => {}, ...cfg }) {
       async connect() {
         const c = await local.connect();
         let tag = null, way = null, stopped = false;
-        const done = () => { if (way) way.release(); way = null; };
+        const done = () => { if (way) { if (stopped) way.retire(); else way.release(); } way = null; };
         // The tag ends with its comment's close, so statement 1's doesn't also match statement 12.
         const wrapped = sql => {
           done();

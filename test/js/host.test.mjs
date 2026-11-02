@@ -35,6 +35,15 @@ function fixture() {
   return { calls, ask };
 }
 
+test("Open in Excel: a page names a model and nothing else, and hears how it went", async () => {
+  const asked = [];
+  const methods = createHostMethods({ onelake: {}, engine: {}, openInExcel: async x => { asked.push(x); return "open"; } });
+  assert.equal(await methods["excel.open"]({ workspace: "ws", model: "m", port: 1, token: "t" }), "open");
+  assert.deepEqual(asked, [{ workspace: "ws", model: "m" }]);
+  await assert.rejects(methods["excel.open"]({ workspace: "ws" }), /opened from the tree/);
+  await assert.rejects(createHostMethods({ onelake: {}, engine: {} })["excel.open"]({ workspace: "ws", model: "m" }), /not available here/);
+});
+
 test("a table's metadata carries its SQL name", async () => {
   const { ask } = fixture();
   const [msg] = await ask("onelake.table", [{ workspace: "ws", item: "lh.Lakehouse", schema: "dbo", table: "t" }]);

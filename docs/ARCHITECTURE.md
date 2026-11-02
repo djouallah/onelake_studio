@@ -216,7 +216,8 @@ every window is a client of it over DuckDB's Quack protocol ([`src/engine-client
 - **How a statement goes:** through a pool of attaches, up to eight a window, since one runs one statement at
   a time and its socket stays open. With all of them busy it goes by `quack_query()`, which costs a new socket:
   about 10ms, and at hundreds a second Windows runs out of ports. Stop finds the statement by a tag in a
-  comment and uses `quack_cancel`, since `interrupt()` doesn't reach the server.
+  comment and uses `quack_cancel`, since `interrupt()` doesn't reach the server. A stopped statement's attach
+  isn't used again: its reads take time to wind down, and the next statement on it waited about 80s, then failed.
 - **The control pipe:** an OS pipe, signed in with the session token, that says a window is alive. The OneLake
   token, the offline switch and what Logs and Performance ask for go this way rather than over Quack, which logs
   what it is sent.
@@ -576,8 +577,9 @@ personal skills, and it follows the extension through updates.
 
 ## Open in Excel
 
-**Open in Excel** on a semantic model opens a new workbook with a PivotTable live on the model, on Windows and
-the Excel desktop app. Excel's provider speaks XMLA over HTTP, so [`src/xmla/`](../src/xmla/) answers it from the window:
+**Open in Excel**, a button on the Pivot of a semantic model opened from the tree, opens a new workbook with a
+PivotTable live on the model, on Windows and the Excel desktop app. It opens with no fields placed, whatever the
+Pivot's shelves hold. Excel's provider speaks XMLA over HTTP, so [`src/xmla/`](../src/xmla/) answers it from the window:
 
 ```
 Excel (MSOLAP) --SOAP over http://127.0.0.1--> extension host
@@ -607,7 +609,6 @@ Excel (MSOLAP) --SOAP over http://127.0.0.1--> extension host
 
 | Command | What it does |
 | --- | --- |
-| **Open in Excel** | A semantic model's right-click, on Windows. See [Open in Excel](#open-in-excel). |
 | **Open OneLake Studio** | Brings the last tab forward, or opens one, signing in if needed. In the Command Palette only: the tree opens a tab with **New Query**. |
 | **Sign in to OneLake** | Signs in and fills the explorer, without opening a tab. |
 | **Sign in to the Fabric API** | Asks for the second token, for semantic models and apps. |

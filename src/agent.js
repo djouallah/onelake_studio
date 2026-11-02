@@ -823,7 +823,7 @@ function createAgent({ onelake, engine, modelPath, appDir, vendorDir, daxSqlPin,
     if (!ref) throw new Error(`${catalog} does not name a semantic model`);
     const path = modelPath(ref.workspace, ref.model);
     if (!await exists(path)) {
-      throw new Error(`${catalog} is not downloaded on this machine: choose Open in Excel on it in the OneLake Studio tree`);
+      throw new Error(`${catalog} is not downloaded on this machine: open it from the OneLake Studio tree`);
     }
     const text = await fsp.readFile(path, 'utf8');
     const key = catalog.toLowerCase();

@@ -144,11 +144,6 @@
         "icon": "$(cloud-download)"
       },
       {
-        "command": "onelakeStudio.openInExcel",
-        "title": "Open in Excel",
-        "category": "OneLake Studio"
-      },
-      {
         "command": "onelakeStudio.copyAppUrl",
         "title": "Copy App URL",
         "category": "OneLake Studio",
@@ -352,11 +347,6 @@
           "group": "inline"
         },
         {
-          "command": "onelakeStudio.openInExcel",
-          "when": "view == onelakeStudio.explorer && viewItem == semanticModel && isWindows",
-          "group": "0_query@1"
-        },
-        {
           "command": "onelakeStudio.copyAppUrl",
           "when": "view == onelakeStudio.explorer && viewItem == fabricAppUrl",
           "group": "inline"
@@ -515,10 +505,6 @@
         },
         {
           "command": "onelakeStudio.redownloadSemanticModel",
-          "when": "false"
-        },
-        {
-          "command": "onelakeStudio.openInExcel",
           "when": "false"
         },
         {

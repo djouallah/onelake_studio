@@ -141,6 +141,47 @@ test("a tab's Stop reaches its statement and no other's", async t => {
   assert.equal(result.cancelled, true);
 });
 
+test("a statement after a Stop gets a connection of its own: the stopped one's reads may still be winding down", async t => {
+  const s = await setup(t);
+  const a = s.open();
+  await a.forTab().call("query", ["SELECT 1 AS up"]);
+  const { admin, route, local } = await s.probe();
+  t.after(() => { try { admin.closeSync(); local.closeSync(); } catch (_) {} });
+  const attached = async () => {
+    for (let i = 0; i < 100; i++) {
+      const way = route("SELECT 1");
+      const name = /FROM (r\d+)\.query/.exec(way.text)?.[1];
+      if (name) return { way, name };
+      await sleep(100);
+    }
+    throw new Error("no attach came");
+  };
+  const first = await attached();
+  first.way.release();
+  const again = await attached();
+  assert.equal(again.name, first.name, "one that finished is used again");
+  again.way.retire();
+  const next = await attached();
+  assert.notEqual(next.name, first.name, "one that was stopped is not");
+  assert.deepEqual((await admin.runAndReadAll(route("SELECT 7 AS seven").text)).getRowObjectsJson(), [{ seven: 7 }]);
+  next.way.release();
+});
+
+test("a tab's Stop retires its connection, and the tab's next statement answers", async t => {
+  const a = (await setup(t)).open();
+  const tab = a.forTab();
+  await tab.call("query", ["SELECT 1 AS up"]);
+  let result = null;
+  const running = tab.call("query", [LONG]).catch(e => { result = e; });
+  await sleep(1000);
+  await tab.call("cancel");
+  await running;
+  assert.equal(result.cancelled, true);
+  const t0 = Date.now();
+  assert.deepEqual((await tab.call("query", ["SELECT 8 AS next"])).rows, [{ next: 8 }]);
+  assert.ok(Date.now() - t0 < 20_000, `took ${Date.now() - t0}ms`);
+});
+
 test("a window that leaves takes its statements with it, and the server stays", async t => {
   const { open, probe } = await setup(t);
   const a = open(), b = open();

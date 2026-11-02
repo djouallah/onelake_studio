@@ -41,6 +41,8 @@ const PREVIEW_ROWS = 500;
 //   exportToFabric(state)  (optional) the Export to Fabric button: the shelves on screen,
 //                    published as a Fabric app of this Explore (src/exportapp.js); answers
 //                    what to say when it is done
+//   openInExcel()    (optional) the Open in Excel button: this model in a new workbook, as a live
+//                    PivotTable (src/xmla); answers what to say when it is open
 //   editSql(sql)     (optional) the Edit SQL button: the shelves' query, all its rows, handed
 //                    to the host's own SQL editor, which runs it and saves its CSV, so Show SQL
 //                    and Download CSV are left out
@@ -63,6 +65,8 @@ export function mountExplore(root, ctx) {
   const csvBtn = btn('Download CSV', download, true);
   const exportBtn = ctx.exportToFabric ? btn('Export to Fabric', exportApp) : null;
   if (exportBtn) exportBtn.title = 'Publish this Explore, on this model, as a Fabric app (a local copy is written too)';
+  const excelBtn = ctx.openInExcel ? btn('Open in Excel', openExcel) : null;
+  if (excelBtn) excelBtn.title = 'This model in a new Excel workbook, as a live PivotTable';
   const editBtn = ctx.editSql ? btn('Edit SQL', () => {
     const sql = explorer?.query({ cap: 0, plain: ctx.plainSql ?? null })?.sql;
     if (sql) ctx.editSql(sql); else setStatus('Put a field on the shelves first', 'error');
@@ -70,7 +74,7 @@ export function mountExplore(root, ctx) {
   if (editBtn) editBtn.title = 'This query in the SQL box, to take further by hand (the pivot is kept)';
   const closeBtn = ctx.close ? btn('Close', ctx.close) : null;
   const actions = el('div', { class: 'explore-actions', hidden: true },
-    ...(editBtn ? [editBtn, closeBtn] : [sqlToggle, closeBtn, csvBtn]), exportBtn);
+    ...(editBtn ? [editBtn, closeBtn] : [sqlToggle, closeBtn, csvBtn]), excelBtn, exportBtn);
   const modelPage = el('div', { class: 'model-page' });
   const pivotPage = el('div', { class: 'explore-page', hidden: true });
 
@@ -346,6 +350,21 @@ export function mountExplore(root, ctx) {
     } finally {
       exportBtn.disabled = false;
       exportBtn.textContent = 'Export to Fabric';
+    }
+  }
+
+  // --- Open in Excel: the host opens it and says how it went ---
+  async function openExcel() {
+    excelBtn.disabled = true;
+    excelBtn.textContent = 'Opening…';
+    try {
+      const said = await ctx.openInExcel();
+      if (said) setStatus(said, 'ok');
+    } catch (e) {
+      setStatus(`Open in Excel: ${e.message}`, 'error');
+    } finally {
+      excelBtn.disabled = false;
+      excelBtn.textContent = 'Open in Excel';
     }
   }
 
