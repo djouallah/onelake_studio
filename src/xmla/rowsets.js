@@ -103,7 +103,7 @@ function definitionRows(cube, type) {
     case 'MDSCHEMA_DIMENSIONS':
       return [
         { ...base, DIMENSION_NAME: 'Measures', DIMENSION_UNIQUE_NAME: MEASURES_U, DIMENSION_CAPTION: 'Measures', DIMENSION_ORDINAL: 0, DIMENSION_TYPE: 2,
-          DIMENSION_CARDINALITY: cube.measures.length, DEFAULT_HIERARCHY: MEASURES_U, IS_VIRTUAL: false, IS_READWRITE: false, DIMENSION_UNIQUE_SETTINGS: 0, DIMENSION_IS_VISIBLE: true },
+          DIMENSION_CARDINALITY: cube.listedMeasures.length, DEFAULT_HIERARCHY: MEASURES_U, IS_VIRTUAL: false, IS_READWRITE: false, DIMENSION_UNIQUE_SETTINGS: 0, DIMENSION_IS_VISIBLE: true },
         ...cube.dimensions.map((d, i) => ({
           ...base, DIMENSION_NAME: d.name, DIMENSION_UNIQUE_NAME: d.unique, DIMENSION_CAPTION: d.name, DIMENSION_ORDINAL: i + 1, DIMENSION_TYPE: 3,
           DIMENSION_CARDINALITY: CARDINALITY, DEFAULT_HIERARCHY: d.hierarchies[0].unique, DESCRIPTION: d.description, IS_VIRTUAL: false, IS_READWRITE: false, DIMENSION_UNIQUE_SETTINGS: 1, DIMENSION_IS_VISIBLE: true })),
@@ -113,7 +113,7 @@ function definitionRows(cube, type) {
                        HIERARCHY_IS_VISIBLE: true, INSTANCE_SELECTION: 0, GROUPING_BEHAVIOR: 1, STRUCTURE_TYPE: 'Natural' };
       return [
         { ...base, ...common, DIMENSION_UNIQUE_NAME: MEASURES_U, HIERARCHY_NAME: 'Measures', HIERARCHY_UNIQUE_NAME: MEASURES_U, HIERARCHY_CAPTION: 'Measures', DIMENSION_TYPE: 2,
-          HIERARCHY_CARDINALITY: cube.measures.length, DEFAULT_MEMBER: cube.defaultMeasure?.unique, HIERARCHY_ORDINAL: 0, HIERARCHY_ORIGIN: 2 },
+          HIERARCHY_CARDINALITY: cube.listedMeasures.length, DEFAULT_MEMBER: cube.defaultMeasure?.unique, HIERARCHY_ORDINAL: 0, HIERARCHY_ORIGIN: 2 },
         ...cube.hierarchies.map((h, i) => ({
           ...base, ...common, DIMENSION_UNIQUE_NAME: h.dimension.unique, HIERARCHY_NAME: h.name, HIERARCHY_UNIQUE_NAME: h.unique, HIERARCHY_CAPTION: h.name, DIMENSION_TYPE: 3,
           HIERARCHY_CARDINALITY: CARDINALITY, DEFAULT_MEMBER: h.all, ALL_MEMBER: h.all, DESCRIPTION: h.description, HIERARCHY_ORDINAL: i + 1, HIERARCHY_ORIGIN: h.origin, HIERARCHY_DISPLAY_FOLDER: h.folder })),
@@ -124,7 +124,7 @@ function definitionRows(cube, type) {
         ...base, DIMENSION_UNIQUE_NAME: dim, HIERARCHY_UNIQUE_NAME: h, LEVEL_NAME: name, LEVEL_UNIQUE_NAME: unique, LEVEL_CAPTION: name, LEVEL_NUMBER: number, LEVEL_CARDINALITY: card,
         LEVEL_TYPE: type2, CUSTOM_ROLLUP_SETTINGS: 0, LEVEL_UNIQUE_SETTINGS: 1, LEVEL_IS_VISIBLE: true, LEVEL_DBTYPE: 130, LEVEL_KEY_CARDINALITY: 1, LEVEL_ORIGIN: 2 });
       return [
-        level(MEASURES_U, MEASURES_U, 'MeasuresLevel', MEASURES_LEVEL, 0, cube.measures.length, 0),
+        level(MEASURES_U, MEASURES_U, 'MeasuresLevel', MEASURES_LEVEL, 0, cube.listedMeasures.length, 0),
         ...cube.hierarchies.flatMap(h => [
           level(h.dimension.unique, h.unique, '(All)', h.allLevel, 0, 1, 1),
           ...h.levels.map(l => level(h.dimension.unique, h.unique, l.name, l.unique, l.number, CARDINALITY, 0)),
@@ -132,9 +132,9 @@ function definitionRows(cube, type) {
       ];
     }
     case 'MDSCHEMA_MEASURES':
-      return cube.measures.map(m => ({
+      return cube.listedMeasures.map(m => ({
         ...base, MEASURE_NAME: m.name, MEASURE_UNIQUE_NAME: m.unique, MEASURE_CAPTION: m.name, MEASURE_AGGREGATOR: 127, DATA_TYPE: 5, NUMERIC_PRECISION: 16, NUMERIC_SCALE: -1,
-        DESCRIPTION: m.description, MEASURE_IS_VISIBLE: true, MEASUREGROUP_NAME: m.table, MEASURE_DISPLAY_FOLDER: m.folder, DEFAULT_FORMAT_STRING: m.format }));
+        DESCRIPTION: m.description, MEASURE_IS_VISIBLE: !m.placeholder, MEASUREGROUP_NAME: m.table, MEASURE_DISPLAY_FOLDER: m.folder, DEFAULT_FORMAT_STRING: m.format }));
     default:
       return [];   // sets, KPIs, actions and member properties: a model here has none
   }
@@ -221,12 +221,12 @@ async function memberRows(cube, r, ctx) {
   }
   const measuresOnly = rs => (rs || []).some(v => v.toLowerCase() === MEASURES_U.toLowerCase());
   if (measuresOnly(r.HIERARCHY_UNIQUE_NAME) || measuresOnly(r.DIMENSION_UNIQUE_NAME)) {
-    return cube.measures.map((m, i) => measureRow(cube, m, i));
+    return cube.listedMeasures.map((m, i) => measureRow(cube, m, i));
   }
   const levelName = r.LEVEL_UNIQUE_NAME?.[0];
   if (levelName) {
     const hit = resolve(cube, levelName);
-    if (hit?.depth == null) return levelName.toLowerCase() === MEASURES_LEVEL.toLowerCase() ? cube.measures.map((m, i) => measureRow(cube, m, i)) : [];
+    if (hit?.depth == null) return levelName.toLowerCase() === MEASURES_LEVEL.toLowerCase() ? cube.listedMeasures.map((m, i) => measureRow(cube, m, i)) : [];
     add(hit.hierarchy, await memberPaths(cube, hit.hierarchy, hit.depth, [], ctx));
     return rows;
   }
@@ -239,7 +239,7 @@ async function memberRows(cube, r, ctx) {
     return rows;
   }
   // Nothing narrower than the cube: the members that cost no query.
-  return [...cube.measures.map((m, i) => measureRow(cube, m, i)), ...cube.hierarchies.map((h, i) => memberRow(cube, h, [], cube.measures.length + i))];
+  return [...cube.listedMeasures.map((m, i) => measureRow(cube, m, i)), ...cube.hierarchies.map((h, i) => memberRow(cube, h, [], cube.listedMeasures.length + i))];
 }
 
 /** A Discover's rowset. `ctx`: { query, literal, signal } for what reads data. */

@@ -10,6 +10,7 @@
 // =============================================================================
 
 const CUBE = 'Model';
+const NO_MEASURES = '__No measures defined';
 const lc = s => String(s).toLowerCase();
 const br = s => `[${String(s).replace(/\]/g, ']]')}]`;
 
@@ -64,8 +65,18 @@ function buildCube(catalog, bim, sqlName) {
     }
     if (dim.hierarchies.length) dimensions.push(dim);
   }
-  return { catalog, name: CUBE, sqlName, dimensions, hierarchies, measures, groups: [...groups], byName,
-           defaultMeasure: measures[0] || null };
+  // Excel refuses a cube with no measure at all ("No data fields are available"), so a model with
+  // none gets one it can't show: its fields still open in a PivotTable, with no numbers to add up.
+  const placeholder = measures.length ? null : {
+    name: NO_MEASURES, unique: `[Measures].${br(NO_MEASURES)}`, table: dimensions[0]?.name ?? CUBE,
+    folder: '', format: '', description: '', placeholder: true,
+  };
+  if (placeholder) {
+    byName.set(lc(placeholder.unique), { measure: placeholder });
+    groups.add(placeholder.table);
+  }
+  return { catalog, name: CUBE, sqlName, dimensions, hierarchies, measures, listedMeasures: placeholder ? [placeholder] : measures,
+           groups: [...groups], byName, defaultMeasure: measures[0] || placeholder };
 }
 
 // A member's key in its unique name: a value as text, a blank as nothing at all.

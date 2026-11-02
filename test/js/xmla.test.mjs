@@ -68,6 +68,30 @@ test("a table called Measures keeps its measures, and is no dimension", () => {
   assert.deepEqual(c.measures.map(m => m.unique), ["[Measures].[M]"]);
 });
 
+test("a model with no measures still opens: Excel refuses a cube with none, so one it can't show stands in", async () => {
+  const c = buildCube(CATALOG, { model: { tables: [{ name: "summary", columns: [col("DUID", "string"), col("mw", "double")] }] } }, CATALOG);
+  assert.deepEqual(c.measures, []);
+  assert.deepEqual(c.groups, ["summary"]);
+  const ctx = { query: async () => { throw new Error("no query for a definition"); }, literal };
+  const rowset = await discover(c, "MDSCHEMA_MEASURES", {}, ctx);
+  assert.deepEqual(tags(rowset, "MEASURE_NAME"), ["__No measures defined"]);
+  assert.deepEqual(tags(rowset, "MEASURE_IS_VISIBLE"), ["false"]);
+  const hierarchies = await discover(c, "MDSCHEMA_HIERARCHIES", { HIERARCHY_UNIQUE_NAME: ["[Measures]"] }, ctx);
+  assert.deepEqual(tags(hierarchies, "DEFAULT_MEMBER"), ["[Measures].[__No measures defined]"]);
+  // Asked for, it runs nothing against the model and has no cell: AGG() of it would be an error.
+  const f = fakeQuery(() => [{ c0: "A" }]);
+  const xml = await execute(`SELECT NON EMPTY Hierarchize(AddCalculatedMembers({DrilldownLevel({[summary].[DUID].[All]})})) ON COLUMNS FROM [Model] WHERE ([Measures].[__No measures defined]) CELL PROPERTIES VALUE`, { cube: c, query: f.query });
+  assert.deepEqual(f.asked, [`SELECT "summary"."DUID" AS "c0" FROM ${CATALOG} GROUP BY ALL`]);
+  assert.deepEqual(tags(axisOf(xml, "Axis0"), "Caption"), ["All", "A"]);
+  assert.deepEqual(cellsOf(xml), {});
+  assert.ok(axisOf(xml, "SlicerAxis").includes("<UName>[Measures].[__No measures defined]</UName>"));
+  // On an axis too, the members stay.
+  const g = fakeQuery(() => [{ c0: "A" }]);
+  const across = await execute(`SELECT {[Measures].Members} ON COLUMNS, NON EMPTY Hierarchize({DrilldownLevel({[summary].[DUID].[All]})}) ON ROWS FROM [Model]`, { cube: c, query: g.query });
+  assert.deepEqual(tags(axisOf(across, "Axis1"), "Caption"), ["All", "A"]);
+  assert.deepEqual(cellsOf(across), {});
+});
+
 test("names: a member's keys and a ] in them survive the round trip", () => {
   const c = cube();
   const h = c.hierarchies.at(-1);
@@ -456,4 +480,18 @@ test("no Excel on this machine is said in those words", async () => {
   };
   await assert.rejects(openInExcel({ port: 1, token: "t", catalog: "c", name: "n" }, exits(3)), /needs the Excel desktop app/);
   await assert.rejects(openInExcel({ port: 1, token: "t", catalog: "c", name: "n" }, exits(1)), /Excel could not open the PivotTable: boom/);
+});
+
+test("Excel's message survives PowerShell's progress blocks around it", async () => {
+  const says = text => () => {
+    const handlers = {};
+    const child = { stderr: { setEncoding() {}, on(_, f) { f(text); } }, on: (e, f) => { handlers[e] = f; return child; } };
+    setImmediate(() => handlers.close(1));
+    return child;
+  };
+  const block = '#< CLIXML\r\n<Objs Version="1.1.0.1"><Obj S="progress"><AV>Preparing modules for first use.</AV></Obj></Objs>';
+  const open = text => openInExcel({ port: 1, token: "t", catalog: "c", name: "n" }, says(text));
+  await assert.rejects(open(`${block}No data fields are available in the OLAP Cube.\r\n`), /PivotTable: No data fields are available in the OLAP Cube\.$/);
+  await assert.rejects(open(`No data fields.\r\n${block}`), /PivotTable: No data fields\.$/);
+  await assert.rejects(open(block), /PivotTable: exit code 1$/);
 });

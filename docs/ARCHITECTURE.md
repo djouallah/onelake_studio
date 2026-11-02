@@ -597,6 +597,8 @@ Excel (MSOLAP) --SOAP over http://127.0.0.1--> extension host
   window serves at a time, as with the command line's bridge. With VS Code closed it fails with a connection error.
   On another machine it doesn't refresh, since the token belongs to this install.
 - **Number formats** aren't applied: Excel doesn't ask this server for them (`CELL PROPERTIES VALUE` only).
+- **A model with no measures** still opens, with a hidden placeholder measure, since Excel refuses a cube with none. Its
+  fields list their values, and there are no numbers: Excel adds up a model's measures, never its columns.
 
 ## Commands
 

@@ -252,7 +252,7 @@ function memberPattern(raw, cube) {
 function suffix(node, cube) {
   const raw = node.of.raw;
   if (node.of.kind !== 'name') throw new Error(`MDX: .${node.name} is read on a name here`);
-  if (raw.toLowerCase() === '[measures]' && /^(ALL)?MEMBERS$/.test(node.name)) return [[{ measures: [...cube.measures] }]];
+  if (raw.toLowerCase() === '[measures]' && /^(ALL)?MEMBERS$/.test(node.name)) return [[{ measures: [...cube.listedMeasures] }]];
   const hit = known(raw, cube);
   if (/^(ALL)?MEMBERS$/.test(node.name)) {
     if (hit.depth != null) return [[{ h: hit.hierarchy, depth: hit.depth, paths: null }]];

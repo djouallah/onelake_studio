@@ -1577,7 +1577,12 @@ async function activateInner(context) {
           await fetchModel(n, { say });
           const { port, token } = await startXmla({ create: true });
           say('starting Excel…');
-          await openInExcel({ port, token, catalog: modelSqlName(n.workspace, n.model), name: n.model });
+          const catalog = modelSqlName(n.workspace, n.model);
+          const { measures } = await agent.excelCube(catalog);
+          await openInExcel({ port, token, catalog, name: n.model });
+          if (!measures.length) {
+            vscode.window.showInformationMessage(`${n.model} has no measures, so its PivotTable can list its fields' values but has no numbers to show. Excel only adds up a model's measures.`);
+          }
         });
     } catch (e) {
       if (e && e.unsupported) {

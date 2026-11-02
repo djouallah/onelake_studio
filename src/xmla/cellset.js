@@ -150,7 +150,8 @@ function grainSql(combo, plan, cube) {
   }));
   const onAxis = positions.flat().find(p => p.measures);
   const measures = onAxis ? onAxis.measures : plan.slicerMeasure ? [plan.slicerMeasure] : [];
-  const select = [...[...columns].map(([k, c]) => `${k} AS ${qid(c.alias)}`), ...measures.map((m, i) => `AGG(${qid(m.name)}) AS ${qid(`m${i}`)}`)];
+  const select = [...[...columns].map(([k, c]) => `${k} AS ${qid(c.alias)}`),
+    ...measures.flatMap((m, i) => (m.placeholder ? [] : [`AGG(${qid(m.name)}) AS ${qid(`m${i}`)}`]))];
   const sql = select.length
     ? `SELECT ${select.join(', ')} FROM ${cube.sqlName}${where.length ? ` WHERE ${where.join(' AND ')}` : ''}${columns.size ? ' GROUP BY ALL' : ''}`
     : null;
@@ -229,8 +230,9 @@ async function select(text, ctx) {
           });
           return addTuple(ai, members, order);
         });
-        const value = measure ? row[`m${mi}`] : null;
-        if (!measure) keys.forEach((k, ai) => live[ai].add(k));     // no measure: the members themselves
+        const real = measure && !measure.placeholder;
+        const value = real ? row[`m${mi}`] : null;
+        if (!real) keys.forEach((k, ai) => live[ai].add(k));     // no measure: the members themselves
         else if (value != null) {
           keys.forEach((k, ai) => live[ai].add(k));
           cells.push({ keys, value, type: typeOf.get(`m${mi}`), format: measure.format });
@@ -318,7 +320,8 @@ async function template(t, ctx) {
   if (t.kind === 'count') return cellset(calculated(t.measure), null, null, [all.length]);
   const into = { filters: [], chosen: new Map(), measures: [] };
   for (const s of t.slices) readFilter(evalSet(parseSet(s), cube), into);
-  const measure = into.measures[0] || cube.defaultMeasure;
+  const first = into.measures[0] || cube.defaultMeasure;
+  const measure = first && !first.placeholder ? first : null;
   const cols = h.levels.slice(0, depth).map(l => l.column);
   const where = into.filters.map(f => condition(f.h, f.paths));
   const select2 = [...cols.map((c, i) => `${columnRef(c)} AS ${qid(`c${i}`)}`), ...(measure ? [`AGG(${qid(measure.name)}) AS ${qid('m')}`] : [])];

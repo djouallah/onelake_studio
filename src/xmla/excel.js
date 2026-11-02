@@ -68,7 +68,9 @@ function openInExcel({ port, token, catalog, name }, run = spawn) {
     child.on('close', code => {
       if (code === 0) return resolve();
       if (code === NO_EXCEL) return reject(new Error('Open in Excel needs the Excel desktop app, and it could not be started on this machine.'));
-      return reject(new Error(`Excel could not open the PivotTable: ${err.replace(/#< CLIXML[\s\S]*/, '').trim() || `exit code ${code}`}`));
+      // PowerShell's own progress comes as blocks of CLIXML, with Excel's message around them.
+      const said = err.replace(/#< CLIXML\s*(<Objs[\s\S]*?<\/Objs>)?/g, '').trim();
+      return reject(new Error(`Excel could not open the PivotTable: ${said || `exit code ${code}`}`));
     });
   });
 }
