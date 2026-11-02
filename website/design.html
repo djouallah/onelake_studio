@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Design decisions: OneLake Studio</title>
+  <meta name="description" content="The decisions behind OneLake Studio: one SQL name for every object, SQL only, read only, running on your machine, and working offline.">
+  <link rel="icon" href="icon.png">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="site-header">
+    <div class="wrap">
+      <a class="brand" href="./"><img src="icon.png" alt="" width="28" height="28">OneLake Studio</a>
+      <nav class="site-nav" aria-label="Main">
+        <a href="features.html">Features</a>
+        <a href="architecture.html">Architecture</a>
+        <a href="design.html" aria-current="page">Design</a>
+        <a href="changelog.html">Changelog</a>
+        <a href="https://github.com/djouallah/onelake_studio">GitHub</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <section class="intro">
+      <h1>Design decisions</h1>
+      <p class="lead">The decisions behind OneLake Studio, and why we made them. For the parts of the app and how they connect, see <a href="architecture.html">Architecture</a>.</p>
+    </section>
+
+    <section>
+      <h2 id="names">One SQL name for every object</h2>
+      <p>Every table, file and semantic model in your tenant has one SQL name. The name is where Fabric keeps the object, with its type first.</p>
+      <div class="table-box names">
+        <table>
+          <thead>
+            <tr><th>Object</th><th>Its name</th><th>Example</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>A table</td><td><code>&lt;kind&gt;.&lt;workspace&gt;.&lt;item&gt;.&lt;schema&gt;.&lt;table&gt;</code></td><td><code>lakehouse.demo.data.aemo.duid</code></td></tr>
+            <tr><td>A semantic model</td><td><code>semanticmodel.&lt;workspace&gt;.&lt;model&gt;</code></td><td><code>semanticmodel.demo.DL</code></td></tr>
+            <tr><td>A file</td><td><code>'lakehouse.&lt;workspace&gt;.&lt;item&gt;/Files/&lt;path&gt;'</code></td><td><code>'lakehouse.demo.data/Files/x.parquet'</code></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>Why: Fabric makes workspace names unique in a tenant, item names unique for their type in a workspace, and table names unique in a schema. So each name points to exactly one object, and a query that joins tables from different workspaces can't read the wrong one. If one name could mean two objects, a query could return wrong data without an error.</p>
+      <p>The names are real SQL. The kind is a DuckDB catalog, the workspace, item and schema are schemas inside it, and each table is a view.</p>
+      <p class="more"><a href="naming.html">The naming rules in detail</a></p>
+    </section>
+
+    <section>
+      <h2 id="sql">SQL only</h2>
+      <p>Everything is queried with SQL, semantic models included. A Power BI semantic model is read as one table, and <code>AGG("measure")</code> computes a measure:</p>
+<pre><code>SELECT duid.Region, AGG("Mwh") AS mwh
+FROM semanticmodel.demo.DL
+GROUP BY ALL;</code></pre>
+      <p>Why: one language for tables and models means one query can join both, and anyone who knows SQL can use a model. <a href="https://github.com/djouallah/dax-sql">dax-sql</a> compiles the model's measures to SQL, and DuckDB runs it. There are no DAX queries. Matching Power BI's DAX results in every case is not a goal, so a result can differ from Power BI in edge cases.</p>
+      <p>Opening a model reads its definition from the Fabric REST API once and keeps it on your machine. Only Direct Lake models are supported, over a lakehouse or a SQL endpoint, and their tables are read from OneLake. Reading a model's definition needs the Contributor role or higher on the workspace, or write permission on the model.</p>
+    </section>
+
+    <section>
+      <h2 id="read-only">Read only</h2>
+      <p>OneLake Studio never changes your data. Every statement is checked before it runs: only one statement at a time, and only one that reads. The only feature that writes is Export to Fabric, and it asks you first.</p>
+      <p>Why: you can point it at production data without risk, and so can an agent.</p>
+    </section>
+
+    <section>
+      <h2 id="local">Runs on your machine</h2>
+      <p>DuckDB runs on your machine and reads OneLake directly, with your own sign-in. There is no service in between, and no app to register in your tenant.</p>
+      <p>Why: nothing to deploy or pay for, your data goes only between OneLake and your machine, and you see only what your account can already see.</p>
+    </section>
+
+    <section>
+      <h2 id="offline">Works offline</h2>
+      <p>Everything you have read is kept on your machine and keeps working without internet. Nothing needs to be turned on. When you are offline, the status bar says so, and no request is sent, so nothing waits for a timeout.</p>
+      <div class="table-box">
+        <table>
+          <thead>
+            <tr><th>Works offline, once read</th><th>Needs OneLake</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>The tree, <code>SHOW ALL TABLES</code>, <code>information_schema</code>, Go To</td><td>A column or a file never read</td></tr>
+            <tr><td>A table's Stats and History, and first rows already read</td><td>A wildcard over files</td></tr>
+            <tr><td>Semantic models: opening them, the Model page, <code>SHOW SEMANTIC …</code></td><td>A table whose metadata was never read</td></tr>
+            <tr><td>Table rows, model queries and the Pivot, for data already read</td><td>Export to Fabric</td></tr>
+            <tr><td><code>Files/</code> objects read before</td><td></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>The cache is per Microsoft account, so one account never sees another's data. It is kept when you sign out, and only <strong>Clear Cached OneLake Data</strong> deletes it.</p>
+      <p>Why: you can work on a plane or a slow connection, and a query on data you have read doesn't wait for the network.</p>
+    </section>
+
+    <section>
+      <h2 id="agents">Agents</h2>
+      <p>Claude Code and GitHub Copilot use OneLake Studio through its command line, with the same access you have. <strong>Install Agent Skill</strong>, in the app or in VS Code, sets it up. The command line asks the running app or VS Code, and if neither is open, it runs on its own.</p>
+      <p>The answer goes to stdout and notes go to stderr. <code>--json</code> gives a structured answer, and exit codes say what happened, such as <code>3</code> for not signed in and <code>4</code> for data that isn't cached.</p>
+    </section>
+
+    <section>
+      <h2 id="scope">Not in scope</h2>
+      <p>Matching Power BI's DAX behavior 100% is not a goal. Measures are compiled to SQL and run in DuckDB, so results can differ from Power BI in edge cases. Also not in scope:</p>
+      <ul>
+        <li>DAX queries (<code>EVALUATE</code>).</li>
+        <li>Writing to OneLake, DDL, or editing data in the grid.</li>
+        <li><code>CREATE</code> and <code>DROP SEMANTIC VIEW</code>: a model exists because Fabric has it.</li>
+        <li>A TDS connection to the SQL endpoint.</li>
+        <li>Diagrams for lakehouse tables, since they declare no keys.</li>
+        <li>vscode.dev: the engine is a native library, so the extension needs desktop VS Code.</li>
+      </ul>
+      <p class="more"><a href="reference.html">The full reference</a></p>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="wrap">
+      <nav class="footer-nav" aria-label="Reference">
+        <a href="naming.html">Naming</a>
+        <a href="reference.html">Reference</a>
+        <a href="catalog.html">Catalog</a>
+      </nav>
+      <p>A personal project, not a Microsoft product or supported by Microsoft. Results computed from a semantic model aren't guaranteed to match Power BI. MIT License.</p>
+    </div>
+  </footer>
+</body>
+</html>

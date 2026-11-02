@@ -16,7 +16,7 @@ const GITHUB = "https://github.com/djouallah/onelake_studio";
 
 const DOCS = [
   { md: "NAMING.md", page: "naming.html", title: "Naming" },
-  { md: "ARCHITECTURE.md", page: "design.html", title: "Design" },
+  { md: "ARCHITECTURE.md", page: "reference.html", title: "Reference" },
   { md: "CATALOG.md", page: "catalog.html", title: "Catalog" },
   { md: "CHANGELOG.md", page: "changelog.html", title: "Changelog" },
 ];
@@ -108,8 +108,8 @@ function page(doc) {
       <a class="brand" href="./"><img src="icon.png" alt="" width="28" height="28">OneLake Studio</a>
       <nav class="site-nav" aria-label="Main">
         <a href="features.html">Features</a>
-        <a href="how-it-works.html">How it works</a>
         <a href="architecture.html">Architecture</a>
+        <a href="design.html">Design</a>
         <a href="changelog.html"${current("changelog.html")}>Changelog</a>
         <a href="${GITHUB}">GitHub</a>
       </nav>
@@ -133,7 +133,7 @@ ${doc.html}
     <div class="wrap">
       <nav class="footer-nav" aria-label="Reference">
         <a href="naming.html"${current("naming.html")}>Naming</a>
-        <a href="design.html"${current("design.html")}>Design</a>
+        <a href="reference.html"${current("reference.html")}>Reference</a>
         <a href="catalog.html"${current("catalog.html")}>Catalog</a>
       </nav>
       <p>A personal project, not a Microsoft product or supported by Microsoft. Results computed from a semantic model aren't guaranteed to match Power BI. MIT License.</p>

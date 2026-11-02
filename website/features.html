@@ -14,8 +14,8 @@
       <a class="brand" href="./"><img src="icon.png" alt="" width="28" height="28">OneLake Studio</a>
       <nav class="site-nav" aria-label="Main">
         <a href="features.html" aria-current="page">Features</a>
-        <a href="how-it-works.html">How it works</a>
         <a href="architecture.html">Architecture</a>
+        <a href="design.html">Design</a>
         <a href="changelog.html">Changelog</a>
         <a href="https://github.com/djouallah/onelake_studio">GitHub</a>
       </nav>
@@ -30,19 +30,19 @@
 
     <section class="feature">
       <div>
-        <h2>One name for every object</h2>
-        <p>Any statement can join across items, workspaces and kinds with no setup. A Power BI semantic model is one more table, and <code>AGG("measure")</code> computes its measure.</p>
+        <h2>One SQL name for every table and model</h2>
+        <p>A query can join tables from different items and workspaces with no setup. A Power BI semantic model is queried like a table, and <code>AGG("measure")</code> computes a measure.</p>
       </div>
-<pre><code>SELECT * FROM lakehouse.aemo.data.dbo.dim_duid;
+<pre><code>SELECT * FROM lakehouse.demo.data.aemo.duid;
 
-SELECT dim_region.Region, AGG("Registered MW")
-FROM semanticmodel.aemo.nem GROUP BY ALL;</code></pre>
+SELECT duid.Region, AGG("Mwh")
+FROM semanticmodel.demo.DL GROUP BY ALL;</code></pre>
     </section>
 
     <section class="feature">
       <div>
-        <h2>A semantic model, in a pivot</h2>
-        <p>See its tables and relationships, then drag fields into a table or a chart, with the SQL behind it.</p>
+        <h2>Semantic models: diagram and pivot</h2>
+        <p>See a model's tables and relationships. Drag fields to build a table or a chart, and see the SQL behind it.</p>
       </div>
       <div class="shots">
         <a class="shot" href="img/pivot.png"><img src="img/pivot.png" alt="The app with a semantic model's Pivot open: its fields on the left, and an area chart of Mwh by date for each region." width="2720" height="1720" loading="lazy"></a>
@@ -53,7 +53,7 @@ FROM semanticmodel.aemo.nem GROUP BY ALL;</code></pre>
     <section class="feature">
       <div>
         <h2>Open in Excel</h2>
-        <p>One click on a model's Pivot opens a new workbook with a PivotTable on the model, its measures and its dimensions. It runs on your machine, so it works offline too. On Windows.</p>
+        <p>A button on a model's Pivot opens a new Excel workbook with a PivotTable connected to the model. It runs on your machine, so it also works offline. Windows only.</p>
       </div>
       <a class="shot" href="img/excel.png"><img src="img/excel.png" alt="Excel with a PivotTable on the semantic model: Mwh by fuel and region, and the PivotTable Fields list." width="2392" height="1202" loading="lazy"></a>
     </section>
@@ -67,8 +67,8 @@ FROM semanticmodel.aemo.nem GROUP BY ALL;</code></pre>
 
     <section class="feature stacked">
       <div>
-        <h2>A table in a click</h2>
-        <p>Columns, row count, first rows, and Delta or Iceberg stats and history.</p>
+        <h2>Table stats and history</h2>
+        <p>Click a table to see its columns, row count, first rows, and the stats and history of a Delta or Iceberg table.</p>
       </div>
       <div class="shots pair">
         <a class="shot" href="img/stats.png"><img src="img/stats.png" alt="A Delta table's Stats tab: format, version, 128 million rows, data files, size and last write." width="658" height="606" loading="lazy"></a>
@@ -78,25 +78,25 @@ FROM semanticmodel.aemo.nem GROUP BY ALL;</code></pre>
 
     <section class="feature stacked">
       <div>
-        <h2>See where the time went</h2>
-        <p>A query's plan shows a timeline of each step and its most expensive operators.</p>
+        <h2>Query plans</h2>
+        <p>A query's plan shows how long each step took and which operators cost the most.</p>
       </div>
       <a class="shot" href="img/profile.png"><img src="img/profile.png" alt="A query's plan: a join over 128 million rows in under 10 seconds, a timeline of its steps, and its most expensive operators." width="1936" height="1310" loading="lazy"></a>
     </section>
 
     <section class="notes">
-      <p><strong>Ask Claude Code or GitHub Copilot.</strong> One command, and your assistant can list your data, read a model's measures and compute them.</p>
-      <p><strong>Work offline.</strong> What you've read keeps working with no internet: browse it, query it, pivot it.</p>
+      <p>Claude Code and GitHub Copilot can use it too. After one command, they can list your data, read a model's measures and compute them.</p>
+      <p>It works offline. Anything you have read can be browsed, queried and pivoted without internet.</p>
     </section>
 
-    <p class="more read-only">Read only. The one exception is Export to Fabric, which is experimental and asks for an OK first.</p>
+    <p class="more read-only">Read only. The only exception is Export to Fabric, which is experimental and asks you first.</p>
   </main>
 
   <footer class="site-footer">
     <div class="wrap">
       <nav class="footer-nav" aria-label="Reference">
         <a href="naming.html">Naming</a>
-        <a href="design.html">Design</a>
+        <a href="reference.html">Reference</a>
         <a href="catalog.html">Catalog</a>
       </nav>
       <p>A personal project, not a Microsoft product or supported by Microsoft. Results computed from a semantic model aren't guaranteed to match Power BI. MIT License.</p>

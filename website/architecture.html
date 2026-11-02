@@ -14,8 +14,8 @@
       <a class="brand" href="./"><img src="icon.png" alt="" width="28" height="28">OneLake Studio</a>
       <nav class="site-nav" aria-label="Main">
         <a href="features.html">Features</a>
-        <a href="how-it-works.html">How it works</a>
         <a href="architecture.html" aria-current="page">Architecture</a>
+        <a href="design.html">Design</a>
         <a href="changelog.html">Changelog</a>
         <a href="https://github.com/djouallah/onelake_studio">GitHub</a>
       </nav>
@@ -138,6 +138,18 @@
     </section>
 
     <section>
+      <h2 id="query">What happens when you run a query</h2>
+      <ol>
+        <li>Each semantic model the query names is opened from its local copy. The first time, its definition is read from Fabric.</li>
+        <li><a href="https://github.com/djouallah/dax-sql">dax-sql</a> rewrites a query on a model as plain SQL over table names. A query that names no model is left as it is.</li>
+        <li>The Node process refuses more than one statement and anything that isn't a read, using DuckDB's own parser to tell.</li>
+        <li>Each table name becomes a view, made from the local catalog, and each file name becomes its <code>abfss://</code> address. A name that doesn't exist fails here.</li>
+        <li>The query runs on the query server. Stop cancels only that tab's queries. A result over <code>maxResultRows</code> (200,000 by default) is counted, and only the first rows go to the tab.</li>
+      </ol>
+      <p class="more"><a href="reference.html#what-happens-when-a-statement-runs">The steps in detail</a></p>
+    </section>
+
+    <section>
       <h2 id="sync">Sync</h2>
       <p>Lists of what exists come from the local catalog, not from OneLake. The local catalog is one SQLite file per account on your machine. The tree, <code>SHOW ALL TABLES</code> and Go To read it.</p>
       <ul>
@@ -158,7 +170,7 @@
         <li>Keep offline uses a second DuckDB process, so downloading a model's tables never slows a query. The two processes share only the disk cache.</li>
         <li>The server runs in UTC, because OneLake stores timestamps in UTC. Otherwise dates wouldn't match between tables.</li>
       </ul>
-      <p class="more"><a href="design.html#the-server">The server</a> and <a href="design.html#keep-offline">Keep offline</a> in detail</p>
+      <p class="more"><a href="reference.html#the-server">The server</a> and <a href="reference.html#keep-offline">Keep offline</a> in detail</p>
     </section>
 
     <section>
@@ -172,7 +184,7 @@
         <li>Subtotals and totals are calculated, not summed, so distinct counts and ratios are correct on every row.</li>
         <li>The port opens the first time you use Open in Excel. It listens on 127.0.0.1 only and needs a token. Requests from a browser are refused.</li>
       </ul>
-      <p class="more"><a href="design.html#open-in-excel">Open in Excel in detail</a></p>
+      <p class="more"><a href="reference.html#open-in-excel">Open in Excel in detail</a></p>
     </section>
 
     <section>
@@ -183,7 +195,7 @@
         <li>The app's function creates a read-only link for each table in the model, and for no other table. The browser reads the tables with DuckDB-WASM.</li>
         <li>Only people who can open the app in Fabric can load the page.</li>
       </ul>
-      <p class="more"><a href="design.html#export-to-fabric">Export to Fabric in detail</a></p>
+      <p class="more"><a href="reference.html#export-to-fabric">Export to Fabric in detail</a></p>
     </section>
 
     <section>
@@ -208,7 +220,7 @@
     <section>
       <h2 id="vscode">In VS Code</h2>
       <p>The parts are the same, except VS Code is the window and its Microsoft account provider does the sign-in. On one machine, the app, the extension and the command line share the local catalog and the cache.</p>
-      <p class="more"><a href="design.html">The design document</a></p>
+      <p class="more"><a href="design.html">Design decisions</a> and <a href="reference.html">the full reference</a></p>
     </section>
   </main>
 
@@ -216,7 +228,7 @@
     <div class="wrap">
       <nav class="footer-nav" aria-label="Reference">
         <a href="naming.html">Naming</a>
-        <a href="design.html">Design</a>
+        <a href="reference.html">Reference</a>
         <a href="catalog.html">Catalog</a>
       </nav>
       <p>A personal project, not a Microsoft product or supported by Microsoft. Results computed from a semantic model aren't guaranteed to match Power BI. MIT License.</p>
