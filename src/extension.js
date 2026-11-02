@@ -14,10 +14,10 @@ const upMs = () => Math.round(process.uptime() * 1000);
 const bundleBegan = upMs();
 
 const vscode = require('vscode');
-const { join, basename, dirname, isAbsolute } = require('node:path');
+const { join, basename, dirname } = require('node:path');
 const os = require('node:os');
-const { existsSync, statSync } = require('node:fs');
-const { createHash, randomBytes } = require('node:crypto');
+const { existsSync } = require('node:fs');
+const { randomBytes } = require('node:crypto');
 const fsp = require('node:fs/promises');
 const { quoteIdent, sqlStr } = require('./sql');
 const { openPanel, setPanelTitle, nameActiveTab, closePanel, revealPanel, panelOpen, postToPanel, postLive, panelSettings } = require('./panel');
@@ -25,11 +25,11 @@ const { openPerformance, closePerformance } = require('./performance');
 const { openLogs, closeLogs } = require('./logs');
 const { createCatalog } = require('./catalog');
 const { createStore } = require('./store');
-const { createCatalogFile, catalogFileOf, stateFileOf } = require('./catalogfile');
+const { stateFileOf } = require('./catalogfile');
 const { createSyncWorker } = require('./syncworker');
 const { createDeltaMirror } = require('./deltamirror');
 const { createDiagLog, outputLogOf } = require('./diaglog');
-const { createLogFile, logFileOf } = require('./logfile');
+const { logFileOf } = require('./logfile');
 const { createOneLake } = require('./onelake');
 const { createSqlTables } = require('./sqltables');
 const { createConnectivity, probeOf } = require('./connectivity');
@@ -40,6 +40,7 @@ const { createSettings } = require('./settings');
 const { createQueries, queryStem } = require('./queries');
 const { createModels } = require('./models');
 const { createExport } = require('./exportflow');
+const { createEngines } = require('./engines');
 const { dirBytes, treeBytes, removeDir } = require('./diskuse');
 const { SKILL_MARKER, skillFile, writeSkill, refreshSkill } = require('./skill');
 const { createHostMethods } = require('./host');
@@ -136,27 +137,10 @@ const { logRead, logBoot, logCatalog, logOpened, whenOpened, nothingWillOpen, st
 const settings = createSettings((key, fallback) => vscode.workspace.getConfiguration('onelakeStudio').get(key, fallback));
 const { catalogTtlMs, tableTtlMs, keepLimitBytes } = settings;
 
-// The disk cache's folder for all accounts: `file-cache-v1` under the folder the setting names,
-// or under the extension's storage. Always our own subfolder, so deleting an old cache can
-// never reach the user's files.
-function fileCacheRootFor(context) {
-  const chosen = vscode.workspace.getConfiguration('onelakeStudio').get('cacheDirectory', '').trim();
-  if (chosen && !isAbsolute(chosen)) {
-    if (out) out.appendLine(`cacheDirectory "${chosen}" is not a full path — using the default`);
-    return join(context.globalStorageUri.fsPath, 'file-cache-v1');
-  }
-  return join(chosen || context.globalStorageUri.fsPath, 'file-cache-v1');
-}
-
-// Real DuckDB, in this process. Built once and kept for the window's lifetime: an engine
-// costs ~17ms to create but its extensions are loaded on first use, and doing that per
-// panel open would be paying it again for nothing.
-//
-// Loaded lazily so a failure to load the native binding — an unsupported platform, a vsix
-// built for another architecture — surfaces when the panel opens, with a message, rather
-// than taking activation down with it.
-let engine = null;
-let engineAccount = null;   // the account (fileCacheAccount) the engine was built for
+// The engine and what goes with it (engines.js); set first thing at activation.
+let engines = null;
+// What is kept was replaced under this window. Set by activateInner.
+let onStoreCleared = () => {};
 
 // Calls of fn one at a time, each after the last has settled.
 function serialized(fn) {
@@ -172,144 +156,6 @@ function serialized(fn) {
 // finds the switch done (the account already bound) instead of closing the panel the switch
 // just opened.
 const accountTurn = serialized(body => body());
-
-// The engine's disk cache of what it reads from OneLake (engine-host.js, cache_httpfs): one
-// directory per account, like the store. Cached bytes are served without OneLake being
-// asked, so they must never be served to a different account. Set at activation and
-// whenever the account moves; null with no account known, which runs the engine without it.
-let fileCacheRoot = null;
-let fileCacheAccount = null;
-const fileCacheDirFor = key => (fileCacheRoot && key ? join(fileCacheRoot, key) : null);
-
-// The editor's proxy, for DuckDB's own downloads and reads: VS Code's `http.proxy` setting
-// first, then the environment variables the editor itself would honour.
-function editorProxy() {
-  const configured = vscode.workspace.getConfiguration('http').get('proxy', '');
-  return configured || process.env.HTTPS_PROXY || process.env.https_proxy ||
-         process.env.HTTP_PROXY || process.env.http_proxy || '';
-}
-
-// The shared engine (engine-client.js): DuckDB in a process of its own, one per account, with
-// every tab of every window as a client over Quack. Its session token lives in the editor's secret
-// storage, where the next window finds it.
-// One server per account and install. A rebuild of the same install replaces it (`build`).
-function sharedEngineServer(context, account, { background = false } = {}) {
-  const script = join(context.extensionUri.fsPath, 'dist', 'engine-server.js');
-  const build = (() => { try { return statSync(script).mtimeMs; } catch (_) { return 0; } })();
-  const key = [account || 'none', context.extensionUri.fsPath, ...(background ? ['background'] : [])].join('|');
-  const secret = `onelakeStudio.engineSession.${createHash('sha256').update(key).digest('hex').slice(0, 16)}`;
-  // What is remembered belongs to the account, so an update keeps it. F5 has its own: the installed
-  // build's server holds this file open.
-  // The background engine has the same one, so what it runs is in Logs with everything else.
-  const stateKey = [account || 'none', context.extensionMode === vscode.ExtensionMode.Production ? '' : 'dev'].join('|');
-  return {
-    key, stateKey, script, build,
-    stateDir: join(context.globalStorageUri.fsPath, 'engine-server'),
-    getToken: () => context.secrets.get(secret),
-    setToken: token => context.secrets.store(secret, token),
-  };
-}
-// What the store keeps, in SQLite (catalogfile.js), per account: the same file for each store made
-// for it. Opening one needs no server and no DuckDB, which is why the tree can draw first.
-const catalogFiles = new Map();
-// What is kept was replaced under this window: another window's Clear, or an import. Set by activateInner.
-let onStoreCleared = () => {};
-function catalogFileFor(context, account) {
-  if (!catalogFiles.has(account)) {
-    const { stateDir, stateKey } = sharedEngineServer(context, account);
-    catalogFiles.set(account, createCatalogFile({
-      file: catalogFileOf(stateDir, stateKey),
-      onCleared: () => onStoreCleared(),
-      log: line => out && out.appendLine(line),
-    }));
-  }
-  return catalogFiles.get(account);
-}
-// What an older version kept for this account comes across, behind a tree already drawn, and its files
-// go: the DuckDB state file, and the JSON store. That store's blobs move to the cache folder. A failure
-// leaves them where they are, and the next window tries again.
-async function importKept(context, account, jsonDir, cacheDir) {
-  const kept = catalogFiles.get(account);
-  const say = line => { if (out) out.appendLine(`move: ${line}`); };
-  let old = null, doing = 'the state file';
-  try {
-    if (!kept) return;
-    const server = sharedEngineServer(context, account);
-    const stateFile = stateFileOf(server.stateDir, server.stateKey);
-    const hadState = existsSync(stateFile), hadJson = existsSync(jsonDir);
-    if (hadState) {
-      const { openOldState } = require('./oldstate');
-      old = await openOldState(stateFile);
-    }
-    const came = await kept.importKept({ run: old && old.run, jsonDir });
-    if (came) say(`${came} entries came across`);
-    if (old) {
-      const logs = createLogFile({ file: logFileOf(server.stateDir, server.stateKey) });
-      const rows = await old.logs();
-      try { logs.add(rows); } finally { logs.close(); }
-      old.close();
-      old = null;
-      for (const f of [stateFile, `${stateFile}.wal`, `${stateFile}.holder`, `${stateFile}.bad`, `${stateFile}.wal.bad`, stateFile.replace(/\.duckdb$/, '.log')]) {
-        await fsp.rm(f, { force: true }).catch(() => {});
-      }
-      say(`state file: ${rows.length} log rows came across, and it is gone`);
-    } else say('state file: nothing to move');
-    doing = 'the JSON store';
-    if (hadJson) {
-      const blobs = join(jsonDir, 'blobs');
-      const hadBlobs = existsSync(blobs);
-      if (hadBlobs) await fsp.cp(blobs, join(cacheDir, 'blobs'), { recursive: true, force: false });
-      await fsp.rm(jsonDir, { recursive: true, force: true });
-      await fsp.rmdir(dirname(jsonDir)).catch(() => {});
-      say(`JSON store: ${hadBlobs ? 'its blobs moved to the cache folder, and ' : ''}it is gone`);
-    } else say('JSON store: nothing to move');
-    if (came) onStoreCleared();
-  } catch (e) {
-    say(`${doing} could not be read, and is tried again next time — ${e.message}`);
-  } finally {
-    if (old) old.close();
-  }
-}
-// Sign Out and the like stop the server of every account this window has used, joined to it or not.
-// Set by activateInner, which has the context.
-let stopServers = async () => {};
-function sharedEngineRemote(context, options) {
-  const { createRemote } = require('./engine-client');
-  return createRemote({
-    ...sharedEngineServer(context, fileCacheAccount), options,
-    onGone: () => {
-      // Its views and the models the tabs defined went with it, so the tabs do too.
-      closePanel();
-      resetEngine({ stop: false }).catch(() => {});
-      vscode.window.showWarningMessage('OneLake Studio: the engine stopped, so its tabs closed. Opening a table starts it again.');
-    },
-  });
-}
-
-// What the engine reads when it boots: here, or in the shared engine's process.
-function engineBootOptions(context, account, readme) {
-  const config = vscode.workspace.getConfiguration('onelakeStudio');
-  const diskCacheGB = Math.max(0, Number(config.get('diskCacheMaxGB', 64)) || 0);
-  return {
-    allowedPaths: readme ? [readme] : [],
-    httpProxy: editorProxy(),
-    // Fetched for this vsix's platform at package time (fetch-extensions.mjs); a first
-    // run offline, or behind a proxy DuckDB cannot use, still has its extensions.
-    bundledExtensions: join(context.extensionUri.fsPath, 'duckdb-extensions'),
-    // Beside the data cache, so the four extensions are downloaded once per install
-    // rather than once per session — and never into the user's own ~/.duckdb, where
-    // they would outlive the extension that fetched them.
-    extensionDir: join(context.globalStorageUri.fsPath, 'duckdb-extensions'),
-    memoryLimit: config.get('engineMemoryLimit', '').trim(),
-    threads: Math.max(0, Math.floor(Number(config.get('engineThreads', 0)) || 0)),
-    spillMaxGB: Math.max(0, Number(config.get('engineSpillMaxGB', 0)) || 0),
-    logMaxGB: Math.max(0, Number(config.get('logMaxGB', 1)) || 0),
-    maxRows: Math.min(1_000_000, Math.max(1000, Math.floor(Number(config.get('maxResultRows', 200_000)) || 200_000))),
-    // 0 is no disk cache at all.
-    fileCacheDir: diskCacheGB > 0 ? fileCacheDirFor(account) : null,
-    fileCacheMaxBytes: diskCacheGB * 1024 ** 3,
-  };
-}
 
 // What an engine asks of this window, whichever engine it is.
 function engineCallbacks() {
@@ -331,91 +177,6 @@ function engineCallbacks() {
     onTablesUsed: list => { if (onelake) onelake.usage.note(list); },
     catalogTables: () => (cachedSqlTables ? cachedSqlTables() : Promise.resolve([])),
   };
-}
-
-// The engine a background job reads with (modeldata.js): a process of its own, so nothing it does is
-// in the way of a query, on one thread with few requests per read, so it holds little of the
-// connection however large the table. It shares only the disk cache, and exits when it's done.
-const BACKGROUND_ENGINE = { threads: 1, memoryLimit: '1GB', fileCacheFanout: 2 };
-let background = null, backgroundAccount = null;
-function closeBackgroundEngine({ stop = false } = {}) {
-  const b = background;
-  background = null;
-  return b ? b.close({ stop }).catch(() => {}) : Promise.resolve();
-}
-function backgroundEngine(context) {
-  if (resetting) return null;
-  if (background && backgroundAccount !== fileCacheAccount) closeBackgroundEngine({ stop: true });
-  if (background) return background;
-  backgroundAccount = fileCacheAccount;
-  fileCacheRoot = fileCacheRootFor(context);
-  const { createEngineHost } = require('./engine-host');
-  const { createRemote } = require('./engine-client');
-  const options = { ...engineBootOptions(context, fileCacheAccount, null), ...BACKGROUND_ENGINE };
-  const made = createEngineHost({
-    ...options,
-    ...engineCallbacks(),
-    remote: createRemote({
-      ...sharedEngineServer(context, fileCacheAccount, { background: true }), options,
-      // Nothing is on screen over it. The next tick starts another, and carries on.
-      onGone: () => { if (background === made) background = null; },
-    }),
-  });
-  background = made;
-  return made;
-}
-
-// `readme` is the one file outside DuckDB's own directories the engine may read (the
-// landing query) — see the lockdown in engine-host.js.
-function ensureEngine(context, { readme } = {}) {
-  // Being stopped: one started now would be stopped too, or left over what is about to be deleted.
-  if (resetting) return null;
-  // An engine holds its account's token and disk cache: one built before the account moved
-  // is closed, with the panel over it, never handed to the new account.
-  if (engine && engineAccount !== fileCacheAccount) {
-    const old = engine;
-    engine = null;
-    closeAllTabs();
-    old.close({ stop: true }).catch(() => {});
-  }
-  if (engine) return engine;
-  try {
-    engineAccount = fileCacheAccount;
-    fileCacheRoot = fileCacheRootFor(context);
-    const { createEngineHost } = require('./engine-host');
-    const booting = engineBootOptions(context, fileCacheAccount, readme);
-    engine = createEngineHost({
-      ...booting,
-      ...engineCallbacks(),
-      remote: sharedEngineRemote(context, booting),
-      onLog: logBoot,
-      onCatalog: logCatalog,
-    });
-  } catch (e) {
-    out && out.appendLine(`native DuckDB unavailable: ${e.message}`);
-    showError(
-      `OneLake Studio could not load DuckDB for this platform (${process.platform}-${process.arch}): ${e.message}`);
-    engine = null;
-  }
-  return engine;
-}
-
-// Closing the engine is what revokes its credentials: the azure secret and every ATTACH
-// hold the access token BY VALUE, so an engine that outlives the sign-out keeps reading
-// OneLake for as long as the token lasts. ensureEngine builds it again on the next open, in
-// a few seconds. On the shared engine that means stopping the server, unless it has gone already.
-let resetting = 0;
-async function resetEngine({ stop = true } = {}) {
-  resetting++;
-  try {
-    const e = engine;
-    engine = null;
-    if (e) await e.close({ stop }).catch(() => {});
-    // Sign Out and Clear Cached stop what's reading too: it holds the token, and those files.
-    if (stop) await closeBackgroundEngine({ stop: true });
-    // A window with only the tree open isn't joined to the server, and another window may have one.
-    if (stop) await stopServers().catch(() => {});
-  } finally { resetting--; }
 }
 
 // Every tab of this window, for an account that is going: Logs and Performance show what it ran too.
@@ -473,7 +234,7 @@ async function show(context, { newTab = false, ...options } = {}) {
   // handed a panel that boots to a spinner and never moves.
   const { readme } = await webviewRoot(context.extensionUri,
     { dev: context.extensionMode === vscode.ExtensionMode.Development });
-  const eng = ensureEngine(context, { readme: readme.fsPath });
+  const eng = engines.ensureEngine({ readme: readme.fsPath });
   if (!eng) return false;
   const opened = await openPanel(context, {
     newTab,
@@ -484,7 +245,7 @@ async function show(context, { newTab = false, ...options } = {}) {
     viewTag: randomBytes(2).toString('hex'),
     host: (tabEngine, post) => createHostMethods({
       onelake, engine: tabEngine, onStatus: message => post({ type: 'status', message }),
-      saveFile, semviews, modelsDir: modelsFolder(),
+      saveFile, semviews, modelsDir: engines.modelsFolder(),
       // A refusal is what Explore's info line says, not a failure of the export.
       exportExplore: x => (exportExplore ? exportExplore(x).catch(e => { if (e.declined) return e.message; throw e; })
         : Promise.reject(new Error('OneLake Studio is still starting'))),
@@ -516,7 +277,7 @@ async function show(context, { newTab = false, ...options } = {}) {
           if (pick === 'Show Log' && out) out.show(true);
           if (pick === 'Reload') {
             closePanel();
-            await resetEngine();
+            await engines.resetEngine();
             vscode.commands.executeCommand('onelakeStudio.open');
           }
         });
@@ -540,10 +301,6 @@ const NEW_QUERY_SQL = [
   'SHOW ALL TABLES;',
   '',
 ].join('\n');
-
-function modelsFolder() {
-  return join(fileCacheRoot, 'models');
-}
 
 // Where a CSV or a OneLake file the panel saves goes: the editor's own save dialog,
 // starting in the workspace folder (or the home directory), then a plain write.
@@ -694,6 +451,16 @@ async function activate(context) {
 }
 
 async function activateInner(context) {
+  engines = createEngines({
+    extensionDir: context.extensionUri.fsPath, storageDir: context.globalStorageUri.fsPath,
+    production: context.extensionMode === vscode.ExtensionMode.Production, secrets: context.secrets, settings,
+    httpProxy: () => vscode.workspace.getConfiguration('http').get('proxy', ''),
+    engineCallbacks, logBoot, logCatalog, closePanel, closeAllTabs,
+    warn: message => vscode.window.showWarningMessage(message),
+    showError,
+    onStoreCleared: () => onStoreCleared(),
+    log: line => out && out.appendLine(line),
+  });
   const queriesRoot = join(os.homedir(), 'OneLakeStudio', 'queries');
 
   // Every OneLake request the extension makes goes through here, on the VS Code token,
@@ -712,17 +479,10 @@ async function activateInner(context) {
   const storeRoot = join(context.globalStorageUri.fsPath, 'onelake-store-v1');
   const jsonStoreOf = key => join(storeRoot, key || 'signed-out');
   // The bytes of a Files/ object the host reads, in the one cache folder beside what DuckDB reads.
-  const hostCacheOf = key => join(fileCacheRoot, key || 'signed-out', 'host');
+  const hostCacheOf = key => join(engines.cacheRoot(), key || 'signed-out', 'host');
   const storeFor = key => {
-    const backend = catalogFileFor(context, key);
+    const backend = engines.catalogFileFor(key);
     return createStore({ dir: hostCacheOf(key), backend, ttlMs: catalogTtlMs });
-  };
-  stopServers = async () => {
-    const { stopServer } = require('./engine-client');
-    for (const account of catalogFiles.keys()) {
-      await stopServer(sharedEngineServer(context, account)).catch(() => {});
-      await stopServer(sharedEngineServer(context, account, { background: true })).catch(() => {});
-    }
   };
   // Nothing here waits for the account provider, whose answer can take seconds. The tree opens on the
   // last account's rows, with no session asked for, and sessionChanged at the end of this function
@@ -741,8 +501,8 @@ async function activateInner(context) {
     onChange: () => tree.queriesChanged(),
   });
   saveQuery = keepQuery;
-  fileCacheRoot = fileCacheRootFor(context);
-  fileCacheAccount = storeAccount;
+  engines.setCacheRoot(engines.fileCacheRootFor());
+  engines.setCacheAccount(storeAccount);
   onelake = createOneLake({
     catalog,
     store: storeFor(storeAccount),
@@ -760,7 +520,7 @@ async function activateInner(context) {
   const deltaLogs = createDeltaMirror({
     catalog, ttlMs: catalogTtlMs, isOffline: () => connectivity.offline(),
     base: () => {
-      const dir = fileCacheDirFor(fileCacheAccount);
+      const dir = engines.fileCacheDirFor(engines.cacheAccount());
       const keeps = settings.keepsDiskCache();
       return dir && keeps ? join(dir, 'delta') : null;
     },
@@ -772,17 +532,17 @@ async function activateInner(context) {
   nameModelTables = sqlTables.nameTables;
   // Semantic views: pointers to model files, kept per account in the extension's storage.
   // A view made or dropped is in the engine's catalog (SHOW ALL TABLES) by the next statement.
-  semviews = createSemViews({ catalogFor: key => catalogFileFor(context, key),
+  semviews = createSemViews({ catalogFor: key => engines.catalogFileFor(key),
                               dir: join(context.globalStorageUri.fsPath, 'semantic-views'), onelake,
                               log: line => out && out.appendLine(line),
-                              onChange: () => { if (engine) engine.catalogChanged(); } });
+                              onChange: () => { if (engines.current()) engines.current().catalogChanged(); } });
   semviews.useAccount(storeAccount);
   // A model's local copy is data, so it is in the cache folder. Where an older version kept them, the
   // whole of this account's folder moves, and each view is pointed at its new place.
   const oldModels = join(os.homedir(), 'OneLakeStudio', 'semantic-models');
   const { adoptModels, adopted: modelsAdopted, modelPath, modelKey, cachedModel, unsupportedModels, unsupportedNote,
           fetchModel, walkTables, openSqlModel: openModelForQuery, completionNames, forgetNames } = createModels({
-    onelake, fabric, semviews, modules: () => agent.modules(), modelsFolder, account: () => queryAccount, oldModels,
+    onelake, fabric, semviews, modules: () => agent.modules(), modelsFolder: () => engines.modelsFolder(), account: () => queryAccount, oldModels,
     notify: message => vscode.window.showInformationMessage(message),
     onModelChanged: n => tree.modelChanged(n),
     log: line => out && out.appendLine(line),
@@ -803,14 +563,14 @@ async function activateInner(context) {
     if (key === storeAccount) return;
     // Its file's handle and its look every few seconds, for an account this window has left. It opens
     // again if that account comes back.
-    if (catalogFiles.has(storeAccount)) catalogFiles.get(storeAccount).close();
+    if (engines.catalogFiles.has(storeAccount)) engines.catalogFiles.get(storeAccount).close();
     storeAccount = key;
     // In one step with the account, before anything below waits: a read in between would write the
     // new account's answers into the old account's store.
-    fileCacheAccount = key;   // the engine picks it up when it is next built
+    engines.setCacheAccount(key);   // the engine picks it up when it is next built
     onelake.useStore(storeFor(key));
     semviews.useAccount(key);
-    importKept(context, key, jsonStoreOf(key), hostCacheOf(key));
+    engines.importKept(key, jsonStoreOf(key), hostCacheOf(key));
     syncWorker.reset();
     if (modelData) modelData.reset();
     forgetNames();
@@ -821,12 +581,12 @@ async function activateInner(context) {
     queryAccount = queryAccountOf(session) || (knownAccount() || {}).queries || null;
     await adoptLooseQueries().catch(() => {});
     tree.queriesChanged();
-    if (engine) engine.catalogChanged();
+    if (engines.current()) engines.current().catalogChanged();
     await adoptModels();
   });
   // What the store holds moved: the engine's catalog is listed again before the next
   // statement that reads it.
-  const catalogMoved = () => { if (engine) engine.catalogChanged(); };
+  const catalogMoved = () => { if (engines.current()) engines.current().catalogChanged(); };
   context.subscriptions.push({ dispose: onelake.onChanged(catalogMoved) },
                              { dispose: onelake.onTableRead(catalogMoved) });
   context.subscriptions.push({ dispose: onelake.onRefreshFailed((what, e) => {
@@ -855,13 +615,13 @@ async function activateInner(context) {
     canFabric: () => fabricToken().then(t => !!t, () => false),
     isOffline: () => connectivity.offline(),
     lease: () => {
-      try { return catalogFileFor(context, storeAccount).lease(syncOwner, 90_000); } catch (_) { return false; }
+      try { return engines.catalogFileFor(storeAccount).lease(syncOwner, 90_000); } catch (_) { return false; }
     },
     keep: {
       limitBytes: keepLimitBytes,
-      ready: () => !!engine && !resetting,
-      othersRunning: () => (engine ? engine.othersRunning() : Promise.resolve(false)),
-      read: (name, o) => (engine ? engine.keepTable(name, o) : Promise.reject(Object.assign(new Error('no engine'), { cancelled: true }))),
+      ready: () => !!engines.current() && !engines.resetting(),
+      othersRunning: () => (engines.current() ? engines.current().othersRunning() : Promise.resolve(false)),
+      read: (name, o) => (engines.current() ? engines.current().keepTable(name, o) : Promise.reject(Object.assign(new Error('no engine'), { cancelled: true }))),
       held: () => !!modelData && modelData.busy(),
     },
     log: line => out && out.appendLine(line),
@@ -888,7 +648,7 @@ async function activateInner(context) {
     if (out) out.mark('tree answered');
     // A Node-API addon loads once, and only when something needs it.
     const native = Object.keys(require.cache).some(f => /node-bindings/.test(f));
-    if (out) out.appendLine(`tree drawn ${Math.round(performance.now() - began)}ms into activation: DuckDB ${native ? 'loaded' : 'not loaded'}, ${engine ? 'an engine' : 'no engine'} here`);
+    if (out) out.appendLine(`tree drawn ${Math.round(performance.now() - began)}ms into activation: DuckDB ${native ? 'loaded' : 'not loaded'}, ${engines.current() ? 'an engine' : 'no engine'} here`);
     warmIfWanted();
   };
 
@@ -939,7 +699,7 @@ async function activateInner(context) {
     showOffline(reason);
     refreshTitle();
     postLive({ type: 'connectivity' });
-    if (engine) engine.catalogChanged();
+    if (engines.current()) engines.current().catalogChanged();
     tree.redraw();
     if (!reason) syncWorker.tick();
     // A window that started with no internet may have been told there was no session. Nothing says
@@ -975,12 +735,12 @@ async function activateInner(context) {
         if (!session) {
           if (!was) return;
           closeAllTabs();
-          await resetEngine();
+          await engines.resetEngine();
           vscode.window.showInformationMessage(
             'OneLake Studio signed out: the Microsoft account is no longer available. What this machine has cached is still here.');
-        } else if (engine && storeAccount !== before) {
+        } else if (engines.current() && storeAccount !== before) {
           closeAllTabs();
-          await resetEngine();
+          await engines.resetEngine();
           vscode.window.showInformationMessage(
             `OneLake Studio is now using ${session.account.label}.`);
         }
@@ -1088,8 +848,8 @@ async function activateInner(context) {
     modelPath: (ws, model) => modelPath({ workspace: ws, model }),
     engine: async () => {
       const { readme } = await webviewRoot(context.extensionUri, { dev });
-      const eng = ensureEngine(context, { readme: readme.fsPath });
-      if (!eng) throw new Error(resetting ? 'the engine is restarting: try again in a moment' : 'DuckDB could not be loaded on this platform — see OneLake Studio: Show Read Log');
+      const eng = engines.ensureEngine({ readme: readme.fsPath });
+      if (!eng) throw new Error(engines.resetting() ? 'the engine is restarting: try again in a moment' : 'DuckDB could not be loaded on this platform — see OneLake Studio: Show Read Log');
       return eng;
     },
     // When a module is first needed, as finding it asks the editor something, and the tree waits for nothing.
@@ -1107,10 +867,10 @@ async function activateInner(context) {
     diagnostics: {
       log: o => out.lines(o),
       async status() {
-        const server = sharedEngineServer(context, storeAccount);
+        const server = engines.sharedEngineServer(storeAccount);
         const stateFile = stateFileOf(server.stateDir, server.stateKey);
         let catalog;
-        try { catalog = catalogFileFor(context, storeAccount).describe(); }
+        try { catalog = engines.catalogFileFor(storeAccount).describe(); }
         catch (e) { catalog = { error: e.message }; }
         return {
           build: buildInfo,
@@ -1118,13 +878,13 @@ async function activateInner(context) {
           session: { signedIn, hasSession, signedOutByChoice: signedOutByChoice(), offline: connectivity.reason(),
                      lastProviderAnswer, account: storeAccount, queries: queryAccount },
           start: out.timeline(),
-          engine: { running: !!engine },
+          engine: { running: !!engines.current() },
           catalog,
           sync: await syncWorker.progress(),
           files: {
             logs: logFileOf(server.stateDir, server.stateKey),
-            cache: fileCacheRoot,
-            models: modelAccountDir(modelsFolder(), queryAccount),
+            cache: engines.cacheRoot(),
+            models: modelAccountDir(engines.modelsFolder(), queryAccount),
             output: outputLogOf(dirname(context.logUri.fsPath), 'OneLake Studio'),
           },
           stillHere: {
@@ -1152,20 +912,20 @@ async function activateInner(context) {
     resolve: (ref, o) => resolveSqlTable(ref, o),
     cachedTable: t => onelake.cached.table({ workspace: t.workspace, item: t.item }, t),
     read: (name, o) => {
-      const reader = backgroundEngine(context);
+      const reader = engines.backgroundEngine();
       return reader ? reader.keepTable(name, o) : Promise.reject(Object.assign(new Error('the engines are being stopped'), { cancelled: true }));
     },
-    onIdle: () => { closeBackgroundEngine(); },
+    onIdle: () => { engines.closeBackgroundEngine(); },
     usage: onelake.usage,
     offlineReason: () => connectivity.reason(),
-    ready: () => !resetting,
+    ready: () => !engines.resetting(),
     lease: () => {
-      try { return catalogFileFor(context, storeAccount).lease(syncOwner, 90_000); } catch (_) { return false; }
+      try { return engines.catalogFileFor(storeAccount).lease(syncOwner, 90_000); } catch (_) { return false; }
     },
     maxBytes: settings.diskCacheBytes,
     log: m => out && out.appendLine(m),
   });
-  context.subscriptions.push({ dispose: () => { modelData.stop(); closeBackgroundEngine(); } });
+  context.subscriptions.push({ dispose: () => { modelData.stop(); engines.closeBackgroundEngine(); } });
   keepOffline = {
     state: ({ workspace, model }) => modelData.state(modelSqlName(workspace, model)),
     set: ({ workspace, model, on }) => modelData.set(modelSqlName(workspace, model), model, on),
@@ -1268,7 +1028,7 @@ async function activateInner(context) {
   onStoreCleared = () => {
     onelake.forgetKept();
     forgetNames();
-    if (engine) engine.catalogChanged();
+    if (engines.current()) engines.current().catalogChanged();
     postLive({ type: 'reset' });
     tree.redraw();
   };
@@ -1326,13 +1086,13 @@ async function activateInner(context) {
   // could close its panel over a moved account.
   let warming = false;
   const warmEngine = async () => {
-    if (warming || engine || !signedIn) return;
+    if (warming || engines.current() || !signedIn) return;
     warming = true;
     try {
       await rebindStore();
       const { readme } = await webviewRoot(context.extensionUri, { dev });
-      if (engine) return;
-      const eng = ensureEngine(context, { readme: readme.fsPath });
+      if (engines.current()) return;
+      const eng = engines.ensureEngine({ readme: readme.fsPath });
       if (eng) await eng.warm();
     } catch (e) {
       if (out) out.appendLine(`the engine could not start ahead of a query — ${(e && e.message) || e}`);
@@ -1384,9 +1144,9 @@ async function activateInner(context) {
     // prove the cache is the reason rather than assume it. It also answers "what is this
     // costing me on disk".
     vscode.commands.registerCommand('onelakeStudio.clearCache', async () => {
-      const fileCacheDir = fileCacheDirFor(storeAccount);
+      const fileCacheDir = engines.fileCacheDirFor(storeAccount);
       const fileBytes = await dirBytes(fileCacheDir) + (fileCacheDir ? await treeBytes(join(fileCacheDir, 'delta')) : 0);
-      const modelsDir = modelAccountDir(modelsFolder(), queryAccount);
+      const modelsDir = modelAccountDir(engines.modelsFolder(), queryAccount);
       const size = await onelake.size() + fileBytes + await treeBytes(modelsDir);
       if (!size) {
         vscode.window.showInformationMessage('OneLake Studio: the cache is empty.');
@@ -1405,7 +1165,7 @@ async function activateInner(context) {
       // The engine has the disk cache's files open and lists what was cleared: it goes first, and is
       // rebuilt on the next open. The panel's tables live in that engine, so the panel goes with it.
       closePanel();
-      await resetEngine();
+      await engines.resetEngine();
       await removeDir(fileCacheDir);
       tree.redraw();
       vscode.window.showInformationMessage(
@@ -1418,9 +1178,9 @@ async function activateInner(context) {
     vscode.commands.registerCommand('onelakeStudio.showPerformance', async () => {
       const { readme } = await webviewRoot(context.extensionUri, { dev: context.extensionMode === vscode.ExtensionMode.Development });
       openPerformance({
-        engine: () => ensureEngine(context, { readme: readme.fsPath }),
+        engine: () => engines.ensureEngine({ readme: readme.fsPath }),
         disk: async () => ({
-          bytes: await dirBytes(fileCacheDirFor(storeAccount)),
+          bytes: await dirBytes(engines.fileCacheDirFor(storeAccount)),
           limit: settings.diskCacheBytes(),
         }),
       });
@@ -1429,13 +1189,13 @@ async function activateInner(context) {
     vscode.commands.registerCommand('onelakeStudio.showLogs', async () => {
       const { readme } = await webviewRoot(context.extensionUri, { dev: context.extensionMode === vscode.ExtensionMode.Development });
       openLogs({
-        engine: () => ensureEngine(context, { readme: readme.fsPath }),
+        engine: () => engines.ensureEngine({ readme: readme.fsPath }),
         open: sql => openInPanel({ type: 'query', sql }),
         copy: sql => vscode.env.clipboard.writeText(sql),
         clear: async () => {
           const pick = await vscode.window.showWarningMessage(
             'Clear what the engine has run, for every window?', { modal: true }, 'Clear');
-          if (pick === 'Clear') await engine?.clearLogs();
+          if (pick === 'Clear') await engines.current()?.clearLogs();
         },
       });
     }),
@@ -1583,9 +1343,9 @@ async function activateInner(context) {
           const before = storeAccount;
           await rebindStore();
           // What was open read the last account's cache, and must not go on with this one's token.
-          if (engine && storeAccount !== before) {
+          if (engines.current() && storeAccount !== before) {
             closeAllTabs();
-            await resetEngine();
+            await engines.resetEngine();
           }
           tree.redraw();
           warmIfWanted();
@@ -1603,7 +1363,7 @@ async function activateInner(context) {
         forgetToken();
         await setSignedIn(false);
         closeAllTabs();
-        await resetEngine();
+        await engines.resetEngine();
         tree.redraw();
         warmIfWanted();
         vscode.window.showInformationMessage(
@@ -1629,7 +1389,7 @@ async function activateInner(context) {
         // The store before anything waits: from here a token is the new account's, and what a background
         // read brings back with it must not land in the old account's catalog.
         await rebindStore();
-        await resetEngine();
+        await engines.resetEngine();
         tree.redraw();
         await showWithProgress({ createIfNone: true });
         await setSignedIn(!!await getToken({ createIfNone: false }));
@@ -1671,9 +1431,9 @@ async function activateInner(context) {
             await rebindStore();
             refreshTitle();
             tree.redraw();
-            if (engine) {
+            if (engines.current()) {
               closeAllTabs();
-              await resetEngine();
+              await engines.resetEngine();
             }
           } catch (err) {
             if (out) out.appendLine(`tenant change failed — ${(err && err.message) || err}`);
@@ -1682,7 +1442,7 @@ async function activateInner(context) {
       }
       // The engine reads these when it is built: a running one keeps the old values until it
       // is restarted (which closes the tabs, whose views live in it).
-      if (engine && (e.affectsConfiguration('onelakeStudio.engineMemoryLimit') ||
+      if (engines.current() && (e.affectsConfiguration('onelakeStudio.engineMemoryLimit') ||
                      e.affectsConfiguration('onelakeStudio.engineThreads') ||
                      e.affectsConfiguration('onelakeStudio.engineSpillMaxGB') ||
                      e.affectsConfiguration('onelakeStudio.logMaxGB') ||
@@ -1692,28 +1452,28 @@ async function activateInner(context) {
         const pick = await vscode.window.showInformationMessage(
           'OneLake Studio: the engine uses the new setting once it restarts. Restarting closes every tab, in every window.',
           'Restart Engine');
-        if (pick === 'Restart Engine' && engine) {
+        if (pick === 'Restart Engine' && engines.current()) {
           closePanel();
-          await resetEngine();
+          await engines.resetEngine();
           vscode.commands.executeCommand('onelakeStudio.open');
         }
       }
       // A new folder starts empty, and the old one stays until it is deleted here. A running
       // engine has the old one's files open, and keeps it until it restarts.
       if (e.affectsConfiguration('onelakeStudio.cacheDirectory')) {
-        const old = fileCacheRoot, next = fileCacheRootFor(context);
+        const old = engines.cacheRoot(), next = engines.fileCacheRootFor();
         if (next !== old) {
-          const running = !!engine;
-          if (!running) fileCacheRoot = next;
+          const running = !!engines.current();
+          if (!running) engines.setCacheRoot(next);
           const remove = running ? 'Restart Engine and Delete Old Cache' : 'Delete Old Cache';
           const actions = running ? [remove, 'Restart Engine'] : [remove];
           const pick = await vscode.window.showInformationMessage(
             `OneLake Studio: table data is now cached in ${next}, which starts empty. The old cache is still in ${old}.`,
             ...actions);
-          if (pick && running && engine) {
+          if (pick && running && engines.current()) {
             closePanel();
-            await resetEngine();
-            fileCacheRoot = next;
+            await engines.resetEngine();
+            engines.setCacheRoot(next);
             vscode.commands.executeCommand('onelakeStudio.open');
           }
           if (pick === remove) await removeDir(old);
@@ -1730,7 +1490,7 @@ async function activateInner(context) {
   // signed in. A provider that has stalled gets a few seconds, and what it says after that is taken as
   // a session change.
   out.mark('activation code ran');
-  importKept(context, storeAccount, jsonStoreOf(storeAccount), hostCacheOf(storeAccount));
+  engines.importKept(storeAccount, jsonStoreOf(storeAccount), hostCacheOf(storeAccount));
   // Now, not after the provider has answered: a click in those seconds with no internet shouldn't wait
   // on a request's timeout to find out.
   if (!signedOutByChoice()) connectivity.check();
@@ -1754,7 +1514,7 @@ async function activateInner(context) {
     modelData.start();
     if (out) {
       out.mark('sync started');
-      const { rows } = catalogFileFor(context, storeAccount).describe();
+      const { rows } = engines.catalogFileFor(storeAccount).describe();
       out.appendLine(`catalog: ${Object.entries(rows).filter(([, n]) => n).map(([t, n]) => `${n} ${t}`).join(', ') || 'empty'}`);
     }
   })().catch(e => { if (out) out.appendLine(`the account provider could not be asked — ${(e && e.message) || e}`); });
@@ -1762,10 +1522,10 @@ async function activateInner(context) {
 
 function deactivate() {
   stopReadLog();
-  for (const f of catalogFiles.values()) f.close();
+  if (engines) for (const f of engines.catalogFiles.values()) f.close();
   // The engine holds a native database handle and a temp directory; closing it is what
   // releases both.
-  return engine ? engine.close() : undefined;
+  return engines && engines.current() ? engines.current().close() : undefined;
 }
 
 module.exports = { activate, deactivate };
