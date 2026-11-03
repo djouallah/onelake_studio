@@ -95,3 +95,30 @@ test("Model's YAML colours a model's file and changes none of its text", async (
 
   assert.equal(prettyModelText("a: b\n".repeat(PRETTY_MAX / 5 + 1), "yaml"), null);
 });
+
+test("Model's YAML sets a custom_extensions block apart, line by line, and nothing after it", async () => {
+  const { prettyModelText, extensionVendors } = await import("../../app/explore/pretty.js");
+  const yaml = [
+    "datasets:",
+    "  - name: fct",
+    "    fields:",
+    "      - name: fare",
+    "        datatype: Decimal",
+    "        custom_extensions:",
+    "          - vendor_name: POWER_BI",
+    "            data: '{\"formatString\":\"#,##0.00\"}'",
+    "      - name: id",
+    "    metrics:",
+    "      - name: total",
+    "custom_extensions:",
+    "- vendor_name: POWER_BI",
+    "  data: '{}'",
+    "version: 0.2.0.dev0",
+  ].join("\n");
+  const lines = prettyModelText(yaml, "yaml").split("\n");
+  const ext = lines.map(l => l.startsWith('<span class="tk-ext">'));
+  assert.deepEqual(ext, [false, false, false, false, false, true, true, true, false, false, false, true, true, true, false]);
+  assert.match(lines[6], /^<span class="tk-ext">.*<span class="tk-key">vendor_name<\/span>.*<\/span>$/, "its own colours inside");
+  assert.deepEqual(extensionVendors(yaml), ["POWER_BI"]);
+  assert.deepEqual(extensionVendors("datasets: []\n"), []);
+});

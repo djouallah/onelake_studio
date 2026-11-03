@@ -82,6 +82,14 @@ section.modelOpen #chartBtn { display: none; }
 .tk-num { color: var(--vscode-debugTokenExpression-number, #b5cea8); }
 .tk-lit { color: var(--vscode-debugTokenExpression-boolean, #ff7b72); }
 .tk-com { color: var(--faint); font-style: italic; }
+/* A custom_extensions block: amber, with a bar down its left that moves no text. */
+.tk-ext, .tk-ext span { color: var(--vscode-editorWarning-foreground, #cca700); }
+.tk-ext { box-shadow: inset 2px 0 0 var(--vscode-editorWarning-foreground, #cca700); }
+.text-file-note { margin: var(--gap) var(--gutter) 0; font-size: 0.74rem; color: var(--muted); }
+.text-file-note[hidden] { display: none; }
+.text-file-note .swatch { display: inline-block; width: 3px; height: 0.9em; margin-right: 0.45rem; vertical-align: -0.1em;
+  background: var(--vscode-editorWarning-foreground, #cca700); }
+.text-file-note:not([hidden]) + .text-file { margin-top: 0.4rem; }
 .model-diagram, .model-panel { background: var(--card); border: 1px solid var(--hairline); border-radius: var(--radius); overflow: auto; }
 .model-diagram { padding: 0.8rem; display: flex; }
 .model-diagram svg { display: block; flex: none; width: 100%; min-width: 640px; height: auto; margin: auto; font-family: inherit; }

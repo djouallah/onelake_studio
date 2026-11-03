@@ -5,6 +5,8 @@
 // it is. Either way the text is escaped and only spans are added around keys, strings,
 // numbers, literals and comments (tk-*, explore.css), so nothing in a file is ever HTML. By
 // hand, with nothing loaded: it works offline and costs the panel nothing until it is shown.
+// An Ossie model's custom_extensions blocks (what Ossie has no field for, Power BI's) are set
+// apart, each of their lines in a tk-ext span.
 // =============================================================================
 
 import { escapeHtml } from '../paths.js';
@@ -52,10 +54,26 @@ function yamlValue(text) {
 }
 
 const KEY = /^("(?:[^"\\]|\\[\s\S])*"|'(?:[^']|'')*'|[^\s#'"\-?:,[\]{}&*!|>%@`][^#]*?|-[^\s#][^#]*?)(\s*:)(?=\s|$)/;
+const EXT_KEY = /^(\s*(?:-\s+)*)custom_extensions\s*:/;
 function prettyYaml(text) {
-  const lines = text.split('\n');
+  const colour = lineColour();
+  let ext = -1;   // a custom_extensions key's column, while its lines go on
+  return text.split('\n').map(raw => {
+    const html = colour(raw);
+    const line = raw.endsWith('\r') ? raw.slice(0, -1) : raw;
+    const indent = /^\s*/.exec(line)[0].length;
+    // Its lines are those indented past the key, and its own `- ` items at the key's column.
+    if (ext >= 0 && line.trim() && !(indent > ext || (indent === ext && /^-(\s|$)/.test(line.slice(indent))))) ext = -1;
+    const k = ext < 0 && EXT_KEY.exec(line);
+    if (k) ext = k[1].length;
+    return ext >= 0 ? `<span class="tk-ext">${html}</span>` : html;
+  }).join('\n');
+}
+
+// A YAML line's HTML, one line after another: what a | or > block keeps is kept between them.
+function lineColour() {
   let block = -1;   // a | or > block's key's indentation, while its lines go on
-  return lines.map(raw => {
+  return raw => {
     const cr = raw.endsWith('\r') ? '\r' : '';
     const line = cr ? raw.slice(0, -1) : raw;
     const indent = /^\s*/.exec(line)[0].length;
@@ -75,7 +93,15 @@ function prettyYaml(text) {
     }
     if (BLOCK.test(rest.replace(/\s+#.*$/, '').trim())) block = indent;
     return out + yamlValue(rest) + cr;
-  }).join('\n');
+  };
+}
+
+// The vendors whose extensions an Ossie model's file holds (custom_extensions' vendor_name),
+// each once, as written: what Model's YAML says its amber lines are.
+export function extensionVendors(text) {
+  const out = new Set();
+  for (const m of String(text).matchAll(/^[\s-]*vendor_name:\s*['"]?([^'"\s#]+)/gm)) out.add(m[1]);
+  return [...out];
 }
 
 /**
