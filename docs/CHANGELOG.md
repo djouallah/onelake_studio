@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.14
 
 - **A semantic model's YAML is plain Apache Ossie where it can be.** A measure that SQL can say the same way
   (`SUM`, `AVERAGE`, `COUNTROWS`, `DIVIDE`, ...) is written in SQL, the rest in DAX. When every table is in one
