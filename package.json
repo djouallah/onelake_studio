@@ -405,11 +405,6 @@
           "group": "1_copy@3"
         },
         {
-          "command": "onelakeStudio.redownloadSemanticModel",
-          "when": "view == onelakeStudio.explorer && viewItem == semanticModel",
-          "group": "2_model@1"
-        },
-        {
           "command": "onelakeStudio.newQuery",
           "when": "view == onelakeStudio.explorer && viewItem == queries",
           "group": "inline"
