@@ -366,9 +366,16 @@ const VIEW_DDL = /^\s*(create(\s+or\s+replace)?|drop)\s+semantic\s+view\b/i;
 const NO_DDL ="Read only: OneLake Studio never writes, and a semantic model is not made or dropped " +
   `in SQL — open one in the tree, or name it ${MODEL_CATALOG}.<workspace>.<model> in a query.`;
 
+// The statement as written goes in front of what dax-sql compiled it to, as a comment, so Logs shows
+// both (src/enginelog.js sourceOf reads it back). DuckDB nests comments, so a `/*` in it is escaped
+// as well as a `*/`, with a backslash, and a backslash is doubled.
+export const withSource = (sql, compiled) =>
+  `/*semantic\n${String(sql).trim().replace(/;+\s*$/, "").replace(/\\/g, "\\\\").replace(/\/(?=\*)|\*(?=\/)/g, "$&\\")}\n*/\n${compiled}`;
+
 /**
  * What a statement asks, in dax-sql's words (createViews().rewrite): null when it names no
- * view, else { sql } to run. One statement.
+ * view, else { sql } to run, and `compiled`, dax-sql's SQL alone (sql is it, with the
+ * statement as written in a comment in front). One statement.
  */
 export async function statement(sql, modules = null) {
   if (SHOW_VIEWS.test(String(sql))) return { sql: showViewsSql() };
@@ -384,7 +391,7 @@ export async function statement(sql, modules = null) {
   if (out.length !== 1) throw new Error("Run one statement at a time (no ';').");
   const [s] = out;
   if (s.sql == null) throw new Error(NO_DDL);
-  return { sql: s.sql };
+  return { sql: withSource(sql, s.sql), compiled: s.sql };
 }
 
 // A view's Direct Lake tables: the model's table name, the engine's view of it — which SQL

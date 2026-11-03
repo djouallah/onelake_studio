@@ -48,6 +48,16 @@ function statementOf(request) {
   };
 }
 
+// A semantic model's query runs as what dax-sql compiled it to, with the statement as written in a
+// comment in front (app/semantic.js withSource): { source, sql } apart, source null for any other.
+// An EXPLAIN or SUMMARIZE of one has it after its first word, and keeps that word.
+const SOURCE = /\/\*semantic\n([\s\S]*?)\n\*\/\n/;
+function sourceOf(sql) {
+  const m = SOURCE.exec(sql);
+  if (!m) return { source: null, sql };
+  return { source: m[1].replace(/\\([\s\S])/g, '$1'), sql: (sql.slice(0, m.index) + sql.slice(m.index + m[0].length)).trim() };
+}
+
 // What the host and a page issue to get ready, rather than what someone asked.
 const isSetup = sql => /^\s*(create|drop|attach|detach)\b/i.test(sql);
 
@@ -116,7 +126,10 @@ function createLogKeeper({ engine, logs, maxBytes, log = () => {}, onFatal = () 
     /** The newest statements, up to date. */
     async read(limit = 1000) {
       await flush().catch(() => {});
-      return logs.read(Math.max(1, Math.floor(limit))).map(x => ({ at: Number(x.ts), window: x.win, sql: x.sql, ms: Number(x.ms), status: x.status, error: x.error, setup: isSetup(x.sql) }));
+      return logs.read(Math.max(1, Math.floor(limit))).map(x => {
+        const { source, sql } = sourceOf(x.sql);
+        return { at: Number(x.ts), window: x.win, sql, source, ms: Number(x.ms), status: x.status, error: x.error, setup: isSetup(sql) };
+      });
     },
     /** How many statements someone has asked for so far, up to date: Performance's queries per second. */
     async statements() {
@@ -127,4 +140,4 @@ function createLogKeeper({ engine, logs, maxBytes, log = () => {}, onFatal = () 
   };
 }
 
-module.exports = { createLogKeeper, parseRequest, statementOf, isSetup };
+module.exports = { createLogKeeper, parseRequest, statementOf, sourceOf, isSetup };

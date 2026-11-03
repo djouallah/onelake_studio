@@ -644,9 +644,10 @@ function createAgent({ onelake, engine, modelPath, appDir, vendorDir, daxSqlPin,
       const st = await semantic.statement(text, compiler);
       const run = st ? st.sql : text;
       if (st && opts.showSql) {
-        io.data({ sql: st.sql });
+        const shown = st.compiled ?? st.sql;
+        io.data({ sql: shown });
         // Never into a --csv that will be parsed.
-        if (opts.csv) io.note(st.sql); else io.out(`${fence('sql', st.sql)}\n`);
+        if (opts.csv) io.note(shown); else io.out(`${fence('sql', shown)}\n`);
       }
       // Tables are named Kind.workspace.item.schema.table (`ls <ws> <item>` prints them), and
       // the engine opens each one a statement names as it runs it — a model's compiled SQL

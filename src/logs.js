@@ -86,6 +86,9 @@ function page(nonce) {
   td.sql { font-family: var(--vscode-editor-font-family); width: 100%; white-space: normal; word-break: break-word; cursor: pointer; }
   td.sql .one { display: block; max-height: 1.4em; overflow: hidden; }
   tr.open td.sql .one { max-height: none; white-space: pre-wrap; }
+  .compiled { margin-top: .5rem; white-space: pre-wrap; }
+  .compiled .label { font-family: var(--vscode-font-family); color: var(--vscode-descriptionForeground); margin-bottom: .2rem; }
+  .compiled .label button { margin-left: .5rem; }
   .error { color: var(--vscode-errorForeground); font-family: var(--vscode-editor-font-family); white-space: pre-wrap; margin-top: .25rem; }
   .s-error { color: var(--vscode-errorForeground); }
   .s-stopped { color: var(--vscode-descriptionForeground); }
@@ -122,7 +125,7 @@ function visible() {
   const text = $('filter').value.trim().toLowerCase();
   return rows.filter(r => ($('setup').checked || !r.setup)
     && (!$('errors').checked || r.status === 'error')
-    && (!text || r.sql.toLowerCase().includes(text) || (r.error || '').toLowerCase().includes(text)));
+    && (!text || r.sql.toLowerCase().includes(text) || (r.source || '').toLowerCase().includes(text) || (r.error || '').toLowerCase().includes(text)));
 }
 function draw() {
   const list = visible();
@@ -144,7 +147,16 @@ function draw() {
       onclick: () => { sort = { col, desc: sort.col === col ? !sort.desc : col === 'at' || col === 'ms' }; draw(); } })), el('th'))),
     el('tbody', {}, ...list.map(r => {
       const key = r.at + r.sql;
-      const sql = el('td', { className: 'sql', title: 'Click to see all of it' }, el('span', { className: 'one', textContent: r.sql }));
+      // A semantic model's query: the statement as written, and what dax-sql compiled it to when it is open.
+      const written = r.source ?? r.sql;
+      const sql = el('td', { className: 'sql', title: 'Click to see all of it' }, el('span', { className: 'one', textContent: written }));
+      if (r.source != null) {
+        const copy = el('button', { textContent: 'Copy', onclick: e => { e.stopPropagation(); vs.postMessage({ copy: r.sql }); } });
+        const lines = r.sql.split('\\n').length;
+        sql.append(el('div', { className: 'compiled', hidden: !open.has(key) },
+          el('div', { className: 'label' }, 'Compiled by dax-sql, ' + lines + (lines === 1 ? ' line' : ' lines'), copy),
+          r.sql));
+      }
       if (r.error) sql.append(el('div', { className: 'error', hidden: !open.has(key), textContent: r.error }));
       const tr = el('tr', { className: open.has(key) ? 'open' : '' },
         el('td', { textContent: when(r.at) }),
@@ -152,8 +164,8 @@ function draw() {
         el('td', { className: 'n', textContent: r.ms.toLocaleString() }),
         sql,
         el('td', {},
-          el('button', { textContent: 'Open', title: 'A new tab with this SQL in its box, not run', onclick: () => vs.postMessage({ open: r.sql }) }), ' ',
-          el('button', { textContent: 'Copy', onclick: () => vs.postMessage({ copy: r.sql }) })));
+          el('button', { textContent: 'Open', title: 'A new tab with this SQL in its box, not run', onclick: () => vs.postMessage({ open: written }) }), ' ',
+          el('button', { textContent: 'Copy', onclick: () => vs.postMessage({ copy: written }) })));
       sql.onclick = () => { if (open.has(key)) open.delete(key); else open.add(key); draw(); };
       return tr;
     }))));

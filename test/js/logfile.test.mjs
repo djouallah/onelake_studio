@@ -101,3 +101,19 @@ test("a database that died is said once it shows, and nothing else is taken for 
   assert.equal(fatal.length, 1);
   assert.ok(said.some(l => /the log could not be kept: FATAL/.test(l)));
 });
+
+test("a semantic model's query is logged as written and as compiled, apart again in Logs", async () => {
+  const { sourceOf, isSetup } = require("../../src/enginelog.js");
+  const { withSource } = await import("../../app/semantic.js");
+  const asked = 'SELECT d.r, AGG("a */ b") /* nested /* */ FROM semanticmodel.ws.m -- \\*/ x\nGROUP BY ALL;';
+  const compiled = "SELECT r, sum(a) FROM lakehouse.ws.lh.dbo.f GROUP BY ALL";
+  const ran = withSource(asked, compiled);
+  assert.deepEqual(sourceOf(ran), { source: asked.replace(/;$/, ""), sql: compiled });
+  assert.deepEqual(sourceOf(`SUMMARIZE ${ran}`), { source: asked.replace(/;$/, ""), sql: `SUMMARIZE ${compiled}` });
+  assert.equal(isSetup(ran), false);
+  assert.deepEqual(sourceOf("SELECT 1 /* a comment */"), { source: null, sql: "SELECT 1 /* a comment */" });
+  // What runs is one comment and the compiled SQL: nothing written in it ends the comment early.
+  assert.equal(ran.lastIndexOf("/*"), 0);
+  assert.equal(ran.indexOf("*/"), ran.lastIndexOf("*/"));
+  assert.ok(ran.endsWith(`*/\n${compiled}`));
+});

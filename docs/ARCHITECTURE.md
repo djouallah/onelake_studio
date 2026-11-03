@@ -254,6 +254,9 @@ result's later rows aren't in that time, since DuckDB doesn't log them. It is ke
 (file storage can't be read back on Windows, since DuckDB locks its own file), and the server moves it to the log
 file every two seconds ([`src/enginelog.js`](../src/enginelog.js)), up to `onelakeStudio.logMaxGB`, the oldest going first.
 It holds your SQL and its errors in plain text, and never the OneLake token. A row reopens its SQL in a new tab, not run.
+A semantic model's query runs as the SQL dax-sql compiles it to, with the query as written in a comment in front
+([`app/semantic.js`](../app/semantic.js)), so its row shows what was asked and, opened, what it compiled to. It reopens
+as what was asked.
 `SELECT * FROM duckdb_logs` answers in a SQL box for what is still in memory.
 
 **Performance** ([`src/performance.js`](../src/performance.js)), a node in the tree, with one tab per window. Live charts of

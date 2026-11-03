@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Logs** shows a semantic model's query as written, and, when its row is opened, the SQL dax-sql compiled it to.
+
 ## 0.2.13
 
 - **Fixes:**
