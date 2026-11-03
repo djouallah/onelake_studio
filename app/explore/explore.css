@@ -72,7 +72,8 @@ section.modelOpen #chartBtn { display: none; }
 .model-page { display: grid; grid-template-columns: minmax(0, 1fr) 380px; gap: var(--gap); padding: var(--gap) var(--gutter) 1.5rem; min-height: 70vh; }
 .model-page[hidden], .explore-sql-page[hidden], .explore-page[hidden], .model-area[hidden], .text-file[hidden] { display: none; }
 /* Model's Diagram | YAML: the model drawn, or its file (pretty.js's tk-* spans). */
-.model-switch { width: max-content; margin: var(--gap) var(--gutter) 0; }
+.model-switch { padding: 0.12rem; }
+.model-switch .subtab { padding: 0.16rem 0.65rem; font-size: 0.74rem; }
 .text-file { margin: var(--gap) var(--gutter) 1.5rem; font-family: var(--vscode-editor-font-family, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace); font-size: 0.82rem; line-height: 1.45;
   white-space: pre; overflow-x: auto; tab-size: 4; padding: 0.75rem 1rem; background: var(--card); border: 1px solid var(--hairline); border-radius: var(--radius-sm); }
 .tk-key { color: var(--vscode-debugTokenExpression-name, #79c0ff); }

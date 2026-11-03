@@ -188,13 +188,15 @@ export function mountExplore(root, ctx) {
   const viewTab = (label, asText) => el('button', { type: 'button', class: 'subtab', role: 'tab', onclick: () => showText(asText) }, label);
   const diagramTab = viewTab('Diagram', false), fileTab = viewTab(/^bim$/i.test(ctx.ext || '') ? 'BIM' : 'YAML', true);
   const textPre = el('pre', { class: 'text-file', hidden: true });
-  const modelArea = el('div', { class: 'model-area' },
-    ctx.text == null ? null : el('div', { class: 'subtabs model-switch', role: 'tablist', 'aria-label': 'How the model is shown' }, diagramTab, fileTab),
-    modelPage, textPre);
+  // In the bar beside the page tabs, on the Model page only.
+  const modelSwitch = ctx.text == null ? null
+    : el('div', { class: 'subtabs model-switch', role: 'tablist', 'aria-label': 'How the model is shown' }, diagramTab, fileTab);
+  const modelArea = el('div', { class: 'model-area' }, modelPage, textPre);
 
   root.replaceChildren(
     el('div', { class: 'subtab-bar' },
       el('div', { class: 'subtabs', role: 'tablist', 'aria-label': 'Semantic model pages', hidden: pages.length < 2 }, tabs),
+      modelSwitch,
       keepOffline?.root,
       actions,
       el('span', { class: 'sm-title' }, ctx.title == null ? 'semantic model ' : `${ctx.title} · semantic model `, el('code', {}, ctx.name))),
@@ -220,6 +222,7 @@ export function mountExplore(root, ctx) {
     }
     if (sqlMode && p !== 'pivot') closeSql();
     modelArea.hidden = p !== 'model';
+    if (modelSwitch) modelSwitch.hidden = p !== 'model';
     pivotPage.hidden = p !== 'pivot' || sqlMode;
     actions.hidden = p !== 'pivot';
     if (p === 'pivot') openExplorer();
