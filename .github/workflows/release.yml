@@ -1,0 +1,133 @@
+# A release: what the Extension workflow already built for the tagged commit, published. Nothing
+# is checked out to build, nothing is packaged again: the vsix that was installed and tried is
+# the vsix that goes out, byte for byte.
+#
+#   git tag ext-v<version> && git push origin ext-v<version>
+#
+# on a commit of main whose Extension run is green, and whose package.json says <version> (the
+# version is bumped before that build, not after: see extension.yml). That run's artifacts are
+# kept 14 days; past that, run the Extension workflow again on the commit (workflow_dispatch),
+# then push the tag again.
+#
+# The Marketplace sign-in (OIDC, the `azure` environment, no token) is extension.yml's header.
+name: Release
+
+on:
+  push:
+    tags: ["ext-v*"]
+
+permissions:
+  contents: read
+
+# vsce uploads the packages one at a time: two releases at once, or one cancelled halfway, is how
+# a version ends up live on some platforms and missing on others. They queue, never cancelled.
+concurrency:
+  group: extension-publish
+  cancel-in-progress: false
+
+jobs:
+  # The tag names the version its commit's package.json says, and that commit has a green build.
+  build:
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      run: ${{ steps.find.outputs.run }}
+      version: ${{ steps.find.outputs.version }}
+    steps:
+      - name: The green Extension run of the tagged commit
+        id: find
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          version=$(gh api "repos/$GITHUB_REPOSITORY/contents/package.json?ref=$GITHUB_SHA" -H "Accept: application/vnd.github.raw" | jq -r .version)
+          # --skip-duplicate would make a mismatched tag a silent no-op: re-sending the old version and saying it worked.
+          [ "$GITHUB_REF_NAME" = "ext-v$version" ] || { echo "tag $GITHUB_REF_NAME, but package.json says $version"; exit 1; }
+          run=$(gh run list -R "$GITHUB_REPOSITORY" --workflow extension.yml --commit "$GITHUB_SHA" --status success \
+                  --json databaseId -q '.[0].databaseId // empty')
+          [ -n "$run" ] || { echo "no green Extension run for $GITHUB_SHA: push it to main and let it pass, then tag"; exit 1; }
+          echo "Publishing what run $run built: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$run" >> "$GITHUB_STEP_SUMMARY"
+          echo "run=$run" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  publish:
+    needs: build
+    runs-on: ubuntu-26.04
+    environment: azure
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+    steps:
+      # `vsce publish --packagePath` reads the manifest out of each vsix and never runs
+      # vscode:prepublish: what goes out is what that run packaged and checked.
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          pattern: vsix-*
+          merge-multiple: true
+          path: vsix
+          run-id: ${{ needs.build.outputs.run }}
+          github-token: ${{ github.token }}
+
+      - name: What is about to go out
+        run: |
+          ls -l vsix
+          [ "$(ls vsix/*.vsix | wc -l)" -eq 5 ] || { echo "expected the five platforms' packages"; exit 1; }
+
+      - name: Sign in to Azure
+        uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          allow-no-subscriptions: true
+
+      # Costs one request. It prints the identity the Marketplace will see: if a publish ever fails
+      # on permissions, comparing it against the publisher's members tells "wrong identity" from
+      # "wrong role".
+      - name: Show the Marketplace identity
+        run: |
+          echo "Marketplace user id (must be a Contributor on publisher 'djouallah'):"
+          az rest -u https://app.vssps.visualstudio.com/_apis/profile/profiles/me \
+                  --resource 499b84ac-1321-427f-aa17-267ca6975798 --query id -o tsv
+
+      # One call for every platform: --packagePath is variadic, and vsce takes each package's
+      # target from its own manifest. --skip-duplicate is the recovery path: with no rollback, a
+      # re-run re-sends only what did not land.
+      - name: Publish
+        run: npx --yes @vscode/vsce@3.9.2 publish --azure-credential --skip-duplicate --packagePath vsix/*.vsix
+
+  # The desktop installer that run built and started, on the GitHub release. The website's Download
+  # button is releases/latest/download/OneLake-Studio-Setup.exe, so the name never changes. After the
+  # Marketplace: a release on GitHub means the version is out.
+  installer:
+    needs: [build, publish]
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          sparse-checkout: |
+            scripts/release-notes.mjs
+            docs/CHANGELOG.md
+          sparse-checkout-cone-mode: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: onelake-studio-setup
+          path: setup
+          run-id: ${{ needs.build.outputs.run }}
+          github-token: ${{ github.token }}
+      - name: Attach the installer to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          set -euo pipefail
+          cp setup/*.exe "$RUNNER_TEMP/OneLake-Studio-Setup.exe"
+          node scripts/release-notes.mjs "$VERSION" > "$RUNNER_TEMP/notes.md"
+          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 \
+            || gh release create "$GITHUB_REF_NAME" --title "OneLake Studio $VERSION" --notes-file "$RUNNER_TEMP/notes.md"
+          gh release upload "$GITHUB_REF_NAME" "$RUNNER_TEMP/OneLake-Studio-Setup.exe" --clobber
