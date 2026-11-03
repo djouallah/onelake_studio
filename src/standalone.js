@@ -12,9 +12,8 @@
 // for as long as Excel needs it.
 // =============================================================================
 
-const { join, resolve, basename, extname } = require('node:path');
+const { join, resolve } = require('node:path');
 const { mkdirSync, readFileSync, writeFileSync, renameSync, existsSync } = require('node:fs');
-const fsp = require('node:fs/promises');
 const { EXIT, failureJson } = require('./bridge');
 const { createConnectivity, probeOf } = require('./connectivity');
 const { useConnectivity, inTime } = require('./http');
@@ -195,11 +194,13 @@ function createStandalone({ extensionDir = join(__dirname, '..'), env = process.
       await settle();
       if (!core.signedIn()) throw Object.assign(new Error('not signed in, and nothing is cached on this machine'), { code: EXIT.UNAVAILABLE });
       const path = resolve(file);
-      const text = await fsp.readFile(path, 'utf8').catch(e => { throw new Error(`${file} could not be read: ${e.message}`); });
-      const { semantic, compiler } = await core.agent.modules();
-      const lakes = semantic.lakehousesOf(semantic.bimOf(path, text, compiler));
-      const model = name || basename(path, extname(path));
-      const where = workspace || await workspaceOf(lakes, core.onelake, file);
+      const found = await core.models.modelFile(path, { workspace });
+      const model = name || found.model;
+      const where = found.workspace;
+      if (!where) {
+        throw new Error(`${file} names its tables <lakehouse>.<schema>.<table>, in its own workspace: give it with --workspace` +
+          (found.choices.length ? ` (${found.choices.join(', ')} ${found.choices.length === 1 ? 'holds' : 'hold'} ${found.lakehouses.join(', ')})` : ''));
+      }
       const catalog = modelSqlName(where, model);
       await core.semviews.put(model, path, where);
       const { measures } = await core.agent.excelCube(catalog);
@@ -211,20 +212,6 @@ function createStandalone({ extensionDir = join(__dirname, '..'), env = process.
       return { catalog, port, url: `http://127.0.0.1:${port}/${token}/`, connection: connectionString({ port, token, catalog }), measures: measures.length, opened: !!open };
     },
   };
-}
-
-// The workspace a model file's tables are in, when it names just one: a model's name is its workspace's
-// and its own, wherever the file is. From what's kept if it can be, so it works with no connection.
-async function workspaceOf(lakes, onelake, file) {
-  // Tables named <lakehouse>.<schema>.<table> are in the model's workspace, which only the
-  // command line can say; an expression says its GUID.
-  if (lakes.some(l => !l.workspace)) throw new Error(`${file} names its tables <lakehouse>.<schema>.<table>, in its own workspace: give it with --workspace`);
-  const named = [...new Set(lakes.map(l => l.workspace))];
-  const ask = `give it with --workspace`;
-  if (named.length !== 1) throw new Error(`${file} reads ${named.length ? `${named.length} workspaces` : 'no lakehouse'}: ${ask}`);
-  const item = await onelake.itemNamed(named[0], lakes[0].item)
-    .catch(e => { throw new Error(`the name of ${file}'s workspace could not be read (${e.message}): ${ask}`); });
-  return item.workspace;
 }
 
 module.exports = { createStandalone, pathsOf, parseSettings, readSettings, keptIn };

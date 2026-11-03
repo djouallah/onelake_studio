@@ -14,7 +14,7 @@ const { chordOf, BROWSER_KEYS } = await import("../../desktop/ui/keys.js");
 const { newer, checkUpdate, DOWNLOAD } = require("../../src/desktop/update.js");
 const { createServer, pageFor } = require("../../src/desktop/server.js");
 const vscode = require("../../src/desktop/vscode.js");
-const { filterOf } = require("../../src/desktop/dialogs.js");
+const { filterOf, openDialog } = require("../../src/desktop/dialogs.js");
 const pkg = require("../../package.json");
 
 test("every when clause the extension's menus use reads as VS Code reads it", () => {
@@ -186,6 +186,27 @@ test("a quick pick: the window's choice is its selection", () => {
 
 test("a save dialog's filters, as Windows writes them", () => {
   assert.equal(filterOf({ CSV: ["csv"], Excel: ["xlsx", "xls"] }), "CSV|*.csv|Excel|*.xlsx;*.xls");
+});
+
+test("an open dialog: Windows' own, its filter and folder through the environment, never the script", async () => {
+  const runs = [];
+  const run = (exe, args, opts) => {
+    runs.push({ exe, args, env: opts.env });
+    const out = new (require("node:events"))();
+    const child = Object.assign(new (require("node:events"))(), {
+      stdout: Object.assign(out, { resume() {} }), stderr: { resume() {} }, stdin: { end() {} },
+    });
+    setImmediate(() => { out.emit("data", Buffer.from("C:\models\sales.yaml
+")); child.emit("close", 0); });
+    return child;
+  };
+  const path = await openDialog({ defaultPath: "C:\models", title: "Open a model file", filters: { Model: ["yaml", "yml", "bim"] } }, { run });
+  assert.equal(path, "C:\models\sales.yaml");
+  const [{ exe, args, env }] = runs;
+  assert.equal(exe, "powershell.exe");
+  assert.match(Buffer.from(args.at(-1), "base64").toString("utf16le"), /OpenFileDialog/);
+  assert.equal(env.OLS_FILTER, "Model|*.yaml;*.yml;*.bim");
+  assert.equal(env.OLS_PATH, "C:\models");
 });
 
 test("keys: named as the window's shortcuts are, and the browser's own do nothing", () => {

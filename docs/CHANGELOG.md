@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- **A model file on your computer opens too.** Right-click an Apache Ossie `.yaml` or a `.bim` in VS Code's
+  Explorer, or on its tab, and choose **Open in OneLake Studio**. In the desktop app, use **File > Open Model
+  File…** (Ctrl+O). Its tables are read from OneLake as any model's are, offline too. When its tables are named
+  `<lakehouse>.<schema>.<table>`, the first open asks which workspace holds that lakehouse, from the workspaces
+  this computer has seen, and remembers it for that file.
+
 ## 0.2.14
 
 - **A semantic model's YAML is plain Apache Ossie where it can be.** A measure that SQL can say the same way

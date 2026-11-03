@@ -710,6 +710,7 @@ const accountEntries = () => entries('view/title', ctx({ view: VIEW })).flat()
 const BAR = [
   { title: 'File', groups: () => [
     [{ title: 'New Query', key: 'Ctrl+N', command: 'onelakeStudio.newQuery' },
+     { title: 'Open Model File…', key: 'Ctrl+O', command: 'onelakeStudio.openModelFile' },
      { title: 'Go to a Table, Column or Measure…', key: 'Ctrl+Alt+O', command: 'onelakeStudio.goTo', disabled: !signedIn() }],
     [{ title: 'Close Tab', key: 'Ctrl+W', run: () => closeTab(current), disabled: !current },
      { title: 'Close All Tabs', run: () => closeTabs([...tabs.keys()]), disabled: !tabs.size }],
@@ -800,6 +801,7 @@ async function checkForUpdates() {
 // ---------------------------------------------------------------------------
 const KEYS = {
   'ctrl+n': () => runCommand('onelakeStudio.newQuery'),
+  'ctrl+o': () => runCommand('onelakeStudio.openModelFile'),
   'ctrl+alt+o': () => runCommand('onelakeStudio.goTo'),
   'ctrl+w': () => { if (current) closeTab(current); },
   'ctrl+tab': () => cycle(1),

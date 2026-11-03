@@ -354,7 +354,8 @@ shows offline, and it is asked again when the table is opened or its Tables node
 - **CSV, JSON, avro, xlsx and plain text** have no block structure, so DuckDB pulls them whole.
 - **A `.zip`** is listed through its central directory, with a range read at the tail, so the archive
   is not downloaded. Every readable entry becomes a view, and it decompresses when queried.
-- **A `.bim`, or an Ossie `.yaml`** opens in the model view (see [Semantic models](#semantic-models)).
+- **A `.bim`, or an Ossie `.yaml`** opens in the model view (see [Semantic models](#semantic-models)). So does one on
+  this computer (*Open in OneLake Studio*, below).
 
 **Each workspace's Apps node** lists its Fabric apps (`AppBackend` items), however they were made.
 - Each shows its URL and when it was last deployed (`GET …/appBackends/<id>/__private/deploy/status`).
@@ -457,6 +458,18 @@ the SQL box. dax-sql's `formats/ossie.js` turns Ossie into the `.bim` it stands 
 Ossie's SQL alike, and from there the two are one. These files can be stored anywhere and have no model name. A model created from one, for
 Fabric or only for a Fabric app, must be named `semanticmodel.<workspace>.<model>`, and it overwrites
 whatever we have under that name. See [NAMING.md](NAMING.md#files).
+
+**A model file on this computer** opens with **Open in OneLake Studio**, on a `.yaml`, `.yml` or `.bim` in VS
+Code's Explorer or on its tab (*Open Model File…* in the palette, and Ctrl+O in the desktop app, ask for one).
+Its tables are always OneLake's ([`src/models.js`](../src/models.js) `modelFile`):
+- **Its workspace:** a Direct Lake expression says it. Tables named `<lakehouse>.<schema>.<table>` are in the
+  model's workspace, which the file doesn't say: the one it was opened in before, while that workspace still
+  holds those lakehouses, else a pick of the workspaces whose kept listing holds them all (every workspace when
+  none does). From the cache alone, so it opens offline.
+- **Its name** is the file's, without the extension: `semanticmodel.<workspace>.<file>`. It is kept as a semantic
+  view pointing at the file, as `serve` keeps one, so it is there after a restart, and an edit to the file is seen
+  when it opens again. The page may keep a file on this disk only when the host kept it under that name first.
+- **`serve <file>`** finds its workspace the same way, and asks for `--workspace` where the extension would ask.
 
 ## Explore
 

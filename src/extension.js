@@ -632,6 +632,43 @@ async function activateInner(context) {
     }
   }
 
+  // A model file on this machine, from VS Code's Explorer, the file's tab, or a file dialog: opened as
+  // a model of the workspace its tables are in. Its tables are OneLake's; when the file doesn't say which
+  // workspace they're in, it is asked once, from the cache, and remembered (models.js modelFile).
+  async function openModelFile(uri) {
+    if (!uri || !uri.fsPath) {
+      const picked = await vscode.window.showOpenDialog({
+        canSelectFiles: true, canSelectFolders: false, canSelectMany: false,
+        filters: { Model: ['yaml', 'yml', 'bim'] }, openLabel: 'Open', title: 'Open a model file',
+      });
+      if (!picked || !picked.length) return;
+      uri = picked[0];
+    }
+    const path = uri.fsPath, name = basename(path);
+    try {
+      const found = await core.models.modelFile(path);
+      let workspace = found.workspace;
+      if (!workspace) {
+        const lakes = found.lakehouses.map(l => `'${l}'`).join(', ');
+        const list = found.choices.length ? found.choices : found.all;
+        if (!list.length) throw new Error('no workspace is cached on this machine yet: sign in and expand the OneLake tree once');
+        workspace = await vscode.window.showQuickPick(list, {
+          title: found.choices.length
+            ? `Which workspace holds lakehouse ${lakes}? (${name})`
+            : `No workspace in the cache has a lakehouse named ${lakes}: pick one anyway (${name})`,
+          placeHolder: 'its tables are read from there',
+        });
+        if (!workspace) return;
+      }
+      await semviews.put(found.model, path, workspace);
+      await openInPanel({ type: 'open-model', name, path, text: found.text, modelWorkspace: workspace, modelName: found.model }, name);
+    } catch (e) {
+      if (e && e.notModel) { vscode.window.showInformationMessage(e.message); return; }
+      if (out) out.appendLine(`opening ${path} failed — ${(e && e.stack) || e}`);
+      showError(`Could not open ${name}: ${(e && e.message) || e}`);
+    }
+  }
+
   // A file or folder of the tree as SQL writes it, in the string DuckDB reads a file from. A file's
   // `path` runs from its item, and a folder's `dir` from Files/.
   const fileNameOf = n => sqlStr(fileSqlName(n, n.kind === 'dir' ? n.dir : String(n.path).replace(/^.*?\/Files\/?/, '')));
@@ -887,6 +924,8 @@ async function activateInner(context) {
     })),
 
     vscode.commands.registerCommand('onelakeStudio.openSemanticModel', onClick(n => openModel(n))),
+    vscode.commands.registerCommand('onelakeStudio.openModelFile', () => openModelFile(null)),
+    vscode.commands.registerCommand('onelakeStudio.openInStudio', uri => openModelFile(uri)),
     // An app in the tree: its URL, copied by its button and opened by a click. Nothing is changed.
     vscode.commands.registerCommand('onelakeStudio.copyAppUrl', async n => {
       if (!n || !n.url) return;

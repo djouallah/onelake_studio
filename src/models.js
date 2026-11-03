@@ -3,7 +3,7 @@
 // models.js — a semantic model's local copy, and what the cache can name
 // =============================================================================
 
-const { dirname } = require('node:path');
+const { dirname, basename, extname, resolve } = require('node:path');
 const { existsSync } = require('node:fs');
 const fsp = require('node:fs/promises');
 const { walkCached } = require('./onelake');
@@ -138,6 +138,7 @@ function createModels({ onelake, fabric, semviews, modules, modelsFolder, accoun
   }
 
   const same = (a, b) => String(a).toLowerCase() === String(b).toLowerCase();
+  const samePath = (a, b) => (process.platform === 'win32' ? same(resolve(a), resolve(b)) : resolve(a) === resolve(b));
 
   // Every table the store has seen, with its columns if they were read, as its SQL name's parts: a
   // walk of the cache alone (the command line's `find` walks it the same way).
@@ -192,6 +193,47 @@ function createModels({ onelake, fabric, semviews, modules, modelsFolder, accoun
     return semviews.put(hit.name, path, ws);
   };
 
+  // A model file on this machine (an Ossie .yaml or a .bim, opened from VS Code's Explorer or the
+  // command line): its text, its model's name, and the workspace its tables are in when that can be
+  // known with no question asked. Its tables are always OneLake's. One named <lakehouse>.<schema>.<table>
+  // is in the model's workspace, which the file doesn't say: the one this file was opened in before, if
+  // it still holds those lakehouses, else `workspace` is null and `choices` are the workspaces whose
+  // kept listing holds them all (`all` when none does). The cache alone, so it works offline. A
+  // `workspace` given (serve --workspace) is taken as it is.
+  async function modelFile(path, { workspace = null } = {}) {
+    const name = basename(path);
+    const text = await fsp.readFile(path, 'utf8').catch(e => { throw new Error(`${name} could not be read: ${e.message}`); });
+    const { semantic, compiler } = await modules();
+    if (semantic.isOssiePath(path) && !semantic.isOssie(text)) {
+      throw Object.assign(new Error(`${name} is not an Apache Ossie model: it has no top-level version and datasets`), { notModel: true });
+    }
+    const lakes = semantic.lakehousesOf(semantic.bimOf(path, text, compiler));
+    const model = basename(path, extname(path));
+    const byId = [...new Set(lakes.filter(l => l.workspace).map(l => l.workspace))];
+    const byName = [...new Map(lakes.filter(l => !l.workspace).map(l => [l.itemName.toLowerCase(), l.itemName])).values()];
+    if (!lakes.length) throw new Error(`${name} reads no lakehouse: its tables are named <lakehouse>.<schema>.<table>, or read through a Direct Lake expression`);
+    if (workspace) return { text, model, workspace };
+    if (byId.length > 1) throw new Error(`${name} reads ${byId.length} workspaces, and a model is in one`);
+    const holds = async ws => {
+      const items = await onelake.cached.items(ws);
+      const have = new Set(((items && items.value) || []).filter(i => sqlKind(i.kind)).map(i => displayName(i.name).toLowerCase()));
+      return byName.every(n => have.has(n.toLowerCase()));
+    };
+    if (byId.length) {
+      const it = await onelake.itemNamed(byId[0], lakes.find(l => l.workspace).item)
+        .catch(e => { throw new Error(`the name of ${name}'s workspace could not be read: ${e.message}`); });
+      if (!await holds(it.workspace)) throw new Error(`${name} names a lakehouse its workspace ${it.workspace} doesn't hold: ${byName.join(', ')}`);
+      return { text, model, workspace: it.workspace };
+    }
+    const kept = (await semviews.list()).find(v => v.schema && samePath(v.path, path));
+    if (kept && await holds(kept.schema)) return { text, model: kept.name, workspace: kept.schema };
+    const listed = await onelake.cached.workspaces();
+    const all = (listed && listed.value) || [];
+    const choices = [];
+    for (const ws of all) if (await holds(ws)) choices.push(ws);
+    return { text, model, workspace: null, lakehouses: byName, choices, all };
+  }
+
   // What Go to can name, from the cache alone (cachedSqlTables, below): every cached table
   // with its columns, every semantic model, and the measures and columns of a model kept as a
   // view (its local file; one in OneLake gives its name only). Read again after a minute.
@@ -230,7 +272,7 @@ function createModels({ onelake, fabric, semviews, modules, modelsFolder, accoun
   return {
     adoptModels, adopted: () => modelsAdopted,
     modelPath, modelKey, cachedModel, unsupportedModels, unsupportedNote,
-    fetchModel, walkTables, openSqlModel, completionNames,
+    fetchModel, walkTables, openSqlModel, completionNames, modelFile,
     forgetNames: () => { namesKept = null; },
   };
 }

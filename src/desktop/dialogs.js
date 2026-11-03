@@ -31,6 +31,16 @@ if ($d.ShowDialog($owner) -eq 'OK') { [Console]::Out.Write($d.FileName) }
 $owner.Close()
 `;
 
+const OPEN = `${FOREGROUND}
+$d = New-Object System.Windows.Forms.OpenFileDialog
+$d.Multiselect = $false
+if ($env:OLS_TITLE) { $d.Title = $env:OLS_TITLE }
+if ($env:OLS_PATH -and (Test-Path $env:OLS_PATH)) { $d.InitialDirectory = $env:OLS_PATH }
+if ($env:OLS_FILTER) { $d.Filter = $env:OLS_FILTER }
+if ($d.ShowDialog($owner) -eq 'OK') { [Console]::Out.Write($d.FileName) }
+$owner.Close()
+`;
+
 const FOLDER = `${FOREGROUND}
 $d = New-Object System.Windows.Forms.FolderBrowserDialog
 $d.ShowNewFolderButton = $true
@@ -68,6 +78,9 @@ const filterOf = filters => Object.entries(filters).map(([name, exts]) => `${nam
 const saveDialog = ({ defaultPath = '', filters = {} } = {}, o = {}) =>
   powershell(SAVE, { ...o, env: { OLS_PATH: defaultPath, OLS_FILTER: filterOf(filters) } }).then(p => p || null);
 
+const openDialog = ({ defaultPath = '', title = '', filters = {} } = {}, o = {}) =>
+  powershell(OPEN, { ...o, env: { OLS_PATH: defaultPath, OLS_TITLE: title, OLS_FILTER: filterOf(filters) } }).then(p => p || null);
+
 const folderDialog = ({ defaultPath = '', title = '' } = {}, o = {}) =>
   powershell(FOLDER, { ...o, env: { OLS_PATH: defaultPath, OLS_TITLE: title } }).then(p => p || null);
 
@@ -84,4 +97,4 @@ function openExternal(url, run = spawn) {
   return true;
 }
 
-module.exports = { saveDialog, folderDialog, copy, reveal, openExternal, filterOf };
+module.exports = { saveDialog, openDialog, folderDialog, copy, reveal, openExternal, filterOf };
