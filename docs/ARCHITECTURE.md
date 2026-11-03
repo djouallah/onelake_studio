@@ -120,7 +120,8 @@ prompts for nothing, until **Sign in to OneLake** or **Switch Microsoft Account*
 **The title says where this window reads from** ([`src/title.js`](../src/title.js)): the sidebar's header and
 the title of a tab with a SQL box read OneLake Studio and then `offline` or the tenant in use. The tenant is the
 `onelakeStudio.tenantId` setting when it is set, since a guest's own domain would name the wrong tenant, and
-otherwise the account's domain. Refresh and Open are in the view's "..." menu so it fits. A tab opened on a table, file,
+otherwise the account's domain. Only its first 4 letters are shown (`fabr…`), so a screenshot doesn't give it away.
+Refresh and Open are in the view's "..." menu so it fits. A tab opened on a table, file,
 semantic model or saved query is named after it instead, as a file's tab is in an editor.
 
 ## Offline

@@ -12,16 +12,18 @@ test("offline wins over whoever was signed in", () => {
   assert.equal(placeOf({ offline: true }), "offline");
 });
 
-test("the home tenant is the account's domain", () => {
-  assert.equal(placeOf({ offline: false, account: "a@contoso.com", tenant: "" }), "contoso.com");
+test("the home tenant is the account's domain, its first letters only, so a screenshot keeps it", () => {
+  assert.equal(placeOf({ offline: false, account: "a@contoso.com", tenant: "" }), "cont…");
+  assert.equal(placeOf({ offline: false, account: "a@abc.io", tenant: "" }), "abc.…");
+  assert.equal(placeOf({ offline: false, account: "a@ab.c", tenant: "" }), "ab.c", "four letters or fewer show whole");
 });
 
 test("the tenant setting is named as it is: a guest's own domain would be the wrong tenant", () => {
-  assert.equal(placeOf({ offline: false, account: "a@contoso.com", tenant: GUID }), GUID);
+  assert.equal(placeOf({ offline: false, account: "a@contoso.com", tenant: GUID }), "72f9…");
 });
 
 test("an account with no domain is shown as it is, and none at all is nothing", () => {
-  assert.equal(placeOf({ offline: false, account: "someone", tenant: "" }), "someone");
+  assert.equal(placeOf({ offline: false, account: "someone", tenant: "" }), "some…");
   assert.equal(placeOf({ offline: false }), "");
 });
 

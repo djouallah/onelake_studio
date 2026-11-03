@@ -4,18 +4,22 @@
 // =============================================================================
 // Always OneLake Studio, and where it reads from: offline, or the tenant in use. The tenant is the
 // one the onelakeStudio.tenantId setting names, since a guest's own domain would name the wrong
-// tenant; with no setting, the home tenant, which is the account's domain.
+// tenant; with no setting, the home tenant, which is the account's domain. Only its first letters
+// are shown (SHOWN), so a screenshot doesn't give the tenant away.
 //
 // No `vscode` import: driven from tests.
 // =============================================================================
 
 const NAME = 'OneLake Studio';
+const SHOWN = 4;
+
+const cut = s => (s.length > SHOWN ? `${s.slice(0, SHOWN)}…` : s);
 
 function placeOf({ offline, account, tenant }) {
   if (offline) return 'offline';
-  if (tenant) return tenant;
+  if (tenant) return cut(String(tenant));
   const label = String(account || '');
-  return label.slice(label.lastIndexOf('@') + 1);
+  return cut(label.slice(label.lastIndexOf('@') + 1));
 }
 
 const tabTitle = place => (place ? `${NAME}: ${place}` : NAME);
