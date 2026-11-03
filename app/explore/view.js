@@ -188,7 +188,8 @@ export function mountExplore(root, ctx) {
   const viewTab = (label, asText) => el('button', { type: 'button', class: 'subtab', role: 'tab', onclick: () => showText(asText) }, label);
   const diagramTab = viewTab('Diagram', false), fileTab = viewTab(/^bim$/i.test(ctx.ext || '') ? 'BIM' : 'YAML', true);
   const textPre = el('pre', { class: 'text-file', hidden: true });
-  // In the bar beside the page tabs, on the Model page only.
+  // In the bar after Keep offline, where Pivot's buttons are on the Pivot page, so changing
+  // pages moves nothing else. On the Model page only.
   const modelSwitch = ctx.text == null ? null
     : el('div', { class: 'subtabs model-switch', role: 'tablist', 'aria-label': 'How the model is shown' }, diagramTab, fileTab);
   const modelArea = el('div', { class: 'model-area' }, modelPage, textPre);
@@ -196,8 +197,8 @@ export function mountExplore(root, ctx) {
   root.replaceChildren(
     el('div', { class: 'subtab-bar' },
       el('div', { class: 'subtabs', role: 'tablist', 'aria-label': 'Semantic model pages', hidden: pages.length < 2 }, tabs),
-      modelSwitch,
       keepOffline?.root,
+      modelSwitch,
       actions,
       el('span', { class: 'sm-title' }, ctx.title == null ? 'semantic model ' : `${ctx.title} · semantic model `, el('code', {}, ctx.name))),
     modelArea, pivotPage, sqlPage);
