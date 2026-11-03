@@ -180,7 +180,7 @@ open the app item can load it.
 |---|---|---|
 | Page | \`site/index.html\`, \`site/app.js\` | Explore over the data source |
 | Explore | \`site/explore/\` | OneLake Studio's, the same files the extension runs |
-| Compiler | \`site/semantic/dax-sql/\`, \`site/semantic/formats/\` | dax-sql (\`${PINS.daxSql}\`): SQL over the model, as SQL over \`v_<table>\` |
+| Compiler | \`site/semantic/src/\`, \`site/semantic/formats/\` | dax-sql (\`${PINS.daxSql}\`): SQL over the model, as SQL over \`v_<table>\` |
 | Packages | \`site/vendor/\` | DuckDB-WASM (\`${WEBAPP.duckdbWasm}\`, DuckDB ${WEBAPP.duckdb}) with its ${WEBAPP.extensions.join(' and ')} extensions, Arrow, the Rayfin SDK, ECharts: shipped with the site, nothing from a CDN |
 | Data source | \`site/storage/\` | signs in (Rayfin Fabric SSO), asks the function, downloads the tables into the browser (OPFS), DuckDB-WASM |
 | Function | \`rayfin/functions/src/function_app.ts\` | reads the model, the tables' metadata locations, a read-only SAS on \`Tables/\` |
@@ -231,8 +231,8 @@ async function writeExport({ plan, state, outDir, fabricAppDir, appDir, daxSqlDi
   await fsp.cp(join(fabricAppDir, 'site'), at(outDir, 'site'), { recursive: true });
   await fsp.cp(join(appDir, 'explore'), at(outDir, 'site/explore'), { recursive: true });
   await fsp.cp(join(appDir, 'paths.js'), at(outDir, 'site/paths.js'));
-  await fsp.cp(join(daxSqlDir, 'src'), at(outDir, 'site/semantic/dax-sql'), { recursive: true });
-  for (const f of ['tmsl.js', 'ossie.js']) await fsp.cp(join(daxSqlDir, 'formats', f), at(outDir, `site/semantic/formats/${f}`));
+  // As the package lays them out: formats/ imports ../src/.
+  for (const d of ['src', 'formats']) await fsp.cp(join(daxSqlDir, d), at(outDir, `site/semantic/${d}`), { recursive: true });
   await fsp.cp(webappDir, at(outDir, 'site/vendor'), { recursive: true });
   await fsp.cp(join(fabricAppDir, 'rayfin'), at(outDir, 'rayfin'), { recursive: true });
   const yml = at(outDir, 'rayfin/rayfin.yml');

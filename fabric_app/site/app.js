@@ -12,7 +12,7 @@ import { createDataSource } from "./storage/data.js";
 import { mountExplore } from "./explore/view.js";
 import { tmslOf } from "./explore/model.js";
 import { EXPLORE_CASTS } from "./explore/query.js";
-import { createCompiler } from "./semantic/dax-sql/index.js";
+import { createCompiler } from "./semantic/src/index.js";
 import { tmslToModel } from "./semantic/formats/tmsl.js";
 import { ossieToTmsl } from "./semantic/formats/ossie.js";
 

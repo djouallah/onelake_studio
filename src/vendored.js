@@ -41,7 +41,7 @@ const VENDOR = {
   // A package's own files, as published (npm/<pkg>@<v>/…): its modules import each other by
   // relative path, so the files the page needs are listed by pattern.
   packages: [
-    { pkg: PINS.daxSql, include: /^\/(src\/.*\.js|formats\/(tmsl|ossie)\.js)$/ },
+    { pkg: PINS.daxSql, include: /^\/(src\/.*\.js|formats\/(tmsl|ossie|ossie-sql)\.js)$/ },
   ],
   // The web app's tree, vendor/webapp/: the same layout (npm/…), plus duckdb-ext/<version>/
   // wasm_eh/<name>.duckdb_extension.wasm, the path DuckDB-WASM asks its repository for.

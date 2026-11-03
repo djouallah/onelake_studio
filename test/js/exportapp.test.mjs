@@ -210,7 +210,7 @@ test("the folder: fabric_app's site and function, Studio's Explore, no model; di
     const read = p => readFile(join(outDir, p), "utf8");
     for (const p of ["site/index.html", "site/app.js", "site/storage/data.js", "site/storage/catalog.js",
                      "site/explore/view.js", "site/explore/model.js", "site/explore/explore.css", "site/paths.js",
-                     "site/semantic/dax-sql/dialects/duckdb.js", "site/semantic/formats/ossie.js",
+                     "site/semantic/src/dialects/duckdb.js", "site/semantic/formats/ossie.js",
                      "site/vendor/npm/apache-arrow@17.0.0/+esm.js",
                      "site/vendor/duckdb-ext/v1.5.6/wasm_eh/icu.duckdb_extension.wasm",
                      "rayfin/functions/src/function_app.ts", ".gitignore", MARKER]) {
