@@ -193,8 +193,7 @@ function createModels({ onelake, fabric, semviews, modules, modelsFolder, accoun
     return semviews.put(hit.name, path, ws);
   };
 
-  // A model file on this machine (an Ossie .yaml or a .bim, opened from VS Code's Explorer or the
-  // command line): its text, its model's name, and the workspace its tables are in when that can be
+  // A model file on this machine (an Ossie .yaml or a .bim, served by the command line): its text, its model's name, and the workspace its tables are in when that can be
   // known with no question asked. Its tables are always OneLake's. One named <lakehouse>.<schema>.<table>
   // is in the model's workspace, which the file doesn't say: the one this file was opened in before, if
   // it still holds those lakehouses, else `workspace` is null and `choices` are the workspaces whose

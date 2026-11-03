@@ -2,13 +2,8 @@
 
 ## Unreleased
 
-- **A model file on your computer opens too.** Right-click an Apache Ossie `.yaml` or a `.bim` in VS Code's
-  Explorer, or on its tab, and choose **Open in OneLake Studio**. In the desktop app, use **File > Open Model
-  File…** (Ctrl+O). Its tables are read from OneLake as any model's are, offline too. When its tables are named
-  `<lakehouse>.<schema>.<table>`, the first open asks which workspace holds that lakehouse, from the workspaces
-  this computer has seen, and remembers it for that file.
 - **Right-click a file or a semantic model in the tree** for **Copy SQL Name** and **Download File…**. A model
-  downloads as its YAML, ready to edit and open again with **Open in OneLake Studio**.
+  downloads as its YAML.
 - **Export to Fabric's app runs DuckDB 2.0**, the same version as the app itself (DuckDB-WASM 1.33.1-dev110.0).
 
 ## 0.2.14

@@ -100,7 +100,6 @@ async function main() {
     reveal: path => dialogs.reveal(path),
     openExternal: url => dialogs.openExternal(url),
     saveDialog: o => dialogs.saveDialog(o),
-    openDialog: o => dialogs.openDialog(o),
     folderDialog: o => dialogs.folderDialog(o),
   });
 

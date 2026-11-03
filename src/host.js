@@ -105,13 +105,10 @@ function createHostMethods({ onelake, engine, onStatus = () => {}, saveFile = nu
     'semantic.keep': async x => {
       if (!x.schema) throw new Error('a semantic model is kept in its workspace');
       const path = String(x.path);
-      // The page names a model's local copy, a OneLake file, or a model file on this machine the host
-      // already keeps under that name (the user opened it: openModelFile) — never any other file on disk.
+      // The page names a model's local copy or a OneLake file — never any other file on disk.
       if (modelsDir && !ONELAKE_FILE_URL.test(path)) {
         const rel = relative(resolve(modelsDir), resolve(path));
-        const inside = rel && !rel.startsWith('..') && !isAbsolute(rel);
-        const sameName = v => v.name.toLowerCase() === String(x.name).toLowerCase() && String(v.schema || '').toLowerCase() === String(x.schema).toLowerCase();
-        if (!inside && !(await views().list()).some(v => sameName(v) && v.path === path)) throw new Error(`${path}: not a semantic model's local copy`);
+        if (!rel || rel.startsWith('..') || isAbsolute(rel)) throw new Error(`${path}: not a semantic model's local copy`);
       }
       return views().put(String(x.name), path, String(x.schema));
     },

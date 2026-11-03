@@ -124,20 +124,13 @@ test("a semantic model is kept from a OneLake file or its local copy, and no oth
   const kept = [];
   const methods = createHostMethods({
     onelake: {}, engine: {}, modelsDir: "/cache/models",
-    semviews: {
-      put: async (name, path) => { kept.push(path); return { name, path }; },
-      // A model file on this machine the host opened (openModelFile) is kept under its name already.
-      list: async () => [{ name: "M", schema: "WS", path: "/home/me/models/m.yaml" }],
-    },
+    semviews: { put: async (name, path) => { kept.push(path); return { name, path }; } },
   });
-  const keep = async (path, name = "m") => {
+  const keep = async path => {
     const out = [];
-    await answer({ methods, engine: {} }, { id: 1, method: "semantic.keep", args: [{ name, schema: "ws", path }] }, m => out.push(m));
+    await answer({ methods, engine: {} }, { id: 1, method: "semantic.keep", args: [{ name: "m", schema: "ws", path }] }, m => out.push(m));
     return out[0];
   };
-  assert.equal((await keep("/home/me/models/m.yaml")).type, "result", "a model file the host opened, under its name");
-  assert.match((await keep("/home/me/models/m.yaml", "other")).message, /not a semantic model's local copy/, "under another name it is any file");
-  kept.length = 0;
   const inLake = "abfss://ws@onelake.dfs.fabric.microsoft.com/lh.Lakehouse/Files/m.yaml";
   assert.equal((await keep(inLake)).type, "result");
   assert.equal((await keep("/cache/models/a/ws/m.yaml")).type, "result");

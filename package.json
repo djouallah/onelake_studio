@@ -143,15 +143,6 @@
         "category": "OneLake Studio"
       },
       {
-        "command": "onelakeStudio.openModelFile",
-        "title": "Open Model File…",
-        "category": "OneLake Studio"
-      },
-      {
-        "command": "onelakeStudio.openInStudio",
-        "title": "Open in OneLake Studio"
-      },
-      {
         "command": "onelakeStudio.redownloadSemanticModel",
         "title": "Download Again (from Fabric)",
         "category": "OneLake Studio",
@@ -297,20 +288,6 @@
       }
     ],
     "menus": {
-      "explorer/context": [
-        {
-          "command": "onelakeStudio.openInStudio",
-          "when": "resourceScheme == file && resourceExtname =~ /^\\.(ya?ml|bim)$/i",
-          "group": "navigation@9"
-        }
-      ],
-      "editor/title/context": [
-        {
-          "command": "onelakeStudio.openInStudio",
-          "when": "resourceScheme == file && resourceExtname =~ /^\\.(ya?ml|bim)$/i",
-          "group": "navigation@9"
-        }
-      ],
       "view/title": [
         {
           "command": "onelakeStudio.goTo",
@@ -468,10 +445,6 @@
         }
       ],
       "commandPalette": [
-        {
-          "command": "onelakeStudio.openInStudio",
-          "when": "false"
-        },
         {
           "command": "onelakeStudio.downloadFile",
           "when": "false"
