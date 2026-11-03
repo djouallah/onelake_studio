@@ -122,3 +122,32 @@ test("Model's YAML sets a custom_extensions block apart, line by line, and nothi
   assert.deepEqual(extensionVendors(yaml), ["POWER_BI"]);
   assert.deepEqual(extensionVendors("datasets: []\n"), []);
 });
+
+test("Model's YAML sets apart an expression in a dialect other than Ossie SQL, its whole item", async () => {
+  const { prettyModelText, foreignDialects } = await import("../../app/explore/pretty.js");
+  const yaml = [
+    "metrics:",                              // 0
+    "  - name: ytd",                         // 1
+    "    expression:",                       // 2
+    "      dialects:",                       // 3
+    "        - dialect: DAX",                // 4  amber
+    "          expression: |",               // 5  amber
+    "            TOTALYTD([mw],",            // 6  amber
+    "              'date'[date])",           // 7  amber
+    "        - expression: SUM(mw)",         // 8  amber: its dialect comes after
+    "          dialect: ANSI_SQL",           // 9  amber
+    "        - dialect: OSSIE_SQL_2026",     // 10
+    "          expression: SUM(mw)",         // 11
+    "    datatype: Double",                  // 12
+    "  - name: total",                       // 13
+    "    expression:",                       // 14
+    "      sql: SUM(mw)",                    // 15
+    "    custom_extensions:",                // 16 amber, as before
+    "      - vendor_name: POWER_BI",         // 17 amber
+    "version: 0.2.0.dev0",                   // 18
+  ].join("\n");
+  const amber = prettyModelText(yaml, "yaml").split("\n").map((l, i) => (l.startsWith('<span class="tk-ext">') ? i : -1)).filter(i => i >= 0);
+  assert.deepEqual(amber, [4, 5, 6, 7, 8, 9, 16, 17]);
+  assert.deepEqual(foreignDialects(yaml), ["DAX", "ANSI_SQL"]);
+  assert.deepEqual(foreignDialects("metrics:\n  - expression:\n      dialects:\n        - dialect: OSSIE_SQL_2026\n"), []);
+});

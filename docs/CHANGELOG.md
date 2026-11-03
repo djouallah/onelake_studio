@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- A semantic model's **YAML** view shows in amber any expression in a dialect other than Ossie SQL, DAX for one,
+  as it does the Power BI extension: what isn't plain Ossie SQL. The note above the file names them.
+
 ## 0.2.15
 
 - **Icons on a file, a folder and a semantic model in the tree**, shown on hover. A file: **Download File…** and

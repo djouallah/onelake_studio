@@ -20,7 +20,7 @@ import { createExplorer } from './explore.js';
 import { compileModelSql } from './query.js';
 import { createPlanView, profileSql, elapsed, profileColors } from './profile.js';
 import { PALETTE, registerChartTheme } from './theme.js';
-import { prettyModelText, extensionVendors } from './pretty.js';
+import { prettyModelText, extensionVendors, foreignDialects } from './pretty.js';
 
 const PAGES = [['model', 'Model'], ['pivot', 'Pivot']];
 const PREVIEW_ROWS = 500;
@@ -188,10 +188,16 @@ export function mountExplore(root, ctx) {
   const viewTab = (label, asText) => el('button', { type: 'button', class: 'subtab', role: 'tab', onclick: () => showText(asText) }, label);
   const diagramTab = viewTab('Diagram', false), fileTab = viewTab(/^bim$/i.test(ctx.ext || '') ? 'BIM' : 'YAML', true);
   const textPre = el('pre', { class: 'text-file', hidden: true });
-  // Over the file, when it has custom_extensions: what its amber lines are (pretty.js tk-ext).
-  const vendors = ctx.text == null || /^bim$/i.test(ctx.ext || '') ? [] : extensionVendors(ctx.text);
+  // Over the file, when it has custom_extensions or a dialect other than Ossie SQL: what its amber
+  // lines are (pretty.js tk-ext).
+  const ossie = ctx.text != null && !/^bim$/i.test(ctx.ext || '');
+  const vendors = ossie ? extensionVendors(ctx.text) : [];
+  const dialects = ossie ? foreignDialects(ctx.text) : [];
+  const extName = `${vendors.length && vendors.every(v => v.toUpperCase() === 'POWER_BI') ? 'Power BI' : 'vendor'} extension`;
   const textNote = el('p', { class: 'text-file-note', hidden: true }, el('span', { class: 'swatch' }),
-    `Amber: ${vendors.length && vendors.every(v => v.toUpperCase() === 'POWER_BI') ? 'Power BI' : 'vendor'} extension, what Ossie has no field for`);
+    !dialects.length ? `Amber: ${extName}, what Ossie has no field for`
+      : !vendors.length ? `Amber: expressions in ${dialects.join(', ')}, not Ossie SQL`
+      : `Amber: not plain Ossie SQL — the ${extName}, and expressions in ${dialects.join(', ')}`);
   // In the bar after Keep offline, where Pivot's buttons are on the Pivot page, so changing
   // pages moves nothing else. On the Model page only.
   const modelSwitch = ctx.text == null ? null
@@ -248,7 +254,7 @@ export function mountExplore(root, ctx) {
     }
     modelPage.hidden = on;
     textPre.hidden = !on;
-    textNote.hidden = !on || !vendors.length || !textPre.querySelector('.tk-ext');
+    textNote.hidden = !on || !(vendors.length || dialects.length) || !textPre.querySelector('.tk-ext');
   }
   showText(false);
 

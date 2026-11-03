@@ -5,8 +5,9 @@
 // it is. Either way the text is escaped and only spans are added around keys, strings,
 // numbers, literals and comments (tk-*, explore.css), so nothing in a file is ever HTML. By
 // hand, with nothing loaded: it works offline and costs the panel nothing until it is shown.
-// An Ossie model's custom_extensions blocks (what Ossie has no field for, Power BI's) are set
-// apart, each of their lines in a tk-ext span.
+// What isn't plain Ossie SQL is set apart, each of its lines in a tk-ext span: an Ossie model's
+// custom_extensions blocks (what Ossie has no field for, Power BI's), and an expression in a dialect
+// other than OSSIE_SQL_2026 (DAX, say): its whole `- dialect:` item.
 // =============================================================================
 
 import { escapeHtml } from '../paths.js';
@@ -57,8 +58,10 @@ const KEY = /^("(?:[^"\\]|\\[\s\S])*"|'(?:[^']|'')*'|[^\s#'"\-?:,[\]{}&*!|>%@`][
 const EXT_KEY = /^(\s*(?:-\s+)*)custom_extensions\s*:/;
 function prettyYaml(text) {
   const colour = lineColour();
+  const raws = text.split('\n');
+  const foreign = foreignDialectLines(raws.map(r => (r.endsWith('\r') ? r.slice(0, -1) : r)));
   let ext = -1;   // a custom_extensions key's column, while its lines go on
-  return text.split('\n').map(raw => {
+  return raws.map((raw, i) => {
     const html = colour(raw);
     const line = raw.endsWith('\r') ? raw.slice(0, -1) : raw;
     const indent = /^\s*/.exec(line)[0].length;
@@ -66,8 +69,46 @@ function prettyYaml(text) {
     if (ext >= 0 && line.trim() && !(indent > ext || (indent === ext && /^-(\s|$)/.test(line.slice(indent))))) ext = -1;
     const k = ext < 0 && EXT_KEY.exec(line);
     if (k) ext = k[1].length;
-    return ext >= 0 ? `<span class="tk-ext">${html}</span>` : html;
+    return ext >= 0 || foreign.has(i) ? `<span class="tk-ext">${html}</span>` : html;
   }).join('\n');
+}
+
+// The lines of each `dialects:` item whose dialect isn't OSSIE_SQL_2026, by index: from its `- ` to its
+// last line indented past that dash, a | block included. Its `dialect:` is read wherever it is in the item.
+const DIALECTS_KEY = /^(\s*(?:-\s+)*)dialects\s*:\s*(?:#.*)?$/;
+const DIALECT = /^dialect\s*:\s*['"]?([^'"\s#]+)/;
+const STANDARD = 'OSSIE_SQL_2026';
+function foreignDialectLines(lines) {
+  const out = new Set();
+  const indentOf = l => /^\s*/.exec(l)[0].length;
+  for (let i = 0; i < lines.length; i++) {
+    const key = DIALECTS_KEY.exec(lines[i]);
+    if (!key) continue;
+    let dash = -1;   // the items' column, once the first is seen
+    let j = i + 1;
+    while (j < lines.length) {
+      const line = lines[j];
+      if (!line.trim()) { j++; continue; }
+      const indent = indentOf(line);
+      const item = /^-(\s|$)/.test(line.slice(indent));
+      if (dash < 0 && item && indent >= key[1].length) dash = indent;
+      if (!item || indent !== dash) break;
+      // One item: its first line, then the lines indented past its dash.
+      const content = indent + /^-\s*/.exec(line.slice(indent))[0].length;
+      let end = j, dialect = DIALECT.exec(line.slice(content));
+      for (let k = j + 1; k < lines.length; k++) {
+        if (!lines[k].trim()) continue;
+        const ind = indentOf(lines[k]);
+        if (ind <= indent) break;
+        end = k;
+        if (!dialect && ind === content) dialect = DIALECT.exec(lines[k].slice(content));
+      }
+      if (dialect && dialect[1].toUpperCase() !== STANDARD) for (let k = j; k <= end; k++) out.add(k);
+      j = end + 1;
+    }
+    i = j - 1;
+  }
+  return out;
 }
 
 // A YAML line's HTML, one line after another: what a | or > block keeps is kept between them.
@@ -101,6 +142,16 @@ function lineColour() {
 export function extensionVendors(text) {
   const out = new Set();
   for (const m of String(text).matchAll(/^[\s-]*vendor_name:\s*['"]?([^'"\s#]+)/gm)) out.add(m[1]);
+  return [...out];
+}
+
+// The dialects other than OSSIE_SQL_2026 an Ossie model's expressions are written in, each once, as
+// written: the rest of what Model's YAML says its amber lines are.
+export function foreignDialects(text) {
+  const out = new Set();
+  for (const m of String(text).matchAll(/^[\s-]*dialect:\s*['"]?([^'"\s#]+)/gm)) {
+    if (m[1].toUpperCase() !== STANDARD) out.add(m[1]);
+  }
   return [...out];
 }
 
