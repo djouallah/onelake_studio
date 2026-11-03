@@ -138,6 +138,11 @@
         "category": "OneLake Studio"
       },
       {
+        "command": "onelakeStudio.downloadFile",
+        "title": "Download File…",
+        "category": "OneLake Studio"
+      },
+      {
         "command": "onelakeStudio.openModelFile",
         "title": "Open Model File…",
         "category": "OneLake Studio"
@@ -386,13 +391,23 @@
         },
         {
           "command": "onelakeStudio.copySqlName",
-          "when": "view == onelakeStudio.explorer && viewItem =~ /^(table|file|dir)$/",
+          "when": "view == onelakeStudio.explorer && viewItem =~ /^(table|file|dir|semanticModel)$/",
           "group": "1_copy@1"
         },
         {
           "command": "onelakeStudio.copyColumns",
           "when": "view == onelakeStudio.explorer && viewItem == table",
           "group": "1_copy@2"
+        },
+        {
+          "command": "onelakeStudio.downloadFile",
+          "when": "view == onelakeStudio.explorer && viewItem =~ /^(file|semanticModel)$/",
+          "group": "1_copy@3"
+        },
+        {
+          "command": "onelakeStudio.redownloadSemanticModel",
+          "when": "view == onelakeStudio.explorer && viewItem == semanticModel",
+          "group": "2_model@1"
         },
         {
           "command": "onelakeStudio.newQuery",
@@ -460,6 +475,10 @@
       "commandPalette": [
         {
           "command": "onelakeStudio.openInStudio",
+          "when": "false"
+        },
+        {
+          "command": "onelakeStudio.downloadFile",
           "when": "false"
         },
         {

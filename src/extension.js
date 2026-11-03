@@ -845,10 +845,27 @@ async function activateInner(context) {
 
     // A table's or a file's SQL name, for a query written by hand.
     vscode.commands.registerCommand('onelakeStudio.copySqlName', async n => {
-      if (!n || !(n.table || isFileNode(n))) return;
-      const name = n.table ? sqlNameOf(n, n) : fileNameOf(n);
+      const isModel = n && n.kind === 'semanticModel' && n.model;
+      if (!n || !(n.table || isFileNode(n) || isModel)) return;
+      const name = n.table ? sqlNameOf(n, n) : isModel ? modelSqlName(n.workspace, n.model) : fileNameOf(n);
       await vscode.env.clipboard.writeText(name);
       vscode.window.setStatusBarMessage(`Copied ${name}`, 3000);
+    }),
+    // A file of the tree, or a semantic model's YAML (its local copy, read from Fabric first if there is
+    // none yet), saved where the save dialog says. A file is read from OneLake after the dialog.
+    vscode.commands.registerCommand('onelakeStudio.downloadFile', async n => {
+      if (!n || !(n.kind === 'file' || (n.kind === 'semanticModel' && n.model))) return;
+      const name = n.kind === 'file' ? basename(String(n.path)) : modelFileName(n.model);
+      try {
+        const bytes = n.kind === 'file'
+          ? () => onelake.readBytes(n.workspace, n.path)
+          : Buffer.from((await fetchModel(n)).text, 'utf8');
+        const saved = await saveFile(name, bytes);
+        if (saved) vscode.window.setStatusBarMessage(`Saved ${saved}`, 5000);
+      } catch (e) {
+        if (e && e.unsupported) { vscode.window.showInformationMessage(e.message); return; }
+        showError(`Could not download ${name}: ${(e && e.message) || e}`);
+      }
     }),
 
     // Saved queries (queriesFolder): open one in the SQL box, rename, delete, show the folder.

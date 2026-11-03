@@ -384,8 +384,10 @@ once and counts, though the answer still comes through the host.
 - **Errors:** the status line says what DuckDB says, and the cursor goes where it says it is.
 - **Variables:** `SET VARIABLE year = 2024` keeps a value in that tab and `getvariable('year')`
   reads it. **Clear Query Variables** forgets them, in every tab of the window.
-- **From the tree:** a table's right-click has Select Top Rows, Copy SQL Name and Copy Column List, and a file's or
-  folder's has Copy SQL Name.
+- **From the tree:** a table's right-click has Select Top Rows, Copy SQL Name and Copy Column List, and a folder's has
+  Copy SQL Name. A file's and a semantic model's have Copy SQL Name and **Download File…**, which saves the file, or
+  the model's YAML, where the save dialog says. A model with no local copy yet is read from Fabric first; a file is
+  read from OneLake after the dialog, so a cancel reads nothing.
   **Go to a Table, Column or Measure** (Ctrl+Alt+O) searches everything the cache holds. A pick opens it in a
   new tab, and its button puts its name in the box, or copies it with no tab open.
 
