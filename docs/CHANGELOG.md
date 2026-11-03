@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.13
 
 - **Fixes:**
   - A DAX query that reads one table only, such as `EVALUATE VALUES(dim[col])`, lists that table's values with no blank
