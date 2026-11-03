@@ -22,9 +22,17 @@ export const EXPLORE_CASTS = {
   datetime: s => `CAST(CAST(${s} AS DATE) AS VARCHAR)`,
 };
 
+// The statement as written goes in front of what dax-sql compiled it to, as a comment, so Logs shows
+// both (src/enginelog.js sourceOf reads it back). DuckDB nests comments, so a `/*` in it is escaped
+// as well as a `*/`, with a backslash, and a backslash is doubled.
+export const withSource = (sql, compiled) =>
+  `/*semantic\n${String(sql).trim().replace(/;+\s*$/, "").replace(/\\/g, "\\\\").replace(/\/(?=\*)|\*(?=\/)/g, "$&\\")}\n*/\n${compiled}`;
+
 // SQL text with SELECTs over model `name` in it, as the SQL that runs: each of them compiled in
-// place, the rest as written. DAX text is refused: Explore takes SQL.
+// place, the rest as written, with the text as written in front when anything was compiled.
+// DAX text is refused: Explore takes SQL.
 export function compileModelSql(compiler, text, name = 'model') {
   if (compiler.isDax?.(text)) throw new Error('Explore takes SQL: SELECT … FROM the model, or SQL over the tables');
-  return compiler.compileStatement(text, name).sql;
+  const { sql } = compiler.compileStatement(text, name);
+  return sql === text ? sql : withSource(text, sql);
 }

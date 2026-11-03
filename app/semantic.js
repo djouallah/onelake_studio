@@ -19,7 +19,7 @@
 // =============================================================================
 import { PINS, npmFile, npmEsm } from "./cdn.js";
 import { quoteIdent, sqlStr, sqlPart, stripBom, basename } from "./paths.js";
-import { EXPLORE_CASTS } from "./explore/query.js";
+import { EXPLORE_CASTS, withSource } from "./explore/query.js";
 
 const lc = s => String(s).toLowerCase();
 
@@ -365,12 +365,6 @@ WHERE v.database_name = '${MODEL_CATALOG}' ORDER BY v.schema_name, v.view_name`;
 const VIEW_DDL = /^\s*(create(\s+or\s+replace)?|drop)\s+semantic\s+view\b/i;
 const NO_DDL ="Read only: OneLake Studio never writes, and a semantic model is not made or dropped " +
   `in SQL — open one in the tree, or name it ${MODEL_CATALOG}.<workspace>.<model> in a query.`;
-
-// The statement as written goes in front of what dax-sql compiled it to, as a comment, so Logs shows
-// both (src/enginelog.js sourceOf reads it back). DuckDB nests comments, so a `/*` in it is escaped
-// as well as a `*/`, with a backslash, and a backslash is doubled.
-export const withSource = (sql, compiled) =>
-  `/*semantic\n${String(sql).trim().replace(/;+\s*$/, "").replace(/\\/g, "\\\\").replace(/\/(?=\*)|\*(?=\/)/g, "$&\\")}\n*/\n${compiled}`;
 
 /**
  * What a statement asks, in dax-sql's words (createViews().rewrite): null when it names no
