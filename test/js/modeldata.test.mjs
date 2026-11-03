@@ -258,7 +258,8 @@ test("one table failing doesn't stop the rest, says which, and is tried again la
   await settled();
   const said = await data.state(CATALOG);
   assert.equal(said.tone, "bad");
-  assert.match(said.say, /^1 of 2 tables here · fact: the read failed$/);
+  assert.match(said.say, /^1 of 2 tables · fact failed, retrying$/);
+  assert.equal(said.tip, "fact could not be read from OneLake: the read failed.\nIt is tried again within the hour.");
   assert.equal(reads.length, 2);
   await data.tick();
   await settled();

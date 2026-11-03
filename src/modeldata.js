@@ -18,7 +18,7 @@
 //
 // No `vscode` import: driven from tests with a fake clock.
 // =============================================================================
-const { SQL_KINDS, fmtBytes } = require('./names');
+const { SQL_KINDS, fmtBytes, fileNamesIn } = require('./names');
 const { tableRefs } = require('./sql');
 
 const EVERY_MS = 15_000;
@@ -27,6 +27,12 @@ const RETRY_MS = 3600 * 1000;      // one that failed isn't read again for this 
 const MEMO_MS = 5 * 60 * 1000;     // a Pivot asks every few seconds, and this asks nothing that often
 
 const tablesWord = n => `${n} table${n === 1 ? '' : 's'}`;
+// Why a table could not be read, in words: a refused sign-in as one, anything else as DuckDB says
+// it, a file under its name and not its URL (a table's file by its own name), on one line.
+const AUTH = /\b401\b|Unauthorized|AuthenticationFailed|token.*expired/i;
+const reasonOf = error => (AUTH.test(error) ? 'the sign-in expired'
+  : fileNamesIn(String(error)).replace(/'abfss:\/\/[^']*\/([^/']+)'/g, "'$1'")
+    .replace(/^\w+ Error:\s*/, '').split('\n')[0].slice(0, 300));
 const lc = s => String(s).toLowerCase();
 
 /**
@@ -114,8 +120,12 @@ function createModelData({ tablesOf, resolve, cachedTable, read, usage, offlineR
     const broke = missing.filter(t => { const k = keptOf(t); return k && k.error; })
       .map(t => ({ name: t.name, error: keptOf(t).error })).concat(failed);
     if (broke.length && broke.length === missing.length + failed.length) {
-      return { on: true, say: `${down.length} of ${tablesWord(count)} here · ${broke[0].name.split('.').pop()}: ${broke[0].error}`,
-               tone: 'bad', busy: false, tip: broke.map(b => `${b.name}: ${b.error}`).join('\n') };
+      // One short line on the bar; why, in the tip.
+      const first = broke[0].name.split('.').pop();
+      return { on: true, say: `${down.length} of ${tablesWord(count)} · ${first}${broke.length > 1 ? ` and ${broke.length - 1} more` : ''} failed, retrying`,
+               tone: 'bad', busy: false,
+               tip: [...broke.map(b => `${b.name.split('.').pop()} could not be read from OneLake: ${reasonOf(b.error)}.`),
+                     `${broke.length > 1 ? 'They are' : 'It is'} tried again within the hour.`].join('\n') };
     }
     if (!missing.length) {
       return { on: true, say: `✓ ${fmtBytes(total)} on this machine`, tone: 'good', busy: false,
