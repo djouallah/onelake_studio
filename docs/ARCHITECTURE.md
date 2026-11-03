@@ -383,10 +383,16 @@ once and counts, though the answer still comes through the host.
 - **Errors:** the status line says what DuckDB says, and the cursor goes where it says it is.
 - **Variables:** `SET VARIABLE year = 2024` keeps a value in that tab and `getvariable('year')`
   reads it. **Clear Query Variables** forgets them, in every tab of the window.
-- **From the tree:** a table's right-click has Select Top Rows, Copy SQL Name and Copy Column List, and a folder's has
-  Copy SQL Name. A file's and a semantic model's have Copy SQL Name and **Download File…**, which saves the file, or
-  the model's YAML, where the save dialog says. A model with no local copy yet is read from Fabric first; a file is
-  read from OneLake after the dialog, so a cancel reads nothing.
+- **From the tree:** a table's right-click has Select Top Rows, Copy SQL Name and Copy Column List. Files, folders
+  and semantic models have no right-click: their actions are icons on the row, shown on hover.
+  - **A file:** Download File… and Copy SQL Name. A semantic model: Download File… (its YAML, read from Fabric first
+    when there is no local copy yet), Copy SQL Name and Download Again. A file is read from OneLake after the save
+    dialog, so a cancel reads nothing.
+  - **A folder** (Files/ itself, or one under it): **Upload Files…**, Copy SQL Name and Refresh. Upload picks files on
+    this computer and writes each into that folder ([`src/onelakewrite.js`](../src/onelakewrite.js)): a name already
+    there asks Replace or Skip, each file is written beside the target in 32 MB pieces and renamed into place, so a
+    cancel or a failure leaves what was there, and the folder is listed again. It needs a connection, as Export does,
+    and OneLake's own refusal is shown when the lakehouse is read-only to you.
   **Go to a Table, Column or Measure** (Ctrl+Alt+O) searches everything the cache holds. A pick opens it in a
   new tab, and its button puts its name in the box, or copies it with no tab open.
 
@@ -488,7 +494,7 @@ same files on DuckDB-WASM.
 
 ## Export to Fabric
 
-The one write. Explore's **Export to Fabric** button, or the command line's `export`, publishes that
+One of two writes, with Upload (above). Explore's **Export to Fabric** button, or the command line's `export`, publishes that
 model's Explore, nothing else, as a Fabric app (item type `AppBackend`, named
 `<model>-explore`). VS Code and the extension are all it needs: no CLI, no Node, no GitHub.
 
@@ -644,7 +650,7 @@ personal skills, and it follows the extension through updates.
   With no folder there is no conversion to wait for, and the error names the closest listed tables.
 - **A folder that is no table fails at once.** With neither `_delta_log` nor `metadata/` in it, it is not a valid OneLake
   table. `ls` and `find` say so, `exists` says no, and `SHOW ALL TABLES` leaves it out.
-- **`export`** is the one write: the same code path as Explore's button, with the same questions asked
+- **`export`** is the command line's one write: the same code path as Explore's button, with the same questions asked
   in VS Code.
 
 ## Keep offline

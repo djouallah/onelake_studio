@@ -14,7 +14,7 @@ const { chordOf, BROWSER_KEYS } = await import("../../desktop/ui/keys.js");
 const { newer, checkUpdate, DOWNLOAD } = require("../../src/desktop/update.js");
 const { createServer, pageFor } = require("../../src/desktop/server.js");
 const vscode = require("../../src/desktop/vscode.js");
-const { filterOf } = require("../../src/desktop/dialogs.js");
+const { filterOf, openDialog } = require("../../src/desktop/dialogs.js");
 const pkg = require("../../package.json");
 
 test("every when clause the extension's menus use reads as VS Code reads it", () => {
@@ -186,6 +186,24 @@ test("a quick pick: the window's choice is its selection", () => {
 
 test("a save dialog's filters, as Windows writes them", () => {
   assert.equal(filterOf({ CSV: ["csv"], Excel: ["xlsx", "xls"] }), "CSV|*.csv|Excel|*.xlsx;*.xls");
+});
+
+test("an open dialog: Windows' own, several files one per line, its filter and folder through the environment", async () => {
+  const { EventEmitter } = require("node:events");
+  const runs = [];
+  const run = (exe, args, opts) => {
+    runs.push({ exe, args, env: opts.env });
+    const out = Object.assign(new EventEmitter(), { resume() {} });
+    const child = Object.assign(new EventEmitter(), { stdout: out, stderr: { resume() {} }, stdin: { end() {} } });
+    setImmediate(() => { out.emit("data", Buffer.from(["C:/data/a.csv", "C:/data/b b.parquet", ""].join("\r\n"))); child.emit("close", 0); });
+    return child;
+  };
+  assert.deepEqual(await openDialog({ defaultPath: "C:/data", title: "Upload", many: true }, { run }), ["C:/data/a.csv", "C:/data/b b.parquet"]);
+  const [{ exe, args, env }] = runs;
+  assert.equal(exe, "powershell.exe");
+  assert.match(Buffer.from(args.at(-1), "base64").toString("utf16le"), /OpenFileDialog/);
+  assert.equal(env.OLS_MANY, "1");
+  assert.equal(env.OLS_PATH, "C:/data");
 });
 
 test("keys: named as the window's shortcuts are, and the browser's own do nothing", () => {

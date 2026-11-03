@@ -32,6 +32,7 @@ const { serveBridge } = require('./bridge');
 const { PINS } = require('./vendored');
 const { createQueries } = require('./queries');
 const { createModels } = require('./models');
+const { createOneLakeWriter } = require('./onelakewrite');
 const { createExport } = require('./exportflow');
 const { createEngines } = require('./engines');
 
@@ -522,8 +523,10 @@ function createCore({
     view.redraw();
   };
 
+  // The one OneLake writer (onelakewrite.js): Export to Fabric's .yaml, and Upload's files.
+  const writer = createOneLakeWriter({ getToken: hostToken });
   exportExplore = createExport({
-    connectivity, modules: () => agent.modules(), hostToken, appToken, fabric, onelake, catalog,
+    connectivity, modules: () => agent.modules(), hostToken, appToken, fabric, onelake, catalog, writer,
     memento, extensionDir, pageDir,
     ui: exportUi,
     onRefresh: node => view.refresh(node),
@@ -567,7 +570,7 @@ function createCore({
   return {
     engines, onelake, semviews, rebindStore, exportExplore, openExcel, keepOffline, openSqlModel, nameModelTables, saveQuery,
     onStoreCleared: () => onStoreCleared(),
-    fabric, sqlTables, syncWorker, favorites, queries, models, agent, startExcel: startXmla,
+    fabric, sqlTables, syncWorker, favorites, queries, models, agent, startExcel: startXmla, writer,
     accountTurn, sessionChanged, setSignedIn, start,
     signedIn: () => signedIn, hasSession: () => hasSession, sessionAsked: () => sessionAsked,
     storeAccount: () => storeAccount, queryAccount: () => queryAccount,

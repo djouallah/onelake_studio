@@ -140,7 +140,14 @@
       {
         "command": "onelakeStudio.downloadFile",
         "title": "Download File…",
-        "category": "OneLake Studio"
+        "category": "OneLake Studio",
+        "icon": "$(desktop-download)"
+      },
+      {
+        "command": "onelakeStudio.uploadFiles",
+        "title": "Upload Files…",
+        "category": "OneLake Studio",
+        "icon": "$(cloud-upload)"
       },
       {
         "command": "onelakeStudio.redownloadSemanticModel",
@@ -334,7 +341,7 @@
         {
           "command": "onelakeStudio.refresh",
           "when": "view == onelakeStudio.explorer && viewItem =~ /^(workspace|workspacePinned|item|dir|tables|models|apps|error)$/",
-          "group": "inline"
+          "group": "inline@3"
         },
         {
           "command": "onelakeStudio.pinWorkspace",
@@ -349,7 +356,7 @@
         {
           "command": "onelakeStudio.redownloadSemanticModel",
           "when": "view == onelakeStudio.explorer && viewItem == semanticModel",
-          "group": "inline"
+          "group": "inline@3"
         },
         {
           "command": "onelakeStudio.copyAppUrl",
@@ -358,8 +365,8 @@
         },
         {
           "command": "onelakeStudio.copySqlName",
-          "when": "view == onelakeStudio.explorer && viewItem =~ /^(table|file|dir)$/",
-          "group": "inline"
+          "when": "view == onelakeStudio.explorer && viewItem =~ /^(table|file|dir|semanticModel)$/",
+          "group": "inline@2"
         },
         {
           "command": "onelakeStudio.selectTop",
@@ -368,7 +375,7 @@
         },
         {
           "command": "onelakeStudio.copySqlName",
-          "when": "view == onelakeStudio.explorer && viewItem =~ /^(table|file|dir|semanticModel)$/",
+          "when": "view == onelakeStudio.explorer && viewItem == table",
           "group": "1_copy@1"
         },
         {
@@ -379,7 +386,12 @@
         {
           "command": "onelakeStudio.downloadFile",
           "when": "view == onelakeStudio.explorer && viewItem =~ /^(file|semanticModel)$/",
-          "group": "1_copy@3"
+          "group": "inline@1"
+        },
+        {
+          "command": "onelakeStudio.uploadFiles",
+          "when": "view == onelakeStudio.explorer && viewItem == dir",
+          "group": "inline@1"
         },
         {
           "command": "onelakeStudio.newQuery",
@@ -447,6 +459,10 @@
       "commandPalette": [
         {
           "command": "onelakeStudio.downloadFile",
+          "when": "false"
+        },
+        {
+          "command": "onelakeStudio.uploadFiles",
           "when": "false"
         },
         {

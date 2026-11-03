@@ -2,8 +2,11 @@
 
 ## Unreleased
 
-- **Right-click a file or a semantic model in the tree** for **Copy SQL Name** and **Download File…**. A model
-  downloads as its YAML.
+- **Icons on a file, a folder and a semantic model in the tree**, shown on hover. A file: **Download File…** and
+  **Copy SQL Name**. A semantic model: **Download File…** (its YAML), **Copy SQL Name** and **Download Again**.
+- **New: Upload Files…** on a folder under a lakehouse's Files/, or on Files/ itself: pick files on this computer
+  and they are written there. A file already there asks Replace or Skip. Big files go in pieces, and a cancel
+  leaves the folder as it was.
 - **Export to Fabric's app runs DuckDB 2.0**, the same version as the app itself (DuckDB-WASM 1.33.1-dev110.0).
 
 ## 0.2.14

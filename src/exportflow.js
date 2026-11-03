@@ -24,6 +24,7 @@ const { createOneLakeWriter } = require('./onelakewrite');
  * @param {object} o.fabric  fabric.js
  * @param {object} o.onelake  onelake.js
  * @param {object} o.catalog  catalog.js
+ * @param {object} [o.writer]  onelakewrite.js, shared with Upload
  * @param {{ get: Function, update: Function }} o.memento  the folder approved last time
  * @param {string} o.extensionDir  where this install's files are
  * @param {() => Promise<string>} o.pageDir  where the page's files are
@@ -31,9 +32,7 @@ const { createOneLakeWriter } = require('./onelakewrite');
  * @param {(node: object) => void} o.onRefresh  this part of the tree changed
  * @param {(line: string) => void} o.log
  */
-function createExport({ connectivity, modules, hostToken, appToken, fabric, onelake, catalog, memento, extensionDir, pageDir, ui, onRefresh, log }) {
-  // The one OneLake writer (onelakewrite.js): Export to Fabric's .yaml, and nothing else.
-  const writer = createOneLakeWriter({ getToken: hostToken });
+function createExport({ connectivity, modules, hostToken, appToken, fabric, onelake, catalog, writer = createOneLakeWriter({ getToken: hostToken }), memento, extensionDir, pageDir, ui, onRefresh, log }) {
 
   // Where Export to Fabric writes a model opened from its local copy: <lakehouse>/Files/
   // semantic_model/<model>.yaml, in the one lakehouse its Direct Lake expressions name (the app

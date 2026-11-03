@@ -830,6 +830,52 @@ async function activateInner(context) {
         showError(`Could not download ${name}: ${(e && e.message) || e}`);
       }
     }),
+    // Files from this computer into a folder of a lakehouse's Files/ (onelakewrite.js): a name already
+    // there is asked about, each file is written beside and renamed into place, and the folder is
+    // listed again. Needs a connection, as Export does.
+    vscode.commands.registerCommand('onelakeStudio.uploadFiles', async n => {
+      if (!n || n.kind !== 'dir') return;
+      const where = `${basename(String(n.item)).replace(/\.[^.]+$/, '')}/Files${n.dir ? `/${n.dir}` : ''}`;
+      if (connectivity.offline()) { vscode.window.showInformationMessage('Upload needs a connection.'); return; }
+      const picked = await vscode.window.showOpenDialog({
+        canSelectFiles: true, canSelectFolders: false, canSelectMany: true, openLabel: 'Upload', title: `Upload to ${where}`,
+      });
+      if (!picked || !picked.length) return;
+      let uploaded = 0;
+      try {
+        await vscode.window.withProgress(
+          { location: vscode.ProgressLocation.Notification, title: `Uploading to ${where}`, cancellable: true },
+          async (progress, token) => {
+            for (const uri of picked) {
+              if (token.isCancellationRequested) break;
+              const name = basename(uri.fsPath);
+              const path = `${n.item}/Files/${n.dir ? `${n.dir}/` : ''}${name}`;
+              const over = await core.writer.stat(n.workspace, path);
+              if (over) {
+                const pick = await vscode.window.showWarningMessage(`${name} is already in ${where}.`, { modal: true }, 'Replace', 'Skip');
+                if (pick !== 'Replace') continue;
+              }
+              let last = 0;
+              await core.writer.writeLocalFile(n.workspace, path, uri.fsPath, {
+                over,
+                cancelled: () => token.isCancellationRequested,
+                onProgress: (done, size) => {
+                  progress.report({ message: `${name} — ${fmtBytes(done)} of ${fmtBytes(size)}`, increment: size ? ((done - last) / size) * (100 / picked.length) : 0 });
+                  last = done;
+                },
+              });
+              uploaded++;
+            }
+          });
+      } catch (e) {
+        if (!(e && e.cancelled)) showError(`Upload to ${where} failed: ${(e && e.message) || e}`);
+      } finally {
+        if (uploaded) {
+          tree.refresh(n);
+          vscode.window.setStatusBarMessage(`Uploaded ${uploaded} file${uploaded === 1 ? '' : 's'} to ${where}`, 5000);
+        }
+      }
+    }),
 
     // Saved queries (queriesFolder): open one in the SQL box, rename, delete, show the folder.
     vscode.commands.registerCommand('onelakeStudio.openQuery', onClick(async n => {

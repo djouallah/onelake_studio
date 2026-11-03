@@ -1,5 +1,5 @@
-// onelakewrite.js: the one file the extension writes to OneLake — a semantic model's .bim into
-// its lakehouse's Files/. No network: `fetch` answers from a script, and every call is kept.
+// onelakewrite.js: what the extension writes to OneLake — Export to Fabric's model and Upload's files, into
+// a lakehouse's Files/. No network: `fetch` answers from a script, and every call is kept.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
@@ -106,4 +106,38 @@ test("stat: the size, or null when there is no file", async () => {
   assert.equal((await w.stat("ws", "lh.Lakehouse/Files/a.bim")).bytes, 42);
   assert.equal(calls[0].method, "HEAD");
   assert.equal(await w.stat("ws", "lh.Lakehouse/Files/gone.bim"), null);
+});
+
+test("a big file goes in pieces, each at its offset, flushed at the whole length, with progress", async () => {
+  const { w, calls } = writerWith(() => res(201));
+  const seen = [];
+  await w.writeFile("ws", "lh.Lakehouse/Files/big.bin", Buffer.from("abcdefghij"), { chunk: 4, onProgress: (done, size) => seen.push([done, size]) });
+  const steps = calls.map(c => c.url.replace(/^.*\?/, "?").replace(/^https.*$/, "rename"));
+  assert.deepEqual(steps, ["?resource=file", "?action=append&position=0", "?action=append&position=4", "?action=append&position=8", "?action=flush&position=10", "rename"]);
+  assert.deepEqual(calls.slice(1, 4).map(c => String(c.body)), ["abcd", "efgh", "ij"]);
+  assert.deepEqual(seen, [[4, 10], [8, 10], [10, 10]]);
+});
+
+test("a cancel stops before the next piece and tidies the temp file; what was there stays", async () => {
+  let cancel = false;
+  const { w, calls } = writerWith(() => res(201));
+  await assert.rejects(
+    w.writeFile("ws", "lh.Lakehouse/Files/big.bin", Buffer.from("abcdefgh"), { chunk: 4, cancelled: () => cancel, onProgress: () => { cancel = true; } }),
+    e => e.cancelled === true);
+  assert.deepEqual(calls.map(c => c.method), ["PUT", "PATCH", "DELETE"], "one piece, then the temp file deleted, no rename");
+});
+
+test("a file on this computer is read a piece at a time", async () => {
+  const { mkdtemp, writeFile, rm } = await import("node:fs/promises");
+  const { join } = await import("node:path");
+  const { tmpdir } = await import("node:os");
+  const dir = await mkdtemp(join(tmpdir(), "upload-"));
+  const file = join(dir, "a b.csv");
+  await writeFile(file, "x,y\n1,2\n");
+  const { w, calls } = writerWith(() => res(201));
+  assert.equal(await w.writeLocalFile("ws", "lh.Lakehouse/Files/raw/a b.csv", file, { chunk: 5, over: null }), 8);
+  assert.deepEqual(calls.filter(c => c.method === "PATCH" && c.url.includes("append")).map(c => String(c.body)), ["x,y\n1", ",2\n"]);
+  assert.equal(calls.at(-1).headers["if-none-match"], "*", "a new file never lands over one made since");
+  assert.match(calls.at(-1).url, /\/ws\/lh\.Lakehouse\/Files\/raw\/a%20b\.csv$/);
+  await rm(dir, { recursive: true, force: true });
 });

@@ -308,8 +308,13 @@ const window_ = {
     const path = await host.saveDialog({ defaultPath: defaultUri ? defaultUri.fsPath : '', filters: filters || {} });
     return path ? Uri.file(path) : undefined;
   },
-  async showOpenDialog({ defaultUri, title } = {}) {
-    const path = await host.folderDialog({ defaultPath: defaultUri ? defaultUri.fsPath : '', title: title || '' });
+  async showOpenDialog({ defaultUri, title, canSelectFiles, canSelectMany, filters } = {}) {
+    const defaultPath = defaultUri ? defaultUri.fsPath : '';
+    if (canSelectFiles) {
+      const paths = await host.openDialog({ defaultPath, title: title || '', filters: filters || {}, many: !!canSelectMany });
+      return paths.length ? paths.map(p => Uri.file(p)) : undefined;
+    }
+    const path = await host.folderDialog({ defaultPath, title: title || '' });
     return path ? [Uri.file(path)] : undefined;
   },
   async showTextDocument(doc) {
