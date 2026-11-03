@@ -196,17 +196,16 @@ test("an open dialog: Windows' own, its filter and folder through the environmen
     const child = Object.assign(new (require("node:events"))(), {
       stdout: Object.assign(out, { resume() {} }), stderr: { resume() {} }, stdin: { end() {} },
     });
-    setImmediate(() => { out.emit("data", Buffer.from("C:\models\sales.yaml
-")); child.emit("close", 0); });
+    setImmediate(() => { out.emit("data", Buffer.from("C:/models/sales.yaml\r\n")); child.emit("close", 0); });
     return child;
   };
-  const path = await openDialog({ defaultPath: "C:\models", title: "Open a model file", filters: { Model: ["yaml", "yml", "bim"] } }, { run });
-  assert.equal(path, "C:\models\sales.yaml");
+  const path = await openDialog({ defaultPath: "C:/models", title: "Open a model file", filters: { Model: ["yaml", "yml", "bim"] } }, { run });
+  assert.equal(path, "C:/models/sales.yaml");
   const [{ exe, args, env }] = runs;
   assert.equal(exe, "powershell.exe");
   assert.match(Buffer.from(args.at(-1), "base64").toString("utf16le"), /OpenFileDialog/);
   assert.equal(env.OLS_FILTER, "Model|*.yaml;*.yml;*.bim");
-  assert.equal(env.OLS_PATH, "C:\models");
+  assert.equal(env.OLS_PATH, "C:/models");
 });
 
 test("keys: named as the window's shortcuts are, and the browser's own do nothing", () => {
