@@ -27,6 +27,7 @@ const DARK = {
   'list-activeSelectionBackground': '#04395e', 'list-activeSelectionForeground': '#ffffff', 'list-hoverBackground': '#2a2d2e',
   'keybindingTable-headerBackground': 'rgba(204,204,204,.04)', 'tree-tableOddRowsBackground': 'rgba(204,204,204,.04)',
   'testing-iconPassed': '#73c991', 'textCodeBlock-background': '#2b2b2b', 'textLink-foreground': '#4daafc',
+  'debugTokenExpression-name': '#c586c0', 'debugTokenExpression-string': '#ce9178', 'debugTokenExpression-number': '#b5cea8', 'debugTokenExpression-boolean': '#4e94ce',
   'list-warningForeground': '#cca700', 'list-errorForeground': '#f88070', 'statusBar-background': '#181818', 'statusBar-foreground': '#cccccc',
 };
 
@@ -43,6 +44,7 @@ const LIGHT = {
   'list-activeSelectionBackground': '#e8e8e8', 'list-activeSelectionForeground': '#000000', 'list-hoverBackground': '#f2f2f2',
   'keybindingTable-headerBackground': 'rgba(59,59,59,.04)', 'tree-tableOddRowsBackground': 'rgba(59,59,59,.04)',
   'testing-iconPassed': '#388a34', 'textCodeBlock-background': '#f2f2f2', 'textLink-foreground': '#005fb8',
+  'debugTokenExpression-name': '#9b46b0', 'debugTokenExpression-string': '#a31515', 'debugTokenExpression-number': '#098658', 'debugTokenExpression-boolean': '#0000ff',
   'list-warningForeground': '#855f00', 'list-errorForeground': '#b01011', 'statusBar-background': '#f8f8f8', 'statusBar-foreground': '#3b3b3b',
 };
 

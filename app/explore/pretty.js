@@ -1,0 +1,96 @@
+// =============================================================================
+// explore/pretty.js — a model's file as Show text's Pretty: its text, coloured
+// =============================================================================
+// A .bim is JSON, re-indented as docview.js does a document; an Ossie model is YAML, kept as
+// it is. Either way the text is escaped and only spans are added around keys, strings,
+// numbers, literals and comments (tk-*, explore.css), so nothing in a file is ever HTML. By
+// hand, with nothing loaded: it works offline and costs the panel nothing until it is shown.
+// =============================================================================
+
+import { escapeHtml } from '../paths.js';
+
+// Past this, colouring is a lot of spans for one <pre>: the text is shown as it is.
+export const PRETTY_MAX = 2 * 1024 * 1024;
+
+const span = (cls, s) => `<span class="tk-${cls}">${escapeHtml(s)}</span>`;
+
+// A string, with the `:` that makes it a key; a number; true, false or null.
+const JSON_TOKEN = /("(?:[^"\\]|\\[\s\S])*")(\s*:)?|(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)|\b(true|false|null)\b/g;
+
+function prettyJson(text) {
+  let out = '', at = 0;
+  for (const m of text.matchAll(JSON_TOKEN)) {
+    out += escapeHtml(text.slice(at, m.index));
+    if (m[1] != null) out += m[2] != null ? span('key', m[1]) + escapeHtml(m[2]) : span('str', m[1]);
+    else if (m[3] != null) out += span('num', m[3]);
+    else out += span('lit', m[4]);
+    at = m.index + m[0].length;
+  }
+  return out + escapeHtml(text.slice(at));
+}
+
+// A YAML value, after its key or its `- `: quoted, a number, a literal, a block's start, or a
+// plain string, then a comment.
+const QUOTED = /^("(?:[^"\\]|\\[\s\S])*"|'(?:[^']|'')*')/;
+const NUMBER = /^[-+]?(?:\d[\d_]*(?:\.\d*)?(?:[eE][-+]?\d+)?|\.inf|\.nan)$/i;
+const LITERAL = /^(?:true|false|null|~|yes|no|on|off)$/i;
+const BLOCK = /^[|>][-+0-9]*$/;
+function yamlValue(text) {
+  const lead = /^\s*/.exec(text)[0], v = text.slice(lead.length);
+  if (!v) return escapeHtml(text);
+  if (v.startsWith('#')) return escapeHtml(lead) + span('com', v);
+  const q = QUOTED.exec(v);
+  let body = q ? q[1] : v, rest = q ? v.slice(q[1].length) : '';
+  if (!q) {
+    const c = /\s#/.exec(v);
+    if (c) { body = v.slice(0, c.index); rest = v.slice(c.index); }
+  }
+  const word = body.trimEnd(), tail = body.slice(word.length);
+  const cls = q ? 'str' : NUMBER.test(word) ? 'num' : LITERAL.test(word) || BLOCK.test(word) ? 'lit' : 'str';
+  const c = /^(\s*)(#.*)$/.exec(rest);
+  return escapeHtml(lead) + span(cls, word) + escapeHtml(tail) + (c ? escapeHtml(c[1]) + span('com', c[2]) : escapeHtml(rest));
+}
+
+const KEY = /^("(?:[^"\\]|\\[\s\S])*"|'(?:[^']|'')*'|[^\s#'"\-?:,[\]{}&*!|>%@`][^#]*?|-[^\s#][^#]*?)(\s*:)(?=\s|$)/;
+function prettyYaml(text) {
+  const lines = text.split('\n');
+  let block = -1;   // a | or > block's key's indentation, while its lines go on
+  return lines.map(raw => {
+    const cr = raw.endsWith('\r') ? '\r' : '';
+    const line = cr ? raw.slice(0, -1) : raw;
+    const indent = /^\s*/.exec(line)[0].length;
+    if (block >= 0) {
+      if (!line.trim() || indent > block) return (line.trim() ? escapeHtml(line.slice(0, indent)) + span('str', line.slice(indent)) : escapeHtml(line)) + cr;
+      block = -1;
+    }
+    const com = /^(\s*)(#.*)$/.exec(line);
+    if (com) return escapeHtml(com[1]) + span('com', com[2]) + cr;
+    let out = escapeHtml(line.slice(0, indent)), rest = line.slice(indent);
+    const dash = /^(?:-(?:\s+|$))+/.exec(rest);
+    if (dash) { out += escapeHtml(dash[0]); rest = rest.slice(dash[0].length); }
+    const key = KEY.exec(rest);
+    if (key) {
+      out += span('key', key[1]) + escapeHtml(key[2]);
+      rest = rest.slice(key[0].length);
+    }
+    if (BLOCK.test(rest.replace(/\s+#.*$/, '').trim())) block = indent;
+    return out + yamlValue(rest) + cr;
+  }).join('\n');
+}
+
+/**
+ * Show text's Pretty: { html } to put in a <pre>, or { html: null, note } when it is shown as
+ * it is. `ext` is the file's extension: a .bim is JSON, anything else YAML.
+ */
+export function prettyModelText(text, ext = '') {
+  const s = String(text);
+  if (s.length > PRETTY_MAX) return { html: null, note: 'This file is too large to colour, so it is shown as stored.' };
+  const json = /^\.?bim$/i.test(ext) || /^\s*[{[]/.test(s);
+  if (!json) return { html: prettyYaml(s) };
+  // Parsed, an integer past 2^53 would come back as another number: such text is coloured as it is.
+  let indented = s;
+  if (!/\d{16}/.test(s)) {
+    try { indented = JSON.stringify(JSON.parse(s.trim()), null, 2); } catch (_) { /* coloured as it is */ }
+  }
+  return { html: prettyJson(indented) };
+}

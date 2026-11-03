@@ -7,7 +7,8 @@
 //             (explore.js, ECharts). Show SQL swaps the pivot for its SQL in a box the user
 //             edits (a SELECT … FROM <model> asks the model; any other SQL runs as written);
 //             Show plan puts the query's profile and plan in place of the results
-//             (profile.js). Download CSV writes the pivot's rows, or the box's.
+//             (profile.js). Download CSV writes the pivot's rows, or the box's. Show text
+//             swaps it for the model's file, Pretty or Raw (pretty.js).
 // The same file in the panel and in Export to Fabric's app: the host says how a model's SQL is compiled
 // and run, and where ECharts comes from (`ctx`); nothing here knows the engine.
 // =============================================================================
@@ -19,13 +20,16 @@ import { createExplorer } from './explore.js';
 import { compileModelSql } from './query.js';
 import { createPlanView, profileSql, elapsed, profileColors } from './profile.js';
 import { PALETTE, registerChartTheme } from './theme.js';
+import { prettyModelText } from './pretty.js';
 
 const PAGES = [['model', 'Model'], ['pivot', 'Pivot']];
 const PREVIEW_ROWS = 500;
+let textPretty = true;   // Show text's Pretty | Raw, for the session, as a document's is
 
 // `ctx`:
 //   name             the model's name: what SQL calls it (FROM <name>)
-//   title            what the bar says of it (its file); none: nothing (the host's bar says it)
+//   title            what the bar says of it (its file); none: only its name (the host's bar says the file)
+//   text, ext        (optional) the model's file and its extension: the Show text button
 //   tmsl             the model, as model.js's tmslOf reads it
 //   compiler         dax-sql's compiler over the model, with the host's tableSource and
 //                    query.js's EXPLORE_CASTS
@@ -130,6 +134,8 @@ export function mountExplore(root, ctx) {
   const tabs = pages.map(([k, t], i) => el('button', { type: 'button', class: `subtab${i ? '' : ' active'}`, role: 'tab',
     'data-apage': k, 'aria-selected': String(!i), tabindex: i ? '-1' : '0' }, t));
   const sqlToggle = btn('Show SQL', () => (sqlMode ? closeSql() : openSql()));
+  const textToggle = ctx.text != null && !ctx.editSql ? btn('Show text', () => (textMode ? closeText() : openText())) : null;
+  if (textToggle) textToggle.title = "The model's file, in place of the pivot";
   const csvBtn = btn('Download CSV', download, true);
   const exportBtn = ctx.exportToFabric ? btn('Export to Fabric', exportApp) : null;
   if (exportBtn) exportBtn.title = 'Publish this Explore, on this model, as a Fabric app (a local copy is written too)';
@@ -161,7 +167,7 @@ export function mountExplore(root, ctx) {
   if (editBtn) editBtn.title = 'This query in the SQL box, to take further by hand (the pivot is kept)';
   const closeBtn = ctx.close ? btn('Close', ctx.close) : null;
   const actions = el('div', { class: 'explore-actions', hidden: true },
-    ...(editBtn ? [editBtn, closeBtn] : [sqlToggle, closeBtn, csvBtn]), excelBtn, exportBtn);
+    ...(editBtn ? [editBtn, closeBtn] : [sqlToggle, textToggle, closeBtn, csvBtn]), excelBtn, exportBtn);
   const modelPage = el('div', { class: 'model-page' });
   const pivotPage = el('div', { class: 'explore-page', hidden: true });
 
@@ -181,13 +187,23 @@ export function mountExplore(root, ctx) {
       ta),
     info, outWrap, planView);
 
+  // Show text: the model's file, in place of the whole pivot.
+  const textTab = (label, pretty) => el('button', { type: 'button', class: 'subtab', role: 'tab',
+    onclick: () => { textPretty = pretty; drawText(); } }, label);
+  const prettyTab = textTab('Pretty', true), rawTab = textTab('Raw', false);
+  const textNote = el('span', { class: 'text-note' });
+  const textPre = el('pre', { class: 'text-file' });
+  const textPage = el('div', { class: 'text-page', hidden: true },
+    el('div', { class: 'text-bar' }, el('div', { class: 'subtabs', role: 'tablist', 'aria-label': 'How the file is shown' }, prettyTab, rawTab), textNote),
+    textPre);
+
   root.replaceChildren(
     el('div', { class: 'subtab-bar' },
       el('div', { class: 'subtabs', role: 'tablist', 'aria-label': 'Semantic model pages', hidden: pages.length < 2 }, tabs),
       keepOffline?.root,
       actions,
-      ctx.title == null ? null : el('span', { class: 'sm-title' }, `${ctx.title} · semantic model `, el('code', {}, ctx.name))),
-    modelPage, pivotPage, sqlPage);
+      el('span', { class: 'sm-title' }, ctx.title == null ? 'semantic model ' : `${ctx.title} · semantic model `, el('code', {}, ctx.name))),
+    modelPage, pivotPage, sqlPage, textPage);
   ta.addEventListener('keydown', e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); runSql(); } });
 
   for (const b of tabs) {
@@ -208,8 +224,9 @@ export function mountExplore(root, ctx) {
       b.tabIndex = on ? 0 : -1;
     }
     if (sqlMode && p !== 'pivot') closeSql();
+    if (textMode && p !== 'pivot') closeText();
     modelPage.hidden = p !== 'model';
-    pivotPage.hidden = p !== 'pivot' || sqlMode;
+    pivotPage.hidden = p !== 'pivot' || sqlMode || textMode;
     actions.hidden = p !== 'pivot';
     if (p === 'pivot') openExplorer();
   }
@@ -300,6 +317,7 @@ export function mountExplore(root, ctx) {
   }
   function openSql() {
     if (!explorer?.query()) { setStatus('Put a field on the shelves first', 'error'); return; }
+    if (textMode) closeText();
     sqlMode = true;
     fillSql();
     pivotPage.hidden = true;
@@ -315,6 +333,35 @@ export function mountExplore(root, ctx) {
     sqlToggle.textContent = 'Show SQL';
     explorer?.redraw();   // the chart takes its box's size again
   }
+  // --- Show text ---
+  let textMode = false, pretty = null;
+  function drawText() {
+    for (const [b, on] of [[prettyTab, textPretty], [rawTab, !textPretty]]) {
+      b.classList.toggle('active', on);
+      b.setAttribute('aria-selected', String(on));
+    }
+    // Coloured once, the first time Pretty is shown.
+    if (textPretty) pretty ??= prettyModelText(ctx.text, ctx.ext);
+    const p = textPretty ? pretty : { html: null, note: '' };
+    if (p.html == null) textPre.textContent = ctx.text; else textPre.innerHTML = p.html;
+    textNote.textContent = p.note || '';
+  }
+  function openText() {
+    if (sqlMode) closeSql();
+    textMode = true;
+    drawText();
+    pivotPage.hidden = true;
+    textPage.hidden = false;
+    textToggle.textContent = 'Show visual';
+  }
+  function closeText() {
+    textMode = false;
+    textPage.hidden = true;
+    pivotPage.hidden = page !== 'pivot';
+    textToggle.textContent = 'Show text';
+    explorer?.redraw();
+  }
+
   // Ctrl+Enter reaches runSql while a run or a plan is still going; only the latest may write.
   let outSeq = 0;
   async function busy(button, label, work, current) {

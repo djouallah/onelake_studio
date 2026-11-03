@@ -346,7 +346,9 @@ async function openModelView(file, text = null, { fromOneLake = text == null } =
     $('modelView').closest('section').classList.add('modelOpen');
     $('modelView').hidden = false;
     modelView = mountExplore($('modelView'), {
-      name: m.name, title: m.file, tmsl: tmslOf(m.bim), compiler: m.exploreCompiler,
+      // The tab and the header already say the file: the bar says only the model's name.
+      name: m.name, tmsl: tmslOf(m.bim), compiler: m.exploreCompiler,
+      text: bim, ext: (/\.([^.]+)$/.exec(file.name) || [])[1] || '',
       run: runModelSql,
       cancel: () => engine.cancelLoad(),
       echarts: loadEcharts,

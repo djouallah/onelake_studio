@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- A semantic model's Pivot has **Show text**: the model's `.bim` or `.yaml` in place of the pivot, Pretty (coloured, and a
+  `.bim` indented) or Raw, as stored. The model's bar no longer repeats the file's name.
 - **Logs** shows a semantic model's query as written, and, when its row is opened, the SQL dax-sql compiled it to.
 
 ## 0.2.13
