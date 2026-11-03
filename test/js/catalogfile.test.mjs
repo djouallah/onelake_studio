@@ -613,7 +613,7 @@ test("which tables are in use: the most read first, over the last 14 days, acros
 
 test("what was read whole is per snapshot, and only what finished counts for the day", async t => {
   const { open } = await setup(t);
-  const { store } = open();
+  const { backend, store } = open();
   const onelake = createOneLake({ catalog: { reset() {} }, store, prefetchEnabled: () => false });
   const { usage } = onelake;
   const a = { workspace: "w", item: "i.Lakehouse", schema: "dbo", table: "a" };
@@ -629,6 +629,11 @@ test("what was read whole is per snapshot, and only what finished counts for the
   usage.noteKept(a, { location: "v2", at: 3000, total: 900, bytes: 400, ms: 10, error: null, retryAt: 0 });
   assert.equal(usage.keptSince(0), 900, "the last attempt at a snapshot replaces the one before");
   assert.equal(usage.kept(a, "v2").error, null);
+  // The disk cache emptied under it (filecache.js): nothing is kept whole, so it is read whole again.
+  backend.dropKept();
+  assert.equal(usage.kept(a, "v2"), null);
+  assert.equal(usage.latestKept(a), null);
+  assert.equal(usage.keptSince(0), 0);
 });
 
 test("Clear takes what says which tables are in use, and a table's time reads with nothing else", async t => {

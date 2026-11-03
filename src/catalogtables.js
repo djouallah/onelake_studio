@@ -528,6 +528,8 @@ function createCatalogTables({ statement }) {
     keptSince(at) {
       return one('SELECT coalesce(sum(bytes), 0) AS bytes FROM table_kept WHERE error IS NULL AND ts >= ?', Math.floor(at)).bytes;
     },
+    /** Nothing is kept whole any more: the disk cache was emptied under it (filecache.js). */
+    dropKept() { run('DELETE FROM table_kept'); },
     pruneUse(fromDay, fromAt) {
       run('DELETE FROM table_use WHERE day < ?', fromDay);
       run('DELETE FROM table_kept WHERE ts < ?', Math.floor(fromAt));

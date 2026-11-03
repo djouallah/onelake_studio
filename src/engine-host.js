@@ -37,6 +37,7 @@ const { sqlStr, quoteIdent, assertReads, checkedRead, tableRefs, fileRefs, files
 const { SQL_KINDS, sqlName, abfssUrl, MODEL_CATALOG, modelSqlName } = require('./names');
 const { revalidate, sameAnswer } = require('./store');
 const { mapPool } = require('./http');
+const { FILE_CACHE_BLOCK } = require('./filecache');
 
 
 // Rows are read in chunks so no single postMessage carries a whole 200k-row grid, and so a tab
@@ -408,6 +409,10 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
       if (serve) {
         await load('quack', '', true);
         await conn.run('SET enable_external_file_cache = true;');
+        // A Delta table's files are read by a local name, mounted (mountTable), and DuckDB leaves a
+        // local file to the system's file cache unless told otherwise.
+        try { await conn.run('SET cache_local_files = true;'); }
+        catch (e) { onWarn(`a Delta table's data isn't held in memory between queries — ${e.message}`); }
         // A window's own guard (sql.js assertReads) refuses these already. This is one more wall, and
         // a text match, so not the only one: the session token is what keeps others out.
         await conn.run(`CREATE MACRO memory.main.studio_authorize(token, query) AS
@@ -536,6 +541,14 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
     try {
       await conn.run(`SET cache_httpfs_type = 'on_disk';`);
       await conn.run(`SET cache_httpfs_cache_directory = ${sqlStr(dir.replace(/\\/g, '/'))};`);
+      // Its own memory for what it reads off disk is 256 blocks, and with it on it reads the disk past
+      // the system's file cache: a table bigger than that came off the disk again on every query. The
+      // shared engine holds what it reads in DuckDB's memory instead (cache_local_files), and anyone
+      // else has the system's file cache. On their own: a build without them still has the disk cache.
+      try {
+        await conn.run(`SET cache_httpfs_cache_block_size = ${FILE_CACHE_BLOCK};`);
+        await conn.run('SET cache_httpfs_disk_cache_reader_enable_memory_cache = false;');
+      } catch (e) { onWarn(`the disk cache keeps its own block size and memory — ${e.message}`); }
       // Its default spawns a private thread pool per read, fanning one read out into up to
       // 1000 threads. In the extension host a cold full-table scan crashed the process that
       // way (a terminate inside cache_httpfs). DuckDB's own scheduler and a bounded fan-out

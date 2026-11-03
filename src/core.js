@@ -16,6 +16,7 @@ const { createStore } = require('./store');
 const { stateFileOf } = require('./catalogfile');
 const { createSyncWorker } = require('./syncworker');
 const { createDeltaMirror } = require('./deltamirror');
+const { settleFileCache } = require('./filecache');
 const { logFileOf } = require('./logfile');
 const { createOneLake } = require('./onelake');
 const { createSqlTables } = require('./sqltables');
@@ -186,6 +187,15 @@ function createCore({
   adoptLooseQueries().then(() => view.queriesChanged(), () => {});
   engines.setCacheRoot(engines.fileCacheRootFor());
   engines.setCacheAccount(storeAccount);
+  // An account's disk cache at this build's block size before the engine reads it (filecache.js). What was
+  // kept whole went with the old blocks, so it is read whole again.
+  const settleCache = account => {
+    const dir = settings.keepsDiskCache() ? engines.fileCacheDirFor(account) : null;
+    if (!dir) return;
+    settleFileCache(dir).then(gone => { if (gone) engines.catalogFileFor(account).dropKept(); })
+      .catch(e => log(`could not settle the disk cache in ${dir}: ${(e && e.message) || e}`));
+  };
+  settleCache(storeAccount);
   onelake = createOneLake({
     catalog,
     store: storeFor(storeAccount),
@@ -251,6 +261,7 @@ function createCore({
     // In one step with the account, before anything below waits: a read in between would write the
     // new account's answers into the old account's store.
     engines.setCacheAccount(key);   // the engine picks it up when it is next built
+    settleCache(key);
     onelake.useStore(storeFor(key));
     semviews.useAccount(key);
     engines.importKept(key, jsonStoreOf(key), hostCacheOf(key));
