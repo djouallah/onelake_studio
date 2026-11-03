@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.15
 
 - **Icons on a file, a folder and a semantic model in the tree**, shown on hover. A file: **Download File…** and
   **Copy SQL Name**. A semantic model: **Download File…** (its YAML), **Copy SQL Name** and **Download Again**.
