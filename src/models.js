@@ -213,7 +213,8 @@ function createModels({ onelake, fabric, semviews, modules, modelsFolder, accoun
     const byName = [...new Map(lakes.filter(l => !l.workspace).map(l => [l.itemName.toLowerCase(), l.itemName])).values()];
     if (!lakes.length) throw new Error(`${name} reads no lakehouse: its tables are named <lakehouse>.<schema>.<table>, or read through a Direct Lake expression`);
     if (workspace) return { text, model, workspace };
-    if (byId.length > 1) throw new Error(`${name} reads ${byId.length} workspaces, and a model is in one`);
+    // Where the workspace can't be known, `unknownWorkspace` says so: serve asks for --workspace.
+    if (byId.length > 1) throw Object.assign(new Error(`${name} reads ${byId.length} workspaces, and a model is in one`), { unknownWorkspace: true });
     const holds = async ws => {
       const items = await onelake.cached.items(ws);
       const have = new Set(((items && items.value) || []).filter(i => sqlKind(i.kind)).map(i => displayName(i.name).toLowerCase()));
@@ -221,7 +222,7 @@ function createModels({ onelake, fabric, semviews, modules, modelsFolder, accoun
     };
     if (byId.length) {
       const it = await onelake.itemNamed(byId[0], lakes.find(l => l.workspace).item)
-        .catch(e => { throw new Error(`the name of ${name}'s workspace could not be read: ${e.message}`); });
+        .catch(e => { throw Object.assign(new Error(`the name of ${name}'s workspace could not be read: ${e.message}`), { unknownWorkspace: true }); });
       if (!await holds(it.workspace)) throw new Error(`${name} names a lakehouse its workspace ${it.workspace} doesn't hold: ${byName.join(', ')}`);
       return { text, model, workspace: it.workspace };
     }

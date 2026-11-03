@@ -194,7 +194,8 @@ function createStandalone({ extensionDir = join(__dirname, '..'), env = process.
       await settle();
       if (!core.signedIn()) throw Object.assign(new Error('not signed in, and nothing is cached on this machine'), { code: EXIT.UNAVAILABLE });
       const path = resolve(file);
-      const found = await core.models.modelFile(path, { workspace });
+      const found = await core.models.modelFile(path, { workspace })
+        .catch(e => { throw e.unknownWorkspace ? new Error(`${e.message.trim()}: give it with --workspace`) : e; });
       const model = name || found.model;
       const where = found.workspace;
       if (!where) {
