@@ -32,6 +32,8 @@ const FABRIC_AUDIENCES = [
   'https://api.fabric.microsoft.com/.default',
   'https://analysis.windows.net/powerbi/api/.default',
 ];
+// The SQL endpoint's audience (tsql.js): what a TDS login to a workspace's endpoint takes.
+const SQL_AUDIENCE = 'https://database.windows.net/.default';
 
 const isCancel = e => /cancel|did not consent/i.test(String((e && e.message) || e));
 
@@ -107,7 +109,7 @@ function createSignIn({ session, memento, tenant, connectivity, log }) {
   // change the answer clears it outright.
   const storageHold = createTokenHold(TOKEN_TTL_MS);
 
-  function forgetToken() { storageHold.forget(); fabricHold.forget(); fabricAudience = null; appHold.forget(); tokenAsked = null; }
+  function forgetToken() { storageHold.forget(); fabricHold.forget(); fabricAudience = null; appHold.forget(); sqlHold.forget(); tokenAsked = null; }
 
   // What is being asked of the account provider, for the burst behind the first to share.
   let tokenAsked = null;
@@ -176,8 +178,21 @@ function createSignIn({ session, memento, tenant, connectivity, log }) {
     return token;
   }
 
+  // The SQL endpoint's token (tsql.js), for the same account as the storage session.
+  const sqlHold = createTokenHold(TOKEN_TTL_MS);
+  async function sqlToken({ fresh = false, createIfNone = false } = {}) {
+    if (!fresh && !createIfNone && sqlHold.recent()) return sqlHold.recent();
+    const asked = sqlHold.turn();
+    const storage = await getSession({ createIfNone: false }).catch(() => null);
+    if (!storage) return null;
+    const s = await sameAccountSession(SQL_AUDIENCE, createIfNone, storage);
+    const token = s ? s.accessToken : null;
+    sqlHold.keep(asked, token);
+    return token;
+  }
+
   return {
-    getSession, getToken, hostToken, fabricToken, appToken, forgetToken,
+    getSession, getToken, hostToken, fabricToken, appToken, sqlToken, forgetToken,
     signedOutByChoice, accountKey, queryAccountOf, knownAccount, rememberAccount,
     lastAuthError: () => lastAuthError,
     // VS Code owns the account, so this is all a Sign Out can do.

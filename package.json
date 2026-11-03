@@ -63,6 +63,11 @@
         "icon": "$(gear)"
       },
       {
+        "command": "onelakeStudio.probeSqlEndpoint",
+        "title": "Probe SQL Endpoint",
+        "category": "OneLake Studio"
+      },
+      {
         "command": "onelakeStudio.showPerformance",
         "title": "Performance",
         "category": "OneLake Studio",
@@ -718,6 +723,7 @@
   },
   "dependencies": {
     "@azure/msal-node": "7.1.2",
-    "@duckdb/node-api": "2.0.0-r.1"
+    "@duckdb/node-api": "2.0.0-r.1",
+    "tedious": "19.2.2"
   }
 }

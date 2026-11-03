@@ -134,6 +134,21 @@ function createFabric({ getFabricToken, apiBase = FABRIC_API,
     return list.map(i => ({ id: i.id, name: i.displayName, type: i.type }));
   }
 
+  // The workspace's items a SQL endpoint answers for, with the endpoint's TDS host:
+  // [{ name, type, host }]. A lakehouse says it in sqlEndpointProperties, a warehouse in its own
+  // properties; every item of a workspace has the same host, and is a database there by its name.
+  async function sqlEndpoints(workspace) {
+    const id = await workspaceId(workspace);
+    const [lakes, houses] = await Promise.all([
+      listAll(`/workspaces/${id}/lakehouses`, `Listing lakehouses in ${workspace}`),
+      listAll(`/workspaces/${id}/warehouses`, `Listing warehouses in ${workspace}`),
+    ]);
+    return [
+      ...lakes.map(l => ({ name: l.displayName, type: 'Lakehouse', host: l.properties?.sqlEndpointProperties?.connectionString })),
+      ...houses.map(w => ({ name: w.displayName, type: 'Warehouse', host: w.properties?.connectionString })),
+    ].filter(i => i.host).sort((a, b) => byName(a.name, b.name));
+  }
+
   // [{ id, name, description }] by name.
   async function listSemanticModels(workspace) {
     const id = await workspaceId(workspace);
@@ -210,7 +225,8 @@ function createFabric({ getFabricToken, apiBase = FABRIC_API,
 
   function reset() { wsIds = null; }
 
-  return { workspaceId, itemOf, itemOfSqlEndpoint, listItems, listSemanticModels, listApps, getBim, reset };
+  return { workspaceId, workspaceNames: async () => [...(await workspaces()).keys()].sort(byName),
+           itemOf, itemOfSqlEndpoint, listItems, sqlEndpoints, listSemanticModels, listApps, getBim, reset };
 }
 
 module.exports = { createFabric, modelFileName, modelAccountDir, modelCopyPath };

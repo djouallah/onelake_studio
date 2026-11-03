@@ -27,6 +27,7 @@ const { createDiagLog, outputLogOf } = require('./diaglog');
 const { createConnectivity, probeOf } = require('./connectivity');
 const { useConnectivity } = require('./http');
 const { createSignIn } = require('./signin');
+const { runTsql } = require('./tsql');
 const { createReadLog } = require('./readlog');
 const { createSettings } = require('./settings');
 const { queryStem } = require('./queries');
@@ -948,6 +949,35 @@ async function activateInner(context) {
         showError(`Could not sign in to the Fabric API: ${(e && e.message) || e}`);
       }
     })),
+
+    // SQL endpoint mode's first check (tsql.js): can this account log in to a workspace's SQL
+    // endpoint, and run a statement there? Asks once for the SQL audience, which may prompt.
+    vscode.commands.registerCommand('onelakeStudio.probeSqlEndpoint', async () => {
+      try {
+        if (!await fabricToken({ createIfNone: true })) return;
+        const ws = await vscode.window.showQuickPick(fabric.workspaceNames(), { placeHolder: 'A workspace with a lakehouse or a warehouse' });
+        if (!ws) return;
+        const items = await fabric.sqlEndpoints(ws);
+        if (!items.length) return showError(`${ws} has no lakehouse or warehouse with a SQL endpoint`);
+        const pick = items.length === 1 ? { i: items[0] }
+          : await vscode.window.showQuickPick(items.map(i => ({ label: i.name, description: i.type, i })));
+        if (!pick) return;
+        const it = pick.i;
+        const token = await signIn.sqlToken({ createIfNone: true });
+        if (!token) return showError('No token for the SQL endpoint: the sign-in was cancelled or refused');
+        const t0 = Date.now();
+        const r = await runTsql({ host: it.host, database: it.name, token,
+          sql: 'SELECT @@VERSION AS version, DB_NAME() AS db, (SELECT COUNT(*) FROM sys.tables) AS tables' });
+        const [version, db, tables] = r.rows[0];
+        out.appendLine(`sql endpoint probe: ${it.host} ${db} answered in ${Date.now() - t0} ms, ${tables} tables, ${String(version).split(/\r?\n/)[0]}`);
+        vscode.window.showInformationMessage(`The SQL endpoint answered: ${db} has ${tables} tables.`, 'Show Log').then(p => {
+          if (p === 'Show Log') out.show(true);
+        });
+      } catch (e) {
+        out.appendLine(`sql endpoint probe failed: ${(e && e.stack) || e}`);
+        showError(`The SQL endpoint probe failed: ${(e && e.message) || e}`);
+      }
+    }),
 
     vscode.commands.registerCommand('onelakeStudio.openSemanticModel', onClick(n => openModel(n))),
     // An app in the tree: its URL, copied by its button and opened by a click. Nothing is changed.
