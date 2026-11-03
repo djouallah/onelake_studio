@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **A semantic model's YAML is plain Apache Ossie where it can be.** A measure that SQL can say the same way
+  (`SUM`, `AVERAGE`, `COUNTROWS`, `DIVIDE`, ...) is written in SQL, the rest in DAX. When every table is in one
+  lakehouse of the model's workspace, a table's source is `<lakehouse>.<schema>.<table>`, with no OneLake URL.
+  The Power BI extension keeps only what Ossie has no field for and something needs, such as format strings and a
+  relationship's filter direction, and the **YAML** view shows it in amber. A model opened before is rewritten when
+  it is read again from Fabric. An Ossie model written by another tool, with its measures in SQL, opens too.
+  dax-sql 0.1.5.
 - A semantic model's **Model** tab has a **Diagram | YAML** switch (**Diagram | BIM** for a `.bim`): the model drawn, or
   its file, coloured. The model's bar no longer repeats the file's name, and its buttons are smaller.
 - **Logs** shows a semantic model's query as written, and, when its row is opened, the SQL dax-sql compiled it to.

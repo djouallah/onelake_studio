@@ -408,6 +408,12 @@ workspace has one model of a name.
 - **From the tree:** a click reads its TMSL definition (the REST API's `getDefinition`) and keeps it as
   Apache Ossie (dax-sql's `tmslToOssie`) in the cache folder, at `models/<account>/<workspace>/<model>.yaml`,
   then opens that copy. It is under its account because a workspace's name is unique in one tenant only.
+- **What the copy says:** a measure is a metric in Ossie's portable SQL when it means the same there, and DAX
+  when not. When every table is in one lakehouse of the model's workspace, each dataset's `source` is
+  `<lakehouse>.<schema>.<table>` and the file holds no Direct Lake expression; that lakehouse is found by name
+  in the tree's listing, so it opens offline. A model over several lakehouses keeps its expression. The
+  `POWER_BI` extension holds only what Ossie has no field for and something needs: what changes an answer
+  (a relationship's filter direction, a date table, ...) and what a user sees (format strings, hidden, ...).
 - **From a query:** a statement that names a model not open yet opens it first, in the same way.
 - **Nothing is written to OneLake**, so someone who may only read the workspace can open and query it.
 - **Only Direct Lake.** Any other model is refused, and nothing is kept.
@@ -447,8 +453,8 @@ SELECT * FROM (SHOW SEMANTIC METRICS IN semanticmodel.ws.sales) WHERE ...;
 
 **A model file is a file.** A `.bim` under `Files/`, or an [Apache Ossie](https://github.com/apache/ossie)
 `.yaml` or `.yml` whose top level has `version:` and `datasets:`, opens in the model view in place of
-the SQL box. dax-sql's `formats/ossie.js` turns Ossie into the `.bim` it stands for, and from there the
-two are one. These files can be stored anywhere and have no model name. A model created from one, for
+the SQL box. dax-sql's `formats/ossie.js` turns Ossie into the `.bim` it stands for, metrics in DAX or in
+Ossie's SQL alike, and from there the two are one. These files can be stored anywhere and have no model name. A model created from one, for
 Fabric or only for a Fabric app, must be named `semanticmodel.<workspace>.<model>`, and it overwrites
 whatever we have under that name. See [NAMING.md](NAMING.md#files).
 
