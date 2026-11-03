@@ -5,6 +5,10 @@
 - A semantic model's **Model** tab has a **Diagram | YAML** switch (**Diagram | BIM** for a `.bim`): the model drawn, or
   its file, coloured. The model's bar no longer repeats the file's name, and its buttons are smaller.
 - **Logs** shows a semantic model's query as written, and, when its row is opened, the SQL dax-sql compiled it to.
+- **Fixes:**
+  - Keep offline no longer fails a big table with *Unauthorized* when the sign-in renews during the read. A file
+    opened before the renewal kept the old sign-in for an hour, so trying again was refused too. A failed table is
+    now one short line on the model's bar, with the reason in its tip.
 
 ## 0.2.13
 

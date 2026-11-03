@@ -660,6 +660,13 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
     const p = await conn.prepare('CREATE OR REPLACE SECRET onelake_storage (TYPE azure, PROVIDER access_token, ACCESS_TOKEN ?)');
     p.bindVarchar(1, token);
     await p.run();
+    // The disk cache keeps a file's open handle for an hour, and the handle keeps the token it was
+    // opened with: a file opened before this one expired went on being refused on every retry (a
+    // Keep offline read of a big table outlives a token). Handles in use stay; the next open is new.
+    if (capabilities.fileCache) {
+      try { await conn.run('SELECT cache_httpfs_clear_file_handle_cache();'); }
+      catch (e) { onWarn(`the disk cache's open files keep the old sign-in — ${e.message}`); }
+    }
   }
 
   async function withAuthRetry(run, canRetry = () => true) {
@@ -670,7 +677,11 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
       if (!AUTH_FAILURE.test(String(e && e.message)) || !canRetry()) throw e;
       const stale = authToken;
       const fresh = await ensureAuth(true);   // PAST the caller's token cache
-      if (!fresh || fresh === stale) throw e;  // same token, same answer — do not loop
+      if (!fresh) throw e;
+      // The same token: a file handle opened with an older one may still be what was refused, put
+      // back by a read that was using it when the token moved on. Issued again, which lets those go,
+      // and tried once more; a second refusal is the token's own, and is said.
+      if (fresh === stale) await admin(() => (remote ? instance.setStorageToken(fresh) : issueSecret(fresh)));
       return run();
     }
   }
