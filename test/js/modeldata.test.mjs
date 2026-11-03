@@ -342,7 +342,9 @@ test("a table that can't be found is named, and the others come down", async () 
   assert.deepEqual(reads.map(r => r.name), [DIM]);
   reads[0].resolve();
   await settled();
-  assert.match((await data.state(CATALOG)).say, /^1 of 2 tables here · fact: there is no table fact$/);
+  const said = await data.state(CATALOG);
+  assert.match(said.say, /^1 of 2 tables · fact failed, retrying$/);
+  assert.match(said.tip, /^fact could not be read from OneLake: there is no table fact\./);
 });
 
 test("an empty table has nothing to bring down", async () => {
