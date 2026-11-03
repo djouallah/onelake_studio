@@ -54,7 +54,7 @@ test("a model is semanticmodel.ws.model, and a statement's unopened models are f
   await assert.rejects(defineView("Sales", "Sales.bim", "{}"), /semanticmodel\.<workspace>\.<model>: Sales has no workspace/);
 });
 
-test("Show text's Pretty colours a model's file and changes none of its text", async () => {
+test("Model's YAML colours a model's file and changes none of its text", async () => {
   const { prettyModelText, PRETTY_MAX } = await import("../../app/explore/pretty.js");
   const plain = html => html.replace(/<[^>]*>/g, "").replace(/&lt;/g, "<").replace(/&gt;/g, ">")
     .replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, "&");
@@ -72,7 +72,7 @@ test("Show text's Pretty colours a model's file and changes none of its text", a
     "    url: http://a#b\r",
     "  -",
   ].join("\n");
-  const y = prettyModelText(yaml, "yaml").html;
+  const y = prettyModelText(yaml, "yaml");
   assert.equal(plain(y), yaml);
   assert.ok(!y.includes("</script>") && y.includes("&amp;"), "a value is escaped");
   assert.match(y, /<span class="tk-key">name<\/span>:/);
@@ -82,7 +82,7 @@ test("Show text's Pretty colours a model's file and changes none of its text", a
   assert.ok(!/tk-key">\s*CALCULATE/.test(y), "a block's lines are not keys");
 
   const bim = '{"model":{"name":"m","n":3,"ok":false,"x":null,"s":"a</script>\\"b"}}';
-  const j = prettyModelText(bim, "bim").html;
+  const j = prettyModelText(bim, "bim");
   assert.equal(plain(j), JSON.stringify(JSON.parse(bim), null, 2));
   assert.ok(!j.includes("</script>"));
   assert.match(j, /<span class="tk-key">&quot;name&quot;<\/span>: <span class="tk-str">&quot;m&quot;<\/span>/);
@@ -91,9 +91,7 @@ test("Show text's Pretty colours a model's file and changes none of its text", a
 
   // An integer past 2^53 would come back as another number: such a .bim is coloured as stored.
   const big = '{"id":12345678901234567890}';
-  assert.equal(plain(prettyModelText(big, "bim").html), big);
+  assert.equal(plain(prettyModelText(big, "bim")), big);
 
-  const huge = prettyModelText("a: b\n".repeat(PRETTY_MAX / 5 + 1), "yaml");
-  assert.equal(huge.html, null);
-  assert.match(huge.note, /too large/);
+  assert.equal(prettyModelText("a: b\n".repeat(PRETTY_MAX / 5 + 1), "yaml"), null);
 });

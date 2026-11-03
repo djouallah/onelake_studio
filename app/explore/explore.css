@@ -24,7 +24,7 @@ section.modelOpen #chartBtn { display: none; }
 /* The studio styles every input; Explore's checkboxes keep their own size. */
 .ex input[type=checkbox], .ex-pop input[type=checkbox] { padding: 0; }
 
-.subtab-bar { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: var(--gap) var(--gutter) 0; }
+.subtab-bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.5rem 1rem; padding: var(--gap) var(--gutter) 0; }
 .subtabs { display: flex; gap: 0.15rem; padding: 0.2rem; background: var(--card); border: 1px solid var(--hairline); border-radius: 999px; }
 .subtab { padding: 0.32rem 0.9rem; font-size: 0.8rem; font-weight: 600; color: var(--muted); background: none; border: none; border-radius: 999px; cursor: pointer; transition: color 0.15s, background 0.15s; }
 .subtab:hover { color: var(--text); }
@@ -50,7 +50,7 @@ section.modelOpen #chartBtn { display: none; }
 
 /* --- SQL page --- */
 .explore-controls { display: flex; gap: 0.8rem; padding: var(--gap) var(--gutter) 0.8rem; align-items: center; flex-wrap: wrap; }
-.btn-explore { padding: 0.42rem 1rem; border: 1px solid var(--border); border-radius: 999px; font-size: 0.82rem; font-weight: 600; background: none; color: var(--text); cursor: pointer; transition: border-color 0.15s, background 0.15s, color 0.15s; }
+.btn-explore { padding: 0.18rem 0.7rem; border: 1px solid var(--border); border-radius: 999px; font-size: 0.76rem; font-weight: 600; line-height: 1.4; white-space: nowrap; background: none; color: var(--text); cursor: pointer; transition: border-color 0.15s, background 0.15s, color 0.15s; }
 .btn-explore:hover { border-color: var(--muted); }
 .btn-explore.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
 .btn-explore.primary:hover { opacity: 0.88; }
@@ -70,14 +70,11 @@ section.modelOpen #chartBtn { display: none; }
 /* As tall as the Pivot's frame (.ex), so the two pages are one size and switching between them
    does not jump; the star sits in the middle of its box. */
 .model-page { display: grid; grid-template-columns: minmax(0, 1fr) 380px; gap: var(--gap); padding: var(--gap) var(--gutter) 1.5rem; min-height: 70vh; }
-.model-page[hidden], .explore-sql-page[hidden], .explore-page[hidden], .text-page[hidden] { display: none; }
-/* Show text: the model's file, Pretty (pretty.js's tk-* spans) or Raw. */
-.text-page { padding: var(--gap) var(--gutter) 1.5rem; }
-.text-bar { display: flex; align-items: center; gap: 1rem; margin-bottom: var(--gap); }
-.text-bar .subtabs { width: max-content; }
-.text-note { font-size: 0.8rem; color: var(--muted); }
-.text-file { font-family: var(--vscode-editor-font-family, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace); font-size: 0.82rem; line-height: 1.45;
-  white-space: pre; overflow-x: auto; tab-size: 4; margin: 0; padding: 0.75rem 1rem; background: var(--card); border: 1px solid var(--hairline); border-radius: var(--radius-sm); }
+.model-page[hidden], .explore-sql-page[hidden], .explore-page[hidden], .model-area[hidden], .text-file[hidden] { display: none; }
+/* Model's Diagram | YAML: the model drawn, or its file (pretty.js's tk-* spans). */
+.model-switch { width: max-content; margin: var(--gap) var(--gutter) 0; }
+.text-file { margin: var(--gap) var(--gutter) 1.5rem; font-family: var(--vscode-editor-font-family, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace); font-size: 0.82rem; line-height: 1.45;
+  white-space: pre; overflow-x: auto; tab-size: 4; padding: 0.75rem 1rem; background: var(--card); border: 1px solid var(--hairline); border-radius: var(--radius-sm); }
 .tk-key { color: var(--vscode-debugTokenExpression-name, #79c0ff); }
 .tk-str { color: var(--vscode-debugTokenExpression-string, #a5d6ff); }
 .tk-num { color: var(--vscode-debugTokenExpression-number, #b5cea8); }
@@ -212,7 +209,7 @@ section.modelOpen #chartBtn { display: none; }
   .ex { grid-template-columns: 190px minmax(0, 1fr); }
 }
 /* The Pivot's actions, in the subtab bar: Show SQL, Download CSV, Export to Fabric. */
-.explore-actions { display: flex; gap: 0.4rem; margin-left: auto; }
+.explore-actions { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-left: auto; }
 .explore-actions[hidden], .subtabs[hidden] { display: none; }
 
 /* Show plan (profile.js): the profile, and the plan's tree. Ported from analytics-as-code. */

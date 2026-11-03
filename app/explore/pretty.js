@@ -1,5 +1,5 @@
 // =============================================================================
-// explore/pretty.js — a model's file as Show text's Pretty: its text, coloured
+// explore/pretty.js — a model's file as Model's YAML (or BIM) shows it: its text, coloured
 // =============================================================================
 // A .bim is JSON, re-indented as docview.js does a document; an Ossie model is YAML, kept as
 // it is. Either way the text is escaped and only spans are added around keys, strings,
@@ -79,18 +79,18 @@ function prettyYaml(text) {
 }
 
 /**
- * Show text's Pretty: { html } to put in a <pre>, or { html: null, note } when it is shown as
- * it is. `ext` is the file's extension: a .bim is JSON, anything else YAML.
+ * The HTML to put in a <pre>, or null when the file is too large to colour and is shown as
+ * stored. `ext` is the file's extension: a .bim is JSON, anything else YAML.
  */
 export function prettyModelText(text, ext = '') {
   const s = String(text);
-  if (s.length > PRETTY_MAX) return { html: null, note: 'This file is too large to colour, so it is shown as stored.' };
+  if (s.length > PRETTY_MAX) return null;
   const json = /^\.?bim$/i.test(ext) || /^\s*[{[]/.test(s);
-  if (!json) return { html: prettyYaml(s) };
+  if (!json) return prettyYaml(s);
   // Parsed, an integer past 2^53 would come back as another number: such text is coloured as it is.
   let indented = s;
   if (!/\d{16}/.test(s)) {
     try { indented = JSON.stringify(JSON.parse(s.trim()), null, 2); } catch (_) { /* coloured as it is */ }
   }
-  return { html: prettyJson(indented) };
+  return prettyJson(indented);
 }
