@@ -41,8 +41,9 @@ const ENGINE_METHODS = new Set(['query', 'stream', 'cancel', 'info', 'fileView',
  *        ask where to save, write it, answer the path (null: dismissed)
  * @param {(x: {file: string, name: string, text: string, state: object|null}) => Promise<string>} [o.exportExplore]
  *        Export to Fabric: answers what the page says when it is done
- * @param {(list: {workspace: string, item: string, schema: string, table: string}[]) => Promise<string[]>} [o.nameTables]
- *        a semantic model's Direct Lake tables (named by GUID) -> their SQL names
+ * @param {(list: object[]) => Promise<string[]>} [o.nameTables]
+ *        a semantic model's Direct Lake tables -> their SQL names: { workspace, item } by GUIDs, or
+ *        { workspaceName, itemName }; then { schema, table }
  * @param {(x: {sql: string, name: string}) => Promise<string|null>} [o.exportResult]
  *        Export: the query's every row to a file the user picks; its path (null: dismissed)
  * @param {(x: {as: string, content: string}) => Promise<void>} [o.openDocument]
@@ -123,11 +124,15 @@ function createHostMethods({ onelake, engine, onStatus = () => {}, saveFile = nu
       try { sqlName = sqlNameOf(lh, t); } catch (_) { /* an item SQL cannot name */ }
       return { ...await onelake.table(lh, t, { onWait: onStatus }), sqlName };
     },
-    // A semantic model's Direct Lake tables, which it names by GUID, as SQL names.
+    // A semantic model's Direct Lake tables as SQL names: each named by GUIDs (its expression), or
+    // by its lakehouse's name in the model's workspace (item.schema.table).
     'onelake.nameTables': async list => {
       if (!nameTables) throw new Error('semantic models are not available here');
       return nameTables((Array.isArray(list) ? list : []).map(x => ({
-        workspace: String(x.workspace), item: String(x.item), schema: String(x.schema || 'dbo'), table: String(x.table),
+        ...(x.itemName != null
+          ? { workspaceName: String(x.workspaceName ?? ''), itemName: String(x.itemName) }
+          : { workspace: String(x.workspace), item: String(x.item) }),
+        schema: String(x.schema || 'dbo'), table: String(x.table),
       })));
     },
     // A Delta table's own log: its state as of the converted version, and its commits a

@@ -44,6 +44,21 @@ test("Open in Excel: a page names a model and nothing else, and hears how it wen
   await assert.rejects(createHostMethods({ onelake: {}, engine: {} })["excel.open"]({ workspace: "ws", model: "m" }), /not available here/);
 });
 
+test("a model's tables reach the host as the page names them: by GUIDs, or by lakehouse name in a workspace", async () => {
+  const asked = [];
+  const methods = createHostMethods({ onelake: {}, engine: {}, nameTables: async list => { asked.push(...list); return list.map(() => "x"); } });
+  await methods["onelake.nameTables"]([
+    { workspace: "w-guid", item: "i-guid", schema: "mart", table: "a", extra: "dropped" },
+    { workspaceName: "power bi", itemName: "nem", schema: "mart", table: "b" },
+    { workspaceName: "power bi", itemName: "nem", table: "c" },
+  ]);
+  assert.deepEqual(asked, [
+    { workspace: "w-guid", item: "i-guid", schema: "mart", table: "a" },
+    { workspaceName: "power bi", itemName: "nem", schema: "mart", table: "b" },
+    { workspaceName: "power bi", itemName: "nem", schema: "dbo", table: "c" },
+  ]);
+});
+
 test("Keep offline: a page names a model and on or off, and nothing else", async () => {
   const asked = [];
   const methods = createHostMethods({ onelake: {}, engine: {},
