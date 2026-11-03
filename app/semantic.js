@@ -79,30 +79,29 @@ export function lakeExpressions(bim) {
   return found;
 }
 
-// The parts of a dotted SQL name, as written ("my ws" keeps its quotes).
-const nameParts = ident => String(ident).match(/"(?:[^"]|"")*"|[^.]+/g) ?? [];
-const unquote = p => (p.startsWith('"') ? p.slice(1, -1).replace(/""/g, '"') : p);
-const SQL_KINDS = ["lakehouse", "warehouse", "sqldatabase", "mirroreddatabase"];
+// The parts of a dotted SQL name, as written ("my ws" keeps its quotes), and one without them.
+export const nameParts = ident => String(ident).match(/"(?:[^"]|"")*"|[^.]+/g) ?? [];
+export const unquote = p => (p.startsWith('"') ? p.slice(1, -1).replace(/""/g, '"') : p);
 
-// A table an Ossie model names in full: its `source` is its SQL name, kind.ws.item.schema.table,
-// which dax-sql reads back as a partition with no expression whose schema is all but the table.
-// { ident, kind, workspace, item } (the item as Fabric shows it), or null.
-function namedInFull(s) {
+// A table an Ossie model names in its own workspace: its `source` is item.schema.table, as
+// Fabric's SQL endpoint names it, which dax-sql reads back as a partition with no expression
+// whose schema is item.schema. { item, schema, table }, unquoted, or null.
+function namedInWorkspace(s) {
   if (!s?.entityName || s.expressionSource || !s.schemaName) return null;
   const parts = nameParts(s.schemaName);
-  if (parts.length !== 4 || !SQL_KINDS.includes(lc(unquote(parts[0])))) return null;
-  return { ident: `${s.schemaName}.${s.entityName}`, kind: lc(unquote(parts[0])), workspace: unquote(parts[1]), item: unquote(parts[2]) };
+  return parts.length === 2 ? { item: unquote(parts[0]), schema: unquote(parts[1]), table: unquote(s.entityName) } : null;
 }
 
 // The lakehouses a model reads, each once: by GUID, { workspace, item }, from a Direct Lake
-// expression; by name, { kind, workspaceName, itemName }, from tables named in full. The one an
-// Ossie model reads is its Iceberg catalog (Export to Fabric, src/exportapp.js).
-export function lakehousesOf(bim) {
+// expression; by name, { workspaceName, itemName }, from tables named item.schema.table, in
+// `workspace`, the model's. The one an Ossie model reads is its Iceberg catalog (Export to
+// Fabric, src/exportapp.js).
+export function lakehousesOf(bim, workspace = null) {
   const out = new Map();
   for (const l of lakeExpressions(bim).values()) out.set(`${l.workspace}/${l.item}`, l);
   for (const t of bim?.model?.tables ?? []) {
-    const n = namedInFull(t.partitions?.[0]?.source);
-    if (n) out.set(lc(JSON.stringify([n.kind, n.workspace, n.item])),{ kind: n.kind, workspaceName: n.workspace, itemName: n.item });
+    const n = namedInWorkspace(t.partitions?.[0]?.source);
+    if (n) out.set(lc(JSON.stringify([n.item])), { workspaceName: workspace, itemName: n.item });
   }
   return [...out.values()];
 }
@@ -134,14 +133,14 @@ export function storageMode(bim) {
 }
 
 // The bim's OneLake tables, by table name: { lh, t } for one its Direct Lake expression places
-// by GUIDs, { ident } for one named in full, whose SQL name is that.
+// by GUIDs, { item, t } for one named item.schema.table in the model's workspace.
 export function directLakeTables(bim) {
   const found = lakeExpressions(bim);
   const tables = new Map();
   for (const t of bim?.model?.tables ?? []) {
     const s = t.partitions?.[0]?.source;
-    const named = namedInFull(s);
-    if (named) { tables.set(lc(t.name), { ident: named.ident }); continue; }
+    const named = namedInWorkspace(s);
+    if (named) { tables.set(lc(t.name), { item: named.item, t: { schema: named.schema, table: named.table } }); continue; }
     const lake = s?.expressionSource && found.get(s.expressionSource);
     if (!lake) continue;
     tables.set(lc(t.name), {
@@ -152,18 +151,20 @@ export function directLakeTables(bim) {
   return tables;
 }
 
-// Who turns a Direct Lake table (its item by GUID) into its SQL name: the host, which asks
-// the Fabric API what the GUIDs are called. Set once by the panel and by the command line.
+// Who turns a Direct Lake table into its SQL name: the host, which asks the Fabric API what
+// an item's GUIDs are called, or finds an item named in a workspace and its kind in the tree's
+// listing. Set once by the panel and by the command line.
 let tableNamer = null;
 export const setTableNamer = fn => { tableNamer = fn; };
 
-// directLakeTables(), each with its SQL name as `ident`: one named in full has it already.
-async function namedLakeTables(bim) {
+// directLakeTables(), each with its SQL name as `ident`; `workspace` is the model's, where a
+// table named item.schema.table is.
+async function namedLakeTables(bim, workspace) {
   const lake = directLakeTables(bim);
-  const list = [...lake.values()].filter(l => !l.ident);
+  const list = [...lake.values()];
   if (!list.length) return lake;
   if (!tableNamer) throw new Error("Direct Lake tables cannot be named here");
-  const names = await tableNamer(list.map(l => ({ ...l.lh, ...l.t })));
+  const names = await tableNamer(list.map(l => (l.lh ? { ...l.lh, ...l.t } : { workspaceName: workspace, itemName: l.item, ...l.t })));
   list.forEach((l, i) => { l.ident = names[i]; });
   return lake;
 }
@@ -212,7 +213,7 @@ export async function defineView(name, path, text, mode = "replace", modules = n
   const mods = await ready(modules);
   const { createCompiler, tmslToModel } = mods;
   const bim = bimOf(path, text, mods);
-  const lake = await namedLakeTables(bim);
+  const lake = await namedLakeTables(bim, schema);
   // A Direct Lake table is read by its SQL name, the engine making its view as a query
   // names it. Any other has no OneLake table behind it: a shorter name would resolve to
   // whatever happens to carry it in the engine, such as a Files/ view, so it is refused.

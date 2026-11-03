@@ -42,7 +42,7 @@ function createExport({ connectivity, modules, hostToken, appToken, fabric, onel
     if (!model || !model.workspace || !model.name) {
       throw new Error('Export to Fabric needs a model that is a OneLake file, or one opened from the tree');
     }
-    const lakes = await lakesOf(text, modelFileName(model.name));
+    const lakes = await lakesOf(text, modelFileName(model.name), model.workspace);
     if (lakes.length !== 1) {
       throw new Error(`${model.name} reads ${lakes.length} lakehouses: Export to Fabric needs a model over exactly one`);
     }
@@ -52,12 +52,13 @@ function createExport({ connectivity, modules, hostToken, appToken, fabric, onel
   }
 
   // The lakehouses a model reads, by GUIDs: the app's catalog is addressed by them. One its
-  // tables name in full (lakehouse.<workspace>.<item>...) is looked up by name in Fabric.
-  async function lakesOf(text, file) {
+  // tables name <lakehouse>.<schema>.<table> is in `workspace` (the model's, or the file's), and
+  // is looked up by name in Fabric.
+  async function lakesOf(text, file, workspace) {
     const { semantic, compiler } = await modules();
-    return Promise.all(semantic.lakehousesOf(semantic.bimOf(file, text, compiler)).map(async l => {
+    return Promise.all(semantic.lakehousesOf(semantic.bimOf(file, text, compiler), workspace).map(async l => {
       if (l.workspace) return l;
-      if (l.kind !== 'lakehouse') throw new Error(`${l.workspaceName}/${l.itemName} is a ${l.kind}: the app reads a lakehouse's tables`);
+      if (!l.workspaceName) throw new Error(`${file} names its lakehouse ${l.itemName} with no workspace`);
       const items = await fabric.listItems(l.workspaceName);
       const it = items.find(i => i.type === 'Lakehouse' && i.name.toLowerCase() === l.itemName.toLowerCase());
       if (!it) throw new Error(`workspace ${l.workspaceName} has no lakehouse ${l.itemName}`);
@@ -83,7 +84,7 @@ function createExport({ connectivity, modules, hostToken, appToken, fabric, onel
       // to OneLake a semantic model ever gets.
       const target = path ? null : await modelTarget(text, model);
       if (target) ({ workspace, path } = target);
-      const plan = planExport(text, file, name, await modules(), { workspace, path }, await lakesOf(text, file));
+      const plan = planExport(text, file, name, await modules(), { workspace, path }, await lakesOf(text, file, model ? model.workspace : workspace));
       const fnDir = join(extensionDir, 'fabric-function');
       const [sourceZip, deployMetaData] = await Promise.all([
         fsp.readFile(join(fnDir, 'source.zip')), fsp.readFile(join(fnDir, 'deploymetadata.json'), 'utf8'),

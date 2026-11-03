@@ -143,9 +143,22 @@ function createSqlTables({ onelake, paths, offlineReason = () => null, deltaLogs
   // A semantic model's Direct Lake tables, which its expressions name by GUID, as SQL names:
   // [{ workspace, item (GUIDs), schema, table }] -> [name]. Every model is named each time the
   // panel opens, and only an item never seen asks Fabric.
+  // Direct Lake tables as SQL names: { workspace, item } by GUIDs (a model's expression), or
+  // { workspaceName, itemName } (a model naming its table item.schema.table), whose kind the
+  // workspace's kept listing says; then the schema and the table.
   async function nameTables(list) {
     const out = [];
     for (const x of list) {
+      if (x.itemName != null) {
+        if (!x.workspaceName) throw new Error(`${x.itemName}.${x.schema}.${x.table}: the model's workspace is not known`);
+        const workspaces = await onelake.workspaces().catch(() => []);
+        const ws = workspaces.find(w => same(w, x.workspaceName)) || String(x.workspaceName);
+        const items = await onelake.items(ws).catch(e => { throw new Error(`workspace ${ws} could not be listed — ${e.message}`); });
+        const hit = items.find(i => sqlKind(i.kind) && same(displayName(i.name), x.itemName));
+        if (!hit) throw new Error(`there is no lakehouse or warehouse ${x.itemName} in workspace ${ws}`);
+        out.push(sqlName({ kind: sqlKind(hit.kind), workspace: ws, item: displayName(hit.name), schema: x.schema, table: x.table }));
+        continue;
+      }
       const it = await onelake.itemNamed(x.workspace, x.item);
       const kind = sqlKind(it.item.replace(/^.*\./, ''));
       if (!kind) throw new Error(`${it.workspace}/${it.item} holds no tables SQL can name`);

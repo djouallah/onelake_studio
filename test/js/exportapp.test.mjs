@@ -52,15 +52,15 @@ test("the plan: its own -explore name, the lakehouse's catalog, the model's URL 
   assert.equal(dfsUrl("ws", "/a b.Lakehouse/Files/m#1.yaml"), "https://onelake.dfs.fabric.microsoft.com/ws/a%20b.Lakehouse/Files/m%231.yaml");
 });
 
-test("the plan: tables named in full read their lakehouse by name, and the caller gives its GUIDs", () => {
-  // As dax-sql reads back lakehouse."power bi".nem.mart.fct_sales: all of it but the table is the schema.
-  const named = t => ({ name: t, partitions: [{ source: { type: "entity", entityName: t, schemaName: 'lakehouse."power bi".nem.mart' } }] });
+test("the plan: tables named item.schema.table read their lakehouse by name, and the caller gives its GUIDs", () => {
+  // As dax-sql reads back nem.mart.fct_sales: all of it but the table is the schema.
+  const named = t => ({ name: t, partitions: [{ source: { type: "entity", entityName: t, schemaName: "nem.mart" } }] });
   const bim = { model: { tables: [named("fct_sales"), named("dim_region")] } };
   const d = doc({ datasets: [
-    { name: "fct_sales", source: 'lakehouse."power bi".nem.mart.fct_sales' },
-    { name: "dim_region", source: 'lakehouse."power bi".nem.mart.dim_region' },
+    { name: "fct_sales", source: "nem.mart.fct_sales" },
+    { name: "dim_region", source: "nem.mart.dim_region" },
   ] });
-  assert.deepEqual(semantic.lakehousesOf(bim), [{ kind: "lakehouse", workspaceName: "power bi", itemName: "nem" }]);
+  assert.deepEqual(semantic.lakehousesOf(bim, "power bi"), [{ workspaceName: "power bi", itemName: "nem" }]);
   assert.throws(() => planExport(OSSIE, "sales.yaml", "sales", mods(bim, d), WHERE), /by name, and the app needs its GUIDs/);
   const plan = planExport(OSSIE, "sales.yaml", "sales", mods(bim, d), WHERE, [{ workspace: WS, item: LH }]);
   assert.equal(plan.catalogUrl, `https://onelake.table.fabric.microsoft.com/iceberg/${WS}/${LH}`);
@@ -123,8 +123,8 @@ test("the page and the function read an Ossie dataset's table as the plan does",
     assert.equal(read({ source: "mart.x", custom_extensions: partition({ entityName: "x", schemaName: "mart" }) }), "mart.x");
     assert.equal(read({ source: "Time Calc", custom_extensions: partition({ type: "calculationGroup" }) }), null);
     assert.equal(read({ source: "by_hand" }), "dbo.by_hand");
-    assert.equal(read({ source: 'lakehouse."power bi".nem.mart.x' }), "mart.x", "a table named in full");
-    assert.equal(read({ source: 'lakehouse."a.b".nem.dbo."my table"' }), "dbo.my table");
+    assert.equal(read({ source: "nem.mart.x" }), "mart.x", "item.schema.table");
+    assert.equal(read({ source: '"my.lake".dbo."my table"' }), "dbo.my table");
     assert.equal(read({}), null);
   }
 });
@@ -138,8 +138,8 @@ test("the plan refuses: not a OneLake Files/ file, no lakehouse, two, a name the
   assert.throws(() => planExport(OSSIE, "m.yaml", "m", mods(two), WHERE), /names 2 lakehouses/);
   const spaced = doc({ datasets: [{ name: "Internet Sales", source: "mart.sales" }] });
   assert.throws(() => planExport(OSSIE, "m.yaml", "m", mods(bimOf(URL_), spaced), WHERE), /letters, digits and _ only: Internet Sales/);
-  const deep = doc({ datasets: [{ name: "sales", source: "a.b.sales" }] });
-  assert.throws(() => planExport(OSSIE, "m.yaml", "m", mods(bimOf(URL_), deep), WHERE), /schema\.table sources only: sales \(a\.b\.sales\)/);
+  const deep = doc({ datasets: [{ name: "sales", source: "w.a.b.sales" }] });
+  assert.throws(() => planExport(OSSIE, "m.yaml", "m", mods(bimOf(URL_), deep), WHERE), /schema\.table sources only: sales \(w\.a\.b\.sales\)/);
   assert.throws(() => planExport("version: 2\nmodels: []\n", "schema.yml", "m", mods(bimOf(URL_)), WHERE), /not an Apache Ossie model/);
 });
 

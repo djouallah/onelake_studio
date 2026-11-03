@@ -216,10 +216,10 @@ function createStandalone({ extensionDir = join(__dirname, '..'), env = process.
 // The workspace a model file's tables are in, when it names just one: a model's name is its workspace's
 // and its own, wherever the file is. From what's kept if it can be, so it works with no connection.
 async function workspaceOf(lakes, onelake, file) {
-  // Tables named in full say their workspace's name; an expression says its GUID.
-  const byName = [...new Set(lakes.filter(l => l.workspaceName).map(l => l.workspaceName))];
-  if (byName.length === 1 && lakes.every(l => l.workspaceName)) return byName[0];
-  const named = [...new Set(lakes.map(l => l.workspace ?? l.workspaceName))];
+  // Tables named <lakehouse>.<schema>.<table> are in the model's workspace, which only the
+  // command line can say; an expression says its GUID.
+  if (lakes.some(l => !l.workspace)) throw new Error(`${file} names its tables <lakehouse>.<schema>.<table>, in its own workspace: give it with --workspace`);
+  const named = [...new Set(lakes.map(l => l.workspace))];
   const ask = `give it with --workspace`;
   if (named.length !== 1) throw new Error(`${file} reads ${named.length ? `${named.length} workspaces` : 'no lakehouse'}: ${ask}`);
   const item = await onelake.itemNamed(named[0], lakes[0].item)

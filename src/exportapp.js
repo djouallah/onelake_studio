@@ -51,7 +51,7 @@ function appName(s) {
 // An Ossie dataset's table as schema.table, or null when it reads none. `source` is required
 // by the spec, so a model from Power BI has one even for a calculation group or a calculated
 // table: its partition, kept in the POWER_BI extension, says it has no entity. A bare name is
-// in dbo, as in a TMSL partition; a table named in full is its last two parts. The page and the function read it the same way
+// in dbo, as in a TMSL partition; item.schema.table is its last two parts. The page and the function read it the same way
 // (fabric_app/site/storage/data.js, fabric_app/rayfin/functions/src/function_app.ts).
 function ossieSource(d) {
   const pbi = (d.custom_extensions ?? []).find(e => String(e.vendor_name).toUpperCase() === 'POWER_BI');
@@ -59,9 +59,9 @@ function ossieSource(d) {
   try { partition = JSON.parse(pbi.data).partitions?.[0]; } catch { /* no extension: its source alone */ }
   if (!d.source || (partition && !partition.source?.entityName)) return null;
   const s = String(d.source);
-  // A table named in full, lakehouse.<workspace>.<item>.<schema>.<table>: its schema.table.
+  // A table named <item>.<schema>.<table>, in the lakehouse the app reads: its schema.table.
   const parts = (s.match(/"(?:[^"]|"")*"|[^.]+/g) ?? []).map(p => (p.startsWith('"') ? p.slice(1, -1).replace(/""/g, '"') : p));
-  if (parts.length === 5) return `${parts[3]}.${parts[4]}`;
+  if (parts.length === 3) return `${parts[1]}.${parts[2]}`;
   return s.includes('.') ? s : `dbo.${s}`;
 }
 
@@ -112,7 +112,7 @@ function planExport(text, fileName, name, { compiler, semantic }, where, lakes =
   if (found.length !== 1) {
     throw new Error(found.length
       ? `${fileName} names ${found.length} lakehouses: the app reads one catalog`
-      : `${fileName} names no lakehouse: its tables must be named in full (lakehouse.<workspace>.<item>.<schema>.<table>), or its Direct Lake expression hold https://onelake.dfs.fabric.microsoft.com/<workspace id>/<lakehouse id>`);
+      : `${fileName} names no lakehouse: its tables must be named <lakehouse>.<schema>.<table>, or its Direct Lake expression hold https://onelake.dfs.fabric.microsoft.com/<workspace id>/<lakehouse id>`);
   }
   const [lake] = found;
   if (!lake.workspace) throw new Error(`${fileName} names its lakehouse ${lake.itemName} by name, and the app needs its GUIDs: Export to Fabric looks them up`);
