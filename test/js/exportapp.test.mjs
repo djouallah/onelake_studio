@@ -174,7 +174,7 @@ async function fixture(root) {
     "app/explore/explore.css": "/* css */\n", "app/paths.js": "// paths\n",
     "webapp/npm/@duckdb/duckdb-wasm@1.0.0/+esm.js": 'import{a}from"../../apache-arrow@17.0.0/+esm.js";\n',
     "webapp/npm/apache-arrow@17.0.0/+esm.js": "// arrow\n",
-    "webapp/duckdb-ext/v1.5.6/wasm_eh/icu.duckdb_extension.wasm": "x".repeat(2048),
+    "webapp/duckdb-ext/v2.0.0/wasm_eh/icu.duckdb_extension.wasm": "x".repeat(2048),
   };
   for (const [p, s] of Object.entries(files)) {
     await mkdir(dirname(join(root, p)), { recursive: true });
@@ -229,7 +229,7 @@ test("the folder: fabric_app's site and function, Studio's Explore, no model; di
                      "site/explore/view.js", "site/explore/model.js", "site/explore/explore.css", "site/paths.js",
                      "site/semantic/src/dialects/duckdb.js", "site/semantic/formats/ossie.js",
                      "site/vendor/npm/apache-arrow@17.0.0/+esm.js",
-                     "site/vendor/duckdb-ext/v1.5.6/wasm_eh/icu.duckdb_extension.wasm",
+                     "site/vendor/duckdb-ext/v2.0.0/wasm_eh/icu.duckdb_extension.wasm",
                      "rayfin/functions/src/function_app.ts", ".gitignore", MARKER]) {
       await read(p);
     }
@@ -337,7 +337,7 @@ test("the shipped page and its data source parse, and read the model from the fu
   assert.ok((await site("storage/auth.js")).includes(`../vendor/npm/${WEBAPP.rayfinClient}/+esm.js`));
   assert.ok((await site("storage/auth.js")).includes(`../vendor/npm/${WEBAPP.rayfinFabric}/+esm.js`));
   assert.ok((await site("app.js")).includes(`./vendor/npm/${WEBAPP.echarts}/dist/echarts.min.js`));
-  assert.ok(VENDOR.webapp.esm.includes(WEBAPP.duckdbWasm) && VENDOR.webapp.files.includes(`${WEBAPP.duckdbWasm}/dist/duckdb-eh.wasm`));
+  assert.ok(VENDOR.webapp.esm.includes(WEBAPP.duckdbWasm) && VENDOR.webapp.files.includes(`${WEBAPP.duckdbWasm}/dist/duckdb-base.wasm`));
   const data = await readFile(new URL("../../fabric_app/site/storage/data.js", import.meta.url), "utf8");
   assert.doesNotMatch(data, /ossie\.json/);
   assert.match(data, /catalog\.open\(\)/);

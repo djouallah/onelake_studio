@@ -21,10 +21,10 @@ const PINS = {
 // nothing from a CDN or DuckDB's repository. vendor.mjs downloads these into vendor/webapp/,
 // and the export copies that tree into the app's site/vendor/.
 const WEBAPP = {
-  // DuckDB-WASM, the eh build only (the page needs Chrome or Edge 121+, which always runs it).
-  duckdbWasm: '@duckdb/duckdb-wasm@1.33.1-dev65.0',
+  // DuckDB-WASM, the base build only (single-threaded; the page needs Chrome or Edge 121+).
+  duckdbWasm: '@duckdb/duckdb-wasm@1.33.1-dev110.0',
   // The DuckDB that build reports (db.getVersion()): the path its extensions are asked under.
-  duckdb: 'v1.5.6',
+  duckdb: 'v2.0.0',
   // DuckDB's signed extensions the page LOADs (storage/data.js).
   extensions: ['parquet', 'icu'],
   arrow: 'apache-arrow@17.0.0',
@@ -47,7 +47,7 @@ const VENDOR = {
   // wasm_eh/<name>.duckdb_extension.wasm, the path DuckDB-WASM asks its repository for.
   webapp: {
     esm: [WEBAPP.duckdbWasm, WEBAPP.arrow, WEBAPP.rayfinClient, WEBAPP.rayfinFabric],
-    files: [`${WEBAPP.duckdbWasm}/dist/duckdb-eh.wasm`, `${WEBAPP.duckdbWasm}/dist/duckdb-browser-eh.worker.js`,
+    files: [`${WEBAPP.duckdbWasm}/dist/duckdb-base.wasm`, `${WEBAPP.duckdbWasm}/dist/duckdb-browser-base.worker.js`,
             `${WEBAPP.echarts}/dist/echarts.min.js`],
     extensions: { duckdb: WEBAPP.duckdb, platform: 'wasm_eh', names: WEBAPP.extensions },
   },

@@ -13,7 +13,7 @@
 // the view is created. DuckDB reads only that store, by names registered to
 // https://store.local/... (duckdb-wasm's own file system): no httpfs, no SAS in any view, and
 // its worker refuses every other request (blockcache.js). The engine is duckdb-wasm's npm
-// release (DuckDB 1.5), with two of DuckDB's signed extensions: parquet, and icu for the
+// release (DuckDB 2.0), with two of DuckDB's signed extensions: parquet, and icu for the
 // session's time zone. All of it ships with the site, in vendor/ (src/vendored.js, WEBAPP):
 // nothing is loaded from a CDN or DuckDB's repository.
 //
@@ -43,7 +43,7 @@
 //   model, query
 // =============================================================================
 
-import * as duckdb from "../vendor/npm/@duckdb/duckdb-wasm@1.33.1-dev65.0/+esm.js";
+import * as duckdb from "../vendor/npm/@duckdb/duckdb-wasm@1.33.1-dev110.0/+esm.js";
 import { engineQueue } from "./queue.js";
 import { createResults } from "./results.js";
 import { createAuth } from "./auth.js";
@@ -54,14 +54,14 @@ import { planTable, prefetchFiles, prioritize } from "./prefetch.js";
 import { quoteIdent as ident, sqlStr as lit } from "../paths.js";
 
 const SMALL_BYTES = 32 * 1024 * 1024;   // a table up to this much Parquet is copied into memory
-// The site's own copy of the engine (vendor/, src/vendored.js WEBAPP), the eh build: the page
+// The site's own copy of the engine (vendor/, src/vendored.js WEBAPP), the base build: the page
 // needs Chrome or Edge 121+, which always runs it.
 const VENDOR = new URL('../vendor/', import.meta.url).href;
-const WASM = `${VENDOR}npm/@duckdb/duckdb-wasm@1.33.1-dev65.0/dist/`;
-const BUNDLE = { mainModule: `${WASM}duckdb-eh.wasm`, mainWorker: `${WASM}duckdb-browser-eh.worker.js`, pthreadWorker: null };
+const WASM = `${VENDOR}npm/@duckdb/duckdb-wasm@1.33.1-dev110.0/dist/`;
+const BUNDLE = { mainModule: `${WASM}duckdb-base.wasm`, mainWorker: `${WASM}duckdb-browser-base.worker.js`, pthreadWorker: null };
 // The DuckDB that build is: its extensions are vendored under this version, and an engine that
 // says another would ask for files the site does not have.
-const DUCKDB = 'v1.5.6';
+const DUCKDB = 'v2.0.0';
 // The extensions DuckDB installs, from the site's own repository (vendor/duckdb-ext): Parquet,
 // and icu for the session's time zone. No httpfs: DuckDB reads only the local store.
 const EXTENSIONS = ['parquet', 'icu'];
@@ -397,7 +397,7 @@ export function createDataSource({ onStatus = () => {}, onProgress = () => {}, t
     });
     ready.catch(() => {});   // awaited below
 
-    // Single-threaded (the eh bundle): the page is not cross-origin isolated. ENGINES of them,
+    // Single-threaded (the base bundle): the page is not cross-origin isolated. ENGINES of them,
     // started together.
     const bundle = BUNDLE;
     const workerUrl = URL.createObjectURL(

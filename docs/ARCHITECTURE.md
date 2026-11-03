@@ -536,7 +536,7 @@ model's Explore, nothing else, as a Fabric app (item type `AppBackend`, named
 **The template** ([`fabric_app/`](../fabric_app/))
 - **`site/`:** the page, black always. Its data source (`storage/`) signs in with Rayfin's Fabric SSO,
   takes the model and the tables' locations from the app's function with a read-only SAS per table, and downloads
-  the tables' files into the browser, where DuckDB-WASM 1.5, shipped in the site's `vendor/`, reads them as `v_<table>`
+  the tables' files into the browser, where DuckDB-WASM (DuckDB 2.0), shipped in the site's `vendor/`, reads them as `v_<table>`
   views.
 - **`rayfin/`:** `rayfin.yml` and the function (`openCatalog`).
 
