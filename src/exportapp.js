@@ -51,7 +51,7 @@ function appName(s) {
 // An Ossie dataset's table as schema.table, or null when it reads none. `source` is required
 // by the spec, so a model from Power BI has one even for a calculation group or a calculated
 // table: its partition, kept in the POWER_BI extension, says it has no entity. A bare name is
-// in dbo, as in a TMSL partition. The page and the function read it the same way
+// in dbo, as in a TMSL partition; a table named in full is its last two parts. The page and the function read it the same way
 // (fabric_app/site/storage/data.js, fabric_app/rayfin/functions/src/function_app.ts).
 function ossieSource(d) {
   const pbi = (d.custom_extensions ?? []).find(e => String(e.vendor_name).toUpperCase() === 'POWER_BI');
@@ -59,6 +59,9 @@ function ossieSource(d) {
   try { partition = JSON.parse(pbi.data).partitions?.[0]; } catch { /* no extension: its source alone */ }
   if (!d.source || (partition && !partition.source?.entityName)) return null;
   const s = String(d.source);
+  // A table named in full, lakehouse.<workspace>.<item>.<schema>.<table>: its schema.table.
+  const parts = (s.match(/"(?:[^"]|"")*"|[^.]+/g) ?? []).map(p => (p.startsWith('"') ? p.slice(1, -1).replace(/""/g, '"') : p));
+  if (parts.length === 5) return `${parts[3]}.${parts[4]}`;
   return s.includes('.') ? s : `dbo.${s}`;
 }
 
@@ -87,9 +90,10 @@ const dfsUrl = (workspace, path) => dfsFileUrl(workspace, path);
  * What an export is, before anything is written: the app's name, its lakehouse and catalog,
  * the model's URL. Throws, saying why, when the model cannot make one.
  * `mods`: the agent's modules() — { compiler: { parseYaml, ossieToTmsl }, semantic };
- * `where`: the model file in OneLake, { workspace, path } (the path from its item).
+ * `where`: the model file in OneLake, { workspace, path } (the path from its item); `lakes`: the
+ * model's lakehouses by GUIDs, when the caller has resolved those its tables name in full.
  */
-function planExport(text, fileName, name, { compiler, semantic }, where) {
+function planExport(text, fileName, name, { compiler, semantic }, where, lakes = null) {
   if (!where || !where.workspace || !where.path) throw new Error(`${fileName} is not a OneLake file: the app reads its model from the lakehouse`);
   if (!/^[^/]+\/Files\//.test(trimPath(where.path))) throw new Error(`${fileName} is not in a lakehouse's Files/`);
   const body = stripBom(text);
@@ -104,13 +108,14 @@ function planExport(text, fileName, name, { compiler, semantic }, where) {
     catch (e) { throw new Error(`${fileName} is not a TMSL model: ${e.message}`); }
     doc = bim;
   }
-  const lakes = semantic.lakehousesOf(bim);
-  if (lakes.length !== 1) {
-    throw new Error(lakes.length
-      ? `${fileName} names ${lakes.length} lakehouses: the app reads one catalog`
-      : `${fileName} names no lakehouse: its Direct Lake expression must hold https://onelake.dfs.fabric.microsoft.com/<workspace id>/<lakehouse id>`);
+  const found = lakes || semantic.lakehousesOf(bim);
+  if (found.length !== 1) {
+    throw new Error(found.length
+      ? `${fileName} names ${found.length} lakehouses: the app reads one catalog`
+      : `${fileName} names no lakehouse: its tables must be named in full (lakehouse.<workspace>.<item>.<schema>.<table>), or its Direct Lake expression hold https://onelake.dfs.fabric.microsoft.com/<workspace id>/<lakehouse id>`);
   }
-  const [lake] = lakes;
+  const [lake] = found;
+  if (!lake.workspace) throw new Error(`${fileName} names its lakehouse ${lake.itemName} by name, and the app needs its GUIDs: Export to Fabric looks them up`);
   // A table reading another expression, a Sql.Database say, isn't in that lakehouse under its name.
   const lakeExprs = semantic.lakeExpressions(bim);
   const elsewhere = ((bim.model ?? bim).tables ?? []).filter(t => {

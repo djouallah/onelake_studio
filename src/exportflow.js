@@ -42,14 +42,27 @@ function createExport({ connectivity, modules, hostToken, appToken, fabric, onel
     if (!model || !model.workspace || !model.name) {
       throw new Error('Export to Fabric needs a model that is a OneLake file, or one opened from the tree');
     }
-    const { semantic, compiler } = await modules();
-    const lakes = semantic.lakehousesOf(semantic.bimOf(modelFileName(model.name), text, compiler));
+    const lakes = await lakesOf(text, modelFileName(model.name));
     if (lakes.length !== 1) {
       throw new Error(`${model.name} reads ${lakes.length} lakehouses: Export to Fabric needs a model over exactly one`);
     }
     const lh = await fabric.itemOf(lakes[0].workspace, lakes[0].item);
     if (!/\.Lakehouse$/i.test(lh.item)) throw new Error(`${model.name} reads ${lh.item}, which has no Files/ to keep its model in`);
     return { workspace: lh.workspace, item: lh.item, path: `${lh.item}/Files/semantic_model/${modelFileName(model.name)}` };
+  }
+
+  // The lakehouses a model reads, by GUIDs: the app's catalog is addressed by them. One its
+  // tables name in full (lakehouse.<workspace>.<item>...) is looked up by name in Fabric.
+  async function lakesOf(text, file) {
+    const { semantic, compiler } = await modules();
+    return Promise.all(semantic.lakehousesOf(semantic.bimOf(file, text, compiler)).map(async l => {
+      if (l.workspace) return l;
+      if (l.kind !== 'lakehouse') throw new Error(`${l.workspaceName}/${l.itemName} is a ${l.kind}: the app reads a lakehouse's tables`);
+      const items = await fabric.listItems(l.workspaceName);
+      const it = items.find(i => i.type === 'Lakehouse' && i.name.toLowerCase() === l.itemName.toLowerCase());
+      if (!it) throw new Error(`workspace ${l.workspaceName} has no lakehouse ${l.itemName}`);
+      return { workspace: String(await fabric.workspaceId(l.workspaceName)).toLowerCase(), item: String(it.id).toLowerCase() };
+    }));
   }
 
   // Export to Fabric, from Explore: the model's Explore as a Fabric app (exportapp.js), its
@@ -70,7 +83,7 @@ function createExport({ connectivity, modules, hostToken, appToken, fabric, onel
       // to OneLake a semantic model ever gets.
       const target = path ? null : await modelTarget(text, model);
       if (target) ({ workspace, path } = target);
-      const plan = planExport(text, file, name, await modules(), { workspace, path });
+      const plan = planExport(text, file, name, await modules(), { workspace, path }, await lakesOf(text, file));
       const fnDir = join(extensionDir, 'fabric-function');
       const [sourceZip, deployMetaData] = await Promise.all([
         fsp.readFile(join(fnDir, 'source.zip')), fsp.readFile(join(fnDir, 'deploymetadata.json'), 'utf8'),

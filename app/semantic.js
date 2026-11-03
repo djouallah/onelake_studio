@@ -79,11 +79,31 @@ export function lakeExpressions(bim) {
   return found;
 }
 
-// The lakehouses a model's expressions name (by GUID), each once: the one an Ossie model's
-// Direct Lake expression holds is its Iceberg catalog (Export to Fabric, src/exportapp.js).
+// The parts of a dotted SQL name, as written ("my ws" keeps its quotes).
+const nameParts = ident => String(ident).match(/"(?:[^"]|"")*"|[^.]+/g) ?? [];
+const unquote = p => (p.startsWith('"') ? p.slice(1, -1).replace(/""/g, '"') : p);
+const SQL_KINDS = ["lakehouse", "warehouse", "sqldatabase", "mirroreddatabase"];
+
+// A table an Ossie model names in full: its `source` is its SQL name, kind.ws.item.schema.table,
+// which dax-sql reads back as a partition with no expression whose schema is all but the table.
+// { ident, kind, workspace, item } (the item as Fabric shows it), or null.
+function namedInFull(s) {
+  if (!s?.entityName || s.expressionSource || !s.schemaName) return null;
+  const parts = nameParts(s.schemaName);
+  if (parts.length !== 4 || !SQL_KINDS.includes(lc(unquote(parts[0])))) return null;
+  return { ident: `${s.schemaName}.${s.entityName}`, kind: lc(unquote(parts[0])), workspace: unquote(parts[1]), item: unquote(parts[2]) };
+}
+
+// The lakehouses a model reads, each once: by GUID, { workspace, item }, from a Direct Lake
+// expression; by name, { kind, workspaceName, itemName }, from tables named in full. The one an
+// Ossie model reads is its Iceberg catalog (Export to Fabric, src/exportapp.js).
 export function lakehousesOf(bim) {
   const out = new Map();
   for (const l of lakeExpressions(bim).values()) out.set(`${l.workspace}/${l.item}`, l);
+  for (const t of bim?.model?.tables ?? []) {
+    const n = namedInFull(t.partitions?.[0]?.source);
+    if (n) out.set(lc(JSON.stringify([n.kind, n.workspace, n.item])),{ kind: n.kind, workspaceName: n.workspace, itemName: n.item });
+  }
   return [...out.values()];
 }
 
@@ -113,11 +133,15 @@ export function storageMode(bim) {
   return "an Import model";
 }
 
+// The bim's OneLake tables, by table name: { lh, t } for one its Direct Lake expression places
+// by GUIDs, { ident } for one named in full, whose SQL name is that.
 export function directLakeTables(bim) {
   const found = lakeExpressions(bim);
   const tables = new Map();
   for (const t of bim?.model?.tables ?? []) {
     const s = t.partitions?.[0]?.source;
+    const named = namedInFull(s);
+    if (named) { tables.set(lc(t.name), { ident: named.ident }); continue; }
     const lake = s?.expressionSource && found.get(s.expressionSource);
     if (!lake) continue;
     tables.set(lc(t.name), {
@@ -133,12 +157,12 @@ export function directLakeTables(bim) {
 let tableNamer = null;
 export const setTableNamer = fn => { tableNamer = fn; };
 
-// directLakeTables(), each with its SQL name as `ident`.
+// directLakeTables(), each with its SQL name as `ident`: one named in full has it already.
 async function namedLakeTables(bim) {
   const lake = directLakeTables(bim);
-  if (!lake.size) return lake;
+  const list = [...lake.values()].filter(l => !l.ident);
+  if (!list.length) return lake;
   if (!tableNamer) throw new Error("Direct Lake tables cannot be named here");
-  const list = [...lake.values()];
   const names = await tableNamer(list.map(l => ({ ...l.lh, ...l.t })));
   list.forEach((l, i) => { l.ident = names[i]; });
   return lake;

@@ -20,11 +20,12 @@ const { fmtBytes, sqlKind, displayName, MODEL_CATALOG, modelSqlName, stripBom } 
  * @param {() => string} o.modelsFolder  where the local copies are
  * @param {() => (string | null)} o.account  this account's folder there
  * @param {string} o.oldModels  where an older version kept them
+ * @param {(list: object[]) => Promise<string[]>} o.nameTables  Direct Lake tables (by GUIDs) -> their SQL names (sqltables.js)
  * @param {(message: string) => void} o.notify  something the person should be told
  * @param {(node: object) => void} o.onModelChanged  a model's local copy came or went
  * @param {(line: string) => void} o.log
  */
-function createModels({ onelake, fabric, semviews, modules, modelsFolder, account, oldModels, notify, onModelChanged, log }) {
+function createModels({ onelake, fabric, semviews, modules, modelsFolder, account, oldModels, nameTables, notify, onModelChanged, log }) {
   // A model's local copy is kept per account (fabric.js modelCopyPath). The copies from before
   // that move once; opening a model waits for it, so it finds its copy where it now is.
   let modelsAdopted = Promise.resolve(0);
@@ -103,8 +104,22 @@ function createModels({ onelake, fabric, semviews, modules, modelsFolder, accoun
         log(`${n.workspace}/${n.model}: ${note}`);
         notify(`${n.model}: ${note}`);
       }
+      // Each Direct Lake table is named in full, its SQL name (lakehouse.ws.item.schema.table)
+      // its source: the copy says where its data is by name, with no expression of GUIDs, and
+      // reads offline with nothing to look up. One that cannot be named keeps its expression.
+      const lake = [...semantic.directLakeTables(doc)].filter(([, l]) => l.lh);
+      const names = new Map();
+      if (lake.length) {
+        try {
+          const idents = await nameTables(lake.map(([, l]) => ({ ...l.lh, ...l.t })));
+          lake.forEach(([table], i) => names.set(table, idents[i]));
+        } catch (e) {
+          log(`${n.workspace}/${n.model}: its tables could not be named, so the copy keeps their Direct Lake expression — ${e.message}`);
+        }
+      }
       // lineWidth 0: a long DAX expression stays on its lines, not folded to the page's width.
-      const text = compiler.stringifyYaml(compiler.tmslToOssie(doc, n.model), { lineWidth: 0 });
+      const ossie = compiler.tmslToOssie(doc, n.model, { source: t => names.get(t.name.toLowerCase()) ?? null });
+      const text = compiler.stringifyYaml(ossie, { lineWidth: 0 });
       await fsp.mkdir(dirname(path), { recursive: true });
       // Whole or not at all: this file is what later opens trust, with nothing to say it was cut short.
       const partial = `${path}.${process.pid}.tmp`;

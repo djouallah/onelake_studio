@@ -52,6 +52,25 @@ test("a host's label is the GUID's bytes in base32, the first three groups littl
   assert.equal(guidOfLabel(WS_LABEL.toUpperCase()), WS_ID);
 });
 
+test("a table named in full (an Ossie copy's source) is read by that name, with nothing to look up", () => {
+  const bim = { model: { tables: [
+    { name: "price", partitions: [{ source: { type: "entity", entityName: "price", schemaName: 'lakehouse."my ws".nem.aemo' } }] },
+    { name: "duid", partitions: [{ source: { type: "entity", entityName: '"DUID list"', schemaName: "lakehouse.ws2.lake.dbo" } }] },
+    // Not named in full: a schema.table, or a four-part name that isn't a catalog's.
+    { name: "plain", partitions: [{ source: { type: "entity", entityName: "x", schemaName: "dbo" } }] },
+    { name: "odd", partitions: [{ source: { type: "entity", entityName: "x", schemaName: "a.b.c.d" } }] },
+  ] } };
+  const tables = directLakeTables(bim);
+  assert.deepEqual(tables.get("price"), { ident: 'lakehouse."my ws".nem.aemo.price' });
+  assert.deepEqual(tables.get("duid"), { ident: 'lakehouse.ws2.lake.dbo."DUID list"' });
+  assert.equal(tables.has("plain"), false);
+  assert.equal(tables.has("odd"), false);
+  assert.deepEqual(lakehousesOf(bim), [
+    { kind: "lakehouse", workspaceName: "my ws", itemName: "nem" },
+    { kind: "lakehouse", workspaceName: "ws2", itemName: "lake" },
+  ]);
+});
+
 test("sqlEndpointOf: the workspace and endpoint a Sql.Database names, and nothing else", () => {
   assert.deepEqual(sqlEndpointOf(model().model.expressions[0].expression), { workspace: WS_ID, endpoint: ENDPOINT });
   assert.equal(sqlEndpointOf(`Sql.Database("${HOST}", "my_database")`), null, "a database by name");

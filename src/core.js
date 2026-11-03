@@ -235,6 +235,7 @@ function createCore({
   const oldModels = join(os.homedir(), 'OneLakeStudio', 'semantic-models');
   const models = createModels({
     onelake, fabric, semviews, modules: () => agent.modules(), modelsFolder: () => engines.modelsFolder(), account: () => queryAccount, oldModels,
+    nameTables: list => sqlTables.nameTables(list),
     notify,
     onModelChanged: n => view.modelChanged(n),
     log,

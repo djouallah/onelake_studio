@@ -52,6 +52,21 @@ test("the plan: its own -explore name, the lakehouse's catalog, the model's URL 
   assert.equal(dfsUrl("ws", "/a b.Lakehouse/Files/m#1.yaml"), "https://onelake.dfs.fabric.microsoft.com/ws/a%20b.Lakehouse/Files/m%231.yaml");
 });
 
+test("the plan: tables named in full read their lakehouse by name, and the caller gives its GUIDs", () => {
+  // As dax-sql reads back lakehouse."power bi".nem.mart.fct_sales: all of it but the table is the schema.
+  const named = t => ({ name: t, partitions: [{ source: { type: "entity", entityName: t, schemaName: 'lakehouse."power bi".nem.mart' } }] });
+  const bim = { model: { tables: [named("fct_sales"), named("dim_region")] } };
+  const d = doc({ datasets: [
+    { name: "fct_sales", source: 'lakehouse."power bi".nem.mart.fct_sales' },
+    { name: "dim_region", source: 'lakehouse."power bi".nem.mart.dim_region' },
+  ] });
+  assert.deepEqual(semantic.lakehousesOf(bim), [{ kind: "lakehouse", workspaceName: "power bi", itemName: "nem" }]);
+  assert.throws(() => planExport(OSSIE, "sales.yaml", "sales", mods(bim, d), WHERE), /by name, and the app needs its GUIDs/);
+  const plan = planExport(OSSIE, "sales.yaml", "sales", mods(bim, d), WHERE, [{ workspace: WS, item: LH }]);
+  assert.equal(plan.catalogUrl, `https://onelake.table.fabric.microsoft.com/iceberg/${WS}/${LH}`);
+  assert.deepEqual(plan.tables, [["fct_sales", "mart.fct_sales"], ["dim_region", "mart.dim_region"]]);
+});
+
 test("the plan: a table reading another expression isn't in the lakehouse, whatever it is called", () => {
   const bim = bimOf(URL_);
   bim.model.expressions.push({ name: "Other", kind: "m", expression: 'Sql.Database("x.datawarehouse.fabric.microsoft.com", "y")' });
@@ -108,6 +123,8 @@ test("the page and the function read an Ossie dataset's table as the plan does",
     assert.equal(read({ source: "mart.x", custom_extensions: partition({ entityName: "x", schemaName: "mart" }) }), "mart.x");
     assert.equal(read({ source: "Time Calc", custom_extensions: partition({ type: "calculationGroup" }) }), null);
     assert.equal(read({ source: "by_hand" }), "dbo.by_hand");
+    assert.equal(read({ source: 'lakehouse."power bi".nem.mart.x' }), "mart.x", "a table named in full");
+    assert.equal(read({ source: 'lakehouse."a.b".nem.dbo."my table"' }), "dbo.my table");
     assert.equal(read({}), null);
   }
 });

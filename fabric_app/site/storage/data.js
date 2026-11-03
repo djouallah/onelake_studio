@@ -77,13 +77,16 @@ const STORE_WAIT = 30000;   // how long the page waits for the store's writer to
 // An Ossie dataset's table as schema.table, or null when it reads none. `source` is required
 // by the spec, so a model from Power BI has one even for a calculation group or a calculated
 // table: its partition, kept in the POWER_BI extension, says it has no entity. A bare name is
-// in dbo, as in a TMSL partition.
+// in dbo, as in a TMSL partition; a table named in full is its last two parts.
 function ossieSource(d) {
   const pbi = (d.custom_extensions ?? []).find(e => String(e.vendor_name).toUpperCase() === 'POWER_BI');
   let partition;
   try { partition = JSON.parse(pbi.data).partitions?.[0]; } catch { /* no extension: its source alone */ }
   if (!d.source || (partition && !partition.source?.entityName)) return null;
   const s = String(d.source);
+  // A table named in full, lakehouse.<workspace>.<item>.<schema>.<table>: its schema.table.
+  const parts = (s.match(/"(?:[^"]|"")*"|[^.]+/g) ?? []).map(p => (p.startsWith('"') ? p.slice(1, -1).replace(/""/g, '"') : p));
+  if (parts.length === 5) return `${parts[3]}.${parts[4]}`;
   return s.includes('.') ? s : `dbo.${s}`;
 }
 
