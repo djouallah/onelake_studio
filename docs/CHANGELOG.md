@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- **Fixes:**
+  - A DAX query that reads one table only, such as `EVALUATE VALUES(dim[col])`, lists that table's values with no blank
+    row, and no longer scans the facts to look for one. A query that also reads a measure or another table still has the
+    blank row, as in DAX. dax-sql 0.1.4.
+
 ## 0.2.12
 
 - **Fixes:**
