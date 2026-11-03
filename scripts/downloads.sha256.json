@@ -1,4 +1,7 @@
 {
+  "https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.33.1-dev110.0/+esm": "9432aeee25eb72f70a3d64b2f4adcec1a5f3bea320621567acafc576b636eab3",
+  "https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.33.1-dev110.0/dist/duckdb-base.wasm": "ee0753ee0de7a5fdc26b428117438eb59ee9cb63d1bcff80042eed398b8104db",
+  "https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.33.1-dev110.0/dist/duckdb-browser-base.worker.js": "b4ea30d5b9509504500e0e90a6a071a0ab76ee824504e7914bfad8088924d4b5",
   "https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.33.1-dev65.0/+esm": "e151df3918b7047d0fccbf03ab4a7bd2962efad6f8a0a040eba47c523193349b",
   "https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.33.1-dev65.0/dist/duckdb-browser-eh.worker.js": "89dc43da9faab0f5ecb4e05a4d0bc334c95db2743c146048ba9dd3621c0496eb",
   "https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.33.1-dev65.0/dist/duckdb-eh.wasm": "7ba4e2ea49b0f8851e90b9ce404cc810d1dd998edabfc1d3677351ba2db0419a",
@@ -137,6 +140,8 @@
   "https://extensions.duckdb.org/v2.0.0/osx_arm64/iceberg.duckdb_extension.gz": "11db9cb14ca5391eb59838055a3c5c5a5d83c827f7b15a255ac5f6d3187bc414",
   "https://extensions.duckdb.org/v2.0.0/osx_arm64/quack.duckdb_extension.gz": "d6779fb4adf9835e31f3b34cfdb1444cec1dd3af8f5ca99071271a91bae52cfc",
   "https://extensions.duckdb.org/v2.0.0/osx_arm64/sqlite_scanner.duckdb_extension.gz": "0c5b3921d3367525659251c2989398df2c463f05389bba35784a7a45c17d57a7",
+  "https://extensions.duckdb.org/v2.0.0/wasm_eh/icu.duckdb_extension.wasm": "0e379b9d688f0df82192f15f9405f60861f478956ad0282ce831572695458308",
+  "https://extensions.duckdb.org/v2.0.0/wasm_eh/parquet.duckdb_extension.wasm": "d8dc437687baa417b55a2ed4d251f6c2fe92732cc7d8f7904845b63e7627ac7b",
   "https://extensions.duckdb.org/v2.0.0/windows_amd64/avro.duckdb_extension.gz": "e6bab5d7cdb8673aca0e6d1604c9e38e45311a13cb4077fc896b1ec5d4f30c6d",
   "https://extensions.duckdb.org/v2.0.0/windows_amd64/azure.duckdb_extension.gz": "eb92137d3a786050d51925699d5cde9d30105f443577839c05b4bfd185c95e0b",
   "https://extensions.duckdb.org/v2.0.0/windows_amd64/delta.duckdb_extension.gz": "a6e8396a2ded95b5c98c12707b3d85ca73cec05d0071589c1826500f4269cf3c",
