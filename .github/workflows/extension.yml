@@ -536,10 +536,31 @@ jobs:
           | Installer | $([math]::Round($setup.Length / 1MB)) MB |
           | Installed | $(& $mb $dir) MB |
           "@ | Out-File -Append $env:GITHUB_STEP_SUMMARY
-      - name: Uninstall it as a newer setup does
-        # In place (_?=), from the install folder, as the next version's setup runs it before installing.
+      - name: Install it over the last release, running
+        # What a user who updates does: the released app is installed and open, and this setup replaces it.
+        working-directory: desktop
         run: |
           $dir = "$env:LOCALAPPDATA\OneLake Studio"
           $un = Start-Process "$dir\uninstall.exe" -ArgumentList '/S', "_?=$dir" -Wait -PassThru
           if ($un.ExitCode -ne 0) { throw "the uninstaller exited with $($un.ExitCode)" }
           if (Test-Path "$dir\onelake-studio.exe") { throw 'the uninstaller left onelake-studio.exe' }
+          $old = "$env:RUNNER_TEMP\OneLake-Studio-Setup.exe"
+          Invoke-WebRequest https://github.com/djouallah/onelake_studio/releases/latest/download/OneLake-Studio-Setup.exe -OutFile $old
+          Start-Process $old -ArgumentList '/S' -Wait
+          $released = (Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\OneLake Studio').DisplayVersion
+          $env:ONELAKE_STUDIO_HOME = "$env:RUNNER_TEMP\smoke-home"
+          $null = Start-Process "$dir\onelake-studio.exe" -PassThru
+          Start-Sleep 20
+          $setup = Get-Item src-tauri/target/release/bundle/nsis/*.exe
+          $up = Start-Process $setup.FullName -ArgumentList '/S' -Wait -PassThru
+          if ($up.ExitCode -ne 0) { throw "setup over $released exited with $($up.ExitCode)" }
+          $version = (Get-Content ../package.json -Raw | ConvertFrom-Json).version
+          $now = (Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\OneLake Studio').DisplayVersion
+          if ($now -ne $version) { throw "after setup over $released the installed version is $now, not $version" }
+          $result = "$env:RUNNER_TEMP\smoke-upgrade.json"
+          $app = Start-Process "$dir\onelake-studio.exe" -ArgumentList '--smoke', "`"$result`"" -PassThru
+          $null = $app.Handle
+          $finished = $app.WaitForExit(180000)
+          if (-not $finished) { $app.Kill(); throw "over $released, the app did not start within three minutes" }
+          if ($app.ExitCode -ne 0 -or -not (Test-Path $result)) { throw "over $released, it did not start: $(Get-Content $result -Raw -ErrorAction SilentlyContinue)" }
+          Write-Host "$version installed over $released, open, and started"
