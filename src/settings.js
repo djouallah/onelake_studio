@@ -34,7 +34,12 @@ function createSettings(read) {
   const diskCacheBytes = () => Math.max(0, Number(read('diskCacheMaxGB', 64)) || 0) * 1024 ** 3;
   const keepsDiskCache = () => Number(read('diskCacheMaxGB', 64)) > 0;
 
-  return { read, catalogTtlMs, tableTtlMs, keepLimitBytes, diskCacheBytes, keepsDiskCache };
+  // What runs the SQL box's statements and a model's queries: 'duckdb', or 'sqlEndpoint', the
+  // workspace's Fabric SQL endpoint (tsql.js), which only online.
+  const sqlEngine = () => (read('sqlEngine', 'duckdb') === 'sqlEndpoint' ? 'sqlEndpoint' : 'duckdb');
+  const maxResultRows = () => Math.min(1_000_000, Math.max(1000, Math.floor(Number(read('maxResultRows', 200_000)) || 200_000)));
+
+  return { read, catalogTtlMs, tableTtlMs, keepLimitBytes, diskCacheBytes, keepsDiskCache, sqlEngine, maxResultRows };
 }
 
 module.exports = { createSettings };

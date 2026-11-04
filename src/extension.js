@@ -20,14 +20,13 @@ const { existsSync } = require('node:fs');
 const { randomBytes } = require('node:crypto');
 const fsp = require('node:fs/promises');
 const { quoteIdent, sqlStr } = require('./sql');
-const { openPanel, setPanelTitle, nameActiveTab, closePanel, revealPanel, panelOpen, postToPanel, postLive, panelSettings } = require('./panel');
+const { openPanel, setPanelTitle, nameActiveTab, closePanel, revealPanel, panelOpen, postToPanel, postLive, panelSettings, setSqlDialect } = require('./panel');
 const { openPerformance, closePerformance } = require('./performance');
 const { openLogs, closeLogs } = require('./logs');
 const { createDiagLog, outputLogOf } = require('./diaglog');
 const { createConnectivity, probeOf } = require('./connectivity');
 const { useConnectivity } = require('./http');
 const { createSignIn } = require('./signin');
-const { runTsql } = require('./tsql');
 const { createReadLog } = require('./readlog');
 const { createSettings } = require('./settings');
 const { queryStem } = require('./queries');
@@ -200,6 +199,7 @@ async function show(context, { newTab = false, ...options } = {}) {
       saveDraft: x => memento.update(QUERY_DRAFT_KEY, x),
       askVariable: askQueryVariable,
       openModel: x => (openSqlModel ? openSqlModel(x) : Promise.reject(new Error('OneLake Studio is still starting'))),
+      tsql: theCore ? theCore.tsql : null,
     }),
     // The page could not bring the engine up. Everything it buffered is already gone;
     // this is the toast that stops the failure being a spinner that never moves.
@@ -241,7 +241,7 @@ const NEW_QUERY_SQL = [
 // starting in the workspace folder (or the home directory), then a plain write.
 // Export: every row of `sql`, written by the engine (engine-host.js exportTo) and moved to the
 // file the user picks. Answers its path, or null when dismissed.
-async function exportResult(eng, { sql, name }) {
+async function exportResult(eng, { sql, name, dialect = 'duckdb' }) {
   const { capabilities = {} } = await eng.call('info').catch(() => ({}));
   const formats = [
     { label: 'CSV', description: 'every row, with a header line', format: 'csv' },
@@ -259,7 +259,18 @@ async function exportResult(eng, { sql, name }) {
   });
   if (!uri) return null;
   return vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: `Exporting to ${basename(uri.fsPath)}` }, async () => {
-    const tmp = await eng.exportTo(sql, pick.format);
+    // SQL endpoint mode: every row from the endpoint, written by DuckDB as any export is, its
+    // columns typed as the endpoint's are (tsql.js).
+    let read = sql;
+    if (dialect === 'tsql') {
+      let fields = [];
+      const lines = [];
+      await theCore.tsql.stream(sql, b => { fields = b.fields; for (const r of b.rows) lines.push(JSON.stringify(r)); }, null, { rows: Infinity });
+      const at = await eng.copyToTemp(`tsql-export-${randomBytes(6).toString('hex')}.ndjson`, Buffer.from(lines.join('\n'), 'utf8'));
+      const columns = fields.map(f => `'${f.name.replace(/'/g, "''")}': '${f.type}'`).join(', ');
+      read = `SELECT * FROM read_json('${at.replace(/'/g, "''")}', format = 'newline_delimited', columns = {${columns}})`;
+    }
+    const tmp = await eng.exportTo(read, pick.format);
     try { await fsp.copyFile(tmp, uri.fsPath); } finally { await fsp.rm(tmp, { force: true }).catch(() => {}); }
     return uri.fsPath;
   });
@@ -426,6 +437,7 @@ async function activateInner(context) {
     mark: step => out && out.mark(step),
   });
   theCore = core;
+  setSqlDialect(core.sqlDialect);
   ({ engines, onelake, semviews, rebindStore, exportExplore, openExcel, keepOffline, openSqlModel, nameModelTables, saveQuery } = core);
   const { fabric, sqlTables, syncWorker, favorites, accountTurn, sessionChanged, setSignedIn } = core;
   const { queriesFolder, listQueries, queryPath } = core.queries;
@@ -501,6 +513,8 @@ async function activateInner(context) {
     showOffline(reason);
     refreshTitle();
     postLive({ type: 'connectivity' });
+    // SQL endpoint mode runs on DuckDB offline: the tabs compile for the one that runs now.
+    postLive({ type: 'settings', ...panelSettings() });
     if (engines.current()) engines.current().catalogChanged();
     tree.redraw();
     if (!reason) syncWorker.tick();
@@ -790,7 +804,12 @@ async function activateInner(context) {
     vscode.commands.registerCommand('onelakeStudio.selectTop', async n => {
       if (!n || !n.table) return;
       const top = vscode.workspace.getConfiguration('onelakeStudio').get('selectTopRows', 1000);
-      await openInPanel({ type: 'run-sql', sql: `SELECT *\nFROM ${sqlNameOf(n, n)}\nLIMIT ${Number.isInteger(top) && top > 0 ? top : 1000};\n` }, n.table);
+      const rows = Number.isInteger(top) && top > 0 ? top : 1000;
+      // In SQL endpoint mode the box takes T-SQL, which has TOP and no LIMIT.
+      const sql = theCore && theCore.sqlDialect() === 'tsql'
+        ? `SELECT TOP ${rows} *\nFROM ${sqlNameOf(n, n)};\n`
+        : `SELECT *\nFROM ${sqlNameOf(n, n)}\nLIMIT ${rows};\n`;
+      await openInPanel({ type: 'run-sql', sql }, n.table);
     }),
     // A table's columns, comma-separated and quoted where SQL needs it, from its metadata (read
     // from OneLake if the cache does not have it yet).
@@ -949,35 +968,6 @@ async function activateInner(context) {
         showError(`Could not sign in to the Fabric API: ${(e && e.message) || e}`);
       }
     })),
-
-    // SQL endpoint mode's first check (tsql.js): can this account log in to a workspace's SQL
-    // endpoint, and run a statement there? Asks once for the SQL audience, which may prompt.
-    vscode.commands.registerCommand('onelakeStudio.probeSqlEndpoint', async () => {
-      try {
-        if (!await fabricToken({ createIfNone: true })) return;
-        const ws = await vscode.window.showQuickPick(fabric.workspaceNames(), { placeHolder: 'A workspace with a lakehouse or a warehouse' });
-        if (!ws) return;
-        const items = await fabric.sqlEndpoints(ws);
-        if (!items.length) return showError(`${ws} has no lakehouse or warehouse with a SQL endpoint`);
-        const pick = items.length === 1 ? { i: items[0] }
-          : await vscode.window.showQuickPick(items.map(i => ({ label: i.name, description: i.type, i })));
-        if (!pick) return;
-        const it = pick.i;
-        const token = await signIn.sqlToken({ createIfNone: true });
-        if (!token) return showError('No token for the SQL endpoint: the sign-in was cancelled or refused');
-        const t0 = Date.now();
-        const r = await runTsql({ host: it.host, database: it.name, token,
-          sql: 'SELECT @@VERSION AS version, DB_NAME() AS db, (SELECT COUNT(*) FROM sys.tables) AS tables' });
-        const [version, db, tables] = r.rows[0];
-        out.appendLine(`sql endpoint probe: ${it.host} ${db} answered in ${Date.now() - t0} ms, ${tables} tables, ${String(version).split(/\r?\n/)[0]}`);
-        vscode.window.showInformationMessage(`The SQL endpoint answered: ${db} has ${tables} tables.`, 'Show Log').then(p => {
-          if (p === 'Show Log') out.show(true);
-        });
-      } catch (e) {
-        out.appendLine(`sql endpoint probe failed: ${(e && e.stack) || e}`);
-        showError(`The SQL endpoint probe failed: ${(e && e.message) || e}`);
-      }
-    }),
 
     vscode.commands.registerCommand('onelakeStudio.openSemanticModel', onClick(n => openModel(n))),
     // An app in the tree: its URL, copied by its button and opened by a click. Nothing is changed.
@@ -1149,7 +1139,8 @@ async function activateInner(context) {
         }
       }
       if (e.affectsConfiguration('onelakeStudio.tableOpensOn') ||
-          e.affectsConfiguration('onelakeStudio.gridThousandsSeparator')) {
+          e.affectsConfiguration('onelakeStudio.gridThousandsSeparator') ||
+          e.affectsConfiguration('onelakeStudio.sqlEngine')) {
         postLive({ type: 'settings', ...panelSettings() });
       }
     }),

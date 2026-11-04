@@ -109,7 +109,17 @@ function closestNames(wanted, names, most = 5) {
 function createAgent({ onelake, engine, modelPath, appDir, vendorDir, daxSqlPin, yamlPin, semviews,
                        readNow = (job, o) => readJob(onelake, job, o),
                        exportApp = null, fetchModel = null, openModel = null, nameTables = null,
-                       signedIn = () => true, offlineReason = () => null, diagnostics = null }) {
+                       signedIn = () => true, offlineReason = () => null, diagnostics = null,
+                       tsql = null, sqlDialect = () => 'duckdb' }) {
+  // A statement as SQL endpoint mode runs it (core.js sqlDialect): T-SQL on the endpoint, with the
+  // engine's result shape (tsql.js); else DuckDB. The command line going away stops it.
+  async function runIn(dialect, sql, { signal, fresh } = {}) {
+    if (dialect !== 'tsql') return (await engine()).agentQuery(sql, { signal, fresh });
+    const owner = {};
+    const stop = () => tsql.cancel(owner);
+    if (signal) signal.addEventListener('abort', stop, { once: true });
+    try { return await tsql.query(sql, owner); } finally { if (signal) signal.removeEventListener('abort', stop); }
+  }
   let mods = null;
   async function modules() {
     if (mods) return mods;
@@ -641,7 +651,8 @@ function createAgent({ onelake, engine, modelPath, appDir, vendorDir, daxSqlPin,
         const m = await semantic.defineView(v.name, v.path, v.text, 'replace', compiler, v.schema);
         defined.add(m.name.toLowerCase());
       }
-      const st = await semantic.statement(text, compiler);
+      const dialect = tsql ? sqlDialect() : 'duckdb';
+      const st = await semantic.statement(text, compiler, dialect);
       const run = st ? st.sql : text;
       if (st && opts.showSql) {
         const shown = st.compiled ?? st.sql;
@@ -654,8 +665,8 @@ function createAgent({ onelake, engine, modelPath, appDir, vendorDir, daxSqlPin,
       // names its Direct Lake tables the same way.
       // SHOW ALL TABLES holds every column of every table, too much for an agent's context: Markdown
       // asks how many, and --csv and --json keep the columns.
-      const counted = !opts.csv && !opts.json && isShowAllTables(run);
-      const res = await (await engine()).agentQuery(counted ? ALL_TABLES_COUNTED : run, { signal: opts.signal, fresh: !!opts.fresh });
+      const counted = dialect === 'duckdb' && !opts.csv && !opts.json && isShowAllTables(run);
+      const res = await runIn(dialect, counted ? ALL_TABLES_COUNTED : run, { signal: opts.signal, fresh: !!opts.fresh });
       // cachedAt: when the oldest table it read was last read from OneLake.
       if (Number.isFinite(res.asOf)) {
         io.seen(res.asOf);
@@ -840,9 +851,10 @@ function createAgent({ onelake, engine, modelPath, appDir, vendorDir, daxSqlPin,
   }
   async function excelQuery(sql, { signal } = {}) {
     const { semantic, compiler } = await modules();
-    const st = await semantic.statement(sql, compiler);
+    const dialect = tsql ? sqlDialect() : 'duckdb';
+    const st = await semantic.statement(sql, compiler, dialect);
     if (!st) throw new Error('This semantic model is no longer open: refresh the PivotTable');
-    return (await engine()).agentQuery(st.sql, { signal });
+    return runIn(dialect, st.sql, { signal });
   }
 
   // Keep offline (modeldata.js): the tables a model reads, by their SQL names.

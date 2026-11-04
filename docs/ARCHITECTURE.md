@@ -30,9 +30,9 @@ SHOW ALL TABLES;
 | --- | --- | --- |
 | **One name per object** | A table has five parts and a model has three. A file is `'lakehouse.<workspace>.<item>/Files/<path>'`. | [NAMING.md](NAMING.md), [`src/names.js`](../src/names.js) |
 | **SQL only** | A model is read with `AGG("measure")` in SQL. There is no DAX query. Excel's MDX is a second way in, and is compiled to that same SQL. | [`app/semantic.js`](../app/semantic.js), [`src/xmla/`](../src/xmla/) |
-| **Read only** | Nothing is written to Fabric or OneLake. The host takes one read per statement, from a tab or the command line, and DuckDB's own parser checks it. The one exception is Export to Fabric, after an OK in VS Code. | `assertReads` and `checkedRead` in [`src/sql.js`](../src/sql.js) |
+| **Read only** | Nothing is written to Fabric or OneLake. The host takes one read per statement, from a tab or the command line, and DuckDB's own parser checks it (on the SQL endpoint, a SELECT and nothing that writes: `assertTsqlRead`). The one exception is Export to Fabric, after an OK in VS Code. | `assertReads` and `checkedRead` in [`src/sql.js`](../src/sql.js), [`src/tsql.js`](../src/tsql.js) |
 | **Cache first** | Every answer from OneLake or Fabric is kept on this machine and served from there first. It is trusted until using it fails, then read again once. | [`src/onelake.js`](../src/onelake.js), [`src/store.js`](../src/store.js) |
-| **Works offline** | A feature that reads data works from what this machine holds, with no network. What isn't held says so at once, never on a timeout. Only writing to Fabric needs a connection: Export to Fabric. The exported Fabric app is online by design, and this rule doesn't apply to it. | [`src/connectivity.js`](../src/connectivity.js), [`src/http.js`](../src/http.js), `cache_httpfs_set_offline` in [`src/engine-host.js`](../src/engine-host.js) |
+| **Works offline** | A feature that reads data works from what this machine holds, with no network. What isn't held says so at once, never on a timeout. Only writing to Fabric needs a connection: Export to Fabric. SQL endpoint mode runs on DuckDB offline. The exported Fabric app is online by design, and this rule doesn't apply to it. | [`src/connectivity.js`](../src/connectivity.js), [`src/http.js`](../src/http.js), `cache_httpfs_set_offline` in [`src/engine-host.js`](../src/engine-host.js) |
 | **The host does the work** | Sign-in, the read-only guard and OneLake's listings, metadata and `Files/` bytes are in the host, and DuckDB's reads are in the server it starts. A tab is a view: it holds no token and makes no network request. | [`src/host.js`](../src/host.js), [`src/panel.js`](../src/panel.js), [`src/engine-client.js`](../src/engine-client.js) |
 | **A table's Pivot is a SQL starter** | It builds a first SQL. Its only actions are Edit SQL and Close. | [`app/app.js`](../app/app.js) |
 
@@ -41,7 +41,6 @@ SHOW ALL TABLES;
 - DAX queries (`EVALUATE`).
 - Writing to OneLake, DDL, or editing data in the grid.
 - `CREATE` and `DROP SEMANTIC VIEW`: a model exists because Fabric has it, not because SQL made it.
-- A TDS connection to the SQL endpoint.
 - ER diagrams for lakehouse tables: they declare no keys.
 - vscode.dev: the engine is a native library, so this needs desktop VS Code.
 
@@ -406,6 +405,29 @@ Results show in the tab:
 - **Export…** writes every row to a CSV, Parquet or Excel file. The engine writes it, through VS Code's
   save dialog. SQL typed by hand still cannot `COPY`.
 
+## SQL endpoint mode
+
+`onelakeStudio.sqlEngine` is `duckdb` by default. With `sqlEndpoint`, what a person writes and runs goes to the
+Fabric SQL endpoint of the workspace it names, in T-SQL, and nothing on screen changes: the SQL box, a model's
+queries (Explore, a table's Pivot, Open in Excel, the command line), Plan, Profile and Export. What the tab reads
+for itself stays DuckDB's: a table's Stats, Data and History, files, SHOW and DESCRIBE.
+
+- **Names are the same** ([NAMING.md](NAMING.md#on-the-sql-endpoint)): a statement writes
+  `lakehouse.<workspace>.<item>.<schema>.<table>`, and the host makes it `"item"."schema"."table"` on that
+  workspace's endpoint, which holds every lakehouse and warehouse of it as a database. One workspace a statement.
+- **A model's queries are T-SQL:** every view is in a second dax-sql registry, `dialect: 'tsql'`
+  ([`app/semantic.js`](../app/semantic.js)); what dax-sql can't write in T-SQL is in its DESIGN.md.
+- **The host runs it** ([`src/tsql.js`](../src/tsql.js)): tedious, with the SQL audience's token for the same
+  account (`signin.js sqlToken`), a few connections kept per endpoint and account, and Stop for a tab's own
+  statements. The answer is in the engine's shape, so the grid, Explore, the command line and Excel read it as
+  DuckDB's.
+- **Plan** is the endpoint's estimated plan (`SET SHOWPLAN_XML`; it has no actual one), and its Profile runs the
+  query once more, its time shared out by the operators' estimated costs. **Profile** of a result and
+  **Export…** read every row from the endpoint: the profile is worked out in the host, in SUMMARIZE's columns, and
+  DuckDB writes the export.
+- **Offline,** everything runs on DuckDB, as in `duckdb` mode: the tab compiles for the dialect that runs now
+  (`core.js sqlDialect`, posted with the settings).
+
 ## Semantic models
 
 **A Power BI semantic model is a Fabric item.** It is not in OneLake: its list and its definition come
@@ -753,6 +775,7 @@ Excel (MSOLAP) --SOAP over http://127.0.0.1--> extension host
 | `onelakeStudio.logMaxGB` | 1 | How much of what the engine ran is kept for **Logs**, per account. `0` keeps none. |
 | `onelakeStudio.selectTopRows` | 1000 | How many rows **Select Top Rows** asks for. |
 | `onelakeStudio.maxResultRows` | 200,000 | The most rows of one result a tab and the command line keep, from 1,000 to 1,000,000. Past it, rows are only counted. |
+| `onelakeStudio.sqlEngine` | `duckdb` | What runs the SQL box's statements and a model's queries: `duckdb`, or `sqlEndpoint`, the workspace's Fabric SQL endpoint, in T-SQL ([SQL endpoint mode](#sql-endpoint-mode)). Offline, DuckDB. |
 | `onelakeStudio.tableOpensOn` | `stats` | What clicking a table shows first: `stats` or `data`. |
 | `onelakeStudio.gridThousandsSeparator` | off | Shows numbers in the grid with thousands separators. A copy still gets the raw value. |
 

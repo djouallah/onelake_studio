@@ -81,6 +81,15 @@ one per kind) and the workspace, item and schema are schemas nested inside it, m
 them. The table is a view there, over `iceberg_scan` of the table's current metadata. The name is
 therefore real SQL, which DuckDB resolves itself.
 
+## On the SQL endpoint
+
+In SQL endpoint mode (`onelakeStudio.sqlEngine`) a statement still names a table by its five parts, and the host
+gives the endpoint three: `lakehouse.aemo.data.dbo.dim_duid` is `"data"."dbo"."dim_duid"` on the SQL endpoint of
+`aemo`. T-SQL names four parts at most and Fabric has no linked servers, so the workspace says which endpoint
+runs the statement, and a statement names one workspace. A lakehouse and a warehouse are databases there; a SQL
+database and a mirrored database have endpoints of their own, and are refused. Copy SQL Name and Go To give the
+five parts in either mode.
+
 ## Semantic models: three parts
 
 **A semantic model is `semanticmodel.<workspace>.<model>`, however it was made.** That holds for a Power
