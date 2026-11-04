@@ -548,6 +548,9 @@ jobs:
           Invoke-WebRequest https://github.com/djouallah/onelake_studio/releases/latest/download/OneLake-Studio-Setup.exe -OutFile $old
           Start-Process $old -ArgumentList '/S' -Wait
           $released = (Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\OneLake Studio').DisplayVersion
+          # With no VS Code, the app's data is in the install folder, next to app\: setup must keep it.
+          New-Item -ItemType Directory -Force "$dir\data" | Out-Null
+          Set-Content "$dir\data\kept.txt" 'mine'
           $env:ONELAKE_STUDIO_HOME = "$env:RUNNER_TEMP\smoke-home"
           $null = Start-Process "$dir\onelake-studio.exe" -PassThru
           Start-Sleep 20
@@ -557,6 +560,7 @@ jobs:
           $version = (Get-Content ../package.json -Raw | ConvertFrom-Json).version
           $now = (Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\OneLake Studio').DisplayVersion
           if ($now -ne $version) { throw "after setup over $released the installed version is $now, not $version" }
+          if ((Get-Content "$dir\data\kept.txt" -ErrorAction SilentlyContinue) -ne 'mine') { throw "setup over $released lost the app's data" }
           $result = "$env:RUNNER_TEMP\smoke-upgrade.json"
           $app = Start-Process "$dir\onelake-studio.exe" -ArgumentList '--smoke', "`"$result`"" -PassThru
           $null = $app.Handle
