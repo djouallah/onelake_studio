@@ -43,7 +43,7 @@
 //   model, query
 // =============================================================================
 
-import * as duckdb from "../vendor/npm/@duckdb/duckdb-wasm@1.33.1-dev110.0/+esm.js";
+import * as duckdb from "../vendor/npm/@duckdb/duckdb-wasm@1.33.1-dev114.0/+esm.js";
 import { engineQueue } from "./queue.js";
 import { createResults } from "./results.js";
 import { createAuth } from "./auth.js";
@@ -57,7 +57,7 @@ const SMALL_BYTES = 32 * 1024 * 1024;   // a table up to this much Parquet is co
 // The site's own copy of the engine (vendor/, src/vendored.js WEBAPP), the base build: the page
 // needs Chrome or Edge 121+, which always runs it.
 const VENDOR = new URL('../vendor/', import.meta.url).href;
-const WASM = `${VENDOR}npm/@duckdb/duckdb-wasm@1.33.1-dev110.0/dist/`;
+const WASM = `${VENDOR}npm/@duckdb/duckdb-wasm@1.33.1-dev114.0/dist/`;
 const BUNDLE = { mainModule: `${WASM}duckdb-base.wasm`, mainWorker: `${WASM}duckdb-browser-base.worker.js`, pthreadWorker: null };
 // The DuckDB that build is: its extensions are vendored under this version, and an engine that
 // says another would ask for files the site does not have.

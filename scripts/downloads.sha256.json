@@ -1,7 +1,7 @@
 {
-  "https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.33.1-dev110.0/+esm": "9432aeee25eb72f70a3d64b2f4adcec1a5f3bea320621567acafc576b636eab3",
-  "https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.33.1-dev110.0/dist/duckdb-base.wasm": "ee0753ee0de7a5fdc26b428117438eb59ee9cb63d1bcff80042eed398b8104db",
-  "https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.33.1-dev110.0/dist/duckdb-browser-base.worker.js": "b4ea30d5b9509504500e0e90a6a071a0ab76ee824504e7914bfad8088924d4b5",
+  "https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.33.1-dev114.0/+esm": "c82ad510780f7ad109233773f895055cc46d864a768a967e439e0a494af0a13b",
+  "https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.33.1-dev114.0/dist/duckdb-base.wasm": "4f3cbae7d8a3d7ac45c25677fc5e3c37d93df4c52ff711210a9d3e796659dfed",
+  "https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.33.1-dev114.0/dist/duckdb-browser-base.worker.js": "25d21ad68d2d5c21b6e7d9328dc1b4375189b04976157c42aa4b7660be0f6c9d",
   "https://cdn.jsdelivr.net/npm/@microsoft/fabric-embedded-host@1.36.1/+esm": "35a90fea82e90b49cd04e52305b691ec815825d0623acbb6c30c6356af156539",
   "https://cdn.jsdelivr.net/npm/@microsoft/rayfin-auth-provider-fabric@1.36.1/+esm": "ea154bb42f40981d62a2a2a6c2bd070c0f4dca44a08d9e3d4ab7720482ea1a54",
   "https://cdn.jsdelivr.net/npm/@microsoft/rayfin-auth@1.36.1/+esm": "eac7a40b42c3a277a962c45538105fc5f740225fbc8ebc091ac20a640f62c672",

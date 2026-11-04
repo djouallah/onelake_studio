@@ -6,10 +6,13 @@
   SQL endpoint of the workspace it names, and a semantic model's queries (Explore, Pivot, Open in Excel, the command
   line) are compiled to T-SQL and run there too. Tables keep their names, `lakehouse.<workspace>.<item>.<schema>.<table>`.
   Plan, Profile and Export work as before. Offline, DuckDB runs everything, as by default. dax-sql 0.1.6.
-- **Plan** has a **SQL** tab before Profile: the SQL the plan is of, as the engine gets it, with Copy. On the SQL endpoint it is the T-SQL with each table's three-part name, which the endpoint's own console runs as it is.
-- Settings have an **Engine** group again, first: Sql Engine, Engine Threads, Engine Spill Max GB and Log Max GB, out of Cache and Query and Results. In Explore's Show plan too.
+- **Plan** has a **SQL** tab before Profile: the SQL the plan is of, as the engine gets it, with Copy. On the SQL endpoint it is the T-SQL with each table's three-part name, which the endpoint's own console runs as it is. In Explore's Show plan too.
+- Settings have an **Engine** group again, first: Sql Engine, Engine Threads, Engine Spill Max GB and Log Max GB, out of Cache and Query and Results.
 - A semantic model's **YAML** view shows in amber any expression in a dialect other than Ossie SQL, DAX for one,
   as it does the Power BI extension: what isn't plain Ossie SQL. The note above the file names them.
+- **Fixed: Export to Fabric's app stopped at start** with "the engine is DuckDB v2.0.0-dev88614, but the site's
+  extensions are for v2.0.0". DuckDB-WASM 1.33.1-dev110.0 was a dev build of DuckDB 2.0 that refuses its extensions;
+  1.33.1-dev114.0, the same source, is v2.0.0 and loads them.
 - The title shows only the first 4 letters of the tenant (`fabr…`), so a screenshot doesn't give it away.
 
 ## 0.2.15

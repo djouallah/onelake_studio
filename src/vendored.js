@@ -22,8 +22,9 @@ const PINS = {
 // and the export copies that tree into the app's site/vendor/.
 const WEBAPP = {
   // DuckDB-WASM, the base build only (single-threaded; the page needs Chrome or Edge 121+).
-  duckdbWasm: '@duckdb/duckdb-wasm@1.33.1-dev110.0',
-  // The DuckDB that build reports (db.getVersion()): the path its extensions are asked under.
+  duckdbWasm: '@duckdb/duckdb-wasm@1.33.1-dev114.0',
+  // The DuckDB that build reports (db.getVersion()): the path its extensions are asked under. A dev build
+  // (dev110.0 said v2.0.0-dev88614) loads no released extension: the build must report the release.
   duckdb: 'v2.0.0',
   // DuckDB's signed extensions the page LOADs (storage/data.js).
   extensions: ['parquet', 'icu'],
