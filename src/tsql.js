@@ -409,9 +409,10 @@ function planTree(xml) {
     (stack.length ? stack.at(-1).children : roots).push(node);
     if (!tag.endsWith('/>')) stack.push(node);
   }
+  // Its children's subtrees first, before they lose theirs.
   const own = n => {
-    n.children.forEach(own);
     n.cost = Math.max(0, n.subtree - n.children.reduce((s, k) => s + k.subtree, 0));
+    n.children.forEach(own);
     delete n.subtree;
     return n;
   };
