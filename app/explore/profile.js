@@ -77,7 +77,7 @@ export function parseProfile(json) {
     const kids = n.children ?? [];
     const skip = SKIP.has(name);
     const me = skip ? null : { id: id++, name, depth, kind: kindOf(name), ms: secs(n.operator_timing ?? n.timing),
-      rows: rowsOf(n), scanned: Number(n.operator_rows_scanned ?? 0),
+      rows: rowsOf(n), scanned: n.operator_rows_scanned == null ? null : Number(n.operator_rows_scanned),
       estimate: Number(n.extra_info?.['Estimated Cardinality']) || null, info: n.extra_info ?? {},
       detail: detailOf(n.extra_info ?? {}) };
     for (const k of JOIN.test(name) ? [...kids].reverse() : kids) visit(k, skip ? depth : depth + 1);
@@ -94,8 +94,13 @@ export function parseProfile(json) {
   const planning = phases.reduce((s, f) => s + f.ms, 0);
   const total = Math.max(secs(p.latency), planning + execution);
   const top = result(roots.at(-1));
-  return { total, planning, execution, other: Math.max(0, total - planning - execution), phases, operators,
-    rows: top ? rowsOf(top) : 0, scanned: Number(p.cumulative_rows_scanned ?? operators.reduce((s, o) => s + o.scanned, 0)),
+  // What the profile doesn't carry is null, not 0: the SQL endpoint's (app.js tsqlProfile) is its
+  // estimated plan and one timed run, so it has no planning and no rows scanned.
+  const scans = operators.filter(o => o.scanned != null);
+  return { total, planning: (p.planner ?? p.all_optimizers ?? p.physical_planner) == null ? null : planning, execution,
+    other: Math.max(0, total - planning - execution), phases, operators, rows: top ? rowsOf(top) : 0,
+    scanned: p.cumulative_rows_scanned != null ? Number(p.cumulative_rows_scanned)
+      : scans.length ? scans.reduce((s, o) => s + o.scanned, 0) : null,
     memory: Number(p.system_peak_buffer_memory ?? 0) || null };
 }
 
@@ -119,10 +124,11 @@ export function renderProfile(root, prof, colors) {
     el('div', { class: 'pf-value' }, value), sub ? el('div', { class: 'pf-sub' }, sub) : null);
   const tiles = el('div', { class: 'pf-tiles' },
     tile('Total', ms(prof.total)),
-    tile('Planning', ms(prof.planning), pct(prof.planning, prof.total)),
-    tile('Execution', ms(prof.execution), pct(prof.execution, prof.total)),
+    // Without its planning, the execution would only say the total again.
+    prof.planning == null ? null : tile('Planning', ms(prof.planning), pct(prof.planning, prof.total)),
+    prof.planning == null ? null : tile('Execution', ms(prof.execution), pct(prof.execution, prof.total)),
     tile('Rows returned', count(prof.rows)),
-    tile('Rows scanned', count(prof.scanned)),
+    prof.scanned == null ? null : tile('Rows scanned', count(prof.scanned)),
     prof.memory ? tile('Peak memory', bytes(prof.memory)) : null);
 
   // The timeline: the phases, the operators in execution order, and what is left of the total.

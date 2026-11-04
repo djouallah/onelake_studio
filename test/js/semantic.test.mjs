@@ -151,3 +151,20 @@ test("Model's YAML sets apart an expression in a dialect other than Ossie SQL, i
   assert.deepEqual(foreignDialects(yaml), ["DAX", "ANSI_SQL"]);
   assert.deepEqual(foreignDialects("metrics:\n  - expression:\n      dialects:\n        - dialect: OSSIE_SQL_2026\n"), []);
 });
+
+test("a profile shows no planning or rows scanned it doesn't carry: the SQL endpoint's", async () => {
+  const { parseProfile } = await import("../../app/explore/profile.js");
+  // The endpoint's (app.js tsqlProfile): its time, and its operators' estimated rows.
+  const endpoint = parseProfile({ latency: 5.66, operator: [{ operator_name: "TOP", operator_timing: 5.66, operator_cardinality: 5000,
+    children: [{ operator_name: "TABLE SCAN", operator_timing: 0, operator_cardinality: 100000, extra_info: { Table: "t" }, children: [] }] }] });
+  assert.equal(endpoint.scanned, null);
+  assert.equal(endpoint.planning, null);
+  assert.equal(endpoint.rows, 5000);
+  // DuckDB's, as app.js profileJson flattens 2.0's: both are there, as is a scan's 0.
+  const duck = parseProfile({ latency: 0.036, planner: 0.0128, all_optimizers: 0.0032, physical_planner: 0.0005, cumulative_rows_scanned: 100000,
+    operator: [{ operator_type: "TOP_N", operator_timing: 0.003, operator_cardinality: 5000,
+      children: [{ operator_type: "TABLE_SCAN", operator_timing: 0.0096, operator_cardinality: 100000, operator_rows_scanned: 100000, children: [] }] }] });
+  assert.equal(duck.scanned, 100000);
+  assert.ok(duck.planning > 0);
+  assert.equal(parseProfile({ planner: 0.001, operator: [{ operator_type: "TABLE_SCAN", operator_rows_scanned: 0, children: [] }] }).scanned, 0);
+});
