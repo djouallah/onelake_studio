@@ -24,6 +24,8 @@ declare module '@microsoft/fabric-user-data-functions' {
   interface RayfinSecretRegistry {
     CATALOG_URL: string;
     MODEL_URL: string;
+    SQL_ENDPOINT: string;
+    SQL_DATABASE: string;
   }
 }
 

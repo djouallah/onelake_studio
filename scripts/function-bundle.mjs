@@ -1,8 +1,10 @@
 // =============================================================================
 // function-bundle.mjs — Export to Fabric's function, as the deploy package Fabric takes
 // =============================================================================
-// The app's one function (openCatalog, fabric_app/rayfin/functions, tracked here) is
-// TypeScript with npm dependencies. Fabric takes it as a zip of one esbuild bundle plus its
+// The app's functions (openCatalog, and sqlEndpoint for SQL endpoint mode: fabric_app/rayfin/
+// functions, tracked here) are TypeScript with npm dependencies, and dax-sql: sqlEndpoint compiles
+// the page's queries with the copy the page itself runs (PINS.daxSql, vendor/npm/, downloaded by
+// vendor.mjs and held to its hash), put in node_modules/ after npm ci, so it is no npm dependency. Fabric takes it as a zip of one esbuild bundle plus its
 // metadata (deploymetadata.json, generated from the source by the TypeScript compiler), the
 // two sent as a multipart form (src/fabricapp.js). Nothing in either names an item, a
 // workspace or a secret's value, so the package is built ONCE, here, at package time, and
@@ -30,6 +32,7 @@ import { createHash } from "node:crypto";
 
 const require = createRequire(import.meta.url);
 const { CLIENT_VERSION } = require("../src/fabricapp.js");
+const { PINS } = require("../src/vendored.js");
 
 const here = join(dirname(fileURLToPath(import.meta.url)), "..");   // the extension root
 const OUT = join(here, "fabric-function");
@@ -39,10 +42,12 @@ const RAYFIN = join(here, "fabric_app", "rayfin");
 const FILES = ["rayfin.yml", "tsconfig.json", "data/schema.ts",
   "functions/package.json", "functions/package-lock.json", "functions/tsconfig.json", "functions/host.json",
   "functions/runtimemetadata.json", "functions/src/function_app.ts", "functions/src/secrets.generated.ts",
-  "functions/src/types.ts"];
+  "functions/src/types.ts", "functions/src/dax-sql.d.ts"];
 const hash = createHash("sha256");
 for (const f of FILES) hash.update(f).update(await readFile(join(RAYFIN, ...f.split("/"))));
-const pins = JSON.stringify({ source: hash.digest("hex").slice(0, 16), cli: CLIENT_VERSION });
+const pins = JSON.stringify({ source: hash.digest("hex").slice(0, 16), cli: CLIENT_VERSION, daxSql: PINS.daxSql });
+const DAX_SQL = join(here, "vendor", "npm", PINS.daxSql);
+if (!existsSync(join(DAX_SQL, "src", "index.js"))) throw new Error(`no ${PINS.daxSql} in vendor/npm/: run node scripts/vendor.mjs first`);
 if (await readFile(join(OUT, "pins.json"), "utf8").catch(() => "") === pins && existsSync(join(OUT, "source.zip"))) {
   console.log("fabric-function/ already holds these pins — nothing to build");
   process.exit(0);
@@ -56,6 +61,11 @@ try {
   await cp(RAYFIN, join(project, "rayfin"), { recursive: true });
   const functions = join(project, "rayfin", "functions");
   sh("npm ci --no-audit --no-fund", functions);
+  // dax-sql as a package, laid out as npm has it (formats/ imports ../src/).
+  const dax = join(functions, "node_modules", "dax-sql");
+  for (const d of ["src", "formats"]) await cp(join(DAX_SQL, d), join(dax, d), { recursive: true });
+  await writeFile(join(dax, "package.json"), JSON.stringify({ name: "dax-sql", version: PINS.daxSql.split("@")[1], type: "module",
+    exports: { ".": "./src/index.js", "./formats/tmsl.js": "./formats/tmsl.js", "./formats/ossie.js": "./formats/ossie.js" } }));
   // The packager, at the version whose wire format fabricapp.js speaks.
   const cli = join(work, "cli");
   await mkdir(cli, { recursive: true });

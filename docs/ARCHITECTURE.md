@@ -427,6 +427,11 @@ for itself stays DuckDB's: a table's Stats, Data and History, files, SHOW and DE
   DuckDB writes the export.
 - **Offline,** everything runs on DuckDB, as in `duckdb` mode: the tab compiles for the dialect that runs now
   (`core.js sqlDialect`, posted with the settings).
+- **Which statements go there:** one that names a lakehouse or warehouse table by its five parts, or a semantic
+  model (`dialectOf` in [`app/app.js`](../app/app.js)). A file is a string, not a table, so its preview, and a
+  database file's tables, are DuckDB's in either mode. A table clicked in the tree starts the box at
+  `SELECT TOP 100 *`: the endpoint has no `LIMIT`.
+- **Export to Fabric** makes an app that runs no DuckDB ([Export to Fabric](#export-to-fabric), SQL endpoint mode).
 
 ## Semantic models
 
@@ -555,6 +560,19 @@ model's Explore, nothing else, as a Fabric app (item type `AppBackend`, named
 - **A newer deploy is never overwritten unasked.** The marker keeps the app's last deploy time, by
   Fabric's clock. If the app was deployed again since, the export asks.
 - **A folder the export did not write** is refused.
+
+**In SQL endpoint mode** (`onelakeStudio.sqlEngine` `sqlEndpoint`) the app runs no DuckDB, in the browser or anywhere.
+- **The function runs the queries:** Explore's query over the model goes to its `sqlEndpoint` call
+  ([`function_app.ts`](../fabric_app/rayfin/functions/src/function_app.ts)), which compiles it to T-SQL with dax-sql
+  (the page's own pinned copy, put in the bundle by [`scripts/function-bundle.mjs`](../scripts/function-bundle.mjs))
+  and runs it on the lakehouse's SQL endpoint with tedious and the app identity's SQL token (Rayfin's
+  `AudienceType.Sql`). Its settings `SQL_ENDPOINT` and `SQL_DATABASE` say where; the export finds them.
+- **Only a SELECT over the model is taken**, never SQL of the browser's own: whoever can call it reads what the app
+  shows, through the model, and nothing else of the lakehouse.
+- **The page** ([`storage/sqldata.js`](../fabric_app/site/storage/sqldata.js), chosen by `site/engine.json`) sends
+  the query and draws the rows; its Show plan is the endpoint's estimated plan, and its SQL tab the T-SQL. `site/`
+  holds no DuckDB, extensions, Arrow or browser data source, and no SAS is signed: the workspace setting for
+  user-delegated SAS tokens isn't needed.
 
 **The template** ([`fabric_app/`](../fabric_app/))
 - **`site/`:** the page, black always. Its data source (`storage/`) signs in with Rayfin's Fabric SSO,

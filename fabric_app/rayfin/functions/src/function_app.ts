@@ -1,5 +1,9 @@
 import { createHmac } from 'node:crypto';
 import { parse as parseYaml } from 'yaml';
+import { createCompiler } from 'dax-sql';
+import { tmslToModel } from 'dax-sql/formats/tmsl.js';
+import { ossieToTmsl } from 'dax-sql/formats/ossie.js';
+import { Connection, Request } from 'tedious';
 
 import {
   UserDataFunctions,
@@ -29,6 +33,14 @@ const udf = new UserDataFunctions();
  *   https://onelake.dfs.fabric.microsoft.com/<workspace>/<item>/Files/<path>
  * Both are set by OneLake Studio's Export to Fabric, which deploys this app.
  * The workspace must allow "Authenticate with OneLake user-delegated SAS tokens".
+ *
+ * An app exported in SQL endpoint mode (OneLake Studio's onelakeStudio.sqlEngine) calls
+ * sqlEndpoint instead, and nothing reads the tables in the browser: the page sends Explore's
+ * query over the model, this function compiles it to T-SQL (dax-sql) and runs it on the
+ * lakehouse's SQL endpoint, with the app identity's SQL token, and the page gets the rows. Only a
+ * SELECT over the model is taken, never SQL of the browser's own, so a caller reads what the app
+ * shows, through the model, and nothing else of the lakehouse.
+ * SQL_ENDPOINT, SQL_DATABASE (app settings): the endpoint's host and the lakehouse's name there.
  */
 
 type StorageCtx = RayfinContext<BlankAppSchema, AudienceType.Storage>;
@@ -263,6 +275,205 @@ udf.func(
       }
       return { ...(model ? { model } : {}), metadata: catalog.metadata,
                missing: [...catalog.missing, ...bad].sort(), sas, expiresOn: iso(expiry) };
+    } catch (e) {
+      return { error: `${step}: ${e instanceof Error ? e.message : String(e)}` };
+    }
+  },
+  [],
+);
+
+// --- SQL endpoint mode --------------------------------------------------------------------
+
+type SqlCtx = RayfinContext<BlankAppSchema, AudienceType.Storage | AudienceType.Sql>;
+
+// What the compiled query gives Explore: a number as a number, a date as 2024-01-31, as the
+// extension's Explore in SQL endpoint mode (app/explore/query.js EXPLORE_CASTS_TSQL, kept the same).
+const CASTS = {
+  int: (s: string) => `CAST(${s} AS BIGINT)`,
+  double: (s: string) => `CAST(${s} AS FLOAT)`,
+  decimal: (s: string) => `CAST(${s} AS FLOAT)`,
+  datetime: (s: string) => `CONVERT(VARCHAR(10), CAST(${s} AS DATE), 23)`,
+};
+const MAX_ROWS = 100_000;          // the most rows one answer holds; past it they are only counted
+const MODEL_KEPT_MS = 60_000;      // the model (and its compiler) kept this long by a warm instance
+const SQL_TIMEOUT_MS = 230_000;    // a statement's longest run, under the function's own limit
+
+const tsqlName = (s: string): string => `"${String(s).replace(/"/g, '""')}"`;
+
+// The model's tables by name, each its schema.table: what the compiler reads them as.
+function sourcesByTable(model: any): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const d of model?.datasets ?? []) {
+    const s = ossieSource(d);
+    if (s) out.set(String(d.name), s);
+  }
+  for (const t of (model?.model ?? model)?.tables ?? []) {
+    const s = t?.partitions?.[0]?.source;
+    if (s?.entityName) out.set(String(t.name), `${s.schemaName ?? 'dbo'}.${s.entityName}`);
+  }
+  return out;
+}
+
+// The model as read (the page's), and dax-sql's T-SQL compiler over it, each table by its
+// three-part name on the endpoint: kept a minute, so a page's queries don't each read the file.
+let _kept: { at: number; url: string; db: string; doc: any; compiler: any } | null = null;
+async function modelAndCompiler(ctx: SqlCtx, db: string): Promise<{ doc: any; compiler: any }> {
+  const url = String(ctx.Secrets.MODEL_URL ?? '').trim();
+  if (_kept && _kept.url === url && _kept.db === db && Date.now() - _kept.at < MODEL_KEPT_MS) return _kept;
+  const doc = await readModel(ctx as unknown as StorageCtx, ctx.Tokens.Storage);
+  const bim = Array.isArray(doc?.datasets) ? ossieToTmsl(doc) : doc;
+  const sources = sourcesByTable(doc);
+  const compiler = createCompiler(tmslToModel(bim), {
+    dialect: 'tsql',
+    castOutput: CASTS,
+    tableSource: (t: any) => {
+      const s = sources.get(String(t.name));
+      if (!s) throw new Error(`table ${t.name}: the model names no source for it`);
+      const [schema, table] = s.split('.');
+      return `${tsqlName(db)}.${tsqlName(schema)}.${tsqlName(table)}`;
+    },
+  });
+  _kept = { at: Date.now(), url, db, doc, compiler };
+  return _kept;
+}
+
+// One connection to the endpoint, kept while this instance is warm and not in use.
+let _idle: Connection | null = null;
+function connect(host: string, db: string, token: string): Promise<Connection> {
+  return new Promise((resolve, reject) => {
+    const conn = new Connection({
+      server: host.replace(/,\d+$/, ''),
+      authentication: { type: 'azure-active-directory-access-token', options: { token } },
+      options: { database: db, port: 1433, encrypt: true, connectTimeout: 30_000, requestTimeout: SQL_TIMEOUT_MS },
+    });
+    conn.on('error', () => { if (_idle === conn) _idle = null; });
+    conn.on('end', () => { if (_idle === conn) _idle = null; });
+    conn.on('connect', (e?: Error) => {
+      if (e) return reject(e);
+      // The endpoint starts a session at TEXTSIZE 4096 bytes, which cuts a plan's XML.
+      conn.execSqlBatch(new Request('SET TEXTSIZE 2147483647', (err?: Error | null) => {
+        if (!err) return resolve(conn);
+        conn.close();
+        reject(err);
+      }));
+    });
+    conn.connect();
+  });
+}
+async function withConnection<T>(host: string, db: string, token: string, fn: (c: Connection) => Promise<T>): Promise<T> {
+  let conn = _idle;
+  _idle = null;
+  if (!conn) conn = await connect(host, db, token);
+  let healthy = true;
+  try { return await fn(conn); }
+  catch (e) { healthy = false; throw e; }
+  finally { if (healthy && !_idle) _idle = conn; else conn.close(); }
+}
+
+// A statement's rows: up to `keep` of them, each an array, and how many there were.
+function run(conn: Connection, sql: string, keep: number): Promise<{ fields: { name: string; type: string }[]; rows: unknown[][]; numRows: number }> {
+  return new Promise((resolve, reject) => {
+    let fields: { name: string; type: string }[] = [];
+    const rows: unknown[][] = [];
+    let numRows = 0;
+    const req = new Request(sql, (e?: Error | null) => (e ? reject(e) : resolve({ fields, rows, numRows })));
+    req.on('columnMetadata', (cols: any) => {
+      fields = (Array.isArray(cols) ? cols : Object.values(cols)).map((c: any) => ({ name: String(c.colName), type: String(c.type?.name ?? '') }));
+    });
+    req.on('row', (cols: any[]) => {
+      numRows++;
+      if (rows.length < keep) rows.push(cols.map((c, i) => value(c.value, fields[i]?.type)));
+    });
+    conn.execSqlBatch(req);
+  });
+}
+
+// A value as JSON carries it, and as Explore shows it: a BIGINT a number while it is exact, a
+// date as 2024-01-31, a time stamp as 2024-01-31 10:05:06.
+function value(v: unknown, type = ''): unknown {
+  if (v == null) return null;
+  if (typeof v === 'string' && /^Int/.test(type) && /^-?\d+$/.test(v) && Number.isSafeInteger(Number(v))) return Number(v);
+  if (v instanceof Date) {
+    const s = v.toISOString().replace('T', ' ').replace(/Z$/, '').replace(/\.000$/, '').replace(/(\.\d*?)0+$/, '$1');
+    return /^DateN?$/.test(type) ? s.slice(0, 10) : s;
+  }
+  if (Buffer.isBuffer(v)) return v.toString('hex');
+  return v;
+}
+
+// A SHOWPLAN_XML's operators as a tree, each with its own estimated cost (its subtree's less its
+// inputs'): what OneLake Studio's SQL endpoint mode shows (src/tsql.js planTree, kept the same).
+interface PlanNode { op: string; logical: string; rows: number; cost: number; table: string | null; children: PlanNode[]; subtree?: number }
+function planTree(xml: string): PlanNode[] {
+  const attr = (tag: string, name: string): string | null => new RegExp(`\\b${name}="([^"]*)"`).exec(tag)?.[1] ?? null;
+  const unxml = (s: string | null) => String(s ?? '').replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+  const roots: PlanNode[] = [], stack: PlanNode[] = [];
+  for (const m of String(xml).matchAll(/<RelOp\b[^>]*>|<\/RelOp>|<Object\b[^>]*\/?>/g)) {
+    const tag = m[0];
+    if (tag.startsWith('</')) { stack.pop(); continue; }
+    if (tag.startsWith('<Object')) {
+      const top = stack[stack.length - 1];
+      if (top && !top.table) top.table = [attr(tag, 'Schema'), attr(tag, 'Table')].filter(Boolean).map(s => unxml(s).replace(/^\[|\]$/g, '')).join('.') || null;
+      continue;
+    }
+    const node: PlanNode = { op: unxml(attr(tag, 'PhysicalOp')), logical: unxml(attr(tag, 'LogicalOp')), rows: Number(attr(tag, 'EstimateRows')) || 0,
+      subtree: Number(attr(tag, 'EstimatedTotalSubtreeCost')) || 0, cost: 0, table: null, children: [] };
+    (stack.length ? stack[stack.length - 1].children : roots).push(node);
+    if (!tag.endsWith('/>')) stack.push(node);
+  }
+  const own = (n: PlanNode): PlanNode => {
+    n.cost = Math.max(0, (n.subtree ?? 0) - n.children.reduce((s, k) => s + (k.subtree ?? 0), 0));
+    n.children.forEach(own);
+    delete n.subtree;
+    return n;
+  };
+  return roots.map(own);
+}
+
+/**
+ * SQL endpoint mode. `request` is JSON:
+ *   { mode: 'model' }                    the model, read in place (MODEL_URL)
+ *   { mode: 'rows', query, rows? }       a SELECT over the model, run: { fields, rows, numRows, truncated }
+ *                                        (`rows`: the most kept, MAX_ROWS at most; 0 only counts them)
+ *   { mode: 'plan', query }              its estimated plan: { plan }
+ *   { mode: 'sql', query }               its T-SQL: { sql }
+ * A failure is returned as { error }, naming the step.
+ */
+udf.func(
+  'sqlEndpoint',
+  async (ctx: RayfinContext<BlankAppSchema, AudienceType.Storage | AudienceType.Sql>, request: string): Promise<any> => {
+    let step = 'the request';
+    try {
+      const r = JSON.parse(String(request ?? '{}'));
+      const mode = String(r.mode ?? '');
+      step = 'the settings SQL_ENDPOINT and SQL_DATABASE';
+      const host = String(ctx.Secrets.SQL_ENDPOINT ?? '').trim();
+      const db = String(ctx.Secrets.SQL_DATABASE ?? '').trim();
+      if (!/^[a-z0-9-]+\.datawarehouse\.fabric\.microsoft\.com(,\d+)?$/i.test(host)) throw new Error('SQL_ENDPOINT is not <name>.datawarehouse.fabric.microsoft.com');
+      if (!db) throw new Error('SQL_DATABASE is empty');
+      step = 'the setting MODEL_URL (the model)';
+      const { doc, compiler } = await modelAndCompiler(ctx, db);
+      if (mode === 'model') return { model: doc };
+      step = 'the query';
+      const query = String(r.query ?? '');
+      // A SELECT over the model, whole: nothing of the caller's own reaches the endpoint.
+      if (!compiler.isSql(query)) throw new Error('the app runs SELECT … FROM the model, and nothing else');
+      const sql: string = compiler.compile(query).sql;
+      if (mode === 'sql') return { sql };
+      step = 'the SQL endpoint';
+      const token = ctx.Tokens.Sql;
+      if (mode === 'plan') {
+        const xml = await withConnection(host, db, token, async conn => {
+          await run(conn, 'SET SHOWPLAN_XML ON', 0);
+          try { return (await run(conn, sql, Number.MAX_SAFE_INTEGER)).rows.map(x => String(x[0])).join(''); }
+          finally { await run(conn, 'SET SHOWPLAN_XML OFF', 0); }
+        });
+        return { plan: planTree(xml) };
+      }
+      if (mode !== 'rows') throw new Error(`no mode ${mode}`);
+      const keep = Math.max(0, Math.min(MAX_ROWS, r.rows == null ? MAX_ROWS : Number(r.rows) || 0));
+      const res = await withConnection(host, db, token, conn => run(conn, sql, keep));
+      return { fields: res.fields.map(f => f.name), rows: res.rows, numRows: res.numRows, truncated: res.numRows > res.rows.length };
     } catch (e) {
       return { error: `${step}: ${e instanceof Error ? e.message : String(e)}` };
     }

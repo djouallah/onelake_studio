@@ -3,12 +3,13 @@
 // =============================================================================
 // OneLake Studio's own Explore (explore/view.js: Model, Pivot), over the data source of
 // this app (storage/data.js): it signs in, its function reads the model from the lakehouse and
-// says where the tables are, and DuckDB-WASM reads them in this browser. The model is never
+// says where the tables are, and DuckDB-WASM reads them in this browser. Exported in SQL endpoint
+// mode (engine.json), the data source is storage/sqldata.js instead: the function runs each query
+// on the lakehouse's SQL endpoint, and this page loads no DuckDB. The model is never
 // copied into the app: it is the lakehouse's file, as it is now. Nothing here is specific to
 // one model; the export writes only rayfin.config.json (the backend) and explore.json (the
 // shelves the first view shows).
 // =============================================================================
-import { createDataSource } from "./storage/data.js";
 import { mountExplore } from "./explore/view.js";
 import { tmslOf } from "./explore/model.js";
 import { EXPLORE_CASTS } from "./explore/query.js";
@@ -66,6 +67,9 @@ function download(name, text) {
 export async function start() {
   try {
     const first = await fetch(new URL("./explore.json" + v, import.meta.url)).then(r => (r.ok ? r.json() : null), () => null);
+    const { engine } = await fetch(new URL("./engine.json" + v, import.meta.url)).then(r => (r.ok ? r.json() : {}), () => ({}));
+    if (engine === "sqlEndpoint") return await startSql(first);
+    const { createDataSource } = await import("./storage/data.js");
     const data = createDataSource({
       onStatus: s => { boot.step(s); status(boot.el() ? "" : s); },
       onProgress: p => status(p ? (p.detail || p.label) : ""),
@@ -99,4 +103,32 @@ export async function start() {
     if (boot.el()) boot.fail(`Error: ${e?.message || e}`);
     else status(`Error: ${e?.message || e}`, "error");
   }
+}
+
+// SQL endpoint mode: Explore's queries over the model go to the function as they are written; it
+// compiles them to T-SQL and runs them there, so the page's compiler passes them through.
+async function startSql(first) {
+  const { createSqlSource } = await import("./storage/sqldata.js");
+  const data = createSqlSource({ onStatus: s => boot.step(s) });
+  await data.init();
+  boot.step("Building Explore…");
+  const doc = data.model();
+  const bim = Array.isArray(doc.datasets) ? ossieToTmsl(doc) : doc;
+  const name = /^[A-Za-z_]\w*$/.test(String(doc.name ?? "")) ? doc.name : "model";
+  document.title = `${doc.name || name} · Explore`;
+  status("");
+  boot.done();
+  mountExplore(document.getElementById("explore"), {
+    name, title: String(doc.name || name), tmsl: tmslOf(bim),
+    compiler: { isDax: t => /^\s*(DEFINE|EVALUATE)\b/i.test(t), compileStatement: text => ({ sql: text }) },
+    run: sql => data.run(sql),
+    shownSql: sql => data.shownSql(sql),
+    echarts: () => echartsReady,
+    saveText: download,
+    loadState: key => { try { return JSON.parse(localStorage.getItem(key)) ?? first; } catch { return first; } },
+    saveState: (key, s) => { try { localStorage.setItem(key, JSON.stringify(s)); } catch {} },
+    setStatus: status,
+    profileSet: false,
+    htmlPlan: false,
+  });
 }

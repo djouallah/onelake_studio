@@ -10,6 +10,9 @@
 - Settings have an **Engine** group again, first: Sql Engine, Engine Threads, Engine Spill Max GB and Log Max GB, out of Cache and Query and Results.
 - A semantic model's **YAML** view shows in amber any expression in a dialect other than Ossie SQL, DAX for one,
   as it does the Power BI extension: what isn't plain Ossie SQL. The note above the file names them.
+- **Export to Fabric in SQL endpoint mode** makes an app that runs no DuckDB: its function compiles Explore's
+  queries over the model to T-SQL and runs them on the lakehouse's SQL endpoint, with the app's own identity, and the
+  page only draws the rows. The site ships no DuckDB, and the workspace needs no SAS setting.
 - **Fixed, SQL endpoint mode:** a table clicked in the tree puts `SELECT TOP 100 *` in the box, not `LIMIT 100`,
   which the endpoint doesn't support; and a file clicked, or a database file's table, is read by DuckDB as before, not sent
   to the endpoint. A statement goes to the endpoint when it names a lakehouse or warehouse table, or a semantic model.

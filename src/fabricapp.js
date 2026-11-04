@@ -12,7 +12,8 @@
 //   2. its backend: extended-properties, polled until it names BaaSEndpoint
 //   3. its publishable key (the browser SDK's)
 //   4. its runtime settings: Fabric sign-in, the function's identity, static hosting PROTECTED
-//   5. the function's secrets: CATALOG_URL (the tables) and MODEL_URL (the model, read in place)
+//   5. the function's secrets: CATALOG_URL (the tables) and MODEL_URL (the model, read in place);
+//      in SQL endpoint mode SQL_ENDPOINT and SQL_DATABASE too (where it runs the model's queries)
 //   6. the site: a zip of dist/ (with rayfin.config.json, made here) -> hostingUrl
 //   7. the function: the package built at package time (scripts/function-bundle.mjs), then
 //      its deploy status polled
@@ -218,7 +219,7 @@ function createFabricApp({ getToken, apiBase = FABRIC_API, log = () => {},
    * `onItem(id)` hears the item's id as soon as there is one: if a later step fails, a second
    * export must know this item is its own.
    */
-  async function publish({ workspaceId: ws, name, tenantId, catalogUrl, modelUrl, site, fn, redirects: known = [],
+  async function publish({ workspaceId: ws, name, tenantId, catalogUrl, modelUrl, sqlEndpoint = null, site, fn, redirects: known = [],
                           itemId = null, takeOver = false, onItem = () => {} }) {
     const { item, created } = await ensureItem(ws, name, { itemId, takeOver });
     const id = item.id;
@@ -234,6 +235,11 @@ function createFabricApp({ getToken, apiBase = FABRIC_API, log = () => {},
     await postSettings(ws, id, redirects);
     await postSecret(ws, id, 'CATALOG_URL', catalogUrl);
     await postSecret(ws, id, 'MODEL_URL', modelUrl);
+    // SQL endpoint mode: where the function runs the model's queries.
+    if (sqlEndpoint) {
+      await postSecret(ws, id, 'SQL_ENDPOINT', sqlEndpoint.host);
+      await postSecret(ws, id, 'SQL_DATABASE', sqlEndpoint.database);
+    }
     log(`app ${name}: uploading the site`);
     const config = { apiUrl, publishableKey: key, workspaceId: ws, itemId: id, portalUrl: PORTAL_URL, ...(tenantId ? { tenantId } : {}) };
     const hostingUrl = await deploySite(ws, id, await site(config));

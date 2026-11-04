@@ -537,6 +537,7 @@ function createCore({
     ui: exportUi,
     onRefresh: node => view.refresh(node),
     log,
+    sqlEngine: settings.sqlEngine,
   }).exportExplore;
 
   // Behind what's on screen, once it has been built.

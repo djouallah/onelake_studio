@@ -21,4 +21,8 @@ export type AppFunctionsSchema = {
     input: { tables: string };
     output: { model?: any; metadata: Record<string, string>; missing: string[]; sas: string; expiresOn: string } | { error: string };
   };
+  sqlEndpoint: {
+    input: { request: string };
+    output: any;
+  };
 };

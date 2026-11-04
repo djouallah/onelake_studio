@@ -32,7 +32,17 @@ const { createOneLakeWriter } = require('./onelakewrite');
  * @param {(node: object) => void} o.onRefresh  this part of the tree changed
  * @param {(line: string) => void} o.log
  */
-function createExport({ connectivity, modules, hostToken, appToken, fabric, onelake, catalog, writer = createOneLakeWriter({ getToken: hostToken }), memento, extensionDir, pageDir, ui, onRefresh, log }) {
+function createExport({ connectivity, modules, hostToken, appToken, fabric, onelake, catalog, writer = createOneLakeWriter({ getToken: hostToken }), memento, extensionDir, pageDir, ui, onRefresh, log, sqlEngine = () => 'duckdb' }) {
+
+  // SQL endpoint mode (onelakeStudio.sqlEngine): the app's function runs the model's queries on its
+  // lakehouse's SQL endpoint, by the lakehouse's name there.
+  async function sqlEndpointOf(plan) {
+    const lh = await fabric.itemOf(plan.workspace, plan.lakehouse);
+    const name = lh.item.replace(/\.Lakehouse$/i, '');
+    const ep = (await fabric.sqlEndpoints(plan.workspace)).find(e => e.type === 'Lakehouse' && e.name.toLowerCase() === name.toLowerCase());
+    if (!ep) throw new Error(`the lakehouse ${name} has no SQL endpoint yet: open it in Fabric once, or export with onelakeStudio.sqlEngine duckdb`);
+    return { host: String(ep.host).replace(/,\d+$/, ''), database: ep.name };
+  }
 
   // Where Export to Fabric writes a model opened from its local copy: <lakehouse>/Files/
   // semantic_model/<model>.yaml, in the one lakehouse its Direct Lake expressions name (the app
@@ -84,6 +94,7 @@ function createExport({ connectivity, modules, hostToken, appToken, fabric, onel
       const target = path ? null : await modelTarget(text, model);
       if (target) ({ workspace, path } = target);
       const plan = planExport(text, file, name, await modules(), { workspace, path }, await lakesOf(text, file, model ? model.workspace : workspace));
+      if (sqlEngine() === 'sqlEndpoint') plan.sqlEndpoint = await sqlEndpointOf(plan);
       const fnDir = join(extensionDir, 'fabric-function');
       const [sourceZip, deployMetaData] = await Promise.all([
         fsp.readFile(join(fnDir, 'source.zip')), fsp.readFile(join(fnDir, 'deploymetadata.json'), 'utf8'),
@@ -116,7 +127,8 @@ function createExport({ connectivity, modules, hostToken, appToken, fabric, onel
         }
         const pick = await ui.info(
           `Export ${plan.name} to Fabric?`,
-          { modal: true, detail: `Local copy: ${outDir}${existsSync(outDir) ? '' : ' (new)'}\nWorkspace: ${workspace}\nModel: ${plan.modelPath}` },
+          { modal: true, detail: `Local copy: ${outDir}${existsSync(outDir) ? '' : ' (new)'}\nWorkspace: ${workspace}\nModel: ${plan.modelPath}` +
+            (plan.sqlEndpoint ? `\nEngine: the SQL endpoint, ${plan.sqlEndpoint.database}` : '') },
           'Export', 'Choose Another Folder…');
         if (pick === 'Export') break;
         if (!pick) throw declined('Export cancelled.');
@@ -232,7 +244,7 @@ function createExport({ connectivity, modules, hostToken, appToken, fabric, onel
           try {
             done = await fabricApp.publish({
               workspaceId: plan.workspace, name: plan.name, tenantId: tenantOf(token),
-              catalogUrl: plan.catalogUrl, modelUrl: plan.modelUrl,
+              catalogUrl: plan.catalogUrl, modelUrl: plan.modelUrl, sqlEndpoint: plan.sqlEndpoint || null,
               site: async config => await zip(await buildDist(outDir, config)),
               fn: { sourceZip, deployMetaData }, redirects: marker.redirects || [],
               itemId: marker.itemId || null, takeOver,

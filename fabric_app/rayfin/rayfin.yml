@@ -31,5 +31,9 @@ services:
 secrets:
   - name: CATALOG_URL
     description: The OneLake Iceberg catalog the app reads, https://onelake.table.fabric.microsoft.com/iceberg/<workspace id>/<lakehouse id>; its tables are the ones the model names
+  - name: SQL_ENDPOINT
+    description: SQL endpoint mode only, the lakehouse's SQL endpoint, <name>.datawarehouse.fabric.microsoft.com; the function runs the model's queries there
+  - name: SQL_DATABASE
+    description: SQL endpoint mode only, the lakehouse's name on its SQL endpoint
   - name: MODEL_URL
     description: The semantic model the app reads in place, https://onelake.dfs.fabric.microsoft.com/<workspace>/<item>/Files/<path> (an Ossie .yaml or a TMSL .bim)

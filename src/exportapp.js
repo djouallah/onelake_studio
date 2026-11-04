@@ -15,6 +15,9 @@
 //   site/vendor/     every package the page runs (vendor/webapp: DuckDB-WASM and its
 //                    extensions, Arrow, the Rayfin SDK, ECharts): nothing from a CDN
 //   site/explore.json  the shelves the first view shows
+//   site/engine.json   in SQL endpoint mode only, { engine: 'sqlEndpoint' }: the page runs no DuckDB
+//                    (storage/sqldata.js), and site/ holds neither DuckDB, its extensions, Arrow
+//                    nor the data source that reads the tables in the browser
 //   rayfin/          fabric_app/rayfin: what the app is (rayfin.yml) and its function's source
 //                    (built at package time, by scripts/function-bundle.mjs: nobody's machine
 //                    builds it)
@@ -176,9 +179,14 @@ open the app item can load it.
 
 - Model: \`${plan.modelPath}\`, read **in place** by the app's function at run time (its \`MODEL_URL\`
   secret): the app holds no copy of it, so a change to the model is in the app on its next load.
-- Lakehouse: workspace \`${plan.workspace}\`, item \`${plan.lakehouse}\` — its Iceberg catalog is the
+${plan.sqlEndpoint ? `- Lakehouse: workspace \`${plan.workspace}\`, item \`${plan.lakehouse}\` — read through its SQL endpoint,
+  \`${plan.sqlEndpoint.host}\`, database \`${plan.sqlEndpoint.database}\` (the function's \`SQL_ENDPOINT\` and \`SQL_DATABASE\`).
+- Engine: **the SQL endpoint.** The function compiles each of Explore's queries over the model to T-SQL (dax-sql) and
+  runs it there; the page runs no DuckDB and reads no table (\`site/engine.json\`, \`site/storage/sqldata.js\`). The
+  tables below and the layers' DuckDB parts are the other mode's, an export with \`onelakeStudio.sqlEngine\` \`duckdb\`.
+` : `- Lakehouse: workspace \`${plan.workspace}\`, item \`${plan.lakehouse}\` — its Iceberg catalog is the
   function's \`CATALOG_URL\`: ${plan.catalogUrl}
-
+`}
 ## Layers
 
 | Layer | Path | |
@@ -233,17 +241,23 @@ async function writeExport({ plan, state, outDir, fabricAppDir, appDir, daxSqlDi
   const { marker } = await isEmptyOrOurs(outDir);
   for (const p of OWNED) await fsp.rm(join(outDir, p), { recursive: true, force: true });
   const at = (root, p) => join(root, ...p.split('/'));
-  await fsp.cp(join(fabricAppDir, 'site'), at(outDir, 'site'), { recursive: true });
+  const sql = !!plan.sqlEndpoint;
+  const siteDir = join(fabricAppDir, 'site');
+  const under = (root, src) => src.slice(root.length + 1).split('\\').join('/');
+  await fsp.cp(siteDir, at(outDir, 'site'), { recursive: true,
+    filter: src => !(sql ? DUCKDB_ONLY.site : ['storage/sqldata.js']).includes(under(siteDir, src)) });
   await fsp.cp(join(appDir, 'explore'), at(outDir, 'site/explore'), { recursive: true });
   await fsp.cp(join(appDir, 'paths.js'), at(outDir, 'site/paths.js'));
   // As the package lays them out: formats/ imports ../src/.
   for (const d of ['src', 'formats']) await fsp.cp(join(daxSqlDir, d), at(outDir, `site/semantic/${d}`), { recursive: true });
-  await fsp.cp(webappDir, at(outDir, 'site/vendor'), { recursive: true });
+  await fsp.cp(webappDir, at(outDir, 'site/vendor'), { recursive: true,
+    filter: src => !sql || !DUCKDB_ONLY.vendor.some(re => re.test(under(webappDir, src))) });
   await fsp.cp(join(fabricAppDir, 'rayfin'), at(outDir, 'rayfin'), { recursive: true });
   const yml = at(outDir, 'rayfin/rayfin.yml');
   await fsp.writeFile(yml, rayfinYml(await fsp.readFile(yml, 'utf8'), plan.name, (marker && marker.redirects) || []));
   const files = {
     'site/explore.json': JSON.stringify(state || null),
+    ...(sql ? { 'site/engine.json': JSON.stringify({ engine: 'sqlEndpoint' }) } : {}),
     'AGENTS.md': agentsMd(plan),
     '.gitignore': GITIGNORE,
   };
@@ -252,10 +266,18 @@ async function writeExport({ plan, state, outDir, fabricAppDir, appDir, daxSqlDi
     await fsp.writeFile(at(outDir, p), body);
   }
   const next = { ...(marker || {}), name: plan.name, model: plan.modelPath,
-                 workspaceId: plan.workspace, lakehouseId: plan.lakehouse };
+                 workspaceId: plan.workspace, lakehouseId: plan.lakehouse, engine: sql ? 'sqlEndpoint' : 'duckdb' };
   await writeMarker(outDir, next);
   return next;
 }
+
+// SQL endpoint mode: what site/ leaves out, the page reading nothing in the browser. Paths under
+// fabric_app/site, and under vendor/webapp.
+const DUCKDB_ONLY = {
+  site: ['storage/data.js', 'storage/blockcache.js', 'storage/catalog.js', 'storage/prefetch.js', 'storage/queue.js',
+         'storage/results.js', 'storage/snapshots.js', 'storage/kv.js'],
+  vendor: [/^npm\/@duckdb(\/|$)/, /^duckdb-ext(\/|$)/, /^npm\/apache-arrow@/, /^npm\/flatbuffers@/],
+};
 
 const writeMarker = (dir, m) => fsp.writeFile(join(dir, MARKER), JSON.stringify(m, null, 2) + '\n');
 
