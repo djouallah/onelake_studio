@@ -536,3 +536,10 @@ jobs:
           | Installer | $([math]::Round($setup.Length / 1MB)) MB |
           | Installed | $(& $mb $dir) MB |
           "@ | Out-File -Append $env:GITHUB_STEP_SUMMARY
+      - name: Uninstall it as a newer setup does
+        # In place (_?=), from the install folder, as the next version's setup runs it before installing.
+        run: |
+          $dir = "$env:LOCALAPPDATA\OneLake Studio"
+          $un = Start-Process "$dir\uninstall.exe" -ArgumentList '/S', "_?=$dir" -Wait -PassThru
+          if ($un.ExitCode -ne 0) { throw "the uninstaller exited with $($un.ExitCode)" }
+          if (Test-Path "$dir\onelake-studio.exe") { throw 'the uninstaller left onelake-studio.exe' }

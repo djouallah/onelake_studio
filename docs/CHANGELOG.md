@@ -18,6 +18,9 @@
   to the endpoint. A statement goes to the endpoint when it names a lakehouse or warehouse table, or a semantic model.
 - **Fixed, SQL endpoint mode:** Profile showed Rows scanned 0 and Planning 0.0 ms. The endpoint gives only an
   estimated plan, so neither was measured. Those tiles, and Execution, are no longer shown there.
+- **Fixed: the Windows app's setup said "Unable to uninstall!"** when it replaced an installed version. The old
+  version's uninstaller stopped everything running from the install folder, itself too. Setup from 0.2.12 to 0.2.15
+  still does it: choose *Do not uninstall* there, or uninstall the old version in Windows Settings first.
 - **Fixed: Export to Fabric's app stopped at start** with "the engine is DuckDB v2.0.0-dev88614, but the site's
   extensions are for v2.0.0". DuckDB-WASM 1.33.1-dev110.0 was a dev build of DuckDB 2.0 that refuses its extensions;
   1.33.1-dev114.0, the same source, is v2.0.0 and loads them.
