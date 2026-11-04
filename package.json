@@ -573,6 +573,50 @@
     },
     "configuration": [
       {
+        "title": "Engine",
+        "order": 0,
+        "properties": {
+          "onelakeStudio.sqlEngine": {
+            "type": "string",
+            "enum": [
+              "duckdb",
+              "sqlEndpoint"
+            ],
+            "enumDescriptions": [
+              "DuckDB on this machine, from what it reads of OneLake and keeps. Works offline.",
+              "The Fabric SQL endpoint of the workspace a statement names: the SQL box takes T-SQL, and a semantic model's queries are compiled to T-SQL. Offline, DuckDB runs them."
+            ],
+            "default": "duckdb",
+            "order": 1,
+            "markdownDescription": "What runs the SQL box's statements and a semantic model's queries (Explore, Pivot, Open in Excel, the command line). With **sqlEndpoint**, write T-SQL and name tables as everywhere else, `lakehouse.<workspace>.<item>.<schema>.<table>`: each statement runs on that workspace's SQL endpoint. A table's Stats, Data and files are always read by DuckDB."
+          },
+          "onelakeStudio.engineThreads": {
+            "type": "integer",
+            "default": 0,
+            "minimum": 0,
+            "scope": "machine",
+            "order": 2,
+            "markdownDescription": "How many threads DuckDB may use. Lower it to keep cores free for VS Code during a heavy query. `0` is DuckDB's default, every core. Applies the next time the engine starts."
+          },
+          "onelakeStudio.engineSpillMaxGB": {
+            "type": "number",
+            "default": 0,
+            "minimum": 0,
+            "scope": "machine",
+            "order": 3,
+            "markdownDescription": "How much a query bigger than memory may spill to the temp folder, in GB. A query that needs more fails. `0` is DuckDB's default. Applies the next time the engine starts."
+          },
+          "onelakeStudio.logMaxGB": {
+            "type": "number",
+            "default": 1,
+            "minimum": 0,
+            "scope": "machine",
+            "order": 4,
+            "markdownDescription": "How much of what the engine ran is kept for **Logs**, in GB, per account. It holds your SQL and its errors. Past this the oldest go. `0` keeps none. Applies the next time the engine starts."
+          }
+        }
+      },
+      {
         "title": "Cache",
         "order": 1,
         "properties": {
@@ -623,30 +667,6 @@
             "pattern": "^$|^([A-Za-z]:)?[\\\\/]",
             "patternErrorMessage": "A full path, e.g. D:\\OneLakeCache or /data/onelake-cache.",
             "markdownDescription": "Where the disk cache is kept, as a full path, for a bigger disk than the one VS Code stores its data on. Empty is VS Code's storage for this extension. A new folder starts empty; you are asked whether to delete the old one. Listings and table metadata stay in VS Code's storage. Applies the next time the engine starts."
-          },
-          "onelakeStudio.engineThreads": {
-            "type": "integer",
-            "default": 0,
-            "minimum": 0,
-            "scope": "machine",
-            "order": 2,
-            "markdownDescription": "How many threads DuckDB may use. Lower it to keep cores free for VS Code during a heavy query. `0` is DuckDB's default, every core. Applies the next time the engine starts."
-          },
-          "onelakeStudio.engineSpillMaxGB": {
-            "type": "number",
-            "default": 0,
-            "minimum": 0,
-            "scope": "machine",
-            "order": 3,
-            "markdownDescription": "How much a query bigger than memory may spill to the temp folder, in GB. A query that needs more fails. `0` is DuckDB's default. Applies the next time the engine starts."
-          },
-          "onelakeStudio.logMaxGB": {
-            "type": "number",
-            "default": 1,
-            "minimum": 0,
-            "scope": "machine",
-            "order": 4,
-            "markdownDescription": "How much of what the engine ran is kept for **Logs**, in GB, per account. It holds your SQL and its errors. Past this the oldest go. `0` keeps none. Applies the next time the engine starts."
           }
         }
       },
@@ -669,20 +689,6 @@
             "scope": "machine",
             "order": 3,
             "markdownDescription": "The most rows of one result a tab and the command line keep. Past it, rows are only counted. **Export…** always writes every row. More rows use more memory in the extension host and the tab. Applies the next time the engine starts."
-          },
-          "onelakeStudio.sqlEngine": {
-            "type": "string",
-            "enum": [
-              "duckdb",
-              "sqlEndpoint"
-            ],
-            "enumDescriptions": [
-              "DuckDB on this machine, from what it reads of OneLake and keeps. Works offline.",
-              "The Fabric SQL endpoint of the workspace a statement names: the SQL box takes T-SQL, and a semantic model's queries are compiled to T-SQL. Offline, DuckDB runs them."
-            ],
-            "default": "duckdb",
-            "order": 4,
-            "markdownDescription": "What runs the SQL box's statements and a semantic model's queries (Explore, Pivot, Open in Excel, the command line). With **sqlEndpoint**, write T-SQL and name tables as everywhere else, `lakehouse.<workspace>.<item>.<schema>.<table>`: each statement runs on that workspace's SQL endpoint. A table's Stats, Data and files are always read by DuckDB."
           },
           "onelakeStudio.tableOpensOn": {
             "type": "string",
