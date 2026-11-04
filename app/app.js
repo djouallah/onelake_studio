@@ -361,7 +361,7 @@ async function openModelView(file, text = null, { fromOneLake = text == null } =
       echarts: loadEcharts,
       setStatus,
       saveText: (name, text) => engine.saveText(name, text),
-      copyText,
+      copyText, shownSql,
       loadState: viewState.get,
       saveState: viewState.set,
       // The native engine set the profile's metrics before it locked its configuration, and
@@ -437,6 +437,9 @@ async function openModels(sql) {
 
 // Text on the clipboard, by the host (a plan's SQL tab).
 const copyText = text => engine.copyText(text);
+// A plan's SQL tab: the statement as its engine gets it. The endpoint's has its tables' three-part
+// names, so its console runs it as it is.
+const shownSql = sql => (sqlDialect() === 'tsql' ? engine.tsqlText(sql) : sql);
 
 // A compiled SQL of a model, run through the engine's read-only path: it names its Direct Lake
 // tables by their SQL names, and the host opens each as the SQL reaches it. Stoppable.
@@ -850,7 +853,7 @@ async function showPlan(text) {
     clearResults();
     const view = $('planView');
     view.replaceChildren(createPlanView({
-      sql, copy: copyText,
+      sql: tsql ? () => engine.tsqlText(sql) : sql, copy: copyText,
       profile: held(async () => {
         try {
           if (tsql) return await tsqlProfile(sql);
@@ -1231,7 +1234,7 @@ async function openPivot() {
       echarts: loadEcharts,
       setStatus,
       saveText: (name, text) => engine.saveText(name, text),
-      copyText,
+      copyText, shownSql,
       loadState: viewState.get,
       saveState: viewState.set,
       profileSet: false,   // as the model view's (openModelView)

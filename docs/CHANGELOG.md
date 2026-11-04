@@ -6,7 +6,7 @@
   SQL endpoint of the workspace it names, and a semantic model's queries (Explore, Pivot, Open in Excel, the command
   line) are compiled to T-SQL and run there too. Tables keep their names, `lakehouse.<workspace>.<item>.<schema>.<table>`.
   Plan, Profile and Export work as before. Offline, DuckDB runs everything, as by default. dax-sql 0.1.6.
-- **Plan** has a **SQL** tab before Profile: the SQL the plan is of, as generated for the engine that runs it (T-SQL on the SQL endpoint), with Copy. In Explore's Show plan too.
+- **Plan** has a **SQL** tab before Profile: the SQL the plan is of, as the engine gets it, with Copy. On the SQL endpoint it is the T-SQL with each table's three-part name, which the endpoint's own console runs as it is. In Explore's Show plan too.
 - A semantic model's **YAML** view shows in amber any expression in a dialect other than Ossie SQL, DAX for one,
   as it does the Power BI extension: what isn't plain Ossie SQL. The note above the file names them.
 - The title shows only the first 4 letters of the tenant (`fabr…`), so a screenshot doesn't give it away.

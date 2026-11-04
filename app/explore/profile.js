@@ -178,7 +178,8 @@ export function renderProfile(root, prof, colors) {
 }
 
 // Show plan's view: SQL, Profile (the default) and Tree, DuckDB's own plan page. `ctx`:
-//   sql         the SQL the plan is of, as the engine runs it (a model's, as generated); no tab without it
+//   sql         the SQL the plan is of, as the engine gets it (a model's, as generated), or a function
+//               that gives it; no tab without it
 //   copy(text)  puts it on the clipboard (the browser's own, when not given)
 //   profile()   the profile's JSON (runs the query: EXPLAIN ANALYZE)
 //   tree()      the plan tree, an element (EXPLAIN (FORMAT html))
@@ -204,7 +205,7 @@ export function createPlanView(ctx) {
     const timer = setInterval(() => { wait.textContent = ctx.elapsed(t0); }, 100);
     try {
       let node;
-      if (k === 'sql') node = sqlView(ctx);
+      if (k === 'sql') node = sqlView(typeof ctx.sql === 'function' ? await ctx.sql() : ctx.sql, ctx.copy);
       else if (k === 'profile') { node = el('div'); renderProfile(node, parseProfile(await ctx.profile()), ctx.colors()); }
       else node = await ctx.tree();
       done[k] = node;
@@ -218,12 +219,12 @@ export function createPlanView(ctx) {
 }
 
 // The SQL tab: the statement, and Copy. Runs nothing.
-function sqlView(ctx) {
-  const text = String(ctx.sql);
+function sqlView(sql, copyText) {
+  const text = String(sql);
   const copy = el('button', { type: 'button', class: 'btn-explore pf-copy' }, 'Copy');
   copy.onclick = async () => {
     try {
-      await (ctx.copy ? ctx.copy(text) : navigator.clipboard.writeText(text));
+      await (copyText ? copyText(text) : navigator.clipboard.writeText(text));
       copy.textContent = 'Copied';
     } catch (_) { copy.textContent = 'Could not copy'; }
     setTimeout(() => { copy.textContent = 'Copy'; }, 1500);

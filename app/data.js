@@ -663,6 +663,7 @@ export function createEngine({
     return { ...collected.result(), asOf: null };
   }
   const planTsql = sql => callHost("tsql.plan", [String(sql)]);
+  const tsqlText = sql => callHost("tsql.text", [String(sql)]);
   // DuckDB's SUMMARIZE of a statement on the endpoint, over every row it returns.
   async function summarizeTsql(sql) {
     const { fields, rows } = await callHost("tsql.summarize", [String(sql)]);
@@ -729,6 +730,6 @@ export function createEngine({
   const askVariable = name => callHost("host.askVariable", [{ name }]);
 
   return { init, reset, statTable, peekTable, rowsOutOfReach, deltaState, deltaHistory,
-           loadFile, readFileBytes, saveText, saveOneLakeFile, runSql, runTsql, planTsql, summarizeTsql, describeLoad, fmtBytes, cancelLoad,
+           loadFile, readFileBytes, saveText, saveOneLakeFile, runSql, runTsql, planTsql, tsqlText, summarizeTsql, describeLoad, fmtBytes, cancelLoad,
            semanticViews, semanticKeep, semanticOpen, exportExplore, openInExcel, offlineState, setOffline, nameTables, saveQuery, saveDraft, askVariable, copyText, exportResult, openDocument };
 }

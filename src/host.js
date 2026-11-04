@@ -77,6 +77,9 @@ function createHostMethods({ onelake, engine, onStatus = () => {}, saveFile = nu
       const rows = Number(opts && opts.rows);
       return endpoint().stream(String(sql), emit, tab, Number.isFinite(rows) && rows >= 0 ? { rows } : {});
     },
+    // The statement as the endpoint gets it, its tables by their three-part names: what its
+    // console runs as it is (a plan's SQL tab).
+    'tsql.text': sql => require('./tsql').onEndpoint(String(sql)).sql,
     // Its estimated plan: [{ op, logical, rows, cost, table, children }].
     'tsql.plan': sql => endpoint().plan(String(sql), tab),
     // DuckDB's SUMMARIZE of it, over every row it returns: { fields, rows }.
