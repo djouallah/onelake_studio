@@ -43,7 +43,14 @@ const settings = { tableOpensOn: cfg.tableOpensOn, gridThousandsSeparator: cfg.g
 const sqlDialect = () => (settings.sqlDialect === 'tsql' ? 'tsql' : 'duckdb');
 // A statement's: SHOW … and DESCRIBE list what this machine knows (the cache's catalog, the models
 // open), so DuckDB answers them in either mode.
-const dialectOf = sql => (/^\s*(SHOW|DESCRIBE|DESC)\b/i.test(String(sql)) ? 'duckdb' : sqlDialect());
+// What runs a statement: the endpoint, in SQL endpoint mode, when it names a lakehouse or warehouse
+// table by its five parts, or a semantic model. Anything else is for DuckDB, whatever the mode: a
+// file's preview ('lakehouse.ws.item/Files/x.csv' is a string, not a table), a database file's
+// tables, SHOW and DESCRIBE.
+const PART = String.raw`(?:"(?:[^"]|"")*"|\[[^\]]*\]|[^\s.,;()'"]+)`;
+const ON_ENDPOINT = new RegExp(String.raw`\b(?:lakehouse|warehouse)\.${PART}\.${PART}\.${PART}\.${PART}|\bsemanticmodel\.`, 'i');
+const outsideStrings = sql => String(sql).replace(/'(?:[^']|'')*'/g, "''").replace(/--[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, '');
+const dialectOf = sql => (/^\s*(SHOW|DESCRIBE|DESC)\b/i.test(String(sql)) || !ON_ENDPOINT.test(outsideStrings(sql)) ? 'duckdb' : sqlDialect());
 semantic.setDialect(sqlDialect);
 
 // Cap on rendered rows only. The CSV saves everything the engine materialised, which is
@@ -720,7 +727,7 @@ async function selectTable(t) {
     showStats();                    // statistics are the landing view for a table
     setViewTabs();
     // Not run: Profile and Export read the rows by it, and the box starts from it.
-    currentSql = activeSqlName ? previewSql(activeSqlName, false) : '';
+    currentSql = activeSqlName ? tablePreviewSql(activeSqlName) : '';
     if (currentSql) offerInBox(currentSql);
     setStatus(engine.describeLoad(info));
     if (rowsOutOfReach === t) {
@@ -807,6 +814,8 @@ function reportLoad(info, queryOk) {
 // A table gets the first hundred rows; a text file gets ALL of it — a LIMIT would cut the
 // document silently. The engine's own row cap still applies and still says so.
 const previewSql = (ident, whole) => `SELECT * FROM ${ident}` + (whole ? '' : ' LIMIT 100');
+// A OneLake table's, in the box: on the SQL endpoint, which has no LIMIT, its TOP.
+const tablePreviewSql = ident => (dialectOf(`SELECT * FROM ${ident}`) === 'tsql' ? `SELECT TOP 100 * FROM ${ident}` : previewSql(ident, false));
 
 // Plan: where the editor's query spends its time, in place of the results — Explore's own
 // view of it (explore/profile.js): the profile (EXPLAIN ANALYZE, so the query runs once to be
