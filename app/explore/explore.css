@@ -231,6 +231,8 @@ section.modelOpen #chartBtn { display: none; }
 .pf-tab { padding: 0.28rem 0.85rem; font-size: 0.78rem; font-weight: 600; color: var(--muted); background: none; border: none; border-radius: 999px; cursor: pointer; }
 .pf-tab:hover { color: var(--text); }
 .pf-tab.active { color: var(--on-accent); background: var(--accent); }
+.pf-sql { position: relative; background: var(--card); border: 1px solid var(--hairline); border-radius: var(--radius); padding: 0.7rem 0.85rem; }
+.pf-copy { position: absolute; top: 0.5rem; right: 0.5rem; background: var(--card); }
 .pf-body { flex: 1 1 auto; min-height: 0; overflow: auto; display: flex; flex-direction: column; }
 .pf-wait { display: flex; align-items: center; gap: 0.7rem; padding: 2rem 0.5rem; font-size: 0.95rem; font-weight: 600; color: var(--text); }
 .pf-wait-time { font-variant-numeric: tabular-nums; color: var(--muted); }

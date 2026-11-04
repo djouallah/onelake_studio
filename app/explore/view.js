@@ -431,6 +431,7 @@ export function mountExplore(root, ctx) {
     try {
       const sql = compile(base);
       showPlanNode(createPlanView({
+        sql, copy: ctx.copyText,
         profile: async () => (await run(profileSql(sql, { set: ctx.profileSet !== false }), { fresh: true })).rows[0]?.explain_value,
         tree: () => planTree(sql),
         colors: () => profileColors(css),

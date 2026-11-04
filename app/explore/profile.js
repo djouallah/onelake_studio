@@ -177,14 +177,16 @@ export function renderProfile(root, prof, colors) {
   root.replaceChildren(el('div', { class: 'pf' }, tiles, timeline, top));
 }
 
-// Show plan's view: Profile (the default) and Tree, DuckDB's own plan page. `ctx`:
+// Show plan's view: SQL, Profile (the default) and Tree, DuckDB's own plan page. `ctx`:
+//   sql         the SQL the plan is of, as the engine runs it (a model's, as generated); no tab without it
+//   copy(text)  puts it on the clipboard (the browser's own, when not given)
 //   profile()   the profile's JSON (runs the query: EXPLAIN ANALYZE)
 //   tree()      the plan tree, an element (EXPLAIN (FORMAT html))
 //   colors()    kind -> colour, in the page's theme
 //   elapsed(t0) a running timer's text
 export function createPlanView(ctx) {
   const body = el('div', { class: 'pf-body' });
-  const tabs = [['profile', 'Profile'], ['tree', 'Tree']];
+  const tabs = [...(ctx.sql != null ? [['sql', 'SQL']] : []), ['profile', 'Profile'], ['tree', 'Tree']];
   const buttons = tabs.map(([k, t]) => el('button', { type: 'button', role: 'tab', class: 'pf-tab', 'data-view': k, onclick: () => show(k) }, t));
   const root = el('div', { class: 'pf-view' }, el('div', { class: 'pf-tabs', role: 'tablist' }, buttons), body);
   // done: each tab's view once it is in; waiting: its spinner while it is under way, so a
@@ -202,7 +204,8 @@ export function createPlanView(ctx) {
     const timer = setInterval(() => { wait.textContent = ctx.elapsed(t0); }, 100);
     try {
       let node;
-      if (k === 'profile') { node = el('div'); renderProfile(node, parseProfile(await ctx.profile()), ctx.colors()); }
+      if (k === 'sql') node = sqlView(ctx);
+      else if (k === 'profile') { node = el('div'); renderProfile(node, parseProfile(await ctx.profile()), ctx.colors()); }
       else node = await ctx.tree();
       done[k] = node;
       if (active() === k) body.replaceChildren(node);
@@ -212,4 +215,18 @@ export function createPlanView(ctx) {
   }
   show('profile');
   return root;
+}
+
+// The SQL tab: the statement, and Copy. Runs nothing.
+function sqlView(ctx) {
+  const text = String(ctx.sql);
+  const copy = el('button', { type: 'button', class: 'btn-explore pf-copy' }, 'Copy');
+  copy.onclick = async () => {
+    try {
+      await (ctx.copy ? ctx.copy(text) : navigator.clipboard.writeText(text));
+      copy.textContent = 'Copied';
+    } catch (_) { copy.textContent = 'Could not copy'; }
+    setTimeout(() => { copy.textContent = 'Copy'; }, 1500);
+  };
+  return el('div', { class: 'pf-sql' }, copy, el('pre', { class: 'sm-plan' }, text));
 }
