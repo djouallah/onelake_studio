@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.16
 
 - **New setting: `onelakeStudio.sqlEngine`.** With `sqlEndpoint`, the SQL box takes T-SQL and runs it on the Fabric
   SQL endpoint of the workspace it names, and a semantic model's queries (Explore, Pivot, Open in Excel, the command
