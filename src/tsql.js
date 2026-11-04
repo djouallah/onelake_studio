@@ -221,7 +221,14 @@ function createTsql({ endpoints, sqlToken, maxRows = () => 200_000, log = () => 
         authentication: { type: 'azure-active-directory-access-token', options: { token } },
         options: { database, port: TDS_PORT, encrypt: true, connectTimeout: CONNECT_TIMEOUT_MS, requestTimeout: 0 },
       });
-      conn.on('connect', e => (e ? reject(e) : resolve(conn)));
+      // The endpoint's sessions start at TEXTSIZE 4096 bytes, which cuts a long value: a plan's
+      // XML (2048 characters, the statement's text alone, for a model's query), a VARCHAR(MAX).
+      // tedious's own textsize option doesn't reach it; the session's SET does.
+      conn.on('connect', e => {
+        if (e) return reject(e);
+        const { Request } = require('tedious');
+        conn.execSqlBatch(new Request('SET TEXTSIZE 2147483647', err => (err ? (conn.close(), reject(err)) : resolve(conn))));
+      });
       conn.connect();
     });
   }
