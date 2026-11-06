@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- **Fixed, SQL endpoint mode:** offline, statements still went to the SQL endpoint. Offline, for no internet or no
+  sign-in, DuckDB now runs everything, and the endpoint is never called. A statement sent as the connection drops
+  runs on DuckDB at once, with nothing to run again: the SQL box, Plan, Profile, Export, Explore, Pivot, Open in
+  Excel and the command line.
+
 ## 0.2.16
 
 - **New setting: `onelakeStudio.sqlEngine`.** With `sqlEndpoint`, the SQL box takes T-SQL and runs it on the Fabric

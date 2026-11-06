@@ -242,6 +242,11 @@ const NEW_QUERY_SQL = [
 // Export: every row of `sql`, written by the engine (engine-host.js exportTo) and moved to the
 // file the user picks. Answers its path, or null when dismissed.
 async function exportResult(eng, { sql, name, dialect = 'duckdb' }) {
+  // Compiled for the endpoint by a tab not yet told this window is offline: refused before any dialog,
+  // and the tab compiles it again for DuckDB (app.js onDuckdbIfOffline).
+  if (dialect === 'tsql' && theCore && theCore.sqlDialect() !== 'tsql') {
+    throw Object.assign(new Error('OneLake Studio is offline: DuckDB runs it.'), { offline: true });
+  }
   const { capabilities = {} } = await eng.call('info').catch(() => ({}));
   const formats = [
     { label: 'CSV', description: 'every row, with a header line', format: 'csv' },

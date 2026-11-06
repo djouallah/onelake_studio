@@ -62,3 +62,14 @@ test("a statement is refused before anything asks for a token or an endpoint", a
   await assert.rejects(t.query("SELECT * FROM lakehouse.w.l.dbo.t"), /has no lakehouse l/);
   assert.equal(asked, 1, "only the endpoint listing, for the last one");
 });
+
+test("offline, nothing is sent: no token, no endpoint listing, no connection", async () => {
+  let asked = 0;
+  const connectivity = { offline: () => true, reason: () => "not signed in" };
+  const t = createTsql({ endpoints: async () => { asked++; return []; }, sqlToken: async () => { asked++; return null; }, connectivity });
+  for (const run of [() => t.query("SELECT * FROM lakehouse.w.l.dbo.t"), () => t.plan("SELECT * FROM lakehouse.w.l.dbo.t"),
+                     () => t.summarize("SELECT * FROM lakehouse.w.l.dbo.t")]) {
+    await assert.rejects(run(), e => e.offline === true && /offline \(not signed in\)/.test(e.message));
+  }
+  assert.equal(asked, 0);
+});

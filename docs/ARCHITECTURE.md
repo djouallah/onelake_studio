@@ -425,8 +425,12 @@ for itself stays DuckDB's: a table's Stats, Data and History, files, SHOW and DE
   query once more, its time shared out by the operators' estimated costs. **Profile** of a result and
   **Export…** read every row from the endpoint: the profile is worked out in the host, in SUMMARIZE's columns, and
   DuckDB writes the export.
-- **Offline,** everything runs on DuckDB, as in `duckdb` mode: the tab compiles for the dialect that runs now
-  (`core.js sqlDialect`, posted with the settings).
+- **Offline** (no internet, or no session), everything runs on DuckDB, as in `duckdb` mode, and nothing calls
+  the endpoint: the tab compiles for the dialect that runs now (`core.js sqlDialect`, posted with the
+  settings), and `tsql.js` refuses a statement sent offline (`e.offline`) before any token or connection. A
+  connection to the endpoint that gets no answer starts the probe, as an HTTP call does. A statement caught
+  that way, or sent before the tab heard, is compiled again and run on DuckDB by its caller (`app.js
+  onDuckdbIfOffline`, Explore's `e.redo`, `agent.js`), with nothing for the user to do.
 - **Which statements go there:** one that names a lakehouse or warehouse table by its five parts, or a semantic
   model (`dialectOf` in [`app/app.js`](../app/app.js)). A file is a string, not a table, so its preview, and a
   database file's tables, are DuckDB's in either mode. A table clicked in the tree starts the box at

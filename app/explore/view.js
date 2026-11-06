@@ -32,7 +32,8 @@ const PREVIEW_ROWS = 500;
 //   tmsl             the model, as model.js's tmslOf reads it
 //   compiler         dax-sql's compiler over the model, with the host's tableSource and
 //                    query.js's EXPLORE_CASTS
-//   run(sql)         a compiled SQL's result: { fields, rows, numRows, truncated?, limit? }
+//   run(sql)         a compiled SQL's result: { fields, rows, numRows, truncated?, limit? }; a failure
+//                    with `redo` asks for the SQL compiled again and run once more
 //   echarts()        ECharts (a promise)
 //   saveText(name, text)  a CSV saved: answers where (or null: dismissed)
 //   loadState(key), saveState(key, s)  the shelves, between visits
@@ -260,6 +261,9 @@ export function mountExplore(root, ctx) {
 
   // --- Running: compiled once, answered from this view's results when it ran before ---
   const compile = text => compileModelSql(ctx.compiler, text, ctx.name);
+  // `e.redo`: the host's engine changed as the query ran (the panel went offline, and its T-SQL runs on
+  // DuckDB now), so it is compiled again, as the compiler now writes it, and run once more.
+  const again = async work => { try { return await work(); } catch (e) { if (!e?.redo) throw e; return work(); } };
   // Results, kept for the life of this view by the SQL that produced them: the model is read
   // only, so the same SQL is the same rows — the pivot toggling Totals or swapping back, Show
   // SQL's unedited box, are answered here. Only answers are kept, never a failure or a Stop;
@@ -316,7 +320,7 @@ export function mountExplore(root, ctx) {
     explorer = createExplorer(pivotPage, {
       model: async () => ctx.tmsl,
       name: ctx.name,
-      run: async text => (await run(compile(text))).rows,
+      run: async text => (await again(() => run(compile(text)))).rows,
       cancel: ctx.cancel,
       chart: box => {
         if (!charts.has(box)) { charts.set(box, echarts.init(box, 'studio')); resized.observe(box); }
@@ -385,17 +389,16 @@ export function mountExplore(root, ctx) {
       const t0 = performance.now();
       const ticker = setInterval(() => { if (my === outSeq) info.textContent = `Running query… ${elapsed(t0)}`; }, 100);
       try {
-        const sql = compile(base);
         // Every column as DuckDB prints it: a DATE, TIMESTAMP or DECIMAL would otherwise show
         // as its raw number.
-        const res = await run(`SELECT COLUMNS(*)::VARCHAR FROM (\n${sql}\n) LIMIT ${PREVIEW_ROWS}`);
+        const res = await again(() => run(`SELECT COLUMNS(*)::VARCHAR FROM (\n${compile(base)}\n) LIMIT ${PREVIEW_ROWS}`));
         if (my !== outSeq) return;
         if (!res.rows.length) { info.textContent = `No rows · ${elapsed(t0)}`; return; }
         out.innerHTML = '<thead><tr>' + res.fields.map(c => `<th>${escapeHtml(c)}</th>`).join('') + '</tr></thead><tbody>' +
           res.rows.map(r => '<tr>' + res.fields.map(c => `<td>${escapeHtml(r[c] ?? '')}</td>`).join('') + '</tr>').join('') + '</tbody>';
         // The count runs the query again: only when the rows shown are cut at the limit.
         const total = res.rows.length < PREVIEW_ROWS ? res.rows.length
-          : Number((await run(`SELECT COUNT(*) AS cnt FROM (\n${sql}\n)`)).rows[0]?.cnt ?? res.rows.length);
+          : Number((await again(() => run(`SELECT COUNT(*) AS cnt FROM (\n${compile(base)}\n)`))).rows[0]?.cnt ?? res.rows.length);
         if (my !== outSeq) return;
         info.textContent = (res.rows.length < total ? `Showing ${res.rows.length} of ${total.toLocaleString()} rows`
           : `${total.toLocaleString()} rows`) + ` · ${elapsed(t0)}`;
@@ -431,9 +434,9 @@ export function mountExplore(root, ctx) {
     try {
       const sql = compile(base);
       showPlanNode(createPlanView({
-        sql: ctx.shownSql ? () => ctx.shownSql(sql) : sql, copy: ctx.copyText,
-        profile: async () => (await run(profileSql(sql, { set: ctx.profileSet !== false }), { fresh: true })).rows[0]?.explain_value,
-        tree: () => planTree(sql),
+        sql: ctx.shownSql ? () => ctx.shownSql(compile(base)) : sql, copy: ctx.copyText,
+        profile: async () => (await again(() => run(profileSql(compile(base), { set: ctx.profileSet !== false }), { fresh: true }))).rows[0]?.explain_value,
+        tree: () => again(() => planTree(compile(base))),
         colors: () => profileColors(css),
         elapsed,
       }));
@@ -451,9 +454,8 @@ export function mountExplore(root, ctx) {
     csvBtn.disabled = true;
     csvBtn.textContent = 'Exporting…';
     try {
-      const sql = compile(base);
       // Cast as the box's results are, so the file holds what they show.
-      const res = await run(`SELECT COLUMNS(*)::VARCHAR FROM (\n${sql}\n)`, { fresh: true });
+      const res = await again(() => run(`SELECT COLUMNS(*)::VARCHAR FROM (\n${compile(base)}\n)`, { fresh: true }));
       const text = toCsv(res.fields, res.rows, { eol: '\n' }) + '\n';
       const saved = await ctx.saveText(`${ctx.name}-explore.csv`, text);
       if (saved) setStatus(`Saved ${res.rows.length.toLocaleString()} rows${typeof saved === 'string' ? ` to ${saved}` : ''}` +

@@ -59,7 +59,7 @@ const RICH_AT = Date.now() - 10 * 60 * 1000;
 // A fuller cache: one lakehouse with two tables (one with metadata), a Files/ folder, a
 // warehouse, and one downloaded model on disk. `tables`: that many more, for --limit to cut;
 // `reverse`: every listing in the opposite order.
-export async function richAgent({ tables = 0, engine = null, exportApp = null, signedIn, reverse = false } = {}) {
+export async function richAgent({ tables = 0, engine = null, exportApp = null, signedIn, reverse = false, tsql, sqlDialect } = {}) {
   const dir = await mkdtemp(join(tmpdir(), "agent-"));
   await stubVendor(dir);
   const bim = join(dir, "Sales.yaml");
@@ -100,7 +100,7 @@ export async function richAgent({ tables = 0, engine = null, exportApp = null, s
   const agent = createAgent({
     onelake, modelPath: (ws, m) => (m === "Sales" ? bim : join(dir, "none.yaml")),
     appDir: APP_DIR, vendorDir: dir, daxSqlPin: "pin", yamlPin: "yaml",
-    semviews: { texts: async () => [] }, engine: engine && (async () => engine), exportApp, signedIn,
+    semviews: { texts: async () => [] }, engine: engine && (async () => engine), exportApp, signedIn, tsql, sqlDialect,
   });
   return { agent, calls, dir, onelake, close: () => rm(dir, { recursive: true, force: true }) };
 }

@@ -52,6 +52,18 @@ const ON_ENDPOINT = new RegExp(String.raw`\b(?:lakehouse|warehouse)\.${PART}\.${
 const outsideStrings = sql => String(sql).replace(/'(?:[^']|'')*'/g, "''").replace(/--[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, '');
 const dialectOf = sql => (/^\s*(SHOW|DESCRIBE|DESC)\b/i.test(String(sql)) || !ON_ENDPOINT.test(outsideStrings(sql)) ? 'duckdb' : sqlDialect());
 semantic.setDialect(sqlDialect);
+// Offline everything runs on DuckDB. A statement that left for the endpoint as the window went offline
+// is refused by the host (tsql.js, e.offline): from then on this page is DuckDB's, ahead of the settings
+// that will say so, and `fn` runs once more, choosing its dialect and compiling for it anew.
+async function onDuckdbIfOffline(fn) {
+  const was = sqlDialect();
+  try { return await fn(); }
+  catch (e) {
+    if (!e || !e.offline || was !== 'tsql') throw e;
+    settings.sqlDialect = 'duckdb';
+    return fn();
+  }
+}
 
 // Cap on rendered rows only. The CSV saves everything the engine materialised, which is
 // itself capped — runQuery says so when the two differ.
@@ -457,7 +469,15 @@ async function runModelSql(sql) {
   setBusy(true, { stoppable: true });
   try {
     await engineReady;
-    if (sqlDialect() === 'tsql') return await runModelTsql(sql);
+    if (sqlDialect() === 'tsql') {
+      // Compiled as T-SQL, and the window is offline now: Explore compiles it again, for DuckDB
+      // (explore/view.js, e.redo).
+      try { return await runModelTsql(sql); }
+      catch (e) {
+        if (e && e.offline) { settings.sqlDialect = 'duckdb'; e.redo = true; }
+        throw e;
+      }
+    }
     const res = await engine.runSql(sql);
     // Explore's Show plan: its profile, in the shape its view reads (profileJson, below).
     if (PROFILE_SQL.test(sql) && res.rows[0]?.explain_value != null) {
@@ -850,23 +870,33 @@ async function showPlan(text) {
     await engineReady;
     await viewsFor(text);
     await openModels(text);
-    const tsql = sqlDialect() === 'tsql';
-    const model = await semantic.statement(text, null, tsql ? 'tsql' : 'duckdb');
-    lastRun.rewritten = !!model;
-    if (my !== selSeq) return false;
-    const sql = model ? model.sql : text.replace(/;\s*$/, '');
-    // Runs nothing, and it is where bad SQL or a table not held fails: below, so the box hears.
-    // On a line of its own, so DuckDB's error quotes the statement's line and not this word.
-    const explained = tsql ? { rows: [{ explain_value: planText(await engine.planTsql(sql)) }] } : await engine.runSql(`EXPLAIN\n${sql}`);
+    // The statement as the dialect that runs now writes it: again for the profile, when that has changed.
+    let tsql = false, sql = '';
+    const compile = async () => {
+      tsql = sqlDialect() === 'tsql';
+      const model = await semantic.statement(text, null, tsql ? 'tsql' : 'duckdb');
+      lastRun.rewritten = !!model;
+      sql = model ? model.sql : text.replace(/;\s*$/, '');
+    };
+    const explained = await onDuckdbIfOffline(async () => {
+      await compile();
+      if (my !== selSeq) return null;
+      // Runs nothing, and it is where bad SQL or a table not held fails: below, so the box hears.
+      // On a line of its own, so DuckDB's error quotes the statement's line and not this word.
+      return tsql ? { rows: [{ explain_value: planText(await engine.planTsql(sql)) }] } : engine.runSql(`EXPLAIN\n${sql}`);
+    });
     if (my !== selSeq) return false;
     clearResults();
     const view = $('planView');
     view.replaceChildren(createPlanView({
-      sql: tsql ? () => engine.tsqlText(sql) : sql, copy: copyText,
+      sql: () => (tsql ? engine.tsqlText(sql) : sql), copy: copyText,
       profile: held(async () => {
         try {
-          if (tsql) return await tsqlProfile(sql);
-          return profileJson((await engine.runSql(profileSql(sql, { set: false }))).rows[0]?.explain_value);
+          return await onDuckdbIfOffline(async () => {
+            if (tsql !== (sqlDialect() === 'tsql')) await compile();
+            if (tsql) return await tsqlProfile(sql);
+            return profileJson((await engine.runSql(profileSql(sql, { set: false }))).rows[0]?.explain_value);
+          });
         } catch (e) {
           // Past the EXPLAIN, the box has its answer: the view and this line say it.
           if (my === selSeq) setStatus(e.cancelled ? 'Stopped.' : 'Plan failed: ' + e.message, e.cancelled ? undefined : 'error');
@@ -907,8 +937,9 @@ async function showPlan(text) {
 // wrong is in lastRun.
 let running = 0;   // queries under way: a kept result waits for them rather than stop them
 let stops = 0;     // presses of Stop: one before a statement reaches the host has nothing to cancel yet
-async function runQuery({ sql, doc = true, ext = '' } = {}) {
-  sql = String(sql ?? '');
+// `summarize`: SUMMARIZE of this query instead (Profile), compiled as the dialect that runs it writes it.
+async function runQuery({ sql, doc = true, ext = '', summarize = null } = {}) {
+  sql = String(summarize != null ? `SUMMARIZE ${summarize}` : sql ?? '');
   currentSql = sql;
   lastRun = { error: null, rewritten: false };
   running++;
@@ -936,24 +967,35 @@ async function runQuery({ sql, doc = true, ext = '' } = {}) {
     await engineReady;   // the box can send a query before the engine is up
     // A query of a semantic model runs as the SQL dax-sql compiles it to, once the tables
     // that SQL reads are open; every other query runs as written, and does not wait for them.
-    await viewsFor(sql);
-    await openModels(sql);
+    const source = summarize != null ? String(summarize) : sql;
+    await viewsFor(source);
+    await openModels(source);
     if (stale()) return false;
-    const dialect = dialectOf(sql);
-    const model = await semantic.statement(sql, null, dialect);
-    if (stale()) return false;
-    if (model) docAllowed = false;
-    lastRun.rewritten = !!model;
-    t0 = performance.now();
-    if (stops !== stopsAtStart) throw Object.assign(new Error('Stopped'), { cancelled: true });
     const onRows = n => { rowsSoFar = n; };
-    const statementSql = model ? model.sql : sql;
-    // Profile (profileResult) asks SUMMARIZE of the query: on the endpoint, the host works it out
-    // over every row the query returns, in DuckDB's columns.
-    const summarized = /^\s*SUMMARIZE\s+([\s\S]+)$/i.exec(statementSql);
-    const res = dialect !== 'tsql' ? await engine.runSql(statementSql, { onRows })
-      : summarized ? await engine.summarizeTsql(summarized[1]) : await engine.runTsql(statementSql, { onRows });
-    if (stale()) return false;
+    const res = await onDuckdbIfOffline(async () => {
+      const dialect = dialectOf(source);
+      let model = null, statementSql;
+      if (summarize != null) {
+        // The SUMMARIZE is of the SQL the query compiles to.
+        const compiled = await semantic.statement(source, null, dialect).catch(() => null);
+        statementSql = `SUMMARIZE ${(compiled ? compiled.sql : source).trim().replace(/;+\s*$/, '')}`;
+        currentSql = statementSql;
+      } else {
+        model = await semantic.statement(sql, null, dialect);
+        statementSql = model ? model.sql : sql;
+      }
+      if (stale()) return null;
+      if (model) docAllowed = false;
+      lastRun.rewritten = !!model;
+      t0 = performance.now();
+      if (stops !== stopsAtStart) throw Object.assign(new Error('Stopped'), { cancelled: true });
+      // Profile asks SUMMARIZE of the query: on the endpoint, the host works it out over every row the
+      // query returns, in DuckDB's columns.
+      const summarized = /^\s*SUMMARIZE\s+([\s\S]+)$/i.exec(statementSql);
+      return dialect !== 'tsql' ? engine.runSql(statementSql, { onRows })
+        : summarized ? engine.summarizeTsql(summarized[1]) : engine.runTsql(statementSql, { onRows });
+    });
+    if (stale() || !res) return false;
     renderResults(res);
     lastResult = res;
     const ms = Math.round(performance.now() - t0);
@@ -1646,10 +1688,8 @@ new MutationObserver(() => { if (chart) { hideChart(); toggleChart(); } })
 async function profileResult() {
   if (!currentSql) return;
   const title = ($('activeTable').textContent || '').replace(/^(Query|Profile): /, '');
-  const model = await semantic.statement(currentSql, null, dialectOf(currentSql)).catch(() => null);
-  const sql = (model ? model.sql : currentSql).trim().replace(/;+\s*$/, '');
   $('activeTable').textContent = `Profile: ${title || 'query'}`;
-  await runQuery({ sql: `SUMMARIZE ${sql}`, doc: false });
+  await runQuery({ summarize: currentSql, doc: false });
 }
 
 // Export: the query on screen, every row (not the rows the page holds), to a file: the host
@@ -1657,10 +1697,12 @@ async function profileResult() {
 // the SQL it compiles to.
 async function exportQuery() {
   if (!currentSql) return null;
-  const dialect = dialectOf(currentSql);
-  const model = await semantic.statement(currentSql, null, dialect);
   const name = ($('activeTable').textContent || 'query').replace(/^Query: /, '');
-  return engine.exportResult({ sql: model ? model.sql : currentSql, name, dialect });
+  return onDuckdbIfOffline(async () => {
+    const dialect = dialectOf(currentSql);
+    const model = await semantic.statement(currentSql, null, dialect);
+    return engine.exportResult({ sql: model ? model.sql : currentSql, name, dialect });
+  });
 }
 
 // ---------------------------------------------------------------------------

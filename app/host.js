@@ -9,7 +9,8 @@
 //   call(method, args, onBatch?)   -> Promise of the call's value; a streamed call hands
 //                                     each batch ({ fields, rows, numRows }) to onBatch
 //
-// A failure rejects with the host's message; `e.cancelled` says it was a Stop, not an error.
+// A failure rejects with the host's message; `e.cancelled` says it was a Stop, not an error, and
+// `e.offline` that it needed a connection this window has not got.
 // =============================================================================
 
 import { vscodeApi } from "./vscode-api.js";
@@ -34,6 +35,7 @@ export function connectHost() {
       const e = new Error(m.message || "the host call failed");
       if (m.cancelled) e.cancelled = true;
       if (m.notValid) e.notValid = true;
+      if (m.offline) e.offline = true;
       p.reject(e);
     }
   });

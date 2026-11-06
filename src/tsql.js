@@ -12,6 +12,8 @@
 // The answer is the engine's (engine-host.js): batches of { fields, rows, numRows }, a field's type
 // in DuckDB's words and a row as an object of JSON-safe values, so the grid, Explore, the command
 // line and Excel read it as they read DuckDB's. Read only, as DuckDB's path is (assertTsqlRead).
+// Offline nothing here goes out: a statement is refused with `offline`, and its caller runs it on
+// DuckDB. A connection that gets no answer starts the probe (connectivity.js), as an HTTP call does.
 // The SQL audience's token comes from signin.js sqlToken; tedious, pure JavaScript, is required on
 // first use, so nothing waits for it at activation.
 //
@@ -196,11 +198,25 @@ const dedupe = names => {
  * @param {() => number} [o.maxRows]
  * @param {(line: string) => void} [o.log]
  * @param {() => string|null} [o.account]  whose connections these are: another account's never reuses one
+ * @param {object} [o.connectivity]  connectivity.js: offline, nothing is sent
  */
-function createTsql({ endpoints, sqlToken, maxRows = () => 200_000, log = () => {}, account = () => null }) {
+function createTsql({ endpoints, sqlToken, maxRows = () => 200_000, log = () => {}, account = () => null, connectivity = null }) {
   const pools = new Map();   // host|db -> idle connections
   const known = new Map();   // lower-cased workspace -> its endpoints, as the Fabric API said
   const running = new Set(); // { owner, cancel }
+
+  const offlineError = reason => Object.assign(new Error(`OneLake Studio is offline (${reason}): the SQL endpoint is not called, DuckDB runs it.`), { offline: true, status: 0 });
+  function refuseOffline() {
+    if (connectivity && connectivity.offline()) throw offlineError(connectivity.reason());
+  }
+  // No answer at all from the endpoint: the probe says whether the internet has gone. Offline now, the
+  // statement is refused as one sent offline is; otherwise the endpoint's own error stands.
+  async function noAnswer(e) {
+    if (!connectivity || !/^(ESOCKET|ETIMEOUT)$/.test(String(e && e.code))) return e;
+    connectivity.networkFailed();
+    await connectivity.check();
+    return connectivity.offline() ? offlineError(connectivity.reason()) : e;
+  }
 
   async function endpointOf(workspace, items) {
     const key = workspace.toLowerCase();
@@ -246,9 +262,9 @@ function createTsql({ endpoints, sqlToken, maxRows = () => 200_000, log = () => 
       let conn;
       try { conn = await connect(host, database, token); }
       catch (e) {
-        if (!/login failed|token/i.test(String(e && e.message))) throw e;
+        if (!/login failed|token/i.test(String(e && e.message))) throw await noAnswer(e);
         token = await sqlToken({ fresh: true });
-        conn = await connect(host, database, token);
+        try { conn = await connect(host, database, token); } catch (e2) { throw await noAnswer(e2); }
       }
       entry = { conn, timer: null };
     }
@@ -269,6 +285,7 @@ function createTsql({ endpoints, sqlToken, maxRows = () => 200_000, log = () => 
   // `rows`: how many rows are kept, past which they are only counted (an export keeps them all).
   async function stream(sql, emit, owner = null, { rows: keep = maxRows() } = {}) {
     assertTsqlRead(sql);
+    refuseOffline();
     const where = onEndpoint(sql);
     const { host, database } = await endpointOf(where.workspace, where.items);
     const { Request } = require('tedious');
@@ -317,6 +334,7 @@ function createTsql({ endpoints, sqlToken, maxRows = () => 200_000, log = () => 
   // (SET STATISTICS XML is not supported).
   async function plan(sql, owner = null) {
     assertTsqlRead(sql);
+    refuseOffline();
     const where = onEndpoint(sql);
     const { host, database } = await endpointOf(where.workspace, where.items);
     const { Request } = require('tedious');

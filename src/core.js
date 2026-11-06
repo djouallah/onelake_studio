@@ -157,9 +157,10 @@ function createCore({
   // (the same cache the catalog uses) for the one file the export writes.
   const fabric = createFabric({ getFabricToken: fabricToken });
   // SQL endpoint mode (settings.sqlEngine): T-SQL on a workspace's Fabric SQL endpoint, online only.
-  // Its statements are the SQL box's and a model's queries; DuckDB reads everything else.
-  const tsql = createTsql({ endpoints: ws => fabric.sqlEndpoints(ws), sqlToken, maxRows: settings.maxResultRows, log, account: () => storeAccount });
-  const sqlDialect = () => (settings.sqlEngine() === 'sqlEndpoint' && !connectivity.noInternet() ? 'tsql' : 'duckdb');
+  // Its statements are the SQL box's and a model's queries; DuckDB reads everything else. Offline, for
+  // no internet or no session, everything is DuckDB's: nothing calls the endpoint.
+  const tsql = createTsql({ endpoints: ws => fabric.sqlEndpoints(ws), sqlToken, maxRows: settings.maxResultRows, log, account: () => storeAccount, connectivity });
+  const sqlDialect = () => (settings.sqlEngine() === 'sqlEndpoint' && !connectivity.offline() ? 'tsql' : 'duckdb');
 
   // What the extension knows about OneLake, kept on disk per account and served from there
   // first (onelake.js). One directory per identity — a hashed account id — so nobody is

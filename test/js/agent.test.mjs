@@ -124,6 +124,19 @@ test("free from the cache: table sizes, more table fields, files, find, model co
   } finally { await close(); }
 });
 
+test("SQL endpoint mode: a statement refused offline as it ran runs again on DuckDB", async () => {
+  let online = true;
+  const asked = [];
+  const tsql = { query: async () => { online = false; throw Object.assign(new Error("offline"), { offline: true }); }, cancel: () => {} };
+  const engine = { agentQuery: async sql => { asked.push(sql); return { fields: [{ name: "a", type: "BIGINT" }], rows: [{ a: 1 }], numRows: 1 }; } };
+  const { agent, close } = await richAgent({ engine, tsql, sqlDialect: () => (online ? "tsql" : "duckdb") });
+  try {
+    const r = await agent.run({ args: ["sql", "SELECT * FROM lakehouse.ws.data.dbo.customers"] });
+    assert.equal(r.code, 0, r.err);
+    assert.deepEqual(asked, ["SELECT * FROM lakehouse.ws.data.dbo.customers"], "DuckDB ran it");
+  } finally { await close(); }
+});
+
 // export hands Explore's own export the model file, as Explore's button does; the dax-sql and
 // YAML modules it loads stand in as stubs (CI's test job has no vendor/).
 test("export: a model file in Files/, or a semantic model's local copy, which the export writes", async () => {

@@ -7,7 +7,7 @@
 //   page -> host   { type: 'call',   id, method, args }
 //   host -> page   { type: 'batch',  id, batch }           (streamed results, zero or more)
 //                  { type: 'result', id, value }           (exactly one of these two)
-//                  { type: 'error',  id, message, cancelled }
+//                  { type: 'error',  id, message, cancelled, offline? }
 //
 // The methods are DuckDB's (query, stream, cancel, info, and what a tab sets up to read a file:
 // fileView, attachFile, releaseFiles — engine-host.js) and OneLake's,
@@ -238,7 +238,7 @@ async function answer({ methods, engine }, msg, post) {
     else throw new Error(`unknown method: ${method}`);
     post({ type: 'result', id, value });
   } catch (e) {
-    post({ type: 'error', id, message: (e && e.message) || String(e), cancelled: !!(e && e.cancelled), ...(e && e.notValid ? { notValid: true } : {}) });
+    post({ type: 'error', id, message: (e && e.message) || String(e), cancelled: !!(e && e.cancelled), ...(e && e.notValid ? { notValid: true } : {}), ...(e && e.offline ? { offline: true } : {}) });
   }
 }
 
