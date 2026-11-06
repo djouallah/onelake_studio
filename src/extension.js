@@ -407,6 +407,7 @@ async function activateInner(context) {
     outputLog: () => outputLogOf(dirname(context.logUri.fsPath), 'OneLake Studio'),
     windowLog: out,
     exportUi: {
+      pick: (items, { title }) => vscode.window.showQuickPick(items, { title, placeHolder: 'What the app runs on' }),
       info: (...a) => vscode.window.showInformationMessage(...a),
       warn: (...a) => vscode.window.showWarningMessage(...a),
       openFolder: () => { const open = (vscode.workspace.workspaceFolders || [])[0]; return open ? open.uri.fsPath : null; },

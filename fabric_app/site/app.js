@@ -3,9 +3,9 @@
 // =============================================================================
 // OneLake Studio's own Explore (explore/view.js: Model, Pivot), over the data source of
 // this app (storage/data.js): it signs in, its function reads the model from the lakehouse and
-// says where the tables are, and DuckDB-WASM reads them in this browser. Exported in SQL endpoint
-// mode (engine.json), the data source is storage/sqldata.js instead: the function runs each query
-// on the lakehouse's SQL endpoint, and this page loads no DuckDB. The model is never
+// says where the tables are, and DuckDB-WASM reads them in this browser. Exported as DirectQuery
+// or Direct Lake (engine.json), the data source is storage/modeldata.js instead: the function runs
+// each query on the semantic model the export made, as DAX, and this page loads no DuckDB. The model is never
 // copied into the app: it is the lakehouse's file, as it is now. Nothing here is specific to
 // one model; the export writes only rayfin.config.json (the backend) and explore.json (the
 // shelves the first view shows).
@@ -68,7 +68,7 @@ export async function start() {
   try {
     const first = await fetch(new URL("./explore.json" + v, import.meta.url)).then(r => (r.ok ? r.json() : null), () => null);
     const { engine } = await fetch(new URL("./engine.json" + v, import.meta.url)).then(r => (r.ok ? r.json() : {}), () => ({}));
-    if (engine === "sqlEndpoint") return await startSql(first);
+    if (engine === "semanticModel") return await startModel(first);
     const { createDataSource } = await import("./storage/data.js");
     const data = createDataSource({
       onStatus: s => { boot.step(s); status(boot.el() ? "" : s); },
@@ -105,11 +105,11 @@ export async function start() {
   }
 }
 
-// SQL endpoint mode: Explore's queries over the model go to the function as they are written; it
-// compiles them to T-SQL and runs them there, so the page's compiler passes them through.
-async function startSql(first) {
-  const { createSqlSource } = await import("./storage/sqldata.js");
-  const data = createSqlSource({ onStatus: s => boot.step(s) });
+// On a semantic model: Explore's queries over the model go to the function as they are written; it
+// turns them into DAX and runs them there, so the page's compiler passes them through.
+async function startModel(first) {
+  const { createModelSource } = await import("./storage/modeldata.js");
+  const data = createModelSource({ onStatus: s => boot.step(s) });
   await data.init();
   boot.step("Building Explore…");
   const doc = data.model();

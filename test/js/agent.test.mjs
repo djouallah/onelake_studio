@@ -171,6 +171,16 @@ test("export: a model file in Files/, or a semantic model's local copy, which th
     assert.deepEqual(exported.pop(), { file: "Sales.yaml", name: "Sales", text: "the Sales model", state: null,
                                        model: { workspace: "a ws", name: "Sales" } });
 
+    // --mode says what the app runs on; without it, VS Code asks.
+    r = await agent.run({ args: ["export", "a ws", "sales"], opts: { mode: "directlake" } });
+    assert.equal(r.code, 0, r.err);
+    assert.equal(exported.pop().mode, "directlake");
+    r = await agent.run({ args: ["export", "a ws", "sales"], opts: { mode: "import" } });
+    assert.equal(r.code, EXIT.USAGE);
+    assert.match(r.err, /--mode takes client, directquery or directlake, not "import"/);
+    r = await agent.run({ args: ["ls"], opts: { mode: "client" } });
+    assert.match(r.err, /--mode is not an option of ls/);
+
     r = await agent.run({ args: ["export", "a ws", "Ops"] });
     assert.equal(r.code, EXIT.NOT_CACHED);
     assert.match(r.err, /a ws\/Ops is not downloaded yet — open it in the OneLake Studio tree/);

@@ -14,6 +14,16 @@ const { PINS } = require('./vendored');
 const { planExport, writeExport, buildDist, writeMarker, readMarker, fingerprint, localChanges, vendorSize, zip, rayfinYml } = require('./exportapp');
 const { createFabricApp, tenantOf } = require('./fabricapp');
 const { createOneLakeWriter } = require('./onelakewrite');
+const { createFabricModel } = require('./fabricmodel');
+const { semanticTmsl, definitionOf, MODES } = require('./pbimodel');
+
+// What the app runs on, as the pick list offers it and the command line's --mode names it.
+const PICKS = [
+  { label: 'Client side', description: 'Fabric app, DuckDB in the browser', mode: 'duckdb' },
+  { label: 'DirectQuery', description: 'semantic model on the SQL endpoint, and the app', mode: 'directQuery' },
+  { label: 'Direct Lake', description: 'semantic model on OneLake, and the app', mode: 'directLake' },
+];
+const MODE_OF = { client: 'duckdb', duckdb: 'duckdb', directquery: 'directQuery', directlake: 'directLake' };
 
 /**
  * @param {object} o
@@ -21,6 +31,8 @@ const { createOneLakeWriter } = require('./onelakewrite');
  * @param {() => Promise<object>} o.modules  the compiler and the page's modules (agent.js)
  * @param {Function} o.hostToken  OneLake's token (signin.js)
  * @param {Function} o.appToken  the Fabric API's own audience (signin.js)
+ * @param {Function} [o.powerBiToken]  the Power BI API's (signin.js fabricToken): a semantic model's refresh, its credentials
+ * @param {Function} [o.sqlToken]  the SQL endpoint's: a DirectQuery model's credentials
  * @param {object} o.fabric  fabric.js
  * @param {object} o.onelake  onelake.js
  * @param {object} o.catalog  catalog.js
@@ -28,19 +40,21 @@ const { createOneLakeWriter } = require('./onelakewrite');
  * @param {{ get: Function, update: Function }} o.memento  the folder approved last time
  * @param {string} o.extensionDir  where this install's files are
  * @param {() => Promise<string>} o.pageDir  where the page's files are
- * @param {object} o.ui  info, warn, pickFolder, openFolder, withProgress, openExternal, reveal
+ * @param {object} o.ui  pick, info, warn, pickFolder, openFolder, withProgress, openExternal, reveal
  * @param {(node: object) => void} o.onRefresh  this part of the tree changed
  * @param {(line: string) => void} o.log
  */
-function createExport({ connectivity, modules, hostToken, appToken, fabric, onelake, catalog, writer = createOneLakeWriter({ getToken: hostToken }), memento, extensionDir, pageDir, ui, onRefresh, log, sqlEngine = () => 'duckdb' }) {
+function createExport({ connectivity, modules, hostToken, appToken, powerBiToken = appToken, sqlToken = async () => null, fabric, onelake, catalog,
+                        writer = createOneLakeWriter({ getToken: hostToken }), memento, extensionDir, pageDir, ui, onRefresh, log,
+                        fabricModel = createFabricModel({ getToken: appToken, powerBiToken, sqlToken, log: m => log(m) }) }) {
 
-  // SQL endpoint mode (onelakeStudio.sqlEngine): the app's function runs the model's queries on its
-  // lakehouse's SQL endpoint, by the lakehouse's name there.
+  // DirectQuery: the semantic model reads the lakehouse through its SQL endpoint, by the
+  // lakehouse's name there.
   async function sqlEndpointOf(plan) {
     const lh = await fabric.itemOf(plan.workspace, plan.lakehouse);
     const name = lh.item.replace(/\.Lakehouse$/i, '');
     const ep = (await fabric.sqlEndpoints(plan.workspace)).find(e => e.type === 'Lakehouse' && e.name.toLowerCase() === name.toLowerCase());
-    if (!ep) throw new Error(`the lakehouse ${name} has no SQL endpoint yet: open it in Fabric once, or export with onelakeStudio.sqlEngine duckdb`);
+    if (!ep) throw new Error(`the lakehouse ${name} has no SQL endpoint yet: open it in Fabric once, or export it as Direct Lake`);
     return { host: String(ep.host).replace(/,\d+$/, ''), database: ep.name };
   }
 
@@ -81,7 +95,8 @@ function createExport({ connectivity, modules, hostToken, appToken, fabric, onel
   // package ships in the vsix (fabric-function/, scripts/function-bundle.mjs). Answers what
   // Explore's info line says; a failure is thrown back to it, and logged. So is the user's No
   // (`declined`), which is no failure, but must not read as a publish on the command line.
-  const exportExplore = async ({ file, name, text, state, workspace, path, model }) => {
+  // `mode`: what the app runs on (PICKS; the command line's --mode), asked when not given.
+  const exportExplore = async ({ file, name, text, state, workspace, path, model, mode }) => {
     const declined = message => Object.assign(new Error(message), { declined: true });
     try {
       // The one thing that can't work from what is held, said before anything is asked.
@@ -92,15 +107,35 @@ function createExport({ connectivity, modules, hostToken, appToken, fabric, onel
       // lakehouse (modelTarget) once every question below has been answered — the one write
       // to OneLake a semantic model ever gets.
       const target = path ? null : await modelTarget(text, model);
+      // The semantic model's workspace and name: the model's own (semanticmodel.<ws>.<model>).
+      const pbi = { workspace: model ? model.workspace : workspace, name: model ? model.name : name };
       if (target) ({ workspace, path } = target);
-      const plan = planExport(text, file, name, await modules(), { workspace, path }, await lakesOf(text, file, model ? model.workspace : workspace));
-      if (sqlEngine() === 'sqlEndpoint') plan.sqlEndpoint = await sqlEndpointOf(plan);
+      const mods = await modules();
+      const plan = planExport(text, file, name, mods, { workspace, path }, await lakesOf(text, file, model ? model.workspace : workspace));
+      if (mode != null && !MODE_OF[String(mode).toLowerCase()]) throw new Error(`no mode ${mode}: client, directquery or directlake`);
       const fnDir = join(extensionDir, 'fabric-function');
       const [sourceZip, deployMetaData] = await Promise.all([
         fsp.readFile(join(fnDir, 'source.zip')), fsp.readFile(join(fnDir, 'deploymetadata.json'), 'utf8'),
       ]).catch(() => { throw new Error('this build has no function package (fabric-function/): run node scripts/function-bundle.mjs'); });
       const token = await appToken({ createIfNone: true });
       if (!token) throw new Error('not signed in to the Fabric API');
+
+      // What the app runs on: DuckDB in the browser, or a semantic model of this one, which is
+      // worked out here (a model that can't be one says so now) and written once all is asked.
+      if (mode == null) {
+        const pick = await ui.pick(PICKS, { title: `Export ${plan.title} to Fabric as…` });
+        if (!pick) throw declined('Export cancelled.');
+        mode = pick.mode;
+      }
+      plan.engine = MODE_OF[String(mode).toLowerCase()];
+      let tmsl = null, existing = null;
+      if (plan.engine !== 'duckdb') {
+        if (plan.engine === 'directQuery') plan.sqlEndpoint = await sqlEndpointOf(plan);
+        tmsl = semanticTmsl(mods.semantic.bimOf(file, text, mods.compiler), plan.engine, {
+          name: pbi.name, tables: plan.tables, lake: { workspace: plan.workspace, item: plan.lakehouse }, sqlEndpoint: plan.sqlEndpoint });
+        pbi.workspaceId = String(await fabric.workspaceId(pbi.workspace)).toLowerCase();
+        existing = await fabricModel.find(pbi.workspaceId, pbi.name);
+      }
 
       // The folder: the one approved last time for this model, or else <the folder VS Code
       // has open>/<app>/, or else a picker. Never used unapproved: where it goes is shown, and
@@ -128,7 +163,7 @@ function createExport({ connectivity, modules, hostToken, appToken, fabric, onel
         const pick = await ui.info(
           `Export ${plan.name} to Fabric?`,
           { modal: true, detail: `Local copy: ${outDir}${existsSync(outDir) ? '' : ' (new)'}\nWorkspace: ${workspace}\nModel: ${plan.modelPath}` +
-            (plan.sqlEndpoint ? `\nEngine: the SQL endpoint, ${plan.sqlEndpoint.database}` : '') },
+            (tmsl ? `\nSemantic model: ${pbi.name}, ${MODES[plan.engine]} (${existing ? 'updated' : 'new'})` : '') },
           'Export', 'Choose Another Folder…');
         if (pick === 'Export') break;
         if (!pick) throw declined('Export cancelled.');
@@ -226,6 +261,19 @@ function createExport({ connectivity, modules, hostToken, appToken, fabric, onel
         async progress => {
           const say = line => { log(line); progress.report({ message: line.replace(/^app \S+: /, '') }); };
           let marker = before;
+          // The semantic model first: the app's function queries it from its first load.
+          if (tmsl) {
+            say(`app ${plan.name}: ${existing ? 'updating' : 'creating'} the semantic model ${pbi.name} (${MODES[plan.engine]})`);
+            const { id } = await fabricModel.write(pbi.workspaceId, pbi.name, definitionOf(tmsl), existing && existing.id);
+            if (plan.engine === 'directLake') {
+              say(`app ${plan.name}: refreshing the semantic model ${pbi.name}`);
+              await fabricModel.frame(pbi.workspaceId, id);
+            } else {
+              say(`app ${plan.name}: setting the semantic model's SQL endpoint credentials (SSO)`);
+              await fabricModel.bindSso(pbi.workspaceId, id);
+            }
+            plan.semanticModel = { workspace: pbi.workspaceId, id, name: pbi.name };
+          }
           if (asIs) say(`app ${plan.name}: publishing ${outDir} as it is`);
           else {
             say(`app ${plan.name}: writing the local copy to ${outDir}`);
@@ -244,7 +292,7 @@ function createExport({ connectivity, modules, hostToken, appToken, fabric, onel
           try {
             done = await fabricApp.publish({
               workspaceId: plan.workspace, name: plan.name, tenantId: tenantOf(token),
-              catalogUrl: plan.catalogUrl, modelUrl: plan.modelUrl, sqlEndpoint: plan.sqlEndpoint || null,
+              catalogUrl: plan.catalogUrl, modelUrl: plan.modelUrl, semanticModel: plan.semanticModel || null,
               site: async config => await zip(await buildDist(outDir, config)),
               fn: { sourceZip, deployMetaData }, redirects: marker.redirects || [],
               itemId: marker.itemId || null, takeOver,
@@ -273,12 +321,13 @@ function createExport({ connectivity, modules, hostToken, appToken, fabric, onel
       log(`exported ${plan.name} -> ${r.hostingUrl || '(no hosting URL)'} (item ${r.itemId}, model ${plan.modelPath}, local copy ${outDir})`);
       for (const w of plan.warnings) log(`  warning: ${w}`);
       const warned = plan.warnings.length ? ` ${plan.warnings.length} warning(s) in the log.` : '';
-      ui.info(`${plan.name} is published to Fabric.${warned}`, 'Open App', 'Reveal Folder')
+      const on = plan.semanticModel ? `, on the semantic model ${pbi.name} (${MODES[plan.engine]})` : '';
+      ui.info(`${plan.name} is published to Fabric${on}.${warned}`, 'Open App', 'Reveal Folder')
         .then(pick => {
           if (pick === 'Open App' && r.hostingUrl) ui.openExternal(r.hostingUrl);
           else if (pick === 'Reveal Folder') ui.reveal(outDir);
         });
-      return `Published to Fabric${asIs ? ' (the local copy, as it is)' : ''}: ${r.hostingUrl || plan.name}`;
+      return `Published to Fabric${asIs ? ' (the local copy, as it is)' : ''}${on}: ${r.hostingUrl || plan.name}`;
     } catch (e) {
       if (!(e && e.declined)) log(`export to fabric of ${file} failed — ${(e && e.stack) || e}`);
       throw e;
@@ -288,4 +337,4 @@ function createExport({ connectivity, modules, hostToken, appToken, fabric, onel
   return { exportExplore };
 }
 
-module.exports = { createExport };
+module.exports = { createExport, PICKS };

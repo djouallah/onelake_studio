@@ -22,7 +22,9 @@ const bim = { model: {
 } };
 const REQUEST = { file: "sales.yaml", name: "sales", text: OSSIE, state: {}, workspace: "power bi", path: "nem.Lakehouse/Files/semantic_model/sales.yaml" };
 
-async function setup({ offline = false, noInternet = false, answers = [], folder = null, token = "t", functionPackage = true } = {}) {
+// `mode`: what the pick list answers (null: Esc). `models`: the workspace's semantic models by name.
+async function setup({ offline = false, noInternet = false, answers = [], folder = null, token = "t", functionPackage = true,
+                       mode = "duckdb", models = {} } = {}) {
   const ext = await mkdtemp(join(tmpdir(), "exportflow-"));
   if (functionPackage) {
     await mkdir(join(ext, "fabric-function"));
@@ -30,8 +32,11 @@ async function setup({ offline = false, noInternet = false, answers = [], folder
     await writeFile(join(ext, "fabric-function", "deploymetadata.json"), "{}");
   }
   const asked = [];
+  const picked = [];
+  const looked = [];
   const kept = new Map();
   const ui = {
+    pick: async (items, o) => { picked.push({ items, ...o }); return items.find(i => i.mode === mode); },
     openFolder: () => folder,
     pickFolder: async o => { asked.push({ pickFolder: o }); return answers.shift() ?? null; },
     info: async (message, ...rest) => { asked.push({ message, rest }); return answers.shift(); },
@@ -44,7 +49,16 @@ async function setup({ offline = false, noInternet = false, answers = [], folder
     modules: async () => ({ semantic, compiler: { parseYaml: () => doc, ossieToTmsl: () => bim } }),
     hostToken: async () => token,
     appToken: async () => token,
-    fabric: {}, onelake: {}, catalog: {},
+    fabric: {
+      workspaceId: async name => `id-of-${name}`,
+      itemOf: async () => ({ workspace: "power bi", item: "nem.Lakehouse" }),
+      sqlEndpoints: async () => [{ type: "Lakehouse", name: "nem", host: "x.datawarehouse.fabric.microsoft.com,1433" }],
+    },
+    onelake: {}, catalog: {},
+    fabricModel: {
+      find: async (ws, name) => { looked.push({ ws, name }); return models[name] || null; },
+      write: async () => { throw new Error("nothing is written in these tests"); },
+    },
     memento: { get: k => kept.get(k), update: async (k, v) => { kept.set(k, v); } },
     extensionDir: ext,
     pageDir: async () => ext,
@@ -52,7 +66,7 @@ async function setup({ offline = false, noInternet = false, answers = [], folder
     onRefresh() {},
     log() {},
   });
-  return { exportExplore, asked, kept, ext, done: () => rm(ext, { recursive: true, force: true }) };
+  return { exportExplore, asked, picked, looked, kept, ext, done: () => rm(ext, { recursive: true, force: true }) };
 }
 
 test("offline says why, before anything is asked", async () => {
@@ -115,5 +129,67 @@ test("Choose Another Folder asks again, starting where the last one was", async 
   assert.equal(e.declined, true);
   assert.equal(asked[1].pickFolder.startAt, open);
   await rm(open, { recursive: true, force: true });
+  await done();
+});
+
+test("what the app runs on is picked after the checks, and Esc is a refusal", async () => {
+  const { exportExplore, asked, picked, done } = await setup({ mode: null });
+  const e = await exportExplore(REQUEST).then(() => null, x => x);
+  assert.equal(e.declined, true);
+  assert.equal(e.message, "Export cancelled.");
+  assert.deepEqual(picked[0].items.map(i => i.label), ["Client side", "DirectQuery", "Direct Lake"]);
+  assert.equal(picked[0].title, "Export Sales Model to Fabric as…");
+  assert.equal(asked.length, 0);
+  await done();
+});
+
+test("a mode given (the command line's --mode) is not asked; an unknown one is refused", async () => {
+  const a = await setup({ mode: null, answers: [null] });
+  await a.exportExplore({ ...REQUEST, mode: "client" }).catch(() => {});
+  assert.equal(a.picked.length, 0);
+  await a.done();
+  const b = await setup();
+  await assert.rejects(b.exportExplore({ ...REQUEST, mode: "import" }), /no mode import: client, directquery or directlake/);
+  await b.done();
+});
+
+test("client side makes no semantic model", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "exportflow-open-"));
+  const { exportExplore, asked, looked, done } = await setup({ folder: dir, answers: [undefined] });
+  await exportExplore(REQUEST).catch(() => {});
+  assert.equal(looked.length, 0);
+  assert.doesNotMatch(asked[0].rest[0].detail, /Semantic model/);
+  await rm(dir, { recursive: true, force: true });
+  await done();
+});
+
+test("Direct Lake: the model's semantic model is looked up by name first, the dialog says it is updated, and a No writes nothing", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "exportflow-open-"));
+  const { exportExplore, asked, looked, done } = await setup({ folder: dir, answers: [undefined], mode: "directLake",
+                                                              models: { sales: { id: "m1", displayName: "sales" } } });
+  const e = await exportExplore(REQUEST).then(() => null, x => x);
+  assert.equal(e.declined, true);
+  assert.deepEqual(looked, [{ ws: "id-of-power bi", name: "sales" }]);
+  assert.match(asked[0].rest[0].detail, /\nSemantic model: sales, Direct Lake \(updated\)$/);
+  await rm(dir, { recursive: true, force: true });
+  await done();
+});
+
+test("DirectQuery: a new semantic model, on the lakehouse's SQL endpoint", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "exportflow-open-"));
+  const { exportExplore, asked, done } = await setup({ folder: dir, answers: [undefined], mode: "directQuery" });
+  await exportExplore(REQUEST).catch(() => {});
+  assert.match(asked[0].rest[0].detail, /\nSemantic model: sales, DirectQuery \(new\)$/);
+  await rm(dir, { recursive: true, force: true });
+  await done();
+});
+
+test("a model opened from the tree is its own semantic model: its workspace and name", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "exportflow-open-"));
+  const { exportExplore, looked, done } = await setup({ folder: dir, answers: [undefined], mode: "directLake" });
+  const { workspace: _w, path: _p, ...rest } = REQUEST;
+  await exportExplore({ ...rest, model: { workspace: "aemo", name: "NEM Sales" } }).catch(() => {});
+  assert.deepEqual(looked, [{ ws: "id-of-aemo", name: "NEM Sales" }]);
+  await rm(dir, { recursive: true, force: true });
   await done();
 });

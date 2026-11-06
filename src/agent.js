@@ -699,9 +699,11 @@ function createAgent({ onelake, engine, modelPath, appDir, vendorDir, daxSqlPin,
     // VS Code where the local copy goes and waits for the OK there before it publishes. The
     // model is what Explore's button would export: a semantic model's .yaml, where the tree
     // wrote it in its lakehouse, or a model file in a lakehouse's Files/. With no Explore on
-    // screen, the app opens on Explore's default view.
+    // screen, the app opens on Explore's default view. --mode says what the app runs on
+    // (client, directquery, directlake); without it, VS Code asks.
     async export([ws, a, b], opts, io) {
       if (!exportApp) throw new Error('Export to Fabric is not available here');
+      const mode = opts.mode != null ? { mode: String(opts.mode) } : {};
       const say = message => { io.data({ message }); io.out(message); };
       const { semantic } = await modules();
       if (!b) {
@@ -714,7 +716,7 @@ function createAgent({ onelake, engine, modelPath, appDir, vendorDir, daxSqlPin,
         }
         const text = await fsp.readFile(path, 'utf8');
         say(await exportApp({ file: path.split(/[\\/]/).pop(), name: semantic.modelName(m.name), text, state: null,
-                              model: { workspace: ws, name: m.name } }));
+                              model: { workspace: ws, name: m.name }, ...mode }));
         return;
       }
       const lh = await itemOf(ws, a, await look('items', [ws], opts));
@@ -723,7 +725,7 @@ function createAgent({ onelake, engine, modelPath, appDir, vendorDir, daxSqlPin,
       const file = where.path.split('/').pop();
       const text = Buffer.from(await onelake.readBytes(where.workspace, where.path)).toString('utf8');
       say(await exportApp({ file, name: semantic.modelName(file), text, state: null,
-                            workspace: where.workspace, path: where.path }));
+                            workspace: where.workspace, path: where.path, ...mode }));
     },
   };
 

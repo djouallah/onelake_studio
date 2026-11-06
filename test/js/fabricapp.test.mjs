@@ -121,6 +121,14 @@ test("publish: item, backend, key, settings, secrets, site, function, redirect â
     itemId: ID, portalUrl: "https://app.fabric.microsoft.com/", tenantId: "tid-1" });
 });
 
+test("publish on a semantic model: its workspace and id are the function's secrets too", async () => {
+  const { app, calls } = appWith(happy());
+  await publish(app, { semanticModel: { workspace: WS, id: "m1" } });
+  const secrets = calls.filter(c => c.url.endsWith("/__private/secrets")).map(c => JSON.parse(c.body));
+  assert.deepEqual(secrets.map(s => s.name), ["CATALOG_URL", "MODEL_URL", "SEMANTIC_MODEL_WORKSPACE", "SEMANTIC_MODEL_ID"]);
+  assert.deepEqual(secrets.slice(2).map(s => s.value), [WS, "m1"]);
+});
+
 test("publish again: the item an earlier export created, by its id, its redirect already known â€” no create, no second settings", async () => {
   const { app, calls } = appWith(happy([
     ["GET", `/workspaces/${WS}/items?type=AppBackend`, () => res(200, { value: [{ id: ID, displayName: "Sales-Model" }] })],

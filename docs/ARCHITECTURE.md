@@ -29,8 +29,8 @@ SHOW ALL TABLES;
 | Rule | What it means | Where it is held |
 | --- | --- | --- |
 | **One name per object** | A table has five parts and a model has three. A file is `'lakehouse.<workspace>.<item>/Files/<path>'`. | [NAMING.md](NAMING.md), [`src/names.js`](../src/names.js) |
-| **SQL only** | A model is read with `AGG("measure")` in SQL. There is no DAX query. Excel's MDX is a second way in, and is compiled to that same SQL. | [`app/semantic.js`](../app/semantic.js), [`src/xmla/`](../src/xmla/) |
-| **Read only** | Nothing is written to Fabric or OneLake. The host takes one read per statement, from a tab or the command line, and DuckDB's own parser checks it (on the SQL endpoint, a SELECT and nothing that writes: `assertTsqlRead`). The one exception is Export to Fabric, after an OK in VS Code. | `assertReads` and `checkedRead` in [`src/sql.js`](../src/sql.js), [`src/tsql.js`](../src/tsql.js) |
+| **SQL only** | A model is read with `AGG("measure")` in SQL. There is no DAX query. Excel's MDX is a second way in, and is compiled to that same SQL. An exported Fabric app on a semantic model runs the DAX that dax-sql makes of that SQL. | [`app/semantic.js`](../app/semantic.js), [`src/xmla/`](../src/xmla/) |
+| **Read only** | Nothing is written to Fabric or OneLake. The host takes one read per statement, from a tab or the command line, and DuckDB's own parser checks it (on the SQL endpoint, a SELECT and nothing that writes: `assertTsqlRead`). The one exception is Export to Fabric, after an OK in VS Code: the app, the model file, and for DirectQuery or Direct Lake a semantic model. | `assertReads` and `checkedRead` in [`src/sql.js`](../src/sql.js), [`src/tsql.js`](../src/tsql.js) |
 | **Cache first** | Every answer from OneLake or Fabric is kept on this machine and served from there first. It is trusted until using it fails, then read again once. | [`src/onelake.js`](../src/onelake.js), [`src/store.js`](../src/store.js) |
 | **Works offline** | A feature that reads data works from what this machine holds, with no network. What isn't held says so at once, never on a timeout. Only writing to Fabric needs a connection: Export to Fabric. SQL endpoint mode runs on DuckDB offline. The exported Fabric app is online by design, and this rule doesn't apply to it. | [`src/connectivity.js`](../src/connectivity.js), [`src/http.js`](../src/http.js), `cache_httpfs_set_offline` in [`src/engine-host.js`](../src/engine-host.js) |
 | **The host does the work** | Sign-in, the read-only guard and OneLake's listings, metadata and `Files/` bytes are in the host, and DuckDB's reads are in the server it starts. A tab is a view: it holds no token and makes no network request. | [`src/host.js`](../src/host.js), [`src/panel.js`](../src/panel.js), [`src/engine-client.js`](../src/engine-client.js) |
@@ -435,7 +435,7 @@ for itself stays DuckDB's: a table's Stats, Data and History, files, SHOW and DE
   model (`dialectOf` in [`app/app.js`](../app/app.js)). A file is a string, not a table, so its preview, and a
   database file's tables, are DuckDB's in either mode. A table clicked in the tree starts the box at
   `SELECT TOP 100 *`: the endpoint has no `LIMIT`.
-- **Export to Fabric** makes an app that runs no DuckDB ([Export to Fabric](#export-to-fabric), SQL endpoint mode).
+- **Export to Fabric** doesn't read this setting. What the app runs on is picked at each export ([Export to Fabric](#export-to-fabric)).
 
 ## Semantic models
 
@@ -530,8 +530,21 @@ One of two writes, with Upload (above). Explore's **Export to Fabric** button, o
 model's Explore, nothing else, as a Fabric app (item type `AppBackend`, named
 `<model>-explore`). VS Code and the extension are all it needs: no CLI, no Node, no GitHub.
 
+**What the app runs on** is picked from a list when the button is clicked (the command line's `--mode`):
+- **Client side:** DuckDB in the browser reads the tables. No semantic model is made.
+- **DirectQuery:** a Power BI semantic model of the model, each table read through the lakehouse's SQL endpoint, and the app
+  on it.
+- **Direct Lake:** a Power BI semantic model of the model, Direct Lake on OneLake, and the app on it.
+
 **What it writes**
 - **The app**, in Fabric.
+- **DirectQuery and Direct Lake: the semantic model**, named as the model (`semanticmodel.<workspace>.<model>`), in the
+  model's workspace. If the workspace has a model of that name, its definition is replaced: one name per workspace. A
+  model opened from the tree is that model, so it is rewritten from its local copy. The definition is TMSL made from the
+  model's file ([`src/pbimodel.js`](../src/pbimodel.js)), written over the Fabric API
+  ([`src/fabricmodel.js`](../src/fabricmodel.js)). Direct Lake is then refreshed, to frame its tables. DirectQuery's
+  SQL endpoint credentials are set to OAuth2 with each caller's own identity (SSO). Direct Lake takes no calculated
+  column: such a model is refused before anything is asked, and goes as DirectQuery.
 - **The model's file**, into the `Files/` of its lakehouse, when it was opened from its local copy:
   `<lakehouse>/Files/semantic_model/<model>.yaml` ([`src/onelakewrite.js`](../src/onelakewrite.js)). The
   app reads the model there. A different file of that name is replaced only when you say so, and not being able
@@ -565,18 +578,19 @@ model's Explore, nothing else, as a Fabric app (item type `AppBackend`, named
   Fabric's clock. If the app was deployed again since, the export asks.
 - **A folder the export did not write** is refused.
 
-**In SQL endpoint mode** (`onelakeStudio.sqlEngine` `sqlEndpoint`) the app runs no DuckDB, in the browser or anywhere.
-- **The function runs the queries:** Explore's query over the model goes to its `sqlEndpoint` call
-  ([`function_app.ts`](../fabric_app/rayfin/functions/src/function_app.ts)), which compiles it to T-SQL with dax-sql
-  (the page's own pinned copy, put in the bundle by [`scripts/function-bundle.mjs`](../scripts/function-bundle.mjs))
-  and runs it on the lakehouse's SQL endpoint with tedious and the app identity's SQL token (Rayfin's
-  `AudienceType.Sql`). Its settings `SQL_ENDPOINT` and `SQL_DATABASE` say where; the export finds them.
-- **Only a SELECT over the model is taken**, never SQL of the browser's own: whoever can call it reads what the app
-  shows, through the model, and nothing else of the lakehouse.
-- **The page** ([`storage/sqldata.js`](../fabric_app/site/storage/sqldata.js), chosen by `site/engine.json`) sends
-  the query and draws the rows; its Show plan is the endpoint's estimated plan, and its SQL tab the T-SQL. `site/`
-  holds no DuckDB, extensions, Arrow or browser data source, and no SAS is signed: the workspace setting for
-  user-delegated SAS tokens isn't needed.
+**On a semantic model** (DirectQuery, Direct Lake) the app runs no DuckDB, in the browser or anywhere.
+- **The function runs the queries:** Explore's query over the model goes to its `semanticModel` call
+  ([`function_app.ts`](../fabric_app/rayfin/functions/src/function_app.ts)), which turns it into DAX with dax-sql's
+  `sqlToDax` (the page's own pinned copy, put in the bundle by [`scripts/function-bundle.mjs`](../scripts/function-bundle.mjs))
+  and runs it on the semantic model with the Power BI API's `executeQueries` and the app identity's Fabric token
+  (Rayfin's `AudienceType.Fabric`). Its settings `SEMANTIC_MODEL_WORKSPACE` and `SEMANTIC_MODEL_ID` say which model.
+- **What it needs:** the app identity may read the semantic model, and the tenant allows the Execute Queries REST API.
+- **Only a SELECT over the model is taken**, never a query of the browser's own: whoever can call it reads what the app
+  shows, through the model, and nothing else.
+- **The page** ([`storage/modeldata.js`](../fabric_app/site/storage/modeldata.js), chosen by `site/engine.json`) sends
+  the query and draws the rows. Its Show plan has no plan tree: its SQL tab is the DAX, and its profile the query's one
+  run. `site/` holds no DuckDB, extensions, Arrow or browser data source, and no SAS is signed: the workspace setting
+  for user-delegated SAS tokens isn't needed.
 
 **The template** ([`fabric_app/`](../fabric_app/))
 - **`site/`:** the page, black always. Its data source (`storage/`) signs in with Rayfin's Fabric SSO,
@@ -854,6 +868,7 @@ every window. The rest apply at once.
 | `src/standalone.js`, `src/msalsession.js`, `src/tokenstore.js` | The command line with VS Code closed: `core.js` with no editor, its sign-in, and its token cache. |
 | `src/diaglog.js` | A window's own log. |
 | `src/exportapp.js`, `src/fabricapp.js`, `src/onelakewrite.js` | Export to Fabric. |
+| `src/pbimodel.js`, `src/fabricmodel.js` | Export to Fabric's semantic model (DirectQuery, Direct Lake): its TMSL, and its writes. |
 | `src/vendored.js` | The one list of pinned third-party code the webview runs, dax-sql included. |
 | [`app/`](../app/) | A tab's page: `index.html`, `app.js`, `data.js`, `grid.js`, `chart.js`, `docview.js`, `dbview.js`, `paths.js`, `semantic.js`, `cdn.js`, `host.js`, `vscode-api.js`. |
 | [`app/explore/`](../app/explore/) | Explore, shared with the Fabric app. |

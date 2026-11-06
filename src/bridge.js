@@ -43,11 +43,11 @@ const COMMANDS = {
   exists: { usage: 'exists <ws> <item> <schema.table>', min: 3, max: 3, flags: ['fresh', 'json'] },
   model: { usage: 'model <ws> <model>', min: 2, max: 2, flags: ['fresh', 'json'] },
   sql: { usage: 'sql "<query>"', min: 1, max: 1, flags: ['csv', 'json', 'limit', 'showSql', 'fresh'] },
-  export: { usage: 'export <ws> <model>, or export <ws> <item> <Files/path>', min: 2, max: 3, flags: ['json'] },
+  export: { usage: 'export <ws> <model>, or export <ws> <item> <Files/path>', min: 2, max: 3, flags: ['json', 'mode'] },
   status: { usage: 'status', max: 0, flags: ['json'] },
   log: { usage: 'log [<text>]', max: 1, flags: ['json', 'limit'] },
 };
-const FLAG_NAME = { fresh: '--fresh', csv: '--csv', json: '--json', limit: '--limit', showSql: '--show-sql', downloaded: '--downloaded', workspace: '--workspace', name: '--name', open: '--open' };
+const FLAG_NAME = { fresh: '--fresh', csv: '--csv', json: '--json', limit: '--limit', showSql: '--show-sql', downloaded: '--downloaded', workspace: '--workspace', name: '--name', open: '--open', mode: '--mode' };
 
 /** What is wrong with a request, or null: asked before the extension is, and by it. */
 function checkRequest({ args, opts = {} }) {
@@ -65,6 +65,9 @@ function checkRequest({ args, opts = {} }) {
     if (opts[key] != null && opts[key] !== false && !c.flags.includes(key)) return `${flag} is not an option of ${name}`;
   }
   if (opts.csv && opts.json) return '--csv or --json, not both';
+  if (opts.mode != null && !/^(client|directquery|directlake)$/i.test(String(opts.mode))) {
+    return `--mode takes client, directquery or directlake, not "${opts.mode}"`;
+  }
   if (opts.limit != null && !(Number.isInteger(Number(opts.limit)) && Number(opts.limit) > 0)) {
     return `--limit takes a positive whole number, not "${opts.limit}"`;
   }

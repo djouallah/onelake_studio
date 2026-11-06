@@ -1,9 +1,9 @@
 // =============================================================================
 // function-bundle.mjs — Export to Fabric's function, as the deploy package Fabric takes
 // =============================================================================
-// The app's functions (openCatalog, and sqlEndpoint for SQL endpoint mode: fabric_app/rayfin/
-// functions, tracked here) are TypeScript with npm dependencies, and dax-sql: sqlEndpoint compiles
-// the page's queries with the copy the page itself runs (PINS.daxSql, vendor/npm/, downloaded by
+// The app's functions (openCatalog, and semanticModel for DirectQuery and Direct Lake: fabric_app/rayfin/
+// functions, tracked here) are TypeScript with npm dependencies, and dax-sql: semanticModel turns
+// the page's queries into DAX with the copy the page itself runs (PINS.daxSql, vendor/npm/, downloaded by
 // vendor.mjs and held to its hash), put in node_modules/ after npm ci, so it is no npm dependency. Fabric takes it as a zip of one esbuild bundle plus its
 // metadata (deploymetadata.json, generated from the source by the TypeScript compiler), the
 // two sent as a multipart form (src/fabricapp.js). Nothing in either names an item, a

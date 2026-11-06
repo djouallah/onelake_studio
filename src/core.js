@@ -533,12 +533,11 @@ function createCore({
   // The one OneLake writer (onelakewrite.js): Export to Fabric's .yaml, and Upload's files.
   const writer = createOneLakeWriter({ getToken: hostToken });
   exportExplore = createExport({
-    connectivity, modules: () => agent.modules(), hostToken, appToken, fabric, onelake, catalog, writer,
+    connectivity, modules: () => agent.modules(), hostToken, appToken, powerBiToken: fabricToken, sqlToken, fabric, onelake, catalog, writer,
     memento, extensionDir, pageDir,
     ui: exportUi,
     onRefresh: node => view.refresh(node),
     log,
-    sqlEngine: settings.sqlEngine,
   }).exportExplore;
 
   // Behind what's on screen, once it has been built.

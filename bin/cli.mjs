@@ -44,7 +44,10 @@ const USAGE = {
                                         .yaml in its lakehouse (open it in the tree once first).
                                         VS Code asks where the local copy goes and for the OK;
                                         the app opens on Explore's default view
-  export <ws> <item> <Files/path>     the same, for a model file (.bim, Ossie .yaml) in Files/`,
+  export <ws> <item> <Files/path>     the same, for a model file (.bim, Ossie .yaml) in Files/
+    --mode client|directquery|directlake  what the app runs on: DuckDB in the browser, or a
+                                        semantic model of that name made from the model (updated
+                                        if the workspace has one). Without it, VS Code asks`,
   status: `  status                              this window: its build, session, startup timeline, catalog,
                                         sync, and where its files are. Answers signed out too`,
   log: `  log [<text>]                        this window's own log, the lines holding <text> if given,
@@ -79,7 +82,7 @@ ${Object.values(USAGE).join("\n")}
 ${OPTIONS}`;
 
 const SWITCHES = { "--fresh": "fresh", "--csv": "csv", "--json": "json", "--show-sql": "showSql", "--downloaded": "downloaded", "--open": "open" };
-const VALUES = { "--limit": "limit", "--timeout": "timeout", "--workspace": "workspace", "--name": "name" };
+const VALUES = { "--limit": "limit", "--timeout": "timeout", "--workspace": "workspace", "--name": "name", "--mode": "mode" };
 const DEFAULT_TIMEOUT_S = 600;
 
 function parse(argv) {
