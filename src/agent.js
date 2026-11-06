@@ -822,7 +822,7 @@ function createAgent({ onelake, engine, modelPath, appDir, vendorDir, daxSqlPin,
       if (opts.fresh && offlineReason()) throw offlineError(offlineReason(), 'An answer newer than the cache');
       await commands[name](rest, {
         fresh: !!opts.fresh, csv: !!opts.csv, json: !!opts.json,
-        explicitLimit, showSql: !!opts.showSql, downloaded: !!opts.downloaded, seen, signal,
+        explicitLimit, showSql: !!opts.showSql, downloaded: !!opts.downloaded, mode: opts.mode, seen, signal,
       }, answer);
       // An answer off disk says how old it is: the oldest listing it was made of.
       if (seen.length) {
