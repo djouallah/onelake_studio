@@ -5,7 +5,7 @@
 // Run: node --test test/js/engine-host.test.mjs
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -14,7 +14,7 @@ import { fileURLToPath } from "node:url";
 import { READS, WRITES } from "./sql-disagreements.mjs";
 
 const require = createRequire(import.meta.url);
-const { createEngineHost, jsonSafe, sameSources, isOneLakeMetadata, isOneLakeTable, duckdbPath, READ_FAILURE, AUTH_FAILURE } = require("../../src/engine-host.js");
+const { createEngineHost, jsonSafe, sameSources, isOneLakeMetadata, isOneLakeTable, duckdbPath, READ_FAILURE, AUTH_FAILURE, FORBIDDEN } = require("../../src/engine-host.js");
 
 // What fetch-extensions.mjs put next to the extension, when CI ran it for this platform.
 const BUNDLED = join(fileURLToPath(new URL(".", import.meta.url)), "..", "..", "duckdb-extensions");
@@ -825,4 +825,73 @@ test("a statement that reads a table says it was used, and a table being kept do
   const gone = new AbortController();
   gone.abort();
   await assert.rejects(engine.keepTable(name, { signal: gone.signal }), /nobody is waiting/);
+});
+
+// What OneLake's table read API answers, as an Arrow stream file, written by a DuckDB of the test's own.
+async function writeArrowStream(file, select) {
+  const { DuckDBInstance } = require("@duckdb/node-api");
+  const duck = await DuckDBInstance.create(":memory:", { allow_unsigned_extensions: "true" });
+  const c = await duck.connect();
+  try {
+    const shipped = join(BUNDLED, "nanoarrow.duckdb_extension");
+    if (existsSync(shipped)) await c.run(`LOAD '${shipped.replace(/\\/g, "/")}'`);
+    else { await c.run("INSTALL nanoarrow FROM community"); await c.run("LOAD nanoarrow"); }
+    await c.run(`COPY (${select}) TO '${file.replace(/\\/g, "/")}' (FORMAT arrows)`);
+  } finally { c.closeSync(); duck.closeSync(); }
+}
+
+test("a table with OneLake security: a 403 moves it to its Arrow files, under the same name, and only it", { skip: !existsSync(CACHE_BUILD) }, async t => {
+  const extDir = await mkdtemp(join(tmpdir(), "onelake-ext-"));
+  const cacheDir = await mkdtemp(join(tmpdir(), "onelake-cache-"));
+  const copy = join(cacheDir, "secured", "abc", "1");
+  await mkdir(copy, { recursive: true });
+  const files = [join(copy, "s0.arrows"), join(copy, "s1.arrows")];
+  await writeArrowStream(files[0], "SELECT range::INTEGER AS i, 'a' AS region FROM range(3)");
+  await writeArrowStream(files[1], "SELECT (range + 3)::INTEGER AS i, 'b' AS region FROM range(2)");
+  // OneLake's refusal as the engine meets it, from a source that names iceberg_scan as a real table's does.
+  const REFUSED = "SELECT NULL::INTEGER AS i /* iceberg_scan( */ WHERE error('IO Error: AzureDfsStorageFileSystem open file failed: HTTP 403 (AuthorizationPermissionMismatch)') IS NULL";
+  const asked = [];
+  const engine = createEngineHost({
+    extensionDir: extDir,
+    bundledExtensions: BUNDLED,
+    fileCacheDir: cacheDir,
+    fileCacheMaxBytes: 1024 ** 3,
+    resolveTable: async (ref, o = {}) => {
+      asked.push(`${ref.table}${o.secured ? " secured" : ""}`);
+      if (ref.table === "open") return { ...ref, emptySql: "SELECT 2 AS b /* iceberg_scan( */" };
+      if (ref.table === "elsewhere") return { ...ref, arrowFiles: [join(extDir, "x.arrows")], secured: true };
+      return o.secured ? { ...ref, arrowFiles: files, secured: true, at: 7 } : { ...ref, emptySql: REFUSED };
+    },
+  });
+  t.after(async () => {
+    await engine.close();
+    await rm(extDir, { recursive: true, force: true }).catch(() => {});
+    await rm(cacheDir, { recursive: true, force: true }).catch(() => {});
+  });
+  const name = table => `lakehouse.w.lh.dbo.${table}`;
+
+  const r = await engine.call("query", [`SELECT i, region FROM ${name("sec")} ORDER BY i`]);
+  assert.deepEqual(r.rows.map(x => x.i), [0, 1, 2, 3, 4], "every stream, read as one table");
+  assert.equal(r.asOf, 7, "as of when it was read");
+  assert.deepEqual(asked, ["sec", "sec secured"]);
+
+  asked.length = 0;
+  await engine.call("query", [`SELECT count(*) AS n FROM ${name("sec")}`]);
+  assert.deepEqual(asked, ["sec secured"], "known now: no refusal first");
+
+  asked.length = 0;
+  const joined = await engine.agentQuery(`SELECT count(*)::INTEGER AS n FROM ${name("sec2")} s, ${name("open")} o WHERE o.b = 2`);
+  assert.equal(joined.rows[0].n, 5);
+  assert.ok(asked.includes("sec2 secured"), asked.join(", "));
+  assert.ok(!asked.includes("open secured"), "the table that read fine stays as it is");
+
+  await assert.rejects(engine.call("query", [`SELECT * FROM ${name("elsewhere")}`]), /aren't where this engine reads/);
+});
+
+test("OneLake's words for a refused file are the ones the engine looks for", () => {
+  assert.ok(FORBIDDEN.test("IO Error: AzureBlobStorageFileSystem could not open file: 403 This request is not authorized to perform this operation using this permission. (AuthorizationPermissionMismatch)"));
+  assert.ok(FORBIDDEN.test("IO Error: Generic MicrosoftAzure error: response error \"Forbidden\""));
+  assert.ok(!FORBIDDEN.test("Binder Error: column fact_403x not found"));
+  assert.ok(!FORBIDDEN.test("Binder Error: no column y\n\nLINE 1: SELECT y FROM t WHERE x = 403"), "a statement quoted in an error");
+  assert.ok(!FORBIDDEN.test("IO Error: HTTP 401 Unauthorized"));
 });

@@ -49,6 +49,8 @@ const EXTENSIONS = [
   // doesn't allow unsigned ones, and it installs them from the community repository as before.
   { name: "h3", repo: "https://community-extensions.duckdb.org", required: false },
   { name: "zipfs", repo: "https://community-extensions.duckdb.org", required: false },
+  // read_arrow, for a table with OneLake security: what OneLake's table read API answers (tableread.js).
+  { name: "nanoarrow", repo: "https://community-extensions.duckdb.org", required: false },
   //
   // cache_httpfs, the disk cache, is OUR build of it (djouallah/duck-read-cache-fs, branch
   // fix/windows-long-path-xattr): the released one caches nothing on disk on Windows. It is

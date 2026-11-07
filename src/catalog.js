@@ -43,6 +43,9 @@ const EXTERNAL_ACCESS_HINT = ' If this happens for every workspace, the tenant s
   '"Users can access data stored in OneLake with apps external to Fabric" is probably off: ' +
   'a Fabric admin turns it on in the Admin portal, under Tenant settings > OneLake settings.';
 // OneLake's message, as the end of a sentence: it brings its own full stop, or gets one.
+// A 403 for one table, and not the rest.
+const TABLE_SECURITY_HINT = ' If only this table is refused, it may have OneLake security, with rules on its rows or columns: ' +
+  'a statement still reads the rows and columns those rules allow.';
 const sentence = said => (said ? ` — ${said}${/[.!?]$/.test(said) ? '' : '.'}` : '.');
 const forbidden = status => (status === 403 ? EXTERNAL_ACCESS_HINT : '');
 
@@ -278,6 +281,8 @@ function createCatalog({ getToken, dfsOrigin = DFS_ORIGIN, tableOrigin = TABLE_O
         // A prefix from disk that no longer holds: asked again at once, not waited out as a
         // conversion in progress.
         if (await stalePrefix(lh, e)) { url = urlOf(await ircPrefixFor(lh)); attempt--; continue; }
+        // A table with OneLake security may refuse its metadata to a user its rules restrict: its rows still read.
+        if (e.status === 403) e.message += TABLE_SECURITY_HINT;
         const notYet = e.status === 400 || e.status === 404;
         // A table waiting for its conversion has its folder, with a Delta log or Iceberg metadata in
         // it. With neither there is nothing to wait for.

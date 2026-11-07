@@ -56,7 +56,11 @@ function deltaTableOf(meta) {
   return at ? abfssUrl(at.workspace, at.dir) : loc;
 }
 
-function createSqlTables({ onelake, paths, offlineReason = () => null, deltaLogs = null }) {
+// OneLake refusing a table's metadata or its files to this user: a table with OneLake security, whose rules
+// restrict them. Its rows are read through the table read API instead (tableread.js).
+const refused = e => !!e && e.status === 403;
+
+function createSqlTables({ onelake, paths, offlineReason = () => null, deltaLogs = null, tableRead = null }) {
   // An item's name in SQL -> the GUIDs that named it, for what nameTables answered: a compiled
   // model query holds that name for as long as the panel does.
   const namedFrom = new Map();
@@ -88,7 +92,8 @@ function createSqlTables({ onelake, paths, offlineReason = () => null, deltaLogs
     }, e => e.notListed && !fresh);
   }
 
-  async function resolveAt(ref, fresh) {
+  // `secured`: the engine found this table's files refused, so it is read through the table read API.
+  async function resolveAt(ref, fresh, { secured = false, signal } = {}) {
     const { ws, dir } = await locate(ref, fresh);
     const lh = { workspace: ws, item: dir };
     const listing = await onelake.tables(lh, { fresh }).catch(() => null);
@@ -97,21 +102,51 @@ function createSqlTables({ onelake, paths, offlineReason = () => null, deltaLogs
     // as if Fabric were still converting it.
     if (fresh && listing && !hit) throw new Error(`${sqlName(ref)}: there is no table ${ref.table} in ${dir}`);
     const t = hit || { schema: ref.schema || 'dbo', table: ref.table };
+    const named = { kind: ref.kind, workspace: ws, item: displayName(dir), schema: t.schema || 'dbo', table: t.table };
+
+    // A table with OneLake security: its rows as the table read API gave them to this user. Not noted as in
+    // use, as keeping it current would only be refused.
+    const where = { workspace: ws, item: dir, schema: t.schema || 'dbo', table: t.table };
+    const since = onelake.refreshedSince ? onelake.refreshedSince(lh) : 0;
+    const readSecured = async first => {
+      if (!tableRead) throw first || new Error(`${sqlName(ref)}: OneLake refused to give this table's files to you`);
+      try {
+        const copy = await tableRead.ensure(where, { since, signal });
+        const { listed: _, ...plain } = named;
+        return { ...plain, at: copy.at, arrowFiles: copy.files, secured: true };
+      } catch (e) {
+        if (!first || e.offline || (signal && signal.aborted)) throw e;
+        if (e.turnedOff) throw Object.assign(new Error(`${first.message}\n${e.message}`), { status: first.status });
+        throw Object.assign(new Error(`${first.message}\nIt was then read through OneLake's table read API, for a table with OneLake security, and that failed too: ${e.message}`),
+          { status: e.status || first.status });
+      }
+    };
+    // A copy still within its age is the answer, with nothing asked of OneLake. An older one tries the direct
+    // read first: a user since given the whole table no longer pays for the API.
+    const kept = tableRead ? await tableRead.held(where) : null;
+    if (secured || (kept && (offlineReason() || tableRead.current(kept.at, since)))) return readSecured(null);
+
     let meta;
     try { meta = await onelake.table(lh, t, { fresh }); }
     catch (e) {
       if (e.notValid) throw e;
-      if (!e.noTable) throw new Error(`${sqlName(ref)}: ${e.message}`);
+      if (refused(e)) return readSecured(Object.assign(new Error(`${sqlName(ref)}: ${e.message}`), { status: e.status }));
+      if (!e.noTable) throw Object.assign(new Error(`${sqlName(ref)}: ${e.message}`), { status: e.status });
       const near = closestTables(ref.table, listing || []);
       throw new Error(e.message + (near.length ? ` — closest: ${near.join(', ')}` : ''));
     }
-    const named = { kind: ref.kind, workspace: ws, item: displayName(dir), schema: t.schema || 'dbo', table: t.table, at: meta.at,
-                    listed: { workspace: ws, item: dir, schema: t.schema || '', table: t.table } };
+    named.at = meta.at;
+    named.listed = { workspace: ws, item: dir, schema: t.schema || '', table: t.table };
     if (meta.empty) return { ...named, emptySql: (await paths()).emptyTableSql(meta.schemaFields) };
     const deltaTable = deltaTableOf(meta);
     // Where its log is kept here, for delta_scan to run on (deltamirror.js).
     const at = deltaTable && deltaLogs ? tableDirOf(meta.metadataLocation) : null;
-    const deltaLocal = at ? await deltaLogs.ensure(at, { fresh }) : null;
+    let deltaLocal = null;
+    try { deltaLocal = at ? await deltaLogs.ensure(at, { fresh }) : null; }
+    catch (e) {
+      if (refused(e)) return readSecured(Object.assign(new Error(`${sqlName(ref)}: ${e.message}`), { status: e.status }));
+      throw e;
+    }
     return { ...named, metadataLocation: meta.metadataLocation, deltaTable, deltaLocal, logMoves: deltaLocal ? deltaLogs.moves(at) : 0 };
   }
 
@@ -119,16 +154,16 @@ function createSqlTables({ onelake, paths, offlineReason = () => null, deltaLogs
   // case, against what the store lists (the tree's own listings, so a table the tree has shown
   // resolves without a request), and answered spelled as OneLake spells them. `fresh` reads past
   // the cache: the engine's way of asking again once a read has failed.
-  async function resolve(ref, { fresh = false } = {}) {
+  async function resolve(ref, { fresh = false, secured = false, signal } = {}) {
     const from = namedFrom.get(nameKey(ref.kind, ref.workspace, ref.item));
-    if (!from) return resolveAt(ref, fresh);
+    if (!from) return resolveAt(ref, fresh, { secured, signal });
     // Named from GUIDs, so the name may be what moved: a renamed item resolves under its new name,
     // and answers to the name the SQL wrote, which a compiled model query goes on using.
     const asWritten = { workspace: ref.workspace, item: ref.item };
     const r = await revalidate(
       o => onelake.itemNamed(from.wsId, from.itemId, o)
         .then(it => ({ workspace: it.workspace, item: displayName(it.item) }), () => asWritten),
-      at => resolveAt({ ...ref, ...at }, fresh),
+      at => resolveAt({ ...ref, ...at }, fresh, { secured, signal }),
       e => e.notListed);
     return same(r.workspace, ref.workspace) && same(r.item, ref.item) ? r : { ...r, ...asWritten };
   }

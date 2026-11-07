@@ -215,3 +215,74 @@ test("a Delta table says where its log is kept here, and is asked for again when
   await sql.resolve(ref, { fresh: true });
   assert.equal(asked[1][1].fresh, true);
 });
+
+// A table with OneLake security: OneLake refuses its metadata or its log to this user, and its rows come from
+// the table read API (tableread.js), here a fake that says what it was asked.
+function securedWorld({ refuse = "load", kept = null, now = 5000 } = {}) {
+  const w = world();
+  const forbidden = () => Object.assign(new Error("Reading dbo.t from the Iceberg catalog failed (HTTP 403)"), { status: 403 });
+  // Written as Delta, so its log is read too.
+  const delta = { ...metadata, properties: { XTABLE_METADATA: JSON.stringify({ sourceTableFormat: "DELTA", sourceIdentifier: "3" }) } };
+  w.catalog.loadTable = async () => { w.calls.push("load"); if (refuse === "load") throw forbidden(); return { metadata: delta, metadataLocation: LOC }; };
+  w.reads = [];
+  w.kept = kept;
+  const tableRead = {
+    held: async () => w.kept,
+    current: at => now - at <= 1000,
+    ensure: async (t, o) => {
+      w.reads.push([t, o]);
+      if (w.readFails) throw w.readFails;
+      w.kept = { files: ["C:/cache/secured/x/1/s0.arrows"], at: now };
+      return w.kept;
+    },
+  };
+  const deltaLogs = { ensure: async () => { if (refuse === "log") throw Object.assign(new Error("list HTTP 403 for _delta_log"), { status: 403 }); return "C:/cache/delta/x"; }, moves: () => 0 };
+  w.sql = createSqlTables({ onelake: w.onelake, paths: async () => ({ emptyTableSql: () => "SELECT 1" }), tableRead, deltaLogs });
+  return w;
+}
+
+test("a table whose metadata is refused is read through the table read API, by its folder's names", async () => {
+  const w = securedWorld();
+  const r = await w.sql.resolve(ref());
+  assert.deepEqual(r.arrowFiles, ["C:/cache/secured/x/1/s0.arrows"]);
+  assert.equal(r.secured, true);
+  assert.equal(r.listed, undefined, "not kept current as a table in use: that would only be refused");
+  assert.deepEqual(w.reads[0][0], { workspace: "ws", item: "old.Lakehouse", schema: "dbo", table: "t" });
+});
+
+test("a Delta table whose log is refused is read through the table read API too", async () => {
+  const w = securedWorld({ refuse: "log" });
+  const r = await w.sql.resolve(ref());
+  assert.equal(r.secured, true);
+  assert.equal(r.listed, undefined);
+});
+
+test("a copy within its age asks OneLake nothing; an older one tries the direct read first", async () => {
+  const w = securedWorld({ refuse: "none", kept: { files: ["C:/cache/secured/x/1/s0.arrows"], at: 4500 } });
+  assert.equal((await w.sql.resolve(ref())).secured, true);
+  assert.equal(count(w, "load"), 0);
+  w.kept = { files: ["C:/cache/secured/x/1/s0.arrows"], at: 1000 };
+  const r = await w.sql.resolve(ref());
+  assert.equal(r.secured, undefined, "given the whole table since: no more charge");
+  assert.equal(count(w, "load"), 1);
+});
+
+test("the engine's own refusal goes straight to the table read API", async () => {
+  const w = securedWorld({ refuse: "none" });
+  assert.equal((await w.sql.resolve(ref(), { secured: true })).secured, true);
+  assert.equal(count(w, "load"), 0);
+});
+
+test("when the table read API refuses too, both refusals are said", async () => {
+  const w = securedWorld();
+  w.readFails = Object.assign(new Error("OneLake's table read API says you may not read dbo.t, or it does not exist (HTTP 403)"), { status: 403 });
+  await assert.rejects(w.sql.resolve(ref()), e => e.status === 403
+    && /Iceberg catalog failed \(HTTP 403\)/.test(e.message) && /that failed too: OneLake's table read API says you may not read/.test(e.message));
+});
+
+test("any other failure of the metadata is said as it was, and the API isn't asked", async () => {
+  const w = securedWorld({ refuse: "none" });
+  w.catalog.loadTable = async () => { throw Object.assign(new Error("Reading dbo.t failed (HTTP 401)"), { status: 401 }); };
+  await assert.rejects(w.sql.resolve(ref()), e => e.status === 401);
+  assert.equal(w.reads.length, 0);
+});

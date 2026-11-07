@@ -138,6 +138,10 @@ VS Code extension); nothing is written to Fabric or OneLake.
   yet) only when they agree or say the data just changed.
 - A query (`sql`) reads OneLake, cached on disk too: a first query over a big table can
   take a minute or two, the next is seconds.
+- A table with OneLake security (roles with rules on its rows or columns) that OneLake refuses the user is read
+  through OneLake's table read API: the answer has only the rows and columns their roles allow, so it can differ from
+  what someone else sees. Each new read uses the workspace's capacity, so the answer is kept and read again after a day
+  or a Refresh, not on every query. `table` may fail with a 403 for it while `sql` still reads it.
 - Read only by construction: anything but a read is refused. The exception is `export`, and
   only when the user asks for it. VS Code then asks the user where the local copy goes and
   waits for their OK, so the command waits too. It prints the app's URL, or exits 5 and says why

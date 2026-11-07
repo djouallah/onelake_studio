@@ -563,7 +563,7 @@ function createOneLake({ catalog, store, prefetchEnabled = () => true, onHit = (
 
   return {
     rowsOutOfReach, listingFailure, listingAt,
-    workspaces, items, tables, files, table, deltaState, deltaHistory, peek, prefetch, refreshTables,
+    workspaces, items, tables, files, table, deltaState, deltaHistory, peek, prefetch, refreshTables, refreshedSince,
     models, apps, itemNamed, readBytes, versionOf, cached, rowsRead, fileRead, onRowsRead, usage,
     onChanged: fn => listen('changed', key => fn(decode(key))),
     onTableRead,

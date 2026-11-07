@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **A table with OneLake security reads.** When OneLake refuses you a table's files because roles restrict its rows
+  or columns, it is read through OneLake's table read API: you get the rows and columns your roles allow, under the
+  table's usual name, in joins and semantic models too. Each read uses the workspace's capacity, so the answer is kept
+  on disk and read again only past `tableMetadataTtlHours` or after **Refresh**. A new setting,
+  `onelakeStudio.securedTableRead` (on by default), turns this off. Stats and History still need the metadata OneLake
+  refuses, and their 403 now says the table may have OneLake security.
 - **Export to Fabric asks what the app runs on:** *Client side*, *DirectQuery* or *Direct Lake*, from a list when
   the button is clicked (on the command line, `export … --mode client|directquery|directlake`).
   - **Client side** is the app as before: DuckDB in the browser. It makes no semantic model.

@@ -181,7 +181,8 @@ The engine is **DuckDB 2.0 running natively in a process of its own** ([The serv
   the disk cache by a mount in our `cache_httpfs`, and never through Fabric's Iceberg conversion, whose column ids can
   disagree with the files'. An Iceberg table is read with `iceberg_scan` on the metadata file the host's cache holds.
   Which it is, and where, comes from the cache, so the catalog is never asked at query time. DuckDB does the work itself:
-  snapshots, deletes, schema evolution.
+  snapshots, deletes, schema evolution. A table with OneLake security that OneLake refuses this user is read with
+  `read_arrow` on what the table read API answered ([OneLake security](#onelake-security)).
 - **Reading files:** `Files/` objects are named as in [NAMING.md](NAMING.md#files), and DuckDB reads them as `abfss://` URLs.
 - **Lockdown:** file access is limited to the temp directory, `https://`, `abfss://` and `zip://` over a
   remote archive. Nothing loads after it: every extension is loaded before, and autoload is off.
@@ -263,6 +264,35 @@ as what was asked.
 memory, cores in use, queries per second and the disk cache, while the tab is on screen. Nothing is stored. It has no
 SQL box, no Stop and no Restart.
 
+## OneLake security
+
+A table can have OneLake security: roles with rules on its rows or its columns. OneLake then refuses the table's
+files, and often its metadata and Delta log, to a user those rules restrict, so DuckDB can't read it directly. Such a
+table is read through OneLake's table read API instead ([`src/tableread.js`](../src/tableread.js)), on the user's own
+storage token. The API applies the user's rules and answers Arrow streams, which DuckDB reads with `read_arrow`, from
+the `nanoarrow` extension shipped in the vsix. The table keeps its five-part name, so a join, a model and Explore read
+it as they read any table.
+
+- **The direct read comes first.** A user who may read the files never uses the API.
+- **When the API is used:** OneLake answers 403 for the table's metadata or Delta log while the table is resolved
+  ([`src/sqltables.js`](../src/sqltables.js)), or DuckDB gets a 403 reading its files. The engine then reads the first
+  row of each table the statement names, to find which ones were refused, and only those go to the API. The statement
+  runs again once. The window remembers each one, so its next statement goes straight to the kept copy.
+- **What it costs:** each read is charged to the workspace's capacity, for every row it scans. The API has no row
+  filter, so a read is every row and column the user may see.
+- **Kept like a table's metadata:** what the API answered is kept in the cache folder, under `secured\`, one folder per
+  table, and read again only past `tableMetadataTtlHours` or after **Refresh** on its lakehouse. A copy past its age
+  tries the direct read first, so a user since given the whole table stops paying for the API. A read is kept whole or
+  not at all: its streams go into a `.part` folder that is renamed once all of them have arrived. The disk cache's
+  limit and **Clear Cached OneLake Data** cover these folders.
+- **Offline:** a kept copy answers, however old. A table never read says so at once.
+- **Stop** stops a read under way, unless another statement is waiting for the same table.
+- **Stats and History** still need the table's metadata and log. If OneLake refuses those, they show its 403, which
+  says the table may have OneLake security and that a statement still reads its rows.
+- **Turned off** with `onelakeStudio.securedTableRead`: a refused table then fails, and the error names the setting. A
+  copy already kept is still used.
+- **With the disk cache off** there is nowhere to keep the streams, and a refused table says so.
+
 ## The cache
 
 | What | Where it is kept | When it is read again |
@@ -273,6 +303,7 @@ SQL box, no Stop and no Restart.
 | What DuckDB reads: table data and `Files/` objects | DuckDB's disk cache (`cache_httpfs`) | Only when the file was rewritten: a kept copy is checked against the file's version tag and modification time |
 | That a table's rows were read, per snapshot | The catalog file | Never: a new snapshot is a new entry |
 | A semantic model's definition | The cache folder, `models/<account>/<workspace>/<model>.yaml` | On **Download Again** |
+| A table with OneLake security: the rows and columns the table read API gave this user | The cache folder, `secured\` | Past `tableMetadataTtlHours`, or after **Refresh** ([OneLake security](#onelake-security)) |
 
 - **A kept answer is trusted until using it fails.** Then it is read again once, and the work tried again
   only if the answer changed. Otherwise the first error stands, and so it does offline
@@ -311,8 +342,8 @@ SQL box, no Stop and no Restart.
   isn't OneLake's, so the OneLake token can't be sent elsewhere. With the disk cache off, only the guard's text check says that. DuckDB loads it as an
   unsigned extension. A build without it fails, rather than ship with no disk cache.
 - **What a build downloads is held to its hash:** the libraries and DuckDB's extensions, against
-  `scripts/downloads.sha256.json`, and DuckDB's native binding against the lockfile. The community extensions `h3` and
-  `zipfs` ship in the vsix too, so nothing is downloaded at run time unless the disk cache is off.
+  `scripts/downloads.sha256.json`, and DuckDB's native binding against the lockfile. The community extensions `h3`,
+  `zipfs` and `nanoarrow` ship in the vsix too, so nothing is downloaded at run time unless the disk cache is off.
 
 ## The explorer
 
@@ -770,6 +801,7 @@ Excel (MSOLAP) --SOAP over http://127.0.0.1--> extension host
 | `onelakeStudio.catalogTtlMinutes` | 5 | How old a listing may be before it is refreshed. The last known answer is always served from disk first. |
 | `onelakeStudio.tableMetadataTtlHours` | 24 | How old a table's Iceberg metadata may be before it is refreshed. **Refresh** on its lakehouse re-reads it at once. |
 | `onelakeStudio.keepUsedTablesGB` | 10 | How much of the tables statements keep reading is read whole in the background and kept, and may come down in a day. Never over half of `diskCacheMaxGB`. `0` turns it off, and their metadata is still read every hour. |
+| `onelakeStudio.securedTableRead` | on | Reads a table whose files OneLake refuses you, because of OneLake security, through OneLake's table read API: the rows and columns your roles allow. Each read uses the workspace's capacity. Off, such a table fails. |
 | `onelakeStudio.prefetchMetadata` | on | Reads every table's metadata in the background once a lakehouse's Tables node is opened, so the first click is a disk read. |
 | `onelakeStudio.diskCacheMaxGB` | 64 | How much of what DuckDB reads from OneLake, tables and `Files/`, is kept on disk, per account. `0` turns the disk cache off. |
 | `onelakeStudio.cacheDirectory` | empty | Where the disk cache is kept, as a full path. Empty is VS Code's storage for this extension. A new folder starts empty. |
@@ -797,6 +829,8 @@ every window. The rest apply at once.
 - **Tabs don't come back after a window reload.** Only the box's last text does (see
   [The SQL box and results](#the-sql-box-and-results)).
 - **A Pivot's shelves are kept per tab,** so a model opened again in a new tab starts with empty shelves.
+- **OneLake's table read API is in preview,** so how a table with OneLake security is read may change. It doesn't
+  serve a table behind a shortcut to another region, and a very large table can fail with *Stream was too long*.
 - **Requires desktop VS Code 1.101+** on Windows x64, or macOS or Linux on x64 or arm64, for its built-in SQLite. Windows on arm64 has no build of DuckDB's `delta`, so no package.
 
 ## Where the code is
@@ -820,6 +854,7 @@ every window. The rest apply at once.
 | `src/http.js` | How the host asks OneLake and the Fabric API for anything. |
 | `src/deltalog.js` | A Delta table's own log, for Stats and History. |
 | `src/deltamirror.js` | A Delta table's log kept in the cache folder, for `delta_scan` to run on. |
+| `src/tableread.js` | A table with OneLake security, read through OneLake's table read API and kept in the cache folder. |
 | `src/fabric.js` | A workspace's semantic models and apps, and a model's definition. |
 | `src/sqlendpoint.js` | A Direct Lake model over a SQL endpoint, pointed at the item behind it. |
 | `src/semviews.js` | The models opened, per account. |

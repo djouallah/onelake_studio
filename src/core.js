@@ -16,6 +16,7 @@ const { createStore } = require('./store');
 const { stateFileOf } = require('./catalogfile');
 const { createSyncWorker } = require('./syncworker');
 const { createDeltaMirror } = require('./deltamirror');
+const { createTableRead, TABLE_READ_FOLDER } = require('./tableread');
 const { settleFileCache } = require('./filecache');
 const { logFileOf } = require('./logfile');
 const { createOneLake } = require('./onelake');
@@ -219,7 +220,16 @@ function createCore({
       return dir && keeps ? join(dir, 'delta') : null;
     },
   });
-  const sqlTables = createSqlTables({ onelake, paths: async () => (await agent.modules()).paths, deltaLogs,
+  // A table with OneLake security, read through OneLake's table read API, in the cache folder too (tableread.js).
+  const tableRead = createTableRead({
+    getToken: hostToken, onRequest: logRead, ttlMs: tableTtlMs, offlineReason: () => connectivity.reason(),
+    enabled: () => settings.read('securedTableRead', true) !== false,
+    base: () => {
+      const dir = engines.fileCacheDirFor(engines.cacheAccount());
+      return dir && settings.keepsDiskCache() ? join(dir, TABLE_READ_FOLDER) : null;
+    },
+  });
+  const sqlTables = createSqlTables({ onelake, paths: async () => (await agent.modules()).paths, deltaLogs, tableRead,
                                       offlineReason: () => connectivity.reason() });
   resolveSqlTable = sqlTables.resolve;
   resolveSqlFile = sqlTables.resolveFile;

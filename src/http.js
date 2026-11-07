@@ -72,7 +72,8 @@ const retryAfterMs = (r, fallback) => {
  * @param {string} url
  * @param {object} o
  * @param {(o?: {fresh?: boolean}) => Promise<string|null>} o.getToken
- * @param {number} o.timeoutMs                    each send's own timeout
+ * @param {number} o.timeoutMs                    each send's own timeout, body included; 0 for none
+ * @param {AbortSignal} [o.signal]                the caller has gone
  * @param {string} [o.who]                        what "not signed in" names
  * @param {number[]} [o.retry]                    statuses besides 429 to wait out
  * @param {number} [o.attempts]                   sends at most (a 401's fresh-token send aside)
@@ -81,17 +82,20 @@ const retryAfterMs = (r, fallback) => {
  */
 async function authedFetch(url, { getToken, fetchImpl = (...a) => fetch(...a), timeoutMs, method = 'GET', headers = {},
                                   body, who = 'a Microsoft account', retry = [], attempts = 1,
-                                  backoffMs = () => 5000, sleep = sleepMs, through = send => send() }) {
+                                  backoffMs = () => 5000, sleep = sleepMs, through = send => send(), signal = null }) {
   if (connectivity && connectivity.offline()) throw offlineError(connectivity.reason());
   let token = await getToken();
   if (!token) throw Object.assign(new Error(`Not signed in to ${who}.`), { status: 401 });
   const send = t => through(async () => {
     try {
+      const ends = [timeoutMs ? AbortSignal.timeout(timeoutMs) : null, signal].filter(Boolean);
       return await fetchImpl(url, {
-        method, body, headers: { ...headers, authorization: `Bearer ${t}` }, signal: AbortSignal.timeout(timeoutMs),
+        method, body, headers: { ...headers, authorization: `Bearer ${t}` },
+        ...(ends.length ? { signal: ends.length > 1 ? AbortSignal.any(ends) : ends[0] } : {}),
       });
     } catch (e) {
-      if (connectivity) connectivity.networkFailed();
+      // A caller that went away says nothing of the network.
+      if (connectivity && !(signal && signal.aborted)) connectivity.networkFailed();
       throw e;
     }
   });

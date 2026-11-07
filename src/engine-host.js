@@ -38,6 +38,7 @@ const { SQL_KINDS, sqlName, abfssUrl, MODEL_CATALOG, modelSqlName } = require('.
 const { revalidate, sameAnswer } = require('./store');
 const { mapPool } = require('./http');
 const { FILE_CACHE_BLOCK } = require('./filecache');
+const { tableReadCopies, TABLE_READ_FOLDER } = require('./tableread');
 
 
 // Rows are read in chunks so no single postMessage carries a whole 200k-row grid, and so a tab
@@ -103,6 +104,9 @@ const AUTH_FAILURE = /AuthenticationFailed|\b401\b|Unauthorized|token.*expired|E
 const READ_FAILURE = /^\s*IO Error\b/;
 // What the disk cache says of a file, or a part of one, that it doesn't keep.
 const NOT_CACHED = /is not cached on this machine/;
+// OneLake refusing this user a table's files, as a table with OneLake security does to someone its rules
+// restrict: the azure extension's words for a 403, and delta's. Not a bare 403: an error can quote the statement.
+const FORBIDDEN = /\b(?:HTTP|status|code)[ :]*403\b|\b403 Forbidden\b|AuthorizationPermissionMismatch|AuthorizationFailure|\bForbidden\b|not authorized to perform/i;
 
 // This string came from the catalog (via the host's store) and is spliced into SQL, so
 // only the one shape the catalog actually returns is accepted: a OneLake abfss URI ending
@@ -182,12 +186,14 @@ async function trimFileCache(dir, maxBytes, onWarn) {
         if (st.isFile()) files.push({ p: join(dir, name), bytes: st.size, at: st.mtimeMs });
       } catch (_) {}
     }
+    // A table read through the table read API is one unit, its copy's folder (tableread.js).
+    for (const c of await tableReadCopies(join(dir, TABLE_READ_FOLDER))) files.push({ ...c, dir: true });
     let total = files.reduce((n, f) => n + f.bytes, 0);
     if (total <= maxBytes) return;
     files.sort((a, b) => a.at - b.at);
     for (const f of files) {
       if (total <= maxBytes * 0.8) break;
-      await fsp.rm(f.p, { force: true }).catch(() => {});
+      await fsp.rm(f.p, { force: true, recursive: !!f.dir }).catch(() => {});
       total -= f.bytes;
     }
   } catch (e) {
@@ -355,7 +361,8 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
       // a later "Failed to open file" that names nothing.
       for (const ext of ['iceberg', 'azure', 'httpfs']) await load(ext, '', true);
       for (const ext of ['avro', 'excel', 'sqlite_scanner', 'delta']) await load(ext, '');
-      for (const ext of ['h3', 'zipfs']) await load(ext, 'community');
+      // nanoarrow's read_arrow is how a table with OneLake security is read: what the table read API answered.
+      for (const ext of ['h3', 'zipfs', 'nanoarrow']) await load(ext, 'community');
       if (fileCacheDir) await enableFileCache(fileCacheDir);
       mark('extensions');
       // azure has an HTTP client of its own, with its own proxy settings.
@@ -489,7 +496,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
 
   const capabilities = {
     excel: false, zipfs: false, h3: false, avro: false, httpfs: false, sqlite_scanner: false,
-    iceberg: false, azure: false, delta: false, cache_httpfs: false, fileCache: false, mount: false, quack: false,
+    iceberg: false, azure: false, delta: false, cache_httpfs: false, fileCache: false, mount: false, quack: false, nanoarrow: false,
   };
 
   // An optional extension that will not load costs one file format, which is not a
@@ -697,12 +704,26 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
   // `made` is what each view reads now (by its lower-cased name, as DuckDB matches names): a
   // view is made again only when its table moved to a new snapshot.
   const made = new Map();
+  // Tables OneLake refused this window the files of, by their lower-cased name: read through the table
+  // read API from now on (sqltables.js), with no refusal first.
+  const refusedHere = new Set();
+  // What the table read API answered for a table, in this engine's disk cache, where the lockdown lets
+  // DuckDB read it. Only there, and only a name that SQL can't be broken out of.
+  const inCache = p => !!fileCacheDir && !/[\r\n\0]/.test(p)
+    && duckdbPath(p).toLowerCase().startsWith(`${duckdbPath(fileCacheDir).toLowerCase()}/${TABLE_READ_FOLDER}/`);
   // What a table reads: its view's name, where that goes, and the view's source.
   async function sourceOf(ref, o) {
     if (!resolveTable) throw new Error('this engine cannot name OneLake tables');
-    const r = await resolveTable(ref, o);
+    const r = await resolveTable(ref, { ...o, secured: refusedHere.has(sqlName(ref).toLowerCase()) });
     let source, mount = null;
     if (r.emptySql != null) source = String(r.emptySql);
+    else if (Array.isArray(r.arrowFiles)) {
+      const bad = r.arrowFiles.find(f => !inCache(String(f)));
+      if (!r.arrowFiles.length || bad !== undefined) {
+        throw new Error(`${sqlName(r)}: its rows from the table read API aren't where this engine reads (${String(bad).slice(0, 120)})`);
+      }
+      source = `SELECT * FROM read_arrow([${r.arrowFiles.map(f => sqlStr(duckdbPath(f))).join(', ')}])`;
+    }
     else if (r.deltaTable != null) {
       if (!isOneLakeTable(r.deltaTable)) throw new Error(`OneLake gave ${sqlName(r)} no readable folder (${String(r.deltaTable).slice(0, 120)})`);
       // On the copy of its log, with the files it names served from OneLake through the disk cache, when
@@ -715,11 +736,14 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
       throw new Error(`OneLake gave ${sqlName(r)} no readable metadata location` +
         (r.metadataLocation ? ` (${String(r.metadataLocation).slice(0, 120)})` : ''));
     }
-    return { name: sqlName(r), path: [r.kind, r.workspace, r.item, r.schema || 'dbo'], source, mount, location: r.emptySql == null ? r.metadataLocation : null, logMoves: r.logMoves, at: r.at, listed: r.listed };
+    return { name: sqlName(r), path: [r.kind, r.workspace, r.item, r.schema || 'dbo'], source, mount, location: r.emptySql == null ? r.metadataLocation : null, logMoves: r.logMoves, at: r.at, listed: r.listed, secured: !!r.secured };
   }
   async function makeView({ name, path: parts, source, mount }) {
     if (/\bdelta_scan\(/.test(source) && !capabilities.delta) {
       throw new Error(`${name} is a Delta table, and DuckDB's delta extension isn't available on this platform.`);
+    }
+    if (/\bread_arrow\(/.test(source) && !capabilities.nanoarrow) {
+      throw new Error(`${name} has OneLake security, and DuckDB's nanoarrow extension, which reads what OneLake's table read API answers, isn't available.`);
     }
     // Before anything may read through it. On the shared engine that's the server's, as the offline switch is.
     if (mount) await (remote ? instance.mount(mount) : mountTable(mount));
@@ -924,12 +948,13 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
   // `fresh` asks OneLake for them first. `seen` hears when the oldest of them was read from OneLake,
   // which is how old the answer may be: a table's metadata is trusted for a day by default. `used`:
   // whether this is someone reading these tables, which is what says they are in use.
-  async function withTables(sql, run, canRetry = () => true, { fresh = false, seen = () => {}, used = true } = {}) {
+  // `signal`: the statement was stopped, so a table still being read through the table read API isn't waited for.
+  async function withTables(sql, run, canRetry = () => true, { fresh = false, seen = () => {}, used = true, signal, refusedOnce = false } = {}) {
     if (readsCatalog(sql)) await syncCatalog();
     await syncOffline();
     let named = [], files = [];
     try {
-      return await revalidate(o => sourcesOf(sql, { ...o, fresh: fresh || !!o.fresh }), async tables => {
+      return await revalidate(o => sourcesOf(sql, { ...o, fresh: fresh || !!o.fresh, signal }), async tables => {
         named = tables;
         const read = tables.map(t => t.at).filter(Number.isFinite);
         seen(read.length ? Math.min(...read) : null);
@@ -944,6 +969,21 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
     } catch (e) {
       if (files.length) { try { e.message = namedError(e.message, files); } catch (_) {} }
       const message = String(e && e.message);
+      // OneLake refused a table's files, its metadata having been given: a table with OneLake security. Which
+      // one, of a statement's several, is asked of each, and those are read through the table read API.
+      if (FORBIDDEN.test(message) && !refusedOnce && canRetry() && !(signal && signal.aborted)) {
+        const direct = named.filter(t => !t.secured && /\b(?:iceberg|delta)_scan\(/.test(t.source));
+        // Asked even of one: the API costs the user, and the refusal has to be OneLake's, not words in the statement.
+        const found = [];
+        for (const t of direct) {
+          try { await withConn(c => c.run(`SELECT 1 FROM ${t.name} LIMIT 1`), agentLive); }
+          catch (p) { if (FORBIDDEN.test(String(p && p.message))) found.push(t); }
+        }
+        if (found.length) {
+          for (const t of found) refusedHere.add(t.name.toLowerCase());
+          return withTables(sql, run, canRetry, { fresh, seen, used, signal, refusedOnce: true });
+        }
+      }
       if (NOT_CACHED.test(message)) {
         const what = named.filter(t => t.location);
         throw Object.assign(new Error(`${what.length === 1 ? what[0].name : 'This statement'}: this part isn't cached on this machine. Read it once online.`), { offline: true });
@@ -953,7 +993,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
         // what is kept. The statement isn't asked twice: the retry finds this window offline.
         if (!offlineReason() && capabilities.offlineRead && checkConnectivity && canRetry()) {
           await checkConnectivity();
-          if (offlineReason()) return withTables(sql, run, canRetry, { fresh, seen, used });
+          if (offlineReason()) return withTables(sql, run, canRetry, { fresh, seen, used, signal, refusedOnce });
         }
         // A read the check above could not see, and the reason it failed.
         const why = offlineReason();
@@ -1038,27 +1078,32 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
     // A statement has no connection to interrupt until it is prepared, which can mean minutes on
     // the Iceberg catalog. A Stop in that time answers it at once, and it never runs. `begin` is
     // where it would start to, and each try passes through it: one going again after a failure too.
+    // `signal` goes with it all the way: a table being read through the table read API, before a try or
+    // between two, stops being waited for.
     let stops = 0;
     const preparing = new Set();
+    const aborts = new Set();
     const stopped = () => Object.assign(new Error('INTERRUPT Error: Interrupted!'), { cancelled: true });
     const stoppable = go => new Promise((resolve, reject) => {
       const at = stops;
+      const ac = new AbortController();
       preparing.add(reject);
+      aborts.add(ac);
       const begin = () => {
         if (stops !== at) throw stopped();
         preparing.delete(reject);
       };
-      go(begin).then(resolve, reject).finally(() => preparing.delete(reject));
+      go(begin, ac.signal).then(resolve, reject).finally(() => { preparing.delete(reject); aborts.delete(ac); });
     });
     // A statement of this tab's, in batches. Run again only before its first batch: a late failure
     // comes after batches went out, and running it again would deliver them twice.
-    async function streamed(statement, emit, begin) {
+    async function streamed(statement, emit, begin, signal) {
       let sent = false, asOf = null;
       const canRetry = () => !sent;
       const numRows = await withAuthRetry(() => withTables(statement, run => {
         begin();
         return withConn(c => runStreaming(c, run, b => { sent = true; emit(b); }), owner);
-      }, canRetry, { seen: at => { asOf = at; } }), canRetry);
+      }, canRetry, { seen: at => { asOf = at; }, signal }), canRetry);
       return { done: true, numRows, asOf };
     }
     // What this tab made, the only things it may take away.
@@ -1076,23 +1121,23 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
       // The page's SQL may read, never write: refused here at once, then asked of DuckDB's parser.
       async query(sql) {
         assertReads(sql);
-        return stoppable(async begin => {
+        return stoppable(async (begin, signal) => {
           await init();
           const statement = await checkedRead(sql, serialize);
           let asOf = null;
           const res = await withAuthRetry(() => withTables(statement, run => {
             begin();
             return runAll(run, owner);
-          }, undefined, { seen: at => { asOf = at; } }));
+          }, undefined, { seen: at => { asOf = at; }, signal }));
           return { ...res, asOf };
         });
       },
 
       async stream(sql, emit) {
         assertReads(sql);
-        return stoppable(async begin => {
+        return stoppable(async (begin, signal) => {
           await init();
-          return streamed(await checkedRead(sql, serialize), emit, begin);
+          return streamed(await checkedRead(sql, serialize), emit, begin, signal);
         });
       },
 
@@ -1102,10 +1147,10 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
         const view = String(name);
         if (!view) throw new Error('a view has a name');
         assertReads(source);
-        return stoppable(async begin => {
+        return stoppable(async (begin, signal) => {
           await init();
           const read = await checkedRead(source, serialize, { strict: true });
-          const done = await streamed(`CREATE OR REPLACE VIEW ${quoteIdent(view)} AS ${read}`, emit, begin);
+          const done = await streamed(`CREATE OR REPLACE VIEW ${quoteIdent(view)} AS ${read}`, emit, begin, signal);
           views.add(view);
           return done;
         });
@@ -1118,13 +1163,13 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
         if (!/^abfss:\/\//i.test(where) && ![...copies.values()].includes(where)) {
           throw new Error(`${where}: a database is attached from OneLake`);
         }
-        return stoppable(async begin => {
+        return stoppable(async (begin, signal) => {
           await init();
           const statement = `ATTACH ${sqlStr(where)} AS ${quoteIdent(as)} (${sqlite ? 'TYPE sqlite, ' : ''}READ_ONLY)`;
           await withAuthRetry(() => withTables(statement, run => {
             begin();
             return runAll(run, owner);
-          }));
+          }, undefined, { signal }));
           attached.add(as);
           return true;
         });
@@ -1141,6 +1186,8 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
         stops++;
         for (const reject of preparing) reject(stopped());
         preparing.clear();
+        for (const ac of aborts) ac.abort(stopped());
+        aborts.clear();
         // A native interrupt. Only the PAGE's queries are interrupted: a secret being
         // issued on the host's own connection is left to finish.
         for (const c of owner) { interrupted.add(c); try { c.interrupt(); } catch (_) {} }
@@ -1236,7 +1283,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
       const res = await withAuthRetry(() => withTables(statement, run => {
         if (signal && signal.aborted) throw new Error('nobody is waiting for this any more');
         return runAll(run, owner);
-      }, undefined, { fresh, used, seen: at => { asOf = at; } }));
+      }, undefined, { fresh, used, seen: at => { asOf = at; }, signal }));
       return { ...res, asOf };
     } catch (e) { throw scrub(e, authToken || token); }
     finally {
@@ -1349,4 +1396,4 @@ async function restartListener(conn, uri, token) {
   await conn.run(`SELECT * FROM quack_serve(${sqlStr(uri)}, token = ${sqlStr(token)});`);
 }
 
-module.exports = { createEngineHost, KEEP_MARK, jsonSafe, sameSources, isOneLakeMetadata, isOneLakeTable, duckdbPath, restartListener, AUTH_FAILURE, READ_FAILURE, NOT_CACHED };
+module.exports = { createEngineHost, KEEP_MARK, jsonSafe, sameSources, isOneLakeMetadata, isOneLakeTable, duckdbPath, restartListener, AUTH_FAILURE, READ_FAILURE, NOT_CACHED, FORBIDDEN };
