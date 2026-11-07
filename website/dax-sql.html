@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>dax-sql: OneLake Studio</title>
+  <meta name="description" content="dax-sql compiles queries over an Apache Ossie semantic model to one SQL SELECT, in DuckDB SQL or T-SQL. Measures can be defined in DAX.">
+  <link rel="icon" href="icon.png">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="site-header">
+    <div class="wrap">
+      <a class="brand" href="./"><img src="icon.png" alt="" width="28" height="28">OneLake Studio</a>
+      <nav class="site-nav" aria-label="Main">
+        <a href="features.html">Features</a>
+        <a href="architecture.html">Architecture</a>
+        <a href="design.html">Design</a>
+        <a href="dax-sql.html" aria-current="page">dax-sql</a>
+        <a href="changelog.html">Changelog</a>
+        <a href="https://github.com/djouallah/onelake_studio">GitHub</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="wrap wide">
+    <section class="intro">
+      <h1>dax-sql</h1>
+      <p class="lead">A compiler for Apache Ossie semantic models. It takes a model and a query, and writes one SQL <code>SELECT</code>, in DuckDB SQL or in T-SQL for Fabric's SQL analytics endpoint and Warehouse. A measure can be defined in DAX, as in Power BI, or in SQL.</p>
+      <div class="actions">
+        <a class="button primary" href="https://github.com/djouallah/dax-sql">dax-sql on GitHub</a>
+        <a class="button" href="https://www.npmjs.com/package/dax-sql">npm install dax-sql</a>
+      </div>
+    </section>
+
+    <section class="feature">
+      <div>
+        <h2>The model</h2>
+        <p>An Ossie model, in YAML: datasets, their fields, relationships, and metrics. A metric's expression is DAX or SQL. A Power BI <code>model.bim</code> (TMSL) works too.</p>
+      </div>
+<pre><code>datasets:
+  - name: Sales
+    source: dbo.sales
+    # fields: ProductKey, Amount
+    metrics:
+      - name: Sales Amount
+        expression:
+          dialects:
+            - dialect: DAX
+              expression: SUM(Sales[Amount])
+      - name: Red Share
+        expression:
+          dialects:
+            - dialect: DAX
+              expression: >-
+                DIVIDE(CALCULATE([Sales Amount],
+                  Product[Color] = "Red"), [Sales Amount])
+  - name: Product
+    source: dbo.product
+    # fields: ProductKey, Category, Color
+relationships:
+  - from: Sales
+    to: Product
+    from_columns: [ProductKey]
+    to_columns: [ProductKey]</code></pre>
+    </section>
+
+    <section class="feature">
+      <div>
+        <h2>The query</h2>
+        <p>DAX, as Power BI writes it (<code>EVALUATE SUMMARIZECOLUMNS(…)</code>), or SQL over the model, where a measure is <code>AGG("name")</code>.</p>
+      </div>
+<pre><code>SELECT Product.Category, AGG("Sales Amount"), AGG("Red Share")
+FROM model
+GROUP BY ALL</code></pre>
+    </section>
+
+    <section class="feature stacked">
+      <div>
+        <h2>The SQL</h2>
+        <p>One <code>SELECT</code>, and its columns with their types. DuckDB SQL by default, and T-SQL with <code>dialect: 'tsql'</code>. This is dax-sql 0.1.6's output for the model and query above. DuckDB filters the red sales in the same scan; T-SQL has no <code>FILTER</code> clause, so it reads them in a second step.</p>
+      </div>
+      <div class="sql-pair">
+        <div>
+          <h3>DuckDB</h3>
+<pre class="sql-out"><code>WITH f3 AS (SELECT j4."category" AS "g0", SUM(t2."amount") AS "a0", SUM(t2."amount") FILTER (WHERE (((j4."color" = ('Red' COLLATE NOCASE))))) AS "a1" FROM "dbo"."sales" AS t2 LEFT JOIN "dbo"."product" AS j4 ON j4."product_key" = t2."product_key" GROUP BY j4."category")
+SELECT q10."Category" AS "Category", CAST(q10."Sales Amount" AS DOUBLE) AS "Sales Amount", CAST(q10."Red Share" AS DOUBLE) AS "Red Share" FROM (SELECT s9."Category", s9."Sales Amount", s9."Red Share" FROM (SELECT * FROM (SELECT k1."Category" AS "Category", f3.a0 AS "Sales Amount", (f3.a1 / NULLIF(f3.a0, 0)) AS "Red Share" FROM (SELECT f3.g0 AS "Category" FROM f3) AS k1 LEFT JOIN f3 ON f3.g0 IS NOT DISTINCT FROM k1."Category") AS z8 WHERE z8."Sales Amount" IS NOT NULL OR z8."Red Share" IS NOT NULL) AS s9) AS q10</code></pre>
+        </div>
+        <div>
+          <h3>T-SQL</h3>
+<pre class="sql-out"><code>WITH f3 AS (SELECT j4."category" AS "g0", SUM(t2."amount") AS "a0" FROM "dbo"."sales" AS t2 LEFT JOIN "dbo"."product" AS j4 ON j4."product_key" = t2."product_key" GROUP BY j4."category"),
+f7 AS (SELECT j6."category" AS "g0", SUM(t5."amount") AS "a0" FROM "dbo"."sales" AS t5 LEFT JOIN "dbo"."product" AS j6 ON j6."product_key" = t5."product_key" WHERE ((j6."color" = ('Red' COLLATE Latin1_General_100_CI_AS_KS_WS_SC_UTF8))) GROUP BY j6."category")
+SELECT q11."Category" AS "Category", CAST(q11."Sales Amount" AS FLOAT) AS "Sales Amount", CAST(q11."Red Share" AS FLOAT) AS "Red Share" FROM (SELECT s10."Category", s10."Sales Amount", s10."Red Share" FROM (SELECT * FROM (SELECT k1."Category" AS "Category", f3.a0 AS "Sales Amount", (CAST(f7.a0 AS FLOAT) / NULLIF(f3.a0, 0)) AS "Red Share" FROM (SELECT f3.g0 AS "Category" FROM f3 UNION SELECT f7.g0 AS "Category" FROM f7) AS k1 LEFT JOIN f3 ON f3.g0 IS NOT DISTINCT FROM k1."Category" LEFT JOIN f7 ON f7.g0 IS NOT DISTINCT FROM k1."Category") AS z9 WHERE z9."Sales Amount" IS NOT NULL OR z9."Red Share" IS NOT NULL) AS s10) AS q11</code></pre>
+        </div>
+      </div>
+    </section>
+
+    <section class="notes">
+      <div>
+        <h2>DAX's meaning, not only its syntax</h2>
+        <p>The filter context, <code>CALCULATE</code> and its modifiers, relationships and the blank row work as they do in Power BI. The results are tested against Power BI's own answers.</p>
+      </div>
+      <div>
+        <h2>And back to DAX</h2>
+        <p><code>sqlToDax</code> turns a <code>SELECT</code> over the model into the DAX query it stands for, so a Power BI semantic model can run it.</p>
+<pre><code>EVALUATE SUMMARIZECOLUMNS('Product'[Category],
+  "Sales Amount", 'Sales'[Sales Amount],
+  "Red Share", 'Sales'[Red Share])</code></pre>
+      </div>
+    </section>
+
+    <section class="notes">
+      <div>
+        <h2>In OneLake Studio</h2>
+        <p>Semantic model queries, the Pivot, Open in Excel and Export to Fabric all run on dax-sql. In the app and the extension it writes DuckDB SQL; an exported app on a semantic model sends DAX.</p>
+      </div>
+      <div>
+        <h2>Not done yet</h2>
+        <p>Object-level security, dynamic format strings, and the window functions' reset argument. <code>FORMAT</code> is en-US only, and model format strings are not applied. What T-SQL can't do is listed in <a href="https://github.com/djouallah/dax-sql/blob/main/DESIGN.md#t-sql">DESIGN.md</a>.</p>
+      </div>
+    </section>
+
+    <p class="more read-only">Initially written by <a href="https://github.com/nsdevaraj">N.S. Devaraj</a>. MIT License. No dependencies.</p>
+  </main>
+
+  <footer class="site-footer">
+    <div class="wrap">
+      <nav class="footer-nav" aria-label="Reference">
+        <a href="naming.html">Naming</a>
+        <a href="reference.html">Reference</a>
+        <a href="catalog.html">Catalog</a>
+      </nav>
+      <p>A personal project, not a Microsoft product or supported by Microsoft. Results computed from a semantic model aren't guaranteed to match Power BI. MIT License.</p>
+    </div>
+  </footer>
+</body>
+</html>

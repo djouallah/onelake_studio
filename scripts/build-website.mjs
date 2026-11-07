@@ -110,6 +110,7 @@ function page(doc) {
         <a href="features.html">Features</a>
         <a href="architecture.html">Architecture</a>
         <a href="design.html">Design</a>
+        <a href="dax-sql.html">dax-sql</a>
         <a href="changelog.html"${current("changelog.html")}>Changelog</a>
         <a href="${GITHUB}">GitHub</a>
       </nav>

@@ -311,6 +311,34 @@ pre code {
   margin-bottom: 0;
 }
 
+.notes h2 {
+  margin-top: 0;
+}
+
+.notes pre {
+  margin: 16px 0 0;
+}
+
+/* dax-sql: each dialect's SQL side by side, its long lines wrapped. */
+.sql-pair {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 16px;
+}
+
+.sql-pair h3 {
+  margin: 0 0 8px;
+}
+
+.sql-out {
+  margin: 0;
+}
+
+.sql-out code {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .read-only {
   margin-top: 72px;
 }
@@ -540,7 +568,8 @@ tr:last-child td {
   .feature,
   .feature:nth-of-type(odd),
   .notes,
-  .shots.pair {
+  .shots.pair,
+  .sql-pair {
     grid-template-columns: minmax(0, 1fr);
     gap: 16px;
   }
