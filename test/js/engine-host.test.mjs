@@ -849,7 +849,7 @@ test("a table with OneLake security: a 403 moves it to its Arrow files, under th
   await writeArrowStream(files[0], "SELECT range::INTEGER AS i, 'a' AS region FROM range(3)");
   await writeArrowStream(files[1], "SELECT (range + 3)::INTEGER AS i, 'b' AS region FROM range(2)");
   // OneLake's refusal as the engine meets it, from a source that names iceberg_scan as a real table's does.
-  const REFUSED = "SELECT NULL::INTEGER AS i /* iceberg_scan( */ WHERE error('IO Error: AzureDfsStorageFileSystem open file failed: HTTP 403 (AuthorizationPermissionMismatch)') IS NULL";
+  const REFUSED = "SELECT NULL::INTEGER AS i, NULL::VARCHAR AS region /* iceberg_scan( */ WHERE error('IO Error: AzureDfsStorageFileSystem open file failed: HTTP 403 (AuthorizationPermissionMismatch)') IS NULL";
   const asked = [];
   const engine = createEngineHost({
     extensionDir: extDir,
