@@ -5,7 +5,7 @@
 // Explore's query over the model is turned into DAX here (dax-sql, semantic/) and runs on the
 // semantic model the export made of the model file, through the app's fabric-semanticmodel
 // connector. The connector is delegated, Fabric Apps' only way to a semantic model: the query runs
-// as whoever is signed in, with their permissions on the model (Build) and its row-level security.
+// as whoever is signed in, with their permissions on the model, Build included.
 // The app's function gives only the model file (semanticModel, rayfin/functions).
 //
 //   const data = createModelSource({ onStatus });

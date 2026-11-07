@@ -197,8 +197,8 @@ ${onModel(plan) ? `- Semantic model: \`${plan.semanticModel ? plan.semanticModel
   made from the model file by the export: the app's \`${MODEL_CONNECTOR}\` connector (\`connectors:\` in \`rayfin/rayfin.yml\`).
 - Engine: **the semantic model, as the viewer.** The page turns each of Explore's queries over the model into DAX
   (dax-sql) and runs it through that connector, which is delegated: as the person signed in, so each viewer needs
-  Read and Build on the semantic model, and its row-level security applies to them. The tenant must allow the
-  Execute Queries REST API. The page runs no DuckDB and reads no table (\`site/engine.json\`,
+  Build on the semantic model (https://learn.microsoft.com/en-us/fabric/apps/connectors). The tenant must have the
+  Semantic Model Execute Queries REST API setting on. The page runs no DuckDB and reads no table (\`site/engine.json\`,
   \`site/storage/modeldata.js\`). The tables below and the layers' DuckDB parts are the client-side export's.
 ` : `- Lakehouse: workspace \`${plan.workspace}\`, item \`${plan.lakehouse}\` — its Iceberg catalog is the
   function's \`CATALOG_URL\`: ${plan.catalogUrl}

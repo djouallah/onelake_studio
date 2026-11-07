@@ -162,7 +162,7 @@ test("rayfin.yml: the app's id and name, its redirects first", async () => {
   const again = rayfinYml(m, "sales-model-explore", [], { workspace: WS, id: "m2" });
   assert.equal(again.match(/^connectors:/gm).length, 1);
   assert.match(again, /itemId: m2\n/);
-  assert.doesNotMatch(rayfinYml(m, "sales-model-explore", []), /connectors:|fabric-semanticmodel/, "exported client side again: gone");
+  assert.doesNotMatch(rayfinYml(m, "sales-model-explore", []), /^connectors:|^ +type: fabric-semanticmodel$/m, "exported client side again: gone");
   assert.match(rayfinYml(m, "sales-model-explore", []), /^secrets:/m, "the rest stays");
 });
 

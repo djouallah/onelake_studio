@@ -583,8 +583,12 @@ Direct Lake without it:
 - **A folder the export did not write** is refused.
 
 **On a semantic model** (DirectQuery, Direct Lake) the app runs no DuckDB, in the browser or anywhere.
-- **The queries run as the viewer**, the way Fabric Apps says a semantic model is read: through the app's
-  `fabric-semanticmodel` connector, which takes delegated auth only. The export declares it in the app's settings
+- **The queries run as the viewer**, as [Fabric Apps' connectors page](https://learn.microsoft.com/en-us/fabric/apps/connectors)
+  says a semantic model is read: "Semantic models support delegated authentication only", and "Don't configure
+  application authentication for a semantic model". Functions get no token for one ("A Power BI semantic model isn't
+  available through ctx.Tokens. Use the fabric-semanticmodel connector instead",
+  [Connect Functions to external resources](https://learn.microsoft.com/en-us/fabric/apps/functions-connect-external-resources)).
+  So the page queries the model through the app's `fabric-semanticmodel` connector. The export declares it in the app's settings
   (`model`, with the semantic model's workspace and id, [`src/fabricapp.js`](../src/fabricapp.js)), and writes it into
   the local copy's `rayfin.yml`. The function has no token for the model and runs no query.
 - **The page** ([`storage/modeldata.js`](../fabric_app/site/storage/modeldata.js), chosen by `site/engine.json`) turns
@@ -594,8 +598,9 @@ Direct Lake without it:
   profile the query's one run.
 - **The function** ([`function_app.ts`](../fabric_app/rayfin/functions/src/function_app.ts), `semanticModel`) gives only
   the model file, read in place.
-- **What it needs:** each viewer has Read and Build on the semantic model, and the tenant allows the Execute Queries
-  REST API. The model's row-level security applies to each viewer.
+- **What it needs:** each viewer has Build on the semantic model ("Semantic model queries require the caller's
+  applicable model permissions, including Build", the connectors page), and the tenant has the Semantic Model
+  Execute Queries REST API setting on ([the data app template's prerequisites](https://learn.microsoft.com/en-us/fabric/apps/data-apps-template)).
 - `site/` holds no DuckDB, extensions, DuckDB's Arrow or browser data source, and no SAS is signed: the workspace
   setting for user-delegated SAS tokens isn't needed.
 

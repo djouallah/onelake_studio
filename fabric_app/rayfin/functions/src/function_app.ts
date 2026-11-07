@@ -34,8 +34,8 @@ const udf = new UserDataFunctions();
  * An app exported as DirectQuery or Direct Lake calls semanticModel instead, for the model file
  * only, and nothing reads the tables in the browser: the export made a Power BI semantic model of
  * the model file, and the page turns Explore's query into DAX (dax-sql) and runs it there through
- * the app's fabric-semanticmodel connector, as the person viewing it (their Build permission, the
- * model's row-level security).
+ * the app's fabric-semanticmodel connector, as the person viewing it (their permissions on the
+ * model, Build included).
  */
 
 type StorageCtx = RayfinContext<BlankAppSchema, AudienceType.Storage>;

@@ -15,7 +15,7 @@
     as its owner, so anyone who may open it reads them with the owner's rights.
   - **DirectQuery** and **Direct Lake** make a Power BI semantic model of the model, named as it is, in its workspace,
     and the app runs its queries there as DAX, as the person viewing it, the way Fabric Apps reads a semantic model.
-    Each viewer needs Build on the model, and its row-level security applies to them. A workspace's model of that name
+    Each viewer needs Build on the model. A workspace's model of that name
     is updated, not duplicated. Direct Lake is refreshed after the write; DirectQuery reads the lakehouse's SQL
     endpoint, with each user's own identity.
   - The app on the SQL endpoint is gone, and DirectQuery takes its place.
