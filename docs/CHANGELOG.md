@@ -8,8 +8,9 @@
   on disk and read again only past `tableMetadataTtlHours` or after **Refresh**. A new setting,
   `onelakeStudio.securedTableRead` (on by default), turns this off. Stats and History still need the metadata OneLake
   refuses, and their 403 now says the table may have OneLake security.
-- **Export to Fabric asks what the app runs on:** *Client side*, *DirectQuery* or *Direct Lake*, from a list when
-  the button is clicked (on the command line, `export … --mode client|directquery|directlake`).
+- **Export to Fabric asks what the app runs on:** *Direct Lake*, *DirectQuery* or *Client side*, in a small window
+  under the button, on Direct Lake unless you change it (on the command line, `export … --mode
+  client|directquery|directlake`, Direct Lake without it).
   - **Client side** is the app as before: DuckDB in the browser. It makes no semantic model.
   - **DirectQuery** and **Direct Lake** make a Power BI semantic model of the model, named as it is, in its workspace,
     and the app runs its queries there as DAX. A workspace's model of that name is updated, not duplicated. Direct Lake

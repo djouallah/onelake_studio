@@ -366,9 +366,9 @@ async function openModelView(file, text = null, { fromOneLake = text == null } =
       // read where it is; a semantic model's local copy is written into its lakehouse by the
       // export, once approved. A model that names no lakehouse or several has no button.
       exportToFabric: semantic.lakehousesOf(m.bim).length === 1 && (fromOneLake || file.modelWorkspace)
-        ? state => engine.exportExplore(fromOneLake
-          ? { file: file.name, name: m.view, text: bim, state, workspace: lakehouse.workspace, path: file.path }
-          : { file: file.name, name: m.view, text: bim, state, model: { workspace: file.modelWorkspace, name: m.view } })
+        ? (state, mode) => engine.exportExplore(fromOneLake
+          ? { file: file.name, name: m.view, text: bim, state, mode, workspace: lakehouse.workspace, path: file.path }
+          : { file: file.name, name: m.view, text: bim, state, mode, model: { workspace: file.modelWorkspace, name: m.view } })
         : undefined,
       // Any model, wherever its file is, by its SQL name. On Windows: Excel's provider is Windows only.
       openInExcel: cfg.windows ? () => engine.openInExcel({ workspace: m.schema, model: m.view }) : undefined,

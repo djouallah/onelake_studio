@@ -22,7 +22,7 @@ const bim = { model: {
 } };
 const REQUEST = { file: "sales.yaml", name: "sales", text: OSSIE, state: {}, workspace: "power bi", path: "nem.Lakehouse/Files/semantic_model/sales.yaml" };
 
-// `mode`: what the pick list answers (null: Esc). `models`: the workspace's semantic models by name.
+// `mode`: what Explore's Export window sends (null: none, as the command line without --mode). `models`: the workspace's semantic models by name.
 async function setup({ offline = false, noInternet = false, answers = [], folder = null, token = "t", functionPackage = true,
                        mode = "duckdb", models = {} } = {}) {
   const ext = await mkdtemp(join(tmpdir(), "exportflow-"));
@@ -32,11 +32,9 @@ async function setup({ offline = false, noInternet = false, answers = [], folder
     await writeFile(join(ext, "fabric-function", "deploymetadata.json"), "{}");
   }
   const asked = [];
-  const picked = [];
   const looked = [];
   const kept = new Map();
   const ui = {
-    pick: async (items, o) => { picked.push({ items, ...o }); return items.find(i => i.mode === mode); },
     openFolder: () => folder,
     pickFolder: async o => { asked.push({ pickFolder: o }); return answers.shift() ?? null; },
     info: async (message, ...rest) => { asked.push({ message, rest }); return answers.shift(); },
@@ -44,7 +42,7 @@ async function setup({ offline = false, noInternet = false, answers = [], folder
     withProgress: () => { throw new Error("nothing is written in these tests"); },
     openExternal() {}, reveal() {},
   };
-  const { exportExplore } = createExport({
+  const { exportExplore: run } = createExport({
     connectivity: { offline: () => offline, noInternet: () => noInternet },
     modules: async () => ({ semantic, compiler: { parseYaml: () => doc, ossieToTmsl: () => bim } }),
     hostToken: async () => token,
@@ -66,7 +64,8 @@ async function setup({ offline = false, noInternet = false, answers = [], folder
     onRefresh() {},
     log() {},
   });
-  return { exportExplore, asked, picked, looked, kept, ext, done: () => rm(ext, { recursive: true, force: true }) };
+  const exportExplore = x => run(mode == null || x.mode ? x : { ...x, mode });
+  return { exportExplore, asked, looked, kept, ext, done: () => rm(ext, { recursive: true, force: true }) };
 }
 
 test("offline says why, before anything is asked", async () => {
@@ -132,21 +131,12 @@ test("Choose Another Folder asks again, starting where the last one was", async 
   await done();
 });
 
-test("what the app runs on is picked after the checks, and Esc is a refusal", async () => {
-  const { exportExplore, asked, picked, done } = await setup({ mode: null });
-  const e = await exportExplore(REQUEST).then(() => null, x => x);
-  assert.equal(e.declined, true);
-  assert.equal(e.message, "Export cancelled.");
-  assert.deepEqual(picked[0].items.map(i => i.label), ["Client side", "DirectQuery", "Direct Lake"]);
-  assert.equal(picked[0].title, "Export Sales Model to Fabric as…");
-  assert.equal(asked.length, 0);
-  await done();
-});
-
-test("a mode given (the command line's --mode) is not asked; an unknown one is refused", async () => {
-  const a = await setup({ mode: null, answers: [null] });
-  await a.exportExplore({ ...REQUEST, mode: "client" }).catch(() => {});
-  assert.equal(a.picked.length, 0);
+test("no mode given is Direct Lake; an unknown one is refused", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "exportflow-open-"));
+  const a = await setup({ mode: null, folder: dir, answers: [undefined] });
+  await a.exportExplore(REQUEST).catch(() => {});
+  assert.match(a.asked[0].rest[0].detail, /\nSemantic model: sales, Direct Lake \(new\)$/);
+  await rm(dir, { recursive: true, force: true });
   await a.done();
   const b = await setup();
   await assert.rejects(b.exportExplore({ ...REQUEST, mode: "import" }), /no mode import: client, directquery or directlake/);

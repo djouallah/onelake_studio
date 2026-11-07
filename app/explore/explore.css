@@ -205,6 +205,12 @@ section.modelOpen #chartBtn { display: none; }
 .ex-pop .ex-row { flex-direction: row; align-items: center; }
 .ex-row .btn-explore, .ex-pop-foot .btn-explore { padding: 0.25rem 0.7rem; font-size: 0.74rem; }
 .ex-pop-foot { display: flex; justify-content: flex-end; gap: 0.4rem; }
+/* Export to Fabric's window (view.js): what the app runs on, one choice a line. */
+.export-pop { width: 260px; }
+.ex-pop .export-engine { align-items: flex-start; color: var(--text); cursor: pointer; }
+.export-engine input { margin: 0.15rem 0 0; accent-color: var(--accent); }
+.export-engine span { display: flex; flex-direction: column; gap: 0.05rem; }
+.export-engine small { color: var(--muted); font-size: 0.74rem; }
 /* A summarised column's summaries: one button each, the current one lit. */
 .ex-aggs { display: flex; flex-direction: column; gap: 0.1rem; }
 .ex-agg { text-align: left; font: inherit; color: var(--text); background: none; border: none; border-radius: var(--radius-sm); padding: 0.32rem 0.55rem; cursor: pointer; }

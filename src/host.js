@@ -79,7 +79,8 @@ function createHostMethods({ onelake, engine, onStatus = () => {}, saveFile = nu
       return exportExplore({ file: String(x.file || 'model'), name: String(x.name || 'model'),
                              text: String(x.text ?? ''),
                              ...(x.workspace && x.path ? { workspace: String(x.workspace), path: String(x.path) } : { model }),
-                             state: x.state && typeof x.state === 'object' ? x.state : null });
+                             state: x.state && typeof x.state === 'object' ? x.state : null,
+                             ...(x.mode ? { mode: String(x.mode) } : {}) });
     },
     // Open in Excel (src/xmla): a semantic model, by its names alone.
     'excel.open': async x => {

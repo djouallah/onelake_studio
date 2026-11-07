@@ -32,7 +32,7 @@ node --no-warnings "{{cli}}" <command>
 | `sql "SELECT * FROM 'lakehouse.<ws>.<item>/Files/x.parquet'"` | a file is `'lakehouse.<ws>.<item>/Files/<path>'`, in single quotes, with its workspace and item spelled as in a table's name. Wildcards go in the path: `read_csv('lakehouse.aemo.data/Files/raw/*.csv', header=true)` |
 | `export <ws> <model>` | Export to Fabric, as Explore's button does it: publishes the model's Explore as a Fabric app. The model must have been downloaded once (opened in the tree, or `model <ws> <model> --fresh`); the export writes its `.yaml` into its lakehouse |
 | `export <ws> <item> <Files/path>` | the same, for a model file (`.bim`, Ossie `.yaml`) in a lakehouse's Files/ |
-| `export … --mode client\|directquery\|directlake` | what the app runs on: `client` is DuckDB in the browser; `directquery` and `directlake` also create the Power BI semantic model `<model>` in the model's workspace (or update the one of that name) and the app queries it. Without `--mode`, VS Code asks |
+| `export … --mode client\|directquery\|directlake` | what the app runs on: `client` is DuckDB in the browser; `directquery` and `directlake` also create the Power BI semantic model `<model>` in the model's workspace (or update the one of that name) and the app queries it. Without `--mode`, `directlake` |
 | `status` | this window on itself, for debugging the extension: its build, session, startup timeline, catalog, sync, and where its files are. Answers signed out too |
 | `log [<text>]` | this window's own log, the lines holding `<text>` if given, newest last. Prefixes: `start:`, `session:`, `move:`, `catalog:`, `sync:`. Default 200 lines, `--limit N` for more |
 

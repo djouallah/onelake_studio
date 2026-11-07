@@ -17,12 +17,8 @@ const { createOneLakeWriter } = require('./onelakewrite');
 const { createFabricModel } = require('./fabricmodel');
 const { semanticTmsl, definitionOf, MODES } = require('./pbimodel');
 
-// What the app runs on, as the pick list offers it and the command line's --mode names it.
-const PICKS = [
-  { label: 'Client side', description: 'Fabric app, DuckDB in the browser', mode: 'duckdb' },
-  { label: 'DirectQuery', description: 'semantic model on the SQL endpoint, and the app', mode: 'directQuery' },
-  { label: 'Direct Lake', description: 'semantic model on OneLake, and the app', mode: 'directLake' },
-];
+// What the app runs on, as Explore's Export window and the command line's --mode name it.
+// Neither says: Direct Lake.
 const MODE_OF = { client: 'duckdb', duckdb: 'duckdb', directquery: 'directQuery', directlake: 'directLake' };
 
 /**
@@ -40,7 +36,7 @@ const MODE_OF = { client: 'duckdb', duckdb: 'duckdb', directquery: 'directQuery'
  * @param {{ get: Function, update: Function }} o.memento  the folder approved last time
  * @param {string} o.extensionDir  where this install's files are
  * @param {() => Promise<string>} o.pageDir  where the page's files are
- * @param {object} o.ui  pick, info, warn, pickFolder, openFolder, withProgress, openExternal, reveal
+ * @param {object} o.ui  info, warn, pickFolder, openFolder, withProgress, openExternal, reveal
  * @param {(node: object) => void} o.onRefresh  this part of the tree changed
  * @param {(line: string) => void} o.log
  */
@@ -95,7 +91,8 @@ function createExport({ connectivity, modules, hostToken, appToken, powerBiToken
   // package ships in the vsix (fabric-function/, scripts/function-bundle.mjs). Answers what
   // Explore's info line says; a failure is thrown back to it, and logged. So is the user's No
   // (`declined`), which is no failure, but must not read as a publish on the command line.
-  // `mode`: what the app runs on (PICKS; the command line's --mode), asked when not given.
+  // `mode`: what the app runs on (MODE_OF: Explore's Export window, the command line's --mode),
+  // Direct Lake when not given.
   const exportExplore = async ({ file, name, text, state, workspace, path, model, mode }) => {
     const declined = message => Object.assign(new Error(message), { declined: true });
     try {
@@ -122,12 +119,7 @@ function createExport({ connectivity, modules, hostToken, appToken, powerBiToken
 
       // What the app runs on: DuckDB in the browser, or a semantic model of this one, which is
       // worked out here (a model that can't be one says so now) and written once all is asked.
-      if (mode == null) {
-        const pick = await ui.pick(PICKS, { title: `Export ${plan.title} to Fabric as…` });
-        if (!pick) throw declined('Export cancelled.');
-        mode = pick.mode;
-      }
-      plan.engine = MODE_OF[String(mode).toLowerCase()];
+      plan.engine = MODE_OF[String(mode ?? 'directlake').toLowerCase()];
       let tmsl = null, existing = null;
       if (plan.engine !== 'duckdb') {
         if (plan.engine === 'directQuery') plan.sqlEndpoint = await sqlEndpointOf(plan);
@@ -337,4 +329,4 @@ function createExport({ connectivity, modules, hostToken, appToken, powerBiToken
   return { exportExplore };
 }
 
-module.exports = { createExport, PICKS };
+module.exports = { createExport };

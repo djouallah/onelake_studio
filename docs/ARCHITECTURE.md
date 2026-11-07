@@ -529,7 +529,8 @@ One of two writes, with Upload (above). Explore's **Export to Fabric** button, o
 model's Explore, nothing else, as a Fabric app (item type `AppBackend`, named
 `<model>-explore`). VS Code and the extension are all it needs: no CLI, no Node, no GitHub.
 
-**What the app runs on** is picked from a list when the button is clicked (the command line's `--mode`):
+**What the app runs on** is picked in a small window under the button, Direct Lake unless changed (the command
+line's `--mode`, Direct Lake without it):
 - **Client side:** DuckDB in the browser reads the tables. No semantic model is made.
 - **DirectQuery:** a Power BI semantic model of the model, each table read through the lakehouse's SQL endpoint, and the app
   on it.

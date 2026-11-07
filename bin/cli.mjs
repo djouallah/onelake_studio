@@ -47,7 +47,7 @@ const USAGE = {
   export <ws> <item> <Files/path>     the same, for a model file (.bim, Ossie .yaml) in Files/
     --mode client|directquery|directlake  what the app runs on: DuckDB in the browser, or a
                                         semantic model of that name made from the model (updated
-                                        if the workspace has one). Without it, VS Code asks`,
+                                        if the workspace has one). Without it, directlake`,
   status: `  status                              this window: its build, session, startup timeline, catalog,
                                         sync, and where its files are. Answers signed out too`,
   log: `  log [<text>]                        this window's own log, the lines holding <text> if given,
