@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.17
 
 - **A table with OneLake security reads.** When OneLake refuses you a table's files because roles restrict its rows
   or columns, it is read through OneLake's table read API: you get the rows and columns your roles allow, under the
