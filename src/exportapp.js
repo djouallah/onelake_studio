@@ -39,6 +39,7 @@ const { createHash } = require('node:crypto');
 const { TABLE_ORIGIN } = require('./catalog');
 const { dfsFileUrl, stripBom } = require('./names');
 const { PINS, WEBAPP } = require('./vendored');
+const { modelConnector, MODEL_CONNECTOR } = require('./fabricapp');
 
 const MARKER = '.onelake-studio-export.json';
 // What a re-export writes again; anything else in the folder is left alone. `model` is an
@@ -151,8 +152,9 @@ function planExport(text, fileName, name, { compiler, semantic }, where, lakes =
   };
 }
 
-// fabric_app/rayfin/rayfin.yml, for this app: its own id and name, and its sign-in redirects.
-function rayfinYml(text, name, redirects = []) {
+// fabric_app/rayfin/rayfin.yml, for this app: its own id and name, its sign-in redirects, and on a
+// semantic model ({ workspace, id }) its connector, as fabricapp.js declares it to Fabric.
+function rayfinYml(text, name, redirects = [], semanticModel = null) {
   let out = String(text);
   const swap = (re, to, what) => {
     if (!re.test(out)) throw new Error(`fabric_app/rayfin/rayfin.yml has no ${what}`);
@@ -169,6 +171,17 @@ function rayfinYml(text, name, redirects = []) {
     swap(/^([ \t]*)allowedRedirectUris:[ \t]*\r?\n/m,
       m => m + fresh.map(r => `${/^([ \t]*)/.exec(m)[1]}  - ${r}\n`).join(''), 'allowedRedirectUris');
   }
+  // The connector block, top level as the CLI keeps it: an as-is folder's is replaced, never doubled.
+  out = out.replace(/^connectors:[^\n]*\n(?:(?:[ \t]+[^\n]*)?\n)*/m, '');
+  if (semanticModel) {
+    const c = modelConnector(semanticModel);
+    out = out.replace(/\n*$/, '\n') + [
+      'connectors:', `  - name: ${c.name}`, `    type: ${c.type}`, `    version: "${c.version}"`,
+      '    config:', `      workspaceId: ${c.config.workspaceId}`, `      itemId: ${c.config.itemId}`,
+      '    operations:', ...c.operations.map(o => `      - name: ${o.name}`),
+      '    auth:', `      type: ${c.auth.type}`, '',
+    ].join('\n');
+  }
   return out;
 }
 
@@ -181,12 +194,17 @@ open the app item can load it.
 - Model: \`${plan.modelPath}\`, read **in place** by the app's function at run time (its \`MODEL_URL\`
   secret): the app holds no copy of it, so a change to the model is in the app on its next load.
 ${onModel(plan) ? `- Semantic model: \`${plan.semanticModel ? plan.semanticModel.name : plan.modelName}\`, ${plan.engine === 'directLake' ? 'Direct Lake' : 'DirectQuery'},
-  made from the model file by the export (the function's \`SEMANTIC_MODEL_WORKSPACE\` and \`SEMANTIC_MODEL_ID\`).
-- Engine: **the semantic model.** The function turns each of Explore's queries over the model into DAX (dax-sql) and
-  runs it there; the page runs no DuckDB and reads no table (\`site/engine.json\`, \`site/storage/modeldata.js\`). The
-  tables below and the layers' DuckDB parts are the client-side export's.
+  made from the model file by the export: the app's \`${MODEL_CONNECTOR}\` connector (\`connectors:\` in \`rayfin/rayfin.yml\`).
+- Engine: **the semantic model, as the viewer.** The page turns each of Explore's queries over the model into DAX
+  (dax-sql) and runs it through that connector, which is delegated: as the person signed in, so each viewer needs
+  Read and Build on the semantic model, and its row-level security applies to them. The tenant must allow the
+  Execute Queries REST API. The page runs no DuckDB and reads no table (\`site/engine.json\`,
+  \`site/storage/modeldata.js\`). The tables below and the layers' DuckDB parts are the client-side export's.
 ` : `- Lakehouse: workspace \`${plan.workspace}\`, item \`${plan.lakehouse}\` — its Iceberg catalog is the
   function's \`CATALOG_URL\`: ${plan.catalogUrl}
+- Identity: the function reads the tables as the **app item's owner** (Fabric Apps' app identity), so anyone who
+  may open the app reads them with the owner's rights, never their own. It signs a SAS only for the tables the
+  model names.
 `}
 ## Layers
 
@@ -195,9 +213,9 @@ ${onModel(plan) ? `- Semantic model: \`${plan.semanticModel ? plan.semanticModel
 | Page | \`site/index.html\`, \`site/app.js\` | Explore over the data source |
 | Explore | \`site/explore/\` | OneLake Studio's, the same files the extension runs |
 | Compiler | \`site/semantic/src/\`, \`site/semantic/formats/\` | dax-sql (\`${PINS.daxSql}\`): SQL over the model, as SQL over \`v_<table>\` |
-| Packages | \`site/vendor/\` | DuckDB-WASM (\`${WEBAPP.duckdbWasm}\`, DuckDB ${WEBAPP.duckdb}) with its ${WEBAPP.extensions.join(' and ')} extensions, Arrow, the Rayfin SDK, ECharts: shipped with the site, nothing from a CDN |
+| Packages | \`site/vendor/\` | DuckDB-WASM (\`${WEBAPP.duckdbWasm}\`, DuckDB ${WEBAPP.duckdb}) with its ${WEBAPP.extensions.join(' and ')} extensions, Arrow, the Rayfin SDK and its semantic-model connector, ECharts: shipped with the site, nothing from a CDN |
 | Data source | \`site/storage/\` | signs in (Rayfin Fabric SSO), asks the function, downloads the tables into the browser (OPFS), DuckDB-WASM |
-| Function | \`rayfin/functions/src/function_app.ts\` | reads the model, the tables' metadata locations, a read-only SAS on \`Tables/\` |
+| Function | \`rayfin/functions/src/function_app.ts\` | reads the model, the tables' metadata locations, a read-only SAS on \`Tables/\`; on a semantic model, the model only |
 
 Tables the app reads (\`v_<table>\` ← \`schema.table\`):
 
@@ -255,7 +273,8 @@ async function writeExport({ plan, state, outDir, fabricAppDir, appDir, daxSqlDi
     filter: src => !sql || !DUCKDB_ONLY.vendor.some(re => re.test(under(webappDir, src))) });
   await fsp.cp(join(fabricAppDir, 'rayfin'), at(outDir, 'rayfin'), { recursive: true });
   const yml = at(outDir, 'rayfin/rayfin.yml');
-  await fsp.writeFile(yml, rayfinYml(await fsp.readFile(yml, 'utf8'), plan.name, (marker && marker.redirects) || []));
+  await fsp.writeFile(yml, rayfinYml(await fsp.readFile(yml, 'utf8'), plan.name, (marker && marker.redirects) || [],
+                                     sql ? plan.semanticModel : null));
   const files = {
     'site/explore.json': JSON.stringify(state || null),
     ...(sql ? { 'site/engine.json': JSON.stringify({ engine: 'semanticModel' }) } : {}),
@@ -276,11 +295,13 @@ async function writeExport({ plan, state, outDir, fabricAppDir, appDir, daxSqlDi
 const onModel = plan => plan.engine === 'directLake' || plan.engine === 'directQuery';
 
 // On a semantic model: what site/ leaves out, the page reading nothing in the browser. Paths under
-// fabric_app/site, and under vendor/webapp.
+// fabric_app/site, and under vendor/webapp. DuckDB's Arrow only: the semantic-model connector
+// decodes with an Arrow of its own version (WEBAPP.rayfinSemanticModel). The other way round, the
+// client-side site keeps the connector's few hundred KB, which its page never loads.
 const DUCKDB_ONLY = {
   site: ['storage/data.js', 'storage/blockcache.js', 'storage/catalog.js', 'storage/prefetch.js', 'storage/queue.js',
          'storage/results.js', 'storage/snapshots.js', 'storage/kv.js'],
-  vendor: [/^npm\/@duckdb(\/|$)/, /^duckdb-ext(\/|$)/, /^npm\/apache-arrow@/, /^npm\/flatbuffers@/],
+  vendor: [/^npm\/@duckdb(\/|$)/, /^duckdb-ext(\/|$)/, new RegExp(`^npm/${WEBAPP.arrow.replace(/[.]/g, '\\.')}(/|$)`)],
 };
 
 const writeMarker = (dir, m) => fsp.writeFile(join(dir, MARKER), JSON.stringify(m, null, 2) + '\n');

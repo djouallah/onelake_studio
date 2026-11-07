@@ -1,8 +1,5 @@
 import { createHmac } from 'node:crypto';
 import { parse as parseYaml } from 'yaml';
-import { createCompiler } from 'dax-sql';
-import { tmslToModel } from 'dax-sql/formats/tmsl.js';
-import { ossieToTmsl } from 'dax-sql/formats/ossie.js';
 
 import {
   UserDataFunctions,
@@ -16,7 +13,8 @@ const udf = new UserDataFunctions();
 
 /*
  * The browser never receives a token: openCatalog uses the app identity's storage token here,
- * server side, and hands back only
+ * server side, and hands back only (the app identity is the app item's owner, so whoever may open
+ * the app reads these tables with the owner's rights)
  *   - the semantic model, read in place from the lakehouse (MODEL_URL) when the page asks for
  *     no tables: the app ships no copy of it, so it is the model as the lakehouse holds it now,
  *   - where each table the page asked for is now: its current metadata.json, from the OneLake
@@ -33,13 +31,11 @@ const udf = new UserDataFunctions();
  * Both are set by OneLake Studio's Export to Fabric, which deploys this app.
  * The workspace must allow "Authenticate with OneLake user-delegated SAS tokens".
  *
- * An app exported as DirectQuery or Direct Lake calls semanticModel instead, and nothing reads the
- * tables in the browser: the export made a Power BI semantic model of the model file, the page
- * sends Explore's query over the model, this function turns it into DAX (dax-sql) and runs it on
- * that semantic model (executeQueries), with the app identity's token, and the page gets the rows.
- * Only a SELECT over the model is taken, never a query of the browser's own, so a caller reads
- * what the app shows, through the model, and nothing else.
- * SEMANTIC_MODEL_WORKSPACE, SEMANTIC_MODEL_ID (app settings): the semantic model's workspace and id.
+ * An app exported as DirectQuery or Direct Lake calls semanticModel instead, for the model file
+ * only, and nothing reads the tables in the browser: the export made a Power BI semantic model of
+ * the model file, and the page turns Explore's query into DAX (dax-sql) and runs it there through
+ * the app's fabric-semanticmodel connector, as the person viewing it (their Build permission, the
+ * model's row-level security).
  */
 
 type StorageCtx = RayfinContext<BlankAppSchema, AudienceType.Storage>;
@@ -283,93 +279,22 @@ udf.func(
 
 // --- On a semantic model (DirectQuery, Direct Lake) ------------------------------------------
 
-type ModelCtx = RayfinContext<BlankAppSchema, AudienceType.Storage | AudienceType.Fabric>;
-
-const MAX_ROWS = 100_000;          // the most rows one answer holds (executeQueries' own cap); past it they are only counted
-const MODEL_KEPT_MS = 60_000;      // the model (and its compiler) kept this long by a warm instance
-const POWER_BI_API = 'https://api.powerbi.com/v1.0/myorg';
-const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-// The model as read (the page's), and dax-sql's compiler over it, which turns a SELECT over the
-// model into DAX: kept a minute, so a page's queries don't each read the file.
-let _kept: { at: number; url: string; doc: any; compiler: any } | null = null;
-async function modelAndCompiler(ctx: ModelCtx): Promise<{ doc: any; compiler: any }> {
-  const url = String(ctx.Secrets.MODEL_URL ?? '').trim();
-  if (_kept && _kept.url === url && Date.now() - _kept.at < MODEL_KEPT_MS) return _kept;
-  const doc = await readModel(ctx as unknown as StorageCtx, ctx.Tokens.Storage);
-  const bim = Array.isArray(doc?.datasets) ? ossieToTmsl(doc) : doc;
-  _kept = { at: Date.now(), url, doc, compiler: createCompiler(tmslToModel(bim)) };
-  return _kept;
-}
-
-// A value as Explore shows it: a date as 2024-01-31, a time stamp as 2024-01-31 10:05:06.
-function value(v: unknown): unknown {
-  if (typeof v !== 'string' || !/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d/.test(v)) return v ?? null;
-  const s = v.replace(/(Z|[+-]\d\d:\d\d)$/, '');
-  if (/T00:00:00(\.0+)?$/.test(s)) return s.slice(0, 10);
-  return s.replace('T', ' ').replace(/\.0+$/, '');
-}
-
-// A column of the answer by the name SQL gave it: 'Table'[Column] and [name] are the bracketed name.
-const fieldName = (key: string): string => /\[((?:[^\]]|\]\])*)\]$/.exec(key)?.[1]?.replace(/\]\]/g, ']') ?? key;
-
-// One DAX query on the model, through the Power BI API's executeQueries, as the app identity.
-async function executeQuery(ws: string, id: string, dax: string, token: string): Promise<{ fields: string[]; rows: unknown[][] }> {
-  const res = await fetch(`${POWER_BI_API}/groups/${ws}/datasets/${id}/executeQueries`, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
-    body: JSON.stringify({ queries: [{ query: dax }], serializerSettings: { includeNulls: true } }),
-  });
-  const text = await res.text();
-  let body: any = null;
-  try { body = JSON.parse(text); } catch { /* said below */ }
-  const said = body?.error?.pbi?.error?.details?.map((d: any) => d?.detail?.value).filter(Boolean).join('; ')
-    || body?.results?.[0]?.error?.message || body?.error?.message || body?.error?.code || text.slice(0, 300);
-  if (!res.ok || body?.results?.[0]?.error) {
-    const hint = res.status === 401 || res.status === 403
-      ? ' (the app needs Build on the semantic model, and the tenant must allow the Execute Queries REST API for it)' : '';
-    throw new Error(`HTTP ${res.status}: ${said}${hint}`);
-  }
-  const rows: any[] = body?.results?.[0]?.tables?.[0]?.rows ?? [];
-  const keys = rows.length ? Object.keys(rows[0]) : [];
-  return { fields: keys.map(fieldName), rows: rows.map(r => keys.map(k => value(r[k]))) };
-}
-
 /**
- * On a semantic model. `request` is JSON:
- *   { mode: 'model' }                    the model, read in place (MODEL_URL)
- *   { mode: 'rows', query, rows? }       a SELECT over the model, run as DAX: { fields, rows, numRows, truncated }
- *                                        (`rows`: the most kept, MAX_ROWS at most; 0 only counts them)
- *   { mode: 'sql', query }               the DAX it runs as: { sql }
- * A failure is returned as { error }, naming the step.
- * SEMANTIC_MODEL_WORKSPACE, SEMANTIC_MODEL_ID (app settings): the model's workspace and its id, set by the export.
+ * On a semantic model: the model file, read in place (MODEL_URL), and nothing else. The page runs
+ * its queries on the semantic model itself, through the app's fabric-semanticmodel connector, as
+ * the person viewing it: no token for the model is in this function, which Fabric Apps does not
+ * offer one for. `request` is JSON, { mode: 'model' }; the answer { model }, or { error } naming
+ * the step.
  */
 udf.func(
   'semanticModel',
-  async (ctx: RayfinContext<BlankAppSchema, AudienceType.Storage | AudienceType.Fabric>, request: string): Promise<any> => {
+  async (ctx: RayfinContext<BlankAppSchema, AudienceType.Storage>, request: string): Promise<any> => {
     let step = 'the request';
     try {
-      const r = JSON.parse(String(request ?? '{}'));
-      const mode = String(r.mode ?? '');
-      step = 'the settings SEMANTIC_MODEL_WORKSPACE and SEMANTIC_MODEL_ID';
-      const ws = String(ctx.Secrets.SEMANTIC_MODEL_WORKSPACE ?? '').trim();
-      const id = String(ctx.Secrets.SEMANTIC_MODEL_ID ?? '').trim();
-      if (!GUID.test(ws) || !GUID.test(id)) throw new Error('they are not GUIDs');
+      const mode = String(JSON.parse(String(request ?? '{}')).mode ?? '');
+      if (mode !== 'model') throw new Error(`no mode ${mode}`);
       step = 'the setting MODEL_URL (the model)';
-      const { doc, compiler } = await modelAndCompiler(ctx);
-      if (mode === 'model') return { model: doc };
-      step = 'the query';
-      const query = String(r.query ?? '');
-      // A SELECT over the model, whole: nothing of the caller's own reaches the semantic model.
-      if (!compiler.isSql(query)) throw new Error('the app runs SELECT … FROM the model, and nothing else');
-      const { dax, limit, offset } = compiler.sqlToDax(query);
-      if (mode === 'sql') return { sql: dax };
-      if (mode !== 'rows') throw new Error(`no mode ${mode}`);
-      step = 'the semantic model';
-      const res = await executeQuery(ws, id, dax, ctx.Tokens.Fabric);
-      const all = res.rows.slice(Number(offset) || 0, limit == null ? undefined : (Number(offset) || 0) + Number(limit));
-      const keep = Math.max(0, Math.min(MAX_ROWS, r.rows == null ? MAX_ROWS : Number(r.rows) || 0));
-      return { fields: res.fields, rows: all.slice(0, keep), numRows: all.length, truncated: all.length > keep };
+      return { model: await readModel(ctx, ctx.Tokens.Storage) };
     } catch (e) {
       return { error: `${step}: ${e instanceof Error ? e.message : String(e)}` };
     }

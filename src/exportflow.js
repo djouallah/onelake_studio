@@ -297,7 +297,7 @@ function createExport({ connectivity, modules, hostToken, appToken, powerBiToken
           const yml = join(outDir, 'rayfin', 'rayfin.yml');
           const tpl = asIs && existsSync(yml) ? await fsp.readFile(yml, 'utf8')
             : await fsp.readFile(join(fabricAppDir, 'rayfin', 'rayfin.yml'), 'utf8');
-          await fsp.writeFile(yml, rayfinYml(tpl, plan.name, done.redirects));
+          await fsp.writeFile(yml, rayfinYml(tpl, plan.name, done.redirects, plan.semanticModel));
           // What was published, to compare the next export with: the folder's files, and the
           // deploy's time by Fabric's clock.
           const live = await fabricApp.deployStatus(plan.workspace, done.itemId).catch(() => null);

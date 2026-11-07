@@ -155,6 +155,15 @@ test("rayfin.yml: the app's id and name, its redirects first", async () => {
   assert.throws(() => rayfinYml("name: x\n", "y"), /has no id/);
   assert.equal(rayfinYml(y, "sales-model-explore", ["https://x-eastus.webapp.fabricapps.net", "http://localhost:5173"]), y,
     "a redirect already listed is not listed again");
+  assert.doesNotMatch(y, /^connectors:/m, "client side: no connector");
+  // On a semantic model: its connector, delegated, at the top level; written again, replaced.
+  const m = rayfinYml(tpl, "sales-model-explore", [], { workspace: WS, id: "m1" });
+  assert.match(m, /^connectors:\n  - name: model\n    type: fabric-semanticmodel\n    version: "1"\n    config:\n      workspaceId: 0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0\n      itemId: m1\n    operations:\n      - name: executeQuery\n    auth:\n      type: delegated\n/m);
+  const again = rayfinYml(m, "sales-model-explore", [], { workspace: WS, id: "m2" });
+  assert.equal(again.match(/^connectors:/gm).length, 1);
+  assert.match(again, /itemId: m2\n/);
+  assert.doesNotMatch(rayfinYml(m, "sales-model-explore", []), /connectors:|fabric-semanticmodel/, "exported client side again: gone");
+  assert.match(rayfinYml(m, "sales-model-explore", []), /^secrets:/m, "the rest stays");
 });
 
 async function fixture(root) {
@@ -177,6 +186,8 @@ async function fixture(root) {
     "webapp/npm/@duckdb/duckdb-wasm@1.0.0/+esm.js": 'import{a}from"../../apache-arrow@17.0.0/+esm.js";\n',
     "webapp/npm/apache-arrow@17.0.0/+esm.js": "// arrow\n",
     "webapp/duckdb-ext/v2.0.0/wasm_eh/icu.duckdb_extension.wasm": "x".repeat(2048),
+    "webapp/npm/@microsoft/rayfin-connector-fabric-semanticmodel@1.36.1/+esm.js": 'import{F}from"../../apache-arrow@21.2.0/+esm.js";\n',
+    "webapp/npm/apache-arrow@21.2.0/+esm.js": "// the connector's arrow\n",
   };
   for (const [p, s] of Object.entries(files)) {
     await mkdir(dirname(join(root, p)), { recursive: true });
@@ -229,10 +240,17 @@ test(`${engine}: the site says it runs on the semantic model, and holds no DuckD
     const all = (await readdir(outDir, { recursive: true })).map(f => f.split("\\").join("/"));
     assert.deepEqual(JSON.parse(await readFile(join(outDir, "site/engine.json"), "utf8")), { engine: "semanticModel" });
     for (const p of ["site/storage/modeldata.js", "site/storage/auth.js", "site/app.js", "site/explore/view.js"]) assert.ok(all.includes(p), p);
-    for (const gone of [/^site\/storage\/(data|catalog)\.js$/, /^site\/vendor\/npm\/@duckdb/, /^site\/vendor\/npm\/apache-arrow/, /^site\/vendor\/duckdb-ext/]) {
+    for (const gone of [/^site\/storage\/(data|catalog)\.js$/, /^site\/vendor\/npm\/@duckdb/, /^site\/vendor\/npm\/apache-arrow@17\.0\.0/, /^site\/vendor\/duckdb-ext/]) {
       assert.ok(!all.some(f => gone.test(f)), `nothing matches ${gone}: ${all.filter(f => gone.test(f)).join(", ")}`);
     }
-    assert.match(await readFile(join(outDir, "AGENTS.md"), "utf8"), /Semantic model: `sales`, (Direct Lake|DirectQuery)/);
+    // The connector and its own Arrow stay: the page queries the model through them.
+    for (const p of ["site/vendor/npm/@microsoft/rayfin-connector-fabric-semanticmodel@1.36.1/+esm.js", "site/vendor/npm/apache-arrow@21.2.0/+esm.js"]) {
+      assert.ok(all.includes(p), p);
+    }
+    assert.match(await readFile(join(outDir, "rayfin/rayfin.yml"), "utf8"), /^connectors:\n  - name: model\n[\s\S]*itemId: m1\n[\s\S]*type: delegated\n/m);
+    const agents = await readFile(join(outDir, "AGENTS.md"), "utf8");
+    assert.match(agents, /Semantic model: `sales`, (Direct Lake|DirectQuery)/);
+    assert.match(agents, /as the viewer/);
 
     // Client side: the site has its DuckDB data source and not the semantic model's.
     const duck = join(root, "out", "duck");
@@ -240,6 +258,8 @@ test(`${engine}: the site says it runs on the semantic model, and holds no DuckD
     assert.equal(was.engine, "duckdb");
     const files = (await readdir(duck, { recursive: true })).map(f => f.split("\\").join("/"));
     assert.ok(files.includes("site/storage/data.js") && !files.includes("site/storage/modeldata.js") && !files.includes("site/engine.json"));
+    assert.doesNotMatch(await readFile(join(duck, "rayfin/rayfin.yml"), "utf8"), /^connectors:/m);
+    assert.match(await readFile(join(duck, "AGENTS.md"), "utf8"), /app item's owner/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -266,7 +286,8 @@ test("the folder: fabric_app's site and function, Studio's Explore, no model; di
       await read(p);
     }
     const size = await vendorSize(outDir);
-    assert.equal(size.total, 2048 + "// arrow\n".length + 'import{a}from"../../apache-arrow@17.0.0/+esm.js";\n'.length);
+    assert.equal(size.total, 2048 + "// arrow\n".length + 'import{a}from"../../apache-arrow@17.0.0/+esm.js";\n'.length
+      + 'import{F}from"../../apache-arrow@21.2.0/+esm.js";\n'.length + "// the connector's arrow\n".length);
     assert.equal(size.total, size.parts.reduce((n, [, b]) => n + b, 0));
     assert.deepEqual(size.parts.map(([n]) => n)[0], "icu extension", "largest first");
     assert.ok(size.parts.some(([n]) => n === "@duckdb/duckdb-wasm@1.0.0"), "a scoped package is one part");

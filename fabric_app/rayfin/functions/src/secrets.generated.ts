@@ -24,8 +24,6 @@ declare module '@microsoft/fabric-user-data-functions' {
   interface RayfinSecretRegistry {
     CATALOG_URL: string;
     MODEL_URL: string;
-    SEMANTIC_MODEL_WORKSPACE: string;
-    SEMANTIC_MODEL_ID: string;
   }
 }
 

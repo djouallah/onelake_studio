@@ -569,6 +569,9 @@ Direct Lake without it:
   the lakehouse at run time (its `MODEL_URL` secret), so the app shows the model as it is there.
 - **The app reads the model's tables, not the lakehouse:** its function signs a read-only SAS for each table the model
   names, and refuses any other.
+- **Client side, the tables are read as the app's owner.** Fabric Apps gives a function one identity, the app item's
+  owner, and no way to the viewer's own OneLake token. So anyone who may open the app reads the model's tables with
+  the owner's rights. On a semantic model it is the other way round (below).
 - **No silent takeover:** a re-export updates the item the last export created (its id is kept in the
   local copy, as soon as the item exists). If an app of that name exists and no export created it, the export asks.
 - **Local edits are never overwritten unasked.** The local copy's marker keeps a hash of each of its
@@ -580,25 +583,28 @@ Direct Lake without it:
 - **A folder the export did not write** is refused.
 
 **On a semantic model** (DirectQuery, Direct Lake) the app runs no DuckDB, in the browser or anywhere.
-- **The function runs the queries:** Explore's query over the model goes to its `semanticModel` call
-  ([`function_app.ts`](../fabric_app/rayfin/functions/src/function_app.ts)), which turns it into DAX with dax-sql's
-  `sqlToDax` (the page's own pinned copy, put in the bundle by [`scripts/function-bundle.mjs`](../scripts/function-bundle.mjs))
-  and runs it on the semantic model with the Power BI API's `executeQueries` and the app identity's Fabric token
-  (Rayfin's `AudienceType.Fabric`). Its settings `SEMANTIC_MODEL_WORKSPACE` and `SEMANTIC_MODEL_ID` say which model.
-- **What it needs:** the app identity may read the semantic model, and the tenant allows the Execute Queries REST API.
-- **Only a SELECT over the model is taken**, never a query of the browser's own: whoever can call it reads what the app
-  shows, through the model, and nothing else.
-- **The page** ([`storage/modeldata.js`](../fabric_app/site/storage/modeldata.js), chosen by `site/engine.json`) sends
-  the query and draws the rows. Its Show plan has no plan tree: its SQL tab is the DAX, and its profile the query's one
-  run. `site/` holds no DuckDB, extensions, Arrow or browser data source, and no SAS is signed: the workspace setting
-  for user-delegated SAS tokens isn't needed.
+- **The queries run as the viewer**, the way Fabric Apps says a semantic model is read: through the app's
+  `fabric-semanticmodel` connector, which takes delegated auth only. The export declares it in the app's settings
+  (`model`, with the semantic model's workspace and id, [`src/fabricapp.js`](../src/fabricapp.js)), and writes it into
+  the local copy's `rayfin.yml`. The function has no token for the model and runs no query.
+- **The page** ([`storage/modeldata.js`](../fabric_app/site/storage/modeldata.js), chosen by `site/engine.json`) turns
+  Explore's query over the model into DAX with dax-sql's `sqlToDax` (the copy in `site/semantic/`), runs it through the
+  connector (Rayfin's `ConnectorsRayfinClient` and the connector's own runtime, which decodes its Arrow answer), and
+  draws the rows. It takes only a SELECT over the model. Its Show plan has no plan tree: its SQL tab is the DAX, and its
+  profile the query's one run.
+- **The function** ([`function_app.ts`](../fabric_app/rayfin/functions/src/function_app.ts), `semanticModel`) gives only
+  the model file, read in place.
+- **What it needs:** each viewer has Read and Build on the semantic model, and the tenant allows the Execute Queries
+  REST API. The model's row-level security applies to each viewer.
+- `site/` holds no DuckDB, extensions, DuckDB's Arrow or browser data source, and no SAS is signed: the workspace
+  setting for user-delegated SAS tokens isn't needed.
 
 **The template** ([`fabric_app/`](../fabric_app/))
 - **`site/`:** the page, black always. Its data source (`storage/`) signs in with Rayfin's Fabric SSO,
   takes the model and the tables' locations from the app's function with a read-only SAS per table, and downloads
   the tables' files into the browser, where DuckDB-WASM (DuckDB 2.0), shipped in the site's `vendor/`, reads them as `v_<table>`
   views.
-- **`rayfin/`:** `rayfin.yml` and the function (`openCatalog`).
+- **`rayfin/`:** `rayfin.yml` and the function (`openCatalog`, and `semanticModel` for the model file).
 
 [`src/exportapp.js`](../src/exportapp.js) writes the local copy from `fabric_app/`, Studio's
 `app/explore/` and dax-sql. Its `dist/` is `site/` stamped with the build, plus `rayfin.config.json`,
@@ -609,7 +615,7 @@ in the same order, with the user's Fabric-audience token:
 
 1. Find the item, or create it.
 2. Wait for its backend, then fetch the publishable key.
-3. Apply the runtime settings.
+3. Apply the runtime settings, with the semantic model's connector on DirectQuery and Direct Lake.
 4. Set the `CATALOG_URL` and `MODEL_URL` secrets.
 5. Upload the site.
 6. Deploy the function and poll it until it is done.

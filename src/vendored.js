@@ -32,6 +32,9 @@ const WEBAPP = {
   // Kept on the same version: they share rayfin-auth and rayfin-lib, one module each.
   rayfinClient: '@microsoft/rayfin-client@1.36.1',
   rayfinFabric: '@microsoft/rayfin-auth-provider-fabric@1.36.1',
+  // On a semantic model (storage/modeldata.js): the fabric-semanticmodel connector's runtime, which
+  // decodes its Arrow answer with an Arrow of its own (not `arrow` above, DuckDB's).
+  rayfinSemanticModel: '@microsoft/rayfin-connector-fabric-semanticmodel@1.36.1',
   echarts: PINS.echarts,
 };
 
@@ -47,7 +50,7 @@ const VENDOR = {
   // The web app's tree, vendor/webapp/: the same layout (npm/…), plus duckdb-ext/<version>/
   // wasm_eh/<name>.duckdb_extension.wasm, the path DuckDB-WASM asks its repository for.
   webapp: {
-    esm: [WEBAPP.duckdbWasm, WEBAPP.arrow, WEBAPP.rayfinClient, WEBAPP.rayfinFabric],
+    esm: [WEBAPP.duckdbWasm, WEBAPP.arrow, WEBAPP.rayfinClient, WEBAPP.rayfinFabric, WEBAPP.rayfinSemanticModel],
     files: [`${WEBAPP.duckdbWasm}/dist/duckdb-base.wasm`, `${WEBAPP.duckdbWasm}/dist/duckdb-browser-base.worker.js`,
             `${WEBAPP.echarts}/dist/echarts.min.js`],
     extensions: { duckdb: WEBAPP.duckdb, platform: 'wasm_eh', names: WEBAPP.extensions },

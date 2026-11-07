@@ -121,12 +121,21 @@ test("publish: item, backend, key, settings, secrets, site, function, redirect â
     itemId: ID, portalUrl: "https://app.fabric.microsoft.com/", tenantId: "tid-1" });
 });
 
-test("publish on a semantic model: its workspace and id are the function's secrets too", async () => {
+test("publish on a semantic model: its connector in every settings write, delegated, and no secret of its own", async () => {
   const { app, calls } = appWith(happy());
   await publish(app, { semanticModel: { workspace: WS, id: "m1" } });
   const secrets = calls.filter(c => c.url.endsWith("/__private/secrets")).map(c => JSON.parse(c.body));
-  assert.deepEqual(secrets.map(s => s.name), ["CATALOG_URL", "MODEL_URL", "SEMANTIC_MODEL_WORKSPACE", "SEMANTIC_MODEL_ID"]);
-  assert.deepEqual(secrets.slice(2).map(s => s.value), [WS, "m1"]);
+  assert.deepEqual(secrets.map(s => s.name), ["CATALOG_URL", "MODEL_URL"]);
+  const writes = calls.filter(c => c.url.endsWith("/projectRuntimeSettings")).map(c => JSON.parse(c.body));
+  assert.equal(writes.length, 2, "the first, and the redirect's");
+  for (const w of writes) {
+    assert.deepEqual(w.connectors, { model: { connector: "fabric-semanticmodel", version: "1",
+      config: { workspaceId: WS, itemId: "m1" }, operations: [{ name: "executeQuery" }], auth: { type: "delegated" } } });
+  }
+  // Client side: no connector at all.
+  const duck = appWith(happy());
+  await publish(duck.app);
+  assert.ok(duck.calls.filter(c => c.url.endsWith("/projectRuntimeSettings")).every(c => !("connectors" in JSON.parse(c.body))));
 });
 
 test("publish again: the item an earlier export created, by its id, its redirect already known â€” no create, no second settings", async () => {

@@ -4,8 +4,8 @@
 // OneLake Studio's own Explore (explore/view.js: Model, Pivot), over the data source of
 // this app (storage/data.js): it signs in, its function reads the model from the lakehouse and
 // says where the tables are, and DuckDB-WASM reads them in this browser. Exported as DirectQuery
-// or Direct Lake (engine.json), the data source is storage/modeldata.js instead: the function runs
-// each query on the semantic model the export made, as DAX, and this page loads no DuckDB. The model is never
+// or Direct Lake (engine.json), the data source is storage/modeldata.js instead: each query runs as
+// DAX on the semantic model the export made, as the person signed in, and this page loads no DuckDB. The model is never
 // copied into the app: it is the lakehouse's file, as it is now. Nothing here is specific to
 // one model; the export writes only rayfin.config.json (the backend) and explore.json (the
 // shelves the first view shows).
@@ -105,8 +105,8 @@ export async function start() {
   }
 }
 
-// On a semantic model: Explore's queries over the model go to the function as they are written; it
-// turns them into DAX and runs them there, so the page's compiler passes them through.
+// On a semantic model: Explore's queries over the model go to the data source as they are written;
+// it turns them into DAX and runs them there, so the page's compiler passes them through.
 async function startModel(first) {
   const { createModelSource } = await import("./storage/modeldata.js");
   const data = createModelSource({ onStatus: s => boot.step(s) });

@@ -9,9 +9,11 @@
 //   await auth.signIn();                // resolves once signed in; the gate comes down
 //   await auth.client()                 // the Rayfin client of the session
 //
-// One option:
-//   ready()   true when the app already holds what it needs and can start without a session
-//             (while the function's kept answer is good, catalog.js's fresh()).
+// Options:
+//   ready()        true when the app already holds what it needs and can start without a session
+//                  (while the function's kept answer is good, catalog.js's fresh()).
+//   connectors()   the app's connectors, { configs, runtimes } (modeldata.js): the client is then
+//                  Rayfin's ConnectorsRayfinClient, client.connectors.<name>.
 // =============================================================================
 
 // The site's own copy (vendor/, src/vendored.js WEBAPP). Keep these on the same version: their
@@ -23,7 +25,7 @@ const RAYFIN_FABRIC_ESM = new URL("../vendor/npm/@microsoft/rayfin-auth-provider
 // --- Rayfin provider: Fabric SSO session (no second login; inside the Fabric portal iframe the
 // session is handed over by postMessage). Backend URL, key and Fabric coordinates come from the
 // rayfin.config.json that `rayfin up` writes next to the site.
-function createRayfinAuth({ ready = () => false } = {}) {
+function createRayfinAuth({ ready = () => false, connectors = null } = {}) {
   let _client = null;
   let _fabric = null;
   let _fabricOpts = null;
@@ -38,10 +40,13 @@ function createRayfinAuth({ ready = () => false } = {}) {
   // One init, whoever asks first.
   let _init = null;
   const init = () => _init ??= (async () => {
-    const [rayfin, fabric] = await Promise.all([import(RAYFIN_CLIENT_ESM), import(RAYFIN_FABRIC_ESM)]);
+    const [rayfin, fabric, wired] = await Promise.all([import(RAYFIN_CLIENT_ESM), import(RAYFIN_FABRIC_ESM),
+                                                       connectors ? connectors() : null]);
     const resolved = await rayfin.resolveRayfinConfig({});
     if (!resolved.baseUrl) throw new Error('rayfin.config.json not found — deploy with `rayfin up`');
-    _client = new rayfin.RayfinClient({ ...resolved, authStorage: true });
+    _client = wired
+      ? new rayfin.ConnectorsRayfinClient({ ...resolved, authStorage: true, connectors: wired.configs }, wired.runtimes)
+      : new rayfin.RayfinClient({ ...resolved, authStorage: true });
     const rc = _client.runtimeConfig || {};
     _fabricOpts = {
       workspaceId: rc.workspaceId,

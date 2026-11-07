@@ -11,10 +11,10 @@
 //      (NAME_TAKEN): it may be someone's own app.
 //   2. its backend: extended-properties, polled until it names BaaSEndpoint
 //   3. its publishable key (the browser SDK's)
-//   4. its runtime settings: Fabric sign-in, the function's identity, static hosting PROTECTED
-//   5. the function's secrets: CATALOG_URL (the tables) and MODEL_URL (the model, read in place);
-//      on a semantic model (DirectQuery, Direct Lake) SEMANTIC_MODEL_WORKSPACE and SEMANTIC_MODEL_ID
-//      too (where it runs the model's queries)
+//   4. its runtime settings: Fabric sign-in, the function's identity, static hosting PROTECTED;
+//      on a semantic model (DirectQuery, Direct Lake) its connector too (MODEL_CONNECTOR), where
+//      the page runs its DAX as the person viewing it, never as the app
+//   5. the function's secrets: CATALOG_URL (the tables) and MODEL_URL (the model, read in place)
 //   6. the site: a zip of dist/ (with rayfin.config.json, made here) -> hostingUrl
 //   7. the function: the package built at package time (scripts/function-bundle.mjs), then
 //      its deploy status polled
@@ -38,6 +38,17 @@ const FUNCTION_POLL_MS = 10_000;
 const FUNCTION_POLLS = 30;   // ~5 minutes, as the CLI waits
 
 const byName = name => i => String(i.displayName).toLowerCase() === String(name).toLowerCase();
+
+// The semantic model's connector, as rayfin.yml declares one (`rayfin connector add`, rayfin-tools-common
+// 1.36's CONNECTOR_CATALOG): delegated is the only auth it takes. The page calls it by this name
+// (fabric_app/site/storage/modeldata.js).
+const MODEL_CONNECTOR = 'model';
+const modelConnector = ({ workspace, id }) => ({
+  name: MODEL_CONNECTOR, type: 'fabric-semanticmodel', version: '1',
+  config: { workspaceId: workspace, itemId: id },
+  operations: [{ name: 'executeQuery' }],
+  auth: { type: 'delegated' },
+});
 
 /**
  * @param {object} o
@@ -159,18 +170,21 @@ function createFabricApp({ getToken, apiBase = FABRIC_API, log = () => {},
     return body;
   }
 
-  const settings = redirects => ({
+  // A connector goes on the wire keyed by its name, its type as `connector` (rayfin-tools-common's
+  // buildRuntimeSettingsPayload).
+  const settings = (redirects, semanticModel) => ({
     auth: { enabled: true, fabric: { enabled: true }, allowedRedirectUris: redirects },
     data: { enabled: false },
     storage: { enabled: false },
     functions: { enabled: true, auth: { type: 'application' } },
     // anonymousAccess false: assetAccess "protected", the site is only for who may open the app.
     staticHosting: { enabled: true, folder: 'dist', indexDocument: 'index.html', anonymousAccess: false },
+    ...(semanticModel ? (({ name, type, ...rest }) => ({ connectors: { [name]: { connector: type, ...rest } } }))(modelConnector(semanticModel)) : {}),
     packageVersions: { '@microsoft/rayfin-cli': CLIENT_VERSION },
   });
-  const postSettings = (ws, id, redirects) => call(`${endpoint(ws, id)}/__private/projectRuntimeSettings`, {
+  const postSettings = (ws, id, redirects, semanticModel) => call(`${endpoint(ws, id)}/__private/projectRuntimeSettings`, {
     method: 'POST', headers: { 'content-type': 'application/json', [MONIKER]: id },
-    body: JSON.stringify(settings(redirects)), retry: [408, 500, 502, 503, 504], what: 'Applying the app\'s settings' });
+    body: JSON.stringify(settings(redirects, semanticModel)), retry: [408, 500, 502, 503, 504], what: 'Applying the app\'s settings' });
 
   const postSecret = (ws, id, name, value) => call(`${endpoint(ws, id)}/__private/secrets`, {
     method: 'POST', headers: { 'content-type': 'application/json', [MONIKER]: id },
@@ -233,14 +247,9 @@ function createFabricApp({ getToken, apiBase = FABRIC_API, log = () => {},
     const live = created ? null : await deployStatus(ws, id).catch(() => null);
     const liveOrigin = live && live.hostingUrl ? new URL(live.hostingUrl).origin : null;
     const redirects = [...new Set([...known, liveOrigin].filter(Boolean))];
-    await postSettings(ws, id, redirects);
+    await postSettings(ws, id, redirects, semanticModel);
     await postSecret(ws, id, 'CATALOG_URL', catalogUrl);
     await postSecret(ws, id, 'MODEL_URL', modelUrl);
-    // On a semantic model: the one the function runs the model's queries on.
-    if (semanticModel) {
-      await postSecret(ws, id, 'SEMANTIC_MODEL_WORKSPACE', semanticModel.workspace);
-      await postSecret(ws, id, 'SEMANTIC_MODEL_ID', semanticModel.id);
-    }
     log(`app ${name}: uploading the site`);
     const config = { apiUrl, publishableKey: key, workspaceId: ws, itemId: id, portalUrl: PORTAL_URL, ...(tenantId ? { tenantId } : {}) };
     const hostingUrl = await deploySite(ws, id, await site(config));
@@ -250,7 +259,7 @@ function createFabricApp({ getToken, apiBase = FABRIC_API, log = () => {},
     const origin = hostingUrl && new URL(hostingUrl).origin;
     if (origin && !redirects.includes(origin)) {
       redirects.push(origin);
-      await postSettings(ws, id, redirects);
+      await postSettings(ws, id, redirects, semanticModel);
     }
     return { itemId: id, hostingUrl, created, redirects };
   }
@@ -279,4 +288,4 @@ function tenantOf(token) {
   } catch (_) { return null; }
 }
 
-module.exports = { createFabricApp, tenantOf, MONIKER, CLIENT_VERSION };
+module.exports = { createFabricApp, tenantOf, modelConnector, MONIKER, CLIENT_VERSION, MODEL_CONNECTOR };

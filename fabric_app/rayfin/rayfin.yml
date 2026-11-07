@@ -2,7 +2,9 @@
 # a model's Explore, over its lakehouse's tables. The extension deploys it over the
 # Fabric REST API from the local copy's dist/, so nothing reads this file to deploy: it says
 # what the app is, for whoever grows it from the local copy. The id, the name and the sign-in
-# redirects are each app's own (written in by the export).
+# redirects are each app's own (written in by the export). Exported as DirectQuery or Direct Lake,
+# the export adds a top-level `connectors:` block: the semantic model, as a fabric-semanticmodel
+# connector with delegated auth, which the page queries as the person viewing it.
 id: explore
 name: explore
 version: 1.0.0
@@ -31,9 +33,5 @@ services:
 secrets:
   - name: CATALOG_URL
     description: The OneLake Iceberg catalog the app reads, https://onelake.table.fabric.microsoft.com/iceberg/<workspace id>/<lakehouse id>; its tables are the ones the model names
-  - name: SEMANTIC_MODEL_WORKSPACE
-    description: DirectQuery and Direct Lake only, the workspace id of the semantic model the export made; the function runs the model's queries there
-  - name: SEMANTIC_MODEL_ID
-    description: DirectQuery and Direct Lake only, that semantic model's id
   - name: MODEL_URL
     description: The semantic model the app reads in place, https://onelake.dfs.fabric.microsoft.com/<workspace>/<item>/Files/<path> (an Ossie .yaml or a TMSL .bim)
