@@ -97,15 +97,10 @@ function postLive(msg) {
 }
 
 // The settings the page reads itself, sent when it opens and again when one changes.
-// What dialect a tab's statements are in (core.js sqlDialect): 'tsql' in SQL endpoint mode while
-// online, else 'duckdb'. Set by the extension.
-let sqlDialectOf = () => 'duckdb';
-const setSqlDialect = fn => { sqlDialectOf = fn; };
 function panelSettings() {
   const config = vscode.workspace.getConfiguration('onelakeStudio');
   return { tableOpensOn: config.get('tableOpensOn', 'stats'),
-           gridThousandsSeparator: config.get('gridThousandsSeparator', false),
-           sqlDialect: sqlDialectOf() };
+           gridThousandsSeparator: config.get('gridThousandsSeparator', false) };
 }
 
 // The page's one channel to the host (host.js): DuckDB statements and OneLake reads,
@@ -267,4 +262,4 @@ function revealPanel() {
 // Whether there is a panel to put a name in.
 const panelOpen = () => tabs.size > 0;
 
-module.exports = { openPanel, setPanelTitle, nameActiveTab, closePanel, revealPanel, panelOpen, postToPanel, postLive, panelSettings, setSqlDialect };
+module.exports = { openPanel, setPanelTitle, nameActiveTab, closePanel, revealPanel, panelOpen, postToPanel, postLive, panelSettings };

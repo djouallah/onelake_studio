@@ -152,9 +152,9 @@ test("Model's YAML sets apart an expression in a dialect other than Ossie SQL, i
   assert.deepEqual(foreignDialects("metrics:\n  - expression:\n      dialects:\n        - dialect: OSSIE_SQL_2026\n"), []);
 });
 
-test("a profile shows no planning or rows scanned it doesn't carry: the SQL endpoint's", async () => {
+test("a profile shows no planning or rows scanned it doesn't carry", async () => {
   const { parseProfile } = await import("../../app/explore/profile.js");
-  // The endpoint's (app.js tsqlProfile): its time, and its operators' estimated rows.
+  // One timed run (the exported app's on a semantic model, modeldata.js): its time, and its operators' rows.
   const endpoint = parseProfile({ latency: 5.66, operator: [{ operator_name: "TOP", operator_timing: 5.66, operator_cardinality: 5000,
     children: [{ operator_name: "TABLE SCAN", operator_timing: 0, operator_cardinality: 100000, extra_info: { Table: "t" }, children: [] }] }] });
   assert.equal(endpoint.scanned, null);

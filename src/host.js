@@ -31,8 +31,6 @@ const RANGE = /^bytes=\d+-\d*$/;
 // The engine's own methods the page may call. Everything else on the engine — opening a
 // table by metadata location, writing a temp file — is the host's to do, below.
 const ENGINE_METHODS = new Set(['query', 'stream', 'cancel', 'info', 'fileView', 'attachFile', 'releaseFiles']);
-// The host's methods that answer in batches, as the engine's stream does.
-const STREAMED = new Set(['tsql.stream']);
 
 /**
  * @param {object} o
@@ -63,32 +61,9 @@ const STREAMED = new Set(['tsql.stream']);
  *        time) and kept as a view: { name, schema, path, text }
  */
 function createHostMethods({ onelake, engine, onStatus = () => {}, saveFile = null, semviews = null, exportExplore = null, openInExcel = null, offlineState = null, setOffline = null,
-                             nameTables = null, exportResult = null, openDocument = null, copyText = null, saveQuery = null, saveDraft = null, askVariable = null, openModel = null, modelsDir = null,
-                             tsql = null }) {
+                             nameTables = null, exportResult = null, openDocument = null, copyText = null, saveQuery = null, saveDraft = null, askVariable = null, openModel = null, modelsDir = null }) {
   const views = () => { if (!semviews) throw new Error('semantic views are not available here'); return semviews; };
-  // SQL endpoint mode (tsql.js): this tab's statements there, which its Stop reaches.
-  const tab = {};
-  const endpoint = () => { if (!tsql) throw new Error('the SQL endpoint is not available here'); return tsql; };
   return {
-    // A statement in T-SQL, on the SQL endpoint of the workspace it names: batches as stream()'s.
-    // `opts.rows`: the most rows kept, past which they are only counted.
-    'tsql.stream': (sql, opts, emit) => {
-      if (typeof opts === 'function') { emit = opts; opts = {}; }
-      const rows = Number(opts && opts.rows);
-      return endpoint().stream(String(sql), emit, tab, Number.isFinite(rows) && rows >= 0 ? { rows } : {});
-    },
-    // The statement as the endpoint gets it, its tables by their three-part names: what its
-    // console runs as it is (a plan's SQL tab).
-    'tsql.text': sql => require('./tsql').onEndpoint(String(sql)).sql,
-    // Its estimated plan: [{ op, logical, rows, cost, table, children }].
-    'tsql.plan': sql => endpoint().plan(String(sql), tab),
-    // DuckDB's SUMMARIZE of it, over every row it returns: { fields, rows }.
-    'tsql.summarize': sql => endpoint().summarize(String(sql), tab),
-    // Stop: this tab's statements, DuckDB's and the endpoint's.
-    cancel: async () => {
-      if (tsql) tsql.cancel(tab);
-      return engine.call('cancel', []);
-    },
     // Export to Fabric (exportapp.js): the model's text (to check it), where it lives in
     // OneLake (the app reads it there), its name and the Explore shelves. The host asks where
     // the local copy goes and publishes it.
@@ -199,7 +174,7 @@ function createHostMethods({ onelake, engine, onStatus = () => {}, saveFile = nu
     // which and where, and its DuckDB writes it).
     'host.exportResult': async x => {
       if (!exportResult) throw new Error('export is not available here');
-      return exportResult({ sql: String((x && x.sql) ?? ''), name: String((x && x.name) || 'query'), dialect: x && x.dialect === 'tsql' ? 'tsql' : 'duckdb' });
+      return exportResult({ sql: String((x && x.sql) ?? ''), name: String((x && x.name) || 'query') });
     },
     'host.openDocument': async x => {
       if (!openDocument) throw new Error('documents are not available here');
@@ -233,7 +208,7 @@ async function answer({ methods, engine }, msg, post) {
   try {
     let value;
     // hasOwn / has: the method name comes from the page.
-    if (Object.hasOwn(methods, method)) value = await methods[method](...list, ...(STREAMED.has(method) ? [batch => post({ type: 'batch', id, batch })] : []));
+    if (Object.hasOwn(methods, method)) value = await methods[method](...list);
     else if (ENGINE_METHODS.has(method)) value = await engine.call(method, list, batch => post({ type: 'batch', id, batch }));
     else throw new Error(`unknown method: ${method}`);
     post({ type: 'result', id, value });

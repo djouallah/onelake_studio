@@ -94,8 +94,8 @@ export function parseProfile(json) {
   const planning = phases.reduce((s, f) => s + f.ms, 0);
   const total = Math.max(secs(p.latency), planning + execution);
   const top = result(roots.at(-1));
-  // What the profile doesn't carry is null, not 0: the SQL endpoint's (app.js tsqlProfile) is its
-  // estimated plan and one timed run, so it has no planning and no rows scanned.
+  // What the profile doesn't carry is null, not 0: the exported app's on a semantic model
+  // (fabric_app/site/storage/modeldata.js) is one timed run, so it has no planning and no rows scanned.
   const scans = operators.filter(o => o.scanned != null);
   return { total, planning: (p.planner ?? p.all_optimizers ?? p.physical_planner) == null ? null : planning, execution,
     other: Math.max(0, total - planning - execution), phases, operators, rows: top ? rowsOf(top) : 0,

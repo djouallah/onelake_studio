@@ -22,7 +22,6 @@ const { createOneLake } = require('./onelake');
 const { createSqlTables } = require('./sqltables');
 const { inTime } = require('./http');
 const { createFabric, modelAccountDir } = require('./fabric');
-const { createTsql } = require('./tsql');
 const { modelSqlName } = require('./names');
 const { createAgent } = require('./agent');
 const { serveXmla } = require('./xmla/server');
@@ -156,11 +155,6 @@ function createCore({
   // Semantic models and their export: Fabric's token for the model, the storage one
   // (the same cache the catalog uses) for the one file the export writes.
   const fabric = createFabric({ getFabricToken: fabricToken });
-  // SQL endpoint mode (settings.sqlEngine): T-SQL on a workspace's Fabric SQL endpoint, online only.
-  // Its statements are the SQL box's and a model's queries; DuckDB reads everything else. Offline, for
-  // no internet or no session, everything is DuckDB's: nothing calls the endpoint.
-  const tsql = createTsql({ endpoints: ws => fabric.sqlEndpoints(ws), sqlToken, maxRows: settings.maxResultRows, log, account: () => storeAccount, connectivity });
-  const sqlDialect = () => (settings.sqlEngine() === 'sqlEndpoint' && !connectivity.offline() ? 'tsql' : 'duckdb');
 
   // What the extension knows about OneLake, kept on disk per account and served from there
   // first (onelake.js). One directory per identity — a hashed account id — so nobody is
@@ -399,7 +393,6 @@ function createCore({
     nameTables: list => nameModelTables(list),
     signedIn: () => signedIn,
     offlineReason: () => connectivity.reason(),
-    tsql, sqlDialect,
     diagnostics: {
       log: o => windowLog.lines(o),
       async status() {
@@ -577,7 +570,7 @@ function createCore({
   return {
     engines, onelake, semviews, rebindStore, exportExplore, openExcel, keepOffline, openSqlModel, nameModelTables, saveQuery,
     onStoreCleared: () => onStoreCleared(),
-    fabric, tsql, sqlDialect, sqlTables, syncWorker, favorites, queries, models, agent, startExcel: startXmla, writer,
+    fabric, sqlTables, syncWorker, favorites, queries, models, agent, startExcel: startXmla, writer,
     accountTurn, sessionChanged, setSignedIn, start,
     signedIn: () => signedIn, hasSession: () => hasSession, sessionAsked: () => sessionAsked,
     storeAccount: () => storeAccount, queryAccount: () => queryAccount,

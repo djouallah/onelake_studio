@@ -37,33 +37,7 @@ const viewState = {
 const cfg = window.ONELAKE_STUDIO_CONFIG || {};
 const vs = vscodeApi();
 // The settings the page reads as it goes: as of the panel's opening, then as the host posts them.
-const settings = { tableOpensOn: cfg.tableOpensOn, gridThousandsSeparator: cfg.gridThousandsSeparator, sqlDialect: cfg.sqlDialect };
-// What the box's statements and a model's queries are written in and run on: 'tsql' in SQL endpoint
-// mode (onelakeStudio.sqlEngine) while online, on the workspace's Fabric SQL endpoint; else DuckDB.
-const sqlDialect = () => (settings.sqlDialect === 'tsql' ? 'tsql' : 'duckdb');
-// A statement's: SHOW … and DESCRIBE list what this machine knows (the cache's catalog, the models
-// open), so DuckDB answers them in either mode.
-// What runs a statement: the endpoint, in SQL endpoint mode, when it names a lakehouse or warehouse
-// table by its five parts, or a semantic model. Anything else is for DuckDB, whatever the mode: a
-// file's preview ('lakehouse.ws.item/Files/x.csv' is a string, not a table), a database file's
-// tables, SHOW and DESCRIBE.
-const PART = String.raw`(?:"(?:[^"]|"")*"|\[[^\]]*\]|[^\s.,;()'"]+)`;
-const ON_ENDPOINT = new RegExp(String.raw`\b(?:lakehouse|warehouse)\.${PART}\.${PART}\.${PART}\.${PART}|\bsemanticmodel\.`, 'i');
-const outsideStrings = sql => String(sql).replace(/'(?:[^']|'')*'/g, "''").replace(/--[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, '');
-const dialectOf = sql => (/^\s*(SHOW|DESCRIBE|DESC)\b/i.test(String(sql)) || !ON_ENDPOINT.test(outsideStrings(sql)) ? 'duckdb' : sqlDialect());
-semantic.setDialect(sqlDialect);
-// Offline everything runs on DuckDB. A statement that left for the endpoint as the window went offline
-// is refused by the host (tsql.js, e.offline): from then on this page is DuckDB's, ahead of the settings
-// that will say so, and `fn` runs once more, choosing its dialect and compiling for it anew.
-async function onDuckdbIfOffline(fn) {
-  const was = sqlDialect();
-  try { return await fn(); }
-  catch (e) {
-    if (!e || !e.offline || was !== 'tsql') throw e;
-    settings.sqlDialect = 'duckdb';
-    return fn();
-  }
-}
+const settings = { tableOpensOn: cfg.tableOpensOn, gridThousandsSeparator: cfg.gridThousandsSeparator };
 
 // Cap on rendered rows only. The CSV saves everything the engine materialised, which is
 // itself capped — runQuery says so when the two differ.
@@ -380,7 +354,7 @@ async function openModelView(file, text = null, { fromOneLake = text == null } =
       echarts: loadEcharts,
       setStatus,
       saveText: (name, text) => engine.saveText(name, text),
-      copyText, shownSql,
+      copyText,
       loadState: viewState.get,
       saveState: viewState.set,
       // The native engine set the profile's metrics before it locked its configuration, and
@@ -456,9 +430,6 @@ async function openModels(sql) {
 
 // Text on the clipboard, by the host (a plan's SQL tab).
 const copyText = text => engine.copyText(text);
-// A plan's SQL tab: the statement as its engine gets it. The endpoint's has its tables' three-part
-// names, so its console runs it as it is.
-const shownSql = sql => (sqlDialect() === 'tsql' ? engine.tsqlText(sql) : sql);
 
 // A compiled SQL of a model, run through the engine's read-only path: it names its Direct Lake
 // tables by their SQL names, and the host opens each as the SQL reaches it. Stoppable.
@@ -469,15 +440,6 @@ async function runModelSql(sql) {
   setBusy(true, { stoppable: true });
   try {
     await engineReady;
-    if (sqlDialect() === 'tsql') {
-      // Compiled as T-SQL, and the window is offline now: Explore compiles it again, for DuckDB
-      // (explore/view.js, e.redo).
-      try { return await runModelTsql(sql); }
-      catch (e) {
-        if (e && e.offline) { settings.sqlDialect = 'duckdb'; e.redo = true; }
-        throw e;
-      }
-    }
     const res = await engine.runSql(sql);
     // Explore's Show plan: its profile, in the shape its view reads (profileJson, below).
     if (PROFILE_SQL.test(sql) && res.rows[0]?.explain_value != null) {
@@ -501,57 +463,6 @@ async function runModelSql(sql) {
 //     which would otherwise be taken for the query's top operator (its rows: 0).
 const PROFILE_SQL = /^\s*EXPLAIN\s*\(\s*ANALY[SZ]E\s*,\s*FORMAT\s+json\s*\)/i;
 
-// SQL endpoint mode: Explore's SQL on the endpoint. Explore wraps its query in DuckDB's SQL (its
-// preview as text, its count, its plan and profile: explore/view.js, shared with the Fabric app);
-// here each is done for the query inside it, which runs on the endpoint as it is.
-const AS_TEXT = /^\s*SELECT COLUMNS\(\*\)::VARCHAR FROM \(\n([\s\S]*)\n\)(?: LIMIT (\d+))?\s*$/;
-const COUNTED = /^\s*SELECT COUNT\(\*\) AS cnt FROM \(\n([\s\S]*)\n\)\s*$/;
-const EXPLAINED = /^\s*EXPLAIN\s+(?!\()([\s\S]*)$/i;
-async function runModelTsql(sql) {
-  let m;
-  if ((m = AS_TEXT.exec(sql))) {
-    const res = await engine.runTsql(m[1], m[2] ? { rows: Number(m[2]) } : {});
-    const text = v => (v == null ? v : typeof v === 'object' ? JSON.stringify(v) : String(v));
-    return { ...res, types: res.fields.map(() => 'VARCHAR'),
-             rows: res.rows.map(r => Object.fromEntries(Object.entries(r).map(([k, v]) => [k, text(v)]))) };
-  }
-  const one = (name, type, v) => ({ fields: [name], types: [type], rows: [{ [name]: v }], numRows: 1, truncated: false });
-  if ((m = COUNTED.exec(sql))) return one('cnt', 'BIGINT', (await engine.runTsql(m[1], { rows: 0 })).numRows);
-  if (PROFILE_SQL.test(sql)) return one('explain_value', 'VARCHAR', await tsqlProfile(sql.replace(PROFILE_SQL, '')));
-  if ((m = EXPLAINED.exec(sql))) return one('explain_value', 'VARCHAR', planText(await engine.planTsql(m[1])));
-  return engine.runTsql(sql);
-}
-
-// The endpoint's estimated plan as text: an operator a line, its inputs below it.
-function planText(roots) {
-  const lines = [];
-  const line = (n, depth) => {
-    const name = n.logical && n.logical !== n.op ? `${n.op} (${n.logical})` : n.op;
-    lines.push(`${'  '.repeat(depth)}${name}  ~${Math.round(n.rows).toLocaleString('en')} rows  cost ${n.cost.toFixed(4)}${n.table ? `  ${n.table}` : ''}`);
-    n.children.forEach(k => line(k, depth + 1));
-  };
-  roots.forEach(n => line(n, 0));
-  return lines.join('\n') || '(no plan)';
-}
-
-// A profile on the endpoint, in the shape Explore's profile view reads (explore/profile.js): the
-// query runs once more for its time, which goes to its operators as their estimated costs share it;
-// an operator's rows are the endpoint's estimate, the top one's the rows it returned.
-async function tsqlProfile(sql) {
-  const plan = await engine.planTsql(sql);
-  const t0 = performance.now();
-  const res = await engine.runTsql(sql, { rows: 0 });
-  const secs = (performance.now() - t0) / 1000;
-  const cost = plan.reduce(function sum(s, n) { return n.children.reduce(sum, s + n.cost); }, 0) || 1;
-  const node = (n, top) => ({
-    operator_name: (n.logical && n.logical !== n.op ? `${n.op} (${n.logical})` : n.op).toUpperCase(),
-    operator_timing: secs * n.cost / cost,
-    operator_cardinality: top ? res.numRows : n.rows,
-    extra_info: { ...(n.table ? { Table: n.table } : {}), 'Estimated Cardinality': Math.round(n.rows) },
-    children: n.children.map(k => node(k, false)),
-  });
-  return JSON.stringify({ latency: secs, operator: plan.map(n => node(n, true)) });
-}
 function profileJson(json) {
   let p;
   try { p = typeof json === 'string' ? JSON.parse(json) : json; } catch (_) { return json; }
@@ -747,7 +658,7 @@ async function selectTable(t) {
     showStats();                    // statistics are the landing view for a table
     setViewTabs();
     // Not run: Profile and Export read the rows by it, and the box starts from it.
-    currentSql = activeSqlName ? tablePreviewSql(activeSqlName) : '';
+    currentSql = activeSqlName ? previewSql(activeSqlName, false) : '';
     if (currentSql) offerInBox(currentSql);
     setStatus(engine.describeLoad(info));
     if (rowsOutOfReach === t) {
@@ -834,8 +745,6 @@ function reportLoad(info, queryOk) {
 // A table gets the first hundred rows; a text file gets ALL of it — a LIMIT would cut the
 // document silently. The engine's own row cap still applies and still says so.
 const previewSql = (ident, whole) => `SELECT * FROM ${ident}` + (whole ? '' : ' LIMIT 100');
-// A OneLake table's, in the box: on the SQL endpoint, which has no LIMIT, its TOP.
-const tablePreviewSql = ident => (dialectOf(`SELECT * FROM ${ident}`) === 'tsql' ? `SELECT TOP 100 * FROM ${ident}` : previewSql(ident, false));
 
 // Plan: where the editor's query spends its time, in place of the results — Explore's own
 // view of it (explore/profile.js): the profile (EXPLAIN ANALYZE, so the query runs once to be
@@ -870,33 +779,21 @@ async function showPlan(text) {
     await engineReady;
     await viewsFor(text);
     await openModels(text);
-    // The statement as the dialect that runs now writes it: again for the profile, when that has changed.
-    let tsql = false, sql = '';
-    const compile = async () => {
-      tsql = sqlDialect() === 'tsql';
-      const model = await semantic.statement(text, null, tsql ? 'tsql' : 'duckdb');
-      lastRun.rewritten = !!model;
-      sql = model ? model.sql : text.replace(/;\s*$/, '');
-    };
-    const explained = await onDuckdbIfOffline(async () => {
-      await compile();
-      if (my !== selSeq) return null;
-      // Runs nothing, and it is where bad SQL or a table not held fails: below, so the box hears.
-      // On a line of its own, so DuckDB's error quotes the statement's line and not this word.
-      return tsql ? { rows: [{ explain_value: planText(await engine.planTsql(sql)) }] } : engine.runSql(`EXPLAIN\n${sql}`);
-    });
+    const model = await semantic.statement(text, null);
+    lastRun.rewritten = !!model;
+    const sql = model ? model.sql : text.replace(/;\s*$/, '');
+    if (my !== selSeq) return false;
+    // Runs nothing, and it is where bad SQL or a table not held fails: below, so the box hears.
+    // On a line of its own, so DuckDB's error quotes the statement's line and not this word.
+    const explained = await engine.runSql(`EXPLAIN\n${sql}`);
     if (my !== selSeq) return false;
     clearResults();
     const view = $('planView');
     view.replaceChildren(createPlanView({
-      sql: () => (tsql ? engine.tsqlText(sql) : sql), copy: copyText,
+      sql: () => sql, copy: copyText,
       profile: held(async () => {
         try {
-          return await onDuckdbIfOffline(async () => {
-            if (tsql !== (sqlDialect() === 'tsql')) await compile();
-            if (tsql) return await tsqlProfile(sql);
-            return profileJson((await engine.runSql(profileSql(sql, { set: false }))).rows[0]?.explain_value);
-          });
+          return profileJson((await engine.runSql(profileSql(sql, { set: false }))).rows[0]?.explain_value);
         } catch (e) {
           // Past the EXPLAIN, the box has its answer: the view and this line say it.
           if (my === selSeq) setStatus(e.cancelled ? 'Stopped.' : 'Plan failed: ' + e.message, e.cancelled ? undefined : 'error');
@@ -937,7 +834,7 @@ async function showPlan(text) {
 // wrong is in lastRun.
 let running = 0;   // queries under way: a kept result waits for them rather than stop them
 let stops = 0;     // presses of Stop: one before a statement reaches the host has nothing to cancel yet
-// `summarize`: SUMMARIZE of this query instead (Profile), compiled as the dialect that runs it writes it.
+// `summarize`: SUMMARIZE of this query instead (Profile), of the SQL it compiles to.
 async function runQuery({ sql, doc = true, ext = '', summarize = null } = {}) {
   sql = String(summarize != null ? `SUMMARIZE ${summarize}` : sql ?? '');
   currentSql = sql;
@@ -972,30 +869,23 @@ async function runQuery({ sql, doc = true, ext = '', summarize = null } = {}) {
     await openModels(source);
     if (stale()) return false;
     const onRows = n => { rowsSoFar = n; };
-    const res = await onDuckdbIfOffline(async () => {
-      const dialect = dialectOf(source);
-      let model = null, statementSql;
-      if (summarize != null) {
-        // The SUMMARIZE is of the SQL the query compiles to.
-        const compiled = await semantic.statement(source, null, dialect).catch(() => null);
-        statementSql = `SUMMARIZE ${(compiled ? compiled.sql : source).trim().replace(/;+\s*$/, '')}`;
-        currentSql = statementSql;
-      } else {
-        model = await semantic.statement(sql, null, dialect);
-        statementSql = model ? model.sql : sql;
-      }
-      if (stale()) return null;
-      if (model) docAllowed = false;
-      lastRun.rewritten = !!model;
-      t0 = performance.now();
-      if (stops !== stopsAtStart) throw Object.assign(new Error('Stopped'), { cancelled: true });
-      // Profile asks SUMMARIZE of the query: on the endpoint, the host works it out over every row the
-      // query returns, in DuckDB's columns.
-      const summarized = /^\s*SUMMARIZE\s+([\s\S]+)$/i.exec(statementSql);
-      return dialect !== 'tsql' ? engine.runSql(statementSql, { onRows })
-        : summarized ? engine.summarizeTsql(summarized[1]) : engine.runTsql(statementSql, { onRows });
-    });
-    if (stale() || !res) return false;
+    let model = null, statementSql;
+    if (summarize != null) {
+      // The SUMMARIZE is of the SQL the query compiles to.
+      const compiled = await semantic.statement(source, null).catch(() => null);
+      statementSql = `SUMMARIZE ${(compiled ? compiled.sql : source).trim().replace(/;+\s*$/, '')}`;
+      currentSql = statementSql;
+    } else {
+      model = await semantic.statement(sql, null);
+      statementSql = model ? model.sql : sql;
+    }
+    if (stale()) return false;
+    if (model) docAllowed = false;
+    lastRun.rewritten = !!model;
+    t0 = performance.now();
+    if (stops !== stopsAtStart) throw Object.assign(new Error('Stopped'), { cancelled: true });
+    const res = await engine.runSql(statementSql, { onRows });
+    if (stale()) return false;
     renderResults(res);
     lastResult = res;
     const ms = Math.round(performance.now() - t0);
@@ -1285,7 +1175,7 @@ async function openPivot() {
       echarts: loadEcharts,
       setStatus,
       saveText: (name, text) => engine.saveText(name, text),
-      copyText, shownSql,
+      copyText,
       loadState: viewState.get,
       saveState: viewState.set,
       profileSet: false,   // as the model view's (openModelView)
@@ -1698,11 +1588,8 @@ async function profileResult() {
 async function exportQuery() {
   if (!currentSql) return null;
   const name = ($('activeTable').textContent || 'query').replace(/^Query: /, '');
-  return onDuckdbIfOffline(async () => {
-    const dialect = dialectOf(currentSql);
-    const model = await semantic.statement(currentSql, null, dialect);
-    return engine.exportResult({ sql: model ? model.sql : currentSql, name, dialect });
-  });
+  const model = await semantic.statement(currentSql, null);
+  return engine.exportResult({ sql: model ? model.sql : currentSql, name });
 }
 
 // ---------------------------------------------------------------------------
@@ -1828,7 +1715,6 @@ window.addEventListener('message', async e => {
     else if (m.type === 'settings') {
       settings.tableOpensOn = m.tableOpensOn;
       settings.gridThousandsSeparator = m.gridThousandsSeparator;
-      settings.sqlDialect = m.sqlDialect;
       if (grid) grid.redraw();
     }
   } catch (err) {

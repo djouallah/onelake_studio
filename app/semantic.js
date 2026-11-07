@@ -19,7 +19,7 @@
 // =============================================================================
 import { PINS, npmFile, npmEsm } from "./cdn.js";
 import { quoteIdent, sqlStr, sqlPart, stripBom, basename } from "./paths.js";
-import { EXPLORE_CASTS, EXPLORE_CASTS_TSQL, withSource } from "./explore/query.js";
+import { EXPLORE_CASTS, withSource } from "./explore/query.js";
 
 const lc = s => String(s).toLowerCase();
 
@@ -44,33 +44,17 @@ function compilerModules() {
   return modulesP;
 }
 
-// The views (dax-sql's registry) and, per view, its Direct Lake tables. Every view is in two
-// registries, one per dialect dax-sql writes: DuckDB's, and T-SQL's for SQL endpoint mode
-// (onelakeStudio.sqlEngine), whose queries run on a workspace's Fabric SQL endpoint.
-let mods = null, views = null, tviews = null;
+// The views (dax-sql's registry) and, per view, its Direct Lake tables.
+let mods = null, views = null;
 const lakes = new Map();   // lower-cased view name -> directLakeTables()
 async function ready(modules) {
   if (!views) {
     mods = modules || await compilerModules();
     // A statement reaches a model by its whole name alone (NAMING.md): `FROM nem` is not a model.
     views = mods.createViews({ fullNames: true });
-    tviews = mods.createViews({ fullNames: true, dialect: "tsql" });
   }
   return mods;
 }
-
-// Which dialect a compiler writes now, for the compilers a view hands out (Explore's, a table's
-// Pivot's): 'duckdb', or 'tsql' in SQL endpoint mode while online. The panel sets it.
-let dialectNow = () => "duckdb";
-export const setDialect = fn => { dialectNow = fn; };
-// A compiler that is DuckDB's or T-SQL's as dialectNow says, at each call.
-const byDialect = (duck, tsql) => new Proxy(duck, {
-  get(_, k) {
-    const c = dialectNow() === "tsql" ? tsql : duck;
-    const v = c[k];
-    return typeof v === "function" ? v.bind(c) : v;
-  },
-});
 
 // A view's default name: its file's, up to its first dot, as an identifier SQL writes bare.
 export function modelName(fileName) {
@@ -242,12 +226,10 @@ export async function defineView(name, path, text, mode = "replace", modules = n
   const where = [...new Set([...lake.values()].map(l => itemOfIdent(l.ident)))];
   const at = { path, mode, db: MODEL_CATALOG, schema, tableSource, tablesFrom: where.join(", ") || null };
   const done = views.define(name, tmslToModel(bim), at);
-  tviews.define(name, tmslToModel(bim), at);
   const v = views.get([MODEL_CATALOG, schema, name]);
   if (done === "created") lakes.set(lc(v.sqlName), lake);
   // Explore's (explore/query.js): its rows go straight to the page, cast as EXPLORE_CASTS says.
-  const exploreCompiler = byDialect(createCompiler(tmslToModel(bim), { tableSource, castOutput: EXPLORE_CASTS }),
-    createCompiler(tmslToModel(bim), { tableSource, castOutput: EXPLORE_CASTS_TSQL, dialect: "tsql" }));
+  const exploreCompiler = createCompiler(tmslToModel(bim), { tableSource, castOutput: EXPLORE_CASTS });
   return { name: fullName(v), view: v.name, schema, file: basename(path), sample: sampleQuery(v),
            directLake: lake.size, bim, exploreCompiler, done };
 }
@@ -288,14 +270,6 @@ const TABLE_CASTS = {
   datetime: s => `CASE WHEN CAST(${asTs(s)} AS TIME) = TIME '00:00:00' THEN CAST(CAST(${asTs(s)} AS DATE) AS VARCHAR) ` +
                  `ELSE CAST(${asTs(s)} AS VARCHAR) END`,
 };
-// The same in T-SQL, for SQL endpoint mode: a timestamp as 2024-01-31 10:00:00.
-const DATE_GRAINS_TSQL = { year: c => `YEAR(${c})`, month: c => `CAST(DATETRUNC(month, ${c}) AS DATE)`, day: c => `CAST(${c} AS DATE)` };
-const asTs2 = s => `CAST(${s} AS DATETIME2(6))`;
-const TABLE_CASTS_TSQL = {
-  ...EXPLORE_CASTS_TSQL,
-  datetime: s => `CASE WHEN CAST(${asTs2(s)} AS TIME) = '00:00:00' THEN CONVERT(VARCHAR(10), ${asTs2(s)}, 23) ` +
-                 `ELSE CONVERT(VARCHAR(19), ${asTs2(s)}, 120) END`,
-};
 
 /**
  * A lakehouse table as a model of its own, for the Pivot: one table, no relationships, and one
@@ -322,7 +296,7 @@ export async function tableModel(table, sqlName, columns, modules = null) {
       const name = `${c.name}_${g}`;
       if ((g === "day" && !ts) || names.has(lc(name))) continue;
       names.add(lc(name));
-      grains.set(name, { sql: q => fn(q(c.name)), tsql: q => DATE_GRAINS_TSQL[g](q(c.name)) });
+      grains.set(name, q => fn(q(c.name)));
       // Marked as worked out (explore.js draws it apart): the table has no such column.
       cols.push({ name, dataType: type, sourceColumn: name, derivedFrom: c.name, derivedAs: g,
         description: `${c.name} by ${g}, worked out as ${fn(c.name)}: not a column of the table` });
@@ -334,19 +308,17 @@ export async function tableModel(table, sqlName, columns, modules = null) {
     measures: [{ name: rows, expression: `COUNTROWS('${table.replace(/'/g, "''")}')`, formatString: "#,0" }],
     partitions: [{ source: { type: "entity", entityName: table } }],
   }], relationships: [] } };
-  const fromIn = d => (grains.size
-    ? `(SELECT *, ${[...grains].map(([n, g]) => `${g[d](quoteIdent)} AS ${quoteIdent(n)}`).join(", ")} FROM ${sqlName})`
-    : sqlName);
-  const from = fromIn("sql"), fromT = fromIn("tsql");
-  const compiler = byDialect(createCompiler(tmslToModel(bim), { tableSource: () => from, castOutput: TABLE_CASTS }),
-    createCompiler(tmslToModel(bim), { tableSource: () => fromT, castOutput: TABLE_CASTS_TSQL, dialect: "tsql" }));
+  const from = grains.size
+    ? `(SELECT *, ${[...grains].map(([n, fn]) => `${fn(quoteIdent)} AS ${quoteIdent(n)}`).join(", ")} FROM ${sqlName})`
+    : sqlName;
+  const compiler = createCompiler(tmslToModel(bim), { tableSource: () => from, castOutput: TABLE_CASTS });
   // The shelves' query as SQL over the table itself, as a person writes it (explore.js
   // modelSql): with one table and no relationships the two mean the same, the measure being
   // COUNT(*) and a grain its expression.
   const plainSql = {
     from: sqlName,
     measure: n => (n === rows ? "COUNT(*)" : null),
-    column: (n, q) => grains.get(n)?.[dialectNow() === "tsql" ? "tsql" : "sql"](q) ?? null,
+    column: (n, q) => grains.get(n)?.(q) ?? null,
   };
   return { name: modelName(table), tmsl: bim.model, compiler, plainSql };
 }
@@ -384,7 +356,6 @@ export function dropView(name) {
   const v = views && views.get(name);
   if (!v) return;
   views.drop([MODEL_CATALOG, v.schema, v.name], { ifExists: true });
-  tviews.drop([MODEL_CATALOG, v.schema, v.name], { ifExists: true });
   lakes.delete(lc(v.sqlName));
 }
 
@@ -424,9 +395,8 @@ const NO_DDL ="Read only: OneLake Studio never writes, and a semantic model is n
  * view, else { sql } to run, and `compiled`, dax-sql's SQL alone (sql is it, with the
  * statement as written in a comment in front). One statement.
  */
-export async function statement(sql, modules = null, dialect = "duckdb") {
-  // DuckDB's lists every model the engine knows (duckdb_views); T-SQL's, those opened here.
-  if (dialect !== "tsql" && SHOW_VIEWS.test(String(sql))) return { sql: showViewsSql() };
+export async function statement(sql, modules = null) {
+  if (SHOW_VIEWS.test(String(sql))) return { sql: showViewsSql() };
   // Refused before dax-sql reads it: whether the view exists is not the question.
   if (VIEW_DDL.test(String(sql))) throw new Error(NO_DDL);
   if (!views) {
@@ -434,7 +404,7 @@ export async function statement(sql, modules = null, dialect = "duckdb") {
     if (!/\bsemantic\b/i.test(String(sql))) return null;
     await ready(modules);
   }
-  const out = (dialect === "tsql" ? tviews : views).rewrite(sql);
+  const out = views.rewrite(sql);
   if (!out) return null;
   if (out.length !== 1) throw new Error("Run one statement at a time (no ';').");
   const [s] = out;

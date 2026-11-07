@@ -653,25 +653,6 @@ export function createEngine({
     return materialize(String(sql), onRows);
   }
 
-  // SQL endpoint mode (onelakeStudio.sqlEngine): a statement in T-SQL, run on the Fabric SQL
-  // endpoint of the workspace it names (src/tsql.js), in the same shape as runSql's. Its estimated
-  // plan: [{ op, logical, rows, cost, table, children }].
-  // `rows`: the most kept, past which they are only counted (0: a count).
-  async function runTsql(sql, { onRows = () => {}, rows } = {}) {
-    const collected = rowCollector(rows ?? maxRows);
-    await callHost("tsql.stream", [String(sql), rows == null ? {} : { rows }], batch => { collected.add(batch); onRows(collected.result().numRows); });
-    return { ...collected.result(), asOf: null };
-  }
-  const planTsql = sql => callHost("tsql.plan", [String(sql)]);
-  const tsqlText = sql => callHost("tsql.text", [String(sql)]);
-  // DuckDB's SUMMARIZE of a statement on the endpoint, over every row it returns.
-  async function summarizeTsql(sql) {
-    const { fields, rows } = await callHost("tsql.summarize", [String(sql)]);
-    const collected = rowCollector(maxRows);
-    collected.add({ fields, rows, numRows: rows.length });
-    return { ...collected.result(), asOf: null };
-  }
-
   // A statement's whole result as plain JS, in the shape the results grid renders.
   // Shared by user SQL (above, after the read-only guard) and the engine's own quick
   // peek, which builds its SQL itself.
@@ -730,6 +711,6 @@ export function createEngine({
   const askVariable = name => callHost("host.askVariable", [{ name }]);
 
   return { init, reset, statTable, peekTable, rowsOutOfReach, deltaState, deltaHistory,
-           loadFile, readFileBytes, saveText, saveOneLakeFile, runSql, runTsql, planTsql, tsqlText, summarizeTsql, describeLoad, fmtBytes, cancelLoad,
+           loadFile, readFileBytes, saveText, saveOneLakeFile, runSql, describeLoad, fmtBytes, cancelLoad,
            semanticViews, semanticKeep, semanticOpen, exportExplore, openInExcel, offlineState, setOffline, nameTables, saveQuery, saveDraft, askVariable, copyText, exportResult, openDocument };
 }

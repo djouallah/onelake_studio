@@ -32,7 +32,7 @@ const FABRIC_AUDIENCES = [
   'https://api.fabric.microsoft.com/.default',
   'https://analysis.windows.net/powerbi/api/.default',
 ];
-// The SQL endpoint's audience (tsql.js): what a TDS login to a workspace's endpoint takes.
+// The SQL endpoint's audience: a DirectQuery semantic model's credentials (fabricmodel.js).
 const SQL_AUDIENCE = 'https://database.windows.net/.default';
 
 const isCancel = e => /cancel|did not consent/i.test(String((e && e.message) || e));
@@ -178,7 +178,7 @@ function createSignIn({ session, memento, tenant, connectivity, log }) {
     return token;
   }
 
-  // The SQL endpoint's token (tsql.js), for the same account as the storage session.
+  // The SQL endpoint's token (fabricmodel.js), for the same account as the storage session.
   const sqlHold = createTokenHold(TOKEN_TTL_MS);
   async function sqlToken({ fresh = false, createIfNone = false } = {}) {
     if (!fresh && !createIfNone && sqlHold.recent()) return sqlHold.recent();

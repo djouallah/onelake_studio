@@ -21,13 +21,6 @@ export const EXPLORE_CASTS = {
   decimal: s => `CAST(${s} AS DOUBLE)`,
   datetime: s => `CAST(CAST(${s} AS DATE) AS VARCHAR)`,
 };
-// The same in T-SQL, for the extension's SQL endpoint mode (a date as 2024-01-31).
-export const EXPLORE_CASTS_TSQL = {
-  int: s => `CAST(${s} AS BIGINT)`,
-  double: s => `CAST(${s} AS FLOAT)`,
-  decimal: s => `CAST(${s} AS FLOAT)`,
-  datetime: s => `CONVERT(VARCHAR(10), CAST(${s} AS DATE), 23)`,
-};
 
 // The statement as written goes in front of what dax-sql compiled it to, as a comment, so Logs shows
 // both (src/enginelog.js sourceOf reads it back). DuckDB nests comments, so a `/*` in it is escaped
