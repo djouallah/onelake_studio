@@ -601,6 +601,8 @@ Direct Lake without it:
 - **What it needs:** each viewer has Build on the semantic model ("Semantic model queries require the caller's
   applicable model permissions, including Build", the connectors page), and the tenant has the Semantic Model
   Execute Queries REST API setting on ([the data app template's prerequisites](https://learn.microsoft.com/en-us/fabric/apps/data-apps-template)).
+  A viewer the model refuses gets one box over the page: *You can't read the semantic model `<name>`. Ask its owner for
+  Build permission on it, then reload.* The name is the one the export wrote into `site/engine.json`.
 - `site/` holds no DuckDB, extensions, DuckDB's Arrow or browser data source, and no SAS is signed: the workspace
   setting for user-delegated SAS tokens isn't needed.
 

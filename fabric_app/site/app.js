@@ -67,8 +67,8 @@ function download(name, text) {
 export async function start() {
   try {
     const first = await fetch(new URL("./explore.json" + v, import.meta.url)).then(r => (r.ok ? r.json() : null), () => null);
-    const { engine } = await fetch(new URL("./engine.json" + v, import.meta.url)).then(r => (r.ok ? r.json() : {}), () => ({}));
-    if (engine === "semanticModel") return await startModel(first);
+    const { engine, name: modelName } = await fetch(new URL("./engine.json" + v, import.meta.url)).then(r => (r.ok ? r.json() : {}), () => ({}));
+    if (engine === "semanticModel") return await startModel(first, modelName);
     const { createDataSource } = await import("./storage/data.js");
     const data = createDataSource({
       onStatus: s => { boot.step(s); status(boot.el() ? "" : s); },
@@ -105,9 +105,23 @@ export async function start() {
   }
 }
 
+// The semantic model refused the person signed in (storage/modeldata.js): one box over the page,
+// once, as every query would be refused the same way.
+function showRefused(model) {
+  if (document.getElementById("refused")) return;
+  const card = document.createElement("div");
+  for (const t of [`You can't read the semantic model ${model}.`, "Ask its owner for Build permission on it, then reload."]) {
+    card.append(Object.assign(document.createElement("p"), { textContent: t }));
+  }
+  const box = Object.assign(document.createElement("div"), { id: "refused" });
+  box.setAttribute("role", "alert");
+  box.append(card);
+  document.body.append(box);
+}
+
 // On a semantic model: Explore's queries over the model go to the data source as they are written;
 // it turns them into DAX and runs them there, so the page's compiler passes them through.
-async function startModel(first) {
+async function startModel(first, modelName) {
   const { createModelSource } = await import("./storage/modeldata.js");
   const data = createModelSource({ onStatus: s => boot.step(s) });
   await data.init();
@@ -121,7 +135,10 @@ async function startModel(first) {
   mountExplore(document.getElementById("explore"), {
     name, title: String(doc.name || name), tmsl: tmslOf(bim),
     compiler: { isDax: t => /^\s*(DEFINE|EVALUATE)\b/i.test(t), compileStatement: text => ({ sql: text }) },
-    run: sql => data.run(sql),
+    run: async sql => {
+      try { return await data.run(sql); }
+      catch (e) { if (e.refused) showRefused(modelName || String(doc.name || name)); throw e; }
+    },
     shownSql: sql => data.shownSql(sql),
     echarts: () => echartsReady,
     saveText: download,

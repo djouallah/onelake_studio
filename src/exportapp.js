@@ -277,7 +277,8 @@ async function writeExport({ plan, state, outDir, fabricAppDir, appDir, daxSqlDi
                                      sql ? plan.semanticModel : null));
   const files = {
     'site/explore.json': JSON.stringify(state || null),
-    ...(sql ? { 'site/engine.json': JSON.stringify({ engine: 'semanticModel' }) } : {}),
+    // The semantic model's name: what the page says when it refuses the person signed in.
+    ...(sql ? { 'site/engine.json': JSON.stringify({ engine: 'semanticModel', ...(plan.semanticModel ? { name: plan.semanticModel.name } : {}) }) } : {}),
     'AGENTS.md': agentsMd(plan),
     '.gitignore': GITIGNORE,
   };

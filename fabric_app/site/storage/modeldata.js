@@ -42,6 +42,12 @@ function value(v) {
   return s.replace("T", " ").replace(/\.0+$/, "");
 }
 
+// The model refusing whoever is signed in, from the connector's failed answer: Power BI's own refusal
+// (category 'api'), not the empty-body 401 the connector says is a token problem, not a DAX error.
+const REFUSED = /\b40[13]\b|unauthori[sz]ed|forbidden|not ?authori[sz]ed|permission|access (is )?denied/i;
+const refusedBy = e => e.category === "api" && !/empty body/i.test(e.message ?? "")
+  && REFUSED.test(`${e.code ?? ""} ${e.message ?? ""} ${e.details ?? ""}`);
+
 // A column of the answer by the name SQL gave it: 'Table'[Column] and [name] are the bracketed name.
 const fieldName = key => /\[((?:[^\]]|\]\])*)\]$/.exec(key)?.[1]?.replace(/\]\]/g, "]") ?? key;
 
@@ -80,7 +86,10 @@ export function createModelSource({ onStatus = () => {} } = {}) {
     const r = await (await auth.client()).connectors[CONNECTOR].executeQuery({ query: dax });
     if (r?.status !== "success") {
       const e = r?.error ?? {};
-      throw new Error(`${e.message || "the semantic model gave no answer"}${e.recoveryHint ? ` (${e.recoveryHint})` : ""}`);
+      console.error("semantic model query failed", e);
+      // `refused`: app.js says so in a box over the page.
+      throw Object.assign(new Error(`${e.message || "the semantic model gave no answer"}${e.recoveryHint ? ` (${e.recoveryHint})` : ""}`),
+                          { refused: refusedBy(e) });
     }
     const fields = r.table.columns.map(c => fieldName(c.name));
     const from = Number(offset) || 0;

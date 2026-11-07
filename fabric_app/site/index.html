@@ -62,6 +62,13 @@
   #boot .elapsed { color: var(--faint); font-size: 0.8rem; font-variant-numeric: tabular-nums; }
   #boot.error .spin { display: none; }
   #boot.error .step { color: var(--err); }
+  /* A viewer the semantic model refuses (app.js): every query would fail the same way, so one
+     box over the page says why. */
+  #refused { position: fixed; inset: 0; z-index: 50; display: flex; align-items: center; justify-content: center;
+             background: rgba(10, 12, 16, 0.85); padding: var(--gutter); }
+  #refused > div { max-width: 34rem; background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius);
+                   box-shadow: var(--shadow); padding: 1.2rem 1.5rem; line-height: 1.6; }
+  #refused p { margin: 0; }
   @keyframes spin { to { transform: rotate(360deg); } }
   @media (prefers-reduced-motion: reduce) { #boot .spin { animation-duration: 3s; } }
 </style>

@@ -238,7 +238,7 @@ test(`${engine}: the site says it runs on the semantic model, and holds no DuckD
     const marker = await writeExport({ plan, state: null, outDir, ...dirs });
     assert.equal(marker.engine, engine);
     const all = (await readdir(outDir, { recursive: true })).map(f => f.split("\\").join("/"));
-    assert.deepEqual(JSON.parse(await readFile(join(outDir, "site/engine.json"), "utf8")), { engine: "semanticModel" });
+    assert.deepEqual(JSON.parse(await readFile(join(outDir, "site/engine.json"), "utf8")), { engine: "semanticModel", name: "sales" });
     for (const p of ["site/storage/modeldata.js", "site/storage/auth.js", "site/app.js", "site/explore/view.js"]) assert.ok(all.includes(p), p);
     for (const gone of [/^site\/storage\/(data|catalog)\.js$/, /^site\/vendor\/npm\/@duckdb/, /^site\/vendor\/npm\/apache-arrow@17\.0\.0/, /^site\/vendor\/duckdb-ext/]) {
       assert.ok(!all.some(f => gone.test(f)), `nothing matches ${gone}: ${all.filter(f => gone.test(f)).join(", ")}`);
