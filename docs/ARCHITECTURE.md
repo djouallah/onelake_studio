@@ -30,9 +30,9 @@ SHOW ALL TABLES;
 | --- | --- | --- |
 | **One name per object** | A table has five parts and a model has three. A file is `'lakehouse.<workspace>.<item>/Files/<path>'`. | [NAMING.md](NAMING.md), [`src/names.js`](../src/names.js) |
 | **SQL only** | A model is read with `AGG("measure")` in SQL. There is no DAX query. Excel's MDX is a second way in, and is compiled to that same SQL. An exported Fabric app on a semantic model runs the DAX that dax-sql makes of that SQL. | [`app/semantic.js`](../app/semantic.js), [`src/xmla/`](../src/xmla/) |
-| **Read only** | Nothing is written to Fabric or OneLake. The host takes one read per statement, from a tab or the command line, and DuckDB's own parser checks it. The one exception is Export to Fabric, after an OK in VS Code: the app, the model file, and for DirectQuery or Direct Lake a semantic model. | `assertReads` and `checkedRead` in [`src/sql.js`](../src/sql.js) |
+| **Read only** | Nothing is written to Fabric or OneLake. The host takes one read per statement, from a tab or the command line, and DuckDB's own parser checks it. The two exceptions each ask first: Export to Fabric (the app, the model file, and for DirectQuery or Direct Lake a semantic model), and Upload Files… into a lakehouse's `Files/`. | `assertReads` and `checkedRead` in [`src/sql.js`](../src/sql.js) |
 | **Cache first** | Every answer from OneLake or Fabric is kept on this machine and served from there first. It is trusted until using it fails, then read again once. | [`src/onelake.js`](../src/onelake.js), [`src/store.js`](../src/store.js) |
-| **Works offline** | A feature that reads data works from what this machine holds, with no network. What isn't held says so at once, never on a timeout. Only writing to Fabric needs a connection: Export to Fabric. The exported Fabric app is online by design, and this rule doesn't apply to it. | [`src/connectivity.js`](../src/connectivity.js), [`src/http.js`](../src/http.js), `cache_httpfs_set_offline` in [`src/engine-host.js`](../src/engine-host.js) |
+| **Works offline** | A feature that reads data works from what this machine holds, with no network. What isn't held says so at once, never on a timeout. Only writing to Fabric needs a connection: Export to Fabric and Upload Files…. The exported Fabric app is online by design, and this rule doesn't apply to it. | [`src/connectivity.js`](../src/connectivity.js), [`src/http.js`](../src/http.js), `cache_httpfs_set_offline` in [`src/engine-host.js`](../src/engine-host.js) |
 | **The host does the work** | Sign-in, the read-only guard and OneLake's listings, metadata and `Files/` bytes are in the host, and DuckDB's reads are in the server it starts. A tab is a view: it holds no token and makes no network request. | [`src/host.js`](../src/host.js), [`src/panel.js`](../src/panel.js), [`src/engine-client.js`](../src/engine-client.js) |
 | **A table's Pivot is a SQL starter** | It builds a first SQL. Its only actions are Edit SQL and Close. | [`app/app.js`](../app/app.js) |
 
@@ -529,12 +529,13 @@ One of two writes, with Upload (above). Explore's **Export to Fabric** button, o
 model's Explore, nothing else, as a Fabric app (item type `AppBackend`, named
 `<model>-explore`). VS Code and the extension are all it needs: no CLI, no Node, no GitHub.
 
-**What the app runs on** is picked in a small window under the button, Direct Lake unless changed (the command
-line's `--mode`, Direct Lake without it):
-- **Client side:** DuckDB in the browser reads the tables. No semantic model is made.
+**What the app runs on** is picked in a small window under the button ([`app/explore/view.js`](../app/explore/view.js)),
+on Direct Lake unless you change it. Export goes on to the questions below. On the command line it is `--mode`, and
+Direct Lake without it:
+- **Direct Lake:** a Power BI semantic model of the model, Direct Lake on OneLake, and the app on it.
 - **DirectQuery:** a Power BI semantic model of the model, each table read through the lakehouse's SQL endpoint, and the app
   on it.
-- **Direct Lake:** a Power BI semantic model of the model, Direct Lake on OneLake, and the app on it.
+- **Client side:** DuckDB in the browser reads the tables. No semantic model is made.
 
 **What it writes**
 - **The app**, in Fabric.
@@ -544,7 +545,7 @@ line's `--mode`, Direct Lake without it):
   model's file ([`src/pbimodel.js`](../src/pbimodel.js)), written over the Fabric API
   ([`src/fabricmodel.js`](../src/fabricmodel.js)). Direct Lake is then refreshed, to frame its tables. DirectQuery's
   SQL endpoint credentials are set to OAuth2 with each caller's own identity (SSO). Direct Lake takes no calculated
-  column: such a model is refused before anything is asked, and goes as DirectQuery.
+  column: a model with one is refused before anything is written, and the message says to export it as DirectQuery.
 - **The model's file**, into the `Files/` of its lakehouse, when it was opened from its local copy:
   `<lakehouse>/Files/semantic_model/<model>.yaml` ([`src/onelakewrite.js`](../src/onelakewrite.js)). The
   app reads the model there. A different file of that name is replaced only when you say so, and not being able

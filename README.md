@@ -42,8 +42,8 @@ a unique name, queried with SQL. Read only, cache first, and it works offline.
 
 Needs desktop VS Code 1.101+ on Windows x64, or macOS or Linux (x64 or arm64).
 
-**Read only.** The one exception is *Export to Fabric*, which publishes an app and writes the
-model's definition into its lakehouse. Opening a semantic model keeps it on your machine only.
+**Read only.** There are two exceptions, and both ask first. *Export to Fabric* publishes an app and writes the
+model's definition into its lakehouse. *Upload Files…* writes files from your computer into a lakehouse's `Files/`. Opening a semantic model keeps it on your machine only.
 
 How it works: [the website](https://djouallah.github.io/onelake_studio/how-it-works.html). Commands,
 settings and release notes: [the docs](https://djouallah.github.io/onelake_studio/docs/).

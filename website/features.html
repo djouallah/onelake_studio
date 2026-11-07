@@ -62,7 +62,7 @@ FROM semanticmodel.demo.DL GROUP BY ALL;</code></pre>
       <div>
         <h2>Export to Fabric</h2>
         <p>Publishes a model's Pivot as a Fabric app. People open it in the browser after signing in to Fabric, and pivot the model there with nothing to install. The app doesn't copy the model: it reads it from the lakehouse.</p>
-        <p>You pick what the app runs on. Client side runs DuckDB in the browser. DirectQuery and Direct Lake also create a Power BI semantic model of the same name, or update it, and the app queries that model.</p>
+        <p>You pick what the app runs on, in a small window under the button. Direct Lake is the default. Direct Lake and DirectQuery also create a Power BI semantic model of the same name, or update it, and the app queries that model. Client side runs DuckDB in the browser.</p>
       </div>
     </section>
 
@@ -90,7 +90,7 @@ FROM semanticmodel.demo.DL GROUP BY ALL;</code></pre>
       <p>It works offline. Anything you have read can be browsed, queried and pivoted without internet.</p>
     </section>
 
-    <p class="more read-only">Read only. The only exception is Export to Fabric, which is experimental and asks you first.</p>
+    <p class="more read-only">Read only. The two exceptions are Export to Fabric, which is experimental, and Upload Files. Both ask you first.</p>
   </main>
 
   <footer class="site-footer">
