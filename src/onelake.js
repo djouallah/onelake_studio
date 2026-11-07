@@ -127,6 +127,7 @@ function createOneLake({ catalog, store, prefetchEnabled = () => true, onHit = (
     return () => { const i = subs.indexOf(sub); if (i >= 0) { sub.off(); subs.splice(i, 1); } };
   }
   function useStore(next) {
+    if (store !== next && store.close) store.close();
     for (const sub of subs) { sub.off(); sub.off = next.on(sub.ev, sub.fn); }
     store = next;
     // The queued keys go with the queue: left in `queued`, they were never prefetched again.
@@ -273,7 +274,11 @@ function createOneLake({ catalog, store, prefetchEnabled = () => true, onHit = (
     // A summary kept before tables had a format is read again once, rather than drawn
     // without one until its TTL runs out. A folder that was no table may have become one, so using
     // that answer reads it again, as using any kept answer that fails does.
-    if (r.cached && (r.at < refreshedSince(lh) || !r.value.format || r.value.notValid)) r = await load(true);
+    // The read failing keeps what was kept, except an answer that it was no table: that one is what failed.
+    if (r.cached && (r.at < refreshedSince(lh) || !r.value.format || r.value.notValid)) {
+      const kept = r;
+      r = await load(true).catch(e => { if (kept.value.notValid) throw e; return kept; });
+    }
     // A table with nothing in it answers with no rows and no error, so nothing would ever say that
     // answer had gone old: a first write is looked for as a listing's new table is.
     const emptyFor = typeof listingTtlMs === 'function' ? listingTtlMs() : listingTtlMs;

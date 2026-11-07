@@ -19,7 +19,7 @@ const { semanticTmsl, definitionOf, MODES } = require('./pbimodel');
 
 // What the app runs on, as Explore's Export window and the command line's --mode name it.
 // Neither says: Direct Lake.
-const MODE_OF = { client: 'duckdb', duckdb: 'duckdb', directquery: 'directQuery', directlake: 'directLake' };
+const MODE_OF = { client: 'duckdb', directquery: 'directQuery', directlake: 'directLake' };
 
 /**
  * @param {object} o

@@ -487,18 +487,9 @@ export function createEngine({
       if (e.cancelled) throw e;
       // Says all there is to say, and no conversion is coming.
       if (e.notValid) throw e;
-      // The catalog is the only source now, so its own words ARE the diagnosis; the old
-      // wrapper replaced them with a guess. Only "not there yet" earns the conversion
-      // story appended, because that is the one cause a user can act on — and the catalog
-      // cannot say it itself: its 404 body is a flat "The given table does not exist",
-      // identical for a table mid-conversion and one that never existed.
-      const notYet = e.status === 400 || e.status === 404;
-      throw new Error(`Could not read ${label} from OneLake's Iceberg catalog: ${e.message}` +
-        (notYet
-          ? ". OneLake writes Iceberg metadata on demand and conversion can take up to two " +
-            "minutes; if it never appears, Delta-to-Iceberg conversion is probably not " +
-            "enabled for this tenant or workspace."
-          : ""));
+      // The catalog is the only source now, so its own words ARE the diagnosis. A table not
+      // there yet has the conversion story in them already: the host adds it (catalog.js).
+      throw new Error(`Could not read ${label} from OneLake's Iceberg catalog: ${e.message}`);
     }
     resolvedC.set(key, resolved);
     return resolved;
@@ -519,7 +510,6 @@ export function createEngine({
     // A click means "show me THIS": stand down whatever was loading, exactly as an open
     // does — otherwise a previous table's open keeps spending on files nobody wants.
     await cancelLoad();
-    const key = tableKey(lh, t);
     const label = labelFor(t);
     // Captured, not read live: the resolve can now sit in a retry loop, and a superseded
     // selection must not stamp "Waiting for Fabric… <old table>" over the new one.

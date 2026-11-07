@@ -9,7 +9,7 @@
 // =============================================================================
 
 const { strip, basename, displayName, holdsTables, itemKind, DFS_ORIGIN, dfsFileUrl } = require('./names');
-const { authedFetch: send, limiter, mapPool, oneLakeMessage, okJson } = require('./http');
+const { authedFetch: send, discard, limiter, mapPool, oneLakeMessage, okJson } = require('./http');
 
 const TABLE_ORIGIN = 'https://onelake.table.fabric.microsoft.com';
 const MAX_PARALLEL = 8;
@@ -132,6 +132,7 @@ function createCatalog({ getToken, dfsOrigin = DFS_ORIGIN, tableOrigin = TABLE_O
       if (cont) u.searchParams.set('continuation', cont);
       const r = await authedFetch(u.toString());
       if (r.status === 404) {
+        discard(r);
         if (page === 0) return out;
         throw new Error(`Listing of ${strip(directory)} was interrupted — it changed while being read`);
       }
@@ -171,7 +172,9 @@ function createCatalog({ getToken, dfsOrigin = DFS_ORIGIN, tableOrigin = TABLE_O
     u.searchParams.set('recursive', 'false');
     u.searchParams.set('directory', strip(directory));
     u.searchParams.set('maxResults', '1');
-    return (await authedFetch(u.toString())).status !== 404;
+    const r = await authedFetch(u.toString());
+    discard(r);
+    return r.status !== 404;
   }
 
   async function listItems(ws) {

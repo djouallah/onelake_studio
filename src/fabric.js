@@ -14,7 +14,7 @@
 
 const { join } = require('node:path');
 const { createHash } = require('node:crypto');
-const { authedFetch, fabricMessage, listPages, mapPool, okJson, retryAfterMs } = require('./http');
+const { authedFetch, discard, fabricMessage, listPages, mapPool, okJson, retryAfterMs } = require('./http');
 
 const FABRIC_API = 'https://api.fabric.microsoft.com/v1';
 const FETCH_TIMEOUT_MS = 60_000;
@@ -135,18 +135,13 @@ function createFabric({ getFabricToken, apiBase = FABRIC_API,
   }
 
   // The workspace's items a SQL endpoint answers for, with the endpoint's TDS host:
-  // [{ name, type, host }]. A lakehouse says it in sqlEndpointProperties, a warehouse in its own
-  // properties; every item of a workspace has the same host, and is a database there by its name.
+  // [{ name, type, host }] for the workspace's lakehouses, which say it in sqlEndpointProperties; every
+  // item of a workspace has the same host, and is a database there by its name.
   async function sqlEndpoints(workspace) {
     const id = await workspaceId(workspace);
-    const [lakes, houses] = await Promise.all([
-      listAll(`/workspaces/${id}/lakehouses`, `Listing lakehouses in ${workspace}`),
-      listAll(`/workspaces/${id}/warehouses`, `Listing warehouses in ${workspace}`),
-    ]);
-    return [
-      ...lakes.map(l => ({ name: l.displayName, type: 'Lakehouse', host: l.properties?.sqlEndpointProperties?.connectionString })),
-      ...houses.map(w => ({ name: w.displayName, type: 'Warehouse', host: w.properties?.connectionString })),
-    ].filter(i => i.host).sort((a, b) => byName(a.name, b.name));
+    const lakes = await listAll(`/workspaces/${id}/lakehouses`, `Listing lakehouses in ${workspace}`);
+    return lakes.map(l => ({ name: l.displayName, type: 'Lakehouse', host: l.properties?.sqlEndpointProperties?.connectionString }))
+      .filter(i => i.host).sort((a, b) => byName(a.name, b.name));
   }
 
   // [{ id, name, description }] by name.
@@ -172,7 +167,8 @@ function createFabric({ getFabricToken, apiBase = FABRIC_API,
       try {
         const r = await call(getFabricToken, `${apiBase}/workspaces/${id}/appBackends/${encodeURIComponent(appId)}/__private/${route}`,
           { headers: { 'x-ms-workload-resource-moniker': appId } });
-        return r.ok ? await r.json().catch(() => ({})) : {};
+        if (!r.ok) { discard(r); return {}; }
+        return await r.json().catch(() => ({}));
       } catch (_) { return {}; }
     };
     // Two reads per app, a few apps at a time: the whole list at once is a burst of 429s.
@@ -225,8 +221,7 @@ function createFabric({ getFabricToken, apiBase = FABRIC_API,
 
   function reset() { wsIds = null; }
 
-  return { workspaceId, workspaceNames: async () => [...(await workspaces()).keys()].sort(byName),
-           itemOf, itemOfSqlEndpoint, listItems, sqlEndpoints, listSemanticModels, listApps, getBim, reset };
+  return { workspaceId, itemOf, itemOfSqlEndpoint, listItems, sqlEndpoints, listSemanticModels, listApps, getBim, reset };
 }
 
 module.exports = { createFabric, modelFileName, modelAccountDir, modelCopyPath };

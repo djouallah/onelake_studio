@@ -39,8 +39,7 @@ function createReadLog({ log, post, onBurst }) {
   function logBoot(m) {
     const stages = Array.isArray(m.stages) ? m.stages : [];
     log(
-      `${String(Number(m.totalMs) || 0).padStart(6)}ms  BOOT ${String(m.what || 'engine ready').slice(0, 80)}` +
-      (m.quiet ? ' (engine reconnected)' : ''));
+      `${String(Number(m.totalMs) || 0).padStart(6)}ms  BOOT ${String(m.what || 'engine ready').slice(0, 80)}`);
     for (const s of stages) {
       log(`${String(Number(s.ms) || 0).padStart(6)}ms       ${s.stage}`);
     }

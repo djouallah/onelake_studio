@@ -24,7 +24,7 @@ const REQUEST = { file: "sales.yaml", name: "sales", text: OSSIE, state: {}, wor
 
 // `mode`: what Explore's Export window sends (null: none, as the command line without --mode). `models`: the workspace's semantic models by name.
 async function setup({ offline = false, noInternet = false, answers = [], folder = null, token = "t", functionPackage = true,
-                       mode = "duckdb", models = {} } = {}) {
+                       mode = "client", models = {} } = {}) {
   const ext = await mkdtemp(join(tmpdir(), "exportflow-"));
   if (functionPackage) {
     await mkdir(join(ext, "fabric-function"));

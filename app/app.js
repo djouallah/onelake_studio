@@ -13,7 +13,7 @@ import { isDocResult, textLinesDoc, fileExt, isTextExt, escapeHtml, basename,
 // Static import is safe: docview.js is tiny — the markdown renderer it uses is imported
 // only inside renderMarkdown(), and only for a document that IS markdown.
 import { renderDocument } from './docview.js';
-import { mountGrid, cellText } from './grid.js';
+import { mountGrid } from './grid.js';
 import { mountChart } from './chart.js';
 import { mountDbBrowser, dbOverviewHtml, dbObjectHtml } from './dbview.js';
 // Static too, and as cheap: the DAX compiler it runs is imported on the first model only.
@@ -713,9 +713,11 @@ async function peekIntoView() {
     if (stale()) return;
     tableStage = 'peek';
     docAllowed = false;             // a peek is a table, whatever shape it comes back
-    renderResults(out);             // this lands the pane in the Data view by itself
+    // A copy: the grid sorts its rows in place, and `out` is the peek kept for the next click.
+    const shown = { ...out, rows: out.rows.slice() };
+    renderResults(shown);           // this lands the pane in the Data view by itself
     // These rows are on screen like any others. Export and Profile go by the query, the whole table.
-    lastResult = out;
+    lastResult = shown;
     if (activeSqlName) currentSql = `SELECT * FROM ${activeSqlName}`;
     $('chartBtn').disabled = !out.rows.length;
     $('csvBtn').disabled = !out.rows.length || !currentSql;
@@ -1067,7 +1069,7 @@ const isDelta = info => !!(info && info.stats && info.stats.format === 'delta');
 function showMeta(mode) {
   if (!activeInfo || viewMode === mode) return;
   if (viewMode === 'data') {
-    statsPrev = ['resultsHint', 'docView', 'resultsTable', 'docBar', 'gridBar']
+    statsPrev = ['resultsHint', 'docView', 'resultsTable', 'docBar', 'gridBar', 'chartView']
       .map(id => [id, $(id).hidden]);
     for (const [id] of statsPrev) $(id).hidden = true;
   }
@@ -1360,6 +1362,8 @@ function setSaveLabel() {
 async function saveActive() {
   const btn = $('csvBtn');
   btn.disabled = true;
+  // What was on screen: a click elsewhere meanwhile has set the button for what is there now.
+  const shown = lastResult, image = imageUrl;
   try {
     const saved = saveIsFile()
       ? await engine.saveOneLakeFile(lakehouse, activeFile)
@@ -1368,7 +1372,7 @@ async function saveActive() {
   } catch (e) {
     setStatus('Save failed: ' + e.message, 'error');
   } finally {
-    btn.disabled = false;
+    if (lastResult === shown && imageUrl === image) btn.disabled = false;
   }
 }
 

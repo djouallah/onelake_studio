@@ -46,6 +46,16 @@
 - **Fixed: Export to Fabric's app stopped at start** with "the engine is DuckDB v2.0.0-dev88614, but the site's
   extensions are for v2.0.0". DuckDB-WASM 1.33.1-dev110.0 was a dev build of DuckDB 2.0 that refuses its extensions;
   1.33.1-dev114.0, the same source, is v2.0.0 and loads them.
+- **Fixes:**
+  - `onelakeStudio.engineMemoryLimit` is a setting again. It was still used, but had dropped out of the Settings list.
+  - The desktop app's Save and Folder dialogs gave back a wrong path when it had a letter like `é` in it.
+  - Sorting a table's first rows in the grid no longer changes the order they come back in the next time they open.
+  - Stats and History no longer show on top of an open chart.
+  - Export works for a query that ends with `;` and then a `--` comment.
+  - An app exported to Fabric again no longer keeps an old copy of the modules it loads later in the browser.
+  - A value with a control character in it no longer breaks a PivotTable in Excel.
+  - After a Refresh, a table whose metadata can't be read keeps showing what was read before, instead of an error.
+  - A Direct Lake refresh that times out says so at once, instead of after a long wait.
 - The title shows only the first 4 letters of the tenant (`fabr…`), so a screenshot doesn't give it away.
 
 ## 0.2.15

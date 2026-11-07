@@ -55,14 +55,12 @@ function createStore({ dir, backend = null, ttlMs = DEFAULT_TTL_MS, maxBytes = D
   const inflight = new Map();   // key -> Promise<entry>
   const memo = new Map();       // key -> { value, at }   (insertion order = LRU)
   // What another window wrote: what this one holds of it goes, and its listeners hear.
-  if (backend && backend.subscribe) {
-    backend.subscribe(keys => {
-      for (const key of keys) {
-        memo.delete(key);
-        events.emit('changed', key);
-      }
-    });
-  }
+  const unsubscribe = (backend && backend.subscribe && backend.subscribe(keys => {
+    for (const key of keys) {
+      memo.delete(key);
+      events.emit('changed', key);
+    }
+  })) || (() => {});
   let tmpSeq = 0;
   let total = 0;                // bytes on disk, from the sweep plus writes since
 
@@ -331,6 +329,8 @@ function createStore({ dir, backend = null, ttlMs = DEFAULT_TTL_MS, maxBytes = D
   return {
     get, put, peek, known, keptAt, allTables, failureOf, latestRead, usage, clear, forget, size, getBlob, hasBlob, putBlob,
     on: (ev, fn) => { events.on(ev, fn); return () => events.off(ev, fn); },
+    // Swapped out (onelake.useStore): another window's writes are no longer this store's news.
+    close: () => { unsubscribe(); memo.clear(); },
   };
 }
 

@@ -106,6 +106,10 @@ test("names: a member's keys and a ] in them survive the round trip", () => {
   assert.equal(resolve(c, "[Measures].[Secret]"), null);
 });
 
+test("a value with a control character XML has no place for still makes XML MSOLAP can read", () => {
+  assert.equal(esc("a\u0001b\tc<"), "a\ufffdb\tc&lt;");
+});
+
 test("a request: session, restrictions in both forms, catalog, statement", () => {
   const r = parseRequest(`<soap:Envelope><soap:Header><Session SessionId="s-1"/></soap:Header><soap:Body><Discover><RequestType>MDSCHEMA_MEMBERS</RequestType>
     <Restrictions><RestrictionList><CUBE_NAME>Model</CUBE_NAME><MEMBER_UNIQUE_NAME><Value>[a].&amp;[1]</Value><Value>[b]</Value></MEMBER_UNIQUE_NAME></RestrictionList></Restrictions>

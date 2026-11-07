@@ -380,7 +380,7 @@ async function buildDist(outDir, config, build = buildId()) {
     if (/\.(html|js)$/.test(rel) && !rel.startsWith('vendor/')) {
       bytes = Buffer.from(bytes.toString('utf8')
         .replaceAll('__BUILD__', build)
-        .replace(/(\b(?:from|import)\s*["']\.{1,2}\/[\w./-]+\.js)(["'])/g, `$1?v=${build}$2`)
+        .replace(/(\b(?:from|import)\s*\(?\s*["']\.{1,2}\/[\w./-]+\.js)(["'])/g, `$1?v=${build}$2`)
         .replace(/(<link rel="stylesheet" href="\.\/[\w./-]+\.css)(")/g, `$1?v=${build}$2`), 'utf8');
     }
     files.set(rel, bytes);

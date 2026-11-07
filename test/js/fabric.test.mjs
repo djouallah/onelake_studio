@@ -249,23 +249,21 @@ test("a model's local copy is under its account: two tenants can each have sales
 test("the module can only read: no write, no existence check, no storage token", () => {
   assert.deepEqual(Object.keys(fabricModule).sort(), ["createFabric", "modelAccountDir", "modelCopyPath", "modelFileName"]);
   const f = createFabric({ getFabricToken: async () => "fab" });
-  assert.deepEqual(Object.keys(f).sort(), ["getBim", "itemOf", "itemOfSqlEndpoint", "listApps", "listItems", "listSemanticModels", "reset", "sqlEndpoints", "workspaceId", "workspaceNames"]);
+  assert.deepEqual(Object.keys(f).sort(), ["getBim", "itemOf", "itemOfSqlEndpoint", "listApps", "listItems", "listSemanticModels", "reset", "sqlEndpoints", "workspaceId"]);
 });
 
-test("sqlEndpoints: a workspace's lakehouses and warehouses with the endpoint's host; one with none is left out", async () => {
-  const { fabric, restore } = fabricWith([
+test("sqlEndpoints: a workspace's lakehouses with the endpoint's host; one with none is left out", async () => {
+  const { fabric, calls, restore } = fabricWith([
     [/\/v1\/workspaces$/, () => res(200, { value: [{ id: "w1", displayName: "Sales" }] })],
     [/\/workspaces\/w1\/lakehouses$/, () => res(200, { value: [
       { displayName: "nem", properties: { sqlEndpointProperties: { connectionString: "x.datawarehouse.fabric.microsoft.com" } } },
       { displayName: "new", properties: {} }] })],
-    [/\/workspaces\/w1\/warehouses$/, () => res(200, { value: [{ displayName: "dw", properties: { connectionString: "x.datawarehouse.fabric.microsoft.com" } }] })],
   ]);
   try {
     assert.deepEqual(await fabric.sqlEndpoints("Sales"), [
-      { name: "dw", type: "Warehouse", host: "x.datawarehouse.fabric.microsoft.com" },
       { name: "nem", type: "Lakehouse", host: "x.datawarehouse.fabric.microsoft.com" },
     ]);
-    assert.deepEqual(await fabric.workspaceNames(), ["Sales"]);
+    assert.ok(!calls.some(c => /warehouses/.test(c.url)), "warehouses are not asked for");
   } finally { restore(); }
 });
 

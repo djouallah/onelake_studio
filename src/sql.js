@@ -585,4 +585,4 @@ function readsCatalog(sql) {
   return /\bshow\b/i.test(s) || CATALOG_READS.test(s);
 }
 
-module.exports = { sqlStr, quoteIdent, assertReads, checkedRead, tableRefs, fileRefs, filesReadBy, namedError, catalogStatement, isShowAllTables, ALL_TABLES_COUNTED, COLUMNS_NOT_READ, readsCatalog };
+module.exports = { sqlStr, quoteIdent, assertReads, checkedRead, tableRefs, fileRefs, filesReadBy, namedError, catalogStatement, isShowAllTables, withoutComments, ALL_TABLES_COUNTED, COLUMNS_NOT_READ, readsCatalog };

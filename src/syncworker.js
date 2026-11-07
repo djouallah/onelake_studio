@@ -38,6 +38,7 @@ const KEEP_IDLE_MS = 2 * 60 * 1000;  // nothing is brought down until nobody has
 const KEEP_MAX_MS = 10 * 60 * 1000;
 const KEEP_RETRY_MS = 6 * 3600 * 1000;
 const KEEP_WATCH_MS = 3_000;         // how soon someone's statement stops one
+const LEASE_RENEW_MS = 30_000;       // how often a window keeping a table renews its lease
 const KEEP_MAX_FILES = 2000;         // each file's open asks OneLake for its version
 const DAY_MS = 24 * 3600 * 1000;
 
@@ -238,6 +239,12 @@ function createSyncWorker({ onelake, opened = () => [], pinned = () => [], ttlMs
     if (others) busyAt = now();
     if (others) stopKeeping('someone');
     else if (keeping && now() - keeping.began > KEEP_MAX_MS) stopKeeping('slow');
+    // Asked again while keeping, which renews it: a lease left to run out (90s) has another window keep
+    // the same table. Not on every look: a lease is a write, which every window hears.
+    else if (keeping && now() - keeping.leasedAt > LEASE_RENEW_MS) {
+      keeping.leasedAt = now();
+      if (!holdsLease()) stopKeeping('lease');
+    }
   }
 
   function keepEnded(k, e) {
@@ -272,7 +279,7 @@ function createSyncWorker({ onelake, opened = () => [], pinned = () => [], ttlMs
     if (keeping || !keepOn() || now() - busyAt < KEEP_IDLE_MS || (keep.held && keep.held())) return;
     const next = await nextToKeep(keep.limitBytes());
     if (!next || keeping || !holdsLease()) return;
-    const k = { ...next, began: now(), stop: new AbortController(), stoppedFor: null };
+    const k = { ...next, began: now(), leasedAt: now(), stop: new AbortController(), stoppedFor: null };
     keeping = k;
     log(`sync: keeping ${k.name}, ${fmtBytes(k.total)}`);
     watching = setInterval(() => { lookAround().catch(() => {}); }, keepWatchMs);

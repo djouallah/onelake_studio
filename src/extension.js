@@ -1106,7 +1106,7 @@ async function activateInner(context) {
         const old = engines.cacheRoot(), next = engines.fileCacheRootFor();
         if (next !== old) {
           const running = !!engines.current();
-          if (!running) engines.setCacheRoot(next);
+          if (!running) { engines.setCacheRoot(next); core.cacheRootMoved(); }
           const remove = running ? 'Restart Engine and Delete Old Cache' : 'Delete Old Cache';
           const actions = running ? [remove, 'Restart Engine'] : [remove];
           const pick = await vscode.window.showInformationMessage(
@@ -1116,6 +1116,7 @@ async function activateInner(context) {
             closePanel();
             await engines.resetEngine();
             engines.setCacheRoot(next);
+            core.cacheRootMoved();
             vscode.commands.executeCommand('onelakeStudio.open');
           }
           if (pick === remove) await removeDir(old);

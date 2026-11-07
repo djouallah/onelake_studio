@@ -205,7 +205,9 @@ function createEngines({ extensionDir, storageDir, production, serverTag = '', s
     if (background && backgroundAccount !== fileCacheAccount) closeBackgroundEngine({ stop: true });
     if (background) return background;
     backgroundAccount = fileCacheAccount;
-    fileCacheRoot = fileCacheRootFor();
+    // A running engine keeps the folder it started on until it restarts (cacheDirectory), and what
+    // is kept offline goes where that engine reads.
+    if (!engine) fileCacheRoot = fileCacheRootFor();
     const { createEngineHost } = require('./engine-host');
     const { createRemote } = require('./engine-client');
     const options = { ...engineBootOptions(fileCacheAccount, null), ...BACKGROUND_ENGINE };
@@ -215,7 +217,7 @@ function createEngines({ extensionDir, storageDir, production, serverTag = '', s
       remote: createRemote({
         ...sharedEngineServer(fileCacheAccount, { background: true }), options,
         // Nothing is on screen over it. The next tick starts another, and carries on.
-        onGone: () => { if (background === made) background = null; },
+        onGone: () => { if (background === made) { background = null; made.close().catch(() => {}); } },
       }),
     });
     background = made;

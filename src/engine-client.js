@@ -250,7 +250,9 @@ async function openClient({ uri, token, extensionDir, bundledExtensions, lockdow
       // same connection before they have waited on them, about 80s measured, then failed as
       // interrupted itself. So it isn't used again: the next statement gets a connection of its own.
       retire() {
-        attaches.splice(attaches.indexOf(free), 1);
+        // A reattach may have emptied the pool under it: -1 would take the newest one out instead.
+        const at = attaches.indexOf(free);
+        if (at >= 0) attaches.splice(at, 1);
         (async () => {
           const c = await local.connect();
           try { await c.run(`DETACH ${free.name};`); }

@@ -107,9 +107,9 @@ function createFabricModel({ getToken, powerBiToken, sqlToken, apiBase = FABRIC_
       const j = await json(await call(location, { token: powerBiToken, who: 'the Power BI API', what }));
       const status = j && (j.extendedStatus || j.status);
       if (status === 'Completed') return;
-      if (status === 'Failed' || status === 'Cancelled' || status === 'Disabled') {
+      if (status === 'Failed' || status === 'Cancelled' || status === 'Disabled' || status === 'TimedOut') {
         const said = j.messages && j.messages.map(x => x.message).filter(Boolean).join('; ');
-        throw new Error(`${what} ${lc(status)}` + (said ? ` — ${said}` : ''));
+        throw new Error(`${what} ${status === 'TimedOut' ? 'timed out' : lc(status)}` + (said ? ` — ${said}` : ''));
       }
     }
     throw new Error(`${what} did not finish`);

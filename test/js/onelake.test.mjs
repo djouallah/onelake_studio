@@ -240,6 +240,18 @@ test("a table's metadata keeps its own window, and a Refresh of its lakehouse re
   assert.deepEqual(catalog.calls, ["load a", "load a"]);
 });
 
+test("a Refresh whose read fails keeps the table's kept metadata", async () => {
+  const catalog = fakeCatalog();
+  const ol = createOneLake({ catalog, store: createStore({ dir: null, ttlMs: 0 }), tableTtlMs: 24 * 3600e3 });
+  const a = { schema: "dbo", table: "a" };
+  const first = await ol.table(lh, a);
+  catalog.loadTable = async () => { throw Object.assign(new Error("500 from the catalog"), { status: 500 }); };
+  ol.refreshTables({ workspace: "ws", item: "lh.Lakehouse" });
+  const again = await ol.table(lh, a);
+  assert.equal(again.cached, true);
+  assert.equal(again.metadataLocation, first.metadataLocation);
+});
+
 test("a folder that is no table is kept as an answer, read again when used, and offline stands", async () => {
   let valid = false, loads = 0, offline = false;
   const catalog = { ...fakeCatalog(), loadTable: async () => {

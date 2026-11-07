@@ -30,7 +30,7 @@
       "delegateParameters": [
         {
           "name": "ctx",
-          "type": "RayfinContext<BlankAppSchema, AudienceType.Storage | AudienceType.Fabric>",
+          "type": "RayfinContext<BlankAppSchema, AudienceType.Storage>",
           "optional": false,
           "hasDefault": false,
           "position": 0,
@@ -46,8 +46,7 @@
         }
       ],
       "contextAudiences": [
-        "Storage",
-        "Fabric"
+        "Storage"
       ]
     }
   ]

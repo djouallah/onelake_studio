@@ -96,6 +96,7 @@ test("a tab's files are its own: no statement or other tab can take them, and th
 
   await assert.rejects(one.call("fileView", ["v", "COPY (SELECT 1) TO 'x.csv'"]), /Read only/);
   await assert.rejects(one.call("attachFile", [{ path: "/etc/passwd", alias: "x" }]), /attached from OneLake/);
+  await assert.rejects(one.call("attachFile", [{ path: "abfss://c@elsewhere.dfs.core.windows.net/x.duckdb", alias: "x" }]), /attached from OneLake/);
 
   await one.call("releaseFiles", [{ views: ["ones_view"] }]);
   await assert.rejects(still(), /ones_view/);

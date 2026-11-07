@@ -143,6 +143,8 @@ function createCore({
     extensionDir, storageDir, production, serverTag, secrets, settings, httpProxy,
     engineCallbacks, logBoot, logCatalog, closePanel, closeAllTabs, warn, showError,
     onStoreCleared: () => onStoreCleared(),
+    // The cache folder moved (setCacheRoot): the store's Files/ bytes go to the new one too.
+    cacheRootMoved: () => onelake.useStore(storeFor(storeAccount)),
     log,
   });
   const queriesRoot = join(os.homedir(), 'OneLakeStudio', 'queries');

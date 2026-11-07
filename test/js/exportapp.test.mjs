@@ -169,7 +169,7 @@ test("rayfin.yml: the app's id and name, its redirects first", async () => {
 async function fixture(root) {
   const files = {
     "fabric_app/site/index.html": '<link rel="stylesheet" href="./explore/explore.css">\n<script type="module">import { start } from "./app.js"; start();</script>\n<footer>build __BUILD__</footer>\n',
-    "fabric_app/site/app.js": 'import { mountExplore } from "./explore/view.js";\n',
+    "fabric_app/site/app.js": 'import { mountExplore } from "./explore/view.js";\nconst { createModelSource } = await import("./storage/modeldata.js");\n',
     "fabric_app/site/storage/data.js": 'import { renderModel } from "../explore/model.js";\n',
     "fabric_app/site/storage/catalog.js": "// catalog\n",
     "fabric_app/site/storage/auth.js": "// auth\n",
@@ -306,6 +306,8 @@ test("the folder: fabric_app's site and function, Studio's Explore, no model; di
     assert.match(files.get("index.html").toString(), /href="\.\/explore\/explore\.css\?v=20261028-120000"/);
     assert.match(files.get("index.html").toString(), /build 20261028-120000/);
     assert.match(files.get("app.js").toString(), /from "\.\/explore\/view\.js\?v=20261028-120000"/);
+    // A module loaded only when it is needed is stamped too, or a redeploy leaves the old one in the browser.
+    assert.match(files.get("app.js").toString(), /import\("\.\/storage\/modeldata\.js\?v=20261028-120000"\)/);
     assert.match(files.get("explore/view.js").toString(), /from '\.\.\/paths\.js\?v=20261028-120000'/);
     assert.match(files.get("storage/data.js").toString(), /from "\.\.\/explore\/model\.js\?v=20261028-120000"/);
     assert.ok(!files.has("dist/index.html"), "the paths are the site's, at the zip root");

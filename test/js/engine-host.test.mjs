@@ -688,6 +688,9 @@ test("native engine host", async t => {
     assert.equal(r.rows[0].c, 3);
     const pq = await engine.exportTo("SELECT 42 AS answer", "parquet");
     assert.equal((await engine.call("query", [`SELECT answer FROM '${pq}'`])).rows[0].answer, 42);
+    // A ';' before a closing comment isn't left inside the COPY's parenthesis.
+    const noted = await engine.exportTo("SELECT 7 AS n; -- note", "parquet");
+    assert.equal((await engine.call("query", [`SELECT n FROM '${noted}'`])).rows[0].n, 7);
     await assert.rejects(engine.exportTo(`COPY (SELECT 1) TO '${path}'`, "csv"), /Read only/);
     await assert.rejects(engine.exportTo("SELECT 1", "exe"), /no export format/);
   });

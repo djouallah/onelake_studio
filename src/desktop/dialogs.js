@@ -8,6 +8,8 @@
 
 const { spawn } = require('node:child_process');
 
+// A dialog's answer comes back as UTF-8: Windows PowerShell writes a redirected stdout in the OEM code
+// page, and a path with an é in it would come back mangled.
 const FOREGROUND = `
 Add-Type -AssemblyName System.Windows.Forms
 $owner = New-Object System.Windows.Forms.Form
@@ -16,6 +18,7 @@ $owner.ShowInTaskbar = $false
 $owner.Opacity = 0
 $owner.Show()
 $owner.Activate()
+[Console]::OutputEncoding = [Text.Encoding]::UTF8
 `;
 
 const SAVE = `${FOREGROUND}
@@ -37,7 +40,6 @@ $d.Multiselect = $env:OLS_MANY -eq '1'
 if ($env:OLS_TITLE) { $d.Title = $env:OLS_TITLE }
 if ($env:OLS_PATH -and (Test-Path $env:OLS_PATH)) { $d.InitialDirectory = $env:OLS_PATH }
 if ($env:OLS_FILTER) { $d.Filter = $env:OLS_FILTER }
-[Console]::OutputEncoding = [Text.Encoding]::UTF8
 if ($d.ShowDialog($owner) -eq 'OK') { [Console]::Out.Write(($d.FileNames -join "\`n")) }
 $owner.Close()
 `;

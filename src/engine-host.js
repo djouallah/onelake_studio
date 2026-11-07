@@ -33,7 +33,7 @@ const fsp = require('node:fs/promises');
 const { join } = require('node:path');
 const os = require('node:os');
 const { randomBytes } = require('node:crypto');
-const { sqlStr, quoteIdent, assertReads, checkedRead, tableRefs, fileRefs, filesReadBy, namedError, catalogStatement, readsCatalog, COLUMNS_NOT_READ } = require('./sql');
+const { sqlStr, quoteIdent, assertReads, checkedRead, tableRefs, fileRefs, filesReadBy, namedError, catalogStatement, readsCatalog, withoutComments, COLUMNS_NOT_READ } = require('./sql');
 const { SQL_KINDS, sqlName, abfssUrl, MODEL_CATALOG, modelSqlName } = require('./names');
 const { revalidate, sameAnswer } = require('./store');
 const { mapPool } = require('./http');
@@ -1160,7 +1160,8 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
       async attachFile({ path, alias, sqlite = false }) {
         const where = String(path), as = String(alias);
         if (!as) throw new Error('a database has an alias');
-        if (!/^abfss:\/\//i.test(where) && ![...copies.values()].includes(where)) {
+        // OneLake's own host: the token goes with any abfss:// URL, and with no disk cache nothing else stops it.
+        if (!isOneLakeTable(where) && ![...copies.values()].includes(where)) {
           throw new Error(`${where}: a database is attached from OneLake`);
         }
         return stoppable(async (begin, signal) => {
@@ -1375,10 +1376,10 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
       // Strict: it goes inside a COPY of ours, so a read that closes the parenthesis isn't one.
       const read = await checkedRead(sql, serialize, { strict: true });
       const file = join(tmpDir, `export_${tmpName()}.${format}`).replace(/\\/g, '/');
-      await ensureAuth();
       await withAuthRetry(() => withTables(read, statement => {
-        const run = String(statement).trim().replace(/;+\s*$/, '');
-        // The paren on a line of its own: a statement may end with a -- comment.
+        // With its comments gone: `SELECT 1; -- note` ends with no ';' to cut, inside the COPY's
+        // parenthesis. The paren on a line of its own all the same.
+        const run = withoutComments(statement);
         return withConn(c => c.run(`COPY (${run}\n) TO ${sqlStr(file)} (${EXPORTS[format]})`), agentLive);
       }));
       return file;
