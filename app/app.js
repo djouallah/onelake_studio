@@ -158,13 +158,15 @@ function wireUi() {
 }
 
 async function startEngine() {
+  // Taken before the boot: a click during it (a model opened from the tree, say) outranks everything
+  // said below, the welcome page too.
+  const before = selSeq;
   await engineReady;
-  const before = selSeq;          // a click during boot outranks everything said below
   let landingFailed = false;
   // Not when a query from the box got here first: its result is what was asked for.
-  if (README_SQL && !currentSql) landingFailed = !await runQuery({ sql: README_SQL });
+  if (README_SQL && !currentSql && selSeq === before) landingFailed = !await runQuery({ sql: README_SQL });
   // A click while the welcome page was loading owns the status bar (and cancelled it).
-  if (selSeq !== before || activeTableRef || activeFile) return;
+  if (selSeq !== before || activeTableRef || activeFile || modelView) return;
   setStatus('DuckDB ready — pick a table in the OneLake sidebar, or write SQL in the box.' +
     (landingFailed ? ' (The welcome page could not be read — the engine itself is fine.)' : ''),
     landingFailed ? 'warn' : 'ok');
@@ -185,9 +187,13 @@ let runSeq = 0;
 // back before anything of the new one is opened. False when a newer click moved on while
 // this one waited: its table belongs to a lakehouse no longer on screen, so it opens nothing.
 let goSeq = 0;
+// A Refresh under way (the 'reset' message): what is opened next waits for it, or the reset's end would
+// let go of what that open made.
+let resetting = null;
 async function goToLakehouse(workspace, item) {
   const my = ++goSeq;
   await engineReady;
+  if (resetting) await resetting.catch(() => {});
   if (my !== goSeq) return false;
   if (lakehouse && lakehouse.workspace === workspace && lakehouse.item === item) return true;
   const resetP = lakehouse ? leaveLakehouse({ forget: false }) : null;
@@ -934,6 +940,7 @@ function clearResults(hint = '', { error = false } = {}) {
   docSeq++;              // an in-flight showDoc() must not paint over this
   if (grid) { grid.destroy(); grid = null; }
   hideChart();
+  underChart = null;
   $('chartBtn').disabled = true;
   viewMode = 'data';
   statsPrev = null;
@@ -1542,37 +1549,48 @@ function editSql() {
 
 // Chart: the rows on screen drawn (chart.js), in place of the grid until Show Rows.
 let chart = null, chartSeq = 0;
+// What the chart covers, put back on Show Rows: the Pretty document, or the grid, and the Raw/Pretty bar.
+let underChart = null;
 function hideChart() {
   chartSeq++;
   if (chart) { chart.destroy(); chart = null; }
   $('chartView').hidden = true;
   $('chartBtn').textContent = 'Chart';
 }
+function showUnderChart() {
+  const was = underChart || { doc: false, docBar: $('docBar').hidden };
+  underChart = null;
+  $('docBar').hidden = was.docBar;
+  $('docView').hidden = !was.doc;
+  $('resultsTable').hidden = was.doc;
+  $('gridBar').hidden = was.doc || !grid;
+}
 async function toggleChart() {
   if (chart || !$('chartView').hidden) {
     hideChart();
-    $('resultsTable').hidden = false;
-    $('gridBar').hidden = !grid;
+    showUnderChart();
     return;
   }
   if (!lastResult || !lastResult.rows.length) return;
   const seq = ++chartSeq;
+  underChart = { doc: !$('docView').hidden, docBar: $('docBar').hidden };
   $('chartView').hidden = false;
   $('resultsTable').hidden = true;
   $('gridBar').hidden = true;
   $('docView').hidden = true;
+  $('docBar').hidden = true;
   $('chartBtn').textContent = 'Show Rows';
   try {
     const c = await mountChart($('chartView'), lastResult, { echarts: loadEcharts, css: pageCss, say: t => setStatus(t, 'ok') });
     if (seq !== chartSeq) { c.destroy(); return; }
     chart = c;
   } catch (e) {
-    if (seq === chartSeq) { hideChart(); $('resultsTable').hidden = false; setStatus('Could not draw the chart: ' + e.message, 'error'); }
+    if (seq === chartSeq) { hideChart(); showUnderChart(); setStatus('Could not draw the chart: ' + e.message, 'error'); }
   }
 }
 
 // A VS Code theme switch: the chart is drawn again in the new theme (ECharts cannot re-theme one).
-new MutationObserver(() => { if (chart) { hideChart(); toggleChart(); } })
+new MutationObserver(() => { if (chart) { hideChart(); showUnderChart(); toggleChart(); } })
   .observe(document.body, { attributes: true, attributeFilter: ['class'] });
 
 // Profile: each column of the query on screen, every row of it — DuckDB's SUMMARIZE: its type,
@@ -1703,7 +1721,15 @@ window.addEventListener('message', async e => {
       setStatus(`${variables.size} query variable(s) cleared.`, 'ok');
       variables.clear();
     }
-    else if (m.type === 'reset') { await engineReady; await leaveLakehouse(); lakehouse = null; }
+    else if (m.type === 'reset') {
+      await engineReady;
+      // No lakehouse from the start, and a goToLakehouse already under way stands down.
+      const left = leaveLakehouse();
+      lakehouse = null;
+      ++goSeq;
+      resetting = left;
+      try { await left; } finally { if (resetting === left) resetting = null; }
+    }
     else if (m.type === 'reads') showReads(m);
     // The webview's context menu on the grid: Copy, with headers, as CSV, Markdown or JSON.
     else if (m.type === 'grid-copy') { if (grid) grid.copy(String(m.as || 'tsv')); }

@@ -76,7 +76,7 @@ async function main() {
   vscode.attach({
     log,
     push: server.push,
-    origin: server.origin,
+    pagesOrigin: server.pagesOrigin,
     resourceUrl: server.resourceUrl,
     setting,
     session: msal.session,
@@ -110,11 +110,13 @@ async function main() {
         return {
           contributes: packageJSON.contributes, welcome: WELCOME, version: packageJSON.version,
           commit: commitOf(extensionDir), home, homepage: packageJSON.homepage, license: packageJSON.license,
+          pages: server.pagesOrigin(),
           window: windowState.get('window', {}),
           contexts: desktop.contexts, views: [...desktop.views.keys()],
           statusItems: [...desktop.statusItems.values()].filter(i => i.shown).map(i => ({ id: i.id, alignment: i.alignment, priority: i.priority, text: i.text, tooltip: i.tooltip, command: i.command, shown: true })),
         };
       case 'tree.children': return desktop.treeChildren(args[0], args[1]);
+      case 'tree.tooltip': return desktop.treeTooltip(args[0], args[1]);
       case 'tree.click': return run(() => desktop.treeClick(args[0], args[1]));
       case 'tree.run': return run(() => desktop.treeRun(args[0], args[1], args[2]));
       case 'command': return run(() => vscode.commands.executeCommand(args[0]));

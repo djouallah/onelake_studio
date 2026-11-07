@@ -136,9 +136,13 @@ function createSyncWorker({ onelake, opened = () => [], pinned = () => [], ttlMs
   // One listing read and written, or why not. False stops the tick.
   async function run(t, mine) {
     try {
-      await inTurn(behind, () => readJob(onelake, t));
+      // A table's metadata can sit in the catalog's backoff for a minute and more. Someone waiting
+      // (first) doesn't wait behind that: the background's read gives way, and is tried next tick.
+      const giveWay = () => { if (waiting.length) throw Object.assign(new Error('someone is waiting'), { gaveWay: true }); };
+      await inTurn(behind, () => readJob(onelake, t, { onWait: giveWay }));
       retryAt.delete(idOf(t));
     } catch (e) {
+      if (e && e.gaveWay) return false;
       if (e && e.offline) return false;
       if (failed(t, e)) return false;
     }

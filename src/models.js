@@ -29,21 +29,23 @@ function createModels({ onelake, fabric, semviews, modules, modelsFolder, accoun
   // A model's local copy is kept per account (fabric.js modelCopyPath). The copies from before
   // that move once; opening a model waits for it, so it finds its copy where it now is.
   let modelsAdopted = Promise.resolve(0);
-  // A model's local copy is data, so it is in the cache folder. Where an older version kept them, the
-  // whole of this account's folder moves, and each view is pointed at its new place.
-  function adoptModels() {
-    modelsAdopted = (async () => {
-      const here = modelAccountDir(modelsFolder(), account()), before = modelAccountDir(oldModels, account());
-      let moved = await semviews.adoptCopies(oldModels, before);
+  // A model's local copy is data, so it is in the cache folder. Where an older version kept them, or
+  // the cache folder that was (`from`, its models folder), the whole of this account's folder moves,
+  // and each view is pointed at its new place.
+  function adoptModels(from = oldModels) {
+    modelsAdopted = modelsAdopted.then(async () => {
+      const here = modelAccountDir(modelsFolder(), account()), before = modelAccountDir(from, account());
+      if (before === here) return 0;
+      let moved = from === oldModels ? await semviews.adoptCopies(oldModels, before) : 0;
       if (existsSync(before)) {
         await fsp.cp(before, here, { recursive: true, force: false });
         moved += await semviews.adoptCopies(before, here) + 1;
         await fsp.rm(before, { recursive: true, force: true });
-        await fsp.rmdir(oldModels).catch(() => {});
+        await fsp.rmdir(from).catch(() => {});
       }
       log(moved ? `move: model copies: moved to ${here}, with ${moved - 1} views pointed there` : 'move: model copies: nothing to move');
       return moved;
-    })().catch(e => {
+    }).catch(e => {
       log(`move: the local copies of models could not be moved, and are tried again next time — ${e.message}`);
       return 0;
     });
@@ -235,8 +237,8 @@ function createModels({ onelake, fabric, semviews, modules, modelsFolder, accoun
   }
 
   // What Go to can name, from the cache alone (cachedSqlTables, below): every cached table
-  // with its columns, every semantic model, and the measures and columns of a model kept as a
-  // view (its local file; one in OneLake gives its name only). Read again after a minute.
+  // with its columns, every semantic model, and the measures of a model kept as a view (its
+  // local file; one in OneLake gives its name only). Read again after a minute.
   function completionNames() {
     if (namesKept && Date.now() - namesKept.at < 60_000) return namesKept.value;
     const value = (async () => {
@@ -248,7 +250,7 @@ function createModels({ onelake, fabric, semviews, modules, modelsFolder, accoun
         const key = `${f.workspace}|${f.model}`.toLowerCase();
         const m = models.get(key);
         if (m) m.modelId = m.modelId || f.modelId;
-        else models.set(key, { workspace: f.workspace, model: f.model, modelId: f.modelId, measures: [], columns: [] });
+        else models.set(key, { workspace: f.workspace, model: f.model, modelId: f.modelId, measures: [] });
       }
       for (const v of await semviews.list().catch(() => [])) {
         const m = v.schema && v.path && models.get(`${v.schema}|${v.name}`.toLowerCase());
@@ -256,10 +258,7 @@ function createModels({ onelake, fabric, semviews, modules, modelsFolder, accoun
         try {
           const { semantic, compiler } = await modules();
           const bim = semantic.bimOf(v.path, await fsp.readFile(v.path, 'utf8'), compiler);
-          for (const t of (bim.model || bim).tables || []) {
-            for (const x of t.measures || []) m.measures.push(x.name);
-            for (const c of t.columns || []) if (!c.isHidden) m.columns.push({ table: t.name, name: c.name });
-          }
+          for (const t of (bim.model || bim).tables || []) for (const x of t.measures || []) m.measures.push(x.name);
         } catch (_) { /* a file in OneLake, or one that cannot be read: its name alone */ }
       }
       return { tables, models: [...models.values()] };

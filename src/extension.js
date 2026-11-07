@@ -312,7 +312,7 @@ async function installSkill(context) {
   await writeSkill(context.extensionUri.fsPath);
   vscode.window.showInformationMessage(
     'OneLake Studio: Claude Code and GitHub Copilot can now answer questions about your OneLake data and semantic models, ' +
-    'through this extension while VS Code is open. It needs Node.js on PATH.',
+    'through this extension while VS Code is open, and on Windows with it closed too. It needs Node.js on PATH.',
     'Open Skill').then(pick => {
     if (pick === 'Open Skill') vscode.window.showTextDocument(vscode.Uri.file(skillFile()));
   });
@@ -1106,7 +1106,8 @@ async function activateInner(context) {
         const old = engines.cacheRoot(), next = engines.fileCacheRootFor();
         if (next !== old) {
           const running = !!engines.current();
-          if (!running) { engines.setCacheRoot(next); core.cacheRootMoved(); }
+          let moved = Promise.resolve();
+          if (!running) { engines.setCacheRoot(next); moved = core.cacheRootMoved(old); }
           const remove = running ? 'Restart Engine and Delete Old Cache' : 'Delete Old Cache';
           const actions = running ? [remove, 'Restart Engine'] : [remove];
           const pick = await vscode.window.showInformationMessage(
@@ -1116,10 +1117,10 @@ async function activateInner(context) {
             closePanel();
             await engines.resetEngine();
             engines.setCacheRoot(next);
-            core.cacheRootMoved();
+            moved = core.cacheRootMoved(old);
             vscode.commands.executeCommand('onelakeStudio.open');
           }
-          if (pick === remove) await removeDir(old);
+          if (pick === remove) { await moved; await removeDir(old); }
         }
       }
       if (e.affectsConfiguration('onelakeStudio.tableOpensOn') ||

@@ -183,3 +183,34 @@ test("a model opened from the tree is its own semantic model: its workspace and 
   await rm(dir, { recursive: true, force: true });
   await done();
 });
+
+test("Publish Folder As Is only for a folder made for the same kind of site: DuckDB in the browser, or a semantic model", async () => {
+  const cases = [
+    // [what the folder was made for, the site it has, this export, As Is offered, why not]
+    ["duckdb", {}, "directLake", false, /the folder was made for Client side, and this export is Direct Lake, so only Overwrite changes what the app runs on\./],
+    [undefined, { "site/engine.json": '{"engine":"semanticModel"}' }, "client", false, /the folder was made for a semantic model, and this export is Client side/],
+    ["directQuery", { "site/engine.json": '{"engine":"semanticModel"}' }, "directLake", true, null],
+  ];
+  for (const [engine, site, mode, offered, why] of cases) {
+    const open = await mkdtemp(join(tmpdir(), "exportflow-open-"));
+    const outDir = join(open, "sales-model-explore");
+    for (const [p, body] of Object.entries(site)) {
+      await mkdir(join(outDir, ...p.split("/").slice(0, -1)), { recursive: true });
+      await writeFile(join(outDir, ...p.split("/")), body);
+    }
+    await mkdir(outDir, { recursive: true });
+    await writeFile(join(outDir, ".onelake-studio-export.json"), JSON.stringify({
+      model: "power bi/nem.Lakehouse/Files/semantic_model/sales.yaml", engine, files: { "site/app.js": "edited since" } }));
+    const { exportExplore, asked, done } = await setup({ folder: open, answers: ["Export", undefined], mode });
+    const e = await exportExplore(REQUEST).then(() => null, x => x);
+    assert.equal(e.declined, true);
+    assert.equal(e.message, "Not exported: the local copy has changes.");
+    const [o, ...buttons] = asked[1].rest;
+    assert.match(asked[1].message, /has changed since it was last published/);
+    assert.deepEqual(buttons, offered ? ["Overwrite Local Changes", "Publish Folder As Is"] : ["Overwrite Local Changes"], `${engine} -> ${mode}`);
+    if (why) assert.match(o.detail, why);
+    else assert.match(o.detail, /Publish As Is: publish the folder's site/);
+    await rm(open, { recursive: true, force: true });
+    await done();
+  }
+});

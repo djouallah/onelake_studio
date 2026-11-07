@@ -56,6 +56,17 @@
   - A value with a control character in it no longer breaks a PivotTable in Excel.
   - After a Refresh, a table whose metadata can't be read keeps showing what was read before, instead of an error.
   - A Direct Lake refresh that times out says so at once, instead of after a long wait.
+  - Changing `cacheDirectory` moves your downloaded semantic models to the new folder, so Delete Old Cache no longer
+    removes them, and files you open go to the new folder too.
+  - A table dropped and created again with the same name shows its own Stats and History, not the old table's.
+  - A semantic-model app (DirectQuery or Direct Lake) uses the model it was exported with, so a measure renamed later
+    no longer breaks it until you export again. Its previews fetch only the rows they show, its row count is counted
+    by the semantic model, and an answer cut short says so.
+  - Publish Folder As Is is not offered when the folder was made for another engine than the one you picked (Client
+    side or a semantic model): only Overwrite changes what the app runs on.
+  - The desktop app shows a table's tooltip in the tree, and a tab's page can no longer reach the window's controls.
+  - Show Rows after a chart goes back to the Pretty document when that was showing, and a model opened while the
+    engine starts keeps its status line.
 - The title shows only the first 4 letters of the tenant (`fabr…`), so a screenshot doesn't give it away.
 
 ## 0.2.15

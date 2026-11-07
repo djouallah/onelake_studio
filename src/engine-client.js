@@ -76,9 +76,12 @@ function connectControl(path, token, window, waitMs = BOOT_MS) {
       const nl = buf.indexOf('\n');
       if (nl < 0) return;
       sock.off('data', onData);
+      // Held until controlChannel listens: news the server sends meanwhile, and what came after the
+      // hello in this chunk (`rest`), are its to read.
+      sock.pause();
       let state = null;
       try { state = JSON.parse(buf.slice(0, nl)); } catch (_) {}
-      if (state && state.ok) done({ sock, state });
+      if (state && state.ok) done({ sock, state, rest: buf.slice(nl + 1) });
       else { sock.destroy(); done(null); }
     };
     sock.on('data', onData);
@@ -301,10 +304,10 @@ async function openClient({ uri, token, extensionDir, bundledExtensions, lockdow
 }
 
 // Questions on the control pipe, answered by id. A line with no id is the server's own news.
-function controlChannel(sock, onNews = () => {}) {
+function controlChannel(sock, onNews = () => {}, rest = '') {
   const asked = new Map();
   let seq = 0, lines = '';
-  sock.on('data', chunk => {
+  const read = chunk => {
     lines += chunk;
     for (let nl; (nl = lines.indexOf('\n')) >= 0;) {
       let m = null;
@@ -316,7 +319,10 @@ function controlChannel(sock, onNews = () => {}) {
       asked.delete(m.id);
       if (m.error) waiting.reject(new Error(m.error)); else waiting.resolve(m.value);
     }
-  });
+  };
+  read(rest);
+  sock.on('data', read);
+  sock.resume();
   sock.on('close', () => {
     for (const w of asked.values()) w.reject(new Error('the engine stopped'));
     asked.clear();
@@ -388,6 +394,7 @@ async function stopServer({ key, getToken }) {
   if (!token) return;
   const joined = await connectControl(pipe, token, crypto.randomBytes(6).toString('hex'), CONNECT_MS);
   if (!joined) return;
+  joined.sock.resume();
   await new Promise(resolve => {
     const timer = setTimeout(resolve, 5_000);
     joined.sock.once('close', () => { clearTimeout(timer); resolve(); });
@@ -413,18 +420,28 @@ async function stopServer({ key, getToken }) {
  */
 function createRemote({ onGone = () => {}, ...cfg }) {
   return async () => {
-    const { sock, state, token, window, options } = await joinServer(cfg);
-    let client;
+    const { sock, state, rest, token, window, options } = await joinServer(cfg);
+    // Listened to from here, not once the client is open: that takes seconds, and a reattach said or the
+    // server gone meanwhile was lost, with a dead engine left in the window.
+    let client = null, closing = false, gone = false, reattachSaid = false;
+    sock.on('error', () => {});
+    sock.on('close', () => { gone = true; if (!closing && client) onGone(); });
+    const ask = controlChannel(sock, m => {
+      if (!m.reattach || closing) return;
+      if (client) client.reattach().catch(() => {});
+      else reattachSaid = true;
+    }, rest);
     try {
       client = await openClient({ uri: state.uri, token, extensionDir: options.extensionDir, bundledExtensions: options.bundledExtensions });
     } catch (e) { sock.destroy(); throw e; }
+    if (gone) {
+      client.stopGrowing();
+      try { client.admin.closeSync(); } catch (_) {}
+      try { client.local.closeSync(); } catch (_) {}
+      throw new Error('the engine stopped');
+    }
+    if (reattachSaid) client.reattach().catch(() => {});
     const { local, admin, route, stopGrowing, reattachControl, listTagged, cancelIds } = client;
-
-    let closing = false;
-    sock.on('error', () => {});
-    sock.on('close', () => { if (!closing) onGone(); });
-
-    const ask = controlChannel(sock, m => { if (m.reattach && !closing) client.reattach().catch(() => {}); });
     const recover = recovery(ask, client);
 
     let seq = 0;

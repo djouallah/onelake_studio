@@ -65,12 +65,23 @@ const ctx = extra => ({ ...contexts, ...extra });
 // Menus
 // ---------------------------------------------------------------------------
 const menu = $('menu');
+menu.tabIndex = -1;
 let menuOwner = null;   // the menu bar's title whose menu is open, if it's one of those
+// The tab whose page had the keys when the menu opened. A page is another origin, so the keys it has
+// never reach this page's handler: the menu takes them while it's open, and gives them back.
+let menuFrom = null;
 function setMenuOwner(i) {
   menuOwner = i;
   [...$('menubar').children].forEach((b, k) => b.classList.toggle('open', k === i));
 }
-function closeMenu() { menu.hidden = true; menu.replaceChildren(); setMenuOwner(null); }
+function closeMenu() {
+  const back = menuFrom && menu.contains(document.activeElement) ? menuFrom : null;
+  menuFrom = null;
+  menu.hidden = true;
+  menu.replaceChildren();
+  setMenuOwner(null);
+  if (back && back.isConnected) back.focus();
+}
 
 // A contributed menu's entries that apply, in their groups and order: [[{ command, title, icon }]].
 function entries(where, context, { inline = null } = {}) {
@@ -115,6 +126,10 @@ function openMenu(x, y, groups, run, owner = null) {
   menu.style.left = `${Math.max(4, Math.min(x, innerWidth - r.width - 4))}px`;
   menu.style.top = `${Math.max(4, Math.min(y, innerHeight - r.height - 4))}px`;
   setMenuOwner(owner);
+  if (document.activeElement instanceof HTMLIFrameElement) {
+    menuFrom = document.activeElement;
+    menu.focus({ preventScroll: true });
+  }
 }
 function highlight(entry) {
   for (const e of menu.querySelectorAll('.entry.on')) e.classList.remove('on');
@@ -180,6 +195,22 @@ function toggle(n) {
   reload();
 }
 
+// A node drawn with no tooltip (a table) asks for its own when the pointer rests on it, once, as VS
+// Code does: a lakehouse can draw thousands.
+let resting = null;
+function tooltipSoon(n) {
+  clearTimeout(resting);
+  if (n.tooltip || n.tooltipAsked) return;
+  resting = setTimeout(async () => {
+    n.tooltipAsked = true;
+    const text = await call('tree.tooltip', VIEW, n.id).catch(() => '');
+    if (!text) return;
+    n.tooltip = text;
+    const el = [...tree.querySelectorAll('.row')].find(r => r.dataset.id === n.id);
+    if (el) el.title = text;
+  }, 300);
+}
+
 function row(n, depth) {
   const inline = entries('view/item/context', ctx({ view: VIEW, viewItem: n.contextValue }), { inline: true }).flat();
   const el = h('div', {
@@ -199,6 +230,8 @@ function row(n, depth) {
         command => call('tree.run', VIEW, n.id, command).catch(() => {}));
     },
     ondragstart: e => { e.dataTransfer.setData('text/plain', n.dragText); e.dataTransfer.effectAllowed = 'copy'; },
+    onpointerenter: () => tooltipSoon(n),
+    onpointerleave: () => clearTimeout(resting),
   },
   h('span', { class: `twist codicon ${n.collapsible ? (isOpen(n) ? 'codicon-chevron-down' : 'codicon-chevron-right') : ''}`,
               onclick: e => { if (n.collapsible) { e.stopPropagation(); toggle(n); } } }),
@@ -378,12 +411,12 @@ async function settingsTab() {
 function tabMessage(id, msg) {
   const t = tabs.get(id);
   if (!t) return;
-  if (t.loaded) t.page.contentWindow.postMessage(msg, location.origin);
+  if (t.loaded) t.page.contentWindow.postMessage(msg, boot.pages);
   else t.waiting.push(msg);
 }
 
 addEventListener('message', e => {
-  if (e.origin !== location.origin || !e.data) return;
+  if (!boot || e.origin !== boot.pages || !e.data) return;
   const d = e.data;
   const from = [...tabs.values()].find(t => t.page.contentWindow === e.source);
   if (!from) return;
@@ -392,6 +425,11 @@ addEventListener('message', e => {
     const r = from.page.getBoundingClientRect();
     openMenu(r.left + d.x, r.top + d.y, entries('webview/context', ctx({ webviewId: from.viewType, ...d.context })), runCommand);
   } else if (d.olsFocus) closeMenu();
+  else if (d.olsKey) {
+    // One of the window's shortcuts, typed in the page: only those, whatever else a page says.
+    const run = KEYS[chordOf(d.key || {})];
+    if (run) run();
+  }
 });
 
 // ---------------------------------------------------------------------------
@@ -556,7 +594,7 @@ function on(m) {
       const t = tabs.get(m.id);
       frame.addEventListener('load', () => {
         t.loaded = true;
-        for (const msg of t.waiting.splice(0)) frame.contentWindow.postMessage(msg, location.origin);
+        for (const msg of t.waiting.splice(0)) frame.contentWindow.postMessage(msg, boot.pages);
       });
       break;
     }
@@ -564,7 +602,8 @@ function on(m) {
       const t = tabs.get(m.id);
       if (!t) break;
       t.loaded = false;
-      t.page.src = `/tab/${encodeURIComponent(m.id)}?dark=${dark ? 1 : 0}&rev=${m.rev}`;
+      // From the pages' port, another origin than this page's (server.js), told which keys are the window's.
+      t.page.src = `${boot.pages}/tab/${encodeURIComponent(m.id)}?dark=${dark ? 1 : 0}&rev=${m.rev}&keys=${encodeURIComponent(tabKeys())}`;
       break;
     }
     case 'tab-post': tabMessage(m.id, m.msg); break;
@@ -796,7 +835,7 @@ async function checkForUpdates() {
 }
 
 // ---------------------------------------------------------------------------
-// Keys: the same wherever the focus is, as a tab's page sends its keys here first (server.js, bridge)
+// Keys: the same wherever the focus is, as a tab's page sends the window's keys here (server.js, bridge)
 // ---------------------------------------------------------------------------
 const KEYS = {
   'ctrl+n': () => runCommand('onelakeStudio.newQuery'),
@@ -819,14 +858,17 @@ const KEYS = {
   'alt+h': () => openBarMenu(2, true),
 };
 
-/** Is this key the window's? Then it's done here, and the page and the browser leave it. */
-window.olsKeydown = e => {
+/** Is this key the window's? Then it's done here, and the browser leaves it. */
+function keydown(e) {
   if (menuKey(e)) return true;
   const chord = chordOf(e);
   if (KEYS[chord]) { KEYS[chord](); return true; }
   return BROWSER_KEYS.has(chord);
-};
-addEventListener('keydown', e => { if (window.olsKeydown(e)) e.preventDefault(); });
+}
+addEventListener('keydown', e => { if (keydown(e)) e.preventDefault(); });
+// What a tab's page leaves to the window, in the page's address (server.js, bridge): its shortcuts,
+// which it sends here, and the browser's own, which do nothing.
+const tabKeys = () => JSON.stringify([...Object.keys(KEYS), ...BROWSER_KEYS]);
 addEventListener('contextmenu', e => {
   const editable = e.target instanceof Element && e.target.closest('input, textarea');
   if (!editable && !String(getSelection())) e.preventDefault();

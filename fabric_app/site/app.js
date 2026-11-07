@@ -5,10 +5,11 @@
 // this app (storage/data.js): it signs in, its function reads the model from the lakehouse and
 // says where the tables are, and DuckDB-WASM reads them in this browser. Exported as DirectQuery
 // or Direct Lake (engine.json), the data source is storage/modeldata.js instead: each query runs as
-// DAX on the semantic model the export made, as the person signed in, and this page loads no DuckDB. The model is never
-// copied into the app: it is the lakehouse's file, as it is now. Nothing here is specific to
-// one model; the export writes only rayfin.config.json (the backend) and explore.json (the
-// shelves the first view shows).
+// DAX on the semantic model the export made, as the person signed in, and this page loads no DuckDB.
+// Client side the model is never copied into the app: it is the lakehouse's file, as it is now. On a
+// semantic model it is model.json, the definition the semantic model was made from. Nothing here is
+// specific to one model; the export writes only rayfin.config.json (the backend), explore.json (the
+// shelves the first view shows), and on a semantic model engine.json and model.json.
 // =============================================================================
 import { mountExplore } from "./explore/view.js";
 import { tmslOf } from "./explore/model.js";

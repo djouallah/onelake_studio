@@ -11,7 +11,8 @@ const { existsSync } = require('node:fs');
 const fsp = require('node:fs/promises');
 const { modelFileName } = require('./fabric');
 const { PINS } = require('./vendored');
-const { planExport, writeExport, buildDist, writeMarker, readMarker, fingerprint, localChanges, vendorSize, zip, rayfinYml } = require('./exportapp');
+const { planExport, modelDoc, writeExport, writeModel, engineOf, buildDist, writeMarker, readMarker, fingerprint, localChanges,
+        vendorSize, zip, rayfinYml } = require('./exportapp');
 const { createFabricApp, tenantOf } = require('./fabricapp');
 const { createOneLakeWriter } = require('./onelakewrite');
 const { createFabricModel } = require('./fabricmodel');
@@ -20,6 +21,8 @@ const { semanticTmsl, definitionOf, MODES } = require('./pbimodel');
 // What the app runs on, as Explore's Export window and the command line's --mode name it.
 // Neither says: Direct Lake.
 const MODE_OF = { client: 'duckdb', directquery: 'directQuery', directlake: 'directLake' };
+// What a folder's site runs on, as the questions say it (exportapp.js engineOf).
+const RUNS_ON = { duckdb: 'Client side', directLake: 'Direct Lake', directQuery: 'DirectQuery', semanticModel: 'a semantic model' };
 
 /**
  * @param {object} o
@@ -120,8 +123,11 @@ function createExport({ connectivity, modules, hostToken, appToken, powerBiToken
       // What the app runs on: DuckDB in the browser, or a semantic model of this one, which is
       // worked out here (a model that can't be one says so now) and written once all is asked.
       plan.engine = MODE_OF[String(mode ?? 'directlake').toLowerCase()];
-      let tmsl = null, existing = null;
+      // `definition`: the model file as the semantic model is made from it, which the page writes its
+      // DAX from (site/model.json): not the lakehouse's file, which can change after this.
+      let tmsl = null, existing = null, definition = null;
       if (plan.engine !== 'duckdb') {
+        definition = modelDoc(text, file, mods).doc;
         if (plan.engine === 'directQuery') plan.sqlEndpoint = await sqlEndpointOf(plan);
         tmsl = semanticTmsl(mods.semantic.bimOf(file, text, mods.compiler), plan.engine, {
           name: pbi.name, tables: plan.tables, lake: { workspace: plan.workspace, item: plan.lakehouse }, sqlEndpoint: plan.sqlEndpoint });
@@ -178,17 +184,23 @@ function createExport({ connectivity, modules, hostToken, appToken, powerBiToken
         if (pick !== 'Replace It') throw declined(`Not exported: ${plan.name} is another model's app.`);
       }
 
-      // Edited since it was last published (by you, or an agent)? Asked, never overwritten.
+      // Edited since it was last published (by you, or an agent)? Asked, never overwritten. As Is
+      // publishes the folder's site, which runs on what it was made for, DuckDB in the browser or a
+      // semantic model: not offered for an export to the other.
       let asIs = false;
       const changed = await localChanges(outDir, before);
       if (changed.length) {
         const shown = changed.slice(0, 5).join('\n') + (changed.length > 5 ? `\n…and ${changed.length - 5} more` : '');
+        const made = await engineOf(outDir, before);
+        const sameSite = (made === 'duckdb') === (plan.engine === 'duckdb');
+        const asIsSays = sameSite ? "Publish As Is: publish the folder's site with your changes, and leave it alone."
+          : `Publish As Is is not offered: the folder was made for ${RUNS_ON[made] || made}, and this export is ${RUNS_ON[plan.engine]}, so only Overwrite changes what the app runs on.`;
         const pick = await ui.warn(
           `The local copy of ${plan.name} has changed since it was last published.`,
-          { modal: true, detail: `${outDir}\n\n${shown}\n\nOverwrite: rewrite it from this Explore, and publish that. Publish As Is: publish the folder's site with your changes, and leave it alone. The function always comes from this version of the extension.` },
-          'Overwrite Local Changes', 'Publish Folder As Is');
+          { modal: true, detail: `${outDir}\n\n${shown}\n\nOverwrite: rewrite it from this Explore, and publish that. ${asIsSays} The function always comes from this version of the extension.` },
+          'Overwrite Local Changes', ...(sameSite ? ['Publish Folder As Is'] : []));
         if (!pick) throw declined('Not exported: the local copy has changes.');
-        asIs = pick === 'Publish Folder As Is';
+        asIs = sameSite && pick === 'Publish Folder As Is';
       }
 
       // Deployed again since this folder published it (another machine, rayfin up)?
@@ -266,10 +278,13 @@ function createExport({ connectivity, modules, hostToken, appToken, powerBiToken
             }
             plan.semanticModel = { workspace: pbi.workspaceId, id, name: pbi.name };
           }
-          if (asIs) say(`app ${plan.name}: publishing ${outDir} as it is`);
-          else {
+          if (asIs) {
+            say(`app ${plan.name}: publishing ${outDir} as it is`);
+            // The semantic model was made again above: the page's copy of the model goes with it.
+            if (definition) await writeModel(outDir, definition);
+          } else {
             say(`app ${plan.name}: writing the local copy to ${outDir}`);
-            marker = await writeExport({ plan, state, outDir, fabricAppDir, appDir,
+            marker = await writeExport({ plan, state, model: definition, outDir, fabricAppDir, appDir,
                                          daxSqlDir: join(ext, 'vendor', 'npm', PINS.daxSql),
                                          webappDir: join(ext, 'vendor', 'webapp') });
           }
@@ -301,7 +316,7 @@ function createExport({ connectivity, modules, hostToken, appToken, powerBiToken
           // What was published, to compare the next export with: the folder's files, and the
           // deploy's time by Fabric's clock.
           const live = await fabricApp.deployStatus(plan.workspace, done.itemId).catch(() => null);
-          await writeMarker(outDir, { ...marker, itemId: done.itemId, hostingUrl: done.hostingUrl,
+          await writeMarker(outDir, { ...marker, engine: plan.engine, itemId: done.itemId, hostingUrl: done.hostingUrl,
                                       redirects: done.redirects, exportedAt: new Date().toISOString(),
                                       deployedAt: (live && live.lastSuccessfulDeploymentAt) || new Date().toISOString(),
                                       files: await fingerprint(outDir) });

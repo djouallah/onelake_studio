@@ -48,11 +48,14 @@ function summarize(metadata, metadataLocation) {
   // Which format the table is written in: a Delta table's Stats and History come from its own
   // log rather than from the conversion.
   const { format, deltaVersion } = names.sourceFormat(metadata);
+  // Which table this is: one dropped and made again at the same path starts its Delta log over at 0, and
+  // what was kept of the old one's log must not answer for it.
+  const tableUuid = metadata['table-uuid'] || null;
   // Listed by the catalog but never written: snapshot -1, no snapshots, no files. DuckDB
   // opens it as an empty table against the right schema.
   if (!snap || String(curId) === '-1' || !snapshots.length) {
     return { empty: true, schemaFields: names.icebergFields(schema), totalRecords: 0, stats: null,
-             metadataLocation, format };
+             metadataLocation, format, ...(tableUuid ? { tableUuid } : {}) };
   }
   return {
     empty: false,
@@ -70,6 +73,7 @@ function summarize(metadata, metadataLocation) {
     },
     metadataLocation,
     format,
+    ...(tableUuid ? { tableUuid } : {}),
   };
 }
 
@@ -315,7 +319,7 @@ function createOneLake({ catalog, store, prefetchEnabled = () => true, onHit = (
     if (!at) throw new Error('the catalog gave this table no location to find its Delta log at');
     // A log file never changes once written, so its text is kept for good.
     const readText = async path => {
-      const k = keys.bytes(at.workspace, path, 'immutable');
+      const k = keys.bytes(at.workspace, path, meta.tableUuid ? `immutable ${meta.tableUuid}` : 'immutable');
       let bytes = await store.getBlob(k);
       if (!bytes) { bytes = await catalog.readBytes(at.workspace, path); await store.putBlob(k, bytes); }
       return new TextDecoder().decode(bytes);
@@ -361,11 +365,15 @@ function createOneLake({ catalog, store, prefetchEnabled = () => true, onHit = (
     if (version == null) throw new Error('the Iceberg metadata does not say which Delta version it was converted from');
     const k = keys.deltaState(at, version);
     const kept = await store.peek(k);
-    if (kept) return { ...kept, cached: true };
+    const uuid = meta.tableUuid || null;
+    if (kept && (kept.tableUuid || null) === uuid) {
+      const { tableUuid: _, ...state } = kept;
+      return { ...state, cached: true };
+    }
     const s = await deltalog.readDeltaState({ readText, readFresh, readCheckpoint: checkpointReader(at, readText, run) },
       at.dir, version);
     // Only what the log said. Nothing found is kept nowhere: a version's state never changes, this might.
-    if (s.source) await store.put(k, s);
+    if (s.source) await store.put(k, { ...s, ...(uuid ? { tableUuid: uuid } : {}) });
     return { ...s, cached: false };
   }
 
@@ -377,13 +385,18 @@ function createOneLake({ catalog, store, prefetchEnabled = () => true, onHit = (
    */
   async function deltaHistory(lh, t, { skip = 0 } = {}) {
     const { meta, at, readText } = await deltaTarget(lh, t);
-    const load = f => get(keys.deltaCommits(lh, t), () => deltalog.listCommits(d => catalog.listDir(at.workspace, d), at.dir),
-      { fresh: f, ...(tableTtlMs != null ? { ttl: tableTtlMs } : {}) });
+    const uuid = meta.tableUuid || null;
+    const load = f => get(keys.deltaCommits(lh, t), async () => {
+      const commits = await deltalog.listCommits(d => catalog.listDir(at.workspace, d), at.dir);
+      return uuid ? commits.map(c => ({ ...c, tableUuid: uuid })) : commits;
+    }, { fresh: f, ...(tableTtlMs != null ? { ttl: tableTtlMs } : {}) });
     const listing = async ({ fresh }) => {
       let r = await load(!!fresh);
       const newest = r.value.length ? r.value[0].version : -1;
       const behind = meta.stats && meta.stats.deltaVersion != null && newest < meta.stats.deltaVersion;
-      if (r.cached && (behind || r.at < refreshedSince(lh))) r = await load(true);
+      // Another table's log, one dropped and made again at the same path.
+      const another = r.value.length > 0 && (r.value[0].tableUuid || null) !== uuid;
+      if (r.cached && (behind || another || r.at < refreshedSince(lh))) r = await load(true);
       return r.value;
     };
     // A kept listing can name commits log retention has deleted since.

@@ -143,8 +143,6 @@ function createCore({
     extensionDir, storageDir, production, serverTag, secrets, settings, httpProxy,
     engineCallbacks, logBoot, logCatalog, closePanel, closeAllTabs, warn, showError,
     onStoreCleared: () => onStoreCleared(),
-    // The cache folder moved (setCacheRoot): the store's Files/ bytes go to the new one too.
-    cacheRootMoved: () => onelake.useStore(storeFor(storeAccount)),
     log,
   });
   const queriesRoot = join(os.homedir(), 'OneLakeStudio', 'queries');
@@ -582,6 +580,12 @@ function createCore({
   return {
     engines, onelake, semviews, rebindStore, exportExplore, openExcel, keepOffline, openSqlModel, nameModelTables, saveQuery,
     onStoreCleared: () => onStoreCleared(),
+    // The cache folder moved from `old` (setCacheRoot): the store's Files/ bytes go to the new one too, and
+    // this account's model copies move there, their views with them. Waited for before `old` is deleted.
+    cacheRootMoved: old => {
+      onelake.useStore(storeFor(storeAccount));
+      return adoptModels(join(old, 'models')).then(moved => { if (moved) view.redraw(); });
+    },
     fabric, sqlTables, syncWorker, favorites, queries, models, agent, startExcel: startXmla, writer,
     accountTurn, sessionChanged, setSignedIn, start,
     signedIn: () => signedIn, hasSession: () => hasSession, sessionAsked: () => sessionAsked,

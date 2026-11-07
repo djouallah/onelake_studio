@@ -2,8 +2,8 @@
 // =============================================================================
 // fabricmodel.js — Export to Fabric's semantic model, written over plain REST
 // =============================================================================
-// DirectQuery and Direct Lake exports make the model a Fabric semantic model item, which the app's
-// function queries in DAX. One name per workspace: the model of that name is updated, else one is
+// DirectQuery and Direct Lake exports make the model a Fabric semantic model item, which the app
+// queries in DAX. One name per workspace: the model of that name is updated, else one is
 // created. Its definition is pbimodel.js's.
 //   find      the workspace's model of that name, or null (read only: asked before anything is written)
 //   write     create it (POST semanticModels) or replace its definition (updateDefinition), each a
@@ -71,7 +71,7 @@ function createFabricModel({ getToken, powerBiToken, sqlToken, apiBase = FABRIC_
   }
 
   // The model called `name` with this definition: the one `id` names, else a new one. Returns
-  // { id, created }.
+  // { id }.
   async function write(ws, name, definition, id = null) {
     if (id) {
       const what = `Updating the semantic model ${name}`;
@@ -79,7 +79,7 @@ function createFabricModel({ getToken, powerBiToken, sqlToken, apiBase = FABRIC_
         method: 'POST', body: JSON.stringify({ definition }), what });
       if (r.status === 202) await waitOperation(r, what);
       log(`semantic model ${name}: definition updated (${id})`);
-      return { id, created: false };
+      return { id };
     }
     const what = `Creating the semantic model ${name}`;
     const r = await call(`${apiBase}/workspaces/${ws}/semanticModels`, {
@@ -87,12 +87,12 @@ function createFabricModel({ getToken, powerBiToken, sqlToken, apiBase = FABRIC_
     if (r.status === 202) await waitOperation(r, what);
     else {
       const item = await json(r);
-      if (item && item.id) { log(`semantic model ${name}: created (${item.id})`); return { id: item.id, created: true }; }
+      if (item && item.id) { log(`semantic model ${name}: created (${item.id})`); return { id: item.id }; }
     }
     const made = await find(ws, name);
     if (!made) throw new Error(`${what}: Fabric accepted it, but the workspace does not list it`);
     log(`semantic model ${name}: created (${made.id})`);
-    return { id: made.id, created: true };
+    return { id: made.id };
   }
 
   // Direct Lake: a refresh frames the tables (their current Delta versions), and is waited for.
@@ -102,15 +102,19 @@ function createFabricModel({ getToken, powerBiToken, sqlToken, apiBase = FABRIC_
       method: 'POST', body: JSON.stringify({ type: 'full', commitMode: 'transactional', retryCount: 1 }), what });
     const location = r.headers.get('location');
     if (!location) return;
+    // The POST's Retry-After for the first look, then each answer's own.
+    let wait = retryAfterMs(r, 3000);
     for (let i = 0; i < POLLS; i++) {
-      await sleep(retryAfterMs(r, 3000));
-      const j = await json(await call(location, { token: powerBiToken, who: 'the Power BI API', what }));
+      await sleep(wait);
+      const p = await call(location, { token: powerBiToken, who: 'the Power BI API', what });
+      const j = await json(p);
       const status = j && (j.extendedStatus || j.status);
       if (status === 'Completed') return;
       if (status === 'Failed' || status === 'Cancelled' || status === 'Disabled' || status === 'TimedOut') {
         const said = j.messages && j.messages.map(x => x.message).filter(Boolean).join('; ');
         throw new Error(`${what} ${status === 'TimedOut' ? 'timed out' : lc(status)}` + (said ? ` — ${said}` : ''));
       }
+      wait = retryAfterMs(p, 3000);
     }
     throw new Error(`${what} did not finish`);
   }

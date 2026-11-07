@@ -135,6 +135,26 @@ test("a Delta table's state is one request the first time, and none after", asyn
   } finally { await done(); }
 });
 
+test("a table dropped and made again at the same path is not answered with the old one's Delta log", async () => {
+  const crcOf = size => JSON.stringify({ tableSizeBytes: size, numFiles: 1,
+    metadata: { id: "x", partitionColumns: [] }, protocol: { minReaderVersion: 1, minWriterVersion: 2 } });
+  const files = { [`${pad20(1)}.crc`]: crcOf(10) };
+  const { ol, catalog, done } = await deltaFixture(files, 1);
+  const xt = JSON.stringify({ sourceTableFormat: "DELTA", sourceIdentifier: "1" });
+  const as = uuid => { catalog.loadTable = async () => ({ metadata: metadata({ "table-uuid": uuid, properties: { XTABLE_METADATA: xt } }), metadataLocation: LOC }); };
+  try {
+    const t = { schema: "dbo", table: "t" };
+    as("old");
+    assert.equal((await ol.deltaState(lh, t)).sizeBytes, 10);
+    as("new");
+    files[`${pad20(1)}.crc`] = crcOf(99);
+    ol.refreshTables({ workspace: lh.workspace, item: lh.item });
+    const s = await ol.deltaState(lh, t);
+    assert.equal(s.cached, false);
+    assert.equal(s.sizeBytes, 99);
+  } finally { await done(); }
+});
+
 test("a Delta table's history: one listing and a page of commits, each file read once", async () => {
   const files = {};
   for (let v = 0; v < 15; v++) files[`${pad20(v)}.json`] = `{"commitInfo":{"timestamp":${v},"operation":"WRITE"}}\n`;

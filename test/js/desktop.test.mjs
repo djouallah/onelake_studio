@@ -7,6 +7,7 @@ import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import http from "node:http";
+import vm from "node:vm";
 
 const require = createRequire(import.meta.url);
 const { when } = await import("../../desktop/ui/when.js");
@@ -82,13 +83,32 @@ test("the server: a token becomes a cookie, and without it, the wrong Host, or a
     assert.equal((await request(port, "/res/secret.txt", { cookie })).status, 403, "outside the page's folders");
     assert.equal((await request(port, "/res/webview/../secret.txt", { cookie })).status, 403);
     assert.equal((await request(port, "/res/webview/%2e%2e/secret.txt", { cookie })).status, 403);
-    assert.match((await request(port, "/tab/1", { cookie })).text, /acquireVsCodeApi/);
-    assert.equal((await request(port, "/tab/9", { cookie })).status, 404);
     const rpc = await request(port, "/rpc", { cookie, method: "POST", body: JSON.stringify({ method: "m", args: [1] }), origin: server.origin() });
     assert.deepEqual(JSON.parse(rpc.text), { ok: true, result: { method: "m", args: [1] } });
     const elsewhere = await request(port, "/rpc", { cookie, method: "POST", body: "{}", origin: "http://evil.example" });
     assert.equal(elsewhere.status, 403, "another origin");
-    assert.equal(server.resourceUrl(join(dir, "ext", "webview", "app.js")), `${server.origin()}/res/webview/app.js`);
+
+    // A tab's page is on a port of its own, another origin: it gets its files, and none of the window's calls.
+    const pages = Number(new URL(server.pagesOrigin()).port);
+    assert.notEqual(pages, port);
+    const tab = await request(pages, `/tab/1?keys=${encodeURIComponent(JSON.stringify(["ctrl+b", 5]))}`, { cookie });
+    assert.match(tab.text, /acquireVsCodeApi/);
+    assert.ok(tab.text.includes(`const shell = ${JSON.stringify(server.origin())}`), "it posts to the window's origin only");
+    assert.ok(tab.text.includes(`new Set(["ctrl+b"])`), "the keys it leaves to the window, strings only");
+    assert.equal((await request(pages, "/tab/9", { cookie })).status, 404);
+    assert.equal((await request(pages, "/tab/1")).status, 403, "no cookie");
+    assert.equal((await request(pages, "/res/webview/app.js", { cookie, origin: server.pagesOrigin() })).text, "the page");
+    assert.equal((await request(pages, "/res/secret.txt", { cookie })).status, 403);
+    assert.equal((await request(port, "/tab/1", { cookie })).status, 404, "the window's port serves no page");
+    const fromTab = await request(port, "/rpc", { cookie, method: "POST", body: JSON.stringify({ method: "app.exit" }), origin: server.pagesOrigin() });
+    assert.equal(fromTab.status, 403, "a tab's page can't call the window's methods");
+    assert.equal((await request(port, "/events", { cookie, origin: server.pagesOrigin() })).status, 403);
+    for (const path of ["/rpc", "/events", "/", "/ui/index.html", "/theme.css"]) {
+      const method = path === "/rpc" ? "POST" : "GET";
+      assert.equal((await request(pages, path, { cookie, method, body: method === "POST" ? "{}" : undefined, origin: server.pagesOrigin() })).status, 404, path);
+    }
+    assert.equal((await request(pages, "/tab/1", { cookie, origin: server.origin() })).status, 403, "the pages' port takes its own origin only");
+    assert.equal(server.resourceUrl(join(dir, "ext", "webview", "app.js")), `${server.pagesOrigin()}/res/webview/app.js`);
     assert.throws(() => server.resourceUrl(join(dir, "elsewhere.js")), /is not this app's/);
   } finally {
     server.close();
@@ -100,7 +120,7 @@ test("the server: a token becomes a cookie, and without it, the wrong Host, or a
 const pushed = [];
 let answers = [];
 vscode.attach({
-  log() {}, push: m => pushed.push(m), origin: () => "http://127.0.0.1:1", resourceUrl: p => `http://127.0.0.1:1/res/${p}`,
+  log() {}, push: m => pushed.push(m), pagesOrigin: () => "http://127.0.0.1:1", resourceUrl: p => `http://127.0.0.1:1/res/${p}`,
   setting: (key, fallback) => (key === "onelakeStudio.tableOpensOn" ? "data" : fallback),
   ask: async (kind, payload) => { pushed.push({ ask: kind, ...payload }); return answers.shift(); },
 });
@@ -152,6 +172,28 @@ test("the tree: nodes by id, their icons, what a click runs, and what's dragged"
   assert.equal(pushed.at(-1).t, "tree-changed");
 });
 
+test("the tree: a node drawn with no tooltip gets the tree's own when the pointer rests on it, once", async () => {
+  let resolved = 0;
+  const provider = {
+    getChildren: async () => [{ name: "t" }, { name: "u" }],
+    getTreeItem: n => Object.assign(new vscode.TreeItem(n.name), { id: `tip-${n.name}` }, n.name === "u" ? { tooltip: "its own" } : {}),
+    resolveTreeItem: async (item, n) => { resolved++; item.tooltip = { value: `about ${n.name}` }; return item; },
+  };
+  vscode.window.createTreeView("tips", { treeDataProvider: provider });
+  const items = await vscode.desktop.treeChildren("tips", null);
+  assert.deepEqual(items.map(i => i.tooltip), ["", "its own"]);
+  assert.equal(resolved, 0, "drawing the tree resolves nothing");
+  assert.equal(await vscode.desktop.treeTooltip("tips", "tip-t"), "about t");
+  assert.equal(await vscode.desktop.treeTooltip("tips", "tip-t"), "about t");
+  assert.equal(await vscode.desktop.treeTooltip("tips", "tip-u"), "its own");
+  assert.equal(resolved, 1, "once, and not for a node that has one");
+  assert.equal(await vscode.desktop.treeTooltip("tips", "gone"), "");
+  // A tree with no resolveTreeItem: nothing to say.
+  vscode.window.createTreeView("plain", { treeDataProvider: { getChildren: async () => [1], getTreeItem: () => ({ id: "p1", label: "p" }) } });
+  await vscode.desktop.treeChildren("plain", null);
+  assert.equal(await vscode.desktop.treeTooltip("plain", "p1"), "");
+});
+
 test("a tab: opened, posted to, told it's shown or not, and closed once", () => {
   const a = vscode.window.createWebviewPanel("onelakeStudio", "One");
   const b = vscode.window.createWebviewPanel("onelakeStudio", "Two");
@@ -170,6 +212,7 @@ test("a tab: opened, posted to, told it's shown or not, and closed once", () => 
   assert.equal(gone, 1);
   assert.throws(() => a.webview.postMessage({}), /closed/);
   assert.equal(a.webview.asWebviewUri(vscode.Uri.file("x")).toString(), "http://127.0.0.1:1/res/x");
+  assert.equal(b.webview.cspSource, "http://127.0.0.1:1", "the pages' origin, not the window's");
 });
 
 test("a quick pick: the window's choice is its selection", () => {
@@ -216,10 +259,34 @@ test("keys: named as the window's shortcuts are, and the browser's own do nothin
   for (const k of ["ctrl+c", "ctrl+shift+c", "ctrl+v", "ctrl+a", "ctrl+z", "ctrl+enter", "arrowdown"]) assert.ok(!BROWSER_KEYS.has(k), k);
 });
 
-test("a tab's keys go to the window first, and a right-click off the menus shows the browser's only on text", () => {
-  const page = pageFor("<head></head><body>", "1", true);
-  assert.match(page, /parent\.olsKeydown\(e\)/);
+test("a tab's page posts the window's keys to the window's origin, keeps its own, and right-clicks off the menus show the browser's only on text", () => {
+  const shell = "http://127.0.0.1:5";
+  const page = pageFor("<head></head><body>", "1", true, { shell, keys: ["ctrl+b", "f5"] });
   assert.match(page, /input, textarea/);
+  assert.equal(page.includes("olsKeydown"), false, "it reaches nothing of the window's but postMessage");
+  // The bridge, run as the page runs it.
+  const posted = [], on = {};
+  const sandbox = {
+    parent: { postMessage: (m, to) => posted.push(JSON.parse(JSON.stringify([m, to]))) },
+    sessionStorage: { getItem: () => null, setItem() {} },
+    addEventListener: (type, fn) => { on[type] = fn; },
+    Element: class {}, getSelection: () => "",
+  };
+  sandbox.window = sandbox;
+  vm.runInNewContext(/<script nonce="[^"]*">([\s\S]*?)<\/script>/.exec(page)[1], sandbox);
+  const press = (key, mods = {}) => {
+    let prevented = false;
+    on.keydown({ key, ctrlKey: false, shiftKey: false, altKey: false, ...mods, preventDefault: () => { prevented = true; } });
+    return prevented;
+  };
+  assert.equal(press("B", { ctrlKey: true }), true);
+  assert.deepEqual(posted.pop(), [{ olsKey: "1", key: { key: "B", ctrlKey: true, shiftKey: false, altKey: false } }, shell]);
+  assert.equal(press("F5"), true, "the browser's reload does nothing");
+  posted.pop();
+  assert.equal(press("c", { ctrlKey: true }), false, "copy stays the page's");
+  assert.equal(posted.length, 0);
+  sandbox.acquireVsCodeApi().postMessage({ run: 1 });
+  assert.deepEqual(posted.pop(), [{ olsTab: "1", msg: { run: 1 } }, shell]);
 });
 
 test("updates: the latest release's tag against this version", async () => {

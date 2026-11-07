@@ -103,6 +103,7 @@ input, select { font: inherit; color: var(--vscode-input-foreground); background
 .pick .description { color: var(--vscode-descriptionForeground); overflow: hidden; text-overflow: ellipsis; flex: 1; min-width: 0; font-size: 12px; }
 .pick.on .description { color: inherit; opacity: .8; }
 
+#menu:focus { outline: none; }
 #menu { position: fixed; z-index: 50; min-width: 200px; max-width: 420px; padding: 4px; background: var(--vscode-menu-background); border: 1px solid var(--vscode-editorWidget-border); box-shadow: 0 2px 8px var(--vscode-widget-shadow); border-radius: 5px; }
 #menu .entry { display: flex; align-items: center; padding: 3px 14px 3px 2px; border-radius: 3px; cursor: pointer; white-space: nowrap; }
 #menu .entry.on { background: var(--vscode-list-activeSelectionBackground); color: var(--vscode-list-activeSelectionForeground); }

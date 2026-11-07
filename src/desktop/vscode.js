@@ -118,6 +118,20 @@ async function treeChildren(viewId, parentId) {
   return out;
 }
 
+// What the pointer resting on a node says. A node drawn with no tooltip gets its own then, from the
+// tree's resolveTreeItem, as VS Code asks for it: a lakehouse can draw thousands.
+async function treeTooltip(viewId, id) {
+  const view = views.get(viewId);
+  const node = view && view.nodes.get(id);
+  if (!node) return '';
+  const provider = view.options.treeDataProvider;
+  if (node.item.tooltip == null && provider.resolveTreeItem) {
+    const token = { isCancellationRequested: false, onCancellationRequested: () => ({ dispose() {} }) };
+    node.item = (await provider.resolveTreeItem(node.item, node.element, token)) || node.item;
+  }
+  return textOf(node.item.tooltip);
+}
+
 function treeClick(viewId, id) {
   const node = views.get(viewId).nodes.get(id);
   if (!node || !node.item.command) return undefined;
@@ -167,7 +181,7 @@ function createWebviewPanel(viewType, titleText) {
     webview: {
       get html() { return html; },
       set html(v) { html = v; rev++; host.push({ t: 'tab-html', id, rev }); },
-      get cspSource() { return host.origin(); },
+      get cspSource() { return host.pagesOrigin(); },
       asWebviewUri: uri => Uri.parse(host.resourceUrl(uri.fsPath)),
       onDidReceiveMessage: received.event,
       postMessage(msg) {
@@ -374,5 +388,5 @@ module.exports = {
   ExtensionMode, ProgressLocation, StatusBarAlignment, ViewColumn,
   commands, window: window_, workspace, env, authentication, languages, version: 'none',
   // For main.js and server.js, not the extension.
-  desktop: { contexts, panels, tabShown, treeChildren, treeClick, treeRun, pickAccept, pickButton, pickHidden, settingChanged, statusItems, views, under },
+  desktop: { contexts, panels, tabShown, treeChildren, treeTooltip, treeClick, treeRun, pickAccept, pickButton, pickHidden, settingChanged, statusItems, views, under },
 };

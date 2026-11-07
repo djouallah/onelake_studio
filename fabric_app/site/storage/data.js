@@ -13,8 +13,8 @@
 // the view is created. DuckDB reads only that store, by names registered to
 // https://store.local/... (duckdb-wasm's own file system): no httpfs, no SAS in any view, and
 // its worker refuses every other request (blockcache.js). The engine is duckdb-wasm's npm
-// release (DuckDB 2.0), with two of DuckDB's signed extensions: parquet, and icu for the
-// session's time zone. All of it ships with the site, in vendor/ (src/vendored.js, WEBAPP):
+// release (DuckDB 2.0), with two of DuckDB's signed extensions: parquet, and icu for time
+// zones (TIMESTAMPTZ). All of it ships with the site, in vendor/ (src/vendored.js, WEBAPP):
 // nothing is loaded from a CDN or DuckDB's repository.
 //
 // A table is opened when a query first names its view, v_<table>, so the first paint pays only
@@ -63,7 +63,7 @@ const BUNDLE = { mainModule: `${WASM}duckdb-base.wasm`, mainWorker: `${WASM}duck
 // says another would ask for files the site does not have.
 const DUCKDB = 'v2.0.0';
 // The extensions DuckDB installs, from the site's own repository (vendor/duckdb-ext): Parquet,
-// and icu for the session's time zone. No httpfs: DuckDB reads only the local store.
+// and icu for time zones (TIMESTAMPTZ). No httpfs: DuckDB reads only the local store.
 const EXTENSIONS = ['parquet', 'icu'];
 const EXT_REPO = `${VENDOR}duckdb-ext`;
 // The local store DuckDB reads from, and its worker's only way out (blockcache.js).
@@ -139,8 +139,7 @@ function warmExtensions(version) {
 }
 
 // onProgress({ label, done, total, detail }) while a long download runs, null when it ends.
-// timeZone: the session's, which CURRENT_DATE follows; the page's to say (none: DuckDB's own).
-export function createDataSource({ onStatus = () => {}, onProgress = () => {}, timeZone = null } = {}) {
+export function createDataSource({ onStatus = () => {}, onProgress = () => {} } = {}) {
   // The function's answer and the snapshot records, kept in IndexedDB (kv.js); the keys
   // localStorage held them under are moved over on the first load.
   const kv = createKv('iceberg-app', { legacy: { catalog: 'rayfin_catalog', snapshots: 'iceberg_snapshots' } });
@@ -429,7 +428,6 @@ importScripts("${bundle.mainWorker}");`], { type: "text/javascript" }));
       try { localStorage.setItem(EXT_KEY, version); } catch (x) {}
       // Iceberg's files never change once written: a Parquet footer read holds for the session.
       await q(e, 'SET parquet_metadata_cache = true;');
-      if (timeZone) await q(e, `SET TimeZone = ${lit(timeZone)};`);
       await q(e, "SET preserve_insertion_order = false;");
       return e;
     }));

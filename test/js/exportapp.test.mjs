@@ -1,7 +1,7 @@
 // exportapp.js: Export to Fabric — the plan (a OneLake file, one lakehouse, schema.table
 // sources), the local copy written from fabric_app/ and Studio's Explore, dist/ stamped with
-// the build, and the zip that is uploaded. The model is never copied: the app reads it in
-// place (MODEL_URL). The compiler is faked (the suite runs without vendor/); semantic.js's
+// the build, and the zip that is uploaded. Client side the model is never copied: the app reads it
+// in place (MODEL_URL); on a semantic model the site holds the model it was made from. The compiler is faked (the suite runs without vendor/); semantic.js's
 // lakehousesOf and isOssie are the real ones.
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -13,9 +13,10 @@ import { inflateRawSync } from "node:zlib";
 import { execFileSync } from "node:child_process";
 
 const require = createRequire(import.meta.url);
-const { planExport, writeExport, buildDist, vendorSize, zip, crc32, rayfinYml, appName, dfsUrl, MARKER,
+const { planExport, modelDoc, writeExport, engineOf, buildDist, vendorSize, zip, crc32, rayfinYml, appName, dfsUrl, MARKER,
         readMarker, fingerprint, localChanges } = require("../../src/exportapp.js");
 const semantic = await import("../../app/semantic.js");
+const { firstRows, counting, kept, MAX_ROWS } = await import("../../fabric_app/site/storage/modelrows.js");
 
 const WS = "0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0";
 const LH = "11111111-2222-3333-4444-555555555555";
@@ -174,6 +175,7 @@ async function fixture(root) {
     "fabric_app/site/storage/catalog.js": "// catalog\n",
     "fabric_app/site/storage/auth.js": "// auth\n",
     "fabric_app/site/storage/modeldata.js": 'import { createAuth } from "./auth.js";\n',
+    "fabric_app/site/storage/modelrows.js": "// modelrows\n",
     "fabric_app/rayfin/rayfin.yml": "id: explore\nname: explore\nservices:\n  auth:\n    allowedRedirectUris:\n      - http://localhost:5173\n",
     "fabric_app/rayfin/functions/src/function_app.ts": "// openCatalog\n",
     "daxsql/src/index.js": "// dax-sql\n",
@@ -218,6 +220,54 @@ function unzip(buf) {
   return out;
 }
 
+// The DAX tree's nodes, as dax-sql's parser reads back what its sqlToDax writes.
+const dcol = (table, name) => ({ k: "col", table, name });
+const dstr = v => ({ k: "str", v });
+const dcall = (fn, ...args) => ({ k: "call", fn, args });
+const asc = { k: "name", name: "ASC" }, desc = { k: "name", name: "DESC" };
+
+test("a semantic model's rows are cut there: TOPN in the query's order and then every column, a count is COUNTROWS", () => {
+  const revenue = dcol(null, "Revenue");
+  const groups = dcall("SUMMARIZECOLUMNS", dcol("dim_region", "Region"), dstr("Revenue"), dcall("MEASURE", revenue));
+  const table = dcall("CALCULATETABLE", dcall("FILTER", groups, revenue), dcol("dim_region", "Region"));
+  const q = { defines: [], evaluates: [{ e: table, order: [{ e: revenue, desc: true }], start: [] }] };
+  assert.deepEqual(firstRows(q, 101), { defines: [], evaluates: [{
+    e: dcall("TOPN", { k: "num", v: "101" }, table, revenue, desc, dcol("dim_region", "Region"), asc, revenue, asc),
+    order: [{ e: revenue, desc: true }], start: [] }] }, "the ORDER BY stays, outside the cut");
+  // SELECTCOLUMNS names the result's columns.
+  const picked = dcall("SELECTCOLUMNS", groups, dstr("region"), dcol("dim_region", "Region"), dstr("rev"), revenue);
+  assert.deepEqual(firstRows({ defines: [], evaluates: [{ e: picked, order: [], start: [] }] }, 5).evaluates[0].e,
+    dcall("TOPN", { k: "num", v: "5" }, picked, dcol(null, "region"), asc, dcol(null, "rev"), asc));
+  // Not a table it knows the columns of, or not one query: left as it is.
+  assert.equal(firstRows({ defines: [], evaluates: [{ e: dcall("ROW", dstr("x"), revenue), order: [], start: [] }] }, 5), null);
+  assert.equal(firstRows({ defines: [{ kind: "var" }], evaluates: [{ e: groups, order: [], start: [] }] }, 5), null);
+  assert.equal(firstRows({ defines: [], evaluates: [{ e: dcall("SUMMARIZECOLUMNS", dcall("ROLLUPADDISSUBTOTAL")), order: [], start: [] }] }, 5), null);
+
+  assert.deepEqual(counting(q), { defines: [], evaluates: [{ e: dcall("ROW", dstr("cnt"), dcall("COUNTROWS", table)), order: [], start: [] }] });
+  assert.equal(counting({ defines: [], evaluates: [q.evaluates[0], q.evaluates[0]] }), null);
+});
+
+test("a semantic model's answer: what it keeps, and truncated only when the query has rows it left out", () => {
+  const rows = n => Array.from({ length: n }, (_, i) => [i]);
+  // A preview: 100 asked for, one more sent to tell whether rows were left.
+  assert.deepEqual(kept(rows(101), 3, { n: 100, asked: 100, askedFor: 101 }), { rows: rows(100), truncated: false, limit: 100 });
+  // Past the OFFSET.
+  assert.deepEqual(kept(rows(6), 1, { from: 2, n: 3, asked: 3, askedFor: 6 }).rows, [[2], [3], [4]]);
+  // All of them, and fewer than the cap: all there.
+  assert.equal(kept(rows(5), 3, { n: MAX_ROWS, asked: Infinity, askedFor: MAX_ROWS + 1 }).truncated, false);
+  // All of them, cut at executeQueries' 100,000 rows: said, with what was kept.
+  const all = kept(rows(100_000), 3, { n: MAX_ROWS, asked: Infinity, askedFor: MAX_ROWS + 1 });
+  assert.equal(all.truncated, true);
+  assert.equal(all.limit, 100_000);
+  // ... or at its 1,000,000 values: 20 columns is 50,000 rows.
+  const wide = kept(rows(50_000), 20, { n: MAX_ROWS, asked: Infinity, askedFor: MAX_ROWS + 1 });
+  assert.deepEqual([wide.truncated, wide.limit, wide.rows.length], [true, 50_000, 50_000]);
+  // A LIMIT of exactly the cap has all it asked for.
+  assert.equal(kept(rows(100_000), 3, { n: MAX_ROWS, asked: MAX_ROWS, askedFor: MAX_ROWS + 1 }).truncated, false);
+  // Not cut on the model, and at the cap: rows may be missing.
+  assert.equal(kept(rows(100_000), 3, { n: MAX_ROWS, asked: Infinity }).truncated, true);
+});
+
 test("the zip: every entry at the root, deflated, read back byte for byte", async () => {
   const files = new Map([["index.html", Buffer.from("<!doctype html>")], ["a/b.js", Buffer.from("x".repeat(5000))],
                          ["é.txt", Buffer.alloc(0)]]);
@@ -235,11 +285,18 @@ test(`${engine}: the site says it runs on the semantic model, and holds no DuckD
     const plan = { ...planExport(OSSIE, "sales.yaml", "sales", mods(bimOf(URL_)), WHERE),
                    engine, semanticModel: { workspace: "0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0", id: "m1", name: "sales" } };
     const outDir = join(root, "out", plan.name);
-    const marker = await writeExport({ plan, state: null, outDir, ...dirs });
+    // The model the semantic model is made from goes with the site: the page writes its DAX from it.
+    await assert.rejects(writeExport({ plan, state: null, outDir, ...dirs }), /needs the model it was made from/);
+    const model = modelDoc(OSSIE, "sales.yaml", mods(bimOf(URL_))).doc;
+    const marker = await writeExport({ plan, state: null, model, outDir, ...dirs });
     assert.equal(marker.engine, engine);
+    assert.equal(await engineOf(outDir, marker), engine);
     const all = (await readdir(outDir, { recursive: true })).map(f => f.split("\\").join("/"));
     assert.deepEqual(JSON.parse(await readFile(join(outDir, "site/engine.json"), "utf8")), { engine: "semanticModel", name: "sales" });
-    for (const p of ["site/storage/modeldata.js", "site/storage/auth.js", "site/app.js", "site/explore/view.js"]) assert.ok(all.includes(p), p);
+    assert.deepEqual(JSON.parse(await readFile(join(outDir, "site/model.json"), "utf8")), doc());
+    for (const p of ["site/storage/modeldata.js", "site/storage/modelrows.js", "site/storage/auth.js", "site/app.js", "site/explore/view.js"]) {
+      assert.ok(all.includes(p), p);
+    }
     for (const gone of [/^site\/storage\/(data|catalog)\.js$/, /^site\/vendor\/npm\/@duckdb/, /^site\/vendor\/npm\/apache-arrow@17\.0\.0/, /^site\/vendor\/duckdb-ext/]) {
       assert.ok(!all.some(f => gone.test(f)), `nothing matches ${gone}: ${all.filter(f => gone.test(f)).join(", ")}`);
     }
@@ -251,15 +308,22 @@ test(`${engine}: the site says it runs on the semantic model, and holds no DuckD
     const agents = await readFile(join(outDir, "AGENTS.md"), "utf8");
     assert.match(agents, /Semantic model: `sales`, (Direct Lake|DirectQuery)/);
     assert.match(agents, /as the viewer/);
+    assert.match(agents, /as it was when exported[\s\S]*`site\/model\.json`[\s\S]*when it is\s+exported again/);
+    assert.doesNotMatch(agents, /next load/, "the semantic model is the model as exported, not as it is now");
+    // A marker from before the engine was kept: the site says.
+    assert.equal(await engineOf(outDir, { ...marker, engine: undefined }), "semanticModel");
 
     // Client side: the site has its DuckDB data source and not the semantic model's.
     const duck = join(root, "out", "duck");
     const was = await writeExport({ plan: { ...plan, engine: "duckdb", semanticModel: undefined }, state: null, outDir: duck, ...dirs });
     assert.equal(was.engine, "duckdb");
     const files = (await readdir(duck, { recursive: true })).map(f => f.split("\\").join("/"));
-    assert.ok(files.includes("site/storage/data.js") && !files.includes("site/storage/modeldata.js") && !files.includes("site/engine.json"));
+    assert.ok(files.includes("site/storage/data.js") && !files.includes("site/engine.json"));
+    for (const p of ["site/storage/modeldata.js", "site/storage/modelrows.js", "site/model.json"]) assert.ok(!files.includes(p), p);
+    assert.equal(await engineOf(duck, { ...was, engine: undefined }), "duckdb");
     assert.doesNotMatch(await readFile(join(duck, "rayfin/rayfin.yml"), "utf8"), /^connectors:/m);
     assert.match(await readFile(join(duck, "AGENTS.md"), "utf8"), /app item's owner/);
+    assert.match(await readFile(join(duck, "AGENTS.md"), "utf8"), /read \*\*in place\*\*[\s\S]*on its next load/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -374,8 +438,9 @@ test("local changes: an edit, a new file, a removed one — never node_modules o
   }
 });
 
-test("the shipped page and its data source parse, and read the model from the function, not a file", async () => {
-  for (const p of ["fabric_app/site/app.js", "fabric_app/site/storage/data.js", "fabric_app/site/storage/catalog.js"]) {
+test("the shipped page and its data source parse; client side reads the model from the function, on a semantic model from the site", async () => {
+  for (const p of ["fabric_app/site/app.js", "fabric_app/site/storage/data.js", "fabric_app/site/storage/catalog.js",
+                   "fabric_app/site/storage/modeldata.js"]) {
     execFileSync(process.execPath, ["--check", new URL(`../../${p}`, import.meta.url).pathname.replace(/^\/(\w:)/, "$1")]);
   }
   // Every package the page runs is the site's own (vendor/, src/vendored.js WEBAPP), at the pins.
@@ -396,6 +461,11 @@ test("the shipped page and its data source parse, and read the model from the fu
   const data = await readFile(new URL("../../fabric_app/site/storage/data.js", import.meta.url), "utf8");
   assert.doesNotMatch(data, /ossie\.json/);
   assert.match(data, /catalog\.open\(\)/);
+  assert.doesNotMatch(data, /timeZone|SET TimeZone/, "no session time zone the page never passes");
+  // On a semantic model the page reads the model the semantic model was made from, not the function's.
+  const modeldata = await site("storage/modeldata.js");
+  assert.match(modeldata, /"\.\.\/model\.json"/);
+  assert.doesNotMatch(modeldata, /functions\.semanticModel/);
   const fn = await readFile(new URL("../../fabric_app/rayfin/functions/src/function_app.ts", import.meta.url), "utf8");
   assert.match(fn, /ctx\.Secrets\.MODEL_URL/);
   const html = await readFile(new URL("../../fabric_app/site/index.html", import.meta.url), "utf8");

@@ -547,8 +547,8 @@ Direct Lake without it:
   SQL endpoint credentials are set to OAuth2 with each caller's own identity (SSO). Direct Lake takes no calculated
   column: a model with one is refused before anything is written, and the message says to export it as DirectQuery.
 - **The model's file**, into the `Files/` of its lakehouse, when it was opened from its local copy:
-  `<lakehouse>/Files/semantic_model/<model>.yaml` ([`src/onelakewrite.js`](../src/onelakewrite.js)). The
-  app reads the model there. A different file of that name is replaced only when you say so, and not being able
+  `<lakehouse>/Files/semantic_model/<model>.yaml` ([`src/onelakewrite.js`](../src/onelakewrite.js)). A
+  client-side app reads the model there. A different file of that name is replaced only when you say so, and not being able
   to tell what is there stops the export. It is written beside the file and renamed into place, so a failure part way
   leaves what was there.
 - **A local copy of the app:** to the folder approved last time for that model, or else `<the folder VS
@@ -565,8 +565,9 @@ Direct Lake without it:
 - **It asks first.** Before anything is written, it shows where and waits for *Export* or *Choose
   Another Folder…*. All the questions come before anything is written, locally or in Fabric.
 - **Protected:** the site loads only for people who may open the app item.
-- **The model is read in place:** the app never holds a copy. Its function reads the model file from
-  the lakehouse at run time (its `MODEL_URL` secret), so the app shows the model as it is there.
+- **Client side, the model is read in place:** the app never holds a copy. Its function reads the model file from
+  the lakehouse at run time (its `MODEL_URL` secret), so the app shows the model as it is there. On a semantic
+  model it is the model as exported (below).
 - **The app reads the model's tables, not the lakehouse:** its function signs a read-only SAS for each table the model
   names, and refuses any other.
 - **Client side, the tables are read as the app's owner.** Fabric Apps gives a function one identity, the app item's
@@ -577,7 +578,9 @@ Direct Lake without it:
 - **Local edits are never overwritten unasked.** The local copy's marker keeps a hash of each of its
   files as last published (`site/`, `rayfin/`, `AGENTS.md`, `.gitignore`, without `node_modules` or
   `dist/`). If any changed, the export asks: *Overwrite Local Changes*, *Publish Folder As Is*, or
-  cancel.
+  cancel. As Is publishes the folder's site, which runs on what the folder was made for, so it is offered only when
+  the export runs on the same: Client side, or a semantic model (DirectQuery or Direct Lake). Otherwise the question
+  says why, and only *Overwrite Local Changes* changes what the app runs on.
 - **A newer deploy is never overwritten unasked.** The marker keeps the app's last deploy time, by
   Fabric's clock. If the app was deployed again since, the export asks.
 - **A folder the export did not write** is refused.
@@ -596,8 +599,16 @@ Direct Lake without it:
   connector (Rayfin's `ConnectorsRayfinClient` and the connector's own runtime, which decodes its Arrow answer), and
   draws the rows. It takes only a SELECT over the model. Its Show plan has no plan tree: its SQL tab is the DAX, and its
   profile the query's one run.
-- **The function** ([`function_app.ts`](../fabric_app/rayfin/functions/src/function_app.ts), `semanticModel`) gives only
-  the model file, read in place.
+- **The page's model is the one the semantic model was made from:** `site/model.json`, written by the export, and
+  again by a *Publish Folder As Is*. The semantic model is a copy of the model file made at export, so the page writes
+  its DAX from that copy, not from the lakehouse's file: a measure renamed in the file since would make DAX the
+  semantic model refuses. A change to the model file reaches the app when it is exported again.
+- **Rows are cut on the semantic model** ([`storage/modelrows.js`](../fabric_app/site/storage/modelrows.js)): a
+  preview's rows, and a LIMIT and OFFSET, are a `TOPN` in the DAX, and a count is `COUNTROWS`, so neither waits for
+  the whole answer. executeQueries sends at most 100,000 rows or 1,000,000 values in one answer, and the page keeps at
+  most 100,000 rows: an answer cut by either says so, as the client-side app's does.
+- **The function** ([`function_app.ts`](../fabric_app/rayfin/functions/src/function_app.ts)) is not called: the page
+  reads `site/model.json` and the semantic model, nothing else.
 - **What it needs:** each viewer has Build on the semantic model ("Semantic model queries require the caller's
   applicable model permissions, including Build", the connectors page), and the tenant has the Semantic Model
   Execute Queries REST API setting on ([the data app template's prerequisites](https://learn.microsoft.com/en-us/fabric/apps/data-apps-template)).
@@ -611,7 +622,7 @@ Direct Lake without it:
   takes the model and the tables' locations from the app's function with a read-only SAS per table, and downloads
   the tables' files into the browser, where DuckDB-WASM (DuckDB 2.0), shipped in the site's `vendor/`, reads them as `v_<table>`
   views.
-- **`rayfin/`:** `rayfin.yml` and the function (`openCatalog`, and `semanticModel` for the model file).
+- **`rayfin/`:** `rayfin.yml` and the function (`openCatalog`, for a client-side app).
 
 [`src/exportapp.js`](../src/exportapp.js) writes the local copy from `fabric_app/`, Studio's
 `app/explore/` and dax-sql. Its `dist/` is `site/` stamped with the build, plus `rayfin.config.json`,
@@ -651,7 +662,10 @@ command, menu, tab and message is the same code in both, and a change to the ext
   to it in its own CSP.
 - **The connection** is an HTTP server on `127.0.0.1` ([`src/desktop/server.js`](../src/desktop/server.js)): messages out
   as server-sent events, back as POSTs. The first request's token becomes an `HttpOnly`, `SameSite=Strict` cookie, and
-  anything without it, with another `Host` or another `Origin`, is refused. A page reaches only its own files.
+  anything without it, with another `Host` or another `Origin`, is refused. A tab's page is served from a second port,
+  another origin: it reaches only its own files, can't reach into the window's page, and talks to the window by
+  `postMessage`, as a webview does. The window's port refuses its requests, so only the window runs commands, changes
+  settings or closes the app.
 - **What needs Windows** ([`src/desktop/dialogs.js`](../src/desktop/dialogs.js)): the save and folder dialogs, the clipboard
   and Explorer, through PowerShell, as Open in Excel is.
 - **Sign-in** is the command line's: MSAL as the Azure CLI's public client, with the token cache under DPAPI, and the same

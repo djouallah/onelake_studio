@@ -20,7 +20,7 @@ const res = (status, body, headers = {}) => ({
 });
 
 function modelWith(answers) {
-  const calls = [];
+  const calls = [], slept = [];
   const fetchImpl = async (url, init = {}) => {
     const method = init.method || "GET";
     calls.push({ url, method, auth: (init.headers || {}).authorization, body: init.body });
@@ -31,8 +31,8 @@ function modelWith(answers) {
     return res(404, { message: `no answer for ${method} ${url}` });
   };
   const model = createFabricModel({ getToken: async () => "fab", powerBiToken: async () => "pbi", sqlToken: async () => "sql",
-                                    sleep: async () => {}, fetchImpl });
-  return { model, calls };
+                                    sleep: async ms => { slept.push(ms); }, fetchImpl });
+  return { model, calls, slept };
 }
 
 test("find: the workspace's model of that name, whatever its case, or null", async () => {
@@ -47,7 +47,7 @@ test("write: a new model is created, its operation waited for, then found by nam
     ["GET", "/operations/op1", (_, n) => res(200, { status: n < 2 ? "Running" : "Succeeded" })],
     ["GET", `/workspaces/${WS}/semanticModels`, () => res(200, { value: [{ id: "m9", displayName: "sales" }] })],
   ]);
-  assert.deepEqual(await model.write(WS, "sales", DEF), { id: "m9", created: true });
+  assert.deepEqual(await model.write(WS, "sales", DEF), { id: "m9" });
   assert.deepEqual(JSON.parse(calls[0].body), { displayName: "sales", definition: DEF });
   assert.equal(calls[0].auth, "Bearer fab");
 });
@@ -56,7 +56,7 @@ test("write: the model of that name has its definition replaced, the same item",
   const { model, calls } = modelWith([
     ["POST", `/semanticModels/m1/updateDefinition`, () => res(200, {})],
   ]);
-  assert.deepEqual(await model.write(WS, "sales", DEF, "m1"), { id: "m1", created: false });
+  assert.deepEqual(await model.write(WS, "sales", DEF, "m1"), { id: "m1" });
   assert.deepEqual(calls.map(c => c.method + " " + c.url), [`POST ${API}/workspaces/${WS}/semanticModels/m1/updateDefinition`]);
   assert.deepEqual(JSON.parse(calls[0].body), { definition: DEF });
 });
@@ -69,15 +69,17 @@ test("write: a failed operation says why", async () => {
   await assert.rejects(model.write(WS, "sales", DEF, "m1"), /Updating the semantic model sales failed — bad TMSL/);
 });
 
-test("frame: a Direct Lake refresh with Power BI's token, waited for until it completes", async () => {
-  const { model, calls } = modelWith([
-    ["POST", `/groups/${WS}/datasets/m1/refreshes`, () => res(202, "", { location: `${PBI}/groups/${WS}/datasets/m1/refreshes/r1` })],
-    ["GET", "/refreshes/r1", (_, n) => res(200, { status: n < 2 ? "Unknown" : "Completed" })],
+test("frame: a Direct Lake refresh with Power BI's token, waited for until it completes, as each answer says to wait", async () => {
+  const { model, calls, slept } = modelWith([
+    ["POST", `/groups/${WS}/datasets/m1/refreshes`, () => res(202, "", { location: `${PBI}/groups/${WS}/datasets/m1/refreshes/r1`, "retry-after": "2" })],
+    ["GET", "/refreshes/r1", (_, n) => res(200, { status: n < 3 ? "Unknown" : "Completed" }, n === 1 ? { "retry-after": "7" } : {})],
   ]);
   await model.frame(WS, "m1");
   assert.equal(calls[0].auth, "Bearer pbi");
   assert.equal(JSON.parse(calls[0].body).type, "full");
-  assert.equal(calls.length, 3);
+  assert.equal(calls.length, 4);
+  // The POST's wait first, then each poll's own: one that says nothing is the default, not the POST's again.
+  assert.deepEqual(slept, [2000, 7000, 3000]);
   const failed = modelWith([
     ["POST", "/refreshes", () => res(202, "", { location: `${PBI}/r2` })],
     ["GET", "/r2", () => res(200, { status: "Failed", messages: [{ message: "table missing" }] })],

@@ -644,8 +644,6 @@ export function createEngine({
   }
 
   // A statement's whole result as plain JS, in the shape the results grid renders.
-  // Shared by user SQL (above, after the read-only guard) and the engine's own quick
-  // peek, which builds its SQL itself.
   async function materialize(clean, onRows = () => {}) {
     // Cap what gets turned into JS objects. Everything downstream — the DOM table, the CSV
     // — works off this array, so an uncapped SELECT * on a large table takes the tab out.

@@ -78,9 +78,8 @@ function createLogKeeper({ engine, logs, maxBytes, log = () => {}, onFatal = () 
   let last = 0n, moved = 0, chain = Promise.resolve(), timers = [];
   let asked = 0;              // statements someone asked for, since this process started
 
-  async function move() {
-    const rows = await engine.readLog(last);
-    if (!rows.length) return;
+  // The rows past `last`, as the log file keeps them.
+  function take(rows) {
     const fresh = [];
     for (const r of rows) {
       const us = BigInt(r.us);
@@ -93,8 +92,18 @@ function createLogKeeper({ engine, logs, maxBytes, log = () => {}, onFatal = () 
                      error: st.error == null ? null : cut(st.error), conn: st.conn });
       }
     }
+    return fresh;
+  }
+  async function move() {
+    const rows = await engine.readLog(last);
+    if (!rows.length) return;
+    const fresh = take(rows);
     if (maxBytes > 0) logs.add(fresh);
     if (moved > EMPTY_PAST_ROWS) {
+      // What was logged while the rows above were being kept, read just before the log is emptied:
+      // emptying takes everything, and a statement in neither read would never be in the Logs tab.
+      const late = take(await engine.readLog(last));
+      if (maxBytes > 0) logs.add(late);
       await engine.emptyLog();
       moved = 0;
     }

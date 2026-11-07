@@ -31,11 +31,11 @@ const udf = new UserDataFunctions();
  * Both are set by OneLake Studio's Export to Fabric, which deploys this app.
  * The workspace must allow "Authenticate with OneLake user-delegated SAS tokens".
  *
- * An app exported as DirectQuery or Direct Lake calls semanticModel instead, for the model file
- * only, and nothing reads the tables in the browser: the export made a Power BI semantic model of
- * the model file, and the page turns Explore's query into DAX (dax-sql) and runs it there through
- * the app's fabric-semanticmodel connector, as the person viewing it (their permissions on the
- * model, Build included).
+ * An app exported as DirectQuery or Direct Lake calls nothing here: the export made a Power BI
+ * semantic model of the model file and put the model beside the page (site/model.json), and the
+ * page turns Explore's query into DAX (dax-sql) and runs it there through the app's
+ * fabric-semanticmodel connector, as the person viewing it (their permissions on the model, Build
+ * included).
  */
 
 type StorageCtx = RayfinContext<BlankAppSchema, AudienceType.Storage>;
@@ -270,31 +270,6 @@ udf.func(
       }
       return { ...(model ? { model } : {}), metadata: catalog.metadata,
                missing: [...catalog.missing, ...bad].sort(), sas, expiresOn: iso(expiry) };
-    } catch (e) {
-      return { error: `${step}: ${e instanceof Error ? e.message : String(e)}` };
-    }
-  },
-  [],
-);
-
-// --- On a semantic model (DirectQuery, Direct Lake) ------------------------------------------
-
-/**
- * On a semantic model: the model file, read in place (MODEL_URL), and nothing else. The page runs
- * its queries on the semantic model itself, through the app's fabric-semanticmodel connector, as
- * the person viewing it: no token for the model is in this function, which Fabric Apps does not
- * offer one for. `request` is JSON, { mode: 'model' }; the answer { model }, or { error } naming
- * the step.
- */
-udf.func(
-  'semanticModel',
-  async (ctx: RayfinContext<BlankAppSchema, AudienceType.Storage>, request: string): Promise<any> => {
-    let step = 'the request';
-    try {
-      const mode = String(JSON.parse(String(request ?? '{}')).mode ?? '');
-      if (mode !== 'model') throw new Error(`no mode ${mode}`);
-      step = 'the setting MODEL_URL (the model)';
-      return { model: await readModel(ctx, ctx.Tokens.Storage) };
     } catch (e) {
       return { error: `${step}: ${e instanceof Error ? e.message : String(e)}` };
     }

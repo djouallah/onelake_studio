@@ -24,30 +24,6 @@
       "contextAudiences": [
         "Storage"
       ]
-    },
-    {
-      "functionName": "semanticModel",
-      "delegateParameters": [
-        {
-          "name": "ctx",
-          "type": "RayfinContext<BlankAppSchema, AudienceType.Storage>",
-          "optional": false,
-          "hasDefault": false,
-          "position": 0,
-          "isFabricParameter": false
-        },
-        {
-          "name": "request",
-          "type": "string",
-          "optional": false,
-          "hasDefault": false,
-          "position": 1,
-          "isFabricParameter": false
-        }
-      ],
-      "contextAudiences": [
-        "Storage"
-      ]
     }
   ]
 }
