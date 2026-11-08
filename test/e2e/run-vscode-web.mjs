@@ -579,6 +579,43 @@ async function cachedRunMatrix({ saved, home, dbFile }) {
 }
 
 // ---------------------------------------------------------------------------
+// A model's Report: every tile's SQL (FROM model) goes through the compiler. With no rows here a tile
+// can only fail where the rows aren't held, never as SQL DuckDB can't parse.
+// ---------------------------------------------------------------------------
+async function modelMatrix() {
+  await step("Model: the Report runs every tile, compiled", async () => {
+    await drive("exec", { command: "onelakeStudio.openSemanticModel", args: [{ kind: "semanticModel", workspace: WORKSPACE, model: "shop", modelId: "shop" }], timeoutMs: 60000 });
+    const f = await panel();
+    await until("the model view", async () => f.locator("#modelView").isVisible(), 30000);
+    await f.locator('#modelView [data-apage="report"]').click();
+    const tiles = await until("every tile done", async () => {
+      const said = await f.locator("#modelView .rp-tile").evaluateAll(ts => ts.map(t => t.innerText));
+      return said.length && said.every(t => !/Waiting…|Running…/.test(t)) && said;
+    }, 90000);
+    check("the Report has tiles", tiles.length > 0, String(tiles.length));
+    const bad = tiles.filter(t => /Parser Error|Binder Error|Catalog Error|syntax error|AGG\(/i.test(t));
+    check("no tile's SQL reached DuckDB uncompiled", bad.length === 0, bad.join(" | "));
+    await f.locator('#modelView [data-apage="model"]').click();
+  }, 180000);
+}
+
+// What the Logs tab lists, as written, with setup hidden as it is by default.
+async function logsListed() {
+  await drive("exec", { command: "onelakeStudio.showLogs" });
+  return until("the Logs tab's rows", async () => {
+    for (const f of page.frames()) {
+      if (f.isDetached() || !await f.locator("#filter").count().catch(() => 0)) continue;
+      const rows = await f.locator("#list tbody tr").evaluateAll(trs => trs.map(tr => ({ status: tr.children[1].textContent, sql: tr.querySelector(".one").textContent })));
+      if (rows.length) return rows;
+    }
+    return false;
+  }, 30000);
+}
+// Statements every matrix above runs, by a word of their own: each one is in Logs.
+const RAN = [/select 101 as first_one/, /select 102 as by_button/, /fromm where/, /select 901 as planned/, /select 902 as explained/,
+  /from a saved query/];
+
+// ---------------------------------------------------------------------------
 // Plan
 // ---------------------------------------------------------------------------
 const planned = () => until("the profile, or its error", async () => {
@@ -826,6 +863,12 @@ async function main() {
   await cachedRunMatrix({ saved, home: cached.home, dbFile });
   await planMatrix();
   await cachedPlanMatrix();
+  await modelMatrix();
+  let before = [];
+  await step("Logs: everything that ran is listed", async () => {
+    before = await logsListed().catch(() => []);
+    for (const re of RAN) check(`Logs lists ${re.source}`, before.some(r => re.test(r.sql)), `${before.length} rows`);
+  });
   await step("Cached: after all of it", async () => {
     check("nothing reached OneLake or Microsoft", connections.length === mark, JSON.stringify(connections.slice(mark)));
     check("nothing prompted", (await dialogsSeen()).length === 0, (await dialogsSeen()).join(" | "));
@@ -868,6 +911,13 @@ async function main() {
     settled("the kept catalog", listed);
     check("the catalog lists the tables after a restart", /orders/.test(listed.table), listed.table || listed.status);
   }, 240000);
+  await step("Logs: nothing that ran before the restart is lost", async () => {
+    const after = await logsListed().catch(() => []);
+    const kept = new Set(after.map(r => `${r.status}|${r.sql}`));
+    const lost = before.filter(r => !kept.has(`${r.status}|${r.sql}`));
+    check("every statement listed before is still listed", before.length > 0 && lost.length === 0, `${lost.length} of ${before.length} lost: ${lost.slice(0, 5).map(r => r.sql).join(" | ")}`);
+    check("and what ran since is there too", after.some(r => /select 77 as still_works/.test(r.sql)), `${after.length} rows`);
+  });
   await close();
 
   // ------------------------------------------------------------------- 5
