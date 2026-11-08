@@ -14,7 +14,7 @@ import { fileURLToPath } from "node:url";
 
 const require = createRequire(import.meta.url);
 const { createEngineHost, KEEP_MARK } = require("../../src/engine-host.js");
-const { createRemote, stopServer, openClient, pipePath, LOST } = require("../../src/engine-client.js");
+const { createRemote, stopServer, openClient, pipePath, lineReader, LOST } = require("../../src/engine-client.js");
 const { createCatalogFile } = require("../../src/catalogfile.js");
 const { createLogFile, logFileOf } = require("../../src/logfile.js");
 const { openOldState } = require("../../src/oldstate.js");
@@ -68,6 +68,21 @@ async function setup(t, { key = "test", idleMs = 60_000 } = {}) {
   const probe = () => openClient({ uri: /serving (quack:\S+)/.exec(log())[1], token: secret, extensionDir: options.extensionDir, bundledExtensions: options.bundledExtensions });
   return { open, gone, log, probe, secret: () => secret, key: `${key}-${dir}`, pipe: pipePath(`${key}-${dir}`) };
 }
+
+test("the control pipe's lines: whole whatever the chunks, and a long one in time linear in its length", () => {
+  const lines = [];
+  const read = lineReader(l => lines.push(l));
+  for (const c of ["{\"a\":1}\n{\"b", "\":2}\n", "", "{\"c\"", ":3}\n{\"d\":4}"]) read(c);
+  assert.deepEqual(lines, ['{"a":1}', '{"b":2}', '{"c":3}']);
+  read("\n");
+  assert.equal(lines.at(-1), '{"d":4}');
+  // 40 MB in 64 KB chunks: searched once, not once per chunk (that was seconds; this is well under one).
+  const chunk = "x".repeat(65536), t0 = Date.now();
+  for (let i = 0; i < 640; i++) read(chunk);
+  read("\n");
+  assert.equal(lines.at(-1).length, 640 * 65536);
+  assert.ok(Date.now() - t0 < 3000, `took ${Date.now() - t0} ms`);
+});
 
 test("two windows join one server, and what one makes the other reads", async t => {
   const { open, log, secret } = await setup(t);

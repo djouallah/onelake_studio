@@ -31,22 +31,24 @@ function openLogs({ engine, open, copy, clear }) {
   panel.webview.html = page(crypto.randomBytes(16).toString('base64'));
   const post = msg => { try { panel.webview.postMessage(msg); } catch (_) {} };
 
-  let asking = false, said = '';
+  let asking = false, said = null;   // what the last rows shown were: null, none yet
   async function tick() {
     if (asking || !panel.visible) return;
     asking = true;
     try {
       const e = engine();
       if (!e) { post({ down: 'The engine is not available here.' }); return; }
-      const kept = await e.logs(SHOWN);
-      // Redrawn only when something changed, so a scrolled or expanded table stays as it is.
-      const now = `${kept.length}|${kept[0] ? `${kept[0].at}|${kept[0].ms}` : ''}`;
+      // The newest statement first: the rows shown are tens of MB of SQL, asked for again only when
+      // something ran since. Redrawn only then, so a scrolled or expanded table stays as it is.
+      const [newest] = await e.logs(1);
+      const now = newest ? `${newest.at}|${newest.window}|${newest.ms}|${newest.status}` : '';
       if (now === said) { post({ down: null }); return; }
+      const kept = newest ? await e.logs(SHOWN) : [];
       said = now;
       // A file under its name: DuckDB logs its URL, and a row reopens as what was written.
       post({ rows: kept.map(r => ({ ...r, sql: fileNamesIn(r.sql), error: r.error && fileNamesIn(r.error) })), shown: SHOWN });
     } catch (err) {
-      said = '';
+      said = null;
       post({ down: `The engine did not answer: ${(err && err.message) || err}` });
     } finally { asking = false; }
   }
@@ -56,10 +58,10 @@ function openLogs({ engine, open, copy, clear }) {
     panel.onDidChangeViewState(() => { if (panel.visible) tick(); }),
     panel.webview.onDidReceiveMessage(async m => {
       if (!m) return;
-      if (m.ready) { said = ''; tick(); }
+      if (m.ready) { said = null; tick(); }
       else if (m.open != null) open(String(m.open));
       else if (m.copy != null) copy(String(m.copy));
-      else if (m.clear) { await clear(); said = ''; tick(); }
+      else if (m.clear) { await clear(); said = null; tick(); }
     }),
   ];
   panel.onDidDispose(() => {

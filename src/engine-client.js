@@ -303,23 +303,36 @@ async function openClient({ uri, token, extensionDir, bundledExtensions, lockdow
   return { local, admin, route, stopGrowing, reattach, reattachControl, listTagged, cancelIds };
 }
 
+// Lines from a stream's text, in time linear in its length: each chunk is searched once, and a line
+// is joined from its pieces once it ends. An answer of tens of MB (the Logs tab's) comes in thousands of
+// chunks, and searching all of it again at each one froze the extension host for seconds.
+function lineReader(onLine) {
+  let pieces = [];
+  return chunk => {
+    let from = 0;
+    for (let nl; (nl = chunk.indexOf('\n', from)) >= 0; from = nl + 1) {
+      pieces.push(chunk.slice(from, nl));
+      const line = pieces.length === 1 ? pieces[0] : pieces.join('');
+      pieces = [];
+      onLine(line);
+    }
+    if (from < chunk.length) pieces.push(chunk.slice(from));
+  };
+}
+
 // Questions on the control pipe, answered by id. A line with no id is the server's own news.
 function controlChannel(sock, onNews = () => {}, rest = '') {
   const asked = new Map();
-  let seq = 0, lines = '';
-  const read = chunk => {
-    lines += chunk;
-    for (let nl; (nl = lines.indexOf('\n')) >= 0;) {
-      let m = null;
-      try { m = JSON.parse(lines.slice(0, nl)); } catch (_) {}
-      lines = lines.slice(nl + 1);
-      if (m && m.id == null) { onNews(m); continue; }
-      const waiting = m && asked.get(m.id);
-      if (!waiting) continue;
-      asked.delete(m.id);
-      if (m.error) waiting.reject(new Error(m.error)); else waiting.resolve(m.value);
-    }
-  };
+  let seq = 0;
+  const read = lineReader(line => {
+    let m = null;
+    try { m = JSON.parse(line); } catch (_) {}
+    if (m && m.id == null) { onNews(m); return; }
+    const waiting = m && asked.get(m.id);
+    if (!waiting) return;
+    asked.delete(m.id);
+    if (m.error) waiting.reject(new Error(m.error)); else waiting.resolve(m.value);
+  });
   read(rest);
   sock.on('data', read);
   sock.resume();
@@ -551,4 +564,4 @@ function createRemote({ onGone = () => {}, ...cfg }) {
   };
 }
 
-module.exports = { createRemote, stopServer, openClient, loadExtension, pipePath, LOST };
+module.exports = { createRemote, stopServer, openClient, loadExtension, pipePath, lineReader, LOST };
