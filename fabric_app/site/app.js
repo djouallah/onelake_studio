@@ -1,7 +1,7 @@
 // =============================================================================
-// app.js — Export to Fabric's app: a semantic model's Explore, nothing else
+// app.js — Export to Fabric's app: a semantic model's Report, and its Explore
 // =============================================================================
-// OneLake Studio's own Explore (explore/view.js: Model, Pivot), over the data source of
+// OneLake Studio's own Explore (explore/view.js: Report, Model, Pivot), over the data source of
 // this app (storage/data.js): it signs in, its function reads the model from the lakehouse and
 // says where the tables are, and DuckDB-WASM reads them in this browser. Exported as DirectQuery
 // or Direct Lake (engine.json), the data source is storage/modeldata.js instead: each query runs as
@@ -9,11 +9,14 @@
 // Client side the model is never copied into the app: it is the lakehouse's file, as it is now. On a
 // semantic model it is model.json, the definition the semantic model was made from. Nothing here is
 // specific to one model; the export writes only rayfin.config.json (the backend), explore.json (the
-// shelves the first view shows), and on a semantic model engine.json and model.json.
+// shelves the first view shows), and on a semantic model engine.json and model.json. The Report page
+// is report.js, the one file the export writes once and never again: the folder's owner grows it.
 // =============================================================================
 import { mountExplore } from "./explore/view.js";
 import { tmslOf } from "./explore/model.js";
-import { EXPLORE_CASTS } from "./explore/query.js";
+import { EXPLORE_CASTS, compileModelSql } from "./explore/query.js";
+import { PALETTE, registerChartTheme } from "./explore/theme.js";
+import { formatValue } from "./explore/draw.js";
 import { createCompiler } from "./semantic/src/index.js";
 import { tmslToModel } from "./semantic/formats/tmsl.js";
 import { ossieToTmsl } from "./semantic/formats/ossie.js";
@@ -57,6 +60,18 @@ const resultOf = table => ({
   numRows: table.numRows,
 });
 
+// The Report page (report.js's draw), its SQL over the model run by `sql`.
+const report = sql => async root => {
+  const { draw } = await import("./report.js");
+  const css = name => getComputedStyle(root).getPropertyValue(name).trim();
+  return draw(root, {
+    sql,
+    echarts: async () => { const ec = await echartsReady; registerChartTheme(ec, css); return ec; },
+    palette: PALETTE,
+    format: formatValue,
+  });
+};
+
 function download(name, text) {
   const a = Object.assign(document.createElement("a"),
     { href: URL.createObjectURL(new Blob([text], { type: "text/csv" })), download: name });
@@ -85,10 +100,13 @@ export async function start() {
     document.title = `${doc.name || name} · Explore`;
     status("");
     boot.done();
+    const compiler = createCompiler(tmslToModel(bim), { tableSource: t => `v_${t.name}`, castOutput: EXPLORE_CASTS });
     mountExplore(document.getElementById("explore"), {
       name, title: String(doc.name || name), tmsl: tmslOf(bim),
-      compiler: createCompiler(tmslToModel(bim), { tableSource: t => `v_${t.name}`, castOutput: EXPLORE_CASTS }),
+      compiler,
       run: async sql => resultOf(await data.query(sql)),
+      // report.js's SQL says FROM model, whatever the model's name.
+      report: report(async text => resultOf(await data.query(compileModelSql(compiler, text, "model")))),
       echarts: () => echartsReady,
       saveText: download,
       loadState: key => { try { return JSON.parse(localStorage.getItem(key)) ?? first; } catch { return first; } },
@@ -133,13 +151,15 @@ async function startModel(first, modelName) {
   document.title = `${doc.name || name} · Explore`;
   status("");
   boot.done();
+  const run = async sql => {
+    try { return await data.run(sql); }
+    catch (e) { if (e.refused) showRefused(modelName || String(doc.name || name)); throw e; }
+  };
   mountExplore(document.getElementById("explore"), {
     name, title: String(doc.name || name), tmsl: tmslOf(bim),
     compiler: { isDax: t => /^\s*(DEFINE|EVALUATE)\b/i.test(t), compileStatement: text => ({ sql: text }) },
-    run: async sql => {
-      try { return await data.run(sql); }
-      catch (e) { if (e.refused) showRefused(modelName || String(doc.name || name)); throw e; }
-    },
+    run,
+    report: report(run),
     shownSql: sql => data.shownSql(sql),
     echarts: () => echartsReady,
     saveText: download,

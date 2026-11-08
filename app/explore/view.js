@@ -1,6 +1,7 @@
 // =============================================================================
-// explore/view.js — a semantic model's Explore: Model and Pivot
+// explore/view.js — a semantic model's Explore: Model and Pivot (and the Fabric app's Report)
 // =============================================================================
+//   Report    the Fabric app's only: its own page, drawn by the host (ctx.report)
 //   Model     the star of its tables and relationships, and what the model says of the
 //             table picked (model.js)
 //   Pivot     the model's fields dragged onto shelves, drawn as a pivot or a chart
@@ -22,7 +23,7 @@ import { createPlanView, profileSql, elapsed, profileColors } from './profile.js
 import { PALETTE, registerChartTheme } from './theme.js';
 import { prettyModelText, extensionVendors, foreignDialects } from './pretty.js';
 
-const PAGES = [['model', 'Model'], ['pivot', 'Pivot']];
+const PAGES = [['report', 'Report'], ['model', 'Model'], ['pivot', 'Pivot']];
 const PREVIEW_ROWS = 500;
 
 // `ctx`:
@@ -55,8 +56,10 @@ const PREVIEW_ROWS = 500;
 //   plainSql         (optional) { from, measure(name) }: editSql's query as SQL over one table
 //                    (explore.js's modelSql), else SQL over the model
 //   close()          (optional) a Close button, after Edit SQL
-//   pages            (optional) the pages shown, of 'model', 'pivot' (default: both);
-//                    the first is the one it opens on. One page: no page tabs.
+//   report(root)     (optional) the Report page, drawn into `root` by the host the first time it is
+//                    shown: the Fabric app's (its site/report.js). No report: no Report page
+//   pages            (optional) the pages shown, of 'report', 'model', 'pivot' (default: all
+//                    there are); the first is the one it opens on. One page: no page tabs.
 //   stateKey         (optional) where its shelves are kept (default: explore.<name>)
 // Returns { destroy }.
 
@@ -129,7 +132,7 @@ export function mountExplore(root, ctx) {
   const btn = (text, onclick, primary) => el('button', { type: 'button', class: `btn-explore${primary ? ' primary' : ''}`, onclick }, text);
 
   // --- The frame: the subtabs and the Pivot's actions, then one element per page ---
-  const pages = PAGES.filter(([k]) => !ctx.pages || ctx.pages.includes(k));
+  const pages = PAGES.filter(([k]) => (k !== 'report' || ctx.report) && (!ctx.pages || ctx.pages.includes(k)));
   const tabs = pages.map(([k, t], i) => el('button', { type: 'button', class: `subtab${i ? '' : ' active'}`, role: 'tab',
     'data-apage': k, 'aria-selected': String(!i), tabindex: i ? '-1' : '0' }, t));
   const sqlToggle = btn('Show SQL', () => (sqlMode ? closeSql() : openSql()));
@@ -165,6 +168,7 @@ export function mountExplore(root, ctx) {
   const closeBtn = ctx.close ? btn('Close', ctx.close) : null;
   const actions = el('div', { class: 'explore-actions', hidden: true },
     ...(editBtn ? [editBtn, closeBtn] : [sqlToggle, closeBtn, csvBtn]), excelBtn, exportBtn);
+  const reportPage = el('div', { class: 'report-page', hidden: true });
   const modelPage = el('div', { class: 'model-page' });
   const pivotPage = el('div', { class: 'explore-page', hidden: true });
 
@@ -211,7 +215,7 @@ export function mountExplore(root, ctx) {
       modelSwitch,
       actions,
       el('span', { class: 'sm-title' }, ctx.title == null ? 'semantic model ' : `${ctx.title} · semantic model `, el('code', {}, ctx.name))),
-    modelArea, pivotPage, sqlPage);
+    reportPage, modelArea, pivotPage, sqlPage);
   ta.addEventListener('keydown', e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); runSql(); } });
 
   for (const b of tabs) {
@@ -222,7 +226,7 @@ export function mountExplore(root, ctx) {
     });
     b.addEventListener('click', () => show(b.dataset.apage));
   }
-  let page = pages[0][0];
+  let page = pages[0][0], reportDrawn = false;
   function show(p) {
     page = p;
     for (const b of tabs) {
@@ -232,6 +236,13 @@ export function mountExplore(root, ctx) {
       b.tabIndex = on ? 0 : -1;
     }
     if (sqlMode && p !== 'pivot') closeSql();
+    reportPage.hidden = p !== 'report';
+    if (p === 'report' && !reportDrawn) {
+      reportDrawn = true;
+      Promise.resolve().then(() => ctx.report(reportPage)).catch(e => {
+        reportPage.replaceChildren(el('div', { class: 'ex-error' }, `The report could not be drawn: ${e.message}`));
+      });
+    }
     modelArea.hidden = p !== 'model';
     if (modelSwitch) modelSwitch.hidden = p !== 'model';
     pivotPage.hidden = p !== 'pivot' || sqlMode;

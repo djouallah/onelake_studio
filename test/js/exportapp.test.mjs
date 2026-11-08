@@ -11,10 +11,11 @@ import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { inflateRawSync } from "node:zlib";
 import { execFileSync } from "node:child_process";
+import { pathToFileURL } from "node:url";
 
 const require = createRequire(import.meta.url);
 const { planExport, modelDoc, writeExport, engineOf, buildDist, vendorSize, zip, crc32, rayfinYml, appName, dfsUrl, MARKER,
-        readMarker, fingerprint, localChanges } = require("../../src/exportapp.js");
+        readMarker, fingerprint, localChanges, starterTiles, starterReport } = require("../../src/exportapp.js");
 const semantic = await import("../../app/semantic.js");
 const { firstRows, counting, kept, MAX_ROWS } = await import("../../fabric_app/site/storage/modelrows.js");
 
@@ -176,6 +177,7 @@ async function fixture(root) {
     "fabric_app/site/storage/auth.js": "// auth\n",
     "fabric_app/site/storage/modeldata.js": 'import { createAuth } from "./auth.js";\n',
     "fabric_app/site/storage/modelrows.js": "// modelrows\n",
+    "fabric_app/report.js": await readFile(new URL("../../fabric_app/report.js", import.meta.url), "utf8"),
     "fabric_app/rayfin/rayfin.yml": "id: explore\nname: explore\nservices:\n  auth:\n    allowedRedirectUris:\n      - http://localhost:5173\n",
     "fabric_app/rayfin/functions/src/function_app.ts": "// openCatalog\n",
     "daxsql/src/index.js": "// dax-sql\n",
@@ -405,6 +407,94 @@ test("the folder: fabric_app's site and function, Studio's Explore, no model; di
   }
 });
 
+// A model as a .bim reads: a fact with its measures, a date table, two dimensions.
+const salesBim = () => ({ model: {
+  tables: [
+    { name: "fct_sales", columns: [{ name: "region_id", dataType: "int64" }, { name: "date", dataType: "dateTime" },
+                                   { name: "amount", dataType: "double" }],
+      measures: [{ name: "Revenue", formatString: "#,##0" }, { name: "Orders" }, { name: "Hidden", isHidden: true },
+                 { name: "Margin %", formatString: "0.0" }, { name: "Units" }, { name: "Fifth" }] },
+    { name: "Calendar", dataCategory: "Time", columns: [{ name: "Date", dataType: "dateTime" }, { name: "Month Name", dataType: "string" },
+                                                       { name: "Year", dataType: "int64" }] },
+    { name: "dim_region", columns: [{ name: "Region Code", dataType: "string" }, { name: "Region", dataType: "string" },
+                                    { name: "State", dataType: "string" }, { name: "secret", dataType: "string", isHidden: true }] },
+    { name: "LocalDateTable_1", columns: [{ name: "Year", dataType: "int64" }] },
+  ],
+  relationships: [{ fromTable: "fct_sales", fromColumn: "region_id", toTable: "dim_region", toColumn: "Region Code" },
+                  { fromTable: "fct_sales", fromColumn: "date", toTable: "Calendar", toColumn: "Date" }],
+} });
+
+test("the Report's first tiles: the first measures, by the date table's year, by a dimension, a top 10 — from metadata alone", () => {
+  const tiles = starterTiles(salesBim());
+  assert.deepEqual(tiles.map(t => [t.kind, t.title]), [
+    ["kpi", "Totals"], ["line", "Revenue by Year"], ["bar", "Revenue by Region"], ["table", "Top 10 State"]]);
+  assert.equal(tiles[0].sql, 'SELECT AGG("Revenue") AS "Revenue", AGG("Orders") AS "Orders", AGG("Margin %") AS "Margin %", AGG("Units") AS "Units" FROM model',
+    "four visible measures, in the model's order");
+  assert.deepEqual(tiles[0].formats, { Revenue: "#,##0", "Margin %": "0.0" });
+  assert.equal(tiles[1].sql, 'SELECT "Calendar"."Year" AS "Year", AGG("Revenue") AS "Revenue" FROM model GROUP BY ALL ORDER BY "Year"');
+  assert.match(tiles[2].sql, /^SELECT "dim_region"\."Region" AS "Region", AGG\("Revenue"\) AS "Revenue" FROM model GROUP BY ALL ORDER BY "Revenue" DESC FETCH FIRST 12 ROWS WITH TIES$/,
+    "a code is not a dimension's label");
+  assert.match(tiles[3].sql, /^SELECT "dim_region"\."State" AS "State", AGG\("Revenue"\)[^]*FETCH FIRST 10 ROWS WITH TIES$/);
+
+  // No date table: a dimension's date, else no trend. No measures: a fact's number, summed.
+  const bim = salesBim();
+  bim.model.tables[1].dataCategory = undefined;
+  bim.model.relationships.pop();
+  for (const t of bim.model.tables) t.measures = [];
+  const plain = starterTiles(bim);
+  assert.deepEqual(plain.map(t => t.kind), ["kpi", "bar", "table"]);
+  assert.equal(plain[0].sql, 'SELECT SUM("fct_sales"."amount") AS "Sum of amount" FROM model', "a key is not a figure");
+  assert.deepEqual(starterTiles({ model: { tables: [{ name: "t", columns: [{ name: "x", dataType: "string" }] }] } }), [], "nothing to add up: no tiles");
+});
+
+test("site/report.js: the template with its tiles, a module whose TILES are the tiles' SQL as written", async () => {
+  const template = await readFile(new URL("../../fabric_app/report.js", import.meta.url), "utf8");
+  const tiles = starterTiles(salesBim());
+  tiles.push({ why: "a name with a backtick and ${", title: "odd", kind: "bar", formats: { "x\\y": "0" },
+               sql: 'SELECT "t"."a`b${c}" AS "x\\y" FROM model' });
+  const text = starterReport(template, tiles);
+  assert.match(text, /\/\/ the year of the model's date table\n  \{\n    title: "Revenue by Year", kind: "line",\n    sql: `SELECT "Calendar"/);
+  const dir = await mkdtemp(join(tmpdir(), "report-"));
+  try {
+    await writeFile(join(dir, "report.mjs"), text);
+    const { TILES, draw } = await import(pathToFileURL(join(dir, "report.mjs")).href);
+    assert.equal(typeof draw, "function");
+    // A tile with no format strings has no `formats`.
+    assert.deepEqual(TILES, tiles.map(({ why, formats, ...t }) => (Object.keys(formats).length ? { ...t, formats } : t)));
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+  assert.throws(() => starterReport("export const TILES = [];", tiles), /no \/\*TILES\*\/\[\]/);
+});
+
+test("the Report is the folder's: written once, kept by every export, never a local change; gone, written again", async () => {
+  const root = await mkdtemp(join(tmpdir(), "export-"));
+  try {
+    const dirs = await fixture(root);
+    const plan = { ...planExport(OSSIE, "sales.yaml", "sales", mods(bimOf(URL_)), WHERE), tiles: starterTiles(salesBim()) };
+    const outDir = join(root, "out", plan.name);
+    const read = p => readFile(join(outDir, p), "utf8");
+    await writeExport({ plan, state: null, outDir, ...dirs });
+    assert.match(await read("site/report.js"), /title: "Revenue by Region", kind: "bar"/);
+    assert.match(await read("AGENTS.md"), /## The Report: yours to grow[\s\S]*`site\/report\.js`[\s\S]*FROM semanticmodel\.<workspace>\.sales/);
+    const marker = { ...(await readMarker(outDir)), files: await fingerprint(outDir) };
+    assert.ok(!("site/report.js" in marker.files));
+
+    await writeFile(join(outDir, "site", "report.js"), "export const TILES = []; // an agent's");
+    assert.deepEqual(await localChanges(outDir, marker), [], "not asked about: no export rewrites it");
+    await writeExport({ plan, state: null, outDir, ...dirs });
+    assert.equal(await read("site/report.js"), "export const TILES = []; // an agent's");
+    const files = await buildDist(outDir, {}, "20261108-120000");
+    assert.equal(files.get("report.js").toString(), "export const TILES = []; // an agent's", "published as it is");
+
+    await rm(join(outDir, "site", "report.js"));
+    await writeExport({ plan, state: null, outDir, ...dirs });
+    assert.match(await read("site/report.js"), /title: "Totals", kind: "kpi"/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("local changes: an edit, a new file, a removed one — never node_modules or dist/", async () => {
   const root = await mkdtemp(join(tmpdir(), "export-"));
   try {
@@ -439,7 +529,7 @@ test("local changes: an edit, a new file, a removed one — never node_modules o
 });
 
 test("the shipped page and its data source parse; client side reads the model from the function, on a semantic model from the site", async () => {
-  for (const p of ["fabric_app/site/app.js", "fabric_app/site/storage/data.js", "fabric_app/site/storage/catalog.js",
+  for (const p of ["fabric_app/report.js", "fabric_app/site/app.js", "fabric_app/site/storage/data.js", "fabric_app/site/storage/catalog.js",
                    "fabric_app/site/storage/modeldata.js"]) {
     execFileSync(process.execPath, ["--check", new URL(`../../${p}`, import.meta.url).pathname.replace(/^\/(\w:)/, "$1")]);
   }

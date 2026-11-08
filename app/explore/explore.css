@@ -71,7 +71,7 @@ section.modelOpen #chartBtn { display: none; }
 /* As tall as the Pivot's frame (.ex), so the two pages are one size and switching between them
    does not jump; the star sits in the middle of its box. */
 .model-page { display: grid; grid-template-columns: minmax(0, 1fr) 380px; gap: var(--gap); padding: var(--gap) var(--gutter) 1.5rem; min-height: 70vh; }
-.model-page[hidden], .explore-sql-page[hidden], .explore-page[hidden], .model-area[hidden], .text-file[hidden] { display: none; }
+.report-page[hidden], .model-page[hidden], .explore-sql-page[hidden], .explore-page[hidden], .model-area[hidden], .text-file[hidden] { display: none; }
 /* Model's Diagram | YAML: the model drawn, or its file (pretty.js's tk-* spans). */
 .model-switch { padding: 0.12rem; }
 .model-switch .subtab { padding: 0.16rem 0.65rem; font-size: 0.74rem; }

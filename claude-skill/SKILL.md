@@ -145,6 +145,9 @@ VS Code extension); nothing is written to Fabric or OneLake.
 - Read only by construction: anything but a read is refused. The exception is `export`, and
   only when the user asks for it. VS Code then asks the user where the local copy goes and
   waits for their OK, so the command waits too. It prints the app's URL, or exits 5 and says why
-  nothing was published. The app opens on Explore's default view.
+  nothing was published. The app opens on its Report, with Explore's Pivot beside it.
+- To grow that report: edit `site/report.js` in the local copy (its `AGENTS.md` says how; each tile is a
+  SELECT over the model, which `sql` tries first with the model's own name), then `export` again to
+  publish it. No export rewrites that file.
 - The same downloads are shared with the OneLake Studio VS Code extension
   (in the extension's cache folder, under `models/<account>/<ws>/<model>.yaml`).

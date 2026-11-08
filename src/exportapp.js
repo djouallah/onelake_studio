@@ -14,6 +14,8 @@
 //   site/semantic/   dax-sql (PINS.daxSql): SQL over the model, as SQL over the views
 //   site/vendor/     every package the page runs (vendor/webapp: DuckDB-WASM and its
 //                    extensions, Arrow, the Rayfin SDK, ECharts): nothing from a CDN
+//   site/report.js   the Report page the app opens on (fabric_app/report.js, with tiles picked
+//                    from the model): written once, then the folder's, and kept by every export
 //   site/explore.json  the shelves the first view shows
 //   site/engine.json   DirectQuery and Direct Lake only, { engine: 'semanticModel' }: the page runs
 //                    no DuckDB (storage/modeldata.js: it queries the semantic model), and site/ holds
@@ -49,6 +51,8 @@ const MARKER = '.onelake-studio-export.json';
 // What a re-export writes again; anything else in the folder is left alone. `model` is an
 // earlier export's copy of the model, which no export writes any more.
 const OWNED = ['site', 'dist', 'rayfin', 'model', 'AGENTS.md', '.gitignore'];
+// But for site/report.js, the Report: written when the folder has none, and kept from then on.
+const REPORT = 'site/report.js';
 
 // An app's name: lower case, letters, digits and dashes (as a Rayfin id), and -explore: its
 // own, never the name of an app someone else deployed for the same model.
@@ -157,7 +161,89 @@ function planExport(text, fileName, name, mods, where, lakes = null) {
     modelUrl: dfsUrl(where.workspace, where.path),
     modelPath: `${where.workspace}/${trimPath(where.path)}`,
     tables: [...sources],
+    tiles: starterTiles(bim),
   };
+}
+
+// --- The Report's first tiles ------------------------------------------------------
+// site/report.js is the folder owner's: written once, from fabric_app/report.js with these tiles,
+// and kept by every later export. Picked from the model's metadata alone, with no query: its
+// first measures as figures, the first by a year of its date table, by a dimension's text
+// column, and a top 10 of another. Each tile is a SELECT over the model (FROM model).
+
+const AUTO_DATE = /^(DateTableTemplate|LocalDateTable)/;
+// A key or a code, by its name: "Region Code", customer_id, ProductKey; not "Paid" or "Grid".
+const keyish = name => /(^|[\s_])(id|key|sk|code)$/i.test(name) || /[a-z](Id|ID|Key|Code)$/.test(name);
+const qid = s => `"${String(s).replace(/"/g, '""')}"`;
+
+function starterTiles(bim) {
+  const m = bim.model ?? bim;
+  const tables = (m.tables ?? []).filter(t => !AUTO_DATE.test(t.name) && !t.isHidden);
+  const shown = t => (t.columns ?? []).filter(c => !c.isHidden && c.type !== 'rowNumber');
+  const measures = tables.flatMap(t => (t.measures ?? []).filter(x => !x.isHidden));
+  const dims = new Set((m.relationships ?? []).map(r => r.toTable));
+  // What a figure is: the model's measures, else a fact table's first number, summed.
+  let figures = measures.slice(0, 4).map(x => ({ name: x.name, sql: `AGG(${qid(x.name)})`, format: x.formatString }));
+  if (!figures.length) {
+    const t = tables.find(x => !dims.has(x.name) && shown(x).some(c => /^(int64|double|decimal)$/.test(c.dataType)));
+    const c = t && shown(t).find(x => /^(int64|double|decimal)$/.test(x.dataType) && !keyish(x.name));
+    if (c) figures = [{ name: `Sum of ${c.name}`, sql: `SUM(${qid(t.name)}.${qid(c.name)})`, format: c.formatString }];
+  }
+  if (!figures.length) return [];
+  const [first] = figures;
+  const col = (t, c) => ({ name: c.name, sql: `${qid(t.name)}.${qid(c.name)}` });
+  const formats = fs => Object.fromEntries(fs.filter(f => f.format).map(f => [f.name, f.format]));
+  const select = (cols, fs) => [...cols, ...fs].map(f => `${f.sql} AS ${qid(f.name)}`).join(', ');
+  const tiles = [{ why: 'the model\'s first measures', title: 'Totals', kind: 'kpi',
+    sql: `SELECT ${select([], figures)} FROM model`, formats: formats(figures) }];
+  // Over time: the date table's year, else its first date, else a date column of a dimension.
+  const dateTable = tables.find(t => t.dataCategory === 'Time');
+  const yearCol = dateTable && shown(dateTable).find(c => /year/i.test(c.name) && !/month|week|quarter|day/i.test(c.name));
+  const dateOf = t => shown(t).find(c => c.dataType === 'dateTime');
+  const timeTable = dateTable || tables.find(t => dims.has(t.name) && dateOf(t));
+  const timeCol = yearCol || (timeTable && dateOf(timeTable));
+  if (timeCol) {
+    const x = col(timeTable, timeCol);
+    tiles.push({ why: yearCol ? 'the year of the model\'s date table' : 'a date the model has', title: `${first.name} by ${x.name}`, kind: 'line',
+      sql: `SELECT ${select([x], [first])} FROM model GROUP BY ALL ORDER BY ${qid(x.name)}`, formats: formats([first]) });
+  }
+  // By a dimension: the text columns of the tables relationships point to (any table, in a model
+  // of one), keys and codes left out.
+  const texts = tables.filter(t => !dims.size || dims.has(t.name)).filter(t => t !== timeTable)
+    .flatMap(t => shown(t).filter(c => c.dataType === 'string' && !keyish(c.name)).map(c => col(t, c)));
+  const [byA, byB] = [texts[0], texts.find(c => c.name !== texts[0]?.name)];
+  if (byA) {
+    tiles.push({ why: 'a dimension\'s first text column', title: `${first.name} by ${byA.name}`, kind: 'bar',
+      sql: `SELECT ${select([byA], [first])} FROM model GROUP BY ALL ORDER BY ${qid(first.name)} DESC FETCH FIRST 12 ROWS WITH TIES`,
+      formats: formats([first]) });
+  }
+  if (byB) {
+    tiles.push({ why: 'another text column, with every figure', title: `Top 10 ${byB.name}`, kind: 'table',
+      sql: `SELECT ${select([byB], figures)} FROM model GROUP BY ALL ORDER BY ${qid(first.name)} DESC FETCH FIRST 10 ROWS WITH TIES`,
+      formats: formats(figures) });
+  }
+  return tiles;
+}
+
+// The tiles as report.js's TILES: a comment saying why each was picked, its SQL as a template
+// literal a person reads (and edits) as SQL.
+function tilesSource(tiles) {
+  if (!tiles.length) return '[]';
+  const lit = s => `\`${String(s).replace(/[\\`]/g, '\\$&').replace(/\$\{/g, '\\${')}\``;
+  return `[\n${tiles.map(t => [
+    `  // ${t.why}`,
+    '  {',
+    `    title: ${JSON.stringify(t.title)}, kind: ${JSON.stringify(t.kind)},`,
+    `    sql: ${lit(t.sql)},`,
+    ...(Object.keys(t.formats).length ? [`    formats: ${JSON.stringify(t.formats)},`] : []),
+    '  },',
+  ].join('\n')).join('\n')}\n]`;
+}
+
+/** site/report.js: fabric_app/report.js with these tiles (planExport's `tiles`). */
+function starterReport(template, tiles) {
+  if (!template.includes('/*TILES*/[]')) throw new Error('fabric_app/report.js has no /*TILES*/[]');
+  return template.replace('/*TILES*/[]', () => tilesSource(tiles));
 }
 
 // fabric_app/rayfin/rayfin.yml, for this app: its own id and name, its sign-in redirects, and on a
@@ -193,7 +279,7 @@ function rayfinYml(text, name, redirects = [], semanticModel = null) {
   return out;
 }
 
-const agentsMd = plan => `# ${plan.title} — Explore, as a Fabric app
+const agentsMd = plan => `# ${plan.title} — Report and Explore, as a Fabric app
 
 Written by OneLake Studio's **Export to Fabric**, and deployed by it over the Fabric REST API (item
 type \`AppBackend\`, named \`${plan.name}\`): no CLI. The site is **protected** — only people who may
@@ -217,11 +303,28 @@ ${onModel(plan) ? `- Model: \`${plan.modelPath}\`, as it was when exported: the 
   may open the app reads them with the owner's rights, never their own. It signs a SAS only for the tables the
   model names.
 `}
+## The Report: yours to grow
+
+The app opens on its Report, \`site/report.js\`. It is the one file here that is yours: the first export
+wrote it with a few tiles picked from the model, and no export writes it again, so edit it freely, then
+export again to publish it (it is not one of the local changes an export asks about). Delete it and the
+next export writes a new one. The Pivot and the Model stay beside it, as they are.
+
+- A tile is \`{ title, kind, sql, formats? }\` in \`TILES\`. \`kind\` is \`kpi\` (one row, each column a
+  figure), \`bar\` or \`line\` (the first column across, every other a series), or \`table\`.
+- \`sql\` is one SELECT over the model, \`FROM model\`: its columns as \`"table"."column"\`, its measures
+  as \`AGG("measure")\`, \`GROUP BY ALL\`, \`ORDER BY\`, \`FETCH FIRST n ROWS WITH TIES\`. ${onModel(plan)
+  ? 'The page turns it into DAX and runs it on the semantic model.' : 'The page compiles it (dax-sql) to SQL over the tables, and DuckDB-WASM runs it.'}
+- Try a tile before it goes in: OneLake Studio's SQL box, or its command line's \`sql\`, runs the same SQL
+  with the model's own name, \`FROM semanticmodel.<workspace>.${plan.modelName}\`.
+- \`draw\` is plain code over ECharts: a new kind of tile, a filter, a layout is yours to write there.
+
 ## Layers
 
 | Layer | Path | |
 |---|---|---|
-| Page | \`site/index.html\`, \`site/app.js\` | Explore over the data source |
+| Report | \`site/report.js\` | the page the app opens on: yours, kept by every export |
+| Page | \`site/index.html\`, \`site/app.js\` | Report and Explore over the data source |
 | Explore | \`site/explore/\` | OneLake Studio's, the same files the extension runs |
 | Compiler | \`site/semantic/src/\`, \`site/semantic/formats/\` | dax-sql (\`${PINS.daxSql}\`): SQL over the model, as SQL over \`v_<table>\` |
 | Packages | \`site/vendor/\` | DuckDB-WASM (\`${WEBAPP.duckdbWasm}\`, DuckDB ${WEBAPP.duckdb}) with its ${WEBAPP.extensions.join(' and ')} extensions, Arrow, the Rayfin SDK and its semantic-model connector, ECharts: shipped with the site, nothing from a CDN |
@@ -234,7 +337,8 @@ ${plan.tables.map(([n, s]) => `- \`${n}\` ← \`${s}\``).join('\n')}
 
 \`dist/\` is \`site/\` as uploaded (stamped with the build, plus \`rayfin.config.json\`), but for \`vendor/\`:
 the packages are uploaded as \`site/vendor/\` holds them, and kept there only. Exporting again from
-OneLake Studio rewrites \`site/\`, \`dist/\`, \`rayfin/\` and this file, and updates the same app.
+OneLake Studio rewrites \`site/\` (but for \`site/report.js\`), \`dist/\`, \`rayfin/\` and this file, and updates the
+same app.
 
 The workspace must allow **OneLake user-delegated SAS tokens** (workspace settings → OneLake): the
 function signs one. The page needs a browser with OPFS shared access handles (Chrome or Edge 121+).
@@ -271,8 +375,10 @@ const readMarker = async dir => (await isEmptyOrOurs(dir)).marker;
 async function writeExport({ plan, state, model, outDir, fabricAppDir, appDir, daxSqlDir, webappDir }) {
   if (onModel(plan) && !model) throw new Error('an app on a semantic model needs the model it was made from');
   const { marker } = await isEmptyOrOurs(outDir);
-  for (const p of OWNED) await fsp.rm(join(outDir, p), { recursive: true, force: true });
   const at = (root, p) => join(root, ...p.split('/'));
+  // The Report is the folder's own, kept as it is: only a folder without one gets the first tiles.
+  const kept = await fsp.readFile(at(outDir, REPORT), 'utf8').catch(() => null);
+  for (const p of OWNED) await fsp.rm(join(outDir, p), { recursive: true, force: true });
   const sql = onModel(plan);
   const siteDir = join(fabricAppDir, 'site');
   const under = (root, src) => src.slice(root.length + 1).split('\\').join('/');
@@ -289,6 +395,7 @@ async function writeExport({ plan, state, model, outDir, fabricAppDir, appDir, d
   await fsp.writeFile(yml, rayfinYml(await fsp.readFile(yml, 'utf8'), plan.name, (marker && marker.redirects) || [],
                                      sql ? plan.semanticModel : null));
   const files = {
+    [REPORT]: kept ?? starterReport(await fsp.readFile(join(fabricAppDir, 'report.js'), 'utf8'), plan.tiles || []),
     'site/explore.json': JSON.stringify(state || null),
     // The semantic model's name: what the page says when it refuses the person signed in.
     ...(sql ? { 'site/engine.json': JSON.stringify({ engine: 'semanticModel', ...(plan.semanticModel ? { name: plan.semanticModel.name } : {}) }) } : {}),
@@ -357,7 +464,8 @@ async function vendorSize(outDir) {
 // --- What changed in the folder since it was published ---------------------------
 
 // The folder's own files — what an export writes and an agent edits — as { 'a/b': sha256 }.
-// node_modules and dist/ are build output, not edits.
+// node_modules and dist/ are build output, not edits. The Report isn't counted: no export
+// rewrites it, so an edit to it is never at risk and never asked about.
 const FINGERPRINTED = ['site', 'rayfin', 'AGENTS.md', '.gitignore'];
 const SKIPPED = new Set(['node_modules', 'dist']);
 
@@ -369,7 +477,7 @@ async function fingerprint(outDir) {
     if (!st) return;
     if (st.isDirectory()) {
       for (const e of (await fsp.readdir(abs)).sort()) if (!SKIPPED.has(e)) await walk(`${rel}/${e}`);
-    } else {
+    } else if (rel !== REPORT) {
       out[rel] = createHash('sha256').update(await fsp.readFile(abs)).digest('hex');
     }
   }
@@ -468,5 +576,5 @@ async function zip(files) {
   return Buffer.concat([...local, ...central, end]);
 }
 
-module.exports = { planExport, modelDoc, writeExport, writeModel, engineOf, buildDist, writeMarker, readMarker, fingerprint, localChanges,
+module.exports = { planExport, starterTiles, starterReport, modelDoc, writeExport, writeModel, engineOf, buildDist, writeMarker, readMarker, fingerprint, localChanges,
                    vendorSize, zip, crc32, rayfinYml, appName, dfsUrl, MARKER };

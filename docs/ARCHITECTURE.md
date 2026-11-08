@@ -525,9 +525,24 @@ same files on DuckDB-WASM.
 
 ## Export to Fabric
 
-One of two writes, with Upload (above). Explore's **Export to Fabric** button, or the command line's `export`, publishes that
-model's Explore, nothing else, as a Fabric app (item type `AppBackend`, named
+One of two writes, with Upload (above). Explore's **Export to Fabric** button, or the command line's `export`, publishes a
+report on that model and its Explore as a Fabric app (item type `AppBackend`, named
 `<model>-explore`). VS Code and the extension are all it needs: no CLI, no Node, no GitHub.
+
+**The Report.** The app opens on a Report page, with Explore's Model and Pivot beside it. The report is one file in
+the local copy, `site/report.js`, and it belongs to whoever owns the folder:
+- **The first export writes it** from [`fabric_app/report.js`](../fabric_app/report.js), with a few tiles picked from
+  the model's metadata, with no query (`starterTiles` in [`src/exportapp.js`](../src/exportapp.js)):
+  - the first four visible measures, as figures;
+  - the first measure by the date table's year;
+  - the first measure by a dimension's text column;
+  - a top 10 of another text column.
+- **Each tile is a SELECT over the model**, `FROM model`, in the SQL the SQL box takes. It is drawn as figures, a bar or
+  line chart, or a table.
+- **No export writes it again**, and it is not one of the local changes an export asks about. So a person or an agent
+  grows it in place and exports again to publish it. The folder's `AGENTS.md` says how.
+- Explore in VS Code has no Report page: only the app passes one to
+  [`app/explore/view.js`](../app/explore/view.js).
 
 **What the app runs on** is picked in a small window under the button ([`app/explore/view.js`](../app/explore/view.js)),
 on Direct Lake unless you change it. Export goes on to the questions below. On the command line it is `--mode`, and
@@ -618,6 +633,7 @@ Direct Lake without it:
   setting for user-delegated SAS tokens isn't needed.
 
 **The template** ([`fabric_app/`](../fabric_app/))
+- **`report.js`:** the first Report, written into `site/` with its tiles when the folder has none.
 - **`site/`:** the page, black always. Its data source (`storage/`) signs in with Rayfin's Fabric SSO,
   takes the model and the tables' locations from the app's function with a read-only SAS per table, and downloads
   the tables' files into the browser, where DuckDB-WASM (DuckDB 2.0), shipped in the site's `vendor/`, reads them as `v_<table>`

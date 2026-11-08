@@ -678,7 +678,7 @@ function createAgent({ onelake, engine, modelPath, appDir, vendorDir, daxSqlPin,
     // VS Code where the local copy goes and waits for the OK there before it publishes. The
     // model is what Explore's button would export: a semantic model's .yaml, where the tree
     // wrote it in its lakehouse, or a model file in a lakehouse's Files/. With no Explore on
-    // screen, the app opens on Explore's default view. --mode says what the app runs on
+    // screen, Explore's Pivot opens on its default view. --mode says what the app runs on
     // (client, directquery, directlake); without it, Direct Lake.
     async export([ws, a, b], opts, io) {
       if (!exportApp) throw new Error('Export to Fabric is not available here');

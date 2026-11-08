@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- **Export to Fabric's app opens on a report.** Its first export picks a few tiles from the model: its first measures
+  as figures, the first by the date table's year, by a dimension, and a top 10. The Pivot and the Model are still
+  there, beside it. The report is one file in the local copy, `site/report.js`, and each tile in it is a SELECT over
+  the model. No later export rewrites that file, so you or an agent can grow it and export again to publish it. The
+  folder's `AGENTS.md` says how. OneLake Studio itself looks the same.
+
 ## 0.2.17
 
 - **A table with OneLake security reads.** When OneLake refuses you a table's files because roles restrict its rows
