@@ -229,7 +229,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
                             memoryLimit = '', threads = 0, spillMaxGB = 0, maxRows = DEFAULT_MAX_ROWS,
                             allowedPaths = [], lockdown = true,
                             httpProxy = '', bundledExtensions = null,
-                            fileCacheDir = null, fileCacheMaxBytes = 0, fileCacheFanout = 16, resolveTable = null, resolveFile = null,
+                            fileCacheDir = null, fileCacheMaxBytes = 0, fileCacheFanout = 4, resolveTable = null, resolveFile = null,
                             catalogTables = null, offlineReason = () => null, checkConnectivity = null,
                             onRowsRead = () => {}, onFileRead = () => {}, onTablesUsed = () => {}, serve = null, remote = null } = {}) {
   let instance = null;
@@ -561,7 +561,8 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
       // way (a terminate inside cache_httpfs). DuckDB's own scheduler and a bounded fan-out
       // keep its parallelism inside DuckDB's.
       await conn.run(`SET cache_httpfs_parallel_read_mode = 'duckdb_task_scheduler';`);
-      await conn.run(`SET cache_httpfs_max_fanout_subrequest = ${Math.max(1, Math.floor(Number(fileCacheFanout)) || 16)};`);
+      // A read spanning blocks fetches at most this many at once: each is a block's worth of memory (filecache.js).
+      await conn.run(`SET cache_httpfs_max_fanout_subrequest = ${Math.max(1, Math.floor(Number(fileCacheFanout)) || 4)};`);
       // A Files/ object can be rewritten in place, so what is kept is checked against the
       // file's version tag and modification time before it is served. Before the wrap: a
       // build without this setting fails here, with nothing cached, not serving stale files.

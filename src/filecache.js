@@ -3,15 +3,18 @@
 // filecache.js — the disk cache's block size, and a folder written at another one
 // =============================================================================
 // cache_httpfs keeps what DuckDB reads from OneLake in blocks, each a file of its own on disk and a request
-// of its own to OneLake. Its 512 KiB made a 9 GB table 18,000 files, each opened on every scan. The engine
-// sets this size (engine-host.js); the window settles the folder before the engine reads from it.
+// of its own to OneLake. Every request to OneLake costs a round trip and money whatever its size, so a block is
+// large: 128 MiB, about two per Parquet file of a Fabric table (a 9.2 GB table is ~72 requests, where 4 MiB made
+// it ~2,300 and its 512 KiB default ~18,000). Reading a cached block reads only the bytes asked for, so its size
+// costs nothing on disk; what it costs is memory, one block per read in flight (engine-host.js caps the fan-out).
+// The engine sets this size (engine-host.js); the window settles the folder before the engine reads from it.
 // No DuckDB here: the window loads this at activation.
 // =============================================================================
 
 const fsp = require('node:fs/promises');
 const { join } = require('node:path');
 
-const FILE_CACHE_BLOCK = 4 * 1024 * 1024;
+const FILE_CACHE_BLOCK = 128 * 1024 * 1024;
 const LAYOUT = `block ${FILE_CACHE_BLOCK}`;
 
 /**

@@ -9,6 +9,14 @@
   app but its packages, which the export adds when it publishes, so the zip is a few MB, not about 50. The report is
   `site/report.json` in it: no export rewrites that entry, so you or an agent can grow it (its `AGENTS.md` says how),
   and the Report tab draws it as it changes. An earlier export's folder is no longer used, and the export says so.
+- **Far fewer requests to OneLake, and data on disk reads in seconds.** The disk cache keeps a table in 128 MB
+  blocks, not 4 MB: a 9.2 GB table is about 72 requests to OneLake, not 2,300. Reading a cached block reads only
+  the bytes a query asks for, where it read the whole block for each few-KB read: a column of a 592-million-row
+  table read from disk took 91 s. The cache is downloaded again once, at the new size.
+- **The extension no longer freezes VS Code for seconds** when the Logs tab is open: an answer from the engine is
+  read in time linear in its size. The Logs tab asks for its rows only when something new ran.
+- **The Report's tiles run one at a time**, and leaving the Report stops the one running, so the Pivot and the rest
+  of the tab don't wait behind them.
 
 ## 0.2.17
 
