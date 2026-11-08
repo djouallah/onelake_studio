@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- **The disk cache keeps 256 GB by default, up from 64.** `onelakeStudio.diskCacheMaxGB` still sets it.
 - **A model has a Report, next to Model and Pivot.** Its first tiles are picked from the model: its first measures as
   figures, the first by the date table's year, by a dimension, and a top 10. Each tile is a SELECT over the model. The
   model view still opens on Model. Export to Fabric's app opens on the same Report, with Model and Pivot beside it.
