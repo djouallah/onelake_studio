@@ -701,7 +701,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
         }
         if (!name) {
           const why = offlineReason();
-          throw Object.assign(new Error(`${sqlName(r)}: this table hasn't been read on this machine, and ${why === 'no internet' ? 'there is no internet' : 'you are not signed in'}. ` +
+          throw Object.assign(new Error(`${sqlName(r)}: this table isn't cached on this machine, and ${why === 'no internet' ? 'there is no internet' : 'you are not signed in'}. ` +
             'What this machine has cached still works: tables, columns, stats and first rows.'), { offline: true });
         }
         source = `SELECT * FROM lake.main.${quoteIdent(name)}`;
@@ -950,7 +950,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
       }
       if (offlineReason() && READ_FAILURE.test(message) && NOT_CACHED.test(message)) {
         const what = named.filter(t => t.location);
-        throw Object.assign(new Error(`${what.length === 1 ? what[0].name : 'This statement'}: this part isn't on this machine yet. Read it once online.`), { offline: true });
+        throw Object.assign(new Error(`${what.length === 1 ? what[0].name : 'This statement'}: this part isn't cached on this machine. Read it once online.`), { offline: true });
       }
       if (READ_FAILURE.test(message)) {
         // The internet went while this was reading, and nothing has said so yet. Run it again from

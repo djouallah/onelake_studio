@@ -280,7 +280,7 @@ test("offline with the lake: a table never read here says so at once, with nothi
   const t0 = Date.now();
   const offline = e => { assert.equal(e.offline, true); return true; };
   await assert.rejects(engine.call("query", ["SELECT * FROM lakehouse.w.lh.dbo.t"]),
-    e => /lakehouse\.w\.lh\.dbo\.t: this table hasn't been read on this machine, and there is no internet/.test(e.message) && offline(e));
+    e => /lakehouse\.w\.lh\.dbo\.t: this table isn't cached on this machine, and there is no internet/.test(e.message) && offline(e));
   // A file read past the lake isn't kept anywhere: refused at once too.
   await assert.rejects(engine.call("query", [`SELECT * FROM '${METADATA.replace("metadata/1.metadata.json", "x.parquet")}'`]),
     e => /This statement: reading rows needs OneLake/.test(e.message) && offline(e));
