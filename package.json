@@ -655,11 +655,11 @@
           },
           "onelakeStudio.diskCacheMaxGB": {
             "type": "number",
-            "default": 64,
+            "default": 256,
             "minimum": 0,
             "scope": "machine",
             "order": 4,
-            "markdownDescription": "How much of what DuckDB reads from OneLake (table data, manifests, metadata and `Files/` objects) is kept on disk, in GB, so what was read once is read from this machine afterwards, even after a restart. A kept copy is checked against OneLake first, so a rewritten file is read again. `0` turns the disk cache off. Kept per Microsoft account. The oldest is dropped past this size only when the engine starts, so a long session can go over it. **Clear Cached OneLake Data** empties it. Applies the next time the engine starts."
+            "markdownDescription": "How much of the OneLake tables' files is kept on this machine, in GB, per Microsoft account. A file a query opens comes down whole, and is read from here after, even with no connection. Past this size the least recently read go. A file no snapshot names any more goes on its own. `0` keeps none: every table is read from OneLake. **Clear Cached OneLake Data** empties it. Applies the next time the engine starts."
           },
           "onelakeStudio.cacheDirectory": {
             "type": "string",

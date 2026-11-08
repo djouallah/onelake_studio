@@ -880,7 +880,7 @@ Excel (MSOLAP) --SOAP over http://127.0.0.1--> extension host
 | `onelakeStudio.keepUsedTablesGB` | 10 | How much of the tables statements keep reading is read whole in the background and kept, and may come down in a day. Never over half of `diskCacheMaxGB`. `0` turns it off, and their metadata is still read every hour. |
 | `onelakeStudio.securedTableRead` | on | Reads a table whose files OneLake refuses you, because of OneLake security, through OneLake's table read API: the rows and columns your roles allow. Each read uses the workspace's capacity. Off, such a table fails. |
 | `onelakeStudio.prefetchMetadata` | on | Reads every table's metadata in the background once a lakehouse's Tables node is opened, so the first click is a disk read. |
-| `onelakeStudio.diskCacheMaxGB` | 64 | How much of the tables' files is kept on this machine, per account. `0` keeps none: every table is read from OneLake, through the lake. |
+| `onelakeStudio.diskCacheMaxGB` | 256 | How much of the tables' files is kept on this machine, per account. `0` keeps none: every table is read from OneLake, through the lake. |
 | `onelakeStudio.cacheDirectory` | empty | Where the disk cache is kept, as a full path. Empty is VS Code's storage for this extension. A new folder starts empty. |
 | `onelakeStudio.engineMemoryLimit` | empty | Most memory DuckDB may use, e.g. `4GB`. Empty is DuckDB's default, 80% of the machine's RAM. |
 | `onelakeStudio.engineThreads` | 0 | How many threads DuckDB may use. `0` is every core. |

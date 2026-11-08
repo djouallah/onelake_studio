@@ -168,7 +168,7 @@ function createEngines({ extensionDir, storageDir, production, serverTag = '', s
 
   // What the engine reads when it boots: here, or in the shared engine's process.
   function engineBootOptions(account, readme) {
-    const diskCacheGB = Math.max(0, Number(settings.read('diskCacheMaxGB', 64)) || 0);
+    const diskCacheGB = Math.max(0, Number(settings.read('diskCacheMaxGB', 256)) || 0);
     return {
       allowedPaths: readme ? [readme] : [],
       httpProxy: editorProxy(),
