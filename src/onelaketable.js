@@ -134,12 +134,18 @@ async function readDelta(c, root, { version: upTo = Infinity } = {}) {
     return !m || parts.length === Number(m[1]);
   };
   const cpv = [...checkpoints.keys()].filter(whole).sort((a, b) => b - a)[0];
+  // A file is its path and its deletion vector's id together, as Delta reconciles them: a remove that names no
+  // deletion vector doesn't remove the add that has one.
+  const idOf = x => {
+    const dv = x.deletionVector;
+    return dv ? `${x.path}\0${dv.storageType}${dv.pathOrInlineDv}${dv.offset == null ? '' : `@${dv.offset}`}` : x.path;
+  };
   const live = new Map();
   let meta = null;
   const apply = a => {
     if (a.metaData) meta = a.metaData;
-    if (a.remove) live.delete(a.remove.path);
-    if (a.add) live.set(a.add.path, a.add);
+    if (a.remove) live.delete(idOf(a.remove));
+    if (a.add) live.set(idOf(a.add), a.add);
   };
   if (cpv !== undefined) {
     const parts = checkpoints.get(cpv).map(q).join(', ');

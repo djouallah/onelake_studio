@@ -72,8 +72,11 @@ def with_dvs(p, targets, store):
         else:
             data = bitmap(deleted); padded = data + b'\x00' * (-len(data) % 4)
             dv = {'storageType': 'i', 'pathOrInlineDv': z85(padded), 'sizeInBytes': len(data), 'cardinality': len(deleted)}
-        acts.append({'remove': {'path': path, 'deletionTimestamp': now, 'dataChange': True, 'extendedFileMetadata': True,
-                                'partitionValues': a.get('partitionValues', {}), 'size': a['size']}})
+        # The remove names the file as it was, its old deletion vector included: Delta knows a file by both.
+        rm = {'path': path, 'deletionTimestamp': now, 'dataChange': True, 'extendedFileMetadata': True,
+              'partitionValues': a.get('partitionValues', {}), 'size': a['size']}
+        if a.get('deletionVector'): rm['deletionVector'] = a['deletionVector']
+        acts.append({'remove': rm})
         acts.append({'add': {**a, 'deletionVector': dv, 'dataChange': True, 'modificationTime': now}})
     if store == 'u': open(f'{p}/ab/deletion_vector_{u}.bin', 'wb').write(buf)
     commit(p, acts)

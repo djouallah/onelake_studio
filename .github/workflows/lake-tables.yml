@@ -95,6 +95,16 @@ jobs:
           t=$(az account get-access-token --resource https://storage.azure.com --query accessToken -o tsv)
           echo "::add-mask::$t"
           echo "ONELAKE_TOKEN=$t" >> "$GITHUB_ENV"
+      # DuckDB's azure extension refused every read here with curl's "Problem with the SSL CA cert". It
+      # looks for the system's bundle by fixed paths; which of them this image has is printed, and the
+      # bundle is linked into each one that is missing.
+      - name: The system's CA bundle where the azure extension looks
+        run: |
+          for p in /etc/ssl/certs/ca-certificates.crt /etc/pki/tls/certs/ca-bundle.crt /etc/ssl/ca-bundle.pem /etc/pki/tls/cacert.pem /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem /etc/ssl/cert.pem; do
+            if [ -e "$p" ]; then echo "present: $p"; else echo "missing: $p"; sudo mkdir -p "$(dirname "$p")"; sudo ln -s /etc/ssl/certs/ca-certificates.crt "$p"; fi
+          done
+          echo "CURL_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt" >> "$GITHUB_ENV"
+          echo "SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt" >> "$GITHUB_ENV"
       - run: python test/fixtures/lake/make_tables.py "$FIXTURES_DIR"
       - name: The cases, uploaded to Tables/test/lakeci_*
         run: |
