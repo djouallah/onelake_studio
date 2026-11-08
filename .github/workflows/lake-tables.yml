@@ -7,8 +7,9 @@
 #            there, and the table service for real: what a statement reads comes down over HTTPS, and reads with
 #            the token gone.
 #
-# Signing in to fabriccat: no secret. The job's OIDC subject, repo:djouallah/onelake_studio:ref:refs/heads/
-# ducklake-tables, is what the federated credential on the Entra app `onelake-studio-ci` trusts. Its service
+# Signing in to fabriccat: no secret. The job's OIDC subject is what the federated credential on the Entra app
+# `onelake-studio-ci` trusts. This repository's subjects carry the owner's and the repository's ids, so it is
+# repo:djouallah@12554469/onelake_studio@1311910860:ref:refs/heads/ducklake-tables, not the plain names. Its service
 # principal is in the group allowed to call Fabric's APIs (fabric-github-deploy) and is a Contributor of tmp.
 # Any other branch, a fork or a pull request gets no token, and its onelake job fails at the sign-in.
 name: Lake tables
@@ -25,8 +26,10 @@ concurrency:
   group: lake-tables-${{ github.ref }}
   cancel-in-progress: true
 
+# Where the cases are written. Set only on the steps that read them: npm test runs every test file, and these
+# skip unless it is set.
 env:
-  LAKE_FIXTURES: ${{ github.workspace }}/.tmp/lake
+  FIXTURES_DIR: ${{ github.workspace }}/.tmp/lake
 
 jobs:
   local:
@@ -50,8 +53,10 @@ jobs:
           key: duckdb-extensions-linux-x64-${{ hashFiles('scripts/fetch-extensions.mjs', 'package-lock.json') }}
       - run: node scripts/fetch-extensions.mjs linux-x64
       - run: npm test
-      - run: python test/fixtures/lake/make_tables.py "$LAKE_FIXTURES"
+      - run: python test/fixtures/lake/make_tables.py "$FIXTURES_DIR"
       - run: node --test test/js/onelaketable.test.mjs
+        env:
+          LAKE_FIXTURES: ${{ env.FIXTURES_DIR }}
 
   onelake:
     runs-on: ubuntu-26.04
@@ -90,11 +95,13 @@ jobs:
           t=$(az account get-access-token --resource https://storage.azure.com --query accessToken -o tsv)
           echo "::add-mask::$t"
           echo "ONELAKE_TOKEN=$t" >> "$GITHUB_ENV"
-      - run: python test/fixtures/lake/make_tables.py "$LAKE_FIXTURES"
+      - run: python test/fixtures/lake/make_tables.py "$FIXTURES_DIR"
       - name: The cases, uploaded to Tables/test/lakeci_*
         run: |
           https="https://onelake.dfs.fabric.microsoft.com/${{ vars.ONELAKE_CI_WORKSPACE }}/${{ vars.ONELAKE_CI_LAKEHOUSE }}.Lakehouse/Tables/test"
-          for c in $(python -c "import json,sys; print(' '.join(k for k,v in json.load(open(sys.argv[1])).items() if v['made']))" "$LAKE_FIXTURES/cases.json"); do
-            python test/fixtures/lake/upload.py "$LAKE_FIXTURES/$c" "$https/lakeci_$c"
+          for c in $(python -c "import json,sys; print(' '.join(k for k,v in json.load(open(sys.argv[1])).items() if v['made']))" "$FIXTURES_DIR/cases.json"); do
+            python test/fixtures/lake/upload.py "$FIXTURES_DIR/$c" "$https/lakeci_$c"
           done
       - run: node --test test/js/onelake-tables.test.mjs
+        env:
+          LAKE_FIXTURES: ${{ env.FIXTURES_DIR }}
