@@ -283,6 +283,30 @@ test("the engine going away isn't the table's fault, and notes nothing", async (
   assert.equal(reads.length, 2, "the next tick tries again");
 });
 
+test("the shared engine gone under a read isn't the table's fault either", async () => {
+  const { data, reads, kept } = setup({ tables: [FACT] });
+  await data.set(CATALOG, MODEL, true);
+  await settled();
+  reads[0].reject(new Error("IO Error: Failed to send message: IO Error: Could not connect to server error for HTTP POST to 'http://127.0.0.1:61026/quack'"));
+  await settled();
+  assert.equal(kept.size, 0);
+  await data.tick();
+  await settled();
+  assert.equal(reads.length, 2, "the next tick tries again");
+});
+
+test("switched off and on again, a table that failed is tried at once", async () => {
+  const { data, reads } = setup({ tables: [FACT] });
+  await data.set(CATALOG, MODEL, true);
+  await settled();
+  reads[0].reject(new Error("the read failed"));
+  await settled();
+  await data.set(CATALOG, MODEL, false);
+  await data.set(CATALOG, MODEL, true);
+  await settled();
+  assert.equal(reads.length, 2);
+});
+
 test("it says how far through a table it is, by its columns, without waiting for the table", async () => {
   const { data, reads } = setup({ tables: [FACT] });
   await data.set(CATALOG, MODEL, true);

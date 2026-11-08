@@ -169,13 +169,16 @@ function createModelData({ tablesOf, resolve, cachedTable, read, usage, offlineR
     }
     if (total > room) return refuse(`${fmtBytes(total)} won't fit: the disk cache is ${fmtBytes(room)}`);
     usage.setOffline(catalog, model, true, now());
+    // Switched on again is asking again: a table that failed doesn't wait out its hour.
+    for (const t of found.tables) { const k = keptOf(t); if (k && k.error && k.retryAt > now()) usage.noteKept(t.t, { ...k, location: t.location, retryAt: 0 }); }
     log(`keep offline: ${model} on`);
     tick().catch(() => {});
     return state(catalog);
   }
 
   // One table's read isn't this table's doing to fail when the engine or the connection went away.
-  const notItsFault = e => !!(e && (e.offline || e.cancelled)) || /interrupt/i.test(String(e && e.message));
+  const notItsFault = e => !!(e && (e.offline || e.cancelled)) ||
+    /interrupt|Could not connect to server|Invalid connection id|the engine (stopped|was closed)/i.test(String(e && e.message));
 
   // Whether it got through them. If not, the next tick is soon enough to try again.
   async function readThem(job, todo) {
