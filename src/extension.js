@@ -728,7 +728,7 @@ async function activateInner(context) {
     vscode.commands.registerCommand('onelakeStudio.clearCache', async () => {
       const fileCacheDir = engines.fileCacheDirFor(core.storeAccount());
       const fileBytes = await dirBytes(fileCacheDir)
-        + (fileCacheDir ? await treeBytes(join(fileCacheDir, 'delta')) + await treeBytes(join(fileCacheDir, 'secured')) : 0);
+        + (fileCacheDir ? await treeBytes(join(fileCacheDir, 'lake')) + await treeBytes(join(fileCacheDir, 'secured')) : 0);
       const modelsDir = modelAccountDir(engines.modelsFolder(), core.queryAccount());
       const size = await onelake.size() + fileBytes + await treeBytes(modelsDir);
       if (!size) {

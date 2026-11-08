@@ -10,7 +10,7 @@
 //   window -> server   { token, window }   then the socket stays open: it says the window is alive
 //   server -> window   { ok, uri, capabilities, tmpDir }
 //   window -> server   { stop: true }      Sign Out, a restart, Clear Cached OneLake Data
-//   window -> server   { id, stats | othersRunning | logs | clearLogs | storageToken | offline | listen }, answered { id, value | error }
+//   window -> server   { id, stats | othersRunning | logs | clearLogs | storageToken | lakeTable | lakeStats | listen }, answered { id, value | error }
 //   server -> window   { reattach: true }   its own news, with no id
 //
 // A window gone is a window whose queries nobody is waiting for: Quack lets them run on, so they
@@ -124,8 +124,9 @@ async function main({ token, pipe, options, logFile, idleMs = 60_000, logsFile =
   async function answer(msg) {
     await booted;
     if (msg.storageToken) { await engine.setStorageToken(String(msg.storageToken)); return true; }
-    if (msg.offline != null) { await engine.setOffline(!!msg.offline); return true; }
-    if (msg.mount) { await engine.mountTable(msg.mount); return true; }
+    // A OneLake table's lake table, synced here, where the lake is (engine-host.js lakeTable).
+    if (msg.lakeTable) return engine.lakeTable(msg.lakeTable);
+    if (msg.lakeStats) return engine.lakeStats();
     if (msg.listen) { await listenAgain(!!msg.listen.force); return true; }
     if (msg.stats) return { ...await engine.stats(), statements: keeper ? await keeper.statements() : 0 };
     if (msg.othersRunning) return engine.othersRunning();
