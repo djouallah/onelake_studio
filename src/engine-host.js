@@ -1256,21 +1256,11 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
     }
   }
 
-  // A table read whole, behind everything (syncworker.js, modeldata.js): every column goes through the disk
-  // cache and no row comes back. Not a page method, and nobody reading it, so it doesn't count as use.
-  // A column at a time: stopped, a statement's reads in flight still finish, and with every column of
-  // every row group in flight that held the connection for over a minute (measured 81s) after the Stop.
-  // `onColumn(done, of)`: how far through its columns it is.
-  const keepTable = async (name, { signal, onColumn = () => {} } = {}) => {
-    const o = { signal, used: false, mark: KEEP_MARK };
-    const { rows } = await agentQuery(`DESCRIBE ${name}`, o);
-    let kept = null;
-    for (const [i, { column_name: column }] of rows.entries()) {
-      kept = await agentQuery(`EXPLAIN ANALYZE SELECT ${quoteIdent(column)} FROM ${name}`, o);
-      onColumn(i + 1, rows.length);
-    }
-    return kept;
-  };
+  // A table kept, behind everything (syncworker.js, modeldata.js): its DuckLake table synced to the latest
+  // snapshot, which naming it does (sourceOf, lakeTable). Nothing of it is read: which files come here is the
+  // table service's, the ones statements open, and the sync keeps a copy of every file still live. Not a page
+  // method, and nobody reading it, so it doesn't count as use.
+  const keepTable = (name, { signal } = {}) => agentQuery(`DESCRIBE ${name}`, { signal, fresh: true, used: false, mark: KEEP_MARK });
 
   // Whether anyone has a statement running on this server, a table being kept aside. Over the control
   // pipe: over Quack, this would be a line in Logs every few seconds. Not a page method.

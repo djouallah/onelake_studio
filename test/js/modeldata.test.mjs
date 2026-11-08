@@ -35,8 +35,8 @@ function setup({ tables = [FACT, DIM], room = 1e9, sizes = { fact: 4000, dim: 10
       return ref.table === "empty" ? { listed, emptySql: "SELECT 1" } : { listed, metadataLocation: `at/${ref.table}/v${world.version}` };
     },
     cachedTable: async t => ({ value: { stats: { totalFilesSize: sizes[t.table] ?? 1 } } }),
-    read: (name, { signal, onColumn }) => new Promise((resolve, reject) => {
-      reads.push({ name, resolve, reject, onColumn });
+    read: (name, { signal }) => new Promise((resolve, reject) => {
+      reads.push({ name, resolve, reject });
       signal.addEventListener("abort", () => reject(new Error("INTERRUPT Error: Interrupted!")));
     }),
     usage,
@@ -305,22 +305,6 @@ test("switched off and on again, a table that failed is tried at once", async ()
   await data.set(CATALOG, MODEL, true);
   await settled();
   assert.equal(reads.length, 2);
-});
-
-test("it says how far through a table it is, by its columns, without waiting for the table", async () => {
-  const { data, reads } = setup({ tables: [FACT] });
-  await data.set(CATALOG, MODEL, true);
-  await settled();
-  assert.equal((await data.state(CATALOG)).meter, 0);
-  reads[0].onColumn(1, 4);
-  const quarter = await data.state(CATALOG);
-  assert.equal(quarter.meter, 25);
-  assert.match(quarter.say, /^0 of 1 table · /);
-  reads[0].onColumn(4, 4);
-  assert.equal((await data.state(CATALOG)).meter, 100);
-  reads[0].resolve();
-  await settled();
-  assert.match((await data.state(CATALOG)).say, /^✓/);
 });
 
 test("once nothing is left to read, what read it can go, and comes back for new data", async () => {

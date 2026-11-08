@@ -803,10 +803,8 @@ test("a statement that reads a table says it was used, and a table being kept do
   assert.equal(used.length, 1, "a Plan runs it");
   used.length = 0;
 
-  const columns = [];
-  const kept = await engine.keepTable(name, { onColumn: (done, of) => columns.push([done, of]) });
-  assert.match(JSON.stringify(kept.rows), /Total Time|QUERY PROFILING|Query Profiling/i, "it ran, and what came back is a plan");
-  assert.deepEqual(columns, [[1, 1]], "a column at a time, saying how far");
+  const kept = await engine.keepTable(name);
+  assert.deepEqual(kept.rows.map(r => r.column_name), ["a"], "it names the table, and reads none of its rows");
   assert.deepEqual(used, [], "or a table would keep itself in use for ever");
   const gone = new AbortController();
   gone.abort();

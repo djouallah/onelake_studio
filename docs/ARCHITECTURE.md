@@ -361,9 +361,9 @@ A table can be part here and part on OneLake, and DuckDB opens each file where i
   offline it asks nothing. A listing that can't be read shows *refresh failed* beside the last good answer. A window hears
   what another wrote from the file within a few seconds, and its tree redraws.
 - **A table statements keep reading is looked after** ([CATALOG.md](CATALOG.md#tables-in-use)). Read 3 times in 14 days, it is
-  *in use*. Its metadata is read every hour, and when nobody is running anything each new snapshot is read whole, through
-  the engine, under `onelakeStudio.keepUsedTablesGB`: every file it opens comes here. Anyone's statement stops that, and
-  what came stays. It works offline from then on, every column. A table over the limit isn't downloaded, and says so in its tooltip.
+  *in use*. Its metadata is read every hour, and when nobody is running anything its lake table is synced to each new
+  snapshot, under `onelakeStudio.keepUsedTablesGB` (`keepTable`). Nothing of it is read: its files come here only as
+  statements open them, and the sync keeps every copy still live. A table over the limit isn't synced, and says so in its tooltip.
 - **Per Microsoft account:** switching accounts never serves one account's data to another.
 - **Survives a sign-out:** signing back in finds it warm. Only **Clear Cached OneLake Data** deletes it.
 - **The catalog is cached too:** `SHOW ALL TABLES` and `information_schema` list every table the catalog file knows with
@@ -791,9 +791,10 @@ personal skills, and it follows the extension through updates.
 ## Keep offline
 
 **Keep offline**, a switch beside a semantic model's tabs, keeps every table the model reads on this machine and current,
-so it answers from disk and with no connection ([`src/modeldata.js`](../src/modeldata.js)). Each table is read whole
-through the engine, as the idle job does it (`keepTable`): every column of every file is opened, so every file comes here
-([Reading OneLake tables](#reading-onelake-tables)), and no row comes back.
+so it answers from disk and with no connection ([`src/modeldata.js`](../src/modeldata.js)). Each table's lake table is
+synced to its latest snapshot, as the idle job does it (`keepTable`), and nothing of it is read: the files that come
+here are the ones the model's queries open ([Reading OneLake tables](#reading-onelake-tables)), so a filter on a partition
+brings down that partition, not the table.
 
 - **A background job, a client of the shared engine** (`engines.js backgroundEngine`), as a window is. It was a server
   process of its own, on one thread and 1 GB, because reading whole beside a query held a whole connection for 3 minutes

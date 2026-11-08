@@ -868,6 +868,8 @@ async function main() {
   await step("Logs: everything that ran is listed", async () => {
     before = await logsListed().catch(() => []);
     for (const re of RAN) check(`Logs lists ${re.source}`, before.some(r => re.test(r.sql)), `${before.length} rows`);
+    // The query tab in front again, for the steps after.
+    await openPanel("onelakeStudio.open");
   });
   await step("Cached: after all of it", async () => {
     check("nothing reached OneLake or Microsoft", connections.length === mark, JSON.stringify(connections.slice(mark)));
