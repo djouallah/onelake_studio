@@ -188,7 +188,7 @@ function createEngines({ extensionDir, storageDir, production, serverTag = '', s
       fileCacheDir: fileCacheDirFor(account),
       // A lake can be open in one process only, and the standalone host has a server of its own.
       lakeFolder: serverTag ? `lake-${serverTag}` : 'lake',
-      fileCacheMaxBytes: diskCacheGB * 1024 ** 3,
+      fileCacheMaxBytes: diskCacheGB * 1e9,
     };
   }
 

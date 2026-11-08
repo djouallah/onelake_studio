@@ -763,7 +763,7 @@ async function activateInner(context) {
       openPerformance({
         engine: () => engines.ensureEngine({ readme: readme.fsPath }),
         disk: async () => ({
-          bytes: await dirBytes(engines.fileCacheDirFor(core.storeAccount())),
+          bytes: await treeBytes(engines.fileCacheDirFor(core.storeAccount())),
           limit: settings.diskCacheBytes(),
         }),
       });
