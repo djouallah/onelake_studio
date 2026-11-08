@@ -22,9 +22,7 @@ const cases = skip ? {} : JSON.parse(readFileSync(join(FIXTURES, "cases.json"), 
 
 test("every case delta-rs could write was written", { skip }, () => {
   const refused = Object.entries(cases).filter(([, v]) => !v.made);
-  // Column mapping is the one delta-rs may refuse; anything else refused is a broken generator.
-  assert.deepEqual(refused.map(([k]) => k).filter(k => k !== "column_mapping"), [], JSON.stringify(refused));
-  if (refused.length) console.log(`not written: ${refused.map(([k, v]) => `${k} (${v.why})`).join("; ")}`);
+  assert.deepEqual(refused, [], "a case not written is a broken generator");
 });
 
 for (const [name, info] of Object.entries(cases)) {
@@ -64,6 +62,22 @@ test("a table followed commit by commit stays equal to delta_scan, time travel i
       const [r] = await H.rowsOf(lake.c, `SELECT count(*)::BIGINT AS n FROM lake.churn AT (VERSION => ${s.snapshot})`);
       assert.equal(Number(r.n), s.rows, `time travel to Delta version ${s.version}`);
     }
+  } finally { lake.close(); }
+});
+
+test("column mapping: a rename after the files were registered keeps their values", { skip: skip || (!cases.column_mapping?.made && "not written") }, async () => {
+  const lake = await H.openLake();
+  try {
+    const root = fwd(join(FIXTURES, "column_mapping"));
+    await syncTable(lake.c, "cm", await readDelta(lake.c, root, { version: 1 }), { dvDir: lake.dvDir });
+    const [before] = await H.rowsOf(lake.c, "SELECT count(region)::BIGINT AS n FROM lake.cm");
+    assert.equal(Number(before.n), 1000);
+    const state = await readDelta(lake.c, root);
+    await syncTable(lake.c, "cm", state, { dvDir: lake.dvDir });
+    const cols = (await H.rowsOf(lake.c, "DESCRIBE lake.cm")).map(r => r.column_name);
+    assert.deepEqual(cols, ["id", "area", "amount"]);
+    const same = await H.sameRows(lake.c, "lake.cm", `delta_scan(${H.q(root)})`, state.fields.map(f => f.name));
+    assert.deepEqual([same.onlyInFirst, same.onlyInSecond], [0, 0], JSON.stringify(same));
   } finally { lake.close(); }
 });
 

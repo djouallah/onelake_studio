@@ -172,10 +172,31 @@ def case_dv_twice(p):
     with_dvs(p, lambda paths: [(paths[0], [1, 2, 3, 4])], 'u')
 
 def case_column_mapping(p):
-    t = rows(0, 500)
-    write_deltalake(p, t, mode='append', configuration={'delta.columnMapping.mode': 'name', 'delta.minReaderVersion': '2', 'delta.minWriterVersion': '5'})
-    meta = DeltaTable(p).metadata().configuration
-    if meta.get('delta.columnMapping.mode') != 'name': raise RuntimeError('delta-rs wrote no column mapping')
+    """Column mapping as Spark writes it, which delta-rs can't: each column's name in the files is col-<uuid>, with
+    its id as the Parquet field id; then a rename, which changes the logical name only."""
+    os.makedirs(log_dir(p))
+    cols = [('id', 'long', pa.int64()), ('region', 'string', pa.string()), ('amount', 'double', pa.float64())]
+    phys = {n: f'col-{uuid.uuid4()}' for n, _, _ in cols}
+    def schema(names):
+        return json.dumps({'type': 'struct', 'fields': [
+            {'name': names.get(n, n), 'type': t, 'nullable': True,
+             'metadata': {'delta.columnMapping.id': i + 1, 'delta.columnMapping.physicalName': phys[n]}}
+            for i, (n, t, _) in enumerate(cols)]})
+    def meta(names):
+        return {'metaData': {'id': 'cm-table', 'format': {'provider': 'parquet', 'options': {}}, 'schemaString': schema(names),
+                             'partitionColumns': [], 'createdTime': 0,
+                             'configuration': {'delta.columnMapping.mode': 'name', 'delta.columnMapping.maxColumnId': '3'}}}
+    def add(lo, hi):
+        t = rows(lo, hi)
+        arrow = pa.schema([pa.field(phys[n], ty, metadata={b'PARQUET:field_id': str(i + 1).encode()}) for i, (n, _, ty) in enumerate(cols)])
+        name = f'part-{uuid.uuid4()}.snappy.parquet'
+        pq.write_table(pa.table([t.column(n) for n, _, _ in cols], schema=arrow), f'{p}/{name}')
+        return {'add': {'path': name, 'partitionValues': {}, 'size': os.path.getsize(f'{p}/{name}'), 'modificationTime': 0,
+                        'dataChange': True, 'stats': json.dumps({'numRecords': hi - lo})}}
+    with open(f'{log_dir(p)}/{0:020d}.json', 'w') as o:
+        for a in ({'protocol': {'minReaderVersion': 2, 'minWriterVersion': 5}}, meta({}), add(0, 500)): o.write(json.dumps(a) + '\n')
+    commit(p, [add(500, 1000)])
+    commit(p, [meta({'region': 'area'})])   # a rename: the files keep their names
 
 def churn(p, step):
     if step == 0: write_deltalake(p, rows(0, 1000), mode='append')

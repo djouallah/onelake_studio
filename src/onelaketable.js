@@ -105,8 +105,9 @@ async function deletionBlob(c, root, dv) {
     const crc = Buffer.alloc(4); crc.writeUInt32BE(crc32(data));
     return Buffer.concat([len, data, crc]);
   }
-  const [content] = await one(c, `SELECT content FROM read_blob(${q(dvFileOf(root, dv))})`);
-  const b = Buffer.from(content), at = dv.offset == null ? 1 : Number(dv.offset), size = b.readUInt32BE(at);
+  // As hex: a BLOB through the JSON row reader comes back as escaped text, not its bytes.
+  const [hex] = await one(c, `SELECT hex(content) FROM read_blob(${q(dvFileOf(root, dv))})`);
+  const b = Buffer.from(hex, 'hex'), at = dv.offset == null ? 1 : Number(dv.offset), size = b.readUInt32BE(at);
   if (size !== Number(dv.sizeInBytes)) throw new Error(`a deletion vector's size is ${size} in its file and ${dv.sizeInBytes} in the log`);
   return b.subarray(at, at + 4 + size + 4);
 }
@@ -114,14 +115,15 @@ async function deletionBlob(c, root, dv) {
 // A checkpoint writes a map as a list of key/value pairs.
 const asObject = m => (Array.isArray(m) ? Object.fromEntries(m.map(x => [x.key, x.value])) : m || {});
 
-/** A Delta table at its latest version, from its log alone. `root` is its folder, local or abfss://. */
-async function readDelta(c, root) {
+/** A Delta table at its latest version, or at `version`, from its log alone. `root` is its folder, local or abfss://. */
+async function readDelta(c, root, { version: upTo = Infinity } = {}) {
   const listed = (await rows(c, `SELECT file FROM glob(${q(`${root}/_delta_log/*`)})`)).map(r => r.file.replace(/\\/g, '/'));
   const commits = new Map(), checkpoints = new Map();
   for (const f of listed) {
     const m = /^(\d{20})\.(json|checkpoint(?:\.\d{10}\.\d{10})?\.parquet)$/.exec(f.split('/').pop());
     if (!m) continue;
     const v = Number(m[1]);
+    if (v > upTo) continue;
     if (m[2] === 'json') commits.set(v, f);
     else { if (!checkpoints.has(v)) checkpoints.set(v, []); checkpoints.get(v).push(f); }
   }
@@ -221,8 +223,21 @@ async function syncTable(c, name, state, { dvDir, held = new Map() }) {
     if (state.partitionColumns.length) await c.run(`ALTER TABLE lake.${qi(name)} SET PARTITIONED BY (${state.partitionColumns.map(qi).join(', ')})`);
     if (state.root) await c.run(`UPDATE ${META}.ducklake_table SET path = ${q(`${state.root}/`)}, path_is_relative = false WHERE table_id = ${tid}`);
   } else {
-    const have = new Set((await rows(c, `SELECT column_name FROM ${META}.ducklake_column WHERE table_id = ${tid} AND end_snapshot IS NULL AND parent_column IS NULL`)).map(r => r.column_name));
-    for (const f of state.fields) if (!have.has(f.name)) await c.run(`ALTER TABLE lake.${qi(name)} ADD COLUMN ${qi(f.name)} ${f.type}`);
+    // A column is known by its name in the files: under column mapping a rename changes only the other one.
+    const have = await rows(c, `SELECT c.column_name AS name, m.source_name AS physical FROM ${META}.ducklake_column c
+      LEFT JOIN ${META}.ducklake_name_mapping m ON m.target_field_id = c.column_id AND m.parent_column IS NULL
+        AND m.mapping_id = (SELECT max(mapping_id) FROM ${META}.ducklake_column_mapping WHERE table_id = ${tid})
+      WHERE c.table_id = ${tid} AND c.end_snapshot IS NULL AND c.parent_column IS NULL`);
+    const byPhysical = new Map(have.map(h => [h.physical || h.name, h.name]));
+    const kept = new Set();
+    for (const f of state.fields) {
+      const was = byPhysical.get(f.physical);
+      if (was !== undefined && was !== f.name) await c.run(`ALTER TABLE lake.${qi(name)} RENAME COLUMN ${qi(was)} TO ${qi(f.name)}`);
+      else if (was === undefined && !have.some(h => h.name === f.name)) await c.run(`ALTER TABLE lake.${qi(name)} ADD COLUMN ${qi(f.name)} ${f.type}`);
+      kept.add(f.name);
+    }
+    for (const h of have) if (!kept.has(h.name) && ![...byPhysical].some(([p, n]) => n === h.name && state.fields.some(f => f.physical === p)))
+      await c.run(`ALTER TABLE lake.${qi(name)} DROP COLUMN ${qi(h.name)}`);
   }
   const cols = await rows(c, `SELECT column_id, column_name, parent_column FROM ${META}.ducklake_column WHERE table_id = ${tid} AND end_snapshot IS NULL ORDER BY column_order`);
   const [pid] = await one(c, `SELECT partition_id FROM ${META}.ducklake_partition_info WHERE table_id = ${tid} AND end_snapshot IS NULL`);

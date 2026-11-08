@@ -1,7 +1,8 @@
 // What the lake's tests share: an engine with the lake attached, and the same-rows check against DuckDB's own
 // readers. Not a test of its own.
 import { createRequire } from "node:module";
-import { existsSync, mkdtempSync } from "node:fs";
+import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
+import tls from "node:tls";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -24,6 +25,10 @@ export async function openLake({ extensions = ["delta", "ducklake"], dir = mkdte
   const db = await DuckDBInstance.create(":memory:", { allow_persistent_secrets: "false" });
   const c = await db.connect();
   for (const e of extensions) await load(c, e);
+  // Node's own certificates, as engine-host.js gives DuckDB: the azure extension finds none of its own on linux.
+  const ca = join(dir, "ca-bundle.pem");
+  writeFileSync(ca, [...new Set(tls.rootCertificates)].join("\n"));
+  await c.run(`SET ca_cert_file = ${q(ca.replace(/\\/g, "/"))}`);
   await attachLake(c, join(dir, "meta.ducklake").replace(/\\/g, "/"));
   return { db, c, dir, dvDir: join(dir, "dv").replace(/\\/g, "/"), close: () => { c.closeSync(); db.closeSync(); } };
 }
