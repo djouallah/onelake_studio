@@ -123,12 +123,6 @@ const isOneLakeTable = s => typeof s === 'string' && ONELAKE_TABLE.test(s);
 // compares as written, and VS Code hands paths over with a small one, so a read through a mount was refused.
 const duckdbPath = p => String(p).replace(/\\/g, '/').replace(/^[a-z]:/, d => d.toUpperCase());
 
-// 25% of RAM unless told otherwise. DuckDB's own default is 80%, which is a fine answer
-// for a process that owns the machine and a bad one for the extension host, which every
-// other extension in the window shares.
-function defaultMemoryLimit() {
-  return `${Math.max(512, Math.floor(os.totalmem() / 4 / 2 ** 20))}MB`;
-}
 
 // The certificate authorities DuckDB's HTTP client may trust, as one PEM file. Needed by the
 // lockdown below: with file access restricted, httpfs refuses to go looking for the
@@ -309,8 +303,9 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
         // out-match ours and decide what the extension reads; measured, it fails as
         // `AuthenticationFailed` from a filesystem we thought we had configured.
         allow_persistent_secrets: 'false',
-        memory_limit: memoryLimit || defaultMemoryLimit(),
       };
+      // DuckDB's own default unless told otherwise, 80% of RAM: it runs in a process of its own, not the extension host.
+      if (memoryLimit) config.memory_limit = memoryLimit;
       if (threads > 0) config.threads = String(threads);
       if (extensionDir) config.extension_directory = extensionDir;
       // The community extensions (h3, zipfs, nanoarrow) ship in the vsix and load by path, and a LOAD by

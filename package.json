@@ -583,7 +583,7 @@
             "order": 1,
             "pattern": "^$|^\\d+(\\.\\d+)?\\s*(KB|MB|GB|TB|KiB|MiB|GiB|TiB)$",
             "patternErrorMessage": "A DuckDB memory size, e.g. 4GB or 512MB.",
-            "markdownDescription": "Most memory DuckDB may use, e.g. `4GB`. Empty means a quarter of this machine's RAM. Bigger queries spill to a temp directory instead of failing. Applies the next time the engine starts."
+            "markdownDescription": "Most memory DuckDB may use, e.g. `4GB`. Empty is DuckDB's default, 80% of this machine's RAM. Bigger queries spill to a temp directory instead of failing. Applies the next time the engine starts."
           },
           "onelakeStudio.engineThreads": {
             "type": "integer",

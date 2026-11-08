@@ -269,11 +269,14 @@ async function syncTable(c, name, state, { dvDir, held = new Map() }) {
 
   await c.run('BEGIN');
   try {
-    const [snap, firstId, nextRow] = await one(c, `SELECT s.snapshot_id + 1, s.next_file_id,
+    // The name map's id comes from the file ids, as DuckLake's own do: it loads the maps from the next file id it has seen,
+    // so a smaller id is never found in a process that has read the lake before.
+    const [snap, mid, nextRow] = await one(c, `SELECT s.snapshot_id + 1,
+      greatest(s.next_file_id, (SELECT coalesce(max(mapping_id), -1) + 1 FROM ${META}.ducklake_column_mapping)),
       coalesce((SELECT next_row_id FROM ${META}.ducklake_table_stats WHERE table_id = ${tid}), 0)
       FROM ${META}.ducklake_snapshot s ORDER BY s.snapshot_id DESC LIMIT 1`);
     const deleteFiles = added.reduce((n, f) => n + (f.deletes ? (f.deletes.parquet ? f.deletes.parquet.length : 1) : 0), 0);
-    await c.run(`INSERT INTO ${META}.ducklake_snapshot SELECT snapshot_id + 1, now(), schema_version, next_catalog_id, next_file_id + ${added.length + deleteFiles}
+    await c.run(`INSERT INTO ${META}.ducklake_snapshot SELECT snapshot_id + 1, now(), schema_version, next_catalog_id, ${Number(mid) + 1 + added.length + deleteFiles}
       FROM ${META}.ducklake_snapshot ORDER BY snapshot_id DESC LIMIT 1`);
     await c.run(`INSERT INTO ${META}.ducklake_snapshot_changes VALUES (${snap}, ${q(`inserted_into_table:${tid},deleted_from_table:${tid}`)}, 'onelake-studio', ${q(`${state.format} ${state.version}`)}, NULL)`);
     if (ended.length) {
@@ -281,7 +284,6 @@ async function syncTable(c, name, state, { dvDir, held = new Map() }) {
       await c.run(`UPDATE ${META}.ducklake_delete_file SET end_snapshot = ${snap} WHERE end_snapshot IS NULL AND data_file_id IN (${ended.join(', ')})`);
     }
     // One name mapping per sync: each column by its name in the files, a Delta partition column by its folder.
-    const [mid] = await one(c, `SELECT coalesce(max(mapping_id), -1) + 1 FROM ${META}.ducklake_column_mapping`);
     await c.run(`INSERT INTO ${META}.ducklake_column_mapping VALUES (${mid}, ${tid}, 'map_by_name')`);
     const children = new Map();
     for (const col of cols) {
@@ -302,7 +304,7 @@ async function syncTable(c, name, state, { dvDir, held = new Map() }) {
     walk(null, null, state.fields);
     await c.run(`INSERT INTO ${META}.ducklake_name_mapping VALUES ${mapping.join(', ')}`);
 
-    let id = Number(firstId), rowId = Number(nextRow);
+    let id = Number(mid) + 1, rowId = Number(nextRow);
     const dataRows = [], partitionRows = [], deleteRows = [];
     for (const f of added) {
       const me = id++, local = held.get(f.path);

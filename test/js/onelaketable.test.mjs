@@ -42,6 +42,20 @@ for (const [name, info] of Object.entries(cases)) {
   });
 }
 
+test("one lake, table after table: each read right after its sync, as the engine does", { skip }, async () => {
+  const lake = await H.openLake();
+  try {
+    for (const [name, info] of Object.entries(cases)) {
+      if (!info.made) continue;
+      const root = fwd(join(FIXTURES, name));
+      const state = await readDelta(lake.c, root);
+      await syncTable(lake.c, name, state, { dvDir: lake.dvDir });
+      const same = await H.sameRows(lake.c, `lake.${H.qi(name)}`, `delta_scan(${H.q(root)})`, state.fields.map(f => f.name));
+      assert.deepEqual([same.onlyInFirst, same.onlyInSecond], [0, 0], `${name}: ${JSON.stringify(same)}`);
+    }
+  } finally { lake.close(); }
+});
+
 test("a table followed commit by commit stays equal to delta_scan, time travel included", { skip }, async () => {
   const lake = await H.openLake();
   try {
