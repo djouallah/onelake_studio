@@ -271,6 +271,89 @@ Mounting onto a local folder or a `file://` path is refused by the lockdown.
 
 `data_file` keeps each file's `abfss://` path, so a file store can be added later without changing the catalog.
 
+### A file store on DuckLake: tried, not built
+
+**The idea:** each table is a DuckLake table whose files keep their OneLake paths. When a file has been fetched
+whole into the cache folder, its path in DuckLake changes to the local copy. A table can be part local and part
+remote, and DuckDB opens whatever each path says, so nothing has to pick a statement's files. That was the problem
+above.
+
+**Tried on 2026-11-08** with DuckDB 2.0.0 and `ducklake` (catalog format 1.1), on generated local Delta tables, and on
+the logs of 29 real tables already kept in the cache folder. The real logs were read from disk only. No OneLake read
+went through it.
+
+| Question | Answer |
+| --- | --- |
+| Under the lockdown, attached before it | Reads, `CREATE TABLE`, new snapshots, `UPDATE` on its metadata and `CHECKPOINT` all work. A file outside `allowed_directories` is refused |
+| Over Quack | A client reads it like any other catalog. A path changed on the server is seen by the client's next statement, with no new snapshot |
+| Local and remote files in one table | Work, and a filter skips a file it can't reach on its stats. **On Windows the lake's own `data_path` must be remote:** with a local one, every `abfss://` or `https://` path is turned into a local path. With a remote one, each table's path can be an absolute OneLake folder in any workspace |
+| Rows written from the log alone, with no file read | 2,000 files in about 50ms, the same rows as `delta_scan`, and the log's stats prune to 2 files. `footer_size` and column stats can be empty. `ducklake_add_data_files` reads every footer instead: 24.6s for 2,000 local files |
+| Partitions | Same rows as `delta_scan`, read from the `col=value` folder names. So a local copy keeps its relative path, folders included |
+| A column added later | One name mapping for every file works, so the log's schema is enough |
+| Deletion vectors | DuckLake's Puffin delete file is the bare blob, and the blob is byte for byte what a Delta `.bin` holds after its first byte. A DV sliced out of the `.bin` into a file of its own gave the same rows as `delta_scan` |
+| Speed, local files, 2,000 files | The same as `delta_scan` on the kept log, within 30ms: `LIMIT 5` 70 against 53ms, a full scan 644 against 590ms. Both open over 100 files for `LIMIT 5` |
+| Real tables in the cache | 1 of 29 partitioned, none with column mapping or deletion vectors |
+| Packaging | `ducklake` has a DuckDB 2.0 build for each platform shipped |
+
+**On a real table,** `scada` (Delta version 13, 9 files, 151 MB, 22 million rows, partitioned by `year`, written by
+Spark), with no `cache_httpfs` loaded and DuckDB's own file cache off. Registered from its log alone in 58 to 259ms.
+The same statement (rows and `sum(INITIALMW)` by year) gave the same answer every time:
+
+| Read | Took |
+| --- | --- |
+| `delta_scan` on OneLake, a new process | 13.3s and 14.7s, then 10.6s and 11.0s again in that process |
+| DuckLake, every file on OneLake, a new process | 6.1s and 6.6s, then 4.5s and 5.9s |
+| Downloading the 9 files whole, one at a time over HTTPS | 32s |
+| DuckLake, 5 files here and 4 on OneLake | 178ms |
+| DuckLake, every file here | 149ms |
+| The same, a new process with no token | 295ms, and one year in 27ms. `delta_scan` failed with no token |
+
+Two findings from it:
+
+- **`ducklake_add_data_files` refused the table:** Spark wrote `SETTLEMENTDATE` as INT96, which DuckDB reads as
+  `TIMESTAMP`, while the Delta schema says `TIMESTAMPTZ`. Rows written from the log read it with no complaint.
+- **A partitioned table needs a name mapping** that marks the partition column (`is_partition`), or the column reads
+  as NULL. One mapping for every file is enough.
+
+**Tried next, the same day:**
+
+| Question | Answer |
+| --- | --- |
+| Following a table as it changes | Appends, a delete that rewrites files, a new column, OPTIMIZE, an update and an overwrite: each commit read from the log and written as one DuckLake snapshot in 12 to 100ms, the same rows as `delta_scan` after every one, files already held here included. Time travel to each of the 7 versions gave the same counts as `delta_scan` |
+| Deletion vectors as Spark and Fabric write them (`storageType` `u`) | Three vectors packed in one `.bin` under a prefix folder, named by a Z85 UUID: decoded, sliced into a file each, the same rows as `delta_scan` |
+| An Iceberg table with deletes: the real `fct_curtailment_region` | Registered from its manifests. Its own position-delete files serve as DuckLake's delete files as they are, with nothing rewritten: 5,401 rows, the same as `iceberg_scan` both ways. **Every file's size is needed:** with none, DuckDB stopped on an internal error and the database had to be restarted |
+| How many tables one lake holds | 5,000 tables of 20 files: a 4.5 MB file, attached in 79ms by a new process, the first read of a table in 137ms, then 12ms, a commit in 12ms, all tables listed in 60ms. Making the 5,000 tables took 12s, once |
+| A statement reading while files are evicted | It keeps its snapshot's paths: a commit and an eviction half way through left it with exactly its 798,000 rows. Windows let the local copies be deleted under it, and then it failed on the first file it hadn't opened yet. So a local copy goes only once every statement started before its eviction has finished |
+| The product's shape, on `scada` | A locked-down server with the lake attached and Quack serving, a locked-down window. Six downloads at a time: 151 MB in 14 to 19s, against 32s one at a time. Each file swapped in as soon as it was whole, with the window reading throughout. The same rows at every step, and with the token gone |
+| Windows and a file just written | The first statement to open the new files waited 6 to 13s with nothing in DuckDB's log, and 148ms after a 20s pause. **The downloader opens each file and reads its footer before the swap:** one such open took 15.4s, and the first statement after it took 167ms |
+
+Smaller things learned: DuckLake writes a `CREATE TABLE` or `ALTER TABLE` to its metadata only at commit, so a schema
+change is its own transaction ahead of the commit's files. `CREATE TABLE … AS` fails with a remote `data_path`, as it
+tries to make a folder there, so a table is made from its column list.
+
+Only one of the tenant's 4,989 tables has delete files, and none of the 36 whose Delta state is kept has deletion
+vectors or column mapping.
+
+**What it would fix:** no `cache_httpfs` at all. Files are read from OneLake until they come down whole, then read from
+disk. The catalog knows which files are here, a remote read skips the log replay `delta_scan` does on every query, and
+eviction is a path changing back.
+
+**What must be handled first:**
+
+- **DuckLake can delete files from a `SELECT`.** `SELECT * FROM ducklake_cleanup_old_files(…)` deleted a data file,
+  and the guard takes it for a read. Here those files are OneLake's, and `ducklake_delete_orphaned_files` on a table
+  folder would delete whatever it doesn't know about. The guard and `studio_authorize` must refuse every `ducklake_*`
+  function that writes, and the metadata catalog by name, before anything is attached. `READ_ONLY` isn't the way: it
+  also stops the server's own metadata writes, and the metadata file can't be attached twice.
+- **The metadata file is tied to the extension's version.** A catalog written by a newer build is refused until it
+  is migrated.
+- **Not tested:** column mapping, as nothing here writes it and no table in the tenant uses it; inline deletion
+  vectors (`storageType` `i`); a checkpoint split into parts; macOS and Linux.
+
+**Decisions it needs:** whole files downloaded for tables in use, and a DuckDB file in the cache folder for DuckLake's
+metadata, opened only by the shared engine. It holds nothing that can't be made again from the kept logs and the files
+in the folder, so Clear Cached deletes it, and a new extension version can rebuild it instead of migrating it.
+
 ## Offline
 
 | Answered from | What |

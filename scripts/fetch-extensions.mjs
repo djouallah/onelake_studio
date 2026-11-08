@@ -43,6 +43,9 @@ const EXTENSIONS = [
   // SQLite files under Files/: the host copies one to the engine's temp directory and
   // ATTACHes it read-only.
   { name: "sqlite_scanner", repo: "https://extensions.duckdb.org", required: false },
+  // OneLake tables read through DuckLake, their files brought here one at a time (onelaketable.js,
+  // tableservice.js). Optional while the setting that turns it on is off by default.
+  { name: "ducklake", repo: "https://extensions.duckdb.org", required: false },
   // COMMUNITY extensions, so nothing is downloaded at run time and a zip reads offline from the first
   // start. A LOAD by path verifies against the core signing keys only, so these load as unsigned, as
   // cache_httpfs does, and their hash here is what holds them. With the disk cache off the engine

@@ -1,0 +1,100 @@
+# OneLake tables through DuckLake (src/onelaketable.js, src/tableservice.js), tested on the branch that builds them.
+#
+#   local:   every case of test/fixtures/lake/make_tables.py, written here by delta-rs (deletion vectors and a
+#            checkpoint in parts written as Spark writes them), read through DuckLake against delta_scan; a table
+#            followed commit by commit; the table service on files it "downloads" from the fixtures.
+#   onelake: the same cases uploaded to fabriccat (workspace tmp, lakehouse data, Tables/test/lakeci_*), read
+#            there, and the table service for real: what a statement reads comes down over HTTPS, and reads with
+#            the token gone.
+#
+# Signing in to fabriccat: no secret. The job's OIDC subject, repo:djouallah/onelake_studio:ref:refs/heads/
+# ducklake-tables, is what the federated credential on the Entra app `onelake-studio-ci` trusts. Its service
+# principal is in the group allowed to call Fabric's APIs (fabric-github-deploy) and is a Contributor of tmp.
+# Any other branch, a fork or a pull request gets no token, and its onelake job fails at the sign-in.
+name: Lake tables
+
+on:
+  push:
+    branches: [ducklake-tables]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lake-tables-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  LAKE_FIXTURES: ${{ github.workspace }}/.tmp/lake
+
+jobs:
+  local:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - run: pip install deltalake==1.5.0 pyarrow==24.0.0 pyroaring==1.1.0
+      - run: npm ci --no-audit --no-fund
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: duckdb-extensions
+          key: duckdb-extensions-linux-x64-${{ hashFiles('scripts/fetch-extensions.mjs', 'package-lock.json') }}
+      - run: node scripts/fetch-extensions.mjs linux-x64
+      - run: npm test
+      - run: python test/fixtures/lake/make_tables.py "$LAKE_FIXTURES"
+      - run: node --test test/js/onelaketable.test.mjs
+
+  onelake:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      ONELAKE_TABLES: abfss://${{ vars.ONELAKE_CI_WORKSPACE }}@onelake.dfs.fabric.microsoft.com/${{ vars.ONELAKE_CI_LAKEHOUSE }}.Lakehouse/Tables/test
+      ONELAKE_CI_CLIENT_ID: ${{ vars.ONELAKE_CI_CLIENT_ID }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - run: pip install deltalake==1.5.0 pyarrow==24.0.0 pyroaring==1.1.0
+      - run: npm ci --no-audit --no-fund
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: duckdb-extensions
+          key: duckdb-extensions-linux-x64-${{ hashFiles('scripts/fetch-extensions.mjs', 'package-lock.json') }}
+      - run: node scripts/fetch-extensions.mjs linux-x64
+      - name: Sign in to fabriccat as onelake-studio-ci
+        uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3
+        with:
+          client-id: ${{ vars.ONELAKE_CI_CLIENT_ID }}
+          tenant-id: ${{ vars.ONELAKE_CI_TENANT_ID }}
+          allow-no-subscriptions: true
+      - name: A storage token for OneLake
+        run: |
+          t=$(az account get-access-token --resource https://storage.azure.com --query accessToken -o tsv)
+          echo "::add-mask::$t"
+          echo "ONELAKE_TOKEN=$t" >> "$GITHUB_ENV"
+      - run: python test/fixtures/lake/make_tables.py "$LAKE_FIXTURES"
+      - name: The cases, uploaded to Tables/test/lakeci_*
+        run: |
+          https="https://onelake.dfs.fabric.microsoft.com/${{ vars.ONELAKE_CI_WORKSPACE }}/${{ vars.ONELAKE_CI_LAKEHOUSE }}.Lakehouse/Tables/test"
+          for c in $(python -c "import json,sys; print(' '.join(k for k,v in json.load(open(sys.argv[1])).items() if v['made']))" "$LAKE_FIXTURES/cases.json"); do
+            python test/fixtures/lake/upload.py "$LAKE_FIXTURES/$c" "$https/lakeci_$c"
+          done
+      - run: node --test test/js/onelake-tables.test.mjs
