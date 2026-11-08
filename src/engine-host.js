@@ -413,7 +413,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
         // a text match, so not the only one: the session token is what keeps others out.
         // DuckLake's own functions write: one deletes files from a SELECT, and here the files are OneLake's.
         await conn.run(`CREATE MACRO memory.main.studio_authorize(token, query) AS
-          CASE WHEN regexp_matches(lower(query), 'quack_(serve|stop)|ducklake_|__ducklake_metadata') THEN NULL ELSE query END;`);
+          CASE WHEN regexp_matches(lower(query), '(?s)quack_(serve|stop)|ducklake_[a-z0-9_]+"?([[:space:]]|/[*].*?[*]/|--[^\\n]*\\n)*[(]|__ducklake_metadata') THEN NULL ELSE query END;`);
         await conn.run(`SET GLOBAL quack_authorization_function = 'studio_authorize';`);
         // Port 0: the system picks a free one. A port already taken raises no error on Windows.
         const r = await conn.runAndReadAll(`SELECT listen_uri FROM quack_serve('quack:127.0.0.1:0', token = ${sqlStr(serve.token)})`);

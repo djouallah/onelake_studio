@@ -64,9 +64,14 @@ function createLogFile({ file, log = () => {} }) {
         db.exec('COMMIT');
       } catch (e) { db.exec('ROLLBACK'); throw e; }
     },
-    /** The newest first. */
+    /** The newest first: `limit` statements, and as many of the engine's setup beside them. Each start
+     * registers every table there is, thousands of them, and the newest rows were only that. */
     read(limit) {
-      return database().prepare('SELECT ts, win, sql, ms, status, error FROM logs ORDER BY ts DESC LIMIT ?').all(limit);
+      // enginelog.js isSetup, in SQL.
+      const SETUP = ['create', 'drop', 'attach', 'detach'].map(w => `lower(ltrim(sql, ' ' || char(9, 10, 13))) GLOB '${w}[^a-z0-9_]*'`).join(' OR ');
+      return database().prepare(`SELECT * FROM (SELECT ts, win, sql, ms, status, error FROM logs WHERE NOT (${SETUP}) ORDER BY ts DESC LIMIT ?)
+        UNION ALL SELECT * FROM (SELECT ts, win, sql, ms, status, error FROM logs WHERE ${SETUP} ORDER BY ts DESC LIMIT ?)
+        ORDER BY ts DESC`).all(limit, limit);
     },
     clear() { database().exec('DELETE FROM logs'); },
     // The oldest go, down to half, so this isn't at the limit again at once.

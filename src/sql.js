@@ -178,11 +178,11 @@ function oneStatement(sql) {
   if (/\bquack_\w+|\bscan_data_from_quack_client\b/i.test(kept)) refuse('Quack is not for statements');
   // The disk cache's switches and the engine's log are the host's, on a server every tab shares.
   if (/\b(?:enable_logging|disable_logging|truncate_duckdb_logs)\b/i.test(kept)) refuse('the engine\'s own switches are not for statements');
-  // The lake's own functions write, and one deletes files from a SELECT: here those files are OneLake's. Its
-  // metadata is the engine's to keep (engine-host.js lakeTable).
-  if (/\bducklake_\w+|\b__ducklake_metadata/i.test(kept)) refuse('the lake is kept by the engine, not by statements');
   // Each of these writes from a SELECT. Named as a function, a string's insides being gone, so a value can mention one.
   const called = scan(String(sql), NAMES).text;
+  // The lake's own functions write, and one deletes files from a SELECT: here those files are OneLake's. Its
+  // metadata is the engine's to keep (engine-host.js lakeTable). Called, not named: ducklake_mart can be a schema.
+  if (/\bducklake_\w+"?\s*\(|\b__ducklake_metadata/i.test(called)) refuse('the lake is kept by the engine, not by statements');
   if (/\b(?:write_blob|write_log)"?\s*\(/i.test(called)) refuse('this function writes');
   // query('…' || '…') runs SQL no name above can be found in, DuckDB having joined the text up first.
   if (/\bquery(?:_table)?"?\s*\(/i.test(called)) refuse('query() runs what no check here can read');

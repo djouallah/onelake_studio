@@ -299,6 +299,11 @@ async function ossieText(file) {
 // (explore/view.js) in place of the editor and the results — Model and Pivot — and is
 // registered (semantic.js) so SQL anywhere, the main editor's included, can name it.
 let modelView = null;
+// The model opened last, by its SQL name. A Report's tile says FROM model (explore/report.js), and its SQL
+// pasted in the box means that model here too.
+let lastModel = null;
+const MODEL_ALIAS = /\b(FROM|JOIN)(\s+)model\b(?!\s*\.)/gi;
+const withModel = sql => (lastModel && sql ? String(sql).replace(MODEL_ALIAS, (_, kw, sp) => `${kw}${sp}${lastModel}`) : sql);
 
 // ECharts' own minified build, as a classic script (window.echarts), from the vendored copy.
 // jsDelivr's +esm repackaging of it draws an empty canvas.
@@ -344,6 +349,7 @@ async function openModelView(file, text = null, { fromOneLake = text == null } =
     // name; else the file, in the workspace it is in, by its name.
     const schema = file.modelWorkspace || (fromOneLake && lakehouse ? lakehouse.workspace : null);
     const m = await semantic.registerModel(file.name, bim, null, schema, file.modelName);
+    lastModel = m.name;
     // Kept by the host as a semantic view too, so it is there after a restart and the
     // command line can name it. Best effort: the view on screen does not depend on it.
     engine.semanticKeep(m.view, fromOneLake ? abfssUrl(lakehouse.workspace, file.path) : file.path, m.schema)
@@ -784,6 +790,7 @@ async function showPlan(text) {
   lastRun = { error: null, rewritten: false };
   text = String(text || '').trim();
   if (!text) { setStatus('Write a query to plan it.'); return false; }
+  text = withModel(text);
   if (planning) { setStatus('A plan is still being measured: wait for it, then plan again.', 'warn'); return false; }
   currentSql = text;
   setStatus('Planning…');
@@ -851,6 +858,8 @@ let running = 0;   // queries under way: a kept result waits for them rather tha
 let stops = 0;     // presses of Stop: one before a statement reaches the host has nothing to cancel yet
 // `summarize`: SUMMARIZE of this query instead (Profile), of the SQL it compiles to.
 async function runQuery({ sql, doc = true, ext = '', summarize = null } = {}) {
+  sql = withModel(sql);
+  summarize = withModel(summarize);
   sql = String(summarize != null ? `SUMMARIZE ${summarize}` : sql ?? '');
   currentSql = sql;
   lastRun = { error: null, rewritten: false };
@@ -1515,7 +1524,10 @@ async function runBox({ plan = false } = {}) {
     // Before anything is cancelled: this Plan would be refused, and would have stopped the one under way.
     if (plan && planning) { setStatus('A plan is still being measured: wait for it, then plan again.', 'warn'); return; }
     enterQuery(activeQuery);
-    const ok = plan ? await showPlan(sql) : await runQuery({ sql });
+    // EXPLAIN [ANALYZE] written in the box is Plan: the profile and the tree, not two columns of text.
+    // One with options, EXPLAIN (FORMAT json) …, runs as written: its text is what was asked for.
+    const explain = /^\s*EXPLAIN(?:\s+ANALY[SZ]E)?\s+(?!\()/i.exec(sql);
+    const ok = plan || explain ? await showPlan(explain ? sql.slice(explain[0].length) : sql) : await runQuery({ sql });
     // The cursor goes where DuckDB says the error is, as the statement is written. Not a
     // selection: the next Ctrl+Enter runs the statement again, not one word of it.
     if (!ok && lastRun.error && !lastRun.rewritten && box.value === text) {

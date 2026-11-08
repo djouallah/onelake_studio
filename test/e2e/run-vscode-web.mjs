@@ -617,6 +617,16 @@ async function planMatrix() {
     check("the plan is gone", !r.plan);
   });
 
+  await step("Run: EXPLAIN written in the box is the plan, not two columns of text", async () => {
+    for (const text of ["explain select 902 as explained", "EXPLAIN ANALYZE select 903 as explained"]) {
+      const r = await runIt(text);
+      settled(text, r);
+      const s = await planned();
+      check(`${text}: the plan view is on screen`, s.plan && !s.planError, s.planText || s.status);
+      check(`${text}: no explain_key table`, !/explain_key/.test(s.table), s.table);
+    }
+  });
+
   await step("Plan: a real query's operators", async () => {
     const r = await runIt("select i % 10 as d, count(*) as n from range(100000) t(i) group by all order by 1", { plan: true });
     settled("a query's plan", r);

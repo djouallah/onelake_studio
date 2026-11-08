@@ -421,6 +421,8 @@ jobs:
           path: |
             ${{ runner.temp }}/e2e/shots
             ${{ runner.temp }}/e2e/*/data/data/logs
+            ${{ runner.temp }}/e2e/**/engine-server/*.log
+            ${{ runner.temp }}/e2e/**/engine-server/logs-*.sqlite
           if-no-files-found: warn
           overwrite: true
           retention-days: 14
