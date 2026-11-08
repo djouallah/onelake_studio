@@ -136,6 +136,8 @@ let semviews = null;
 // Export to Fabric (exportapp.js), the page's fabric.exportExplore; set by activateInner,
 // which owns the agent's modules.
 let exportExplore = null;
+// The Report tab's tiles (exportflow.js reportOf), the page's model.report; set by activateInner, as above.
+let modelReport = null;
 // Open in Excel (src/xmla), the page's excel.open; set by activateInner, as above.
 let openExcel = null;
 // Keep offline (modeldata.js), the page's model.offlineState and model.setOffline; set by activateInner, as above.
@@ -183,6 +185,10 @@ async function show(context, { newTab = false, ...options } = {}) {
       // A refusal is what Explore's info line says, not a failure of the export.
       exportExplore: x => (exportExplore ? exportExplore(x).catch(e => { if (e.declined) return e.message; throw e; })
         : Promise.reject(new Error('OneLake Studio is still starting'))),
+      report: {
+        load: x => (modelReport ? modelReport.load(x) : Promise.reject(new Error('OneLake Studio is still starting'))),
+        stamp: x => (modelReport ? modelReport.stamp(x) : Promise.reject(new Error('OneLake Studio is still starting'))),
+      },
       openInExcel: x => (openExcel ? openExcel(x) : Promise.reject(new Error('OneLake Studio is still starting'))),
       offlineState: x => (keepOffline ? keepOffline.state(x) : Promise.reject(new Error('OneLake Studio is still starting'))),
       setOffline: x => (keepOffline ? keepOffline.set(x) : Promise.reject(new Error('OneLake Studio is still starting'))),
@@ -425,7 +431,7 @@ async function activateInner(context) {
     mark: step => out && out.mark(step),
   });
   theCore = core;
-  ({ engines, onelake, semviews, rebindStore, exportExplore, openExcel, keepOffline, openSqlModel, nameModelTables, saveQuery } = core);
+  ({ engines, onelake, semviews, rebindStore, exportExplore, modelReport, openExcel, keepOffline, openSqlModel, nameModelTables, saveQuery } = core);
   const { fabric, sqlTables, syncWorker, favorites, accountTurn, sessionChanged, setSignedIn } = core;
   const { queriesFolder, listQueries, queryPath } = core.queries;
   const { modelPath, modelKey, cachedModel, unsupportedModels, unsupportedNote, fetchModel, completionNames } = core.models;

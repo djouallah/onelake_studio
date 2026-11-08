@@ -10,13 +10,12 @@
 // semantic model it is model.json, the definition the semantic model was made from. Nothing here is
 // specific to one model; the export writes only rayfin.config.json (the backend), explore.json (the
 // shelves the first view shows), and on a semantic model engine.json and model.json. The Report page
-// is report.js, the one file the export writes once and never again: the folder's owner grows it.
+// is report.json (explore/report.js draws it), which the export writes once and never again: the
+// zip's owner grows it.
 // =============================================================================
 import { mountExplore } from "./explore/view.js";
 import { tmslOf } from "./explore/model.js";
-import { EXPLORE_CASTS, compileModelSql } from "./explore/query.js";
-import { PALETTE, registerChartTheme } from "./explore/theme.js";
-import { formatValue } from "./explore/draw.js";
+import { EXPLORE_CASTS } from "./explore/query.js";
 import { createCompiler } from "./semantic/src/index.js";
 import { tmslToModel } from "./semantic/formats/tmsl.js";
 import { ossieToTmsl } from "./semantic/formats/ossie.js";
@@ -60,17 +59,12 @@ const resultOf = table => ({
   numRows: table.numRows,
 });
 
-// The Report page (report.js's draw), its SQL over the model run by `sql`.
-const report = sql => async root => {
-  const { draw } = await import("./report.js");
-  const css = name => getComputedStyle(root).getPropertyValue(name).trim();
-  return draw(root, {
-    sql,
-    echarts: async () => { const ec = await echartsReady; registerChartTheme(ec, css); return ec; },
-    palette: PALETTE,
-    format: formatValue,
-  });
-};
+// The Report's tiles (explore/report.js), as the export wrote them: report.json.
+const report = { load: async () => {
+  const r = await fetch(new URL("./report.json" + v, import.meta.url));
+  if (!r.ok) throw new Error(`report.json: ${r.status}`);
+  return { spec: await r.json(), stamp: null };
+} };
 
 function download(name, text) {
   const a = Object.assign(document.createElement("a"),
@@ -105,8 +99,7 @@ export async function start() {
       name, title: String(doc.name || name), tmsl: tmslOf(bim),
       compiler,
       run: async sql => resultOf(await data.query(sql)),
-      // report.js's SQL says FROM model, whatever the model's name.
-      report: report(async text => resultOf(await data.query(compileModelSql(compiler, text, "model")))),
+      report,
       echarts: () => echartsReady,
       saveText: download,
       loadState: key => { try { return JSON.parse(localStorage.getItem(key)) ?? first; } catch { return first; } },
@@ -159,7 +152,7 @@ async function startModel(first, modelName) {
     name, title: String(doc.name || name), tmsl: tmslOf(bim),
     compiler: { isDax: t => /^\s*(DEFINE|EVALUATE)\b/i.test(t), compileStatement: text => ({ sql: text }) },
     run,
-    report: report(run),
+    report,
     shownSql: sql => data.shownSql(sql),
     echarts: () => echartsReady,
     saveText: download,

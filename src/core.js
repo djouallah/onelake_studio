@@ -100,7 +100,7 @@ function createCore({
   // Set below: what an engine, a tab and the command line ask for by the time anything can ask.
   let onelake = null, semviews = null, rebindStore = null, onStoreCleared = () => {};
   let resolveSqlTable = null, resolveSqlFile = null, nameModelTables = null, cachedSqlTables = null;
-  let openSqlModel = null, saveQuery = null, exportExplore = null, openExcel = null, keepOffline = null;
+  let openSqlModel = null, saveQuery = null, exportExplore = null, modelReport = null, openExcel = null, keepOffline = null;
 
   // What an engine asks of this window, whichever engine it is.
   function engineCallbacks() {
@@ -535,13 +535,16 @@ function createCore({
 
   // The one OneLake writer (onelakewrite.js): Export to Fabric's .yaml, and Upload's files.
   const writer = createOneLakeWriter({ getToken: hostToken });
-  exportExplore = createExport({
+  const exporter = createExport({
     connectivity, modules: () => agent.modules(), hostToken, appToken, powerBiToken: fabricToken, sqlToken, fabric, onelake, catalog, writer,
     memento, extensionDir, pageDir,
     ui: exportUi,
     onRefresh: node => view.refresh(node),
     log,
-  }).exportExplore;
+  });
+  exportExplore = exporter.exportExplore;
+  // The Report tab's tiles: a model's exported zip's report.json, else the first tiles.
+  modelReport = { load: exporter.reportOf, stamp: exporter.reportStamp };
 
   // Behind what's on screen, once it has been built.
   function start() {
@@ -578,7 +581,7 @@ function createCore({
   }
 
   return {
-    engines, onelake, semviews, rebindStore, exportExplore, openExcel, keepOffline, openSqlModel, nameModelTables, saveQuery,
+    engines, onelake, semviews, rebindStore, exportExplore, modelReport, openExcel, keepOffline, openSqlModel, nameModelTables, saveQuery,
     onStoreCleared: () => onStoreCleared(),
     // The cache folder moved from `old` (setCacheRoot): the store's Files/ bytes go to the new one too, and
     // this account's model copies move there, their views with them. Waited for before `old` is deleted.

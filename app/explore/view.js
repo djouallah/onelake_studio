@@ -1,7 +1,8 @@
 // =============================================================================
-// explore/view.js — a semantic model's Explore: Model and Pivot (and the Fabric app's Report)
+// explore/view.js — a semantic model's Explore: Report, Model and Pivot
 // =============================================================================
-//   Report    the Fabric app's only: its own page, drawn by the host (ctx.report)
+//   Report    tiles the host reads (ctx.report: Export to Fabric's report.json, or the first
+//             tiles), each a SELECT over the model, drawn by report.js
 //   Model     the star of its tables and relationships, and what the model says of the
 //             table picked (model.js)
 //   Pivot     the model's fields dragged onto shelves, drawn as a pivot or a chart
@@ -22,9 +23,11 @@ import { compileModelSql } from './query.js';
 import { createPlanView, profileSql, elapsed, profileColors } from './profile.js';
 import { PALETTE, registerChartTheme } from './theme.js';
 import { prettyModelText, extensionVendors, foreignDialects } from './pretty.js';
+import { drawReport } from './report.js';
 
 const PAGES = [['report', 'Report'], ['model', 'Model'], ['pivot', 'Pivot']];
 const PREVIEW_ROWS = 500;
+const REPORT_POLL_MS = 2000;
 
 // `ctx`:
 //   name             the model's name: what SQL calls it (FROM <name>)
@@ -56,10 +59,12 @@ const PREVIEW_ROWS = 500;
 //   plainSql         (optional) { from, measure(name) }: editSql's query as SQL over one table
 //                    (explore.js's modelSql), else SQL over the model
 //   close()          (optional) a Close button, after Edit SQL
-//   report(root)     (optional) the Report page, drawn into `root` by the host the first time it is
-//                    shown: the Fabric app's (its site/report.js). No report: no Report page
+//   report           (optional) the Report page's tiles: { load(), stamp()? }. load answers
+//                    { spec, stamp } (report.js's spec); stamp(), asked while the page is on
+//                    screen, answers a value that changes when the tiles do. No report: no page
 //   pages            (optional) the pages shown, of 'report', 'model', 'pivot' (default: all
-//                    there are); the first is the one it opens on. One page: no page tabs.
+//                    there are), in that order. One page: no page tabs.
+//   openOn           (optional) the page it opens on (default: the first shown)
 //   stateKey         (optional) where its shelves are kept (default: explore.<name>)
 // Returns { destroy }.
 
@@ -226,7 +231,7 @@ export function mountExplore(root, ctx) {
     });
     b.addEventListener('click', () => show(b.dataset.apage));
   }
-  let page = pages[0][0], reportDrawn = false;
+  let page = ctx.openOn && pages.some(([k]) => k === ctx.openOn) ? ctx.openOn : pages[0][0];
   function show(p) {
     page = p;
     for (const b of tabs) {
@@ -237,17 +242,48 @@ export function mountExplore(root, ctx) {
     }
     if (sqlMode && p !== 'pivot') closeSql();
     reportPage.hidden = p !== 'report';
-    if (p === 'report' && !reportDrawn) {
-      reportDrawn = true;
-      Promise.resolve().then(() => ctx.report(reportPage)).catch(e => {
-        reportPage.replaceChildren(el('div', { class: 'ex-error' }, `The report could not be drawn: ${e.message}`));
-      });
+    if (ctx.report) {
+      if (p === 'report' && !reportSeq) drawReportPage();
+      watchReport(p === 'report');
     }
     modelArea.hidden = p !== 'model';
     if (modelSwitch) modelSwitch.hidden = p !== 'model';
     pivotPage.hidden = p !== 'pivot' || sqlMode;
     actions.hidden = p !== 'pivot';
     if (p === 'pivot') openExplorer();
+  }
+
+  // --- Report: the host's tiles (ctx.report.load), drawn; drawn again when they change ---
+  // Its SQL says FROM model, whatever the model is called here.
+  let reportView = null, reportStamp = null, reportTimer = null, reportSeq = 0;
+  const reportSql = text => run(compileModelSql(ctx.compiler, text, 'model'));
+  const reportEcharts = async () => { const ec = await ctx.echarts(); registerChartTheme(ec, css); return ec; };
+  async function drawReportPage() {
+    const my = ++reportSeq;
+    if (!reportView) reportPage.replaceChildren(el('div', { class: 'ex-empty' }, 'Reading the report…'));
+    try {
+      const { spec, stamp } = await ctx.report.load();
+      if (my !== reportSeq || destroyed) return;
+      reportStamp = stamp ?? null;
+      reportView?.destroy();
+      reportView = drawReport(reportPage, spec, { sql: reportSql, echarts: reportEcharts });
+    } catch (e) {
+      if (my !== reportSeq || destroyed) return;
+      reportView?.destroy();
+      reportView = null;
+      reportPage.replaceChildren(el('div', { class: 'ex-error' }, `The report could not be read: ${e.message}`));
+    }
+  }
+  // While the Report is on screen, its file is looked at every few seconds (ctx.report.stamp):
+  // an edit to it, by a person or an agent, is drawn without a click.
+  function watchReport(on) {
+    clearInterval(reportTimer);
+    reportTimer = null;
+    if (!on || !ctx.report.stamp) return;
+    reportTimer = setInterval(async () => {
+      try { if ((await ctx.report.stamp()) !== reportStamp && page === 'report' && !destroyed) drawReportPage(); }
+      catch { /* asked again next time */ }
+    }, REPORT_POLL_MS);
   }
 
   // --- Model ---
@@ -526,7 +562,7 @@ export function mountExplore(root, ctx) {
     }
   }
 
-  if (page !== 'model') show(page);
+  show(page);
 
   return {
     // The model's query as it stands: Show SQL's box when it is open, else the shelves'.
@@ -534,6 +570,8 @@ export function mountExplore(root, ctx) {
     destroy() {
       destroyed = true;
       keepOffline?.destroy();
+      clearInterval(reportTimer);
+      reportView?.destroy();
       explorer?.destroy();
       results.clear();
       resized.disconnect();

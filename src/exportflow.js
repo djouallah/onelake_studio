@@ -5,14 +5,14 @@
 // Every question goes through `ui`, so whoever is showing this decides how it is asked.
 // =============================================================================
 
-const { join, basename, dirname } = require('node:path');
+const { join, dirname } = require('node:path');
 const os = require('node:os');
 const { existsSync } = require('node:fs');
 const fsp = require('node:fs/promises');
 const { modelFileName } = require('./fabric');
 const { PINS } = require('./vendored');
-const { planExport, modelDoc, writeExport, writeModel, engineOf, buildDist, writeMarker, readMarker, fingerprint, localChanges,
-        vendorSize, zip, rayfinYml } = require('./exportapp');
+const { planExport, starterTiles, modelDoc, appFiles, setModel, engineOf, readApp, writeApp, vendorFiles, vendorSize, buildDist,
+        fingerprint, localChanges, zip, rayfinYml, REPORT } = require('./exportapp');
 const { createFabricApp, tenantOf } = require('./fabricapp');
 const { createOneLakeWriter } = require('./onelakewrite');
 const { createFabricModel } = require('./fabricmodel');
@@ -21,8 +21,14 @@ const { semanticTmsl, definitionOf, MODES } = require('./pbimodel');
 // What the app runs on, as Explore's Export window and the command line's --mode name it.
 // Neither says: Direct Lake.
 const MODE_OF = { client: 'duckdb', directquery: 'directQuery', directlake: 'directLake' };
-// What a folder's site runs on, as the questions say it (exportapp.js engineOf).
+// What a zip's site runs on, as the questions say it (exportapp.js engineOf).
 const RUNS_ON = { duckdb: 'Client side', directLake: 'Direct Lake', directQuery: 'DirectQuery', semanticModel: 'a semantic model' };
+// An earlier export's local copy was a folder, <app>/, with this marker in it.
+const OLD_MARKER = '.onelake-studio-export.json';
+const oldMarker = dir => fsp.readFile(join(dir, OLD_MARKER), 'utf8')
+  .then(t => { const m = JSON.parse(t); delete m.files; return m; }, () => null).catch(() => null);
+// Which zip a model's Report tab reads: the model by its workspace and its name, as the page knows it.
+const reportKey = (workspace, model) => `exportReport:${String(workspace).toLowerCase()}/${String(model).toLowerCase()}`;
 
 /**
  * @param {object} o
@@ -36,7 +42,7 @@ const RUNS_ON = { duckdb: 'Client side', directLake: 'Direct Lake', directQuery:
  * @param {object} o.onelake  onelake.js
  * @param {object} o.catalog  catalog.js
  * @param {object} [o.writer]  onelakewrite.js, shared with Upload
- * @param {{ get: Function, update: Function }} o.memento  the folder approved last time
+ * @param {{ get: Function, update: Function }} o.memento  where each app's zip was approved last time
  * @param {string} o.extensionDir  where this install's files are
  * @param {() => Promise<string>} o.pageDir  where the page's files are
  * @param {object} o.ui  info, warn, pickFolder, openFolder, withProgress, openExternal, reveal
@@ -88,9 +94,9 @@ function createExport({ connectivity, modules, hostToken, appToken, powerBiToken
     }));
   }
 
-  // Export to Fabric, from Explore: the model's Explore as a Fabric app (exportapp.js), its
-  // local copy written to <the open folder>/<app>/ (asked for when no folder is open) —
-  // and published from there over the Fabric REST API (fabricapp.js). The function's deploy
+  // Export to Fabric, from Explore: the model's Report and Explore as a Fabric app (exportapp.js),
+  // its local copy one zip, <the open folder>/<app>.zip (asked for when no folder is open) —
+  // and published from it over the Fabric REST API (fabricapp.js). The function's deploy
   // package ships in the vsix (fabric-function/, scripts/function-bundle.mjs). Answers what
   // Explore's info line says; a failure is thrown back to it, and logged. So is the user's No
   // (`declined`), which is no failure, but must not read as a publish on the command line.
@@ -135,48 +141,55 @@ function createExport({ connectivity, modules, hostToken, appToken, powerBiToken
         existing = await fabricModel.find(pbi.workspaceId, pbi.name);
       }
 
-      // The folder: the one approved last time for this model, or else <the folder VS Code
-      // has open>/<app>/, or else a picker. Never used unapproved: where it goes is shown, and
-      // the export waits for an OK or another folder.
+      // The local copy, <app>.zip: the one approved last time for this model, or else in the
+      // folder VS Code has open, or else in a folder picked. Never used unapproved: where it goes
+      // is shown, and the export waits for an OK or another folder.
       const open = ui.openFolder();
-      const key = `exportFolder:${plan.workspace}/${plan.lakehouse}/${plan.name}`;
-      const remembered = memento.get(key);
-      let outDir = remembered && existsSync(remembered) ? remembered : open ? join(open, plan.name) : null;
-      let prev = outDir;
+      const appKey = `${plan.workspace}/${plan.lakehouse}/${plan.name}`;
+      const remembered = memento.get(`exportZip:${appKey}`);
+      const zipName = `${plan.name}.zip`;
+      let outZip = remembered && existsSync(dirname(remembered)) ? remembered : open ? join(open, zipName) : null;
+      // An earlier export's folder, <app>/ with its marker: no longer written, but what it published
+      // is the app's, and a zip not written yet starts from it.
+      const oldDir = [memento.get(`exportFolder:${appKey}`), open && join(open, plan.name)]
+        .find(d => d && existsSync(join(d, OLD_MARKER)));
+      let prev = outZip;
       const pickFolder = async () => {
         const dir = await ui.pickFolder({
           startAt: prev ? dirname(prev) : os.homedir(),
           openLabel: 'Export Here',
-          title: `Export to Fabric: the folder to keep the app's local copy (${plan.name}/) in`,
+          title: `Export to Fabric: the folder to keep the app's local copy (${zipName}) in`,
         });
-        if (!dir) return null;
-        // The app's own folder picked, rather than the one to put it in: used as it is.
-        return basename(dir) === plan.name ? dir : join(dir, plan.name);
+        return dir ? join(dir, zipName) : null;
       };
       for (;;) {
-        if (!outDir) {
-          outDir = await pickFolder();
-          if (!outDir) throw declined('Export cancelled.');
+        if (!outZip) {
+          outZip = await pickFolder();
+          if (!outZip) throw declined('Export cancelled.');
         }
         const pick = await ui.info(
           `Export ${plan.name} to Fabric?`,
-          { modal: true, detail: `Local copy: ${outDir}${existsSync(outDir) ? '' : ' (new)'}\nWorkspace: ${workspace}\nModel: ${plan.modelPath}` +
-            (tmsl ? `\nSemantic model: ${pbi.name}, ${MODES[plan.engine]} (${existing ? 'updated' : 'new'})` : '') },
+          { modal: true, detail: `Local copy: ${outZip}${existsSync(outZip) ? '' : ' (new)'}\nWorkspace: ${workspace}\nModel: ${plan.modelPath}` +
+            (tmsl ? `\nSemantic model: ${pbi.name}, ${MODES[plan.engine]} (${existing ? 'updated' : 'new'})` : '') +
+            (oldDir ? `\n\nThe app is one file now: the folder ${oldDir} is no longer used, and can be deleted.` : '') },
           'Export', 'Choose Another Folder…');
         if (pick === 'Export') break;
         if (!pick) throw declined('Export cancelled.');
-        prev = outDir;
-        outDir = null;
+        prev = outZip;
+        outZip = null;
       }
-      // A folder Export to Fabric did not write is refused here, before anything else is asked.
-      const before = await readMarker(outDir);
-      await memento.update(key, outDir);
+      // A file Export to Fabric did not write is refused here, before anything else is asked.
+      const local = await readApp(outZip);
+      const before = local ? local.marker : oldDir ? await oldMarker(oldDir) : null;
+      await memento.update(`exportZip:${appKey}`, outZip);
+      // Studio's Report tab for this model draws this zip's report (reportOf).
+      await memento.update(reportKey(pbi.workspace, name), outZip);
       // One client for the export. Its lines go to the log, and while publishing also to the
       // progress notification (`say`, below).
       let appLog = m => log(m);
       const fabricApp = createFabricApp({ getToken: appToken, log: m => appLog(m) });
 
-      // Two models' names can make one app's: this folder's app is another model's.
+      // Two models' names can make one app's: this zip's app is another model's.
       if (before && before.model && before.model !== plan.modelPath) {
         const pick = await ui.warn(
           `${plan.name} is the app of another model. Replace it with this one?`,
@@ -185,25 +198,25 @@ function createExport({ connectivity, modules, hostToken, appToken, powerBiToken
       }
 
       // Edited since it was last published (by you, or an agent)? Asked, never overwritten. As Is
-      // publishes the folder's site, which runs on what it was made for, DuckDB in the browser or a
-      // semantic model: not offered for an export to the other.
+      // publishes the zip's site, which runs on what it was made for, DuckDB in the browser or a
+      // semantic model: not offered for an export to the other. Its report is never at stake.
       let asIs = false;
-      const changed = await localChanges(outDir, before);
+      const changed = local ? localChanges(local.files, before) : [];
       if (changed.length) {
         const shown = changed.slice(0, 5).join('\n') + (changed.length > 5 ? `\n…and ${changed.length - 5} more` : '');
-        const made = await engineOf(outDir, before);
+        const made = engineOf(local.files, before);
         const sameSite = (made === 'duckdb') === (plan.engine === 'duckdb');
-        const asIsSays = sameSite ? "Publish As Is: publish the folder's site with your changes, and leave it alone."
-          : `Publish As Is is not offered: the folder was made for ${RUNS_ON[made] || made}, and this export is ${RUNS_ON[plan.engine]}, so only Overwrite changes what the app runs on.`;
+        const asIsSays = sameSite ? "Publish As Is: publish the zip's site with your changes, and leave it alone."
+          : `Publish As Is is not offered: the zip was made for ${RUNS_ON[made] || made}, and this export is ${RUNS_ON[plan.engine]}, so only Overwrite changes what the app runs on.`;
         const pick = await ui.warn(
           `The local copy of ${plan.name} has changed since it was last published.`,
-          { modal: true, detail: `${outDir}\n\n${shown}\n\nOverwrite: rewrite it from this Explore, and publish that. ${asIsSays} The function always comes from this version of the extension.` },
-          'Overwrite Local Changes', ...(sameSite ? ['Publish Folder As Is'] : []));
+          { modal: true, detail: `${outZip}\n\n${shown}\n\nOverwrite: rewrite it from this Explore, its report kept, and publish that. ${asIsSays} The function always comes from this version of the extension.` },
+          'Overwrite Local Changes', ...(sameSite ? ['Publish As Is'] : []));
         if (!pick) throw declined('Not exported: the local copy has changes.');
-        asIs = sameSite && pick === 'Publish Folder As Is';
+        asIs = sameSite && pick === 'Publish As Is';
       }
 
-      // Deployed again since this folder published it (another machine, rayfin up)?
+      // Deployed again since this zip published it (another machine, rayfin up)?
       // Asked before it is replaced.
       if (before && before.itemId) {
         const live = await fabricApp.deployStatus(plan.workspace, before.itemId)
@@ -215,7 +228,7 @@ function createExport({ connectivity, modules, hostToken, appToken, powerBiToken
         // A marker saying neither is a publish that never finished: any deploy is someone else's.
         if (theirs && !(theirs <= ours)) {
           const pick = await ui.warn(
-            `${plan.name} was deployed again on ${new Date(theirs).toLocaleString()}, not from this folder. Overwrite it?`,
+            `${plan.name} was deployed again on ${new Date(theirs).toLocaleString()}, not from this local copy. Overwrite it?`,
             { modal: true, detail: live.hostingUrl || '' }, 'Overwrite It');
           if (pick !== 'Overwrite It') throw declined(`Not exported: ${plan.name} was deployed from elsewhere since.`);
         }
@@ -264,7 +277,6 @@ function createExport({ connectivity, modules, hostToken, appToken, powerBiToken
       const r = await ui.withProgress(`Export to Fabric: ${plan.name}`,
         async progress => {
           const say = line => { log(line); progress.report({ message: line.replace(/^app \S+: /, '') }); };
-          let marker = before;
           // The semantic model first: the app's function queries it from its first load.
           if (tmsl) {
             say(`app ${plan.name}: ${existing ? 'updating' : 'creating'} the semantic model ${pbi.name} (${MODES[plan.engine]})`);
@@ -278,20 +290,27 @@ function createExport({ connectivity, modules, hostToken, appToken, powerBiToken
             }
             plan.semanticModel = { workspace: pbi.workspaceId, id, name: pbi.name };
           }
+          let files, marker = before || {};
           if (asIs) {
-            say(`app ${plan.name}: publishing ${outDir} as it is`);
+            say(`app ${plan.name}: publishing ${outZip} as it is`);
+            files = local.files;
             // The semantic model was made again above: the page's copy of the model goes with it.
-            if (definition) await writeModel(outDir, definition);
+            if (definition) setModel(files, definition);
           } else {
-            say(`app ${plan.name}: writing the local copy to ${outDir}`);
-            marker = await writeExport({ plan, state, model: definition, outDir, fabricAppDir, appDir,
-                                         daxSqlDir: join(ext, 'vendor', 'npm', PINS.daxSql),
-                                         webappDir: join(ext, 'vendor', 'webapp') });
+            say(`app ${plan.name}: writing the local copy to ${outZip}`);
+            files = await appFiles({ plan, state, model: definition, kept: local ? local.files.get(REPORT) : null,
+                                     redirects: marker.redirects || [], fabricAppDir, appDir,
+                                     daxSqlDir: join(ext, 'vendor', 'npm', PINS.daxSql) });
+            marker = { ...marker, name: plan.name, model: plan.modelPath, workspaceId: plan.workspace,
+                       lakehouseId: plan.lakehouse, engine: plan.engine || 'duckdb' };
           }
-          // What the page's packages weigh, there in the folder (site/vendor/) and here in the log.
+          // Kept before anything is published: a failure from here leaves the zip as it is.
+          await writeApp(outZip, files, marker);
+          // The page's packages, the extension's own: what they weigh, here in the log.
+          const vendor = await vendorFiles(join(ext, 'vendor', 'webapp'), plan.engine);
           const mb = n => `${(n / 1048576).toFixed(1)} MB`;
-          const size = await vendorSize(outDir);
-          say(`app ${plan.name}: site/vendor/ is ${mb(size.total)}`);
+          const size = vendorSize(vendor);
+          say(`app ${plan.name}: the packages are ${mb(size.total)}`);
           for (const [name, bytes] of size.parts) log(`  ${mb(bytes).padStart(9)}  ${name}`);
           const quiet = appLog;
           appLog = say;
@@ -300,39 +319,38 @@ function createExport({ connectivity, modules, hostToken, appToken, powerBiToken
             done = await fabricApp.publish({
               workspaceId: plan.workspace, name: plan.name, tenantId: tenantOf(token),
               catalogUrl: plan.catalogUrl, modelUrl: plan.modelUrl, semanticModel: plan.semanticModel || null,
-              site: async config => await zip(await buildDist(outDir, config)),
+              site: async config => await zip(buildDist(files, config, vendor)),
               fn: { sourceZip, deployMetaData }, redirects: marker.redirects || [],
               itemId: marker.itemId || null, takeOver,
               // Kept as soon as there is one: if a later step fails, the next export must know this
               // item is its own rather than ask about an app it made.
-              onItem: id => writeMarker(outDir, { ...marker, itemId: id }),
+              onItem: id => writeApp(outZip, files, { ...marker, itemId: id }),
             });
           } finally { appLog = quiet; }
-          // The redirects in rayfin.yml: the template's, or (as is) the folder's own.
-          const yml = join(outDir, 'rayfin', 'rayfin.yml');
-          const tpl = asIs && existsSync(yml) ? await fsp.readFile(yml, 'utf8')
+          // The redirects in rayfin.yml: the template's, or (as is) the zip's own.
+          const tpl = asIs && files.has('rayfin/rayfin.yml') ? files.get('rayfin/rayfin.yml').toString('utf8')
             : await fsp.readFile(join(fabricAppDir, 'rayfin', 'rayfin.yml'), 'utf8');
-          await fsp.writeFile(yml, rayfinYml(tpl, plan.name, done.redirects, plan.semanticModel));
-          // What was published, to compare the next export with: the folder's files, and the
+          files.set('rayfin/rayfin.yml', Buffer.from(rayfinYml(tpl, plan.name, done.redirects, plan.semanticModel), 'utf8'));
+          // What was published, to compare the next export with: the zip's entries, and the
           // deploy's time by Fabric's clock.
           const live = await fabricApp.deployStatus(plan.workspace, done.itemId).catch(() => null);
-          await writeMarker(outDir, { ...marker, engine: plan.engine, itemId: done.itemId, hostingUrl: done.hostingUrl,
-                                      redirects: done.redirects, exportedAt: new Date().toISOString(),
-                                      deployedAt: (live && live.lastSuccessfulDeploymentAt) || new Date().toISOString(),
-                                      files: await fingerprint(outDir) });
+          await writeApp(outZip, files, { ...marker, engine: plan.engine, itemId: done.itemId, hostingUrl: done.hostingUrl,
+                                          redirects: done.redirects, exportedAt: new Date().toISOString(),
+                                          deployedAt: (live && live.lastSuccessfulDeploymentAt) || new Date().toISOString(),
+                                          files: fingerprint(files) });
           return done;
         });
       // The Apps of the workspace the app was published to (the lakehouse's, not always the
       // model's), re-read: the app is new, or deployed again.
       onRefresh({ kind: 'apps', workspace: plan.workspace });
-      log(`exported ${plan.name} -> ${r.hostingUrl || '(no hosting URL)'} (item ${r.itemId}, model ${plan.modelPath}, local copy ${outDir})`);
+      log(`exported ${plan.name} -> ${r.hostingUrl || '(no hosting URL)'} (item ${r.itemId}, model ${plan.modelPath}, local copy ${outZip})`);
       for (const w of plan.warnings) log(`  warning: ${w}`);
       const warned = plan.warnings.length ? ` ${plan.warnings.length} warning(s) in the log.` : '';
       const on = plan.semanticModel ? `, on the semantic model ${pbi.name} (${MODES[plan.engine]})` : '';
       ui.info(`${plan.name} is published to Fabric${on}.${warned}`, 'Open App', 'Reveal Folder')
         .then(pick => {
           if (pick === 'Open App' && r.hostingUrl) ui.openExternal(r.hostingUrl);
-          else if (pick === 'Reveal Folder') ui.reveal(outDir);
+          else if (pick === 'Reveal Folder') ui.reveal(outZip);
         });
       return `Published to Fabric${asIs ? ' (the local copy, as it is)' : ''}${on}: ${r.hostingUrl || plan.name}`;
     } catch (e) {
@@ -341,7 +359,29 @@ function createExport({ connectivity, modules, hostToken, appToken, powerBiToken
     }
   };
 
-  return { exportExplore };
+  // The Report a model's Report tab draws (app/explore/report.js): the site/report.json of the zip
+  // its last export was approved into, else the first tiles, picked from the model's text. { spec,
+  // stamp, from }: `stamp` changes when the zip does (reportStamp), `from` is the zip or null.
+  async function reportOf({ workspace, model, file, text }) {
+    const zipPath = memento.get(reportKey(workspace, model));
+    const st = zipPath ? await fsp.stat(zipPath).catch(() => null) : null;
+    const bytes = st && (await readApp(zipPath).catch(() => null))?.files.get(REPORT);
+    if (bytes) {
+      let spec;
+      try { spec = JSON.parse(bytes.toString('utf8')); }
+      catch (e) { throw new Error(`${zipPath}: site/report.json is not JSON: ${e.message}`); }
+      return { spec, stamp: st.mtimeMs, from: zipPath };
+    }
+    const { semantic, compiler } = await modules();
+    return { spec: { tiles: starterTiles(semantic.bimOf(file, text, compiler)) }, stamp: st ? st.mtimeMs : 0, from: null };
+  }
+  async function reportStamp({ workspace, model }) {
+    const zipPath = memento.get(reportKey(workspace, model));
+    const st = zipPath ? await fsp.stat(zipPath).catch(() => null) : null;
+    return st ? st.mtimeMs : 0;
+  }
+
+  return { exportExplore, reportOf, reportStamp };
 }
 
 module.exports = { createExport };

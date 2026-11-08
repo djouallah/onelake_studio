@@ -38,7 +38,7 @@
   "capabilities": {
     "untrustedWorkspaces": {
       "supported": true,
-      "description": "OneLake Studio runs nothing from the workspace. The one thing it touches there is Export to Fabric's local copy of an app, after an OK, in a folder it wrote itself."
+      "description": "OneLake Studio runs nothing from the workspace. The one thing it touches there is Export to Fabric's local copy of an app: one zip it wrote itself, after an OK, which the Report tab reads."
     },
     "virtualWorkspaces": true
   },

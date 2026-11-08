@@ -274,3 +274,20 @@ section.modelOpen #chartBtn { display: none; }
   .ex { grid-template-columns: 1fr; min-height: 0; }
   .ex-fields { height: 40vh; }
 }
+
+/* The Report (report.js): its tiles in a grid, figures, charts and tables. */
+.rp { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 420px), 1fr)); gap: var(--gap); padding: var(--gap) var(--gutter) 1.5rem; }
+.rp-tile { background: var(--card); border: 1px solid var(--hairline); border-radius: var(--radius); padding: 0.8rem 1rem; min-width: 0; display: flex; flex-direction: column; gap: 0.5rem; }
+.rp-tile.wide { grid-column: 1 / -1; }
+.rp-tile h2 { margin: 0; font-size: 0.85rem; font-weight: 600; color: var(--muted); }
+.rp-chart { height: 280px; }
+.rp-kpis { display: flex; flex-wrap: wrap; gap: 0.6rem 2.2rem; }
+.rp-kpi span { display: block; color: var(--muted); font-size: 0.78rem; }
+.rp-kpi b { font-size: 1.7rem; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--text); }
+.rp-table { overflow: auto; max-height: 420px; }
+.rp-table table { border-collapse: collapse; width: 100%; font-size: 0.82rem; }
+.rp-table th { text-align: left; color: var(--muted); font-weight: 600; border-bottom: 1px solid var(--border); padding: 0.35rem 0.6rem; position: sticky; top: 0; background: var(--card); }
+.rp-table td { border-bottom: 1px solid var(--row-line); padding: 0.3rem 0.6rem; }
+.rp-table td.num { text-align: right; font-variant-numeric: tabular-nums; }
+.rp-say { margin: 0; color: var(--muted); font-size: 0.82rem; }
+.rp-say.error { color: var(--err); white-space: pre-wrap; }

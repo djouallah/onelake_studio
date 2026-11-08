@@ -1,6 +1,6 @@
 // exportapp.js: Export to Fabric — the plan (a OneLake file, one lakehouse, schema.table
-// sources), the local copy written from fabric_app/ and Studio's Explore, dist/ stamped with
-// the build, and the zip that is uploaded. Client side the model is never copied: the app reads it
+// sources), the local copy, one zip of fabric_app/, Studio's Explore and the Report, the upload stamped
+// with the build and the packages added, and the zip format itself. Client side the model is never copied: the app reads it
 // in place (MODEL_URL); on a semantic model the site holds the model it was made from. The compiler is faked (the suite runs without vendor/); semantic.js's
 // lakehousesOf and isOssie are the real ones.
 import { test } from "node:test";
@@ -9,13 +9,11 @@ import { createRequire } from "node:module";
 import { mkdtemp, mkdir, writeFile, readFile, rm, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
-import { inflateRawSync } from "node:zlib";
 import { execFileSync } from "node:child_process";
-import { pathToFileURL } from "node:url";
 
 const require = createRequire(import.meta.url);
-const { planExport, modelDoc, writeExport, engineOf, buildDist, vendorSize, zip, crc32, rayfinYml, appName, dfsUrl, MARKER,
-        readMarker, fingerprint, localChanges, starterTiles, starterReport } = require("../../src/exportapp.js");
+const { planExport, modelDoc, appFiles, engineOf, readApp, writeApp, unzip, vendorFiles, vendorSize, buildDist, zip, crc32, rayfinYml,
+        appName, dfsUrl, MARKER, REPORT, fingerprint, localChanges, starterTiles, starterReport } = require("../../src/exportapp.js");
 const semantic = await import("../../app/semantic.js");
 const { firstRows, counting, kept, MAX_ROWS } = await import("../../fabric_app/site/storage/modelrows.js");
 
@@ -76,13 +74,11 @@ test("the plan: a table reading another expression isn't in the lakehouse, whate
   assert.throws(() => planExport(JSON.stringify(bim), "sales.bim", "sales", mods(bim, bim), WHERE), /doesn't hold: fct_sales/);
 });
 
-test("a publish that never finished says so, rather than that nothing changed", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "onelake-export-"));
-  try {
-    assert.equal((await localChanges(dir, { itemId: "item" })).length, 1);
-    assert.deepEqual(await localChanges(dir, { itemId: "item", exportedAt: "2026-01-01T00:00:00Z" }), [], "a marker from before the record");
-    assert.deepEqual(await localChanges(dir, {}), []);
-  } finally { await rm(dir, { recursive: true, force: true }); }
+test("a publish that never finished says so, rather than that nothing changed", () => {
+  const files = new Map([["site/app.js", Buffer.from("x")]]);
+  assert.equal(localChanges(files, { itemId: "item" }).length, 1);
+  assert.deepEqual(localChanges(files, { itemId: "item", exportedAt: "2026-01-01T00:00:00Z" }), [], "a marker from before the record");
+  assert.deepEqual(localChanges(files, {}), []);
 });
 
 test("the plan: a .bim's Direct Lake partitions are its tables, and a table with none is a warning", () => {
@@ -177,7 +173,6 @@ async function fixture(root) {
     "fabric_app/site/storage/auth.js": "// auth\n",
     "fabric_app/site/storage/modeldata.js": 'import { createAuth } from "./auth.js";\n',
     "fabric_app/site/storage/modelrows.js": "// modelrows\n",
-    "fabric_app/report.js": await readFile(new URL("../../fabric_app/report.js", import.meta.url), "utf8"),
     "fabric_app/rayfin/rayfin.yml": "id: explore\nname: explore\nservices:\n  auth:\n    allowedRedirectUris:\n      - http://localhost:5173\n",
     "fabric_app/rayfin/functions/src/function_app.ts": "// openCatalog\n",
     "daxsql/src/index.js": "// dax-sql\n",
@@ -202,26 +197,6 @@ async function fixture(root) {
 }
 
 // The zip's entries, read back through its central directory: path -> bytes.
-function unzip(buf) {
-  const end = buf.lastIndexOf(Buffer.from([0x50, 0x4b, 0x05, 0x06]));
-  const count = buf.readUInt16LE(end + 10);
-  let at = buf.readUInt32LE(end + 16);
-  const out = new Map();
-  for (let i = 0; i < count; i++) {
-    assert.equal(buf.readUInt32LE(at), 0x02014b50);
-    const size = buf.readUInt32LE(at + 20), raw = buf.readUInt32LE(at + 24), crc = buf.readUInt32LE(at + 16);
-    const nameLen = buf.readUInt16LE(at + 28), local = buf.readUInt32LE(at + 42);
-    const name = buf.subarray(at + 46, at + 46 + nameLen).toString("utf8");
-    const start = local + 30 + buf.readUInt16LE(local + 26) + buf.readUInt16LE(local + 28);
-    const data = inflateRawSync(buf.subarray(start, start + size));
-    assert.equal(data.length, raw);
-    assert.equal(crc32(data), crc, `${name}'s crc`);
-    out.set(name, data);
-    at += 46 + nameLen;
-  }
-  return out;
-}
-
 // The DAX tree's nodes, as dax-sql's parser reads back what its sqlToDax writes.
 const dcol = (table, name) => ({ k: "col", table, name });
 const dstr = v => ({ k: "str", v });
@@ -280,128 +255,120 @@ test("the zip: every entry at the root, deflated, read back byte for byte", asyn
 });
 
 for (const engine of ["directLake", "directQuery"]) {
-test(`${engine}: the site says it runs on the semantic model, and holds no DuckDB, Arrow or browser data source`, async () => {
+test(`${engine}: the app says it runs on the semantic model, and holds no DuckDB, Arrow or browser data source`, async () => {
   const root = await mkdtemp(join(tmpdir(), "export-model-"));
   try {
     const dirs = await fixture(root);
     const plan = { ...planExport(OSSIE, "sales.yaml", "sales", mods(bimOf(URL_)), WHERE),
                    engine, semanticModel: { workspace: "0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0", id: "m1", name: "sales" } };
-    const outDir = join(root, "out", plan.name);
     // The model the semantic model is made from goes with the site: the page writes its DAX from it.
-    await assert.rejects(writeExport({ plan, state: null, outDir, ...dirs }), /needs the model it was made from/);
+    await assert.rejects(appFiles({ plan, state: null, ...dirs }), /needs the model it was made from/);
     const model = modelDoc(OSSIE, "sales.yaml", mods(bimOf(URL_))).doc;
-    const marker = await writeExport({ plan, state: null, model, outDir, ...dirs });
-    assert.equal(marker.engine, engine);
-    assert.equal(await engineOf(outDir, marker), engine);
-    const all = (await readdir(outDir, { recursive: true })).map(f => f.split("\\").join("/"));
-    assert.deepEqual(JSON.parse(await readFile(join(outDir, "site/engine.json"), "utf8")), { engine: "semanticModel", name: "sales" });
-    assert.deepEqual(JSON.parse(await readFile(join(outDir, "site/model.json"), "utf8")), doc());
+    const files = await appFiles({ plan, state: null, model, ...dirs });
+    const text = p => files.get(p).toString("utf8");
+    assert.equal(engineOf(files, { engine }), engine);
+    assert.equal(engineOf(files, {}), "semanticModel", "a marker that doesn't say: the site does");
+    assert.deepEqual(JSON.parse(text("site/engine.json")), { engine: "semanticModel", name: "sales" });
+    assert.deepEqual(JSON.parse(text("site/model.json")), doc());
     for (const p of ["site/storage/modeldata.js", "site/storage/modelrows.js", "site/storage/auth.js", "site/app.js", "site/explore/view.js"]) {
-      assert.ok(all.includes(p), p);
+      assert.ok(files.has(p), p);
     }
-    for (const gone of [/^site\/storage\/(data|catalog)\.js$/, /^site\/vendor\/npm\/@duckdb/, /^site\/vendor\/npm\/apache-arrow@17\.0\.0/, /^site\/vendor\/duckdb-ext/]) {
-      assert.ok(!all.some(f => gone.test(f)), `nothing matches ${gone}: ${all.filter(f => gone.test(f)).join(", ")}`);
-    }
-    // The connector and its own Arrow stay: the page queries the model through them.
-    for (const p of ["site/vendor/npm/@microsoft/rayfin-connector-fabric-semanticmodel@1.36.1/+esm.js", "site/vendor/npm/apache-arrow@21.2.0/+esm.js"]) {
-      assert.ok(all.includes(p), p);
-    }
-    assert.match(await readFile(join(outDir, "rayfin/rayfin.yml"), "utf8"), /^connectors:\n  - name: model\n[\s\S]*itemId: m1\n[\s\S]*type: delegated\n/m);
-    const agents = await readFile(join(outDir, "AGENTS.md"), "utf8");
+    assert.ok(![...files.keys()].some(f => /^site\/storage\/(data|catalog)\.js$|vendor\//.test(f)), "no DuckDB data source, and no packages in the zip");
+    // The packages added at publish: the connector and its own Arrow, and not DuckDB's.
+    const vendor = await vendorFiles(dirs.webappDir, engine);
+    assert.deepEqual([...vendor.keys()].sort(), ["vendor/npm/@microsoft/rayfin-connector-fabric-semanticmodel@1.36.1/+esm.js", "vendor/npm/apache-arrow@21.2.0/+esm.js"]);
+    assert.match(text("rayfin/rayfin.yml"), /^connectors:\n  - name: model\n[\s\S]*itemId: m1\n[\s\S]*type: delegated\n/m);
+    const agents = text("AGENTS.md");
     assert.match(agents, /Semantic model: `sales`, (Direct Lake|DirectQuery)/);
     assert.match(agents, /as the viewer/);
     assert.match(agents, /as it was when exported[\s\S]*`site\/model\.json`[\s\S]*when it is\s+exported again/);
+    assert.match(agents, /The page turns it into DAX and runs it on the semantic model\./);
     assert.doesNotMatch(agents, /next load/, "the semantic model is the model as exported, not as it is now");
-    // A marker from before the engine was kept: the site says.
-    assert.equal(await engineOf(outDir, { ...marker, engine: undefined }), "semanticModel");
 
-    // Client side: the site has its DuckDB data source and not the semantic model's.
-    const duck = join(root, "out", "duck");
-    const was = await writeExport({ plan: { ...plan, engine: "duckdb", semanticModel: undefined }, state: null, outDir: duck, ...dirs });
-    assert.equal(was.engine, "duckdb");
-    const files = (await readdir(duck, { recursive: true })).map(f => f.split("\\").join("/"));
-    assert.ok(files.includes("site/storage/data.js") && !files.includes("site/engine.json"));
-    for (const p of ["site/storage/modeldata.js", "site/storage/modelrows.js", "site/model.json"]) assert.ok(!files.includes(p), p);
-    assert.equal(await engineOf(duck, { ...was, engine: undefined }), "duckdb");
-    assert.doesNotMatch(await readFile(join(duck, "rayfin/rayfin.yml"), "utf8"), /^connectors:/m);
-    assert.match(await readFile(join(duck, "AGENTS.md"), "utf8"), /app item's owner/);
-    assert.match(await readFile(join(duck, "AGENTS.md"), "utf8"), /read \*\*in place\*\*[\s\S]*on its next load/);
+    // Client side: the site has its DuckDB data source and not the semantic model's, and DuckDB's packages.
+    const duck = await appFiles({ plan: { ...plan, engine: "duckdb", semanticModel: undefined }, state: null, ...dirs });
+    assert.ok(duck.has("site/storage/data.js") && !duck.has("site/engine.json"));
+    for (const p of ["site/storage/modeldata.js", "site/storage/modelrows.js", "site/model.json"]) assert.ok(!duck.has(p), p);
+    assert.equal(engineOf(duck, {}), "duckdb");
+    assert.doesNotMatch(duck.get("rayfin/rayfin.yml").toString(), /^connectors:/m);
+    assert.match(duck.get("AGENTS.md").toString(), /app item's owner/);
+    assert.match(duck.get("AGENTS.md").toString(), /read \*\*in place\*\*[\s\S]*on its next load/);
+    assert.equal((await vendorFiles(dirs.webappDir, "duckdb")).size, 5, "every package");
   } finally {
     await rm(root, { recursive: true, force: true });
   }
 });
 }
 
-test("the folder: fabric_app's site and function, Studio's Explore, no model; dist/ stamped; re-export allowed", async () => {
+test("the local copy is one zip: the whole app but its packages, written and read back; the upload is its site, stamped, with the packages", async () => {
   const root = await mkdtemp(join(tmpdir(), "export-"));
   try {
     const dirs = await fixture(root);
     const plan = planExport(OSSIE, "sales.yaml", "sales", mods(bimOf(URL_)), WHERE);
-    const outDir = join(root, "out", plan.name);
     const state = { v: 2, rows: ["dim_region.Region"], cols: [], values: ["Revenue"], filters: [], mark: "bar" };
-    const marker = await writeExport({ plan, state, outDir, ...dirs });
-    assert.equal(marker.workspaceId, WS);
-    assert.equal(marker.model, plan.modelPath);
-    const read = p => readFile(join(outDir, p), "utf8");
+    const files = await appFiles({ plan, state, redirects: ["https://x.webapp.fabricapps.net"], ...dirs });
     for (const p of ["site/index.html", "site/app.js", "site/storage/data.js", "site/storage/catalog.js",
                      "site/explore/view.js", "site/explore/model.js", "site/explore/explore.css", "site/paths.js",
-                     "site/semantic/src/dialects/duckdb.js", "site/semantic/formats/ossie.js",
-                     "site/vendor/npm/apache-arrow@17.0.0/+esm.js",
-                     "site/vendor/duckdb-ext/v2.0.0/wasm_eh/icu.duckdb_extension.wasm",
-                     "rayfin/functions/src/function_app.ts", ".gitignore", MARKER]) {
-      await read(p);
+                     "site/semantic/src/dialects/duckdb.js", "site/semantic/formats/ossie.js", "site/report.json",
+                     "rayfin/functions/src/function_app.ts", "AGENTS.md"]) {
+      assert.ok(files.has(p), p);
     }
-    const size = await vendorSize(outDir);
-    assert.equal(size.total, 2048 + "// arrow\n".length + 'import{a}from"../../apache-arrow@17.0.0/+esm.js";\n'.length
-      + 'import{F}from"../../apache-arrow@21.2.0/+esm.js";\n'.length + "// the connector's arrow\n".length);
-    assert.equal(size.total, size.parts.reduce((n, [, b]) => n + b, 0));
-    assert.deepEqual(size.parts.map(([n]) => n)[0], "icu extension", "largest first");
-    assert.ok(size.parts.some(([n]) => n === "@duckdb/duckdb-wasm@1.0.0"), "a scoped package is one part");
-    const all = (await readdir(outDir, { recursive: true })).map(f => f.split("\\").join("/"));
-    assert.ok(!all.some(f => /ossie\.(json|yaml)$|^model\//.test(f)), `no copy of the model: ${all.join(", ")}`);
-    assert.deepEqual(JSON.parse(await read("site/explore.json")), state);
-    assert.match(await read("rayfin/rayfin.yml"), /^id: sales-model-explore$/m);
-    const agents = await read("AGENTS.md");
+    assert.ok(![...files.keys()].some(p => /vendor\/|node_modules|ossie\.(json|yaml)$|^model\/|^dist\/|\.gitignore/.test(p)),
+      `no packages, no build, no copy of the model: ${[...files.keys()].join(", ")}`);
+    assert.deepEqual(JSON.parse(files.get("site/explore.json")), state);
+    assert.match(files.get("rayfin/rayfin.yml").toString(), /^id: sales-model-explore$/m);
+    assert.match(files.get("rayfin/rayfin.yml").toString(), /- https:\/\/x\.webapp\.fabricapps\.net/);
+    const agents = files.get("AGENTS.md").toString();
     assert.match(agents, /- `fct_sales` ← `mart\.fct_sales`/);
     assert.match(agents, /power bi\/nem\.Lakehouse\/Files\/semantic_model\/ossie\.yaml/);
+    assert.match(agents, /## The Report: yours to grow[\s\S]*`site\/report\.json`[\s\S]*FROM semanticmodel\.<workspace>\.sales/);
+    assert.match(agents, /```json\n([\s\S]*?)\n```/);
+    assert.ok(JSON.parse(/```json\n([\s\S]*?)\n```/.exec(agents)[1]).tiles[0].sql.startsWith('SELECT "dim_region"'), "its example is JSON");
 
+    // Written as one file and read back: the same entries, and the marker apart.
+    const zipPath = join(root, "out", `${plan.name}.zip`);
+    assert.equal(await readApp(zipPath), null, "no file yet");
+    await writeApp(zipPath, files, { itemId: "item", model: plan.modelPath });
+    assert.deepEqual(await readdir(join(root, "out")), [`${plan.name}.zip`], "one file, nothing beside it");
+    const back = await readApp(zipPath);
+    assert.deepEqual(back.marker, { itemId: "item", model: plan.modelPath });
+    assert.deepEqual([...back.files.keys()].sort(), [...files.keys()].sort());
+    for (const [p, b] of files) assert.ok(back.files.get(p).equals(b), p);
+    assert.ok(unzip(await readFile(zipPath)).has(MARKER));
+
+    // Re-zipped by hand: a folder zipped whole, backslashes in its names, still the app.
+    const byHand = new Map([...back.files, [MARKER, Buffer.from("{}")]].map(([p, b]) => [`sales-model-explore\\${p.split("/").join("\\")}`, b]));
+    await writeFile(zipPath, await zip([["sales-model-explore/", Buffer.alloc(0)], ...byHand]));
+    assert.deepEqual([...(await readApp(zipPath)).files.keys()].sort(), [...files.keys()].sort());
+    // A zip that isn't an app is never taken for one.
+    const other = join(root, "other.zip");
+    await writeFile(other, await zip([["x.txt", Buffer.from("x")]]));
+    await assert.rejects(readApp(other), /was not written by Export to Fabric/);
+    await writeFile(other, "not a zip");
+    await assert.rejects(readApp(other), /is not a zip Export to Fabric can read/);
+
+    // The upload: site/ at the root, stamped, the packages byte for byte, the backend's config.
+    const vendor = await vendorFiles(dirs.webappDir, "duckdb");
+    const size = vendorSize(vendor);
+    assert.equal(size.total, [...vendor.values()].reduce((n, b) => n + b.length, 0));
+    assert.equal(size.parts[0][0], "icu extension", "largest first");
+    assert.ok(size.parts.some(([n]) => n === "@duckdb/duckdb-wasm@1.0.0"), "a scoped package is one part");
     const config = { apiUrl: "https://backend", publishableKey: "pk-1", workspaceId: WS, itemId: "item" };
-    const files = await buildDist(outDir, config, "20261028-120000");
-    assert.deepEqual(JSON.parse(files.get("rayfin.config.json")), config);
-    assert.match(files.get("index.html").toString(), /import \{ start \} from "\.\/app\.js\?v=20261028-120000"/);
-    assert.match(files.get("index.html").toString(), /href="\.\/explore\/explore\.css\?v=20261028-120000"/);
-    assert.match(files.get("index.html").toString(), /build 20261028-120000/);
-    assert.match(files.get("app.js").toString(), /from "\.\/explore\/view\.js\?v=20261028-120000"/);
+    const up = buildDist(files, config, vendor, "20261028-120000");
+    assert.deepEqual(JSON.parse(up.get("rayfin.config.json")), config);
+    assert.ok(!up.has("AGENTS.md") && !up.has("rayfin/rayfin.yml") && !up.has("site/index.html"), "the site only, at the root");
+    assert.match(up.get("index.html").toString(), /import \{ start \} from "\.\/app\.js\?v=20261028-120000"/);
+    assert.match(up.get("index.html").toString(), /href="\.\/explore\/explore\.css\?v=20261028-120000"/);
+    assert.match(up.get("index.html").toString(), /build 20261028-120000/);
+    assert.match(up.get("app.js").toString(), /from "\.\/explore\/view\.js\?v=20261028-120000"/);
     // A module loaded only when it is needed is stamped too, or a redeploy leaves the old one in the browser.
-    assert.match(files.get("app.js").toString(), /import\("\.\/storage\/modeldata\.js\?v=20261028-120000"\)/);
-    assert.match(files.get("explore/view.js").toString(), /from '\.\.\/paths\.js\?v=20261028-120000'/);
-    assert.match(files.get("storage/data.js").toString(), /from "\.\.\/explore\/model\.js\?v=20261028-120000"/);
-    assert.ok(!files.has("dist/index.html"), "the paths are the site's, at the zip root");
-    assert.equal(files.get("vendor/npm/@duckdb/duckdb-wasm@1.0.0/+esm.js").toString(), 'import{a}from"../../apache-arrow@17.0.0/+esm.js";\n',
-      "vendored packages ship byte for byte");
-    assert.ok(!(await readdir(join(outDir, "dist"))).includes("vendor"), "the packages are kept once, in site/vendor/");
-    assert.equal(await read("dist/rayfin.config.json"), files.get("rayfin.config.json").toString());
-    assert.ok(unzip(await zip(files)).get("app.js").equals(files.get("app.js")));
-
-    // Exported again: the same folder is rewritten, what is not the export's stays, and an
-    // earlier export's model/ copy goes.
-    await writeFile(join(outDir, "notes.md"), "mine");
-    await mkdir(join(outDir, "model"));
-    await writeFile(join(outDir, "model", "ossie.yaml"), OSSIE);
-    await writeFile(join(outDir, MARKER), JSON.stringify({ ...marker, itemId: "item", redirects: ["https://x.webapp.fabricapps.net"] }));
-    const again = await writeExport({ plan, state: null, outDir, ...dirs });
-    assert.equal(again.itemId, "item");
-    assert.equal(await read("notes.md"), "mine");
-    assert.ok(!(await readdir(outDir)).includes("model"));
-    assert.match(await read("rayfin/rayfin.yml"), /- https:\/\/x\.webapp\.fabricapps\.net/);
-    assert.equal(await read("site/explore.json"), "null");
-
-    // A folder that is someone else's is not touched.
-    const other = join(root, "other");
-    await mkdir(other);
-    await writeFile(join(other, "x.txt"), "x");
-    await assert.rejects(writeExport({ plan, state, outDir: other, ...dirs }), /not written by Export to Fabric/);
-    assert.deepEqual(await readdir(other), ["x.txt"]);
+    assert.match(up.get("app.js").toString(), /import\("\.\/storage\/modeldata\.js\?v=20261028-120000"\)/);
+    assert.match(up.get("explore/view.js").toString(), /from '\.\.\/paths\.js\?v=20261028-120000'/);
+    assert.match(up.get("storage/data.js").toString(), /from "\.\.\/explore\/model\.js\?v=20261028-120000"/);
+    assert.equal(up.get("vendor/npm/@duckdb/duckdb-wasm@1.0.0/+esm.js").toString(), 'import{a}from"../../apache-arrow@17.0.0/+esm.js";\n',
+      "packages ship byte for byte");
+    assert.ok(up.has("report.json"));
+    assert.ok(unzip(await zip(up)).get("app.js").equals(up.get("app.js")));
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -447,89 +414,41 @@ test("the Report's first tiles: the first measures, by the date table's year, by
   assert.deepEqual(starterTiles({ model: { tables: [{ name: "t", columns: [{ name: "x", dataType: "string" }] }] } }), [], "nothing to add up: no tiles");
 });
 
-test("site/report.js: the template with its tiles, a module whose TILES are the tiles' SQL as written", async () => {
-  const template = await readFile(new URL("../../fabric_app/report.js", import.meta.url), "utf8");
+test("site/report.json: the tiles as JSON a person edits, kept by every export; never a local change", async () => {
   const tiles = starterTiles(salesBim());
-  tiles.push({ why: "a name with a backtick and ${", title: "odd", kind: "bar", formats: { "x\\y": "0" },
-               sql: 'SELECT "t"."a`b${c}" AS "x\\y" FROM model' });
-  const text = starterReport(template, tiles);
-  assert.match(text, /\/\/ the year of the model's date table\n  \{\n    title: "Revenue by Year", kind: "line",\n    sql: `SELECT "Calendar"/);
-  const dir = await mkdtemp(join(tmpdir(), "report-"));
-  try {
-    await writeFile(join(dir, "report.mjs"), text);
-    const { TILES, draw } = await import(pathToFileURL(join(dir, "report.mjs")).href);
-    assert.equal(typeof draw, "function");
-    // A tile with no format strings has no `formats`.
-    assert.deepEqual(TILES, tiles.map(({ why, formats, ...t }) => (Object.keys(formats).length ? { ...t, formats } : t)));
-  } finally {
-    await rm(dir, { recursive: true, force: true });
-  }
-  assert.throws(() => starterReport("export const TILES = [];", tiles), /no \/\*TILES\*\/\[\]/);
-});
+  const spec = JSON.parse(starterReport(tiles));
+  assert.equal(spec.tiles.length, 4);
+  assert.deepEqual(spec.tiles[1], { why: "the year of the model's date table", title: "Revenue by Year", kind: "line",
+    sql: tiles[1].sql, formats: { Revenue: "#,##0" } });
+  assert.ok(!("formats" in JSON.parse(starterReport([{ ...tiles[0], formats: {} }])).tiles[0]), "no empty formats");
+  assert.match(starterReport(tiles), /^\{\n  "tiles": \[\n    \{\n/, "one key a line");
 
-test("the Report is the folder's: written once, kept by every export, never a local change; gone, written again", async () => {
   const root = await mkdtemp(join(tmpdir(), "export-"));
   try {
     const dirs = await fixture(root);
-    const plan = { ...planExport(OSSIE, "sales.yaml", "sales", mods(bimOf(URL_)), WHERE), tiles: starterTiles(salesBim()) };
-    const outDir = join(root, "out", plan.name);
-    const read = p => readFile(join(outDir, p), "utf8");
-    await writeExport({ plan, state: null, outDir, ...dirs });
-    assert.match(await read("site/report.js"), /title: "Revenue by Region", kind: "bar"/);
-    assert.match(await read("AGENTS.md"), /## The Report: yours to grow[\s\S]*`site\/report\.js`[\s\S]*FROM semanticmodel\.<workspace>\.sales/);
-    const marker = { ...(await readMarker(outDir)), files: await fingerprint(outDir) };
-    assert.ok(!("site/report.js" in marker.files));
+    const plan = { ...planExport(OSSIE, "sales.yaml", "sales", mods(bimOf(URL_)), WHERE), tiles };
+    const first = await appFiles({ plan, state: null, ...dirs });
+    assert.equal(first.get(REPORT).toString(), starterReport(tiles));
+    const mine = Buffer.from('{ "tiles": [] }');
+    const again = await appFiles({ plan, state: null, kept: mine, ...dirs });
+    assert.equal(again.get(REPORT), mine, "the zip's own report, as it is");
 
-    await writeFile(join(outDir, "site", "report.js"), "export const TILES = []; // an agent's");
-    assert.deepEqual(await localChanges(outDir, marker), [], "not asked about: no export rewrites it");
-    await writeExport({ plan, state: null, outDir, ...dirs });
-    assert.equal(await read("site/report.js"), "export const TILES = []; // an agent's");
-    const files = await buildDist(outDir, {}, "20261108-120000");
-    assert.equal(files.get("report.js").toString(), "export const TILES = []; // an agent's", "published as it is");
-
-    await rm(join(outDir, "site", "report.js"));
-    await writeExport({ plan, state: null, outDir, ...dirs });
-    assert.match(await read("site/report.js"), /title: "Totals", kind: "kpi"/);
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
-});
-
-test("local changes: an edit, a new file, a removed one — never node_modules or dist/", async () => {
-  const root = await mkdtemp(join(tmpdir(), "export-"));
-  try {
-    const dirs = await fixture(root);
-    const plan = planExport(OSSIE, "sales.yaml", "sales", mods(bimOf(URL_)), WHERE);
-    const outDir = join(root, "out", plan.name);
-    assert.equal(await readMarker(outDir), null, "a folder not there yet is new");
-    await writeExport({ plan, state: null, outDir, ...dirs });
-    const files = await fingerprint(outDir);
-    assert.ok(files["site/app.js"] && files["rayfin/rayfin.yml"] && files["AGENTS.md"] && files[".gitignore"]);
-    assert.ok(!Object.keys(files).some(p => p.includes("\\")), "paths use /");
-    const marker = { ...(await readMarker(outDir)), files };
-
-    assert.deepEqual(await localChanges(outDir, marker), [], "as published");
-    assert.deepEqual(await localChanges(outDir, { ...marker, files: undefined }), [], "a marker from before the record");
-
-    // Build output and what is outside the copy's own files are not edits.
-    await mkdir(join(outDir, "rayfin", "functions", "node_modules", "x"), { recursive: true });
-    await writeFile(join(outDir, "rayfin", "functions", "node_modules", "x", "i.js"), "1");
-    await mkdir(join(outDir, "dist"), { recursive: true });
-    await writeFile(join(outDir, "dist", "app.js"), "built");
-    await writeFile(join(outDir, "notes.md"), "mine");
-    assert.deepEqual(await localChanges(outDir, marker), []);
-
-    await writeFile(join(outDir, "site", "app.js"), "// an agent's edit");
-    await writeFile(join(outDir, "site", "chart.js"), "new");
-    await rm(join(outDir, "AGENTS.md"));
-    assert.deepEqual(await localChanges(outDir, marker), ["AGENTS.md", "site/app.js", "site/chart.js"]);
+    // An edit to the report is never asked about; an edit to anything else is.
+    const marker = { files: fingerprint(first) };
+    assert.ok(!(REPORT in marker.files) && !(MARKER in marker.files));
+    assert.deepEqual(localChanges(again, marker), []);
+    const edited = new Map(first);
+    edited.set("site/app.js", Buffer.from("// an agent's edit"));
+    edited.set("site/chart.js", Buffer.from("new"));
+    edited.delete("AGENTS.md");
+    assert.deepEqual(localChanges(edited, marker), ["AGENTS.md", "site/app.js", "site/chart.js"]);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
 });
 
 test("the shipped page and its data source parse; client side reads the model from the function, on a semantic model from the site", async () => {
-  for (const p of ["fabric_app/report.js", "fabric_app/site/app.js", "fabric_app/site/storage/data.js", "fabric_app/site/storage/catalog.js",
+  for (const p of ["app/explore/report.js", "fabric_app/site/app.js", "fabric_app/site/storage/data.js", "fabric_app/site/storage/catalog.js",
                    "fabric_app/site/storage/modeldata.js"]) {
     execFileSync(process.execPath, ["--check", new URL(`../../${p}`, import.meta.url).pathname.replace(/^\/(\w:)/, "$1")]);
   }

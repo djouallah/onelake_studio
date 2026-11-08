@@ -42,9 +42,9 @@ const USAGE = {
     --show-sql                       print the SQL a model query compiles to`,
   export: `  export <ws> <model>                 Export to Fabric, as Explore's button does it: the model's
                                         .yaml in its lakehouse (open it in the tree once first).
-                                        VS Code asks where the local copy goes and for the OK;
-                                        the app opens on its Report: site/report.js in the local
-                                        copy, written once, yours to grow; the Pivot is beside it
+                                        VS Code asks where the local copy goes and for the OK.
+                                        The app is one zip, <app>.zip; it opens on its Report,
+                                        site/report.json in the zip, yours to grow; Pivot beside it
   export <ws> <item> <Files/path>     the same, for a model file (.bim, Ossie .yaml) in Files/
     --mode client|directquery|directlake  what the app runs on: DuckDB in the browser, or a
                                         semantic model of that name made from the model (updated

@@ -382,6 +382,13 @@ async function openModelView(file, text = null, { fromOneLake = text == null } =
         state: () => engine.offlineState({ workspace: m.schema, model: m.view }),
         set: on => engine.setOffline({ workspace: m.schema, model: m.view, on }),
       },
+      // The Report tab: the tiles in this model's Export to Fabric zip, else the first tiles
+      // (src/exportflow.js reportOf), drawn again when the zip changes. It opens on Model.
+      report: {
+        load: () => engine.modelReport({ workspace: m.schema, model: m.view, file: file.name, text: bim }),
+        stamp: () => engine.modelReportStamp({ workspace: m.schema, model: m.view }),
+      },
+      openOn: 'model',
     });
     setStatus(`${file.name} is the semantic model ${m.name}` +
               (m.directLake ? ` — ${m.directLake} Direct Lake table(s), opened from OneLake as a query needs them` : '') +

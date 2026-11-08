@@ -56,11 +56,12 @@ const ENGINE_METHODS = new Set(['query', 'stream', 'cancel', 'info', 'fileView',
  *        the box's text, for the next panel
  * @param {(name: string) => Promise<string|null>} [o.askVariable]
  *        a query variable's value, asked of the user; null when dismissed
+ * @param {{ load: Function, stamp: Function }} [o.report]  the Report tab's tiles (exportflow.js reportOf, reportStamp)
  * @param {(x: {workspace: string, model: string}) => Promise<object>} [o.openModel]
  *        a semantic model a query names, opened from its local copy (read from Fabric the first
  *        time) and kept as a view: { name, schema, path, text }
  */
-function createHostMethods({ onelake, engine, onStatus = () => {}, saveFile = null, semviews = null, exportExplore = null, openInExcel = null, offlineState = null, setOffline = null,
+function createHostMethods({ onelake, engine, onStatus = () => {}, saveFile = null, semviews = null, exportExplore = null, report = null, openInExcel = null, offlineState = null, setOffline = null,
                              nameTables = null, exportResult = null, openDocument = null, copyText = null, saveQuery = null, saveDraft = null, askVariable = null, openModel = null, modelsDir = null }) {
   const views = () => { if (!semviews) throw new Error('semantic views are not available here'); return semviews; };
   return {
@@ -81,6 +82,18 @@ function createHostMethods({ onelake, engine, onStatus = () => {}, saveFile = nu
                              ...(x.workspace && x.path ? { workspace: String(x.workspace), path: String(x.path) } : { model }),
                              state: x.state && typeof x.state === 'object' ? x.state : null,
                              ...(x.mode ? { mode: String(x.mode) } : {}) });
+    },
+    // The Report tab (exportflow.js reportOf): a model by its names, and its text for the first
+    // tiles when it has no exported zip yet.
+    'model.report': async x => {
+      if (!report) throw new Error('the Report is not available here');
+      if (!x || !x.workspace || !x.model) throw new Error('the Report needs a semantic model');
+      return report.load({ workspace: String(x.workspace), model: String(x.model), file: String(x.file || 'model'), text: String(x.text ?? '') });
+    },
+    'model.reportStamp': async x => {
+      if (!report) throw new Error('the Report is not available here');
+      if (!x || !x.workspace || !x.model) throw new Error('the Report needs a semantic model');
+      return report.stamp({ workspace: String(x.workspace), model: String(x.model) });
     },
     // Open in Excel (src/xmla): a semantic model, by its names alone.
     'excel.open': async x => {

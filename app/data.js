@@ -676,8 +676,11 @@ export function createEngine({
   // read from Fabric the first time) and keeps it — { name, schema, path, text }.
   const semanticOpen = ref => callHost("semantic.open", [ref]);
   // Export to Fabric: the model's text and the Explore shelves to the host, which writes the
-  // app's folder and publishes it (src/exportapp.js); answers what to tell the user.
+  // app's zip and publishes it (src/exportapp.js); answers what to tell the user.
   const exportExplore = x => callHost("fabric.exportExplore", [x]);
+  // The Report tab: a model's tiles ({ spec, stamp }), and what changes when they do.
+  const modelReport = x => callHost("model.report", [x]);
+  const modelReportStamp = x => callHost("model.reportStamp", [x]);
   // Open in Excel: a semantic model, by its names (src/xmla); answers what to tell the user.
   const openInExcel = x => callHost("excel.open", [x]);
   // Keep offline: a semantic model's tables on this machine (src/modeldata.js); both answer what to show.
@@ -700,5 +703,5 @@ export function createEngine({
 
   return { init, reset, statTable, peekTable, rowsOutOfReach, deltaState, deltaHistory,
            loadFile, readFileBytes, saveText, saveOneLakeFile, runSql, describeLoad, fmtBytes, cancelLoad,
-           semanticViews, semanticKeep, semanticOpen, exportExplore, openInExcel, offlineState, setOffline, nameTables, saveQuery, saveDraft, askVariable, copyText, exportResult, openDocument };
+           semanticViews, semanticKeep, semanticOpen, exportExplore, modelReport, modelReportStamp, openInExcel, offlineState, setOffline, nameTables, saveQuery, saveDraft, askVariable, copyText, exportResult, openDocument };
 }

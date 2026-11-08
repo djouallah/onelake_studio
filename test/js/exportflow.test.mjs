@@ -11,6 +11,7 @@ import { join } from "node:path";
 
 const require = createRequire(import.meta.url);
 const { createExport } = require("../../src/exportflow.js");
+const { writeApp } = require("../../src/exportapp.js");
 const semantic = await import("../../app/semantic.js");
 
 const URL_ = "https://onelake.dfs.fabric.microsoft.com/0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0/11111111-2222-3333-4444-555555555555";
@@ -114,9 +115,10 @@ test("where it goes is shown first: a No leaves nothing written and nothing reme
   assert.equal(e.declined, true);
   assert.match(asked[0].message, /^Export .* to Fabric\?$/);
   assert.equal(asked[0].rest[0].modal, true);
-  assert.match(asked[0].rest[0].detail, /\(new\)/);
+  assert.match(asked[0].rest[0].detail, /^Local copy: .*sales-model-explore\.zip \(new\)\n/, "the app is one file");
+  assert.doesNotMatch(asked[0].rest[0].detail, /no longer used/);
   assert.equal(kept.size, 0);
-  assert.equal(existsSync(join(dir, "sales-model-explore")), false);
+  assert.equal(existsSync(join(dir, "sales-model-explore.zip")), false);
   await rm(dir, { recursive: true, force: true });
   await done();
 });
@@ -184,32 +186,38 @@ test("a model opened from the tree is its own semantic model: its workspace and 
   await done();
 });
 
-test("Publish Folder As Is only for a folder made for the same kind of site: DuckDB in the browser, or a semantic model", async () => {
+test("an earlier export's folder is no longer used, and the dialog says it can be deleted", async () => {
+  const open = await mkdtemp(join(tmpdir(), "exportflow-open-"));
+  await mkdir(join(open, "sales-model-explore"));
+  await writeFile(join(open, "sales-model-explore", ".onelake-studio-export.json"), JSON.stringify({ itemId: "item" }));
+  const { exportExplore, asked, done } = await setup({ folder: open, answers: [undefined] });
+  await exportExplore(REQUEST).catch(() => {});
+  assert.match(asked[0].rest[0].detail, /The app is one file now: the folder .*sales-model-explore is no longer used, and can be deleted\./);
+  await rm(open, { recursive: true, force: true });
+  await done();
+});
+
+test("Publish As Is only for a zip made for the same kind of site: DuckDB in the browser, or a semantic model", async () => {
   const cases = [
-    // [what the folder was made for, the site it has, this export, As Is offered, why not]
-    ["duckdb", {}, "directLake", false, /the folder was made for Client side, and this export is Direct Lake, so only Overwrite changes what the app runs on\./],
-    [undefined, { "site/engine.json": '{"engine":"semanticModel"}' }, "client", false, /the folder was made for a semantic model, and this export is Client side/],
+    // [what the zip was made for, the site it has, this export, As Is offered, why not]
+    ["duckdb", {}, "directLake", false, /the zip was made for Client side, and this export is Direct Lake, so only Overwrite changes what the app runs on\./],
+    [undefined, { "site/engine.json": '{"engine":"semanticModel"}' }, "client", false, /the zip was made for a semantic model, and this export is Client side/],
     ["directQuery", { "site/engine.json": '{"engine":"semanticModel"}' }, "directLake", true, null],
   ];
   for (const [engine, site, mode, offered, why] of cases) {
     const open = await mkdtemp(join(tmpdir(), "exportflow-open-"));
-    const outDir = join(open, "sales-model-explore");
-    for (const [p, body] of Object.entries(site)) {
-      await mkdir(join(outDir, ...p.split("/").slice(0, -1)), { recursive: true });
-      await writeFile(join(outDir, ...p.split("/")), body);
-    }
-    await mkdir(outDir, { recursive: true });
-    await writeFile(join(outDir, ".onelake-studio-export.json"), JSON.stringify({
-      model: "power bi/nem.Lakehouse/Files/semantic_model/sales.yaml", engine, files: { "site/app.js": "edited since" } }));
+    const files = new Map([["site/app.js", Buffer.from("// app")], ...Object.entries(site).map(([p, body]) => [p, Buffer.from(body)])]);
+    await writeApp(join(open, "sales-model-explore.zip"), files, {
+      model: "power bi/nem.Lakehouse/Files/semantic_model/sales.yaml", engine, files: { "site/app.js": "edited since" } });
     const { exportExplore, asked, done } = await setup({ folder: open, answers: ["Export", undefined], mode });
     const e = await exportExplore(REQUEST).then(() => null, x => x);
     assert.equal(e.declined, true);
     assert.equal(e.message, "Not exported: the local copy has changes.");
     const [o, ...buttons] = asked[1].rest;
     assert.match(asked[1].message, /has changed since it was last published/);
-    assert.deepEqual(buttons, offered ? ["Overwrite Local Changes", "Publish Folder As Is"] : ["Overwrite Local Changes"], `${engine} -> ${mode}`);
+    assert.deepEqual(buttons, offered ? ["Overwrite Local Changes", "Publish As Is"] : ["Overwrite Local Changes"], `${engine} -> ${mode}`);
     if (why) assert.match(o.detail, why);
-    else assert.match(o.detail, /Publish As Is: publish the folder's site/);
+    else assert.match(o.detail, /Publish As Is: publish the zip's site/);
     await rm(open, { recursive: true, force: true });
     await done();
   }

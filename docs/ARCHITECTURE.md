@@ -504,8 +504,17 @@ holds those lakehouses, else `--workspace`, and the error names the workspaces w
 
 ## Explore
 
-A semantic model opens as **Explore** ([`app/explore/`](../app/explore/)), on two pages:
+A semantic model opens as **Explore** ([`app/explore/`](../app/explore/)), on three pages. It opens on Model.
 
+- **Report:** tiles, each a SELECT over the model `FROM model`, drawn as figures, a bar or line chart, or a table
+  ([`report.js`](../app/explore/report.js)). A tile that fails says so in its box, and the rest still draw.
+  - **Which tiles:** the model's Export to Fabric zip's `site/report.json`, when it has one (the zip its last export was
+    approved into), else the first tiles, picked from the model's metadata with no query (`starterTiles` in
+    [`src/exportapp.js`](../src/exportapp.js)): the first four visible measures as figures, the first by the date table's
+    year, by a dimension's text column, and a top 10 of another. The first export writes those into the zip.
+  - **Drawn again** when the zip changes, while the tab is on screen: a person or an agent edits the report and sees it.
+  - A tile is `{ title, kind, sql, formats?, echarts?, wide? }`: `kind` is `kpi`, `bar`, `line` or `table`, `formats` a
+    column's format string, `echarts` an ECharts option merged over the tile's own.
 - **Model:** its tables as a star, dimensions in the middle and facts around them, with its
   relationships. Click a table for its columns, measures (with their DAX) and relationships.
 - **Pivot:** drag columns onto Rows, Columns and Filters and measures onto Values, drawn as a pivot or
@@ -529,20 +538,11 @@ One of two writes, with Upload (above). Explore's **Export to Fabric** button, o
 report on that model and its Explore as a Fabric app (item type `AppBackend`, named
 `<model>-explore`). VS Code and the extension are all it needs: no CLI, no Node, no GitHub.
 
-**The Report.** The app opens on a Report page, with Explore's Model and Pivot beside it. The report is one file in
-the local copy, `site/report.js`, and it belongs to whoever owns the folder:
-- **The first export writes it** from [`fabric_app/report.js`](../fabric_app/report.js), with a few tiles picked from
-  the model's metadata, with no query (`starterTiles` in [`src/exportapp.js`](../src/exportapp.js)):
-  - the first four visible measures, as figures;
-  - the first measure by the date table's year;
-  - the first measure by a dimension's text column;
-  - a top 10 of another text column.
-- **Each tile is a SELECT over the model**, `FROM model`, in the SQL the SQL box takes. It is drawn as figures, a bar or
-  line chart, or a table.
-- **No export writes it again**, and it is not one of the local changes an export asks about. So a person or an agent
-  grows it in place and exports again to publish it. The folder's `AGENTS.md` says how.
-- Explore in VS Code has no Report page: only the app passes one to
-  [`app/explore/view.js`](../app/explore/view.js).
+**The local copy is one file**, `<model>-explore.zip`: the whole app but its packages (DuckDB-WASM, Arrow, the Rayfin SDK,
+ECharts), which are the extension's own and are added when it publishes, so the zip is a few MB. It holds `site/`,
+`rayfin/`, `AGENTS.md` and `export.json`, the record of what was published. Its report, `site/report.json`, is the
+Report tab's (Explore, above). No export writes that entry again, and it is not one of the local changes an export asks
+about, so a person or an agent grows it in the zip and exports again to publish it.
 
 **What the app runs on** is picked in a small window under the button ([`app/explore/view.js`](../app/explore/view.js)),
 on Direct Lake unless you change it. Export goes on to the questions below. On the command line it is `--mode`, and
@@ -566,8 +566,9 @@ Direct Lake without it:
   client-side app reads the model there. A different file of that name is replaced only when you say so, and not being able
   to tell what is there stops the export. It is written beside the file and renamed into place, so a failure part way
   leaves what was there.
-- **A local copy of the app:** to the folder approved last time for that model, or else `<the folder VS
-  Code has open>/<model>-explore/`, or else one you pick.
+- **A local copy of the app**, one zip: where it was approved last time for that model, or else `<the folder VS
+  Code has open>/<model>-explore.zip`, or else in a folder you pick. An earlier export's `<model>-explore/` folder is no
+  longer written: the export says it can be deleted, and the app it published stays the zip's.
 
 **What it needs**
 - **It names exactly one lakehouse** in its Direct Lake expression. Without that, the button is not
@@ -577,7 +578,7 @@ Direct Lake without it:
 - **Write access to the lakehouse.**
 
 **How it behaves**
-- **It asks first.** Before anything is written, it shows where and waits for *Export* or *Choose
+- **It asks first.** Before anything is written, it shows the zip and waits for *Export* or *Choose
   Another Folder…*. All the questions come before anything is written, locally or in Fabric.
 - **Protected:** the site loads only for people who may open the app item.
 - **Client side, the model is read in place:** the app never holds a copy. Its function reads the model file from
@@ -590,13 +591,12 @@ Direct Lake without it:
   the owner's rights. On a semantic model it is the other way round (below).
 - **No silent takeover:** a re-export updates the item the last export created (its id is kept in the
   local copy, as soon as the item exists). If an app of that name exists and no export created it, the export asks.
-- **Local edits are never overwritten unasked.** The local copy's marker keeps a hash of each of its
-  files as last published (`site/`, `rayfin/`, `AGENTS.md`, `.gitignore`, without `node_modules` or
-  `dist/`). If any changed, the export asks: *Overwrite Local Changes*, *Publish Folder As Is*, or
-  cancel. As Is publishes the folder's site, which runs on what the folder was made for, so it is offered only when
+- **Local edits are never overwritten unasked.** The zip's `export.json` keeps a hash of each of its entries as last
+  published, but for the report, which no export rewrites. If any changed, the export asks: *Overwrite Local Changes*
+  (the report kept), *Publish As Is*, or cancel. As Is publishes the zip's site, which runs on what the zip was made for, so it is offered only when
   the export runs on the same: Client side, or a semantic model (DirectQuery or Direct Lake). Otherwise the question
   says why, and only *Overwrite Local Changes* changes what the app runs on.
-- **A newer deploy is never overwritten unasked.** The marker keeps the app's last deploy time, by
+- **A newer deploy is never overwritten unasked.** `export.json` keeps the app's last deploy time, by
   Fabric's clock. If the app was deployed again since, the export asks.
 - **A folder the export did not write** is refused.
 
@@ -615,7 +615,7 @@ Direct Lake without it:
   draws the rows. It takes only a SELECT over the model. Its Show plan has no plan tree: its SQL tab is the DAX, and its
   profile the query's one run.
 - **The page's model is the one the semantic model was made from:** `site/model.json`, written by the export, and
-  again by a *Publish Folder As Is*. The semantic model is a copy of the model file made at export, so the page writes
+  again by a *Publish As Is*. The semantic model is a copy of the model file made at export, so the page writes
   its DAX from that copy, not from the lakehouse's file: a measure renamed in the file since would make DAX the
   semantic model refuses. A change to the model file reaches the app when it is exported again.
 - **Rows are cut on the semantic model** ([`storage/modelrows.js`](../fabric_app/site/storage/modelrows.js)): a
@@ -633,7 +633,6 @@ Direct Lake without it:
   setting for user-delegated SAS tokens isn't needed.
 
 **The template** ([`fabric_app/`](../fabric_app/))
-- **`report.js`:** the first Report, written into `site/` with its tiles when the folder has none.
 - **`site/`:** the page, black always. Its data source (`storage/`) signs in with Rayfin's Fabric SSO,
   takes the model and the tables' locations from the app's function with a read-only SAS per table, and downloads
   the tables' files into the browser, where DuckDB-WASM (DuckDB 2.0), shipped in the site's `vendor/`, reads them as `v_<table>`
@@ -641,8 +640,9 @@ Direct Lake without it:
 - **`rayfin/`:** `rayfin.yml` and the function (`openCatalog`, for a client-side app).
 
 [`src/exportapp.js`](../src/exportapp.js) writes the local copy from `fabric_app/`, Studio's
-`app/explore/` and dax-sql. Its `dist/` is `site/` stamped with the build, plus `rayfin.config.json`,
-zipped in-process.
+`app/explore/` and dax-sql, as one zip (`appFiles`, `writeApp`). What is uploaded is built in memory from it
+(`buildDist`): `site/` stamped with the build, the packages from `vendor/webapp`, and `rayfin.config.json`, zipped
+in-process.
 
 **Publishing** ([`src/fabricapp.js`](../src/fabricapp.js)) is the REST sequence that `rayfin up` runs,
 in the same order, with the user's Fabric-audience token:

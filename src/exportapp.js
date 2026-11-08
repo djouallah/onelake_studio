@@ -4,18 +4,15 @@
 // =============================================================================
 // Explore's button (app/explore/view.js) hands the host the model's text (to check it), where
 // it lives in OneLake (for a model opened from its local copy, where the export writes it), and
-// the shelves on screen. What is written to a folder of this machine
-// — the local copy, an agent's to grow later — and what is published from its dist/
-// (fabricapp.js) is:
+// the shelves on screen. The local copy — the whole app, an agent's to grow later — is one zip on
+// this machine, <app>.zip, and what is published is built from it (buildDist, fabricapp.js):
 //   site/            fabric_app/site: the page (index.html, app.js) and its data source
 //                    (storage/: Fabric sign-in, the function's answer, DuckDB-WASM reading the
 //                    tables in the browser as views v_<table>)
 //   site/explore/    Studio's Explore (app/explore/), the same files the panel runs
 //   site/semantic/   dax-sql (PINS.daxSql): SQL over the model, as SQL over the views
-//   site/vendor/     every package the page runs (vendor/webapp: DuckDB-WASM and its
-//                    extensions, Arrow, the Rayfin SDK, ECharts): nothing from a CDN
-//   site/report.js   the Report page the app opens on (fabric_app/report.js, with tiles picked
-//                    from the model): written once, then the folder's, and kept by every export
+//   site/report.json the Report the app opens on (app/explore/report.js draws it): tiles picked
+//                    from the model, written once, then the zip's, and kept by every export
 //   site/explore.json  the shelves the first view shows
 //   site/engine.json   DirectQuery and Direct Lake only, { engine: 'semanticModel' }: the page runs
 //                    no DuckDB (storage/modeldata.js: it queries the semantic model), and site/ holds
@@ -26,9 +23,12 @@
 //   rayfin/          fabric_app/rayfin: what the app is (rayfin.yml) and its function's source
 //                    (built at package time, by scripts/function-bundle.mjs: nobody's machine
 //                    builds it)
-//   dist/            site/ stamped with the build, plus rayfin.config.json (the backend the
-//                    browser talks to): byte for byte what was uploaded, but for vendor/,
-//                    uploaded as site/ holds it and not written a second time
+//   AGENTS.md        how the app is made, and how to grow its report
+//   export.json      what was published: the app item, its redirects, the entries' hashes
+// Not in the zip: vendor/, every package the page runs (vendor/webapp: DuckDB-WASM and its
+// extensions, Arrow, the Rayfin SDK, ECharts; nothing from a CDN), the extension's own, added
+// as site/vendor/ when publishing; and the upload itself, site/ stamped with the build plus
+// rayfin.config.json (the backend the browser talks to), built in memory.
 // Client side, the model is never copied: the app's function reads it from the lakehouse, in
 // place, at run time (MODEL_URL), so the app shows the model as it is there. On a semantic model
 // the page reads site/model.json instead: the semantic model is the model as exported, and
@@ -47,12 +47,10 @@ const { dfsFileUrl, stripBom } = require('./names');
 const { PINS, WEBAPP } = require('./vendored');
 const { modelConnector, MODEL_CONNECTOR } = require('./fabricapp');
 
-const MARKER = '.onelake-studio-export.json';
-// What a re-export writes again; anything else in the folder is left alone. `model` is an
-// earlier export's copy of the model, which no export writes any more.
-const OWNED = ['site', 'dist', 'rayfin', 'model', 'AGENTS.md', '.gitignore'];
-// But for site/report.js, the Report: written when the folder has none, and kept from then on.
-const REPORT = 'site/report.js';
+// The zip's record of what was published, and the Report: written when the zip has none, and
+// kept from then on by every export.
+const MARKER = 'export.json';
+const REPORT = 'site/report.json';
 
 // An app's name: lower case, letters, digits and dashes (as a Rayfin id), and -explore: its
 // own, never the name of an app someone else deployed for the same model.
@@ -166,8 +164,8 @@ function planExport(text, fileName, name, mods, where, lakes = null) {
 }
 
 // --- The Report's first tiles ------------------------------------------------------
-// site/report.js is the folder owner's: written once, from fabric_app/report.js with these tiles,
-// and kept by every later export. Picked from the model's metadata alone, with no query: its
+// site/report.json is the zip owner's: written once with these tiles, and kept by every later
+// export. Studio's Report tab draws the same file, or these tiles before there is one. Picked from the model's metadata alone, with no query: its
 // first measures as figures, the first by a year of its date table, by a dimension's text
 // column, and a top 10 of another. Each tile is a SELECT over the model (FROM model).
 
@@ -225,25 +223,10 @@ function starterTiles(bim) {
   return tiles;
 }
 
-// The tiles as report.js's TILES: a comment saying why each was picked, its SQL as a template
-// literal a person reads (and edits) as SQL.
-function tilesSource(tiles) {
-  if (!tiles.length) return '[]';
-  const lit = s => `\`${String(s).replace(/[\\`]/g, '\\$&').replace(/\$\{/g, '\\${')}\``;
-  return `[\n${tiles.map(t => [
-    `  // ${t.why}`,
-    '  {',
-    `    title: ${JSON.stringify(t.title)}, kind: ${JSON.stringify(t.kind)},`,
-    `    sql: ${lit(t.sql)},`,
-    ...(Object.keys(t.formats).length ? [`    formats: ${JSON.stringify(t.formats)},`] : []),
-    '  },',
-  ].join('\n')).join('\n')}\n]`;
-}
-
-/** site/report.js: fabric_app/report.js with these tiles (planExport's `tiles`). */
-function starterReport(template, tiles) {
-  if (!template.includes('/*TILES*/[]')) throw new Error('fabric_app/report.js has no /*TILES*/[]');
-  return template.replace('/*TILES*/[]', () => tilesSource(tiles));
+/** site/report.json: the Report, these tiles (starterTiles), as a person or an agent edits it. */
+function starterReport(tiles) {
+  const out = tiles.map(({ formats, ...t }) => (formats && Object.keys(formats).length ? { ...t, formats } : t));
+  return JSON.stringify({ tiles: out }, null, 2) + '\n';
 }
 
 // fabric_app/rayfin/rayfin.yml, for this app: its own id and name, its sign-in redirects, and on a
@@ -305,29 +288,41 @@ ${onModel(plan) ? `- Model: \`${plan.modelPath}\`, as it was when exported: the 
 `}
 ## The Report: yours to grow
 
-The app opens on its Report, \`site/report.js\`. It is the one file here that is yours: the first export
-wrote it with a few tiles picked from the model, and no export writes it again, so edit it freely, then
+The app opens on its Report, \`site/report.json\`, with Explore's Model and Pivot beside it. The first
+export wrote it with a few tiles picked from the model, and no export writes it again: edit it freely, then
 export again to publish it (it is not one of the local changes an export asks about). Delete it and the
-next export writes a new one. The Pivot and the Model stay beside it, as they are.
+next export writes a new one. OneLake Studio's Report tab, next to Model and Pivot, draws this same file
+from this zip, and draws it again when the zip changes.
 
-- A tile is \`{ title, kind, sql, formats? }\` in \`TILES\`. \`kind\` is \`kpi\` (one row, each column a
-  figure), \`bar\` or \`line\` (the first column across, every other a series), or \`table\`.
-- \`sql\` is one SELECT over the model, \`FROM model\`: its columns as \`"table"."column"\`, its measures
-  as \`AGG("measure")\`, \`GROUP BY ALL\`, \`ORDER BY\`, \`FETCH FIRST n ROWS WITH TIES\`. ${onModel(plan)
+\`\`\`json
+{ "tiles": [
+  { "title": "Revenue by Region", "kind": "bar",
+    "sql": "SELECT \\"dim_region\\".\\"Region\\" AS \\"Region\\", AGG(\\"Revenue\\") AS \\"Revenue\\" FROM model GROUP BY ALL ORDER BY \\"Revenue\\" DESC",
+    "formats": { "Revenue": "#,##0" },
+    "echarts": { "series": [{ "itemStyle": { "color": "#199e70" } }] } }
+] }
+\`\`\`
+
+- \`kind\` is \`kpi\` (one row, each column a figure), \`bar\` or \`line\` (the first column across, every other a
+  series), or \`table\`. \`"wide": true\` gives a tile the whole row.
+- \`sql\` is one SELECT over the model, \`FROM model\`: its columns as \`"table"."column"\`, its measures as
+  \`AGG("measure")\`, \`GROUP BY ALL\`, \`ORDER BY\`, \`FETCH FIRST n ROWS WITH TIES\`. ${onModel(plan)
   ? 'The page turns it into DAX and runs it on the semantic model.' : 'The page compiles it (dax-sql) to SQL over the tables, and DuckDB-WASM runs it.'}
-- Try a tile before it goes in: OneLake Studio's SQL box, or its command line's \`sql\`, runs the same SQL
-  with the model's own name, \`FROM semanticmodel.<workspace>.${plan.modelName}\`.
-- \`draw\` is plain code over ECharts: a new kind of tile, a filter, a layout is yours to write there.
+- \`formats\`: a column's format string, as the model writes one (\`#,##0.00\`).
+- \`echarts\` (bar and line): an ECharts option merged over the tile's own, for anything the kinds don't say.
+- Try a tile's SQL before it goes in: OneLake Studio's SQL box, or its command line's \`sql\`, runs it with the
+  model's own name in place of \`model\`: \`FROM semanticmodel.<workspace>.${plan.modelName}\`.
+- This is a zip: unzip it, edit, and zip it again with the same entries at its root.
 
 ## Layers
 
 | Layer | Path | |
 |---|---|---|
-| Report | \`site/report.js\` | the page the app opens on: yours, kept by every export |
+| Report | \`site/report.json\` | the page the app opens on: yours, kept by every export |
 | Page | \`site/index.html\`, \`site/app.js\` | Report and Explore over the data source |
-| Explore | \`site/explore/\` | OneLake Studio's, the same files the extension runs |
+| Explore | \`site/explore/\` | OneLake Studio's, the same files the extension runs; \`report.js\` draws the Report |
 | Compiler | \`site/semantic/src/\`, \`site/semantic/formats/\` | dax-sql (\`${PINS.daxSql}\`): SQL over the model, as SQL over \`v_<table>\` |
-| Packages | \`site/vendor/\` | DuckDB-WASM (\`${WEBAPP.duckdbWasm}\`, DuckDB ${WEBAPP.duckdb}) with its ${WEBAPP.extensions.join(' and ')} extensions, Arrow, the Rayfin SDK and its semantic-model connector, ECharts: shipped with the site, nothing from a CDN |
+| Packages | \`site/vendor/\`, not in this zip | DuckDB-WASM (\`${WEBAPP.duckdbWasm}\`, DuckDB ${WEBAPP.duckdb}) with its ${WEBAPP.extensions.join(' and ')} extensions, Arrow, the Rayfin SDK and its semantic-model connector, ECharts: OneLake Studio's own, added when it publishes; nothing from a CDN |
 | Data source | \`site/storage/\` | signs in (Rayfin Fabric SSO), asks the function, downloads the tables into the browser (OPFS), DuckDB-WASM |
 | Function | \`rayfin/functions/src/function_app.ts\` | reads the model, the tables' metadata locations, a read-only SAS on \`Tables/\`; on a semantic model the page asks it nothing |
 
@@ -335,82 +330,116 @@ Tables the app reads (\`v_<table>\` ← \`schema.table\`):
 
 ${plan.tables.map(([n, s]) => `- \`${n}\` ← \`${s}\``).join('\n')}
 
-\`dist/\` is \`site/\` as uploaded (stamped with the build, plus \`rayfin.config.json\`), but for \`vendor/\`:
-the packages are uploaded as \`site/vendor/\` holds them, and kept there only. Exporting again from
-OneLake Studio rewrites \`site/\` (but for \`site/report.js\`), \`dist/\`, \`rayfin/\` and this file, and updates the
-same app.
+Exporting again from OneLake Studio rewrites every entry of this zip but \`site/report.json\`, and updates the
+same app; \`export.json\` is its record of what was published.
 
 The workspace must allow **OneLake user-delegated SAS tokens** (workspace settings → OneLake): the
 function signs one. The page needs a browser with OPFS shared access handles (Chrome or Edge 121+).
 `;
 
-const GITIGNORE = `node_modules
-rayfin/.env*
-rayfin/.deployments.json
-`;
+// --- The local copy: one zip ------------------------------------------------------
 
-// --- Writing the folder -------------------------------------------------------
-
-async function isEmptyOrOurs(dir) {
-  const entries = await fsp.readdir(dir).catch(e => (e.code === 'ENOENT' ? null : Promise.reject(e)));
-  if (entries == null || !entries.length) return { exists: entries != null, marker: null };
-  const marker = await fsp.readFile(join(dir, MARKER), 'utf8')
-    .then(t => { try { return JSON.parse(t); } catch { return null; } }, () => null);
-  if (!marker) throw new Error(`${dir} is not empty and was not written by Export to Fabric: rename it, or open another folder`);
-  return { exists: true, marker };
+// A zip's entries, path -> bytes: the ones zip() writes (deflated), and stored ones, as another tool
+// re-zips the app. Folders are left out, a backslash is a slash, and one top folder holding every
+// entry (a folder zipped whole) is taken off.
+function unzip(buf) {
+  const end = buf.lastIndexOf(Buffer.from([0x50, 0x4b, 0x05, 0x06]));
+  if (end < 0) throw new Error('no zip directory');
+  const count = buf.readUInt16LE(end + 10);
+  let at = buf.readUInt32LE(end + 16);
+  const out = new Map();
+  for (let i = 0; i < count; i++) {
+    if (buf.readUInt32LE(at) !== 0x02014b50) throw new Error('a broken zip directory');
+    const method = buf.readUInt16LE(at + 10), size = buf.readUInt32LE(at + 20), raw = buf.readUInt32LE(at + 24);
+    const nameLen = buf.readUInt16LE(at + 28), extra = buf.readUInt16LE(at + 30), note = buf.readUInt16LE(at + 32);
+    const local = buf.readUInt32LE(at + 42), crc = buf.readUInt32LE(at + 16);
+    const name = buf.subarray(at + 46, at + 46 + nameLen).toString('utf8').split('\\').join('/');
+    at += 46 + nameLen + extra + note;
+    if (name.endsWith('/')) continue;
+    if (method !== 0 && method !== 8) throw new Error(`${name} is compressed in a way this can't read (method ${method})`);
+    const start = local + 30 + buf.readUInt16LE(local + 26) + buf.readUInt16LE(local + 28);
+    const packed = buf.subarray(start, start + size);
+    const data = method === 8 ? zlib.inflateRawSync(packed) : Buffer.from(packed);
+    if (data.length !== raw || crc32(data) !== crc) throw new Error(`${name} is damaged`);
+    out.set(name, data);
+  }
+  const tops = new Set([...out.keys()].map(p => (p.includes('/') ? p.slice(0, p.indexOf('/') + 1) : '')));
+  if (tops.size === 1 && ![...tops][0].match(/^(|site\/|rayfin\/)$/)) {
+    const [top] = tops;
+    return new Map([...out].map(([p, b]) => [p.slice(top.length), b]));
+  }
+  return out;
 }
 
-// The folder's marker: null when the folder is new or empty; throws when it holds anything
-// Export to Fabric did not write.
-const readMarker = async dir => (await isEmptyOrOurs(dir)).marker;
+/**
+ * The local copy, read: { files: Map(path -> bytes), marker }; null when there is no such file.
+ * Throws for a file that is not an app Export to Fabric wrote, which is never written over.
+ */
+async function readApp(zipPath) {
+  const bytes = await fsp.readFile(zipPath).catch(e => (e.code === 'ENOENT' ? null : Promise.reject(e)));
+  if (!bytes) return null;
+  let files;
+  try { files = unzip(bytes); } catch (e) { throw new Error(`${zipPath} is not a zip Export to Fabric can read: ${e.message}`); }
+  let marker = null;
+  try { marker = JSON.parse(files.get(MARKER).toString('utf8')); } catch { /* not ours */ }
+  if (!marker || typeof marker !== 'object') throw new Error(`${zipPath} was not written by Export to Fabric: rename it, or choose another folder`);
+  files.delete(MARKER);
+  return { files, marker };
+}
+
+/** Writes the local copy, its entries sorted and its marker last: beside it first, then renamed into place. */
+async function writeApp(zipPath, files, marker) {
+  const all = [...files].filter(([p]) => p !== MARKER).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+  all.push([MARKER, Buffer.from(JSON.stringify(marker, null, 2) + '\n', 'utf8')]);
+  await fsp.mkdir(dirname(zipPath), { recursive: true });
+  const tmp = `${zipPath}.${process.pid}.tmp`;
+  await fsp.writeFile(tmp, await zip(all));
+  await fsp.rename(tmp, zipPath);
+}
+
+// A folder's files, under `to`: path -> bytes, but for those `skip` says.
+async function filesOf(root, to, skip = () => false) {
+  const out = new Map();
+  for (const rel of (await fsp.readdir(root, { recursive: true })).map(f => f.split('\\').join('/')).sort()) {
+    if (skip(rel)) continue;
+    const src = join(root, rel);
+    if ((await fsp.stat(src)).isFile()) out.set(`${to}${rel}`, await fsp.readFile(src));
+  }
+  return out;
+}
 
 /**
- * Writes the app's folder (the local copy). Returns the marker kept in the folder (an earlier
- * export's item and redirects, when there was one).
+ * The app's entries, path -> bytes, as the local copy holds them: no packages (vendorFiles).
+ * `kept`: the zip's own site/report.json, which no export writes over (else the first tiles);
+ * `redirects`: the app's sign-in redirects so far.
  * `model`: on a semantic model, the model file read (modelDoc's doc) that the semantic model is made from.
  * `fabricAppDir`: the extension's fabric_app/; `appDir`: Studio's page modules (app/, or
- * webview/ installed); `daxSqlDir`: vendor/npm/<PINS.daxSql>; `webappDir`: vendor/webapp, the
- * page's packages.
+ * webview/ installed); `daxSqlDir`: vendor/npm/<PINS.daxSql>.
  */
-async function writeExport({ plan, state, model, outDir, fabricAppDir, appDir, daxSqlDir, webappDir }) {
+async function appFiles({ plan, state, model, kept = null, redirects = [], fabricAppDir, appDir, daxSqlDir }) {
   if (onModel(plan) && !model) throw new Error('an app on a semantic model needs the model it was made from');
-  const { marker } = await isEmptyOrOurs(outDir);
-  const at = (root, p) => join(root, ...p.split('/'));
-  // The Report is the folder's own, kept as it is: only a folder without one gets the first tiles.
-  const kept = await fsp.readFile(at(outDir, REPORT), 'utf8').catch(() => null);
-  for (const p of OWNED) await fsp.rm(join(outDir, p), { recursive: true, force: true });
   const sql = onModel(plan);
-  const siteDir = join(fabricAppDir, 'site');
-  const under = (root, src) => src.slice(root.length + 1).split('\\').join('/');
-  await fsp.cp(siteDir, at(outDir, 'site'), { recursive: true,
-    filter: src => !(sql ? DUCKDB_ONLY.site : MODEL_ONLY).includes(under(siteDir, src)) });
-  await fsp.cp(join(appDir, 'explore'), at(outDir, 'site/explore'), { recursive: true });
-  await fsp.cp(join(appDir, 'paths.js'), at(outDir, 'site/paths.js'));
-  // As the package lays them out: formats/ imports ../src/.
-  for (const d of ['src', 'formats']) await fsp.cp(join(daxSqlDir, d), at(outDir, `site/semantic/${d}`), { recursive: true });
-  await fsp.cp(webappDir, at(outDir, 'site/vendor'), { recursive: true,
-    filter: src => !sql || !DUCKDB_ONLY.vendor.some(re => re.test(under(webappDir, src))) });
-  await fsp.cp(join(fabricAppDir, 'rayfin'), at(outDir, 'rayfin'), { recursive: true });
-  const yml = at(outDir, 'rayfin/rayfin.yml');
-  await fsp.writeFile(yml, rayfinYml(await fsp.readFile(yml, 'utf8'), plan.name, (marker && marker.redirects) || [],
-                                     sql ? plan.semanticModel : null));
-  const files = {
-    [REPORT]: kept ?? starterReport(await fsp.readFile(join(fabricAppDir, 'report.js'), 'utf8'), plan.tiles || []),
-    'site/explore.json': JSON.stringify(state || null),
+  const text = s => Buffer.from(s, 'utf8');
+  const files = new Map([
+    ...await filesOf(join(fabricAppDir, 'site'), 'site/', rel => (sql ? DUCKDB_ONLY.site : MODEL_ONLY).includes(rel)),
+    ...await filesOf(join(appDir, 'explore'), 'site/explore/'),
+    ['site/paths.js', await fsp.readFile(join(appDir, 'paths.js'))],
+    // As the package lays them out: formats/ imports ../src/.
+    ...await filesOf(join(daxSqlDir, 'src'), 'site/semantic/src/'),
+    ...await filesOf(join(daxSqlDir, 'formats'), 'site/semantic/formats/'),
+    ...await filesOf(join(fabricAppDir, 'rayfin'), 'rayfin/', rel => rel.split('/').includes('node_modules')),
+  ]);
+  files.set('rayfin/rayfin.yml', text(rayfinYml(files.get('rayfin/rayfin.yml').toString('utf8'), plan.name, redirects,
+                                                sql ? plan.semanticModel : null)));
+  files.set(REPORT, kept ?? text(starterReport(plan.tiles || [])));
+  files.set('site/explore.json', text(JSON.stringify(state || null)));
+  if (sql) {
     // The semantic model's name: what the page says when it refuses the person signed in.
-    ...(sql ? { 'site/engine.json': JSON.stringify({ engine: 'semanticModel', ...(plan.semanticModel ? { name: plan.semanticModel.name } : {}) }) } : {}),
-    'AGENTS.md': agentsMd(plan),
-    '.gitignore': GITIGNORE,
-  };
-  for (const [p, body] of Object.entries(files)) {
-    await fsp.mkdir(dirname(at(outDir, p)), { recursive: true });
-    await fsp.writeFile(at(outDir, p), body);
+    files.set('site/engine.json', text(JSON.stringify({ engine: 'semanticModel', ...(plan.semanticModel ? { name: plan.semanticModel.name } : {}) })));
+    setModel(files, model);
   }
-  if (sql) await writeModel(outDir, model);
-  const next = { ...(marker || {}), name: plan.name, model: plan.modelPath,
-                 workspaceId: plan.workspace, lakehouseId: plan.lakehouse, engine: plan.engine || 'duckdb' };
-  await writeMarker(outDir, next);
-  return next;
+  files.set('AGENTS.md', text(agentsMd(plan)));
+  return files;
 }
 
 // DirectQuery and Direct Lake: the app queries a semantic model, not the tables.
@@ -419,14 +448,11 @@ const onModel = plan => plan.engine === 'directLake' || plan.engine === 'directQ
 // On a semantic model, site/model.json: the model the semantic model is made from, which the page
 // writes its DAX from (storage/modeldata.js). The lakehouse's file can change after the export, and
 // the semantic model does not: written at each export, As Is too.
-const writeModel = (outDir, model) => fsp.writeFile(join(outDir, 'site', 'model.json'), JSON.stringify(model));
+const setModel = (files, model) => files.set('site/model.json', Buffer.from(JSON.stringify(model), 'utf8'));
 
-// What a folder's site runs on: its marker's engine ('duckdb', 'directLake', 'directQuery'), or
-// for a marker from before that was kept, 'semanticModel' when the site has an engine.json.
-async function engineOf(outDir, marker) {
-  if (marker && marker.engine) return marker.engine;
-  return (await fsp.access(join(outDir, 'site', 'engine.json')).then(() => true, () => false)) ? 'semanticModel' : 'duckdb';
-}
+// What a zip's site runs on: its marker's engine ('duckdb', 'directLake', 'directQuery'), or
+// 'semanticModel' when the marker doesn't say and the site has an engine.json.
+const engineOf = (files, marker) => (marker && marker.engine) || (files.has('site/engine.json') ? 'semanticModel' : 'duckdb');
 
 // Client side: what site/ leaves out, the semantic model's data source.
 const MODEL_ONLY = ['storage/modeldata.js', 'storage/modelrows.js'];
@@ -441,57 +467,45 @@ const DUCKDB_ONLY = {
   vendor: [/^npm\/@duckdb(\/|$)/, /^duckdb-ext(\/|$)/, new RegExp(`^npm/${WEBAPP.arrow.replace(/[.]/g, '\\.')}(/|$)`)],
 };
 
-const writeMarker = (dir, m) => fsp.writeFile(join(dir, MARKER), JSON.stringify(m, null, 2) + '\n');
+/** The packages the page runs, as site/vendor/ is uploaded: `webappDir` (vendor/webapp), less DuckDB's on a semantic model. */
+const vendorFiles = (webappDir, engine) => {
+  const sql = engine !== 'duckdb';
+  return filesOf(webappDir, 'vendor/', rel => sql && DUCKDB_ONLY.vendor.some(re => re.test(rel)));
+};
 
-// What site/vendor/ weighs: { total, parts: [[name, bytes]] }, a part per package
+// What the packages weigh: { total, parts: [[name, bytes]] }, a part per package
 // (npm/<pkg>@<v>, npm/@<scope>/<pkg>@<v>) or extension, largest first.
-async function vendorSize(outDir) {
-  const root = join(outDir, 'site', 'vendor');
+function vendorSize(vendor) {
   const parts = new Map();
   let total = 0;
-  for (const rel of (await fsp.readdir(root, { recursive: true }).catch(() => [])).map(f => f.split('\\').join('/'))) {
-    const st = await fsp.stat(join(root, rel));
-    if (!st.isFile()) continue;
-    const seg = rel.split('/');
+  for (const [path, bytes] of vendor) {
+    const seg = path.split('/').slice(1);
     const name = seg[0] === 'npm' ? seg.slice(1, seg[1].startsWith('@') ? 3 : 2).join('/')
-      : seg[0] === 'duckdb-ext' ? `${seg[seg.length - 1].replace(/\.duckdb_extension\.wasm$/, '')} extension` : rel;
-    parts.set(name, (parts.get(name) || 0) + st.size);
-    total += st.size;
+      : seg[0] === 'duckdb-ext' ? `${seg[seg.length - 1].replace(/\.duckdb_extension\.wasm$/, '')} extension` : seg.join('/');
+    parts.set(name, (parts.get(name) || 0) + bytes.length);
+    total += bytes.length;
   }
   return { total, parts: [...parts].sort((a, b) => b[1] - a[1]) };
 }
 
-// --- What changed in the folder since it was published ---------------------------
+// --- What changed in the zip since it was published -------------------------------
 
-// The folder's own files — what an export writes and an agent edits — as { 'a/b': sha256 }.
-// node_modules and dist/ are build output, not edits. The Report isn't counted: no export
-// rewrites it, so an edit to it is never at risk and never asked about.
-const FINGERPRINTED = ['site', 'rayfin', 'AGENTS.md', '.gitignore'];
-const SKIPPED = new Set(['node_modules', 'dist']);
-
-async function fingerprint(outDir) {
+// The zip's entries — what an export writes and an agent edits — as { 'a/b': sha256 }. The
+// Report isn't counted: no export rewrites it, so an edit to it is never at risk and never asked about.
+function fingerprint(files) {
   const out = {};
-  async function walk(rel) {
-    const abs = join(outDir, ...rel.split('/'));
-    const st = await fsp.stat(abs).catch(() => null);
-    if (!st) return;
-    if (st.isDirectory()) {
-      for (const e of (await fsp.readdir(abs)).sort()) if (!SKIPPED.has(e)) await walk(`${rel}/${e}`);
-    } else if (rel !== REPORT) {
-      out[rel] = createHash('sha256').update(await fsp.readFile(abs)).digest('hex');
-    }
+  for (const [p, bytes] of [...files].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) {
+    if (p !== REPORT && p !== MARKER) out[p] = createHash('sha256').update(bytes).digest('hex');
   }
-  for (const p of FINGERPRINTED) await walk(p);
   return out;
 }
 
-// The paths added, removed or changed since `marker.files` was taken; [] when nothing moved,
-// or when the marker predates the record (an earlier export's, which says when it published).
+// The paths added, removed or changed since `marker.files` was taken; [] when nothing moved.
 // A publish that failed part way has an item and no record, and says so rather than nothing.
-async function localChanges(outDir, marker) {
+function localChanges(files, marker) {
   const was = marker && marker.files;
   if (!was) return marker && marker.itemId && !marker.exportedAt ? ['(the last publish did not finish, so any file may have changed)'] : [];
-  const now = await fingerprint(outDir);
+  const now = fingerprint(files);
   return [...new Set([...Object.keys(was), ...Object.keys(now)])].filter(p => was[p] !== now[p]).sort();
 }
 
@@ -499,36 +513,29 @@ async function localChanges(outDir, marker) {
 const buildId = (d = new Date()) => d.toISOString().replace(/[-:]/g, '').replace('T', '-').slice(0, 15);
 
 /**
- * dist/ from site/: every relative import gets ?v=<build> and __BUILD__ becomes the build, so
- * a browser never runs the files of two deploys together; then rayfin.config.json, which the
- * browser SDK fetches from the site's root. Returns the files, path -> bytes, as uploaded.
- * vendor/ is in the upload but not written to dist/: ~48 MB of packages, the same bytes as
- * site/vendor/, kept once.
+ * What is uploaded, path -> bytes: the zip's site/ at the root, every relative import given
+ * ?v=<build> and __BUILD__ the build, so a browser never runs the files of two deploys together;
+ * then `vendor` (vendorFiles), byte for byte, and rayfin.config.json, which the browser SDK fetches
+ * from the site's root.
  */
-async function buildDist(outDir, config, build = buildId()) {
-  const site = join(outDir, 'site'), dist = join(outDir, 'dist');
-  await fsp.rm(dist, { recursive: true, force: true });
-  const files = new Map();
-  for (const rel of (await fsp.readdir(site, { recursive: true })).map(f => f.split('\\').join('/')).sort()) {
-    const src = join(site, rel);
-    if (!(await fsp.stat(src)).isFile()) continue;
-    let bytes = await fsp.readFile(src);
-    // site/vendor/ is pinned packages, already versioned by their path: left byte for byte.
+function buildDist(files, config, vendor = new Map(), build = buildId()) {
+  const out = new Map();
+  for (const [path, raw] of [...files].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) {
+    if (!path.startsWith('site/')) continue;
+    const rel = path.slice('site/'.length);
+    let bytes = raw;
+    // vendor/ is pinned packages, already versioned by their path: left byte for byte.
     if (/\.(html|js)$/.test(rel) && !rel.startsWith('vendor/')) {
-      bytes = Buffer.from(bytes.toString('utf8')
+      bytes = Buffer.from(Buffer.from(raw).toString('utf8')
         .replaceAll('__BUILD__', build)
         .replace(/(\b(?:from|import)\s*\(?\s*["']\.{1,2}\/[\w./-]+\.js)(["'])/g, `$1?v=${build}$2`)
         .replace(/(<link rel="stylesheet" href="\.\/[\w./-]+\.css)(")/g, `$1?v=${build}$2`), 'utf8');
     }
-    files.set(rel, bytes);
+    out.set(rel, bytes);
   }
-  files.set('rayfin.config.json', Buffer.from(JSON.stringify(config, null, 2) + '\n', 'utf8'));
-  for (const [rel, bytes] of files) {
-    if (rel.startsWith('vendor/')) continue;
-    await fsp.mkdir(dirname(join(dist, rel)), { recursive: true });
-    await fsp.writeFile(join(dist, rel), bytes);
-  }
-  return files;
+  for (const [path, bytes] of vendor) out.set(path, bytes);
+  out.set('rayfin.config.json', Buffer.from(JSON.stringify(config, null, 2) + '\n', 'utf8'));
+  return out;
 }
 
 // --- A zip, with no dependency -----------------------------------------------
@@ -576,5 +583,5 @@ async function zip(files) {
   return Buffer.concat([...local, ...central, end]);
 }
 
-module.exports = { planExport, starterTiles, starterReport, modelDoc, writeExport, writeModel, engineOf, buildDist, writeMarker, readMarker, fingerprint, localChanges,
-                   vendorSize, zip, crc32, rayfinYml, appName, dfsUrl, MARKER };
+module.exports = { planExport, starterTiles, starterReport, modelDoc, appFiles, setModel, engineOf, readApp, writeApp, unzip, vendorFiles,
+                   vendorSize, buildDist, fingerprint, localChanges, zip, crc32, rayfinYml, appName, dfsUrl, MARKER, REPORT };
