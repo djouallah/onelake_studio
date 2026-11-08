@@ -868,12 +868,10 @@ async function main() {
   await step("Logs: everything that ran is listed", async () => {
     before = await logsListed().catch(() => []);
     for (const re of RAN) check(`Logs lists ${re.source}`, before.some(r => re.test(r.sql)), `${before.length} rows`);
-    // The query tab in front again, for the steps after: the engine is up, so no "DuckDB ready" comes again.
-    await drive("exec", { command: "onelakeStudio.open", timeoutMs: 60000 });
-    await until("the query tab on screen", async () => {
-      for (const f of page.frames()) if (!f.isDetached() && await f.locator("#status").count().catch(() => 0) && await onScreen(f)) return true;
-      return false;
-    }, 30000);
+    // A query's box in front again, for the steps after: the Report left the model on screen, and Logs is a tab of
+    // its own. The engine is up, so no "DuckDB ready" comes again.
+    await drive("exec", { command: "onelakeStudio.newQuery", timeoutMs: 60000 });
+    await until("a query's box on screen", async () => (await panel()).locator("#sqlEditor").isVisible(), 30000);
   });
   await step("Cached: after all of it", async () => {
     check("nothing reached OneLake or Microsoft", connections.length === mark, JSON.stringify(connections.slice(mark)));
