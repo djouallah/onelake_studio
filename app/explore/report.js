@@ -37,7 +37,13 @@ function formatter(tile) {
 
 /**
  * The Report in `root`. `ctx`: sql(text) -> { fields, rows }; echarts() -> ECharts with the theme
- * 'studio' registered. Returns { destroy }.
+ * 'studio' registered; shown() (optional), a promise that settles once the Report is on screen;
+ * leftWhileRunning() (optional), whether the host stopped the tile running because the Report was
+ * left (and forgets it). Returns { destroy }.
+ * The tiles run one at a time, top to bottom: each is a scan of the model's tables, and the engine
+ * gives one query all it has, where several at once share it, keep each other waiting, and keep
+ * anything else the tab asks waiting too. A tile waits while the Report is off screen; one stopped
+ * (`cancelled`, by the host when the Report was left) runs again when it is back.
  */
 export function drawReport(root, spec, ctx) {
   const charts = [];
@@ -48,12 +54,33 @@ export function drawReport(root, spec, ctx) {
   if (!tiles) grid.append(el('p', { class: 'rp-say error' }, 'The report has no "tiles" list.'));
   else if (!tiles.length) grid.append(el('p', { class: 'rp-say' }, 'The report has no tiles yet.'));
   let gone = false;
-  for (const tile of tiles ?? []) {
-    const body = el('div', {}, el('p', { class: 'rp-say' }, 'Running…'));
+  const jobs = (tiles ?? []).map(tile => {
+    const body = el('div', {}, el('p', { class: 'rp-say' }, 'Waiting…'));
     const wide = tile.wide ?? (tile.kind === 'kpi' || tile.kind === 'table');
     grid.append(el('section', { class: `rp-tile${wide ? ' wide' : ''}` }, el('h2', {}, String(tile.title ?? '')), body));
-    drawTile(body, tile).catch(e => { if (!gone) body.replaceChildren(el('p', { class: 'rp-say error' }, e?.message || String(e))); });
-  }
+    return { tile, body };
+  });
+  (async () => {
+    for (const { tile, body } of jobs) {
+      for (;;) {
+        await ctx.shown?.();
+        if (gone) return;
+        body.replaceChildren(el('p', { class: 'rp-say' }, 'Running…'));
+        try { await drawTile(body, tile); break; }
+        catch (e) {
+          if (gone) return;
+          // Stopped because the Report was left: again when it is back. Stopped by Stop: no more tiles.
+          if (e?.cancelled && ctx.leftWhileRunning?.()) { body.replaceChildren(el('p', { class: 'rp-say' }, 'Waiting…')); continue; }
+          body.replaceChildren(el('p', { class: `rp-say${e?.cancelled ? '' : ' error'}` }, e?.cancelled ? 'Stopped.' : e?.message || String(e)));
+          if (e?.cancelled) {
+            for (const j of jobs.slice(jobs.findIndex(j => j.body === body) + 1)) j.body.replaceChildren(el('p', { class: 'rp-say' }, 'Stopped.'));
+            return;
+          }
+          break;
+        }
+      }
+    }
+  })();
 
   async function drawTile(body, tile) {
     if (!KINDS.has(tile.kind)) throw new Error(`a tile's kind is kpi, bar, line or table, not ${JSON.stringify(tile.kind)}`);

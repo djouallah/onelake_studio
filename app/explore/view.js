@@ -243,7 +243,15 @@ export function mountExplore(root, ctx) {
     if (sqlMode && p !== 'pivot') closeSql();
     reportPage.hidden = p !== 'report';
     if (ctx.report) {
-      if (p === 'report' && !reportSeq) drawReportPage();
+      if (p === 'report') {
+        for (const go of reportWaiters.splice(0)) go();
+        if (!reportSeq) drawReportPage();
+      } else if (reportRuns.size && ctx.cancel) {
+        // The Report left with a tile running: stopped, so what is asked next has the engine. The
+        // tile runs again when the Report is back.
+        reportLeft = true;
+        ctx.cancel();
+      }
       watchReport(p === 'report');
     }
     modelArea.hidden = p !== 'model';
@@ -256,7 +264,18 @@ export function mountExplore(root, ctx) {
   // --- Report: the host's tiles (ctx.report.load), drawn; drawn again when they change ---
   // Its SQL says FROM model, whatever the model is called here.
   let reportView = null, reportStamp = null, reportTimer = null, reportSeq = 0;
-  const reportSql = text => run(compileModelSql(ctx.compiler, text, 'model'));
+  // A tile's query, shared while it runs: the Report drawn again (its file changed) asks the same
+  // SQL again, and waits on the run already going rather than starting a second.
+  const reportRuns = new Map();   // sql -> its run, while it runs
+  let reportLeft = false, reportWaiters = [];
+  const reportSql = text => {
+    const sql = compileModelSql(ctx.compiler, text, 'model');
+    if (!reportRuns.has(sql)) reportRuns.set(sql, run(sql).finally(() => reportRuns.delete(sql)));
+    return reportRuns.get(sql);
+  };
+  // What report.js waits on before each tile, and asks when one was stopped (drawReport).
+  const reportShown = () => (page === 'report' ? Promise.resolve() : new Promise(r => reportWaiters.push(r)));
+  const leftWhileRunning = () => { const was = reportLeft; reportLeft = false; return was; };
   const reportEcharts = async () => { const ec = await ctx.echarts(); registerChartTheme(ec, css); return ec; };
   async function drawReportPage() {
     const my = ++reportSeq;
@@ -266,7 +285,7 @@ export function mountExplore(root, ctx) {
       if (my !== reportSeq || destroyed) return;
       reportStamp = stamp ?? null;
       reportView?.destroy();
-      reportView = drawReport(reportPage, spec, { sql: reportSql, echarts: reportEcharts });
+      reportView = drawReport(reportPage, spec, { sql: reportSql, echarts: reportEcharts, shown: reportShown, leftWhileRunning });
     } catch (e) {
       if (my !== reportSeq || destroyed) return;
       reportView?.destroy();
