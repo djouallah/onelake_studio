@@ -32,7 +32,7 @@ SHOW ALL TABLES;
 | **SQL only** | A model is read with `AGG("measure")` in SQL. There is no DAX query. Excel's MDX is a second way in, and is compiled to that same SQL. An exported Fabric app on a semantic model runs the DAX that dax-sql makes of that SQL. | [`app/semantic.js`](../app/semantic.js), [`src/xmla/`](../src/xmla/) |
 | **Read only** | Nothing is written to Fabric or OneLake. The host takes one read per statement, from a tab or the command line, and DuckDB's own parser checks it. The two exceptions each ask first: Export to Fabric (the app, the model file, and for DirectQuery or Direct Lake a semantic model), and Upload Files… into a lakehouse's `Files/`. | `assertReads` and `checkedRead` in [`src/sql.js`](../src/sql.js) |
 | **Cache first** | Every answer from OneLake or Fabric is kept on this machine and served from there first. It is trusted until using it fails, then read again once. | [`src/onelake.js`](../src/onelake.js), [`src/store.js`](../src/store.js) |
-| **Works offline** | A feature that reads data works from what this machine holds, with no network. What isn't held says so at once, never on a timeout. Only writing to Fabric needs a connection: Export to Fabric and Upload Files…. The exported Fabric app is online by design, and this rule doesn't apply to it. | [`src/connectivity.js`](../src/connectivity.js), [`src/http.js`](../src/http.js), `cache_httpfs_set_offline` in [`src/engine-host.js`](../src/engine-host.js) |
+| **Works offline** | A feature that reads data works from what this machine holds, with no network. What isn't held says so at once, never on a timeout. Only writing to Fabric needs a connection: Export to Fabric and Upload Files…. The exported Fabric app is online by design, and this rule doesn't apply to it. | [`src/connectivity.js`](../src/connectivity.js), [`src/http.js`](../src/http.js), the lake in [`src/tableservice.js`](../src/tableservice.js) |
 | **The host does the work** | Sign-in, the read-only guard and OneLake's listings, metadata and `Files/` bytes are in the host, and DuckDB's reads are in the server it starts. A tab is a view: it holds no token and makes no network request. | [`src/host.js`](../src/host.js), [`src/panel.js`](../src/panel.js), [`src/engine-client.js`](../src/engine-client.js) |
 | **A table's Pivot is a SQL starter** | It builds a first SQL. Its only actions are Edit SQL and Close. | [`app/app.js`](../app/app.js) |
 
@@ -93,7 +93,7 @@ and joins at step 3.
      synced from the cache first.
    - `withTables` makes a view for each five-part name: `tableRefs` finds the names,
      `resolve` ([`src/sqltables.js`](../src/sqltables.js)) looks them up in the cached listings. The view
-     is `delta_scan` on a Delta table's folder, and `iceberg_scan` on an Iceberg table's metadata file.
+     is over the table's lake table ([Reading OneLake tables](#reading-onelake-tables)).
    - `withFileUrls` gives DuckDB each file's `abfss://` URL in place of its name: `fileRefs` finds the names, and
      `resolveFile` looks them up as `resolve` does. A name that can't be found fails here.
    - `catalogStatement` rewrites `SHOW` statements so they report whole paths.
@@ -149,16 +149,16 @@ the status bar, and comes back by itself ([`src/connectivity.js`](../src/connect
 | Table rows, a model's queries and its Pivot, for what was read | Export to Fabric |
 | `Files/` objects read before | |
 
-**How rows are read offline:** `cache_httpfs` keeps a file's bytes on disk, but opening a file asks OneLake
-for its size and version first. So what an open answers is kept too, as one more cache entry for the file,
-and offline (`cache_httpfs_set_offline`) an open builds its handle from that with no request. A block it
-holds reads as usual. A block it doesn't is an error, and the engine says that part isn't cached. Bytes with
-no such entry need one open online to be readable offline, and aren't downloaded again.
+**How rows are read offline:** a table's files that statements have read are on this machine, whole, and its
+lake table names them there ([Reading OneLake tables](#reading-onelake-tables)). Offline, a statement reads
+those. A file not here yet fails on its OneLake path, and the engine says that part isn't cached. A table never
+read on this machine is refused at once, before anything runs.
 
-With the disk cache off, there is nothing to read, and a statement that reads OneLake is refused at once.
+A `Files/` object read by a statement isn't kept: it is read from OneLake each time, and offline that statement is
+refused at once.
 
 **Losing the internet during a read:** the read fails on DuckDB's own timeout, the engine checks the
-internet once, and if it has gone the statement runs again from what is kept.
+internet once, and if it has gone the statement runs again, offline.
 
 ## The engine
 
@@ -176,12 +176,10 @@ The engine is **DuckDB 2.0 running natively in a process of its own** ([The serv
   `semantic` in it.
 - **Catalogs:** one attached `:memory:` catalog per kind (`lakehouse`, `warehouse`, `sqldatabase`,
   `mirroreddatabase`), and one for `semanticmodel`. The workspace, item and schema are nested schemas.
-- **Reading OneLake:** through DuckDB's `delta`, `iceberg` and `azure` extensions. A Delta table is read with
-  `delta_scan` on a local copy of its log ([`src/deltamirror.js`](../src/deltamirror.js)), with the Parquet files served from OneLake through
-  the disk cache by a mount in our `cache_httpfs`, and never through Fabric's Iceberg conversion, whose column ids can
-  disagree with the files'. An Iceberg table is read with `iceberg_scan` on the metadata file the host's cache holds.
-  Which it is, and where, comes from the cache, so the catalog is never asked at query time. DuckDB does the work itself:
-  snapshots, deletes, schema evolution. A table with OneLake security that OneLake refuses this user is read with
+- **Reading OneLake:** a Delta or Iceberg table through the lake ([Reading OneLake tables](#reading-onelake-tables)),
+  `Files/` objects through DuckDB's `azure` extension. A Delta table is never read through Fabric's Iceberg conversion,
+  whose column ids can disagree with the files'. Which it is, and where, comes from the cache, so the catalog is never
+  asked at query time. A table with OneLake security that OneLake refuses this user is read with
   `read_arrow` on what the table read API answered ([OneLake security](#onelake-security)).
 - **Reading files:** `Files/` objects are named as in [NAMING.md](NAMING.md#files), and DuckDB reads them as `abfss://` URLs.
 - **Lockdown:** file access is limited to the temp directory, `https://`, `abfss://` and `zip://` over a
@@ -204,7 +202,7 @@ every window is a client of it over DuckDB's Quack protocol ([`src/engine-client
   that leaves cancels its statements, and with no window left the server waits a minute, so a reload finds
   it warm, then exits. If it dies, its tabs close and the next click starts it again. **Sign Out**, **Switch
   Microsoft Account**, a restart and **Clear Cached OneLake Data** stop it for every window, and their tabs close.
-- **What is shared:** one memory budget, and the blocks read, in memory over the disk cache.
+- **What is shared:** one memory budget, the blocks read, in memory, and the lake.
 - **Tabs:** each runs its own statements, and its Stop reaches only those, including one still opening its tables:
   that one answers at once and never runs. Whatever the tree opens gets a new tab, and so does **New Query**. A tab's `Files/` views carry a tag, so two tabs' views never share a name.
 - **The session token:** a new random one per server, kept in VS Code's secret storage, and reaching the
@@ -293,6 +291,40 @@ it as they read any table.
   copy already kept is still used.
 - **With the disk cache off** there is nowhere to keep the streams, and a refused table says so.
 
+## Reading OneLake tables
+
+Every Delta and Iceberg table is read through **the lake**: one DuckLake catalog, `lake`, in the server
+([`src/onelaketable.js`](../src/onelaketable.js), [`src/tableservice.js`](../src/tableservice.js)). Each of its files
+is named by where it is: its OneLake path, until it has come to this machine whole, then its copy in the cache folder.
+A table can be part here and part on OneLake, and DuckDB opens each file where its name says.
+
+- **A table is synced from its own metadata, and no data file is read for that.** A Delta table from its `_delta_log`:
+  the newest checkpoint, in one part or several, and the commits after it, a file known by its path and its deletion
+  vector together, as Delta reconciles them. An Iceberg table from its manifests. What is synced is its schema and its live
+  files: each one's size, row count, partition values and deletes. Each sync is one snapshot of the lake table: a file no
+  longer live is ended, a new one added, a column added, renamed (under column mapping) or dropped. It runs when a
+  statement names the table and the catalog's metadata for it has moved since, or with **Refresh**.
+- **Deletes:** a Delta deletion vector is the same bytes as the lake's own delete file, so each is cut out of the
+  `.bin` it is packed in, or built from an inline one, and kept under `lake\deletes`. An Iceberg table's
+  position-delete files are used as they are.
+- **What a statement reads comes here.** The server keeps DuckDB's log of the files statements open. A file
+  opened on OneLake is queued, downloaded whole over HTTPS, opened once here (on Windows the first open of a new file
+  can wait many seconds, and a statement mustn't be the one that waits), and then its name in the lake becomes the copy,
+  in the transaction that records it. The unit is a file: a table never comes down whole for this, only the files
+  statements open. Kept under `lakeiles`, by workspace, item and folder, so a Delta partition's `col=value` folder
+  is in the copy's path, where the lake reads its value.
+- **What goes:** a copy whose file the latest snapshot no longer names, slowly and behind everything else, once nothing
+  has needed it for 15 minutes, since a statement that started before keeps the files it started with. A file a table
+  still reads stays, unless what is kept here would pass `onelakeStudio.diskCacheMaxGB`: then the least recently read
+  goes back to its OneLake name, and its copy goes the same slow way. At `0` nothing comes here.
+- **One process holds the lake:** its metadata file can be open in one only. So the server holds it, a window asks it
+  for a table over the control pipe (`lakeTable`), and Keep offline's reads are a client of the same server. The
+  standalone host's server has a lake of its own, `lake-standalone`.
+- **Only through the lake:** a table is never read past it. An engine that can't open the lake doesn't start, and one
+  with no cache folder (no account) refuses a table.
+- **What a statement can't do to it:** DuckLake's own functions write, and one deletes files from a `SELECT`. The guard
+  and the server refuse any `ducklake_` function and the lake's metadata by name.
+
 ## The cache
 
 | What | Where it is kept | When it is read again |
@@ -300,7 +332,8 @@ it as they read any table.
 | Listings (workspaces, items, tables, `Files/`, semantic models), table metadata, first rows | The catalog file, [`src/catalogfile.js`](../src/catalogfile.js) | Served at once, refreshed in the background past its window |
 | The name behind a Direct Lake model's item GUIDs | The catalog file | Only when using it fails |
 | The bytes of a `Files/` object the host reads (an image, a `.bim`, a SQLite copy, a saved file) | The cache folder, under the etag its cached listing gave | Only when the file was rewritten |
-| What DuckDB reads: table data and `Files/` objects | DuckDB's disk cache (`cache_httpfs`) | Only when the file was rewritten: a kept copy is checked against the file's version tag and modification time |
+| A table's files that statements read | The cache folder, `lake\files`, named in the lake ([Reading OneLake tables](#reading-onelake-tables)) | Never: a file isn't rewritten. A new snapshot names new files |
+| `Files/` objects a statement reads | Not kept | Every time |
 | That a table's rows were read, per snapshot | The catalog file | Never: a new snapshot is a new entry |
 | A semantic model's definition | The cache folder, `models/<account>/<workspace>/<model>.yaml` | On **Download Again** |
 | A table with OneLake security: the rows and columns the table read API gave this user | The cache folder, `secured\` | Past `tableMetadataTtlHours`, or after **Refresh** ([OneLake security](#onelake-security)) |
@@ -317,7 +350,7 @@ it as they read any table.
   - **A model's local copy** is not covered: it changes only on **Download Again**.
   - **A table kept as empty** can't fail, so it is read again past `catalogTtlMinutes`, before a statement uses it.
 - **An answer that was cut off is a failure, not an empty listing:** what was kept stays, and shows *refresh failed*.
-- **The disk cache's limit** is held when the server starts and every hour after, so one long scan can pass it for a while.
+- **The disk cache's limit** is held by the table service before each file comes down.
 - **Clearing reaches every window:** each one notices it in the catalog file within a few seconds, and what it holds in
   memory goes too.
 - **The catalog keeps itself current** ([`src/syncworker.js`](../src/syncworker.js)), behind everything, in a window's
@@ -329,21 +362,20 @@ it as they read any table.
   what another wrote from the file within a few seconds, and its tree redraws.
 - **A table statements keep reading is looked after** ([CATALOG.md](CATALOG.md#tables-in-use)). Read 3 times in 14 days, it is
   *in use*. Its metadata is read every hour, and when nobody is running anything each new snapshot is read whole, through
-  the engine, under `onelakeStudio.keepUsedTablesGB`. Anyone's statement stops that, and what it read stays. It works offline
-  from then on, every column. A table over the limit isn't downloaded, and says so in its tooltip.
+  the engine, under `onelakeStudio.keepUsedTablesGB`: every file it opens comes here. Anyone's statement stops that, and
+  what came stays. It works offline from then on, every column. A table over the limit isn't downloaded, and says so in its tooltip.
 - **Per Microsoft account:** switching accounts never serves one account's data to another.
 - **Survives a sign-out:** signing back in finds it warm. Only **Clear Cached OneLake Data** deletes it.
 - **The catalog is cached too:** `SHOW ALL TABLES` and `information_schema` list every table the catalog file knows with
   no request to OneLake. A table whose columns were never read is listed with none, and a statement that names it reads
   them first. In `information_schema.columns` it has one placeholder, `(columns not read yet)`, as a DuckDB view must have
   a column.
-- **A patched build:** the vsix carries a `cache_httpfs` with a Windows fix not yet released upstream
-  (without it, nothing is cached on disk on Windows), the offline read above, and a refusal of any Azure URL whose host
-  isn't OneLake's, so the OneLake token can't be sent elsewhere. With the disk cache off, only the guard's text check says that. DuckDB loads it as an
-  unsigned extension. A build without it fails, rather than ship with no disk cache.
+- **The OneLake token and other hosts:** the guard refuses an Azure URL whose host isn't OneLake's, as a statement
+  writes it. A URL joined up from pieces at run time gets past that check, and nothing behind it refuses it yet.
 - **What a build downloads is held to its hash:** the libraries and DuckDB's extensions, against
   `scripts/downloads.sha256.json`, and DuckDB's native binding against the lockfile. The community extensions `h3`,
-  `zipfs` and `nanoarrow` ship in the vsix too, so nothing is downloaded at run time unless the disk cache is off.
+  `zipfs` and `nanoarrow` ship in the vsix too, and load as unsigned extensions, as a load by path knows only DuckDB's own
+  signing keys. `ducklake` ships with the rest.
 
 ## The explorer
 
@@ -760,23 +792,22 @@ personal skills, and it follows the extension through updates.
 
 **Keep offline**, a switch beside a semantic model's tabs, keeps every table the model reads on this machine and current,
 so it answers from disk and with no connection ([`src/modeldata.js`](../src/modeldata.js)). Each table is read whole
-through the engine, as the idle job does it (`keepTable`): every column of every file goes through the disk cache, and
-no row comes back.
+through the engine, as the idle job does it (`keepTable`): every column of every file is opened, so every file comes here
+([Reading OneLake tables](#reading-onelake-tables)), and no row comes back.
 
-- **A background job, in an engine of its own.** Reading whole with the query engine took a whole connection: beside a
-  query, it held one for 3 minutes on a 50 Mbit/s line, and starved the host's own requests. So it runs in a second server
-  process, `extension.js backgroundEngine`, on one thread and 1 GB with few requests per read, and never stops for a
-  query. They share only the disk cache. A cold query still shares the line with it, and has most of it. The server
-  exits once nothing is left to read, and isn't started until something is.
+- **A background job, a client of the shared engine** (`engines.js backgroundEngine`), as a window is. It was a server
+  process of its own, on one thread and 1 GB, because reading whole beside a query held a whole connection for 3 minutes
+  on a 50 Mbit/s line and starved the host's own requests. It can't be one now: the lake can be open in one process
+  only. So it shares the server's threads and connection with queries, and that cost is back.
 - **It was asked for,** so it differs from the idle job: it starts at once, with no two quiet minutes first, and has no
   time limit. The idle job holds off meanwhile, or the two would read the same bytes twice.
 - **It stays on.** It's a row in the catalog per model, so it goes on with the tab closed and comes back with the next
   window. Each table's metadata is read past the cache every hour, and a new snapshot comes down when it appears.
 - **Every window shows the same.** What the switch says is worked out from the catalog (`table_kept`), and one window reads:
-  the one with the catalog's lease. Its statements are in **Logs**, a line per column, as the two servers share a log file.
+  the one with the catalog's lease. Its statements are in **Logs**, a line per column.
 - **Off stops it, and deletes nothing.** A table stopped part way keeps what it read, and switching on again carries on.
   Back on answers at once from what's kept, asking OneLake nothing: whether anything is newer is looked for behind it, on the hourly clock.
-  The disk cache clears the oldest as it does for everything else.
+  What is kept goes as any table's files go.
 - **More than the disk cache holds stays off** (`diskCacheMaxGB`), counting the other models kept offline, since it would
   evict itself. **Clear Cached OneLake Data** switches them all off.
 - **A table that fails** is named beside the switch and tried again in an hour. With no connection it waits, and carries on.
@@ -848,7 +879,7 @@ Excel (MSOLAP) --SOAP over http://127.0.0.1--> extension host
 | `onelakeStudio.keepUsedTablesGB` | 10 | How much of the tables statements keep reading is read whole in the background and kept, and may come down in a day. Never over half of `diskCacheMaxGB`. `0` turns it off, and their metadata is still read every hour. |
 | `onelakeStudio.securedTableRead` | on | Reads a table whose files OneLake refuses you, because of OneLake security, through OneLake's table read API: the rows and columns your roles allow. Each read uses the workspace's capacity. Off, such a table fails. |
 | `onelakeStudio.prefetchMetadata` | on | Reads every table's metadata in the background once a lakehouse's Tables node is opened, so the first click is a disk read. |
-| `onelakeStudio.diskCacheMaxGB` | 64 | How much of what DuckDB reads from OneLake, tables and `Files/`, is kept on disk, per account. `0` turns the disk cache off. |
+| `onelakeStudio.diskCacheMaxGB` | 64 | How much of the tables' files is kept on this machine, per account. `0` keeps none: every table is read from OneLake, through the lake. |
 | `onelakeStudio.cacheDirectory` | empty | Where the disk cache is kept, as a full path. Empty is VS Code's storage for this extension. A new folder starts empty. |
 | `onelakeStudio.engineMemoryLimit` | empty | Most memory DuckDB may use, e.g. `4GB`. Empty is a quarter of the machine's RAM. |
 | `onelakeStudio.engineThreads` | 0 | How many threads DuckDB may use. `0` is every core. |
@@ -898,7 +929,8 @@ every window. The rest apply at once.
 | `src/connectivity.js` | Whether this window is offline, and why. |
 | `src/http.js` | How the host asks OneLake and the Fabric API for anything. |
 | `src/deltalog.js` | A Delta table's own log, for Stats and History. |
-| `src/deltamirror.js` | A Delta table's log kept in the cache folder, for `delta_scan` to run on. |
+| `src/onelaketable.js` | A Delta or Iceberg table kept in the lake from its own metadata. |
+| `src/tableservice.js` | The files statements read, brought here one at a time, and let go when no snapshot names them. |
 | `src/tableread.js` | A table with OneLake security, read through OneLake's table read API and kept in the cache folder. |
 | `src/fabric.js` | A workspace's semantic models and apps, and a model's definition. |
 | `src/sqlendpoint.js` | A Direct Lake model over a SQL endpoint, pointed at the item behind it. |

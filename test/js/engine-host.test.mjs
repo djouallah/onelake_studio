@@ -67,7 +67,7 @@ test("warm() boots the engine and lists the catalog ahead of the first statement
   assert.equal(listings, 1, "the statement found the catalog already listed");
 });
 
-test("offline with no disk cache: a read of OneLake is refused at once, and the rest of the catalog still answers", async t => {
+test("with no cache folder: a OneLake table is refused, never read past the lake; offline a file is too, and the catalog still answers", async t => {
   const extDir = await mkdtemp(join(tmpdir(), "onelake-ext-"));
   let reason = "no internet";
   const METADATA = "abfss://ws@onelake.dfs.fabric.microsoft.com/lh.Lakehouse/Tables/dbo/t/metadata/1.metadata.json";
@@ -86,14 +86,14 @@ test("offline with no disk cache: a read of OneLake is refused at once, and the 
   });
 
   const t0 = Date.now();
+  const FILE = `SELECT * FROM '${METADATA.replace("metadata/1.metadata.json", "x.parquet")}'`;
   await assert.rejects(engine.call("query", ["SELECT * FROM lakehouse.w.lh.dbo.t"]),
-    /lakehouse\.w\.lh\.dbo\.t: reading rows needs OneLake, and there is no internet/);
-  await assert.rejects(engine.call("query", [`SELECT * FROM '${METADATA.replace("metadata/1.metadata.json", "x.parquet")}'`]),
-    /This statement: reading rows needs OneLake/);
+    /lakehouse\.w\.lh\.dbo\.t: a OneLake table is read through the lake, and this engine has none/);
+  await assert.rejects(engine.call("query", [FILE]), /This statement: reading rows needs OneLake, and there is no internet/);
   reason = "not signed in";
-  await assert.rejects(engine.call("query", ["SELECT * FROM lakehouse.w.lh.dbo.t"]), /you are not signed in/);
+  await assert.rejects(engine.call("query", [FILE]), /you are not signed in/);
   const batches = [];
-  await assert.rejects(engine.call("stream", ["SELECT * FROM lakehouse.w.lh.dbo.t"], b => batches.push(b)), /reading rows needs OneLake/);
+  await assert.rejects(engine.call("stream", ["SELECT * FROM lakehouse.w.lh.dbo.t"], b => batches.push(b)), /read through the lake/);
   assert.ok(Date.now() - t0 < 20000, "refused, not timed out");
 
   const r = await engine.call("query", ["SHOW ALL TABLES"]);
@@ -736,7 +736,7 @@ test("a kept log's folder is spelled the way the lockdown keeps it", () => {
   assert.equal(duckdbPath("/home/x/cache"), "/home/x/cache");
 });
 
-test("offline with no cache folder, a Delta table says so at once, and an empty one still answers", async t => {
+test("with no cache folder, a Delta table is refused, never read past the lake, and an empty one still answers", async t => {
   const extDir = await mkdtemp(join(tmpdir(), "onelake-delta-offline-"));
   const engine = createEngineHost({
     extensionDir: extDir,
@@ -754,7 +754,7 @@ test("offline with no cache folder, a Delta table says so at once, and an empty 
   });
   await engine.warm();
   await assert.rejects(engine.call("query", ["SELECT * FROM lakehouse.w.lh.dbo.t"]),
-    e => e.offline === true && /lakehouse\.w\.lh\.dbo\.t: reading rows needs OneLake, and there is no internet/.test(e.message));
+    /lakehouse\.w\.lh\.dbo\.t: a OneLake table is read through the lake, and this engine has none/);
   const r = await engine.call("query", ["SELECT * FROM lakehouse.w.lh.dbo.never_written"]);
   assert.equal(r.rows.length, 0);
 });

@@ -116,7 +116,7 @@ const FORBIDDEN = /\b(?:HTTP|status|code)[ :]*403\b|\b403 Forbidden\b|Authorizat
 // breaks and NULs are not.
 const ONELAKE_METADATA = /^abfss:\/\/[^@/\r\n\0]+@onelake\.dfs\.fabric\.microsoft\.com\/[^\r\n\0]+\.metadata\.json$/i;
 const isOneLakeMetadata = s => typeof s === 'string' && ONELAKE_METADATA.test(s);
-// A Delta table's folder, spliced into delta_scan(...) as that is: only this shape may pass.
+// A Delta table's folder, whose log is read into the lake as it is named: only this shape may pass.
 const ONELAKE_TABLE = /^abfss:\/\/[^@/\r\n\0]+@onelake\.dfs\.fabric\.microsoft\.com\/[^\r\n\0]*[^/\r\n\0]$/i;
 const isOneLakeTable = s => typeof s === 'string' && ONELAKE_TABLE.test(s);
 // A local folder as the lockdown knows it. DuckDB keeps allowed_directories with a capital drive letter and
@@ -224,7 +224,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
                             memoryLimit = '', threads = 0, spillMaxGB = 0, maxRows = DEFAULT_MAX_ROWS,
                             allowedPaths = [], lockdown = true,
                             httpProxy = '', bundledExtensions = null,
-                            fileCacheDir = null, fileCacheMaxBytes = 0, fileCacheFanout = 16, resolveTable = null, resolveFile = null,
+                            fileCacheDir = null, fileCacheMaxBytes = 0, lakeFolder = 'lake', resolveTable = null, resolveFile = null,
                             catalogTables = null, offlineReason = () => null, checkConnectivity = null,
                             onRowsRead = () => {}, onFileRead = () => {}, onTablesUsed = () => {}, serve = null, remote = null } = {}) {
   let instance = null;
@@ -357,8 +357,8 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
       for (const ext of ['avro', 'excel', 'sqlite_scanner', 'delta']) await load(ext, '');
       // nanoarrow's read_arrow is how a table with OneLake security is read: what the table read API answered.
       for (const ext of COMMUNITY) await load(ext, 'community');
-      // A OneLake table is read through DuckLake, its files brought here as they are read (openLake).
-      // Without a cache folder there is nowhere to keep either, and a table is read from OneLake itself.
+      // A OneLake table is read through DuckLake, its files brought here as they are read (openLake). A cache
+      // folder is there whenever an account is; without one, no OneLake table is read (sourceOf).
       if (fileCacheDir) { await load('ducklake', '', true); await openLake(); }
       mark('extensions');
       // azure has an HTTP client of its own, with its own proxy settings.
@@ -544,17 +544,20 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
   const LAKE_POLL_MS = 1000, LAKE_TIDY_MS = 60 * 1000;
   let lakeService = null, lakeToken = null, lakeDirs = null;
   async function openLake() {
-    const root = join(fileCacheDir, 'lake');
+    const root = join(fileCacheDir, lakeFolder);
     lakeDirs = { meta: join(root, 'meta.ducklake'), files: join(root, 'files'), deletes: join(root, 'deletes') };
     await fsp.mkdir(root, { recursive: true });
+    // One engine holds the lake: its metadata file can be open in one process only. Without it no OneLake
+    // table can be read, so the engine doesn't start.
     try { await attachLake(conn, duckdbPath(lakeDirs.meta)); }
-    catch (e) { onWarn(`OneLake tables are read from OneLake: the lake could not be attached — ${e.message}`); return; }
+    catch (e) { throw new Error(`the lake could not be opened, so no OneLake table can be read: ${e.message}`); }
     capabilities.lake = true;
     lakeService = createTableService({
       withConn: fn => admin(() => fn(conn)),
       filesDir: duckdbPath(lakeDirs.files),
       download: httpsDownload({ getToken: async () => { if (!lakeToken) throw new Error('not signed in'); return lakeToken; } }),
-      maxBytes: fileCacheMaxBytes > 0 ? fileCacheMaxBytes : undefined,
+      // 0 (the disk cache set to nothing): a table is read from OneLake, and nothing comes here.
+      maxBytes: Math.max(0, Number(fileCacheMaxBytes) || 0),
       log: onWarn,
     });
     // Off the boot: a window's statements never wait for these.
@@ -658,7 +661,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
   // A table, ready to be selected from by its SQL name. A Delta or Iceberg table is a view over its lake table,
   // kept from the table's own log or metadata file (lakeTable): Fabric's Iceberg conversion of a Delta table
   // isn't to be read, as its column ids can disagree with the ones in the files, and DuckDB then gives one
-  // column another's values. With no lake, a view over delta_scan on its folder or iceberg_scan on its metadata. Where each is
+  // column another's values. Where each is
   // comes from what the host's store holds (the catalog's loadTable answer, cached on disk). The
   // catalog is not asked at query time when the store has the answer — it answered a loadTable in 5s,
   // 12s and 114s on a real tenant.
@@ -705,8 +708,11 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
             'What this machine has cached still works: tables, columns, stats and first rows.'), { offline: true });
         }
         source = `SELECT * FROM lake.main.${quoteIdent(name)}`;
-      } else if (which.deltaTable) source = `SELECT * FROM delta_scan(${sqlStr(which.deltaTable)})`;
-      else source = `SELECT * FROM iceberg_scan(${sqlStr(which.metadataLocation)})`;
+      } else {
+        // Only through the lake: never past it, read from OneLake by another way that keeps nothing here.
+        throw new Error(`${sqlName(r)}: a OneLake table is read through the lake, and this engine has none` +
+          (fileCacheDir ? '.' : ': it has no cache folder, as no account is signed in.'));
+      }
     } else {
       throw new Error(`OneLake gave ${sqlName(r)} no readable metadata location` +
         (r.metadataLocation ? ` (${String(r.metadataLocation).slice(0, 120)})` : ''));
@@ -714,9 +720,6 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
     return { name: sqlName(r), path: [r.kind, r.workspace, r.item, r.schema || 'dbo'], source, location: r.emptySql == null ? r.metadataLocation : null, at: r.at, listed: r.listed, secured: !!r.secured };
   }
   async function makeView({ name, path: parts, source }) {
-    if (/\bdelta_scan\(/.test(source) && !capabilities.delta) {
-      throw new Error(`${name} is a Delta table, and DuckDB's delta extension isn't available on this platform.`);
-    }
     if (/\bread_arrow\(/.test(source) && !capabilities.nanoarrow) {
       throw new Error(`${name} has OneLake security, and DuckDB's nanoarrow extension, which reads what OneLake's table read API answers, isn't available.`);
     }
