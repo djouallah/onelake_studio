@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- **The desktop app reads OneLake tables with VS Code open.** Its engine did not start, since VS Code's held the lake
+  (`meta.ducklake`): it has a lake of its own now, so the first read of a table there downloads its files again.
+
 ## 0.2.18
 
 - **The lake's metadata can be queried, as `system_internal`.** `SELECT * FROM system_internal.ducklake_data_file`

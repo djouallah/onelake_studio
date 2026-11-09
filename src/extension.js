@@ -390,6 +390,8 @@ async function activateInner(context) {
     signIn, connectivity, settings, readLog,
     extensionDir: context.extensionUri.fsPath, storageDir: context.globalStorageUri.fsPath,
     production: context.extensionMode === vscode.ExtensionMode.Production, dev,
+    // The desktop app's (src/desktop/main.js); VS Code gives none.
+    serverTag: context.serverTag || '',
     memento: context.globalState, secrets: context.secrets,
     httpProxy: () => vscode.workspace.getConfiguration('http').get('proxy', ''),
     readmePath: async () => (await webviewRoot(context.extensionUri, { dev })).readme.fsPath,

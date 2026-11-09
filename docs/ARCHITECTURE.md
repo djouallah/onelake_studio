@@ -338,7 +338,7 @@ A table can be part here and part on OneLake, and DuckDB opens each file where i
   goes back to its OneLake name, and its copy goes the same slow way. At `0` nothing comes here.
 - **One process holds the lake:** its metadata file can be open in one only. So the server holds it, a window asks it
   for a table over the control pipe (`lakeTable`, `lakeSync`, `lakeTables`), and Keep offline's reads are a client of the same server. The
-  standalone host's server has a lake of its own, `lake-standalone`.
+  standalone host's server has a lake of its own, `lake-standalone`, and the desktop app's `lake-desktop`.
 - **Only through the lake:** a table is never read past it. An engine that can't open the lake doesn't start, and one
   with no cache folder (no account) refuses a table.
 - **What a statement can't do to it:** DuckLake's own functions write, and one deletes files from a `SELECT`. The guard
@@ -782,7 +782,8 @@ command, menu, tab and message is the same code in both, and a change to the ext
   `signin` for both. No app registration.
 - **The same data:** with VS Code on the machine, its folder for this extension, so the extension, the command line and the
   app read one cache. With none, `%LOCALAPPDATA%\OneLake Studio\data`. Settings are VS Code's where there are any, under
-  what the app's Settings tab changes.
+  what the app's Settings tab changes. Its engine is a server of its own, so it has a lake of its own, `lake-desktop`:
+  with VS Code open too, both read OneLake tables, and each keeps its own copy of their files.
 - **The shell** is Tauri ([`desktop/src-tauri/`](../desktop/src-tauri/)): it shows a splash, starts the Node process, and
   opens the page it names. Each line the process says after that is something only the shell can do: exit, zoom.
   Closing the window closes the process's stdin, and it ends; if the process ends first, the splash comes back with

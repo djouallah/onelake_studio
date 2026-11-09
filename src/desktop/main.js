@@ -176,6 +176,9 @@ async function main() {
     globalStorageUri: vscode.Uri.file(home),
     logUri: vscode.Uri.file(join(home, 'desktop-logs', 'window', 'exthost')),
     extensionMode: vscode.ExtensionMode.Production,
+    // Not VS Code's: the app's engine is a server of its own, and the lake can be open in one process only,
+    // so it has a lake of its own beside VS Code's (engines.js).
+    serverTag: 'desktop',
     subscriptions: [],
     globalState: keptIn(join(home, 'standalone-state.json')),
     secrets: (kept => ({ get: async k => kept.get(k), store: (k, v) => kept.store(k, v), delete: k => kept.update(k, undefined) }))(keptIn(join(home, 'standalone-secrets.json'))),
