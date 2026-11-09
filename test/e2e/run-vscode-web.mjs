@@ -606,20 +606,22 @@ async function modelMatrix() {
     const row = f.locator("#modelView .rp-tile tr.rp-pick").first();
     check("a tile takes clicks", await row.count() > 0);
     // Every text each tile shows from here on, so a run too quick to see is still seen.
-    const picked = await f.evaluate(() => {
+    const { picked, slicers } = await f.evaluate(() => {
       const tiles = [...document.querySelectorAll("#modelView .rp-tile")];
       window.__rpSaid = tiles.map(t => [t.innerText]);
       new MutationObserver(() => tiles.forEach((t, i) => window.__rpSaid[i].push(t.innerText)))
         .observe(document.querySelector("#modelView .rp"), { childList: true, subtree: true, characterData: true });
-      return tiles.findIndex(t => t.querySelector("tr.rp-pick"));
+      // A slicer lists every value whatever is picked: it does not run again.
+      return { picked: tiles.findIndex(t => t.querySelector("tr.rp-pick")), slicers: tiles.map(t => t.classList.contains("rp-slicer-tile")) };
     });
+    check("the Report has a slicer", slicers.some(Boolean));
     await row.click();
     const chips = f.locator("#modelView .rp-filters");
     const listed = await chips.innerText();
     check("the pick is listed above the tiles", /Filtered by:\s*Color = Red/.test(listed), listed);
     const tiles = await tilesDone(f);
     const said = await f.evaluate(() => window.__rpSaid);
-    const others = tiles.map((t, i) => [t, i]).filter(([, i]) => i !== picked);
+    const others = tiles.map((t, i) => [t, i]).filter(([, i]) => i !== picked && !slicers[i]);
     check("every other tile ran again", others.every(([, i]) => said[i].some(t => /Running…/.test(t))), JSON.stringify(said));
     check("the tile picked in stays as it was", !said[picked].some(t => /Waiting…|Running…/.test(t)), said[picked].join(" | "));
     check("its row is highlighted", await f.locator("#modelView tr.rp-on").count() === 1);
@@ -631,6 +633,7 @@ async function modelMatrix() {
     check("its ✕ clears the pick", await chips.isHidden() && await f.locator("#modelView tr.rp-on").count() === 0);
     const again = await tilesDone(f);
     check("the others ran again, unfiltered", again.filter((_, i) => i !== picked).every(t => !UNCOMPILED.test(t)), again.join(" | "));
+    check("the slicer did not run again", slicers.every((s, i) => !s || !said[i].some(t => /Running…/.test(t))), JSON.stringify(said));
     await f.locator('#modelView [data-apage="model"]').click();
   }, 180000);
 }

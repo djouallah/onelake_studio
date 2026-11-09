@@ -249,6 +249,9 @@ and a tile's ✕ write it here.
   Pivot draws them: \`{ "rows": ["dim_region.Region"], "cols": [], "values": ["Revenue"], "filters": [], "mark": "bar" }\`.
   A column is \`table.column\`, a measure its name; \`mark\` is \`auto\`, \`table\`, \`highlight\`, \`bar\`, \`stacked\`,
   \`line\`, \`area\`, \`heatmap\` or \`scatter\`. A click picks its first Rows field (else Columns).
+- \`slicer\` has no \`sql\`: its \`column\` is a model column, \`"table"."column"\`, and it lists that column's values
+  to tick. What is ticked filters every other tile to those values: \`{ "title": "Color", "kind": "slicer", "column": "\\"Product\\".\\"Color\\"" }\`.
+- The tiles are drawn in the order they are listed.
 - \`sql\` is one SELECT over the model, \`FROM model\`: its columns as \`"table"."column"\`, its measures as
   \`AGG("measure")\`, \`GROUP BY ALL\`, \`ORDER BY\`, \`FETCH FIRST n ROWS WITH TIES\`. ${onModel(plan)
   ? 'The page turns it into DAX and runs it on the semantic model.' : 'The page compiles it (dax-sql) to SQL over the tables, and DuckDB-WASM runs it.'}

@@ -121,7 +121,7 @@ export async function seedAccount({ dataDir, home }) {
   await mkdir(dirname(model), { recursive: true });
   await writeFile(model, stringify(tmslToOssie(BIM, "shop")));
 
-  // The model's Report, as an export's zip holds it: figures, a bar and a pivot over the model, and a table that needs no rows
+  // The model's Report, as an export's zip holds it: figures, a bar, a pivot and a slicer over the model, and a table that needs no rows
   // from OneLake, so it has a row to click. Its first column is a constant, so it names the model
   // column its clicks filter by (crossFilter).
   const report = join(home, "OneLakeStudio", "exports", "shop.zip");
@@ -129,6 +129,7 @@ export async function seedAccount({ dataDir, home }) {
     { title: "Totals", kind: "kpi", sql: 'SELECT AGG("Total") AS "Total" FROM model' },
     { title: "Total by Color", kind: "bar", sql: 'SELECT "Product"."Color" AS "Color", AGG("Total") AS "Total" FROM model GROUP BY ALL ORDER BY "Total" DESC' },
     { title: "Total by Color", kind: "pivot", pivot: { rows: ["Product.Color"], values: ["Total"], mark: "stacked" } },
+    { title: "Color", kind: "slicer", column: '"Product"."Color"' },
     { title: "Colors", kind: "table", sql: `SELECT 'Red' AS "Color", 3 AS "Total" FROM model`,
                                         crossFilter: '"Product"."Color"' }];
   await writeApp(report, new Map([["site/report.json", Buffer.from(JSON.stringify({ tiles }))]]), { e2e: true });

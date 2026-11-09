@@ -578,19 +578,24 @@ opens on Model, and the Fabric app on its Report.
     approved into); else the file Studio keeps for the model until its first export (`<storage>/reports/`, by its
     workspace and name); else none: a Report starts empty. The first export writes Studio's file, or no tiles, into
     the zip, and the file goes.
-  - **Add to report and ✕:** Pivot's **Add to report** puts the shelves on screen after the tiles, as a `pivot` tile;
-    a tile's ✕ takes it out. Both write where the tiles are kept (`reportSave` in
+  - **Add to report, Add slicer, ✕ and the grip:** Pivot's **Add to report** puts the shelves on screen after the
+    tiles, as a `pivot` tile; the Report's **Add slicer** puts a model column there, as a `slicer` tile; a tile's ✕ takes
+    it out, and its grip ⠿ moves it (dragged onto another tile, or by the arrow keys), drawn there at once with nothing run
+    again. All write where the tiles are kept, one save after another (`reportSave` in
     [`src/exportflow.js`](../src/exportflow.js)), over the tiles they were drawn from: a report that changed since (an
     edit to its file) is refused and drawn again. The Fabric app's Report only reads, so it has neither.
   - **Drawn again** when the zip changes, while the tab is on screen: a person or an agent edits the report and sees it.
   - A tile is `{ title, kind, sql, formats?, echarts?, wide?, crossFilter? }`: `kind` is `kpi`, `bar`, `line` or `table`,
     `formats` a column's format string, `echarts` an ECharts option merged over the tile's own. A `pivot` tile is
     `{ title, kind: 'pivot', pivot }`, `pivot` the shelves as Pivot keeps them; its SQL is Pivot's (`pivotQuery`), and it
-    is drawn by Pivot's own code (`pivotView` in [`explore.js`](../app/explore/explore.js)), so it keeps every mark.
+    is drawn by Pivot's own code (`pivotView` in [`explore.js`](../app/explore/explore.js)), so it keeps every mark. A
+    `slicer` tile is `{ title, kind: 'slicer', column }`, `column` a model column (`"table"."column"`): its values (the
+    first 1,000) to tick. The tiles are drawn in the order they are listed.
   - **Cross filtering:** a click on a bar, a line's point or a table's row picks its first column's value, and every other
     tile runs again with it as a `WHERE` on the model column that first column is (`withFilters`: before `GROUP BY`, ANDed
     to a `WHERE` the tile has, `IS NULL` for a blank, the literal typed by the model's column). A pivot tile picks its
-    first Rows field (else Columns). The tile clicked stays whole, its pick bright and the rest dim. The same click
+    first Rows field (else Columns). A slicer's ticked values are its pick, a `WHERE … IN (…)` on every other tile (`IS
+    NULL` for a blank among them); it does not run again when other picks change, as it lists every value. The tile clicked stays whole, its pick bright and the rest dim. The same click
     again, or the pick's ✕ in the bar above the tiles, clears it; picks in several tiles all apply. A figures tile takes
     no clicks. `crossFilter` names the model column when the first column is not one, or is `false` for a tile that takes
     none. The tiles still run one at a time, and a pick stops the tile running when it changes it.

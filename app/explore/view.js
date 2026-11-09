@@ -11,16 +11,17 @@
 //             (a host that saves the Report) puts the pivot on the Report as a tile.
 //   Report    tiles the host reads (ctx.report: Export to Fabric's report.json, or the file the
 //             host keeps before an export; none at first), each a SELECT over the model or
-//             a pivot, drawn by report.js; a ✕ takes one out (a host that saves the Report)
+//             a pivot or a slicer, drawn by report.js; a ✕ takes one out, its grip moves it, and
+//             Add slicer puts a column's values on it to tick (a host that saves the Report)
 // Model's Diagram | YAML (or BIM) shows the model drawn, or its file as written (pretty.js).
 // The same file in the panel and in Export to Fabric's app: the host says how a model's SQL is compiled
 // and run, and where ECharts comes from (`ctx`); nothing here knows the engine.
 // =============================================================================
 
-import { escapeHtml, toCsv } from '../paths.js';
+import { escapeHtml, toCsv, quoteIdent } from '../paths.js';
 import { renderModel } from './model.js';
 import { el } from './dom.js';
-import { createExplorer, pivotTitle } from './explore.js';
+import { createExplorer, modelFields, pivotTitle } from './explore.js';
 import { compileModelSql } from './query.js';
 import { createPlanView, profileSql, elapsed, profileColors } from './profile.js';
 import { PALETTE, registerChartTheme } from './theme.js';
@@ -179,9 +180,13 @@ export function mountExplore(root, ctx) {
   if (editBtn) editBtn.title = 'This query in the SQL box, to take further by hand (the pivot is kept)';
   const closeBtn = ctx.close ? btn('Close', ctx.close) : null;
   // Last, so the buttons before it stay where they were.
-  const addBtn = ctx.report?.save ? hostBtn('Add to report', 'Adding…', addToReport, 'This pivot, as it is, as a tile of the Report') : null;
+  const addBtn = ctx.report?.save ? hostBtn('Add to report', 'Adding…', () => addToReport(), 'This pivot, as it is, as a tile of the Report') : null;
   const actions = el('div', { class: 'explore-actions', hidden: true },
     ...(editBtn ? [editBtn, closeBtn] : [sqlToggle, closeBtn, csvBtn]), excelBtn, exportBtn, addBtn);
+  // The Report page's own, where Pivot's are on the Pivot page.
+  const slicerBtn = ctx.report?.save ? btn('Add slicer', () => (slicerPop ? closeSlicerPop() : openSlicerPop())) : null;
+  if (slicerBtn) slicerBtn.title = "A model column's values on the Report, to tick: every other tile shows only those";
+  const reportActions = slicerBtn ? el('div', { class: 'explore-actions', hidden: true }, slicerBtn) : null;
   const reportPage = el('div', { class: 'report-page', hidden: true });
   const modelPage = el('div', { class: 'model-page' });
   const pivotPage = el('div', { class: 'explore-page', hidden: true });
@@ -228,6 +233,7 @@ export function mountExplore(root, ctx) {
       keepOffline?.root,
       modelSwitch,
       actions,
+      reportActions,
       el('span', { class: 'sm-title' }, ctx.title == null ? 'semantic model ' : `${ctx.title} · semantic model `, el('code', {}, ctx.name))),
     reportPage, modelArea, pivotPage, sqlPage);
   ta.addEventListener('keydown', e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); runSql(); } });
@@ -267,6 +273,8 @@ export function mountExplore(root, ctx) {
     if (modelSwitch) modelSwitch.hidden = p !== 'model';
     pivotPage.hidden = p !== 'pivot' || sqlMode;
     actions.hidden = p !== 'pivot';
+    if (reportActions) reportActions.hidden = p !== 'report';
+    if (p !== 'report') closeSlicerPop();
     if (p === 'pivot') openExplorer();
   }
 
@@ -296,6 +304,8 @@ export function mountExplore(root, ctx) {
   };
   // Add to report changed the tiles while the Report was not on screen: drawn again when it is.
   let reportChanged = false;
+  // The tiles on screen and the stamp they were read at: what a save writes over (saveReport).
+  let shownReport = null;
   async function drawReportPage() {
     const my = ++reportSeq;
     reportChanged = false;
@@ -304,10 +314,12 @@ export function mountExplore(root, ctx) {
       const { spec, stamp } = await ctx.report.load();
       if (my !== reportSeq || destroyed) return;
       reportStamp = stamp ?? null;
+      shownReport = { spec, stamp: reportStamp };
       reportView?.destroy();
+      const saves = !!ctx.report.save;
       reportView = drawReport(reportPage, spec, { sql: reportSql, echarts: reportEcharts, shown: reportShown, leftWhileRunning,
                                                   cancel: ctx.cancel, columnType, model: ctx.tmsl, css,
-                                                  remove: ctx.report.save ? i => removeTile(spec, stamp, i) : undefined });
+                                                  remove: saves ? removeTile : undefined, move: saves ? moveTile : undefined });
     } catch (e) {
       if (my !== reportSeq || destroyed) return;
       reportView?.destroy();
@@ -315,29 +327,105 @@ export function mountExplore(root, ctx) {
       reportPage.replaceChildren(el('div', { class: 'ex-error' }, `The report could not be read: ${e.message}`));
     }
   }
-  // The ✕ on a tile: the tiles without it, saved over the ones drawn (refused when they changed
-  // since, by a person or an agent), and drawn again either way.
-  async function removeTile(spec, stamp, i) {
-    const tile = spec.tiles[i];
+  // Every save, one after another: each writes over the one before, by the stamp it answered
+  // (two quick moves would otherwise both write over the first stamp, and the second be refused).
+  let saving = Promise.resolve();
+  const inTurn = work => (saving = saving.then(work, work));
+  // `edit(spec)`: the tiles to save, from those on screen (else read, when the Report was never
+  // drawn), saved over them: refused when they changed since, by a person or an agent.
+  async function saveReport(edit) {
+    const base = shownReport ?? await ctx.report.load();
+    const spec = edit({ ...base.spec, tiles: Array.isArray(base.spec?.tiles) ? base.spec.tiles : [] });
+    const saved = await ctx.report.save(spec, base.stamp ?? null);
+    shownReport = { spec, stamp: saved?.stamp ?? null };
+    // So the look every few seconds does not draw again what is on screen.
+    reportStamp = shownReport.stamp;
+    return spec;
+  }
+  // The ✕ on a tile: the tiles without it, and drawn again (their answers are kept: run()).
+  const removeTile = i => inTurn(async () => {
+    const tile = shownReport?.spec.tiles?.[i];
     try {
-      await ctx.report.save({ ...spec, tiles: spec.tiles.filter((_, j) => j !== i) }, stamp);
+      await saveReport(spec => ({ ...spec, tiles: spec.tiles.filter((_, j) => j !== i) }));
       setStatus(`Removed "${tile?.title ?? 'the tile'}" from the report.`, 'ok');
     } catch (e) {
       setStatus(`Remove from the report: ${e.message}`, 'error');
     }
     if (!destroyed) drawReportPage();
-  }
-  // Add to report: the shelves on screen, as a pivot tile after the Report's own.
-  async function addToReport() {
+  });
+  // A tile's grip: moved on screen already (report.js), so only saved; drawn again only when the
+  // save is refused, as the file is now.
+  const moveTile = (from, to) => inTurn(async () => {
+    try {
+      await saveReport(spec => {
+        const tiles = [...spec.tiles];
+        tiles.splice(to, 0, ...tiles.splice(from, 1));
+        return { ...spec, tiles };
+      });
+    } catch (e) {
+      setStatus(`Move: ${e.message}`, 'error');
+      if (!destroyed) drawReportPage();
+    }
+  });
+  // Add to report: the shelves on screen, as a pivot tile after the Report's own. Read first: the
+  // Report may have changed, or never been drawn, since.
+  const addToReport = () => inTurn(async () => {
     const state = explorer?.state();
     if (!state || !explorer.query()) throw new Error('put a field on the shelves first');
     const title = pivotTitle(state);
-    const { spec, stamp } = await ctx.report.load();
-    const tiles = Array.isArray(spec?.tiles) ? spec.tiles : [];
-    await ctx.report.save({ ...spec, tiles: [...tiles, { title, kind: 'pivot', pivot: state }] }, stamp);
+    shownReport = await ctx.report.load();
+    await saveReport(spec => ({ ...spec, tiles: [...spec.tiles, { title, kind: 'pivot', pivot: state }] }));
     if (page === 'report') drawReportPage(); else reportChanged = true;
     return `Added "${title}" to the report.`;
+  });
+  // Add slicer: a column of the model, picked in a small window under the button, as a slicer
+  // tile after the Report's own.
+  let slicerPop = null, slicerTimer = 0;
+  function closeSlicerPop() {
+    clearTimeout(slicerTimer);
+    slicerPop?.remove(); slicerPop = null;
+    document.removeEventListener('pointerdown', outsideSlicer, true);
   }
+  function outsideSlicer(e) { if (slicerPop && !slicerPop.contains(e.target) && !slicerBtn.contains(e.target)) closeSlicerPop(); }
+  function openSlicerPop() {
+    const { tables } = modelFields(ctx.tmsl ?? {});
+    const find = el('input', { type: 'search', placeholder: 'Search columns', 'aria-label': 'Search columns' });
+    const list = el('div', { class: 'slicer-columns' });
+    const fill = () => {
+      const term = find.value.trim().toLowerCase();
+      const groups = tables.map(t => {
+        const cols = t.columns.filter(c => !c.derived && (!term || `${t.name} ${c.name}`.toLowerCase().includes(term)));
+        return cols.length ? el('div', { class: 'slicer-table' }, el('div', { class: 'slicer-table-name' }, t.name),
+          cols.map(c => el('button', { type: 'button', class: 'slicer-column', title: c.id, onclick: () => addSlicer(c) }, c.name))) : null;
+      }).filter(Boolean);
+      list.replaceChildren(...(groups.length ? groups : [el('div', { class: 'ex-hint' }, 'No column matches.')]));
+    };
+    find.addEventListener('input', fill);
+    slicerPop = el('div', { class: 'ex-pop slicer-pop', role: 'dialog', 'aria-label': 'Add a slicer' },
+      el('div', { class: 'ex-pop-head' }, 'Add a slicer'), el('div', { class: 'ex-pop-body' }, find, list));
+    slicerPop.addEventListener('keydown', e => { if (e.key === 'Escape') { closeSlicerPop(); slicerBtn.focus(); } });
+    fill();
+    document.body.append(slicerPop);
+    // Under the button, its right edges lined up, and kept on screen.
+    const r = slicerBtn.getBoundingClientRect();
+    slicerPop.style.left = `${Math.max(8, Math.min(r.right - slicerPop.offsetWidth, innerWidth - slicerPop.offsetWidth - 8))}px`;
+    slicerPop.style.top = `${Math.max(8, Math.min(r.bottom + 6, innerHeight - slicerPop.offsetHeight - 8))}px`;
+    find.focus();
+    slicerTimer = setTimeout(() => document.addEventListener('pointerdown', outsideSlicer, true));
+  }
+  const addSlicer = c => {
+    closeSlicerPop();
+    return inTurn(async () => {
+      try {
+        await saveReport(spec => ({ ...spec, tiles: [...spec.tiles,
+          { title: c.name, kind: 'slicer', column: `${quoteIdent(c.table)}.${quoteIdent(c.name)}` }] }));
+        setStatus(`Added a slicer on ${c.name} to the report.`, 'ok');
+      } catch (e) {
+        setStatus(`Add slicer: ${e.message}`, 'error');
+      }
+      if (!destroyed) drawReportPage();
+    });
+  };
   // While the Report is on screen, its file is looked at every few seconds (ctx.report.stamp):
   // an edit to it, by a person or an agent, is drawn without a click.
   function watchReport(on) {
@@ -650,6 +738,7 @@ export function mountExplore(root, ctx) {
       for (const c of charts.values()) c.dispose();
       charts.clear();
       closeExport();
+      closeSlicerPop();
       document.querySelectorAll('.ex-pop').forEach(p => p.remove());
       root.replaceChildren();
     },

@@ -18,6 +18,11 @@
   draws it, with any mark, and a click on it filters the other tiles. Each tile has a ✕ that takes it out. The Report
   is kept on this machine until the model's first Export to Fabric, which publishes it; after that it is the zip's
   `site/report.json`, which Add to report and ✕ write. Export to Fabric's app draws the tiles, and only reads them.
+- **Move a tile on the Report.** Drag its grip ⠿ onto another tile, or focus the grip and use the arrow keys. It moves
+  at once, nothing runs again, and the filters stay.
+- **Slicers.** **Add slicer** on the Report puts a column of the model there as a list of its values. Tick some, and
+  every other tile shows only those; the filter is listed above the tiles, with a ✕ that clears it. Slicers work in
+  Export to Fabric's app too.
 - **A click in the Report filters its other tiles.** Click a bar, a line's point or a table's row, and every other tile
   runs again for that value; the tile you clicked keeps all its bars, with yours bright. A bar above the tiles lists
   each filter, with a ✕ to clear it, and clicking the same bar again clears it too. Filters from several tiles all

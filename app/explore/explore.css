@@ -131,7 +131,7 @@ section.modelOpen #chartBtn { display: none; }
 .ex { display: grid; grid-template-columns: 250px minmax(0, 1fr); gap: var(--gap); min-height: 70vh; }
 .ex-fields, .ex-main { background: var(--card); border: 1px solid var(--hairline); border-radius: var(--radius); min-height: 0; }
 .ex-fields { display: flex; flex-direction: column; padding: 0.6rem; max-height: 80vh; }
-.ex-search, .ex-pop input[type=search], .ex-pop input[type=number], .ex-pop input[type=date], .ex-pop select, .ex-tools select {
+.ex-search, .ex-pop input[type=search], .rp-slicer input[type=search], .ex-pop input[type=number], .ex-pop input[type=date], .ex-pop select, .ex-tools select {
   font-size: 0.8rem; background: var(--input-bg); color: var(--text); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 0.32rem 0.55rem; }
 .ex-search { width: 100%; margin-bottom: 0.5rem; }
 .ex-list { overflow: auto; flex: 1 1 0; min-height: 0; }
@@ -284,6 +284,26 @@ section.modelOpen #chartBtn { display: none; }
 .rp-head h2 { flex: 1; min-width: 0; }
 .rp-remove { background: none; border: none; color: var(--faint); font: inherit; cursor: pointer; padding: 0.1rem 0.35rem; border-radius: var(--radius); }
 .rp-remove:hover, .rp-remove:focus-visible { color: var(--text); background: var(--hover-soft); }
+/* A tile's grip: dragged onto another tile, or moved by the arrow keys. */
+.rp-grip { background: none; border: none; color: var(--faint); font: inherit; cursor: grab; padding: 0.1rem 0.3rem; border-radius: var(--radius); }
+.rp-grip:hover, .rp-grip:focus-visible { color: var(--text); background: var(--hover-soft); }
+.rp-tile.rp-dragging { opacity: 0.5; }
+.rp-tile.rp-drop-before { box-shadow: inset 3px 0 0 var(--accent); }
+.rp-tile.rp-drop-after { box-shadow: inset -3px 0 0 var(--accent); }
+.rp-tile.wide.rp-drop-before { box-shadow: inset 0 3px 0 var(--accent); }
+.rp-tile.wide.rp-drop-after { box-shadow: inset 0 -3px 0 var(--accent); }
+/* A slicer: its column's values to tick. */
+.rp-slicer { display: flex; flex-direction: column; gap: 0.4rem; font-size: 0.82rem; }
+.rp-slicer-bar { display: flex; gap: 0.4rem; }
+.rp-slicer-bar input { flex: 1; min-width: 0; }
+.rp-slicer .ex-values { display: flex; flex-direction: column; gap: 0.1rem; max-height: 240px; overflow: auto; }
+.rp-slicer .ex-values label { display: flex; align-items: center; gap: 0.45rem; color: var(--text); }
+/* Add slicer's window: the model's columns, by table. */
+.slicer-columns { max-height: 320px; overflow: auto; display: flex; flex-direction: column; gap: 0.4rem; }
+.slicer-table { display: flex; flex-direction: column; }
+.slicer-table-name { font-weight: 600; color: var(--muted); padding: 0.1rem 0; }
+.slicer-column { background: none; border: none; color: var(--text); font: inherit; text-align: left; cursor: pointer; padding: 0.2rem 0.6rem; border-radius: var(--radius); }
+.slicer-column:hover, .slicer-column:focus-visible { background: var(--hover-soft); }
 /* A pivot tile's table: Pivot's own (explore.js), its rows picked by a click. */
 .rp-pivot { overflow: auto; max-height: 420px; }
 .rp-pivot tr.rp-pick { cursor: pointer; }

@@ -132,3 +132,23 @@ test("a pivot tile's chart: the pick bright, the rest dim, and a click's row key
   assert.deepEqual(picked.keyAt({ dataIndex: 1 }), ["Queens"]);
   assert.deepEqual(pivotView(s, rows, "bar", look, { on() {}, active: false }).option.series[0].data, [10, 20]);
 });
+
+test("a slicer's values go in as IN, a blank among them as IS NULL", () => {
+  const sql = 'SELECT AGG("Total Fare") AS "Total Fare" FROM model';
+  assert.equal(withFilters(sql, [{ ref: BOROUGH, values: ["Bronx"], type: "string" }]),
+               `SELECT AGG("Total Fare") AS "Total Fare" FROM model WHERE ${BOROUGH} IN ('Bronx')`);
+  assert.equal(withFilters(sql, [{ ref: BOROUGH, values: ["Bronx", "O'Hare"], type: "string" }]),
+               `SELECT AGG("Total Fare") AS "Total Fare" FROM model WHERE ${BOROUGH} IN ('Bronx', 'O''Hare')`);
+  assert.equal(withFilters(sql, [{ ref: BOROUGH, values: [null, "Bronx"], type: "string" }]),
+               `SELECT AGG("Total Fare") AS "Total Fare" FROM model WHERE (${BOROUGH} IS NULL OR ${BOROUGH} IN ('Bronx'))`);
+  assert.equal(withFilters(sql, [{ ref: BOROUGH, values: [null], type: "string" }]),
+               `SELECT AGG("Total Fare") AS "Total Fare" FROM model WHERE ${BOROUGH} IS NULL`);
+  assert.equal(withFilters(sql, [{ ref: BOROUGH, values: [], type: "string" }]), sql, "nothing ticked: no filter");
+  // Typed by the column, beside a click's pick, ANDed to the tile's own WHERE.
+  const own = `${sql} WHERE "dim_zone"."Zone" <> 'x' GROUP BY ALL`;
+  assert.equal(withFilters(own, [{ ref: '"dim_date"."Date"', values: ["2024-03-01", "2024-03-02"], type: "dateTime" },
+                                 { ref: '"dim_date"."Year"', values: [2024], type: "int64" },
+                                 { ref: BOROUGH, value: "Bronx", type: "string" }]),
+               `${sql} WHERE ("dim_zone"."Zone" <> 'x') AND "dim_date"."Date" IN (DATE '2024-03-01', DATE '2024-03-02') AND ` +
+               `"dim_date"."Year" IN (2024) AND ${BOROUGH} = 'Bronx' GROUP BY ALL`);
+});
