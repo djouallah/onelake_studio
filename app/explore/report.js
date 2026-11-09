@@ -49,7 +49,7 @@ const NAME = String.raw`"(?:[^"]|"")*"|\[[^\]]*\]|` + '`[^`]*`' + String.raw`|[A
 // A column: table.column, 'table'[column] as DAX writes it, or a name alone.
 const COLUMN = String.raw`'(?:[^']|'')*'\s*\[[^\]]*\]|(?:${NAME})(?:\s*\.\s*(?:${NAME}))?`;
 // The first SELECT item, when it is a column: what follows it is a comma, its alias or FROM.
-const FIRST = new RegExp(String.raw`^(?:\s|--[^\n]*|/\*[\s\S]*?\*/)*SELECT\s+(${COLUMN})\s*(?=$|,|AS\b|FROM\b|["\[` + '`' + String.raw`A-Za-z_])`, 'i');
+const FIRST = new RegExp(String.raw`^(?:\s|--[^\n]*|/\*[\s\S]*?\*/)*SELECT\s+(${COLUMN})(?!\w)\s*(?=$|,|AS\b|FROM\b|["\[` + '`' + String.raw`A-Za-z_])`, 'i');
 // Bare words a first item can start with that are not a column.
 const NOT_COLUMNS = new Set(['ALL', 'DISTINCT', 'CASE', 'NOT', 'NULL', 'TRUE', 'FALSE']);
 const unquote = p => (p[0] === '"' ? p.slice(1, -1).replace(/""/g, '"') : p[0] === '[' || p[0] === '`' ? p.slice(1, -1) : p);
