@@ -63,7 +63,8 @@ Results computed from a semantic model are not guaranteed to match Power BI.
       |                  v
       |     +---------------------------------------------+
       |     |  The server (src/engine-server.js)          |
-      |     |  one per account: DuckDB, its caches, state |
+      |     |  one per account: DuckDB, the lake, and the |
+      |     |  table service that copies its files here   |
       |     +---------------------------------------------+
       v                  v
  Fabric REST API      OneLake
@@ -143,7 +144,7 @@ the status bar, and comes back by itself ([`src/connectivity.js`](../src/connect
 
 | Works offline, if cached | Needs OneLake |
 | --- | --- |
-| The tree, `SHOW ALL TABLES`, `information_schema`, Go To | A column or a file never read |
+| The tree, `SHOW ALL TABLES`, `information_schema`, Go To | A table's file no statement has opened here, or a file never read |
 | A table's Stats and History, and first rows already read | A wildcard over files |
 | Semantic models: opening them, Explore's Model page, `SHOW SEMANTIC …` | A table whose metadata was never read |
 | Table rows, a model's queries and its Pivot, for what was read | Export to Fabric |
@@ -185,8 +186,9 @@ The engine is **DuckDB 2.0 running natively in a process of its own** ([The serv
 - **Lockdown:** file access is limited to the temp directory, `https://`, `abfss://` and `zip://` over a
   remote archive. Nothing loads after it: every extension is loaded before, and autoload is off.
 - **What a statement may be:** from a tab or the command line, one read, or an `EXPLAIN` of one. Never `COPY`,
-  `INSERT`, `EXPORT`, `PRAGMA`, anything that creates, drops or attaches, a Quack function, the disk cache's or
-  the log's own switches, `query()`, a function that writes, or an Azure URL whose host isn't OneLake's.
+  `INSERT`, `EXPORT`, `PRAGMA`, anything that creates, drops or attaches, a Quack function, the log's own switches,
+  a `ducklake_` function or the lake's metadata, `query()`, a function that writes, or an Azure URL whose host isn't
+  OneLake's.
 - **How a tab sets up a file:** by host methods, `fileView`, `attachFile` and `releaseFiles`, not by SQL. A tab takes
   away only what it made, and what it made goes when it closes. A view's source is one read too, and an attach is
   always `READ_ONLY`, from OneLake or a copy the host made.
@@ -243,8 +245,10 @@ every window is a client of it over DuckDB's Quack protocol ([`src/engine-client
 - **The server's own log is `logs-<id>.log`,** a plain text file beside it, so it can be read when nothing else can. Its last
   1 MB is kept.
 
-Outside those files there is **one cache folder**, `file-cache-v1`: what DuckDB reads and, under `<account>\host\`, the bytes
-of a `Files/` object the host reads, and a semantic model's `.yaml` copy under `models\`. Saved queries are yours, under
+Outside those files there is **one cache folder**, `file-cache-v1`, with a folder per account. In it: the lake under
+`lake\` (its DuckLake metadata file `meta.ducklake`, the tables' file copies under `files\` and their delete files under
+`deletes\`), the bytes of a `Files/` object the host reads under `host\`, and a table with OneLake security under
+`secured\`. A semantic model's `.yaml` copy is under `models\<account>\`. Saved queries are yours, under
 `~/OneLakeStudio/queries`.
 
 **Logs** ([`src/logs.js`](../src/logs.js)), a node in the tree, with one tab per window. The record is DuckDB's own: its `Quack` log has a row per
@@ -319,14 +323,14 @@ A table can be part here and part on OneLake, and DuckDB opens each file where i
   those files. It reads the log whole only when a checkpoint is newer than that version, when the log doesn't go on
   from it, or when the table was dropped and made again. A new snapshot of a table written every few minutes is one
   commit, which is one request.
-- **Deletes:** a Delta deletion vector is the same bytes as the lake's own delete file, so each is cut out of the
-  `.bin` it is packed in, or built from an inline one, and kept under `lake\deletes`. An Iceberg table's
-  position-delete files are used as they are.
+- **Deletes:** a Delta deletion vector is the same bytes as an Iceberg Puffin delete file, which DuckLake reads, so
+  each is cut out of the `.bin` it is packed in, or built from an inline one, and kept under `lake\deletes`. An Iceberg
+  table's position-delete files are used as they are. Column mapping and partitions are kept.
 - **What a statement reads comes here.** The server keeps DuckDB's log of the files statements open. A file
   opened on OneLake is queued, downloaded whole over HTTPS, opened once here (on Windows the first open of a new file
   can wait many seconds, and a statement mustn't be the one that waits), and then its name in the lake becomes the copy,
   in the transaction that records it. The unit is a file: a table never comes down whole for this, only the files
-  statements open. Kept under `lakeiles`, by workspace, item and folder, so a Delta partition's `col=value` folder
+  statements open. Kept under `lake\files`, by workspace, item and folder, so a Delta partition's `col=value` folder
   is in the copy's path, where the lake reads its value.
 - **What goes:** a copy whose file the latest snapshot no longer names, slowly and behind everything else, once nothing
   has needed it for 15 minutes, since a statement that started before keeps the files it started with. A file a table
@@ -401,9 +405,8 @@ mirrored databases, their tables and files, semantic models and apps. *Queries*,
 
 **A table's icon** says whether it is cached, as a model's does: a cloud until a statement has read its
 rows at its current snapshot, a check after (`cached.rows` in [`src/onelake.js`](../src/onelake.js)). What is
-kept is the part of each file that was read, so a check doesn't promise every column, unless its tooltip says it was read
-whole. A new snapshot goes
-back to the cloud. A table nothing was ever written to has a check, since it reads no file. **A file's icon** says the
+kept is each file a statement opened, whole, so a check doesn't promise every file: a statement filtered to one
+partition brought that partition, not the table. A new snapshot goes back to the cloud. A table nothing was ever written to has a check, since it reads no file. **A file's icon** says the
 same, per version of the file (`cached.file`): a statement or a tab read it, or the host kept it whole, and a file
 rewritten in OneLake goes back to the cloud. A wildcard marks no one file. **A folder under `Tables/`** with neither a
 Delta log nor Iceberg metadata has a warning and says *not a valid table*. That is kept like any table's metadata, so it
@@ -770,8 +773,9 @@ local pipe or socket ([`src/bridge.js`](../src/bridge.js)). The extension answer
 - **The same cache:** a session's account id is MSAL's `homeAccountId` in both, so one person has one account key, and the
   files are VS Code's for this extension. The tenant and the proxy come from VS Code's `settings.json`.
 - **Its own engine:** VS Code's server has its session token in VS Code's secret storage, so this one is a server of its
-  own, sharing the catalog, the log and the disk cache as the background engine does. Its token is in a file in this user's
-  profile, and opens a local port, no more.
+  own, sharing the catalog and the log. The lake can be open in one process only, so it has a lake of its own,
+  `lake-standalone`, beside VS Code's in the same cache folder. Its token is in a file in this user's profile, and opens a
+  local port, no more.
 - **Nothing stays running:** no sync and no idle job. The process ends with the answer, and its server a minute after.
 - **Not here:** `export`, which asks for an OK in VS Code. Exit code 3 says so.
 
@@ -819,17 +823,16 @@ synced to its latest snapshot, as the idle job does it (`keepTable`), and nothin
 here are the ones the model's queries open ([Reading OneLake tables](#reading-onelake-tables)), so a filter on a partition
 brings down that partition, not the table.
 
-- **A background job, a client of the shared engine** (`engines.js backgroundEngine`), as a window is. It was a server
-  process of its own, on one thread and 1 GB, because reading whole beside a query held a whole connection for 3 minutes
-  on a 50 Mbit/s line and starved the host's own requests. It can't be one now: the lake can be open in one process
-  only. So it shares the server's threads and connection with queries, and that cost is back.
+- **A background job, a client of the query server** (`engines.js backgroundEngine`), as a window is: the lake can be
+  open in one process only. It reads no rows, so it costs the server a log read per table, not a table read.
 - **It was asked for,** so it differs from the idle job: it starts at once, with no two quiet minutes first, and has no
-  time limit. The idle job holds off meanwhile, or the two would read the same bytes twice.
+  time limit. The idle job holds off meanwhile, or the two would sync the same tables.
 - **It stays on.** It's a row in the catalog per model, so it goes on with the tab closed and comes back with the next
-  window. Each table's metadata is read past the cache every hour, and a new snapshot comes down when it appears.
-- **Every window shows the same.** What the switch says is worked out from the catalog (`table_kept`), and one window reads:
-  the one with the catalog's lease. Its statements are in **Logs**, a line per column.
-- **Off stops it, and deletes nothing.** A table stopped part way keeps what it read, and switching on again carries on.
+  window. Each table's metadata is read past the cache every hour, and its lake table is synced when a new snapshot
+  appears.
+- **Every window shows the same.** What the switch says is worked out from the catalog (`table_kept`), and one window
+  syncs: the one with the catalog's lease. Its statements are in **Logs**, a line per table.
+- **Off stops it, and deletes nothing.** The files that came down stay, and switching on again carries on.
   Back on answers at once from what's kept, asking OneLake nothing: whether anything is newer is looked for behind it, on the hourly clock.
   What is kept goes as any table's files go.
 - **More than the disk cache holds stays off** (`diskCacheMaxGB`), counting the other models kept offline, since it would
@@ -900,7 +903,7 @@ Excel (MSOLAP) --SOAP over http://127.0.0.1--> extension host
 | `onelakeStudio.tenantId` | empty | Directory (tenant) GUID to sign in against. Empty is your home tenant. Set it to reach a tenant you are a guest in. |
 | `onelakeStudio.catalogTtlMinutes` | 5 | How old a listing may be before it is refreshed. The last known answer is always served from disk first. |
 | `onelakeStudio.tableMetadataTtlHours` | 24 | How old a table's Iceberg metadata may be before it is refreshed. **Refresh** on its lakehouse re-reads it at once. |
-| `onelakeStudio.keepUsedTablesGB` | 10 | How much of the tables statements keep reading is read whole in the background and kept, and may come down in a day. Never over half of `diskCacheMaxGB`. `0` turns it off, and their metadata is still read every hour. |
+| `onelakeStudio.keepUsedTablesGB` | 10 | How big, by their files, the tables statements keep reading may be together for the idle job to sync them to each new snapshot, and how much of them may change in a day. It reads no rows. Never over half of `diskCacheMaxGB`. `0` turns it off, and their metadata is still read every hour. |
 | `onelakeStudio.securedTableRead` | on | Reads a table whose files OneLake refuses you, because of OneLake security, through OneLake's table read API: the rows and columns your roles allow. Each read uses the workspace's capacity. Off, such a table fails. |
 | `onelakeStudio.prefetchMetadata` | on | Reads every table's metadata in the background once a lakehouse's Tables node is opened, so the first click is a disk read. |
 | `onelakeStudio.diskCacheMaxGB` | 256 | How much of the tables' files is kept on this machine, per account. `0` keeps none: every table is read from OneLake, through the lake. |

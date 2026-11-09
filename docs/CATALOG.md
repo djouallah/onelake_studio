@@ -6,8 +6,8 @@
 
 ## The idea
 
-**Metadata lives in a local SQLite file, and data lives in OneLake with a cache on this machine.** Three
-parts have one job each:
+**Metadata lives in a local SQLite file, and data lives in OneLake, with the files statements read copied to this
+machine in the lake.** Three parts have one job each:
 
 | Part | Its job | Runs in | Touches the network |
 | --- | --- | --- | --- |
@@ -67,7 +67,7 @@ and F5 has its own.
 | `rows_read`, `file_read` | That a table's snapshot or a file's version was read here |
 | `first_rows` | A table's first rows, per snapshot, so its Data tab opens at once. The one thing with a limit: 256 MB, oldest first |
 | `table_use` | How many statements read a table, per day: its name and a count, never the statement. Gone after 14 days |
-| `table_kept` | Reading a table whole, per snapshot: when, how big, how long, why it failed and when to try again. Gone after 14 days |
+| `table_kept` | A table in use or kept offline, synced in the background to a snapshot: when, how big its files are, how long, why it failed and when to try again. Gone after 14 days |
 | `sync_state` | what was synced, when, its last error, when it is next due |
 
 Every row says when it was last read from OneLake.
@@ -106,7 +106,7 @@ DuckDB and no server. A lease in the catalog file says which window sweeps the t
 | Each window | What it has opened, and pinned workspaces | `catalogTtlMinutes` |
 | The window with the lease | The rest of the tenant: workspaces, items and table lists, and models if a Fabric token is already there. Workspaces in use go first | Every 12 hours |
 | The window with the lease | The metadata of the 20 tables most in use | Every hour |
-| The window with the lease | One table in use, read whole, through the engine (see [Tables in use](#tables-in-use)) | When nobody is running anything |
+| The window with the lease | One table in use, its lake table synced to its current snapshot through the engine, with no rows read (see [Tables in use](#tables-in-use)) | When nobody is running anything |
 | The window with the lease | The metadata of the other tables the lake holds | At `tableMetadataTtlHours` |
 | The window with the lease | A lake table whose metadata location moved past the one it was synced from: synced, through the engine, one at a time | While no statement is running |
 
@@ -124,44 +124,43 @@ DuckDB and no server. A lease in the catalog file says which window sweeps the t
 **A table is in use when statements read it 3 times in 14 days.** Every statement that reads its rows counts, from a tab
 or the command line, and a model's query counts for the tables it reads. `DESCRIBE` and a plain `EXPLAIN` read none.
 
-**What such a table is short of isn't its repeat:** a repeat already reads from disk. It is short of a current snapshot,
-and of the parts of it nothing has read. So the worker does two things for it:
+**What such a table is short of isn't its repeat:** a repeat already reads the files it opened from disk. It is short
+of a current snapshot. So the worker does two things for it:
 
-1. **Its metadata is read every hour**, so a statement never waits for that and isn't answered from a snapshot a day old.
-2. **It is read whole**, once at each snapshot, so every column works offline. The worker decides and DuckDB reads:
-   `EXPLAIN ANALYZE SELECT <column> FROM <table>`, a column at a time, opens every file as any statement does, so the
-   table service brings every one here, and no row reaches a client. Each is a line in **Logs**, under a comment that says why. When it finishes, the table's icon goes
-   to a check.
+1. **Its metadata is read every hour**, so its lake table is synced to each new snapshot within the hour, a statement
+   never waits for that, and it isn't answered from a snapshot a day old.
+2. **It is synced once more at its current snapshot,** through the engine (`keepTable`, a `DESCRIBE` that syncs the
+   lake table first). No row is read and no file comes down for this: a table's files come here only as statements
+   open them, and the sync keeps every copy still live. Each is a line in **Logs**, under a comment that says why.
 
 **It is the last thing to run:**
 
 - **One at a time,** by the window with the lease, on an engine already up. It never starts one.
 - **Only once nobody has run anything for 2 minutes,** on any window or the command line. The server says so over the
   control pipe, so asking leaves no line in Logs.
-- **Anyone's statement stops it, within 3 seconds.** What it read stays on disk, so the next try carries on from there.
-  It tries again after 2 more quiet minutes.
-- **After 10 minutes it stops, and waits 6 hours,** so a slow connection isn't kept busy. A read that fails waits as long.
+- **Anyone's statement stops it, within 3 seconds.** It tries again after 2 more quiet minutes.
+- **After 10 minutes it stops, and waits 6 hours,** so a slow connection isn't kept busy. A sync that fails waits as long.
 
-**What it may bring down**, under `onelakeStudio.keepUsedTablesGB`, 10 GB by default, and never over half of
-`diskCacheMaxGB`. Past `diskCacheMaxGB` the least recently read files go back to OneLake first, and what someone read
-comes before this.
+**Which tables it syncs** is held to `onelakeStudio.keepUsedTablesGB`, 10 GB by default and never over half of
+`diskCacheMaxGB`, counted by the size of each table's files:
 
-| Limit | Why |
+| Limit | What it means |
 | --- | --- |
-| The tables in use, most read first, fit in it together | One big table can't push out the rest |
-| What comes down in 24 hours fits in it too | A table rewritten daily comes down whole each day. An append counts for what it grew by |
-| A table of no known size isn't read | Never guess |
-| Nor is one of more than 2,000 files | Each open asks OneLake for the file's version |
+| The tables in use, most read first, fit in it together | A table past what is left is skipped |
+| What changed in 24 hours fits in it too | A table rewritten daily counts whole each day. An append counts for what it grew by |
+| A table of no known size, or of more than 2,000 files, isn't synced this way | Never guess |
 
-A table over the limit says so in its tooltip. `0` turns the reading off, and the hourly metadata stays on.
+A table over the limit says so in its tooltip. `0` turns this off, and the hourly metadata stays on. Whatever the
+limit, the sync worker still syncs every lake table whose snapshot moved
+([ARCHITECTURE.md](ARCHITECTURE.md#reading-onelake-tables)).
 
 **The costs of this:**
 
-- **A table in use is read whole once,** at its current snapshot, even if what you read of it was already held.
-- **It runs on the engine's own threads and memory,** and DuckDB's are shared, so it can be heard on a laptop until someone
-  runs something.
-- **"Read whole" is what happened, not what is still there.** The cache's blocks are opaque, so eviction can take them
-  afterwards with nothing to say so.
+- **It reads the table's new commits,** not its rows, so it is a log read, even on a large table.
+- **It runs on the server's threads and connection,** shared with statements, which is why it waits for quiet and stops
+  for anyone.
+- **What is on disk is what statements opened.** A table in use can still have files never read here, such as another
+  partition's, and those are read from OneLake.
 
 ## Opening
 
@@ -215,8 +214,9 @@ which downloads a model's file. Neither is a listing.
 
 ## Reading data
 
-**Nothing downloads a file on its own, unless a table is in use** ([Tables in use](#tables-in-use)). Otherwise the sync
-worker reads listings only. Bytes move when someone asks for them:
+**Nothing downloads a table's file on its own.** A file comes here because a statement opened it, and the sync worker
+reads only listings, metadata and the commits a lake table needs ([Tables in use](#tables-in-use)). Bytes move when
+someone asks for them:
 
 | What asks | What comes down | Kept in | Limit |
 | --- | --- | --- | --- |
@@ -226,7 +226,7 @@ worker reads listings only. Bytes move when someone asks for them:
 | Opening a `Files/` object in a tab | The whole file, or a range if only a range is asked for | The cache folder, `host\` | 1 GB in all, and a file over 512 MB isn't kept |
 | Opening a model | Its `.yaml` | The cache folder, `models\` | None |
 | The History tab on a Delta table | Its log files | The cache folder, `host\` | The same 1 GB |
-| A table in use, at a snapshot not yet read whole | Every column of it | The cache folder | `keepUsedTablesGB` |
+| A lake table whose snapshot moved | The commits since its last sync, 16 at a time, or the whole log after a newer checkpoint. No rows | The lake's metadata file, `lake\meta.ducklake` | None |
 
 A table opens on Stats by default, which reads nothing. When a table not in use changes, nothing downloads until someone reads it again.
 
@@ -327,9 +327,10 @@ vectors or column mapping.
 
 Whatever isn't held says so at once.
 
-**A table that moved on since it was read:** its metadata was read again online, and its new snapshot's rows never were. Offline, a
-statement and the Data tab read the last snapshot that was read, and its age is when that was read. Stats shows the newest metadata
-held. Back online, it's the current snapshot again.
+**A table that moved on since it was read:** online, the sync worker synced its lake table to the new snapshot, and the
+files that snapshot added were never opened here. Offline, a statement reads the lake table as last synced: the files
+already copied answer, and one that needs a file never copied says the table isn't cached on this machine. Stats shows
+the newest metadata held.
 
 ## What goes, and what stays
 
@@ -359,7 +360,7 @@ run on 1.144 only, so whether 1.101 itself has it is still to be shown.
 | A real catalog file: read times, a read during a write, a crash during a write | Invariants 3 and 4 depend on them | Measure with a real tenant's rows |
 | Activation to a drawn tree | The real meaning of "opens at once" | Measure, and see what the bundle loads at activation |
 | Whether `iceberg_metadata` gives `data_file`'s columns, and whether Fabric's per-file stats are really zero (`names.js:197`) | If it is costly, `data_file` waits. Nothing else depends on it | Try it on real tables |
-| A Delta log that moved past what was read | Offline, a read that worked can ask for new files that aren't cached, and is refused | Nothing yet: it fails with an error, and never gives wrong rows |
+| A lake table synced past what was read | Offline, a read that worked can ask for new files that aren't copied here, and is refused | Nothing yet: it fails with an error, and never gives wrong rows |
 
 ## Waves
 
