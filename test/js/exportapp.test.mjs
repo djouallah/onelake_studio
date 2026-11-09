@@ -12,7 +12,7 @@ import { join, dirname } from "node:path";
 import { execFileSync } from "node:child_process";
 
 const require = createRequire(import.meta.url);
-const { planExport, modelDoc, appFiles, engineOf, readApp, writeApp, unzip, vendorFiles, vendorSize, buildDist, zip, crc32, rayfinYml,
+const { planExport, planOnModel, modelDoc, appFiles, engineOf, readApp, writeApp, unzip, vendorFiles, vendorSize, buildDist, zip, crc32, rayfinYml,
         appName, dfsUrl, MARKER, REPORT, fingerprint, localChanges } = require("../../src/exportapp.js");
 const semantic = await import("../../app/semantic.js");
 const { firstRows, counting, kept, MAX_ROWS } = await import("../../fabric_app/site/storage/modelrows.js");
@@ -254,14 +254,15 @@ test("the zip: every entry at the root, deflated, read back byte for byte", asyn
   assert.equal(crc32(Buffer.from("123456789")), 0xcbf43926);
 });
 
-for (const engine of ["directLake", "directQuery"]) {
-test(`${engine}: the app says it runs on the semantic model, and holds no DuckDB, Arrow or browser data source`, async () => {
+test("a semantic model as it is: the app says it runs on it, and holds no DuckDB, Arrow or browser data source", async () => {
+  const engine = "semanticModel";
   const root = await mkdtemp(join(tmpdir(), "export-model-"));
   try {
     const dirs = await fixture(root);
-    const plan = { ...planExport(OSSIE, "sales.yaml", "sales", mods(bimOf(URL_)), WHERE),
-                   engine, semanticModel: { workspace: "0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0", id: "m1", name: "sales" } };
-    // The model the semantic model is made from goes with the site: the page writes its DAX from it.
+    const plan = planOnModel(doc(), "sales", { workspace: "aemo", workspaceId: "0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0", id: "m1", name: "sales" });
+    assert.deepEqual([plan.engine, plan.workspace, plan.lakehouse, plan.catalogUrl, plan.modelUrl, plan.modelPath],
+                     [engine, "0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0", null, null, null, "aemo/sales"]);
+    // The model's local copy goes with the site: the page writes its DAX from it.
     await assert.rejects(appFiles({ plan, state: null, ...dirs }), /needs the model it was made from/);
     const model = modelDoc(OSSIE, "sales.yaml", mods(bimOf(URL_))).doc;
     const files = await appFiles({ plan, state: null, model, ...dirs });
@@ -279,14 +280,14 @@ test(`${engine}: the app says it runs on the semantic model, and holds no DuckDB
     assert.deepEqual([...vendor.keys()].sort(), ["vendor/npm/@microsoft/rayfin-connector-fabric-semanticmodel@1.36.1/+esm.js", "vendor/npm/apache-arrow@21.2.0/+esm.js"]);
     assert.match(text("rayfin/rayfin.yml"), /^connectors:\n  - name: model\n[\s\S]*itemId: m1\n[\s\S]*type: delegated\n/m);
     const agents = text("AGENTS.md");
-    assert.match(agents, /Semantic model: `sales`, (Direct Lake|DirectQuery)/);
+    assert.match(agents, /Semantic model: `sales`, as it is in Fabric: the export changed nothing in it/);
     assert.match(agents, /as the viewer/);
     assert.match(agents, /as it was when exported[\s\S]*`site\/model\.json`[\s\S]*when it is\s+exported again/);
     assert.match(agents, /The page turns it into DAX and runs it on the semantic model\./);
     assert.doesNotMatch(agents, /next load/, "the semantic model is the model as exported, not as it is now");
 
     // Client side: the site has its DuckDB data source and not the semantic model's, and DuckDB's packages.
-    const duck = await appFiles({ plan: { ...plan, engine: "duckdb", semanticModel: undefined }, state: null, ...dirs });
+    const duck = await appFiles({ plan: { ...planExport(OSSIE, "sales.yaml", "sales", mods(bimOf(URL_)), WHERE), engine: "duckdb" }, state: null, ...dirs });
     assert.ok(duck.has("site/storage/data.js") && !duck.has("site/engine.json"));
     for (const p of ["site/storage/modeldata.js", "site/storage/modelrows.js", "site/model.json"]) assert.ok(!duck.has(p), p);
     assert.equal(engineOf(duck, {}), "duckdb");
@@ -298,7 +299,6 @@ test(`${engine}: the app says it runs on the semantic model, and holds no DuckDB
     await rm(root, { recursive: true, force: true });
   }
 });
-}
 
 test("the local copy is one zip: the whole app but its packages, written and read back; the upload is its site, stamped, with the packages", async () => {
   const root = await mkdtemp(join(tmpdir(), "export-"));
