@@ -168,3 +168,16 @@ test("a profile shows no planning or rows scanned it doesn't carry", async () =>
   assert.ok(duck.planning > 0);
   assert.equal(parseProfile({ planner: 0.001, operator: [{ operator_type: "TABLE_SCAN", operator_rows_scanned: 0, children: [] }] }).scanned, 0);
 });
+
+test("a profile's time is the clock's, not every thread's added up", async () => {
+  const { parseProfile } = await import("../../app/explore/profile.js");
+  // 3 s on 8 threads: the operators' times add up to 24 s.
+  const p = parseProfile({ latency: 3, planner: 0.004, cumulative_rows_scanned: 0,
+    operator: [{ operator_type: "HASH_GROUP_BY", operator_timing: 16, operator_cardinality: 293430,
+      children: [{ operator_type: "TABLE_SCAN", operator_timing: 8, operator_cardinality: 591729858, operator_rows_scanned: 0, children: [] }] }] });
+  assert.equal(p.total, 3000);
+  assert.equal(Math.round(p.execution), 2996);
+  assert.equal(Math.round(p.operators.reduce((s, o) => s + o.ms, 0)), 2996, "each operator its share of the execution");
+  assert.deepEqual(p.operators.map(o => o.cpu), [8000, 16000], "and its threads' time kept");
+  assert.equal(p.scanned, null, "a scan that passed rows on and says it read none: unknown");
+});
