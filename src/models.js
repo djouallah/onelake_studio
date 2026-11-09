@@ -4,7 +4,7 @@
 // =============================================================================
 
 const { dirname, basename, extname, resolve } = require('node:path');
-const { existsSync } = require('node:fs');
+const { existsSync, renameSync } = require('node:fs');
 const fsp = require('node:fs/promises');
 const { walkCached } = require('./onelake');
 const { modelAccountDir, modelCopyPath } = require('./fabric');
@@ -35,15 +35,20 @@ function createModels({ onelake, fabric, semviews, modules, modelsFolder, accoun
   function adoptModels(from = oldModels) {
     modelsAdopted = modelsAdopted.then(async () => {
       const here = modelAccountDir(modelsFolder(), account()), before = modelAccountDir(from, account());
-      if (before === here) return 0;
-      let moved = from === oldModels ? await semviews.adoptCopies(oldModels, before) : 0;
-      if (existsSync(before)) {
-        await fsp.cp(before, here, { recursive: true, force: false });
-        moved += await semviews.adoptCopies(before, here) + 1;
-        await fsp.rm(before, { recursive: true, force: true });
-        await fsp.rmdir(from).catch(() => {});
+      let moved = 0;
+      if (before !== here) {
+        moved = from === oldModels ? await semviews.adoptCopies(oldModels, before) : 0;
+        if (existsSync(before)) {
+          await fsp.cp(before, here, { recursive: true, force: false });
+          moved += await semviews.adoptCopies(before, here) + 1;
+          await fsp.rm(before, { recursive: true, force: true });
+          await fsp.rmdir(from).catch(() => {});
+        }
       }
       log(moved ? `move: model copies: moved to ${here}, with ${moved - 1} views pointed there` : 'move: model copies: nothing to move');
+      // Copies named <model>.yaml by an earlier version are <model>.ossie.yaml now, their views with them.
+      const renamed = await semviews.renameCopies(here);
+      if (renamed) log(`move: model copies: ${renamed} renamed <model>.ossie.yaml`);
       return moved;
     }).catch(e => {
       log(`move: the local copies of models could not be moved, and are tried again next time — ${e.message}`);
@@ -55,7 +60,13 @@ function createModels({ onelake, fabric, semviews, modules, modelsFolder, accoun
   // What Go To can name, kept for a moment (completionNames below).
   let namesKept = null;
 
-  const modelPath = n => modelCopyPath(modelsFolder(), account(), n.workspace, n.model);
+  // A copy an earlier version named <model>.yaml, and no view points at, is renamed when first looked for.
+  const modelPath = n => {
+    const path = modelCopyPath(modelsFolder(), account(), n.workspace, n.model);
+    const old = path.replace(/\.ossie\.yaml$/, '.yaml');
+    if (!existsSync(path) && existsSync(old)) { try { renameSync(old, path); } catch (_) { /* kept as it is */ } }
+    return path;
+  };
 
   // A model's local copy (fetchModel), when there is one: the tree's check mark.
   const modelKey = n => `${n.workspace}|${n.modelId}`;

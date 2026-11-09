@@ -147,9 +147,9 @@ VS Code extension); nothing is written to Fabric or OneLake.
   waits for their OK, so the command waits too. It prints the app's URL, or exits 5 and says why
   nothing was published. The app is one file, `<app>.fabricapp` (a zip), and is the model's Report alone.
 - To grow that report: edit `site/report.json` in the file (its `AGENTS.md` says how: unzip, edit, zip again). A
-  client-side app's model is `model.yaml` beside it, the model the app runs on.
+  client-side app's model is `model.ossie.yaml` beside it, the model the app runs on.
   Each tile is `{ title, kind, sql }`, its SQL a SELECT over the model `FROM model`, which `sql` tries first with the
   model's own name. OneLake Studio's Report tab draws the zip's report as it changes; `export` again publishes it.
   No export rewrites that file.
 - The same downloads are shared with the OneLake Studio VS Code extension
-  (in the extension's cache folder, under `models/<account>/<ws>/<model>.yaml`).
+  (in the extension's cache folder, under `models/<account>/<ws>/<model>.ossie.yaml`).

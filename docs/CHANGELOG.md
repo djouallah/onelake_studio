@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **A model named `<name>.ossie.yaml` opens in OneLake Studio from VS Code by itself**, as Apache Ossie's own tools name
+  a model; a plain `.yaml` keeps its Open in OneLake Studio button. Studio's copies of downloaded models, and the model
+  inside an app's file, are named `.ossie.yaml` too: the ones already on this machine are renamed once.
 - **Open a model or an app's file from disk.** In VS Code, a `.bim` or an Ossie `.yaml` has **Open in OneLake Studio**
   on the editor's title bar and on Explorer's right-click, and an app's file opens in OneLake Studio by itself. In the
   desktop app, File › Open… (Ctrl+O), a double-click on an app's file, and Windows' "Open with" on a `.yaml` or `.bim`.

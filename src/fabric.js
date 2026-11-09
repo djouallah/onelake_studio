@@ -31,18 +31,20 @@ const byName = (a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' });
 // become `_`, and a name that is nothing but those still gets a file.
 // Cleaned, two names could come out as one, and one file would then answer for both models, so a name
 // that changed carries a mark of what it was.
-function modelFileName(modelName) {
+function safeName(modelName) {
   const name = String(modelName);
   const safe = name.replace(/[\\/:*?"<>|#%\u0000-\u001f]/g, '_').replace(/^[.\s]+|[.\s]+$/g, '');
   const mark = safe === name ? '' : `~${createHash('sha256').update(name).digest('hex').slice(0, 6)}`;
-  return `${safe || 'model'}${mark}.yaml`;
+  return `${safe || 'model'}${mark}`;
 }
+// A model's local copy: an Apache Ossie model, named as Ossie's own tools name one (<name>.ossie.yaml).
+const modelFileName = modelName => `${safeName(modelName)}.ossie.yaml`;
 
 // Where a model's local copy is kept. Under its account: a workspace's name is unique in one tenant
 // only, so two accounts can each have sales/nem, and neither may read the other's definition.
 const modelAccountDir = (root, account) => join(root, account || 'signed-out');
 function modelCopyPath(root, account, workspace, model) {
-  return join(modelAccountDir(root, account), modelFileName(workspace).replace(/\.yaml$/, ''), modelFileName(model));
+  return join(modelAccountDir(root, account), safeName(workspace), modelFileName(model));
 }
 
 /**

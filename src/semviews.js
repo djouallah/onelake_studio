@@ -89,6 +89,25 @@ function createSemViews({ catalogFor, dir = null, onelake, onChange = () => {}, 
       onChange();
       return { name: String(name), schema: sch, path, text };
     },
+    // A copy under `accountDir` an earlier version named <model>.yaml is <model>.ossie.yaml now, the
+    // name Ossie's own tools use: renamed, and its view pointed there. A file of the person's own,
+    // anywhere else, is left as it is. Answers how many views moved.
+    async renameCopies(accountDir) {
+      let moved = 0;
+      for (const v of await list()) {
+        if (ABFSS.test(v.path) || !/\.yaml$/i.test(v.path) || /\.ossie\.yaml$/i.test(v.path)) continue;
+        const rel = relative(accountDir, v.path);
+        if (isAbsolute(rel) || rel.split(/[\\/]/)[0] === '..') continue;
+        const to = v.path.replace(/\.yaml$/i, '.ossie.yaml');
+        if (!await exists(to)) {
+          if (!await exists(v.path)) continue;
+          if (!await fsp.rename(v.path, to).then(() => true, () => false)) continue;
+        }
+        await this.put(v.name, to, v.schema);
+        moved++;
+      }
+      return moved;
+    },
     // A local copy from before they were kept per account sits in <root>/<workspace>/. The ones
     // this account opened move into `accountDir`, so they still open offline, and never over one
     // there. A copy no account points at is left where it is; nothing reads it now. Answers how

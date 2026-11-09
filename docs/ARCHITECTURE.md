@@ -356,7 +356,7 @@ A table can be part here and part on OneLake, and DuckDB opens each file where i
 | A table's files that statements read | The cache folder, `lake\files`, named in the lake ([Reading OneLake tables](#reading-onelake-tables)) | Never: a file isn't rewritten. A new snapshot names new files |
 | `Files/` objects a statement reads | Not kept | Every time |
 | That a table's rows were read, per snapshot | The catalog file | Never: a new snapshot is a new entry |
-| A semantic model's definition | The cache folder, `models/<account>/<workspace>/<model>.yaml` | On **Refresh** of its workspace or its Semantic models |
+| A semantic model's definition | The cache folder, `models/<account>/<workspace>/<model>.ossie.yaml` | On **Refresh** of its workspace or its Semantic models |
 | A table with OneLake security: the rows and columns the table read API gave this user | The cache folder, `secured\` | Past `tableMetadataTtlHours`, or after **Refresh** ([OneLake security](#onelake-security)) |
 
 - **A kept answer is trusted until using it fails.** Then it is read again once, and the work tried again
@@ -498,7 +498,8 @@ workspace has one model of a name.
 
 **Opening one**
 - **From the tree:** a click reads its TMSL definition (the REST API's `getDefinition`) and keeps it as
-  Apache Ossie (dax-sql's `tmslToOssie`) in the cache folder, at `models/<account>/<workspace>/<model>.yaml`,
+  Apache Ossie (dax-sql's `tmslToOssie`) in the cache folder, at `models/<account>/<workspace>/<model>.ossie.yaml`
+  (named as Ossie's own tools name a model; a copy an earlier version named `<model>.yaml` is renamed, its view with it),
   then opens that copy. It is under its account because a workspace's name is unique in one tenant only.
 - **What the copy says:** a measure is a metric in Ossie's portable SQL when it means the same there, and DAX
   when not. When every table is in one lakehouse of the model's workspace, each dataset's `source` is
@@ -626,10 +627,12 @@ A model file or an app's file on this machine opens in a tab, as one from the tr
   its lakehouse's `Files/` instead. Another YAML is a document, and says it is not a model.
 - **An app's file**, `.fabricapp` (`openApp` in [`src/exportflow.js`](../src/exportflow.js)): on the Report page, which
   draws this file; its Add to report writes here, and its next export saves here. A semantic model's app opens that
-  model, as the tree's click does. A client-side app opens on its own `model.yaml`, the app as it is, and Export to
+  model, as the tree's click does. A client-side app opens on its own `model.ossie.yaml`, the app as it is, and Export to
   Fabric there publishes this file as it is: no Save dialog, and no question about its changes.
-- **In VS Code**, a `.fabricapp` opens in OneLake Studio by default (a custom editor that hands it over and closes its
-  own tab). A `.bim` or an Ossie `.yaml` opens as text, with **Open in OneLake Studio** on the editor's title bar, by
+- **A file named `<name>.ossie.yaml`** is a model by its name: the Apache Ossie spec names no extension, and Ossie's own
+  tools (its compliance suite and grader) name a model `*.ossie.yaml`. Studio's own copies are named so too.
+- **In VS Code**, a `.fabricapp` and a `*.ossie.yaml` open in OneLake Studio by default (custom editors that hand them
+  over and close their own tab; *Reopen Editor With… > Text Editor* shows the text). A `.bim` or an Ossie `.yaml` opens as text, with **Open in OneLake Studio** on the editor's title bar, by
   what the editor holds (`onelakeStudio.activeIsModel`), so other YAML has none; Explorer's right-click offers it on a
   `.yaml`, `.yml`, `.bim` or `.fabricapp`.
 - **In the desktop app**, File › Open… (Ctrl+O); a double-click on a `.fabricapp`, whose default app it is; and
@@ -670,9 +673,9 @@ publish it. One an earlier export saved as `<model>-explore.zip` is offered unde
 there.
 
 **The app runs on the model as exported**, never on the lakehouse's file as it is now:
-- **Client side**, the file holds its model, `model.yaml` (`model.bim` for a .bim), and each publish makes the site's
+- **Client side**, the file holds its model, `model.ossie.yaml` (`model.bim` for a .bim; `model.yaml` from an earlier export still reads), and each publish makes the site's
   `model.json` from it, which the page reads. The function never reads a model: the export gives it the tables it may
-  sign for (its `TABLES` secret). An export from Explore rewrites `model.yaml` from Explore's model; an agent's edit to
+  sign for (its `TABLES` secret). An export from Explore rewrites `model.ossie.yaml` from Explore's model; an agent's edit to
   it is published by opening the `.fabricapp` and exporting there. A change to the lakehouse's file reaches the app
   when it is exported again.
 - **On a semantic model**, the file holds no model of its own: `export.json` names the semantic model

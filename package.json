@@ -49,6 +49,12 @@
         "displayName": "OneLake Studio app",
         "selector": [{ "filenamePattern": "*.fabricapp" }],
         "priority": "default"
+      },
+      {
+        "viewType": "onelakeStudio.ossieModel",
+        "displayName": "OneLake Studio model",
+        "selector": [{ "filenamePattern": "*.ossie.yaml" }],
+        "priority": "default"
       }
     ],
     "commands": [

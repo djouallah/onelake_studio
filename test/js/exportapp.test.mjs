@@ -288,7 +288,7 @@ test("a semantic model as it is: the app says it runs on it, and holds no DuckDB
     assert.doesNotMatch(agents, /next load/, "the semantic model is the model as exported, not as it is now");
 
     // Client side: the site has its DuckDB data source and not the semantic model's, and DuckDB's packages.
-    assert.ok(!files.has("model.yaml") && !files.has("model.bim"), "a semantic model's app names the model, and holds no copy");
+    assert.ok(!files.has("model.ossie.yaml") && !files.has("model.bim"), "a semantic model's app names the model, and holds no copy");
     const duck = await appFiles({ plan: { ...planExport(OSSIE, "sales.yaml", "sales", mods(bimOf(URL_)), WHERE), engine: "duckdb" },
                                   state: null, model, modelText: OSSIE, modelFile: "sales.yaml", ...dirs });
     assert.ok(duck.has("site/storage/data.js"));
@@ -297,12 +297,12 @@ test("a semantic model as it is: the app says it runs on it, and holds no DuckDB
     assert.equal(engineOf(new Map(), {}), "duckdb", "an older client-side site, with no engine.json");
     for (const p of ["site/storage/modeldata.js", "site/storage/modelrows.js"]) assert.ok(!duck.has(p), p);
     // Client side the app runs on its own model: the file's model.yaml, and the site's model.json made from it.
-    assert.equal(duck.get("model.yaml").toString(), OSSIE);
+    assert.equal(duck.get("model.ossie.yaml").toString(), OSSIE);
     assert.deepEqual(JSON.parse(duck.get("site/model.json")), model);
     assert.equal(engineOf(duck, {}), "duckdb");
     assert.doesNotMatch(duck.get("rayfin/rayfin.yml").toString(), /^connectors:/m);
     assert.match(duck.get("AGENTS.md").toString(), /app item's owner/);
-    assert.match(duck.get("AGENTS.md").toString(), /`model\.yaml` in this file[\s\S]*the app\s+runs on it/);
+    assert.match(duck.get("AGENTS.md").toString(), /`model\.ossie\.yaml` in this file[\s\S]*the app\s+runs on it/);
     assert.match(duck.get("AGENTS.md").toString(), /`TABLES` setting\), and never reads the model/);
     assert.equal((await vendorFiles(dirs.webappDir, "duckdb")).size, 5, "every package");
   } finally {
@@ -321,11 +321,11 @@ test("the local copy is one zip: the whole app but its packages, written and rea
     for (const p of ["site/index.html", "site/app.js", "site/storage/data.js", "site/storage/catalog.js",
                      "site/explore/view.js", "site/explore/model.js", "site/explore/explore.css", "site/paths.js",
                      "site/semantic/src/dialects/duckdb.js", "site/semantic/formats/ossie.js", "site/report.json",
-                     "rayfin/functions/src/function_app.ts", "AGENTS.md", "model.yaml", "site/model.json"]) {
+                     "rayfin/functions/src/function_app.ts", "AGENTS.md", "model.ossie.yaml", "site/model.json"]) {
       assert.ok(files.has(p), p);
     }
     assert.ok(![...files.keys()].some(p => /vendor\/|node_modules|ossie\.(json|yaml)$|^model\/|^dist\/|\.gitignore/.test(p)),
-      `no packages, no build, no model but model.yaml: ${[...files.keys()].join(", ")}`);
+      `no packages, no build, no model but model.ossie.yaml: ${[...files.keys()].join(", ")}`);
     assert.deepEqual(JSON.parse(files.get("site/explore.json")), state);
     assert.match(files.get("rayfin/rayfin.yml").toString(), /^id: sales-model-explore$/m);
     assert.match(files.get("rayfin/rayfin.yml").toString(), /- https:\/\/x\.webapp\.fabricapps\.net/);

@@ -25,7 +25,7 @@
 //   rayfin/          fabric_app/rayfin: what the app is (rayfin.yml) and its function's source
 //                    (built at package time, by scripts/function-bundle.mjs: nobody's machine
 //                    builds it)
-//   model.yaml       client side only: the model the app runs on (model.bim for a .bim), the model as
+//   model.ossie.yaml client side only: the model the app runs on (model.bim for a .bim), the model as
 //                    exported. Each publish makes site/model.json from it, so an edit here (an
 //                    agent's) is published by opening the file and exporting it. A semantic model's app has none:
 //                    its record names the semantic model.
@@ -61,8 +61,9 @@ const REPORT = 'site/report.json';
 // The local copy's own extension: a zip inside, as a .vsix is, so a double-click opens OneLake Studio.
 const APP_EXT = '.fabricapp';
 // Client side, the model the app runs on, in its own format, at the file's root.
-const MODEL_COPIES = ['model.yaml', 'model.bim'];
-const modelCopyName = file => (/\.bim$/i.test(String(file)) ? 'model.bim' : 'model.yaml');
+// model.ossie.yaml, as Ossie's own tools name a model; model.yaml from an earlier export still reads.
+const MODEL_COPIES = ['model.ossie.yaml', 'model.yaml', 'model.bim'];
+const modelCopyName = file => (/\.bim$/i.test(String(file)) ? 'model.bim' : 'model.ossie.yaml');
 /** The model's copy in the app's entries: `text` as `file` names its format, the other format's gone. */
 function setModelCopy(files, file, text) {
   for (const p of MODEL_COPIES) files.delete(p);
@@ -254,7 +255,7 @@ ${onModel(plan) ? `- Semantic model: \`${plan.semanticModel.name}\`, as it is in
   Build on the semantic model (https://learn.microsoft.com/en-us/fabric/apps/connectors). The tenant must have the
   Semantic Model Execute Queries REST API setting on. The page runs no DuckDB and reads no table (\`site/engine.json\`,
   \`site/storage/modeldata.js\`). The tables below and the layers' DuckDB parts are the client-side export's.
-` : `- Model: \`model.yaml\` in this file (\`model.bim\` for a .bim), exported from \`${plan.modelPath}\`: the app
+` : `- Model: \`model.ossie.yaml\` in this file (\`model.bim\` for a .bim), exported from \`${plan.modelPath}\`: the app
   runs on it, as \`site/model.json\`, made from it at each publish. An edit to it is published by opening this file in OneLake Studio and exporting it;
   a change to the lakehouse's file reaches the app when it is exported again.
 - Lakehouse: workspace \`${plan.workspace}\`, item \`${plan.lakehouse}\` — its Iceberg catalog is the
@@ -271,7 +272,7 @@ again: edit it freely, then export again to publish it. Delete it and the next e
 draws this same file from this zip, and draws it again when the zip changes; its Visual's **Add to report**
 and a tile's ✕ write it here.
 
-${onModel(plan) ? '' : `\`model.yaml\` (\`model.bim\` for a .bim model), at the root, is the model the app runs on: read it for the
+${onModel(plan) ? '' : `\`model.ossie.yaml\` (\`model.bim\` for a .bim model), at the root, is the model the app runs on: read it for the
 tables, columns and measures a tile can name.
 `}
 \`\`\`json
@@ -411,7 +412,7 @@ async function filesOf(root, to, skip = () => false) {
  * before the first export (else a Report with no tiles);
  * `redirects`: the app's sign-in redirects so far.
  * `model`: the model the page runs on, read (modelDoc's doc): site/model.json.
- * `modelText`, `modelFile`: client side, the model's text and its file's name, kept as model.yaml (setModelCopy).
+ * `modelText`, `modelFile`: client side, the model's text and its file's name, kept as model.ossie.yaml (setModelCopy).
  * `fabricAppDir`: the extension's fabric_app/; `appDir`: Studio's page modules (app/, or
  * webview/ installed); `daxSqlDir`: vendor/npm/<PINS.daxSql>.
  */

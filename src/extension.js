@@ -14,7 +14,7 @@ const upMs = () => Math.round(process.uptime() * 1000);
 const bundleBegan = upMs();
 
 const vscode = require('vscode');
-const { join, basename, dirname, extname } = require('node:path');
+const { join, basename, dirname } = require('node:path');
 const os = require('node:os');
 const { existsSync } = require('node:fs');
 const { randomBytes } = require('node:crypto');
@@ -692,8 +692,8 @@ async function activateInner(context) {
       return openModel({ kind: 'semanticModel', workspace, model: m.name, modelId: m.id }, { openOn: 'report' });
     }
     if (app.copy) {
-      // Named for its model's format (model.yaml, model.bim): the tab reads the text by its name.
-      return openText({ name: `${model}${extname(app.copy.name)}`, path: fsPath, text: app.copy.text, workspace, modelName: model,
+      // Named for its model's format (model.ossie.yaml, model.bim): the tab reads the text by its name.
+      return openText({ name: `${model}${app.copy.name.replace(/^model/, '')}`, path: fsPath, text: app.copy.text, workspace, modelName: model,
                         appFile: fsPath, appModel: app.modelPath, appModelFile: app.copy.name, openOn: 'report' });
     }
     // A file from before the app held its model: the model file in OneLake, as the tree opens it.
@@ -725,17 +725,20 @@ async function activateInner(context) {
   const fileNameOf = n => sqlStr(fileSqlName(n, n.kind === 'dir' ? n.dir : String(n.path).replace(/^.*?\/Files\/?/, '')));
   const isFileNode = n => n.kind === 'file' || n.kind === 'dir';
 
-  // A .fabricapp opened in VS Code opens in OneLake Studio: its editor hands the file to openPath and
-  // closes its own empty tab. The desktop app opens files itself (src/desktop/main.js), and has no editors.
+  // A .fabricapp, or a model named as Ossie's tools name one (*.ossie.yaml), opened in VS Code opens in
+  // OneLake Studio: its editor hands the file to openPath and closes its own empty tab ("Reopen Editor
+  // With… Text Editor" still shows the text). The desktop app opens files itself (src/desktop/main.js).
   if (vscode.window.registerCustomEditorProvider) {
-    context.subscriptions.push(vscode.window.registerCustomEditorProvider('onelakeStudio.fabricApp', {
-      openCustomDocument: uri => ({ uri, dispose() {} }),
-      resolveCustomEditor: (doc, webviewPanel) => {
-        webviewPanel.webview.html = '<p>Opened in OneLake Studio.</p>';
-        setTimeout(() => webviewPanel.dispose(), 0);
-        return openPath(doc.uri);
-      },
-    }, { supportsMultipleEditorsPerDocument: false }));
+    for (const viewType of ['onelakeStudio.fabricApp', 'onelakeStudio.ossieModel']) {
+      context.subscriptions.push(vscode.window.registerCustomEditorProvider(viewType, {
+        openCustomDocument: uri => ({ uri, dispose() {} }),
+        resolveCustomEditor: (doc, webviewPanel) => {
+          webviewPanel.webview.html = '<p>Opened in OneLake Studio.</p>';
+          setTimeout(() => webviewPanel.dispose(), 0);
+          return openPath(doc.uri);
+        },
+      }, { supportsMultipleEditorsPerDocument: false }));
+    }
   }
   // The title bar's Open in OneLake Studio, on a .bim or an Ossie .yaml open as text: by the text of
   // every open document (app/semantic.js's isOssie: a top-level version and datasets), so a dbt
