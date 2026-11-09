@@ -5,9 +5,8 @@
 
 const { join, dirname, isAbsolute } = require('node:path');
 const { existsSync, statSync } = require('node:fs');
-const { createHash } = require('node:crypto');
 const fsp = require('node:fs/promises');
-const { createCatalogFile, catalogFileOf, stateFileOf } = require('./catalogfile');
+const { createCatalogFile, catalogFileOf, stateFileOf, shortHash } = require('./catalogfile');
 const { createLogFile, logFileOf } = require('./logfile');
 
 /**
@@ -15,7 +14,7 @@ const { createLogFile, logFileOf } = require('./logfile');
  * @param {string} o.extensionDir  where this install's files are
  * @param {string} o.storageDir  what this install keeps
  * @param {boolean} o.production  an installed build, not a checkout's: a checkout keeps its own state
- * @param {string} [o.serverTag]  a server apart from the editor's, sharing what is remembered as the background engine's does
+ * @param {string} [o.serverTag]  a server apart from the editor's, sharing what is remembered
  * @param {{ get: Function, store: Function }} o.secrets  where a server's session token is kept
  * @param {object} o.settings  settings.js
  * @param {() => string} o.httpProxy  a proxy the person set, or ''
@@ -50,7 +49,7 @@ function createEngines({ extensionDir, storageDir, production, serverTag = '', s
   let engine = null;
   let engineAccount = null;   // the account (fileCacheAccount) the engine was built for
 
-  // The engine's disk cache of what it reads from OneLake (engine-host.js, cache_httpfs): one
+  // The engine's disk cache of what it reads from OneLake (engine-host.js: the lake and its files): one
   // directory per account, like the store. Cached bytes are served without OneLake being
   // asked, so they must never be served to a different account. Set at activation and
   // whenever the account moves; null with no account known, which runs the engine without it.
@@ -70,14 +69,13 @@ function createEngines({ extensionDir, storageDir, production, serverTag = '', s
   // every tab of every window as a client over Quack. Its session token lives in the editor's secret
   // storage, where the next window finds it.
   // One server per account and install. A rebuild of the same install replaces it (`build`).
-  function sharedEngineServer(account, { background = false } = {}) {
+  function sharedEngineServer(account) {
     const script = join(extensionDir, 'dist', 'engine-server.js');
     const build = (() => { try { return statSync(script).mtimeMs; } catch (_) { return 0; } })();
-    const key = [account || 'none', extensionDir, ...(serverTag ? [serverTag] : []), ...(background ? ['background'] : [])].join('|');
-    const secret = `onelakeStudio.engineSession.${createHash('sha256').update(key).digest('hex').slice(0, 16)}`;
+    const key = [account || 'none', extensionDir, ...(serverTag ? [serverTag] : [])].join('|');
+    const secret = `onelakeStudio.engineSession.${shortHash(key)}`;
     // What is remembered belongs to the account, so an update keeps it. F5 has its own: the installed
     // build's server holds this file open.
-    // The background engine has the same one, so what it runs is in Logs with everything else.
     const stateKey = [account || 'none', production ? '' : 'dev'].join('|');
     return {
       key, stateKey, script, build,
@@ -150,7 +148,6 @@ function createEngines({ extensionDir, storageDir, production, serverTag = '', s
     const { stopServer } = require('./engine-client');
     for (const account of catalogFiles.keys()) {
       await stopServer(sharedEngineServer(account)).catch(() => {});
-      await stopServer(sharedEngineServer(account, { background: true })).catch(() => {});
     }
   };
   function sharedEngineRemote(options) {
@@ -168,7 +165,6 @@ function createEngines({ extensionDir, storageDir, production, serverTag = '', s
 
   // What the engine reads when it boots: here, or in the shared engine's process.
   function engineBootOptions(account, readme) {
-    const diskCacheGB = Math.max(0, Number(settings.read('diskCacheMaxGB', 256)) || 0);
     return {
       allowedPaths: readme ? [readme] : [],
       httpProxy: editorProxy(),
@@ -183,12 +179,12 @@ function createEngines({ extensionDir, storageDir, production, serverTag = '', s
       threads: Math.max(0, Math.floor(Number(settings.read('engineThreads', 0)) || 0)),
       spillMaxGB: Math.max(0, Number(settings.read('engineSpillMaxGB', 0)) || 0),
       logMaxGB: Math.max(0, Number(settings.read('logMaxGB', 1)) || 0),
-      maxRows: Math.min(1_000_000, Math.max(1000, Math.floor(Number(settings.read('maxResultRows', 200_000)) || 200_000))),
+      maxRows: settings.maxResultRows(),
       // Always the account's folder: the lake's metadata is there. 0 GB keeps no table's files in it.
       fileCacheDir: fileCacheDirFor(account),
       // A lake can be open in one process only, and the standalone host has a server of its own.
       lakeFolder: serverTag ? `lake-${serverTag}` : 'lake',
-      fileCacheMaxBytes: diskCacheGB * 1e9,
+      fileCacheMaxBytes: settings.diskCacheBytes(),
     };
   }
 

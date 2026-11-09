@@ -362,9 +362,13 @@ function createExport({ connectivity, modules, hostToken, appToken, powerBiToken
   // The Report a model's Report tab draws (app/explore/report.js): the site/report.json of the zip
   // its last export was approved into, else the first tiles, picked from the model's text. { spec,
   // stamp, from }: `stamp` changes when the zip does (reportStamp), `from` is the zip or null.
-  async function reportOf({ workspace, model, file, text }) {
+  // The model's zip, and what the disk says of it: null when there is none.
+  const reportZip = async ({ workspace, model }) => {
     const zipPath = memento.get(reportKey(workspace, model));
-    const st = zipPath ? await fsp.stat(zipPath).catch(() => null) : null;
+    return { zipPath, st: zipPath ? await fsp.stat(zipPath).catch(() => null) : null };
+  };
+  async function reportOf({ workspace, model, file, text }) {
+    const { zipPath, st } = await reportZip({ workspace, model });
     const bytes = st && (await readApp(zipPath).catch(() => null))?.files.get(REPORT);
     if (bytes) {
       let spec;
@@ -375,9 +379,8 @@ function createExport({ connectivity, modules, hostToken, appToken, powerBiToken
     const { semantic, compiler } = await modules();
     return { spec: { tiles: starterTiles(semantic.bimOf(file, text, compiler)) }, stamp: st ? st.mtimeMs : 0, from: null };
   }
-  async function reportStamp({ workspace, model }) {
-    const zipPath = memento.get(reportKey(workspace, model));
-    const st = zipPath ? await fsp.stat(zipPath).catch(() => null) : null;
+  async function reportStamp(m) {
+    const { st } = await reportZip(m);
     return st ? st.mtimeMs : 0;
   }
 

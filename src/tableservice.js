@@ -19,13 +19,14 @@
 // No `vscode` import. The engine passes in its connection, the token and how to download.
 // =============================================================================
 
-const { mkdirSync, renameSync, rmSync, openSync, readSync, closeSync, statSync } = require('node:fs');
+const { mkdirSync, renameSync, rmSync, openSync, readSync, closeSync, statSync, writeFileSync } = require('node:fs');
 const { dirname, join } = require('node:path');
-const { META } = require('./onelaketable');
+const { sqlStr: q } = require('./sql');
+const { META, rows } = require('./onelaketable');
 
 const HELD = `${META}.studio_held`;
-const q = s => `'${String(s).replace(/'/g, "''")}'`;
-const rows = async (c, sql) => (await c.runAndReadAll(sql)).getRowObjectsJson();
+// What is held here, by the path the lake gave a file before its copy came, on connection `c`.
+const heldOn = async c => new Map((await rows(c, `SELECT path, local FROM ${HELD} WHERE unread_since IS NULL`)).map(r => [r.path, r.local]));
 
 // abfss://<workspace>@<host>/<rest> -> https://<host>/<workspace>/<rest>, which a GET reads.
 function httpsOf(url) {
@@ -176,7 +177,7 @@ function createTableService({ withConn, filesDir, download, maxBytes = 10 * 1024
   /** What is held here, by the path the lake gave a file before its copy came: for syncTable. */
   async function held() {
     await init();
-    return new Map((await withConn(c => rows(c, `SELECT path, local FROM ${HELD} WHERE unread_since IS NULL`))).map(r => [r.path, r.local]));
+    return withConn(heldOn);
   }
 
   async function idle() {
@@ -199,7 +200,7 @@ function httpsDownload({ getToken, fetchImpl = fetch }) {
     const res = await fetchImpl(httpsOf(url), { headers: { Authorization: `Bearer ${await getToken()}`, 'x-ms-version': '2023-11-03' } });
     if (!res.ok) throw new Error(`OneLake answered ${res.status}`);
     const buf = Buffer.from(await res.arrayBuffer());
-    require('node:fs').writeFileSync(dst, buf);
+    writeFileSync(dst, buf);
     return statSync(dst).size;
   };
 }
@@ -211,4 +212,4 @@ async function openedSince(c, sinceUs) {
   return { paths: [...new Set(r.map(x => x.path.replace(/\\\\/g, '\\')))], lastUs: r.length ? Number(r[r.length - 1].us) : sinceUs };
 }
 
-module.exports = { createTableService, httpsDownload, openedSince, httpsOf, localOf };
+module.exports = { createTableService, httpsDownload, openedSince, heldOn, httpsOf };

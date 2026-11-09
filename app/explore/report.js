@@ -17,6 +17,7 @@
 // The same file in the panel and in Export to Fabric's app: the host says how SQL runs (`sql`).
 // =============================================================================
 
+import { sqlStr } from '../paths.js';
 import { el } from './dom.js';
 import { formatValue } from './draw.js';
 import { PALETTE } from './theme.js';
@@ -70,7 +71,6 @@ export function firstColumn(sql) {
   return m ? columnOf(m[1]) : null;
 }
 
-const quote = s => `'${String(s).replace(/'/g, "''")}'`;
 const NUMBER = /^-?\d+(?:\.\d+)?(?:e[+-]?\d+)?$/i;
 
 /**
@@ -83,7 +83,7 @@ export function sqlLiteral(value, type) {
   if (typeof value === 'bigint') return String(value);
   if (typeof value === 'number') {
     if (!Number.isFinite(value)) throw new Error(`${value} can't be a filter`);
-    return type === 'string' ? quote(value) : String(value);
+    return type === 'string' ? sqlStr(value) : String(value);
   }
   const s = String(value);
   if (type === 'dateTime') {
@@ -92,7 +92,7 @@ export function sqlLiteral(value, type) {
   }
   if ((type === 'int64' || type === 'double' || type === 'decimal') && NUMBER.test(s)) return s;
   if (type === 'boolean' && /^(true|false)$/i.test(s)) return s.toUpperCase();
-  return quote(s);
+  return sqlStr(s);
 }
 
 // SQL's tokens: where each starts and ends, and the words and semicolons outside parentheses,

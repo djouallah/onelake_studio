@@ -42,6 +42,7 @@ const fsp = require('node:fs/promises');
 const zlib = require('node:zlib');
 const deflateRaw = require('node:util').promisify(zlib.deflateRaw);
 const { createHash } = require('node:crypto');
+const { crc32 } = require('./crc32');
 const { TABLE_ORIGIN } = require('./catalog');
 const { dfsFileUrl, stripBom } = require('./names');
 const { PINS, WEBAPP } = require('./vendored');
@@ -390,9 +391,12 @@ async function readApp(zipPath) {
   return { files, marker };
 }
 
+// A zip's entries in path order, as every export writes, hashes and uploads them.
+const byPath = files => [...files].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+
 /** Writes the local copy, its entries sorted and its marker last: beside it first, then renamed into place. */
 async function writeApp(zipPath, files, marker) {
-  const all = [...files].filter(([p]) => p !== MARKER).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+  const all = byPath(files).filter(([p]) => p !== MARKER);
   all.push([MARKER, Buffer.from(JSON.stringify(marker, null, 2) + '\n', 'utf8')]);
   await fsp.mkdir(dirname(zipPath), { recursive: true });
   const tmp = `${zipPath}.${process.pid}.tmp`;
@@ -497,7 +501,7 @@ function vendorSize(vendor) {
 // Report isn't counted: no export rewrites it, so an edit to it is never at risk and never asked about.
 function fingerprint(files) {
   const out = {};
-  for (const [p, bytes] of [...files].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) {
+  for (const [p, bytes] of byPath(files)) {
     if (p !== REPORT && p !== MARKER) out[p] = createHash('sha256').update(bytes).digest('hex');
   }
   return out;
@@ -523,7 +527,7 @@ const buildId = (d = new Date()) => d.toISOString().replace(/[-:]/g, '').replace
  */
 function buildDist(files, config, vendor = new Map(), build = buildId()) {
   const out = new Map();
-  for (const [path, raw] of [...files].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) {
+  for (const [path, raw] of byPath(files)) {
     if (!path.startsWith('site/')) continue;
     const rel = path.slice('site/'.length);
     let bytes = raw;
@@ -543,17 +547,6 @@ function buildDist(files, config, vendor = new Map(), build = buildId()) {
 
 // --- A zip, with no dependency -----------------------------------------------
 // Deflate (zlib's raw deflate, level 9) per entry, UTF-8 names, the entries at the root.
-
-const CRC = (() => {
-  const t = new Int32Array(256);
-  for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; t[n] = c; }
-  return t;
-})();
-function crc32(buf) {
-  let c = -1;
-  for (let i = 0; i < buf.length; i++) c = CRC[(c ^ buf[i]) & 0xff] ^ (c >>> 8);
-  return (c ^ -1) >>> 0;
-}
 
 /** files: Map or [[path, bytes]] -> a zip's bytes. Deflated off the thread every other extension shares. */
 async function zip(files) {

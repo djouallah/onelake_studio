@@ -38,7 +38,7 @@ const { SQL_KINDS, sqlName, abfssUrl, MODEL_CATALOG, modelSqlName } = require('.
 const { revalidate, sameAnswer } = require('./store');
 const { mapPool } = require('./http');
 const { readDelta, readIceberg, syncTable, attachLake } = require('./onelaketable');
-const { createTableService, httpsDownload, openedSince } = require('./tableservice');
+const { createTableService, httpsDownload, openedSince, heldOn } = require('./tableservice');
 const { tableReadCopies, TABLE_READ_FOLDER } = require('./tableread');
 
 
@@ -175,14 +175,13 @@ const sameSources = (a, b) => sameAnswer(a.map(({ at, ...t }) => t), b.map(({ at
 async function trimFileCache(dir, maxBytes, onWarn) {
   try {
     if (!(maxBytes > 0)) return;
-    const files = [];
-    for (const c of await tableReadCopies(join(dir, TABLE_READ_FOLDER))) files.push({ ...c, dir: true });
-    let total = files.reduce((n, f) => n + f.bytes, 0);
+    const copies = await tableReadCopies(join(dir, TABLE_READ_FOLDER));
+    let total = copies.reduce((n, f) => n + f.bytes, 0);
     if (total <= maxBytes) return;
-    files.sort((a, b) => a.at - b.at);
-    for (const f of files) {
+    copies.sort((a, b) => a.at - b.at);
+    for (const f of copies) {
       if (total <= maxBytes * 0.8) break;
-      await fsp.rm(f.p, { force: true, recursive: !!f.dir }).catch(() => {});
+      await fsp.rm(f.p, { force: true, recursive: true }).catch(() => {});
       total -= f.bytes;
     }
   } catch (e) {
@@ -535,7 +534,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
   // files are named on OneLake until they come down whole, then by their copy in the cache folder
   // (tableservice.js). What a statement opens is what comes down: DuckDB's own FileSystem log says which.
   // The lake is the engine's that holds DuckDB, the server's on the shared engine: a window asks it over
-  // the control pipe (lakeTable). Without a cache folder there is no lake, and a table is read from OneLake.
+  // the control pipe (lakeTable). Without a cache folder there is no lake, and no OneLake table is read (sourceOf).
   const LAKE_POLL_MS = 1000, LAKE_TIDY_MS = 60 * 1000;
   let lakeService = null, lakeToken = null, lakeDirs = null;
   async function openLake() {
@@ -594,9 +593,9 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
     lakeSynced.set(name, since);
     return { name };
   }
-  // The service's own connection is the admin one: inside admin() already, so asked of it directly.
-  const heldNow = async () => new Map((await conn.runAndReadAll(`SELECT path, local FROM __ducklake_metadata_lake.studio_held WHERE unread_since IS NULL`)
-    .catch(() => ({ getRowObjectsJson: () => [] }))).getRowObjectsJson().map(r => [r.path, r.local]));
+  // The service's own connection is the admin one: inside admin() already, so asked of it directly. None
+  // before the service's first look has made its table.
+  const heldNow = () => heldOn(conn).catch(() => new Map());
 
   // ---------------------------------------------------------------------------
   // OneLake, spoken by DuckDB itself
@@ -875,13 +874,10 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
   // A OneLake URL it reads: after FROM or JOIN, or as a function's argument. Not one that is only a
   // value, as a model's path is in what SHOW SEMANTIC VIEWS compiles to.
   const READS_ONELAKE = /(?:\b(?:from|join)\s+\(?\s*'|\b(?!values\b)\w+\s*\(\s*\[?\s*')(?:zip:\/\/)?(?:abfss?|az|azure):\/\//i;
-  function refuseOffline(sql, tables) {
+  function refuseOffline(sql) {
     const why = offlineReason();
-    if (!why) return;
-    const reading = tables.find(t => /\b(?:iceberg|delta)_scan\(/.test(t.source));
-    if (!reading && !READS_ONELAKE.test(sql)) return;
-    const what = reading ? reading.name : 'This statement';
-    throw Object.assign(new Error(`${what}: reading rows needs OneLake, and ${why === 'no internet' ? 'there is no internet' : 'you are not signed in'}. ` +
+    if (!why || !READS_ONELAKE.test(sql)) return;
+    throw Object.assign(new Error(`This statement: reading rows needs OneLake, and ${why === 'no internet' ? 'there is no internet' : 'you are not signed in'}. ` +
       'What this machine has cached still works: tables, columns, stats and first rows.'), { offline: true });
   }
 
@@ -922,7 +918,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
         seen(read.length ? Math.min(...read) : null);
         const { statement, written } = await withFileUrls(sql, fresh);
         files = written;
-        refuseOffline(statement, tables.filter(t => !/\bFROM lake\./.test(t.source)));
+        refuseOffline(statement);
         for (const t of tables) await makeView(t);
         const result = await run(catalogStatement(sql) || statement);
         rowsRead(sql, tables, statement, used);
@@ -934,7 +930,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
       // OneLake refused a table's files, its metadata having been given: a table with OneLake security. Which
       // one, of a statement's several, is asked of each, and those are read through the table read API.
       if (FORBIDDEN.test(message) && !refusedOnce && canRetry() && !(signal && signal.aborted)) {
-        const direct = named.filter(t => !t.secured && /\b(?:iceberg|delta)_scan\(|\bFROM lake\./.test(t.source));
+        const direct = named.filter(t => !t.secured && /\bFROM lake\./.test(t.source));
         // Asked even of one: the API costs the user, and the refusal has to be OneLake's, not words in the statement.
         const found = [];
         for (const t of direct) {

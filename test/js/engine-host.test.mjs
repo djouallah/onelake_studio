@@ -832,8 +832,8 @@ test("a table with OneLake security: a 403 moves it to its Arrow files, under th
   const files = [join(copy, "s0.arrows"), join(copy, "s1.arrows")];
   await writeArrowStream(files[0], "SELECT range::INTEGER AS i, 'a' AS region FROM range(3)");
   await writeArrowStream(files[1], "SELECT (range + 3)::INTEGER AS i, 'b' AS region FROM range(2)");
-  // OneLake's refusal as the engine meets it, from a source that names iceberg_scan as a real table's does.
-  const REFUSED = "SELECT NULL::INTEGER AS i, NULL::VARCHAR AS region /* iceberg_scan( */ WHERE error('IO Error: AzureDfsStorageFileSystem open file failed: HTTP 403 (AuthorizationPermissionMismatch)') IS NULL";
+  // OneLake's refusal as the engine meets it, from a source that reads the lake as a real table's does.
+  const REFUSED = "SELECT NULL::INTEGER AS i, NULL::VARCHAR AS region /* FROM lake.t */ WHERE error('IO Error: AzureDfsStorageFileSystem open file failed: HTTP 403 (AuthorizationPermissionMismatch)') IS NULL";
   const asked = [];
   const engine = createEngineHost({
     extensionDir: extDir,
@@ -842,7 +842,7 @@ test("a table with OneLake security: a 403 moves it to its Arrow files, under th
     fileCacheMaxBytes: 1024 ** 3,
     resolveTable: async (ref, o = {}) => {
       asked.push(`${ref.table}${o.secured ? " secured" : ""}`);
-      if (ref.table === "open") return { ...ref, emptySql: "SELECT 2 AS b /* iceberg_scan( */" };
+      if (ref.table === "open") return { ...ref, emptySql: "SELECT 2 AS b /* FROM lake.t */" };
       if (ref.table === "elsewhere") return { ...ref, arrowFiles: [join(extDir, "x.arrows")], secured: true };
       return o.secured ? { ...ref, arrowFiles: files, secured: true, at: 7 } : { ...ref, emptySql: REFUSED };
     },

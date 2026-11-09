@@ -22,10 +22,11 @@
 
 const { createHash } = require('node:crypto');
 const { mkdirSync, writeFileSync } = require('node:fs');
+const { sqlStr: q, quoteIdent: qi } = require('./sql');
+const { DFS_ORIGIN } = require('./names');
+const { crc32 } = require('./crc32');
 
 const META = '__ducklake_metadata_lake';
-const q = s => `'${String(s).replace(/'/g, "''")}'`;
-const qi = s => `"${String(s).replace(/"/g, '""')}"`;
 const rows = async (c, sql) => (await c.runAndReadAll(sql)).getRowObjectsJson();
 const one = async (c, sql) => Object.values((await rows(c, sql))[0] || {});
 
@@ -72,16 +73,6 @@ function z85(s) {
     out.writeUInt32BE(n >>> 0, (i / 5) * 4);
   }
   return out;
-}
-const CRC_TABLE = (() => {
-  const t = new Uint32Array(256);
-  for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; }
-  return t;
-})();
-function crc32(b) {
-  let c = 0xffffffff;
-  for (const x of b) c = CRC_TABLE[(c ^ x) & 0xff] ^ (c >>> 8);
-  return (c ^ 0xffffffff) >>> 0;
 }
 const uuidOf = b => { const h = b.toString('hex'); return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`; };
 
@@ -346,7 +337,7 @@ async function syncTable(c, name, state, { dvDir, held = new Map() }) {
  */
 async function attachLake(c, metadataFile) {
   // Never written to: every table names its own folder. Remote only so DuckLake keeps remote paths remote.
-  await c.run(`ATTACH ${q(`ducklake:${metadataFile}`)} AS lake (DATA_PATH 'https://onelake.dfs.fabric.microsoft.com/unused/', DATA_INLINING_ROW_LIMIT 0)`);
+  await c.run(`ATTACH ${q(`ducklake:${metadataFile}`)} AS lake (DATA_PATH ${q(`${DFS_ORIGIN}/unused/`)}, DATA_INLINING_ROW_LIMIT 0)`);
 }
 
-module.exports = { readDelta, readIceberg, syncTable, attachLake, deletionBlob, z85, crc32, META };
+module.exports = { readDelta, readIceberg, syncTable, attachLake, rows, META };
