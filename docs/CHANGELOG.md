@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.18
 
 - **A OneLake table's files are kept whole, on this machine, as queries read them.** A Delta or Iceberg table is
   read through a DuckLake catalog made from its own log, and a file a query opens comes down whole in the background;
