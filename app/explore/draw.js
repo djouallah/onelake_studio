@@ -34,10 +34,10 @@ export const extent = values => {
 };
 
 // Explore's small multiples: n plot areas one above the other, in percent of the chart below
-// `top`, each under a line for its title.
+// `top`, each under a line for its title, with room between them for the axis's top label.
 export const stackedGrids = (n, top = 0) => Array.from({ length: n }, (_, i) => {
   const at = top + i * (100 - top) / n;
-  return { title: `${at + 0.5}%`, grid: { left: 4, right: 16, containLabel: true, top: `${at + 5}%`, height: `${(100 - top) / n - 11}%` } };
+  return { title: `${at + 0.5}%`, grid: { left: 4, right: 16, containLabel: true, top: `${at + 9}%`, height: `${(100 - top) / n - 15}%` } };
 });
 
 // The semantic model as a star (Model page): the tables a relationship points to (the

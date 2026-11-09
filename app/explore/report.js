@@ -215,6 +215,8 @@ export function drawReport(root, spec, ctx) {
     let piv = null;
     if (tile?.kind === 'pivot' && fields) try { piv = pivotQuery(tile.pivot, fields); } catch (_) { /* drawPivot says */ }
     const mark = piv && (piv.state.mark === 'auto' ? autoMark(piv.state, fields) : piv.state.mark);
+    // A pivot's chart of several measures is a plot each, one above the other: taller.
+    const plots = piv && mark !== 'heatmap' && mark !== 'scatter' ? Math.min(piv.state.values.length, 4) : 1;
     const wide = tile.wide ?? (tile.kind === 'kpi' || tile.kind === 'table' || mark === 'table' || mark === 'highlight' || mark === 'heatmap');
     const title = String(tile.title ?? '');
     const job = { tile, body, piv, on: pickColumn(tile, piv), dirty: true, asking: false, chart: null, box: null, repaint: null };
@@ -227,6 +229,7 @@ export function drawReport(root, spec, ctx) {
       body);
     if (grip) draggable(job, grip);
     grid.append(job.section);
+    job.plots = plots;
     return job;
   });
   pump();
@@ -467,7 +470,7 @@ export function drawReport(root, spec, ctx) {
       if (v.node) { body.replaceChildren(el('div', { class: 'rp-pivot' }, v.node)); return; }
       keyAt = v.keyAt;
       if (!job.chart) {
-        const box = el('div', { class: 'rp-chart' });
+        const box = el('div', { class: 'rp-chart', style: job.plots > 1 ? `height: ${job.plots * 180}px` : null });
         body.replaceChildren(box);
         const chart = echarts.init(box, 'studio');
         Object.assign(job, { chart, box });

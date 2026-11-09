@@ -426,7 +426,11 @@ function pivotChart(s, piv, mark, { fields, palette, css }, pick) {
   const xField = fields.byId.get(byCols ? s.cols[0] : s.rows[0]);
   const flat = (mark === 'bar' || mark === 'stacked') && xField?.type === 'text';   // names read across, bars lie down
   const legend = shown.length > 1;
-  const grids = stackedGrids(ms.length, legend ? 7 : 0);
+  // One plot has no title over it: the Values shelf, or a Report tile's title, names its measure,
+  // and a title there sat on the axis's top label. Several have one each, over their own plot.
+  const one = ms.length === 1;
+  const grids = one ? [{ grid: { left: 4, right: 16, containLabel: true, top: legend ? 36 : 14, bottom: cut ? 24 : 8 } }]
+    : stackedGrids(ms.length, legend ? 7 : 0);
   const catAxis = (i, more) => ({ type: 'category', gridIndex: i, data: cats.map(label), inverse: flat,
     axisLabel: { show: flat || i === ms.length - 1, hideOverlap: true }, ...more });
   const valAxis = (i, m) => ({ type: 'value', gridIndex: i,
@@ -442,7 +446,8 @@ function pivotChart(s, piv, mark, { fields, palette, css }, pick) {
           return `${p.marker}${shown.length > 1 ? `${esc(p.seriesName)} · ` : ''}${esc(nameOf(m))}: <b>${esc(fmt(m, p.value))}</b>`;
         })].join('<br>') },
       legend: legend ? { type: 'scroll', top: 0, data: shown.map(label) } : undefined,
-      title: ms.map((m, i) => ({ text: i ? nameOf(m) : nameOf(m) + cut, top: grids[i].title, left: 4, textStyle: { fontSize: 12, fontWeight: 600 } })),
+      title: one ? (cut ? [{ text: cut.trim(), right: 16, bottom: 0, textStyle: { fontSize: 11, fontWeight: 400 } }] : [])
+        : ms.map((m, i) => ({ text: i ? nameOf(m) : nameOf(m) + cut, top: grids[i].title, left: 4, textStyle: { fontSize: 12, fontWeight: 600 } })),
       grid: grids.map(g => g.grid),
       dataZoom: !flat && cats.length > 60 ? [{ type: 'inside', xAxisIndex: ms.map((_, i) => i) }] : [],
       xAxis: ms.map((m, i) => flat ? valAxis(i, m) : catAxis(i, { boundaryGap: mark === 'bar' || mark === 'stacked' })),

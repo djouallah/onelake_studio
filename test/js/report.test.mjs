@@ -152,3 +152,15 @@ test("a slicer's values go in as IN, a blank among them as IS NULL", () => {
                `${sql} WHERE ("dim_zone"."Zone" <> 'x') AND "dim_date"."Date" IN (DATE '2024-03-01', DATE '2024-03-02') AND ` +
                `"dim_date"."Year" IN (2024) AND ${BOROUGH} = 'Bronx' GROUP BY ALL`);
 });
+
+test("a chart of one measure draws no title over its plot; one of several, a title each", () => {
+  const fields = modelFields(MODEL);
+  const look = { fields, palette: ["#111"], css: () => "" };
+  const rows = [{ Borough: "Bronx", "Total Fare": 10, "Sum of fare": 1 }];
+  const one = pivotQuery({ rows: ["dim_zone.Borough"], values: ["Total Fare"], mark: "line" }, fields).state;
+  const plain = pivotView(one, rows, "line", look).option;
+  assert.deepEqual(plain.title, [], "the tile's title, or the Values shelf, names it");
+  assert.equal(plain.grid.length, 1);
+  const two = pivotQuery({ rows: ["dim_zone.Borough"], values: ["Total Fare", "\0sum\0trips.fare"], mark: "line" }, fields).state;
+  assert.deepEqual(pivotView(two, rows, "line", look).option.title.map(t => t.text), ["Total Fare", "Sum of fare"]);
+});
