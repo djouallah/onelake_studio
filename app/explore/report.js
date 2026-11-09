@@ -203,7 +203,7 @@ export function drawReport(root, spec, ctx) {
   root.replaceChildren(chips, grid);
   if (!tiles) grid.append(el('p', { class: 'rp-say error' }, 'The report has no "tiles" list.'));
   else if (!tiles.length) grid.append(el('p', { class: 'rp-say' }, ctx.remove
-    ? 'The report has no tiles yet. Build a view in Pivot and click Add to report.' : 'The report has no tiles yet.'));
+    ? 'The report has no tiles yet. Build a view in Visual and click Add to report.' : 'The report has no tiles yet.'));
   let gone = false, pumping = false, running = null;
   // What a click picked, by the tile it was picked in: { field, value, label }, in the order picked.
   const picks = new Map();

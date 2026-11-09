@@ -46,7 +46,7 @@ FROM semanticmodel.demo.DL GROUP BY ALL;</code></pre>
         <p>See a model's tables and relationships. Drag fields to build a table or a chart, and see the SQL behind it.</p>
       </div>
       <div class="shots">
-        <a class="shot" href="img/pivot.png"><img src="img/pivot.png" alt="The app with a semantic model's Pivot open: its fields on the left, and an area chart of Mwh by date for each region." width="2720" height="1720" loading="lazy"></a>
+        <a class="shot" href="img/pivot.png"><img src="img/pivot.png" alt="The app with a semantic model's Visual open: its fields on the left, and an area chart of Mwh by date for each region." width="2720" height="1720" loading="lazy"></a>
         <a class="shot" href="img/model.png"><img src="img/model.png" alt="The model's diagram: a summary fact table joined to its calendar, duid and mstime dimensions." width="1062" height="358" loading="lazy"></a>
       </div>
     </section>
@@ -54,7 +54,7 @@ FROM semanticmodel.demo.DL GROUP BY ALL;</code></pre>
     <section class="feature">
       <div>
         <h2>Open in Excel</h2>
-        <p>A button on a model's Pivot opens a new Excel workbook with a PivotTable connected to the model. It runs on your machine, so it also works offline. Windows only.</p>
+        <p>A button on a model's Model page opens a new Excel workbook with a PivotTable connected to the model. It runs on your machine, so it also works offline. Windows only.</p>
       </div>
       <a class="shot" href="img/excel.png"><img src="img/excel.png" alt="Excel with a PivotTable on the semantic model: Mwh by fuel and region, and the PivotTable Fields list." width="2392" height="1202" loading="lazy"></a>
     </section>
@@ -62,7 +62,7 @@ FROM semanticmodel.demo.DL GROUP BY ALL;</code></pre>
     <section class="feature stacked">
       <div>
         <h2>Export to Fabric</h2>
-        <p>Publishes a model's Pivot as a Fabric app. People open it in the browser after signing in to Fabric, and pivot the model there with nothing to install. The app doesn't copy the model: it reads it from the lakehouse.</p>
+        <p>Publishes a model's Report as a Fabric app. People open it in the browser after signing in to Fabric, and use its tiles and slicers there with nothing to install. The app doesn't copy the model: it reads it from the lakehouse.</p>
         <p>You pick what the app runs on, in a small window under the button. Direct Lake is the default. Direct Lake and DirectQuery also create a Power BI semantic model of the same name, or update it, and the app queries that model. Client side runs DuckDB in the browser.</p>
       </div>
     </section>

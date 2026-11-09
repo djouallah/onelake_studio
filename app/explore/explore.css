@@ -32,6 +32,7 @@ section.modelOpen #chartBtn { display: none; }
 .subtab.active { color: var(--on-accent); background: var(--accent); }
 
 /* Keep offline, beside the tabs: it belongs to the whole model. */
+.keep-offline[hidden] { display: none; }
 .keep-offline { display: inline-flex; align-items: center; flex: 1 1 auto; gap: 0.45rem; min-width: 0; margin-right: auto; font-size: 0.78rem; }
 .keep-offline label { font-weight: 600; cursor: pointer; white-space: nowrap; }
 .keep-switch { position: relative; flex: none; width: 28px; height: 16px; padding: 0; border: 0; border-radius: 999px; background: var(--disabled); cursor: pointer; transition: background 0.15s; }
@@ -224,7 +225,7 @@ section.modelOpen #chartBtn { display: none; }
   .model-page { grid-template-columns: 1fr; }
   .ex { grid-template-columns: 190px minmax(0, 1fr); }
 }
-/* The Pivot's actions, in the subtab bar: Show SQL, Download CSV, Export to Fabric. */
+/* Each page's actions, at the right of the subtab bar. */
 .explore-actions { display: flex; flex: none; gap: 0.4rem; margin-left: auto; }
 .explore-actions[hidden], .subtabs[hidden] { display: none; }
 

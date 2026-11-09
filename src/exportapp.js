@@ -201,7 +201,7 @@ function rayfinYml(text, name, redirects = [], semanticModel = null) {
   return out;
 }
 
-const agentsMd = plan => `# ${plan.title} — Report and Explore, as a Fabric app
+const agentsMd = plan => `# ${plan.title} — its Report, as a Fabric app
 
 Written by OneLake Studio's **Export to Fabric**, and deployed by it over the Fabric REST API (item
 type \`AppBackend\`, named \`${plan.name}\`): no CLI. The site is **protected** — only people who may
@@ -227,11 +227,11 @@ ${onModel(plan) ? `- Model: \`${plan.modelPath}\`, as it was when exported: the 
 `}
 ## The Report: yours to grow
 
-The app opens on its Report, \`site/report.json\`, after Explore's Model and Pivot. The first export wrote
+The app is its Report, \`site/report.json\`, and nothing else. The first export wrote
 it with the tiles built in OneLake Studio's Report tab (none, if it had none), and no export writes it
 again: edit it freely, then export again to publish it (it is not one of the local changes an export asks
-about). Delete it and the next export writes a new one. OneLake Studio's Report tab, after Model and Pivot,
-draws this same file from this zip, and draws it again when the zip changes; its Pivot's **Add to report**
+about). Delete it and the next export writes a new one. OneLake Studio's Report tab, after Model and Visual,
+draws this same file from this zip, and draws it again when the zip changes; its Visual's **Add to report**
 and a tile's ✕ write it here.
 
 \`\`\`json
@@ -246,7 +246,7 @@ and a tile's ✕ write it here.
 - \`kind\` is \`kpi\` (one row, each column a figure), \`bar\` or \`line\` (the first column across, every other a
   series), \`table\`, or \`pivot\`. \`"wide": true\` gives a tile the whole row.
 - \`pivot\` has no \`sql\`: its \`pivot\` is Explore's shelves, as **Add to report** saves them, and it is drawn as
-  Pivot draws them: \`{ "rows": ["dim_region.Region"], "cols": [], "values": ["Revenue"], "filters": [], "mark": "bar" }\`.
+  Visual draws them: \`{ "rows": ["dim_region.Region"], "cols": [], "values": ["Revenue"], "filters": [], "mark": "bar" }\`.
   A column is \`table.column\`, a measure its name; \`mark\` is \`auto\`, \`table\`, \`highlight\`, \`bar\`, \`stacked\`,
   \`line\`, \`area\`, \`heatmap\` or \`scatter\`. A click picks its first Rows field (else Columns).
 - \`slicer\` has no \`sql\`: its \`column\` is a model column, \`"table"."column"\`, and it lists that column's values
@@ -269,8 +269,8 @@ and a tile's ✕ write it here.
 | Layer | Path | |
 |---|---|---|
 | Report | \`site/report.json\` | the page the app opens on: yours, kept by every export |
-| Page | \`site/index.html\`, \`site/app.js\` | Report and Explore over the data source |
-| Explore | \`site/explore/\` | OneLake Studio's, the same files the extension runs; \`report.js\` draws the Report |
+| Page | \`site/index.html\`, \`site/app.js\` | the Report over the data source |
+| Explore | \`site/explore/\` | OneLake Studio's, the same files the extension runs; \`report.js\` draws the Report, with Visual's drawing for a pivot tile |
 | Compiler | \`site/semantic/src/\`, \`site/semantic/formats/\` | dax-sql (\`${PINS.daxSql}\`): SQL over the model, as SQL over \`v_<table>\` |
 | Packages | \`site/vendor/\`, not in this zip | DuckDB-WASM (\`${WEBAPP.duckdbWasm}\`, DuckDB ${WEBAPP.duckdb}) with its ${WEBAPP.extensions.join(' and ')} extensions, Arrow, the Rayfin SDK and its semantic-model connector, ECharts: OneLake Studio's own, added when it publishes; nothing from a CDN |
 | Data source | \`site/storage/\` | signs in (Rayfin Fabric SSO), asks the function, downloads the tables into the browser (OPFS), DuckDB-WASM |

@@ -1206,7 +1206,7 @@ async function openPivot() {
     if (!tablePivot || tablePivot.table !== t) return;
     tablePivot = null;
     $('pivotView').innerHTML = `<div class="hint">${escapeHtml(`The pivot could not open: ${e.message}`)}</div>`;
-    setStatus(`Pivot: ${e.message}`, 'error');
+    setStatus(`Visual: ${e.message}`, 'error');
     console.error(e);
   }
 }

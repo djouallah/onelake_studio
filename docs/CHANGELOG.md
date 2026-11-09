@@ -12,14 +12,18 @@
   for them. The background sync finds new snapshots: every hour for a table in use, once a day for the rest, or on
   **Refresh** of its lakehouse. A sync reads only the commits since the last one, 16 at a time.
 - **The disk cache keeps 256 GB by default, up from 64.** `onelakeStudio.diskCacheMaxGB` still sets it.
-- **A model has a Report, after Model and Pivot.** It starts empty, and you build it from Pivot (below). The
-  model view still opens on Model. Export to Fabric's app opens on the same Report, with Model and Pivot beside it.
-- **Build the Report from Pivot.** **Add to report** puts the pivot on screen on the Report as a tile, drawn as Pivot
+- **A model has a Report, after Model and Visual.** It starts empty, and you build it from Visual (below). The
+  model view still opens on Model. Export to Fabric, now on the Report, publishes the Report alone as the app.
+- **Build the Report from Visual.** **Add to report** puts the pivot on screen on the Report as a tile, drawn as Visual
   draws it, with any mark, and a click on it filters the other tiles. Each tile has a ✕ that takes it out. The Report
   is kept on this machine until the model's first Export to Fabric, which publishes it; after that it is the zip's
   `site/report.json`, which Add to report and ✕ write. Export to Fabric's app draws the tiles, and only reads them.
 - **Move a tile on the Report.** Drag its grip ⠿ onto another tile, or focus the grip and use the arrow keys. It moves
   at once, nothing runs again, and the filters stay.
+- **Pivot is now Visual**, for a model and for a table: it draws tables and charts alike.
+- **Each page's buttons are in the bar, at the right.** Model has Keep offline, Diagram | YAML and Open in Excel;
+  Visual has Show SQL, Download CSV and Add to report; the Report has Add slicer and Export to Fabric. The model's
+  name is no longer repeated at the right of the bar.
 - **Slicers.** **Add slicer** on the Report puts a column of the model there as a list of its values. Tick some, and
   every other tile shows only those; the filter is listed above the tiles, with a ✕ that clears it. Slicers work in
   Export to Fabric's app too.
@@ -33,7 +37,7 @@
   and the Report tab draws it as it changes. An earlier export's folder is no longer used, and the export says so.
 - **The extension no longer freezes VS Code for seconds** when the Logs tab is open: an answer from the engine is
   read in time linear in its size. The Logs tab asks for its rows only when something new ran.
-- **The Report's tiles run one at a time**, and leaving the Report stops the one running, so the Pivot and the rest
+- **The Report's tiles run one at a time**, and leaving the Report stops the one running, so the Visual and the rest
   of the tab don't wait behind them.
 
 ## 0.2.17

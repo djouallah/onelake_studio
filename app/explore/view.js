@@ -1,19 +1,22 @@
 // =============================================================================
-// explore/view.js — a semantic model's Explore: Model, Pivot and Report
+// explore/view.js — a semantic model's Explore: Model, Visual and Report
 // =============================================================================
 //   Model     the star of its tables and relationships, and what the model says of the
 //             table picked (model.js)
-//   Pivot     the model's fields dragged onto shelves, drawn as a pivot or a chart
+//   Visual    (the 'pivot' page) the model's fields dragged onto shelves, drawn as a pivot or a chart
 //             (explore.js, ECharts). Show SQL swaps the pivot for its SQL in a box the user
 //             edits (a SELECT … FROM <model> asks the model; any other SQL runs as written);
 //             Show plan puts the query's profile and plan in place of the results
 //             (profile.js). Download CSV writes the pivot's rows, or the box's. Add to report
-//             (a host that saves the Report) puts the pivot on the Report as a tile.
+//             (a host that saves the Report) puts the visual on the Report as a tile.
 //   Report    tiles the host reads (ctx.report: Export to Fabric's report.json, or the file the
 //             host keeps before an export; none at first), each a SELECT over the model or
 //             a pivot or a slicer, drawn by report.js; a ✕ takes one out, its grip moves it, and
 //             Add slicer puts a column's values on it to tick (a host that saves the Report)
 // Model's Diagram | YAML (or BIM) shows the model drawn, or its file as written (pretty.js).
+// The bar: the page tabs, then each page's own: Model's Keep offline, then Diagram | YAML and Open
+// in Excel at the right; Visual's Show SQL, Download CSV and Add to report; the Report's Add slicer
+// and Export to Fabric, which publishes the Report as a Fabric app.
 // The same file in the panel and in Export to Fabric's app: the host says how a model's SQL is compiled
 // and run, and where ECharts comes from (`ctx`); nothing here knows the engine.
 // =============================================================================
@@ -28,7 +31,7 @@ import { PALETTE, registerChartTheme } from './theme.js';
 import { prettyModelText, extensionVendors, foreignDialects } from './pretty.js';
 import { drawReport } from './report.js';
 
-const PAGES = [['model', 'Model'], ['pivot', 'Pivot'], ['report', 'Report']];
+const PAGES = [['model', 'Model'], ['pivot', 'Visual'], ['report', 'Report']];
 const PREVIEW_ROWS = 500;
 // The SQL box's rows in all, a column beside the query's own (runSql), not shown.
 const TOTAL_NAME = '__onelake_rows_in_all';
@@ -37,7 +40,6 @@ const REPORT_POLL_MS = 2000;
 
 // `ctx`:
 //   name             the model's name: what SQL calls it (FROM <name>)
-//   title            what the bar says of it (its file); none: only its name (the host's bar says the file)
 //   text, ext        (optional) the model's file and its extension: Model's Diagram | YAML switch
 //   tmsl             the model, as model.js's tmslOf reads it
 //   compiler         dax-sql's compiler over the model, with the host's tableSource and
@@ -51,8 +53,8 @@ const REPORT_POLL_MS = 2000;
 //                    engine that set them and locked its configuration (the extension's)
 //   htmlPlan         Show plan's tree as DuckDB's HTML page in a frame (the Fabric app), else
 //                    its text plan (the panel: its CSP runs no inline script)
-//   exportToFabric(state, mode)  (optional) the Export to Fabric button: the shelves on screen,
-//                    published as a Fabric app of this Explore (src/exportapp.js), on `mode`
+//   exportToFabric(state, mode)  (optional) the Report's Export to Fabric button: the Report
+//                    published as a Fabric app (src/exportapp.js; `state`, the shelves, or null), on `mode`
 //                    (directlake, directquery or client); answers what to say when it is done
 //   openInExcel()    (optional) the Open in Excel button: this model in a new workbook, as a live
 //                    PivotTable (src/xmla); answers what to say when it is open
@@ -144,14 +146,14 @@ export function mountExplore(root, ctx) {
   const setStatus = ctx.setStatus || (() => {});
   const btn = (text, onclick, primary) => el('button', { type: 'button', class: `btn-explore${primary ? ' primary' : ''}`, onclick }, text);
 
-  // --- The frame: the subtabs and the Pivot's actions, then one element per page ---
+  // --- The frame: the subtabs and each page's actions, then one element per page ---
   const pages = PAGES.filter(([k]) => (k !== 'report' || ctx.report) && (!ctx.pages || ctx.pages.includes(k)));
   const tabs = pages.map(([k, t], i) => el('button', { type: 'button', class: `subtab${i ? '' : ' active'}`, role: 'tab',
     'data-apage': k, 'aria-selected': String(!i), tabindex: i ? '-1' : '0' }, t));
   const sqlToggle = btn('Show SQL', () => (sqlMode ? closeSql() : openSql()));
   const csvBtn = btn('Download CSV', download, true);
   const exportBtn = ctx.exportToFabric ? btn('Export to Fabric', () => (exportPop ? closeExport() : openExport())) : null;
-  if (exportBtn) exportBtn.title = 'Publish this Explore, on this model, as a Fabric app (a local copy is written too)';
+  if (exportBtn) exportBtn.title = 'Publish this Report, on this model, as a Fabric app (a local copy is written too)';
   // What the host does and says how it went, with the button waiting meanwhile.
   const hostBtn = (label, doing, fn, title) => {
     const b = btn(label, async () => {
@@ -179,14 +181,13 @@ export function mountExplore(root, ctx) {
   }, true) : null;
   if (editBtn) editBtn.title = 'This query in the SQL box, to take further by hand (the pivot is kept)';
   const closeBtn = ctx.close ? btn('Close', ctx.close) : null;
-  // Last, so the buttons before it stay where they were.
-  const addBtn = ctx.report?.save ? hostBtn('Add to report', 'Adding…', () => addToReport(), 'This pivot, as it is, as a tile of the Report') : null;
+  const addBtn = ctx.report?.save ? hostBtn('Add to report', 'Adding…', () => addToReport(), 'This visual, as it is, as a tile of the Report') : null;
+  // Each page's buttons, at the right of the bar: Visual's, the Report's, the Model's.
   const actions = el('div', { class: 'explore-actions', hidden: true },
-    ...(editBtn ? [editBtn, closeBtn] : [sqlToggle, closeBtn, csvBtn]), excelBtn, exportBtn, addBtn);
-  // The Report page's own, where Pivot's are on the Pivot page.
+    ...(editBtn ? [editBtn, closeBtn] : [sqlToggle, csvBtn, addBtn]));
   const slicerBtn = ctx.report?.save ? btn('Add slicer', () => (slicerPop ? closeSlicerPop() : openSlicerPop())) : null;
   if (slicerBtn) slicerBtn.title = "A model column's values on the Report, to tick: every other tile shows only those";
-  const reportActions = slicerBtn ? el('div', { class: 'explore-actions', hidden: true }, slicerBtn) : null;
+  const reportActions = slicerBtn || exportBtn ? el('div', { class: 'explore-actions', hidden: true }, slicerBtn, exportBtn) : null;
   const reportPage = el('div', { class: 'report-page', hidden: true });
   const modelPage = el('div', { class: 'model-page' });
   const pivotPage = el('div', { class: 'explore-page', hidden: true });
@@ -221,20 +222,19 @@ export function mountExplore(root, ctx) {
     !dialects.length ? `Amber: ${extName}, what Ossie has no field for`
       : !vendors.length ? `Amber: expressions in ${dialects.join(', ')}, not Ossie SQL`
       : `Amber: not plain Ossie SQL — the ${extName}, and expressions in ${dialects.join(', ')}`);
-  // In the bar after Keep offline, where Pivot's buttons are on the Pivot page, so changing
-  // pages moves nothing else. On the Model page only.
+  // At the right of the bar, before Open in Excel. On the Model page only.
   const modelSwitch = ctx.text == null ? null
     : el('div', { class: 'subtabs model-switch', role: 'tablist', 'aria-label': 'How the model is shown' }, diagramTab, fileTab);
+  const modelActions = modelSwitch || excelBtn ? el('div', { class: 'explore-actions', hidden: true }, modelSwitch, excelBtn) : null;
   const modelArea = el('div', { class: 'model-area' }, modelPage, textNote, textPre);
 
   root.replaceChildren(
     el('div', { class: 'subtab-bar' },
       el('div', { class: 'subtabs', role: 'tablist', 'aria-label': 'Semantic model pages', hidden: pages.length < 2 }, tabs),
       keepOffline?.root,
-      modelSwitch,
+      modelActions,
       actions,
-      reportActions,
-      el('span', { class: 'sm-title' }, ctx.title == null ? 'semantic model ' : `${ctx.title} · semantic model `, el('code', {}, ctx.name))),
+      reportActions),
     reportPage, modelArea, pivotPage, sqlPage);
   ta.addEventListener('keydown', e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); runSql(); } });
 
@@ -270,7 +270,8 @@ export function mountExplore(root, ctx) {
       watchReport(p === 'report');
     }
     modelArea.hidden = p !== 'model';
-    if (modelSwitch) modelSwitch.hidden = p !== 'model';
+    if (keepOffline) keepOffline.root.hidden = p !== 'model';
+    if (modelActions) modelActions.hidden = p !== 'model';
     pivotPage.hidden = p !== 'pivot' || sqlMode;
     actions.hidden = p !== 'pivot';
     if (reportActions) reportActions.hidden = p !== 'report';
@@ -688,8 +689,8 @@ export function mountExplore(root, ctx) {
   function outsideExport(e) { if (exportPop && !exportPop.contains(e.target) && !exportBtn.contains(e.target)) closeExport(); }
   function openExport() {
     const go = () => exportApp(exportPop.querySelector('input:checked').value);
-    exportPop = el('div', { class: 'ex-pop export-pop', role: 'dialog', 'aria-label': `Export ${ctx.name} to Fabric` },
-      el('div', { class: 'ex-pop-head' }, `Export ${ctx.name} to Fabric`),
+    exportPop = el('div', { class: 'ex-pop export-pop', role: 'dialog', 'aria-label': 'Export the Report to Fabric' },
+      el('div', { class: 'ex-pop-head' }, 'Export the Report to Fabric'),
       el('div', { class: 'ex-pop-body', role: 'radiogroup' }, ENGINES.map(([mode, label, says], i) =>
         el('label', { class: 'export-engine' },
           el('input', { type: 'radio', name: 'export-engine', value: mode, checked: !i }),

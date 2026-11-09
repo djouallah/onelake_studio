@@ -323,7 +323,7 @@ vectors or column mapping.
 | Answered from | What |
 | --- | --- |
 | The catalog alone | The tree, Go To, `SHOW ALL TABLES`, Stats, History, a wildcard's list of files, the command line's metadata |
-| The catalog and the lake | Rows, Pivot and a model's queries, for the files that have been read |
+| The catalog and the lake | Rows, Visual and a model's queries, for the files that have been read |
 
 Whatever isn't held says so at once.
 

@@ -1,7 +1,7 @@
 // =============================================================================
 // app.js — Export to Fabric's app: a semantic model's Report, and its Explore
 // =============================================================================
-// OneLake Studio's own Explore (explore/view.js: Model, Pivot, Report; it opens on the Report), over the data source of
+// OneLake Studio's own Report (explore/view.js, its Report page alone), over the data source of
 // this app (storage/data.js): it signs in, its function reads the model from the lakehouse and
 // says where the tables are, and DuckDB-WASM reads them in this browser. Exported as DirectQuery
 // or Direct Lake (engine.json), the data source is storage/modeldata.js instead: each query runs as
@@ -96,10 +96,10 @@ export async function start() {
     boot.done();
     const compiler = createCompiler(tmslToModel(bim), { tableSource: t => `v_${t.name}`, castOutput: EXPLORE_CASTS });
     mountExplore(document.getElementById("explore"), {
-      name, title: String(doc.name || name), tmsl: tmslOf(bim),
+      name, tmsl: tmslOf(bim),
       compiler,
       run: async sql => resultOf(await data.query(sql)),
-      report, openOn: "report",
+      report, pages: ["report"],
       echarts: () => echartsReady,
       saveText: download,
       loadState: key => { try { return JSON.parse(localStorage.getItem(key)) ?? first; } catch { return first; } },
@@ -149,10 +149,10 @@ async function startModel(first, modelName) {
     catch (e) { if (e.refused) showRefused(modelName || String(doc.name || name)); throw e; }
   };
   mountExplore(document.getElementById("explore"), {
-    name, title: String(doc.name || name), tmsl: tmslOf(bim),
+    name, tmsl: tmslOf(bim),
     compiler: { isDax: t => /^\s*(DEFINE|EVALUATE)\b/i.test(t), compileStatement: text => ({ sql: text }) },
     run,
-    report, openOn: "report",
+    report, pages: ["report"],
     shownSql: sql => data.shownSql(sql),
     echarts: () => echartsReady,
     saveText: download,

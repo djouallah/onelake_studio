@@ -30,7 +30,7 @@ node --no-warnings "{{cli}}" <command>
 | `sql "<sql>"` | read-only SQL. A table is `kind.workspace.item.schema.table` — `lakehouse.aemo.data.dbo.dim_duid`; kind is `lakehouse`, `warehouse`, `sqldatabase` or `mirroreddatabase` (any case), a lakehouse without schemas is `dbo`, a part with spaces is `"quoted"` — any table, any workspace, joined freely. Every semantic model is a table too, `semanticmodel.<ws>.<model>`: `AGG("measure")` is the measure; and `SHOW SEMANTIC …` (below) |
 | `sql -` | the SQL from stdin. Prefer it for anything with quotes in it: `AGG("Total Sales")` does not survive every shell, PowerShell's above all |
 | `sql "SELECT * FROM 'lakehouse.<ws>.<item>/Files/x.parquet'"` | a file is `'lakehouse.<ws>.<item>/Files/<path>'`, in single quotes, with its workspace and item spelled as in a table's name. Wildcards go in the path: `read_csv('lakehouse.aemo.data/Files/raw/*.csv', header=true)` |
-| `export <ws> <model>` | Export to Fabric, as Explore's button does it: publishes the model's Explore as a Fabric app. The model must have been downloaded once (opened in the tree, or `model <ws> <model> --fresh`); the export writes its `.yaml` into its lakehouse |
+| `export <ws> <model>` | Export to Fabric, as Explore's button does it: publishes the model's Report as a Fabric app. The model must have been downloaded once (opened in the tree, or `model <ws> <model> --fresh`); the export writes its `.yaml` into its lakehouse |
 | `export <ws> <item> <Files/path>` | the same, for a model file (`.bim`, Ossie `.yaml`) in a lakehouse's Files/ |
 | `export … --mode client\|directquery\|directlake` | what the app runs on: `client` is DuckDB in the browser; `directquery` and `directlake` also create the Power BI semantic model `<model>` in the model's workspace (or update the one of that name) and the app queries it. Without `--mode`, `directlake` |
 | `status` | this window on itself, for debugging the extension: its build, session, startup timeline, catalog, sync, and where its files are. Answers signed out too |
@@ -145,7 +145,7 @@ VS Code extension); nothing is written to Fabric or OneLake.
 - Read only by construction: anything but a read is refused. The exception is `export`, and
   only when the user asks for it. VS Code then asks the user where the local copy goes and
   waits for their OK, so the command waits too. It prints the app's URL, or exits 5 and says why
-  nothing was published. The app is one file, `<app>.zip`, and opens on its Report, with Explore's Pivot beside it.
+  nothing was published. The app is one file, `<app>.zip`, and is the model's Report alone.
 - To grow that report: edit `site/report.json` in the zip (its `AGENTS.md` says how: unzip, edit, zip again).
   Each tile is `{ title, kind, sql }`, its SQL a SELECT over the model `FROM model`, which `sql` tries first with the
   model's own name. OneLake Studio's Report tab draws the zip's report as it changes; `export` again publishes it.

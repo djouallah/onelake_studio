@@ -13,7 +13,7 @@ queried with SQL.
   computes its measure, compiled from its DAX by [dax-sql](https://github.com/djouallah/dax-sql).
 - **Runs on your machine.** DuckDB in a process of its own reads OneLake directly, with your own token.
 - **Works offline.** This is a must, not a fallback. Everything you have read keeps working with no
-  internet and no sign-in: browsing, SQL, a model's Explore and its Pivot.
+  internet and no sign-in: browsing, SQL, a model's Explore and its Visual.
 - **Agents get the same access.** An agent asks through the command line, on the same sign-in, cache
   and engine as a person in the editor.
 
@@ -34,7 +34,7 @@ SHOW ALL TABLES;
 | **Cache first** | Every answer from OneLake or Fabric is kept on this machine and served from there first. It is trusted until using it fails, then read again once. | [`src/onelake.js`](../src/onelake.js), [`src/store.js`](../src/store.js) |
 | **Works offline** | A feature that reads data works from what this machine holds, with no network. What isn't held says so at once, never on a timeout. Only writing to Fabric needs a connection: Export to Fabric and Upload Files…. The exported Fabric app is online by design, and this rule doesn't apply to it. | [`src/connectivity.js`](../src/connectivity.js), [`src/http.js`](../src/http.js), the lake in [`src/tableservice.js`](../src/tableservice.js) |
 | **The host does the work** | Sign-in, the read-only guard and OneLake's listings, metadata and `Files/` bytes are in the host, and DuckDB's reads are in the server it starts. A tab is a view: it holds no token and makes no network request. | [`src/host.js`](../src/host.js), [`src/panel.js`](../src/panel.js), [`src/engine-client.js`](../src/engine-client.js) |
-| **A table's Pivot is a SQL starter** | It builds a first SQL. Its only actions are Edit SQL and Close. | [`app/app.js`](../app/app.js) |
+| **A table's Visual is a SQL starter** | It builds a first SQL. Its only actions are Edit SQL and Close. | [`app/app.js`](../app/app.js) |
 
 ## Out of scope
 
@@ -147,7 +147,7 @@ the status bar, and comes back by itself ([`src/connectivity.js`](../src/connect
 | The tree, `SHOW ALL TABLES`, `information_schema`, Go To | A table's file no statement has opened here, or a file never read |
 | A table's Stats and History, and first rows already read | A wildcard over files |
 | Semantic models: opening them, Explore's Model page, `SHOW SEMANTIC …` | A table whose metadata was never read |
-| Table rows, a model's queries and its Pivot, for what was read | Export to Fabric |
+| Table rows, a model's queries and its Visual, for what was read | Export to Fabric |
 | `Files/` objects read before | |
 
 **How rows are read offline:** a table's files that statements have read are on this machine, whole, and its
@@ -412,7 +412,7 @@ rewritten in OneLake goes back to the cloud. A wildcard marks no one file. **A f
 Delta log nor Iceberg metadata has a warning and says *not a valid table*. That is kept like any table's metadata, so it
 shows offline, and it is asked again when the table is opened or its Tables node is, so a folder that becomes a table stops saying so.
 
-**Clicking a table** opens it in a new tab: Data, Stats, History and Pivot. The SQL box gets
+**Clicking a table** opens it in a new tab: Data, Stats, History and Visual. The SQL box gets
 `SELECT * FROM <its name> LIMIT 100` to start from, not run. A file does the same with what its preview runs.
 - **Data** is hidden offline on a table with none of its rows read here, since all it could show is an error. The status
   line says why. It comes back with the connection.
@@ -420,7 +420,7 @@ shows offline, and it is asked again when the table is opened or its Tables node
   also has its own log read for what Iceberg has no word for ([`src/deltalog.js`](../src/deltalog.js)).
 - **Time travel:** on an Iceberg table, History's Query puts a snapshot's rows in the SQL box, and
   each snapshot says how its row count and columns differ from the table now.
-- **Pivot** is the SQL starter described under the rules above.
+- **Visual** is the SQL starter described under the rules above.
 
 **Clicking a file** opens it in a new tab: Parquet, CSV, JSON, Excel, DuckDB, SQLite, and files inside a zip.
 - **A database file** is recognised by its header, never its extension. A DuckDB file is attached
@@ -430,7 +430,7 @@ shows offline, and it is asked again when the table is opened or its Tables node
     columns beside the SQL box, with a filter, and an overview of the file. This comes from DuckDB's catalog, so no
     table's rows are read. The tree stays while queries run in that tab.
   - **A table or view** opens as a table in OneLake does: Stats (columns, keys, indexes, its definition), Data and
-    Pivot. It has no History.
+    Visual. It has no History.
   - **Row counts:** a DuckDB file's are its own estimate, which still counts deleted rows, and say so. A SQLite file's
     are counted from its copy, for up to 200 tables, since its estimate means nothing.
 - **CSV, JSON, avro, xlsx and plain text** have no block structure, so DuckDB pulls them whole.
@@ -555,12 +555,14 @@ holds those lakehouses, else `--workspace`, and the error names the workspaces w
 
 ## Explore
 
-A semantic model opens as **Explore** ([`app/explore/`](../app/explore/)), on three pages: Model, Pivot and Report. It
-opens on Model, and the Fabric app on its Report.
+A semantic model opens as **Explore** ([`app/explore/`](../app/explore/)), on three pages: Model, Visual and Report
+(Visual is the `pivot` page in the code). It opens on Model. The Fabric app is its Report alone.
+- **The bar** holds the page tabs, then each page's own: Model's Keep offline at the left, its Diagram | YAML and Open in
+  Excel at the right; Visual's Show SQL, Download CSV and Add to report; the Report's Add slicer and Export to Fabric.
 
 - **Model:** its tables as a star, dimensions in the middle and facts around them, with its
   relationships. Click a table for its columns, measures (with their DAX) and relationships.
-- **Pivot:** drag columns onto Rows, Columns and Filters and measures onto Values, drawn as a pivot or
+- **Visual:** drag columns onto Rows, Columns and Filters and measures onto Values, drawn as a pivot or
   a chart.
   - A column dropped on Values is summarised, as in Power BI: a number is summed and anything else
     counted, and its chip switches to average, min, max, count or distinct count.
@@ -572,13 +574,13 @@ opens on Model, and the Fabric app on its Report.
     costly operators) next to its plan tree.
   - **Add to report** puts the view on the Report, as a tile (Report, below).
 - **Report:** tiles, each a SELECT over the model `FROM model` or a pivot, drawn as figures, a bar or line chart, a
-  table, or as Pivot draws it ([`report.js`](../app/explore/report.js)). A tile that fails says so in its box, and the
+  table, or as Visual draws it ([`report.js`](../app/explore/report.js)). A tile that fails says so in its box, and the
   rest still draw.
   - **Which tiles:** the model's Export to Fabric zip's `site/report.json`, when it has one (the zip its last export was
     approved into); else the file Studio keeps for the model until its first export (`<storage>/reports/`, by its
     workspace and name); else none: a Report starts empty. The first export writes Studio's file, or no tiles, into
     the zip, and the file goes.
-  - **Add to report, Add slicer, ✕ and the grip:** Pivot's **Add to report** puts the shelves on screen after the
+  - **Add to report, Add slicer, ✕ and the grip:** Visual's **Add to report** puts the shelves on screen after the
     tiles, as a `pivot` tile; the Report's **Add slicer** puts a model column there, as a `slicer` tile; a tile's ✕ takes
     it out, and its grip ⠿ moves it (dragged onto another tile, or by the arrow keys), drawn there at once with nothing run
     again. All write where the tiles are kept, one save after another (`reportSave` in
@@ -587,8 +589,8 @@ opens on Model, and the Fabric app on its Report.
   - **Drawn again** when the zip changes, while the tab is on screen: a person or an agent edits the report and sees it.
   - A tile is `{ title, kind, sql, formats?, echarts?, wide?, crossFilter? }`: `kind` is `kpi`, `bar`, `line` or `table`,
     `formats` a column's format string, `echarts` an ECharts option merged over the tile's own. A `pivot` tile is
-    `{ title, kind: 'pivot', pivot }`, `pivot` the shelves as Pivot keeps them; its SQL is Pivot's (`pivotQuery`), and it
-    is drawn by Pivot's own code (`pivotView` in [`explore.js`](../app/explore/explore.js)), so it keeps every mark. A
+    `{ title, kind: 'pivot', pivot }`, `pivot` the shelves as Visual keeps them; its SQL is Visual's (`pivotQuery`), and it
+    is drawn by Visual's own code (`pivotView` in [`explore.js`](../app/explore/explore.js)), so it keeps every mark. A
     `slicer` tile is `{ title, kind: 'slicer', column }`, `column` a model column (`"table"."column"`): its values (the
     first 1,000) to tick. The tiles are drawn in the order they are listed.
   - **Cross filtering:** a click on a bar, a line's point or a table's row picks its first column's value, and every other
@@ -606,8 +608,8 @@ same files on DuckDB-WASM.
 
 ## Export to Fabric
 
-One of two writes, with Upload (above). Explore's **Export to Fabric** button, or the command line's `export`, publishes a
-report on that model and its Explore as a Fabric app (item type `AppBackend`, named
+One of two writes, with Upload (above). The Report's **Export to Fabric** button, or the command line's `export`, publishes
+the model's Report as a Fabric app, and nothing else of Explore (item type `AppBackend`, named
 `<model>-explore`). VS Code and the extension are all it needs: no CLI, no Node, no GitHub.
 
 **The local copy is one file**, `<model>-explore.zip`: the whole app but its packages (DuckDB-WASM, Arrow, the Rayfin SDK,
@@ -855,10 +857,10 @@ brings down that partition, not the table.
 
 ## Open in Excel
 
-**Open in Excel**, a button on a semantic model's Pivot, opens a new workbook with a PivotTable live on the model,
-on Windows and the Excel desktop app. Any model that has a Pivot has it, a local copy or a file in a lakehouse's
+**Open in Excel**, a button on a semantic model's Model page, opens a new workbook with a PivotTable live on the model,
+on Windows and the Excel desktop app. Any model Explore opens has it, a local copy or a file in a lakehouse's
 `Files/`: the model is found by its SQL name, through its kept view. It opens with no fields placed, whatever the
-Pivot's shelves hold. Excel's provider speaks XMLA over HTTP, so [`src/xmla/`](../src/xmla/) answers it from the window:
+Visual's shelves hold. Excel's provider speaks XMLA over HTTP, so [`src/xmla/`](../src/xmla/) answers it from the window:
 
 ```
 Excel (MSOLAP) --SOAP over http://127.0.0.1--> extension host
@@ -945,7 +947,7 @@ every window. The rest apply at once.
   and **Export…** writes every row.
 - **Tabs don't come back after a window reload.** Only the box's last text does (see
   [The SQL box and results](#the-sql-box-and-results)).
-- **A Pivot's shelves are kept per tab,** so a model opened again in a new tab starts with empty shelves.
+- **A Visual's shelves are kept per tab,** so a model opened again in a new tab starts with empty shelves.
 - **OneLake's table read API is in preview,** so how a table with OneLake security is read may change. It doesn't
   serve a table behind a shortcut to another region, and a very large table can fail with *Stream was too long*.
 - **Requires desktop VS Code 1.101+** on Windows x64, or macOS or Linux on x64 or arm64, for its built-in SQLite. Windows on arm64 has no build of DuckDB's `delta`, so no package.
