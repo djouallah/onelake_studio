@@ -212,7 +212,7 @@ WHERE f.end_snapshot IS NULL AND t.end_snapshot IS NULL</code></pre>
 
     <section>
       <h2 id="export">Export to Fabric</h2>
-      <p>Export to Fabric is one of two features that write, with Upload Files, and it asks before writing anything. It copies the model's file into the lakehouse's <code>Files/</code> folder and publishes the app with the Fabric REST API.</p>
+      <p>Export to Fabric is one of two features that write, with Upload Files, and it asks before writing anything. It publishes the app with the Fabric REST API. An app made from a Power BI semantic model queries that model as it is, and nothing is written to it.</p>
       <ul>
         <li>The app doesn't hold a copy of the model. It reads the model from the lakehouse each time it runs.</li>
         <li>A small window under the button asks what the app runs on. Direct Lake is picked unless you change it.</li>

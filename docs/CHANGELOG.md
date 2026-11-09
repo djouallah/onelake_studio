@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **Export to Fabric on a Power BI semantic model uses that model as it is.** The app queries it, Direct Lake,
+  DirectQuery or Import, and no mode is asked: there is no window under the button. Nothing is written to the model
+  or for it.
+  Before, the export rewrote the model from Studio's copy of it, on the mode picked, and wrote a `.yaml` of it into
+  its lakehouse. A semantic model that names no lakehouse, or several, can be exported now too. The command line's
+  `export <ws> <model>` refuses `--mode`.
 - **The desktop app reads OneLake tables with VS Code open.** Its engine did not start, since VS Code's held the lake
   (`meta.ducklake`): it has a lake of its own now, so the first read of a table there downloads its files again.
 

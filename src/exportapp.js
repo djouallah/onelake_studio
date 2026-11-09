@@ -15,12 +15,13 @@
 //                    tab's tiles (none at first), written once, then the zip's (Studio's Add to
 //                    report writes it too), and kept by every export
 //   site/explore.json  the shelves the first view shows
-//   site/engine.json   DirectQuery and Direct Lake only, { engine: 'semanticModel' }: the page runs
+//   site/engine.json   on a semantic model only, { engine: 'semanticModel' }: the page runs
 //                    no DuckDB (storage/modeldata.js: it queries the semantic model), and site/ holds
 //                    neither DuckDB, its extensions, Arrow nor the data source that reads the tables
 //                    in the browser
-//   site/model.json    DirectQuery and Direct Lake only: the model the semantic model was made from,
-//                    which the page writes its DAX from
+//   site/model.json    on a semantic model only: the model the semantic model was made from, or its
+//                    local copy when the export is of the semantic model itself, which the page
+//                    writes its DAX from
 //   rayfin/          fabric_app/rayfin: what the app is (rayfin.yml) and its function's source
 //                    (built at package time, by scripts/function-bundle.mjs: nobody's machine
 //                    builds it)
@@ -164,6 +165,23 @@ function planExport(text, fileName, name, mods, where, lakes = null) {
   };
 }
 
+/**
+ * An export of a Power BI semantic model as it is (exportflow.js): the app goes in the model's
+ * workspace and queries it, so it has no lakehouse, catalog or model file, and the model need
+ * name no lakehouse. `doc`: its local copy, read (modelDoc's doc); `model`: { workspace (its name),
+ * workspaceId, id, name }.
+ */
+function planOnModel(doc, name, model) {
+  const title = String((doc && doc.name) || name);
+  return {
+    warnings: [], title, name: appName(title), modelName: name,
+    workspace: model.workspaceId, lakehouse: null, catalogUrl: null, modelUrl: null,
+    modelPath: `${model.workspace}/${model.name}`,
+    tables: [], engine: 'semanticModel',
+    semanticModel: { workspace: model.workspaceId, id: model.id, name: model.name },
+  };
+}
+
 // site/report.json is the zip owner's: written once, with the tiles Studio's Report tab kept for the
 // model or none, and kept by every later export. Studio's Report tab draws the same file.
 const EMPTY_REPORT = '{\n  "tiles": []\n}\n';
@@ -207,12 +225,15 @@ Written by OneLake Studio's **Export to Fabric**, and deployed by it over the Fa
 type \`AppBackend\`, named \`${plan.name}\`): no CLI. The site is **protected** — only people who may
 open the app item can load it.
 
-${onModel(plan) ? `- Model: \`${plan.modelPath}\`, as it was when exported: the semantic model was made from it then, and
+${onModel(plan) ? `${plan.engine === 'semanticModel' ? `- Semantic model: \`${plan.semanticModel.name}\`, as it is in Fabric: the export changed nothing in it. The page
+  reads its definition as it was when exported, \`site/model.json\`; a change to the semantic model reaches the app
+  when it is exported again. It is the app's \`${MODEL_CONNECTOR}\` connector (\`connectors:\` in \`rayfin/rayfin.yml\`).
+` : `- Model: \`${plan.modelPath}\`, as it was when exported: the semantic model was made from it then, and
   the page reads that same definition, \`site/model.json\`. A change to the model file reaches the app when it is
   exported again.
 - Semantic model: \`${plan.semanticModel ? plan.semanticModel.name : plan.modelName}\`, ${plan.engine === 'directLake' ? 'Direct Lake' : 'DirectQuery'},
   made from the model file by the export: the app's \`${MODEL_CONNECTOR}\` connector (\`connectors:\` in \`rayfin/rayfin.yml\`).
-- Engine: **the semantic model, as the viewer.** The page turns each of Explore's queries over the model into DAX
+`}- Engine: **the semantic model, as the viewer.** The page turns each of Explore's queries over the model into DAX
   (dax-sql) and runs it through that connector, which is delegated: as the person signed in, so each viewer needs
   Build on the semantic model (https://learn.microsoft.com/en-us/fabric/apps/connectors). The tenant must have the
   Semantic Model Execute Queries REST API setting on. The page runs no DuckDB and reads no table (\`site/engine.json\`,
@@ -400,8 +421,9 @@ async function appFiles({ plan, state, model, kept = null, redirects = [], fabri
   return files;
 }
 
-// DirectQuery and Direct Lake: the app queries a semantic model, not the tables.
-const onModel = plan => plan.engine === 'directLake' || plan.engine === 'directQuery';
+// DirectQuery and Direct Lake, made from the model file, or a semantic model as it is: the app
+// queries a semantic model, not the tables.
+const onModel = plan => plan.engine === 'directLake' || plan.engine === 'directQuery' || plan.engine === 'semanticModel';
 
 // On a semantic model, site/model.json: the model the semantic model is made from, which the page
 // writes its DAX from (storage/modeldata.js). The lakehouse's file can change after the export, and
@@ -530,5 +552,5 @@ async function zip(files) {
   return Buffer.concat([...local, ...central, end]);
 }
 
-module.exports = { planExport, modelDoc, appFiles, setModel, engineOf, readApp, writeApp, unzip, vendorFiles,
+module.exports = { planExport, planOnModel, modelDoc, appFiles, setModel, engineOf, readApp, writeApp, unzip, vendorFiles,
                    vendorSize, buildDist, fingerprint, localChanges, zip, crc32, rayfinYml, appName, dfsUrl, MARKER, REPORT };

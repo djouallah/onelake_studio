@@ -56,6 +56,8 @@ const REPORT_POLL_MS = 2000;
 //   exportToFabric(state, mode)  (optional) the Report's Export to Fabric button: the Report
 //                    published as a Fabric app (src/exportapp.js; `state`, the shelves, or null), on `mode`
 //                    (directlake, directquery or client); answers what to say when it is done
+//   exportAsIs       (optional) the model is a Power BI semantic model: Export to Fabric publishes on
+//                    it as it is, at once, with no mode (`mode` null), and asks nothing here
 //   openInExcel()    (optional) the Open in Excel button: this model in a new workbook, as a live
 //                    PivotTable (src/xmla); answers what to say when it is open
 //   keepOffline      (optional) { state(), set(on) }: the Keep offline switch beside the tabs, every
@@ -152,8 +154,12 @@ export function mountExplore(root, ctx) {
     'data-apage': k, 'aria-selected': String(!i), tabindex: i ? '-1' : '0' }, t));
   const sqlToggle = btn('Show SQL', () => (sqlMode ? closeSql() : openSql()));
   const csvBtn = btn('Download CSV', download, true);
-  const exportBtn = ctx.exportToFabric ? btn('Export to Fabric', () => (exportPop ? closeExport() : openExport())) : null;
-  if (exportBtn) exportBtn.title = 'Publish this Report, on this model, as a Fabric app (a local copy is written too)';
+  const exportBtn = !ctx.exportToFabric ? null
+    : btn('Export to Fabric', () => (ctx.exportAsIs ? exportApp(null) : exportPop ? closeExport() : openExport()));
+  if (exportBtn) {
+    exportBtn.title = ctx.exportAsIs ? 'Publish this Report as a Fabric app, on this semantic model as it is (a local copy is written too)'
+      : 'Publish this Report, on this model, as a Fabric app (a local copy is written too)';
+  }
   // What the host does and says how it went, with the button waiting meanwhile.
   const hostBtn = (label, doing, fn, title) => {
     const b = btn(label, async () => {

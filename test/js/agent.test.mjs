@@ -126,7 +126,7 @@ test("free from the cache: table sizes, more table fields, files, find, model co
 
 // export hands Explore's own export the model file, as Explore's button does; the dax-sql and
 // YAML modules it loads stand in as stubs (CI's test job has no vendor/).
-test("export: a model file in Files/, or a semantic model's local copy, which the export writes", async () => {
+test("export: a model file in Files/, or a semantic model's local copy", async () => {
   const { mkdtemp, writeFile, rm } = await import("node:fs/promises");
   const { tmpdir } = await import("node:os");
   const { join } = await import("node:path");
@@ -158,8 +158,8 @@ test("export: a model file in Files/, or a semantic model's local copy, which th
     assert.deepEqual(exported.pop(), { file: "Sales.yaml", name: "Sales", text: "the Sales model", state: null,
                                        model: { workspace: "a ws", name: "Sales" } });
 
-    // --mode says what the app runs on; without it, VS Code asks.
-    r = await agent.run({ args: ["export", "a ws", "sales"], opts: { mode: "directlake" } });
+    // --mode says what a model file's app runs on (a semantic model's is refused by the export itself).
+    r = await agent.run({ args: ["export", "a ws", "a", "Files/models/sales-2.yaml"], opts: { mode: "directlake" } });
     assert.equal(r.code, 0, r.err);
     assert.equal(exported.pop().mode, "directlake");
     r = await agent.run({ args: ["export", "a ws", "sales"], opts: { mode: "import" } });

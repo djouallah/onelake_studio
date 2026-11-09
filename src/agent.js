@@ -678,17 +678,17 @@ function createAgent({ onelake, engine, modelPath, appDir, vendorDir, daxSqlPin,
 
     // Export to Fabric from a shell: Explore's own export (extension.js), which asks in
     // VS Code where the local copy goes and waits for the OK there before it publishes. The
-    // model is what Explore's button would export: a semantic model's .yaml, where the tree
-    // wrote it in its lakehouse, or a model file in a lakehouse's Files/. With no Explore on
-    // screen, Explore's Pivot opens on its default view. --mode says what the app runs on
-    // (client, directquery, directlake); without it, Direct Lake.
+    // model is what Explore's button would export: a semantic model, which the app queries as it
+    // is (no --mode), or a model file in a lakehouse's Files/. With no Explore on screen,
+    // Explore's Pivot opens on its default view. For a model file --mode says what the app runs
+    // on (client, directquery, directlake); without it, Direct Lake.
     async export([ws, a, b], opts, io) {
       if (!exportApp) throw new Error('Export to Fabric is not available here');
       const mode = opts.mode != null ? { mode: String(opts.mode) } : {};
       const say = message => { io.data({ message }); io.out(message); };
       const { semantic } = await modules();
       if (!b) {
-        // A semantic model: its local copy, which the export writes into its lakehouse.
+        // A semantic model: its local copy, which the page writes its DAX from.
         const m = await modelOf(ws, a, opts);
         const path = modelPath(ws, m.name);
         if (!await exists(path)) {

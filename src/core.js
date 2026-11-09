@@ -534,10 +534,10 @@ function createCore({
     view.redraw();
   };
 
-  // The one OneLake writer (onelakewrite.js): Export to Fabric's .yaml, and Upload's files.
+  // The one OneLake writer (onelakewrite.js): Upload's files.
   const writer = createOneLakeWriter({ getToken: hostToken });
   const exporter = createExport({
-    connectivity, modules: () => agent.modules(), hostToken, appToken, powerBiToken: fabricToken, sqlToken, fabric, onelake, catalog, writer,
+    connectivity, modules: () => agent.modules(), appToken, powerBiToken: fabricToken, sqlToken, fabric,
     memento, extensionDir, pageDir, reportDir: join(storageDir, 'reports'),
     ui: exportUi,
     onRefresh: node => view.refresh(node),

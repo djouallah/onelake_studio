@@ -30,7 +30,7 @@ SHOW ALL TABLES;
 | --- | --- | --- |
 | **One name per object** | A table has five parts and a model has three. A file is `'lakehouse.<workspace>.<item>/Files/<path>'`. | [NAMING.md](NAMING.md), [`src/names.js`](../src/names.js) |
 | **SQL only** | A model is read with `AGG("measure")` in SQL. There is no DAX query. Excel's MDX is a second way in, and is compiled to that same SQL. An exported Fabric app on a semantic model runs the DAX that dax-sql makes of that SQL. | [`app/semantic.js`](../app/semantic.js), [`src/xmla/`](../src/xmla/) |
-| **Read only** | Nothing is written to Fabric or OneLake. The host takes one read per statement, from a tab or the command line, and DuckDB's own parser checks it. The two exceptions each ask first: Export to Fabric (the app, the model file, and for DirectQuery or Direct Lake a semantic model), and Upload Files… into a lakehouse's `Files/`. | `assertReads` and `checkedRead` in [`src/sql.js`](../src/sql.js) |
+| **Read only** | Nothing is written to Fabric or OneLake. The host takes one read per statement, from a tab or the command line, and DuckDB's own parser checks it. The two exceptions each ask first: Export to Fabric (the app, and for a model file on DirectQuery or Direct Lake a semantic model), and Upload Files… into a lakehouse's `Files/`. | `assertReads` and `checkedRead` in [`src/sql.js`](../src/sql.js) |
 | **Cache first** | Every answer from OneLake or Fabric is kept on this machine and served from there first. It is trusted until using it fails, then read again once. | [`src/onelake.js`](../src/onelake.js), [`src/store.js`](../src/store.js) |
 | **Works offline** | A feature that reads data works from what this machine holds, with no network. What isn't held says so at once, never on a timeout. Only writing to Fabric needs a connection: Export to Fabric and Upload Files…. The exported Fabric app is online by design, and this rule doesn't apply to it. | [`src/connectivity.js`](../src/connectivity.js), [`src/http.js`](../src/http.js), the lake in [`src/tableservice.js`](../src/tableservice.js) |
 | **The host does the work** | Sign-in, the read-only guard and OneLake's listings, metadata and `Files/` bytes are in the host, and DuckDB's reads are in the server it starts. A tab is a view: it holds no token and makes no network request. | [`src/host.js`](../src/host.js), [`src/panel.js`](../src/panel.js), [`src/engine-client.js`](../src/engine-client.js) |
@@ -638,7 +638,12 @@ ECharts), which are the extension's own and are added when it publishes, so the 
 Report tab's (Explore, above). No export writes that entry again, and it is not one of the local changes an export asks
 about, so a person or an agent grows it in the zip and exports again to publish it.
 
-**What the app runs on** is picked in a small window under the button ([`app/explore/view.js`](../app/explore/view.js)),
+**A Power BI semantic model** opened from the tree is exported as it is: the app queries that model, Direct Lake,
+DirectQuery or Import, whatever it reads. Nothing is asked about what it runs on (the command line refuses `--mode`), and
+nothing is written to the model or for it: no definition, no refresh, no file in a lakehouse. The app goes in the
+model's workspace, and the model needs to name no lakehouse.
+
+**What a model file's app runs on** is picked in a small window under the button ([`app/explore/view.js`](../app/explore/view.js)),
 on Direct Lake unless you change it. Export goes on to the questions below. On the command line it is `--mode`, and
 Direct Lake without it:
 - **Direct Lake:** a Power BI semantic model of the model, Direct Lake on OneLake, and the app on it.
@@ -648,28 +653,21 @@ Direct Lake without it:
 
 **What it writes**
 - **The app**, in Fabric.
-- **DirectQuery and Direct Lake: the semantic model**, named as the model (`semanticmodel.<workspace>.<model>`), in the
-  model's workspace. If the workspace has a model of that name, its definition is replaced: one name per workspace. A
-  model opened from the tree is that model, so it is rewritten from its local copy. The definition is TMSL made from the
+- **A model file on DirectQuery or Direct Lake: the semantic model**, named as the model (`semanticmodel.<workspace>.<model>`), in the
+  model's workspace. If the workspace has a model of that name, its definition is replaced: one name per workspace. The definition is TMSL made from the
   model's file ([`src/pbimodel.js`](../src/pbimodel.js)), written over the Fabric API
   ([`src/fabricmodel.js`](../src/fabricmodel.js)). Direct Lake is then refreshed, to frame its tables. DirectQuery's
   SQL endpoint credentials are set to OAuth2 with each caller's own identity (SSO). Direct Lake takes no calculated
   column: a model with one is refused before anything is written, and the message says to export it as DirectQuery.
-- **The model's file**, into the `Files/` of its lakehouse, when it was opened from its local copy:
-  `<lakehouse>/Files/semantic_model/<model>.yaml` ([`src/onelakewrite.js`](../src/onelakewrite.js)). A
-  client-side app reads the model there. A different file of that name is replaced only when you say so, and not being able
-  to tell what is there stops the export. It is written beside the file and renamed into place, so a failure part way
-  leaves what was there.
 - **A local copy of the app**, one zip: where it was approved last time for that model, or else `<the folder VS
   Code has open>/<model>-explore.zip`, or else in a folder you pick. An earlier export's `<model>-explore/` folder is no
   longer written: the export says it can be deleted, and the app it published stays the zip's.
 
-**What it needs**
+**What a model file needs** (a semantic model exported as it is needs none of it)
 - **It names exactly one lakehouse** in its Direct Lake expression. Without that, the button is not
   shown.
 - **Every table names its source as `schema.table`**, with a table name of letters, digits and `_`.
 - **The workspace allows OneLake user-delegated SAS tokens.**
-- **Write access to the lakehouse.**
 
 **How it behaves**
 - **It asks first.** Before anything is written, it shows the zip and waits for *Export* or *Choose
@@ -694,7 +692,8 @@ Direct Lake without it:
   Fabric's clock. If the app was deployed again since, the export asks.
 - **A folder the export did not write** is refused.
 
-**On a semantic model** (DirectQuery, Direct Lake) the app runs no DuckDB, in the browser or anywhere.
+**On a semantic model** (one exported as it is, or one made from a model file on DirectQuery or Direct Lake) the app
+runs no DuckDB, in the browser or anywhere.
 - **The queries run as the viewer**, as [Fabric Apps' connectors page](https://learn.microsoft.com/en-us/fabric/apps/connectors)
   says a semantic model is read: "Semantic models support delegated authentication only", and "Don't configure
   application authentication for a semantic model". Functions get no token for one ("A Power BI semantic model isn't
@@ -711,7 +710,8 @@ Direct Lake without it:
 - **The page's model is the one the semantic model was made from:** `site/model.json`, written by the export, and
   again by a *Publish As Is*. The semantic model is a copy of the model file made at export, so the page writes
   its DAX from that copy, not from the lakehouse's file: a measure renamed in the file since would make DAX the
-  semantic model refuses. A change to the model file reaches the app when it is exported again.
+  semantic model refuses. A change to the model file reaches the app when it is exported again. A semantic model
+  exported as it is gives its local copy, the definition Fabric gave when it was opened.
 - **Rows are cut on the semantic model** ([`storage/modelrows.js`](../fabric_app/site/storage/modelrows.js)): a
   preview's rows, and a LIMIT and OFFSET, are a `TOPN` in the DAX, and a count is `COUNTROWS`, so neither waits for
   the whole answer. executeQueries sends at most 100,000 rows or 1,000,000 values in one answer, and the page keeps at

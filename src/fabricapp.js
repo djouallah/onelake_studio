@@ -248,8 +248,9 @@ function createFabricApp({ getToken, apiBase = FABRIC_API, log = () => {},
     const liveOrigin = live && live.hostingUrl ? new URL(live.hostingUrl).origin : null;
     const redirects = [...new Set([...known, liveOrigin].filter(Boolean))];
     await postSettings(ws, id, redirects, semanticModel);
-    await postSecret(ws, id, 'CATALOG_URL', catalogUrl);
-    await postSecret(ws, id, 'MODEL_URL', modelUrl);
+    // A semantic model's app as it is has neither: its page asks the function nothing.
+    if (catalogUrl) await postSecret(ws, id, 'CATALOG_URL', catalogUrl);
+    if (modelUrl) await postSecret(ws, id, 'MODEL_URL', modelUrl);
     log(`app ${name}: uploading the site`);
     const config = { apiUrl, publishableKey: key, workspaceId: ws, itemId: id, portalUrl: PORTAL_URL, ...(tenantId ? { tenantId } : {}) };
     const hostingUrl = await deploySite(ws, id, await site(config));

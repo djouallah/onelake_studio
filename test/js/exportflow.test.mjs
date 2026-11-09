@@ -177,14 +177,31 @@ test("DirectQuery: a new semantic model, on the lakehouse's SQL endpoint", async
   await done();
 });
 
-test("a model opened from the tree is its own semantic model: its workspace and name", async () => {
+// A semantic model opened from the tree: its local copy, with no file in OneLake.
+const { workspace: _w, path: _p, ...ON_MODEL } = REQUEST;
+
+test("a semantic model opened from the tree is exported as it is: found by its workspace and name, nothing asked of a lakehouse", async () => {
   const dir = await mkdtemp(join(tmpdir(), "exportflow-open-"));
-  const { exportExplore, looked, done } = await setup({ folder: dir, answers: [undefined], mode: "directLake" });
-  const { workspace: _w, path: _p, ...rest } = REQUEST;
-  await exportExplore({ ...rest, model: { workspace: "aemo", name: "NEM Sales" } }).catch(() => {});
+  const { exportExplore, asked, looked, done } = await setup({ folder: dir, answers: [undefined], mode: null,
+                                                              models: { "NEM Sales": { id: "m1", displayName: "NEM Sales" } } });
+  const e = await exportExplore({ ...ON_MODEL, model: { workspace: "aemo", name: "NEM Sales" } }).then(() => null, x => x);
+  assert.equal(e.declined, true);
   assert.deepEqual(looked, [{ ws: "id-of-aemo", name: "NEM Sales" }]);
+  const { detail } = asked[0].rest[0];
+  assert.match(detail, /\nWorkspace: aemo\nSemantic model: NEM Sales, as it is \(not changed\)$/);
+  assert.doesNotMatch(detail, /Model: |\.yaml|Direct Lake|DirectQuery/, "no model file, and no mode");
   await rm(dir, { recursive: true, force: true });
   await done();
+});
+
+test("a semantic model takes no mode, and one gone from its workspace is said", async () => {
+  const a = await setup({ mode: "directLake" });
+  await assert.rejects(a.exportExplore({ ...ON_MODEL, model: { workspace: "aemo", name: "NEM Sales" } }), /NEM Sales is a semantic model: its app runs on it as it is, with no mode/);
+  await a.done();
+  const b = await setup({ mode: null });
+  await assert.rejects(b.exportExplore({ ...ON_MODEL, model: { workspace: "aemo", name: "NEM Sales" } }), /aemo has no semantic model NEM Sales any more/);
+  assert.equal(b.asked.length, 0);
+  await b.done();
 });
 
 test("an earlier export's folder is no longer used, and the dialog says it can be deleted", async () => {

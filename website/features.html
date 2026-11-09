@@ -62,8 +62,9 @@ FROM semanticmodel.demo.DL GROUP BY ALL;</code></pre>
     <section class="feature stacked">
       <div>
         <h2>Export to Fabric</h2>
-        <p>Publishes a model's Report as a Fabric app. People open it in the browser after signing in to Fabric, and use its tiles and slicers there with nothing to install. The app doesn't copy the model: it reads it from the lakehouse.</p>
-        <p>You pick what the app runs on, in a small window under the button. Direct Lake is the default. Direct Lake and DirectQuery also create a Power BI semantic model of the same name, or update it, and the app queries that model. Client side runs DuckDB in the browser.</p>
+        <p>Publishes a model's Report as a Fabric app. People open it in the browser after signing in to Fabric, and use its tiles and slicers there with nothing to install.</p>
+        <p>An app made from a Power BI semantic model queries that model as it is. Nothing is asked, and nothing is written to the model.</p>
+        <p>For a model file, you pick what the app runs on, in a small window under the button. Direct Lake is the default. Direct Lake and DirectQuery also create a Power BI semantic model of the same name, or update it, and the app queries that model. Client side runs DuckDB in the browser.</p>
       </div>
     </section>
 

@@ -366,15 +366,16 @@ async function openModelView(file, text = null, { fromOneLake = text == null } =
       // the panel's CSP runs no inline script (DuckDB's HTML plan): its text plan instead.
       profileSet: false,
       htmlPlan: false,
-      // Explore as a Fabric app of its own (src/exportapp.js). The app reads the model from
-      // OneLake at run time, and the tables of the one lakehouse it names: a OneLake file is
-      // read where it is; a semantic model's local copy is written into its lakehouse by the
-      // export, once approved. A model that names no lakehouse or several has no button.
-      exportToFabric: semantic.lakehousesOf(m.bim).length === 1 && (fromOneLake || file.modelWorkspace)
+      // Explore as a Fabric app of its own (src/exportapp.js). A model file in OneLake: the app reads
+      // it where it is, and the tables of the one lakehouse it names, or a semantic model is made of it;
+      // one that names no lakehouse or several has no button. A Power BI semantic model: the app
+      // queries it as it is, whatever it reads, and nothing is asked or written for it.
+      exportToFabric: (fromOneLake ? semantic.lakehousesOf(m.bim).length === 1 : !!file.modelWorkspace)
         ? (state, mode) => engine.exportExplore(fromOneLake
           ? { file: file.name, name: m.view, text: bim, state, mode, workspace: lakehouse.workspace, path: file.path }
-          : { file: file.name, name: m.view, text: bim, state, mode, model: { workspace: file.modelWorkspace, name: m.view } })
+          : { file: file.name, name: m.view, text: bim, state, model: { workspace: file.modelWorkspace, name: file.modelName || m.view } })
         : undefined,
+      exportAsIs: !fromOneLake,
       // Any model, wherever its file is, by its SQL name. On Windows: Excel's provider is Windows only.
       openInExcel: cfg.windows ? () => engine.openInExcel({ workspace: m.schema, model: m.view }) : undefined,
       keepOffline: {

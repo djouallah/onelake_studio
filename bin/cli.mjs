@@ -40,13 +40,14 @@ const USAGE = {
                                         table: SELECT d.col, AGG("measure") FROM semanticmodel.ws.model GROUP BY ALL
   sql -                               the SQL from stdin: no shell quoting to get wrong
     --show-sql                       print the SQL a model query compiles to`,
-  export: `  export <ws> <model>                 Export to Fabric, as Explore's button does it: the model's
-                                        .yaml in its lakehouse (open it in the tree once first).
+  export: `  export <ws> <model>                 Export to Fabric, as Explore's button does it: the app
+                                        queries the semantic model as it is, and nothing is written
+                                        to it (open it in the tree once first). No --mode.
                                         VS Code asks where the local copy goes and for the OK.
                                         The app is one zip, <app>.zip: the model's Report,
                                         site/report.json in the zip, yours to grow
   export <ws> <item> <Files/path>     the same, for a model file (.bim, Ossie .yaml) in Files/
-    --mode client|directquery|directlake  what the app runs on: DuckDB in the browser, or a
+    --mode client|directquery|directlake  a model file's app runs on: DuckDB in the browser, or a
                                         semantic model of that name made from the model (updated
                                         if the workspace has one). Without it, directlake`,
   semanticmodel: `  semanticmodel <ws> <item> <Files/path>  the Power BI semantic model of a model file (.bim,
