@@ -317,8 +317,7 @@ export function mountExplore(root, ctx) {
       const saves = !!ctx.report.save;
       reportView = drawReport(reportPage, spec, { sql: reportSql, echarts: reportEcharts, shown: reportShown, leftWhileRunning,
                                                   cancel: ctx.cancel, columnType, model: ctx.tmsl, css,
-                                                  remove: saves ? removeTile : undefined, move: saves ? moveTile : undefined,
-                                                  resize: saves ? resizeTile : undefined });
+                                                  remove: saves ? removeTile : undefined, layout: saves ? layoutTiles : undefined });
     } catch (e) {
       if (my !== reportSeq || destroyed) return;
       reportView?.destroy();
@@ -352,26 +351,17 @@ export function mountExplore(root, ctx) {
     }
     if (!destroyed) drawReportPage();
   });
-  // A tile's grip: moved on screen already (report.js), so only saved; drawn again only when the
-  // save is refused, as the file is now.
-  const moveTile = (from, to) => inTurn(async () => {
+  // A tile's grip or ◢: laid out on screen already (report.js), so only saved: each tile in its new
+  // order, with its place; an earlier build's `size` goes. Drawn again only when the save is
+  // refused, as the file is now.
+  const layoutTiles = list => inTurn(async () => {
     try {
-      await saveReport(spec => {
-        const tiles = [...spec.tiles];
-        tiles.splice(to, 0, ...tiles.splice(from, 1));
-        return { ...spec, tiles };
-      });
+      await saveReport(spec => ({ ...spec, tiles: list.map(({ from, layout }) => {
+        const { size: _, ...tile } = spec.tiles[from];
+        return { ...tile, layout };
+      }) }));
     } catch (e) {
-      setStatus(`Move: ${e.message}`, 'error');
-      if (!destroyed) drawReportPage();
-    }
-  });
-  // A tile's ◢: resized on screen already (report.js), so only saved, as a move is.
-  const resizeTile = (i, size) => inTurn(async () => {
-    try {
-      await saveReport(spec => ({ ...spec, tiles: spec.tiles.map((t, j) => (j === i ? { ...t, size } : t)) }));
-    } catch (e) {
-      setStatus(`Resize: ${e.message}`, 'error');
+      setStatus(`Layout: ${e.message}`, 'error');
       if (!destroyed) drawReportPage();
     }
   });

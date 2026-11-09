@@ -277,22 +277,24 @@ section.modelOpen #chartBtn { display: none; }
 }
 
 /* The Report (report.js): its tiles in a grid, figures, charts and tables. */
-/* 12 columns; a tile spans what its size says (report.js), all of them on a narrow window. */
-.rp { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); align-items: start; gap: var(--gap); padding: var(--gap) var(--gutter) 1.5rem; }
-.rp-tile { position: relative; background: var(--card); border: 1px solid var(--hairline); border-radius: var(--radius); padding: 0.8rem 1rem; min-width: 0; display: flex; flex-direction: column; gap: 0.5rem; }
-@media (max-width: 700px) { .rp-tile { grid-column: 1 / -1 !important; } }
-.rp-body { min-height: 0; display: flex; flex-direction: column; }
-/* A tile given a height: its content fills it, and scrolls when it is more. */
-.rp-tile.rp-sized .rp-body { flex: 1; }
-.rp-tile.rp-sized .rp-chart { height: auto !important; flex: 1; min-height: 60px; }
-.rp-tile.rp-sized .rp-table, .rp-tile.rp-sized .rp-pivot { max-height: none; flex: 1; min-height: 0; }
-.rp-tile.rp-sized .rp-slicer { flex: 1; min-height: 0; }
-.rp-tile.rp-sized .rp-slicer .ex-values, .rp-tile.rp-sized .slicer-pills { max-height: none; flex: 1; min-height: 0; }
+/* 12 columns and rows of 10px (report.js arrange): a tile is placed by its layout, and its content
+   fills it, scrolling when it is more. A tile keeps a gap below it inside its rows. On a narrow
+   window each tile is full width, one under another, as tall as its rows. */
+.rp { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); grid-auto-rows: 10px; column-gap: var(--gap); row-gap: 0; padding: var(--gap) var(--gutter) 1.5rem; }
+.rp-tile { position: relative; background: var(--card); border: 1px solid var(--hairline); border-radius: var(--radius); padding: 0.8rem 1rem; min-width: 0; min-height: 0; margin-bottom: var(--gap); display: flex; flex-direction: column; gap: 0.5rem; overflow: hidden; }
+@media (max-width: 700px) {
+  .rp { grid-auto-rows: auto; row-gap: var(--gap); }
+  .rp-tile { grid-column: 1 / -1 !important; grid-row: auto !important; height: var(--rp-h); margin-bottom: 0; }
+}
+.rp-body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.rp-body .rp-chart { height: auto; flex: 1; min-height: 60px; }
+.rp-body .rp-table, .rp-body .rp-pivot { max-height: none; flex: 1; min-height: 0; }
+.rp-body .rp-slicer { flex: 1; min-height: 0; }
+.rp-body .rp-slicer .ex-values, .rp-body .slicer-pills { max-height: none; flex: 1; min-height: 0; }
 /* Its ◢: dragged, or the arrow keys. */
 .rp-resize { position: absolute; right: 2px; bottom: 2px; background: none; border: none; color: var(--faint); font-size: 0.7rem; line-height: 1; padding: 0.15rem; cursor: nwse-resize; border-radius: var(--radius-sm); opacity: 0.6; touch-action: none; }
 .rp-tile:hover .rp-resize, .rp-resize:focus-visible { opacity: 1; }
 .rp-resize:hover, .rp-resize:focus-visible { color: var(--text); background: var(--hover-soft); }
-.rp-tile.rp-resizing { outline: 2px dashed var(--accent); outline-offset: 2px; user-select: none; }
 .rp-tile h2 { margin: 0; font-size: 0.85rem; font-weight: 600; color: var(--muted); }
 .rp-head { display: flex; align-items: center; gap: 0.5rem; }
 .rp-head h2 { flex: 1; min-width: 0; }
@@ -301,11 +303,8 @@ section.modelOpen #chartBtn { display: none; }
 /* A tile's grip: dragged onto another tile, or moved by the arrow keys. */
 .rp-grip { background: none; border: none; color: var(--faint); font: inherit; cursor: grab; padding: 0.1rem 0.3rem; border-radius: var(--radius); }
 .rp-grip:hover, .rp-grip:focus-visible { color: var(--text); background: var(--hover-soft); }
-.rp-tile.rp-dragging { opacity: 0.5; }
-.rp-tile.rp-drop-before { box-shadow: inset 3px 0 0 var(--accent); }
-.rp-tile.rp-drop-after { box-shadow: inset -3px 0 0 var(--accent); }
-.rp-tile.wide.rp-drop-before { box-shadow: inset 0 3px 0 var(--accent); }
-.rp-tile.wide.rp-drop-after { box-shadow: inset 0 -3px 0 var(--accent); }
+.rp-tile.rp-dragging, .rp-tile.rp-resizing { outline: 2px dashed var(--accent); outline-offset: -2px; user-select: none; z-index: 1; }
+.rp-grip { touch-action: none; }
 /* A slicer: its column's values to tick. */
 .rp-slicer { display: flex; flex-direction: column; gap: 0.4rem; font-size: 0.82rem; }
 .rp-slicer-bar { display: flex; gap: 0.4rem; }

@@ -195,3 +195,30 @@ test("Visual's fields leave out a hidden table, its measures too, and hidden col
   assert.ok(!byId.has("stg_log.path") && !byId.has("Files") && !byId.has("trips.secret"));
   assert.ok(byId.has("trips.fare") && byId.has("Total Fare"));
 });
+
+// The Report's grid: 12 columns, rows of 10px.
+const { arrange, COLUMNS, MIN_ROWS } = await import("../../app/explore/report.js");
+const at = list => list.map(({ x, y, w, h }) => [x, y, w, h]);
+
+test("tiles with no place go in the first place they fit", () => {
+  assert.deepEqual(at(arrange([{ w: 3, h: 20 }, { w: 6, h: 30 }, { w: 6, h: 10 }, { w: 12, h: 8 }])),
+    [[0, 0, 3, 20], [3, 0, 6, 30], [0, 30, 6, 10], [0, 40, 12, 8]], "six wide fits only under the chart");
+  assert.equal(COLUMNS, 12);
+  assert.deepEqual(at(arrange([{ w: 40, h: 1 }])), [[0, 0, 12, MIN_ROWS]], "no wider than the grid, no shorter than the least");
+});
+
+test("a tile floats up into the room under a short one beside a tall one", () => {
+  // A short slicer, a tall chart beside it, and a tile below them both: it rises under the slicer.
+  const placed = arrange([{ x: 0, y: 0, w: 3, h: 10 }, { x: 3, y: 0, w: 9, h: 40 }, { x: 0, y: 40, w: 3, h: 10 }]);
+  assert.deepEqual(at(placed)[2], [0, 10, 3, 10]);
+});
+
+test("a tile put over others pushes them down; the rest float up", () => {
+  const tiles = [{ x: 0, y: 0, w: 6, h: 10 }, { x: 6, y: 0, w: 6, h: 10 }, { x: 0, y: 10, w: 12, h: 10 }];
+  // The wide one put at the top: the two pushed under it.
+  assert.deepEqual(at(arrange(tiles.map((t, i) => (i === 2 ? { ...t, y: 0 } : t)), 2)),
+    [[0, 10, 6, 10], [6, 10, 6, 10], [0, 0, 12, 10]]);
+  // The first put in the second's place: the second pushed under it, the wide one under them both.
+  assert.deepEqual(at(arrange(tiles.map((t, i) => (i === 0 ? { ...t, x: 6 } : t)), 0)),
+    [[6, 0, 6, 10], [6, 10, 6, 10], [0, 20, 12, 10]]);
+});

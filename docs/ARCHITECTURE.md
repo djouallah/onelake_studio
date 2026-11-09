@@ -585,8 +585,8 @@ A semantic model opens as **Explore** ([`app/explore/`](../app/explore/)), on th
     workspace and name); else none: a Report starts empty. The first export writes Studio's file, or no tiles, into
     the zip, and the file goes.
   - **Add to report, ✕ and the grip:** Visual's **Add to report** puts the shelves on screen after the tiles, as a
-    `pivot` tile (a slicer too); a tile's ✕ takes it out, and its grip ⠿ moves it (dragged onto another tile, or by the arrow keys), drawn there at once with nothing run
-    again. All write where the tiles are kept, one save after another (`reportSave` in
+    `pivot` tile (a slicer too); a tile's ✕ takes it out, and its grip ⠿ drags it anywhere on the grid and its ◢ drags its size (or the arrow keys, on
+    either), drawn there at once with nothing run again. All write where the tiles are kept, one save after another (`reportSave` in
     [`src/exportflow.js`](../src/exportflow.js)), over the tiles they were drawn from: a report that changed since (an
     edit to its file) is refused and drawn again. The Fabric app's Report only reads, so it has neither.
   - **Drawn again** when the zip changes, while the tab is on screen: a person or an agent edits the report and sees it.
@@ -594,10 +594,11 @@ A semantic model opens as **Explore** ([`app/explore/`](../app/explore/)), on th
     `formats` a column's format string, `echarts` an ECharts option merged over the tile's own. A `pivot` tile is
     `{ title, kind: 'pivot', pivot }`, `pivot` the shelves as Visual keeps them; its SQL is Visual's (`pivotQuery`), and it
     is drawn by Visual's own code (`pivotView` in [`explore.js`](../app/explore/explore.js)), so it keeps every mark. A
-    slicer is a `pivot` tile whose mark is `slicer` (Visual, above). The tiles are drawn in the order they are listed,
-    on 12 columns: `size` (`{ w, h }`, columns and pixels) is what a tile's ◢ was dragged to (or its arrow keys), saved
-    as a move is, with nothing run again; without one a tile is half the width (figures and tables all of it) and as
-    tall as it needs.
+    slicer is a `pivot` tile whose mark is `slicer` (Visual, above). The tiles are laid out on 12 columns and rows of 10px:
+    `layout` (`{ x, y, w, h }`) is where a tile's grip and ◢ put it. `arrange` places them: the tile moved stays where
+    it is put, every other tile floats up as far as it can and down past what it would overlap, and then all float up
+    once more, so a gap under a short tile is filled. A tile with no layout goes in the first place it fits, as big as
+    its kind is (a slicer 3 columns, a chart 6, figures and tables 12). The tiles are kept top to bottom.
   - **Cross filtering:** a click on a bar, a line's point or a table's row picks its first column's value, and every other
     tile runs again with it as a `WHERE` on the model column that first column is (`withFilters`: before `GROUP BY`, ANDed
     to a `WHERE` the tile has, `IS NULL` for a blank, the literal typed by the model's column). A pivot tile picks its
