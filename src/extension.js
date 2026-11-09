@@ -736,18 +736,17 @@ async function activateInner(context) {
       },
     }, { supportsMultipleEditorsPerDocument: false }));
   }
-  // The title bar's Open in OneLake Studio, on a .bim or an Ossie .yaml open as text: by the text in the
-  // editor (app/semantic.js's isOssie: a top-level version and datasets), so a dbt schema.yml has none.
-  const isModelText = d => /\.bim$/i.test(d.fileName)
-    || (/\.ya?ml$/i.test(d.fileName) && /^datasets:/m.test(d.getText()) && /^version:/m.test(d.getText()));
-  const markActiveModel = () => {
-    const editor = vscode.window.activeTextEditor;
-    vscode.commands.executeCommand('setContext', 'onelakeStudio.activeIsModel', !!editor && isModelText(editor.document));
-  };
-  if (vscode.window.onDidChangeActiveTextEditor) {
-    markActiveModel();
-    context.subscriptions.push(vscode.window.onDidChangeActiveTextEditor(markActiveModel),
-      vscode.workspace.onDidSaveTextDocument(markActiveModel));
+  // The title bar's Open in OneLake Studio, on a .bim or an Ossie .yaml open as text: by the text of
+  // every open document (app/semantic.js's isOssie: a top-level version and datasets), so a dbt
+  // schema.yml has none, and a file restored with the window has it as soon as this starts.
+  const isModelText = d => d.uri.scheme === 'file' && (/\.bim$/i.test(d.fileName)
+    || (/\.ya?ml$/i.test(d.fileName) && /^datasets:/m.test(d.getText()) && /^version:/m.test(d.getText())));
+  const markModels = () => vscode.commands.executeCommand('setContext', 'onelakeStudio.modelPaths',
+    vscode.workspace.textDocuments.filter(isModelText).map(d => d.uri.path));
+  if (vscode.workspace.onDidOpenTextDocument) {
+    markModels();
+    context.subscriptions.push(vscode.workspace.onDidOpenTextDocument(markModels),
+      vscode.workspace.onDidCloseTextDocument(markModels), vscode.workspace.onDidSaveTextDocument(markModels));
   }
 
   const explorer = vscode.window.createTreeView('onelakeStudio.explorer', {

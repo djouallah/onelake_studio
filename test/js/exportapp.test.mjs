@@ -291,7 +291,10 @@ test("a semantic model as it is: the app says it runs on it, and holds no DuckDB
     assert.ok(!files.has("model.yaml") && !files.has("model.bim"), "a semantic model's app names the model, and holds no copy");
     const duck = await appFiles({ plan: { ...planExport(OSSIE, "sales.yaml", "sales", mods(bimOf(URL_)), WHERE), engine: "duckdb" },
                                   state: null, model, modelText: OSSIE, modelFile: "sales.yaml", ...dirs });
-    assert.ok(duck.has("site/storage/data.js") && !duck.has("site/engine.json"));
+    assert.ok(duck.has("site/storage/data.js"));
+    // engine.json always: the hosting answers a file a site lacks with its index.html.
+    assert.deepEqual(JSON.parse(duck.get("site/engine.json")), { engine: "duckdb" });
+    assert.equal(engineOf(new Map(), {}), "duckdb", "an older client-side site, with no engine.json");
     for (const p of ["site/storage/modeldata.js", "site/storage/modelrows.js"]) assert.ok(!duck.has(p), p);
     // Client side the app runs on its own model: the file's model.yaml, and the site's model.json made from it.
     assert.equal(duck.get("model.yaml").toString(), OSSIE);

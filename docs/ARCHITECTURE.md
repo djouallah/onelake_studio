@@ -672,9 +672,9 @@ there.
 **The app runs on the model as exported**, never on the lakehouse's file as it is now:
 - **Client side**, the file holds its model, `model.yaml` (`model.bim` for a .bim), and each publish makes the site's
   `model.json` from it, which the page reads. The function never reads a model: the export gives it the tables it may
-  sign for (its `TABLES` secret). `model.yaml` is one of the local changes an export asks about, so an agent's edit to it
-  is published by *Publish As Is*, and *Overwrite* rewrites it from Explore's model. A change to the lakehouse's file
-  reaches the app when it is exported again.
+  sign for (its `TABLES` secret). An export from Explore rewrites `model.yaml` from Explore's model; an agent's edit to
+  it is published by opening the `.fabricapp` and exporting there. A change to the lakehouse's file reaches the app
+  when it is exported again.
 - **On a semantic model**, the file holds no model of its own: `export.json` names the semantic model
   (`semanticModel: { workspace, id, name }`), and the site's `model.json` is its local copy, which the page writes its
   DAX from.
@@ -713,11 +713,13 @@ and the command line's `export` takes no `--mode`.
   the owner's rights. On a semantic model it is the other way round (below).
 - **No silent takeover:** a re-export updates the item the last export created (its id is kept in the
   local copy, as soon as the item exists). If an app of that name exists and no export created it, the export asks.
-- **Local edits are never overwritten unasked.** The zip's `export.json` keeps a hash of each of its entries as last
-  published, but for the report, which no export rewrites. If any changed, the export asks: *Overwrite Local Changes*
-  (the report kept), *Publish As Is*, or cancel. As Is publishes the zip's site, which runs on what the zip was made for, so it is offered only when
-  the export runs on the same: Client side, or a semantic model. Otherwise the question
-  says why, and only *Overwrite Local Changes* changes what the app runs on.
+- **Saving over the file rewrites it**, from this Explore, its report kept: nothing is asked about what changed in it.
+  An edit made in the file (by a person or an agent) is published by opening the `.fabricapp` and exporting there,
+  which publishes it as it is.
+- **`site/engine.json` is in every site**, `{ engine: 'duckdb' }` or `{ engine: 'semanticModel', name }`: the hosting
+  answers a file a site lacks with its `index.html`, so the page reads its JSON files as missing when they aren't JSON.
+- **A name in the recycle bin:** a deleted app keeps its name there, and Fabric refuses a new app of that name. The
+  export says so: delete it there for good, or restore it, and export again.
 - **A newer deploy is never overwritten unasked.** `export.json` keeps the app's last deploy time, by
   Fabric's clock. If the app was deployed again since, the export asks.
 - **A folder the export did not write** is refused.
@@ -737,7 +739,7 @@ and the command line's `export` takes no `--mode`.
   draws the rows. It takes only a SELECT over the model. Its Show plan has no plan tree: its SQL tab is the DAX, and its
   profile the query's one run.
 - **The page's model is the semantic model's local copy:** `site/model.json`, written by the export, and again by a
-  *Publish As Is*: the definition Fabric gave when it was opened (or Refreshed), which the page writes its DAX from. A
+  publish of the file as it is: the definition Fabric gave when it was opened (or Refreshed), which the page writes its DAX from. A
   change to the semantic model reaches the app when it is exported again.
 - **Rows are cut on the semantic model** ([`storage/modelrows.js`](../fabric_app/site/storage/modelrows.js)): a
   preview's rows, and a LIMIT and OFFSET, are a `TOPN` in the DAX, and a count is `COUNTROWS`, so neither waits for

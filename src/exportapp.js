@@ -15,10 +15,11 @@
 //                    tab's tiles (none at first), written once, then the zip's (Studio's Add to
 //                    report writes it too), and kept by every export
 //   site/explore.json  the shelves the first view shows
-//   site/engine.json   on a semantic model only, { engine: 'semanticModel' }: the page runs
-//                    no DuckDB (storage/modeldata.js: it queries the semantic model), and site/ holds
-//                    neither DuckDB, its extensions, Arrow nor the data source that reads the tables
-//                    in the browser
+//   site/engine.json   what the page runs on, { engine: 'duckdb' } or { engine: 'semanticModel', name }:
+//                    on a semantic model the page runs no DuckDB (storage/modeldata.js: it queries the
+//                    semantic model), and site/ holds neither DuckDB, its extensions, Arrow nor the data
+//                    source that reads the tables in the browser. Always written: the hosting answers a
+//                    file a site lacks with its index.html
 //   site/model.json    the model the page runs on: client side, model.yaml as JSON; on a semantic model,
 //                    its local copy, which the page writes its DAX from
 //   rayfin/          fabric_app/rayfin: what the app is (rayfin.yml) and its function's source
@@ -26,7 +27,7 @@
 //                    builds it)
 //   model.yaml       client side only: the model the app runs on (model.bim for a .bim), the model as
 //                    exported. Each publish makes site/model.json from it, so an edit here (an
-//                    agent's) is published by Publish As Is. An app on a semantic model has none:
+//                    agent's) is published by opening the file and exporting it. A semantic model's app has none:
 //                    its record names the semantic model.
 //   AGENTS.md        how the app is made, and how to grow its report
 //   export.json      what was published: the app item, its redirects, the entries' hashes
@@ -254,7 +255,7 @@ ${onModel(plan) ? `- Semantic model: \`${plan.semanticModel.name}\`, as it is in
   Semantic Model Execute Queries REST API setting on. The page runs no DuckDB and reads no table (\`site/engine.json\`,
   \`site/storage/modeldata.js\`). The tables below and the layers' DuckDB parts are the client-side export's.
 ` : `- Model: \`model.yaml\` in this file (\`model.bim\` for a .bim), exported from \`${plan.modelPath}\`: the app
-  runs on it, as \`site/model.json\`, made from it at each publish. An edit to it is published by *Publish As Is*;
+  runs on it, as \`site/model.json\`, made from it at each publish. An edit to it is published by opening this file in OneLake Studio and exporting it;
   a change to the lakehouse's file reaches the app when it is exported again.
 - Lakehouse: workspace \`${plan.workspace}\`, item \`${plan.lakehouse}\` — its Iceberg catalog is the
   function's \`CATALOG_URL\`: ${plan.catalogUrl}
@@ -266,8 +267,7 @@ ${onModel(plan) ? `- Semantic model: \`${plan.semanticModel.name}\`, as it is in
 
 The app is its Report, \`site/report.json\`, and nothing else. The first export wrote
 it with the tiles built in OneLake Studio's Report tab (none, if it had none), and no export writes it
-again: edit it freely, then export again to publish it (it is not one of the local changes an export asks
-about). Delete it and the next export writes a new one. OneLake Studio's Report tab, after Model and Visual,
+again: edit it freely, then export again to publish it. Delete it and the next export writes a new one. OneLake Studio's Report tab, after Model and Visual,
 draws this same file from this zip, and draws it again when the zip changes; its Visual's **Add to report**
 and a tile's ✕ write it here.
 
@@ -434,10 +434,9 @@ async function appFiles({ plan, state, model, modelText = null, modelFile = 'mod
   files.set('site/explore.json', text(JSON.stringify(state || null)));
   setModel(files, model);
   if (!sql && modelText != null) setModelCopy(files, modelFile, modelText);
-  if (sql) {
-    // The semantic model's name: what the page says when it refuses the person signed in.
-    files.set('site/engine.json', text(JSON.stringify({ engine: 'semanticModel', ...(plan.semanticModel ? { name: plan.semanticModel.name } : {}) })));
-  }
+  // On a semantic model, its name: what the page says when it refuses the person signed in.
+  files.set('site/engine.json', text(JSON.stringify(sql
+    ? { engine: 'semanticModel', ...(plan.semanticModel ? { name: plan.semanticModel.name } : {}) } : { engine: 'duckdb' })));
   files.set('AGENTS.md', text(agentsMd(plan)));
   return files;
 }
@@ -449,9 +448,14 @@ const onModel = plan => plan.engine === 'semanticModel';
 // local copy, which the page writes its DAX from (storage/modeldata.js). Written at each export, As Is too.
 const setModel = (files, model) => files.set('site/model.json', Buffer.from(JSON.stringify(model), 'utf8'));
 
-// What a zip's site runs on: its marker's engine ('duckdb', 'directLake', 'directQuery'), or
-// 'semanticModel' when the marker doesn't say and the site has an engine.json.
-const engineOf = (files, marker) => (marker && marker.engine) || (files.has('site/engine.json') ? 'semanticModel' : 'duckdb');
+// What a zip's site runs on: its marker's engine ('duckdb', 'semanticModel', or an older 'directLake',
+// 'directQuery'), else its engine.json's; a site with none (an older client-side one) is DuckDB.
+function engineOf(files, marker) {
+  if (marker && marker.engine) return marker.engine;
+  const said = files.get('site/engine.json');
+  if (!said) return 'duckdb';
+  try { return JSON.parse(said.toString('utf8')).engine || 'semanticModel'; } catch { return 'semanticModel'; }
+}
 
 // Client side: what site/ leaves out, the semantic model's data source.
 const MODEL_ONLY = ['storage/modeldata.js', 'storage/modelrows.js'];

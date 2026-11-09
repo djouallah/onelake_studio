@@ -139,7 +139,7 @@ test("an app an earlier export saved as .zip: offered as .fabricapp, and renamed
   kept.set("exportZip:0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0/11111111-2222-3333-4444-555555555555/sales-model-explore", old);
   const e = await exportExplore(REQUEST).then(() => null, x => x);
   assert.equal(asked[0].saveFile.defaultPath, now);
-  assert.equal(e.message, "Not exported: the local copy has changes.", "its questions come as before");
+  assert.match(e.message, /stop: Fabric is not asked/, "on to Fabric");
   assert.equal(existsSync(old), false);
   assert.ok(await readApp(now), "the same app, by its new name");
   await rm(dir, { recursive: true, force: true });
@@ -174,34 +174,17 @@ test("a semantic model gone from its workspace is said, before anything is asked
   await b.done();
 });
 
-test("Publish As Is only for a zip made for the same kind of site: DuckDB in the browser, or a semantic model", async () => {
-  const onModel = { ...ON_MODEL, model: { workspace: "aemo", name: "NEM Sales" } };
-  const FILE = "power bi/nem.Lakehouse/Files/semantic_model/sales.yaml";
-  const cases = [
-    // [what the zip was made for, the site it has, this export, the zip's model, As Is offered, why not]
-    ["directLake", { "site/engine.json": '{"engine":"semanticModel"}' }, REQUEST, FILE, false, /the zip was made for Direct Lake, and this export is Client side, so only Overwrite changes what the app runs on\./],
-    [undefined, { "site/engine.json": '{"engine":"semanticModel"}' }, REQUEST, FILE, false, /the zip was made for a semantic model, and this export is Client side/],
-    ["duckdb", {}, onModel, "aemo/NEM Sales", false, /the zip was made for Client side, and this export is a semantic model/],
-    ["duckdb", {}, REQUEST, FILE, true, null],
-    ["directQuery", { "site/engine.json": '{"engine":"semanticModel"}' }, onModel, "aemo/NEM Sales", true, null],
-  ];
-  for (const [engine, site, request, model, offered, why] of cases) {
-    const open = await mkdtemp(join(tmpdir(), "exportflow-open-"));
-    const files = new Map([["site/app.js", Buffer.from("// app")], ...Object.entries(site).map(([p, body]) => [p, Buffer.from(body)])]);
-    await writeApp(join(open, "sales-model-explore.zip"), files, { model, engine, files: { "site/app.js": "edited since" } });
-    const { exportExplore, asked, done } = await setup({ answers: [join(open, "sales-model-explore.zip"), undefined],
-                                                         models: { "NEM Sales": { id: "m1", displayName: "NEM Sales" } } });
-    const e = await exportExplore(request).then(() => null, x => x);
-    assert.equal(e.declined, true);
-    assert.equal(e.message, "Not exported: the local copy has changes.");
-    const [o, ...buttons] = asked[1].rest;
-    assert.match(asked[1].message, /has changed since it was last published/);
-    assert.deepEqual(buttons, offered ? ["Overwrite Local Changes", "Publish As Is"] : ["Overwrite Local Changes"], `${engine} -> ${request.model ? "model" : "file"}`);
-    if (why) assert.match(o.detail, why);
-    else assert.match(o.detail, /Publish As Is: publish the zip's site/);
-    await rm(open, { recursive: true, force: true });
-    await done();
-  }
+test("saving over an app's file rewrites it, with no question about what changed in it", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "exportflow-over-"));
+  const file = join(dir, "sales-model-explore.fabricapp");
+  await writeApp(file, new Map([["site/app.js", Buffer.from("// app")]]),
+    { model: "power bi/nem.Lakehouse/Files/semantic_model/sales.yaml", engine: "duckdb", files: { "site/app.js": "edited since" } });
+  const { exportExplore, asked, done } = await setup({ answers: [file] });
+  const e = await exportExplore(REQUEST).then(() => null, x => x);
+  assert.match(e.message, /stop: Fabric is not asked/, "on to Fabric");
+  assert.deepEqual(asked.map(a => (a.saveFile ? "save" : a.message)), ["save"], "the Save dialog alone");
+  await rm(dir, { recursive: true, force: true });
+  await done();
 });
 
 test("opening an app's file: its report is this file from now on, and a client-side app's own model comes back", async () => {

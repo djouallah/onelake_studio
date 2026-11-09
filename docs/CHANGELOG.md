@@ -8,8 +8,13 @@
   An app's file opens on its Report page.
 - **The exported app is one `.fabricapp` file**, a zip as before. One saved as `.zip` is renamed the next time it is
   exported. A client-side app holds its model, `model.yaml`, and runs on it: a change to the lakehouse's file reaches
-  the app when it is exported again, and an edit to `model.yaml` is published by *Publish As Is*. An app on a semantic
-  model names the model and holds no copy.
+  the app when it is exported again, and an edit to `model.yaml` is published by opening the file and exporting there.
+  An app on a semantic model names the model and holds no copy.
+- **Saving over an app's file asks nothing more.** The question about what changed in it since it was last published is
+  gone: an export from Explore rewrites the file (its report kept) and publishes it.
+- **A client-side app no longer fails at start with "Unexpected token '<'"**: every site has its `engine.json` now, and
+  the page takes a file the site lacks as missing.
+- **An app name held by Fabric's recycle bin is said so**: delete the old app there, or restore it, and export again.
 - **Export to Fabric asks only where to save the app**: a Save dialog named for it, opened where it was saved last,
   else in Documents. The confirmation that listed the workspace, the model and what the app runs on is gone, with
   its Choose Another Folder….

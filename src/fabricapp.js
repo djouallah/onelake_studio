@@ -95,11 +95,11 @@ function createFabricApp({ getToken, apiBase = FABRIC_API, log = () => {},
         body: JSON.stringify({ type: ITEM_TYPE, displayName: name }), what: `Creating the app ${name}`,
       });
     } catch (e) {
-      // A name Fabric refuses although no app of the workspace has it (just listed): an app deleted a
-      // short while ago keeps its name for a time, and its id is gone too.
+      // A name Fabric refuses although no app of the workspace has it (just listed): a deleted app, in
+      // the workspace's recycle bin, keeps its name.
       if (e.status === 409) {
-        throw Object.assign(new Error(`Fabric still holds the name ${name} for an app deleted a short while ago, and lists no app of that ` +
-          'name in this workspace: export again in a few minutes'), { status: 409 });
+        throw Object.assign(new Error(`An app named ${name} is in this workspace's recycle bin: delete it there for good (or restore it), ` +
+          'and export again'), { status: 409 });
       }
       if (e.status && e.status < 500 && e.status !== 429) throw e;
       const late = (await listItems(ws)).find(byName(name));

@@ -183,13 +183,13 @@ test("a 202 create is followed; a 5xx create is looked for by name, never sent t
   assert.equal(flaky.calls.filter(c => c.method === "POST" && c.url.endsWith("/items")).length, 1);
 });
 
-test("a name Fabric refuses that no app of the workspace has: an app deleted a short while ago, and the export is tried again later", async () => {
+test("a name Fabric refuses that no app of the workspace has: a deleted app in the recycle bin, said so", async () => {
   const held = appWith(happy([
     ["POST", `/workspaces/${WS}/items`, () => res(409, { errorCode: "ItemDisplayNameAlreadyInUse",
       message: "An item with the name sales-model of type AppBackend already exists in the workspace. Please delete the item and retry" })],
   ]));
   await assert.rejects(publish(held.app, { itemId: "deleted-since" }),
-    /Fabric still holds the name sales-model for an app deleted a short while ago[\s\S]*export again in a few minutes/);
+    /An app named sales-model is in this workspace's recycle bin: delete it there for good \(or restore it\), and export again/);
   assert.equal(held.calls.filter(c => c.method === "POST" && c.url.endsWith("/items")).length, 1, "asked once");
 });
 

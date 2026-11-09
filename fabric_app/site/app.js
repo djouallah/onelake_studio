@@ -57,11 +57,17 @@ const resultOf = table => ({
   numRows: table.numRows,
 });
 
+// One of the site's JSON files, or `missing` when it has none: the hosting answers a file a site
+// lacks with its index.html (200), which is not JSON.
+const siteJson = (name, missing) => fetch(new URL(`./${name}${v}`, import.meta.url))
+  .then(r => (r.ok ? r.text() : null), () => null)
+  .then(text => { try { return text == null ? missing : JSON.parse(text); } catch { return missing; } });
+
 // The Report's tiles (explore/report.js), as the export wrote them: report.json.
 const report = { load: async () => {
-  const r = await fetch(new URL("./report.json" + v, import.meta.url));
-  if (!r.ok) throw new Error(`report.json: ${r.status}`);
-  return { spec: await r.json(), stamp: null };
+  const spec = await siteJson("report.json", null);
+  if (!spec) throw new Error("the site has no report.json: export the app again");
+  return { spec, stamp: null };
 } };
 
 function download(name, text) {
@@ -74,8 +80,8 @@ function download(name, text) {
 
 export async function start() {
   try {
-    const first = await fetch(new URL("./explore.json" + v, import.meta.url)).then(r => (r.ok ? r.json() : null), () => null);
-    const { engine, name: modelName } = await fetch(new URL("./engine.json" + v, import.meta.url)).then(r => (r.ok ? r.json() : {}), () => ({}));
+    const first = await siteJson("explore.json", null);
+    const { engine, name: modelName } = (await siteJson("engine.json", {})) || {};
     if (engine === "semanticModel") return await startModel(first, modelName);
     const { createDataSource } = await import("./storage/data.js");
     const data = createDataSource({

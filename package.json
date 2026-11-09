@@ -316,7 +316,7 @@
       "editor/title": [
         {
           "command": "onelakeStudio.openPath",
-          "when": "resourceScheme == file && resourceExtname =~ /^\\.(ya?ml|bim)$/i && onelakeStudio.activeIsModel",
+          "when": "resourceScheme == file && resourcePath in onelakeStudio.modelPaths",
           "group": "navigation"
         }
       ],

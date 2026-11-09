@@ -12,7 +12,7 @@ const fsp = require('node:fs/promises');
 const { createHash } = require('node:crypto');
 const { PINS } = require('./vendored');
 const { planExport, planOnModel, modelDoc, appFiles, setModel, setModelCopy, modelCopyOf, tablesOf, engineOf, readApp, writeApp, vendorFiles, vendorSize, buildDist,
-        fingerprint, localChanges, zip, rayfinYml, REPORT, APP_EXT } = require('./exportapp');
+        fingerprint, zip, rayfinYml, REPORT, APP_EXT } = require('./exportapp');
 const { createFabricApp, tenantOf } = require('./fabricapp');
 const { createFabricModel } = require('./fabricmodel');
 const { semanticTmsl, definitionOf, MODES } = require('./pbimodel');
@@ -20,8 +20,6 @@ const { semanticTmsl, definitionOf, MODES } = require('./pbimodel');
 // A semantic model's storage mode, as Create Semantic Model's dialog and the command line's --mode
 // name it. Neither says: Direct Lake.
 const MODE_OF = { directquery: 'directQuery', directlake: 'directLake' };
-// What a zip's site runs on, as the questions say it (exportapp.js engineOf).
-const RUNS_ON = { duckdb: 'Client side', directLake: 'Direct Lake', directQuery: 'DirectQuery', semanticModel: 'a semantic model' };
 // An earlier export's local copy was a folder, <app>/, with this marker in it.
 const OLD_MARKER = '.onelake-studio-export.json';
 const oldMarker = dir => fsp.readFile(join(dir, OLD_MARKER), 'utf8')
@@ -173,24 +171,9 @@ function createExport({ connectivity, modules, appToken, powerBiToken = appToken
         if (pick !== 'Replace It') throw declined(`Not exported: ${plan.name} is another model's app.`);
       }
 
-      // Edited since it was last published (by you, or an agent)? Asked, never overwritten. As Is
-      // publishes the zip's site, which runs on what it was made for, DuckDB in the browser or a
-      // semantic model: not offered for an export to the other. Its report is never at stake.
-      let asIs = !!appFile;
-      const changed = local && !appFile ? localChanges(local.files, before) : [];
-      if (changed.length) {
-        const shown = changed.slice(0, 5).join('\n') + (changed.length > 5 ? `\n…and ${changed.length - 5} more` : '');
-        const made = engineOf(local.files, before);
-        const sameSite = (made === 'duckdb') === (plan.engine === 'duckdb');
-        const asIsSays = sameSite ? "Publish As Is: publish the zip's site with your changes, and leave it alone."
-          : `Publish As Is is not offered: the zip was made for ${RUNS_ON[made] || made}, and this export is ${RUNS_ON[plan.engine]}, so only Overwrite changes what the app runs on.`;
-        const pick = await ui.warn(
-          `The local copy of ${plan.name} has changed since it was last published.`,
-          { modal: true, detail: `${outZip}\n\n${shown}\n\nOverwrite: rewrite it from this Explore, its report kept, and publish that. ${asIsSays} The function always comes from this version of the extension.` },
-          'Overwrite Local Changes', ...(sameSite ? ['Publish As Is'] : []));
-        if (!pick) throw declined('Not exported: the local copy has changes.');
-        asIs = sameSite && pick === 'Publish As Is';
-      }
+      // Saved over, the file is rewritten from this Explore, its report kept: saving is what changes it.
+      // An app's file opened from disk (appFile) is published as it is, its own edits included.
+      const asIs = !!appFile;
 
       // Deployed again since this zip published it (another machine, rayfin up)?
       // Asked before it is replaced.
