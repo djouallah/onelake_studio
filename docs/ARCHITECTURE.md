@@ -545,8 +545,15 @@ A semantic model opens as **Explore** ([`app/explore/`](../app/explore/)), on th
     [`src/exportapp.js`](../src/exportapp.js)): the first four visible measures as figures, the first by the date table's
     year, by a dimension's text column, and a top 10 of another. The first export writes those into the zip.
   - **Drawn again** when the zip changes, while the tab is on screen: a person or an agent edits the report and sees it.
-  - A tile is `{ title, kind, sql, formats?, echarts?, wide? }`: `kind` is `kpi`, `bar`, `line` or `table`, `formats` a
-    column's format string, `echarts` an ECharts option merged over the tile's own.
+  - A tile is `{ title, kind, sql, formats?, echarts?, wide?, crossFilter? }`: `kind` is `kpi`, `bar`, `line` or `table`,
+    `formats` a column's format string, `echarts` an ECharts option merged over the tile's own.
+  - **Cross filtering:** a click on a bar, a line's point or a table's row picks its first column's value, and every other
+    tile runs again with it as a `WHERE` on the model column that first column is (`withFilters`: before `GROUP BY`, ANDed
+    to a `WHERE` the tile has, `IS NULL` for a blank, the literal typed by the model's column). The tile clicked stays
+    whole, its pick bright and the rest dim. The same click again, or the pick's ✕ in the bar above the tiles, clears it;
+    picks in several tiles all apply. A figures tile takes no clicks. `crossFilter` names the model column when the first
+    column is not one, or is `false` for a tile that takes none. The tiles still run one at a time, and a pick stops the
+    tile running when it changes it.
 - **Model:** its tables as a star, dimensions in the middle and facts around them, with its
   relationships. Click a table for its columns, measures (with their DAX) and relationships.
 - **Pivot:** drag columns onto Rows, Columns and Filters and measures onto Values, drawn as a pivot or

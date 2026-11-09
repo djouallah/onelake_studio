@@ -280,6 +280,14 @@ export function mountExplore(root, ctx) {
   const reportShown = () => (page === 'report' ? Promise.resolve() : new Promise(r => reportWaiters.push(r)));
   const leftWhileRunning = () => { const was = reportLeft; reportLeft = false; return was; };
   const reportEcharts = async () => { const ec = await ctx.echarts(); registerChartTheme(ec, css); return ec; };
+  // A model column's dataType, for a pick's literal (report.js): by its table, or the one column
+  // of its name when there is no table.
+  const columnType = (table, column) => {
+    const is = (a, b) => String(a).toLowerCase() === String(b).toLowerCase();
+    const found = (ctx.tmsl?.tables ?? []).filter(t => table == null || is(t.name, table))
+      .flatMap(t => (t.columns ?? []).filter(c => is(c.name, column)));
+    return found.length === 1 ? found[0].dataType : undefined;
+  };
   async function drawReportPage() {
     const my = ++reportSeq;
     if (!reportView) reportPage.replaceChildren(el('div', { class: 'ex-empty' }, 'Reading the report…'));
@@ -288,7 +296,8 @@ export function mountExplore(root, ctx) {
       if (my !== reportSeq || destroyed) return;
       reportStamp = stamp ?? null;
       reportView?.destroy();
-      reportView = drawReport(reportPage, spec, { sql: reportSql, echarts: reportEcharts, shown: reportShown, leftWhileRunning });
+      reportView = drawReport(reportPage, spec, { sql: reportSql, echarts: reportEcharts, shown: reportShown, leftWhileRunning,
+                                                  cancel: ctx.cancel, columnType });
     } catch (e) {
       if (my !== reportSeq || destroyed) return;
       reportView?.destroy();

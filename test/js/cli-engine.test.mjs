@@ -206,6 +206,30 @@ test("--show-sql: the SQL a model query compiles to, never inside a --csv", asyn
   });
 });
 
+test("a Report tile with a pick from another tile runs filtered on the real engine (app/explore/report.js)", async () => {
+  const { withFilters } = await import("../../app/explore/report.js");
+  const BAR = 'SELECT "dim_customer"."Region" AS "Region", AGG("Total Sales") AS "Total Sales" FROM model GROUP BY ALL ' +
+              'ORDER BY "Total Sales" DESC FETCH FIRST 12 ROWS WITH TIES';
+  const KPI = 'SELECT AGG("Total Sales") AS "Total Sales" FROM model';
+  const REGION = '"dim_customer"."Region"';
+  await withAgent(agent, async ({ cli }) => {
+    // A tile's SQL says FROM model; the command line names the model.
+    const rows = async (sql, filters) => {
+      const text = withFilters(sql, filters).replace(/\bFROM model\b/, "FROM semanticmodel.shop.sales_model");
+      const r = await cli(["sql", text, "--json"]);
+      assert.equal(r.code, EXIT.OK, `${text}\n${r.stdout}${r.stderr}`);
+      return JSON.parse(r.stdout).rows.map(row => row.map(v => (typeof v === "string" && /^-?\d+(\.\d+)?$/.test(v) ? Number(v) : v)));
+    };
+    assert.deepEqual(await rows(KPI, [{ ref: REGION, value: "East", type: "string" }]), [[12.5]]);
+    assert.deepEqual(await rows(BAR, [{ ref: '"fct_sales"."customer_id"', value: 2, type: "int64" }]), [["West", 5]]);
+    assert.deepEqual(await rows(BAR, [{ ref: REGION, value: null, type: "string" }]), [], "a blank: no customer has none");
+    assert.deepEqual(await rows(BAR, [{ ref: REGION, value: "O'Brien", type: "string" }]), [], "a quote in the value");
+    // Two picks, ANDed to the tile's own WHERE.
+    const own = BAR.replace("FROM model", `FROM model WHERE ${REGION} <> 'West' OR ${REGION} IS NULL`);
+    assert.deepEqual(await rows(own, [{ ref: '"fct_sales"."customer_id"', value: 1, type: "int64" }, { ref: REGION, value: "East" }]), [["East", 12.5]]);
+  });
+});
+
 test("--csv and --json carry what the engine answered", async () => {
   await withAgent(agent, async ({ cli }) => {
     const sql = `SELECT 1 AS i, 'a,"b"' AS s, NULL::VARCHAR AS n, 1.5::DOUBLE AS f, TRUE AS b, 'two\nlines' AS l, DATE '2026-01-02' AS d`;

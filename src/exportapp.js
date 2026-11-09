@@ -310,6 +310,9 @@ from this zip, and draws it again when the zip changes.
   ? 'The page turns it into DAX and runs it on the semantic model.' : 'The page compiles it (dax-sql) to SQL over the tables, and DuckDB-WASM runs it.'}
 - \`formats\`: a column's format string, as the model writes one (\`#,##0.00\`).
 - \`echarts\` (bar and line): an ECharts option merged over the tile's own, for anything the kinds don't say.
+- \`crossFilter\` (bar, line and table): a click on a bar, a point or a row filters every other tile by its first column's
+  value, as a WHERE on the model column that column is. When the first column is not a model column, name one here,
+  \`"table"."column"\`; \`false\` makes the tile take no clicks.
 - Try a tile's SQL before it goes in: OneLake Studio's SQL box, or its command line's \`sql\`, runs it with the
   model's own name in place of \`model\`: \`FROM semanticmodel.<workspace>.${plan.modelName}\`.
 - This is a zip: unzip it, edit, and zip it again with the same entries at its root.

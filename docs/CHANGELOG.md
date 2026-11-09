@@ -6,6 +6,10 @@
 - **A model has a Report, next to Model and Pivot.** Its first tiles are picked from the model: its first measures as
   figures, the first by the date table's year, by a dimension, and a top 10. Each tile is a SELECT over the model. The
   model view still opens on Model. Export to Fabric's app opens on the same Report, with Model and Pivot beside it.
+- **A click in the Report filters its other tiles.** Click a bar, a line's point or a table's row, and every other tile
+  runs again for that value; the tile you clicked keeps all its bars, with yours bright. A bar above the tiles lists
+  each filter, with a ✕ to clear it, and clicking the same bar again clears it too. Filters from several tiles all
+  apply. This works in Export to Fabric's app as well.
 - **Export to Fabric's local copy is one file, `<app>.zip`**, where the `<app>/` folder used to be. It holds the whole
   app but its packages, which the export adds when it publishes, so the zip is a few MB, not about 50. The report is
   `site/report.json` in it: no export rewrites that entry, so you or an agent can grow it (its `AGENTS.md` says how),

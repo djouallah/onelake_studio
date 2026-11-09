@@ -14,7 +14,7 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import { chromium } from "playwright-core";
 
-import { ACCOUNT, MODEL_QUERY, NEVER_READ, TABLE, WORKSPACE, globalState, seedAccount } from "./fixtures.mjs";
+import { ACCOUNT, MODEL_QUERY, NEVER_READ, REPORT_KEY, TABLE, WORKSPACE, globalState, seedAccount } from "./fixtures.mjs";
 
 const SERVER = process.env.E2E_SERVER;
 const VSIX = process.env.E2E_VSIX;
@@ -580,21 +580,57 @@ async function cachedRunMatrix({ saved, home, dbFile }) {
 
 // ---------------------------------------------------------------------------
 // A model's Report: every tile's SQL (FROM model) goes through the compiler. With no rows here a tile
-// can only fail where the rows aren't held, never as SQL DuckDB can't parse.
+// can only fail where the rows aren't held, never as SQL DuckDB can't parse. The Report is the zip's
+// (fixtures.mjs): the first tiles, and a table whose row needs no rows from OneLake, to click.
 // ---------------------------------------------------------------------------
+const tilesDone = f => until("every tile done", async () => {
+  const said = await f.locator("#modelView .rp-tile").evaluateAll(ts => ts.map(t => t.innerText));
+  return said.length && said.every(t => !/Waiting…|Running…/.test(t)) && said;
+}, 90000);
+const UNCOMPILED = /Parser Error|Binder Error|Catalog Error|syntax error|AGG\(|\bSQL( syntax)?: /i;
+
 async function modelMatrix() {
   await step("Model: the Report runs every tile, compiled", async () => {
     await drive("exec", { command: "onelakeStudio.openSemanticModel", args: [{ kind: "semanticModel", workspace: WORKSPACE, model: "shop", modelId: "shop" }], timeoutMs: 60000 });
     const f = await panel();
     await until("the model view", async () => f.locator("#modelView").isVisible(), 30000);
     await f.locator('#modelView [data-apage="report"]').click();
-    const tiles = await until("every tile done", async () => {
-      const said = await f.locator("#modelView .rp-tile").evaluateAll(ts => ts.map(t => t.innerText));
-      return said.length && said.every(t => !/Waiting…|Running…/.test(t)) && said;
-    }, 90000);
+    const tiles = await tilesDone(f);
     check("the Report has tiles", tiles.length > 0, String(tiles.length));
-    const bad = tiles.filter(t => /Parser Error|Binder Error|Catalog Error|syntax error|AGG\(/i.test(t));
+    const bad = tiles.filter(t => UNCOMPILED.test(t));
     check("no tile's SQL reached DuckDB uncompiled", bad.length === 0, bad.join(" | "));
+  }, 180000);
+
+  await step("Model: a row picked in one tile filters the others", async () => {
+    const f = await panel();
+    const row = f.locator("#modelView .rp-tile tr.rp-pick").first();
+    check("a tile takes clicks", await row.count() > 0);
+    // Every text each tile shows from here on, so a run too quick to see is still seen.
+    const picked = await f.evaluate(() => {
+      const tiles = [...document.querySelectorAll("#modelView .rp-tile")];
+      window.__rpSaid = tiles.map(t => [t.innerText]);
+      new MutationObserver(() => tiles.forEach((t, i) => window.__rpSaid[i].push(t.innerText)))
+        .observe(document.querySelector("#modelView .rp"), { childList: true, subtree: true, characterData: true });
+      return tiles.findIndex(t => t.querySelector("tr.rp-pick"));
+    });
+    await row.click();
+    const chips = f.locator("#modelView .rp-filters");
+    const listed = await chips.innerText();
+    check("the pick is listed above the tiles", /Filtered by:\s*Color = Red/.test(listed), listed);
+    const tiles = await tilesDone(f);
+    const said = await f.evaluate(() => window.__rpSaid);
+    const others = tiles.map((t, i) => [t, i]).filter(([, i]) => i !== picked);
+    check("every other tile ran again", others.every(([, i]) => said[i].some(t => /Running…/.test(t))), JSON.stringify(said));
+    check("the tile picked in stays as it was", !said[picked].some(t => /Waiting…|Running…/.test(t)), said[picked].join(" | "));
+    check("its row is highlighted", await f.locator("#modelView tr.rp-on").count() === 1);
+    // With the pick as a WHERE, compiled: they stop where the rows aren't held, as they did unfiltered.
+    check("the others ran filtered, past the compiler", others.every(([t]) => /isn't cached/.test(t) && !UNCOMPILED.test(t)),
+      others.map(([t]) => t).join(" | "));
+
+    await f.locator("#modelView .rp-x").first().click();
+    check("its ✕ clears the pick", await chips.isHidden() && await f.locator("#modelView tr.rp-on").count() === 0);
+    const again = await tilesDone(f);
+    check("the others ran again, unfiltered", again.filter((_, i) => i !== picked).every(t => !UNCOMPILED.test(t)), again.join(" | "));
     await f.locator('#modelView [data-apage="model"]').click();
   }, 180000);
 }
@@ -827,13 +863,14 @@ async function main() {
   // ------------------------------------------------------------------- 3
   console.log("\n=== 3. Signed out, with an account's cache on this machine");
   const cached = await place("cached");
-  const { saved, dbFile } = await seedAccount(cached);
+  const { saved, report, dbFile } = await seedAccount(cached);
   // The first start only makes the state to add to: an account known, and signed out.
   await open(cached);
   await step("Cached: the account is on this machine", async () => {
     await drive("exec", { command: "onelakeStudio.signOut" });
     await sleep(3000);
-    const state = await globalState(page, { "onelakeStudio.lastAccount": ACCOUNT });
+    // And the model's Report, from an export's zip (fixtures.mjs).
+    const state = await globalState(page, { "onelakeStudio.lastAccount": ACCOUNT, [REPORT_KEY]: report });
     check("the account is written in", state?.["onelakeStudio.lastAccount"]?.key === ACCOUNT.key, JSON.stringify(state));
   });
   await close();
