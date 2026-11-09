@@ -26,8 +26,8 @@
 // and its view reads that; a larger one is read in place, read_parquet over its files. A
 // table's position deletes are applied by its view. A table the page cannot plan, or that a
 // view cannot read (equality deletes, a deletion vector), fails: there is no other way in.
-// After the first paint the rest are opened in the background, small ones first, behind
-// whatever the page asks.
+// Only the tables a query names are downloaded and opened: none in the background, as a
+// slow connection would spend itself on tables no chart reads.
 // Each view is at the snapshot the catalog named (catalog.js keeps that answer up to ~55
 // minutes, so a reload within it reads the same snapshots).
 // DuckDB-WASM runs single-threaded here, so the page runs a pool of engines (ENGINES, each its
@@ -39,7 +39,6 @@
 //
 // The members the page calls:
 //   init            sign in, locate the tables, size them; nothing opened yet
-//   attachAgg       starts opening the rest in the background; nothing for the page to redraw
 //   model, query
 // =============================================================================
 
@@ -150,7 +149,7 @@ export function createDataSource({ onStatus = () => {}, onProgress = () => {} } 
   // A kept answer from the function needs no session: the page starts without the Rayfin SDK.
   const auth = createAuth({ ready: catalog.fresh });
   let tables = new Map(), model = null;
-  // table name -> { location, bytes, planning, record, stored, ready, whenReady, isReady }.
+  // table name -> { location, bytes, planning, record, stored, ready }.
   // `ready`: the table's record, its files all in the store: once for every engine.
   const located = new Map();
 
@@ -259,7 +258,6 @@ export function createDataSource({ onStatus = () => {}, onProgress = () => {} } 
   const readyOf = (name, t) => t.ready ??= (async () => {
     const record = t.record ?? await planned(name, t);
     await local(name, t, record);
-    t.whenReady();
     return record;
   })().catch(err => { t.ready = null; throw err; });
 
@@ -396,10 +394,8 @@ export function createDataSource({ onStatus = () => {}, onProgress = () => {} } 
     for (const t of metas.filter(Boolean).sort((a, b) => (a.bytes ?? Infinity) - (b.bytes ?? Infinity))) {
       const planning = t.record ? null : t.error ? Promise.reject(t.error) : planFor(t);
       planning?.catch(() => {});   // thrown when the table opens
-      let whenReady;
-      const isReady = new Promise(r => { whenReady = r; });
       located.set(t.name, { name: t.name, location: t.location, bytes: t.bytes, planning, record: t.record ?? null,
-        stored: !!t.record, ready: null, whenReady, isReady });
+        stored: !!t.record, ready: null });
     }
   }
 
@@ -483,30 +479,8 @@ importScripts("${bundle.mainWorker}");`], { type: "text/javascript" }));
     return versions.length ? results.key(sql, versions) : null;
   };
 
-  // After the first paint: the tables not opened yet, on every engine, small ones first, each
-  // its own job at the back of its queue, so whatever the page asks goes first. A table not
-  // ready yet is made ready (planned, downloaded) by the first engine; the others open it once
-  // it is, so none of them waits on it with a job of its queue. Not awaited: the page does not
-  // wait for them, and opening a table changes no result it holds.
-  let _warming = false;
-  function attachAgg() {
-    if (!_warming) {
-      _warming = true;
-      const order = [...located].sort(([, a], [, b]) => (a.bytes ?? Infinity) - (b.bytes ?? Infinity));
-      for (const e of engines)
-        for (const [name, t] of order) {
-          if (e.opened.has(name)) continue;
-          // Made ready (planned, downloaded) outside the queue; then each engine opens it.
-          const job = () => submit(() => e.opened.has(name) ? null : open(e, name), { engine: e, later: true });
-          // A table that fails here fails again, with its reason, when a query names it.
-          (e === engines[0] ? readyOf(name, t).then(job) : t.isReady.then(job)).catch(() => {});
-        }
-    }
-    return Promise.resolve(false);
-  }
-
   return {
-    init, attachAgg,
+    init,
     // The semantic model as the lakehouse holds it (an Ossie document or TMSL), once init has
     // answered.
     model: () => model,

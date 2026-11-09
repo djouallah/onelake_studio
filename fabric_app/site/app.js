@@ -112,8 +112,6 @@ export async function start() {
       profileSet: true,
       htmlPlan: true,
     });
-    // The model's other tables, opened in the background for the next query.
-    data.attachAgg();
   } catch (e) {
     console.error(e);
     if (boot.el()) boot.fail(`Error: ${e?.message || e}`);

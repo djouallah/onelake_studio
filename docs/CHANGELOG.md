@@ -24,6 +24,9 @@
 - **A Fabric app's download counts bytes as they come.** A large table, downloaded on a first visit, showed
   "0 of 35 files, 0 MB" for minutes: the count moved only when a whole file was in, and six files of 250 MB come
   down at once. It now shows the MB coming in, the speed, and about how long is left.
+- **A Fabric app downloads only the tables its charts read.** It used to download and open every table of the model
+  in the background as soon as it started, and on a slow connection those took the bandwidth from the table a chart
+  was waiting for. A table now comes down when a query first reads it.
 - **A semantic model has no Download Again button.** Refresh on its workspace, or on its Semantic models, reads each
   model downloaded there from Fabric again, behind, and replaces its local copy. One that can't be read keeps its
   copy, and the log says why.
