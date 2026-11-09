@@ -12,8 +12,7 @@
   for them. The background sync finds new snapshots: every hour for a table in use, once a day for the rest, or on
   **Refresh** of its lakehouse. A sync reads only the commits since the last one, 16 at a time.
 - **The disk cache keeps 256 GB by default, up from 64.** `onelakeStudio.diskCacheMaxGB` still sets it.
-- **A model has a Report, after Model and Pivot.** Its first tiles are picked from the model: its first measures as
-  figures, the first by the date table's year, by a dimension, and a top 10. Each tile is a SELECT over the model. The
+- **A model has a Report, after Model and Pivot.** It starts empty, and you build it from Pivot (below). The
   model view still opens on Model. Export to Fabric's app opens on the same Report, with Model and Pivot beside it.
 - **Build the Report from Pivot.** **Add to report** puts the pivot on screen on the Report as a tile, drawn as Pivot
   draws it, with any mark, and a click on it filters the other tiles. Each tile has a ✕ that takes it out. The Report

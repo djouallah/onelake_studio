@@ -83,12 +83,11 @@ function createHostMethods({ onelake, engine, onStatus = () => {}, saveFile = nu
                              state: x.state && typeof x.state === 'object' ? x.state : null,
                              ...(x.mode ? { mode: String(x.mode) } : {}) });
     },
-    // The Report tab (exportflow.js reportOf): a model by its names, and its text for the first
-    // tiles when it has no exported zip yet.
+    // The Report tab (exportflow.js reportOf): a model by its names.
     'model.report': async x => {
       if (!report) throw new Error('the Report is not available here');
       if (!x || !x.workspace || !x.model) throw new Error('the Report needs a semantic model');
-      return report.load({ workspace: String(x.workspace), model: String(x.model), file: String(x.file || 'model'), text: String(x.text ?? '') });
+      return report.load({ workspace: String(x.workspace), model: String(x.model) });
     },
     'model.reportStamp': async x => {
       if (!report) throw new Error('the Report is not available here');

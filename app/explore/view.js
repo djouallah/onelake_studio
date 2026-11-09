@@ -9,8 +9,8 @@
 //             Show plan puts the query's profile and plan in place of the results
 //             (profile.js). Download CSV writes the pivot's rows, or the box's. Add to report
 //             (a host that saves the Report) puts the pivot on the Report as a tile.
-//   Report    tiles the host reads (ctx.report: Export to Fabric's report.json, the file the
-//             host keeps before an export, or the first tiles), each a SELECT over the model or
+//   Report    tiles the host reads (ctx.report: Export to Fabric's report.json, or the file the
+//             host keeps before an export; none at first), each a SELECT over the model or
 //             a pivot, drawn by report.js; a ✕ takes one out (a host that saves the Report)
 // Model's Diagram | YAML (or BIM) shows the model drawn, or its file as written (pretty.js).
 // The same file in the panel and in Export to Fabric's app: the host says how a model's SQL is compiled

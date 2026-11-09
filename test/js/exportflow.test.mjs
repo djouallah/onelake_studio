@@ -226,13 +226,13 @@ test("Publish As Is only for a zip made for the same kind of site: DuckDB in the
 
 // The Report tab's tiles, as Add to report and a tile's ✕ save them (reportSave).
 const MODEL = { workspace: "power bi", model: "sales" };
-const OPENED = { ...MODEL, file: "sales.yaml", text: OSSIE };
+const OPENED = MODEL;
 const TILES = { tiles: [{ title: "Total Fare by Borough", kind: "pivot", pivot: { rows: ["dim_zone.Borough"], values: ["Total Fare"] } }] };
 
 test("before an export, the Report is kept in Studio's file, and a save over a newer edit is refused", async () => {
   const { flow, done } = await setup();
   const first = await flow.reportOf(OPENED);
-  assert.deepEqual([first.from, first.stamp], [null, 0], "the first tiles, nothing written");
+  assert.deepEqual([first.spec, first.from, first.stamp], [{ tiles: [] }, null, 0], "no tiles, nothing written");
   const { stamp } = await flow.reportSave({ ...MODEL, spec: TILES, stamp: first.stamp });
   const back = await flow.reportOf(OPENED);
   assert.deepEqual(back.spec, TILES);
@@ -240,7 +240,7 @@ test("before an export, the Report is kept in Studio's file, and a save over a n
   assert.match(back.from, /reports[\\/][0-9a-f]{40}\.json$/);
   assert.deepEqual((await flow.reportOf({ ...OPENED, workspace: "POWER BI", model: "Sales" })).spec, TILES, "by its names, case aside");
   assert.equal(await flow.reportStamp(MODEL), stamp);
-  // Drawn from the first tiles, saved after the file was written: refused, the file as it was.
+  // Drawn before the file was written, saved after: refused, the file as it was.
   await assert.rejects(flow.reportSave({ ...MODEL, spec: { tiles: [] }, stamp: first.stamp }), /changed since it was drawn/);
   assert.deepEqual((await flow.reportOf(OPENED)).spec, TILES);
   await assert.rejects(flow.reportSave({ ...MODEL, spec: { title: "no tiles" }, stamp }), /a report is/);

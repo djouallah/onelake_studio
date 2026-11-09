@@ -13,7 +13,7 @@ import { execFileSync } from "node:child_process";
 
 const require = createRequire(import.meta.url);
 const { planExport, modelDoc, appFiles, engineOf, readApp, writeApp, unzip, vendorFiles, vendorSize, buildDist, zip, crc32, rayfinYml,
-        appName, dfsUrl, MARKER, REPORT, fingerprint, localChanges, starterTiles, starterReport } = require("../../src/exportapp.js");
+        appName, dfsUrl, MARKER, REPORT, fingerprint, localChanges } = require("../../src/exportapp.js");
 const semantic = await import("../../app/semantic.js");
 const { firstRows, counting, kept, MAX_ROWS } = await import("../../fabric_app/site/storage/modelrows.js");
 
@@ -374,62 +374,15 @@ test("the local copy is one zip: the whole app but its packages, written and rea
   }
 });
 
-// A model as a .bim reads: a fact with its measures, a date table, two dimensions.
-const salesBim = () => ({ model: {
-  tables: [
-    { name: "fct_sales", columns: [{ name: "region_id", dataType: "int64" }, { name: "date", dataType: "dateTime" },
-                                   { name: "amount", dataType: "double" }],
-      measures: [{ name: "Revenue", formatString: "#,##0" }, { name: "Orders" }, { name: "Hidden", isHidden: true },
-                 { name: "Margin %", formatString: "0.0" }, { name: "Units" }, { name: "Fifth" }] },
-    { name: "Calendar", dataCategory: "Time", columns: [{ name: "Date", dataType: "dateTime" }, { name: "Month Name", dataType: "string" },
-                                                       { name: "Year", dataType: "int64" }] },
-    { name: "dim_region", columns: [{ name: "Region Code", dataType: "string" }, { name: "Region", dataType: "string" },
-                                    { name: "State", dataType: "string" }, { name: "secret", dataType: "string", isHidden: true }] },
-    { name: "LocalDateTable_1", columns: [{ name: "Year", dataType: "int64" }] },
-  ],
-  relationships: [{ fromTable: "fct_sales", fromColumn: "region_id", toTable: "dim_region", toColumn: "Region Code" },
-                  { fromTable: "fct_sales", fromColumn: "date", toTable: "Calendar", toColumn: "Date" }],
-} });
-
-test("the Report's first tiles: the first measures, by the date table's year, by a dimension, a top 10 — from metadata alone", () => {
-  const tiles = starterTiles(salesBim());
-  assert.deepEqual(tiles.map(t => [t.kind, t.title]), [
-    ["kpi", "Totals"], ["line", "Revenue by Year"], ["bar", "Revenue by Region"], ["table", "Top 10 State"]]);
-  assert.equal(tiles[0].sql, 'SELECT AGG("Revenue") AS "Revenue", AGG("Orders") AS "Orders", AGG("Margin %") AS "Margin %", AGG("Units") AS "Units" FROM model',
-    "four visible measures, in the model's order");
-  assert.deepEqual(tiles[0].formats, { Revenue: "#,##0", "Margin %": "0.0" });
-  assert.equal(tiles[1].sql, 'SELECT "Calendar"."Year" AS "Year", AGG("Revenue") AS "Revenue" FROM model GROUP BY ALL ORDER BY "Year"');
-  assert.match(tiles[2].sql, /^SELECT "dim_region"\."Region" AS "Region", AGG\("Revenue"\) AS "Revenue" FROM model GROUP BY ALL ORDER BY "Revenue" DESC FETCH FIRST 12 ROWS WITH TIES$/,
-    "a code is not a dimension's label");
-  assert.match(tiles[3].sql, /^SELECT "dim_region"\."State" AS "State", AGG\("Revenue"\)[^]*FETCH FIRST 10 ROWS WITH TIES$/);
-
-  // No date table: a dimension's date, else no trend. No measures: a fact's number, summed.
-  const bim = salesBim();
-  bim.model.tables[1].dataCategory = undefined;
-  bim.model.relationships.pop();
-  for (const t of bim.model.tables) t.measures = [];
-  const plain = starterTiles(bim);
-  assert.deepEqual(plain.map(t => t.kind), ["kpi", "bar", "table"]);
-  assert.equal(plain[0].sql, 'SELECT SUM("fct_sales"."amount") AS "Sum of amount" FROM model', "a key is not a figure");
-  assert.deepEqual(starterTiles({ model: { tables: [{ name: "t", columns: [{ name: "x", dataType: "string" }] }] } }), [], "nothing to add up: no tiles");
-});
-
-test("site/report.json: the tiles as JSON a person edits, kept by every export; never a local change", async () => {
-  const tiles = starterTiles(salesBim());
-  const spec = JSON.parse(starterReport(tiles));
-  assert.equal(spec.tiles.length, 4);
-  assert.deepEqual(spec.tiles[1], { why: "the year of the model's date table", title: "Revenue by Year", kind: "line",
-    sql: tiles[1].sql, formats: { Revenue: "#,##0" } });
-  assert.ok(!("formats" in JSON.parse(starterReport([{ ...tiles[0], formats: {} }])).tiles[0]), "no empty formats");
-  assert.match(starterReport(tiles), /^\{\n  "tiles": \[\n    \{\n/, "one key a line");
+test("site/report.json: no tiles at first, kept by every export; never a local change", async () => {
 
   const root = await mkdtemp(join(tmpdir(), "export-"));
   try {
     const dirs = await fixture(root);
-    const plan = { ...planExport(OSSIE, "sales.yaml", "sales", mods(bimOf(URL_)), WHERE), tiles };
+    const plan = planExport(OSSIE, "sales.yaml", "sales", mods(bimOf(URL_)), WHERE);
     const first = await appFiles({ plan, state: null, ...dirs });
-    assert.equal(first.get(REPORT).toString(), starterReport(tiles));
-    const mine = Buffer.from('{ "tiles": [] }');
+    assert.deepEqual(JSON.parse(first.get(REPORT).toString()), { tiles: [] });
+    const mine = Buffer.from('{ "tiles": [{ "title": "mine", "kind": "kpi", "sql": "SELECT 1 FROM model" }] }');
     const again = await appFiles({ plan, state: null, kept: mine, ...dirs });
     assert.equal(again.get(REPORT), mine, "the zip's own report, as it is");
 

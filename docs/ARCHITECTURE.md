@@ -576,9 +576,7 @@ opens on Model, and the Fabric app on its Report.
   rest still draw.
   - **Which tiles:** the model's Export to Fabric zip's `site/report.json`, when it has one (the zip its last export was
     approved into); else the file Studio keeps for the model until its first export (`<storage>/reports/`, by its
-    workspace and name); else the first tiles, picked from the model's metadata with no query (`starterTiles` in
-    [`src/exportapp.js`](../src/exportapp.js)): the first four visible measures as figures, the first by the date table's
-    year, by a dimension's text column, and a top 10 of another. The first export writes those, or Studio's file, into
+    workspace and name); else none: a Report starts empty. The first export writes Studio's file, or no tiles, into
     the zip, and the file goes.
   - **Add to report and ✕:** Pivot's **Add to report** puts the shelves on screen after the tiles, as a `pivot` tile;
     a tile's ✕ takes it out. Both write where the tiles are kept (`reportSave` in

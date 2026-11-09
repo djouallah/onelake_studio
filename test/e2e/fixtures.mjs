@@ -12,7 +12,7 @@ const require = createRequire(import.meta.url);
 const { createStore } = require("../../src/store.js");
 const { createOneLake } = require("../../src/onelake.js");
 const { PINS } = require("../../src/vendored.js");
-const { starterTiles, writeApp } = require("../../src/exportapp.js");
+const { writeApp } = require("../../src/exportapp.js");
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const VENDOR = join(root, "vendor");
@@ -121,11 +121,15 @@ export async function seedAccount({ dataDir, home }) {
   await mkdir(dirname(model), { recursive: true });
   await writeFile(model, stringify(tmslToOssie(BIM, "shop")));
 
-  // The model's Report, as an export's zip holds it: the first tiles, and a table that needs no rows
+  // The model's Report, as an export's zip holds it: figures, a bar and a pivot over the model, and a table that needs no rows
   // from OneLake, so it has a row to click. Its first column is a constant, so it names the model
   // column its clicks filter by (crossFilter).
   const report = join(home, "OneLakeStudio", "exports", "shop.zip");
-  const tiles = [...starterTiles(BIM), { title: "Colors", kind: "table", sql: `SELECT 'Red' AS "Color", 3 AS "Total" FROM model`,
+  const tiles = [
+    { title: "Totals", kind: "kpi", sql: 'SELECT AGG("Total") AS "Total" FROM model' },
+    { title: "Total by Color", kind: "bar", sql: 'SELECT "Product"."Color" AS "Color", AGG("Total") AS "Total" FROM model GROUP BY ALL ORDER BY "Total" DESC' },
+    { title: "Total by Color", kind: "pivot", pivot: { rows: ["Product.Color"], values: ["Total"], mark: "stacked" } },
+    { title: "Colors", kind: "table", sql: `SELECT 'Red' AS "Color", 3 AS "Total" FROM model`,
                                         crossFilter: '"Product"."Color"' }];
   await writeApp(report, new Map([["site/report.json", Buffer.from(JSON.stringify({ tiles }))]]), { e2e: true });
 

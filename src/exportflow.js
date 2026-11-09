@@ -12,7 +12,7 @@ const fsp = require('node:fs/promises');
 const { createHash } = require('node:crypto');
 const { modelFileName } = require('./fabric');
 const { PINS } = require('./vendored');
-const { planExport, starterTiles, modelDoc, appFiles, setModel, engineOf, readApp, writeApp, vendorFiles, vendorSize, buildDist,
+const { planExport, modelDoc, appFiles, setModel, engineOf, readApp, writeApp, vendorFiles, vendorSize, buildDist,
         fingerprint, localChanges, zip, rayfinYml, REPORT } = require('./exportapp');
 const { createFabricApp, tenantOf } = require('./fabricapp');
 const { createOneLakeWriter } = require('./onelakewrite');
@@ -372,8 +372,8 @@ function createExport({ connectivity, modules, hostToken, appToken, powerBiToken
 
   // The Report a model's Report tab draws (app/explore/report.js), and Add to report and a tile's
   // ✕ save (reportSave): the site/report.json of the zip its last export was approved into; before
-  // there is one, the file Studio keeps for the model (reportDir); else the first tiles, picked
-  // from the model's text. { spec, stamp, from }: `stamp` changes when the tiles do (reportStamp),
+  // there is one, the file Studio keeps for the model (reportDir); else no tiles. { spec, stamp,
+  // from }: `stamp` changes when the tiles do (reportStamp),
   // `from` is the zip or the file, or null.
   // Where the model's Report is kept, and what the disk says of it: { zipPath, st } once it has a
   // zip, else { file, st } (st null: nothing written yet).
@@ -384,7 +384,7 @@ function createExport({ connectivity, modules, hostToken, appToken, powerBiToken
     const file = reportDir ? join(reportDir, reportName(workspace, model)) : null;
     return { file, st: file ? await fsp.stat(file).catch(() => null) : null };
   }
-  async function reportOf({ workspace, model, file, text }) {
+  async function reportOf({ workspace, model }) {
     const home = await reportHome({ workspace, model });
     const from = home.zipPath || home.file;
     const bytes = !home.st ? null : home.zipPath ? (await readApp(home.zipPath).catch(() => null))?.files.get(REPORT)
@@ -395,8 +395,7 @@ function createExport({ connectivity, modules, hostToken, appToken, powerBiToken
       catch (e) { throw new Error(`${from}${home.zipPath ? ': site/report.json' : ''} is not JSON: ${e.message}`); }
       return { spec, stamp: home.st.mtimeMs, from };
     }
-    const { semantic, compiler } = await modules();
-    return { spec: { tiles: starterTiles(semantic.bimOf(file, text, compiler)) }, stamp: home.st ? home.st.mtimeMs : 0, from: null };
+    return { spec: { tiles: [] }, stamp: home.st ? home.st.mtimeMs : 0, from: null };
   }
   async function reportStamp(m) {
     const { st } = await reportHome(m);

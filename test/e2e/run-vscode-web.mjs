@@ -581,7 +581,7 @@ async function cachedRunMatrix({ saved, home, dbFile }) {
 // ---------------------------------------------------------------------------
 // A model's Report: every tile's SQL (FROM model) goes through the compiler. With no rows here a tile
 // can only fail where the rows aren't held, never as SQL DuckDB can't parse. The Report is the zip's
-// (fixtures.mjs): the first tiles, and a table whose row needs no rows from OneLake, to click.
+// (fixtures.mjs): tiles over the model (a pivot among them), and a table whose row needs no rows from OneLake, to click.
 // ---------------------------------------------------------------------------
 const tilesDone = f => until("every tile done", async () => {
   const said = await f.locator("#modelView .rp-tile").evaluateAll(ts => ts.map(t => t.innerText));

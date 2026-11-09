@@ -1,8 +1,8 @@
 // =============================================================================
 // explore/report.js — a model's Report: tiles, each one SELECT over the model, drawn
 // =============================================================================
-// The Report is data (site/report.json in Export to Fabric's zip; the first tiles before there is
-// one, or the file Studio keeps before an export): { tiles: [{ title, kind, sql, formats?, echarts?,
+// The Report is data (site/report.json in Export to Fabric's zip, or the file Studio keeps before
+// an export; no tiles before either): { tiles: [{ title, kind, sql, formats?, echarts?,
 // wide?, crossFilter? }] }. A tile's SQL is a SELECT over the model, FROM model, in the SQL the SQL
 // box takes.
 //   kind 'kpi'    one row: each column a figure

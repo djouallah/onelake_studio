@@ -12,8 +12,8 @@
 //   site/explore/    Studio's Explore (app/explore/), the same files the panel runs
 //   site/semantic/   dax-sql (PINS.daxSql): SQL over the model, as SQL over the views
 //   site/report.json the Report the app opens on (app/explore/report.js draws it): Studio's Report
-//                    tab's tiles, or tiles picked from the model, written once, then the zip's
-//                    (Studio's Add to report writes it too), and kept by every export
+//                    tab's tiles (none at first), written once, then the zip's (Studio's Add to
+//                    report writes it too), and kept by every export
 //   site/explore.json  the shelves the first view shows
 //   site/engine.json   DirectQuery and Direct Lake only, { engine: 'semanticModel' }: the page runs
 //                    no DuckDB (storage/modeldata.js: it queries the semantic model), and site/ holds
@@ -161,76 +161,12 @@ function planExport(text, fileName, name, mods, where, lakes = null) {
     modelUrl: dfsUrl(where.workspace, where.path),
     modelPath: `${where.workspace}/${trimPath(where.path)}`,
     tables: [...sources],
-    tiles: starterTiles(bim),
   };
 }
 
-// --- The Report's first tiles ------------------------------------------------------
-// site/report.json is the zip owner's: written once with these tiles (or those Studio's Report tab
-// kept), and kept by every later export. Studio's Report tab draws the same file, or these tiles
-// before there is one. Picked from the model's metadata alone, with no query: its
-// first measures as figures, the first by a year of its date table, by a dimension's text
-// column, and a top 10 of another. Each tile is a SELECT over the model (FROM model).
-
-const AUTO_DATE = /^(DateTableTemplate|LocalDateTable)/;
-// A key or a code, by its name: "Region Code", customer_id, ProductKey; not "Paid" or "Grid".
-const keyish = name => /(^|[\s_])(id|key|sk|code)$/i.test(name) || /[a-z](Id|ID|Key|Code)$/.test(name);
-const qid = s => `"${String(s).replace(/"/g, '""')}"`;
-
-function starterTiles(bim) {
-  const m = bim.model ?? bim;
-  const tables = (m.tables ?? []).filter(t => !AUTO_DATE.test(t.name) && !t.isHidden);
-  const shown = t => (t.columns ?? []).filter(c => !c.isHidden && c.type !== 'rowNumber');
-  const measures = tables.flatMap(t => (t.measures ?? []).filter(x => !x.isHidden));
-  const dims = new Set((m.relationships ?? []).map(r => r.toTable));
-  // What a figure is: the model's measures, else a fact table's first number, summed.
-  let figures = measures.slice(0, 4).map(x => ({ name: x.name, sql: `AGG(${qid(x.name)})`, format: x.formatString }));
-  if (!figures.length) {
-    const t = tables.find(x => !dims.has(x.name) && shown(x).some(c => /^(int64|double|decimal)$/.test(c.dataType)));
-    const c = t && shown(t).find(x => /^(int64|double|decimal)$/.test(x.dataType) && !keyish(x.name));
-    if (c) figures = [{ name: `Sum of ${c.name}`, sql: `SUM(${qid(t.name)}.${qid(c.name)})`, format: c.formatString }];
-  }
-  if (!figures.length) return [];
-  const [first] = figures;
-  const col = (t, c) => ({ name: c.name, sql: `${qid(t.name)}.${qid(c.name)}` });
-  const formats = fs => Object.fromEntries(fs.filter(f => f.format).map(f => [f.name, f.format]));
-  const select = (cols, fs) => [...cols, ...fs].map(f => `${f.sql} AS ${qid(f.name)}`).join(', ');
-  const tiles = [{ why: 'the model\'s first measures', title: 'Totals', kind: 'kpi',
-    sql: `SELECT ${select([], figures)} FROM model`, formats: formats(figures) }];
-  // Over time: the date table's year, else its first date, else a date column of a dimension.
-  const dateTable = tables.find(t => t.dataCategory === 'Time');
-  const yearCol = dateTable && shown(dateTable).find(c => /year/i.test(c.name) && !/month|week|quarter|day/i.test(c.name));
-  const dateOf = t => shown(t).find(c => c.dataType === 'dateTime');
-  const timeTable = dateTable || tables.find(t => dims.has(t.name) && dateOf(t));
-  const timeCol = yearCol || (timeTable && dateOf(timeTable));
-  if (timeCol) {
-    const x = col(timeTable, timeCol);
-    tiles.push({ why: yearCol ? 'the year of the model\'s date table' : 'a date the model has', title: `${first.name} by ${x.name}`, kind: 'line',
-      sql: `SELECT ${select([x], [first])} FROM model GROUP BY ALL ORDER BY ${qid(x.name)}`, formats: formats([first]) });
-  }
-  // By a dimension: the text columns of the tables relationships point to (any table, in a model
-  // of one), keys and codes left out.
-  const texts = tables.filter(t => !dims.size || dims.has(t.name)).filter(t => t !== timeTable)
-    .flatMap(t => shown(t).filter(c => c.dataType === 'string' && !keyish(c.name)).map(c => col(t, c)));
-  const [byA, byB] = [texts[0], texts.find(c => c.name !== texts[0]?.name)];
-  if (byA) {
-    tiles.push({ why: 'a dimension\'s first text column', title: `${first.name} by ${byA.name}`, kind: 'bar',
-      sql: `SELECT ${select([byA], [first])} FROM model GROUP BY ALL ORDER BY ${qid(first.name)} DESC FETCH FIRST 12 ROWS WITH TIES`,
-      formats: formats([first]) });
-  }
-  if (byB) {
-    tiles.push({ why: 'another text column, with every figure', title: `Top 10 ${byB.name}`, kind: 'table',
-      sql: `SELECT ${select([byB], figures)} FROM model GROUP BY ALL ORDER BY ${qid(first.name)} DESC FETCH FIRST 10 ROWS WITH TIES`,
-      formats: formats(figures) });
-  }
-  return tiles;
-}
-
-/** site/report.json: the Report, these tiles (starterTiles), as a person or an agent edits it. */
-function starterReport(tiles) {
-  const out = tiles.map(({ formats, ...t }) => (formats && Object.keys(formats).length ? { ...t, formats } : t));
-  return JSON.stringify({ tiles: out }, null, 2) + '\n';
-}
+// site/report.json is the zip owner's: written once, with the tiles Studio's Report tab kept for the
+// model or none, and kept by every later export. Studio's Report tab draws the same file.
+const EMPTY_REPORT = '{\n  "tiles": []\n}\n';
 
 // fabric_app/rayfin/rayfin.yml, for this app: its own id and name, its sign-in redirects, and on a
 // semantic model ({ workspace, id }) its connector, as fabricapp.js declares it to Fabric.
@@ -292,7 +228,7 @@ ${onModel(plan) ? `- Model: \`${plan.modelPath}\`, as it was when exported: the 
 ## The Report: yours to grow
 
 The app opens on its Report, \`site/report.json\`, after Explore's Model and Pivot. The first export wrote
-it with the tiles built in OneLake Studio's Report tab, or a few picked from the model, and no export writes it
+it with the tiles built in OneLake Studio's Report tab (none, if it had none), and no export writes it
 again: edit it freely, then export again to publish it (it is not one of the local changes an export asks
 about). Delete it and the next export writes a new one. OneLake Studio's Report tab, after Model and Pivot,
 draws this same file from this zip, and draws it again when the zip changes; its Pivot's **Add to report**
@@ -425,7 +361,7 @@ async function filesOf(root, to, skip = () => false) {
 /**
  * The app's entries, path -> bytes, as the local copy holds them: no packages (vendorFiles).
  * `kept`: the zip's own site/report.json, which no export writes over, or the one Studio kept
- * before the first export (else the first tiles);
+ * before the first export (else a Report with no tiles);
  * `redirects`: the app's sign-in redirects so far.
  * `model`: on a semantic model, the model file read (modelDoc's doc) that the semantic model is made from.
  * `fabricAppDir`: the extension's fabric_app/; `appDir`: Studio's page modules (app/, or
@@ -446,7 +382,7 @@ async function appFiles({ plan, state, model, kept = null, redirects = [], fabri
   ]);
   files.set('rayfin/rayfin.yml', text(rayfinYml(files.get('rayfin/rayfin.yml').toString('utf8'), plan.name, redirects,
                                                 sql ? plan.semanticModel : null)));
-  files.set(REPORT, kept ?? text(starterReport(plan.tiles || [])));
+  files.set(REPORT, kept ?? text(EMPTY_REPORT));
   files.set('site/explore.json', text(JSON.stringify(state || null)));
   if (sql) {
     // The semantic model's name: what the page says when it refuses the person signed in.
@@ -587,5 +523,5 @@ async function zip(files) {
   return Buffer.concat([...local, ...central, end]);
 }
 
-module.exports = { planExport, starterTiles, starterReport, modelDoc, appFiles, setModel, engineOf, readApp, writeApp, unzip, vendorFiles,
+module.exports = { planExport, modelDoc, appFiles, setModel, engineOf, readApp, writeApp, unzip, vendorFiles,
                    vendorSize, buildDist, fingerprint, localChanges, zip, crc32, rayfinYml, appName, dfsUrl, MARKER, REPORT };

@@ -542,7 +542,7 @@ function createCore({
   });
   exportExplore = exporter.exportExplore;
   // The Report tab's tiles: a model's exported zip's report.json, else the file kept for it
-  // before an export, else the first tiles; Add to report and a tile's ✕ write them.
+  // before an export, else none; Add to report and a tile's ✕ write them.
   modelReport = { load: exporter.reportOf, stamp: exporter.reportStamp, save: exporter.reportSave };
 
   // Behind what's on screen, once it has been built.
