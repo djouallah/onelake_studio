@@ -138,6 +138,14 @@ test("publish on a semantic model: its connector in every settings write, delega
   assert.ok(duck.calls.filter(c => c.url.endsWith("/projectRuntimeSettings")).every(c => !("connectors" in JSON.parse(c.body))));
 });
 
+test("publish a semantic model's app as it is: no secret and no function of ours, the page calls none", async () => {
+  const { app, calls } = appWith(happy());
+  const done = await publish(app, { semanticModel: { workspace: WS, id: "m1" }, catalogUrl: null, modelUrl: null, fn: null });
+  assert.equal(done.hostingUrl, HOST);
+  assert.equal(calls.filter(c => c.url.endsWith("/__private/secrets")).length, 0);
+  assert.equal(calls.filter(c => /\/functions\//.test(c.url)).length, 0);
+});
+
 test("publish again: the item an earlier export created, by its id, its redirect already known — no create, no second settings", async () => {
   const { app, calls } = appWith(happy([
     ["GET", `/workspaces/${WS}/items?type=AppBackend`, () => res(200, { value: [{ id: ID, displayName: "Sales-Model" }] })],

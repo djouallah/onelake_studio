@@ -12,12 +12,12 @@
 //   2. its backend: extended-properties, polled until it names BaaSEndpoint
 //   3. its publishable key (the browser SDK's)
 //   4. its runtime settings: Fabric sign-in, the function's identity, static hosting PROTECTED;
-//      on a semantic model (DirectQuery, Direct Lake) its connector too (MODEL_CONNECTOR), where
-//      the page runs its DAX as the person viewing it, never as the app
+//      on a semantic model its connector too (MODEL_CONNECTOR), where the page runs its DAX as the
+//      person viewing it, never as the app; Fabric makes the connector a function of its own
 //   5. the function's secrets: CATALOG_URL (the tables) and MODEL_URL (the model, read in place)
 //   6. the site: a zip of dist/ (with rayfin.config.json, made here) -> hostingUrl
 //   7. the function: the package built at package time (scripts/function-bundle.mjs), then
-//      its deploy status polled
+//      its deploy status polled. Client side only: on a semantic model the page calls no function
 //   8. the hosting URL among the sign-in redirects (runtime settings again), when it is new
 // The order is the CLI's: settings before content, content before functions.
 // No `vscode` import: the extension passes in its token.
@@ -254,8 +254,11 @@ function createFabricApp({ getToken, apiBase = FABRIC_API, log = () => {},
     log(`app ${name}: uploading the site`);
     const config = { apiUrl, publishableKey: key, workspaceId: ws, itemId: id, portalUrl: PORTAL_URL, ...(tenantId ? { tenantId } : {}) };
     const hostingUrl = await deploySite(ws, id, await site(config));
-    log(`app ${name}: deploying the function (a few minutes)`);
-    await deployFunction(ws, id, fn);
+    // `fn` null: a semantic model's app, whose page calls no function of ours.
+    if (fn) {
+      log(`app ${name}: deploying the function (a few minutes)`);
+      await deployFunction(ws, id, fn);
+    }
     // Sign-in comes back to the site: its origin must be one of the app's redirects.
     const origin = hostingUrl && new URL(hostingUrl).origin;
     if (origin && !redirects.includes(origin)) {

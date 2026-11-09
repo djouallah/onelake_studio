@@ -710,8 +710,9 @@ and the command line's `export` takes no `--mode`.
   preview's rows, and a LIMIT and OFFSET, are a `TOPN` in the DAX, and a count is `COUNTROWS`, so neither waits for
   the whole answer. executeQueries sends at most 100,000 rows or 1,000,000 values in one answer, and the page keeps at
   most 100,000 rows: an answer cut by either says so, as the client-side app's does.
-- **The function** ([`function_app.ts`](../fabric_app/rayfin/functions/src/function_app.ts)) is not called: the page
-  reads `site/model.json` and the semantic model, nothing else.
+- **No function of ours** ([`function_app.ts`](../fabric_app/rayfin/functions/src/function_app.ts)) is deployed, and
+  no secret set: the page reads `site/model.json` and the semantic model, nothing else. The app's one function is the
+  connector's, `<app>_connector`, which Fabric makes for it. An app first published with ours keeps it.
 - **What it needs:** each viewer has Build on the semantic model ("Semantic model queries require the caller's
   applicable model permissions, including Build", the connectors page), and the tenant has the Semantic Model
   Execute Queries REST API setting on ([the data app template's prerequisites](https://learn.microsoft.com/en-us/fabric/apps/data-apps-template)).

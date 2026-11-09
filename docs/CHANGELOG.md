@@ -11,6 +11,8 @@
   `.yaml` of it into its lakehouse. A semantic model that names no lakehouse, or several, can be exported now too. A
   model file's app is client side, DuckDB in the browser; for one on a semantic model, Create Semantic Model first,
   then export that model. The confirmation says what the app runs on. The command line's `export` takes no `--mode`.
+- **An app on a semantic model deploys no function of its own**, only the connector's that Fabric makes: its page
+  never called ours, and deploying it took a few minutes of every export.
 - **Create Semantic Model asks in one dialog**, with Direct Lake and DirectQuery as its buttons, in place of a list
   and then a second question when a model of that name is there: the dialog says so itself.
 - **The desktop app reads OneLake tables with VS Code open.** Its engine did not start, since VS Code's held the lake

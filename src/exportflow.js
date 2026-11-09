@@ -115,10 +115,12 @@ function createExport({ connectivity, modules, appToken, powerBiToken = appToken
         plan = planExport(text, file, name, mods, { workspace, path }, await lakesOf(text, file, workspace));
         plan.engine = 'duckdb';
       }
+      // The function reads the tables client side; on a semantic model the page calls none, and none is deployed.
       const fnDir = join(extensionDir, 'fabric-function');
-      const [sourceZip, deployMetaData] = await Promise.all([
+      const fn = onItself ? null : await Promise.all([
         fsp.readFile(join(fnDir, 'source.zip')), fsp.readFile(join(fnDir, 'deploymetadata.json'), 'utf8'),
-      ]).catch(() => { throw new Error('this build has no function package (fabric-function/): run node scripts/function-bundle.mjs'); });
+      ]).then(([sourceZip, deployMetaData]) => ({ sourceZip, deployMetaData }),
+              () => { throw new Error('this build has no function package (fabric-function/): run node scripts/function-bundle.mjs'); });
       const token = await appToken({ createIfNone: true });
       if (!token) throw new Error('not signed in to the Fabric API');
 
@@ -270,7 +272,7 @@ function createExport({ connectivity, modules, appToken, powerBiToken = appToken
               workspaceId: plan.workspace, name: plan.name, tenantId: tenantOf(token),
               catalogUrl: plan.catalogUrl, modelUrl: plan.modelUrl, semanticModel: plan.semanticModel || null,
               site: async config => await zip(buildDist(files, config, vendor)),
-              fn: { sourceZip, deployMetaData }, redirects: marker.redirects || [],
+              fn, redirects: marker.redirects || [],
               itemId: marker.itemId || null, takeOver,
               // Kept as soon as there is one: if a later step fails, the next export must know this
               // item is its own rather than ask about an app it made.
