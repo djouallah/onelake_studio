@@ -508,7 +508,10 @@ const CATALOG_CTES = `WITH RECURSIVE
   s AS (SELECT database_oid, database_name, oid, schema_name AS n, parent_schema_oid,
                CASE WHEN regexp_full_match(schema_name, '[A-Za-z_][A-Za-z0-9_]*') AND lower(schema_name) NOT IN (SELECT w FROM kw)
                     THEN schema_name ELSE '"' || replace(schema_name, '"', '""') || '"' END AS q
-        FROM duckdb_schemas()),
+        FROM duckdb_schemas()
+        -- The lake (engine-host.js): the engine's own copy of each OneLake table, by a hash of its folder, and its
+        -- metadata. What a query names is the table's own name; these are how it is read.
+        WHERE database_name NOT IN ('lake', '__ducklake_metadata_lake')),
   p AS (SELECT database_oid, database_name, oid, q AS path, [n] AS parts FROM s WHERE parent_schema_oid IS NULL
         UNION ALL
         SELECT s.database_oid, s.database_name, s.oid, p.path || '.' || s.q, list_append(p.parts, s.n)
