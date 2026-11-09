@@ -657,9 +657,8 @@ and the command line's `export` takes no `--mode`.
 
 **What it writes**
 - **The app**, in Fabric.
-- **A local copy of the app**, one zip: where it was approved last time for that model, or else `<the folder VS
-  Code has open>/<model>-explore.zip`, or else in a folder you pick. An earlier export's `<model>-explore/` folder is no
-  longer written: the export says it can be deleted, and the app it published stays the zip's.
+- **A local copy of the app**, one zip, `<model>-explore.zip`, where you save it. An earlier export's
+  `<model>-explore/` folder is no longer written; the app it published stays the zip's.
 
 **What a model file needs** (a semantic model exported as it is needs none of it)
 - **It names exactly one lakehouse** in its Direct Lake expression. Without that, the button is not
@@ -668,8 +667,9 @@ and the command line's `export` takes no `--mode`.
 - **The workspace allows OneLake user-delegated SAS tokens.**
 
 **How it behaves**
-- **It asks first.** Before anything is written, it shows the zip and what the app runs on (*Runs on: DuckDB in the
-  browser*, or *Semantic model: … as it is*), and waits for *Export* or *Choose Another Folder…*. All the questions come before anything is written, locally or in Fabric.
+- **It asks one thing: where to save the app.** A Save dialog named for it, opened where this app was saved last, else
+  in Documents; *Export* there exports, and saving over the file is the dialog's own question. The other questions
+  come only when one applies (below), and all of them before anything is written, locally or in Fabric.
 - **Protected:** the site loads only for people who may open the app item.
 - **Client side, the model is read in place:** the app never holds a copy. Its function reads the model file from
   the lakehouse at run time (its `MODEL_URL` secret), so the app shows the model as it is there. On a semantic

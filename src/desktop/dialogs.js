@@ -24,6 +24,7 @@ $owner.Activate()
 const SAVE = `${FOREGROUND}
 $d = New-Object System.Windows.Forms.SaveFileDialog
 $d.OverwritePrompt = $true
+if ($env:OLS_TITLE) { $d.Title = $env:OLS_TITLE }
 if ($env:OLS_PATH) {
   $d.FileName = [IO.Path]::GetFileName($env:OLS_PATH)
   $dir = [IO.Path]::GetDirectoryName($env:OLS_PATH)
@@ -78,8 +79,8 @@ function powershell(script, { env = {}, input = '', run = spawn } = {}) {
 // { CSV: ['csv'] } as Windows writes a dialog's filter: "CSV|*.csv".
 const filterOf = filters => Object.entries(filters).map(([name, exts]) => `${name}|${exts.map(e => `*.${e}`).join(';')}`).join('|');
 
-const saveDialog = ({ defaultPath = '', filters = {} } = {}, o = {}) =>
-  powershell(SAVE, { ...o, env: { OLS_PATH: defaultPath, OLS_FILTER: filterOf(filters) } }).then(p => p || null);
+const saveDialog = ({ defaultPath = '', title = '', filters = {} } = {}, o = {}) =>
+  powershell(SAVE, { ...o, env: { OLS_PATH: defaultPath, OLS_TITLE: title, OLS_FILTER: filterOf(filters) } }).then(p => p || null);
 
 // The files picked, one or several (`many`), or [] when dismissed.
 const openDialog = ({ defaultPath = '', title = '', filters = {}, many = false } = {}, o = {}) =>

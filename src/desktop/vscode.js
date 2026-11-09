@@ -318,8 +318,8 @@ const window_ = {
     return host.ask('input', { title: opts.title || '', value: opts.value || '', prompt: opts.prompt || '', placeholder: opts.placeHolder || '' },
       { validate: opts.validateInput }).then(v => (v == null ? undefined : v));
   },
-  async showSaveDialog({ defaultUri, filters } = {}) {
-    const path = await host.saveDialog({ defaultPath: defaultUri ? defaultUri.fsPath : '', filters: filters || {} });
+  async showSaveDialog({ defaultUri, title, filters } = {}) {
+    const path = await host.saveDialog({ defaultPath: defaultUri ? defaultUri.fsPath : '', title: title || '', filters: filters || {} });
     return path ? Uri.file(path) : undefined;
   },
   async showOpenDialog({ defaultUri, title, canSelectFiles, canSelectMany, filters } = {}) {

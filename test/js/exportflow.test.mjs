@@ -37,7 +37,7 @@ async function setup({ offline = false, noInternet = false, answers = [], folder
   const kept = new Map();
   const ui = {
     openFolder: () => folder,
-    pickFolder: async o => { asked.push({ pickFolder: o }); return answers.shift() ?? null; },
+    saveFile: async o => { asked.push({ saveFile: o }); return answers.shift() ?? null; },
     info: async (message, ...rest) => { asked.push({ message, rest }); return answers.shift(); },
     warn: async (message, ...rest) => { asked.push({ message, rest }); return answers.shift(); },
     withProgress: () => { throw new Error("nothing is written in these tests"); },
@@ -100,47 +100,37 @@ test("no token for the Fabric API stops it before a question", async () => {
   await done();
 });
 
-test("with no folder open it asks for one, and dismissing that is a refusal", async () => {
-  const { exportExplore, asked, done } = await setup({ answers: [null] });
+test("the Save dialog is the one question: named for the app, in Documents the first time; Cancel writes and remembers nothing", async () => {
+  const { exportExplore, asked, kept, done } = await setup({ answers: [null] });
   const e = await exportExplore(REQUEST).then(() => null, x => x);
   assert.equal(e.declined, true);
   assert.equal(e.message, "Export cancelled.");
-  assert.ok(asked[0].pickFolder);
+  assert.equal(asked.length, 1);
+  const o = asked[0].saveFile;
+  assert.match(o.defaultPath, /sales-model-explore\.zip$/);
+  assert.equal(o.title, "Export sales-model-explore to Fabric");
+  assert.equal(o.saveLabel, "Export");
+  assert.deepEqual(o.filters, { "OneLake Studio app": ["zip"] });
+  assert.equal(kept.size, 0);
   await done();
 });
 
-test("where it goes is shown first: a No leaves nothing written and nothing remembered", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "exportflow-open-"));
-  const { exportExplore, asked, kept, done } = await setup({ folder: dir, answers: [undefined] });
-  const e = await exportExplore(REQUEST).then(() => null, x => x);
-  assert.equal(e.declined, true);
-  assert.match(asked[0].message, /^Export .* to Fabric\?$/);
-  assert.equal(asked[0].rest[0].modal, true);
-  assert.match(asked[0].rest[0].detail, /^Local copy: .*sales-model-explore\.zip \(new\)\n/, "the app is one file");
-  assert.doesNotMatch(asked[0].rest[0].detail, /no longer used/);
-  assert.equal(kept.size, 0);
-  assert.equal(existsSync(join(dir, "sales-model-explore.zip")), false);
+test("an app saved before: the Save dialog opens on that file", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "exportflow-saved-"));
+  const { exportExplore, asked, kept, done } = await setup({ answers: [null] });
+  const there = join(dir, "sales-model-explore.zip");
+  kept.set("exportZip:0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0/11111111-2222-3333-4444-555555555555/sales-model-explore", there);
+  await exportExplore(REQUEST).catch(() => {});
+  assert.equal(asked[0].saveFile.defaultPath, there);
   await rm(dir, { recursive: true, force: true });
   await done();
 });
 
-test("Choose Another Folder asks again, starting where the last one was", async () => {
-  const open = await mkdtemp(join(tmpdir(), "exportflow-open-"));
-  const { exportExplore, asked, done } = await setup({ folder: open, answers: ["Choose Another Folder…", null] });
-  const e = await exportExplore(REQUEST).then(() => null, x => x);
-  assert.equal(e.declined, true);
-  assert.equal(asked[1].pickFolder.startAt, open);
-  await rm(open, { recursive: true, force: true });
-  await done();
-});
-
-test("a model file's app is client side: no mode asked, no semantic model looked up, and the dialog says so", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "exportflow-open-"));
-  const { exportExplore, asked, looked, done } = await setup({ folder: dir, answers: [undefined] });
+test("a model file's app is client side: no mode asked, and no semantic model looked up", async () => {
+  const { exportExplore, asked, looked, done } = await setup({ answers: [null] });
   await exportExplore(REQUEST).catch(() => {});
   assert.equal(looked.length, 0);
-  assert.match(asked[0].rest[0].detail, /\nModel: power bi\/nem\.Lakehouse\/Files\/semantic_model\/sales\.yaml\nRuns on: DuckDB in the browser$/);
-  await rm(dir, { recursive: true, force: true });
+  assert.equal(asked.length, 1, "the Save dialog alone");
   await done();
 });
 
@@ -148,16 +138,12 @@ test("a model file's app is client side: no mode asked, no semantic model looked
 const { workspace: _w, path: _p, ...ON_MODEL } = REQUEST;
 
 test("a semantic model opened from the tree is exported as it is: found by its workspace and name, nothing asked of a lakehouse", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "exportflow-open-"));
-  const { exportExplore, asked, looked, done } = await setup({ folder: dir, answers: [undefined],
+  const { exportExplore, asked, looked, done } = await setup({ answers: [null],
                                                               models: { "NEM Sales": { id: "m1", displayName: "NEM Sales" } } });
   const e = await exportExplore({ ...ON_MODEL, model: { workspace: "aemo", name: "NEM Sales" } }).then(() => null, x => x);
   assert.equal(e.declined, true);
   assert.deepEqual(looked, [{ ws: "id-of-aemo", name: "NEM Sales" }]);
-  const { detail } = asked[0].rest[0];
-  assert.match(detail, /\nWorkspace: aemo\nSemantic model: NEM Sales, as it is \(not changed\)$/);
-  assert.doesNotMatch(detail, /Model: |\.yaml|Direct Lake|DirectQuery/, "no model file, and no mode");
-  await rm(dir, { recursive: true, force: true });
+  assert.equal(asked.length, 1, "the Save dialog alone: no mode");
   await done();
 });
 
@@ -166,17 +152,6 @@ test("a semantic model gone from its workspace is said, before anything is asked
   await assert.rejects(b.exportExplore({ ...ON_MODEL, model: { workspace: "aemo", name: "NEM Sales" } }), /aemo has no semantic model NEM Sales any more/);
   assert.equal(b.asked.length, 0);
   await b.done();
-});
-
-test("an earlier export's folder is no longer used, and the dialog says it can be deleted", async () => {
-  const open = await mkdtemp(join(tmpdir(), "exportflow-open-"));
-  await mkdir(join(open, "sales-model-explore"));
-  await writeFile(join(open, "sales-model-explore", ".onelake-studio-export.json"), JSON.stringify({ itemId: "item" }));
-  const { exportExplore, asked, done } = await setup({ folder: open, answers: [undefined] });
-  await exportExplore(REQUEST).catch(() => {});
-  assert.match(asked[0].rest[0].detail, /The app is one file now: the folder .*sales-model-explore is no longer used, and can be deleted\./);
-  await rm(open, { recursive: true, force: true });
-  await done();
 });
 
 test("Publish As Is only for a zip made for the same kind of site: DuckDB in the browser, or a semantic model", async () => {
@@ -194,7 +169,7 @@ test("Publish As Is only for a zip made for the same kind of site: DuckDB in the
     const open = await mkdtemp(join(tmpdir(), "exportflow-open-"));
     const files = new Map([["site/app.js", Buffer.from("// app")], ...Object.entries(site).map(([p, body]) => [p, Buffer.from(body)])]);
     await writeApp(join(open, "sales-model-explore.zip"), files, { model, engine, files: { "site/app.js": "edited since" } });
-    const { exportExplore, asked, done } = await setup({ folder: open, answers: ["Export", undefined],
+    const { exportExplore, asked, done } = await setup({ answers: [join(open, "sales-model-explore.zip"), undefined],
                                                          models: { "NEM Sales": { id: "m1", displayName: "NEM Sales" } } });
     const e = await exportExplore(request).then(() => null, x => x);
     assert.equal(e.declined, true);

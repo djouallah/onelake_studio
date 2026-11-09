@@ -44,7 +44,7 @@ const reportName = (workspace, model) =>
  * @param {string} o.extensionDir  where this install's files are
  * @param {string} [o.reportDir]  where a model's Report is kept until its first export (Add to report)
  * @param {() => Promise<string>} o.pageDir  where the page's files are
- * @param {object} o.ui  info, warn, pickFolder, openFolder, withProgress, openExternal, reveal
+ * @param {object} o.ui  info, warn, saveFile, openFolder, withProgress, openExternal, reveal
  * @param {(node: object) => void} o.onRefresh  this part of the tree changed
  * @param {(line: string) => void} o.log
  */
@@ -78,7 +78,7 @@ function createExport({ connectivity, modules, appToken, powerBiToken = appToken
   }
 
   // Export to Fabric, from Explore: the model's Report and Explore as a Fabric app (exportapp.js),
-  // its local copy one zip, <the open folder>/<app>.zip (asked for when no folder is open) —
+  // its local copy one zip, <app>.zip, saved where the Save dialog says —
   // and published from it over the Fabric REST API (fabricapp.js). The function's deploy
   // package ships in the vsix (fabric-function/, scripts/function-bundle.mjs). Answers what
   // Explore's info line says; a failure is thrown back to it, and logged. So is the user's No
@@ -124,43 +124,24 @@ function createExport({ connectivity, modules, appToken, powerBiToken = appToken
       const token = await appToken({ createIfNone: true });
       if (!token) throw new Error('not signed in to the Fabric API');
 
-      // The local copy, <app>.zip: the one approved last time for this model, or else in the
-      // folder VS Code has open, or else in a folder picked. Never used unapproved: where it goes
-      // is shown, and the export waits for an OK or another folder.
-      const open = ui.openFolder();
+      // The local copy, <app>.zip, where the person saves it: the Save dialog is the export's one
+      // question, opened where this app was saved last, else in Documents. Saving over the file is
+      // the dialog's own question; Cancel is a refusal, with nothing written.
       const appKey = `${plan.workspace}/${plan.lakehouse ?? 'semanticmodel'}/${plan.name}`;
       const remembered = memento.get(`exportZip:${appKey}`);
       const zipName = `${plan.name}.zip`;
-      let outZip = remembered && existsSync(dirname(remembered)) ? remembered : open ? join(open, zipName) : null;
+      const documents = join(os.homedir(), 'Documents');
+      const outZip = await ui.saveFile({
+        defaultPath: remembered && existsSync(dirname(remembered)) ? remembered
+          : join(existsSync(documents) ? documents : os.homedir(), zipName),
+        title: `Export ${plan.name} to Fabric`, saveLabel: 'Export', filters: { 'OneLake Studio app': ['zip'] },
+      });
+      if (!outZip) throw declined('Export cancelled.');
       // An earlier export's folder, <app>/ with its marker: no longer written, but what it published
       // is the app's, and a zip not written yet starts from it.
+      const open = ui.openFolder();
       const oldDir = [memento.get(`exportFolder:${appKey}`), open && join(open, plan.name)]
         .find(d => d && existsSync(join(d, OLD_MARKER)));
-      let prev = outZip;
-      const pickFolder = async () => {
-        const dir = await ui.pickFolder({
-          startAt: prev ? dirname(prev) : os.homedir(),
-          openLabel: 'Export Here',
-          title: `Export to Fabric: the folder to keep the app's local copy (${zipName}) in`,
-        });
-        return dir ? join(dir, zipName) : null;
-      };
-      for (;;) {
-        if (!outZip) {
-          outZip = await pickFolder();
-          if (!outZip) throw declined('Export cancelled.');
-        }
-        const pick = await ui.info(
-          `Export ${plan.name} to Fabric?`,
-          { modal: true, detail: `Local copy: ${outZip}${existsSync(outZip) ? '' : ' (new)'}\nWorkspace: ${workspace}\n` +
-            (onItself ? `Semantic model: ${pbi.name}, as it is (not changed)` : `Model: ${plan.modelPath}\nRuns on: DuckDB in the browser`) +
-            (oldDir ? `\n\nThe app is one file now: the folder ${oldDir} is no longer used, and can be deleted.` : '') },
-          'Export', 'Choose Another Folder…');
-        if (pick === 'Export') break;
-        if (!pick) throw declined('Export cancelled.');
-        prev = outZip;
-        outZip = null;
-      }
       // A file Export to Fabric did not write is refused here, before anything else is asked.
       const local = await readApp(outZip);
       const before = local ? local.marker : oldDir ? await oldMarker(oldDir) : null;

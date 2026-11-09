@@ -406,12 +406,9 @@ async function activateInner(context) {
       info: (...a) => vscode.window.showInformationMessage(...a),
       warn: (...a) => vscode.window.showWarningMessage(...a),
       openFolder: () => { const open = (vscode.workspace.workspaceFolders || [])[0]; return open ? open.uri.fsPath : null; },
-      pickFolder: async ({ startAt, openLabel, title }) => {
-        const picked = await vscode.window.showOpenDialog({
-          canSelectFolders: true, canSelectFiles: false, canSelectMany: false,
-          defaultUri: vscode.Uri.file(startAt), openLabel, title,
-        });
-        return picked && picked.length ? picked[0].fsPath : null;
+      saveFile: async ({ defaultPath, title, saveLabel, filters }) => {
+        const uri = await vscode.window.showSaveDialog({ defaultUri: vscode.Uri.file(defaultPath), title, saveLabel, filters });
+        return uri ? uri.fsPath : null;
       },
       withProgress: (title, work) => vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title }, work),
       openExternal: url => vscode.env.openExternal(vscode.Uri.parse(url)),
