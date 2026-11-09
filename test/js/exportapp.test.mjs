@@ -324,7 +324,7 @@ test("the local copy is one zip: the whole app but its packages, written and rea
                      "rayfin/functions/src/function_app.ts", "AGENTS.md", "model.ossie.yaml", "site/model.json"]) {
       assert.ok(files.has(p), p);
     }
-    assert.ok(![...files.keys()].some(p => /vendor\/|node_modules|ossie\.(json|yaml)$|^model\/|^dist\/|\.gitignore/.test(p)),
+    assert.ok(![...files.keys()].filter(p => p !== "model.ossie.yaml").some(p => /vendor\/|node_modules|ossie\.(json|yaml)$|^model\/|^dist\/|\.gitignore/.test(p)),
       `no packages, no build, no model but model.ossie.yaml: ${[...files.keys()].join(", ")}`);
     assert.deepEqual(JSON.parse(files.get("site/explore.json")), state);
     assert.match(files.get("rayfin/rayfin.yml").toString(), /^id: sales-model-explore$/m);
