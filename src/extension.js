@@ -187,6 +187,8 @@ async function show(context, { newTab = false, ...options } = {}) {
       // A refusal is what Explore's info line says, not a failure of the export.
       exportExplore: x => (exportExplore ? exportExplore(x).catch(e => { if (e.declined) return e.message; throw e; })
         : Promise.reject(new Error('OneLake Studio is still starting'))),
+      createSemanticModel: x => (createSemanticModel ? createSemanticModel(x).catch(e => { if (e.declined) return e.message; throw e; })
+        : Promise.reject(new Error('OneLake Studio is still starting'))),
       report: {
         load: x => (modelReport ? modelReport.load(x) : Promise.reject(new Error('OneLake Studio is still starting'))),
         stamp: x => (modelReport ? modelReport.stamp(x) : Promise.reject(new Error('OneLake Studio is still starting'))),

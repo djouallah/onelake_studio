@@ -376,6 +376,10 @@ async function openModelView(file, text = null, { fromOneLake = text == null } =
           : { file: file.name, name: m.view, text: bim, state, model: { workspace: file.modelWorkspace, name: file.modelName || m.view } })
         : undefined,
       // Any model, wherever its file is, by its SQL name. On Windows: Excel's provider is Windows only.
+      // A model file in OneLake, made a Power BI semantic model as the tree's ⛁ does it. A semantic model is one already.
+      createSemanticModel: fromOneLake
+        ? () => engine.createSemanticModel({ file: file.name, text: bim, workspace: lakehouse.workspace, path: file.path })
+        : undefined,
       openInExcel: cfg.windows ? () => engine.openInExcel({ workspace: m.schema, model: m.view }) : undefined,
       keepOffline: {
         state: () => engine.offlineState({ workspace: m.schema, model: m.view }),

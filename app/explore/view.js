@@ -14,8 +14,8 @@
 //             a visual (a slicer among them), drawn by report.js; a ✕ takes one out and its grip
 //             moves it (a host that saves the Report)
 // Model's Diagram | YAML (or BIM) shows the model drawn, or its file as written (pretty.js).
-// The bar: the page tabs, then each page's own: Model's Keep offline, then Diagram | YAML and Open
-// in Excel at the right; Visual's Show SQL, Download CSV and Add to report; the Report's Export to
+// The bar: the page tabs, then each page's own: Model's Keep offline, then Diagram | YAML, Create
+// Semantic Model (a model file only) and Open in Excel at the right; Visual's Show SQL, Download CSV and Add to report; the Report's Export to
 // Fabric, which publishes the Report as a Fabric app.
 // The same file in the panel and in Export to Fabric's app: the host says how a model's SQL is compiled
 // and run, and where ECharts comes from (`ctx`); nothing here knows the engine.
@@ -56,6 +56,8 @@ const REPORT_POLL_MS = 2000;
 //   exportToFabric(state)  (optional) the Report's Export to Fabric button: the Report published as
 //                    a Fabric app (src/exportapp.js; `state`, the shelves, or null), on what the model
 //                    is, so nothing is asked here; answers what to say when it is done
+//   createSemanticModel()  (optional) a model file's Create Semantic Model button, on the Model page:
+//                    the tree's own (src/exportflow.js), its dialog the host's; answers what to say
 //   openInExcel()    (optional) the Open in Excel button: this model in a new workbook, as a live
 //                    PivotTable (src/xmla); answers what to say when it is open
 //   keepOffline      (optional) { state(), set(on) }: the Keep offline switch beside the tabs, every
@@ -172,6 +174,8 @@ export function mountExplore(root, ctx) {
     b.title = title;
     return b;
   };
+  const createBtn = ctx.createSemanticModel
+    ? hostBtn('Create Semantic Model', 'Creating…', ctx.createSemanticModel, 'A Power BI semantic model of this file, in its workspace') : null;
   const excelBtn = ctx.openInExcel
     ? hostBtn('Open in Excel', 'Opening…', ctx.openInExcel, 'This model in a new Excel workbook, as a live PivotTable') : null;
   const keepOffline = ctx.keepOffline ? offlineSwitch(ctx.keepOffline) : null;
@@ -220,10 +224,11 @@ export function mountExplore(root, ctx) {
     !dialects.length ? `Amber: ${extName}, what Ossie has no field for`
       : !vendors.length ? `Amber: expressions in ${dialects.join(', ')}, not Ossie SQL`
       : `Amber: not plain Ossie SQL — the ${extName}, and expressions in ${dialects.join(', ')}`);
-  // At the right of the bar, before Open in Excel. On the Model page only.
+  // At the right of the bar, before Create Semantic Model and Open in Excel. On the Model page only.
   const modelSwitch = ctx.text == null ? null
     : el('div', { class: 'subtabs model-switch', role: 'tablist', 'aria-label': 'How the model is shown' }, diagramTab, fileTab);
-  const modelActions = modelSwitch || excelBtn ? el('div', { class: 'explore-actions', hidden: true }, modelSwitch, excelBtn) : null;
+  const modelActions = modelSwitch || createBtn || excelBtn
+    ? el('div', { class: 'explore-actions', hidden: true }, modelSwitch, createBtn, excelBtn) : null;
   const modelArea = el('div', { class: 'model-area' }, modelPage, textNote, textPre);
 
   root.replaceChildren(

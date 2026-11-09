@@ -61,7 +61,7 @@ const ENGINE_METHODS = new Set(['query', 'stream', 'cancel', 'info', 'fileView',
  *        a semantic model a query names, opened from its local copy (read from Fabric the first
  *        time) and kept as a view: { name, schema, path, text }
  */
-function createHostMethods({ onelake, engine, onStatus = () => {}, saveFile = null, semviews = null, exportExplore = null, report = null, openInExcel = null, offlineState = null, setOffline = null,
+function createHostMethods({ onelake, engine, onStatus = () => {}, saveFile = null, semviews = null, exportExplore = null, createSemanticModel = null, report = null, openInExcel = null, offlineState = null, setOffline = null,
                              nameTables = null, exportResult = null, openDocument = null, copyText = null, saveQuery = null, saveDraft = null, askVariable = null, openModel = null, modelsDir = null }) {
   const views = () => { if (!semviews) throw new Error('semantic views are not available here'); return semviews; };
   return {
@@ -71,7 +71,7 @@ function createHostMethods({ onelake, engine, onStatus = () => {}, saveFile = nu
     'fabric.exportExplore': async x => {
       if (!exportExplore) throw new Error('Export to Fabric is not available here');
       // A OneLake file (workspace + path), or a semantic model opened from its local copy
-      // (model: { workspace, name }), which the export writes into its lakehouse.
+      // (model: { workspace, name }), which the app queries as it is.
       const model = x.model && x.model.workspace && x.model.name
         ? { workspace: String(x.model.workspace), name: String(x.model.name) } : null;
       if (!(x.workspace && x.path) && !model) {
@@ -80,8 +80,14 @@ function createHostMethods({ onelake, engine, onStatus = () => {}, saveFile = nu
       return exportExplore({ file: String(x.file || 'model'), name: String(x.name || 'model'),
                              text: String(x.text ?? ''),
                              ...(x.workspace && x.path ? { workspace: String(x.workspace), path: String(x.path) } : { model }),
-                             state: x.state && typeof x.state === 'object' ? x.state : null,
-                             ...(x.mode ? { mode: String(x.mode) } : {}) });
+                             state: x.state && typeof x.state === 'object' ? x.state : null });
+    },
+    // Create Semantic Model (exportflow.js), from Explore: a model file in OneLake. The host's dialog asks the rest.
+    'fabric.createSemanticModel': async x => {
+      if (!createSemanticModel) throw new Error('Create Semantic Model is not available here');
+      if (!x || !x.workspace || !x.path) throw new Error("Create Semantic Model needs a model file in a lakehouse's Files/");
+      return createSemanticModel({ file: String(x.file || 'model'), text: String(x.text ?? ''),
+                                   workspace: String(x.workspace), path: String(x.path) });
     },
     // The Report tab (exportflow.js reportOf): a model by its names.
     'model.report': async x => {

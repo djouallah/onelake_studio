@@ -44,6 +44,15 @@ test("Open in Excel: a page names a model and nothing else, and hears how it wen
   await assert.rejects(createHostMethods({ onelake: {}, engine: {} })["excel.open"]({ workspace: "ws", model: "m" }), /not available here/);
 });
 
+test("Create Semantic Model: a page names a model file in OneLake, and hears how it went", async () => {
+  const asked = [];
+  const methods = createHostMethods({ onelake: {}, engine: {}, createSemanticModel: async x => { asked.push(x); return "made"; } });
+  assert.equal(await methods["fabric.createSemanticModel"]({ file: "sales.yaml", text: "t", workspace: "ws", path: "lh.Lakehouse/Files/sales.yaml", mode: "directquery" }), "made");
+  assert.deepEqual(asked, [{ file: "sales.yaml", text: "t", workspace: "ws", path: "lh.Lakehouse/Files/sales.yaml" }], "no mode: the host's dialog asks it");
+  await assert.rejects(methods["fabric.createSemanticModel"]({ file: "sales.yaml", workspace: "ws" }), /needs a model file in a lakehouse's Files\//);
+  await assert.rejects(createHostMethods({ onelake: {}, engine: {} })["fabric.createSemanticModel"]({ workspace: "ws", path: "p" }), /not available here/);
+});
+
 test("a model's tables reach the host as the page names them: by GUIDs, or by lakehouse name in a workspace", async () => {
   const asked = [];
   const methods = createHostMethods({ onelake: {}, engine: {}, nameTables: async list => { asked.push(...list); return list.map(() => "x"); } });

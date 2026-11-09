@@ -678,6 +678,7 @@ export function createEngine({
   // Export to Fabric: the model's text and the Explore shelves to the host, which writes the
   // app's zip and publishes it (src/exportapp.js); answers what to tell the user.
   const exportExplore = x => callHost("fabric.exportExplore", [x]);
+  const createSemanticModel = x => callHost("fabric.createSemanticModel", [x]);
   // The Report tab: a model's tiles ({ spec, stamp }), what changes when they do, and the tiles
   // saved over those of a stamp (Add to report, a tile's ✕).
   const modelReport = x => callHost("model.report", [x]);
@@ -705,5 +706,5 @@ export function createEngine({
 
   return { init, reset, statTable, peekTable, rowsOutOfReach, deltaState, deltaHistory,
            loadFile, readFileBytes, saveText, saveOneLakeFile, runSql, describeLoad, fmtBytes, cancelLoad,
-           semanticViews, semanticKeep, semanticOpen, exportExplore, modelReport, modelReportStamp, modelReportSave, openInExcel, offlineState, setOffline, nameTables, saveQuery, saveDraft, askVariable, copyText, exportResult, openDocument };
+           semanticViews, semanticKeep, semanticOpen, exportExplore, createSemanticModel, modelReport, modelReportStamp, modelReportSave, openInExcel, offlineState, setOffline, nameTables, saveQuery, saveDraft, askVariable, copyText, exportResult, openDocument };
 }

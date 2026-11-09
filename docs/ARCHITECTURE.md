@@ -560,8 +560,8 @@ holds those lakehouses, else `--workspace`, and the error names the workspaces w
 
 A semantic model opens as **Explore** ([`app/explore/`](../app/explore/)), on three pages: Model, Visual and Report
 (Visual is the `pivot` page in the code). It opens on Model. The Fabric app is its Report alone.
-- **The bar** holds the page tabs, then each page's own: Model's Keep offline at the left, its Diagram | YAML and Open in
-  Excel at the right; Visual's Show SQL, Download CSV and Add to report; the Report's Export to Fabric.
+- **The bar** holds the page tabs, then each page's own: Model's Keep offline at the left, its Diagram | YAML, Create
+  Semantic Model (a model file only) and Open in Excel at the right; Visual's Show SQL, Download CSV and Add to report; the Report's Export to Fabric.
 
 - **Model:** its tables as a star, dimensions in the middle and facts around them, with its
   relationships. Click a table for its columns, measures (with their DAX) and relationships.
@@ -618,7 +618,8 @@ same files on DuckDB-WASM.
 
 ## Create Semantic Model
 
-A `.bim` or Ossie `.yaml` in a lakehouse's `Files/` has a ⛁ in the tree (`modelFile`, [`src/tree.js`](../src/tree.js)):
+A `.bim` or Ossie `.yaml` in a lakehouse's `Files/` has a ⛁ in the tree (`modelFile`, [`src/tree.js`](../src/tree.js)), and
+the same button on Explore's Model page when it is open there (`fabric.createSemanticModel`, [`src/host.js`](../src/host.js)):
 **Create Semantic Model** makes the Power BI semantic model of it, named for the file, in the file's workspace, on Direct
 Lake (refreshed once made) or DirectQuery (its SQL endpoint signed in to by SSO) (`createSemanticModel` in
 [`src/exportflow.js`](../src/exportflow.js)), and nothing else: no app, no zip, no Report. One dialog asks which: its
