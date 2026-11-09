@@ -52,10 +52,11 @@ const EMPTY = () => ({ v: 2, rows: [], cols: [], values: [], filters: [], mark: 
 // =============================================================================
 
 // Tables with their visible columns and measures, dimensions first (a dimension is a table a
-// relationship points to: the model says it, not the names).
+// relationship points to: the model says it, not the names). A hidden table hides all it holds,
+// its measures too, as Power BI does.
 export function modelFields(model) {
   const dims = new Set((model.relationships ?? []).map(r => r.toTable));
-  const tables = (model.tables ?? []).map(t => ({
+  const tables = (model.tables ?? []).filter(t => !t.isHidden).map(t => ({
     // A model of one table (a lakehouse table's Pivot) has neither.
     name: t.name, dimension: dims.has(t.name), kind: dims.size ? (dims.has(t.name) ? 'dimension' : 'fact') : null,
     columns: (t.columns ?? []).filter(c => !c.isHidden && c.type !== 'rowNumber').map(c => ({ id: `${t.name}.${c.name}`, kind: 'column', table: t.name,

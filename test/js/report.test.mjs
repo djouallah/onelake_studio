@@ -185,3 +185,13 @@ test("a slicer is a Visual: its query lists the values that have the measure, an
   assert.equal(pivotTitle(state), "Borough");
   assert.equal(pivotQuery({ rows: ["dim_zone.Borough"], mark: "slicer" }, fields).state.slicer, "list", "List unless picked");
 });
+
+test("Visual's fields leave out a hidden table, its measures too, and hidden columns and measures", () => {
+  const { tables, byId } = modelFields({ tables: [
+    ...MODEL.tables.map(t => (t.name === "trips" ? { ...t, columns: [...t.columns, { name: "secret", dataType: "string", isHidden: true }] } : t)),
+    { name: "stg_log", isHidden: true, columns: [{ name: "path", dataType: "string" }], measures: [{ name: "Files" }] },
+  ], relationships: MODEL.relationships });
+  assert.deepEqual(tables.map(t => t.name), ["dim_zone", "trips"]);
+  assert.ok(!byId.has("stg_log.path") && !byId.has("Files") && !byId.has("trips.secret"));
+  assert.ok(byId.has("trips.fare") && byId.has("Total Fare"));
+});
