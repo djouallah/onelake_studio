@@ -14,11 +14,12 @@
 //                                           snapshots.js keeps (without location and bytes),
 //                                           the snapshot's manifests and how many were not in
 //                                           the manifest cache.
-//   prefetchFiles(name, files, url, store, onFile)
+//   prefetchFiles(name, files, url, store, onFile, onBytes)
 //                                           each Parquet file whole, six at a time, handed to
 //                                           the worker's store (store(path, bytes), resolved
-//                                           once kept; blockcache.js); onFile(bytes) as each
-//                                           one is done. files: [{ path, size }]. Returns the
+//                                           once kept; blockcache.js); onBytes(n) as each
+//                                           part of a file arrives, onFile(bytes) as each one
+//                                           is done. files: [{ path, size }]. Returns the
 //                                           sizes; a file that fails to download throws.
 // =============================================================================
 
@@ -56,17 +57,39 @@ const get = (url, table) => limited(async () => {
 // store (store(path, bytes), resolved once it is kept): DuckDB reads them there. Not through
 // the browser's HTTP cache, which does not keep a response of 70-100 MB. Returns each file's
 // size.
-export async function prefetchFiles(name, files, url, store, onFile = () => {}) {
+// A file is read as it arrives, so a page downloading files of 250 MB shows bytes coming
+// (onBytes) long before the first file is done.
+export async function prefetchFiles(name, files, url, store, onFile = () => {}, onBytes = () => {}) {
   if (!order.includes(name)) order.push(name);
   return Promise.all(files.map(f => limited(async () => {
     const r = await fetch(url(f.path), { cache: 'no-store' });
     if (!r.ok) throw new Error(`${f.path.split('/').pop()}: HTTP ${r.status}`);
-    const bytes = await r.arrayBuffer();
+    const bytes = await body(r, Number(r.headers.get('content-length')) || f.size, onBytes);
     const size = bytes.byteLength;   // read first: the store takes the bytes (transferred)
     await store(f.path, bytes);
     onFile(size);
     return { path: f.path, size };
   }, name)));
+}
+// A response's body as an ArrayBuffer, onBytes(n) for each part as it arrives: into one buffer
+// of the size it is said to be, or, when that is unknown or wrong, its parts joined.
+async function body(r, expected, onBytes) {
+  const reader = r.body.getReader();
+  let buf = expected > 0 ? new Uint8Array(expected) : null, at = 0;
+  const parts = [];
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (buf && at + value.length > buf.length) { parts.push(buf.subarray(0, at)); buf = null; }
+    if (buf) buf.set(value, at); else parts.push(value);
+    at += value.length;
+    onBytes(value.length);
+  }
+  if (buf) return at === buf.length ? buf.buffer : buf.slice(0, at).buffer;
+  const out = new Uint8Array(at);
+  let o = 0;
+  for (const p of parts) { out.set(p, o); o += p.length; }
+  return out.buffer;
 }
 
 // --- Avro object container files, read by the schema in their header: the records of a

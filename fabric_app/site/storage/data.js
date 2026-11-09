@@ -279,12 +279,36 @@ export function createDataSource({ onStatus = () => {}, onProgress = () => {} } 
     if (!missing.size) return;
     const fresh = all.filter(f => missing.has(f.path));
     const shown = !(t.bytes != null && t.bytes <= SMALL_BYTES);
-    let done = 0, got = 0;
-    const progress = () => shown && onProgress({ label: `Downloading ${name}`, done, total: fresh.length,
-      detail: `${done} of ${fresh.length} files, ${(got / 1048576).toFixed(0)} MB${t.bytes && fresh.length === all.length ? ` of ${(t.bytes / 1048576).toFixed(0)} MB` : ''}. Kept in this browser for the next visit.` });
-    progress();
+    // `got` counts bytes as they arrive, not files done: a file of 250 MB, six at a time, is
+    // ~1.5 GB before the first one is done. The speed is over the last 10 s, and with it how
+    // long is left, once 10 s have passed.
+    const whole = t.bytes && fresh.length === all.length ? t.bytes : null;
+    const MB = n => Math.round(n / 1048576).toLocaleString('en-US');
+    let done = 0, got = 0, drawn = 0;
+    const started = Date.now(), seen = [[started, 0]];
+    const rate = () => {
+      const now = Date.now();
+      seen.push([now, got]);
+      while (seen.length > 2 && now - seen[1][0] >= 10000) seen.shift();
+      const [t0, g0] = seen[0];
+      return now - started >= 10000 && now > t0 ? (got - g0) / ((now - t0) / 1000) : null;
+    };
+    const progress = (force = false) => {
+      if (!shown) return;
+      const now = Date.now();
+      if (!force && now - drawn < 500) return;
+      drawn = now;
+      const r = rate();
+      const left = r > 0 && whole ? Math.max(whole - got, 0) / r : null;
+      const time = left == null ? '' : left < 90 ? `, about ${Math.max(Math.round(left), 1)} s left` : `, about ${Math.round(left / 60)} min left`;
+      onProgress({ label: `Downloading ${name}`, done, total: fresh.length,
+        detail: `Downloading ${name}: ${done} of ${fresh.length} files, ${MB(got)} MB${whole ? ` of ${MB(whole)} MB` : ''}` +
+          `${r > 0 ? `, ${r < 10485760 ? (r / 1048576).toFixed(1) : MB(r)} MB/s${time}` : ''}. Kept in this browser for the next visit.` });
+    };
+    progress(true);
     try {
-      await prefetchFiles(name, fresh, f => https(f, sas), toStore, n => { done++; got += n; progress(); });
+      await prefetchFiles(name, fresh, f => https(f, sas), toStore,
+        () => { done++; progress(true); }, n => { got += n; progress(); });
     } finally { if (shown) onProgress(null); }
     const still = await lacking(fresh.map(f => f.path));
     if (still.length) throw new Error(`${name}: ${still.length} files not in the local store after their download`);

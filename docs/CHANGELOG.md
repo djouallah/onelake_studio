@@ -21,6 +21,9 @@
 - **Export to Fabric asks only where to save the app**: a Save dialog named for it, opened where it was saved last,
   else in Documents. The confirmation that listed the workspace, the model and what the app runs on is gone, with
   its Choose Another Folder….
+- **A Fabric app's download counts bytes as they come.** A large table, downloaded on a first visit, showed
+  "0 of 35 files, 0 MB" for minutes: the count moved only when a whole file was in, and six files of 250 MB come
+  down at once. It now shows the MB coming in, the speed, and about how long is left.
 - **A semantic model has no Download Again button.** Refresh on its workspace, or on its Semantic models, reads each
   model downloaded there from Fabric again, behind, and replaces its local copy. One that can't be read keeps its
   copy, and the log says why.
