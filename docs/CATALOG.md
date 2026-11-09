@@ -262,7 +262,7 @@ went through it.
 | Rows written from the log alone, with no file read | 2,000 files in about 50ms, the same rows as `delta_scan`, and the log's stats prune to 2 files. `footer_size` and column stats can be empty. `ducklake_add_data_files` reads every footer instead: 24.6s for 2,000 local files |
 | Partitions | Same rows as `delta_scan`, read from the `col=value` folder names. So a local copy keeps its relative path, folders included |
 | A column added later | One name mapping for every file works, so the log's schema is enough |
-| Deletion vectors | DuckLake's Puffin delete file is the bare blob, and the blob is byte for byte what a Delta `.bin` holds after its first byte. A DV sliced out of the `.bin` into a file of its own gave the same rows as `delta_scan` |
+| Deletion vectors | The Iceberg Puffin delete file DuckLake reads is the bare blob, and the blob is byte for byte what a Delta `.bin` holds after its first byte. A DV sliced out of the `.bin` into a file of its own gave the same rows as `delta_scan` |
 | Speed, local files, 2,000 files | The same as `delta_scan` on the kept log, within 30ms: `LIMIT 5` 70 against 53ms, a full scan 644 against 590ms. Both open over 100 files for `LIMIT 5` |
 | Real tables in the cache | 1 of 29 partitioned, none with column mapping or deletion vectors |
 | Packaging | `ducklake` has a DuckDB 2.0 build for each platform shipped |

@@ -13,7 +13,7 @@
 //   turns every remote path into a local one.
 // - A Delta partition column isn't in its files. DuckLake reads it from the col=value folder name when the name
 //   mapping marks it, so a local copy keeps the file's relative path.
-// - A deletion vector is the same bytes as DuckLake's Puffin delete file, sliced out of the .bin it is packed in.
+// - A deletion vector is the same bytes as an Iceberg Puffin delete file, sliced out of the .bin it is packed in.
 // - Every file's size is needed: with none, a read stops on an internal error that takes the database with it.
 // - CREATE and ALTER reach the metadata only at commit, so a schema change is committed before the files.
 //
