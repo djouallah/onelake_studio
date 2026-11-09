@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Architecture: OneLake Studio</title>
-  <meta name="description" content="The parts of the OneLake Studio app and what each does: the window, the Node process, the local catalog and its sync, the DuckDB servers, Excel's XMLA endpoint, the command line and the exported Fabric app.">
+  <meta name="description" content="The parts of the OneLake Studio app and what each does: the window, the Node process, the local catalog and its sync, the query server and its local lake, Excel's XMLA endpoint, the command line and the exported Fabric app.">
   <link rel="icon" href="icon.png">
   <link rel="stylesheet" href="style.css">
 </head>
@@ -34,7 +34,7 @@
       <figure class="diagram wide">
         <svg viewBox="0 0 680 566" role="img" aria-labelledby="parts-title parts-desc">
           <title id="parts-title">The parts of the OneLake Studio app</title>
-          <desc id="parts-desc">On this machine, the app window, Excel and the command line talk to the Node process: the window over HTTP on 127.0.0.1, Excel over XMLA on 127.0.0.1, the command line over a local pipe. The Node process sends statements to the query server, starts the keep-offline engine, and reads and writes the local catalog, a SQLite file. Both DuckDB engines read through one disk cache from OneLake. The Node process keeps the local catalog current from the Fabric REST API and OneLake. Export to Fabric publishes a Fabric app through the Fabric REST API.</desc>
+          <desc id="parts-desc">On this machine, the app window, Excel and the command line talk to the Node process: the window over HTTP on 127.0.0.1, Excel over XMLA on 127.0.0.1, the command line over a local pipe. The Node process sends statements to the query server over Quack and a control pipe, its sync worker asks the query server to sync a table whose snapshot moved, and it reads and writes the local catalog, a SQLite file. The query server holds the local lake, a DuckLake catalog of the tables read here with copies of their files, and runs the table service. A query reads the files already copied from disk, and the rest from OneLake. The table service downloads each file a query opened, whole, from OneLake. The sync worker reads listings and metadata from the Fabric REST API and OneLake. Export to Fabric publishes a Fabric app through the Fabric REST API.</desc>
           <defs>
             <marker id="head" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto">
               <path class="head" d="M0 0 8 4 0 8z"/>
@@ -69,48 +69,49 @@
           <path class="edge" d="M125 220V289" marker-end="url(#head)"/>
           <text class="note" x="133" y="250">Quack,</text>
           <text class="note" x="133" y="266">control pipe</text>
-          <path class="edge" d="M355 220V289" marker-end="url(#head)"/>
-          <text class="note" x="363" y="258">starts</text>
+          <path class="edge" d="M345 220V289" marker-end="url(#head)"/>
+          <text class="note" x="353" y="250">sync worker:</text>
+          <text class="note" x="353" y="266">sync a table</text>
           <path class="edge" d="M580 220V289" marker-end="url(#head)"/>
           <text class="note" x="588" y="250">reads,</text>
           <text class="note" x="588" y="266">writes</text>
 
-          <rect class="node" x="15" y="290" width="220" height="64" rx="5"/>
-          <text class="title" x="125" y="316" text-anchor="middle">Query server</text>
-          <text class="note" x="125" y="337" text-anchor="middle">DuckDB: every tab's SQL</text>
-          <rect class="node" x="255" y="290" width="200" height="64" rx="5"/>
-          <text class="title" x="355" y="316" text-anchor="middle">Keep-offline engine</text>
-          <text class="note" x="355" y="337" text-anchor="middle">DuckDB: one thread</text>
+          <rect class="node" x="15" y="290" width="440" height="122" rx="5"/>
+          <text class="title" x="235" y="313" text-anchor="middle">Query server</text>
+          <text class="note" x="235" y="332" text-anchor="middle">DuckDB: every tab's SQL, and Keep offline</text>
+          <rect class="node" x="30" y="344" width="205" height="56" rx="5"/>
+          <text class="title" x="132" y="367" text-anchor="middle">Local lake</text>
+          <text class="note" x="132" y="386" text-anchor="middle">DuckLake catalog, file copies</text>
+          <rect class="node" x="250" y="344" width="190" height="56" rx="5"/>
+          <text class="title" x="345" y="367" text-anchor="middle">Table service</text>
+          <text class="note" x="345" y="386" text-anchor="middle">copies files queries open</text>
           <rect class="node" x="500" y="290" width="165" height="64" rx="5"/>
           <text class="title" x="582" y="316" text-anchor="middle">Local catalog</text>
           <text class="note" x="582" y="337" text-anchor="middle">SQLite file: metadata</text>
 
-          <path class="edge" d="M125 354V399" marker-end="url(#head)"/>
-          <path class="edge" d="M355 354V399" marker-end="url(#head)"/>
-
-          <rect class="node" x="15" y="400" width="440" height="52" rx="5"/>
-          <text class="title" x="235" y="422" text-anchor="middle">Disk cache</text>
-          <text class="note" x="235" y="441" text-anchor="middle">the bytes both engines read</text>
-
-          <path class="edge" d="M150 452V499" marker-end="url(#head)"/>
-          <text class="note" x="142" y="482" text-anchor="end">rows, files</text>
+          <path class="edge" d="M110 400V499" marker-end="url(#head)"/>
+          <text class="note" x="118" y="440">files not</text>
+          <text class="note" x="118" y="456">copied yet</text>
+          <path class="edge" d="M270 400V499" marker-end="url(#head)"/>
+          <text class="note" x="278" y="440">whole files,</text>
+          <text class="note" x="278" y="456">HTTPS</text>
           <path class="edge" d="M478 220V499" marker-end="url(#head)"/>
-          <path class="edge" d="M478 484H290V499" marker-end="url(#head)"/>
+          <path class="edge" d="M478 484H330V499" marker-end="url(#head)"/>
           <text class="note" x="486" y="400">sync:</text>
           <text class="note" x="486" y="416">listings,</text>
           <text class="note" x="486" y="432">metadata</text>
 
-          <rect class="node remote" x="15" y="500" width="300" height="56" rx="5"/>
-          <text class="title" x="165" y="523" text-anchor="middle">OneLake</text>
-          <text class="note" x="165" y="542" text-anchor="middle">tables, files</text>
-          <rect class="node remote" x="330" y="500" width="190" height="56" rx="5"/>
-          <text class="title" x="425" y="523" text-anchor="middle">Fabric REST API</text>
-          <text class="note" x="425" y="542" text-anchor="middle">workspaces, models</text>
+          <rect class="node remote" x="15" y="500" width="335" height="56" rx="5"/>
+          <text class="title" x="182" y="523" text-anchor="middle">OneLake</text>
+          <text class="note" x="182" y="542" text-anchor="middle">tables, files</text>
+          <rect class="node remote" x="365" y="500" width="160" height="56" rx="5"/>
+          <text class="title" x="445" y="523" text-anchor="middle">Fabric REST API</text>
+          <text class="note" x="445" y="542" text-anchor="middle">workspaces, models</text>
           <rect class="node remote" x="545" y="500" width="120" height="56" rx="5"/>
           <text class="title" x="605" y="523" text-anchor="middle">Fabric app</text>
           <text class="note" x="605" y="542" text-anchor="middle">in a browser</text>
-          <path class="edge" d="M520 528H544" marker-end="url(#head)"/>
-          <text class="note" x="532" y="494" text-anchor="middle">Export</text>
+          <path class="edge" d="M525 528H544" marker-end="url(#head)"/>
+          <text class="note" x="535" y="494" text-anchor="middle">Export</text>
         </svg>
       </figure>
     </section>
@@ -125,13 +126,13 @@
           <tbody>
             <tr><td>Shell</td><td>Starts the Node process and opens the window. Remembers the window's size and position. If you start the app twice, it shows the window that is already open.</td><td><code>onelake-studio.exe</code>, Tauri</td><td>None</td></tr>
             <tr><td>Window</td><td>Draws the tree, tabs, menus, dialogs and status bar. Each tab is the extension's page inside an iframe. It does not have the OneLake token.</td><td>WebView2, which is Edge</td><td>127.0.0.1 only</td></tr>
-            <tr><td>Node process</td><td>The extension's code, unchanged. It handles sign-in, blocks anything that writes, turns names into tables, keeps the local catalog up to date, serves Excel, and runs Export to Fabric.</td><td><code>node.exe</code>, <code>dist/desktop.js</code></td><td>Fabric REST API, OneLake lists and metadata</td></tr>
+            <tr><td>Node process</td><td>The extension's code, unchanged. It handles sign-in, blocks anything that writes, turns names into tables, keeps the local catalog up to date, serves Excel, and runs Export to Fabric. Its sync worker finds tables whose snapshot moved and asks the query server to sync them.</td><td><code>node.exe</code>, <code>dist/desktop.js</code></td><td>Fabric REST API, OneLake lists and metadata</td></tr>
             <tr><td>Local catalog</td><td>A SQLite file on your machine. It stores all metadata: lists of workspaces, items and tables, table metadata, Delta history, opened models, and what was read. The tree reads it, even before you sign in.</td><td>A SQLite file, read with <code>node:sqlite</code></td><td>None</td></tr>
-            <tr><td>Query server</td><td>Runs the SQL from every tab. Tabs connect to it with DuckDB's Quack protocol, and share one memory limit and the data already read.</td><td>DuckDB 2.0, in a separate process</td><td>OneLake: rows and files</td></tr>
-            <tr><td>Keep-offline engine</td><td>Downloads every table of a model set to Keep offline, so it works without internet. Queries never wait for it. It stops when there is nothing left to download.</td><td>DuckDB, a second process: one thread, 1 GB</td><td>OneLake</td></tr>
-            <tr><td>Disk cache</td><td>Stores the bytes DuckDB reads from OneLake. A file is downloaded again only if it changed. One cache per Microsoft account, used by both DuckDB processes.</td><td>Files, <code>cache_httpfs</code></td><td>None</td></tr>
+            <tr><td>Query server</td><td>Runs the SQL from every tab, the command line and Keep offline. Tabs connect to it with DuckDB's Quack protocol, and share one memory limit and the data already read. It is the one process that holds the local lake.</td><td>DuckDB 2.0, in a separate process</td><td>OneLake: table logs, and files not copied yet</td></tr>
+            <tr><td>Local lake</td><td>A DuckLake catalog of every OneLake table read on this machine, made from the table's own Delta log or Iceberg metadata, and copies of its files. A query on a table it holds reads it at once and asks OneLake nothing. One per Microsoft account.</td><td><code>lake\meta.ducklake</code>, a DuckDB file, and <code>lake\files\</code>, in the account's cache folder</td><td>None</td></tr>
+            <tr><td>Table service</td><td>Downloads each file a query opened, whole, in the background, then points the lake at the copy. Only files that queries opened come down. A copy no snapshot names any more is deleted after 15 minutes, and past the disk cache size (256 GB by default) the least recently read go.</td><td>The query server</td><td>OneLake: whole files, over HTTPS</td></tr>
             <tr><td>Excel's endpoint</td><td>Lets Excel PivotTables query a semantic model over XMLA. The queries run on the query server.</td><td>The Node process, HTTP on 127.0.0.1</td><td>None</td></tr>
-            <tr><td>Command line</td><td>Sends its command to the running app, which answers with its own sign-in, cache and engine. If the app isn't running, the command line starts its own process.</td><td><code>bin/cli.mjs</code></td><td>Through the app</td></tr>
+            <tr><td>Command line</td><td>Sends its command to the running app, which answers with its own sign-in, cache and engine. If the app isn't running, the command line starts its own process, with a query server and a lake of its own.</td><td><code>bin/cli.mjs</code></td><td>Through the app</td></tr>
             <tr><td>Fabric app</td><td>A model's Pivot, published with Export to Fabric. It runs in the browser after a Fabric sign-in and reads the model's tables there.</td><td>Fabric, and the browser</td><td>OneLake</td></tr>
           </tbody>
         </table>
@@ -144,8 +145,8 @@
         <li>Each semantic model the query names is opened from its local copy. The first time, its definition is read from Fabric.</li>
         <li><a href="https://github.com/djouallah/dax-sql">dax-sql</a> rewrites a query on a model as plain SQL over table names. A query that names no model is left as it is.</li>
         <li>The Node process refuses more than one statement and anything that isn't a read, using DuckDB's own parser to tell.</li>
-        <li>Each table name becomes a view, made from the local catalog, and each file name becomes its <code>abfss://</code> address. A name that doesn't exist fails here.</li>
-        <li>The query runs on the query server. Stop cancels only that tab's queries. A result over <code>maxResultRows</code> (200,000 by default) is counted, and only the first rows go to the tab.</li>
+        <li>Each table name is found in the local catalog and becomes a view over that table in the local lake. A table the lake doesn't hold yet is added from its log first, once. Each file name becomes its <code>abfss://</code> address. A name that doesn't exist fails here.</li>
+        <li>The query runs on the query server. It reads the files already copied from disk, and the rest from OneLake, and the table service then copies those. Stop cancels only that tab's queries. A result over <code>maxResultRows</code> (200,000 by default) is counted, and only the first rows go to the tab.</li>
       </ol>
       <p class="more"><a href="reference.html#what-happens-when-a-statement-runs">The steps in detail</a></p>
     </section>
@@ -156,19 +157,22 @@
       <ul>
         <li>Workspaces you have open or pinned are refreshed when their lists are older than <code>catalogTtlMinutes</code>.</li>
         <li>Every 12 hours, one process reads the lists for the rest of the tenant: five requests every 15 seconds. If Fabric answers 429, it waits a minute.</li>
-        <li>A table read 3 times in 14 days has its metadata checked every hour. When nothing else is running, each new version is downloaded in full, so it works offline.</li>
-        <li>With no internet or no sign-in, no request is sent, and everything already read still works.</li>
+        <li>A table in the local lake has its metadata checked every hour if it was read 3 times in 14 days, and every 24 hours otherwise. When its snapshot moved, the sync worker asks the query server to sync it: in the background, one table at a time, and only while no query runs.</li>
+        <li>A sync reads only the commits since the last one, and no rows. The new files come down when a query opens them.</li>
+        <li><strong>Refresh</strong> on a lakehouse makes its tables sync on their next read.</li>
+        <li>With no internet or no sign-in, no request is sent. Everything the lake holds still works: every table's metadata and every file already copied. A file never copied says the table isn't cached on this machine.</li>
       </ul>
-      <p class="more"><a href="catalog.html">The local catalog in detail</a></p>
+      <p class="more"><a href="catalog.html">The local catalog in detail</a> and <a href="reference.html#reading-onelake-tables">how tables are read</a></p>
     </section>
 
     <section>
       <h2 id="servers">The servers</h2>
-      <p>DuckDB runs in a separate process. The Node process checks each statement before sending it: it must only read, and every name must resolve to a table.</p>
+      <p>DuckDB runs in one separate process, the query server. The Node process checks each statement before sending it: it must only read, and every name must resolve to a table.</p>
       <ul>
         <li>Statements go over Quack. Stop cancels only its own tab's statements.</li>
-        <li>The OneLake token, the offline switch, and the data for the Logs and Performance tabs go over a separate OS pipe, because Quack logs everything it receives.</li>
-        <li>Keep offline uses a second DuckDB process, so downloading a model's tables never slows a query. The two processes share only the disk cache.</li>
+        <li>The OneLake token, the offline switch, the sync worker's requests to sync a table, and the data for the Logs and Performance tabs go over a separate OS pipe, because Quack logs everything it receives.</li>
+        <li>The lake's file can be open in one process only, so the query server holds it. Keep offline is a client of the same server. It keeps a model's tables in the lake current and reads no rows, so their files come down as the model's queries open them.</li>
+        <li>The command line, when no app is running, starts a server of its own, with its own lake folder, <code>lake-standalone</code>.</li>
         <li>The server runs in UTC, because OneLake stores timestamps in UTC. Otherwise dates wouldn't match between tables.</li>
       </ul>
       <p class="more"><a href="reference.html#the-server">The server</a> and <a href="reference.html#keep-offline">Keep offline</a> in detail</p>

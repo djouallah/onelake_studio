@@ -511,7 +511,8 @@ const CATALOG_CTES = `WITH RECURSIVE
         FROM duckdb_schemas()
         -- The lake (engine-host.js): the engine's own copy of each OneLake table, by a hash of its folder, and its
         -- metadata. What a query names is the table's own name; these are how it is read.
-        WHERE database_name NOT IN ('lake', '__ducklake_metadata_lake')),
+        -- Not named in full: the guard refuses a statement that names the lake's metadata (engine-host.js studio_authorize).
+        WHERE database_name <> 'lake' AND NOT starts_with(database_name, '__ducklake')),
   p AS (SELECT database_oid, database_name, oid, q AS path, [n] AS parts FROM s WHERE parent_schema_oid IS NULL
         UNION ALL
         SELECT s.database_oid, s.database_name, s.oid, p.path || '.' || s.q, list_append(p.parts, s.n)
