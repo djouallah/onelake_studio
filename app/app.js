@@ -382,11 +382,13 @@ async function openModelView(file, text = null, { fromOneLake = text == null } =
         state: () => engine.offlineState({ workspace: m.schema, model: m.view }),
         set: on => engine.setOffline({ workspace: m.schema, model: m.view, on }),
       },
-      // The Report tab: the tiles in this model's Export to Fabric zip, else the first tiles
-      // (src/exportflow.js reportOf), drawn again when the zip changes. It opens on Model.
+      // The Report tab: the tiles in this model's Export to Fabric zip, else the file the host
+      // keeps for it, else the first tiles (src/exportflow.js reportOf), drawn again when they
+      // change; Add to report and a tile's ✕ save them (reportSave). It opens on Model.
       report: {
         load: () => engine.modelReport({ workspace: m.schema, model: m.view, file: file.name, text: bim }),
         stamp: () => engine.modelReportStamp({ workspace: m.schema, model: m.view }),
+        save: (spec, stamp) => engine.modelReportSave({ workspace: m.schema, model: m.view, spec, stamp }),
       },
       openOn: 'model',
     });

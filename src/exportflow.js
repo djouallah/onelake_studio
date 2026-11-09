@@ -9,6 +9,7 @@ const { join, dirname } = require('node:path');
 const os = require('node:os');
 const { existsSync } = require('node:fs');
 const fsp = require('node:fs/promises');
+const { createHash } = require('node:crypto');
 const { modelFileName } = require('./fabric');
 const { PINS } = require('./vendored');
 const { planExport, starterTiles, modelDoc, appFiles, setModel, engineOf, readApp, writeApp, vendorFiles, vendorSize, buildDist,
@@ -29,6 +30,9 @@ const oldMarker = dir => fsp.readFile(join(dir, OLD_MARKER), 'utf8')
   .then(t => { const m = JSON.parse(t); delete m.files; return m; }, () => null).catch(() => null);
 // Which zip a model's Report tab reads: the model by its workspace and its name, as the page knows it.
 const reportKey = (workspace, model) => `exportReport:${String(workspace).toLowerCase()}/${String(model).toLowerCase()}`;
+// The file a model's Report is kept in before it has a zip, in `reportDir`: by the same names.
+const reportName = (workspace, model) =>
+  `${createHash('sha1').update(`${String(workspace).toLowerCase()}/${String(model).toLowerCase()}`).digest('hex')}.json`;
 
 /**
  * @param {object} o
@@ -44,13 +48,14 @@ const reportKey = (workspace, model) => `exportReport:${String(workspace).toLowe
  * @param {object} [o.writer]  onelakewrite.js, shared with Upload
  * @param {{ get: Function, update: Function }} o.memento  where each app's zip was approved last time
  * @param {string} o.extensionDir  where this install's files are
+ * @param {string} [o.reportDir]  where a model's Report is kept until its first export (Add to report)
  * @param {() => Promise<string>} o.pageDir  where the page's files are
  * @param {object} o.ui  info, warn, pickFolder, openFolder, withProgress, openExternal, reveal
  * @param {(node: object) => void} o.onRefresh  this part of the tree changed
  * @param {(line: string) => void} o.log
  */
 function createExport({ connectivity, modules, hostToken, appToken, powerBiToken = appToken, sqlToken = async () => null, fabric, onelake, catalog,
-                        writer = createOneLakeWriter({ getToken: hostToken }), memento, extensionDir, pageDir, ui, onRefresh, log,
+                        writer = createOneLakeWriter({ getToken: hostToken }), memento, extensionDir, reportDir = null, pageDir, ui, onRefresh, log,
                         fabricModel = createFabricModel({ getToken: appToken, powerBiToken, sqlToken, log: m => log(m) }) }) {
 
   // DirectQuery: the semantic model reads the lakehouse through its SQL endpoint, by the
@@ -290,7 +295,7 @@ function createExport({ connectivity, modules, hostToken, appToken, powerBiToken
             }
             plan.semanticModel = { workspace: pbi.workspaceId, id, name: pbi.name };
           }
-          let files, marker = before || {};
+          let files, marker = before || {}, fromStudio = null;
           if (asIs) {
             say(`app ${plan.name}: publishing ${outZip} as it is`);
             files = local.files;
@@ -298,14 +303,20 @@ function createExport({ connectivity, modules, hostToken, appToken, powerBiToken
             if (definition) setModel(files, definition);
           } else {
             say(`app ${plan.name}: writing the local copy to ${outZip}`);
-            files = await appFiles({ plan, state, model: definition, kept: local ? local.files.get(REPORT) : null,
+            // The zip's Report, else the one Studio kept for this model before it had a zip.
+            const studioReport = local && local.files.get(REPORT) ? null : reportDir && join(reportDir, reportName(pbi.workspace, name));
+            const kept = (local && local.files.get(REPORT)) || (studioReport && await fsp.readFile(studioReport).catch(() => null)) || null;
+            files = await appFiles({ plan, state, model: definition, kept,
                                      redirects: marker.redirects || [], fabricAppDir, appDir,
                                      daxSqlDir: join(ext, 'vendor', 'npm', PINS.daxSql) });
+            fromStudio = kept && studioReport ? studioReport : null;
             marker = { ...marker, name: plan.name, model: plan.modelPath, workspaceId: plan.workspace,
                        lakehouseId: plan.lakehouse, engine: plan.engine || 'duckdb' };
           }
           // Kept before anything is published: a failure from here leaves the zip as it is.
           await writeApp(outZip, files, marker);
+          // The zip holds the Report now, and is where it is kept from here on.
+          if (fromStudio) await fsp.rm(fromStudio, { force: true }).catch(() => {});
           // The page's packages, the extension's own: what they weigh, here in the log.
           const vendor = await vendorFiles(join(ext, 'vendor', 'webapp'), plan.engine);
           const mb = n => `${(n / 1048576).toFixed(1)} MB`;
@@ -359,32 +370,65 @@ function createExport({ connectivity, modules, hostToken, appToken, powerBiToken
     }
   };
 
-  // The Report a model's Report tab draws (app/explore/report.js): the site/report.json of the zip
-  // its last export was approved into, else the first tiles, picked from the model's text. { spec,
-  // stamp, from }: `stamp` changes when the zip does (reportStamp), `from` is the zip or null.
-  // The model's zip, and what the disk says of it: null when there is none.
-  const reportZip = async ({ workspace, model }) => {
+  // The Report a model's Report tab draws (app/explore/report.js), and Add to report and a tile's
+  // ✕ save (reportSave): the site/report.json of the zip its last export was approved into; before
+  // there is one, the file Studio keeps for the model (reportDir); else the first tiles, picked
+  // from the model's text. { spec, stamp, from }: `stamp` changes when the tiles do (reportStamp),
+  // `from` is the zip or the file, or null.
+  // Where the model's Report is kept, and what the disk says of it: { zipPath, st } once it has a
+  // zip, else { file, st } (st null: nothing written yet).
+  async function reportHome({ workspace, model }) {
     const zipPath = memento.get(reportKey(workspace, model));
-    return { zipPath, st: zipPath ? await fsp.stat(zipPath).catch(() => null) : null };
-  };
+    const st = zipPath ? await fsp.stat(zipPath).catch(() => null) : null;
+    if (st) return { zipPath, st };
+    const file = reportDir ? join(reportDir, reportName(workspace, model)) : null;
+    return { file, st: file ? await fsp.stat(file).catch(() => null) : null };
+  }
   async function reportOf({ workspace, model, file, text }) {
-    const { zipPath, st } = await reportZip({ workspace, model });
-    const bytes = st && (await readApp(zipPath).catch(() => null))?.files.get(REPORT);
+    const home = await reportHome({ workspace, model });
+    const from = home.zipPath || home.file;
+    const bytes = !home.st ? null : home.zipPath ? (await readApp(home.zipPath).catch(() => null))?.files.get(REPORT)
+      : await fsp.readFile(home.file).catch(() => null);
     if (bytes) {
       let spec;
       try { spec = JSON.parse(bytes.toString('utf8')); }
-      catch (e) { throw new Error(`${zipPath}: site/report.json is not JSON: ${e.message}`); }
-      return { spec, stamp: st.mtimeMs, from: zipPath };
+      catch (e) { throw new Error(`${from}${home.zipPath ? ': site/report.json' : ''} is not JSON: ${e.message}`); }
+      return { spec, stamp: home.st.mtimeMs, from };
     }
     const { semantic, compiler } = await modules();
-    return { spec: { tiles: starterTiles(semantic.bimOf(file, text, compiler)) }, stamp: st ? st.mtimeMs : 0, from: null };
+    return { spec: { tiles: starterTiles(semantic.bimOf(file, text, compiler)) }, stamp: home.st ? home.st.mtimeMs : 0, from: null };
   }
   async function reportStamp(m) {
-    const { st } = await reportZip(m);
+    const { st } = await reportHome(m);
     return st ? st.mtimeMs : 0;
   }
+  // The tiles written where the Report is kept (reportHome): into the zip, whose report.json no
+  // export writes over and no fingerprint counts, or Studio's file. Refused when they changed
+  // since `stamp`, the one they were drawn from: a person's or an agent's edit is never lost.
+  // Answers { stamp }.
+  async function reportSave({ workspace, model, spec, stamp }) {
+    if (!spec || typeof spec !== 'object' || !Array.isArray(spec.tiles)) throw new Error('a report is { "tiles": [...] }');
+    const home = await reportHome({ workspace, model });
+    if (stamp != null && stamp !== (home.st ? home.st.mtimeMs : 0)) {
+      throw new Error('the report changed since it was drawn: it is drawn again as it is now, so try once more');
+    }
+    const bytes = Buffer.from(JSON.stringify(spec, null, 2) + '\n', 'utf8');
+    if (home.zipPath) {
+      const app = await readApp(home.zipPath);
+      if (!app) throw new Error(`${home.zipPath} is gone`);
+      app.files.set(REPORT, bytes);
+      await writeApp(home.zipPath, app.files, app.marker);
+    } else {
+      if (!home.file) throw new Error('the Report is not kept here');
+      await fsp.mkdir(dirname(home.file), { recursive: true });
+      const tmp = `${home.file}.${process.pid}.tmp`;
+      await fsp.writeFile(tmp, bytes);
+      await fsp.rename(tmp, home.file);
+    }
+    return { stamp: await reportStamp({ workspace, model }) };
+  }
 
-  return { exportExplore, reportOf, reportStamp };
+  return { exportExplore, reportOf, reportStamp, reportSave };
 }
 
 module.exports = { createExport };

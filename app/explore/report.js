@@ -2,18 +2,22 @@
 // explore/report.js — a model's Report: tiles, each one SELECT over the model, drawn
 // =============================================================================
 // The Report is data (site/report.json in Export to Fabric's zip; the first tiles before there is
-// one): { tiles: [{ title, kind, sql, formats?, echarts?, wide?, crossFilter? }] }. A tile's SQL is a
-// SELECT over the model, FROM model, in the SQL the SQL box takes.
+// one, or the file Studio keeps before an export): { tiles: [{ title, kind, sql, formats?, echarts?,
+// wide?, crossFilter? }] }. A tile's SQL is a SELECT over the model, FROM model, in the SQL the SQL
+// box takes.
 //   kind 'kpi'    one row: each column a figure
 //   kind 'bar'    the first column across, every other column a series (also 'line')
 //   kind 'table'  the rows as they are
+//   kind 'pivot'  no sql: `pivot` is Pivot's shelves ({ rows, cols, values, filters, mark, totals,
+//                 sort }, as Add to report saves them), drawn as Pivot draws them (explore.js)
 // `formats`: a column's format string; `echarts` (bar, line): an ECharts option merged over the
 // tile's own. A tile that fails says so in its own box, and the rest still draw.
 // Cross filtering: a click on a bar, a line's point or a table's row picks that row's first value,
 // and every other tile runs again with it as a WHERE on the model column the tile's first column
 // is. `crossFilter` names that column when the first is not one ("table"."column"), or is false
-// for a tile that takes no clicks. The tile clicked stays whole, its pick bright; the same click
-// again clears it, as the pick's ✕ above the tiles does. Picks in several tiles all apply.
+// for a tile that takes no clicks. A pivot tile picks its first Rows field (else Columns). The
+// tile clicked stays whole, its pick bright; the same click again clears it, as the pick's ✕ above
+// the tiles does. Picks in several tiles all apply.
 // The same file in the panel and in Export to Fabric's app: the host says how SQL runs (`sql`).
 // =============================================================================
 
@@ -21,8 +25,9 @@ import { sqlStr } from '../paths.js';
 import { el } from './dom.js';
 import { formatValue } from './draw.js';
 import { PALETTE } from './theme.js';
+import { autoMark, modelFields, pivotQuery, pivotView } from './explore.js';
 
-const KINDS = new Set(['kpi', 'bar', 'line', 'table']);
+const KINDS = new Set(['kpi', 'bar', 'line', 'table', 'pivot']);
 // A chart's other bars and points, while one is picked.
 const DIM = 0.3;
 
@@ -164,7 +169,9 @@ const same = (a, b) => (a ?? null) === (b ?? null);
  * leftWhileRunning() (optional), whether the host stopped the tile running because the Report was
  * left (and forgets it); cancel() (optional), stops the tile running, when a pick changes it;
  * columnType(table, column) (optional), a model column's dataType (table null: the one column of
- * that name), for a pick's literal. Returns { destroy }.
+ * that name), for a pick's literal; model, the model (model.js's tmslOf), for pivot tiles; css(name)
+ * (optional), a CSS token's value, for a pivot's tints; remove(index) (optional), a ✕ on each tile
+ * that takes it out of the report. Returns { destroy }.
  * The tiles run one at a time, top to bottom: each is a scan of the model's tables, and the engine
  * gives one query all it has, where several at once share it, keep each other waiting, and keep
  * anything else the tab asks waiting too. A tile waits while the Report is off screen; one stopped
@@ -177,22 +184,35 @@ export function drawReport(root, spec, ctx) {
   const chips = el('div', { class: 'rp-filters', hidden: true });
   root.replaceChildren(chips, grid);
   if (!tiles) grid.append(el('p', { class: 'rp-say error' }, 'The report has no "tiles" list.'));
-  else if (!tiles.length) grid.append(el('p', { class: 'rp-say' }, 'The report has no tiles yet.'));
+  else if (!tiles.length) grid.append(el('p', { class: 'rp-say' }, ctx.remove
+    ? 'The report has no tiles yet. Build a view in Pivot and click Add to report.' : 'The report has no tiles yet.'));
   let gone = false, pumping = false, running = null;
   // What a click picked, by the tile it was picked in: { field, value, label }, in the order picked.
   const picks = new Map();
-  const jobs = (tiles ?? []).map(tile => {
+  // The model's fields, for pivot tiles: read once, when there is one.
+  const fields = tiles?.some(t => t?.kind === 'pivot') && ctx.model ? modelFields(ctx.model) : null;
+  const jobs = (tiles ?? []).map((tile, i) => {
     const body = el('div', {}, el('p', { class: 'rp-say' }, 'Waiting…'));
-    const wide = tile.wide ?? (tile.kind === 'kpi' || tile.kind === 'table');
-    grid.append(el('section', { class: `rp-tile${wide ? ' wide' : ''}` }, el('h2', {}, String(tile.title ?? '')), body));
-    return { tile, body, on: pickColumn(tile), dirty: true, asking: false, chart: null, box: null, repaint: null };
+    // A pivot tile's shelves and query; a broken one says why when it runs (drawPivot).
+    let piv = null;
+    if (tile?.kind === 'pivot' && fields) try { piv = pivotQuery(tile.pivot, fields); } catch (_) { /* drawPivot says */ }
+    const mark = piv && (piv.state.mark === 'auto' ? autoMark(piv.state, fields) : piv.state.mark);
+    const wide = tile.wide ?? (tile.kind === 'kpi' || tile.kind === 'table' || mark === 'table' || mark === 'highlight' || mark === 'heatmap');
+    const title = String(tile.title ?? '');
+    grid.append(el('section', { class: `rp-tile${wide ? ' wide' : ''}` },
+      el('div', { class: 'rp-head' }, el('h2', {}, title),
+        ctx.remove ? el('button', { type: 'button', class: 'rp-remove', title: 'Remove from the report',
+          'aria-label': `Remove ${title || 'this tile'} from the report`, onclick: () => ctx.remove(i) }, '✕') : null),
+      body));
+    return { tile, body, piv, on: pickColumn(tile, piv), dirty: true, asking: false, chart: null, box: null, repaint: null };
   });
   pump();
 
   // The model column a click on this tile filters the others by, with its type; null: no clicks.
-  function pickColumn(tile) {
+  function pickColumn(tile, piv) {
     if (tile.kind === 'kpi' || tile.crossFilter === false) return null;
-    const c = typeof tile.crossFilter === 'string' ? columnOf(tile.crossFilter) : firstColumn(tile.sql);
+    const c = tile.kind === 'pivot' ? piv?.field
+      : typeof tile.crossFilter === 'string' ? columnOf(tile.crossFilter) : firstColumn(tile.sql);
     return c && { ...c, type: ctx.columnType?.(c.table, c.column) };
   }
   // The picks of every other tile, as withFilters takes them.
@@ -264,7 +284,8 @@ export function drawReport(root, spec, ctx) {
 
   async function drawTile(job) {
     const { tile, body } = job;
-    if (!KINDS.has(tile.kind)) throw new Error(`a tile's kind is kpi, bar, line or table, not ${JSON.stringify(tile.kind)}`);
+    if (!KINDS.has(tile.kind)) throw new Error(`a tile's kind is kpi, bar, line, table or pivot, not ${JSON.stringify(tile.kind)}`);
+    if (tile.kind === 'pivot') return drawPivot(job);
     if (typeof tile.sql !== 'string' || !tile.sql.trim()) throw new Error('the tile has no sql');
     if (tile.crossFilter != null && tile.crossFilter !== false && !(typeof tile.crossFilter === 'string' && columnOf(tile.crossFilter))) {
       throw new Error(`a tile's crossFilter is a model column ("table"."column") or false, not ${JSON.stringify(tile.crossFilter)}`);
@@ -333,6 +354,48 @@ export function drawReport(root, spec, ctx) {
     chart.setOption(tile.echarts && typeof tile.echarts === 'object' ? merge(option, tile.echarts) : option);
     if (job.on) chart.on('click', e => { if (e.componentType === 'series' && res.rows[e.dataIndex]) pickRow(res.rows[e.dataIndex], cats[e.dataIndex]); });
     job.repaint = () => chart.setOption({ series: picked() });
+  }
+
+  // A pivot tile: its shelves' query, with the other tiles' picks, drawn as Pivot draws it.
+  async function drawPivot(job) {
+    const { tile, body } = job;
+    if (!fields) throw new Error('a pivot tile needs the model, and the Report was given none');
+    // Its shelves read again, to say what is wrong with them.
+    const piv = job.piv ?? pivotQuery(tile.pivot, fields);
+    const sql = withFilters(piv.sql, filtersFor(job));
+    job.asking = true;
+    let res;
+    try { res = await ctx.sql(sql); } finally { job.asking = false; }
+    if (gone || job.dirty) return;
+    clear(job);
+    if (!res.rows.length) { body.replaceChildren(el('p', { class: 'rp-say' }, 'No rows.')); return; }
+    const look = { fields, palette: PALETTE, css: ctx.css ?? (() => '') };
+    const pickOf = () => {
+      if (!job.on) return null;
+      const p = picks.get(job);
+      return { on: key => pick(job, job.on.column, key[0], key[0] == null ? '' : String(key[0])), active: !!p, value: p?.value };
+    };
+    const view = () => pivotView(piv.state, res.rows, piv.state.mark, look, pickOf());
+    const first = view();
+    // A chart needs ECharts first; a table draws as it is.
+    const echarts = first.node ? null : await ctx.echarts();
+    if (gone || job.dirty) return;
+    let keyAt = null;
+    const paint = v => {
+      if (v.node) { body.replaceChildren(el('div', { class: 'rp-pivot' }, v.node)); return; }
+      keyAt = v.keyAt;
+      if (!job.chart) {
+        const box = el('div', { class: 'rp-chart' });
+        body.replaceChildren(box);
+        const chart = echarts.init(box, 'studio');
+        Object.assign(job, { chart, box });
+        resized.observe(box);
+        if (job.on) chart.on('click', e => { const key = e.componentType === 'series' && keyAt?.(e); if (key) pickOf().on(key); });
+      }
+      job.chart.setOption({ aria: { enabled: true }, ...v.option }, true);
+    };
+    paint(first);
+    job.repaint = () => paint(view());
   }
 
   return {

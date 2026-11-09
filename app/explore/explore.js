@@ -242,6 +242,226 @@ export function autoMark(s, fields) {
 
 const label = a => a.length ? a.map(v => v == null ? '(blank)' : String(v)).join(' · ') : 'All';
 
+// A field of the shelves: the model's, or a column summarised on Values, which acts as a
+// measure of the view's own.
+function shelfField(fields, id) {
+  const a = aggOf(id);
+  if (!a) return fields?.byId.get(id);
+  const c = fields?.byId.get(a.col);
+  return c && { id, kind: 'measure', type: 'measure', name: nameOf(id), agg: a.agg, column: c,
+    format: a.agg === 'count' || a.agg === 'distinct' ? '#,0' : c.format };
+}
+
+/**
+ * A Report's tile of saved shelves: { state }, every shelf there, { sql }, the SELECT over the
+ * model (FROM model) it runs, and { field }, the model column of its first Rows field (else
+ * Columns) that a click on it picks, or null.
+ */
+export function pivotQuery(saved, fields) {
+  if (!saved || typeof saved !== 'object' || Array.isArray(saved)) throw new Error("a pivot tile's pivot is the shelves: { rows, cols, values, filters, mark }");
+  const state = { ...EMPTY(), ...saved };
+  for (const k of ['rows', 'cols', 'values', 'filters']) if (!Array.isArray(state[k])) throw new Error(`a pivot tile's ${k} is a list`);
+  const q = buildQuery(state);
+  if (!q) throw new Error("the tile's pivot has no fields on its shelves");
+  const columnOf = id => { const f = fields.byId.get(id); return f && f.kind === 'column' ? { table: f.table, name: f.name, type: f.type } : null; };
+  const first = columnOf(state.rows[0] ?? state.cols[0]);
+  return { state, sql: modelSql(q, columnOf, 'model'), field: first && { table: first.table, column: first.name, ref: `${qid(first.table)}.${qid(first.name)}` } };
+}
+
+/** What a Report's tile of these shelves is called: its values by its rows and columns. */
+export function pivotTitle(s) {
+  const names = ids => ids.map(nameOf).join(', ');
+  const dims = [...s.rows, ...s.cols];
+  return s.values.length && dims.length ? `${names(s.values)} by ${names(dims)}` : names(s.values.length ? s.values : dims);
+}
+
+// A Report's tile's other bars, points and cells, while one of its rows is picked.
+const DIM = 0.3;
+const same = (a, b) => (a ?? null) === (b ?? null);
+
+/**
+ * The rows of the shelves' query drawn as `mark` says ('auto': autoMark's), the Pivot page's
+ * and a Report's tile's alike: { node }, a table or why there is none, or { option, keyAt }, an
+ * ECharts option and the row key of a click on it (null: none). `s`: the shelves the rows are
+ * of; `look`: { fields, palette, css }. `pick` (a Report's tile): { on(key), active, value } —
+ * what a click on a row key calls, and the first field's value picked: its row bright, the
+ * others dim.
+ */
+export function pivotView(s, rows, mark, look, pick = null) {
+  const shown = mark === 'auto' ? autoMark(s, look.fields) : mark;
+  const piv = pivot(rows, s);
+  if (shown === 'table' || shown === 'highlight' || !s.values.length) return { node: pivotTable(s, piv, shown === 'highlight', look, pick) };
+  const out = pivotChart(s, piv, shown, look, pick);
+  return typeof out === 'string' ? { node: el('div', { class: 'ex-empty' }, out) } : out;
+}
+
+// A key not picked, while a pick is on.
+const dimmed = (pick, key) => !!pick?.active && !same(key?.[0], pick.value);
+
+function pivotTable(s, piv, highlight, { fields, palette }, pick) {
+  const fmt = (id, v) => formatValue(v, shelfField(fields, id)?.format);
+  const measures = s.values, rowNames = s.rows.map(nameOf);
+  const colKeys = [...piv.colKeys, ...(s.cols.length && piv.hasColTotal ? [null] : [])];
+  const rowKeys = [...piv.rowKeys, ...(piv.hasRowTotal ? [null] : [])];
+  // Every cell is an element, and nothing here draws only what is in view.
+  const cells = rowKeys.length * Math.max(colKeys.length, 1) * Math.max(measures.length, 1);
+  if (cells > MAX_CELLS) {
+    return el('div', { class: 'ex-empty ex-error' },
+      `${rowKeys.length.toLocaleString()} rows by ${colKeys.length.toLocaleString()} columns is too many cells to draw: add a filter, or move a column to Rows.`);
+  }
+  const tint = palette[0];
+  // Only for the highlight, which reads them: every cell is two string keys here.
+  const ranges = !highlight ? {} : Object.fromEntries(measures.map(m => [m, extent(piv.rowKeys.flatMap(a => piv.colKeys.map(b => piv.cell(a, b)?.[nameOf(m)])))]));
+  const t = el('table', { class: 'explore-table ex-pivot' });
+  const head = el('thead');
+  // One header line per column field, then the measures' names when there are several (or no column field).
+  const lead = text => el('th', { class: 'ex-rowhead', scope: 'col' }, text);
+  for (let level = 0; level < s.cols.length; level++) {
+    const tr = el('tr');
+    // The column field's name, before its values.
+    rowNames.forEach((n, i) => tr.append(lead(i === rowNames.length - 1 ? `${nameOf(s.cols[level])} →` : '')));
+    if (!rowNames.length) tr.append(lead(`${nameOf(s.cols[level])} →`));
+    for (const b of colKeys) tr.append(el('th', { colspan: measures.length || 1, class: 'ex-colhead' }, b ? label([b[level]]) : level ? '' : 'Total'));
+    head.append(tr);
+  }
+  // The row fields' names, and the measure each column holds.
+  if (measures.length || !s.cols.length) {
+    const tr = el('tr');
+    rowNames.forEach(n => tr.append(lead(n)));
+    if (!rowNames.length && s.cols.length) tr.append(lead(''));
+    for (const b of s.cols.length ? colKeys : [[]]) for (const m of measures) tr.append(el('th', { class: 'ex-num' }, nameOf(m)));
+    head.append(tr);
+  }
+  const body = el('tbody');
+  let prev = [];
+  for (const a of rowKeys) {
+    // A Report's tile picks a row by its first field's value: a total row picks nothing.
+    const picks = pick && a && rowNames.length;
+    const tr = el('tr', { class: [a ? '' : 'ex-total', picks ? 'rp-pick' : '', picks && pick.active && same(a[0], pick.value) ? 'rp-on' : ''].filter(Boolean).join(' '),
+      ...(picks ? { tabindex: 0, onclick: () => pick.on(a),
+        onkeydown: e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick.on(a); } } } : {}) });
+    if (a) {
+      a.forEach((v, i) => {
+        const repeat = prev.length > i && a.slice(0, i + 1).every((v2, j) => prev[j] === v2);
+        tr.append(el('th', { scope: 'row', class: repeat ? 'ex-repeat' : '' }, v == null ? '(blank)' : String(v)));
+      });
+      prev = a;
+    } else if (rowNames.length) {
+      tr.append(el('th', { scope: 'row', colspan: rowNames.length }, 'Total'));
+    }
+    if (!rowNames.length && s.cols.length) tr.append(el('th', { scope: 'row' }, ''));
+    for (const b of s.cols.length ? colKeys : [[]]) {
+      const r = piv.cell(a, b);
+      for (const m of measures) {
+        const v = r?.[nameOf(m)];
+        const td = el('td', { class: 'ex-num' }, fmt(m, v));
+        if (highlight && a && b) {
+          const [lo, hi] = ranges[m], p = shade(v, lo, hi);
+          if (p) td.style.background = `color-mix(in srgb, ${tint} ${p}%, transparent)`;
+        }
+        tr.append(td);
+      }
+    }
+    body.append(tr);
+  }
+  t.append(head, body);
+  return t;
+}
+
+function pivotChart(s, piv, mark, { fields, palette, css }, pick) {
+  const fmt = (id, v) => formatValue(v, shelfField(fields, id)?.format);
+  const color = i => palette[i % palette.length];
+  // The categories are the row keys; with no row field, the column keys are.
+  const byCols = !s.rows.length;
+  const cats = byCols ? piv.colKeys : piv.rowKeys;
+  const series = byCols ? [[]] : piv.colKeys.length ? piv.colKeys : [[]];
+  const at = (cat, ser) => byCols ? piv.cell([], cat) : piv.cell(cat, ser);
+  const shown = series.slice(0, SERIES_CAP);
+  const cut = series.length > SERIES_CAP ? ` (the first ${SERIES_CAP} of ${series.length} series)` : '';
+  // A point's value, dim when a pick is on and its key is not the one picked.
+  const point = (key, value) => (dimmed(pick, key) ? { value, itemStyle: { opacity: DIM } } : value);
+
+  if (mark === 'heatmap') {
+    if (!s.rows.length || !s.cols.length) return 'A heatmap needs a field on Rows and one on Columns.';
+    const m = s.values[0], n = nameOf(m);
+    const cells = [];
+    piv.rowKeys.forEach((a, y) => piv.colKeys.forEach((b, x) => { const v = piv.cell(a, b)?.[n]; if (v != null) cells.push(point(a, [x, y, v])); }));
+    const [lo, hi] = extent(cells.map(c => (c.value ?? c)[2]));
+    return {
+      option: {
+        title: { text: nameOf(m) + cut, left: 4, top: 0, textStyle: { fontSize: 12, fontWeight: 600 } },
+        tooltip: { position: 'top', formatter: p => `${esc(label(piv.rowKeys[p.value[1]]))} · ${esc(label(piv.colKeys[p.value[0]]))}<br><b>${esc(fmt(m, p.value[2]))}</b>` },
+        grid: { left: 4, right: 16, top: 28, bottom: 44, containLabel: true },
+        xAxis: { type: 'category', data: piv.colKeys.map(label), splitArea: { show: true } },
+        yAxis: { type: 'category', data: piv.rowKeys.map(label), inverse: true, splitArea: { show: true } },
+        visualMap: { min: lo, max: hi, calculable: true, orient: 'horizontal', left: 'center', bottom: 0, itemHeight: 120,
+          inRange: { color: [css('--raised'), color(0)] }, formatter: v => fmt(m, v) },
+        series: [{ type: 'heatmap', data: cells, label: { show: cells.length <= 150, formatter: p => fmt(m, p.value[2]), fontSize: 10 } }],
+      },
+      keyAt: e => piv.rowKeys[e.value?.[1]] ?? null,
+    };
+  }
+  if (mark === 'scatter') {
+    if (s.values.length < 2) return 'A scatter needs two measures on Values: the first across, the second up.';
+    const [mx, my] = s.values, [nx, ny] = [nameOf(mx), nameOf(my)];
+    // Each series' points' keys, in the order of its data.
+    const keys = shown.map(b => cats.filter(a => { const r = at(a, b); return r?.[nx] != null && r?.[ny] != null; }));
+    return {
+      option: {
+        tooltip: { trigger: 'item', formatter: p => `${esc(p.data.name)}<br>${esc(nameOf(mx))}: <b>${esc(fmt(mx, p.data.value[0]))}</b><br>${esc(nameOf(my))}: <b>${esc(fmt(my, p.data.value[1]))}</b>` },
+        legend: shown.length > 1 ? { type: 'scroll', top: 0 } : undefined,
+        grid: { left: 4, right: 16, top: shown.length > 1 ? 56 : 32, bottom: 24, containLabel: true },
+        xAxis: { type: 'value', name: nameOf(mx) + cut, nameLocation: 'middle', nameGap: 26, scale: true, axisLabel: { formatter: v => fmt(mx, v) } },
+        yAxis: { type: 'value', name: nameOf(my), scale: true, axisLabel: { formatter: v => fmt(my, v) } },
+        series: shown.map((b, i) => ({
+          type: 'scatter', name: label(b), symbolSize: 8, itemStyle: { color: color(i), opacity: 0.8 },
+          data: keys[i].map(a => { const r = at(a, b); return { name: label(a), value: [r[nx], r[ny]], ...(dimmed(pick, a) ? { itemStyle: { opacity: DIM } } : {}) }; }),
+        })),
+      },
+      keyAt: e => keys[e.seriesIndex]?.[e.dataIndex] ?? null,
+    };
+  }
+  // Bar, stacked bar, line, area: one plot per measure, the series the column keys.
+  const ms = s.values.slice(0, MULTIPLES);
+  const xField = fields.byId.get(byCols ? s.cols[0] : s.rows[0]);
+  const flat = (mark === 'bar' || mark === 'stacked') && xField?.type === 'text';   // names read across, bars lie down
+  const legend = shown.length > 1;
+  const grids = stackedGrids(ms.length, legend ? 7 : 0);
+  const catAxis = (i, more) => ({ type: 'category', gridIndex: i, data: cats.map(label), inverse: flat,
+    axisLabel: { show: flat || i === ms.length - 1, hideOverlap: true }, ...more });
+  const valAxis = (i, m) => ({ type: 'value', gridIndex: i,
+    axisLabel: { formatter: v => fmt(m, v), hideOverlap: true }, splitNumber: ms.length > 2 ? 2 : 4 });
+  const lines = mark === 'line' || mark === 'area';
+  // A line marks the pick across its plot, as its points are not drawn.
+  const marked = pick?.active && lines ? cats.findIndex(a => same(a[0], pick.value)) : -1;
+  return {
+    option: {
+      tooltip: { trigger: 'axis', confine: true, axisPointer: { type: lines ? 'line' : 'shadow' },
+        formatter: ps => [esc(ps[0]?.axisValueLabel), ...ps.filter(p => p.value != null).map(p => {
+          const m = ms[Math.floor(p.seriesIndex / shown.length)];
+          return `${p.marker}${shown.length > 1 ? `${esc(p.seriesName)} · ` : ''}${esc(nameOf(m))}: <b>${esc(fmt(m, p.value))}</b>`;
+        })].join('<br>') },
+      legend: legend ? { type: 'scroll', top: 0, data: shown.map(label) } : undefined,
+      title: ms.map((m, i) => ({ text: i ? nameOf(m) : nameOf(m) + cut, top: grids[i].title, left: 4, textStyle: { fontSize: 12, fontWeight: 600 } })),
+      grid: grids.map(g => g.grid),
+      dataZoom: !flat && cats.length > 60 ? [{ type: 'inside', xAxisIndex: ms.map((_, i) => i) }] : [],
+      xAxis: ms.map((m, i) => flat ? valAxis(i, m) : catAxis(i, { boundaryGap: mark === 'bar' || mark === 'stacked' })),
+      yAxis: ms.map((m, i) => flat ? catAxis(i) : valAxis(i, m)),
+      series: ms.flatMap((m, i) => shown.map((b, j) => ({
+        type: lines ? 'line' : 'bar', name: label(b), xAxisIndex: i, yAxisIndex: i,
+        stack: mark === 'stacked' || mark === 'area' ? `s${i}` : undefined,
+        areaStyle: mark === 'area' ? { opacity: 0.85 } : undefined, showSymbol: false, connectNulls: false,
+        itemStyle: { color: color(j) }, lineStyle: mark === 'line' ? { width: 1.6 } : undefined,
+        barMaxWidth: 28, large: cats.length > 400,
+        data: cats.map(a => point(a, at(a, b)?.[nameOf(m)] ?? null)),
+        ...(marked >= 0 && j === 0 ? { markLine: { silent: true, symbol: 'none', label: { show: false },
+          data: [flat ? { yAxis: label(cats[marked]) } : { xAxis: label(cats[marked]) }] } } : {}),
+      }))),
+    },
+    keyAt: e => cats[e.dataIndex] ?? null,
+  };
+}
+
 // `root`: the element the page is built in. `ctx`:
 //   model()          the model, TMSL (a promise)
 //   name             the model's name in SQL (FROM <name>; 'model' in the Fabric app)
@@ -307,15 +527,7 @@ export function createExplorer(root, ctx) {
       onclick: () => { state.mark = k; save(); renderControls(); draw(); } }, m));
   }
 
-  // A field of the shelves: the model's, or a column summarised on Values, which acts as a
-  // measure of the view's own.
-  function fieldOf(id) {
-    const a = aggOf(id);
-    if (!a) return fields?.byId.get(id);
-    const c = fields?.byId.get(a.col);
-    return c && { id, kind: 'measure', type: 'measure', name: nameOf(id), agg: a.agg, column: c,
-      format: a.agg === 'count' || a.agg === 'distinct' ? '#,0' : c.format };
-  }
+  const fieldOf = id => shelfField(fields, id);
 
   // --- Drag and drop: a field onto a shelf, a chip along or between shelves, or off them ---
   const accepts = (shelf, f) => f && (shelf === 'values' || f.kind === 'column');
@@ -695,169 +907,18 @@ export function createExplorer(root, ctx) {
           ? 'Drag columns onto Rows and Columns and measures onto Values, or click a field to add it. By keyboard: R, C, F or V on a field.' : 'Reading the model…'));
       return;
     }
-    const s = result.state, mark = state.mark === 'auto' ? autoMark(s, fields) : state.mark;
-    const piv = pivot(result.rows, s);
-    if (mark === 'table' || mark === 'highlight' || !s.values.length) {
+    const view = pivotView(result.state, result.rows, state.mark, { fields, palette: ctx.palette(), css: ctx.css });
+    if (view.node) {
       chartBox.hidden = true;
       table.hidden = false;
-      drawTable(s, piv, mark === 'highlight');
-      return;
-    }
-    const option = chartOption(s, piv, mark);
-    if (typeof option === 'string') {
-      chartBox.hidden = true;
-      table.hidden = false;
-      table.replaceChildren(el('div', { class: 'ex-empty' }, option));
+      table.replaceChildren(view.node);
       return;
     }
     table.hidden = true;
     chartBox.hidden = false;
     const chart = ctx.chart(chartBox);
-    chart.setOption({ aria: { enabled: true }, ...option }, true);
+    chart.setOption({ aria: { enabled: true }, ...view.option }, true);
     chart.resize();
-  }
-
-  const fmt = (id, v) => formatValue(v, fieldOf(id)?.format);
-  function drawTable(s, piv, highlight) {
-    const measures = s.values, rowNames = s.rows.map(nameOf);
-    const colKeys = [...piv.colKeys, ...(s.cols.length && piv.hasColTotal ? [null] : [])];
-    const rowKeys = [...piv.rowKeys, ...(piv.hasRowTotal ? [null] : [])];
-    // Every cell is an element, and nothing here draws only what is in view.
-    const cells = rowKeys.length * Math.max(colKeys.length, 1) * Math.max(measures.length, 1);
-    if (cells > MAX_CELLS) {
-      table.replaceChildren(el('div', { class: 'ex-empty ex-error' },
-        `${rowKeys.length.toLocaleString()} rows by ${colKeys.length.toLocaleString()} columns is too many cells to draw: add a filter, or move a column to Rows.`));
-      return;
-    }
-    const tint = ctx.palette()[0];
-    // Only for the highlight, which reads them: every cell is two string keys here.
-    const ranges = !highlight ? {} : Object.fromEntries(measures.map(m => [m, extent(piv.rowKeys.flatMap(a => piv.colKeys.map(b => piv.cell(a, b)?.[nameOf(m)])))]));
-    const t = el('table', { class: 'explore-table ex-pivot' });
-    const head = el('thead');
-    // One header line per column field, then the measures' names when there are several (or no column field).
-    const lead = text => el('th', { class: 'ex-rowhead', scope: 'col' }, text);
-    for (let level = 0; level < s.cols.length; level++) {
-      const tr = el('tr');
-      // The column field's name, before its values.
-      rowNames.forEach((n, i) => tr.append(lead(i === rowNames.length - 1 ? `${nameOf(s.cols[level])} →` : '')));
-      if (!rowNames.length) tr.append(lead(`${nameOf(s.cols[level])} →`));
-      for (const b of colKeys) tr.append(el('th', { colspan: measures.length || 1, class: 'ex-colhead' }, b ? label([b[level]]) : level ? '' : 'Total'));
-      head.append(tr);
-    }
-    // The row fields' names, and the measure each column holds.
-    if (measures.length || !s.cols.length) {
-      const tr = el('tr');
-      rowNames.forEach(n => tr.append(lead(n)));
-      if (!rowNames.length && s.cols.length) tr.append(lead(''));
-      for (const b of s.cols.length ? colKeys : [[]]) for (const m of measures) tr.append(el('th', { class: 'ex-num' }, nameOf(m)));
-      head.append(tr);
-    }
-    const body = el('tbody');
-    let prev = [];
-    for (const a of rowKeys) {
-      const tr = el('tr', { class: a ? '' : 'ex-total' });
-      if (a) {
-        a.forEach((v, i) => {
-          const same = prev.length > i && a.slice(0, i + 1).every((v2, j) => prev[j] === v2);
-          tr.append(el('th', { scope: 'row', class: same ? 'ex-repeat' : '' }, v == null ? '(blank)' : String(v)));
-        });
-        prev = a;
-      } else if (rowNames.length) {
-        tr.append(el('th', { scope: 'row', colspan: rowNames.length }, 'Total'));
-      }
-      if (!rowNames.length && s.cols.length) tr.append(el('th', { scope: 'row' }, ''));
-      for (const b of s.cols.length ? colKeys : [[]]) {
-        const r = piv.cell(a, b);
-        for (const m of measures) {
-          const v = r?.[nameOf(m)];
-          const td = el('td', { class: 'ex-num' }, fmt(m, v));
-          if (highlight && a && b) {
-            const [lo, hi] = ranges[m], p = shade(v, lo, hi);
-            if (p) td.style.background = `color-mix(in srgb, ${tint} ${p}%, transparent)`;
-          }
-          tr.append(td);
-        }
-      }
-      body.append(tr);
-    }
-    t.append(head, body);
-    table.replaceChildren(t);
-  }
-
-  function chartOption(s, piv, mark) {
-    const colors = ctx.palette();
-    const color = i => colors[i % colors.length];
-    // The categories are the row keys; with no row field, the column keys are.
-    const byCols = !s.rows.length;
-    const cats = byCols ? piv.colKeys : piv.rowKeys;
-    const series = byCols ? [[]] : piv.colKeys.length ? piv.colKeys : [[]];
-    const at = (cat, ser) => byCols ? piv.cell([], cat) : piv.cell(cat, ser);
-    const shown = series.slice(0, SERIES_CAP);
-    const cut = series.length > SERIES_CAP ? ` (the first ${SERIES_CAP} of ${series.length} series)` : '';
-
-    if (mark === 'heatmap') {
-      if (!s.rows.length || !s.cols.length) return 'A heatmap needs a field on Rows and one on Columns.';
-      const m = s.values[0], n = nameOf(m);
-      const cells = [];
-      piv.rowKeys.forEach((a, y) => piv.colKeys.forEach((b, x) => { const v = piv.cell(a, b)?.[n]; if (v != null) cells.push([x, y, v]); }));
-      const [lo, hi] = extent(cells.map(c => c[2]));
-      return {
-        title: { text: nameOf(m) + cut, left: 4, top: 0, textStyle: { fontSize: 12, fontWeight: 600 } },
-        tooltip: { position: 'top', formatter: p => `${esc(label(piv.rowKeys[p.value[1]]))} · ${esc(label(piv.colKeys[p.value[0]]))}<br><b>${esc(fmt(m, p.value[2]))}</b>` },
-        grid: { left: 4, right: 16, top: 28, bottom: 44, containLabel: true },
-        xAxis: { type: 'category', data: piv.colKeys.map(label), splitArea: { show: true } },
-        yAxis: { type: 'category', data: piv.rowKeys.map(label), inverse: true, splitArea: { show: true } },
-        visualMap: { min: lo, max: hi, calculable: true, orient: 'horizontal', left: 'center', bottom: 0, itemHeight: 120,
-          inRange: { color: [ctx.css('--raised'), color(0)] }, formatter: v => fmt(m, v) },
-        series: [{ type: 'heatmap', data: cells, label: { show: cells.length <= 150, formatter: p => fmt(m, p.value[2]), fontSize: 10 } }],
-      };
-    }
-    if (mark === 'scatter') {
-      if (s.values.length < 2) return 'A scatter needs two measures on Values: the first across, the second up.';
-      const [mx, my] = s.values, [nx, ny] = [nameOf(mx), nameOf(my)];
-      return {
-        tooltip: { trigger: 'item', formatter: p => `${esc(p.data.name)}<br>${esc(nameOf(mx))}: <b>${esc(fmt(mx, p.data.value[0]))}</b><br>${esc(nameOf(my))}: <b>${esc(fmt(my, p.data.value[1]))}</b>` },
-        legend: shown.length > 1 ? { type: 'scroll', top: 0 } : undefined,
-        grid: { left: 4, right: 16, top: shown.length > 1 ? 56 : 32, bottom: 24, containLabel: true },
-        xAxis: { type: 'value', name: nameOf(mx) + cut, nameLocation: 'middle', nameGap: 26, scale: true, axisLabel: { formatter: v => fmt(mx, v) } },
-        yAxis: { type: 'value', name: nameOf(my), scale: true, axisLabel: { formatter: v => fmt(my, v) } },
-        series: shown.map((b, i) => ({
-          type: 'scatter', name: label(b), symbolSize: 8, itemStyle: { color: color(i), opacity: 0.8 },
-          data: cats.map(a => { const r = at(a, b); return r?.[nx] != null && r?.[ny] != null ? { name: label(a), value: [r[nx], r[ny]] } : null; }).filter(Boolean),
-        })),
-      };
-    }
-    // Bar, stacked bar, line, area: one plot per measure, the series the column keys.
-    const ms = s.values.slice(0, MULTIPLES);
-    const xField = fields.byId.get(byCols ? s.cols[0] : s.rows[0]);
-    const flat = (mark === 'bar' || mark === 'stacked') && xField?.type === 'text';   // names read across, bars lie down
-    const legend = shown.length > 1;
-    const grids = stackedGrids(ms.length, legend ? 7 : 0);
-    const catAxis = (i, more) => ({ type: 'category', gridIndex: i, data: cats.map(label), inverse: flat,
-      axisLabel: { show: flat || i === ms.length - 1, hideOverlap: true }, ...more });
-    const valAxis = (i, m) => ({ type: 'value', gridIndex: i,
-      axisLabel: { formatter: v => fmt(m, v), hideOverlap: true }, splitNumber: ms.length > 2 ? 2 : 4 });
-    return {
-      tooltip: { trigger: 'axis', confine: true, axisPointer: { type: mark === 'line' || mark === 'area' ? 'line' : 'shadow' },
-        formatter: ps => [esc(ps[0]?.axisValueLabel), ...ps.filter(p => p.value != null).map(p => {
-          const m = ms[Math.floor(p.seriesIndex / shown.length)];
-          return `${p.marker}${shown.length > 1 ? `${esc(p.seriesName)} · ` : ''}${esc(nameOf(m))}: <b>${esc(fmt(m, p.value))}</b>`;
-        })].join('<br>') },
-      legend: legend ? { type: 'scroll', top: 0, data: shown.map(label) } : undefined,
-      title: ms.map((m, i) => ({ text: i ? nameOf(m) : nameOf(m) + cut, top: grids[i].title, left: 4, textStyle: { fontSize: 12, fontWeight: 600 } })),
-      grid: grids.map(g => g.grid),
-      dataZoom: !flat && cats.length > 60 ? [{ type: 'inside', xAxisIndex: ms.map((_, i) => i) }] : [],
-      xAxis: ms.map((m, i) => flat ? valAxis(i, m) : catAxis(i, { boundaryGap: mark === 'bar' || mark === 'stacked' })),
-      yAxis: ms.map((m, i) => flat ? catAxis(i) : valAxis(i, m)),
-      series: ms.flatMap((m, i) => shown.map((b, j) => ({
-        type: mark === 'line' || mark === 'area' ? 'line' : 'bar', name: label(b), xAxisIndex: i, yAxisIndex: i,
-        stack: mark === 'stacked' || mark === 'area' ? `s${i}` : undefined,
-        areaStyle: mark === 'area' ? { opacity: 0.85 } : undefined, showSymbol: false, connectNulls: false,
-        itemStyle: { color: color(j) }, lineStyle: mark === 'line' ? { width: 1.6 } : undefined,
-        barMaxWidth: 28, large: cats.length > 400,
-        data: cats.map(a => at(a, b)?.[nameOf(m)] ?? null),
-      }))),
-    };
   }
 
   // --- Start ---

@@ -56,7 +56,7 @@ const ENGINE_METHODS = new Set(['query', 'stream', 'cancel', 'info', 'fileView',
  *        the box's text, for the next panel
  * @param {(name: string) => Promise<string|null>} [o.askVariable]
  *        a query variable's value, asked of the user; null when dismissed
- * @param {{ load: Function, stamp: Function }} [o.report]  the Report tab's tiles (exportflow.js reportOf, reportStamp)
+ * @param {{ load: Function, stamp: Function, save?: Function }} [o.report]  the Report tab's tiles (exportflow.js reportOf, reportStamp, reportSave)
  * @param {(x: {workspace: string, model: string}) => Promise<object>} [o.openModel]
  *        a semantic model a query names, opened from its local copy (read from Fabric the first
  *        time) and kept as a view: { name, schema, path, text }
@@ -94,6 +94,13 @@ function createHostMethods({ onelake, engine, onStatus = () => {}, saveFile = nu
       if (!report) throw new Error('the Report is not available here');
       if (!x || !x.workspace || !x.model) throw new Error('the Report needs a semantic model');
       return report.stamp({ workspace: String(x.workspace), model: String(x.model) });
+    },
+    // Add to report and a tile's ✕ (exportflow.js reportSave): the tiles, over those of `stamp`.
+    'model.reportSave': async x => {
+      if (!report || !report.save) throw new Error('the Report is not saved here');
+      if (!x || !x.workspace || !x.model) throw new Error('the Report needs a semantic model');
+      return report.save({ workspace: String(x.workspace), model: String(x.model), spec: x.spec,
+                           stamp: typeof x.stamp === 'number' ? x.stamp : null });
     },
     // Open in Excel (src/xmla): a semantic model, by its names alone.
     'excel.open': async x => {

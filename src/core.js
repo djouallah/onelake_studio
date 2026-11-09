@@ -535,14 +535,15 @@ function createCore({
   const writer = createOneLakeWriter({ getToken: hostToken });
   const exporter = createExport({
     connectivity, modules: () => agent.modules(), hostToken, appToken, powerBiToken: fabricToken, sqlToken, fabric, onelake, catalog, writer,
-    memento, extensionDir, pageDir,
+    memento, extensionDir, pageDir, reportDir: join(storageDir, 'reports'),
     ui: exportUi,
     onRefresh: node => view.refresh(node),
     log,
   });
   exportExplore = exporter.exportExplore;
-  // The Report tab's tiles: a model's exported zip's report.json, else the first tiles.
-  modelReport = { load: exporter.reportOf, stamp: exporter.reportStamp };
+  // The Report tab's tiles: a model's exported zip's report.json, else the file kept for it
+  // before an export, else the first tiles; Add to report and a tile's ✕ write them.
+  modelReport = { load: exporter.reportOf, stamp: exporter.reportStamp, save: exporter.reportSave };
 
   // Behind what's on screen, once it has been built.
   function start() {

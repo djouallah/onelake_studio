@@ -1,15 +1,17 @@
 // =============================================================================
-// explore/view.js — a semantic model's Explore: Report, Model and Pivot
+// explore/view.js — a semantic model's Explore: Model, Pivot and Report
 // =============================================================================
-//   Report    tiles the host reads (ctx.report: Export to Fabric's report.json, or the first
-//             tiles), each a SELECT over the model, drawn by report.js
 //   Model     the star of its tables and relationships, and what the model says of the
 //             table picked (model.js)
 //   Pivot     the model's fields dragged onto shelves, drawn as a pivot or a chart
 //             (explore.js, ECharts). Show SQL swaps the pivot for its SQL in a box the user
 //             edits (a SELECT … FROM <model> asks the model; any other SQL runs as written);
 //             Show plan puts the query's profile and plan in place of the results
-//             (profile.js). Download CSV writes the pivot's rows, or the box's.
+//             (profile.js). Download CSV writes the pivot's rows, or the box's. Add to report
+//             (a host that saves the Report) puts the pivot on the Report as a tile.
+//   Report    tiles the host reads (ctx.report: Export to Fabric's report.json, the file the
+//             host keeps before an export, or the first tiles), each a SELECT over the model or
+//             a pivot, drawn by report.js; a ✕ takes one out (a host that saves the Report)
 // Model's Diagram | YAML (or BIM) shows the model drawn, or its file as written (pretty.js).
 // The same file in the panel and in Export to Fabric's app: the host says how a model's SQL is compiled
 // and run, and where ECharts comes from (`ctx`); nothing here knows the engine.
@@ -18,14 +20,14 @@
 import { escapeHtml, toCsv } from '../paths.js';
 import { renderModel } from './model.js';
 import { el } from './dom.js';
-import { createExplorer } from './explore.js';
+import { createExplorer, pivotTitle } from './explore.js';
 import { compileModelSql } from './query.js';
 import { createPlanView, profileSql, elapsed, profileColors } from './profile.js';
 import { PALETTE, registerChartTheme } from './theme.js';
 import { prettyModelText, extensionVendors, foreignDialects } from './pretty.js';
 import { drawReport } from './report.js';
 
-const PAGES = [['report', 'Report'], ['model', 'Model'], ['pivot', 'Pivot']];
+const PAGES = [['model', 'Model'], ['pivot', 'Pivot'], ['report', 'Report']];
 const PREVIEW_ROWS = 500;
 // The SQL box's rows in all, a column beside the query's own (runSql), not shown.
 const TOTAL_NAME = '__onelake_rows_in_all';
@@ -62,10 +64,12 @@ const REPORT_POLL_MS = 2000;
 //   plainSql         (optional) { from, measure(name) }: editSql's query as SQL over one table
 //                    (explore.js's modelSql), else SQL over the model
 //   close()          (optional) a Close button, after Edit SQL
-//   report           (optional) the Report page's tiles: { load(), stamp()? }. load answers
+//   report           (optional) the Report page's tiles: { load(), stamp()?, save()? }. load answers
 //                    { spec, stamp } (report.js's spec); stamp(), asked while the page is on
-//                    screen, answers a value that changes when the tiles do. No report: no page
-//   pages            (optional) the pages shown, of 'report', 'model', 'pivot' (default: all
+//                    screen, answers a value that changes when the tiles do; save(spec, stamp)
+//                    writes the tiles, refused when they changed since `stamp` (Add to report and
+//                    the tiles' ✕: none, a Report that only reads). No report: no page
+//   pages            (optional) the pages shown, of 'model', 'pivot', 'report' (default: all
 //                    there are), in that order. One page: no page tabs.
 //   openOn           (optional) the page it opens on (default: the first shown)
 //   stateKey         (optional) where its shelves are kept (default: explore.<name>)
@@ -174,8 +178,10 @@ export function mountExplore(root, ctx) {
   }, true) : null;
   if (editBtn) editBtn.title = 'This query in the SQL box, to take further by hand (the pivot is kept)';
   const closeBtn = ctx.close ? btn('Close', ctx.close) : null;
+  // Last, so the buttons before it stay where they were.
+  const addBtn = ctx.report?.save ? hostBtn('Add to report', 'Adding…', addToReport, 'This pivot, as it is, as a tile of the Report') : null;
   const actions = el('div', { class: 'explore-actions', hidden: true },
-    ...(editBtn ? [editBtn, closeBtn] : [sqlToggle, closeBtn, csvBtn]), excelBtn, exportBtn);
+    ...(editBtn ? [editBtn, closeBtn] : [sqlToggle, closeBtn, csvBtn]), excelBtn, exportBtn, addBtn);
   const reportPage = el('div', { class: 'report-page', hidden: true });
   const modelPage = el('div', { class: 'model-page' });
   const pivotPage = el('div', { class: 'explore-page', hidden: true });
@@ -248,7 +254,7 @@ export function mountExplore(root, ctx) {
     if (ctx.report) {
       if (p === 'report') {
         for (const go of reportWaiters.splice(0)) go();
-        if (!reportSeq) drawReportPage();
+        if (!reportSeq || reportChanged) drawReportPage();
       } else if (reportRuns.size && ctx.cancel) {
         // The Report left with a tile running: stopped, so what is asked next has the engine. The
         // tile runs again when the Report is back.
@@ -288,8 +294,11 @@ export function mountExplore(root, ctx) {
       .flatMap(t => (t.columns ?? []).filter(c => is(c.name, column)));
     return found.length === 1 ? found[0].dataType : undefined;
   };
+  // Add to report changed the tiles while the Report was not on screen: drawn again when it is.
+  let reportChanged = false;
   async function drawReportPage() {
     const my = ++reportSeq;
+    reportChanged = false;
     if (!reportView) reportPage.replaceChildren(el('div', { class: 'ex-empty' }, 'Reading the report…'));
     try {
       const { spec, stamp } = await ctx.report.load();
@@ -297,13 +306,37 @@ export function mountExplore(root, ctx) {
       reportStamp = stamp ?? null;
       reportView?.destroy();
       reportView = drawReport(reportPage, spec, { sql: reportSql, echarts: reportEcharts, shown: reportShown, leftWhileRunning,
-                                                  cancel: ctx.cancel, columnType });
+                                                  cancel: ctx.cancel, columnType, model: ctx.tmsl, css,
+                                                  remove: ctx.report.save ? i => removeTile(spec, stamp, i) : undefined });
     } catch (e) {
       if (my !== reportSeq || destroyed) return;
       reportView?.destroy();
       reportView = null;
       reportPage.replaceChildren(el('div', { class: 'ex-error' }, `The report could not be read: ${e.message}`));
     }
+  }
+  // The ✕ on a tile: the tiles without it, saved over the ones drawn (refused when they changed
+  // since, by a person or an agent), and drawn again either way.
+  async function removeTile(spec, stamp, i) {
+    const tile = spec.tiles[i];
+    try {
+      await ctx.report.save({ ...spec, tiles: spec.tiles.filter((_, j) => j !== i) }, stamp);
+      setStatus(`Removed "${tile?.title ?? 'the tile'}" from the report.`, 'ok');
+    } catch (e) {
+      setStatus(`Remove from the report: ${e.message}`, 'error');
+    }
+    if (!destroyed) drawReportPage();
+  }
+  // Add to report: the shelves on screen, as a pivot tile after the Report's own.
+  async function addToReport() {
+    const state = explorer?.state();
+    if (!state || !explorer.query()) throw new Error('put a field on the shelves first');
+    const title = pivotTitle(state);
+    const { spec, stamp } = await ctx.report.load();
+    const tiles = Array.isArray(spec?.tiles) ? spec.tiles : [];
+    await ctx.report.save({ ...spec, tiles: [...tiles, { title, kind: 'pivot', pivot: state }] }, stamp);
+    if (page === 'report') drawReportPage(); else reportChanged = true;
+    return `Added "${title}" to the report.`;
   }
   // While the Report is on screen, its file is looked at every few seconds (ctx.report.stamp):
   // an edit to it, by a person or an agent, is drawn without a click.
@@ -424,6 +457,7 @@ export function mountExplore(root, ctx) {
     pivotPage.hidden = true;
     sqlPage.hidden = false;
     sqlToggle.textContent = 'Show visual';
+    sqlModeButtons();
     ta.focus();
   }
   function closeSql() {
@@ -432,7 +466,14 @@ export function mountExplore(root, ctx) {
     sqlPage.hidden = true;
     pivotPage.hidden = page !== 'pivot';
     sqlToggle.textContent = 'Show SQL';
+    sqlModeButtons();
     explorer?.redraw();   // the chart takes its box's size again
+  }
+  // Add to report takes the shelves, not the box: off while the box is shown.
+  function sqlModeButtons() {
+    if (!addBtn) return;
+    addBtn.disabled = sqlMode;
+    addBtn.title = sqlMode ? 'Show visual first' : 'This pivot, as it is, as a tile of the Report';
   }
   // Ctrl+Enter reaches runSql while a run or a plan is still going; only the latest may write.
   let outSeq = 0;

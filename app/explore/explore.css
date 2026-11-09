@@ -280,6 +280,16 @@ section.modelOpen #chartBtn { display: none; }
 .rp-tile { background: var(--card); border: 1px solid var(--hairline); border-radius: var(--radius); padding: 0.8rem 1rem; min-width: 0; display: flex; flex-direction: column; gap: 0.5rem; }
 .rp-tile.wide { grid-column: 1 / -1; }
 .rp-tile h2 { margin: 0; font-size: 0.85rem; font-weight: 600; color: var(--muted); }
+.rp-head { display: flex; align-items: center; gap: 0.5rem; }
+.rp-head h2 { flex: 1; min-width: 0; }
+.rp-remove { background: none; border: none; color: var(--faint); font: inherit; cursor: pointer; padding: 0.1rem 0.35rem; border-radius: var(--radius); }
+.rp-remove:hover, .rp-remove:focus-visible { color: var(--text); background: var(--hover-soft); }
+/* A pivot tile's table: Pivot's own (explore.js), its rows picked by a click. */
+.rp-pivot { overflow: auto; max-height: 420px; }
+.rp-pivot tr.rp-pick { cursor: pointer; }
+.rp-pivot tr.rp-pick:hover > * { background: var(--hover-soft); }
+.rp-pivot tr.rp-pick:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.rp-pivot tr.rp-on > * { background: color-mix(in srgb, var(--accent) 22%, transparent); }
 .rp-chart { height: 280px; }
 .rp-kpis { display: flex; flex-wrap: wrap; gap: 0.6rem 2.2rem; }
 .rp-kpi span { display: block; color: var(--muted); font-size: 0.78rem; }

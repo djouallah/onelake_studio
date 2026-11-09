@@ -555,24 +555,9 @@ holds those lakehouses, else `--workspace`, and the error names the workspaces w
 
 ## Explore
 
-A semantic model opens as **Explore** ([`app/explore/`](../app/explore/)), on three pages. It opens on Model.
+A semantic model opens as **Explore** ([`app/explore/`](../app/explore/)), on three pages: Model, Pivot and Report. It
+opens on Model, and the Fabric app on its Report.
 
-- **Report:** tiles, each a SELECT over the model `FROM model`, drawn as figures, a bar or line chart, or a table
-  ([`report.js`](../app/explore/report.js)). A tile that fails says so in its box, and the rest still draw.
-  - **Which tiles:** the model's Export to Fabric zip's `site/report.json`, when it has one (the zip its last export was
-    approved into), else the first tiles, picked from the model's metadata with no query (`starterTiles` in
-    [`src/exportapp.js`](../src/exportapp.js)): the first four visible measures as figures, the first by the date table's
-    year, by a dimension's text column, and a top 10 of another. The first export writes those into the zip.
-  - **Drawn again** when the zip changes, while the tab is on screen: a person or an agent edits the report and sees it.
-  - A tile is `{ title, kind, sql, formats?, echarts?, wide?, crossFilter? }`: `kind` is `kpi`, `bar`, `line` or `table`,
-    `formats` a column's format string, `echarts` an ECharts option merged over the tile's own.
-  - **Cross filtering:** a click on a bar, a line's point or a table's row picks its first column's value, and every other
-    tile runs again with it as a `WHERE` on the model column that first column is (`withFilters`: before `GROUP BY`, ANDed
-    to a `WHERE` the tile has, `IS NULL` for a blank, the literal typed by the model's column). The tile clicked stays
-    whole, its pick bright and the rest dim. The same click again, or the pick's ✕ in the bar above the tiles, clears it;
-    picks in several tiles all apply. A figures tile takes no clicks. `crossFilter` names the model column when the first
-    column is not one, or is `false` for a tile that takes none. The tiles still run one at a time, and a pick stops the
-    tile running when it changes it.
 - **Model:** its tables as a star, dimensions in the middle and facts around them, with its
   relationships. Click a table for its columns, measures (with their DAX) and relationships.
 - **Pivot:** drag columns onto Rows, Columns and Filters and measures onto Values, drawn as a pivot or
@@ -585,6 +570,32 @@ A semantic model opens as **Explore** ([`app/explore/`](../app/explore/)), on th
   - **Show SQL** swaps the pivot for that SQL in a box you can edit and run.
   - **Show plan** profiles it (`profile.js`: DuckDB's `EXPLAIN ANALYZE` as totals, a timeline and the
     costly operators) next to its plan tree.
+  - **Add to report** puts the view on the Report, as a tile (Report, below).
+- **Report:** tiles, each a SELECT over the model `FROM model` or a pivot, drawn as figures, a bar or line chart, a
+  table, or as Pivot draws it ([`report.js`](../app/explore/report.js)). A tile that fails says so in its box, and the
+  rest still draw.
+  - **Which tiles:** the model's Export to Fabric zip's `site/report.json`, when it has one (the zip its last export was
+    approved into); else the file Studio keeps for the model until its first export (`<storage>/reports/`, by its
+    workspace and name); else the first tiles, picked from the model's metadata with no query (`starterTiles` in
+    [`src/exportapp.js`](../src/exportapp.js)): the first four visible measures as figures, the first by the date table's
+    year, by a dimension's text column, and a top 10 of another. The first export writes those, or Studio's file, into
+    the zip, and the file goes.
+  - **Add to report and ✕:** Pivot's **Add to report** puts the shelves on screen after the tiles, as a `pivot` tile;
+    a tile's ✕ takes it out. Both write where the tiles are kept (`reportSave` in
+    [`src/exportflow.js`](../src/exportflow.js)), over the tiles they were drawn from: a report that changed since (an
+    edit to its file) is refused and drawn again. The Fabric app's Report only reads, so it has neither.
+  - **Drawn again** when the zip changes, while the tab is on screen: a person or an agent edits the report and sees it.
+  - A tile is `{ title, kind, sql, formats?, echarts?, wide?, crossFilter? }`: `kind` is `kpi`, `bar`, `line` or `table`,
+    `formats` a column's format string, `echarts` an ECharts option merged over the tile's own. A `pivot` tile is
+    `{ title, kind: 'pivot', pivot }`, `pivot` the shelves as Pivot keeps them; its SQL is Pivot's (`pivotQuery`), and it
+    is drawn by Pivot's own code (`pivotView` in [`explore.js`](../app/explore/explore.js)), so it keeps every mark.
+  - **Cross filtering:** a click on a bar, a line's point or a table's row picks its first column's value, and every other
+    tile runs again with it as a `WHERE` on the model column that first column is (`withFilters`: before `GROUP BY`, ANDed
+    to a `WHERE` the tile has, `IS NULL` for a blank, the literal typed by the model's column). A pivot tile picks its
+    first Rows field (else Columns). The tile clicked stays whole, its pick bright and the rest dim. The same click
+    again, or the pick's ✕ in the bar above the tiles, clears it; picks in several tiles all apply. A figures tile takes
+    no clicks. `crossFilter` names the model column when the first column is not one, or is `false` for a tile that takes
+    none. The tiles still run one at a time, and a pick stops the tile running when it changes it.
 
 `view.js` is host-neutral: the host passes in the compiler, how to run SQL, and where ECharts comes
 from. **A tab** runs it on the native engine. **The Fabric app** runs the

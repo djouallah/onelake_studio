@@ -11,7 +11,7 @@ import { join } from "node:path";
 
 const require = createRequire(import.meta.url);
 const { createExport } = require("../../src/exportflow.js");
-const { writeApp } = require("../../src/exportapp.js");
+const { writeApp, readApp } = require("../../src/exportapp.js");
 const semantic = await import("../../app/semantic.js");
 
 const URL_ = "https://onelake.dfs.fabric.microsoft.com/0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0/11111111-2222-3333-4444-555555555555";
@@ -43,7 +43,7 @@ async function setup({ offline = false, noInternet = false, answers = [], folder
     withProgress: () => { throw new Error("nothing is written in these tests"); },
     openExternal() {}, reveal() {},
   };
-  const { exportExplore: run } = createExport({
+  const flow = createExport({
     connectivity: { offline: () => offline, noInternet: () => noInternet },
     modules: async () => ({ semantic, compiler: { parseYaml: () => doc, ossieToTmsl: () => bim } }),
     hostToken: async () => token,
@@ -60,13 +60,14 @@ async function setup({ offline = false, noInternet = false, answers = [], folder
     },
     memento: { get: k => kept.get(k), update: async (k, v) => { kept.set(k, v); } },
     extensionDir: ext,
+    reportDir: join(ext, "reports"),
     pageDir: async () => ext,
     ui,
     onRefresh() {},
     log() {},
   });
-  const exportExplore = x => run(mode == null || x.mode ? x : { ...x, mode });
-  return { exportExplore, asked, looked, kept, ext, done: () => rm(ext, { recursive: true, force: true }) };
+  const exportExplore = x => flow.exportExplore(mode == null || x.mode ? x : { ...x, mode });
+  return { exportExplore, flow, asked, looked, kept, ext, done: () => rm(ext, { recursive: true, force: true }) };
 }
 
 test("offline says why, before anything is asked", async () => {
@@ -221,4 +222,48 @@ test("Publish As Is only for a zip made for the same kind of site: DuckDB in the
     await rm(open, { recursive: true, force: true });
     await done();
   }
+});
+
+// The Report tab's tiles, as Add to report and a tile's ✕ save them (reportSave).
+const MODEL = { workspace: "power bi", model: "sales" };
+const OPENED = { ...MODEL, file: "sales.yaml", text: OSSIE };
+const TILES = { tiles: [{ title: "Total Fare by Borough", kind: "pivot", pivot: { rows: ["dim_zone.Borough"], values: ["Total Fare"] } }] };
+
+test("before an export, the Report is kept in Studio's file, and a save over a newer edit is refused", async () => {
+  const { flow, done } = await setup();
+  const first = await flow.reportOf(OPENED);
+  assert.deepEqual([first.from, first.stamp], [null, 0], "the first tiles, nothing written");
+  const { stamp } = await flow.reportSave({ ...MODEL, spec: TILES, stamp: first.stamp });
+  const back = await flow.reportOf(OPENED);
+  assert.deepEqual(back.spec, TILES);
+  assert.equal(back.stamp, stamp);
+  assert.match(back.from, /reports[\\/][0-9a-f]{40}\.json$/);
+  assert.deepEqual((await flow.reportOf({ ...OPENED, workspace: "POWER BI", model: "Sales" })).spec, TILES, "by its names, case aside");
+  assert.equal(await flow.reportStamp(MODEL), stamp);
+  // Drawn from the first tiles, saved after the file was written: refused, the file as it was.
+  await assert.rejects(flow.reportSave({ ...MODEL, spec: { tiles: [] }, stamp: first.stamp }), /changed since it was drawn/);
+  assert.deepEqual((await flow.reportOf(OPENED)).spec, TILES);
+  await assert.rejects(flow.reportSave({ ...MODEL, spec: { title: "no tiles" }, stamp }), /a report is/);
+  await done();
+});
+
+test("with an export's zip, the Report is the zip's site/report.json: saved into it, its other entries and marker kept", async () => {
+  const open = await mkdtemp(join(tmpdir(), "exportflow-open-"));
+  const zipPath = join(open, "sales-model-explore.zip");
+  const marker = { model: "power bi/nem.Lakehouse/Files/semantic_model/sales.yaml", files: { "site/app.js": "h" } };
+  await writeApp(zipPath, new Map([["site/app.js", Buffer.from("// app")], ["site/report.json", Buffer.from('{ "tiles": [] }')]]), marker);
+  const { flow, kept, done } = await setup();
+  // A file from before the export is not read once there is a zip.
+  await flow.reportSave({ ...MODEL, spec: { tiles: [{ title: "old", kind: "kpi", sql: "SELECT 1 FROM model" }] }, stamp: 0 });
+  kept.set("exportReport:power bi/sales", zipPath);
+  const before = await flow.reportOf(OPENED);
+  assert.deepEqual([before.spec, before.from], [{ tiles: [] }, zipPath]);
+  await flow.reportSave({ ...MODEL, spec: TILES, stamp: before.stamp });
+  const app = await readApp(zipPath);
+  assert.deepEqual(JSON.parse(app.files.get("site/report.json").toString("utf8")), TILES);
+  assert.equal(app.files.get("site/app.js").toString("utf8"), "// app");
+  assert.deepEqual(app.marker, marker);
+  assert.deepEqual((await flow.reportOf(OPENED)).spec, TILES);
+  await rm(open, { recursive: true, force: true });
+  await done();
 });

@@ -79,3 +79,56 @@ test("a blank is IS NULL, and a FROM in parentheses is not the tile's", () => {
   assert.equal(withFilters('SELECT "FROM" FROM model', [{ ref: '"t"."FROM"', value: 1 }]), 'SELECT "FROM" FROM model WHERE "t"."FROM" = 1');
   assert.throws(() => withFilters("SELECT 1", [{ ref: BOROUGH, value: "x" }]), /no FROM/);
 });
+
+// A pivot tile: Pivot's shelves, as Add to report saves them, run as Pivot's own query.
+const { modelFields, pivotQuery, pivotTitle, pivotView } = await import("../../app/explore/explore.js");
+const MODEL = { tables: [
+  { name: "dim_zone", columns: [{ name: "Borough", dataType: "string" }] },
+  { name: "trips", columns: [{ name: "fare", dataType: "double" }], measures: [{ name: "Total Fare" }] },
+], relationships: [{ fromTable: "trips", toTable: "dim_zone" }] };
+const PIVOT_SQL = 'SELECT "dim_zone"."Borough" AS "Borough", AGG("Total Fare") AS "Total Fare"\nFROM model\nGROUP BY ALL\n' +
+                  'ORDER BY "Borough"\nFETCH FIRST 5000 ROWS WITH TIES';
+
+test("a pivot tile runs Pivot's query, and a click on it picks its first Rows field", () => {
+  const fields = modelFields(MODEL);
+  const { state, sql, field } = pivotQuery({ rows: ["dim_zone.Borough"], values: ["Total Fare"], mark: "bar" }, fields);
+  assert.deepEqual([state.cols, state.filters, state.totals], [[], [], false], "every shelf there");
+  assert.equal(sql, PIVOT_SQL);
+  assert.deepEqual(field, { table: "dim_zone", column: "Borough", ref: BOROUGH });
+  // No Rows: its first Columns field.
+  assert.deepEqual(pivotQuery({ cols: ["dim_zone.Borough"], values: ["Total Fare"] }, fields).field.column, "Borough");
+  assert.equal(pivotQuery({ values: ["Total Fare"] }, fields).field, null, "nothing to pick");
+  for (const [saved, why] of [[null, /the shelves/], [[], /the shelves/], [{ rows: "dim_zone.Borough" }, /rows is a list/], [{}, /no fields/]]) {
+    assert.throws(() => pivotQuery(saved, fields), why, JSON.stringify(saved));
+  }
+});
+
+test("another tile's pick goes in a pivot tile's query, beside its own filters", () => {
+  const fields = modelFields(MODEL);
+  const pick = [{ ref: BOROUGH, value: "Bronx", type: "string" }];
+  assert.equal(withFilters(pivotQuery({ rows: ["dim_zone.Borough"], values: ["Total Fare"] }, fields).sql, pick),
+               PIVOT_SQL.replace("FROM model", `FROM model WHERE ${BOROUGH} = 'Bronx'`));
+  const own = pivotQuery({ rows: ["dim_zone.Borough"], values: ["Total Fare"],
+                           filters: [{ field: "dim_zone.Borough", op: "notIn", values: ["Queens"] }] }, fields).sql;
+  assert.match(withFilters(own, pick), /\nWHERE \(\("dim_zone"\."Borough" NOT IN \('Queens'\) OR "dim_zone"\."Borough" IS NULL\)\) AND "dim_zone"\."Borough" = 'Bronx'\nGROUP BY ALL\n/);
+});
+
+test("a pivot tile's title: its values by its rows and columns", () => {
+  modelFields(MODEL);
+  assert.equal(pivotTitle({ rows: ["dim_zone.Borough"], cols: [], values: ["Total Fare", "\0sum\0trips.fare"] }), "Total Fare, Sum of fare by Borough");
+  assert.equal(pivotTitle({ rows: [], cols: [], values: ["Total Fare"] }), "Total Fare");
+  assert.equal(pivotTitle({ rows: ["dim_zone.Borough"], cols: [], values: [] }), "Borough");
+});
+
+test("a pivot tile's chart: the pick bright, the rest dim, and a click's row key; Pivot's own, as it was", () => {
+  const fields = modelFields(MODEL);
+  const s = pivotQuery({ rows: ["dim_zone.Borough"], values: ["Total Fare"], mark: "bar" }, fields).state;
+  const rows = [{ Borough: "Bronx", "Total Fare": 10 }, { Borough: "Queens", "Total Fare": 20 }];
+  const look = { fields, palette: ["#111", "#222"], css: () => "" };
+  const plain = pivotView(s, rows, "bar", look);
+  assert.deepEqual(plain.option.series[0].data, [10, 20]);
+  const picked = pivotView(s, rows, "bar", look, { on() {}, active: true, value: "Queens" });
+  assert.deepEqual(picked.option.series[0].data, [{ value: 10, itemStyle: { opacity: 0.3 } }, 20]);
+  assert.deepEqual(picked.keyAt({ dataIndex: 1 }), ["Queens"]);
+  assert.deepEqual(pivotView(s, rows, "bar", look, { on() {}, active: false }).option.series[0].data, [10, 20]);
+});

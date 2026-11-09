@@ -188,6 +188,7 @@ async function show(context, { newTab = false, ...options } = {}) {
       report: {
         load: x => (modelReport ? modelReport.load(x) : Promise.reject(new Error('OneLake Studio is still starting'))),
         stamp: x => (modelReport ? modelReport.stamp(x) : Promise.reject(new Error('OneLake Studio is still starting'))),
+        save: x => (modelReport ? modelReport.save(x) : Promise.reject(new Error('OneLake Studio is still starting'))),
       },
       openInExcel: x => (openExcel ? openExcel(x) : Promise.reject(new Error('OneLake Studio is still starting'))),
       offlineState: x => (keepOffline ? keepOffline.state(x) : Promise.reject(new Error('OneLake Studio is still starting'))),

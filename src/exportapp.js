@@ -11,8 +11,9 @@
 //                    tables in the browser as views v_<table>)
 //   site/explore/    Studio's Explore (app/explore/), the same files the panel runs
 //   site/semantic/   dax-sql (PINS.daxSql): SQL over the model, as SQL over the views
-//   site/report.json the Report the app opens on (app/explore/report.js draws it): tiles picked
-//                    from the model, written once, then the zip's, and kept by every export
+//   site/report.json the Report the app opens on (app/explore/report.js draws it): Studio's Report
+//                    tab's tiles, or tiles picked from the model, written once, then the zip's
+//                    (Studio's Add to report writes it too), and kept by every export
 //   site/explore.json  the shelves the first view shows
 //   site/engine.json   DirectQuery and Direct Lake only, { engine: 'semanticModel' }: the page runs
 //                    no DuckDB (storage/modeldata.js: it queries the semantic model), and site/ holds
@@ -165,8 +166,9 @@ function planExport(text, fileName, name, mods, where, lakes = null) {
 }
 
 // --- The Report's first tiles ------------------------------------------------------
-// site/report.json is the zip owner's: written once with these tiles, and kept by every later
-// export. Studio's Report tab draws the same file, or these tiles before there is one. Picked from the model's metadata alone, with no query: its
+// site/report.json is the zip owner's: written once with these tiles (or those Studio's Report tab
+// kept), and kept by every later export. Studio's Report tab draws the same file, or these tiles
+// before there is one. Picked from the model's metadata alone, with no query: its
 // first measures as figures, the first by a year of its date table, by a dimension's text
 // column, and a top 10 of another. Each tile is a SELECT over the model (FROM model).
 
@@ -289,11 +291,12 @@ ${onModel(plan) ? `- Model: \`${plan.modelPath}\`, as it was when exported: the 
 `}
 ## The Report: yours to grow
 
-The app opens on its Report, \`site/report.json\`, with Explore's Model and Pivot beside it. The first
-export wrote it with a few tiles picked from the model, and no export writes it again: edit it freely, then
-export again to publish it (it is not one of the local changes an export asks about). Delete it and the
-next export writes a new one. OneLake Studio's Report tab, next to Model and Pivot, draws this same file
-from this zip, and draws it again when the zip changes.
+The app opens on its Report, \`site/report.json\`, after Explore's Model and Pivot. The first export wrote
+it with the tiles built in OneLake Studio's Report tab, or a few picked from the model, and no export writes it
+again: edit it freely, then export again to publish it (it is not one of the local changes an export asks
+about). Delete it and the next export writes a new one. OneLake Studio's Report tab, after Model and Pivot,
+draws this same file from this zip, and draws it again when the zip changes; its Pivot's **Add to report**
+and a tile's ✕ write it here.
 
 \`\`\`json
 { "tiles": [
@@ -305,7 +308,11 @@ from this zip, and draws it again when the zip changes.
 \`\`\`
 
 - \`kind\` is \`kpi\` (one row, each column a figure), \`bar\` or \`line\` (the first column across, every other a
-  series), or \`table\`. \`"wide": true\` gives a tile the whole row.
+  series), \`table\`, or \`pivot\`. \`"wide": true\` gives a tile the whole row.
+- \`pivot\` has no \`sql\`: its \`pivot\` is Explore's shelves, as **Add to report** saves them, and it is drawn as
+  Pivot draws them: \`{ "rows": ["dim_region.Region"], "cols": [], "values": ["Revenue"], "filters": [], "mark": "bar" }\`.
+  A column is \`table.column\`, a measure its name; \`mark\` is \`auto\`, \`table\`, \`highlight\`, \`bar\`, \`stacked\`,
+  \`line\`, \`area\`, \`heatmap\` or \`scatter\`. A click picks its first Rows field (else Columns).
 - \`sql\` is one SELECT over the model, \`FROM model\`: its columns as \`"table"."column"\`, its measures as
   \`AGG("measure")\`, \`GROUP BY ALL\`, \`ORDER BY\`, \`FETCH FIRST n ROWS WITH TIES\`. ${onModel(plan)
   ? 'The page turns it into DAX and runs it on the semantic model.' : 'The page compiles it (dax-sql) to SQL over the tables, and DuckDB-WASM runs it.'}
@@ -417,7 +424,8 @@ async function filesOf(root, to, skip = () => false) {
 
 /**
  * The app's entries, path -> bytes, as the local copy holds them: no packages (vendorFiles).
- * `kept`: the zip's own site/report.json, which no export writes over (else the first tiles);
+ * `kept`: the zip's own site/report.json, which no export writes over, or the one Studio kept
+ * before the first export (else the first tiles);
  * `redirects`: the app's sign-in redirects so far.
  * `model`: on a semantic model, the model file read (modelDoc's doc) that the semantic model is made from.
  * `fabricAppDir`: the extension's fabric_app/; `appDir`: Studio's page modules (app/, or

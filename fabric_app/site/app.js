@@ -1,7 +1,7 @@
 // =============================================================================
 // app.js — Export to Fabric's app: a semantic model's Report, and its Explore
 // =============================================================================
-// OneLake Studio's own Explore (explore/view.js: Report, Model, Pivot), over the data source of
+// OneLake Studio's own Explore (explore/view.js: Model, Pivot, Report; it opens on the Report), over the data source of
 // this app (storage/data.js): it signs in, its function reads the model from the lakehouse and
 // says where the tables are, and DuckDB-WASM reads them in this browser. Exported as DirectQuery
 // or Direct Lake (engine.json), the data source is storage/modeldata.js instead: each query runs as
@@ -10,8 +10,8 @@
 // semantic model it is model.json, the definition the semantic model was made from. Nothing here is
 // specific to one model; the export writes only rayfin.config.json (the backend), explore.json (the
 // shelves the first view shows), and on a semantic model engine.json and model.json. The Report page
-// is report.json (explore/report.js draws it), which the export writes once and never again: the
-// zip's owner grows it.
+// is report.json (explore/report.js draws it), which no export writes over: Studio's Report tab
+// (Add to report, a tile's ✕) and the zip's owner grow it, and here it only reads.
 // =============================================================================
 import { mountExplore } from "./explore/view.js";
 import { tmslOf } from "./explore/model.js";
@@ -99,7 +99,7 @@ export async function start() {
       name, title: String(doc.name || name), tmsl: tmslOf(bim),
       compiler,
       run: async sql => resultOf(await data.query(sql)),
-      report,
+      report, openOn: "report",
       echarts: () => echartsReady,
       saveText: download,
       loadState: key => { try { return JSON.parse(localStorage.getItem(key)) ?? first; } catch { return first; } },
@@ -152,7 +152,7 @@ async function startModel(first, modelName) {
     name, title: String(doc.name || name), tmsl: tmslOf(bim),
     compiler: { isDax: t => /^\s*(DEFINE|EVALUATE)\b/i.test(t), compileStatement: text => ({ sql: text }) },
     run,
-    report,
+    report, openOn: "report",
     shownSql: sql => data.shownSql(sql),
     echarts: () => echartsReady,
     saveText: download,
