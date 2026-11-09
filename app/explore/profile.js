@@ -88,19 +88,27 @@ export function parseProfile(json) {
   // The rows the query returns: its top operator's, below EXPLAIN ANALYZE and through a CTE to
   // the query that reads it (its last child).
   const result = n => n && (SKIP.has(nameOf(n)) || CTE.test(nameOf(n)) ? result((n.children ?? []).at(-1)) : n);
-  const execution = operators.reduce((s, o) => s + o.ms, 0);
   const phases = [['Bind and plan', secs(p.planner)], ['Optimize', secs(p.all_optimizers)],
     ['Physical plan', secs(p.physical_planner)]].filter(([, ms]) => ms > 0).map(([name, ms]) => ({ name, ms, kind: 'plan' }));
   const planning = phases.reduce((s, f) => s + f.ms, 0);
-  const total = Math.max(secs(p.latency), planning + execution);
+  // An operator's time is every thread's added up: on 8 threads, a 3 s query's operators add up to 24 s.
+  // The query's own time is its latency, as the clock ran; without one (one timed run), what they add up to.
+  const busy = operators.reduce((s, o) => s + o.ms, 0);
+  const total = p.latency != null ? secs(p.latency) : planning + busy;
+  const execution = p.latency != null ? Math.max(0, total - planning) : busy;
+  // Each operator's part of that time, as its share of all the threads' (its own `cpu`).
+  if (busy > 0) for (const o of operators) { o.cpu = o.ms; o.ms = o.ms * execution / busy; }
   const top = result(roots.at(-1));
   // What the profile doesn't carry is null, not 0: the exported app's on a semantic model
   // (fabric_app/site/storage/modeldata.js) is one timed run, so it has no planning and no rows scanned.
   const scans = operators.filter(o => o.scanned != null);
+  let scanned = p.cumulative_rows_scanned != null ? Number(p.cumulative_rows_scanned)
+    : scans.length ? scans.reduce((s, o) => s + o.scanned, 0) : null;
+  // A scan that says it read none and passed rows on (a DuckLake table's) doesn't count them: unknown, not 0.
+  if (scanned === 0 && operators.some(o => o.kind === 'scan' && o.rows > 0)) scanned = null;
   return { total, planning: (p.planner ?? p.all_optimizers ?? p.physical_planner) == null ? null : planning, execution,
     other: Math.max(0, total - planning - execution), phases, operators, rows: top ? rowsOf(top) : 0,
-    scanned: p.cumulative_rows_scanned != null ? Number(p.cumulative_rows_scanned)
-      : scans.length ? scans.reduce((s, o) => s + o.scanned, 0) : null,
+    scanned,
     memory: Number(p.system_peak_buffer_memory ?? 0) || null };
 }
 
@@ -157,7 +165,7 @@ export function renderProfile(root, prof, colors) {
   const setFold = hide => { fold(hide); toggle.textContent = hide ? `Show all ${steps.length} steps` : `Hide the ${folded} under 0.5%`; toggle.onclick = () => setFold(!hide); };
   if (toggle) setFold(true);
   const timeline = el('section', { class: 'pf-section' },
-    el('h4', {}, 'Timeline', el('span', { class: 'pf-note' }, 'phases in order, then each operator’s own time in the order its pipelines run (one thread)'), toggle),
+    el('h4', {}, 'Timeline', el('span', { class: 'pf-note' }, 'phases in order, then each operator’s share of the execution, in the order its pipelines run'), toggle),
     legend, el('div', { class: 'pf-gantt' }, rows));
 
   // The most expensive operators.

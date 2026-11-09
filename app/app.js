@@ -1515,7 +1515,10 @@ async function runBox({ plan = false } = {}) {
     // Before anything is cancelled: this Plan would be refused, and would have stopped the one under way.
     if (plan && planning) { setStatus('A plan is still being measured: wait for it, then plan again.', 'warn'); return; }
     enterQuery(activeQuery);
-    const ok = plan ? await showPlan(sql) : await runQuery({ sql });
+    // EXPLAIN [ANALYZE] written in the box is Plan: the profile and the tree, not two columns of text.
+    // One with options, EXPLAIN (FORMAT json) …, runs as written: its text is what was asked for.
+    const explain = /^\s*EXPLAIN(?:\s+ANALY[SZ]E)?\s+(?!\()/i.exec(sql);
+    const ok = plan || explain ? await showPlan(explain ? sql.slice(explain[0].length) : sql) : await runQuery({ sql });
     // The cursor goes where DuckDB says the error is, as the statement is written. Not a
     // selection: the next Ctrl+Enter runs the statement again, not one word of it.
     if (!ok && lastRun.error && !lastRun.rewritten && box.value === text) {

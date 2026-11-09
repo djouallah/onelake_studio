@@ -194,9 +194,8 @@ test("a Delta table is read from its own folder, and an Iceberg one from its met
   assert.equal(r.metadataLocation, location);
 });
 
-test("a Delta table says where its log is kept here, and is asked for again when the statement is", async () => {
+test("a Delta table answers its folder, and its log is left to the engine, which reads it into the lake", async () => {
   const { createSqlTables } = require("../../src/sqltables.js");
-  const asked = [];
   const onelake = {
     workspaces: async () => ["ws"],
     items: async () => [{ name: "lh.Lakehouse", kind: "Lakehouse" }],
@@ -204,19 +203,14 @@ test("a Delta table says where its log is kept here, and is asked for again when
     table: async () => ({ empty: false, format: "delta", at: 1,
       metadataLocation: "abfss://ws@onelake.dfs.fabric.microsoft.com/lh.Lakehouse/Tables/dbo/t/metadata/v3.metadata.json" }),
   };
-  const deltaLogs = { ensure: async (at, o) => { asked.push([at, o]); return "C:/cache/delta/abc"; }, moves: () => 3 };
-  const sql = createSqlTables({ onelake, paths: async () => ({}), deltaLogs });
-  const ref = { kind: "lakehouse", workspace: "ws", item: "lh", schema: "dbo", table: "t" };
-  const r = await sql.resolve(ref);
-  assert.equal(r.deltaLocal, "C:/cache/delta/abc");
-  assert.equal(r.logMoves, 3);
+  const sql = createSqlTables({ onelake, paths: async () => ({}) });
+  const r = await sql.resolve({ kind: "lakehouse", workspace: "ws", item: "lh", schema: "dbo", table: "t" });
   assert.equal(r.deltaTable, "abfss://ws@onelake.dfs.fabric.microsoft.com/lh.Lakehouse/Tables/dbo/t");
-  assert.deepEqual(asked[0], [{ workspace: "ws", dir: "lh.Lakehouse/Tables/dbo/t" }, { fresh: false }]);
-  await sql.resolve(ref, { fresh: true });
-  assert.equal(asked[1][1].fresh, true);
+  assert.equal(r.at, 1);
+  assert.equal("deltaLocal" in r, false);
 });
 
-// A table with OneLake security: OneLake refuses its metadata or its log to this user, and its rows come from
+// A table with OneLake security: OneLake refuses its metadata to this user, and its rows come from
 // the table read API (tableread.js), here a fake that says what it was asked.
 function securedWorld({ refuse = "load", kept = null, now = 5000 } = {}) {
   const w = world();
@@ -236,8 +230,7 @@ function securedWorld({ refuse = "load", kept = null, now = 5000 } = {}) {
       return w.kept;
     },
   };
-  const deltaLogs = { ensure: async () => { if (refuse === "log") throw Object.assign(new Error("list HTTP 403 for _delta_log"), { status: 403 }); return "C:/cache/delta/x"; }, moves: () => 0 };
-  w.sql = createSqlTables({ onelake: w.onelake, paths: async () => ({ emptyTableSql: () => "SELECT 1" }), tableRead, deltaLogs });
+  w.sql = createSqlTables({ onelake: w.onelake, paths: async () => ({ emptyTableSql: () => "SELECT 1" }), tableRead });
   return w;
 }
 
@@ -250,11 +243,11 @@ test("a table whose metadata is refused is read through the table read API, by i
   assert.deepEqual(w.reads[0][0], { workspace: "ws", item: "old.Lakehouse", schema: "dbo", table: "t" });
 });
 
-test("a Delta table whose log is refused is read through the table read API too", async () => {
+test("a Delta table whose metadata reads is not secured here: a refusal of its log is the engine's to meet", async () => {
   const w = securedWorld({ refuse: "log" });
   const r = await w.sql.resolve(ref());
-  assert.equal(r.secured, true);
-  assert.equal(r.listed, undefined);
+  assert.equal(r.secured, undefined);
+  assert.ok(r.deltaTable, "the engine reads its log, and moves it to the table read API if OneLake refuses that");
 });
 
 test("a copy within its age asks OneLake nothing; an older one tries the direct read first", async () => {

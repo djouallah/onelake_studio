@@ -43,22 +43,17 @@ const EXTENSIONS = [
   // SQLite files under Files/: the host copies one to the engine's temp directory and
   // ATTACHes it read-only.
   { name: "sqlite_scanner", repo: "https://extensions.duckdb.org", required: false },
+  // How a OneLake table is read: through DuckLake, its files brought here one at a time as they are read
+  // (onelaketable.js, tableservice.js). What stays on this machine, and so what reads offline.
+  { name: "ducklake", repo: "https://extensions.duckdb.org", required: true },
   // COMMUNITY extensions, so nothing is downloaded at run time and a zip reads offline from the first
-  // start. A LOAD by path verifies against the core signing keys only, so these load as unsigned, as
-  // cache_httpfs does, and their hash here is what holds them. With the disk cache off the engine
-  // doesn't allow unsigned ones, and it installs them from the community repository as before.
+  // start. A LOAD by path verifies against the core signing keys only, so these load as unsigned, and
+  // their hash here is what holds them. Without them in the bundle the engine doesn't allow unsigned
+  // ones, and it installs them from the community repository.
   { name: "h3", repo: "https://community-extensions.duckdb.org", required: false },
   { name: "zipfs", repo: "https://community-extensions.duckdb.org", required: false },
   // read_arrow, for a table with OneLake security: what OneLake's table read API answers (tableread.js).
   { name: "nanoarrow", repo: "https://community-extensions.duckdb.org", required: false },
-  //
-  // cache_httpfs, the disk cache, is OUR build of it (djouallah/duck-read-cache-fs, branch
-  // fix/windows-long-path-xattr): the released one caches nothing on disk on Windows. It is
-  // unsigned, and engine-host.js allows that for it. It also holds what reading kept data offline
-  // needs (cache_httpfs_set_offline), which upstream doesn't have. Required: without it a vsix would
-  // ship with no disk cache and nothing to read offline, and say so nowhere.
-  { name: "cache_httpfs", required: true,
-    url: (duckdb, platform) => `https://github.com/djouallah/duck-read-cache-fs/releases/download/onelake-${duckdb}-6/cache_httpfs.${platform}.duckdb_extension` },
 ];
 
 const target = process.argv[2];

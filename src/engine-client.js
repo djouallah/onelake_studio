@@ -486,8 +486,8 @@ function createRemote({ onGone = () => {}, ...cfg }) {
       // A connection on this window's own DuckDB, for what needs no server: asking its parser.
       connectLocal: () => local.connect(),
       setStorageToken: token => ask({ storageToken: token }),
-      setOffline: now => ask({ offline: now }),
-      mount: m => ask({ mount: m }),
+      lakeTable: t => ask({ lakeTable: t }),
+      lakeStats: () => ask({ lakeStats: true }),
       stats: () => ask({ stats: true }),
       othersRunning: () => ask({ othersRunning: true }),
       logs: limit => ask({ logs: { limit } }),

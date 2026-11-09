@@ -49,6 +49,18 @@ test("two servers share one log: the query engine's and the background engine's,
   assert.deepEqual(background.read(10).map(r => r.ts), [3, 2, 1]);
 });
 
+test("thousands of setup statements after the last query don't hide it", async t => {
+  const { open } = await setup(t);
+  const f = open();
+  f.add([row(1, "SELECT 'the query'")]);
+  f.add(Array.from({ length: 50 }, (_, i) => row(2 + i, `CREATE SCHEMA IF NOT EXISTS "s${i}"`)));
+  f.add([row(60, "\n  DROP VIEW v"), row(61, "createdat_report")]);
+  const rows = f.read(10);
+  assert.deepEqual(rows.filter(r => !/^\s*(create|drop)\b/i.test(r.sql)).map(r => r.ts), [61, 1]);
+  assert.equal(rows.length, 12, "ten of the setup, newest first");
+  assert.equal(rows[0].ts, 61);
+});
+
 test("clear empties it", async t => {
   const { open } = await setup(t);
   const f = open();

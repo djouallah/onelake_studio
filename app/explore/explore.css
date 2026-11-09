@@ -289,5 +289,16 @@ section.modelOpen #chartBtn { display: none; }
 .rp-table th { text-align: left; color: var(--muted); font-weight: 600; border-bottom: 1px solid var(--border); padding: 0.35rem 0.6rem; position: sticky; top: 0; background: var(--card); }
 .rp-table td { border-bottom: 1px solid var(--row-line); padding: 0.3rem 0.6rem; }
 .rp-table td.num { text-align: right; font-variant-numeric: tabular-nums; }
+.rp-table tr.rp-pick { cursor: pointer; }
+.rp-table tr.rp-pick:hover td { background: var(--hover-soft); }
+.rp-table tr.rp-pick:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.rp-table tr.rp-on td { background: color-mix(in srgb, var(--accent) 22%, transparent); }
+/* Cross filtering's picks, above the tiles: one chip each, its ✕ clears it. */
+.rp-filters { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; padding: var(--gap) var(--gutter) 0; font-size: 0.8rem; color: var(--muted); }
+.rp-filters[hidden] { display: none; }
+.rp-chip { display: inline-flex; align-items: center; border: 1px solid var(--accent); background: color-mix(in srgb, var(--accent) 14%, var(--raised)); border-radius: 999px; color: var(--text); }
+.rp-chip > span { padding: 0.18rem 0.2rem 0.18rem 0.65rem; }
+.rp-x { background: none; border: none; color: var(--faint); font: inherit; cursor: pointer; padding: 0.18rem 0.55rem 0.18rem 0.3rem; }
+.rp-x:hover, .rp-x:focus-visible { color: var(--text); }
 .rp-say { margin: 0; color: var(--muted); font-size: 0.82rem; }
 .rp-say.error { color: var(--err); white-space: pre-wrap; }

@@ -60,7 +60,7 @@ function deltaTableOf(meta) {
 // restrict them. Its rows are read through the table read API instead (tableread.js).
 const refused = e => !!e && e.status === 403;
 
-function createSqlTables({ onelake, paths, offlineReason = () => null, deltaLogs = null, tableRead = null }) {
+function createSqlTables({ onelake, paths, offlineReason = () => null, tableRead = null }) {
   // An item's name in SQL -> the GUIDs that named it, for what nameTables answered: a compiled
   // model query holds that name for as long as the panel does.
   const namedFrom = new Map();
@@ -138,16 +138,8 @@ function createSqlTables({ onelake, paths, offlineReason = () => null, deltaLogs
     named.at = meta.at;
     named.listed = { workspace: ws, item: dir, schema: t.schema || '', table: t.table };
     if (meta.empty) return { ...named, emptySql: (await paths()).emptyTableSql(meta.schemaFields) };
-    const deltaTable = deltaTableOf(meta);
-    // Where its log is kept here, for delta_scan to run on (deltamirror.js).
-    const at = deltaTable && deltaLogs ? tableDirOf(meta.metadataLocation) : null;
-    let deltaLocal = null;
-    try { deltaLocal = at ? await deltaLogs.ensure(at, { fresh }) : null; }
-    catch (e) {
-      if (refused(e)) return readSecured(Object.assign(new Error(`${sqlName(ref)}: ${e.message}`), { status: e.status }));
-      throw e;
-    }
-    return { ...named, metadataLocation: meta.metadataLocation, deltaTable, deltaLocal, logMoves: deltaLocal ? deltaLogs.moves(at) : 0 };
+    // Its log is read by the engine, into the lake (engine-host.js lakeTable).
+    return { ...named, metadataLocation: meta.metadataLocation, deltaTable: deltaTableOf(meta) };
   }
 
   // A table's SQL name, found in OneLake. The parts are matched as DuckDB matches names, ignoring

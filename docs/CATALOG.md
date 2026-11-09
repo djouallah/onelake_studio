@@ -13,7 +13,7 @@ parts have one job each:
 | --- | --- | --- | --- |
 | **The catalog** | Knows what exists: workspaces, items, tables, columns, files | A SQLite file | Never |
 | **The sync worker** | Keeps the catalog up to date, in the background, and decides what else is worth reading | The window's extension host | Yes: listings and metadata from OneLake and Fabric |
-| **The engine** | Runs SQL and reads the bytes | DuckDB, in the server | Yes: reads data, with a disk cache |
+| **The engine** | Runs SQL and reads the bytes | DuckDB, in the server | Yes: reads data through the lake, and keeps the files read |
 
 Anything that wants metadata reads the catalog. Nothing waits on OneLake to answer a question the catalog
 can answer.
@@ -32,8 +32,8 @@ can answer.
       v                  v
  +-----------+      +-----------------------+
  |  Catalog  |      |  Server               | ------>  OneLake
- |  SQLite   |      |  engine: DuckDB and   |          (rows, files)
- +-----------+      |  disk cache           |
+ |  SQLite   |      |  engine: DuckDB, the  |          (logs, files)
+ +-----------+      |  lake, table service  |
                     +-----------------------+
 ```
 
@@ -86,12 +86,12 @@ Every row says when it was last read from OneLake.
 
 | What | Where | Why |
 | --- | --- | --- |
-| Iceberg's `metadata.json`, manifest lists and manifests | The disk cache | `iceberg_scan` reads them as files. The catalog holds the facts from them. |
+| What the lake holds of a table: its files, their sizes, row counts, partitions and deletes | The cache folder, `lake\meta.ducklake`, a DuckDB file the server opens | DuckLake reads it. Made again from a table's own metadata, so it is a cache too ([Reading data](#reading-data)). |
 | A model's `.yaml` | The cache folder, under `models\` | A file: data, with its path in the catalog. |
 | Saved queries | `~/OneLakeStudio/queries/` | Not metadata. |
 | The log | `logs-<id>.sqlite`, a file of its own | Not metadata. |
 | Bytes of a `Files/` object the host reads | The cache folder, under `host\` | Data. |
-| A Delta table's log and deletion vectors | The cache folder, under `delta\` | `delta_scan` reads them as files. |
+| A table's files, and its deletion vectors | The cache folder, under `lake\files` and `lake\deletes` | Data, named in the lake. |
 
 ## The sync worker
 
@@ -127,8 +127,8 @@ and of the parts of it nothing has read. So the worker does two things for it:
 
 1. **Its metadata is read every hour**, so a statement never waits for that and isn't answered from a snapshot a day old.
 2. **It is read whole**, once at each snapshot, so every column works offline. The worker decides and DuckDB reads:
-   `EXPLAIN ANALYZE SELECT <column> FROM <table>`, a column at a time, goes through the disk cache as any statement does, and
-   no row reaches a client. Each is a line in **Logs**, under a comment that says why. When it finishes, the table's icon goes
+   `EXPLAIN ANALYZE SELECT <column> FROM <table>`, a column at a time, opens every file as any statement does, so the
+   table service brings every one here, and no row reaches a client. Each is a line in **Logs**, under a comment that says why. When it finishes, the table's icon goes
    to a check.
 
 **It is the last thing to run:**
@@ -141,7 +141,8 @@ and of the parts of it nothing has read. So the worker does two things for it:
 - **After 10 minutes it stops, and waits 6 hours,** so a slow connection isn't kept busy. A read that fails waits as long.
 
 **What it may bring down**, under `onelakeStudio.keepUsedTablesGB`, 10 GB by default, and never over half of
-`diskCacheMaxGB`. The disk cache evicts the oldest first, and what someone read comes before this.
+`diskCacheMaxGB`. Past `diskCacheMaxGB` the least recently read files go back to OneLake first, and what someone read
+comes before this.
 
 | Limit | Why |
 | --- | --- |
@@ -176,8 +177,8 @@ Neither holds up the tree.
 ## How a statement runs
 
 As [ARCHITECTURE.md](ARCHITECTURE.md#what-happens-when-a-statement-runs) describes, with one change: `resolve`
-and `resolveFile` query the catalog, in the window. The view is `delta_scan` on a Delta table's kept log, or
-`iceberg_scan` on an Iceberg table's metadata location. `SHOW ALL TABLES` and `information_schema` are answered from the catalog.
+and `resolveFile` query the catalog, in the window. The view is over the table's lake table, synced in the server from its
+log or metadata location when that moved. `SHOW ALL TABLES` and `information_schema` are answered from the catalog.
 
 A name not in a kept listing asks the worker for that listing before it is called missing. So does a read that
 fails with an `IO Error`, for that table's listing and metadata.
@@ -216,7 +217,7 @@ worker reads listings only. Bytes move when someone asks for them:
 | What asks | What comes down | Kept in | Limit |
 | --- | --- | --- | --- |
 | Opening a lakehouse's Tables node | Each table's Iceberg metadata, two at a time (`prefetchMetadata`), and no rows | The catalog | None |
-| The Data tab, or a statement | The parts of files that statement reads | The cache folder | `diskCacheMaxGB`, oldest first |
+| The Data tab, or a statement | Each file that statement opens, whole, after it | The cache folder, `lake\files` | `diskCacheMaxGB`, least recently read first |
 | The Data tab's first 100 rows | The same reads, and the rows | `first_rows` | 256 MB, oldest first |
 | Opening a `Files/` object in a tab | The whole file, or a range if only a range is asked for | The cache folder, `host\` | 1 GB in all, and a file over 512 MB isn't kept |
 | Opening a model | Its `.yaml` | The cache folder, `models\` | None |
@@ -225,58 +226,100 @@ worker reads listings only. Bytes move when someone asks for them:
 
 A table opens on Stats by default, which reads nothing. When a table not in use changes, nothing downloads until someone reads it again.
 
-**DuckDB keeps reading the bytes:** a Delta table with `delta_scan`, and an Iceberg table with `iceberg_scan`, over `abfss://`, `azure`
-and `cache_httpfs`.
+**A table is read through the lake** ([ARCHITECTURE.md](ARCHITECTURE.md#reading-onelake-tables)): a DuckLake table in
+the server, synced from the table's own log or manifests, each of its files named on OneLake until it has come here
+whole. A table is never read past the lake.
 
 **A Delta table is never read through Fabric's Iceberg conversion.** Measured on a real table: a file's own column ids disagreed with
 the conversion's, and `iceberg_scan` gave one column another's values with no error. The conversion's metadata is still where a table's
 format and Stats come from.
 
-**`delta_scan` reads the log itself, past DuckDB's file system.** On the real table, DuckDB's file log held the Parquet files and no log
-file. So a Delta table reads through one path, online and offline ([`src/deltamirror.js`](../src/deltamirror.js)):
+**Before the lake,** a Delta table's log was copied to the cache folder, `delta_scan` ran on that copy, and the Parquet files
+it named were served from OneLake by a mount in our fork of `cache_httpfs`, in blocks. A file downloader was ruled out then:
+`LIMIT 5` opened 17 to 40 of 40 files, so a store had to choose each statement's files itself. The lake removes that
+problem, as each file is named where it is and DuckDB opens what the name says. So the fork, its blocks and the log copy
+went, and what the measurements below found decided it.
 
-1. **Its log is kept in the cache folder:** the latest checkpoint, the commits after it, and any deletion vectors, copied as they are and
-   never rewritten. It's asked for again past `catalogTtlMinutes`, and when a read fails. A file whose size differs from the
-   listing's, or that was written after the copy, is copied again: a table dropped and made again starts its log over.
-2. **`delta_scan` runs on that folder.** It reads no log from OneLake, online or offline.
-3. **A mount serves the Parquet files it names.** The log's paths are relative, so `delta_scan` asks for them under the local folder.
-   `cache_httpfs_mount` in our fork of `cache_httpfs` serves them from OneLake, through the disk cache and under their `abfss://` paths.
+### What the lake was measured on
 
-Rewriting the log to absolute paths was tried and isn't the way: `delta_scan` takes a path as absolute only if it starts with `/`, and a
-rewrite would mean producing Delta's metadata ourselves. A table's log is in a folder of its own, so the disk cache's eviction doesn't touch it.
+**The idea:** each table is a DuckLake table whose files keep their OneLake paths. When a file has been fetched
+whole into the cache folder, its path in DuckLake changes to the local copy. A table can be part local and part
+remote, and DuckDB opens whatever each path says, so nothing has to pick a statement's files.
 
-Measured on the real `scada` table, 22 million rows, with the engine's lockdown on and a space in the folder's name:
+**Tried on 2026-11-08** with DuckDB 2.0.0 and `ducklake` (catalog format 1.1), on generated local Delta tables, and on
+the logs of 29 real tables already kept in the cache folder. The real logs were read from disk only. No OneLake read
+went through it.
 
-| Read | Took | Result |
-|---|---|---|
-| Whole table, online, cold, through the mount | 10.9s, 47 MB kept | The same as `delta_scan` on OneLake itself |
-| The same, offline, a new process with no token | 0.18s | The same |
-| One year, online, cold | 4.3s, 4.5 MB kept | The same |
-| A year not read, offline | 0.03s | Refused: not cached on this machine |
+| Question | Answer |
+| --- | --- |
+| Under the lockdown, attached before it | Reads, `CREATE TABLE`, new snapshots, `UPDATE` on its metadata and `CHECKPOINT` all work. A file outside `allowed_directories` is refused |
+| Over Quack | A client reads it like any other catalog. A path changed on the server is seen by the client's next statement, with no new snapshot |
+| Local and remote files in one table | Work, and a filter skips a file it can't reach on its stats. **On Windows the lake's own `data_path` must be remote:** with a local one, every `abfss://` or `https://` path is turned into a local path. With a remote one, each table's path can be an absolute OneLake folder in any workspace |
+| Rows written from the log alone, with no file read | 2,000 files in about 50ms, the same rows as `delta_scan`, and the log's stats prune to 2 files. `footer_size` and column stats can be empty. `ducklake_add_data_files` reads every footer instead: 24.6s for 2,000 local files |
+| Partitions | Same rows as `delta_scan`, read from the `col=value` folder names. So a local copy keeps its relative path, folders included |
+| A column added later | One name mapping for every file works, so the log's schema is enough |
+| Deletion vectors | DuckLake's Puffin delete file is the bare blob, and the blob is byte for byte what a Delta `.bin` holds after its first byte. A DV sliced out of the `.bin` into a file of its own gave the same rows as `delta_scan` |
+| Speed, local files, 2,000 files | The same as `delta_scan` on the kept log, within 30ms: `LIMIT 5` 70 against 53ms, a full scan 644 against 590ms. Both open over 100 files for `LIMIT 5` |
+| Real tables in the cache | 1 of 29 partitioned, none with column mapping or deletion vectors |
+| Packaging | `ducklake` has a DuckDB 2.0 build for each platform shipped |
 
-Mounting onto a local folder or a `file://` path is refused by the lockdown.
+**On a real table,** `scada` (Delta version 13, 9 files, 151 MB, 22 million rows, partitioned by `year`, written by
+Spark), with no `cache_httpfs` loaded and DuckDB's own file cache off. Registered from its log alone in 58 to 259ms.
+The same statement (rows and `sum(INITIALMW)` by year) gave the same answer every time:
 
-**No file downloader, because of what was measured** on generated local Delta tables of 40 files and 131 MB:
+| Read | Took |
+| --- | --- |
+| `delta_scan` on OneLake, a new process | 13.3s and 14.7s, then 10.6s and 11.0s again in that process |
+| DuckLake, every file on OneLake, a new process | 6.1s and 6.6s, then 4.5s and 5.9s |
+| Downloading the 9 files whole, one at a time over HTTPS | 32s |
+| DuckLake, 5 files here and 4 on OneLake | 178ms |
+| DuckLake, every file here | 149ms |
+| The same, a new process with no token | 295ms, and one year in 27ms. `delta_scan` failed with no token |
 
-- `LIMIT 5` opened all 40 files and read 37 MB, with `read_parquet` too, and at one thread as at eight.
-- With files missing, a loop that fetched each file DuckDB asked for fetched 17 to 40 of the 40 for `LIMIT 5`.
-- So a file store has to choose each statement's files itself, and reading one column of a big table still
-  fetches whole files. Reading parts of files already works offline.
+Two findings from it:
 
-**The costs of this choice:**
+- **`ducklake_add_data_files` refused the table:** Spark wrote `SETTLEMENTDATE` as INT96, which DuckDB reads as
+  `TIMESTAMP`, while the Delta schema says `TIMESTAMPTZ`. Rows written from the log read it with no complaint.
+- **A partitioned table needs a name mapping** that marks the partition column (`is_partition`), or the column reads
+  as NULL. One mapping for every file is enough.
 
-- The patched, unsigned `cache_httpfs` stays, and reading rows offline depends on it.
-- The catalog can't say how much of a table is held, as the cache's blocks are opaque.
-- `httpfs` stays in any case: `quack_serve` fails without it on DuckDB 2.0.0.
+**Tried next, the same day:**
 
-`data_file` keeps each file's `abfss://` path, so a file store can be added later without changing the catalog.
+| Question | Answer |
+| --- | --- |
+| Following a table as it changes | Appends, a delete that rewrites files, a new column, OPTIMIZE, an update and an overwrite: each commit read from the log and written as one DuckLake snapshot in 12 to 100ms, the same rows as `delta_scan` after every one, files already held here included. Time travel to each of the 7 versions gave the same counts as `delta_scan` |
+| Deletion vectors as Spark and Fabric write them (`storageType` `u`) | Three vectors packed in one `.bin` under a prefix folder, named by a Z85 UUID: decoded, sliced into a file each, the same rows as `delta_scan` |
+| An Iceberg table with deletes: the real `fct_curtailment_region` | Registered from its manifests. Its own position-delete files serve as DuckLake's delete files as they are, with nothing rewritten: 5,401 rows, the same as `iceberg_scan` both ways. **Every file's size is needed:** with none, DuckDB stopped on an internal error and the database had to be restarted |
+| How many tables one lake holds | 5,000 tables of 20 files: a 4.5 MB file, attached in 79ms by a new process, the first read of a table in 137ms, then 12ms, a commit in 12ms, all tables listed in 60ms. Making the 5,000 tables took 12s, once |
+| A statement reading while files are evicted | It keeps its snapshot's paths: a commit and an eviction half way through left it with exactly its 798,000 rows. Windows let the local copies be deleted under it, and then it failed on the first file it hadn't opened yet. So a local copy goes only once every statement started before its eviction has finished |
+| The product's shape, on `scada` | A locked-down server with the lake attached and Quack serving, a locked-down window. Six downloads at a time: 151 MB in 14 to 19s, against 32s one at a time. Each file swapped in as soon as it was whole, with the window reading throughout. The same rows at every step, and with the token gone |
+| Windows and a file just written | The first statement to open the new files waited 6 to 13s with nothing in DuckDB's log, and 148ms after a 20s pause. **The downloader opens each file and reads its footer before the swap:** one such open took 15.4s, and the first statement after it took 167ms |
+
+Smaller things learned: DuckLake writes a `CREATE TABLE` or `ALTER TABLE` to its metadata only at commit, so a schema
+change is its own transaction ahead of the commit's files. `CREATE TABLE … AS` fails with a remote `data_path`, as it
+tries to make a folder there, so a table is made from its column list.
+
+Only one of the tenant's 4,989 tables has delete files, and none of the 36 whose Delta state is kept has deletion
+vectors or column mapping.
+
+**Where that left it, as built:**
+
+- **DuckLake can delete files from a `SELECT`** (`ducklake_cleanup_old_files`), and here those files are OneLake's. The
+  guard and `studio_authorize` refuse every `ducklake_` function and the metadata by name. `READ_ONLY` isn't the way: it
+  stops the server's own metadata writes too, and the metadata file can't be attached twice.
+- **The metadata file is tied to the extension's version.** It holds nothing that can't be made again from the tables'
+  own metadata and the files in the folder, so a version that can't read it can start it again.
+- **Since tested in CI** (`lake-tables.yml`, local and on fabriccat): column mapping with a rename, inline deletion
+  vectors, a checkpoint in parts. Not tested: macOS and Linux, beyond the build.
+- **`iceberg_to_ducklake` can't be used:** it takes a 0.4 catalog only, and DuckDB 2.0.0 makes 1.0 and 1.1
+  ([duckdb-iceberg#1717](https://github.com/duckdb/duckdb-iceberg/issues/1717)). An Iceberg table is read from its manifests instead.
 
 ## Offline
 
 | Answered from | What |
 | --- | --- |
 | The catalog alone | The tree, Go To, `SHOW ALL TABLES`, Stats, History, a wildcard's list of files, the command line's metadata |
-| The catalog and the disk cache | Rows, Pivot and a model's queries, for what has been read |
+| The catalog and the lake | Rows, Pivot and a model's queries, for the files that have been read |
 
 Whatever isn't held says so at once.
 
@@ -293,7 +336,7 @@ held. Back online, it's the current snapshot again.
 | The command line's own `--fresh` calls for listings | The read-only guard and the lockdown |
 | The tree's wait for the server | NAMING.md's names |
 | | The `prefetchMetadata` walk, and `onelake.js` as the way to a listing, which a click still takes |
-| | `iceberg_scan`, `azure`, `httpfs`, `cache_httpfs` |
+| | `azure`, `httpfs`, and `ducklake` in place of the `cache_httpfs` fork |
 | | Export to Fabric and the Fabric app, both untouched |
 
 **ARCHITECTURE.md changes when this ships:** *The host does the work* no longer covers listings and metadata, *The
@@ -311,9 +354,7 @@ run on 1.144 only, so whether 1.101 itself has it is still to be shown.
 | `node:sqlite` in the real extension host, on macOS and Linux | Checked only as plain Node on Windows: Node 24.22.1, loaded in 0.1ms, opened and queried in-memory in 0.2ms | CI's e2e |
 | A real catalog file: read times, a read during a write, a crash during a write | Invariants 3 and 4 depend on them | Measure with a real tenant's rows |
 | Activation to a drawn tree | The real meaning of "opens at once" | Measure, and see what the bundle loads at activation |
-| A manifest evicted while its data is held | That table fails offline. It can happen today too: eviction goes oldest-first, and block names are hashes | Give Iceberg's files a folder eviction skips, which probably needs a change in the `cache_httpfs` fork |
 | Whether `iceberg_metadata` gives `data_file`'s columns, and whether Fabric's per-file stats are really zero (`names.js:197`) | If it is costly, `data_file` waits. Nothing else depends on it | Try it on real tables |
-| A Delta table with deletion vectors, read through the mount | `delta_scan` handles them, and their copy is tested only with a fake OneLake | Try it on a real table |
 | A Delta log that moved past what was read | Offline, a read that worked can ask for new files that aren't cached, and is refused | Nothing yet: it fails with an error, and never gives wrong rows |
 
 ## Waves
@@ -328,7 +369,6 @@ Each wave works on its own, and is proved before the next starts.
 | **4. The command line** | Every metadata command reads the catalog, and `--fresh` is a top-priority job. | Every metadata command answers with the network refused, and a table-exists check is timed warm and cold. |
 | **5. What the sync costs** | The rest of the tenant is read every 12 hours, and what downloads bytes is written down (*Reading data*). | The worker has met no 429 on a real tenant at that pace. |
 
-**On its own, whenever:** Iceberg's files in a folder eviction skips. It probably needs a change in the `cache_httpfs` fork.
 
 **Only if needed:** `data_file`.
 

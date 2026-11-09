@@ -14,7 +14,7 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import { chromium } from "playwright-core";
 
-import { ACCOUNT, MODEL_QUERY, NEVER_READ, TABLE, WORKSPACE, globalState, seedAccount } from "./fixtures.mjs";
+import { ACCOUNT, MODEL_QUERY, NEVER_READ, REPORT_KEY, TABLE, WORKSPACE, globalState, seedAccount } from "./fixtures.mjs";
 
 const SERVER = process.env.E2E_SERVER;
 const VSIX = process.env.E2E_VSIX;
@@ -579,6 +579,79 @@ async function cachedRunMatrix({ saved, home, dbFile }) {
 }
 
 // ---------------------------------------------------------------------------
+// A model's Report: every tile's SQL (FROM model) goes through the compiler. With no rows here a tile
+// can only fail where the rows aren't held, never as SQL DuckDB can't parse. The Report is the zip's
+// (fixtures.mjs): the first tiles, and a table whose row needs no rows from OneLake, to click.
+// ---------------------------------------------------------------------------
+const tilesDone = f => until("every tile done", async () => {
+  const said = await f.locator("#modelView .rp-tile").evaluateAll(ts => ts.map(t => t.innerText));
+  return said.length && said.every(t => !/Waiting…|Running…/.test(t)) && said;
+}, 90000);
+const UNCOMPILED = /Parser Error|Binder Error|Catalog Error|syntax error|AGG\(|\bSQL( syntax)?: /i;
+
+async function modelMatrix() {
+  await step("Model: the Report runs every tile, compiled", async () => {
+    await drive("exec", { command: "onelakeStudio.openSemanticModel", args: [{ kind: "semanticModel", workspace: WORKSPACE, model: "shop", modelId: "shop" }], timeoutMs: 60000 });
+    const f = await panel();
+    await until("the model view", async () => f.locator("#modelView").isVisible(), 30000);
+    await f.locator('#modelView [data-apage="report"]').click();
+    const tiles = await tilesDone(f);
+    check("the Report has tiles", tiles.length > 0, String(tiles.length));
+    const bad = tiles.filter(t => UNCOMPILED.test(t));
+    check("no tile's SQL reached DuckDB uncompiled", bad.length === 0, bad.join(" | "));
+  }, 180000);
+
+  await step("Model: a row picked in one tile filters the others", async () => {
+    const f = await panel();
+    const row = f.locator("#modelView .rp-tile tr.rp-pick").first();
+    check("a tile takes clicks", await row.count() > 0);
+    // Every text each tile shows from here on, so a run too quick to see is still seen.
+    const picked = await f.evaluate(() => {
+      const tiles = [...document.querySelectorAll("#modelView .rp-tile")];
+      window.__rpSaid = tiles.map(t => [t.innerText]);
+      new MutationObserver(() => tiles.forEach((t, i) => window.__rpSaid[i].push(t.innerText)))
+        .observe(document.querySelector("#modelView .rp"), { childList: true, subtree: true, characterData: true });
+      return tiles.findIndex(t => t.querySelector("tr.rp-pick"));
+    });
+    await row.click();
+    const chips = f.locator("#modelView .rp-filters");
+    const listed = await chips.innerText();
+    check("the pick is listed above the tiles", /Filtered by:\s*Color = Red/.test(listed), listed);
+    const tiles = await tilesDone(f);
+    const said = await f.evaluate(() => window.__rpSaid);
+    const others = tiles.map((t, i) => [t, i]).filter(([, i]) => i !== picked);
+    check("every other tile ran again", others.every(([, i]) => said[i].some(t => /Running…/.test(t))), JSON.stringify(said));
+    check("the tile picked in stays as it was", !said[picked].some(t => /Waiting…|Running…/.test(t)), said[picked].join(" | "));
+    check("its row is highlighted", await f.locator("#modelView tr.rp-on").count() === 1);
+    // With the pick as a WHERE, compiled: they stop where the rows aren't held, as they did unfiltered.
+    check("the others ran filtered, past the compiler", others.every(([t]) => /isn't cached/.test(t) && !UNCOMPILED.test(t)),
+      others.map(([t]) => t).join(" | "));
+
+    await f.locator("#modelView .rp-x").first().click();
+    check("its ✕ clears the pick", await chips.isHidden() && await f.locator("#modelView tr.rp-on").count() === 0);
+    const again = await tilesDone(f);
+    check("the others ran again, unfiltered", again.filter((_, i) => i !== picked).every(t => !UNCOMPILED.test(t)), again.join(" | "));
+    await f.locator('#modelView [data-apage="model"]').click();
+  }, 180000);
+}
+
+// What the Logs tab lists, as written, with setup hidden as it is by default.
+async function logsListed() {
+  await drive("exec", { command: "onelakeStudio.showLogs" });
+  return until("the Logs tab's rows", async () => {
+    for (const f of page.frames()) {
+      if (f.isDetached() || !await f.locator("#filter").count().catch(() => 0)) continue;
+      const rows = await f.locator("#list tbody tr").evaluateAll(trs => trs.map(tr => ({ status: tr.children[1].textContent, sql: tr.querySelector(".one").textContent })));
+      if (rows.length) return rows;
+    }
+    return false;
+  }, 30000);
+}
+// Statements every matrix above runs, by a word of their own: each one is in Logs.
+const RAN = [/select 101 as first_one/, /select 102 as by_button/, /fromm where/, /select 901 as planned/, /select 902 as explained/,
+  /from a saved query/];
+
+// ---------------------------------------------------------------------------
 // Plan
 // ---------------------------------------------------------------------------
 const planned = () => until("the profile, or its error", async () => {
@@ -615,6 +688,16 @@ async function planMatrix() {
     settled("a Run after a Plan", r);
     check("the result is back", /\b903\b/.test(r.table), r.table || r.status);
     check("the plan is gone", !r.plan);
+  });
+
+  await step("Run: EXPLAIN written in the box is the plan, not two columns of text", async () => {
+    for (const text of ["explain select 902 as explained", "EXPLAIN ANALYZE select 903 as explained"]) {
+      const r = await runIt(text);
+      settled(text, r);
+      const s = await planned();
+      check(`${text}: the plan view is on screen`, s.plan && !s.planError, s.planText || s.status);
+      check(`${text}: no explain_key table`, !/explain_key/.test(s.table), s.table);
+    }
   });
 
   await step("Plan: a real query's operators", async () => {
@@ -780,13 +863,14 @@ async function main() {
   // ------------------------------------------------------------------- 3
   console.log("\n=== 3. Signed out, with an account's cache on this machine");
   const cached = await place("cached");
-  const { saved, dbFile } = await seedAccount(cached);
+  const { saved, report, dbFile } = await seedAccount(cached);
   // The first start only makes the state to add to: an account known, and signed out.
   await open(cached);
   await step("Cached: the account is on this machine", async () => {
     await drive("exec", { command: "onelakeStudio.signOut" });
     await sleep(3000);
-    const state = await globalState(page, { "onelakeStudio.lastAccount": ACCOUNT });
+    // And the model's Report, from an export's zip (fixtures.mjs).
+    const state = await globalState(page, { "onelakeStudio.lastAccount": ACCOUNT, [REPORT_KEY]: report });
     check("the account is written in", state?.["onelakeStudio.lastAccount"]?.key === ACCOUNT.key, JSON.stringify(state));
   });
   await close();
@@ -816,6 +900,16 @@ async function main() {
   await cachedRunMatrix({ saved, home: cached.home, dbFile });
   await planMatrix();
   await cachedPlanMatrix();
+  await modelMatrix();
+  let before = [];
+  await step("Logs: everything that ran is listed", async () => {
+    before = await logsListed().catch(() => []);
+    for (const re of RAN) check(`Logs lists ${re.source}`, before.some(r => re.test(r.sql)), `${before.length} rows`);
+    // A query's box in front again, for the steps after: the Report left the model on screen, and Logs is a tab of
+    // its own. The engine is up, so no "DuckDB ready" comes again.
+    await drive("exec", { command: "onelakeStudio.newQuery", timeoutMs: 60000 });
+    await until("a query's box on screen", async () => (await panel()).locator("#sqlEditor").isVisible(), 30000);
+  });
   await step("Cached: after all of it", async () => {
     check("nothing reached OneLake or Microsoft", connections.length === mark, JSON.stringify(connections.slice(mark)));
     check("nothing prompted", (await dialogsSeen()).length === 0, (await dialogsSeen()).join(" | "));
@@ -858,6 +952,13 @@ async function main() {
     settled("the kept catalog", listed);
     check("the catalog lists the tables after a restart", /orders/.test(listed.table), listed.table || listed.status);
   }, 240000);
+  await step("Logs: nothing that ran before the restart is lost", async () => {
+    const after = await logsListed().catch(() => []);
+    const kept = new Set(after.map(r => `${r.status}|${r.sql}`));
+    const lost = before.filter(r => !kept.has(`${r.status}|${r.sql}`));
+    check("every statement listed before is still listed", before.length > 0 && lost.length === 0, `${lost.length} of ${before.length} lost: ${lost.slice(0, 5).map(r => r.sql).join(" | ")}`);
+    check("and what ran since is there too", after.some(r => /select 77 as still_works/.test(r.sql)), `${after.length} rows`);
+  });
   await close();
 
   // ------------------------------------------------------------------- 5

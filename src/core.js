@@ -15,7 +15,6 @@ const { createCatalog } = require('./catalog');
 const { createStore } = require('./store');
 const { stateFileOf } = require('./catalogfile');
 const { createSyncWorker } = require('./syncworker');
-const { createDeltaMirror } = require('./deltamirror');
 const { createTableRead, TABLE_READ_FOLDER } = require('./tableread');
 const { settleFileCache } = require('./filecache');
 const { logFileOf } = require('./logfile');
@@ -211,15 +210,6 @@ function createCore({
     isOffline: () => connectivity.offline(),
   });
   mark('catalog ready');
-  // A Delta table's log, in the cache folder (deltamirror.js). There's nowhere to keep it with the disk cache off.
-  const deltaLogs = createDeltaMirror({
-    catalog, ttlMs: catalogTtlMs, isOffline: () => connectivity.offline(),
-    base: () => {
-      const dir = engines.fileCacheDirFor(engines.cacheAccount());
-      const keeps = settings.keepsDiskCache();
-      return dir && keeps ? join(dir, 'delta') : null;
-    },
-  });
   // A table with OneLake security, read through OneLake's table read API, in the cache folder too (tableread.js).
   const tableRead = createTableRead({
     getToken: hostToken, onRequest: logRead, ttlMs: tableTtlMs, offlineReason: () => connectivity.reason(),
@@ -229,7 +219,7 @@ function createCore({
       return dir && settings.keepsDiskCache() ? join(dir, TABLE_READ_FOLDER) : null;
     },
   });
-  const sqlTables = createSqlTables({ onelake, paths: async () => (await agent.modules()).paths, deltaLogs, tableRead,
+  const sqlTables = createSqlTables({ onelake, paths: async () => (await agent.modules()).paths, tableRead,
                                       offlineReason: () => connectivity.reason() });
   resolveSqlTable = sqlTables.resolve;
   resolveSqlFile = sqlTables.resolveFile;

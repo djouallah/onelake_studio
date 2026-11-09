@@ -27,6 +27,9 @@ import { drawReport } from './report.js';
 
 const PAGES = [['report', 'Report'], ['model', 'Model'], ['pivot', 'Pivot']];
 const PREVIEW_ROWS = 500;
+// The SQL box's rows in all, a column beside the query's own (runSql), not shown.
+const TOTAL_NAME = '__onelake_rows_in_all';
+const TOTAL_COL = `"${TOTAL_NAME}"`;
 const REPORT_POLL_MS = 2000;
 
 // `ctx`:
@@ -277,6 +280,14 @@ export function mountExplore(root, ctx) {
   const reportShown = () => (page === 'report' ? Promise.resolve() : new Promise(r => reportWaiters.push(r)));
   const leftWhileRunning = () => { const was = reportLeft; reportLeft = false; return was; };
   const reportEcharts = async () => { const ec = await ctx.echarts(); registerChartTheme(ec, css); return ec; };
+  // A model column's dataType, for a pick's literal (report.js): by its table, or the one column
+  // of its name when there is no table.
+  const columnType = (table, column) => {
+    const is = (a, b) => String(a).toLowerCase() === String(b).toLowerCase();
+    const found = (ctx.tmsl?.tables ?? []).filter(t => table == null || is(t.name, table))
+      .flatMap(t => (t.columns ?? []).filter(c => is(c.name, column)));
+    return found.length === 1 ? found[0].dataType : undefined;
+  };
   async function drawReportPage() {
     const my = ++reportSeq;
     if (!reportView) reportPage.replaceChildren(el('div', { class: 'ex-empty' }, 'Reading the report…'));
@@ -285,7 +296,8 @@ export function mountExplore(root, ctx) {
       if (my !== reportSeq || destroyed) return;
       reportStamp = stamp ?? null;
       reportView?.destroy();
-      reportView = drawReport(reportPage, spec, { sql: reportSql, echarts: reportEcharts, shown: reportShown, leftWhileRunning });
+      reportView = drawReport(reportPage, spec, { sql: reportSql, echarts: reportEcharts, shown: reportShown, leftWhileRunning,
+                                                  cancel: ctx.cancel, columnType });
     } catch (e) {
       if (my !== reportSeq || destroyed) return;
       reportView?.destroy();
@@ -452,16 +464,15 @@ export function mountExplore(root, ctx) {
       const ticker = setInterval(() => { if (my === outSeq) info.textContent = `Running query… ${elapsed(t0)}`; }, 100);
       try {
         // Every column as DuckDB prints it: a DATE, TIMESTAMP or DECIMAL would otherwise show
-        // as its raw number.
-        const res = await run(`SELECT COLUMNS(*)::VARCHAR FROM (\n${compile(base)}\n) LIMIT ${PREVIEW_ROWS}`);
+        // as its raw number. How many rows there are in all comes in the same run: a COUNT(*)
+        // after it ran the whole query a second time (3 s and 3 s on a model's 592 million rows).
+        const res = await run(`SELECT COLUMNS(*)::VARCHAR FROM (SELECT *, COUNT(*) OVER () AS ${TOTAL_COL} FROM (\n${compile(base)}\n)) LIMIT ${PREVIEW_ROWS}`);
         if (my !== outSeq) return;
         if (!res.rows.length) { info.textContent = `No rows · ${elapsed(t0)}`; return; }
-        out.innerHTML = '<thead><tr>' + res.fields.map(c => `<th>${escapeHtml(c)}</th>`).join('') + '</tr></thead><tbody>' +
-          res.rows.map(r => '<tr>' + res.fields.map(c => `<td>${escapeHtml(r[c] ?? '')}</td>`).join('') + '</tr>').join('') + '</tbody>';
-        // The count runs the query again: only when the rows shown are cut at the limit.
-        const total = res.rows.length < PREVIEW_ROWS ? res.rows.length
-          : Number((await run(`SELECT COUNT(*) AS cnt FROM (\n${compile(base)}\n)`)).rows[0]?.cnt ?? res.rows.length);
-        if (my !== outSeq) return;
+        const fields = res.fields.filter(c => c !== TOTAL_NAME);
+        out.innerHTML = '<thead><tr>' + fields.map(c => `<th>${escapeHtml(c)}</th>`).join('') + '</tr></thead><tbody>' +
+          res.rows.map(r => '<tr>' + fields.map(c => `<td>${escapeHtml(r[c] ?? '')}</td>`).join('') + '</tr>').join('') + '</tbody>';
+        const total = Number(res.rows[0][TOTAL_NAME] ?? res.rows.length);
         info.textContent = (res.rows.length < total ? `Showing ${res.rows.length} of ${total.toLocaleString()} rows`
           : `${total.toLocaleString()} rows`) + ` · ${elapsed(t0)}`;
         setStatus(`${ctx.name}: ${info.textContent}.`, 'ok');

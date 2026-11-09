@@ -2,17 +2,23 @@
 
 ## Unreleased
 
+- **A OneLake table's files are kept whole, on this machine, as queries read them.** A Delta or Iceberg table is
+  read through a DuckLake catalog made from its own log, and a file a query opens comes down whole in the background;
+  after that the table reads from disk, and offline. A file no snapshot names any more is deleted on its own, and past
+  the disk cache's size the least recently read go. The block cache (cache_httpfs) is gone. Keep offline and tables
+  in use keep their table current, and bring down only what queries read.
+- **The disk cache keeps 256 GB by default, up from 64.** `onelakeStudio.diskCacheMaxGB` still sets it.
 - **A model has a Report, next to Model and Pivot.** Its first tiles are picked from the model: its first measures as
   figures, the first by the date table's year, by a dimension, and a top 10. Each tile is a SELECT over the model. The
   model view still opens on Model. Export to Fabric's app opens on the same Report, with Model and Pivot beside it.
+- **A click in the Report filters its other tiles.** Click a bar, a line's point or a table's row, and every other tile
+  runs again for that value; the tile you clicked keeps all its bars, with yours bright. A bar above the tiles lists
+  each filter, with a ✕ to clear it, and clicking the same bar again clears it too. Filters from several tiles all
+  apply. This works in Export to Fabric's app as well.
 - **Export to Fabric's local copy is one file, `<app>.zip`**, where the `<app>/` folder used to be. It holds the whole
   app but its packages, which the export adds when it publishes, so the zip is a few MB, not about 50. The report is
   `site/report.json` in it: no export rewrites that entry, so you or an agent can grow it (its `AGENTS.md` says how),
   and the Report tab draws it as it changes. An earlier export's folder is no longer used, and the export says so.
-- **Far fewer requests to OneLake, and data on disk reads in seconds.** The disk cache keeps a table in 128 MB
-  blocks, not 4 MB: a 9.2 GB table is about 72 requests to OneLake, not 2,300. Reading a cached block reads only
-  the bytes a query asks for, where it read the whole block for each few-KB read: a column of a 592-million-row
-  table read from disk took 91 s. The cache is downloaded again once, at the new size.
 - **The extension no longer freezes VS Code for seconds** when the Logs tab is open: an answer from the engine is
   read in time linear in its size. The Logs tab asks for its rows only when something new ran.
 - **The Report's tiles run one at a time**, and leaving the Report stops the one running, so the Pivot and the rest

@@ -10,6 +10,9 @@ const require = createRequire(import.meta.url);
 const { assertReads, checkedRead, isShowAllTables, readsCatalog } = require("../../src/sql.js");
 
 const ALLOWED = [
+  // A schema or table of the user's can be called ducklake_something: only the lake's functions are refused.
+  `SELECT * FROM lakehouse.tpch.dbt.ducklake_mart.dim_duid`,
+  `SELECT * FROM "sqldatabase"."tpch"."dbt_ducklake_meta"."dbo"."ducklake_snapshot"`,
   "SELECT 42",
   "select content from read_text('C:/ext/README.md')",
   "SELECT 'COPY (SELECT 1) TO x; INSERT'",
@@ -54,8 +57,10 @@ const REFUSED = [
   ...SETUP,
   "PRAGMA enable_external_access = true",
   "PRAGMA database_list",
-  "SELECT cache_httpfs_clear_cache()",
-  'SELECT "cache_httpfs_set_offline"(true)',
+  "SELECT * FROM ducklake_cleanup_old_files('lake', cleanup_all => true)",
+  "SELECT * FROM \"ducklake_delete_orphaned_files\"('lake')",
+  "SELECT * FROM ducklake_expire_snapshots('lake', older_than => now())",
+  "SELECT * FROM __ducklake_metadata_lake.ducklake_data_file",
   "SELECT * FROM truncate_duckdb_logs()",
   "SELECT * FROM enable_logging(['Quack'])",
   "SELECT * FROM quack_stop('quack:127.0.0.1:1')",

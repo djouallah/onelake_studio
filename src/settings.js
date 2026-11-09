@@ -26,13 +26,13 @@ function createSettings(read) {
   // the disk cache, as it evicts the oldest first and what someone read comes before this.
   const keepLimitBytes = () => {
     const keep = Math.max(0, Number(read('keepUsedTablesGB', 10)) || 0);
-    const disk = Math.max(0, Number(read('diskCacheMaxGB', 64)) || 0);
+    const disk = Math.max(0, Number(read('diskCacheMaxGB', 256)) || 0);
     return Math.min(keep, disk / 2) * 1e9;
   };
 
   // The most the disk cache may hold, per account: 0 is no disk cache at all.
-  const diskCacheBytes = () => Math.max(0, Number(read('diskCacheMaxGB', 64)) || 0) * 1024 ** 3;
-  const keepsDiskCache = () => Number(read('diskCacheMaxGB', 64)) > 0;
+  const diskCacheBytes = () => Math.max(0, Number(read('diskCacheMaxGB', 256)) || 0) * 1e9;
+  const keepsDiskCache = () => Number(read('diskCacheMaxGB', 256)) > 0;
 
   const maxResultRows = () => Math.min(1_000_000, Math.max(1000, Math.floor(Number(read('maxResultRows', 200_000)) || 200_000)));
 

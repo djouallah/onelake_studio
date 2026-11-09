@@ -168,7 +168,7 @@ function createEngines({ extensionDir, storageDir, production, serverTag = '', s
 
   // What the engine reads when it boots: here, or in the shared engine's process.
   function engineBootOptions(account, readme) {
-    const diskCacheGB = Math.max(0, Number(settings.read('diskCacheMaxGB', 64)) || 0);
+    const diskCacheGB = Math.max(0, Number(settings.read('diskCacheMaxGB', 256)) || 0);
     return {
       allowedPaths: readme ? [readme] : [],
       httpProxy: editorProxy(),
@@ -184,25 +184,26 @@ function createEngines({ extensionDir, storageDir, production, serverTag = '', s
       spillMaxGB: Math.max(0, Number(settings.read('engineSpillMaxGB', 0)) || 0),
       logMaxGB: Math.max(0, Number(settings.read('logMaxGB', 1)) || 0),
       maxRows: Math.min(1_000_000, Math.max(1000, Math.floor(Number(settings.read('maxResultRows', 200_000)) || 200_000))),
-      // 0 is no disk cache at all.
-      fileCacheDir: diskCacheGB > 0 ? fileCacheDirFor(account) : null,
-      fileCacheMaxBytes: diskCacheGB * 1024 ** 3,
+      // Always the account's folder: the lake's metadata is there. 0 GB keeps no table's files in it.
+      fileCacheDir: fileCacheDirFor(account),
+      // A lake can be open in one process only, and the standalone host has a server of its own.
+      lakeFolder: serverTag ? `lake-${serverTag}` : 'lake',
+      fileCacheMaxBytes: diskCacheGB * 1e9,
     };
   }
 
-  // The engine a background job reads with (modeldata.js): a process of its own, so nothing it does is
-  // in the way of a query, on one thread with few requests per read, so it holds little of the
-  // connection however large the table. It shares only the disk cache, and exits when it's done.
-  const BACKGROUND_ENGINE = { threads: 1, memoryLimit: '1GB', fileCacheFanout: 2 };
-  let background = null, backgroundAccount = null;
-  function closeBackgroundEngine({ stop = false } = {}) {
+  // The engine a background job reads with (modeldata.js): one more client of the shared engine, as a
+  // window is. Not a server of its own: the lake can be open in one process only, and a model kept
+  // offline is its tables' files in the lake like any other table's. Closing it never stops the server.
+  let background = null, backgroundAccount = null, lastReadme = null;
+  function closeBackgroundEngine() {
     const b = background;
     background = null;
-    return b ? b.close({ stop }).catch(() => {}) : Promise.resolve();
+    return b ? b.close({ stop: false }).catch(() => {}) : Promise.resolve();
   }
   function backgroundEngine() {
     if (resetting) return null;
-    if (background && backgroundAccount !== fileCacheAccount) closeBackgroundEngine({ stop: true });
+    if (background && backgroundAccount !== fileCacheAccount) closeBackgroundEngine();
     if (background) return background;
     backgroundAccount = fileCacheAccount;
     // A running engine keeps the folder it started on until it restarts (cacheDirectory), and what
@@ -210,12 +211,13 @@ function createEngines({ extensionDir, storageDir, production, serverTag = '', s
     if (!engine) fileCacheRoot = fileCacheRootFor();
     const { createEngineHost } = require('./engine-host');
     const { createRemote } = require('./engine-client');
-    const options = { ...engineBootOptions(fileCacheAccount, null), ...BACKGROUND_ENGINE };
+    // The window's own options: if this client is the one that starts the server, it starts as a window would.
+    const options = engineBootOptions(fileCacheAccount, lastReadme);
     const made = createEngineHost({
       ...options,
       ...engineCallbacks(),
       remote: createRemote({
-        ...sharedEngineServer(fileCacheAccount, { background: true }), options,
+        ...sharedEngineServer(fileCacheAccount), options,
         // Nothing is on screen over it. The next tick starts another, and carries on.
         onGone: () => { if (background === made) { background = null; made.close().catch(() => {}); } },
       }),
@@ -242,6 +244,7 @@ function createEngines({ extensionDir, storageDir, production, serverTag = '', s
       engineAccount = fileCacheAccount;
       fileCacheRoot = fileCacheRootFor();
       const { createEngineHost } = require('./engine-host');
+      if (readme) lastReadme = readme;
       const booting = engineBootOptions(fileCacheAccount, readme);
       engine = createEngineHost({
         ...booting,

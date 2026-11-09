@@ -50,7 +50,7 @@ function openPerformance({ engine, disk }) {
       post({ stats: {
         memory: s.memoryBytes, memoryText: fmtBytes(s.memoryBytes), memoryOf: s.memoryLimit,
         cores, threads: Number(s.threads), qps,
-        disk: diskNow ? diskNow.bytes : null, diskText: diskNow ? fmtBytes(diskNow.bytes) : null,
+        disk: diskNow ? diskNow.bytes : null, diskText: diskNow ? (diskNow.bytes > 0 ? fmtBytes(diskNow.bytes) : '0 B') : null,
         diskOf: diskNow ? (diskNow.limit ? fmtBytes(diskNow.limit) : 'off') : null,
       } });
     } catch (err) {

@@ -2,9 +2,8 @@
 // =============================================================================
 // modeldata.js — Keep offline: a semantic model's tables stay on this machine, current
 // =============================================================================
-// Reading a table whole through an engine is what fills the disk cache: every column of every file,
-// and no row comes back (engine-host.js keepTable). After it the model answers from disk, and with
-// no connection.
+// A table kept is its DuckLake table synced to the latest snapshot (engine-host.js keepTable): nothing of it is
+// read. Its files come here as statements open them (tableservice.js), and the sync keeps every copy still live.
 //
 // This is a background job. Once switched on it needs nothing from anyone: it goes on with the tab
 // closed, comes back with the next window, and never stops for a query. What keeps it out of a query's
@@ -40,7 +39,7 @@ const lc = s => String(s).toLowerCase();
  * @param {(catalog: string) => Promise<string[]>} o.tablesOf  a model's tables, by their SQL names
  * @param {(ref: object, o: { fresh: boolean }) => Promise<object>} o.resolve  sqltables.js resolve
  * @param {(t: object) => Promise<{ value: object }|null>} o.cachedTable  a table's kept metadata
- * @param {(name: string, o: { signal: AbortSignal, onColumn: Function }) => Promise<any>} o.read  a table, read whole
+ * @param {(name: string, o: { signal: AbortSignal }) => Promise<any>} o.read  a table, synced into the lake
  * @param {object} o.usage  what's on and what's been read whole (onelake.js)
  * @param {() => string|null} o.offlineReason
  * @param {() => boolean} o.ready  whether reading can start: not while the engines are being stopped
@@ -110,9 +109,7 @@ function createModelData({ tablesOf, resolve, cachedTable, read, usage, offlineR
     const down = tables.filter(isDown);
     const missing = tables.filter(t => !isDown(t));
     const total = tables.reduce((n, t) => n + t.size, 0);
-    // Part of the table being read, by its columns. Only the window reading knows, and only roughly.
-    const part = current && current.table ? missing.find(t => t.name === current.table) : null;
-    const held = down.reduce((n, t) => n + t.size, 0) + (part ? part.size * current.fraction : 0);
+    const held = down.reduce((n, t) => n + t.size, 0);
     if (offline) {
       return { on: true, say: `No connection · ${down.length} of ${tablesWord(count)} here`, tone: 'warn', busy: false,
                tip: 'The rest comes down when the connection is back. What is here still answers.' };
@@ -169,13 +166,16 @@ function createModelData({ tablesOf, resolve, cachedTable, read, usage, offlineR
     }
     if (total > room) return refuse(`${fmtBytes(total)} won't fit: the disk cache is ${fmtBytes(room)}`);
     usage.setOffline(catalog, model, true, now());
+    // Switched on again is asking again: a table that failed doesn't wait out its hour.
+    for (const t of found.tables) { const k = keptOf(t); if (k && k.error && k.retryAt > now()) usage.noteKept(t.t, { ...k, location: t.location, retryAt: 0 }); }
     log(`keep offline: ${model} on`);
     tick().catch(() => {});
     return state(catalog);
   }
 
   // One table's read isn't this table's doing to fail when the engine or the connection went away.
-  const notItsFault = e => !!(e && (e.offline || e.cancelled)) || /interrupt/i.test(String(e && e.message));
+  const notItsFault = e => !!(e && (e.offline || e.cancelled)) ||
+    /interrupt|Could not connect to server|Invalid connection id|the engine (stopped|was closed)/i.test(String(e && e.message));
 
   // Whether it got through them. If not, the next tick is soon enough to try again.
   async function readThem(job, todo) {
@@ -183,9 +183,8 @@ function createModelData({ tablesOf, resolve, cachedTable, read, usage, offlineR
       if (job.stop.signal.aborted) return false;
       const began = now();
       job.table = t.name;
-      job.fraction = 0;
       try {
-        await read(t.name, { signal: job.stop.signal, onColumn: (done, of) => { job.fraction = of > 0 ? done / of : 0; } });
+        await read(t.name, { signal: job.stop.signal });
         // Nothing of the idle job's daily budget went on this: nobody asked that job for it.
         usage.noteKept(t.t, { location: t.location, at: now(), total: t.size, bytes: 0, ms: now() - began, error: null, retryAt: 0 });
         log(`keep offline: ${t.name}, ${fmtBytes(t.size)}, in ${Math.round((now() - began) / 1000)}s`);
@@ -224,7 +223,7 @@ function createModelData({ tablesOf, resolve, cachedTable, read, usage, offlineR
         if (fresh) freshAt.set(key, now());
         const todo = tables.filter(t => { const k = keptOf(t); return !k || (k.error && k.retryAt <= now()); });
         if (!todo.length) continue;
-        const job = { catalog: m.catalog, stop: new AbortController(), table: null, fraction: 0 };
+        const job = { catalog: m.catalog, stop: new AbortController(), table: null };
         current = job;
         reading = true;
         log(`keep offline: ${m.model}: ${tablesWord(todo.length)} to read`);

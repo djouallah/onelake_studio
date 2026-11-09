@@ -32,12 +32,13 @@ const fs = require('node:fs');
 const fsp = require('node:fs/promises');
 const { join } = require('node:path');
 const os = require('node:os');
-const { randomBytes } = require('node:crypto');
+const { randomBytes, createHash } = require('node:crypto');
 const { sqlStr, quoteIdent, assertReads, checkedRead, tableRefs, fileRefs, filesReadBy, namedError, catalogStatement, readsCatalog, withoutComments, COLUMNS_NOT_READ } = require('./sql');
 const { SQL_KINDS, sqlName, abfssUrl, MODEL_CATALOG, modelSqlName } = require('./names');
 const { revalidate, sameAnswer } = require('./store');
 const { mapPool } = require('./http');
-const { FILE_CACHE_BLOCK } = require('./filecache');
+const { readDelta, readIceberg, syncTable, attachLake } = require('./onelaketable');
+const { createTableService, httpsDownload, openedSince } = require('./tableservice');
 const { tableReadCopies, TABLE_READ_FOLDER } = require('./tableread');
 
 
@@ -102,8 +103,8 @@ const AUTH_FAILURE = /AuthenticationFailed|\b401\b|Unauthorized|token.*expired|E
 // A read that fails is how DuckDB says a kept metadata location no longer holds, at the view or at
 // the statement. A statement's own mistake is a Binder or Catalog Error, which asks OneLake nothing.
 const READ_FAILURE = /^\s*IO Error\b/;
-// What the disk cache says of a file, or a part of one, that it doesn't keep.
-const NOT_CACHED = /is not cached on this machine/;
+// Offline, a lake table's file that hasn't come here yet: a read of its OneLake path that failed.
+const NOT_CACHED = /abfss?:\/\//;
 // OneLake refusing this user a table's files, as a table with OneLake security does to someone its rules
 // restrict: the azure extension's words for a 403, and delta's. Not a bare 403: an error can quote the statement.
 const FORBIDDEN = /\b(?:HTTP|status|code)[ :]*403\b|\b403 Forbidden\b|AuthorizationPermissionMismatch|AuthorizationFailure|\bForbidden\b|not authorized to perform/i;
@@ -115,19 +116,13 @@ const FORBIDDEN = /\b(?:HTTP|status|code)[ :]*403\b|\b403 Forbidden\b|Authorizat
 // breaks and NULs are not.
 const ONELAKE_METADATA = /^abfss:\/\/[^@/\r\n\0]+@onelake\.dfs\.fabric\.microsoft\.com\/[^\r\n\0]+\.metadata\.json$/i;
 const isOneLakeMetadata = s => typeof s === 'string' && ONELAKE_METADATA.test(s);
-// A Delta table's folder, spliced into delta_scan(...) as that is: only this shape may pass.
+// A Delta table's folder, whose log is read into the lake as it is named: only this shape may pass.
 const ONELAKE_TABLE = /^abfss:\/\/[^@/\r\n\0]+@onelake\.dfs\.fabric\.microsoft\.com\/[^\r\n\0]*[^/\r\n\0]$/i;
 const isOneLakeTable = s => typeof s === 'string' && ONELAKE_TABLE.test(s);
 // A local folder as the lockdown knows it. DuckDB keeps allowed_directories with a capital drive letter and
 // compares as written, and VS Code hands paths over with a small one, so a read through a mount was refused.
 const duckdbPath = p => String(p).replace(/\\/g, '/').replace(/^[a-z]:/, d => d.toUpperCase());
 
-// 25% of RAM unless told otherwise. DuckDB's own default is 80%, which is a fine answer
-// for a process that owns the machine and a bad one for the extension host, which every
-// other extension in the window shares.
-function defaultMemoryLimit() {
-  return `${Math.max(512, Math.floor(os.totalmem() / 4 / 2 ** 20))}MB`;
-}
 
 // The certificate authorities DuckDB's HTTP client may trust, as one PEM file. Needed by the
 // lockdown below: with file access restricted, httpfs refuses to go looking for the
@@ -164,6 +159,8 @@ function proxySettings(proxyUrl) {
 
 const FILE_CACHE_TRIM_MS = 60 * 60 * 1000;
 const TABLES_AT_ONCE = 4;
+// The community extensions the vsix ships, loaded by path.
+const COMMUNITY = ['h3', 'zipfs', 'nanoarrow'];
 // In front of a statement that keeps a table in use: what Logs shows, and how the server tells it from
 // anyone's own. No % or _, as it goes in a LIKE.
 const KEEP_MARK = '/* OneLake Studio keeps this table on this machine */ ';
@@ -172,21 +169,13 @@ const LIST_BATCH = 200;
 // Whether a statement's tables read the same as they did: when they were read from OneLake isn't that.
 const sameSources = (a, b) => sameAnswer(a.map(({ at, ...t }) => t), b.map(({ at, ...t }) => t));
 
-// The disk cache held under its budget: oldest first — cache_httpfs touches a file each time
-// it serves it, so the oldest is the least recently used — down to 80%. Nothing waits for it:
-// one stat per file was over a second of a boot at 14,000 files, and a file removed under a
-// read is only a cache miss.
+// What the table read API answered (tableread.js) held under its budget: oldest first, down to 80%. A table
+// read that way is one unit, its copy's folder. The files of OneLake tables are the table service's
+// (tableservice.js), which holds them to the same budget. Nothing waits for this.
 async function trimFileCache(dir, maxBytes, onWarn) {
   try {
     if (!(maxBytes > 0)) return;
     const files = [];
-    for (const name of await fsp.readdir(dir)) {
-      try {
-        const st = await fsp.stat(join(dir, name));
-        if (st.isFile()) files.push({ p: join(dir, name), bytes: st.size, at: st.mtimeMs });
-      } catch (_) {}
-    }
-    // A table read through the table read API is one unit, its copy's folder (tableread.js).
     for (const c of await tableReadCopies(join(dir, TABLE_READ_FOLDER))) files.push({ ...c, dir: true });
     let total = files.reduce((n, f) => n + f.bytes, 0);
     if (total <= maxBytes) return;
@@ -229,7 +218,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
                             memoryLimit = '', threads = 0, spillMaxGB = 0, maxRows = DEFAULT_MAX_ROWS,
                             allowedPaths = [], lockdown = true,
                             httpProxy = '', bundledExtensions = null,
-                            fileCacheDir = null, fileCacheMaxBytes = 0, fileCacheFanout = 4, resolveTable = null, resolveFile = null,
+                            fileCacheDir = null, fileCacheMaxBytes = 0, lakeFolder = 'lake', resolveTable = null, resolveFile = null,
                             catalogTables = null, offlineReason = () => null, checkConnectivity = null,
                             onRowsRead = () => {}, onFileRead = () => {}, onTablesUsed = () => {}, serve = null, remote = null } = {}) {
   let instance = null;
@@ -314,23 +303,23 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
         // out-match ours and decide what the extension reads; measured, it fails as
         // `AuthenticationFailed` from a filesystem we thought we had configured.
         allow_persistent_secrets: 'false',
-        memory_limit: memoryLimit || defaultMemoryLimit(),
       };
+      // DuckDB's own default unless told otherwise, 80% of RAM: it runs in a process of its own, not the extension host.
+      if (memoryLimit) config.memory_limit = memoryLimit;
       if (threads > 0) config.threads = String(threads);
       if (extensionDir) config.extension_directory = extensionDir;
-      // The disk cache (cache_httpfs) ships in the vsix as our own build of it, with the
-      // Windows fix that is not released upstream yet — and our build is not signed by
-      // DuckDB. Loading it needs unsigned extensions allowed, as do h3 and zipfs by path (a LOAD by
-      // path knows only the core signing keys). All three are held to their hash when the vsix is
-      // built (scripts/pinned-downloads.mjs); the lockdown below then refuses every LOAD, so nothing
-      // the page sends can load anything else.
-      const cacheBuild = fileCacheDir && bundledExtensions && join(bundledExtensions, 'cache_httpfs.duckdb_extension');
-      if (cacheBuild && fs.existsSync(cacheBuild)) { config.allow_unsigned_extensions = 'true'; unsignedAllowed = true; }
+      // The community extensions (h3, zipfs, nanoarrow) ship in the vsix and load by path, and a LOAD by
+      // path knows only the core signing keys: so unsigned extensions are allowed when they are there.
+      // Each is held to its hash when the vsix is built (scripts/pinned-downloads.mjs); the lockdown
+      // below then refuses every LOAD, so nothing the page sends can load anything else.
+      if (bundledExtensions && COMMUNITY.some(e => fs.existsSync(join(bundledExtensions, `${e}.duckdb_extension`)))) {
+        config.allow_unsigned_extensions = 'true'; unsignedAllowed = true;
+      }
       if (fileCacheDir) {
         await fsp.mkdir(fileCacheDir, { recursive: true })
           .catch(e => onWarn(`could not make the disk cache's folder ${fileCacheDir} — ${e.message}`));
         trimFileCache(fileCacheDir, fileCacheMaxBytes, onWarn);
-        // A server can run for days, and one long scan can pass the budget by any amount.
+        // A server can run for days.
         if (serve) setInterval(() => trimFileCache(fileCacheDir, fileCacheMaxBytes, onWarn), FILE_CACHE_TRIM_MS).unref();
       }
       mark('temp+disk cache');
@@ -362,8 +351,10 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
       for (const ext of ['iceberg', 'azure', 'httpfs']) await load(ext, '', true);
       for (const ext of ['avro', 'excel', 'sqlite_scanner', 'delta']) await load(ext, '');
       // nanoarrow's read_arrow is how a table with OneLake security is read: what the table read API answered.
-      for (const ext of ['h3', 'zipfs', 'nanoarrow']) await load(ext, 'community');
-      if (fileCacheDir) await enableFileCache(fileCacheDir);
+      for (const ext of COMMUNITY) await load(ext, 'community');
+      // A OneLake table is read through DuckLake, its files brought here as they are read (openLake). A cache
+      // folder is there whenever an account is; without one, no OneLake table is read (sourceOf).
+      if (fileCacheDir) { await load('ducklake', '', true); await openLake(); }
       mark('extensions');
       // azure has an HTTP client of its own, with its own proxy settings.
       if (proxy) {
@@ -405,25 +396,24 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
       // The bytes DuckDB reads from OneLake (data files, manifests) are kept in memory by
       // its external file cache, and dropped when memory runs short. Spilled instead, to
       // this session's temp directory: a block evicted is read back from local disk rather
-      // than fetched from OneLake again. This is the in-session layer; the disk cache
-      // (cache_httpfs, enableFileCache below) is the one that outlives the process.
+      // than fetched from OneLake again. What outlives the process is a table's files, whole (openLake).
       try { await conn.run('SET external_file_cache_spill = true;'); }
       catch (e) { onWarn(`could not let DuckDB's file cache spill to disk — ${e.message}`); }
 
-      // The shared engine's server. Loading cache_httpfs turns DuckDB's external file cache off, so
-      // it is turned back on here: the blocks every client reads stay in this process's memory,
-      // over the disk cache. Quack starts before the lockdown, which leaves nothing to start with.
+      // The shared engine's server: the blocks every client reads stay in this process's memory.
+      // Quack starts before the lockdown, which leaves nothing to start with.
       if (serve) {
         await load('quack', '', true);
         await conn.run('SET enable_external_file_cache = true;');
-        // A Delta table's files are read by a local name, mounted (mountTable), and DuckDB leaves a
-        // local file to the system's file cache unless told otherwise.
+        // A table's files here are local files, and DuckDB leaves a local file to the system's file
+        // cache unless told otherwise.
         try { await conn.run('SET cache_local_files = true;'); }
         catch (e) { onWarn(`a Delta table's data isn't held in memory between queries — ${e.message}`); }
         // A window's own guard (sql.js assertReads) refuses these already. This is one more wall, and
         // a text match, so not the only one: the session token is what keeps others out.
+        // DuckLake's own functions write: one deletes files from a SELECT, and here the files are OneLake's.
         await conn.run(`CREATE MACRO memory.main.studio_authorize(token, query) AS
-          CASE WHEN regexp_matches(lower(query), 'quack_(serve|stop)') THEN NULL ELSE query END;`);
+          CASE WHEN regexp_matches(lower(query), '(?s)quack_(serve|stop)|ducklake_[a-z0-9_]+"?([[:space:]]|/[*].*?[*]/|--[^\\n]*\\n)*[(]|__ducklake_metadata') THEN NULL ELSE query END;`);
         await conn.run(`SET GLOBAL quack_authorization_function = 'studio_authorize';`);
         // Port 0: the system picks a free one. A port already taken raises no error on Windows.
         const r = await conn.runAndReadAll(`SELECT listen_uri FROM quack_serve('quack:127.0.0.1:0', token = ${sqlStr(serve.token)})`);
@@ -431,7 +421,8 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
         // DuckDB's own log of what Quack is asked: one row a statement, with its time and any error,
         // in memory. engine-server.js moves it into the log file, so it outlives this process.
         // Writing it to a file isn't an option: on Windows DuckDB then can't read its own file back.
-        await conn.run(`CALL enable_logging(['Quack'], storage = 'memory');`);
+        // And the files statements open, which is how the table service hears what to bring here.
+        await conn.run(`CALL enable_logging(${capabilities.lake ? "['Quack', 'FileSystem']" : "['Quack']"}, storage = 'memory');`);
         mark('quack');
       }
 
@@ -455,8 +446,8 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
         const dirs = [`${tmp}/`, 'https://', 'abfss://', 'abfs://', 'az://', 'azure://',
                       'zip://abfss://', 'zip://https://'];
         if (extensionDir) dirs.push(`${extensionDir.replace(/\\/g, '/')}/`);
-        // cache_httpfs checks each cache file against these before it reads or writes it.
-        if (capabilities.fileCache) dirs.push(`${fileCacheDir.replace(/\\/g, '/')}/`);
+        // The lake's metadata, a table's files and deletion vectors, and what the table read API answered.
+        if (fileCacheDir) dirs.push(`${fileCacheDir.replace(/\\/g, '/')}/`);
         const paths = [ca, ...allowedPaths.filter(Boolean).map(p => String(p).replace(/\\/g, '/'))];
         await conn.run(`SET allowed_directories = [${dirs.map(sqlStr).join(', ')}];`);
         await conn.run(`SET allowed_paths = [${paths.map(sqlStr).join(', ')}];`);
@@ -496,7 +487,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
 
   const capabilities = {
     excel: false, zipfs: false, h3: false, avro: false, httpfs: false, sqlite_scanner: false,
-    iceberg: false, azure: false, delta: false, cache_httpfs: false, fileCache: false, mount: false, quack: false, nanoarrow: false,
+    iceberg: false, azure: false, delta: false, ducklake: false, lake: false, quack: false, nanoarrow: false,
   };
 
   // An optional extension that will not load costs one file format, which is not a
@@ -537,108 +528,81 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
     }
   }
 
-  // The bytes DuckDB reads from OneLake — data files, manifests, metadata.json — kept on
-  // disk across sessions by cache_httpfs, around the azure filesystem: read once, read from
-  // here after, restart or not. An Iceberg table's files are never rewritten under the same
-  // name, but a Files/ object can be, so a kept copy is validated before it is served.
-  // Optional: without it, reads go to OneLake as they always did.
-  async function enableFileCache(dir) {
-    await load('cache_httpfs', 'community');
-    if (!capabilities.cache_httpfs) return;
-    try {
-      await conn.run(`SET cache_httpfs_type = 'on_disk';`);
-      await conn.run(`SET cache_httpfs_cache_directory = ${sqlStr(dir.replace(/\\/g, '/'))};`);
-      // Its own memory for what it reads off disk is 256 blocks, and with it on it reads the disk past
-      // the system's file cache: a table bigger than that came off the disk again on every query. The
-      // shared engine holds what it reads in DuckDB's memory instead (cache_local_files), and anyone
-      // else has the system's file cache. On their own: a build without them still has the disk cache.
+  // ---------------------------------------------------------------------------
+  // OneLake tables, through DuckLake
+  // ---------------------------------------------------------------------------
+  // A Delta or Iceberg table is a DuckLake table in `lake`, kept from its own metadata (onelaketable.js): its
+  // files are named on OneLake until they come down whole, then by their copy in the cache folder
+  // (tableservice.js). What a statement opens is what comes down: DuckDB's own FileSystem log says which.
+  // The lake is the engine's that holds DuckDB, the server's on the shared engine: a window asks it over
+  // the control pipe (lakeTable). Without a cache folder there is no lake, and a table is read from OneLake.
+  const LAKE_POLL_MS = 1000, LAKE_TIDY_MS = 60 * 1000;
+  let lakeService = null, lakeToken = null, lakeDirs = null;
+  async function openLake() {
+    const root = join(fileCacheDir, lakeFolder);
+    lakeDirs = { meta: join(root, 'meta.ducklake'), files: join(root, 'files'), deletes: join(root, 'deletes') };
+    await fsp.mkdir(root, { recursive: true });
+    // One engine holds the lake: its metadata file can be open in one process only. Without it no OneLake
+    // table can be read, so the engine doesn't start.
+    try { await attachLake(conn, duckdbPath(lakeDirs.meta)); }
+    catch (e) { throw new Error(`the lake could not be opened, so no OneLake table can be read: ${e.message}`); }
+    capabilities.lake = true;
+    lakeService = createTableService({
+      withConn: fn => admin(() => fn(conn)),
+      filesDir: duckdbPath(lakeDirs.files),
+      download: httpsDownload({ getToken: async () => { if (!lakeToken) throw new Error('not signed in'); return lakeToken; } }),
+      // 0 (the disk cache set to nothing): a table is read from OneLake, and nothing comes here.
+      maxBytes: Math.max(0, Number(fileCacheMaxBytes) || 0),
+      log: onWarn,
+    });
+    // Off the boot: a window's statements never wait for these.
+    let lastUs = 0;
+    const poll = async () => {
       try {
-        await conn.run(`SET cache_httpfs_cache_block_size = ${FILE_CACHE_BLOCK};`);
-        await conn.run('SET cache_httpfs_disk_cache_reader_enable_memory_cache = false;');
-      } catch (e) { onWarn(`the disk cache keeps its own block size and memory — ${e.message}`); }
-      // Its default spawns a private thread pool per read, fanning one read out into up to
-      // 1000 threads. In the extension host a cold full-table scan crashed the process that
-      // way (a terminate inside cache_httpfs). DuckDB's own scheduler and a bounded fan-out
-      // keep its parallelism inside DuckDB's.
-      await conn.run(`SET cache_httpfs_parallel_read_mode = 'duckdb_task_scheduler';`);
-      // A read spanning blocks fetches at most this many at once: each is a block's worth of memory (filecache.js).
-      await conn.run(`SET cache_httpfs_max_fanout_subrequest = ${Math.max(1, Math.floor(Number(fileCacheFanout)) || 4)};`);
-      // A Files/ object can be rewritten in place, so what is kept is checked against the
-      // file's version tag and modification time before it is served. Before the wrap: a
-      // build without this setting fails here, with nothing cached, not serving stale files.
-      await conn.run('SET cache_httpfs_enable_cache_validation = true;');
-      // The OneLake secret goes with any abfss:// URL, whatever its host, and a statement can join a URL up
-      // from pieces no text check can read. Here is where a read can't get past. Frozen by the lockdown.
-      await conn.run(`SET cache_httpfs_allowed_azure_hosts = 'onelake.dfs.fabric.microsoft.com,onelake.blob.fabric.microsoft.com';`);
-      for (const name of ['AzureDfsStorageFileSystem', 'AzureBlobStorageFileSystem']) {
-        // Released builds run a constant call twice and throw on the second although the
-        // wrap worked: what is registered afterwards is the answer, not the error.
-        try { await conn.run(`SELECT cache_httpfs_wrap_cache_filesystem(${sqlStr(name)});`); } catch (_) {}
-      }
-      const r = await conn.runAndReadAll(`SELECT count(*)::INTEGER AS n FROM cache_httpfs_list_registered_filesystems()
-        WHERE registered_filesystems = 'cache_httpfs_AzureDfsStorageFileSystem'`);
-      capabilities.fileCache = r.getRowObjects()[0].n === 1;
-      if (!capabilities.fileCache) onWarn('cache_httpfs could not wrap the azure filesystem — OneLake reads are not cached on disk');
-    } catch (e) {
-      onWarn(`disk cache unavailable — ${e.message}`);
-    }
-    if (!capabilities.fileCache) return;
-    // Any call starts keeping what opening a file answers, which an offline open needs. A build
-    // without this function reads nothing offline, and refuseOffline says so.
-    try {
-      await conn.run('SELECT cache_httpfs_set_offline(false);');
-      servingOffline = false;
-      capabilities.offlineRead = true;
-    } catch (e) {
-      onWarn(`reading kept data offline is unavailable — ${e.message}`);
-    }
-    // Asked with nothing mounted: a build without mounts reads a Delta table from OneLake itself.
-    try {
-      await conn.run(`SELECT cache_httpfs_unmount('');`);
-      capabilities.mount = true;
-    } catch (e) {
-      onWarn(`reading a Delta table through the disk cache is unavailable — ${e.message}`);
-    }
+        const got = await withConn(c => openedSince(c, lastUs), agentLive);
+        lastUs = got.lastUs;
+        // In a window's own engine nothing else reads the log, so what was read goes.
+        if (!serve && got.paths.length) await withConn(c => c.run('CALL truncate_duckdb_logs();'), agentLive);
+        if (got.paths.length && !offlineReason()) await lakeService.noteOpened(got.paths);
+      } catch (e) { onWarn(`the table service missed what was read — ${e.message}`); }
+    };
+    setInterval(poll, LAKE_POLL_MS).unref();
+    setInterval(() => lakeService.tidy().catch(e => onWarn(`the table service could not tidy — ${e.message}`)), LAKE_TIDY_MS).unref();
+    if (!serve) await conn.run(`CALL enable_logging(['FileSystem'], storage = 'memory');`);
   }
 
-  // A Delta table's folder here, with the files it names served from where they really are. Only a folder
-  // in this engine's disk cache, and only OneLake: the lockdown is what it reads past.
-  const mountsMade = new Map();
-  function mountTable({ local, remote: where }) {
-    const inside = fileCacheDir && String(local).replace(/\\/g, '/').toLowerCase().startsWith(`${fileCacheDir.replace(/\\/g, '/').toLowerCase()}/`);
-    if (!inside || !isOneLakeTable(where)) throw new Error(`this engine can't serve ${local} from ${where}`);
-    if (mountsMade.get(local) === where) return Promise.resolve();
-    return admin(async () => {
-      await conn.run(`SELECT cache_httpfs_mount(${sqlStr(local)}, ${sqlStr(where)});`);
-      mountsMade.set(local, where);
+  // A table's name in the lake: by its folder, so a new snapshot of it is the same table.
+  const lakeNameOf = folder => `t_${createHash('sha256').update(String(folder).toLowerCase()).digest('hex').slice(0, 24)}`;
+  const lakeSynced = new Map();   // lake name -> what it was synced from: the catalog's `at` and location
+  /**
+   * The lake table that reads `t`, synced from its metadata when that moved: its name in `lake`. Offline, the
+   * lake table as it was last synced, or no name if it never was.
+   */
+  async function lakeTable({ deltaTable, metadataLocation, at, fresh = false, offline = false }) {
+    if (!capabilities.lake) throw new Error('this engine has no lake');
+    const folder = deltaTable || String(metadataLocation).replace(/\/metadata\/[^/]+$/, '');
+    const name = lakeNameOf(folder), since = `${at}|${metadataLocation}`;
+    if (!fresh && lakeSynced.get(name) === since) return { name };
+    const known = async () => (await withConn(c => c.runAndReadAll(
+      `SELECT count(*)::INTEGER AS n FROM duckdb_tables() WHERE database_name = 'lake' AND table_name = ${sqlStr(name)}`), agentLive)).getRowObjects()[0].n > 0;
+    // Offline, what was synced last; none for a table never synced here, which the window says (sourceOf).
+    if (offline) return { name: await known() ? name : null };
+    await admin(async () => {
+      const state = deltaTable ? await readDelta(conn, deltaTable) : await readIceberg(conn, metadataLocation);
+      await syncTable(conn, name, state, { dvDir: duckdbPath(lakeDirs.deletes), held: await heldNow() });
     });
+    lakeSynced.set(name, since);
+    return { name };
   }
-
-  // The disk cache serves what it keeps with no call to OneLake while this window is offline. A
-  // function, since the lockdown freezes the settings.
-  let servingOffline = false;
-  async function syncOffline() {
-    if (!capabilities.offlineRead) return;
-    // On the shared engine the switch is the server's, and another window may have moved it, so what
-    // this window remembers says nothing: each statement says what it needs, over the control pipe.
-    if (remote) { await instance.setOffline(!!offlineReason()); return; }
-    await setOffline(!!offlineReason());
-  }
-  function setOffline(now) {
-    if (servingOffline === now) return Promise.resolve();
-    return admin(async () => {
-      if (servingOffline === now) return;
-      await conn.run(`SELECT cache_httpfs_set_offline(${now});`);
-      servingOffline = now;
-    });
-  }
+  // The service's own connection is the admin one: inside admin() already, so asked of it directly.
+  const heldNow = async () => new Map((await conn.runAndReadAll(`SELECT path, local FROM __ducklake_metadata_lake.studio_held WHERE unread_since IS NULL`)
+    .catch(() => ({ getRowObjectsJson: () => [] }))).getRowObjectsJson().map(r => [r.path, r.local]));
 
   // ---------------------------------------------------------------------------
   // OneLake, spoken by DuckDB itself
   // ---------------------------------------------------------------------------
-  // DuckDB reads OneLake with one azure secret holding the VS Code token: tables with
-  // delta_scan on a copy of their log or iceberg_scan on their metadata file, Files/ objects by their
-  // abfss:// names. No catalog is ever asked at query time — the host's store already holds where each
+  // DuckDB reads OneLake with one azure secret holding the VS Code token: tables through the lake, Files/
+  // objects by their abfss:// names. No catalog is ever asked at query time — the host's store already holds where each
   // table is.
 
   // Reissues the storage secret when the token has changed. Returns null rather
@@ -668,13 +632,8 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
     const p = await conn.prepare('CREATE OR REPLACE SECRET onelake_storage (TYPE azure, PROVIDER access_token, ACCESS_TOKEN ?)');
     p.bindVarchar(1, token);
     await p.run();
-    // The disk cache keeps a file's open handle for an hour, and the handle keeps the token it was
-    // opened with: a file opened before this one expired went on being refused on every retry (a
-    // Keep offline read of a big table outlives a token). Handles in use stay; the next open is new.
-    if (capabilities.fileCache) {
-      try { await conn.run('SELECT cache_httpfs_clear_file_handle_cache();'); }
-      catch (e) { onWarn(`the disk cache's open files keep the old sign-in — ${e.message}`); }
-    }
+    // And the table service's downloads: the one place the token is kept outside DuckDB's secret.
+    lakeToken = token;
   }
 
   async function withAuthRetry(run, canRetry = () => true) {
@@ -694,10 +653,10 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
     }
   }
 
-  // A table, ready to be selected from by its SQL name. A Delta table is a view over delta_scan on its
-  // folder, which reads the table's own log: Fabric's Iceberg conversion of a Delta table isn't to be
-  // read, as its column ids can disagree with the ones in the files, and DuckDB then gives one column
-  // another's values. An Iceberg table is a view over iceberg_scan on its metadata file. Where each is
+  // A table, ready to be selected from by its SQL name. A Delta or Iceberg table is a view over its lake table,
+  // kept from the table's own log or metadata file (lakeTable): Fabric's Iceberg conversion of a Delta table
+  // isn't to be read, as its column ids can disagree with the ones in the files, and DuckDB then gives one
+  // column another's values. Where each is
   // comes from what the host's store holds (the catalog's loadTable answer, cached on disk). The
   // catalog is not asked at query time when the store has the answer — it answered a loadTable in 5s,
   // 12s and 114s on a real tenant.
@@ -716,7 +675,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
   async function sourceOf(ref, o) {
     if (!resolveTable) throw new Error('this engine cannot name OneLake tables');
     const r = await resolveTable(ref, { ...o, secured: refusedHere.has(sqlName(ref).toLowerCase()) });
-    let source, mount = null;
+    let source;
     if (r.emptySql != null) source = String(r.emptySql);
     else if (Array.isArray(r.arrowFiles)) {
       const bad = r.arrowFiles.find(f => !inCache(String(f)));
@@ -725,29 +684,40 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
       }
       source = `SELECT * FROM read_arrow([${r.arrowFiles.map(f => sqlStr(duckdbPath(f))).join(', ')}])`;
     }
-    else if (r.deltaTable != null) {
-      if (!isOneLakeTable(r.deltaTable)) throw new Error(`OneLake gave ${sqlName(r)} no readable folder (${String(r.deltaTable).slice(0, 120)})`);
-      // On the copy of its log, with the files it names served from OneLake through the disk cache, when
-      // both are here. Otherwise on OneLake itself, which is the same online and nothing offline.
-      const local = r.deltaLocal && capabilities.mount ? duckdbPath(r.deltaLocal) : null;
-      source = `SELECT * FROM delta_scan(${sqlStr(local || r.deltaTable)})`;
-      if (local) mount = { local, remote: r.deltaTable };
-    } else if (isOneLakeMetadata(r.metadataLocation)) source = `SELECT * FROM iceberg_scan(${sqlStr(r.metadataLocation)})`;
-    else {
+    else if (r.deltaTable != null || isOneLakeMetadata(r.metadataLocation)) {
+      if (r.deltaTable != null && !isOneLakeTable(r.deltaTable)) throw new Error(`OneLake gave ${sqlName(r)} no readable folder (${String(r.deltaTable).slice(0, 120)})`);
+      const which = { deltaTable: r.deltaTable || null, metadataLocation: r.deltaTable ? null : r.metadataLocation, at: r.at,
+                      fresh: !!(o && o.fresh), offline: !!offlineReason() };
+      if (capabilities.lake) {
+        let name;
+        try { ({ name } = await (remote ? instance.lakeTable(which) : lakeTable(which))); }
+        catch (e) {
+          // OneLake refused this user the table's log: a table with OneLake security, read through the table read API.
+          if (!FORBIDDEN.test(String(e && e.message)) || refusedHere.has(sqlName(ref).toLowerCase())) throw e;
+          refusedHere.add(sqlName(ref).toLowerCase());
+          return sourceOf(ref, o);
+        }
+        if (!name) {
+          const why = offlineReason();
+          throw Object.assign(new Error(`${sqlName(r)}: this table isn't cached on this machine, and ${why === 'no internet' ? 'there is no internet' : 'you are not signed in'}. ` +
+            'What this machine has cached still works: tables, columns, stats and first rows.'), { offline: true });
+        }
+        source = `SELECT * FROM lake.main.${quoteIdent(name)}`;
+      } else {
+        // Only through the lake: never past it, read from OneLake by another way that keeps nothing here.
+        throw new Error(`${sqlName(r)}: a OneLake table is read through the lake, and this engine has none` +
+          (fileCacheDir ? '.' : ': it has no cache folder, as no account is signed in.'));
+      }
+    } else {
       throw new Error(`OneLake gave ${sqlName(r)} no readable metadata location` +
         (r.metadataLocation ? ` (${String(r.metadataLocation).slice(0, 120)})` : ''));
     }
-    return { name: sqlName(r), path: [r.kind, r.workspace, r.item, r.schema || 'dbo'], source, mount, location: r.emptySql == null ? r.metadataLocation : null, logMoves: r.logMoves, at: r.at, listed: r.listed, secured: !!r.secured };
+    return { name: sqlName(r), path: [r.kind, r.workspace, r.item, r.schema || 'dbo'], source, location: r.emptySql == null ? r.metadataLocation : null, at: r.at, listed: r.listed, secured: !!r.secured };
   }
-  async function makeView({ name, path: parts, source, mount }) {
-    if (/\bdelta_scan\(/.test(source) && !capabilities.delta) {
-      throw new Error(`${name} is a Delta table, and DuckDB's delta extension isn't available on this platform.`);
-    }
+  async function makeView({ name, path: parts, source }) {
     if (/\bread_arrow\(/.test(source) && !capabilities.nanoarrow) {
       throw new Error(`${name} has OneLake security, and DuckDB's nanoarrow extension, which reads what OneLake's table read API answers, isn't available.`);
     }
-    // Before anything may read through it. On the shared engine that's the server's, as the offline switch is.
-    if (mount) await (remote ? instance.mount(mount) : mountTable(mount));
     const key = name.toLowerCase();
     // On a shared engine another window may have changed the view since, so what this window
     // remembers making says nothing. A statement costs little there, sent in one call.
@@ -899,23 +869,15 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
     return { statement: statement + sql.slice(at), written };
   }
 
-  // Offline, a statement that reads OneLake is served from the disk cache. Only with no such cache
-  // (turned off, or a build that can't) is it refused here, rather than left to time out.
-  // A table nothing was ever written to reads no file, and needs no network.
+  // Offline, a statement that reads a lake table reads the files here and fails on one that isn't (what an
+  // offline read of OneLake answers is said as that, below). One that reads OneLake past the lake is refused
+  // here, rather than left to time out. A table nothing was ever written to reads no file, and needs no network.
   // A OneLake URL it reads: after FROM or JOIN, or as a function's argument. Not one that is only a
   // value, as a model's path is in what SHOW SEMANTIC VIEWS compiles to.
   const READS_ONELAKE = /(?:\b(?:from|join)\s+\(?\s*'|\b(?!values\b)\w+\s*\(\s*\[?\s*')(?:zip:\/\/)?(?:abfss?|az|azure):\/\//i;
   function refuseOffline(sql, tables) {
     const why = offlineReason();
     if (!why) return;
-    // delta_scan on OneLake itself reads the table's log from there, past the disk cache. So no copy of
-    // its log here means none of it can be read.
-    const noLog = tables.find(t => /\bdelta_scan\(\s*'abfss:/.test(t.source));
-    if (noLog) {
-      throw Object.assign(new Error(`${noLog.name}: this Delta table hasn't been read here, and ${why === 'no internet' ? 'there is no internet' : 'you are not signed in'}. ` +
-        'What this machine has cached still works: tables, columns, stats and first rows.'), { offline: true });
-    }
-    if (capabilities.offlineRead) return;
     const reading = tables.find(t => /\b(?:iceberg|delta)_scan\(/.test(t.source));
     if (!reading && !READS_ONELAKE.test(sql)) return;
     const what = reading ? reading.name : 'This statement';
@@ -952,7 +914,6 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
   // `signal`: the statement was stopped, so a table still being read through the table read API isn't waited for.
   async function withTables(sql, run, canRetry = () => true, { fresh = false, seen = () => {}, used = true, signal, refusedOnce = false } = {}) {
     if (readsCatalog(sql)) await syncCatalog();
-    await syncOffline();
     let named = [], files = [];
     try {
       return await revalidate(o => sourcesOf(sql, { ...o, fresh: fresh || !!o.fresh, signal }), async tables => {
@@ -961,7 +922,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
         seen(read.length ? Math.min(...read) : null);
         const { statement, written } = await withFileUrls(sql, fresh);
         files = written;
-        refuseOffline(statement, tables);
+        refuseOffline(statement, tables.filter(t => !/\bFROM lake\./.test(t.source)));
         for (const t of tables) await makeView(t);
         const result = await run(catalogStatement(sql) || statement);
         rowsRead(sql, tables, statement, used);
@@ -973,7 +934,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
       // OneLake refused a table's files, its metadata having been given: a table with OneLake security. Which
       // one, of a statement's several, is asked of each, and those are read through the table read API.
       if (FORBIDDEN.test(message) && !refusedOnce && canRetry() && !(signal && signal.aborted)) {
-        const direct = named.filter(t => !t.secured && /\b(?:iceberg|delta)_scan\(/.test(t.source));
+        const direct = named.filter(t => !t.secured && /\b(?:iceberg|delta)_scan\(|\bFROM lake\./.test(t.source));
         // Asked even of one: the API costs the user, and the refusal has to be OneLake's, not words in the statement.
         const found = [];
         for (const t of direct) {
@@ -985,14 +946,14 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
           return withTables(sql, run, canRetry, { fresh, seen, used, signal, refusedOnce: true });
         }
       }
-      if (NOT_CACHED.test(message)) {
+      if (offlineReason() && READ_FAILURE.test(message) && NOT_CACHED.test(message)) {
         const what = named.filter(t => t.location);
         throw Object.assign(new Error(`${what.length === 1 ? what[0].name : 'This statement'}: this part isn't cached on this machine. Read it once online.`), { offline: true });
       }
       if (READ_FAILURE.test(message)) {
         // The internet went while this was reading, and nothing has said so yet. Run it again from
         // what is kept. The statement isn't asked twice: the retry finds this window offline.
-        if (!offlineReason() && capabilities.offlineRead && checkConnectivity && canRetry()) {
+        if (!offlineReason() && capabilities.lake && checkConnectivity && canRetry()) {
           await checkConnectivity();
           if (offlineReason()) return withTables(sql, run, canRetry, { fresh, seen, used, signal, refusedOnce });
         }
@@ -1252,6 +1213,8 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
   const emptyLog = () => withConn(c => c.run('CALL truncate_duckdb_logs();'), agentLive);
   // serve: Quack listening again, on the same port, with its listener gone or going.
   const relisten = () => admin(() => restartListener(conn, served, serve.token));
+  // What the table service holds and has done: for Performance, and the tests.
+  const lakeStats = () => init().then(() => (remote ? instance.lakeStats() : lakeService ? lakeService.stats() : null));
   // serve: the OneLake token a window sends, over the control pipe.
   const setStorageToken = token => init().then(() => admin(() => issueSecret(token)));
   // What the Logs tab shows.
@@ -1293,21 +1256,11 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
     }
   }
 
-  // A table read whole, behind everything (syncworker.js, modeldata.js): every column goes through the disk
-  // cache and no row comes back. Not a page method, and nobody reading it, so it doesn't count as use.
-  // A column at a time: stopped, a statement's reads in flight still finish, and with every column of
-  // every row group in flight that held the connection for over a minute (measured 81s) after the Stop.
-  // `onColumn(done, of)`: how far through its columns it is.
-  const keepTable = async (name, { signal, onColumn = () => {} } = {}) => {
-    const o = { signal, used: false, mark: KEEP_MARK };
-    const { rows } = await agentQuery(`DESCRIBE ${name}`, o);
-    let kept = null;
-    for (const [i, { column_name: column }] of rows.entries()) {
-      kept = await agentQuery(`EXPLAIN ANALYZE SELECT ${quoteIdent(column)} FROM ${name}`, o);
-      onColumn(i + 1, rows.length);
-    }
-    return kept;
-  };
+  // A table kept, behind everything (syncworker.js, modeldata.js): its DuckLake table synced to the latest
+  // snapshot, which naming it does (sourceOf, lakeTable). Nothing of it is read: which files come here is the
+  // table service's, the ones statements open, and the sync keeps a copy of every file still live. Not a page
+  // method, and nobody reading it, so it doesn't count as use.
+  const keepTable = (name, { signal } = {}) => agentQuery(`DESCRIBE ${name}`, { signal, fresh: true, used: false, mark: KEEP_MARK });
 
   // Whether anyone has a statement running on this server, a table being kept aside. Over the control
   // pipe: over Quack, this would be a line in Logs every few seconds. Not a page method.
@@ -1388,7 +1341,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
   }
 
   const api = { call, close, copyToTemp, exportTo, agentQuery, keepTable, othersRunning, catalogChanged, warm, maxRows, forTab, boot, stats,
-                readLog, emptyLog, relisten, setStorageToken, setOffline, mountTable, logs, clearLogs };
+                readLog, emptyLog, relisten, setStorageToken, lakeTable, lakeStats, logs, clearLogs };
   return api;
 }
 
