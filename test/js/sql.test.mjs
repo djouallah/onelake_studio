@@ -13,6 +13,8 @@ const ALLOWED = [
   // A schema or table of the user's can be called ducklake_something: only the lake's functions are refused.
   `SELECT * FROM lakehouse.tpch.dbt.ducklake_mart.dim_duid`,
   `SELECT * FROM "sqldatabase"."tpch"."dbt_ducklake_meta"."dbo"."ducklake_snapshot"`,
+  // The lake's metadata is read by its name.
+  "SELECT * FROM system_internal.ducklake_data_file",
   "SELECT 42",
   "select content from read_text('C:/ext/README.md')",
   "SELECT 'COPY (SELECT 1) TO x; INSERT'",
@@ -60,7 +62,6 @@ const REFUSED = [
   "SELECT * FROM ducklake_cleanup_old_files('lake', cleanup_all => true)",
   "SELECT * FROM \"ducklake_delete_orphaned_files\"('lake')",
   "SELECT * FROM ducklake_expire_snapshots('lake', older_than => now())",
-  "SELECT * FROM __ducklake_metadata_lake.ducklake_data_file",
   "SELECT * FROM truncate_duckdb_logs()",
   "SELECT * FROM enable_logging(['Quack'])",
   "SELECT * FROM quack_stop('quack:127.0.0.1:1')",

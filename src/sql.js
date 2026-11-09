@@ -181,8 +181,8 @@ function oneStatement(sql) {
   // Each of these writes from a SELECT. Named as a function, a string's insides being gone, so a value can mention one.
   const called = scan(String(sql), NAMES).text;
   // The lake's own functions write, and one deletes files from a SELECT: here those files are OneLake's. Its
-  // metadata is the engine's to keep (engine-host.js lakeTable). Called, not named: ducklake_mart can be a schema.
-  if (/\bducklake_\w+"?\s*\(|\b__ducklake_metadata/i.test(called)) refuse('the lake is kept by the engine, not by statements');
+  // metadata, system_internal, is read like any table. Called, not named: ducklake_mart can be a schema.
+  if (/\bducklake_\w+"?\s*\(/i.test(called)) refuse('the lake is kept by the engine, not by statements');
   if (/\b(?:write_blob|write_log)"?\s*\(/i.test(called)) refuse('this function writes');
   // query('…' || '…') runs SQL no name above can be found in, DuckDB having joined the text up first.
   if (/\bquery(?:_table)?"?\s*\(/i.test(called)) refuse('query() runs what no check here can read');
@@ -509,10 +509,9 @@ const CATALOG_CTES = `WITH RECURSIVE
                CASE WHEN regexp_full_match(schema_name, '[A-Za-z_][A-Za-z0-9_]*') AND lower(schema_name) NOT IN (SELECT w FROM kw)
                     THEN schema_name ELSE '"' || replace(schema_name, '"', '""') || '"' END AS q
         FROM duckdb_schemas()
-        -- The lake (engine-host.js): the engine's own copy of each OneLake table, by a hash of its folder, and its
-        -- metadata. What a query names is the table's own name; these are how it is read.
-        -- Not named in full: the guard refuses a statement that names the lake's metadata (engine-host.js studio_authorize).
-        WHERE database_name <> 'lake' AND NOT starts_with(database_name, '__ducklake')),
+        -- The lake (engine-host.js): the engine's own copy of each OneLake table, by a hash of its folder. What a
+        -- query names is the table's own name; these are how it is read. Its metadata, system_internal, is listed.
+        WHERE database_name <> 'lake'),
   p AS (SELECT database_oid, database_name, oid, q AS path, [n] AS parts FROM s WHERE parent_schema_oid IS NULL
         UNION ALL
         SELECT s.database_oid, s.database_name, s.oid, p.path || '.' || s.q, list_append(p.parts, s.n)

@@ -287,9 +287,11 @@ test("offline with the lake: a table never read here says so at once, with nothi
     e => /This statement: reading rows needs OneLake/.test(e.message) && offline(e));
   assert.ok(Date.now() - t0 < 20000, "answered from this machine, not timed out");
   assert.equal((await engine.call("query", ["SELECT 42 AS a"])).rows[0].a, 42);
-  // The lake and its metadata are how a table is read, not tables of the user's.
+  // The lake is how a table is read, not tables of the user's. Its metadata is listed, and read, as system_internal.
   const listed = (await engine.call("query", ["SHOW ALL TABLES"])).rows.map(r => r.database);
-  assert.ok(!listed.some(d => /^(lake|__ducklake_metadata_lake)$/.test(d)), listed.join(", "));
+  assert.ok(!listed.includes("lake"), listed.join(", "));
+  assert.ok(listed.includes("system_internal"), listed.join(", "));
+  assert.ok((await engine.call("query", ["SELECT count(*) AS n FROM system_internal.ducklake_snapshot"])).rows[0].n > 0);
 });
 
 test("the internet going during a read is checked once, and the statement runs again, offline", { skip: !existsSync(LAKE_BUILD) }, async t => {

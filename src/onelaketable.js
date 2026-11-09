@@ -26,7 +26,8 @@ const { sqlStr: q, quoteIdent: qi } = require('./sql');
 const { DFS_ORIGIN } = require('./names');
 const { crc32 } = require('./crc32');
 
-const META = '__ducklake_metadata_lake';
+// The lake's metadata, by a name a statement can read it by: system_internal.ducklake_snapshot and the rest.
+const META = 'system_internal';
 // What each lake table was last synced from, so a restart forgets nothing: its folder, the catalog's metadata
 // location, the table's own version, and for Delta its log's live files then, which the next sync goes on from.
 const SYNCED = `${META}.studio_synced`;
@@ -380,7 +381,7 @@ async function syncTable(c, name, state, { dvDir, held = new Map(), synced = nul
  */
 async function attachLake(c, metadataFile) {
   // Never written to: every table names its own folder. Remote only so DuckLake keeps remote paths remote.
-  await c.run(`ATTACH ${q(`ducklake:${metadataFile}`)} AS lake (DATA_PATH ${q(`${DFS_ORIGIN}/unused/`)}, DATA_INLINING_ROW_LIMIT 0)`);
+  await c.run(`ATTACH ${q(`ducklake:${metadataFile}`)} AS lake (DATA_PATH ${q(`${DFS_ORIGIN}/unused/`)}, DATA_INLINING_ROW_LIMIT 0, METADATA_CATALOG ${q(META)})`);
   await c.run(`CREATE TABLE IF NOT EXISTS ${SYNCED} (name VARCHAR PRIMARY KEY, folder VARCHAR, format VARCHAR, location VARCHAR,
     version VARCHAR, listed VARCHAR, uuid VARCHAR, log VARCHAR, synced_at BIGINT)`);
 }

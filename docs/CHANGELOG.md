@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- **The lake's metadata can be queried, as `system_internal`.** `SELECT * FROM system_internal.ducklake_data_file`
+  and the rest read what the lake keeps about each OneLake table: its snapshots, files and columns, and
+  `studio_synced`, what each table was last synced from. It was refused before.
+
 ## 0.2.18
 
 - **A OneLake table's files are kept whole, on this machine, as queries read them.** A Delta or Iceberg table is

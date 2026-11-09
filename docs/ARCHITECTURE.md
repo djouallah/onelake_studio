@@ -187,7 +187,7 @@ The engine is **DuckDB 2.0 running natively in a process of its own** ([The serv
   remote archive. Nothing loads after it: every extension is loaded before, and autoload is off.
 - **What a statement may be:** from a tab or the command line, one read, or an `EXPLAIN` of one. Never `COPY`,
   `INSERT`, `EXPORT`, `PRAGMA`, anything that creates, drops or attaches, a Quack function, the log's own switches,
-  a `ducklake_` function or the lake's metadata, `query()`, a function that writes, or an Azure URL whose host isn't
+  a `ducklake_` function, `query()`, a function that writes, or an Azure URL whose host isn't
   OneLake's.
 - **How a tab sets up a file:** by host methods, `fileView`, `attachFile` and `releaseFiles`, not by SQL. A tab takes
   away only what it made, and what it made goes when it closes. A view's source is one read too, and an attach is
@@ -342,7 +342,9 @@ A table can be part here and part on OneLake, and DuckDB opens each file where i
 - **Only through the lake:** a table is never read past it. An engine that can't open the lake doesn't start, and one
   with no cache folder (no account) refuses a table.
 - **What a statement can't do to it:** DuckLake's own functions write, and one deletes files from a `SELECT`. The guard
-  and the server refuse any `ducklake_` function and the lake's metadata by name.
+  and the server refuse any `ducklake_` function by name. The lake's metadata is a database called `system_internal`
+  (`system_internal.ducklake_snapshot`, `ducklake_data_file`, `studio_synced` and the rest), which a statement reads
+  like any table, and can't write, since a statement is one read.
 
 ## The cache
 
