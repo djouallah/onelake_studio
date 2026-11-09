@@ -613,6 +613,17 @@ A semantic model opens as **Explore** ([`app/explore/`](../app/explore/)), on th
 from. **A tab** runs it on the native engine. **The Fabric app** runs the
 same files on DuckDB-WASM.
 
+## Create Semantic Model
+
+A `.bim` or Ossie `.yaml` in a lakehouse's `Files/` has a ⛁ in the tree (`modelFile`, [`src/tree.js`](../src/tree.js)):
+**Create Semantic Model** makes the Power BI semantic model of it, named for the file, in the file's workspace, on Direct
+Lake (refreshed once made) or DirectQuery (its SQL endpoint signed in to by SSO), picked first. It is the semantic model
+Export to Fabric makes for its app, made the same way (`createSemanticModel` in
+[`src/exportflow.js`](../src/exportflow.js)), and nothing else: no app, no zip, no Report. One of that name already
+in the workspace is updated only on an OK. The workspace's semantic models are listed again after. The command line's
+`semanticmodel <ws> <item> <Files/path> --mode directlake|directquery` asks the same, and waits for that OK in VS Code.
+Needs a connection, as Export does.
+
 ## Export to Fabric
 
 One of two writes, with Upload (above). The Report's **Export to Fabric** button, or the command line's `export`, publishes

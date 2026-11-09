@@ -43,12 +43,16 @@ const USAGE = {
   export: `  export <ws> <model>                 Export to Fabric, as Explore's button does it: the model's
                                         .yaml in its lakehouse (open it in the tree once first).
                                         VS Code asks where the local copy goes and for the OK.
-                                        The app is one zip, <app>.zip; it opens on its Report,
-                                        site/report.json in the zip, yours to grow; Pivot beside it
+                                        The app is one zip, <app>.zip: the model's Report,
+                                        site/report.json in the zip, yours to grow
   export <ws> <item> <Files/path>     the same, for a model file (.bim, Ossie .yaml) in Files/
     --mode client|directquery|directlake  what the app runs on: DuckDB in the browser, or a
                                         semantic model of that name made from the model (updated
                                         if the workspace has one). Without it, directlake`,
+  semanticmodel: `  semanticmodel <ws> <item> <Files/path>  the Power BI semantic model of a model file (.bim,
+                                        Ossie .yaml) in Files/, named for the file, in its workspace,
+                                        and no app. Asks in VS Code before it updates one of that name
+    --mode directlake|directquery     on Direct Lake (the default) or the SQL endpoint`,
   status: `  status                              this window: its build, session, startup timeline, catalog,
                                         sync, and where its files are. Answers signed out too`,
   log: `  log [<text>]                        this window's own log, the lines holding <text> if given,
@@ -190,7 +194,7 @@ async function local(name) {
 async function ask() {
   if (wrong) return fail(EXIT.USAGE, wrong);
   if (Object.hasOwn(LOCAL, args[0])) return local(args[0]);
-  const seconds = opts.timeout != null ? Number(opts.timeout) : args[0] === "export" ? 0 : DEFAULT_TIMEOUT_S;
+  const seconds = opts.timeout != null ? Number(opts.timeout) : args[0] === "export" || args[0] === "semanticmodel" ? 0 : DEFAULT_TIMEOUT_S;
   if (!(seconds >= 0)) return fail(EXIT.USAGE, `--timeout takes seconds, not "${opts.timeout}"`);
   const timeoutMs = seconds * 1000;
   let alone = null;

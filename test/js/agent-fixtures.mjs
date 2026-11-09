@@ -59,7 +59,7 @@ const RICH_AT = Date.now() - 10 * 60 * 1000;
 // A fuller cache: one lakehouse with two tables (one with metadata), a Files/ folder, a
 // warehouse, and one downloaded model on disk. `tables`: that many more, for --limit to cut;
 // `reverse`: every listing in the opposite order.
-export async function richAgent({ tables = 0, engine = null, exportApp = null, signedIn, reverse = false } = {}) {
+export async function richAgent({ tables = 0, engine = null, exportApp = null, createModel = null, signedIn, reverse = false } = {}) {
   const dir = await mkdtemp(join(tmpdir(), "agent-"));
   await stubVendor(dir);
   const bim = join(dir, "Sales.yaml");
@@ -88,6 +88,8 @@ export async function richAgent({ tables = 0, engine = null, exportApp = null, s
   const onelake = {
     workspaces: remote("workspaces"), items: remote("items"), models: remote("models"),
     tables: remote("tables"), table: remote("table"), files: remote("files"),
+    // A model file in Files/, as Create Semantic Model reads it.
+    readBytes: async (ws, path) => Buffer.from(`model file ${ws}/${path}`),
     cached: {
       workspaces: async () => hit("workspaces"),
       items: async ws => hit(`items ${ws}`),
@@ -100,7 +102,7 @@ export async function richAgent({ tables = 0, engine = null, exportApp = null, s
   const agent = createAgent({
     onelake, modelPath: (ws, m) => (m === "Sales" ? bim : join(dir, "none.yaml")),
     appDir: APP_DIR, vendorDir: dir, daxSqlPin: "pin", yamlPin: "yaml",
-    semviews: { texts: async () => [] }, engine: engine && (async () => engine), exportApp, signedIn,
+    semviews: { texts: async () => [] }, engine: engine && (async () => engine), exportApp, createModel, signedIn,
   });
   return { agent, calls, dir, onelake, close: () => rm(dir, { recursive: true, force: true }) };
 }

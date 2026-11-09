@@ -161,8 +161,8 @@ function createStandalone({ extensionDir = join(__dirname, '..'), env = process.
 
     /** One request, as the bridge would have it answered. */
     async answer(request, { signal } = {}) {
-      if (request.args[0] === 'export') {
-        const message = 'export asks for your OK in VS Code: open VS Code with OneLake Studio, and run it again';
+      if (request.args[0] === 'export' || request.args[0] === 'semanticmodel') {
+        const message = `${request.args[0]} asks for your OK in VS Code: open VS Code with OneLake Studio, and run it again`;
         return { out: request.opts.json ? failureJson(EXIT.UNAVAILABLE, message) : '', err: request.opts.json ? '' : message, code: EXIT.UNAVAILABLE };
       }
       await settle();

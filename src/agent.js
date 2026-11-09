@@ -25,6 +25,7 @@
 //                                    SEMANTIC VIEWS / METRICS / DIMENSIONS; --show-sql the compiled SQL
 //   export <ws> <model>              Export to Fabric, as Explore's button: a semantic model
 //   export <ws> <item> <Files/path>  (its local copy, written into its lakehouse) or a model file in Files/
+//   semanticmodel <ws> <item> <Files/path>  the Power BI semantic model of a model file, and no app
 //   status                           this window: build, session, startup, catalog, sync, its files
 //   log [<text>]                     this window's own log
 //
@@ -69,6 +70,7 @@ const fence = (lang, text) => '```' + lang + '\n' + String(text).trim() + '\n```
  * @param {string} o.vendorDir               the vendored DAX compiler and YAML reader
  * @param {ReturnType<import('./semviews').createSemViews>} o.semviews  the views this machine keeps
  * @param {(x: object) => Promise<string>} [o.exportApp]  Explore's Export to Fabric (extension.js)
+ * @param {(x: object) => Promise<string>} [o.createModel]  the tree's Create Semantic Model (exportflow.js)
  * @param {(n: {workspace: string, model: string, modelId: string}) => Promise<{path: string, text: string}>} [o.fetchModel]
  *   a semantic model's definition read from Fabric again, into its local copy (modelPath)
  * @param {(x: {workspace: string, model: string}) => Promise<object>} [o.openModel]
@@ -108,7 +110,7 @@ function closestNames(wanted, names, most = 5) {
 
 function createAgent({ onelake, engine, modelPath, appDir, vendorDir, daxSqlPin, yamlPin, semviews,
                        readNow = (job, o) => readJob(onelake, job, o),
-                       exportApp = null, fetchModel = null, openModel = null, nameTables = null,
+                       exportApp = null, createModel = null, fetchModel = null, openModel = null, nameTables = null,
                        signedIn = () => true, offlineReason = () => null, diagnostics = null }) {
   let mods = null;
   async function modules() {
@@ -705,6 +707,22 @@ function createAgent({ onelake, engine, modelPath, appDir, vendorDir, daxSqlPin,
       const text = Buffer.from(await onelake.readBytes(where.workspace, where.path)).toString('utf8');
       say(await exportApp({ file, name: semantic.modelName(file), text, state: null,
                             workspace: where.workspace, path: where.path, ...mode }));
+    },
+
+    // Create Semantic Model from a shell: the tree's own (exportflow.js), which asks in VS Code
+    // before it updates a model of that name. A model file in a lakehouse's Files/, made into the
+    // Power BI semantic model of its name in that workspace, and no app. --mode directlake (the
+    // default) or directquery.
+    async semanticmodel([ws, a, b], opts, io) {
+      if (!createModel) throw new Error('Create Semantic Model is not available here');
+      const lh = await itemOf(ws, a, await look('items', [ws], opts));
+      if (!hasFilesArea(lh.item)) throw new Error(`${lh.item} has no Files area — only a lakehouse does`);
+      const path = `${lh.item}/Files/${String(b).replace(/^\/?Files\//i, '')}`;
+      const file = path.split('/').pop();
+      const text = Buffer.from(await onelake.readBytes(lh.workspace, path)).toString('utf8');
+      const message = await createModel({ file, text, workspace: lh.workspace, path, mode: opts.mode != null ? String(opts.mode) : 'directlake' });
+      io.data({ message });
+      io.out(message);
     },
   };
 

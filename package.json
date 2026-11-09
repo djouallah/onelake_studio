@@ -138,6 +138,11 @@
         "category": "OneLake Studio"
       },
       {
+        "command": "onelakeStudio.createSemanticModel",
+        "title": "Create Semantic Model…",
+        "category": "OneLake Studio",
+        "icon": "$(database)"
+      },      {
         "command": "onelakeStudio.downloadFile",
         "title": "Download File…",
         "category": "OneLake Studio",
@@ -365,7 +370,7 @@
         },
         {
           "command": "onelakeStudio.copySqlName",
-          "when": "view == onelakeStudio.explorer && viewItem =~ /^(table|file|dir|semanticModel)$/",
+          "when": "view == onelakeStudio.explorer && viewItem =~ /^(table|file|modelFile|dir|semanticModel)$/",
           "group": "inline@2"
         },
         {
@@ -385,8 +390,13 @@
         },
         {
           "command": "onelakeStudio.downloadFile",
-          "when": "view == onelakeStudio.explorer && viewItem =~ /^(file|semanticModel)$/",
+          "when": "view == onelakeStudio.explorer && viewItem =~ /^(file|modelFile|semanticModel)$/",
           "group": "inline@1"
+        },
+        {
+          "command": "onelakeStudio.createSemanticModel",
+          "when": "view == onelakeStudio.explorer && viewItem == modelFile",
+          "group": "inline@0"
         },
         {
           "command": "onelakeStudio.uploadFiles",
@@ -459,6 +469,10 @@
       "commandPalette": [
         {
           "command": "onelakeStudio.downloadFile",
+          "when": "false"
+        },
+        {
+          "command": "onelakeStudio.createSemanticModel",
           "when": "false"
         },
         {

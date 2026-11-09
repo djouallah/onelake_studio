@@ -136,6 +136,8 @@ let semviews = null;
 // Export to Fabric (exportapp.js), the page's fabric.exportExplore; set by activateInner,
 // which owns the agent's modules.
 let exportExplore = null;
+// Create Semantic Model (exportflow.js), the tree's; set by activateInner, as above.
+let createSemanticModel = null;
 // The Report tab's tiles (exportflow.js reportOf), the page's model.report; set by activateInner, as above.
 let modelReport = null;
 // Open in Excel (src/xmla), the page's excel.open; set by activateInner, as above.
@@ -432,7 +434,7 @@ async function activateInner(context) {
     mark: step => out && out.mark(step),
   });
   theCore = core;
-  ({ engines, onelake, semviews, rebindStore, exportExplore, modelReport, openExcel, keepOffline, openSqlModel, nameModelTables, saveQuery } = core);
+  ({ engines, onelake, semviews, rebindStore, exportExplore, createSemanticModel, modelReport, openExcel, keepOffline, openSqlModel, nameModelTables, saveQuery } = core);
   const { fabric, sqlTables, syncWorker, favorites, accountTurn, sessionChanged, setSignedIn } = core;
   const { queriesFolder, listQueries, queryPath } = core.queries;
   const { modelPath, modelKey, cachedModel, unsupportedModels, unsupportedNote, fetchModel, completionNames } = core.models;
@@ -843,6 +845,28 @@ async function activateInner(context) {
     // Files from this computer into a folder of a lakehouse's Files/ (onelakewrite.js): a name already
     // there is asked about, each file is written beside and renamed into place, and the folder is
     // listed again. Needs a connection, as Export does.
+    // A .bim or .yaml in a lakehouse's Files/ made into the Power BI semantic model of its name, in
+    // its workspace, and no app (exportflow.js createSemanticModel): Direct Lake or DirectQuery,
+    // picked first. Needs a connection, as Export does.
+    vscode.commands.registerCommand('onelakeStudio.createSemanticModel', async n => {
+      if (!n || n.kind !== 'file' || !/\.(bim|ya?ml)$/i.test(String(n.path))) return;
+      if (connectivity.offline()) { vscode.window.showInformationMessage('Create Semantic Model needs a connection.'); return; }
+      const file = basename(String(n.path));
+      const name = file.replace(/\.[^.]+$/, '');
+      const mode = await vscode.window.showQuickPick([
+        { label: 'Direct Lake', description: "reads the lakehouse's tables from OneLake", mode: 'directlake' },
+        { label: 'DirectQuery', description: "queries the lakehouse's SQL endpoint", mode: 'directquery' },
+      ], { title: `Create the semantic model ${name} in ${n.workspace}`, placeHolder: 'What it runs on' });
+      if (!mode) return;
+      try {
+        const text = Buffer.from(await onelake.readBytes(n.workspace, n.path)).toString('utf8');
+        if (!createSemanticModel) throw new Error('OneLake Studio is still starting');
+        vscode.window.showInformationMessage(await createSemanticModel({ file, text, workspace: n.workspace, path: n.path, mode: mode.mode }));
+      } catch (e) {
+        if (e && e.declined) return;
+        showError(`Create Semantic Model: ${(e && e.message) || e}`);
+      }
+    }),
     vscode.commands.registerCommand('onelakeStudio.uploadFiles', async n => {
       if (!n || n.kind !== 'dir') return;
       const where = `${basename(String(n.item)).replace(/\.[^.]+$/, '')}/Files${n.dir ? `/${n.dir}` : ''}`;

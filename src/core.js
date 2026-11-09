@@ -100,6 +100,7 @@ function createCore({
   let onelake = null, semviews = null, rebindStore = null, onStoreCleared = () => {};
   let resolveSqlTable = null, resolveSqlFile = null, nameModelTables = null, cachedSqlTables = null;
   let openSqlModel = null, saveQuery = null, exportExplore = null, modelReport = null, openExcel = null, keepOffline = null;
+  let createSemanticModel = null;
 
   // What an engine asks of this window, whichever engine it is.
   function engineCallbacks() {
@@ -396,6 +397,8 @@ function createCore({
     yamlPin: PINS.yaml,
     // `export`: Explore's own Export to Fabric (below), and the .yaml the tree wrote for a model.
     exportApp: x => (exportExplore ? exportExplore(x) : Promise.reject(new Error('OneLake Studio is still starting'))),
+    // `semanticmodel`: the tree's Create Semantic Model, for a model file in a lakehouse's Files/.
+    createModel: x => (createSemanticModel ? createSemanticModel(x) : Promise.reject(new Error('OneLake Studio is still starting'))),
     fetchModel: n => fetchModel(n, { fresh: true }),
     openModel: x => openSqlModel(x),
     nameTables: list => nameModelTables(list),
@@ -541,6 +544,7 @@ function createCore({
     log,
   });
   exportExplore = exporter.exportExplore;
+  createSemanticModel = exporter.createSemanticModel;
   // The Report tab's tiles: a model's exported zip's report.json, else the file kept for it
   // before an export, else none; Add to report and a tile's ✕ write them.
   modelReport = { load: exporter.reportOf, stamp: exporter.reportStamp, save: exporter.reportSave };
@@ -580,7 +584,7 @@ function createCore({
   }
 
   return {
-    engines, onelake, semviews, rebindStore, exportExplore, modelReport, openExcel, keepOffline, openSqlModel, nameModelTables, saveQuery,
+    engines, onelake, semviews, rebindStore, exportExplore, createSemanticModel, modelReport, openExcel, keepOffline, openSqlModel, nameModelTables, saveQuery,
     onStoreCleared: () => onStoreCleared(),
     // The cache folder moved from `old` (setCacheRoot): the store's Files/ bytes go to the new one too, and
     // this account's model copies move there, their views with them. Waited for before `old` is deleted.

@@ -427,7 +427,57 @@ function createExport({ connectivity, modules, hostToken, appToken, powerBiToken
     return { stamp: await reportStamp({ workspace, model }) };
   }
 
-  return { exportExplore, reportOf, reportStamp, reportSave };
+  // Create Semantic Model, from the tree (a .bim or Ossie .yaml in a lakehouse's Files/) or the
+  // command line's `semanticmodel`: the Power BI semantic model Export to Fabric makes for its app,
+  // and nothing else (no app, no zip, no Report). Named for the file (`name`, else its name), in
+  // the file's workspace, on `mode`: Direct Lake (refreshed once made) or DirectQuery (its SQL
+  // endpoint signed in to by SSO). One of that name already there is updated only on the user's
+  // OK. Answers what to say when it is done; a No is thrown as `declined`.
+  async function createSemanticModel({ file, name, text, workspace, path, mode }) {
+    const declined = message => Object.assign(new Error(message), { declined: true });
+    try {
+      if (connectivity.offline()) {
+        throw new Error(`Create Semantic Model needs a connection, and ${connectivity.noInternet() ? 'there is no internet' : 'you are not signed in'}.`);
+      }
+      const engine = MODE_OF[String(mode ?? 'directlake').toLowerCase()];
+      if (!engine || engine === 'duckdb') throw new Error(`no mode ${mode}: directlake or directquery`);
+      if (!workspace || !path) throw new Error('Create Semantic Model needs a model file in a lakehouse\'s Files/');
+      const mods = await modules();
+      const modelName = name || mods.semantic.modelName(file);
+      const plan = planExport(text, file, modelName, mods, { workspace, path }, await lakesOf(text, file, workspace));
+      plan.engine = engine;
+      if (engine === 'directQuery') plan.sqlEndpoint = await sqlEndpointOf(plan);
+      const tmsl = semanticTmsl(mods.semantic.bimOf(file, text, mods.compiler), engine, {
+        name: modelName, tables: plan.tables, lake: { workspace: plan.workspace, item: plan.lakehouse }, sqlEndpoint: plan.sqlEndpoint });
+      const workspaceId = String(await fabric.workspaceId(workspace)).toLowerCase();
+      const existing = await fabricModel.find(workspaceId, modelName);
+      if (existing) {
+        const pick = await ui.warn(`The semantic model ${modelName} already exists in ${workspace}. Update it?`,
+          { modal: true, detail: `${MODES[engine]}, from ${path}` }, 'Update');
+        if (pick !== 'Update') throw declined(`Not created: ${modelName} already exists in ${workspace}.`);
+      }
+      await ui.withProgress(`Create Semantic Model: ${modelName}`, async progress => {
+        const say = line => { log(`semantic model ${workspace}/${modelName}: ${line}`); progress.report({ message: line }); };
+        say(`${existing ? 'updating' : 'creating'} it (${MODES[engine]})`);
+        const { id } = await fabricModel.write(workspaceId, modelName, definitionOf(tmsl), existing && existing.id);
+        if (engine === 'directLake') {
+          say('refreshing it');
+          await fabricModel.frame(workspaceId, id);
+        } else {
+          say('setting its SQL endpoint sign-in (SSO)');
+          await fabricModel.bindSso(workspaceId, id);
+        }
+      });
+      // The workspace's semantic models, listed again: it is there now.
+      onRefresh({ kind: 'models', workspace });
+      return `Semantic model ${modelName} ${existing ? 'updated' : 'created'} in ${workspace} (${MODES[engine]}).`;
+    } catch (e) {
+      if (!(e && e.declined)) log(`create semantic model from ${path || file} failed — ${(e && e.stack) || e}`);
+      throw e;
+    }
+  }
+
+  return { exportExplore, reportOf, reportStamp, reportSave, createSemanticModel };
 }
 
 module.exports = { createExport };

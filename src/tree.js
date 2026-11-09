@@ -235,6 +235,8 @@ class LakehouseTree {
     // A pinned workspace offers Unpin, an unpinned one Pin (package.json menus).
     item.contextValue = n.kind === 'workspace' && n.pinned ? 'workspacePinned'
       : n.kind === 'fabricApp' && n.url ? 'fabricAppUrl'
+      // A .bim or .yaml in Files/: a file, that Create Semantic Model takes too.
+      : n.kind === 'file' && /\.(bim|ya?ml)$/i.test(String(n.path)) ? 'modelFile'
       : n.kind;
     // A stable identity, so expansion state survives a refresh keyed on WHAT the node is
     // rather than on its label — labels repeat freely across workspaces. Only the domain
