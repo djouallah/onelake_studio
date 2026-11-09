@@ -152,6 +152,24 @@
     </section>
 
     <section>
+      <h2 id="split">A table can be partly local and partly on OneLake</h2>
+      <p>The local lake names each file of a table separately. A file stays named by its <code>abfss://</code> address until it has been copied whole to this machine. Then its name changes to the copy under <code>lake\files\</code>. So one table can have some files read from disk and the rest read from OneLake, and a query reads each file from where its name says.</p>
+      <ul>
+        <li>Only the files a query opened are copied. A filter that skips most files leaves those files on OneLake.</li>
+        <li>New files from a new snapshot start on OneLake, and come down when a query opens them.</li>
+        <li>When the disk cache is full, the least recently read files go back to their OneLake names, and their copies are deleted.</li>
+        <li>Offline, a query that needs a file not copied yet says the table isn't cached on this machine.</li>
+      </ul>
+      <p>You can see it in the <code>system_internal</code> database, in the tree after the workspaces. This query lists each table's files and where each one is read from:</p>
+      <pre><code>SELECT s.folder, f.path, f.record_count
+FROM system_internal.ducklake_data_file f
+JOIN system_internal.ducklake_table t USING (table_id)
+JOIN system_internal.studio_synced s ON s.name = t.table_name
+WHERE f.end_snapshot IS NULL AND t.end_snapshot IS NULL</code></pre>
+      <p>A path starting with <code>abfss://</code> is read from OneLake. Any other path is a copy on this machine.</p>
+    </section>
+
+    <section>
       <h2 id="sync">Sync</h2>
       <p>Lists of what exists come from the local catalog, not from OneLake. The local catalog is one SQLite file per account on your machine. The tree, <code>SHOW ALL TABLES</code> and Go To read it.</p>
       <ul>
