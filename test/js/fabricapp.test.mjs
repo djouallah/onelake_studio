@@ -183,6 +183,16 @@ test("a 202 create is followed; a 5xx create is looked for by name, never sent t
   assert.equal(flaky.calls.filter(c => c.method === "POST" && c.url.endsWith("/items")).length, 1);
 });
 
+test("a name Fabric refuses that no app of the workspace has: an app deleted a short while ago, and the export is tried again later", async () => {
+  const held = appWith(happy([
+    ["POST", `/workspaces/${WS}/items`, () => res(409, { errorCode: "ItemDisplayNameAlreadyInUse",
+      message: "An item with the name sales-model of type AppBackend already exists in the workspace. Please delete the item and retry" })],
+  ]));
+  await assert.rejects(publish(held.app, { itemId: "deleted-since" }),
+    /Fabric still holds the name sales-model for an app deleted a short while ago[\s\S]*export again in a few minutes/);
+  assert.equal(held.calls.filter(c => c.method === "POST" && c.url.endsWith("/items")).length, 1, "asked once");
+});
+
 test("Fabric's own message is the error: a capacity refusal, a failed site, a failed function", async () => {
   const cap = appWith(happy([["POST", `/workspaces/${WS}/items`, () => res(400, { errorCode: "CapacityLimitExceeded", message: "no capacity" })]]));
   await assert.rejects(publish(cap.app), /Creating the app sales-model failed \(HTTP 400\) — no capacity/);
