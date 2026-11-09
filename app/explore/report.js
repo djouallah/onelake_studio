@@ -185,7 +185,7 @@ export function drawReport(root, spec, ctx) {
     const body = el('div', {}, el('p', { class: 'rp-say' }, 'Waiting…'));
     const wide = tile.wide ?? (tile.kind === 'kpi' || tile.kind === 'table');
     grid.append(el('section', { class: `rp-tile${wide ? ' wide' : ''}` }, el('h2', {}, String(tile.title ?? '')), body));
-    return { tile, body, on: pickColumn(tile), dirty: true, chart: null, box: null, repaint: null };
+    return { tile, body, on: pickColumn(tile), dirty: true, asking: false, chart: null, box: null, repaint: null };
   });
   pump();
 
@@ -246,7 +246,8 @@ export function drawReport(root, spec, ctx) {
     drawChips();
     job.repaint?.();
     for (const j of jobs) if (j !== job) { j.dirty = true; say(j, 'Waiting…'); }
-    if (running && running !== job) ctx.cancel?.();
+    // Stopped only while its query runs: once answered, its drawing is dropped (drawTile).
+    if (running && running !== job && running.asking) ctx.cancel?.();
     pump();
   }
 
@@ -268,7 +269,10 @@ export function drawReport(root, spec, ctx) {
     if (tile.crossFilter != null && tile.crossFilter !== false && !(typeof tile.crossFilter === 'string' && columnOf(tile.crossFilter))) {
       throw new Error(`a tile's crossFilter is a model column ("table"."column") or false, not ${JSON.stringify(tile.crossFilter)}`);
     }
-    const res = await ctx.sql(withFilters(tile.sql, filtersFor(job)));
+    const sql = withFilters(tile.sql, filtersFor(job));
+    job.asking = true;
+    let res;
+    try { res = await ctx.sql(sql); } finally { job.asking = false; }
     // A pick changed the tile while it ran: this answer is not its own any more.
     if (gone || job.dirty) return;
     clear(job);
