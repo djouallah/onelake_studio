@@ -119,7 +119,6 @@ function wireUi() {
   };
   $('pivotBtn').onclick = openPivot;
   $('csvBtn').onclick = saveActive;
-  $('editSqlBtn').onclick = editSql;
   $('runBtn').onclick = () => runBox();
   $('planBtn').onclick = () => runBox({ plan: true });
   $('saveQueryBtn').onclick = saveBox;
@@ -1544,19 +1543,6 @@ async function saveBox() {
   } catch (e) {
     setStatus('Could not save the query: ' + e.message, 'error');
   }
-}
-
-// Edit SQL, a semantic model's only: its view hides the box, and this takes the model's own SQL
-// there: its Show SQL box, the pivot's query or one typed there.
-function editSql() {
-  const sql = (modelView.sql() || '').trim();
-  if (!sql) {
-    setStatus("Put a field on the shelves first: Edit SQL takes the model's query.");
-    return;
-  }
-  enterQuery('');
-  putInBox(sql);
-  setStatus('The SQL is in the box: run it (Ctrl+Enter).', 'ok');
 }
 
 // Chart: the rows on screen drawn (chart.js), in place of the grid until Show Rows.

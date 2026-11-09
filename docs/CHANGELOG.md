@@ -25,7 +25,8 @@
 - **Pivot is now Visual**, for a model and for a table: it draws tables and charts alike.
 - **Each page's buttons are in the bar, at the right.** Model has Keep offline, Diagram | YAML and Open in Excel;
   Visual has Show SQL, Download CSV and Add to report; the Report has Export to Fabric. The model's
-  name is no longer repeated at the right of the bar.
+  name is no longer repeated at the right of the bar. A model's Edit SQL button is gone: Visual's Show SQL
+  has the model's SQL, to change and run there.
 - **Create Semantic Model, with no app.** A `.bim` or `.yaml` in a lakehouse's Files has a new icon in the tree: it
   makes the Power BI semantic model of that file, named for it, in its workspace, on Direct Lake or DirectQuery,
   picked first. It asks before it updates a model of that name. The command line has it too: `semanticmodel`.

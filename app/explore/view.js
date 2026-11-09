@@ -676,8 +676,6 @@ export function mountExplore(root, ctx) {
   show(page);
 
   return {
-    // The model's query as it stands: Show SQL's box when it is open, else the shelves'.
-    sql: () => (sqlMode ? typed() : explorer?.query()?.sql ?? ''),
     destroy() {
       destroyed = true;
       keepOffline?.destroy();
