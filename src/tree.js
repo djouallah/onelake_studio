@@ -57,12 +57,14 @@ class LakehouseTree {
    * @param {() => void} [deps.onAsked]  VS Code asked for its top level
    * @param {() => void} [deps.onDrawn]  its top level was just answered, with what it holds
    * @param {() => number} [deps.keepLimitBytes]  how much of the tables in use is kept with nobody asking
+   * @param {() => Promise<string[]>} [deps.internalTables]  system_internal's tables, the lake's metadata, from the engine
    */
   constructor({ onelake, fabric = null, hasFabric = async () => false, isSignedIn, log = () => {},
                 favorites = { get: () => [] }, cachedModel = () => null, unsupportedModel = () => null,
                 queries = { list: async () => [] }, filter = () => null, onAsked = () => {}, onDrawn = () => {},
-                keepLimitBytes = () => 0 }) {
+                keepLimitBytes = () => 0, internalTables = null }) {
     this.keepLimitBytes = keepLimitBytes;
+    this.internalTables = internalTables;
     this.onAsked = onAsked;
     this.onDrawn = onDrawn;
     this.queries = queries;
@@ -262,6 +264,16 @@ class LakehouseTree {
       // one runs whatever the panel has open. A click opens it in the panel's SQL box.
       case 'queries':
         item.iconPath = new vscode.ThemeIcon('bookmark');
+        break;
+      // The lake's metadata: what the engine keeps about the OneLake tables it reads. A click puts a table's
+      // first rows in a tab's SQL box, not run.
+      case 'systemInternal':
+        item.iconPath = new vscode.ThemeIcon('server-environment');
+        item.tooltip = 'What the engine keeps about the OneLake tables it reads: their snapshots, files and columns';
+        break;
+      case 'internalTable':
+        item.iconPath = new vscode.ThemeIcon('table');
+        item.command = { command: 'onelakeStudio.openInternalTable', title: 'Open table', arguments: [n] };
         break;
       // Two views of the engine, each a tab of its own.
       case 'logs':
@@ -465,8 +477,16 @@ class LakehouseTree {
         node('group', 'Favorites', { group: 'favorites', expanded: true, count: favs.length, filter: only, names: shown }),
         node('group', favs.length ? 'Other workspaces' : 'Workspaces',
              { group: 'others', expanded: !favs.length || !!only, count: shown.length - favs.length, filter: only, names: shown }),
+        // After the workspaces, and closed: listing it asks the engine.
+        ...(this.internalTables && !only ? [node('systemInternal', 'system_internal', {})] : []),
         ...this._local(),
       ];
+    }
+
+    if (n.kind === 'systemInternal') {
+      const tables = await this.internalTables();
+      if (!tables.length) return [node('empty', 'Nothing here until a OneLake table is read', { leaf: true })];
+      return tables.map(t => node('internalTable', t, { leaf: true, table: t }));
     }
 
     if (n.kind === 'queries') {

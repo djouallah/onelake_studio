@@ -193,6 +193,11 @@
         "category": "OneLake Studio"
       },
       {
+        "command": "onelakeStudio.openInternalTable",
+        "title": "Open system_internal Table",
+        "category": "OneLake Studio"
+      },
+      {
         "command": "onelakeStudio.renameQuery",
         "title": "Rename Query…",
         "category": "OneLake Studio"
@@ -573,6 +578,10 @@
         },
         {
           "command": "onelakeStudio.openQuery",
+          "when": "false"
+        },
+        {
+          "command": "onelakeStudio.openInternalTable",
           "when": "false"
         },
         {

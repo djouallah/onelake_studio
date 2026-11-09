@@ -116,3 +116,17 @@ test("every filter on offer names something the tree can match", async () => {
   assert.deepEqual(TREE_FILTERS.map(f => f.only),
     ["Lakehouse", "Warehouse", "SQL database", "Mirrored database", "models", "apps"]);
 });
+
+test("system_internal comes after the workspaces, and lists the engine's tables", async () => {
+  const tree = new LakehouseTree({
+    onelake: { workspaces: async () => Object.keys(WORKSPACES), items: listing("items"), onChanged: () => () => {} },
+    isSignedIn: () => true,
+    internalTables: async () => ["ducklake_snapshot", "studio_synced"],
+  });
+  const top = await tree.getChildren();
+  assert.deepEqual(top.map(n => n.label), ["Favorites", "Workspaces", "system_internal", "Queries", "Logs", "Performance"]);
+  const tables = await tree.getChildren(top[2]);
+  assert.deepEqual(tables.map(n => `${n.kind}:${n.table}`), ["internalTable:ducklake_snapshot", "internalTable:studio_synced"]);
+  // A filter shows one type of item, and this is none.
+  assert.ok(!(await treeOf("Lakehouse").getChildren()).some(n => n.kind === "systemInternal"));
+});

@@ -477,6 +477,13 @@ async function activateInner(context) {
     queries: { list: () => listQueries() },
     unsupportedModel: n => unsupportedModels.get(modelKey(n)) || null,
     keepLimitBytes,
+    internalTables: async () => {
+      const { readme } = await webviewRoot(context.extensionUri, { dev: context.extensionMode === vscode.ExtensionMode.Development });
+      const eng = engines.ensureEngine({ readme: readme.fsPath });
+      if (!eng) throw new Error('DuckDB could not be loaded on this platform');
+      const { rows } = await eng.call('query', [`SELECT table_name FROM duckdb_tables() WHERE database_name = 'system_internal' ORDER BY 1`]);
+      return rows.map(r => String(r.table_name));
+    },
     // A listing failure becomes an error NODE, but the stack behind it goes here.
     log: m => out && out.appendLine(m),
   });
@@ -789,6 +796,10 @@ async function activateInner(context) {
     vscode.commands.registerCommand('onelakeStudio.openTable', onClick(n => openInPanel({
       type: 'open-table',
       workspace: n.workspace, item: n.item, schema: n.schema, table: n.table,
+    }))),
+
+    vscode.commands.registerCommand('onelakeStudio.openInternalTable', onClick(n => openInPanel({
+      type: 'query', sql: `SELECT * FROM system_internal.${quoteIdent(n.table)} LIMIT 100`,
     }))),
 
     vscode.commands.registerCommand('onelakeStudio.openFile', onClick(n => openInPanel({
