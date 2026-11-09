@@ -558,7 +558,7 @@ holds those lakehouses, else `--workspace`, and the error names the workspaces w
 A semantic model opens as **Explore** ([`app/explore/`](../app/explore/)), on three pages: Model, Visual and Report
 (Visual is the `pivot` page in the code). It opens on Model. The Fabric app is its Report alone.
 - **The bar** holds the page tabs, then each page's own: Model's Keep offline at the left, its Diagram | YAML and Open in
-  Excel at the right; Visual's Show SQL, Download CSV and Add to report; the Report's Add slicer and Export to Fabric.
+  Excel at the right; Visual's Show SQL, Download CSV and Add to report; the Report's Export to Fabric.
 
 - **Model:** its tables as a star, dimensions in the middle and facts around them, with its
   relationships. Click a table for its columns, measures (with their DAX) and relationships.
@@ -570,6 +570,10 @@ A semantic model opens as **Explore** ([`app/explore/`](../app/explore/)), on th
   - Every view is one `SELECT … FROM <model>` in dax-sql's SQL (`modelSql`): columns, `AGG("measure")`,
     summarised columns and `ROLLUP` totals.
   - **Show SQL** swaps the pivot for that SQL in a box you can edit and run.
+  - **Slicer** is a mark like the others (`slicerView`): the values of the first Rows field, those the query answers
+    (with a measure on Values, only those with a figure, shown beside each; a filter narrows them too), drawn as a list,
+    buttons, a dropdown of the list, or a range for a date or a number, picked by a switch over it (`state.slicer`). On
+    Visual it only shows; on the Report it filters. A table's Visual has no Slicer: it only builds SQL.
   - **Show plan** profiles it (`profile.js`: DuckDB's `EXPLAIN ANALYZE` as totals, a timeline and the
     costly operators) next to its plan tree.
   - **Add to report** puts the view on the Report, as a tile (Report, below).
@@ -580,9 +584,8 @@ A semantic model opens as **Explore** ([`app/explore/`](../app/explore/)), on th
     approved into); else the file Studio keeps for the model until its first export (`<storage>/reports/`, by its
     workspace and name); else none: a Report starts empty. The first export writes Studio's file, or no tiles, into
     the zip, and the file goes.
-  - **Add to report, Add slicer, ✕ and the grip:** Visual's **Add to report** puts the shelves on screen after the
-    tiles, as a `pivot` tile; the Report's **Add slicer** puts a model column there, as a `slicer` tile; a tile's ✕ takes
-    it out, and its grip ⠿ moves it (dragged onto another tile, or by the arrow keys), drawn there at once with nothing run
+  - **Add to report, ✕ and the grip:** Visual's **Add to report** puts the shelves on screen after the tiles, as a
+    `pivot` tile (a slicer too); a tile's ✕ takes it out, and its grip ⠿ moves it (dragged onto another tile, or by the arrow keys), drawn there at once with nothing run
     again. All write where the tiles are kept, one save after another (`reportSave` in
     [`src/exportflow.js`](../src/exportflow.js)), over the tiles they were drawn from: a report that changed since (an
     edit to its file) is refused and drawn again. The Fabric app's Report only reads, so it has neither.
@@ -591,13 +594,13 @@ A semantic model opens as **Explore** ([`app/explore/`](../app/explore/)), on th
     `formats` a column's format string, `echarts` an ECharts option merged over the tile's own. A `pivot` tile is
     `{ title, kind: 'pivot', pivot }`, `pivot` the shelves as Visual keeps them; its SQL is Visual's (`pivotQuery`), and it
     is drawn by Visual's own code (`pivotView` in [`explore.js`](../app/explore/explore.js)), so it keeps every mark. A
-    `slicer` tile is `{ title, kind: 'slicer', column }`, `column` a model column (`"table"."column"`): its values (the
-    first 1,000) to tick. The tiles are drawn in the order they are listed.
+    slicer is a `pivot` tile whose mark is `slicer` (Visual, above). The tiles are drawn in the order they are listed.
   - **Cross filtering:** a click on a bar, a line's point or a table's row picks its first column's value, and every other
     tile runs again with it as a `WHERE` on the model column that first column is (`withFilters`: before `GROUP BY`, ANDed
     to a `WHERE` the tile has, `IS NULL` for a blank, the literal typed by the model's column). A pivot tile picks its
-    first Rows field (else Columns). A slicer's ticked values are its pick, a `WHERE … IN (…)` on every other tile (`IS
-    NULL` for a blank among them); it does not run again when other picks change, as it lists every value. The tile clicked stays whole, its pick bright and the rest dim. The same click
+    first Rows field (else Columns). A slicer's pick is its values, a `WHERE … IN (…)` on every other tile (`IS NULL` for a
+    blank among them), or its range, `>=` and `<=` (a date's last day kept whole); it does not run again when other picks
+    change. The tile clicked stays whole, its pick bright and the rest dim. The same click
     again, or the pick's ✕ in the bar above the tiles, clears it; picks in several tiles all apply. A figures tile takes
     no clicks. `crossFilter` names the model column when the first column is not one, or is `false` for a tile that takes
     none. The tiles still run one at a time, and a pick stops the tile running when it changes it.

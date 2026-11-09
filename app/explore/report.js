@@ -8,10 +8,10 @@
 //   kind 'kpi'    one row: each column a figure
 //   kind 'bar'    the first column across, every other column a series (also 'line')
 //   kind 'table'  the rows as they are
-//   kind 'pivot'  no sql: `pivot` is Pivot's shelves ({ rows, cols, values, filters, mark, totals,
-//                 sort }, as Add to report saves them), drawn as Pivot draws them (explore.js)
-//   kind 'slicer' no sql: `column` is a model column ("table"."column"); its values, ticked,
-//                 filter every other tile to them
+//   kind 'pivot'  no sql: `pivot` is Visual's shelves ({ rows, cols, values, filters, mark, totals,
+//                 sort, slicer }, as Add to report saves them), drawn as Visual draws them
+//                 (explore.js). Its mark 'slicer' is a slicer: what is picked in it (values, or a
+//                 range) filters every other tile, and it does not run again when they change.
 // The tiles are drawn in the order they are listed; a host that saves the Report moves them
 // (`move`) and takes them out (`remove`).
 // `formats`: a column's format string; `echarts` (bar, line): an ECharts option merged over the
@@ -29,11 +29,10 @@ import { sqlStr } from '../paths.js';
 import { el } from './dom.js';
 import { formatValue } from './draw.js';
 import { PALETTE } from './theme.js';
+import { shiftDate } from './draw.js';
 import { autoMark, modelFields, pivotQuery, pivotView } from './explore.js';
 
-const KINDS = new Set(['kpi', 'bar', 'line', 'table', 'pivot', 'slicer']);
-// A slicer's values listed at most, as Pivot's filter lists a column's.
-const SLICER_CAP = 1000;
+const KINDS = new Set(['kpi', 'bar', 'line', 'table', 'pivot']);
 // A chart's other bars and points, while one is picked.
 const DIM = 0.3;
 
@@ -144,9 +143,18 @@ function tokens(sql) {
 const CLAUSES = new Set(['WHERE', 'GROUP', 'HAVING', 'QUALIFY', 'WINDOW', 'ORDER', 'LIMIT', 'OFFSET', 'FETCH']);
 
 // A pick as a condition: { ref, value } is `ref = literal`, or `ref IS NULL` for a blank; a
-// slicer's { ref, values } is `ref IN (…)`, with a blank among them `ref IS NULL OR …`. An empty
-// list is no condition.
+// slicer's { ref, values } is `ref IN (…)`, with a blank among them `ref IS NULL OR …`, and its
+// { ref, range: [lo, hi] } `ref >= lo AND ref <= hi`, either end left out when null: a date's
+// last day is kept whole (`< the day after`), as Visual's own filter keeps it. An empty list is
+// no condition.
 function condition(f) {
+  if (Array.isArray(f.range)) {
+    const [lo, hi] = f.range;
+    const day = f.type === 'dateTime' && hi != null && /^\d{4}-\d{2}-\d{2}/.exec(String(hi));
+    return [lo != null ? `${f.ref} >= ${sqlLiteral(lo, f.type)}` : null,
+      day ? `${f.ref} < ${sqlLiteral(shiftDate(day[0], 1), f.type)}` : hi != null ? `${f.ref} <= ${sqlLiteral(hi, f.type)}` : null]
+      .filter(Boolean).join(' AND ') || null;
+  }
   if (!Array.isArray(f.values)) return f.value == null ? `${f.ref} IS NULL` : `${f.ref} = ${sqlLiteral(f.value, f.type)}`;
   const named = f.values.filter(v => v != null);
   const inList = named.length ? `${f.ref} IN (${named.map(v => sqlLiteral(v, f.type)).join(', ')})` : null;
@@ -216,13 +224,14 @@ export function drawReport(root, spec, ctx) {
     if (tile?.kind === 'pivot' && fields) try { piv = pivotQuery(tile.pivot, fields); } catch (_) { /* drawPivot says */ }
     const mark = piv && (piv.state.mark === 'auto' ? autoMark(piv.state, fields) : piv.state.mark);
     // A pivot's chart of several measures is a plot each, one above the other: taller.
-    const plots = piv && mark !== 'heatmap' && mark !== 'scatter' ? Math.min(piv.state.values.length, 4) : 1;
+    const plots = piv && mark !== 'heatmap' && mark !== 'scatter' && mark !== 'slicer' ? Math.min(piv.state.values.length, 4) : 1;
     const wide = tile.wide ?? (tile.kind === 'kpi' || tile.kind === 'table' || mark === 'table' || mark === 'highlight' || mark === 'heatmap');
     const title = String(tile.title ?? '');
     const job = { tile, body, piv, on: pickColumn(tile, piv), dirty: true, asking: false, chart: null, box: null, repaint: null };
     const grip = ctx.move ? el('button', { type: 'button', class: 'rp-grip', title: 'Drag to move, or move with the arrow keys',
       'aria-label': `Move ${title || 'this tile'}`, onkeydown: e => keyMove(e, job) }, '⠿') : null;
-    job.section = el('section', { class: `rp-tile${wide ? ' wide' : ''}${tile.kind === 'slicer' ? ' rp-slicer-tile' : ''}` },
+    job.slicer = mark === 'slicer';
+    job.section = el('section', { class: `rp-tile${wide ? ' wide' : ''}${job.slicer ? ' rp-slicer-tile' : ''}` },
       el('div', { class: 'rp-head' }, grip, el('h2', {}, title),
         ctx.remove ? el('button', { type: 'button', class: 'rp-remove', title: 'Remove from the report',
           'aria-label': `Remove ${title || 'this tile'} from the report`, onclick: () => ctx.remove(jobs.indexOf(job)) }, '✕') : null),
@@ -238,13 +247,12 @@ export function drawReport(root, spec, ctx) {
   function pickColumn(tile, piv) {
     if (tile.kind === 'kpi' || tile.crossFilter === false) return null;
     const c = tile.kind === 'pivot' ? piv?.field
-      : tile.kind === 'slicer' ? columnOf(tile.column)
       : typeof tile.crossFilter === 'string' ? columnOf(tile.crossFilter) : firstColumn(tile.sql);
     return c && { ...c, type: ctx.columnType?.(c.table, c.column) };
   }
   // The picks of every other tile, as withFilters takes them.
   const filtersFor = job => [...picks].filter(([j]) => j !== job)
-    .map(([j, p]) => ({ ref: j.on.ref, type: j.on.type, ...(p.values ? { values: p.values } : { value: p.value }) }));
+    .map(([j, p]) => ({ ref: j.on.ref, type: j.on.type, ...(p.values ? { values: p.values } : p.range ? { range: p.range } : { value: p.value }) }));
 
   // --- Moving a tile: its grip dragged onto another tile, or its arrow keys ---
   let dragging = null;
@@ -345,11 +353,11 @@ export function drawReport(root, spec, ctx) {
     else picks.set(job, { field, value, label });
     changed(job);
   }
-  // A slicer lists every value of its column whatever is picked, so it does not run again.
+  // A slicer keeps the values it was drawn with whatever is picked, so it does not run again.
   function changed(job) {
     drawChips();
     job.repaint?.();
-    for (const j of jobs) if (j !== job && j.tile.kind !== 'slicer') { j.dirty = true; say(j, 'Waiting…'); }
+    for (const j of jobs) if (j !== job && !j.slicer) { j.dirty = true; say(j, 'Waiting…'); }
     // Stopped only while its query runs: once answered, its drawing is dropped (drawTile).
     if (running && running !== job && running.asking && running.dirty) ctx.cancel?.();
     pump();
@@ -359,7 +367,7 @@ export function drawReport(root, spec, ctx) {
   function drawChips() {
     chips.hidden = !picks.size;
     chips.replaceChildren(...(picks.size ? [el('span', { class: 'rp-filters-say' }, 'Filtered by:')] : []), ...[...picks].map(([job, p]) => {
-      const text = p.values ? `${p.field}: ${p.label}` : `${p.field} = ${p.value == null || p.label === '' ? '(blank)' : p.label}`;
+      const text = p.values || p.range ? `${p.field}: ${p.label}` : `${p.field} = ${p.value == null || p.label === '' ? '(blank)' : p.label}`;
       return el('span', { class: 'rp-chip' }, el('span', {}, text),
         el('button', { type: 'button', class: 'rp-x', title: 'Clear this filter', 'aria-label': `Clear ${text}`,
           onclick: () => { picks.delete(job); changed(job); } }, '✕'));
@@ -368,9 +376,8 @@ export function drawReport(root, spec, ctx) {
 
   async function drawTile(job) {
     const { tile, body } = job;
-    if (!KINDS.has(tile.kind)) throw new Error(`a tile's kind is kpi, bar, line, table, pivot or slicer, not ${JSON.stringify(tile.kind)}`);
+    if (!KINDS.has(tile.kind)) throw new Error(`a tile's kind is kpi, bar, line, table or pivot, not ${JSON.stringify(tile.kind)}`);
     if (tile.kind === 'pivot') return drawPivot(job);
-    if (tile.kind === 'slicer') return drawSlicer(job);
     if (typeof tile.sql !== 'string' || !tile.sql.trim()) throw new Error('the tile has no sql');
     if (tile.crossFilter != null && tile.crossFilter !== false && !(typeof tile.crossFilter === 'string' && columnOf(tile.crossFilter))) {
       throw new Error(`a tile's crossFilter is a model column ("table"."column") or false, not ${JSON.stringify(tile.crossFilter)}`);
@@ -460,7 +467,17 @@ export function drawReport(root, spec, ctx) {
       const p = picks.get(job);
       return { on: key => pick(job, job.on.column, key[0], key[0] == null ? '' : String(key[0])), active: !!p, value: p?.value };
     };
-    const view = () => pivotView(piv.state, res.rows, piv.state.mark, look, pickOf());
+    // A slicer's pick: its values, or its range; `quiet`, it drew the change itself.
+    const selOf = () => ({ style: piv.state.slicer, ...(picks.get(job) ?? {}), onChange: (next, quiet) => {
+      if (!next && !picks.has(job)) return;
+      if (next) picks.set(job, { field: job.on.column, ...next, label: next.values
+        ? (next.values.length > 2 ? `${next.values.length} values` : next.values.map(v => (v == null ? '(blank)' : String(v))).join(', '))
+        : `${next.range[0] ?? '…'} – ${next.range[1] ?? '…'}` });
+      else picks.delete(job);
+      job.quiet = quiet;
+      changed(job);
+    } });
+    const view = () => pivotView(piv.state, res.rows, piv.state.mark, look, pickOf(), job.slicer ? selOf() : null);
     const first = view();
     // A chart needs ECharts first; a table draws as it is.
     const echarts = first.node ? null : await ctx.echarts();
@@ -480,49 +497,7 @@ export function drawReport(root, spec, ctx) {
       job.chart.setOption({ aria: { enabled: true }, ...v.option }, true);
     };
     paint(first);
-    job.repaint = () => paint(view());
-  }
-
-  // A slicer: its column's values to tick. What is ticked is its pick, { field, values, label },
-  // and every other tile runs again with it; nothing ticked, no filter.
-  async function drawSlicer(job) {
-    const { tile, body } = job;
-    if (!job.on) throw new Error(`a slicer's column is a model column ("table"."column"), not ${JSON.stringify(tile.column)}`);
-    job.asking = true;
-    let res;
-    try { res = await ctx.sql(`SELECT ${job.on.ref} AS "v" FROM model GROUP BY ALL ORDER BY "v" FETCH FIRST ${SLICER_CAP} ROWS WITH TIES`); }
-    finally { job.asking = false; }
-    if (gone) return;
-    clear(job);
-    const values = res.rows.map(r => r.v);
-    const shown = v => (v == null ? '(blank)' : String(v));
-    const ticked = new Set(picks.get(job)?.values ?? []);
-    const find = el('input', { type: 'search', placeholder: 'Search values', 'aria-label': `Search the values of ${tile.title || job.on.column}` });
-    const list = el('div', { class: 'ex-values' });
-    const apply = () => {
-      const vs = values.filter(v => ticked.has(v));
-      if (!vs.length && !picks.has(job)) return;
-      if (vs.length) picks.set(job, { field: job.on.column, values: vs, label: vs.length > 2 ? `${vs.length} values` : vs.map(shown).join(', ') });
-      else picks.delete(job);
-      changed(job);
-    };
-    const draw = () => {
-      const term = find.value.trim().toLowerCase();
-      list.replaceChildren(...values.filter(v => shown(v).toLowerCase().includes(term)).map(v => {
-        const box = el('input', { type: 'checkbox', checked: ticked.has(v) });
-        box.addEventListener('change', () => { if (box.checked) ticked.add(v); else ticked.delete(v); apply(); });
-        return el('label', {}, box, shown(v));
-      }));
-    };
-    find.addEventListener('input', draw);
-    body.replaceChildren(el('div', { class: 'rp-slicer' },
-      el('div', { class: 'rp-slicer-bar' }, find,
-        el('button', { type: 'button', class: 'btn-explore', onclick: () => { ticked.clear(); draw(); apply(); } }, 'Clear')),
-      list,
-      values.length >= SLICER_CAP ? el('p', { class: 'rp-say' }, `first ${SLICER_CAP.toLocaleString()} values`) : null));
-    draw();
-    // Cleared from its chip: the boxes as the pick is.
-    job.repaint = () => { ticked.clear(); for (const v of picks.get(job)?.values ?? []) ticked.add(v); draw(); };
+    job.repaint = () => { if (job.quiet) { job.quiet = false; return; } paint(view()); };
   }
 
   return {

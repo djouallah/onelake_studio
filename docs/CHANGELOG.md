@@ -22,11 +22,13 @@
   at once, nothing runs again, and the filters stay.
 - **Pivot is now Visual**, for a model and for a table: it draws tables and charts alike.
 - **Each page's buttons are in the bar, at the right.** Model has Keep offline, Diagram | YAML and Open in Excel;
-  Visual has Show SQL, Download CSV and Add to report; the Report has Add slicer and Export to Fabric. The model's
+  Visual has Show SQL, Download CSV and Add to report; the Report has Export to Fabric. The model's
   name is no longer repeated at the right of the bar.
-- **Slicers.** **Add slicer** on the Report puts a column of the model there as a list of its values. Tick some, and
-  every other tile shows only those; the filter is listed above the tiles, with a ✕ that clears it. Slicers work in
-  Export to Fabric's app too.
+- **Slicer is a Visual.** Pick Slicer in Visual's marks, with a column on Rows, then Add to report. With a measure on
+  Values it lists only the values that have one, its figure beside each (Year with Revenue: only the years with
+  revenue), and a filter narrows it too. It draws as a list, buttons, a dropdown or, for a date or a number, a range.
+  On the Report, what you pick in it filters every other tile; the filter is listed above the tiles, with a ✕ that
+  clears it. Slicers work in Export to Fabric's app too.
 - **A click in the Report filters its other tiles.** Click a bar, a line's point or a table's row, and every other tile
   runs again for that value; the tile you clicked keeps all its bars, with yours bright. A bar above the tiles lists
   each filter, with a ✕ to clear it, and clicking the same bar again clears it too. Filters from several tiles all

@@ -129,7 +129,7 @@ export async function seedAccount({ dataDir, home }) {
     { title: "Totals", kind: "kpi", sql: 'SELECT AGG("Total") AS "Total" FROM model' },
     { title: "Total by Color", kind: "bar", sql: 'SELECT "Product"."Color" AS "Color", AGG("Total") AS "Total" FROM model GROUP BY ALL ORDER BY "Total" DESC' },
     { title: "Total by Color", kind: "pivot", pivot: { rows: ["Product.Color"], values: ["Total"], mark: "stacked" } },
-    { title: "Color", kind: "slicer", column: '"Product"."Color"' },
+    { title: "Color", kind: "pivot", pivot: { rows: ["Product.Color"], values: ["Total"], mark: "slicer", slicer: "list" } },
     { title: "Colors", kind: "table", sql: `SELECT 'Red' AS "Color", 3 AS "Total" FROM model`,
                                         crossFilter: '"Product"."Color"' }];
   await writeApp(report, new Map([["site/report.json", Buffer.from(JSON.stringify({ tiles }))]]), { e2e: true });

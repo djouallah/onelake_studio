@@ -11,20 +11,20 @@
 //             (a host that saves the Report) puts the visual on the Report as a tile.
 //   Report    tiles the host reads (ctx.report: Export to Fabric's report.json, or the file the
 //             host keeps before an export; none at first), each a SELECT over the model or
-//             a pivot or a slicer, drawn by report.js; a ✕ takes one out, its grip moves it, and
-//             Add slicer puts a column's values on it to tick (a host that saves the Report)
+//             a visual (a slicer among them), drawn by report.js; a ✕ takes one out and its grip
+//             moves it (a host that saves the Report)
 // Model's Diagram | YAML (or BIM) shows the model drawn, or its file as written (pretty.js).
 // The bar: the page tabs, then each page's own: Model's Keep offline, then Diagram | YAML and Open
-// in Excel at the right; Visual's Show SQL, Download CSV and Add to report; the Report's Add slicer
-// and Export to Fabric, which publishes the Report as a Fabric app.
+// in Excel at the right; Visual's Show SQL, Download CSV and Add to report; the Report's Export to
+// Fabric, which publishes the Report as a Fabric app.
 // The same file in the panel and in Export to Fabric's app: the host says how a model's SQL is compiled
 // and run, and where ECharts comes from (`ctx`); nothing here knows the engine.
 // =============================================================================
 
-import { escapeHtml, toCsv, quoteIdent } from '../paths.js';
+import { escapeHtml, toCsv } from '../paths.js';
 import { renderModel } from './model.js';
 import { el } from './dom.js';
-import { createExplorer, modelFields, pivotTitle } from './explore.js';
+import { createExplorer, pivotTitle } from './explore.js';
 import { compileModelSql } from './query.js';
 import { createPlanView, profileSql, elapsed, profileColors } from './profile.js';
 import { PALETTE, registerChartTheme } from './theme.js';
@@ -185,9 +185,7 @@ export function mountExplore(root, ctx) {
   // Each page's buttons, at the right of the bar: Visual's, the Report's, the Model's.
   const actions = el('div', { class: 'explore-actions', hidden: true },
     ...(editBtn ? [editBtn, closeBtn] : [sqlToggle, csvBtn, addBtn]));
-  const slicerBtn = ctx.report?.save ? btn('Add slicer', () => (slicerPop ? closeSlicerPop() : openSlicerPop())) : null;
-  if (slicerBtn) slicerBtn.title = "A model column's values on the Report, to tick: every other tile shows only those";
-  const reportActions = slicerBtn || exportBtn ? el('div', { class: 'explore-actions', hidden: true }, slicerBtn, exportBtn) : null;
+  const reportActions = exportBtn ? el('div', { class: 'explore-actions', hidden: true }, exportBtn) : null;
   const reportPage = el('div', { class: 'report-page', hidden: true });
   const modelPage = el('div', { class: 'model-page' });
   const pivotPage = el('div', { class: 'explore-page', hidden: true });
@@ -275,7 +273,6 @@ export function mountExplore(root, ctx) {
     pivotPage.hidden = p !== 'pivot' || sqlMode;
     actions.hidden = p !== 'pivot';
     if (reportActions) reportActions.hidden = p !== 'report';
-    if (p !== 'report') closeSlicerPop();
     if (p === 'pivot') openExplorer();
   }
 
@@ -379,54 +376,6 @@ export function mountExplore(root, ctx) {
     if (page === 'report') drawReportPage(); else reportChanged = true;
     return `Added "${title}" to the report.`;
   });
-  // Add slicer: a column of the model, picked in a small window under the button, as a slicer
-  // tile after the Report's own.
-  let slicerPop = null, slicerTimer = 0;
-  function closeSlicerPop() {
-    clearTimeout(slicerTimer);
-    slicerPop?.remove(); slicerPop = null;
-    document.removeEventListener('pointerdown', outsideSlicer, true);
-  }
-  function outsideSlicer(e) { if (slicerPop && !slicerPop.contains(e.target) && !slicerBtn.contains(e.target)) closeSlicerPop(); }
-  function openSlicerPop() {
-    const { tables } = modelFields(ctx.tmsl ?? {});
-    const find = el('input', { type: 'search', placeholder: 'Search columns', 'aria-label': 'Search columns' });
-    const list = el('div', { class: 'slicer-columns' });
-    const fill = () => {
-      const term = find.value.trim().toLowerCase();
-      const groups = tables.map(t => {
-        const cols = t.columns.filter(c => !c.derived && (!term || `${t.name} ${c.name}`.toLowerCase().includes(term)));
-        return cols.length ? el('div', { class: 'slicer-table' }, el('div', { class: 'slicer-table-name' }, t.name),
-          cols.map(c => el('button', { type: 'button', class: 'slicer-column', title: c.id, onclick: () => addSlicer(c) }, c.name))) : null;
-      }).filter(Boolean);
-      list.replaceChildren(...(groups.length ? groups : [el('div', { class: 'ex-hint' }, 'No column matches.')]));
-    };
-    find.addEventListener('input', fill);
-    slicerPop = el('div', { class: 'ex-pop slicer-pop', role: 'dialog', 'aria-label': 'Add a slicer' },
-      el('div', { class: 'ex-pop-head' }, 'Add a slicer'), el('div', { class: 'ex-pop-body' }, find, list));
-    slicerPop.addEventListener('keydown', e => { if (e.key === 'Escape') { closeSlicerPop(); slicerBtn.focus(); } });
-    fill();
-    document.body.append(slicerPop);
-    // Under the button, its right edges lined up, and kept on screen.
-    const r = slicerBtn.getBoundingClientRect();
-    slicerPop.style.left = `${Math.max(8, Math.min(r.right - slicerPop.offsetWidth, innerWidth - slicerPop.offsetWidth - 8))}px`;
-    slicerPop.style.top = `${Math.max(8, Math.min(r.bottom + 6, innerHeight - slicerPop.offsetHeight - 8))}px`;
-    find.focus();
-    slicerTimer = setTimeout(() => document.addEventListener('pointerdown', outsideSlicer, true));
-  }
-  const addSlicer = c => {
-    closeSlicerPop();
-    return inTurn(async () => {
-      try {
-        await saveReport(spec => ({ ...spec, tiles: [...spec.tiles,
-          { title: c.name, kind: 'slicer', column: `${quoteIdent(c.table)}.${quoteIdent(c.name)}` }] }));
-        setStatus(`Added a slicer on ${c.name} to the report.`, 'ok');
-      } catch (e) {
-        setStatus(`Add slicer: ${e.message}`, 'error');
-      }
-      if (!destroyed) drawReportPage();
-    });
-  };
   // While the Report is on screen, its file is looked at every few seconds (ctx.report.stamp):
   // an edit to it, by a person or an agent, is drawn without a click.
   function watchReport(on) {
@@ -514,6 +463,8 @@ export function mountExplore(root, ctx) {
     }
     if (explorer || destroyed) return;
     explorer = createExplorer(pivotPage, {
+      // A table's Visual only builds SQL: no slicer there.
+      noSlicer: !!ctx.editSql,
       model: async () => ctx.tmsl,
       name: ctx.name,
       run: async text => (await run(compile(text))).rows,
@@ -739,7 +690,6 @@ export function mountExplore(root, ctx) {
       for (const c of charts.values()) c.dispose();
       charts.clear();
       closeExport();
-      closeSlicerPop();
       document.querySelectorAll('.ex-pop').forEach(p => p.remove());
       root.replaceChildren();
     },

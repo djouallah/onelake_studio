@@ -27,7 +27,9 @@ const ROW_TOTAL = '__rows_total', COL_TOTAL = '__columns_total';
 const TYPES = { string: 'text', int64: 'number', double: 'number', decimal: 'number', dateTime: 'date', boolean: 'bool' };
 const ICONS = { text: 'Abc', number: '#', date: '▦', bool: '◐', measure: 'Σ' };
 const MARKS = [['auto', 'Automatic'], ['table', 'Table'], ['highlight', 'Highlight'], ['bar', 'Bar'], ['stacked', 'Stacked'],
-  ['line', 'Line'], ['area', 'Area'], ['heatmap', 'Heatmap'], ['scatter', 'Scatter']];
+  ['line', 'Line'], ['area', 'Area'], ['heatmap', 'Heatmap'], ['scatter', 'Scatter'], ['slicer', 'Slicer']];
+// How a slicer is drawn (slicerView); Range only for a date or a number.
+const SLICER_STYLES = [['list', 'List'], ['buttons', 'Buttons'], ['dropdown', 'Dropdown'], ['range', 'Range']];
 const SHELVES = [['rows', 'Rows'], ['cols', 'Columns'], ['values', 'Values'], ['filters', 'Filters']];
 // A column on Values is summarised, as Power BI does it: a number summed, anything else
 // counted; its chip changes the summary. On the shelf it is "\0sum\0Table.Column".
@@ -43,7 +45,7 @@ export const aggOf = id => { const m = /^\u0000(\w+)\u0000([\s\S]+)$/.exec(id); 
 const defaultAgg = f => f.type === 'number' ? 'sum' : 'count';
 // Totals are off until asked for. `v` 2: shelves saved before that kept totals on by
 // default, so their `totals` is not read back.
-const EMPTY = () => ({ v: 2, rows: [], cols: [], values: [], filters: [], mark: 'auto', totals: false, sort: 'fields' });
+const EMPTY = () => ({ v: 2, rows: [], cols: [], values: [], filters: [], mark: 'auto', totals: false, sort: 'fields', slicer: 'list' });
 
 // =============================================================================
 // The model's fields, the query, the pivot: no DOM
@@ -271,6 +273,8 @@ export function pivotQuery(saved, fields) {
 /** What a Report's tile of these shelves is called: its values by its rows and columns. */
 export function pivotTitle(s) {
   const names = ids => ids.map(nameOf).join(', ');
+  // A slicer is named for what it slices.
+  if (s.mark === 'slicer' && (s.rows[0] ?? s.cols[0])) return nameOf(s.rows[0] ?? s.cols[0]);
   const dims = [...s.rows, ...s.cols];
   return s.values.length && dims.length ? `${names(s.values)} by ${names(dims)}` : names(s.values.length ? s.values : dims);
 }
@@ -283,16 +287,109 @@ const same = (a, b) => (a ?? null) === (b ?? null);
  * The rows of the shelves' query drawn as `mark` says ('auto': autoMark's), the Pivot page's
  * and a Report's tile's alike: { node }, a table or why there is none, or { option, keyAt }, an
  * ECharts option and the row key of a click on it (null: none). `s`: the shelves the rows are
- * of; `look`: { fields, palette, css }. `pick` (a Report's tile): { on(key), active, value } —
- * what a click on a row key calls, and the first field's value picked: its row bright, the
- * others dim.
+ * of; `look`: { fields, palette, css, styles? }. `pick` (a Report's tile): { on(key), active,
+ * value } — what a click on a row key calls, and the first field's value picked: its row bright,
+ * the others dim. `sel`: a slicer's (slicerView).
  */
-export function pivotView(s, rows, mark, look, pick = null) {
+export function pivotView(s, rows, mark, look, pick = null, sel = null) {
   const shown = mark === 'auto' ? autoMark(s, look.fields) : mark;
+  if (shown === 'slicer') return { node: slicerView(s, rows, look, sel ?? { style: s.slicer, onChange() {} }) };
   const piv = pivot(rows, s);
   if (shown === 'table' || shown === 'highlight' || !s.values.length) return { node: pivotTable(s, piv, shown === 'highlight', look, pick) };
   const out = pivotChart(s, piv, shown, look, pick);
   return typeof out === 'string' ? { node: el('div', { class: 'ex-empty' }, out) } : out;
+}
+
+// A slicer: the values of the first Rows field (else Columns) as the rows have them, in the query's
+// order, each with the first measure's figure (a value with none is not in the rows), drawn as
+// `sel.style` says: a list to tick, buttons, a dropdown of the list, or a range for a date or a
+// number. `sel`: { style, values, range, onChange(next, quiet) }, `next` { values } or { range:
+// [lo, hi] } (null: nothing picked); `quiet`: the slicer has drawn the change itself. A Report's
+// tile filters by it; the Visual page's only shows it. `look.styles` ({ value, set(style) }, the
+// Visual page): a switch of the styles over it.
+function slicerView(s, rows, look, sel) {
+  const id = s.rows[0] ?? s.cols[0];
+  const field = id && look.fields.byId.get(id);
+  if (!field) return el('div', { class: 'ex-empty' }, 'A slicer needs a column on Rows.');
+  const name = nameOf(id), m = s.values[0];
+  const fmt = v => formatValue(v, shelfField(look.fields, m)?.format);
+  const figures = new Map();
+  for (const r of rows) if (!r[ROW_TOTAL] && !r[COL_TOTAL] && !figures.has(r[name])) figures.set(r[name], m ? r[nameOf(m)] : null);
+  const values = [...figures.keys()];
+  const shown = v => (v == null ? '(blank)' : String(v));
+  const ranged = field.type === 'date' || field.type === 'number';
+  const style = SLICER_STYLES.some(([k]) => k === sel.style) && (sel.style !== 'range' || ranged) ? sel.style : 'list';
+  const ticked = new Set(sel.values ?? []);
+  const commit = () => { const vs = values.filter(v => ticked.has(v)); sel.onChange(vs.length ? { values: vs } : null, true); };
+
+  // The list, with a search and Clear; `after` once a box changes (the dropdown's summary).
+  function listOf(after = () => {}) {
+    const find = el('input', { type: 'search', placeholder: 'Search values', 'aria-label': `Search the values of ${name}` });
+    const list = el('div', { class: 'ex-values' });
+    const draw = () => {
+      const term = find.value.trim().toLowerCase();
+      list.replaceChildren(...values.filter(v => shown(v).toLowerCase().includes(term)).map(v => {
+        const box = el('input', { type: 'checkbox', checked: ticked.has(v) });
+        box.addEventListener('change', () => { if (box.checked) ticked.add(v); else ticked.delete(v); commit(); after(); });
+        return el('label', {}, box, el('span', { class: 'slicer-value' }, shown(v)), m ? el('span', { class: 'slicer-figure' }, fmt(figures.get(v))) : null);
+      }));
+    };
+    find.addEventListener('input', draw);
+    draw();
+    const clear = el('button', { type: 'button', class: 'btn-explore', onclick: () => { ticked.clear(); draw(); commit(); after(); } }, 'Clear');
+    return el('div', { class: 'rp-slicer' }, el('div', { class: 'rp-slicer-bar' }, find, clear), list);
+  }
+  function buttons() {
+    const pills = values.map(v => {
+      const b = el('button', { type: 'button', class: 'slicer-pill', 'aria-pressed': String(ticked.has(v)) }, shown(v));
+      b.addEventListener('click', () => { if (ticked.has(v)) ticked.delete(v); else ticked.add(v); b.setAttribute('aria-pressed', String(ticked.has(v))); commit(); });
+      return b;
+    });
+    const clear = el('button', { type: 'button', class: 'btn-explore', onclick: () => {
+      ticked.clear(); for (const b of pills) b.setAttribute('aria-pressed', 'false'); commit(); } }, 'Clear');
+    return el('div', { class: 'slicer-pills' }, pills, clear);
+  }
+  // A button that says what is picked, opening the list in a small window under it.
+  function dropdown() {
+    const say = () => `${name}: ${!ticked.size ? 'All' : ticked.size === 1 ? shown([...ticked][0]) : `${ticked.size} selected`} ▾`;
+    const b = el('button', { type: 'button', class: 'slicer-drop', 'aria-haspopup': 'dialog' }, say());
+    let pop = null;
+    const close = () => { pop?.remove(); pop = null; document.removeEventListener('pointerdown', outside, true); };
+    const outside = e => { if (pop && !pop.contains(e.target) && !b.contains(e.target)) close(); };
+    b.addEventListener('click', () => {
+      if (pop) { close(); return; }
+      pop = el('div', { class: 'ex-pop slicer-drop-pop', role: 'dialog', 'aria-label': name }, listOf(() => { b.textContent = say(); }));
+      pop.addEventListener('keydown', e => { if (e.key === 'Escape') { close(); b.focus(); } });
+      document.body.append(pop);
+      const r = b.getBoundingClientRect();
+      pop.style.left = `${Math.max(8, Math.min(r.left, innerWidth - pop.offsetWidth - 8))}px`;
+      pop.style.top = `${Math.max(8, Math.min(r.bottom + 6, innerHeight - pop.offsetHeight - 8))}px`;
+      pop.querySelector('input')?.focus();
+      setTimeout(() => { if (pop) document.addEventListener('pointerdown', outside, true); });
+    });
+    return el('div', { class: 'slicer-dropdown' }, b);
+  }
+  // From and To, each optional: a date's or a number's own input, the values' ends as hints.
+  function range() {
+    const type = field.type === 'date' ? 'date' : 'number';
+    const ends = values.filter(v => v != null).map(v => (type === 'date' ? String(v).slice(0, 10) : v));
+    const hint = i => (ends.length ? String(i ? ends.reduce((a, b) => (b > a ? b : a)) : ends.reduce((a, b) => (b < a ? b : a))) : '');
+    const box = i => el('input', { type, step: 'any', value: sel.range?.[i] ?? '', placeholder: hint(i), 'aria-label': `${name} ${i ? 'to' : 'from'}` });
+    const from = box(0), to = box(1);
+    const read = x => (x.value === '' ? null : type === 'number' ? Number(x.value) : x.value);
+    const send = () => { const r = [read(from), read(to)]; sel.onChange(r[0] == null && r[1] == null ? null : { range: r }, true); };
+    for (const x of [from, to]) x.addEventListener('change', send);
+    const clear = el('button', { type: 'button', class: 'btn-explore', onclick: () => { from.value = ''; to.value = ''; send(); } }, 'Clear');
+    return el('div', { class: 'rp-slicer slicer-range' }, el('label', {}, 'From', from), el('label', {}, 'To', to), clear);
+  }
+
+  const body = style === 'buttons' ? buttons() : style === 'dropdown' ? dropdown() : style === 'range' ? range() : listOf();
+  if (!look.styles) return body;
+  const switcher = el('div', { class: 'subtabs slicer-styles', role: 'radiogroup', 'aria-label': 'Slicer style' },
+    SLICER_STYLES.map(([k, t]) => el('button', { type: 'button', class: `subtab${k === style ? ' active' : ''}`, role: 'radio',
+      'aria-checked': String(k === style), disabled: k === 'range' && !ranged, title: k === 'range' && !ranged ? 'For a date or a number column' : null,
+      onclick: () => look.styles.set(k) }, t)));
+  return el('div', { class: 'slicer-view' }, switcher, body);
 }
 
 // A key not picked, while a pick is on.
@@ -477,8 +574,11 @@ function pivotChart(s, piv, mark, { fields, palette, css }, pick) {
 //   css(name)        a CSS token's value (the chart's tints)
 //   loadState()      the shelves kept from the last visit (or null)
 //   saveState(s)     keep the shelves for the next visit
+//   noSlicer         (optional) no Slicer mark (a table's Visual, which only builds SQL)
 export function createExplorer(root, ctx) {
   let fields = null, state = load(), drag = null, seq = 0, timer = null, result = null, pop = null;
+  // What the Visual page's slicer has picked: shown only, nothing filters here.
+  let preview = null;
   let popTimer = null, destroyed = false;
   // A column's values, as a filter lists them to tick: the same query whatever else is on
   // the shelves, and the model is read only — asked once per field for the explorer's life.
@@ -528,6 +628,7 @@ export function createExplorer(root, ctx) {
   totals.addEventListener('change', () => { state.totals = totals.checked; changed(); });
   sort.addEventListener('change', () => { state.sort = sort.value; changed(); });
   for (const [k, m] of MARKS) {
+    if (k === 'slicer' && ctx.noSlicer) continue;
     marks.append(el('button', { type: 'button', class: 'ex-mark', 'data-mark': k,
       onclick: () => { state.mark = k; save(); renderControls(); draw(); } }, m));
   }
@@ -912,7 +1013,10 @@ export function createExplorer(root, ctx) {
           ? 'Drag columns onto Rows and Columns and measures onto Values, or click a field to add it. By keyboard: R, C, F or V on a field.' : 'Reading the model…'));
       return;
     }
-    const view = pivotView(result.state, result.rows, state.mark, { fields, palette: ctx.palette(), css: ctx.css });
+    const look = { fields, palette: ctx.palette(), css: ctx.css,
+      styles: { value: state.slicer, set: k => { state.slicer = k; save(); draw(); } } };
+    const view = pivotView(result.state, result.rows, state.mark, look, null,
+      { style: state.slicer, ...preview, onChange: (next, quiet) => { preview = next; if (!quiet) draw(); } });
     if (view.node) {
       chartBox.hidden = true;
       table.hidden = false;

@@ -164,3 +164,24 @@ test("a chart of one measure draws no title over its plot; one of several, a tit
   const two = pivotQuery({ rows: ["dim_zone.Borough"], values: ["Total Fare", "\0sum\0trips.fare"], mark: "line" }, fields).state;
   assert.deepEqual(pivotView(two, rows, "line", look).option.title.map(t => t.text), ["Total Fare", "Sum of fare"]);
 });
+
+test("a slicer's range: both ends, one end, a date's last day kept whole", () => {
+  const sql = 'SELECT AGG("Total Fare") AS "Total Fare" FROM model';
+  const date = '"dim_date"."Date"', year = '"dim_date"."Year"';
+  assert.equal(withFilters(sql, [{ ref: year, range: [2021, 2023], type: "int64" }]), `${sql} WHERE ${year} >= 2021 AND ${year} <= 2023`);
+  assert.equal(withFilters(sql, [{ ref: year, range: [2021, null], type: "int64" }]), `${sql} WHERE ${year} >= 2021`);
+  assert.equal(withFilters(sql, [{ ref: date, range: [null, "2023-12-31"], type: "dateTime" }]), `${sql} WHERE ${date} < DATE '2024-01-01'`);
+  assert.equal(withFilters(sql, [{ ref: date, range: ["2021-01-01", "2021-01-31"], type: "dateTime" }]),
+               `${sql} WHERE ${date} >= DATE '2021-01-01' AND ${date} < DATE '2021-02-01'`);
+  assert.equal(withFilters(sql, [{ ref: year, range: [null, null], type: "int64" }]), sql, "no ends: no filter");
+});
+
+test("a slicer is a Visual: its query lists the values that have the measure, and it is named for its column", () => {
+  const fields = modelFields(MODEL);
+  const { state, sql, field } = pivotQuery({ rows: ["dim_zone.Borough"], values: ["Total Fare"], mark: "slicer", slicer: "buttons" }, fields);
+  assert.equal(sql, PIVOT_SQL);
+  assert.deepEqual(field, { table: "dim_zone", column: "Borough", ref: BOROUGH });
+  assert.equal(state.slicer, "buttons");
+  assert.equal(pivotTitle(state), "Borough");
+  assert.equal(pivotQuery({ rows: ["dim_zone.Borough"], mark: "slicer" }, fields).state.slicer, "list", "List unless picked");
+});

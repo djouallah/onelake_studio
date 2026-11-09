@@ -249,8 +249,10 @@ and a tile's ✕ write it here.
   Visual draws them: \`{ "rows": ["dim_region.Region"], "cols": [], "values": ["Revenue"], "filters": [], "mark": "bar" }\`.
   A column is \`table.column\`, a measure its name; \`mark\` is \`auto\`, \`table\`, \`highlight\`, \`bar\`, \`stacked\`,
   \`line\`, \`area\`, \`heatmap\` or \`scatter\`. A click picks its first Rows field (else Columns).
-- \`slicer\` has no \`sql\`: its \`column\` is a model column, \`"table"."column"\`, and it lists that column's values
-  to tick. What is ticked filters every other tile to those values: \`{ "title": "Color", "kind": "slicer", "column": "\\"Product\\".\\"Color\\"" }\`.
+- A slicer is a \`pivot\` tile whose \`mark\` is \`slicer\`: it lists the values of its first Rows field (those with a
+  figure, when a measure is on Values, which it shows beside each), and what is picked in it filters every other tile.
+  \`"slicer"\` says how it is drawn: \`list\`, \`buttons\`, \`dropdown\`, or \`range\` (a date or a number):
+  \`{ "rows": ["dim_date.Year"], "values": ["Revenue"], "filters": [], "mark": "slicer", "slicer": "buttons" }\`.
 - The tiles are drawn in the order they are listed.
 - \`sql\` is one SELECT over the model, \`FROM model\`: its columns as \`"table"."column"\`, its measures as
   \`AGG("measure")\`, \`GROUP BY ALL\`, \`ORDER BY\`, \`FETCH FIRST n ROWS WITH TIES\`. ${onModel(plan)
