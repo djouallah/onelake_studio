@@ -1,16 +1,18 @@
 # CI for the VS Code extension: what a release ships is built here, once.
 #
-# Every push to main and every pull request runs test, engine and cli-os, then package, so a change is
-# packaged for every platform and checked exactly as a release would be, and the desktop installer
-# built. A change to the website alone (Pages builds it) runs nothing here; docs/CHANGELOG.md is in
+# Every push and pull request runs test, engine and cli-os, then packages win32-x64 (what is installed
+# here to try) and linux-x64 (what the browser test runs), and the browser, standalone and desktop
+# tests: a few minutes. The full build, every platform's package and the desktop installer built,
+# installed and started over the last release, is a manual run (workflow_dispatch, 30 minutes, the
+# installer most of it): the run a release publishes from. A change to the website alone (Pages builds it) runs nothing here; docs/CHANGELOG.md is in
 # the package, so a change to it still does.
 #
 # Release (release.yml): nothing is built again. The version is bumped BEFORE the build, so the
 # vsix that is installed and tried is the one that goes out:
 #   bump "version" in package.json, refresh package-lock.json
 #   (the "Refresh extension lockfile" workflow does it against the public registry), give the
-#   CHANGELOG's Unreleased items that version's heading, commit, push to main: this workflow
-#   builds it. Try that run's vsix. Then  git tag ext-v<that version> && git push origin ext-v<that version>
+#   CHANGELOG's Unreleased items that version's heading, commit, push to main, and run the full
+#   build on it: gh workflow run extension.yml --ref main. Try that run's vsix. Then  git tag ext-v<that version> && git push origin ext-v<that version>
 #   and release.yml publishes this run's packages and installer, found by the tag's commit.
 #
 # PLATFORM-SPECIFIC, and it has to be. DuckDB runs natively in the extension host now:
@@ -201,12 +203,8 @@ jobs:
       # anyway, so cancelling early protects nothing.
       fail-fast: false
       matrix:
-        target:
-          - win32-x64
-          - darwin-x64
-          - darwin-arm64
-          - linux-x64
-          - linux-arm64
+        # A push: what is tried here and what the browser test runs. The full build (workflow_dispatch): every platform.
+        target: ${{ fromJSON(github.event_name == 'workflow_dispatch' && '["win32-x64","darwin-x64","darwin-arm64","linux-x64","linux-arm64"]' || '["win32-x64","linux-x64"]') }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
@@ -468,7 +466,9 @@ jobs:
           node-version: 24
           cache: npm
           cache-dependency-path: package-lock.json
-      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+      # The installer, built, installed and started: the full build only (workflow_dispatch).
+      - if: github.event_name == 'workflow_dispatch'
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: |
             ~/.cargo/registry
@@ -500,13 +500,15 @@ jobs:
           overwrite: true
           retention-days: 14
       - name: Build the installer
+        if: github.event_name == 'workflow_dispatch'
         working-directory: desktop
         # The cached target keeps the last version's installer, under its own name: only this build's goes on.
         run: |
           Remove-Item -Recurse -Force src-tauri/target/release/bundle -ErrorAction SilentlyContinue
           npx --yes @tauri-apps/cli@2.12.4 icon ../media/icon.png
           npx --yes @tauri-apps/cli@2.12.4 build
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+      - if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: onelake-studio-setup
           path: desktop/src-tauri/target/release/bundle/nsis/*.exe
@@ -514,6 +516,7 @@ jobs:
           overwrite: true
           retention-days: 14
       - name: Install it and start it once
+        if: github.event_name == 'workflow_dispatch'
         working-directory: desktop
         run: |
           $setup = Get-Item src-tauri/target/release/bundle/nsis/*.exe
@@ -540,6 +543,7 @@ jobs:
           | Installed | $(& $mb $dir) MB |
           "@ | Out-File -Append $env:GITHUB_STEP_SUMMARY
       - name: Install it over the last release, running
+        if: github.event_name == 'workflow_dispatch'
         # What a user who updates does: the released app is installed and open, and this setup replaces it.
         working-directory: desktop
         run: |

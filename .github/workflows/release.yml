@@ -4,8 +4,9 @@
 #
 #   git tag ext-v<version> && git push origin ext-v<version>
 #
-# on a commit of main whose Extension run is green, and whose package.json says <version> (the
-# version is bumped before that build, not after: see extension.yml). That run's artifacts are
+# on a commit of main whose full Extension run (workflow_dispatch: every platform, and the installer)
+# is green, and whose package.json says <version> (the version is bumped before that build, not
+# after: see extension.yml). A push's run builds two platforms and no installer, so it is not one. That run's artifacts are
 # kept 14 days; past that, run the Extension workflow again on the commit (workflow_dispatch),
 # then push the tag again.
 #
@@ -45,9 +46,9 @@ jobs:
           version=$(gh api "repos/$GITHUB_REPOSITORY/contents/package.json?ref=$GITHUB_SHA" -H "Accept: application/vnd.github.raw" | jq -r .version)
           # --skip-duplicate would make a mismatched tag a silent no-op: re-sending the old version and saying it worked.
           [ "$GITHUB_REF_NAME" = "ext-v$version" ] || { echo "tag $GITHUB_REF_NAME, but package.json says $version"; exit 1; }
-          run=$(gh run list -R "$GITHUB_REPOSITORY" --workflow extension.yml --commit "$GITHUB_SHA" --status success \
+          run=$(gh run list -R "$GITHUB_REPOSITORY" --workflow extension.yml --commit "$GITHUB_SHA" --event workflow_dispatch --status success \
                   --json databaseId -q '.[0].databaseId // empty')
-          [ -n "$run" ] || { echo "no green Extension run for $GITHUB_SHA: push it to main and let it pass, then tag"; exit 1; }
+          [ -n "$run" ] || { echo "no green full Extension run for $GITHUB_SHA: gh workflow run extension.yml --ref main, let it pass, then tag"; exit 1; }
           echo "Publishing what run $run built: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$run" >> "$GITHUB_STEP_SUMMARY"
           echo "run=$run" >> "$GITHUB_OUTPUT"
           echo "version=$version" >> "$GITHUB_OUTPUT"

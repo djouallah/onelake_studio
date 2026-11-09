@@ -14,7 +14,9 @@ locally first. Never install a vsix for ordinary testing.
 1. **Get the build, with its version.** Bump the patch version in `package.json` and
    `package-lock.json`, and give the CHANGELOG's *Unreleased* items that version's heading, before
    anything is built: the release publishes this build as it is and builds nothing. Push to `main`
-   and wait for the green CI run ("Extension"). Download that run's vsix for this machine:
+   and run the full build on it (`gh workflow run extension.yml --ref main`: every platform and the
+   installer; a push builds only win32-x64 and linux-x64). Wait for that run to be green, and
+   download its vsix for this machine:
 
    ```sh
    gh run download <run-id> -n vsix-win32-x64 -D <scratch dir>
