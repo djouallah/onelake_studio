@@ -594,7 +594,10 @@ A semantic model opens as **Explore** ([`app/explore/`](../app/explore/)), on th
     `formats` a column's format string, `echarts` an ECharts option merged over the tile's own. A `pivot` tile is
     `{ title, kind: 'pivot', pivot }`, `pivot` the shelves as Visual keeps them; its SQL is Visual's (`pivotQuery`), and it
     is drawn by Visual's own code (`pivotView` in [`explore.js`](../app/explore/explore.js)), so it keeps every mark. A
-    slicer is a `pivot` tile whose mark is `slicer` (Visual, above). The tiles are drawn in the order they are listed.
+    slicer is a `pivot` tile whose mark is `slicer` (Visual, above). The tiles are drawn in the order they are listed,
+    on 12 columns: `size` (`{ w, h }`, columns and pixels) is what a tile's ◢ was dragged to (or its arrow keys), saved
+    as a move is, with nothing run again; without one a tile is half the width (figures and tables all of it) and as
+    tall as it needs.
   - **Cross filtering:** a click on a bar, a line's point or a table's row picks its first column's value, and every other
     tile runs again with it as a `WHERE` on the model column that first column is (`withFilters`: before `GROUP BY`, ANDed
     to a `WHERE` the tile has, `IS NULL` for a blank, the literal typed by the model's column). A pivot tile picks its

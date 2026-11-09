@@ -317,7 +317,8 @@ export function mountExplore(root, ctx) {
       const saves = !!ctx.report.save;
       reportView = drawReport(reportPage, spec, { sql: reportSql, echarts: reportEcharts, shown: reportShown, leftWhileRunning,
                                                   cancel: ctx.cancel, columnType, model: ctx.tmsl, css,
-                                                  remove: saves ? removeTile : undefined, move: saves ? moveTile : undefined });
+                                                  remove: saves ? removeTile : undefined, move: saves ? moveTile : undefined,
+                                                  resize: saves ? resizeTile : undefined });
     } catch (e) {
       if (my !== reportSeq || destroyed) return;
       reportView?.destroy();
@@ -362,6 +363,15 @@ export function mountExplore(root, ctx) {
       });
     } catch (e) {
       setStatus(`Move: ${e.message}`, 'error');
+      if (!destroyed) drawReportPage();
+    }
+  });
+  // A tile's ◢: resized on screen already (report.js), so only saved, as a move is.
+  const resizeTile = (i, size) => inTurn(async () => {
+    try {
+      await saveReport(spec => ({ ...spec, tiles: spec.tiles.map((t, j) => (j === i ? { ...t, size } : t)) }));
+    } catch (e) {
+      setStatus(`Resize: ${e.message}`, 'error');
       if (!destroyed) drawReportPage();
     }
   });

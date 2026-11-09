@@ -12,8 +12,10 @@
 //                 sort, slicer }, as Add to report saves them), drawn as Visual draws them
 //                 (explore.js). Its mark 'slicer' is a slicer: what is picked in it (values, or a
 //                 range) filters every other tile, and it does not run again when they change.
-// The tiles are drawn in the order they are listed; a host that saves the Report moves them
-// (`move`) and takes them out (`remove`).
+// The tiles are drawn in the order they are listed, on a grid of 12 columns; `size` ({ w, h }: the
+// columns it spans, 1 to 12, and its height in pixels) is what its ◢ was dragged to, else half the
+// width (all of it for figures and tables) and its own height. A host that saves the Report moves
+// them (`move`), resizes them (`resize`) and takes them out (`remove`).
 // `formats`: a column's format string; `echarts` (bar, line): an ECharts option merged over the
 // tile's own. A tile that fails says so in its own box, and the rest still draw.
 // Cross filtering: a click on a bar, a line's point or a table's row picks that row's first value,
@@ -33,6 +35,10 @@ import { shiftDate } from './draw.js';
 import { autoMark, modelFields, pivotQuery, pivotView } from './explore.js';
 
 const KINDS = new Set(['kpi', 'bar', 'line', 'table', 'pivot']);
+// The grid a tile's size is in: columns, and the step and least of a height in pixels.
+const COLUMNS = 12, ROW_STEP = 20, MIN_HEIGHT = 120;
+const clampW = w => Math.max(1, Math.min(COLUMNS, Math.round(w)));
+const clampH = h => Math.max(MIN_HEIGHT, Math.round(h / ROW_STEP) * ROW_STEP);
 // A chart's other bars and points, while one is picked.
 const DIM = 0.3;
 
@@ -197,7 +203,9 @@ const same = (a, b) => (a ?? null) === (b ?? null);
  * that name), for a pick's literal; model, the model (model.js's tmslOf), for pivot tiles; css(name)
  * (optional), a CSS token's value, for a pivot's tints; remove(index) (optional), a ✕ on each tile
  * that takes it out of the report; move(from, to) (optional), a grip on each tile that drags it, or
- * moves it by the arrow keys, to another place, drawn there at once. Returns { destroy }.
+ * moves it by the arrow keys, to another place, drawn there at once; resize(index, size)
+ * (optional), a ◢ on each tile that drags its size ({ w, h }, columns and pixels), or sets it by the
+ * arrow keys. Returns { destroy }.
  * The tiles run one at a time, top to bottom: each is a scan of the model's tables, and the engine
  * gives one query all it has, where several at once share it, keep each other waiting, and keep
  * anything else the tab asks waiting too. A tile waits while the Report is off screen; one stopped
@@ -218,7 +226,7 @@ export function drawReport(root, spec, ctx) {
   // The model's fields, for pivot tiles: read once, when there is one.
   const fields = tiles?.some(t => t?.kind === 'pivot') && ctx.model ? modelFields(ctx.model) : null;
   const jobs = (tiles ?? []).map(tile => {
-    const body = el('div', {}, el('p', { class: 'rp-say' }, 'Waiting…'));
+    const body = el('div', { class: 'rp-body' }, el('p', { class: 'rp-say' }, 'Waiting…'));
     // A pivot tile's shelves and query; a broken one says why when it runs (drawPivot).
     let piv = null;
     if (tile?.kind === 'pivot' && fields) try { piv = pivotQuery(tile.pivot, fields); } catch (_) { /* drawPivot says */ }
@@ -231,11 +239,15 @@ export function drawReport(root, spec, ctx) {
     const grip = ctx.move ? el('button', { type: 'button', class: 'rp-grip', title: 'Drag to move, or move with the arrow keys',
       'aria-label': `Move ${title || 'this tile'}`, onkeydown: e => keyMove(e, job) }, '⠿') : null;
     job.slicer = mark === 'slicer';
-    job.section = el('section', { class: `rp-tile${wide ? ' wide' : ''}${job.slicer ? ' rp-slicer-tile' : ''}` },
+    job.size = { w: clampW(tile.size?.w ?? (wide ? COLUMNS : COLUMNS / 2)), h: tile.size?.h > 0 ? clampH(tile.size.h) : null };
+    job.section = el('section', { class: `rp-tile${job.slicer ? ' rp-slicer-tile' : ''}` },
       el('div', { class: 'rp-head' }, grip, el('h2', {}, title),
         ctx.remove ? el('button', { type: 'button', class: 'rp-remove', title: 'Remove from the report',
           'aria-label': `Remove ${title || 'this tile'} from the report`, onclick: () => ctx.remove(jobs.indexOf(job)) }, '✕') : null),
-      body);
+      body,
+      ctx.resize ? el('button', { type: 'button', class: 'rp-resize', title: 'Drag to resize, or resize with the arrow keys',
+        'aria-label': `Resize ${title || 'this tile'}`, onpointerdown: e => resizeFrom(e, job), onkeydown: e => keyResize(e, job) }, '◢') : null);
+    sized(job);
     if (grip) draggable(job, grip);
     grid.append(job.section);
     job.plots = plots;
@@ -253,6 +265,54 @@ export function drawReport(root, spec, ctx) {
   // The picks of every other tile, as withFilters takes them.
   const filtersFor = job => [...picks].filter(([j]) => j !== job)
     .map(([j, p]) => ({ ref: j.on.ref, type: j.on.type, ...(p.values ? { values: p.values } : p.range ? { range: p.range } : { value: p.value }) }));
+
+  // --- A tile's size: its columns and its height, its ◢ dragged or its arrow keys ---
+  function sized(job) {
+    const s = job.section;
+    s.style.gridColumn = `span ${job.size.w}`;
+    s.style.height = job.size.h ? `${job.size.h}px` : '';
+    s.classList.toggle('wide', job.size.w === COLUMNS);
+    s.classList.toggle('rp-sized', !!job.size.h);
+  }
+  // The columns a width in pixels spans, on the grid as it is drawn now.
+  function columnsOf(px) {
+    const cs = getComputedStyle(grid);
+    const gap = parseFloat(cs.columnGap) || 0;
+    const inner = grid.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+    return clampW((px + gap) / ((inner + gap) / COLUMNS));
+  }
+  function resizeFrom(e, job) {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    const handle = e.currentTarget, s = job.section;
+    const top = s.getBoundingClientRect(), was = { ...job.size };
+    handle.setPointerCapture(e.pointerId);
+    s.classList.add('rp-resizing');
+    const move = m => {
+      job.size = { w: columnsOf(m.clientX - top.left), h: clampH(m.clientY - top.top) };
+      sized(job);
+    };
+    const done = () => {
+      handle.removeEventListener('pointermove', move);
+      handle.removeEventListener('pointerup', done);
+      handle.removeEventListener('pointercancel', done);
+      s.classList.remove('rp-resizing');
+      if (job.size.w !== was.w || job.size.h !== was.h) ctx.resize(jobs.indexOf(job), { ...job.size });
+    };
+    handle.addEventListener('pointermove', move);
+    handle.addEventListener('pointerup', done);
+    handle.addEventListener('pointercancel', done);
+  }
+  // ← → a column narrower or wider, ↑ ↓ a step shorter or taller.
+  function keyResize(e, job) {
+    const dw = { ArrowLeft: -1, ArrowRight: 1 }[e.key] ?? 0, dh = { ArrowUp: -1, ArrowDown: 1 }[e.key] ?? 0;
+    if (!dw && !dh) return;
+    e.preventDefault();
+    const h = job.size.h ?? job.section.getBoundingClientRect().height;
+    job.size = { w: clampW(job.size.w + dw), h: dh ? clampH(h + dh * ROW_STEP) : job.size.h };
+    sized(job);
+    ctx.resize(jobs.indexOf(job), { ...job.size });
+  }
 
   // --- Moving a tile: its grip dragged onto another tile, or its arrow keys ---
   let dragging = null;
@@ -487,7 +547,8 @@ export function drawReport(root, spec, ctx) {
       if (v.node) { body.replaceChildren(el('div', { class: 'rp-pivot' }, v.node)); return; }
       keyAt = v.keyAt;
       if (!job.chart) {
-        const box = el('div', { class: 'rp-chart', style: job.plots > 1 ? `height: ${job.plots * 180}px` : null });
+        // A tile given a height has its chart fill it (CSS); else several plots are taller.
+        const box = el('div', { class: 'rp-chart', style: job.plots > 1 && !job.size.h ? `height: ${job.plots * 180}px` : null });
         body.replaceChildren(box);
         const chart = echarts.init(box, 'studio');
         Object.assign(job, { chart, box });

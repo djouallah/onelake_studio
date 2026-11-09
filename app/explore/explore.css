@@ -277,9 +277,22 @@ section.modelOpen #chartBtn { display: none; }
 }
 
 /* The Report (report.js): its tiles in a grid, figures, charts and tables. */
-.rp { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 420px), 1fr)); gap: var(--gap); padding: var(--gap) var(--gutter) 1.5rem; }
-.rp-tile { background: var(--card); border: 1px solid var(--hairline); border-radius: var(--radius); padding: 0.8rem 1rem; min-width: 0; display: flex; flex-direction: column; gap: 0.5rem; }
-.rp-tile.wide { grid-column: 1 / -1; }
+/* 12 columns; a tile spans what its size says (report.js), all of them on a narrow window. */
+.rp { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); align-items: start; gap: var(--gap); padding: var(--gap) var(--gutter) 1.5rem; }
+.rp-tile { position: relative; background: var(--card); border: 1px solid var(--hairline); border-radius: var(--radius); padding: 0.8rem 1rem; min-width: 0; display: flex; flex-direction: column; gap: 0.5rem; }
+@media (max-width: 700px) { .rp-tile { grid-column: 1 / -1 !important; } }
+.rp-body { min-height: 0; display: flex; flex-direction: column; }
+/* A tile given a height: its content fills it, and scrolls when it is more. */
+.rp-tile.rp-sized .rp-body { flex: 1; }
+.rp-tile.rp-sized .rp-chart { height: auto !important; flex: 1; min-height: 60px; }
+.rp-tile.rp-sized .rp-table, .rp-tile.rp-sized .rp-pivot { max-height: none; flex: 1; min-height: 0; }
+.rp-tile.rp-sized .rp-slicer { flex: 1; min-height: 0; }
+.rp-tile.rp-sized .rp-slicer .ex-values, .rp-tile.rp-sized .slicer-pills { max-height: none; flex: 1; min-height: 0; }
+/* Its ◢: dragged, or the arrow keys. */
+.rp-resize { position: absolute; right: 2px; bottom: 2px; background: none; border: none; color: var(--faint); font-size: 0.7rem; line-height: 1; padding: 0.15rem; cursor: nwse-resize; border-radius: var(--radius-sm); opacity: 0.6; touch-action: none; }
+.rp-tile:hover .rp-resize, .rp-resize:focus-visible { opacity: 1; }
+.rp-resize:hover, .rp-resize:focus-visible { color: var(--text); background: var(--hover-soft); }
+.rp-tile.rp-resizing { outline: 2px dashed var(--accent); outline-offset: 2px; user-select: none; }
 .rp-tile h2 { margin: 0; font-size: 0.85rem; font-weight: 600; color: var(--muted); }
 .rp-head { display: flex; align-items: center; gap: 0.5rem; }
 .rp-head h2 { flex: 1; min-width: 0; }

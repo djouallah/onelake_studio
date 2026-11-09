@@ -24,6 +24,9 @@
 - **Each page's buttons are in the bar, at the right.** Model has Keep offline, Diagram | YAML and Open in Excel;
   Visual has Show SQL, Download CSV and Add to report; the Report has Export to Fabric. The model's
   name is no longer repeated at the right of the bar.
+- **Resize a tile on the Report.** Drag the ◢ in its corner, or focus it and use the arrow keys: its width snaps to
+  twelfths of the Report, its height to 20px steps, and the size is kept. A short tile no longer stretches to the
+  height of the one beside it.
 - **Slicer is a Visual.** Pick Slicer in Visual's marks, with a column on Rows, then Add to report. With a measure on
   Values it lists only the values that have one, its figure beside each (Year with Revenue: only the years with
   revenue), and a filter narrows it too. It draws as a list, buttons, a dropdown or, for a date or a number, a range.

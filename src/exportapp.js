@@ -253,7 +253,9 @@ and a tile's ✕ write it here.
   figure, when a measure is on Values, which it shows beside each), and what is picked in it filters every other tile.
   \`"slicer"\` says how it is drawn: \`list\`, \`buttons\`, \`dropdown\`, or \`range\` (a date or a number):
   \`{ "rows": ["dim_date.Year"], "values": ["Revenue"], "filters": [], "mark": "slicer", "slicer": "buttons" }\`.
-- The tiles are drawn in the order they are listed.
+- The tiles are drawn in the order they are listed, on 12 columns. \`"size": { "w": 4, "h": 300 }\` gives a tile 4 of
+  them and a height of 300 pixels, as its ◢ in OneLake Studio sets it; without it, a tile is half the width (all of it
+  with \`"wide": true\`) and as tall as it needs.
 - \`sql\` is one SELECT over the model, \`FROM model\`: its columns as \`"table"."column"\`, its measures as
   \`AGG("measure")\`, \`GROUP BY ALL\`, \`ORDER BY\`, \`FETCH FIRST n ROWS WITH TIES\`. ${onModel(plan)
   ? 'The page turns it into DAX and runs it on the semantic model.' : 'The page compiles it (dax-sql) to SQL over the tables, and DuckDB-WASM runs it.'}
