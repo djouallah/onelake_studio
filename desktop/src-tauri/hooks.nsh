@@ -15,6 +15,25 @@
   RMDir /r "$INSTDIR\app"
 !macroend
 
+; A model file, .yaml, .yml or .bim, is OneLake Studio's to open from Windows' "Open with", and never made
+; its default: .fabricapp is the only file the app takes (tauri.conf.json fileAssociations).
+!macro OpenWithModel EXT
+  WriteRegStr SHCTX "Software\Classes\${EXT}\OpenWithProgids" "OneLakeStudio.Model" ""
+!macroend
+!macro NSIS_HOOK_POSTINSTALL
+  WriteRegStr SHCTX "Software\Classes\OneLakeStudio.Model" "" "Semantic model"
+  WriteRegStr SHCTX "Software\Classes\OneLakeStudio.Model\DefaultIcon" "" "$\"$INSTDIR\${MAINBINARYNAME}.exe$\",0"
+  WriteRegStr SHCTX "Software\Classes\OneLakeStudio.Model\shell\open\command" "" "$\"$INSTDIR\${MAINBINARYNAME}.exe$\" $\"%1$\""
+  !insertmacro OpenWithModel ".yaml"
+  !insertmacro OpenWithModel ".yml"
+  !insertmacro OpenWithModel ".bim"
+  System::Call 'shell32::SHChangeNotify(i 0x8000000, i 0, i 0, i 0)'
+!macroend
+
 !macro NSIS_HOOK_PREUNINSTALL
   !insertmacro StopRunningApp
+  DeleteRegValue SHCTX "Software\Classes\.yaml\OpenWithProgids" "OneLakeStudio.Model"
+  DeleteRegValue SHCTX "Software\Classes\.yml\OpenWithProgids" "OneLakeStudio.Model"
+  DeleteRegValue SHCTX "Software\Classes\.bim\OpenWithProgids" "OneLakeStudio.Model"
+  DeleteRegKey SHCTX "Software\Classes\OneLakeStudio.Model"
 !macroend

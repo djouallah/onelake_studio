@@ -44,7 +44,7 @@ const USAGE = {
                                         queries the semantic model as it is, and nothing is written
                                         to it (open it in the tree once first).
                                         VS Code asks where the local copy goes and for the OK.
-                                        The app is one zip, <app>.zip: the model's Report,
+                                        The app is one file, <app>.fabricapp: the model's Report,
                                         site/report.json in the zip, yours to grow
   export <ws> <item> <Files/path>     the same, for a model file (.bim, Ossie .yaml) in Files/: the
                                         app reads its tables client side, DuckDB in the browser.

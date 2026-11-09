@@ -612,7 +612,7 @@ async function activateInner(context) {
 
   // A click on a model in the tree: its local copy (read from Fabric the first time), opened in
   // the panel. One progress notification from the click until the page says it is on screen.
-  async function openModel(n) {
+  async function openModel(n, { openOn = null } = {}) {
     if (!n || n.kind !== 'semanticModel') return;
     const refused = unsupportedModels.get(modelKey(n));
     if (refused) {
@@ -628,7 +628,7 @@ async function activateInner(context) {
           say('opening it in OneLake Studio…');
           const name = modelFileName(n.model);
           const opened = whenOpened(name);
-          if (!await openInPanel({ type: 'open-model', name, path, text, modelWorkspace: n.workspace, modelName: n.model })) return;
+          if (!await openInPanel({ type: 'open-model', name, path, text, modelWorkspace: n.workspace, modelName: n.model, openOn })) return;
           await opened;
         });
     } catch (e) {
@@ -641,6 +641,63 @@ async function activateInner(context) {
       if (out) out.appendLine(`opening ${n.model} failed — ${(e && e.stack) || e}`);
       showError(`Could not open ${n.model}: ${(e && e.message) || e}`);
     }
+  }
+
+  // A file from disk: VS Code's Explorer or an editor's title bar, a .fabricapp's editor, the desktop
+  // app's File > Open… or a double-click. A .fabricapp opens its model on the Report page, drawing this
+  // file; an Ossie .yaml or a .bim opens as a model, its tables OneLake's by the names in it. `arg`: a
+  // Uri, a path, or nothing (the active editor's file).
+  async function openPath(arg) {
+    const editor = vscode.window.activeTextEditor;
+    const fsPath = typeof arg === 'string' ? arg : arg && arg.fsPath ? arg.fsPath : editor ? editor.document.uri.fsPath : null;
+    if (!fsPath) return;
+    const name = basename(fsPath);
+    try {
+      if (/\.fabricapp$/i.test(fsPath)) return await openAppFile(fsPath);
+      const found = await core.models.modelFile(fsPath);
+      const workspace = found.workspace || (found.choices && found.choices.length === 1 ? found.choices[0] : null);
+      if (!workspace) {
+        throw new Error(`${name} names its tables <lakehouse>.<schema>.<table>, and ${found.choices && found.choices.length
+          ? `${found.choices.join(', ')} each hold ${found.lakehouses.join(', ')}` : `no workspace seen here holds ${found.lakehouses.join(', ')}`}: ` +
+          'open it from its lakehouse\'s Files/ in the tree');
+      }
+      await openText({ name, path: fsPath, text: found.text, workspace, modelName: found.model });
+    } catch (e) {
+      if (e && e.notModel) { vscode.window.showInformationMessage(e.message); return; }
+      if (out) out.appendLine(`opening ${fsPath} failed — ${(e && e.stack) || e}`);
+      showError(`Could not open ${name}: ${(e && e.message) || e}`);
+    }
+  }
+
+  // A model handed to a tab as text, under a progress notification until the page says it is on screen.
+  async function openText(msg) {
+    await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: `Opening ${msg.name}` }, async () => {
+      const opened = whenOpened(msg.name);
+      if (!await openInPanel({ type: 'open-model', ...msg })) return;
+      await opened;
+    });
+  }
+
+  // A .fabricapp: a semantic model's app opens that model, as the tree's click does; a client-side app
+  // opens on its own model.yaml, the app as it is, and Export to Fabric there publishes this file. Either
+  // way on the Report page, which draws this file (exportflow.js openApp).
+  async function openAppFile(fsPath) {
+    if (!core.openApp) throw new Error('OneLake Studio is still starting');
+    const app = await core.openApp(fsPath);
+    const { workspace, model } = app.report;
+    if (app.semanticModel || app.engine === 'semanticModel') {
+      const name = app.semanticModel ? app.semanticModel.name : model;
+      const m = (await onelake.models(workspace)).find(x => (app.semanticModel ? x.id === app.semanticModel.id : x.name === name));
+      if (!m) throw new Error(`${workspace} has no semantic model ${name}: it was deleted or renamed`);
+      return openModel({ kind: 'semanticModel', workspace, model: m.name, modelId: m.id }, { openOn: 'report' });
+    }
+    if (app.copy) {
+      return openText({ name: basename(fsPath), path: fsPath, text: app.copy.text, workspace, modelName: model,
+                        appFile: fsPath, appModel: app.modelPath, appModelFile: app.copy.name, openOn: 'report' });
+    }
+    // A file from before the app held its model: the model file in OneLake, as the tree opens it.
+    const [ws, ...rest] = app.modelPath.split('/');
+    return openInPanel({ type: 'open-file', workspace: ws, item: rest[0], path: rest.join('/'), bytes: 0, openOn: 'report' });
   }
 
   // The local copies of a workspace's models, read from Fabric again, behind: Refresh of the workspace
@@ -666,6 +723,32 @@ async function activateInner(context) {
   // `path` runs from its item, and a folder's `dir` from Files/.
   const fileNameOf = n => sqlStr(fileSqlName(n, n.kind === 'dir' ? n.dir : String(n.path).replace(/^.*?\/Files\/?/, '')));
   const isFileNode = n => n.kind === 'file' || n.kind === 'dir';
+
+  // A .fabricapp opened in VS Code opens in OneLake Studio: its editor hands the file to openPath and
+  // closes its own empty tab. The desktop app opens files itself (src/desktop/main.js), and has no editors.
+  if (vscode.window.registerCustomEditorProvider) {
+    context.subscriptions.push(vscode.window.registerCustomEditorProvider('onelakeStudio.fabricApp', {
+      openCustomDocument: uri => ({ uri, dispose() {} }),
+      resolveCustomEditor: (doc, webviewPanel) => {
+        webviewPanel.webview.html = '<p>Opened in OneLake Studio.</p>';
+        setTimeout(() => webviewPanel.dispose(), 0);
+        return openPath(doc.uri);
+      },
+    }, { supportsMultipleEditorsPerDocument: false }));
+  }
+  // The title bar's Open in OneLake Studio, on a .bim or an Ossie .yaml open as text: by the text in the
+  // editor (app/semantic.js's isOssie: a top-level version and datasets), so a dbt schema.yml has none.
+  const isModelText = d => /\.bim$/i.test(d.fileName)
+    || (/\.ya?ml$/i.test(d.fileName) && /^datasets:/m.test(d.getText()) && /^version:/m.test(d.getText()));
+  const markActiveModel = () => {
+    const editor = vscode.window.activeTextEditor;
+    vscode.commands.executeCommand('setContext', 'onelakeStudio.activeIsModel', !!editor && isModelText(editor.document));
+  };
+  if (vscode.window.onDidChangeActiveTextEditor) {
+    markActiveModel();
+    context.subscriptions.push(vscode.window.onDidChangeActiveTextEditor(markActiveModel),
+      vscode.workspace.onDidSaveTextDocument(markActiveModel));
+  }
 
   const explorer = vscode.window.createTreeView('onelakeStudio.explorer', {
     treeDataProvider: tree,
@@ -1006,6 +1089,7 @@ async function activateInner(context) {
     })),
 
     vscode.commands.registerCommand('onelakeStudio.openSemanticModel', onClick(n => openModel(n))),
+    vscode.commands.registerCommand('onelakeStudio.openPath', arg => openPath(arg)),
     // An app in the tree: its URL, copied by its button and opened by a click. Nothing is changed.
     vscode.commands.registerCommand('onelakeStudio.copyAppUrl', async n => {
       if (!n || !n.url) return;

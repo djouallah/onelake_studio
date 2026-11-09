@@ -52,7 +52,7 @@ const happy = (over = []) => [
 const publish = (app, over = {}) => app.publish({
   workspaceId: WS, name: "sales-model", tenantId: "tid-1",
   catalogUrl: `https://onelake.table.fabric.microsoft.com/iceberg/${WS}/lh`,
-  modelUrl: "https://onelake.dfs.fabric.microsoft.com/ws/nem.Lakehouse/Files/semantic_model/ossie.yaml",
+  tables: "mart.fct_sales,mart.dim_region",
   site: async config => { publish.config = config; return Buffer.from("PK-site"); },
   fn: { sourceZip: Buffer.from("PK-fn"), deployMetaData: '{"runtime":"TypeScript"}' },
   ...over,
@@ -107,7 +107,7 @@ test("publish: item, backend, key, settings, secrets, site, function, redirect â
   assert.deepEqual(first.auth, { enabled: true, fabric: { enabled: true }, allowedRedirectUris: [] });
   assert.equal(first.packageVersions["@microsoft/rayfin-cli"], "1.36.2");
   assert.deepEqual(JSON.parse(calls[6].body), { name: "CATALOG_URL", value: `https://onelake.table.fabric.microsoft.com/iceberg/${WS}/lh` });
-  assert.deepEqual(JSON.parse(calls[7].body), { name: "MODEL_URL", value: "https://onelake.dfs.fabric.microsoft.com/ws/nem.Lakehouse/Files/semantic_model/ossie.yaml" });
+  assert.deepEqual(JSON.parse(calls[7].body), { name: "TABLES", value: "mart.fct_sales,mart.dim_region" });
   assert.equal(calls[8].headers["content-type"], "application/zip");
   assert.equal(String(calls[8].body), "PK-site");
   const form = calls[9].body;
@@ -125,7 +125,7 @@ test("publish on a semantic model: its connector in every settings write, delega
   const { app, calls } = appWith(happy());
   await publish(app, { semanticModel: { workspace: WS, id: "m1" } });
   const secrets = calls.filter(c => c.url.endsWith("/__private/secrets")).map(c => JSON.parse(c.body));
-  assert.deepEqual(secrets.map(s => s.name), ["CATALOG_URL", "MODEL_URL"]);
+  assert.deepEqual(secrets.map(s => s.name), ["CATALOG_URL", "TABLES"]);
   const writes = calls.filter(c => c.url.endsWith("/projectRuntimeSettings")).map(c => JSON.parse(c.body));
   assert.equal(writes.length, 2, "the first, and the redirect's");
   for (const w of writes) {
@@ -140,7 +140,7 @@ test("publish on a semantic model: its connector in every settings write, delega
 
 test("publish a semantic model's app as it is: no secret and no function of ours, the page calls none", async () => {
   const { app, calls } = appWith(happy());
-  const done = await publish(app, { semanticModel: { workspace: WS, id: "m1" }, catalogUrl: null, modelUrl: null, fn: null });
+  const done = await publish(app, { semanticModel: { workspace: WS, id: "m1" }, catalogUrl: null, tables: null, fn: null });
   assert.equal(done.hostingUrl, HOST);
   assert.equal(calls.filter(c => c.url.endsWith("/__private/secrets")).length, 0);
   assert.equal(calls.filter(c => /\/functions\//.test(c.url)).length, 0);

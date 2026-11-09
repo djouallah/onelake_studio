@@ -2,12 +2,13 @@
 // The desktop app's window. All it does is start the app's Node process (src/desktop/main.js), show a
 // splash until that says where it is, and then open that page. Everything else is the extension's.
 // After its first line, each line the Node process says is something only the window can do: exit, zoom.
-// When it ends, the splash comes back with Restart.
+// When it ends, the splash comes back with Restart. A file the app is started with (a double-click on a
+// .fabricapp, "Open with" on a model) is a line on the Node process's stdin: {"open":"<path>"}.
 
 use std::fs::File;
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Write};
 use std::os::windows::process::CommandExt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdout, Command, Stdio};
 use std::sync::{Mutex, OnceLock};
 use tauri::{AppHandle, Manager, Url, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
@@ -20,6 +21,32 @@ const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 struct App {
     child: Mutex<Option<Child>>,
     splash: OnceLock<Url>,
+    // Files asked for before the Node process runs: opened once it does.
+    pending: Mutex<Vec<String>>,
+}
+
+// The files among a start's arguments that the app opens: a .fabricapp, a model .yaml, .yml or .bim.
+fn files_in(args: &[String]) -> Vec<String> {
+    args.iter().skip(1)
+        .filter(|a| {
+            let p = Path::new(a.as_str());
+            let ext = p.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
+            ["fabricapp", "yaml", "yml", "bim"].contains(&ext.as_str()) && p.is_file()
+        })
+        .cloned()
+        .collect()
+}
+
+// A file to open: a line on the Node process's stdin, or kept until it runs.
+fn open_file(app: &AppHandle, path: String) {
+    let state = app.state::<App>();
+    let mut child = state.child.lock().unwrap();
+    if let Some(stdin) = child.as_mut().and_then(|c| c.stdin.as_mut()) {
+        let _ = writeln!(stdin, "{}", serde_json::json!({ "open": path }));
+        let _ = stdin.flush();
+    } else {
+        state.pending.lock().unwrap().push(path);
+    }
 }
 
 fn log_file() -> PathBuf {
@@ -78,6 +105,10 @@ fn launch(window: WebviewWindow) {
         if let Ok(parsed) = url.parse() {
             let _ = window.navigate(parsed);
         }
+        let waiting: Vec<String> = handle.state::<App>().pending.lock().unwrap().drain(..).collect();
+        for path in waiting {
+            open_file(&handle, path);
+        }
         for line in out.lines() {
             let Ok(line) = line else { break };
             let asked = said(&line);
@@ -112,7 +143,10 @@ fn main() {
     if smoke.is_none() {
         // A second start shows the first window: two would run two engines on the same cache.
         builder = builder
-            .plugin(tauri_plugin_single_instance::init(|app, _, _| {
+            .plugin(tauri_plugin_single_instance::init(|app, argv, _| {
+                for path in files_in(&argv) {
+                    open_file(app, path);
+                }
                 if let Some(window) = app.get_webview_window("main") {
                     let _ = window.unminimize();
                     let _ = window.show();
@@ -124,7 +158,7 @@ fn main() {
                 .build());
     }
     builder
-        .manage(App { child: Mutex::new(None), splash: OnceLock::new() })
+        .manage(App { child: Mutex::new(None), splash: OnceLock::new(), pending: Mutex::new(files_in(&args)) })
         .invoke_handler(tauri::generate_handler![restart])
         .setup(move |app| {
             let window = WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))

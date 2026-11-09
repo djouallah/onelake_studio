@@ -1,5 +1,4 @@
 import { createHmac } from 'node:crypto';
-import { parse as parseYaml } from 'yaml';
 
 import {
   UserDataFunctions,
@@ -15,27 +14,22 @@ const udf = new UserDataFunctions();
  * The browser never receives a token: openCatalog uses the app identity's storage token here,
  * server side, and hands back only (the app identity is the app item's owner, so whoever may open
  * the app reads these tables with the owner's rights)
- *   - the semantic model, read in place from the lakehouse (MODEL_URL) when the page asks for
- *     no tables: the app ships no copy of it, so it is the model as the lakehouse holds it now,
  *   - where each table the page asked for is now: its current metadata.json, from the OneLake
  *     Iceberg REST catalog (loadTable), and
  *   - a OneLake user-delegation SAS for each of those tables, read-only, on its own folder: DuckDB
  *     in the browser reads the metadata, the manifests and the data files with them.
- * Only the model's tables: someone who can call this reads what the app shows, not the rest of the
- * lakehouse, whichever tables they ask for.
+ * Only the model's tables (TABLES): someone who can call this reads what the app shows, not the rest of
+ * the lakehouse, whichever tables they ask for. The model is the page's own, site/model.json, made at
+ * export from the model.yaml the app's file holds: this function never reads it.
  *
  * CATALOG_URL (an app setting): the catalog the app reads,
  *   https://onelake.table.fabric.microsoft.com/iceberg/<workspace id>/<lakehouse id>
- * MODEL_URL (an app setting): the model file, an Apache Ossie .yaml or a TMSL .bim, in OneLake,
- *   https://onelake.dfs.fabric.microsoft.com/<workspace>/<item>/Files/<path>
+ * TABLES (an app setting): the tables the model names, schema.table, comma-separated.
  * Both are set by OneLake Studio's Export to Fabric, which deploys this app.
  * The workspace must allow "Authenticate with OneLake user-delegated SAS tokens".
  *
- * An app exported as DirectQuery or Direct Lake calls nothing here: the export made a Power BI
- * semantic model of the model file and put the model beside the page (site/model.json), and the
- * page turns Explore's query into DAX (dax-sql) and runs it there through the app's
- * fabric-semanticmodel connector, as the person viewing it (their permissions on the model, Build
- * included).
+ * An app on a semantic model has no function of ours: its page turns Explore's query into DAX
+ * (dax-sql) and runs it through the app's fabric-semanticmodel connector, as the person viewing it.
  */
 
 type StorageCtx = RayfinContext<BlankAppSchema, AudienceType.Storage>;
@@ -52,46 +46,12 @@ interface DelegationKey {
 
 const iso = (d: Date): string => d.toISOString().replace(/\.\d{3}Z$/, 'Z');
 
-// The model file, read with the storage token: JSON (a .bim) or YAML (an Ossie model).
-async function readModel(ctx: StorageCtx, token: string): Promise<any> {
-  const url = String(ctx.Secrets.MODEL_URL ?? '').trim();
-  if (!/^https:\/\/onelake\.dfs\.fabric\.microsoft\.com\//.test(url)) throw new Error('MODEL_URL is not https://onelake.dfs.fabric.microsoft.com/<workspace>/<item>/<path>');
-  const res = await fetch(url, { headers: { Authorization: `Bearer ${token}`, 'x-ms-version': SAS_VERSION } });
-  const text = await res.text();
-  if (!res.ok) throw new Error(`HTTP ${res.status} ${text.slice(0, 200)}`);
-  const body = text.replace(/^﻿/, '');
-  try { return JSON.parse(body); } catch { return parseYaml(body); }
-}
-
-// An Ossie dataset's table as schema.table, or null when it reads none. `source` is required
-// by the spec, so a model from Power BI has one even for a calculation group or a calculated
-// table: its partition, kept in the POWER_BI extension, says it has no entity. A bare name is
-// in dbo, as in a TMSL partition; item.schema.table is its last two parts.
-function ossieSource(d: any): string | null {
-  const pbi = (d?.custom_extensions ?? []).find((e: any) => String(e.vendor_name).toUpperCase() === 'POWER_BI');
-  let partition: any;
-  try { partition = JSON.parse(pbi.data).partitions?.[0]; } catch { /* no extension: its source alone */ }
-  if (!d?.source || (partition && !partition.source?.entityName)) return null;
-  const s = String(d.source);
-  // A table named <item>.<schema>.<table>, in the lakehouse the app reads: its schema.table.
-  const parts = (s.match(/"(?:[^"]|"")*"|[^.]+/g) ?? []).map(p => (p.startsWith('"') ? p.slice(1, -1).replace(/""/g, '"') : p));
-  if (parts.length === 3) return `${parts[1]}.${parts[2]}`;
-  return s.includes('.') ? s : `dbo.${s}`;
-}
-
-// The tables a model names, as the page reads them (site/storage/data.js, modelTables): an
-// Ossie dataset's table, a TMSL table's Direct Lake partition (schema.table).
-function modelSources(model: any): string[] {
-  const out = new Set<string>();
-  for (const d of model?.datasets ?? []) {
-    const s = ossieSource(d);
-    if (s) out.add(s);
-  }
-  for (const t of (model?.model ?? model)?.tables ?? []) {
-    const s = t?.partitions?.[0]?.source;
-    if (s?.entityName) out.add(`${s.schemaName ?? 'dbo'}.${s.entityName}`);
-  }
-  return [...out];
+// TABLES: the tables the app may read, schema.table, comma-separated: the ones its model names, given by
+// the export. The model itself is the page's own (site/model.json): this reads no model.
+function appTables(ctx: StorageCtx): string[] {
+  const out = [...new Set(String(ctx.Secrets.TABLES ?? '').split(',').map(s => s.trim()).filter(Boolean))];
+  if (!out.length) throw new Error('TABLES is empty: export the app again');
+  return out;
 }
 
 // CATALOG_URL: the catalog's REST endpoint, then its warehouse, <workspace id>/<lakehouse id>,
@@ -226,27 +186,24 @@ function signFolderSas(blobPath: string, permissions: string, key: DelegationKey
 }
 
 /**
- * The tables the page asks for (`schema.table`, comma-separated) — or, asked for none, the
- * model (MODEL_URL) and the tables it names — as they are in the catalog now, and a read-only
- * SAS on each one's folder to read it with. A table the model doesn't name is `missing`.
+ * The tables the page asks for (`schema.table`, comma-separated) — or, asked for none, every table
+ * the model names (TABLES) — as they are in the catalog now, and a read-only SAS on each one's folder
+ * to read it with. A table the model doesn't name is `missing`.
  * A failure is returned as { error }, naming the step: thrown, it reaches the browser as a bare
  * 500 that says nothing. The message never holds a token or a key.
  */
 udf.func(
   'openCatalog',
   async (ctx: RayfinContext<BlankAppSchema, AudienceType.Storage>, tables: string): Promise<{
-    model?: any; metadata: Record<string, string>; missing: string[]; sas: Record<string, string>; expiresOn: string;
+    metadata: Record<string, string>; missing: string[]; sas: Record<string, string>; expiresOn: string;
   } | { error: string }> => {
     let step = 'the table names';
     try {
       const asked = [...new Set(String(tables ?? '').split(',').map(s => s.trim()).filter(Boolean))];
       step = 'the storage token of the app identity';
       const token = ctx.Tokens.Storage;
-      step = 'the setting MODEL_URL (the model)';
-      const read = await readModel(ctx, token);
-      step = "the model's tables";
-      const inModel = modelSources(read);
-      const model = asked.length ? undefined : read;
+      step = "the setting TABLES (the model's tables)";
+      const inModel = appTables(ctx);
       let names = asked.length ? asked.filter(t => inModel.includes(t)) : inModel;
       // A name that is not schema.table cannot be in the catalog, and one the model doesn't name is
       // not this app's: each is listed as missing, and the rest are still answered.
@@ -268,7 +225,7 @@ udf.func(
         const folder = tableFolder(location);
         sas[folder] = signFolderSas(`/${ws}/${lh}/Tables/${folder}`, 'r', key, start, expiry);
       }
-      return { ...(model ? { model } : {}), metadata: catalog.metadata,
+      return { metadata: catalog.metadata,
                missing: [...catalog.missing, ...bad].sort(), sas, expiresOn: iso(expiry) };
     } catch (e) {
       return { error: `${step}: ${e instanceof Error ? e.message : String(e)}` };

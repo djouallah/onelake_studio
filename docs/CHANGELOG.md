@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- **Open a model or an app's file from disk.** In VS Code, a `.bim` or an Ossie `.yaml` has **Open in OneLake Studio**
+  on the editor's title bar and on Explorer's right-click, and an app's file opens in OneLake Studio by itself. In the
+  desktop app, File › Open… (Ctrl+O), a double-click on an app's file, and Windows' "Open with" on a `.yaml` or `.bim`.
+  An app's file opens on its Report page.
+- **The exported app is one `.fabricapp` file**, a zip as before. One saved as `.zip` is renamed the next time it is
+  exported. A client-side app holds its model, `model.yaml`, and runs on it: a change to the lakehouse's file reaches
+  the app when it is exported again, and an edit to `model.yaml` is published by *Publish As Is*. An app on a semantic
+  model names the model and holds no copy.
 - **Export to Fabric asks only where to save the app**: a Save dialog named for it, opened where it was saved last,
   else in Documents. The confirmation that listed the workspace, the model and what the app runs on is gone, with
   its Choose Another Folder….

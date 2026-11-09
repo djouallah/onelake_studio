@@ -19,20 +19,26 @@
 //                    no DuckDB (storage/modeldata.js: it queries the semantic model), and site/ holds
 //                    neither DuckDB, its extensions, Arrow nor the data source that reads the tables
 //                    in the browser
-//   site/model.json    on a semantic model only: its local copy, which the page writes its DAX from
+//   site/model.json    the model the page runs on: client side, model.yaml as JSON; on a semantic model,
+//                    its local copy, which the page writes its DAX from
 //   rayfin/          fabric_app/rayfin: what the app is (rayfin.yml) and its function's source
 //                    (built at package time, by scripts/function-bundle.mjs: nobody's machine
 //                    builds it)
+//   model.yaml       client side only: the model the app runs on (model.bim for a .bim), the model as
+//                    exported. Each publish makes site/model.json from it, so an edit here (an
+//                    agent's) is published by Publish As Is. An app on a semantic model has none:
+//                    its record names the semantic model.
 //   AGENTS.md        how the app is made, and how to grow its report
 //   export.json      what was published: the app item, its redirects, the entries' hashes
 // Not in the zip: vendor/, every package the page runs (vendor/webapp: DuckDB-WASM and its
 // extensions, Arrow, the Rayfin SDK, ECharts; nothing from a CDN), the extension's own, added
 // as site/vendor/ when publishing; and the upload itself, site/ stamped with the build plus
 // rayfin.config.json (the backend the browser talks to), built in memory.
-// Client side, the model is never copied: the app's function reads it from the lakehouse, in
-// place, at run time (MODEL_URL), so the app shows the model as it is there. On a semantic model
-// the page reads site/model.json instead, its local copy as exported. The lakehouse its Direct Lake
-// expression holds is the catalog (CATALOG_URL). Nothing here is AI.
+// The app runs on the model as exported, never the lakehouse's file as it is now: client side the
+// page reads site/model.json, made from the file's model.yaml, and its function signs only the
+// tables that model names (TABLES); on a semantic model the page writes its DAX from site/model.json
+// and queries the model. The lakehouse its Direct Lake expression holds is the catalog
+// (CATALOG_URL). Nothing here is AI.
 // No `vscode` import: the extension passes in what it owns.
 // =============================================================================
 
@@ -51,6 +57,21 @@ const { modelConnector, MODEL_CONNECTOR } = require('./fabricapp');
 // kept from then on by every export.
 const MARKER = 'export.json';
 const REPORT = 'site/report.json';
+// The local copy's own extension: a zip inside, as a .vsix is, so a double-click opens OneLake Studio.
+const APP_EXT = '.fabricapp';
+// Client side, the model the app runs on, in its own format, at the file's root.
+const MODEL_COPIES = ['model.yaml', 'model.bim'];
+const modelCopyName = file => (/\.bim$/i.test(String(file)) ? 'model.bim' : 'model.yaml');
+/** The model's copy in the app's entries: `text` as `file` names its format, the other format's gone. */
+function setModelCopy(files, file, text) {
+  for (const p of MODEL_COPIES) files.delete(p);
+  files.set(modelCopyName(file), Buffer.from(String(text), 'utf8'));
+}
+/** The model copy an app's entries hold, { name, text }, or null (an app on a semantic model has none). */
+function modelCopyOf(files) {
+  const name = MODEL_COPIES.find(p => files.has(p));
+  return name ? { name, text: files.get(name).toString('utf8') } : null;
+}
 
 // An app's name: lower case, letters, digits and dashes (as a Rayfin id), and -explore: its
 // own, never the name of an app someone else deployed for the same model.
@@ -79,6 +100,9 @@ function ossieSource(d) {
 // The model's tables as the data source reads them (fabric_app/site/storage/data.js,
 // modelTables): name -> schema.table. An Ossie dataset's table; a TMSL table's Direct Lake
 // partition.
+/** The tables a model names, schema.table, each once: what a client-side app's function may sign (TABLES). */
+const tablesOf = model => [...new Set(sourcesOf(model).values())];
+
 function sourcesOf(model) {
   const out = new Map();
   for (const d of model.datasets ?? []) {
@@ -156,7 +180,6 @@ function planExport(text, fileName, name, mods, where, lakes = null) {
     warnings, title, name: appName(title), modelName: name, fileName,
     workspace: lake.workspace, lakehouse: lake.item,
     catalogUrl: `${TABLE_ORIGIN}/iceberg/${lake.workspace}/${lake.item}`,
-    modelUrl: dfsUrl(where.workspace, where.path),
     modelPath: `${where.workspace}/${trimPath(where.path)}`,
     tables: [...sources],
   };
@@ -172,7 +195,7 @@ function planOnModel(doc, name, model) {
   const title = String((doc && doc.name) || name);
   return {
     warnings: [], title, name: appName(title), modelName: name,
-    workspace: model.workspaceId, lakehouse: null, catalogUrl: null, modelUrl: null,
+    workspace: model.workspaceId, lakehouse: null, catalogUrl: null,
     modelPath: `${model.workspace}/${model.name}`,
     tables: [], engine: 'semanticModel',
     semanticModel: { workspace: model.workspaceId, id: model.id, name: model.name },
@@ -230,13 +253,14 @@ ${onModel(plan) ? `- Semantic model: \`${plan.semanticModel.name}\`, as it is in
   Build on the semantic model (https://learn.microsoft.com/en-us/fabric/apps/connectors). The tenant must have the
   Semantic Model Execute Queries REST API setting on. The page runs no DuckDB and reads no table (\`site/engine.json\`,
   \`site/storage/modeldata.js\`). The tables below and the layers' DuckDB parts are the client-side export's.
-` : `- Model: \`${plan.modelPath}\`, read **in place** by the app's function at run time (its \`MODEL_URL\`
-  secret): the app holds no copy of it, so a change to the model is in the app on its next load.
+` : `- Model: \`model.yaml\` in this file (\`model.bim\` for a .bim), exported from \`${plan.modelPath}\`: the app
+  runs on it, as \`site/model.json\`, made from it at each publish. An edit to it is published by *Publish As Is*;
+  a change to the lakehouse's file reaches the app when it is exported again.
 - Lakehouse: workspace \`${plan.workspace}\`, item \`${plan.lakehouse}\` — its Iceberg catalog is the
   function's \`CATALOG_URL\`: ${plan.catalogUrl}
 - Identity: the function reads the tables as the **app item's owner** (Fabric Apps' app identity), so anyone who
   may open the app reads them with the owner's rights, never their own. It signs a SAS only for the tables the
-  model names.
+  model names (its \`TABLES\` setting), and never reads the model.
 `}
 ## The Report: yours to grow
 
@@ -247,6 +271,9 @@ about). Delete it and the next export writes a new one. OneLake Studio's Report 
 draws this same file from this zip, and draws it again when the zip changes; its Visual's **Add to report**
 and a tile's ✕ write it here.
 
+${onModel(plan) ? '' : `\`model.yaml\` (\`model.bim\` for a .bim model), at the root, is the model the app runs on: read it for the
+tables, columns and measures a tile can name.
+`}
 \`\`\`json
 { "tiles": [
   { "title": "Revenue by Region", "kind": "bar",
@@ -383,12 +410,13 @@ async function filesOf(root, to, skip = () => false) {
  * `kept`: the zip's own site/report.json, which no export writes over, or the one Studio kept
  * before the first export (else a Report with no tiles);
  * `redirects`: the app's sign-in redirects so far.
- * `model`: on a semantic model, its local copy, read (modelDoc's doc).
+ * `model`: the model the page runs on, read (modelDoc's doc): site/model.json.
+ * `modelText`, `modelFile`: client side, the model's text and its file's name, kept as model.yaml (setModelCopy).
  * `fabricAppDir`: the extension's fabric_app/; `appDir`: Studio's page modules (app/, or
  * webview/ installed); `daxSqlDir`: vendor/npm/<PINS.daxSql>.
  */
-async function appFiles({ plan, state, model, kept = null, redirects = [], fabricAppDir, appDir, daxSqlDir }) {
-  if (onModel(plan) && !model) throw new Error('an app on a semantic model needs the model it was made from');
+async function appFiles({ plan, state, model, modelText = null, modelFile = 'model.yaml', kept = null, redirects = [], fabricAppDir, appDir, daxSqlDir }) {
+  if (!model) throw new Error('an app needs the model it runs on');
   const sql = onModel(plan);
   const text = s => Buffer.from(s, 'utf8');
   const files = new Map([
@@ -404,10 +432,11 @@ async function appFiles({ plan, state, model, kept = null, redirects = [], fabri
                                                 sql ? plan.semanticModel : null)));
   files.set(REPORT, kept ?? text(EMPTY_REPORT));
   files.set('site/explore.json', text(JSON.stringify(state || null)));
+  setModel(files, model);
+  if (!sql && modelText != null) setModelCopy(files, modelFile, modelText);
   if (sql) {
     // The semantic model's name: what the page says when it refuses the person signed in.
     files.set('site/engine.json', text(JSON.stringify({ engine: 'semanticModel', ...(plan.semanticModel ? { name: plan.semanticModel.name } : {}) })));
-    setModel(files, model);
   }
   files.set('AGENTS.md', text(agentsMd(plan)));
   return files;
@@ -416,8 +445,8 @@ async function appFiles({ plan, state, model, kept = null, redirects = [], fabri
 // A semantic model, as it is: the app queries it, not the tables.
 const onModel = plan => plan.engine === 'semanticModel';
 
-// On a semantic model, site/model.json: its local copy, which the page writes its DAX from
-// (storage/modeldata.js): written at each export, As Is too.
+// site/model.json, the model the page runs on: client side model.yaml read, on a semantic model its
+// local copy, which the page writes its DAX from (storage/modeldata.js). Written at each export, As Is too.
 const setModel = (files, model) => files.set('site/model.json', Buffer.from(JSON.stringify(model), 'utf8'));
 
 // What a zip's site runs on: its marker's engine ('duckdb', 'directLake', 'directQuery'), or
@@ -543,4 +572,5 @@ async function zip(files) {
 }
 
 module.exports = { planExport, planOnModel, modelDoc, appFiles, setModel, engineOf, readApp, writeApp, unzip, vendorFiles,
-                   vendorSize, buildDist, fingerprint, localChanges, zip, crc32, rayfinYml, appName, dfsUrl, MARKER, REPORT };
+                   vendorSize, buildDist, fingerprint, localChanges, zip, crc32, rayfinYml, appName, dfsUrl, MARKER, REPORT,
+                   APP_EXT, MODEL_COPIES, setModelCopy, modelCopyOf, tablesOf };

@@ -78,7 +78,7 @@ function createHostMethods({ onelake, engine, onStatus = () => {}, saveFile = nu
         throw new Error('Export to Fabric needs a model that is a OneLake file, or one opened from the tree');
       }
       return exportExplore({ file: String(x.file || 'model'), name: String(x.name || 'model'),
-                             text: String(x.text ?? ''),
+                             text: String(x.text ?? ''), ...(x.appFile ? { appFile: String(x.appFile) } : {}),
                              ...(x.workspace && x.path ? { workspace: String(x.workspace), path: String(x.path) } : { model }),
                              state: x.state && typeof x.state === 'object' ? x.state : null });
     },

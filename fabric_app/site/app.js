@@ -2,14 +2,12 @@
 // app.js — Export to Fabric's app: a semantic model's Report, and its Explore
 // =============================================================================
 // OneLake Studio's own Report (explore/view.js, its Report page alone), over the data source of
-// this app (storage/data.js): it signs in, its function reads the model from the lakehouse and
-// says where the tables are, and DuckDB-WASM reads them in this browser. Exported as DirectQuery
-// or Direct Lake (engine.json), the data source is storage/modeldata.js instead: each query runs as
-// DAX on the semantic model the export made, as the person signed in, and this page loads no DuckDB.
-// Client side the model is never copied into the app: it is the lakehouse's file, as it is now. On a
-// semantic model it is model.json, the definition the semantic model was made from. Nothing here is
-// specific to one model; the export writes only rayfin.config.json (the backend), explore.json (the
-// shelves the first view shows), and on a semantic model engine.json and model.json. The Report page
+// this app (storage/data.js): it signs in, its function says where the tables are, and DuckDB-WASM
+// reads them in this browser. On a semantic model (engine.json), the data source is
+// storage/modeldata.js instead: each query runs as DAX on the semantic model, as the person signed
+// in, and this page loads no DuckDB. Either way the model is model.json, the model as exported. Nothing
+// here is specific to one model; the export writes only rayfin.config.json (the backend), explore.json
+// (the shelves the first view shows), model.json, and on a semantic model engine.json. The Report page
 // is report.json (explore/report.js draws it), which no export writes over: Studio's Report tab
 // (Add to report, a tile's ✕) and the zip's owner grow it, and here it only reads.
 // =============================================================================

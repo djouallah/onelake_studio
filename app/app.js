@@ -227,7 +227,7 @@ async function openTable(m) {
 async function openFile(m) {
   if (!await goToLakehouse(m.workspace, m.item)) return;
   const entry = { name: basename(m.path), path: m.path, isDir: false, bytes: m.bytes || 0,
-                  modelWorkspace: m.modelWorkspace || null };
+                  modelWorkspace: m.modelWorkspace || null, openOn: m.openOn || null };
   if (IMAGE_EXTS.has(fileExt(entry.name))) await selectImage(entry);
   else await selectFile(entry);
 }
@@ -340,13 +340,16 @@ async function openModelView(file, text = null, { fromOneLake = text == null } =
     if (fromOneLake) await engineReady;
     const bim = text != null ? text : new TextDecoder().decode(await engine.readFileBytes(lakehouse, file));
     // semanticmodel.ws.model: the semantic model the tree opened, by its own workspace and
-    // name; else the file, in the workspace it is in, by its name.
-    const schema = file.modelWorkspace || (fromOneLake && lakehouse ? lakehouse.workspace : null);
+    // name; else the file, in the workspace it is in (a file from disk: the one its tables are in), by its name.
+    const schema = file.modelWorkspace || file.localWorkspace || (fromOneLake && lakehouse ? lakehouse.workspace : null);
     const m = await semantic.registerModel(file.name, bim, null, schema, file.modelName);
     // Kept by the host as a semantic view too, so it is there after a restart and the
     // command line can name it. Best effort: the view on screen does not depend on it.
-    engine.semanticKeep(m.view, fromOneLake ? abfssUrl(lakehouse.workspace, file.path) : file.path, m.schema)
-      .catch(e => console.warn(`[views] ${m.name} not kept: ${e.message}`));
+    // An app's file holds its model in a zip, which no view can read: not kept.
+    if (!file.appFile) {
+      engine.semanticKeep(m.view, fromOneLake ? abfssUrl(lakehouse.workspace, file.path) : file.path, m.schema)
+        .catch(e => console.warn(`[views] ${m.name} not kept: ${e.message}`));
+    }
     if (my !== selSeq) return;
     $('modelView').closest('section').classList.add('modelOpen');
     $('modelView').hidden = false;
@@ -369,8 +372,11 @@ async function openModelView(file, text = null, { fromOneLake = text == null } =
       // Explore as a Fabric app of its own (src/exportapp.js). A model file in OneLake: the app reads
       // it where it is, and the tables of the one lakehouse it names, or a semantic model is made of it;
       // one that names no lakehouse or several has no button. A Power BI semantic model: the app
-      // queries it as it is, whatever it reads, and nothing is asked or written for it.
-      exportToFabric: (fromOneLake ? semantic.lakehousesOf(m.bim).length === 1 : !!file.modelWorkspace)
+      // queries it as it is, whatever it reads, and nothing is asked or written for it. A client-side
+      // app's file opened from disk: that file, published as it is (its model.yaml, its report).
+      exportToFabric: file.appFile ? state => engine.exportExplore({ appFile: file.appFile, file: file.appModelFile, name: m.view,
+        text: bim, state, workspace: file.appModel.split('/')[0], path: file.appModel.split('/').slice(1).join('/') })
+        : (fromOneLake ? semantic.lakehousesOf(m.bim).length === 1 : !!file.modelWorkspace)
         ? state => engine.exportExplore(fromOneLake
           ? { file: file.name, name: m.view, text: bim, state, workspace: lakehouse.workspace, path: file.path }
           : { file: file.name, name: m.view, text: bim, state, model: { workspace: file.modelWorkspace, name: file.modelName || m.view } })
@@ -387,13 +393,13 @@ async function openModelView(file, text = null, { fromOneLake = text == null } =
       },
       // The Report tab: the tiles in this model's Export to Fabric zip, else the file the host
       // keeps for it, else none (src/exportflow.js reportOf), drawn again when they change; Add
-      // to report and a tile's ✕ save them (reportSave). It opens on Model.
+      // to report and a tile's ✕ save them (reportSave). It opens on Model, or on the Report for an app's file.
       report: {
         load: () => engine.modelReport({ workspace: m.schema, model: m.view }),
         stamp: () => engine.modelReportStamp({ workspace: m.schema, model: m.view }),
         save: (spec, stamp) => engine.modelReportSave({ workspace: m.schema, model: m.view, spec, stamp }),
       },
-      openOn: 'model',
+      openOn: file.openOn || 'model',
     });
     setStatus(`${file.name} is the semantic model ${m.name}` +
               (m.directLake ? ` — ${m.directLake} Direct Lake table(s), opened from OneLake as a query needs them` : '') +
@@ -1700,8 +1706,15 @@ window.addEventListener('message', async e => {
       const t0 = Date.now();
       // Reported even when it fails: the host's progress notification waits for this.
       try {
+        // From the tree a semantic model (modelWorkspace); from disk a model file, or an app's file
+        // (appFile) on its own model, in the workspace its tables are in (workspace).
         await openModelView({ name: String(m.name || 'model.yaml'), path: String(m.path || ''),
                               modelWorkspace: m.modelWorkspace ? String(m.modelWorkspace) : null,
+                              localWorkspace: m.workspace ? String(m.workspace) : null,
+                              appFile: m.appFile ? String(m.appFile) : null,
+                              appModel: m.appModel ? String(m.appModel) : null,
+                              appModelFile: m.appModelFile ? String(m.appModelFile) : null,
+                              openOn: m.openOn ? String(m.openOn) : null,
                               modelName: m.modelName ? String(m.modelName) : null }, String(m.text || ''));
       } finally {
         reportOpened('file', String(m.name || 'model.yaml'), Date.now() - t0);

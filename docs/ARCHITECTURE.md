@@ -616,6 +616,28 @@ A semantic model opens as **Explore** ([`app/explore/`](../app/explore/)), on th
 from. **A tab** runs it on the native engine. **The Fabric app** runs the
 same files on DuckDB-WASM.
 
+## Opening files from disk
+
+A model file or an app's file on this machine opens in a tab, as one from the tree does (`openPath` in
+[`src/extension.js`](../src/extension.js), the command `onelakeStudio.openPath`).
+- **A model file**, a `.bim`, or a `.yaml`/`.yml` that is an Ossie model (a top-level `version:` and `datasets:`): its
+  model, its tables OneLake's by the names in it, in the workspace that holds them (`modelFile` in
+  [`src/models.js`](../src/models.js)). One whose tables more than one workspace could hold says so, and is opened from
+  its lakehouse's `Files/` instead. Another YAML is a document, and says it is not a model.
+- **An app's file**, `.fabricapp` (`openApp` in [`src/exportflow.js`](../src/exportflow.js)): on the Report page, which
+  draws this file; its Add to report writes here, and its next export saves here. A semantic model's app opens that
+  model, as the tree's click does. A client-side app opens on its own `model.yaml`, the app as it is, and Export to
+  Fabric there publishes this file as it is: no Save dialog, and no question about its changes.
+- **In VS Code**, a `.fabricapp` opens in OneLake Studio by default (a custom editor that hands it over and closes its
+  own tab). A `.bim` or an Ossie `.yaml` opens as text, with **Open in OneLake Studio** on the editor's title bar, by
+  what the editor holds (`onelakeStudio.activeIsModel`), so other YAML has none; Explorer's right-click offers it on a
+  `.yaml`, `.yml`, `.bim` or `.fabricapp`.
+- **In the desktop app**, File › Open… (Ctrl+O); a double-click on a `.fabricapp`, whose default app it is; and
+  Windows' "Open with" on a `.yaml`, `.yml` or `.bim`, which lists it without becoming their default (the installer,
+  [`desktop/src-tauri/hooks.nsh`](../desktop/src-tauri/hooks.nsh)). A file the app is started with reaches the Node
+  process as a line on its stdin, `{"open":"<path>"}`, also when the app is already running (its single instance).
+  A file dropped on the window is not opened: the window gets no path for it.
+
 ## Create Semantic Model
 
 A `.bim` or Ossie `.yaml` in a lakehouse's `Files/` has a ⛁ in the tree (`modelFile`, [`src/tree.js`](../src/tree.js)), and
@@ -638,11 +660,24 @@ One of two writes, with Upload (above). The Report's **Export to Fabric** button
 the model's Report as a Fabric app, and nothing else of Explore (item type `AppBackend`, named
 `<model>-explore`). VS Code and the extension are all it needs: no CLI, no Node, no GitHub.
 
-**The local copy is one file**, `<model>-explore.zip`: the whole app but its packages (DuckDB-WASM, Arrow, the Rayfin SDK,
-ECharts), which are the extension's own and are added when it publishes, so the zip is a few MB. It holds `site/`,
-`rayfin/`, `AGENTS.md` and `export.json`, the record of what was published. Its report, `site/report.json`, is the
-Report tab's (Explore, above). No export writes that entry again, and it is not one of the local changes an export asks
-about, so a person or an agent grows it in the zip and exports again to publish it.
+**The local copy is one file**, `<model>-explore.fabricapp`, a zip with an extension of its own (as a `.vsix` is), so
+VS Code and the desktop app open it (Opening files from disk, below). It is the whole app but its packages (DuckDB-WASM,
+Arrow, the Rayfin SDK, ECharts), which are the extension's own and are added when it publishes, so the file is a few MB.
+It holds `site/`, `rayfin/`, `AGENTS.md` and `export.json`, the record of what was published, and a client-side app's
+model. Its report, `site/report.json`, is the Report tab's (Explore, above). No export writes that entry again, and it
+is not one of the local changes an export asks about, so a person or an agent grows it in the file and exports again to
+publish it. One an earlier export saved as `<model>-explore.zip` is offered under its new name, and renamed when saved
+there.
+
+**The app runs on the model as exported**, never on the lakehouse's file as it is now:
+- **Client side**, the file holds its model, `model.yaml` (`model.bim` for a .bim), and each publish makes the site's
+  `model.json` from it, which the page reads. The function never reads a model: the export gives it the tables it may
+  sign for (its `TABLES` secret). `model.yaml` is one of the local changes an export asks about, so an agent's edit to it
+  is published by *Publish As Is*, and *Overwrite* rewrites it from Explore's model. A change to the lakehouse's file
+  reaches the app when it is exported again.
+- **On a semantic model**, the file holds no model of its own: `export.json` names the semantic model
+  (`semanticModel: { workspace, id, name }`), and the site's `model.json` is its local copy, which the page writes its
+  DAX from.
 
 **A Power BI semantic model** opened from the tree is exported as it is: the app queries that model, Direct Lake,
 DirectQuery or Import, whatever it reads, and nothing is written to the model or for it: no definition, no refresh, no file in a lakehouse. The app goes in the
@@ -657,7 +692,7 @@ and the command line's `export` takes no `--mode`.
 
 **What it writes**
 - **The app**, in Fabric.
-- **A local copy of the app**, one zip, `<model>-explore.zip`, where you save it. An earlier export's
+- **A local copy of the app**, one file, `<model>-explore.fabricapp`, where you save it. An earlier export's
   `<model>-explore/` folder is no longer written; the app it published stays the zip's.
 
 **What a model file needs** (a semantic model exported as it is needs none of it)
@@ -671,9 +706,6 @@ and the command line's `export` takes no `--mode`.
   in Documents; *Export* there exports, and saving over the file is the dialog's own question. The other questions
   come only when one applies (below), and all of them before anything is written, locally or in Fabric.
 - **Protected:** the site loads only for people who may open the app item.
-- **Client side, the model is read in place:** the app never holds a copy. Its function reads the model file from
-  the lakehouse at run time (its `MODEL_URL` secret), so the app shows the model as it is there. On a semantic
-  model it is the model as exported (below).
 - **The app reads the model's tables, not the lakehouse:** its function signs a read-only SAS for each table the model
   names, and refuses any other.
 - **Client side, the tables are read as the app's owner.** Fabric Apps gives a function one identity, the app item's
@@ -740,7 +772,7 @@ in the same order, with the user's Fabric-audience token:
 1. Find the item, or create it.
 2. Wait for its backend, then fetch the publishable key.
 3. Apply the runtime settings, with the semantic model's connector on DirectQuery and Direct Lake.
-4. Set the `CATALOG_URL` and `MODEL_URL` secrets.
+4. Client side, set the `CATALOG_URL` and `TABLES` secrets.
 5. Upload the site.
 6. Deploy the function and poll it until it is done.
 7. Add the hosting URL to the sign-in redirects.

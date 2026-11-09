@@ -158,6 +158,12 @@ async function main() {
       case 'app.zoom': shell({ do: 'zoom', factor: Number(args[0]) || 1 }); return null;
       case 'app.open': return dialogs.openExternal(String(args[0]));
       case 'app.update': return checkUpdate(packageJSON.version);
+      // File > Open…: an app's file or a model file, opened as a double-click would.
+      case 'app.openFile': return run(async () => {
+        const picked = await vscode.window.showOpenDialog({ canSelectFiles: true, canSelectMany: false, title: 'Open',
+          filters: { 'OneLake Studio app or model': ['fabricapp', 'yaml', 'yml', 'bim'] } });
+        if (picked && picked.length) await vscode.commands.executeCommand('onelakeStudio.openPath', picked[0].fsPath);
+      });
       default: throw new Error(`no method ${method}`);
     }
   }
@@ -205,6 +211,12 @@ async function main() {
   }
   process.stdin.on('end', leave);
   process.stdin.on('close', leave);
+  // The window's lines: a file to open, {"open":"<path>"} (a double-click on a .fabricapp, "Open with").
+  require('node:readline').createInterface({ input: process.stdin }).on('line', line => {
+    let asked = null;
+    try { asked = JSON.parse(line); } catch (_) { return; }
+    if (asked && typeof asked.open === 'string') run(() => vscode.commands.executeCommand('onelakeStudio.openPath', asked.open));
+  });
   process.stdin.resume();
 }
 

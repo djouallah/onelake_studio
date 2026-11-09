@@ -59,6 +59,9 @@ async function setup({ offline = false, noInternet = false, answers = [], folder
       write: async () => { throw new Error("nothing is written in these tests"); },
     },
     memento: { get: k => kept.get(k), update: async (k, v) => { kept.set(k, v); } },
+    // Fabric is never asked: the first call stops the export here.
+    fabricAppOf: () => ({ takenName: async () => { throw new Error("stop: Fabric is not asked in these tests"); },
+                          deployStatus: async () => null }),
     extensionDir: ext,
     reportDir: join(ext, "reports"),
     pageDir: async () => ext,
@@ -107,10 +110,10 @@ test("the Save dialog is the one question: named for the app, in Documents the f
   assert.equal(e.message, "Export cancelled.");
   assert.equal(asked.length, 1);
   const o = asked[0].saveFile;
-  assert.match(o.defaultPath, /sales-model-explore\.zip$/);
+  assert.match(o.defaultPath, /sales-model-explore\.fabricapp$/);
   assert.equal(o.title, "Export sales-model-explore to Fabric");
   assert.equal(o.saveLabel, "Export");
-  assert.deepEqual(o.filters, { "OneLake Studio app": ["zip"] });
+  assert.deepEqual(o.filters, { "OneLake Studio app": ["fabricapp"] });
   assert.equal(kept.size, 0);
   await done();
 });
@@ -118,10 +121,27 @@ test("the Save dialog is the one question: named for the app, in Documents the f
 test("an app saved before: the Save dialog opens on that file", async () => {
   const dir = await mkdtemp(join(tmpdir(), "exportflow-saved-"));
   const { exportExplore, asked, kept, done } = await setup({ answers: [null] });
-  const there = join(dir, "sales-model-explore.zip");
+  const there = join(dir, "sales-model-explore.fabricapp");
   kept.set("exportZip:0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0/11111111-2222-3333-4444-555555555555/sales-model-explore", there);
   await exportExplore(REQUEST).catch(() => {});
   assert.equal(asked[0].saveFile.defaultPath, there);
+  await rm(dir, { recursive: true, force: true });
+  await done();
+});
+
+test("an app an earlier export saved as .zip: offered as .fabricapp, and renamed when saved there", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "exportflow-old-"));
+  const old = join(dir, "sales-model-explore.zip");
+  await writeApp(old, new Map([["site/app.js", Buffer.from("// app")]]),
+    { model: "power bi/nem.Lakehouse/Files/semantic_model/sales.yaml", engine: "duckdb", files: { "site/app.js": "edited since" } });
+  const now = join(dir, "sales-model-explore.fabricapp");
+  const { exportExplore, asked, kept, done } = await setup({ answers: [now, undefined] });
+  kept.set("exportZip:0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0/11111111-2222-3333-4444-555555555555/sales-model-explore", old);
+  const e = await exportExplore(REQUEST).then(() => null, x => x);
+  assert.equal(asked[0].saveFile.defaultPath, now);
+  assert.equal(e.message, "Not exported: the local copy has changes.", "its questions come as before");
+  assert.equal(existsSync(old), false);
+  assert.ok(await readApp(now), "the same app, by its new name");
   await rm(dir, { recursive: true, force: true });
   await done();
 });
@@ -182,6 +202,46 @@ test("Publish As Is only for a zip made for the same kind of site: DuckDB in the
     await rm(open, { recursive: true, force: true });
     await done();
   }
+});
+
+test("opening an app's file: its report is this file from now on, and a client-side app's own model comes back", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "exportflow-open-app-"));
+  const file = join(dir, "sales-model-explore.fabricapp");
+  await writeApp(file, new Map([["model.yaml", Buffer.from(OSSIE)], ["site/report.json", Buffer.from('{"tiles":[]}')]]),
+    { name: "sales-model-explore", model: "power bi/nem.Lakehouse/Files/semantic_model/sales.yaml", engine: "duckdb",
+      workspaceId: "ws-id", lakehouseId: "lh-id", report: { workspace: "power bi", model: "sales" } });
+  const { flow, kept, done } = await setup();
+  const app = await flow.openApp(file);
+  assert.deepEqual(app.report, { workspace: "power bi", model: "sales" });
+  assert.deepEqual(app.copy, { name: "model.yaml", text: OSSIE });
+  assert.equal(app.modelPath, "power bi/nem.Lakehouse/Files/semantic_model/sales.yaml");
+  assert.equal(kept.get("exportReport:power bi/sales"), file, "the Report tab draws this file");
+  assert.equal(kept.get("exportZip:ws-id/lh-id/sales-model-explore"), file, "the next export saves here");
+  // A semantic model's app holds no model: it names the one it queries.
+  const model = join(dir, "nem-explore.fabricapp");
+  await writeApp(model, new Map([["site/engine.json", Buffer.from('{"engine":"semanticModel"}')]]),
+    { name: "nem-explore", model: "aemo/NEM Sales", engine: "semanticModel", semanticModel: { workspace: "aemo-id", id: "m1", name: "NEM Sales" } });
+  const b = await flow.openApp(model);
+  assert.deepEqual(b.report, { workspace: "aemo", model: "NEM Sales" }, "from where its model is, for a file from before report was kept");
+  assert.deepEqual(b.semanticModel, { workspace: "aemo-id", id: "m1", name: "NEM Sales" });
+  assert.equal(b.copy, null);
+  await assert.rejects(flow.openApp(join(dir, "gone.fabricapp")), /is gone/);
+  await rm(dir, { recursive: true, force: true });
+  await done();
+});
+
+test("an app's file opened from disk is exported as it is: no Save dialog, and no question about its changes", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "exportflow-app-"));
+  const file = join(dir, "sales-model-explore.fabricapp");
+  await writeApp(file, new Map([["model.yaml", Buffer.from(OSSIE)], ["site/app.js", Buffer.from("// app")]]),
+    { model: "power bi/nem.Lakehouse/Files/semantic_model/sales.yaml", engine: "duckdb", files: { "site/app.js": "edited since" } });
+  const { exportExplore, asked, done } = await setup();
+  const e = await exportExplore({ ...REQUEST, file: "model.yaml", appFile: file }).then(() => null, x => x);
+  assert.match(e.message, /stop: Fabric is not asked/, "it went on to Fabric");
+  assert.equal(asked.filter(a => a.saveFile).length, 0, "no Save dialog");
+  assert.equal(asked.filter(a => /has changed since/.test(a.message || "")).length, 0, "its changes are what is published");
+  await rm(dir, { recursive: true, force: true });
+  await done();
 });
 
 // Create Semantic Model: from the tree, no mode, and one dialog asks it; from the command line, a mode,

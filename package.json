@@ -43,6 +43,14 @@
     "virtualWorkspaces": true
   },
   "contributes": {
+    "customEditors": [
+      {
+        "viewType": "onelakeStudio.fabricApp",
+        "displayName": "OneLake Studio app",
+        "selector": [{ "filenamePattern": "*.fabricapp" }],
+        "priority": "default"
+      }
+    ],
     "commands": [
       {
         "command": "onelakeStudio.open",
@@ -136,6 +144,12 @@
         "command": "onelakeStudio.openSemanticModel",
         "title": "Open Semantic Model",
         "category": "OneLake Studio"
+      },
+      {
+        "command": "onelakeStudio.openPath",
+        "title": "Open in OneLake Studio",
+        "category": "OneLake Studio",
+        "icon": "$(open-preview)"
       },
       {
         "command": "onelakeStudio.createSemanticModel",
@@ -299,6 +313,20 @@
       }
     ],
     "menus": {
+      "editor/title": [
+        {
+          "command": "onelakeStudio.openPath",
+          "when": "resourceScheme == file && resourceExtname =~ /^\\.(ya?ml|bim)$/i && onelakeStudio.activeIsModel",
+          "group": "navigation"
+        }
+      ],
+      "explorer/context": [
+        {
+          "command": "onelakeStudio.openPath",
+          "when": "resourceScheme == file && resourceExtname =~ /^\\.(ya?ml|bim|fabricapp)$/i",
+          "group": "navigation@9"
+        }
+      ],
       "view/title": [
         {
           "command": "onelakeStudio.goTo",
@@ -461,6 +489,10 @@
         }
       ],
       "commandPalette": [
+        {
+          "command": "onelakeStudio.openPath",
+          "when": "false"
+        },
         {
           "command": "onelakeStudio.downloadFile",
           "when": "false"

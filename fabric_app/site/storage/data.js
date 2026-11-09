@@ -3,10 +3,10 @@
 // =============================================================================
 // The Iceberg backend of Export to Fabric's app (OneLake Studio). Its inputs are the semantic
 // model and a OneLake Iceberg catalog, nothing else: no import, no file written for it. The
-// model is read in place, from the lakehouse, by the app's function (its MODEL_URL), which
-// answers with it where each of its tables is now and a read-only SAS (catalog.js). The model
-// names the tables (an Ossie dataset's `source`, or a TMSL table's Direct Lake partition:
-// schema.table).
+// model is the site's own, model.json, made by the export from the model.yaml the app's file
+// holds: the app runs on the model as exported. The app's function answers where each of its
+// tables is now and a read-only SAS (catalog.js). The model names the tables (an Ossie dataset's
+// `source`, or a TMSL table's Direct Lake partition: schema.table).
 // The page is the only thing that reads OneLake, and the SAS never leaves it: it plans each
 // table itself (metadata.json, manifest list, manifests: prefetch.js's planTable) and
 // downloads every file a table's view reads into the local store (OPFS, blockcache.js) before
@@ -68,6 +68,8 @@ const EXTENSIONS = ['parquet', 'icu'];
 const EXT_REPO = `${VENDOR}duckdb-ext`;
 // The local store DuckDB reads from, and its worker's only way out (blockcache.js).
 const BLOCKCACHE = new URL('./blockcache.js' + new URL(import.meta.url).search, import.meta.url).href;
+// The model, the site's own (src/exportapp.js, setModel), of this build.
+const MODEL_JSON = new URL("../model.json" + new URL(import.meta.url).search, import.meta.url).href;
 const ENGINES = (() => {
   try { const n = Number(new URLSearchParams(location.search).get('engines')); if (n >= 1 && n <= 4) return Math.floor(n); } catch (e) {}
   return 2;
@@ -384,12 +386,15 @@ export function createDataSource({ onStatus = () => {}, onProgress = () => {} } 
     await kv.load();
     await auth.signIn();
     onStatus("Loading the query engine…");
-    // The function's answer (the model, where its tables are, the SAS), the tables' sizes and
+    // The model, the function's answer (where its tables are, the SAS), the tables' sizes and
     // their plans, while DuckDB's bundle loads: none of them needs it.
-    const ready = catalog.open().then(async answer => {
-      if (!answer.model) throw new Error("the app's function gave no model: is its MODEL_URL set?");
+    const modelRead = fetch(MODEL_JSON).then(r => {
+      if (!r.ok) throw new Error(`the site has no model.json (HTTP ${r.status}): export the app again`);
+      return r.json();
+    });
+    const ready = Promise.all([modelRead, catalog.open()]).then(async ([doc, answer]) => {
       access = answer;
-      model = answer.model;
+      model = doc;
       tables = modelTables(model);
       sas = access.sas;
       await sizeAll();

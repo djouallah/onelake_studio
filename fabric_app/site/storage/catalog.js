@@ -1,18 +1,18 @@
 // =============================================================================
 // catalog.js — where the model's tables are, from the app's function
 // =============================================================================
-// The browser never holds a token: the openCatalog function (rayfin/functions) reads the
-// semantic model from the lakehouse, asks the OneLake Iceberg catalog, server side, where each
-// of its tables is now (its metadata.json) and signs a read-only SAS on each table's folder,
-// valid ~55 min. It answers for the model's tables, with the model.
+// The browser never holds a token: the openCatalog function (rayfin/functions) asks the OneLake
+// Iceberg catalog, server side, where each of the model's tables is now (its metadata.json) and
+// signs a read-only SAS on each table's folder, valid ~55 min. The model itself is the site's own
+// (model.json): the function names its tables from the app's TABLES setting, and returns no model.
 //
 // The answer is kept (kv.js, this browser's IndexedDB) until shortly before its SAS expires,
 // so a viewer calls the function about once an hour, not on every load; a page open past that
 // is given a new one (`renew`). This browser's alone, like the page's memory: nothing is shared.
 //
 //   const catalog = createCatalog(() => auth.client(), kv);
-//   await catalog.open()   the model's tables, and the model
-//     -> { model, metadata: { '<schema>.<table>': 'abfss://...metadata.json' }, missing: [...], sas: { '<folder under Tables/>': '...' }, expiresOn }
+//   await catalog.open()   the model's tables
+//     -> { metadata: { '<schema>.<table>': 'abfss://...metadata.json' }, missing: [...], sas: { '<folder under Tables/>': '...' }, expiresOn }
 //   catalog.fresh()     true while the kept answer is good: the page can start without a session
 //   catalog.renewAt()   when to ask again (ms since the epoch)
 // =============================================================================
@@ -25,9 +25,9 @@ export function createCatalog(client, kv) {
   const load = () => kv.get(KEY);
   const save = v => kv.set(KEY, v);
   const renewAt = (a = load()) => a ? Date.parse(a.expiresOn) - RENEW_MARGIN_MS : 0;
-  // A kept answer for the model's tables holds the model and a SAS per table: an answer without
-  // them (a build that kept another app's, or an older one) is asked again.
-  const good = a => !!a && Date.now() < renewAt(a) && !!a.model && !!a.sas && typeof a.sas === 'object';
+  // A kept answer for the model's tables holds a SAS per table: an answer without them (a build
+  // that kept another app's, or an older one) is asked again.
+  const good = a => !!a && Date.now() < renewAt(a) && !!a.sas && typeof a.sas === 'object';
 
   async function call() {
     const rayfin = await client();
@@ -45,7 +45,6 @@ export function createCatalog(client, kv) {
     return call();
   }
 
-  // fresh: the page can start from the kept answer without a session. Only one that is still
-  // good and holds the model: without the model the page must sign in to ask again.
+  // fresh: the page can start from the kept answer without a session, while it is still good.
   return { open, renewAt: () => renewAt(), fresh: () => good(load()) };
 }
