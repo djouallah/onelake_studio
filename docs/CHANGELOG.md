@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- **Edit a Report tile.** Hover over a tile for its tools. ✎ opens the visual in Visual, on its own fields, with a strip
+  above it: change the fields, the mark or the title, then **Update tile**, and the tile changes where it is. **Cancel**
+  leaves it as it was. Either way Visual gets back the fields it had before. ⧉ copies a tile, and a double-click on a
+  tile's title renames it.
+- **Card is a Visual.** Pick Card in Visual's marks to show each field on Values as one big number, then Add to report.
+  On the Report, the other tiles' picks filter it. Automatic draws a card too when only Values has fields, where it
+  used to draw a table of one cell.
+- **A Report tile's grip, ✕ and the new tools show only while the pointer or the keyboard is on the tile**, so a
+  report reads as it will in the app.
 - **A model named `<name>.ossie.yaml` opens in OneLake Studio from VS Code by itself**, as Apache Ossie's own tools name
   a model; a plain `.yaml` keeps its Open in OneLake Studio button. Studio's copies of downloaded models, and the model
   inside an app's file, are named `.ossie.yaml` too: the ones already on this machine are renamed once.

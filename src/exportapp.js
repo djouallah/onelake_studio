@@ -289,7 +289,11 @@ tables, columns and measures a tile can name.
 - \`pivot\` has no \`sql\`: its \`pivot\` is Explore's shelves, as **Add to report** saves them, and it is drawn as
   Visual draws them: \`{ "rows": ["dim_region.Region"], "cols": [], "values": ["Revenue"], "filters": [], "mark": "bar" }\`.
   A column is \`table.column\`, a measure its name; \`mark\` is \`auto\`, \`table\`, \`highlight\`, \`bar\`, \`stacked\`,
-  \`line\`, \`area\`, \`heatmap\` or \`scatter\`. A click picks its first Rows field (else Columns).
+  \`line\`, \`area\`, \`heatmap\`, \`scatter\` or \`card\`. A click picks its first Rows field (else Columns).
+- A card is a \`pivot\` tile whose \`mark\` is \`card\`: each field on Values as one big figure, over every row its
+  filters keep (its Rows and Columns are left out). Other tiles' picks filter it, and a click on it picks nothing:
+  \`{ "rows": [], "cols": [], "values": ["Revenue"], "filters": [], "mark": "card" }\`. \`auto\` draws a card too when
+  only Values has fields.
 - A slicer is a \`pivot\` tile whose \`mark\` is \`slicer\`: it lists the values of its first Rows field (those with a
   figure, when a measure is on Values, which it shows beside each), and what is picked in it filters every other tile.
   \`"slicer"\` says how it is drawn: \`list\`, \`buttons\`, \`dropdown\`, or \`range\` (a date or a number):

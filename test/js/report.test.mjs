@@ -81,7 +81,7 @@ test("a blank is IS NULL, and a FROM in parentheses is not the tile's", () => {
 });
 
 // A pivot tile: Pivot's shelves, as Add to report saves them, run as Pivot's own query.
-const { modelFields, pivotQuery, pivotTitle, pivotView } = await import("../../app/explore/explore.js");
+const { modelFields, pivotQuery, pivotTitle, pivotView, autoMark } = await import("../../app/explore/explore.js");
 const MODEL = { tables: [
   { name: "dim_zone", columns: [{ name: "Borough", dataType: "string" }] },
   { name: "trips", columns: [{ name: "fare", dataType: "double" }], measures: [{ name: "Total Fare" }] },
@@ -184,6 +184,29 @@ test("a slicer is a Visual: its query lists the values that have the measure, an
   assert.equal(state.slicer, "buttons");
   assert.equal(pivotTitle(state), "Borough");
   assert.equal(pivotQuery({ rows: ["dim_zone.Borough"], mark: "slicer" }, fields).state.slicer, "list", "List unless picked");
+});
+
+test("a card is its Values over every row its filters keep: Rows and Columns left out, nothing to pick", () => {
+  const fields = modelFields(MODEL);
+  const { sql, field } = pivotQuery({ rows: ["dim_zone.Borough"], values: ["Total Fare"], mark: "card", totals: true,
+                                      filters: [{ field: "dim_zone.Borough", op: "in", values: ["Bronx"] }] }, fields);
+  assert.equal(sql, `SELECT AGG("Total Fare") AS "Total Fare"
+FROM model
+WHERE ${BOROUGH} IN ('Bronx')`);
+  assert.equal(field, null, "a click on a card picks nothing");
+  assert.equal(withFilters(sql, [{ ref: BOROUGH, value: "Queens", type: "string" }]),
+               `SELECT AGG("Total Fare") AS "Total Fare"
+FROM model
+WHERE (${BOROUGH} IN ('Bronx')) AND ${BOROUGH} = 'Queens'`, "another tile's pick filters it");
+  assert.throws(() => pivotQuery({ rows: ["dim_zone.Borough"], mark: "card" }, fields), /Values/);
+  assert.equal(pivotTitle({ rows: [], cols: [], values: ["Total Fare"], mark: "card" }), "Total Fare");
+});
+
+test("Automatic: a card for Values alone, a table for no Values", () => {
+  const fields = modelFields(MODEL);
+  assert.equal(autoMark({ rows: [], cols: [], values: ["Total Fare"] }, fields), "card");
+  assert.equal(autoMark({ rows: ["dim_zone.Borough"], cols: [], values: [] }, fields), "table");
+  assert.equal(autoMark({ rows: ["dim_zone.Borough"], cols: [], values: ["Total Fare"] }, fields), "bar");
 });
 
 test("Visual's fields leave out a hidden table, its measures too, and hidden columns and measures", () => {

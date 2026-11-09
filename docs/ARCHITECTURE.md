@@ -578,6 +578,9 @@ A semantic model opens as **Explore** ([`app/explore/`](../app/explore/)), on th
     (with a measure on Values, only those with a figure, shown beside each; a filter narrows them too), drawn as a list,
     buttons, a dropdown of the list, or a range for a date or a number, picked by a switch over it (`state.slicer`). On
     Visual it only shows; on the Report it filters. A table's Visual has no Slicer: it only builds SQL.
+  - **Card** is a mark too (`cardView`): each field on Values as one figure, in its format string, over every row its
+    filters keep. Its query leaves Rows and Columns out (`buildQuery`), and Automatic picks it when only Values has
+    fields. On the Report the other tiles' picks filter it, and a click on it picks nothing.
   - **Show plan** profiles it (`profile.js`: DuckDB's `EXPLAIN ANALYZE` as totals, a timeline and the
     costly operators) next to its plan tree.
   - **Add to report** puts the view on the Report, as a tile (Report, below).
@@ -590,9 +593,16 @@ A semantic model opens as **Explore** ([`app/explore/`](../app/explore/)), on th
     the zip, and the file goes.
   - **Add to report, ✕ and the grip:** Visual's **Add to report** puts the shelves on screen after the tiles, as a
     `pivot` tile (a slicer too); a tile's ✕ takes it out, and its grip ⠿ drags it anywhere on the grid and its ◢ drags its size (or the arrow keys, on
-    either), drawn there at once with nothing run again. All write where the tiles are kept, one save after another (`reportSave` in
+    either), drawn there at once with nothing run again. ⧉ adds a copy after the tiles, as big as the tile, in the first
+    place it fits, and a double-click on a title renames it in place. A tile's tools show only while the pointer or the
+    keyboard is on it. All write where the tiles are kept, one save after another (`reportSave` in
     [`src/exportflow.js`](../src/exportflow.js)), over the tiles they were drawn from: a report that changed since (an
-    edit to its file) is refused and drawn again. The Fabric app's Report only reads, so it has neither.
+    edit to its file) is refused and drawn again. The Fabric app's Report only reads, so it has none of them.
+  - **Editing a tile:** a pivot tile's ✎ opens its shelves in Visual (`editTile` in [`view.js`](../app/explore/view.js)),
+    under a strip with its title, **Update tile** and **Cancel**. Update writes the shelves and the title into that tile,
+    its layout kept; a title that was its shelves' own follows the new ones. Either way Visual's shelves from before come
+    back, and the Report is on screen again. Add to report still adds a new tile from there. A tile with `sql` has no ✎:
+    its SQL is the file's.
   - **Drawn again** when the zip changes, while the tab is on screen: a person or an agent edits the report and sees it.
   - A tile is `{ title, kind, sql, formats?, echarts?, wide?, crossFilter? }`: `kind` is `kpi`, `bar`, `line` or `table`,
     `formats` a column's format string, `echarts` an ECharts option merged over the tile's own. A `pivot` tile is

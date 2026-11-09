@@ -292,11 +292,14 @@ section.modelOpen #chartBtn { display: none; }
 .rp-tile h2 { margin: 0; font-size: 0.85rem; font-weight: 600; color: var(--muted); }
 .rp-head { display: flex; align-items: center; gap: 0.5rem; }
 .rp-head h2 { flex: 1; min-width: 0; }
-.rp-remove { background: none; border: none; color: var(--faint); font: inherit; cursor: pointer; padding: 0.1rem 0.35rem; border-radius: var(--radius); }
-.rp-remove:hover, .rp-remove:focus-visible { color: var(--text); background: var(--hover-soft); }
-/* A tile's grip: dragged onto another tile, or moved by the arrow keys. */
-.rp-grip { background: none; border: none; color: var(--faint); font: inherit; cursor: grab; padding: 0.1rem 0.3rem; border-radius: var(--radius); }
-.rp-grip:hover, .rp-grip:focus-visible { color: var(--text); background: var(--hover-soft); }
+.rp-head h2[title] { cursor: text; }
+/* A tile's tools: its grip (dragged, or the arrow keys), ✎, ⧉ and ✕, shown while the pointer or the
+   keyboard is on the tile, as the tree's row actions are. */
+.rp-tool { background: none; border: none; color: var(--faint); font: inherit; cursor: pointer; padding: 0.1rem 0.35rem; border-radius: var(--radius); opacity: 0; }
+.rp-tile:hover .rp-tool, .rp-tile:focus-within .rp-tool { opacity: 1; }
+.rp-tool:hover, .rp-tool:focus-visible { color: var(--text); background: var(--hover-soft); }
+.rp-grip { cursor: grab; padding: 0.1rem 0.3rem; }
+.rp-rename { flex: 1; min-width: 0; font: inherit; font-size: 0.85rem; font-weight: 600; color: var(--text); background: var(--input-bg); border: 1px solid var(--accent); border-radius: var(--radius-sm); padding: 0.05rem 0.35rem; }
 .rp-tile.rp-dragging, .rp-tile.rp-resizing { outline: 2px dashed var(--accent); outline-offset: -2px; user-select: none; z-index: 1; }
 .rp-grip { touch-action: none; }
 /* A slicer: its column's values to tick. */
@@ -327,6 +330,13 @@ section.modelOpen #chartBtn { display: none; }
 .rp-pivot tr.rp-pick:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .rp-pivot tr.rp-on > * { background: color-mix(in srgb, var(--accent) 22%, transparent); }
 .rp-chart { height: 280px; }
+/* A card (explore.js cardView): its figures, as big as its box lets them be. */
+.card-figures { flex: 1; min-height: 0; display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 0.6rem 2.2rem; container-type: size; }
+.explore-page .card-figures { min-height: 160px; }
+.card-figure { display: flex; flex-direction: column; align-items: center; min-width: 0; }
+.card-figure b { font-size: clamp(1.4rem, 45cqh, 3.2rem); line-height: 1.1; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--text); white-space: nowrap; }
+.card-many .card-figure b { font-size: clamp(1.2rem, 30cqh, 2.4rem); }
+.card-figure span { color: var(--muted); font-size: 0.78rem; text-align: center; }
 .rp-kpis { display: flex; flex-wrap: wrap; gap: 0.6rem 2.2rem; }
 .rp-kpi span { display: block; color: var(--muted); font-size: 0.78rem; }
 .rp-kpi b { font-size: 1.7rem; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--text); }
@@ -348,3 +358,9 @@ section.modelOpen #chartBtn { display: none; }
 .rp-x:hover, .rp-x:focus-visible { color: var(--text); }
 .rp-say { margin: 0; color: var(--muted); font-size: 0.82rem; }
 .rp-say.error { color: var(--err); white-space: pre-wrap; }
+/* Over Visual while a Report tile is edited there (view.js editTile). */
+.explore-editing { display: flex; flex-wrap: wrap; align-items: center; gap: 0.6rem; margin: var(--gap) var(--gutter) 0; padding: 0.45rem 0.8rem; border: 1px solid var(--accent); border-radius: var(--radius); background: color-mix(in srgb, var(--accent) 10%, var(--card)); font-size: 0.8rem; }
+.explore-editing[hidden] { display: none; }
+.explore-editing-say { font-weight: 600; }
+.explore-editing label { display: inline-flex; align-items: center; gap: 0.4rem; flex: 1; min-width: 12rem; color: var(--muted); }
+.explore-editing-title { flex: 1; min-width: 0; font: inherit; color: var(--text); background: var(--input-bg); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 0.2rem 0.5rem; }

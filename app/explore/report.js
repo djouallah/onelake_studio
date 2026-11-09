@@ -16,7 +16,9 @@
 // the column and row a tile starts at, and how many it spans) is where its grip and its ◢ put it.
 // Every tile floats up as far as it can, and a tile placed over others pushes them down (arrange);
 // a tile with no layout goes in the first place it fits, as wide and tall as its kind is. A host
-// that saves the Report places them (`layout`) and takes them out (`remove`).
+// that saves the Report places them (`layout`), takes them out (`remove`), copies them
+// (`duplicate`), renames them (a double-click on the title: `rename`) and, for a pivot tile, opens
+// its shelves in Visual (`edit`).
 // `formats`: a column's format string; `echarts` (bar, line): an ECharts option merged over the
 // tile's own. A tile that fails says so in its own box, and the rest still draw.
 // Cross filtering: a click on a bar, a line's point or a table's row picks that row's first value,
@@ -238,7 +240,9 @@ const same = (a, b) => (a ?? null) === (b ?? null);
  * (optional), a CSS token's value, for a pivot's tints; remove(index) (optional), a ✕ on each tile
  * that takes it out of the report; layout(tiles) (optional), a grip on each tile that drags it
  * anywhere on the grid and a ◢ that drags its size (or the arrow keys, on either), drawn there at
- * once: `tiles` is each tile, in its new order (top to bottom), as { from: its index before, layout }.
+ * once: `tiles` is each tile, in its new order (top to bottom), as { from: its index before, layout };
+ * duplicate(index) (optional), a ⧉ that copies a tile; rename(index, title) (optional), a double-click
+ * on a title that edits it in place; edit(index) (optional), a ✎ on a pivot tile that opens it in Visual.
  * Returns { destroy }.
  * The tiles run one at a time, top to bottom: each is a scan of the model's tables, and the engine
  * gives one query all it has, where several at once share it, keep each other waiting, and keep
@@ -270,15 +274,19 @@ export function drawReport(root, spec, ctx) {
     const wide = tile.wide ?? (tile.kind === 'kpi' || tile.kind === 'table' || mark === 'table' || mark === 'highlight' || mark === 'heatmap');
     const title = String(tile.title ?? '');
     const job = { tile, body, piv, on: pickColumn(tile, piv), dirty: true, asking: false, chart: null, box: null, repaint: null };
-    const grip = ctx.layout ? el('button', { type: 'button', class: 'rp-grip', title: 'Drag to move, or move with the arrow keys',
+    const grip = ctx.layout ? el('button', { type: 'button', class: 'rp-tool rp-grip', title: 'Drag to move, or move with the arrow keys',
       'aria-label': `Move ${title || 'this tile'}`, onpointerdown: e => dragFrom(e, job, 'move'), onkeydown: e => keyed(e, job, 'move') }, '⠿') : null;
     job.slicer = mark === 'slicer';
     job.plots = plots;
     job.at = startAt(tile, { wide, mark, plots });
-    job.section = el('section', { class: `rp-tile${job.slicer ? ' rp-slicer-tile' : ''}` },
-      el('div', { class: 'rp-head' }, grip, el('h2', {}, title),
-        ctx.remove ? el('button', { type: 'button', class: 'rp-remove', title: 'Remove from the report',
-          'aria-label': `Remove ${title || 'this tile'} from the report`, onclick: () => ctx.remove(jobs.indexOf(job)) }, '✕') : null),
+    const name = title || 'this tile';
+    const tool = (glyph, tip, label, onclick) => el('button', { type: 'button', class: 'rp-tool', title: tip, 'aria-label': label, onclick }, glyph);
+    const heading = el('h2', ctx.rename ? { title: 'Double-click to rename', ondblclick: () => renameIn(job, heading, heading.textContent) } : {}, title);
+    job.section = el('section', { class: `rp-tile${job.slicer ? ' rp-slicer-tile' : ''}${mark === 'card' ? ' rp-card-tile' : ''}` },
+      el('div', { class: 'rp-head' }, grip, heading,
+        ctx.edit && tile.kind === 'pivot' ? tool('✎', 'Edit this visual', `Edit ${name}`, () => ctx.edit(jobs.indexOf(job))) : null,
+        ctx.duplicate ? tool('⧉', 'Duplicate', `Duplicate ${name}`, () => ctx.duplicate(jobs.indexOf(job))) : null,
+        ctx.remove ? tool('✕', 'Remove from the report', `Remove ${name} from the report`, () => ctx.remove(jobs.indexOf(job))) : null),
       body,
       ctx.layout ? el('button', { type: 'button', class: 'rp-resize', title: 'Drag to resize, or resize with the arrow keys',
         'aria-label': `Resize ${title || 'this tile'}`, onpointerdown: e => dragFrom(e, job, 'size'), onkeydown: e => keyed(e, job, 'size') }, '◢') : null);
@@ -287,6 +295,28 @@ export function drawReport(root, spec, ctx) {
   });
   layOut(arrange(jobs.map(j => j.at)));
   pump();
+
+  // A double-click on a title: an input in its place; Enter or leaving it keeps what is typed, Esc
+  // puts the title back.
+  function renameIn(job, heading, was) {
+    const input = el('input', { type: 'text', class: 'rp-rename', value: was, 'aria-label': 'Tile title' });
+    let done = false;
+    const end = keep => {
+      if (done) return;
+      done = true;
+      const next = input.value.trim();
+      input.replaceWith(heading);
+      if (keep && next && next !== was) { heading.textContent = next; ctx.rename(jobs.indexOf(job), next); }
+    };
+    input.addEventListener('keydown', e => {
+      if (e.key === 'Enter') { e.preventDefault(); end(true); }
+      else if (e.key === 'Escape') { e.preventDefault(); end(false); }
+    });
+    input.addEventListener('blur', () => end(true));
+    heading.replaceWith(input);
+    input.focus();
+    input.select();
+  }
 
   // The model column a click on this tile filters the others by, with its type; null: no clicks.
   function pickColumn(tile, piv) {
@@ -306,8 +336,8 @@ export function drawReport(root, spec, ctx) {
     if (tile.layout && typeof tile.layout === 'object') return { ...tile.layout };
     const style = mark === 'slicer' ? tile.pivot?.slicer : null;
     const rows = mark === 'slicer' ? ({ dropdown: 8, range: 9, buttons: 10 }[style] ?? 28)
-      : tile.kind === 'kpi' ? 12 : wide ? 36 : plots > 1 ? 14 + 18 * plots : 32;
-    const w = tile.size?.w ?? (mark === 'slicer' ? 3 : wide ? COLUMNS : COLUMNS / 2);
+      : mark === 'card' ? 10 : tile.kind === 'kpi' ? 12 : wide ? 36 : plots > 1 ? 14 + 18 * plots : 32;
+    const w = tile.size?.w ?? (mark === 'slicer' || mark === 'card' ? 3 : wide ? COLUMNS : COLUMNS / 2);
     return { x: null, y: null, w, h: tile.size?.h > 0 ? Math.ceil(tile.size.h / ROW) : rows };
   }
   // Each tile where `places` says, in the same order as the tiles.

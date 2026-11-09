@@ -27,7 +27,7 @@ const ROW_TOTAL = '__rows_total', COL_TOTAL = '__columns_total';
 const TYPES = { string: 'text', int64: 'number', double: 'number', decimal: 'number', dateTime: 'date', boolean: 'bool' };
 const ICONS = { text: 'Abc', number: '#', date: '▦', bool: '◐', measure: 'Σ' };
 const MARKS = [['auto', 'Automatic'], ['table', 'Table'], ['highlight', 'Highlight'], ['bar', 'Bar'], ['stacked', 'Stacked'],
-  ['line', 'Line'], ['area', 'Area'], ['heatmap', 'Heatmap'], ['scatter', 'Scatter'], ['slicer', 'Slicer']];
+  ['line', 'Line'], ['area', 'Area'], ['heatmap', 'Heatmap'], ['scatter', 'Scatter'], ['slicer', 'Slicer'], ['card', 'Card']];
 // How a slicer is drawn (slicerView); Range only for a date or a number.
 const SLICER_STYLES = [['list', 'List'], ['buttons', 'Buttons'], ['dropdown', 'Dropdown'], ['range', 'Range']];
 const SHELVES = [['rows', 'Rows'], ['cols', 'Columns'], ['values', 'Values'], ['filters', 'Filters']];
@@ -98,10 +98,15 @@ function conditions(f, today) {
 }
 
 // The shelves as one query. `cap`: the rows asked for at most (0: all, for the CSV).
+// A card is its Values over every row its filters keep: its Rows and Columns are left out.
 const localToday = () => new Date().toLocaleDateString('en-CA');   // YYYY-MM-DD
 export function buildQuery(s, { cap = CAP, today = localToday() } = {}) {
+  if (!s.rows.length && !s.cols.length && !s.values.length) return null;
+  if (s.mark === 'card') {
+    if (!s.values.length) throw new Error('A card shows the fields on Values: put a measure there.');
+    s = { ...s, rows: [], cols: [], totals: false };
+  }
   const dims = [...s.rows, ...s.cols];
-  if (!dims.length && !s.values.length) return null;
   const select = {};
   for (const id of [...dims, ...s.values]) {
     const name = nameOf(id);
@@ -233,7 +238,8 @@ export function pivot(rows, s) {
 
 // The mark drawn when none is picked, as Tableau's Show Me picks it.
 export function autoMark(s, fields) {
-  if (!s.values.length || (!s.rows.length && !s.cols.length)) return 'table';
+  if (!s.values.length) return 'table';
+  if (!s.rows.length && !s.cols.length) return 'card';
   if (s.rows.length && s.cols.length) return s.values.length === 1 ? 'highlight' : 'table';
   const x = fields.byId.get(s.rows[0] ?? s.cols[0]);
   return x?.type === 'date' || x?.type === 'number' ? 'line' : 'bar';
@@ -267,7 +273,8 @@ export function pivotQuery(saved, fields) {
   const q = buildQuery(state);
   if (!q) throw new Error("the tile's pivot has no fields on its shelves");
   const columnOf = id => { const f = fields.byId.get(id); return f && f.kind === 'column' ? { table: f.table, name: f.name, type: f.type } : null; };
-  const first = columnOf(state.rows[0] ?? state.cols[0]);
+  // A card has no rows to click: it picks nothing.
+  const first = state.mark === 'card' ? null : columnOf(state.rows[0] ?? state.cols[0]);
   return { state, sql: modelSql(q, columnOf, 'model'), field: first && { table: first.table, column: first.name, ref: `${qid(first.table)}.${qid(first.name)}` } };
 }
 
@@ -295,10 +302,24 @@ const same = (a, b) => (a ?? null) === (b ?? null);
 export function pivotView(s, rows, mark, look, pick = null, sel = null) {
   const shown = mark === 'auto' ? autoMark(s, look.fields) : mark;
   if (shown === 'slicer') return { node: slicerView(s, rows, look, sel ?? { style: s.slicer, onChange() {} }) };
+  if (shown === 'card') return { node: cardView(s, rows, look) };
   const piv = pivot(rows, s);
   if (shown === 'table' || shown === 'highlight' || !s.values.length) return { node: pivotTable(s, piv, shown === 'highlight', look, pick) };
   const out = pivotChart(s, piv, shown, look, pick);
   return typeof out === 'string' ? { node: el('div', { class: 'ex-empty' }, out) } : out;
+}
+
+// A card: each field on Values as one figure, from the one row its query answers (buildQuery
+// leaves its Rows and Columns out), in its format, else grouped with at most two decimals. Its
+// name is under it only when there are several: a Report's tile is titled for one.
+function cardView(s, rows, look) {
+  const row = rows[0] ?? {}, many = s.values.length > 1;
+  const text = id => {
+    const v = row[nameOf(id)], format = shelfField(look.fields, id)?.format;
+    return v == null ? '(blank)' : typeof v === 'number' && !format ? v.toLocaleString('en-US', { maximumFractionDigits: 2 }) : formatValue(v, format);
+  };
+  return el('div', { class: `card-figures${many ? ' card-many' : ''}` }, s.values.map(id =>
+    el('div', { class: 'card-figure' }, el('b', {}, text(id)), many ? el('span', {}, nameOf(id)) : null)));
 }
 
 // A slicer: the values of the first Rows field (else Columns) as the rows have them, in the query's
@@ -631,7 +652,13 @@ export function createExplorer(root, ctx) {
   for (const [k, m] of MARKS) {
     if (k === 'slicer' && ctx.noSlicer) continue;
     marks.append(el('button', { type: 'button', class: 'ex-mark', 'data-mark': k,
-      onclick: () => { state.mark = k; save(); renderControls(); draw(); } }, m));
+      onclick: () => {
+        // A card asks a query of its own (buildQuery): to or from one runs again.
+        const asks = (state.mark === 'card') !== (k === 'card');
+        state.mark = k;
+        if (asks) { changed(); return; }
+        save(); renderControls(); draw();
+      } }, m));
   }
 
   const fieldOf = id => shelfField(fields, id);
@@ -989,6 +1016,7 @@ export function createExplorer(root, ctx) {
         ? `First ${n.toLocaleString()} rows: add a filter for all of them${note}`
         : `${n.toLocaleString()} row${n === 1 ? '' : 's'}`;
       info.classList.toggle('ex-warn', rows.length >= CAP);
+      if (state.mark === 'card' && (state.rows.length || state.cols.length)) info.textContent = 'A card shows Values only: Rows and Columns are left out';
       draw();
     } catch (e) {
       if (my !== seq) return;
@@ -1059,6 +1087,13 @@ export function createExplorer(root, ctx) {
     },
     // The shelves as they are (Export to Fabric: the app's first view).
     state: () => JSON.parse(JSON.stringify(state)),
+    // Other shelves on screen, run (a Report's tile, to edit it), and kept as the shelves are.
+    setState(s) {
+      state = { ...EMPTY(), ...JSON.parse(JSON.stringify(s ?? {})), v: 2 };
+      preview = null;
+      closePop();
+      changed();
+    },
     // The view is going: its timers stop, its popup goes, and a query still running finds
     // its sequence moved on and draws nothing.
     destroy() {

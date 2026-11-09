@@ -11,8 +11,9 @@
 //             (a host that saves the Report) puts the visual on the Report as a tile.
 //   Report    tiles the host reads (ctx.report: Export to Fabric's report.json, or the file the
 //             host keeps before an export; none at first), each a SELECT over the model or
-//             a visual (a slicer among them), drawn by report.js; a ✕ takes one out and its grip
-//             moves it (a host that saves the Report)
+//             a visual (a slicer among them), drawn by report.js; a ✕ takes one out, its grip
+//             moves it, ⧉ copies it, a double-click renames it, and ✎ opens a visual's shelves in
+//             Visual under a strip that updates the tile (a host that saves the Report)
 // Model's Diagram | YAML (or BIM) shows the model drawn, or its file as written (pretty.js).
 // The bar: the page tabs, then each page's own: Model's Keep offline, then Diagram | YAML, Create
 // Semantic Model (a model file only) and Open in Excel at the right; Visual's Show SQL, Download CSV and Add to report; the Report's Export to
@@ -193,6 +194,13 @@ export function mountExplore(root, ctx) {
   const reportPage = el('div', { class: 'report-page', hidden: true });
   const modelPage = el('div', { class: 'model-page' });
   const pivotPage = el('div', { class: 'explore-page', hidden: true });
+  // Over Visual while a Report tile is edited there (editTile): its title, Update tile and Cancel.
+  const titleBox = el('input', { type: 'text', class: 'explore-editing-title', 'aria-label': 'Tile title' });
+  titleBox.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); updateTile(); } });
+  const editStrip = el('div', { class: 'explore-editing', hidden: true },
+    el('span', { class: 'explore-editing-say' }, 'Editing a Report tile'),
+    el('label', {}, 'Title', titleBox),
+    btn('Update tile', () => updateTile(), true), btn('Cancel', () => endEdit(false)));
 
   // Show SQL: the pivot's SQL in a box the user edits, in place of the whole pivot.
   const ta = el('textarea', { spellcheck: 'false', wrap: 'off', 'aria-label': 'SQL over the semantic model' });
@@ -238,7 +246,7 @@ export function mountExplore(root, ctx) {
       modelActions,
       actions,
       reportActions),
-    reportPage, modelArea, pivotPage, sqlPage);
+    reportPage, modelArea, editStrip, pivotPage, sqlPage);
   ta.addEventListener('keydown', e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); runSql(); } });
 
   for (const b of tabs) {
@@ -276,6 +284,7 @@ export function mountExplore(root, ctx) {
     if (keepOffline) keepOffline.root.hidden = p !== 'model';
     if (modelActions) modelActions.hidden = p !== 'model';
     pivotPage.hidden = p !== 'pivot' || sqlMode;
+    editStrip.hidden = !editing || p !== 'pivot';
     actions.hidden = p !== 'pivot';
     if (reportActions) reportActions.hidden = p !== 'report';
     if (p === 'pivot') openExplorer();
@@ -322,7 +331,9 @@ export function mountExplore(root, ctx) {
       const saves = !!ctx.report.save;
       reportView = drawReport(reportPage, spec, { sql: reportSql, echarts: reportEcharts, shown: reportShown, leftWhileRunning,
                                                   cancel: ctx.cancel, columnType, model: ctx.tmsl, css,
-                                                  remove: saves ? removeTile : undefined, layout: saves ? layoutTiles : undefined });
+                                                  remove: saves ? removeTile : undefined, layout: saves ? layoutTiles : undefined,
+                                                  duplicate: saves ? duplicateTile : undefined, rename: saves ? renameTile : undefined,
+                                                  edit: saves ? editTile : undefined });
     } catch (e) {
       if (my !== reportSeq || destroyed) return;
       reportView?.destroy();
@@ -370,6 +381,81 @@ export function mountExplore(root, ctx) {
       if (!destroyed) drawReportPage();
     }
   });
+  // A tile's ⧉: a copy of it after the Report's own tiles, as big as it is, in the first place it fits.
+  const duplicateTile = i => inTurn(async () => {
+    const tile = shownReport?.spec.tiles?.[i];
+    try {
+      await saveReport(spec => {
+        if (!spec.tiles[i]) throw new Error('the tile is no longer on the report');
+        const { layout, size: _, ...copy } = spec.tiles[i];
+        return { ...spec, tiles: [...spec.tiles, { ...copy, ...(layout?.w && layout?.h ? { layout: { w: layout.w, h: layout.h } } : {}) }] };
+      });
+      setStatus(`Duplicated "${tile?.title ?? 'the tile'}".`, 'ok');
+    } catch (e) {
+      setStatus(`Duplicate: ${e.message}`, 'error');
+    }
+    if (!destroyed) drawReportPage();
+  });
+  // A tile's title, typed in its place (report.js drew it already): only saved, and drawn again
+  // when the save is refused.
+  const renameTile = (i, title) => inTurn(async () => {
+    try {
+      await saveReport(spec => {
+        if (!spec.tiles[i]) throw new Error('the tile is no longer on the report');
+        return { ...spec, tiles: spec.tiles.map((t, j) => (j === i ? { ...t, title } : t)) };
+      });
+    } catch (e) {
+      setStatus(`Rename: ${e.message}`, 'error');
+      if (!destroyed) drawReportPage();
+    }
+  });
+  // A pivot tile's ✎: its shelves in Visual, under the strip that updates it. `editing`: the tile's
+  // index and title, whether that title was its shelves' own (then it follows them), and the shelves
+  // Visual had before, put back once the edit is done. A second ✎ keeps those first shelves.
+  let editing = null;
+  async function editTile(i) {
+    const tile = shownReport?.spec.tiles?.[i];
+    if (tile?.kind !== 'pivot' || !tile.pivot) return;
+    show('pivot');
+    await openExplorer();
+    if (!explorer || destroyed) return;
+    await explorer.ready;
+    const title = String(tile.title ?? '');
+    const own = (() => { try { return pivotTitle({ rows: [], cols: [], values: [], ...tile.pivot }); } catch { return null; } })();
+    editing = { index: i, title, auto: title === own, before: editing?.before ?? explorer.state() };
+    explorer.setState(tile.pivot);
+    titleBox.value = title;
+    if (sqlMode) closeSql();
+    show('pivot');
+  }
+  // Update tile: the shelves on screen, and the title, written into the tile; its place stays.
+  const updateTile = () => inTurn(async () => {
+    if (!editing || !explorer) return;
+    if (!explorer.query()) { setStatus('Update tile: put a field on the shelves first', 'error'); return; }
+    const state = explorer.state(), typed = titleBox.value.trim();
+    const title = (editing.auto && typed === editing.title) || !typed ? pivotTitle(state) : typed;
+    const { index } = editing;
+    try {
+      await saveReport(spec => {
+        if (!spec.tiles[index]) throw new Error('the tile is no longer on the report');
+        return { ...spec, tiles: spec.tiles.map((t, j) => (j === index ? { ...t, title, pivot: state } : t)) };
+      });
+    } catch (e) {
+      setStatus(`Update tile: ${e.message}`, 'error');
+      return;
+    }
+    endEdit(true);
+    setStatus(`Updated "${title}".`, 'ok');
+  });
+  // The edit done (`saved`) or cancelled: Visual's shelves from before, and the Report on screen.
+  function endEdit(saved) {
+    if (!editing) return;
+    const { before } = editing;
+    editing = null;
+    explorer?.setState(before);
+    if (saved) reportChanged = true;
+    show('report');
+  }
   // Add to report: the shelves on screen, as a pivot tile after the Report's own. Read first: the
   // Report may have changed, or never been drawn, since.
   const addToReport = () => inTurn(async () => {
@@ -456,7 +542,12 @@ export function mountExplore(root, ctx) {
     });
   });
   themed.observe(document.body, { attributes: true, attributeFilter: ['class'] });
-  async function openExplorer() {
+  // Once, whoever asks first (show, editTile); asked again only after it failed.
+  let opening = null;
+  function openExplorer() {
+    return (opening ??= startExplorer().finally(() => { if (!explorer) opening = null; }));
+  }
+  async function startExplorer() {
     if (explorer) return;
     pivotPage.replaceChildren(el('div', { class: 'ex-empty' }, 'Loading the chart library…'));
     try {
