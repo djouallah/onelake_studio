@@ -23,8 +23,8 @@
 //                                    'lakehouse.ws.item/Files/x.parquet'; a semantic model is
 //                                    semanticmodel.ws.model, AGG("m") its measure m; and SHOW
 //                                    SEMANTIC VIEWS / METRICS / DIMENSIONS; --show-sql the compiled SQL
-//   export <ws> <model>              Export to Fabric, as Explore's button: a semantic model
-//   export <ws> <item> <Files/path>  (its local copy, written into its lakehouse) or a model file in Files/
+//   export <ws> <model>              Export to Fabric, as Explore's button: a semantic model, queried
+//   export <ws> <item> <Files/path>  as it is, or a model file in Files/, read client side
 //   semanticmodel <ws> <item> <Files/path>  the Power BI semantic model of a model file, and no app
 //   status                           this window: build, session, startup, catalog, sync, its files
 //   log [<text>]                     this window's own log
@@ -678,13 +678,11 @@ function createAgent({ onelake, engine, modelPath, appDir, vendorDir, daxSqlPin,
 
     // Export to Fabric from a shell: Explore's own export (extension.js), which asks in
     // VS Code where the local copy goes and waits for the OK there before it publishes. The
-    // model is what Explore's button would export: a semantic model, which the app queries as it
-    // is (no --mode), or a model file in a lakehouse's Files/. With no Explore on screen,
-    // Explore's Pivot opens on its default view. For a model file --mode says what the app runs
-    // on (client, directquery, directlake); without it, Direct Lake.
+    // model is what Explore's button would export, and what the app runs on is what it is: a
+    // semantic model, which the app queries as it is, or a model file in a lakehouse's Files/, read
+    // client side. With no Explore on screen, Explore's Pivot opens on its default view.
     async export([ws, a, b], opts, io) {
       if (!exportApp) throw new Error('Export to Fabric is not available here');
-      const mode = opts.mode != null ? { mode: String(opts.mode) } : {};
       const say = message => { io.data({ message }); io.out(message); };
       const { semantic } = await modules();
       if (!b) {
@@ -697,7 +695,7 @@ function createAgent({ onelake, engine, modelPath, appDir, vendorDir, daxSqlPin,
         }
         const text = await fsp.readFile(path, 'utf8');
         say(await exportApp({ file: path.split(/[\\/]/).pop(), name: semantic.modelName(m.name), text, state: null,
-                              model: { workspace: ws, name: m.name }, ...mode }));
+                              model: { workspace: ws, name: m.name } }));
         return;
       }
       const lh = await itemOf(ws, a, await look('items', [ws], opts));
@@ -706,7 +704,7 @@ function createAgent({ onelake, engine, modelPath, appDir, vendorDir, daxSqlPin,
       const file = where.path.split('/').pop();
       const text = Buffer.from(await onelake.readBytes(where.workspace, where.path)).toString('utf8');
       say(await exportApp({ file, name: semantic.modelName(file), text, state: null,
-                            workspace: where.workspace, path: where.path, ...mode }));
+                            workspace: where.workspace, path: where.path }));
     },
 
     // Create Semantic Model from a shell: the tree's own (exportflow.js), which asks in VS Code

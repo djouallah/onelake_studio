@@ -53,11 +53,9 @@ const REPORT_POLL_MS = 2000;
 //                    engine that set them and locked its configuration (the extension's)
 //   htmlPlan         Show plan's tree as DuckDB's HTML page in a frame (the Fabric app), else
 //                    its text plan (the panel: its CSP runs no inline script)
-//   exportToFabric(state, mode)  (optional) the Report's Export to Fabric button: the Report
-//                    published as a Fabric app (src/exportapp.js; `state`, the shelves, or null), on `mode`
-//                    (directlake, directquery or client); answers what to say when it is done
-//   exportAsIs       (optional) the model is a Power BI semantic model: Export to Fabric publishes on
-//                    it as it is, at once, with no mode (`mode` null), and asks nothing here
+//   exportToFabric(state)  (optional) the Report's Export to Fabric button: the Report published as
+//                    a Fabric app (src/exportapp.js; `state`, the shelves, or null), on what the model
+//                    is, so nothing is asked here; answers what to say when it is done
 //   openInExcel()    (optional) the Open in Excel button: this model in a new workbook, as a live
 //                    PivotTable (src/xmla); answers what to say when it is open
 //   keepOffline      (optional) { state(), set(on) }: the Keep offline switch beside the tabs, every
@@ -154,12 +152,8 @@ export function mountExplore(root, ctx) {
     'data-apage': k, 'aria-selected': String(!i), tabindex: i ? '-1' : '0' }, t));
   const sqlToggle = btn('Show SQL', () => (sqlMode ? closeSql() : openSql()));
   const csvBtn = btn('Download CSV', download, true);
-  const exportBtn = !ctx.exportToFabric ? null
-    : btn('Export to Fabric', () => (ctx.exportAsIs ? exportApp(null) : exportPop ? closeExport() : openExport()));
-  if (exportBtn) {
-    exportBtn.title = ctx.exportAsIs ? 'Publish this Report as a Fabric app, on this semantic model as it is (a local copy is written too)'
-      : 'Publish this Report, on this model, as a Fabric app (a local copy is written too)';
-  }
+  const exportBtn = ctx.exportToFabric ? btn('Export to Fabric', () => exportApp()) : null;
+  if (exportBtn) exportBtn.title = 'Publish this Report, on this model, as a Fabric app (a local copy is written too)';
   // What the host does and says how it went, with the button waiting meanwhile.
   const hostBtn = (label, doing, fn, title) => {
     const b = btn(label, async () => {
@@ -632,44 +626,11 @@ export function mountExplore(root, ctx) {
 
   // --- Export to Fabric: what the app runs on, in a small window under the button (Direct Lake
   // unless changed), then the host does the work and says how it went ---
-  const ENGINES = [
-    ['directlake', 'Direct Lake', 'semantic model on OneLake'],
-    ['directquery', 'DirectQuery', 'semantic model on the SQL endpoint'],
-    ['client', 'Client side', 'DuckDB in the browser'],
-  ];
-  let exportPop = null, exportTimer = 0;
-  function closeExport() {
-    clearTimeout(exportTimer);
-    exportPop?.remove(); exportPop = null;
-    document.removeEventListener('pointerdown', outsideExport, true);
-  }
-  function outsideExport(e) { if (exportPop && !exportPop.contains(e.target) && !exportBtn.contains(e.target)) closeExport(); }
-  function openExport() {
-    const go = () => exportApp(exportPop.querySelector('input:checked').value);
-    exportPop = el('div', { class: 'ex-pop export-pop', role: 'dialog', 'aria-label': 'Export the Report to Fabric' },
-      el('div', { class: 'ex-pop-head' }, 'Export the Report to Fabric'),
-      el('div', { class: 'ex-pop-body', role: 'radiogroup' }, ENGINES.map(([mode, label, says], i) =>
-        el('label', { class: 'export-engine' },
-          el('input', { type: 'radio', name: 'export-engine', value: mode, checked: !i }),
-          el('span', {}, el('b', {}, label), el('small', {}, says))))),
-      el('div', { class: 'ex-pop-foot' },
-        el('button', { type: 'button', class: 'btn-explore', onclick: closeExport }, 'Cancel'),
-        el('button', { type: 'button', class: 'btn-explore primary', onclick: go }, 'Export')));
-    exportPop.addEventListener('keydown', e => { if (e.key === 'Escape') closeExport(); if (e.key === 'Enter' && e.target.type === 'radio') go(); });
-    document.body.append(exportPop);
-    // Under the button, its right edges lined up, and kept on screen.
-    const r = exportBtn.getBoundingClientRect();
-    exportPop.style.left = `${Math.max(8, Math.min(r.right - exportPop.offsetWidth, innerWidth - exportPop.offsetWidth - 8))}px`;
-    exportPop.style.top = `${Math.max(8, Math.min(r.bottom + 6, innerHeight - exportPop.offsetHeight - 8))}px`;
-    exportPop.querySelector('input:checked').focus();
-    exportTimer = setTimeout(() => document.addEventListener('pointerdown', outsideExport, true));
-  }
-  async function exportApp(mode) {
-    closeExport();
+  async function exportApp() {
     exportBtn.disabled = true;
     exportBtn.textContent = 'Exporting…';
     try {
-      const said = await ctx.exportToFabric(explorer?.state() ?? null, mode);
+      const said = await ctx.exportToFabric(explorer?.state() ?? null);
       if (said) setStatus(said, 'ok');
     } catch (e) {
       setStatus(`Export to Fabric: ${e.message}`, 'error');
@@ -693,7 +654,6 @@ export function mountExplore(root, ctx) {
       themed.disconnect();
       for (const c of charts.values()) c.dispose();
       charts.clear();
-      closeExport();
       document.querySelectorAll('.ex-pop').forEach(p => p.remove());
       root.replaceChildren();
     },

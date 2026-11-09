@@ -880,15 +880,11 @@ async function activateInner(context) {
       if (connectivity.offline()) { vscode.window.showInformationMessage('Create Semantic Model needs a connection.'); return; }
       const file = basename(String(n.path));
       const name = file.replace(/\.[^.]+$/, '');
-      const mode = await vscode.window.showQuickPick([
-        { label: 'Direct Lake', description: "reads the lakehouse's tables from OneLake", mode: 'directlake' },
-        { label: 'DirectQuery', description: "queries the lakehouse's SQL endpoint", mode: 'directquery' },
-      ], { title: `Create the semantic model ${name} in ${n.workspace}`, placeHolder: 'What it runs on' });
-      if (!mode) return;
+      // What it runs on is asked in createSemanticModel's one dialog, with whether it replaces one.
       try {
         const text = Buffer.from(await onelake.readBytes(n.workspace, n.path)).toString('utf8');
         if (!createSemanticModel) throw new Error('OneLake Studio is still starting');
-        vscode.window.showInformationMessage(await createSemanticModel({ file, text, workspace: n.workspace, path: n.path, mode: mode.mode }));
+        vscode.window.showInformationMessage(await createSemanticModel({ file, name, text, workspace: n.workspace, path: n.path }));
       } catch (e) {
         if (e && e.declined) return;
         showError(`Create Semantic Model: ${(e && e.message) || e}`);

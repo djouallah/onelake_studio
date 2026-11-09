@@ -5,12 +5,14 @@
 - **A semantic model has no Download Again button.** Refresh on its workspace, or on its Semantic models, reads each
   model downloaded there from Fabric again, behind, and replaces its local copy. One that can't be read keeps its
   copy, and the log says why.
-- **Export to Fabric on a Power BI semantic model uses that model as it is.** The app queries it, Direct Lake,
-  DirectQuery or Import, and no mode is asked: there is no window under the button. Nothing is written to the model
-  or for it.
-  Before, the export rewrote the model from Studio's copy of it, on the mode picked, and wrote a `.yaml` of it into
-  its lakehouse. A semantic model that names no lakehouse, or several, can be exported now too. The command line's
-  `export <ws> <model>` refuses `--mode`.
+- **Export to Fabric runs the app on what you opened, and asks nothing about it.** The window under the button is
+  gone. A Power BI semantic model's app queries that model as it is, Direct Lake, DirectQuery or Import, and nothing
+  is written to the model or for it: before, the export rewrote the model from Studio's copy of it, and wrote a
+  `.yaml` of it into its lakehouse. A semantic model that names no lakehouse, or several, can be exported now too. A
+  model file's app is client side, DuckDB in the browser; for one on a semantic model, Create Semantic Model first,
+  then export that model. The confirmation says what the app runs on. The command line's `export` takes no `--mode`.
+- **Create Semantic Model asks in one dialog**, with Direct Lake and DirectQuery as its buttons, in place of a list
+  and then a second question when a model of that name is there: the dialog says so itself.
 - **The desktop app reads OneLake tables with VS Code open.** Its engine did not start, since VS Code's held the lake
   (`meta.ducklake`): it has a lake of its own now, so the first read of a table there downloads its files again.
 

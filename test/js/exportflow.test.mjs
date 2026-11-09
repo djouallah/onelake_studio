@@ -23,9 +23,9 @@ const bim = { model: {
 } };
 const REQUEST = { file: "sales.yaml", name: "sales", text: OSSIE, state: {}, workspace: "power bi", path: "nem.Lakehouse/Files/semantic_model/sales.yaml" };
 
-// `mode`: what Explore's Export window sends (null: none, as the command line without --mode). `models`: the workspace's semantic models by name.
+// `models`: the workspace's semantic models by name.
 async function setup({ offline = false, noInternet = false, answers = [], folder = null, token = "t", functionPackage = true,
-                       mode = "client", models = {} } = {}) {
+                       models = {} } = {}) {
   const ext = await mkdtemp(join(tmpdir(), "exportflow-"));
   if (functionPackage) {
     await mkdir(join(ext, "fabric-function"));
@@ -66,7 +66,7 @@ async function setup({ offline = false, noInternet = false, answers = [], folder
     onRefresh() {},
     log() {},
   });
-  const exportExplore = x => flow.exportExplore(mode == null || x.mode ? x : { ...x, mode });
+  const exportExplore = x => flow.exportExplore(x);
   return { exportExplore, flow, asked, looked, kept, ext, done: () => rm(ext, { recursive: true, force: true }) };
 }
 
@@ -134,45 +134,12 @@ test("Choose Another Folder asks again, starting where the last one was", async 
   await done();
 });
 
-test("no mode given is Direct Lake; an unknown one is refused", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "exportflow-open-"));
-  const a = await setup({ mode: null, folder: dir, answers: [undefined] });
-  await a.exportExplore(REQUEST).catch(() => {});
-  assert.match(a.asked[0].rest[0].detail, /\nSemantic model: sales, Direct Lake \(new\)$/);
-  await rm(dir, { recursive: true, force: true });
-  await a.done();
-  const b = await setup();
-  await assert.rejects(b.exportExplore({ ...REQUEST, mode: "import" }), /no mode import: client, directquery or directlake/);
-  await b.done();
-});
-
-test("client side makes no semantic model", async () => {
+test("a model file's app is client side: no mode asked, no semantic model looked up, and the dialog says so", async () => {
   const dir = await mkdtemp(join(tmpdir(), "exportflow-open-"));
   const { exportExplore, asked, looked, done } = await setup({ folder: dir, answers: [undefined] });
   await exportExplore(REQUEST).catch(() => {});
   assert.equal(looked.length, 0);
-  assert.doesNotMatch(asked[0].rest[0].detail, /Semantic model/);
-  await rm(dir, { recursive: true, force: true });
-  await done();
-});
-
-test("Direct Lake: the model's semantic model is looked up by name first, the dialog says it is updated, and a No writes nothing", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "exportflow-open-"));
-  const { exportExplore, asked, looked, done } = await setup({ folder: dir, answers: [undefined], mode: "directLake",
-                                                              models: { sales: { id: "m1", displayName: "sales" } } });
-  const e = await exportExplore(REQUEST).then(() => null, x => x);
-  assert.equal(e.declined, true);
-  assert.deepEqual(looked, [{ ws: "id-of-power bi", name: "sales" }]);
-  assert.match(asked[0].rest[0].detail, /\nSemantic model: sales, Direct Lake \(updated\)$/);
-  await rm(dir, { recursive: true, force: true });
-  await done();
-});
-
-test("DirectQuery: a new semantic model, on the lakehouse's SQL endpoint", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "exportflow-open-"));
-  const { exportExplore, asked, done } = await setup({ folder: dir, answers: [undefined], mode: "directQuery" });
-  await exportExplore(REQUEST).catch(() => {});
-  assert.match(asked[0].rest[0].detail, /\nSemantic model: sales, DirectQuery \(new\)$/);
+  assert.match(asked[0].rest[0].detail, /\nModel: power bi\/nem\.Lakehouse\/Files\/semantic_model\/sales\.yaml\nRuns on: DuckDB in the browser$/);
   await rm(dir, { recursive: true, force: true });
   await done();
 });
@@ -182,7 +149,7 @@ const { workspace: _w, path: _p, ...ON_MODEL } = REQUEST;
 
 test("a semantic model opened from the tree is exported as it is: found by its workspace and name, nothing asked of a lakehouse", async () => {
   const dir = await mkdtemp(join(tmpdir(), "exportflow-open-"));
-  const { exportExplore, asked, looked, done } = await setup({ folder: dir, answers: [undefined], mode: null,
+  const { exportExplore, asked, looked, done } = await setup({ folder: dir, answers: [undefined],
                                                               models: { "NEM Sales": { id: "m1", displayName: "NEM Sales" } } });
   const e = await exportExplore({ ...ON_MODEL, model: { workspace: "aemo", name: "NEM Sales" } }).then(() => null, x => x);
   assert.equal(e.declined, true);
@@ -194,11 +161,8 @@ test("a semantic model opened from the tree is exported as it is: found by its w
   await done();
 });
 
-test("a semantic model takes no mode, and one gone from its workspace is said", async () => {
-  const a = await setup({ mode: "directLake" });
-  await assert.rejects(a.exportExplore({ ...ON_MODEL, model: { workspace: "aemo", name: "NEM Sales" } }), /NEM Sales is a semantic model: its app runs on it as it is, with no mode/);
-  await a.done();
-  const b = await setup({ mode: null });
+test("a semantic model gone from its workspace is said, before anything is asked", async () => {
+  const b = await setup();
   await assert.rejects(b.exportExplore({ ...ON_MODEL, model: { workspace: "aemo", name: "NEM Sales" } }), /aemo has no semantic model NEM Sales any more/);
   assert.equal(b.asked.length, 0);
   await b.done();
@@ -216,29 +180,65 @@ test("an earlier export's folder is no longer used, and the dialog says it can b
 });
 
 test("Publish As Is only for a zip made for the same kind of site: DuckDB in the browser, or a semantic model", async () => {
+  const onModel = { ...ON_MODEL, model: { workspace: "aemo", name: "NEM Sales" } };
+  const FILE = "power bi/nem.Lakehouse/Files/semantic_model/sales.yaml";
   const cases = [
-    // [what the zip was made for, the site it has, this export, As Is offered, why not]
-    ["duckdb", {}, "directLake", false, /the zip was made for Client side, and this export is Direct Lake, so only Overwrite changes what the app runs on\./],
-    [undefined, { "site/engine.json": '{"engine":"semanticModel"}' }, "client", false, /the zip was made for a semantic model, and this export is Client side/],
-    ["directQuery", { "site/engine.json": '{"engine":"semanticModel"}' }, "directLake", true, null],
+    // [what the zip was made for, the site it has, this export, the zip's model, As Is offered, why not]
+    ["directLake", { "site/engine.json": '{"engine":"semanticModel"}' }, REQUEST, FILE, false, /the zip was made for Direct Lake, and this export is Client side, so only Overwrite changes what the app runs on\./],
+    [undefined, { "site/engine.json": '{"engine":"semanticModel"}' }, REQUEST, FILE, false, /the zip was made for a semantic model, and this export is Client side/],
+    ["duckdb", {}, onModel, "aemo/NEM Sales", false, /the zip was made for Client side, and this export is a semantic model/],
+    ["duckdb", {}, REQUEST, FILE, true, null],
+    ["directQuery", { "site/engine.json": '{"engine":"semanticModel"}' }, onModel, "aemo/NEM Sales", true, null],
   ];
-  for (const [engine, site, mode, offered, why] of cases) {
+  for (const [engine, site, request, model, offered, why] of cases) {
     const open = await mkdtemp(join(tmpdir(), "exportflow-open-"));
     const files = new Map([["site/app.js", Buffer.from("// app")], ...Object.entries(site).map(([p, body]) => [p, Buffer.from(body)])]);
-    await writeApp(join(open, "sales-model-explore.zip"), files, {
-      model: "power bi/nem.Lakehouse/Files/semantic_model/sales.yaml", engine, files: { "site/app.js": "edited since" } });
-    const { exportExplore, asked, done } = await setup({ folder: open, answers: ["Export", undefined], mode });
-    const e = await exportExplore(REQUEST).then(() => null, x => x);
+    await writeApp(join(open, "sales-model-explore.zip"), files, { model, engine, files: { "site/app.js": "edited since" } });
+    const { exportExplore, asked, done } = await setup({ folder: open, answers: ["Export", undefined],
+                                                         models: { "NEM Sales": { id: "m1", displayName: "NEM Sales" } } });
+    const e = await exportExplore(request).then(() => null, x => x);
     assert.equal(e.declined, true);
     assert.equal(e.message, "Not exported: the local copy has changes.");
     const [o, ...buttons] = asked[1].rest;
     assert.match(asked[1].message, /has changed since it was last published/);
-    assert.deepEqual(buttons, offered ? ["Overwrite Local Changes", "Publish As Is"] : ["Overwrite Local Changes"], `${engine} -> ${mode}`);
+    assert.deepEqual(buttons, offered ? ["Overwrite Local Changes", "Publish As Is"] : ["Overwrite Local Changes"], `${engine} -> ${request.model ? "model" : "file"}`);
     if (why) assert.match(o.detail, why);
     else assert.match(o.detail, /Publish As Is: publish the zip's site/);
     await rm(open, { recursive: true, force: true });
     await done();
   }
+});
+
+// Create Semantic Model: from the tree, no mode, and one dialog asks it; from the command line, a mode,
+// and only replacing one is asked.
+const CREATE = { file: "sales.yaml", text: OSSIE, workspace: "power bi", path: "nem.Lakehouse/Files/semantic_model/sales.yaml" };
+
+test("Create Semantic Model from the tree: one dialog, its buttons the modes, and whether it replaces one", async () => {
+  const a = await setup({ answers: [undefined] });
+  const e = await a.flow.createSemanticModel(CREATE).then(() => null, x => x);
+  assert.equal(e.declined, true);
+  assert.equal(a.asked.length, 1, "one question");
+  assert.equal(a.asked[0].message, "Create the semantic model sales?");
+  assert.deepEqual(a.asked[0].rest.slice(1), ["Direct Lake", "DirectQuery"]);
+  assert.match(a.asked[0].rest[0].detail, /^Workspace: power bi\nFrom: nem\.Lakehouse\/Files\/semantic_model\/sales\.yaml\n\nDirect Lake reads/);
+  await a.done();
+  const b = await setup({ answers: [undefined], models: { sales: { id: "m1", displayName: "sales" } } });
+  await b.flow.createSemanticModel(CREATE).catch(() => {});
+  assert.equal(b.asked[0].message, "Update the semantic model sales?");
+  assert.match(b.asked[0].rest[0].detail, /\n\npower bi already has a semantic model of this name: its definition is replaced\.\n/);
+  await b.done();
+});
+
+test("Create Semantic Model from the command line: a new one is not asked about, one there is", async () => {
+  const a = await setup({ models: { sales: { id: "m1", displayName: "sales" } }, answers: [undefined] });
+  const e = await a.flow.createSemanticModel({ ...CREATE, mode: "directlake" }).then(() => null, x => x);
+  assert.equal(e.declined, true);
+  assert.equal(a.asked[0].message, "Update the semantic model sales?");
+  assert.deepEqual(a.asked[0].rest.slice(1), ["Update"]);
+  await a.done();
+  const b = await setup();
+  await assert.rejects(b.flow.createSemanticModel({ ...CREATE, mode: "client" }), /no mode client: directlake or directquery/);
+  await b.done();
 });
 
 // The Report tab's tiles, as Add to report and a tile's ✕ save them (reportSave).

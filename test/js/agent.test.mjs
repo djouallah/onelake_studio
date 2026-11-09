@@ -158,13 +158,13 @@ test("export: a model file in Files/, or a semantic model's local copy", async (
     assert.deepEqual(exported.pop(), { file: "Sales.yaml", name: "Sales", text: "the Sales model", state: null,
                                        model: { workspace: "a ws", name: "Sales" } });
 
-    // --mode says what a model file's app runs on (a semantic model's is refused by the export itself).
-    r = await agent.run({ args: ["export", "a ws", "a", "Files/models/sales-2.yaml"], opts: { mode: "directlake" } });
-    assert.equal(r.code, 0, r.err);
-    assert.equal(exported.pop().mode, "directlake");
-    r = await agent.run({ args: ["export", "a ws", "sales"], opts: { mode: "import" } });
+    // export takes no --mode: what the app runs on is what the model is.
+    r = await agent.run({ args: ["export", "a ws", "sales"], opts: { mode: "directlake" } });
     assert.equal(r.code, EXIT.USAGE);
-    assert.match(r.err, /--mode takes client, directquery or directlake, not "import"/);
+    assert.match(r.err, /--mode is not an option of export/);
+    r = await agent.run({ args: ["semanticmodel", "a ws", "a", "Files/x.yaml"], opts: { mode: "client" } });
+    assert.equal(r.code, EXIT.USAGE);
+    assert.match(r.err, /--mode takes directlake or directquery, not "client"/);
     r = await agent.run({ args: ["ls"], opts: { mode: "client" } });
     assert.match(r.err, /--mode is not an option of ls/);
 

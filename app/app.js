@@ -371,11 +371,10 @@ async function openModelView(file, text = null, { fromOneLake = text == null } =
       // one that names no lakehouse or several has no button. A Power BI semantic model: the app
       // queries it as it is, whatever it reads, and nothing is asked or written for it.
       exportToFabric: (fromOneLake ? semantic.lakehousesOf(m.bim).length === 1 : !!file.modelWorkspace)
-        ? (state, mode) => engine.exportExplore(fromOneLake
-          ? { file: file.name, name: m.view, text: bim, state, mode, workspace: lakehouse.workspace, path: file.path }
+        ? state => engine.exportExplore(fromOneLake
+          ? { file: file.name, name: m.view, text: bim, state, workspace: lakehouse.workspace, path: file.path }
           : { file: file.name, name: m.view, text: bim, state, model: { workspace: file.modelWorkspace, name: file.modelName || m.view } })
         : undefined,
-      exportAsIs: !fromOneLake,
       // Any model, wherever its file is, by its SQL name. On Windows: Excel's provider is Windows only.
       openInExcel: cfg.windows ? () => engine.openInExcel({ workspace: m.schema, model: m.view }) : undefined,
       keepOffline: {
