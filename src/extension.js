@@ -14,7 +14,7 @@ const upMs = () => Math.round(process.uptime() * 1000);
 const bundleBegan = upMs();
 
 const vscode = require('vscode');
-const { join, basename, dirname } = require('node:path');
+const { join, basename, dirname, extname } = require('node:path');
 const os = require('node:os');
 const { existsSync } = require('node:fs');
 const { randomBytes } = require('node:crypto');
@@ -692,7 +692,8 @@ async function activateInner(context) {
       return openModel({ kind: 'semanticModel', workspace, model: m.name, modelId: m.id }, { openOn: 'report' });
     }
     if (app.copy) {
-      return openText({ name: basename(fsPath), path: fsPath, text: app.copy.text, workspace, modelName: model,
+      // Named for its model's format (model.yaml, model.bim): the tab reads the text by its name.
+      return openText({ name: `${model}${extname(app.copy.name)}`, path: fsPath, text: app.copy.text, workspace, modelName: model,
                         appFile: fsPath, appModel: app.modelPath, appModelFile: app.copy.name, openOn: 'report' });
     }
     // A file from before the app held its model: the model file in OneLake, as the tree opens it.
@@ -741,8 +742,9 @@ async function activateInner(context) {
   // schema.yml has none, and a file restored with the window has it as soon as this starts.
   const isModelText = d => d.uri.scheme === 'file' && (/\.bim$/i.test(d.fileName)
     || (/\.ya?ml$/i.test(d.fileName) && /^datasets:/m.test(d.getText()) && /^version:/m.test(d.getText())));
+  // resourcePath is the Uri's fsPath (c:\… on Windows): both forms, so the menu's `in` finds it either way.
   const markModels = () => vscode.commands.executeCommand('setContext', 'onelakeStudio.modelPaths',
-    vscode.workspace.textDocuments.filter(isModelText).map(d => d.uri.path));
+    vscode.workspace.textDocuments.filter(isModelText).flatMap(d => [d.uri.fsPath, d.uri.path]));
   if (vscode.workspace.onDidOpenTextDocument) {
     markModels();
     context.subscriptions.push(vscode.workspace.onDidOpenTextDocument(markModels),
