@@ -439,7 +439,7 @@ async function activateInner(context) {
   ({ engines, onelake, semviews, rebindStore, exportExplore, createSemanticModel, modelReport, openExcel, keepOffline, openSqlModel, nameModelTables, saveQuery } = core);
   const { fabric, sqlTables, syncWorker, favorites, accountTurn, sessionChanged, setSignedIn } = core;
   const { queriesFolder, listQueries, queryPath } = core.queries;
-  const { modelPath, modelKey, cachedModel, unsupportedModels, unsupportedNote, fetchModel, completionNames } = core.models;
+  const { modelKey, cachedModel, unsupportedModels, unsupportedNote, fetchModel, completionNames } = core.models;
 
   // The explorer's filter: one type only, until the picker says otherwise. Not remembered: left
   // on from last time it would look like missing workspaces, and read them all at startup.
@@ -613,25 +613,19 @@ async function activateInner(context) {
 
   // A click on a model in the tree: its local copy (read from Fabric the first time), opened in
   // the panel. One progress notification from the click until the page says it is on screen.
-  // Download Again (`fresh`) asks before it replaces the local copy.
-  async function openModel(n, { fresh = false } = {}) {
+  async function openModel(n) {
     if (!n || n.kind !== 'semanticModel') return;
-    const refused = !fresh && unsupportedModels.get(modelKey(n));
+    const refused = unsupportedModels.get(modelKey(n));
     if (refused) {
       vscode.window.showInformationMessage(unsupportedNote(n, refused));
       return;
     }
     try {
-      if (fresh && existsSync(modelPath(n))) {
-        const pick = await vscode.window.showWarningMessage(
-          `Download ${n.model} from Fabric again, over its local copy?`, { modal: true, detail: modelPath(n) }, 'Download Again');
-        if (pick !== 'Download Again') return;
-      }
       await vscode.window.withProgress(
         { location: vscode.ProgressLocation.Notification, title: `Opening ${n.model}` },
         async progress => {
           const say = message => progress.report({ message });
-          const { path, text } = await fetchModel(n, { fresh, say });
+          const { path, text } = await fetchModel(n, { say });
           say('opening it in OneLake Studio…');
           const name = modelFileName(n.model);
           const opened = whenOpened(name);
@@ -647,6 +641,25 @@ async function activateInner(context) {
       }
       if (out) out.appendLine(`opening ${n.model} failed — ${(e && e.stack) || e}`);
       showError(`Could not open ${n.model}: ${(e && e.message) || e}`);
+    }
+  }
+
+  // The local copies of a workspace's models, read from Fabric again, behind: Refresh of the workspace
+  // or its Semantic models is the one way a change made in Fabric reaches them. A model that fails
+  // keeps its copy, and says why in the log.
+  async function refreshModelCopies(workspace) {
+    if (connectivity.offline()) return;
+    const models = await onelake.models(workspace).catch(() => []);
+    for (const m of models) {
+      const n = { kind: 'semanticModel', workspace, model: m.name, modelId: m.id };
+      if (!cachedModel(n)) continue;
+      try {
+        await fetchModel(n, { fresh: true });
+        if (out) out.appendLine(`${workspace}/${m.name}: its local copy was read from Fabric again`);
+      } catch (e) {
+        if (out) out.appendLine(`${workspace}/${m.name}: its local copy was kept, as Fabric's could not be read — ${(e && e.message) || e}`);
+      }
+      tree.modelChanged(n);
     }
   }
 
@@ -713,6 +726,7 @@ async function activateInner(context) {
       if (!n || !['models', 'apps'].includes(n.kind)) onelake.refreshTables({ workspace: n && n.workspace, item: n && n.item });
       tree.refresh(n);
       postLive({ type: 'reset' });
+      if (n && (n.kind === 'models' || n.kind === 'workspace')) refreshModelCopies(n.workspace);
     }),
 
     vscode.commands.registerCommand('onelakeStudio.showLog', () => out.show(true)),
@@ -1007,7 +1021,6 @@ async function activateInner(context) {
       if (!n || !/^https:\/\//i.test(n.url || '')) return;
       vscode.env.openExternal(vscode.Uri.parse(n.url));
     })),
-    vscode.commands.registerCommand('onelakeStudio.redownloadSemanticModel', n => openModel(n, { fresh: true })),
     vscode.commands.registerCommand('onelakeStudio.open', async () => {
       try {
         await showWithProgress({ createIfNone: true });

@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **A semantic model has no Download Again button.** Refresh on its workspace, or on its Semantic models, reads each
+  model downloaded there from Fabric again, behind, and replaces its local copy. One that can't be read keeps its
+  copy, and the log says why.
 - **Export to Fabric on a Power BI semantic model uses that model as it is.** The app queries it, Direct Lake,
   DirectQuery or Import, and no mode is asked: there is no window under the button. Nothing is written to the model
   or for it.

@@ -836,7 +836,7 @@ function createAgent({ onelake, engine, modelPath, appDir, vendorDir, daxSqlPin,
   // modules(): the compiler, for the extension's own uses of it too (Export to Fabric).
   // Open in Excel (src/xmla): a model as a cube, and a model SELECT run as `sql` runs one, through
   // the same guard. A model is wherever its view says: a local copy, or a file in a lakehouse's
-  // Files/. One whose text changed is read again, so a Download Again reaches an open workbook at
+  // Files/. One whose text changed is read again, so a Refresh of its workspace reaches an open workbook at
   // its next refresh.
   const cubes = new Map();   // lower-cased SQL name -> { text, cube }
   async function excelCube(catalog) {

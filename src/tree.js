@@ -346,7 +346,7 @@ class LakehouseTree {
         item.description = '';
         item.command = { command: 'onelakeStudio.openSemanticModel', title: 'Open semantic model', arguments: [n] };
         item.tooltip = (n.description ? `${n.description}\n\n` : '') + (there
-          ? `Downloaded to ${there}. Click to open it; Download Again reads it from Fabric again.`
+          ? `Downloaded to ${there}. Click to open it. Refresh on its workspace reads it from Fabric again.`
           : 'Click to download its definition (kept on this machine only) and open it as a model.');
         break;
       }

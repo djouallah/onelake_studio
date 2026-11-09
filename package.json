@@ -155,12 +155,6 @@
         "icon": "$(cloud-upload)"
       },
       {
-        "command": "onelakeStudio.redownloadSemanticModel",
-        "title": "Download Again (from Fabric)",
-        "category": "OneLake Studio",
-        "icon": "$(cloud-download)"
-      },
-      {
         "command": "onelakeStudio.copyAppUrl",
         "title": "Copy App URL",
         "category": "OneLake Studio",
@@ -364,11 +358,6 @@
           "group": "inline@0"
         },
         {
-          "command": "onelakeStudio.redownloadSemanticModel",
-          "when": "view == onelakeStudio.explorer && viewItem == semanticModel",
-          "group": "inline@3"
-        },
-        {
           "command": "onelakeStudio.copyAppUrl",
           "when": "view == onelakeStudio.explorer && viewItem == fabricAppUrl",
           "group": "inline"
@@ -550,10 +539,6 @@
         },
         {
           "command": "onelakeStudio.openSemanticModel",
-          "when": "false"
-        },
-        {
-          "command": "onelakeStudio.redownloadSemanticModel",
           "when": "false"
         },
         {

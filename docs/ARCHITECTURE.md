@@ -356,7 +356,7 @@ A table can be part here and part on OneLake, and DuckDB opens each file where i
 | A table's files that statements read | The cache folder, `lake\files`, named in the lake ([Reading OneLake tables](#reading-onelake-tables)) | Never: a file isn't rewritten. A new snapshot names new files |
 | `Files/` objects a statement reads | Not kept | Every time |
 | That a table's rows were read, per snapshot | The catalog file | Never: a new snapshot is a new entry |
-| A semantic model's definition | The cache folder, `models/<account>/<workspace>/<model>.yaml` | On **Download Again** |
+| A semantic model's definition | The cache folder, `models/<account>/<workspace>/<model>.yaml` | On **Refresh** of its workspace or its Semantic models |
 | A table with OneLake security: the rows and columns the table read API gave this user | The cache folder, `secured\` | Past `tableMetadataTtlHours`, or after **Refresh** ([OneLake security](#onelake-security)) |
 
 - **A kept answer is trusted until using it fails.** Then it is read again once, and the work tried again
@@ -368,7 +368,7 @@ A table can be part here and part on OneLake, and DuckDB opens each file where i
     again. A compiled query goes on working, and the next one uses the new name.
   - **A table's read fails** (DuckDB's `IO Error`): the table's listing and metadata are read again. A
     statement's own mistake asks OneLake nothing.
-  - **A model's local copy** is not covered: it changes only on **Download Again**.
+  - **A model's local copy** is not covered: it changes only on **Refresh** of its workspace or its Semantic models.
   - **A table kept as empty** can't fail, so it is read again past `catalogTtlMinutes`, before a statement uses it.
 - **An answer that was cut off is a failure, not an empty listing:** what was kept stays, and shows *refresh failed*.
 - **The disk cache's limit** is held by the table service before each file comes down.
@@ -470,7 +470,7 @@ once and counts, though the answer still comes through the host.
 - **From the tree:** a table's right-click has Select Top Rows, Copy SQL Name and Copy Column List. Files, folders
   and semantic models have no right-click: their actions are icons on the row, shown on hover.
   - **A file:** Download File… and Copy SQL Name. A semantic model: Download File… (its YAML, read from Fabric first
-    when there is no local copy yet), Copy SQL Name and Download Again. A file is read from OneLake after the save
+    when there is no local copy yet) and Copy SQL Name. A file is read from OneLake after the save
     dialog, so a cancel reads nothing.
   - **A folder** (Files/ itself, or one under it): **Upload Files…**, Copy SQL Name and Refresh. Upload picks files on
     this computer and writes each into that folder ([`src/onelakewrite.js`](../src/onelakewrite.js)): a name already
@@ -517,8 +517,9 @@ workspace has one model of a name.
   workspace, its tables are read from there when exactly one item holds them all, and a message says so. Otherwise it is
   refused: tables of the same name in another workspace are other tables.
 - **The local copy is the cache.** Later clicks open it without asking Fabric, and the tree marks the
-  model with a check. The command line reads and writes the same copies. **Download Again** reads
-  Fabric again and replaces the copy, after asking.
+  model with a check. The command line reads and writes the same copies. **Refresh** on the
+  workspace or its Semantic models reads each downloaded model from Fabric again, behind, and replaces its copy; one
+  that can't be read keeps its copy, and the log says why.
 - **Every model opened is remembered** as a pointer (name, file path, when) in the account's catalog file
   ([`src/semviews.js`](../src/semviews.js)), so it survives a restart. **Clear Cached OneLake Data** takes it, with the
   local copy.
