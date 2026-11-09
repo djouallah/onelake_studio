@@ -302,8 +302,23 @@ A table can be part here and part on OneLake, and DuckDB opens each file where i
   the newest checkpoint, in one part or several, and the commits after it, a file known by its path and its deletion
   vector together, as Delta reconciles them. An Iceberg table from its manifests. What is synced is its schema and its live
   files: each one's size, row count, partition values and deletes. Each sync is one snapshot of the lake table: a file no
-  longer live is ended, a new one added, a column added, renamed (under column mapping) or dropped. It runs when a
-  statement names the table and the catalog's metadata for it has moved since, or with **Refresh**.
+  longer live is ended, a new one added, a column added, renamed (under column mapping) or dropped.
+- **A statement reads the lake as it is, and asks OneLake nothing.** The table's name is found in the catalog file, and
+  if the lake holds the table, the statement reads it at once: no log is read, and no metadata is asked for, even right
+  after the server starts. It reads the table as of its last sync. Only a table the lake has never held is synced
+  first, on its first read, which reads its whole log once.
+- **The sync service finds out that a table changed** ([`src/syncworker.js`](../src/syncworker.js)), in the window with
+  the lease. It reads the catalog's metadata of the tables the lake holds: every hour for a table in use, and at
+  `tableMetadataTtlHours` for the others. When a table's metadata location has moved past the one the lake was synced
+  from, it asks the server to sync that table (`lakeSync` on the control pipe), one table at a time, and only while no
+  statement is running. **Refresh** on a lakehouse makes the next statement on each of its tables read the metadata
+  again and sync the table. A failed read that is retried (`fresh`) syncs it too.
+- **A sync reads only what is new.** The lake remembers what each table was synced from, in `studio_synced` in its own
+  metadata file, in the same transaction as the sync: its folder, the metadata location, the Delta version, and that
+  version's live files. The next sync reads only the commits after that version, 16 at a time, and applies them to
+  those files. It reads the log whole only when a checkpoint is newer than that version, when the log doesn't go on
+  from it, or when the table was dropped and made again. A new snapshot of a table written every few minutes is one
+  commit, which is one request.
 - **Deletes:** a Delta deletion vector is the same bytes as the lake's own delete file, so each is cut out of the
   `.bin` it is packed in, or built from an inline one, and kept under `lake\deletes`. An Iceberg table's
   position-delete files are used as they are.
@@ -318,7 +333,7 @@ A table can be part here and part on OneLake, and DuckDB opens each file where i
   still reads stays, unless what is kept here would pass `onelakeStudio.diskCacheMaxGB`: then the least recently read
   goes back to its OneLake name, and its copy goes the same slow way. At `0` nothing comes here.
 - **One process holds the lake:** its metadata file can be open in one only. So the server holds it, a window asks it
-  for a table over the control pipe (`lakeTable`), and Keep offline's reads are a client of the same server. The
+  for a table over the control pipe (`lakeTable`, `lakeSync`, `lakeTables`), and Keep offline's reads are a client of the same server. The
   standalone host's server has a lake of its own, `lake-standalone`.
 - **Only through the lake:** a table is never read past it. An engine that can't open the lake doesn't start, and one
   with no cache folder (no account) refuses a table.
@@ -357,12 +372,13 @@ A table can be part here and part on OneLake, and DuckDB opens each file where i
   extension host, where VS Code's sign-in, proxy and certificates are. Each window refreshes what it has open and pinned
   workspaces past `catalogTtlMinutes`. One window, holding a lease in the catalog file, reads the rest of the tenant's
   listings every 12 hours: workspaces, items, table lists, and models if a Fabric token is already there. That is five
-  listings every 15 seconds, one at a time, and a 429 or no answer stops it for a minute. It reads no table's metadata, and
+  listings every 15 seconds, one at a time, and a 429 or no answer stops it for a minute. The only table metadata it reads
+  is that of the tables the lake holds, to sync each one that moved ([Reading OneLake tables](#reading-onelake-tables)), and
   offline it asks nothing. A listing that can't be read shows *refresh failed* beside the last good answer. A window hears
   what another wrote from the file within a few seconds, and its tree redraws.
 - **A table statements keep reading is looked after** ([CATALOG.md](CATALOG.md#tables-in-use)). Read 3 times in 14 days, it is
-  *in use*. Its metadata is read every hour, and when nobody is running anything its lake table is synced to each new
-  snapshot, under `onelakeStudio.keepUsedTablesGB` (`keepTable`). Nothing of it is read: its files come here only as
+  *in use*. Its metadata is read every hour, so its lake table is synced to each new snapshot within the hour, and when
+  nobody is running anything it is synced once more under `onelakeStudio.keepUsedTablesGB` (`keepTable`, which syncs it now). Nothing of it is read: its files come here only as
   statements open them, and the sync keeps every copy still live. A table over the limit isn't synced, and says so in its tooltip.
 - **Per Microsoft account:** switching accounts never serves one account's data to another.
 - **Survives a sign-out:** signing back in finds it warm. Only **Clear Cached OneLake Data** deletes it.

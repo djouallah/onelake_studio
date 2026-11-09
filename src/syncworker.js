@@ -9,6 +9,11 @@
 //   the rest of the tenant's listings                every 12 hours, by one window only
 //   the metadata of tables in use                    every hour, by that window
 //   the bytes of tables in use, at a new snapshot    when nobody is running anything, by that window
+//   the metadata of the other tables the lake holds  at the table TTL, by that window
+//   a lake table, when its catalog snapshot moved    with no statement running, by that window
+//
+// A statement reads what the lake holds and asks OneLake nothing (engine-host.js lakeTable), so this is how a lake
+// table hears that its table changed: the catalog's metadata location for it moved past what it was synced from.
 //
 // It runs in a window, not the server, for VS Code's own sign-in, proxy and certificates. A lease in
 // the catalog file says which window sweeps the tenant, and another takes over when that one goes.
@@ -75,17 +80,24 @@ function readJob(onelake, t, { onWait } = {}) {
  * @param {() => Promise<boolean>} o.keep.othersRunning  whether anyone has a statement running
  * @param {(name: string, o: { signal: AbortSignal }) => Promise<any>} o.keep.read
  * @param {() => boolean} [o.keep.held]  whether this holds off: a model kept offline is coming down
+ * @param {object} [o.lake]  the lake's tables, synced to the catalog's snapshots, when there is an engine to ask
+ * @param {() => boolean} o.lake.ready  whether an engine is up: one is never started for this
+ * @param {() => Promise<object[]>} o.lake.tables  each lake table: { name, folder, format, location, listed }
+ * @param {(which: object) => Promise<any>} o.lake.sync  one synced now (engine-host.js lakeSync)
+ * @param {() => Promise<boolean>} o.lake.othersRunning  whether anyone has a statement running
+ * @param {() => number} o.lake.ttlMs  how old the metadata of a lake table not in use may be
  * @param {(line: string) => void} [o.log]
  * @param {() => number} [o.now]
  */
 function createSyncWorker({ onelake, opened = () => [], pinned = () => [], ttlMs, canFabric = async () => false,
-                            isOffline, lease = () => true, usage = onelake.usage, keep = null, log = () => {},
+                            isOffline, lease = () => true, usage = onelake.usage, keep = null, lake = null, log = () => {},
                             now = Date.now, everyMs = EVERY_MS, jobsPerTick = JOBS_PER_TICK, keepWatchMs = KEEP_WATCH_MS }) {
   let timer = null, busy = false, turn = 0, pausedUntil = 0, sweepAfter = 0;
   let leased = null, sweepBegan = null, lastRun = null;
   let keeping = null, watching = null, busyAt = now(), lastKept = null;
   const retryAt = new Map();
   const failures = [];               // the latest, for `status`
+  let lakeRows = [], lakeSyncing = null, lastSynced = null;
 
   const idOf = t => [t.kind, t.workspace, t.item, t.dir, t.schema, t.table].join('\u0000');
   const kept = t => (t.kind === 'workspaces' ? onelake.cached.workspaces()
@@ -179,6 +191,66 @@ function createSyncWorker({ onelake, opened = () => [], pinned = () => [], ttlMs
       if (!mine && !(mine = holdsLease())) return;
       yield job;
     }
+  }
+
+  // The other tables the lake holds, read again at the table TTL: a table in use is read every hour already.
+  async function* lakeListings() {
+    let mine = false;
+    for (const r of lakeRows) {
+      if (!r.listed) continue;
+      const job = { kind: 'table', ...r.listed };
+      if (!await due(job, lake.ttlMs())) continue;
+      if (!mine && !(mine = holdsLease())) return;
+      yield job;
+    }
+  }
+  // The lake's tables, from the engine, once a tick: none without one.
+  async function readLakeRows() {
+    if (!lake || !lake.ready()) { lakeRows = []; return; }
+    try { lakeRows = (await lake.tables()) || []; } catch (_) { lakeRows = []; }
+  }
+
+  // A lake table whose catalog snapshot isn't the one it was synced from, and how to sync it.
+  async function movedLakeTables() {
+    const moved = [];
+    for (const r of lakeRows) {
+      if (!r.listed || (retryAt.get(`lake\u0000${r.name}`) || 0) > now()) continue;
+      const held = await onelake.cached.table(lhOf(r.listed), r.listed).catch(() => null);
+      const meta = held && held.value;
+      if (!meta || meta.empty || meta.notValid || !meta.metadataLocation || meta.metadataLocation === r.location) continue;
+      moved.push({ name: r.name, sql: sqlNameOf(lhOf(r.listed), r.listed), which: {
+        deltaTable: r.format === 'delta' ? r.folder : null, metadataLocation: meta.metadataLocation, at: held.at,
+        listed: r.listed, uuid: meta.tableUuid || null } });
+    }
+    return moved;
+  }
+  // One at a time, behind everything: each waits for nobody to be running a statement, and the next tick carries on
+  // where this one stopped. Not waited for: a log can take seconds.
+  async function considerSyncing() {
+    if (!lake || lakeSyncing || !lake.ready()) return;
+    const moved = await movedLakeTables();
+    if (!moved.length || !holdsLease()) return;
+    lakeSyncing = (async () => {
+      let leasedAt = now();
+      for (const m of moved) {
+        if (isOffline() || !lake.ready() || now() < pausedUntil) return;
+        if (now() - leasedAt > LEASE_RENEW_MS) { leasedAt = now(); if (!holdsLease()) return; }
+        if (await lake.othersRunning().catch(() => true)) return;
+        const began = now();
+        try {
+          const r = await lake.sync(m.which);
+          lastSynced = { at: now(), table: m.sql, ms: now() - began };
+          log(`sync: ${m.sql} synced to its new snapshot in ${now() - began}ms${r && r.commitsRead != null ? `, ${r.commitsRead} commit(s) read` : ''}`);
+        } catch (e) {
+          if (e && (e.offline || e.cancelled)) return;
+          retryAt.set(`lake\u0000${m.name}`, now() + RETRY_MS);
+          const error = String((e && e.message) || e);
+          log(`sync: ${m.sql} could not be synced — ${error}`);
+          failures.push({ at: now(), where: `lake ${m.sql}`, error });
+          if (failures.length > MAX_FAILURES) failures.shift();
+        }
+      }
+    })().finally(() => { lakeSyncing = null; });
   }
 
   async function* tenantListings() {
@@ -300,7 +372,7 @@ function createSyncWorker({ onelake, opened = () => [], pinned = () => [], ttlMs
     const mine = turn;
     let left = jobsPerTick;
     const began = now();
-    const ran = { open: 0, pinned: 0, used: 0, tenant: 0 };
+    const ran = { open: 0, pinned: 0, used: 0, lake: 0, tenant: 0 };
     const drain = async (kind, listings) => {
       for await (const t of listings) {
         if (mine !== turn || isOffline()) return false;
@@ -319,6 +391,9 @@ function createSyncWorker({ onelake, opened = () => [], pinned = () => [], ttlMs
         for (const t of opened()) if (await due(t, ttl)) yield t;
       })();
       if (!await drain('open', mineOpen) || !await drain('pinned', pinnedListings(ttl)) || !await drain('used', usedListings())) return;
+      await readLakeRows();
+      if (lake && !await drain('lake', lakeListings())) return;
+      await considerSyncing();
       await considerKeeping();
       // A tenant with nothing due isn't walked every few seconds.
       if (now() < sweepAfter) return;
@@ -335,7 +410,7 @@ function createSyncWorker({ onelake, opened = () => [], pinned = () => [], ttlMs
       log(`sync: ${(e && e.message) || e}`);
     } finally {
       busy = false;
-      const count = ran.open + ran.pinned + ran.used + ran.tenant;
+      const count = ran.open + ran.pinned + ran.used + ran.lake + ran.tenant;
       if (count) {
         lastRun = { at: now(), ms: now() - began, ...ran };
         const what = Object.entries(ran).filter(([, n]) => n).map(([k, n]) => `${n} ${k}`).join(', ');
@@ -386,7 +461,8 @@ function createSyncWorker({ onelake, opened = () => [], pinned = () => [], ttlMs
       }
       return { running: !!timer, lease: leased, tenantDue: due, sweeping: sweepBegan != null, opened: opened().length,
                pinned: pinned().length, pausedUntil: pausedUntil > now() ? pausedUntil : null, lastRun, failures: [...failures],
-               used: { tables: inUse.length, keptBytes, keeping: keeping ? keeping.name : null, last: lastKept } };
+               used: { tables: inUse.length, keptBytes, keeping: keeping ? keeping.name : null, last: lastKept },
+               lake: { tables: lakeRows.length, syncing: !!lakeSyncing, last: lastSynced } };
     },
     start() {
       if (timer) return;

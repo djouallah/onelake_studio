@@ -86,7 +86,7 @@ Every row says when it was last read from OneLake.
 
 | What | Where | Why |
 | --- | --- | --- |
-| What the lake holds of a table: its files, their sizes, row counts, partitions and deletes | The cache folder, `lake\meta.ducklake`, a DuckDB file the server opens | DuckLake reads it. Made again from a table's own metadata, so it is a cache too ([Reading data](#reading-data)). |
+| What the lake holds of a table: its files, their sizes, row counts, partitions and deletes, and what it was last synced from (`studio_synced`) | The cache folder, `lake\meta.ducklake`, a DuckDB file the server opens | DuckLake reads it. Made again from a table's own metadata, so it is a cache too ([Reading data](#reading-data)). |
 | A model's `.yaml` | The cache folder, under `models\` | A file: data, with its path in the catalog. |
 | Saved queries | `~/OneLakeStudio/queries/` | Not metadata. |
 | The log | `logs-<id>.sqlite`, a file of its own | Not metadata. |
@@ -107,9 +107,11 @@ DuckDB and no server. A lease in the catalog file says which window sweeps the t
 | The window with the lease | The rest of the tenant: workspaces, items and table lists, and models if a Fabric token is already there. Workspaces in use go first | Every 12 hours |
 | The window with the lease | The metadata of the 20 tables most in use | Every hour |
 | The window with the lease | One table in use, read whole, through the engine (see [Tables in use](#tables-in-use)) | When nobody is running anything |
+| The window with the lease | The metadata of the other tables the lake holds | At `tableMetadataTtlHours` |
+| The window with the lease | A lake table whose metadata location moved past the one it was synced from: synced, through the engine, one at a time | While no statement is running |
 
-- **Table metadata is read only for lakehouses opened,** as `prefetchMetadata` does, **and for tables in use,** so the
-  tenant's manifests are not walked. A staging item is never swept.
+- **Table metadata is read only for lakehouses opened,** as `prefetchMetadata` does, **for tables in use, and for the
+  tables the lake holds,** so the tenant's manifests are not walked. A staging item is never swept.
 - **Limits:** one request at a time and five listings every 15 seconds, so a large tenant fills in over minutes. A 429, a
   503 or no answer at all stops everything for a minute, and a listing that fails isn't asked again for an hour.
 - **Every window hears** what another wrote: a look at the file every few seconds (`PRAGMA data_version`), and the tree
@@ -177,8 +179,10 @@ Neither holds up the tree.
 ## How a statement runs
 
 As [ARCHITECTURE.md](ARCHITECTURE.md#what-happens-when-a-statement-runs) describes, with one change: `resolve`
-and `resolveFile` query the catalog, in the window. The view is over the table's lake table, synced in the server from its
-log or metadata location when that moved. `SHOW ALL TABLES` and `information_schema` are answered from the catalog.
+and `resolveFile` query the catalog, in the window. The view is over the table's lake table, as the server last synced it.
+A table the lake holds is named from what the catalog keeps alone, with no request, however old that is: the sync worker
+is what finds out that it moved. Only a table the lake has never held is synced on its first read, which reads its log.
+`SHOW ALL TABLES` and `information_schema` are answered from the catalog.
 
 A name not in a kept listing asks the worker for that listing before it is called missing. So does a read that
 fails with an `IO Error`, for that table's listing and metadata.

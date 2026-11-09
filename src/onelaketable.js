@@ -27,6 +27,11 @@ const { DFS_ORIGIN } = require('./names');
 const { crc32 } = require('./crc32');
 
 const META = '__ducklake_metadata_lake';
+// What each lake table was last synced from, so a restart forgets nothing: its folder, the catalog's metadata
+// location, the table's own version, and for Delta its log's live files then, which the next sync goes on from.
+const SYNCED = `${META}.studio_synced`;
+// Commits read at once: over OneLake each is a request of a second or two.
+const COMMITS_AT_ONCE = 16;
 const rows = async (c, sql) => (await c.runAndReadAll(sql)).getRowObjectsJson();
 const one = async (c, sql) => Object.values((await rows(c, sql))[0] || {});
 
@@ -106,8 +111,36 @@ async function deletionBlob(c, root, dv) {
 // A checkpoint writes a map as a list of key/value pairs.
 const asObject = m => (Array.isArray(m) ? Object.fromEntries(m.map(x => [x.key, x.value])) : m || {});
 
-/** A Delta table at its latest version, or at `version`, from its log alone. `root` is its folder, local or abfss://. */
-async function readDelta(c, root, { version: upTo = Infinity } = {}) {
+// A deletion vector's descriptor, the same however the log wrote it: a checkpoint has every field, a commit some.
+const dvOf = dv => (dv ? { storageType: dv.storageType, pathOrInlineDv: dv.pathOrInlineDv, offset: dv.offset == null ? null : Number(dv.offset),
+  sizeInBytes: Number(dv.sizeInBytes), cardinality: Number(dv.cardinality) } : null);
+// An add as it is kept between reads: what its file needs, not its column stats.
+const addOf = a => ({ path: a.path, size: Number(a.size), partitionValues: a.partitionValues || {}, deletionVector: dvOf(a.deletionVector),
+  records: a.stats ? (JSON.parse(a.stats).numRecords ?? null) : (a.records ?? null) });
+
+// The commits' text, in their order: COMMITS_AT_ONCE at a time, each on a connection of its own, or in one read on `c`.
+async function commitTexts(c, files, withConn) {
+  if (!withConn || files.length < 2) {
+    if (!files.length) return [];
+    const texts = new Map((await rows(c, `SELECT filename, content FROM read_text([${files.map(q).join(', ')}])`))
+      .map(t => [t.filename.replace(/\\/g, '/'), t.content]));
+    return files.map(f => texts.get(f));
+  }
+  const out = new Array(files.length);
+  let next = 0;
+  await Promise.all(Array.from({ length: Math.min(COMMITS_AT_ONCE, files.length) }, () => withConn(async lc => {
+    for (let i = next++; i < files.length; i = next++) out[i] = (await rows(lc, `SELECT content FROM read_text(${q(files[i])})`))[0].content;
+  })));
+  return out;
+}
+
+/**
+ * A Delta table at its latest version, or at `version`, from its log alone. `root` is its folder, local or abfss://.
+ * `from` and `base`: an earlier answer's `version` and `log`. Only the commits after `from` are read then, unless a
+ * checkpoint is newer or the log doesn't go on from there: then it is read whole. `withConn(fn)` runs fn on a
+ * connection of its own, so the commits are read at the same time.
+ */
+async function readDelta(c, root, { version: upTo = Infinity, from = null, base = null, withConn = null } = {}) {
   const listed = (await rows(c, `SELECT file FROM glob(${q(`${root}/_delta_log/*`)})`)).map(r => r.file.replace(/\\/g, '/'));
   const commits = new Map(), checkpoints = new Map();
   for (const f of listed) {
@@ -119,12 +152,18 @@ async function readDelta(c, root, { version: upTo = Infinity } = {}) {
     else { if (!checkpoints.has(v)) checkpoints.set(v, []); checkpoints.get(v).push(f); }
   }
   if (!commits.size && !checkpoints.size) throw new Error(`${root} has no Delta log`);
+  const version = Math.max(...commits.keys(), ...checkpoints.keys());
   // The newest checkpoint with all its parts.
   const whole = v => {
     const parts = checkpoints.get(v), m = /\.checkpoint\.\d{10}\.(\d{10})\.parquet$/.exec(parts[0]);
     return !m || parts.length === Number(m[1]);
   };
   const cpv = [...checkpoints.keys()].filter(whole).sort((a, b) => b - a)[0];
+  const after = v => [...commits.keys()].filter(x => v === undefined || x > v).sort((a, b) => a - b);
+  // The log goes on from `from`: every commit after it is there, and no checkpoint is newer. One that is lower now
+  // started again: another table at the same path.
+  const goesOn = !!base && Number.isInteger(from) && from <= version && (cpv === undefined || cpv <= from)
+    && after(from).every((v, i) => v === from + 1 + i);
   // A file is its path and its deletion vector's id together, as Delta reconciles them: a remove that names no
   // deletion vector doesn't remove the add that has one.
   const idOf = x => {
@@ -136,39 +175,37 @@ async function readDelta(c, root, { version: upTo = Infinity } = {}) {
   const apply = a => {
     if (a.metaData) meta = a.metaData;
     if (a.remove) live.delete(idOf(a.remove));
-    if (a.add) live.set(idOf(a.add), a.add);
+    if (a.add) live.set(idOf(a.add), addOf(a.add));
   };
-  if (cpv !== undefined) {
+  if (goesOn) {
+    meta = base.metaData;
+    for (const a of base.adds) live.set(idOf(a), a);
+  } else if (cpv !== undefined) {
     const parts = checkpoints.get(cpv).map(q).join(', ');
     for (const r of await rows(c, `SELECT to_json(add) AS a, to_json(metaData) AS m FROM read_parquet([${parts}], union_by_name = true) WHERE add IS NOT NULL OR metaData IS NOT NULL`)) {
       if (r.m && r.m !== 'null') { const m = JSON.parse(r.m); m.configuration = asObject(m.configuration); apply({ metaData: m }); }
       if (r.a && r.a !== 'null') { const a = JSON.parse(r.a); a.partitionValues = asObject(a.partitionValues); apply({ add: a }); }
     }
   }
-  const newer = [...commits.keys()].filter(v => cpv === undefined || v > cpv).sort((a, b) => a - b);
-  if (newer.length) {
-    const texts = new Map((await rows(c, `SELECT filename, content FROM read_text([${newer.map(v => q(commits.get(v))).join(', ')}])`))
-      .map(t => [t.filename.replace(/\\/g, '/'), t.content]));
-    for (const v of newer) for (const line of texts.get(commits.get(v)).split('\n')) if (line.trim()) apply(JSON.parse(line));
-  }
+  const newer = after(goesOn ? from : cpv).map(v => commits.get(v));
+  for (const text of await commitTexts(c, newer, withConn)) for (const line of text.split('\n')) if (line.trim()) apply(JSON.parse(line));
   if (!meta) throw new Error(`${root}'s log has no metadata`);
   const partitionColumns = meta.partitionColumns || [];
-  const files = [...live.values()].map(a => {
-    const stats = a.stats ? JSON.parse(a.stats) : {};
-    return {
-      key: a.path,
-      // The log's paths are URIs; the files' own names aren't.
-      path: decodeURIComponent(a.path),
-      size: Number(a.size),
-      records: stats.numRecords == null ? null : Number(stats.numRecords),
-      partitionValues: partitionColumns.map(k => (a.partitionValues && a.partitionValues[k] != null ? String(a.partitionValues[k]) : null)),
-      deletes: a.deletionVector ? { count: Number(a.deletionVector.cardinality), dv: a.deletionVector } : null,
-    };
-  });
+  const files = [...live.values()].map(a => ({
+    key: a.path,
+    // The log's paths are URIs; the files' own names aren't.
+    path: decodeURIComponent(a.path),
+    size: a.size,
+    records: a.records == null ? null : Number(a.records),
+    partitionValues: partitionColumns.map(k => (a.partitionValues[k] != null ? String(a.partitionValues[k]) : null)),
+    deletes: a.deletionVector ? { count: a.deletionVector.cardinality, dv: a.deletionVector } : null,
+  }));
   return {
-    format: 'delta', version: Math.max(...commits.keys(), ...checkpoints.keys()), root,
+    format: 'delta', version, root, commitsRead: newer.length, whole: !goesOn,
     fields: JSON.parse(meta.schemaString).fields.map(deltaField), partitionColumns, files,
     columnMapping: (meta.configuration && meta.configuration['delta.columnMapping.mode']) || 'none',
+    // What the next read goes on from.
+    log: { metaData: meta, adds: [...live.values()] },
     readDeletes: f => deletionBlob(c, root, f.deletes.dv),
   };
 }
@@ -209,8 +246,10 @@ async function readIceberg(c, metadataLocation) {
  * @param {string} o.dvDir    where a deletion vector's own file is written: a local folder the engine may read
  * @param {Map<string,string>} [o.held]  a file's path as DuckLake held it (relative to the table, or a full URL)
  *   -> its local copy, so a file already here goes on being read from here (tableservice.js)
+ * @param {object} [o.synced]  where `state` came from, noted in studio_synced in the same transaction:
+ *   { folder, location, listed, uuid }
  */
-async function syncTable(c, name, state, { dvDir, held = new Map() }) {
+async function syncTable(c, name, state, { dvDir, held = new Map(), synced = null }) {
   const started = Date.now();
   const tableId = async () => (await one(c, `SELECT table_id FROM ${META}.ducklake_table WHERE table_name = ${q(name)} AND end_snapshot IS NULL`))[0];
   let tid = await tableId();
@@ -254,7 +293,10 @@ async function syncTable(c, name, state, { dvDir, held = new Map() }) {
     else ended.push(r.data_file_id);
   }
   const added = state.files.filter(f => !kept.has(f.key));
-  if (!added.length && !ended.length) return { tableId: tid, added: 0, ended: 0, ms: Date.now() - started };
+  if (!added.length && !ended.length) {
+    await noteSynced(c, name, state, synced);
+    return { tableId: tid, added: 0, ended: 0, ms: Date.now() - started };
+  }
   const blobs = new Map();
   for (const f of added) if (f.deletes && f.deletes.dv) blobs.set(f.key, await state.readDeletes(f));
 
@@ -323,6 +365,7 @@ async function syncTable(c, name, state, { dvDir, held = new Map() }) {
     const [count, bytes] = await one(c, `SELECT coalesce(sum(record_count), 0), coalesce(sum(file_size_bytes), 0) FROM ${META}.ducklake_data_file WHERE table_id = ${tid} AND end_snapshot IS NULL`);
     await c.run(`DELETE FROM ${META}.ducklake_table_stats WHERE table_id = ${tid}`);
     await c.run(`INSERT INTO ${META}.ducklake_table_stats VALUES (${tid}, ${count}, ${rowId}, ${bytes})`);
+    await noteSynced(c, name, state, synced);
     await c.run('COMMIT');
   } catch (e) {
     await c.run('ROLLBACK').catch(() => {});
@@ -338,6 +381,30 @@ async function syncTable(c, name, state, { dvDir, held = new Map() }) {
 async function attachLake(c, metadataFile) {
   // Never written to: every table names its own folder. Remote only so DuckLake keeps remote paths remote.
   await c.run(`ATTACH ${q(`ducklake:${metadataFile}`)} AS lake (DATA_PATH ${q(`${DFS_ORIGIN}/unused/`)}, DATA_INLINING_ROW_LIMIT 0)`);
+  await c.run(`CREATE TABLE IF NOT EXISTS ${SYNCED} (name VARCHAR PRIMARY KEY, folder VARCHAR, format VARCHAR, location VARCHAR,
+    version VARCHAR, listed VARCHAR, uuid VARCHAR, log VARCHAR, synced_at BIGINT)`);
 }
 
-module.exports = { readDelta, readIceberg, syncTable, attachLake, rows, META };
+// ---------------------------------------------------------------------------- What was synced
+
+// Bound, not spliced: a big table's log is megabytes of text.
+async function noteSynced(c, name, state, s) {
+  if (!s) return;
+  await c.run(`INSERT OR REPLACE INTO ${SYNCED} VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::BIGINT)`, [
+    name, String(s.folder), state.format, s.location == null ? null : String(s.location), String(state.version),
+    s.listed ? JSON.stringify(s.listed) : null, s.uuid == null ? null : String(s.uuid),
+    state.log ? JSON.stringify(state.log) : null, String(Date.now())]);
+}
+const syncedRow = r => ({ name: r.name, folder: r.folder, format: r.format, location: r.location, version: r.version,
+  listed: r.listed ? JSON.parse(r.listed) : null, uuid: r.uuid, syncedAt: Number(r.synced_at) });
+/** What lake table `name` was last synced from, its log included, or null. */
+async function syncedOf(c, name) {
+  const [r] = await rows(c, `SELECT * FROM ${SYNCED} WHERE name = ${q(name)}`);
+  return r ? { ...syncedRow(r), log: r.log ? JSON.parse(r.log) : null } : null;
+}
+/** Every lake table and what it was last synced from, without the logs. */
+async function syncedAll(c) {
+  return (await rows(c, `SELECT * EXCLUDE (log) FROM ${SYNCED} ORDER BY name`)).map(syncedRow);
+}
+
+module.exports = { readDelta, readIceberg, syncTable, attachLake, syncedOf, syncedAll, rows, META };

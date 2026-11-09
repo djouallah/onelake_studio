@@ -279,3 +279,40 @@ test("any other failure of the metadata is said as it was, and the API isn't ask
   await assert.rejects(w.sql.resolve(ref()), e => e.status === 401);
   assert.equal(w.reads.length, 0);
 });
+
+test("a table the lake holds resolves from what the catalog keeps: nothing asked, nothing refreshed behind it, past its age too", async () => {
+  const w = world();
+  await w.sql.resolve(ref());
+  w.calls.length = 0;
+  w.now += 365 * 24 * 3600 * 1000;
+  const asked = [];
+  const held = async x => { asked.push(x); return { name: "t_lake", location: "abfss://ws@onelake.dfs.fabric.microsoft.com/lh.Lakehouse/Tables/dbo/t/metadata/0.metadata.json", at: 5 }; };
+  const r = await w.sql.resolve(ref(), { held });
+  assert.equal(r.lake, "t_lake");
+  assert.equal(r.at, 5, "as old as the lake's sync");
+  assert.match(r.metadataLocation, /0\.metadata\.json$/, "the snapshot the lake has");
+  assert.deepEqual(r.listed, { workspace: "ws", item: "old.Lakehouse", schema: "dbo", table: "t" });
+  assert.deepEqual(asked, [{ deltaTable: null, metadataLocation: LOC }]);
+  await new Promise(res => setImmediate(res));
+  assert.deepEqual(w.calls, [], "no request, and none behind it");
+
+  // One the lake doesn't hold resolves as it always has.
+  const fresh = await w.sql.resolve(ref(), { held: async () => ({ name: null }) });
+  assert.equal(fresh.lake, undefined);
+  assert.equal(fresh.metadataLocation, LOC);
+  // Asked past the cache, the lake isn't asked: the table is read again, and the engine syncs it.
+  asked.length = 0;
+  await w.sql.resolve(ref(), { held, fresh: true });
+  assert.deepEqual(asked, []);
+});
+
+test("a Refresh over a lakehouse the lake holds a table of reads its metadata again, and says to sync it", async () => {
+  const w = world();
+  await w.sql.resolve(ref());
+  w.calls.length = 0;
+  w.onelake.refreshTables({ workspace: "ws", item: "old.Lakehouse" });
+  const r = await w.sql.resolve(ref(), { held: async () => ({ name: "t_lake", location: LOC, at: 1 }) });
+  assert.equal(r.sync, true);
+  assert.equal(r.lake, undefined);
+  assert.equal(count(w, "load"), 1);
+});

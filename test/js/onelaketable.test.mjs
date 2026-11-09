@@ -56,19 +56,64 @@ test("one lake, table after table: each read right after its sync, as the engine
   } finally { lake.close(); }
 });
 
-test("a table followed commit by commit stays equal to delta_scan, time travel included", { skip }, async () => {
+// A connection of its own for each read, as the engine gives readDelta: its commits are read at the same time.
+const ownConn = lake => async fn => {
+  const c = await lake.db.connect();
+  try { return await fn(c); } finally { c.closeSync(); }
+};
+// What a read says of a table, its files in an order of their own: the same table read two ways reads the same.
+const shape = s => ({
+  version: s.version, fields: s.fields, partitionColumns: s.partitionColumns, columnMapping: s.columnMapping,
+  files: s.files.map(({ key, path, size, records, partitionValues, deletes }) => JSON.stringify({ key, path, size, records, partitionValues, deletes })).sort(),
+});
+
+for (const [name, info] of Object.entries(cases)) {
+  test(`${name}: read on from each version, the same as read whole`, { skip: skip || (!info.made && `not written: ${info.why}`) }, async () => {
+    const lake = await H.openLake();
+    try {
+      const root = fwd(join(FIXTURES, name));
+      const latest = (await readDelta(lake.c, root)).version;
+      let before = null;
+      for (let v = 0; v <= latest; v++) {
+        const whole = await readDelta(lake.c, root, { version: v });
+        const on = before ? await readDelta(lake.c, root, { version: v, from: before.version, base: before.log, withConn: ownConn(lake) }) : whole;
+        assert.deepEqual(shape(on), shape(whole), `${name} at version ${v}`);
+        before = on;
+      }
+    } finally { lake.close(); }
+  });
+}
+
+test("a table followed commit by commit stays equal to delta_scan, time travel included, and so does one synced on", { skip }, async () => {
   const lake = await H.openLake();
   try {
     const root = fwd(join(FIXTURES, "churn"));
     let steps = [];
     const snapshots = [];
+    let before = null;
     for (let step = 0; step < 7; step++) {
       const out = JSON.parse(execFileSync("python", [MAKE, FIXTURES, "churn", String(step)], { encoding: "utf8" }));
       steps = out.steps;
+      // A checkpoint between two syncs: the next one reads from it, not on from where it got to.
+      if (step === 4) execFileSync("python", ["-c", `from deltalake import DeltaTable; DeltaTable(r'''${root}''').create_checkpoint()`]);
       const state = await readDelta(lake.c, root);
       await syncTable(lake.c, "churn", state, { dvDir: lake.dvDir });
-      const same = await H.sameRows(lake.c, "lake.churn", `delta_scan(${H.q(root)})`, state.fields.map(f => f.name));
+      const names = state.fields.map(f => f.name);
+      const same = await H.sameRows(lake.c, "lake.churn", `delta_scan(${H.q(root)})`, names);
       assert.deepEqual([same.onlyInFirst, same.onlyInSecond], [0, 0], `after ${steps[step]}: ${JSON.stringify(same)}`);
+      // The same table synced on from its last sync: only the new commits are read, and the rows are the same.
+      if (before) {
+        const [old] = await H.rowsOf(lake.c, "SELECT count(*)::BIGINT AS n FROM lake.churn_on");
+        assert.equal(Number(old.n), before.rows, `before its sync, ${steps[step]} isn't seen`);
+      }
+      const on = before ? await readDelta(lake.c, root, { from: before.state.version, base: before.state.log, withConn: ownConn(lake) }) : state;
+      assert.equal(on.whole, !before || step === 4, `after ${steps[step]}: read whole only with no sync before it, or a newer checkpoint`);
+      if (before && step !== 4) assert.equal(on.commitsRead, on.version - before.state.version);
+      assert.deepEqual(shape(on), shape(state), `after ${steps[step]}`);
+      await syncTable(lake.c, "churn_on", on, { dvDir: lake.dvDir });
+      const sameOn = await H.sameRows(lake.c, "lake.churn_on", `delta_scan(${H.q(root)})`, names);
+      assert.deepEqual([sameOn.onlyInFirst, sameOn.onlyInSecond], [0, 0], `synced on, after ${steps[step]}: ${JSON.stringify(sameOn)}`);
+      before = { state: on, rows: sameOn.rows };
       const [s] = await H.rowsOf(lake.c, "SELECT max(snapshot_id)::BIGINT AS id FROM lake.snapshots()");
       snapshots.push({ version: out.version, snapshot: Number(s.id), rows: same.rows });
     }

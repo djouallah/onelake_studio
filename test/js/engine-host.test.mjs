@@ -5,10 +5,11 @@
 // Run: node --test test/js/engine-host.test.mjs
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { READS, WRITES } from "./sql-disagreements.mjs";
@@ -878,4 +879,88 @@ test("OneLake's words for a refused file are the ones the engine looks for", () 
   assert.ok(!FORBIDDEN.test("Binder Error: column fact_403x not found"));
   assert.ok(!FORBIDDEN.test("Binder Error: no column y\n\nLINE 1: SELECT y FROM t WHERE x = 403"), "a statement quoted in an error");
   assert.ok(!FORBIDDEN.test("IO Error: HTTP 401 Unauthorized"));
+});
+
+// A Delta table written here by hand, a commit at a time: a Parquet file DuckDB writes, and its log line.
+async function deltaCommit(c, root, version, from, to) {
+  const file = `part-${version}.parquet`;
+  await mkdir(join(root, "_delta_log"), { recursive: true });
+  await c.run(`COPY (SELECT range::INTEGER AS a FROM range(${from}, ${to})) TO '${duckdbPath(join(root, file))}' (FORMAT parquet)`);
+  const { size } = await stat(join(root, file));
+  const lines = [
+    ...(version === 0 ? [{ protocol: { minReaderVersion: 1, minWriterVersion: 2 } }, { metaData: { id: "t", format: { provider: "parquet", options: {} },
+      schemaString: JSON.stringify({ type: "struct", fields: [{ name: "a", type: "integer", nullable: true, metadata: {} }] }),
+      partitionColumns: [], configuration: {}, createdTime: 0 } }] : []),
+    { add: { path: file, partitionValues: {}, size, modificationTime: 0, dataChange: true, stats: JSON.stringify({ numRecords: to - from }) } },
+  ];
+  await writeFile(join(root, "_delta_log", `${String(version).padStart(20, "0")}.json`), lines.map(l => JSON.stringify(l)).join("\n") + "\n");
+}
+
+test("a table the lake holds is read as it is, with nothing asked of OneLake, after a restart too; a sync reads only what is new", { skip: !existsSync(LAKE_BUILD) }, async t => {
+  const H = await import("./lake-helpers.mjs");
+  const { syncTable } = require("../../src/onelaketable.js");
+  const extDir = await mkdtemp(join(tmpdir(), "onelake-ext-"));
+  const cacheDir = await mkdtemp(join(tmpdir(), "onelake-cache-"));
+  const FOLDER = "abfss://ws@onelake.dfs.fabric.microsoft.com/lh.Lakehouse/Tables/dbo/t";
+  const LOC = `${FOLDER}/metadata/1.metadata.json`;
+  const listed = { workspace: "ws", item: "lh.Lakehouse", schema: "dbo", table: "t" };
+  // The lake as an earlier server left it: this table synced, with no file in it. Its folder is on OneLake, which
+  // this engine has no token for, so any read of its log would fail.
+  const lakeName = `t_${createHash("sha256").update(FOLDER.toLowerCase()).digest("hex").slice(0, 24)}`;
+  const local = duckdbPath(join(cacheDir, "src", "u"));
+  {
+    await mkdir(join(cacheDir, "lake"), { recursive: true });
+    const lake = await H.openLake({ extensions: ["ducklake"], dir: join(cacheDir, "lake") });
+    try {
+      const state = { format: "delta", version: 3, root: FOLDER, partitionColumns: [], columnMapping: "none", files: [],
+        fields: [{ name: "a", physical: "a", type: "INTEGER", children: [] }], log: { metaData: {}, adds: [] } };
+      await syncTable(lake.c, lakeName, state, { dvDir: lake.dvDir, synced: { folder: FOLDER, location: LOC, listed } });
+      await deltaCommit(lake.c, local, 0, 0, 3);
+    } finally { lake.close(); }
+  }
+  const asked = [];
+  const open = () => createEngineHost({
+    extensionDir: extDir, bundledExtensions: BUNDLED, fileCacheDir: cacheDir, fileCacheMaxBytes: 1024 ** 3,
+    resolveTable: async (ref, o = {}) => {
+      if (o.held) asked.push((await o.held({ deltaTable: FOLDER, metadataLocation: LOC })).name);
+      return { ...ref, deltaTable: FOLDER, metadataLocation: LOC, at: 1, listed };
+    },
+  });
+  let engine = open();
+  t.after(async () => {
+    await engine.close();
+    await rm(extDir, { recursive: true, force: true }).catch(() => {});
+    await rm(cacheDir, { recursive: true, force: true }).catch(() => {});
+  });
+  const syncedAt = async () => (await engine.lakeTables()).find(r => r.name === lakeName).syncedAt;
+  const before = await syncedAt();
+
+  assert.equal((await engine.call("query", ["SELECT count(*)::INTEGER AS n FROM lakehouse.ws.lh.dbo.t"])).rows[0].n, 0);
+  assert.deepEqual(asked, [lakeName], "the engine says the lake holds it");
+  assert.equal(await syncedAt(), before, "not synced");
+
+  // A table the lake has no record of is synced first; after that, a sync reads only the commits since.
+  const first = await engine.lakeSync({ deltaTable: local, metadataLocation: null, listed: { ...listed, table: "u" } });
+  assert.deepEqual([first.added, first.commitsRead, first.version], [1, 1, "0"]);
+  const count = async () => (await engine.agentQuery(`SELECT count(*)::INTEGER AS n FROM lake.main.${first.name}`)).rows[0].n;
+  assert.equal(await count(), 3);
+  {
+    const db = await H.openLake({ extensions: ["ducklake"], dir: await mkdtemp(join(tmpdir(), "onelake-w-")) });
+    try { await deltaCommit(db.c, local, 1, 3, 5); await deltaCommit(db.c, local, 2, 5, 9); } finally { db.close(); }
+  }
+  assert.equal(await count(), 3, "a commit that landed isn't read until a sync");
+  const next = await engine.lakeSync({ deltaTable: local, metadataLocation: null });
+  assert.deepEqual([next.added, next.commitsRead, next.version], [2, 2, "2"]);
+  assert.equal(await count(), 9);
+  assert.deepEqual((await engine.lakeTables()).map(r => [r.name, r.version]).sort(), [[lakeName, "3"], [first.name, "2"]].sort());
+
+  // The server starts again: what the lake was synced to is still known, and nothing is read again.
+  await engine.close();
+  engine = open();
+  asked.length = 0;
+  assert.equal((await engine.call("query", ["SELECT count(*)::INTEGER AS n FROM lakehouse.ws.lh.dbo.t"])).rows[0].n, 0);
+  assert.deepEqual(asked, [lakeName]);
+  assert.equal(await syncedAt(), before);
+  assert.equal((await engine.lakeTable({ deltaTable: local, check: true })).name, first.name);
+  assert.equal((await engine.lakeTable({ deltaTable: `${FOLDER}_never`, check: true })).name, null, "never synced here");
 });

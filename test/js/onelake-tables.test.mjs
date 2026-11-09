@@ -89,18 +89,28 @@ test("on OneLake: what a statement reads comes down, and then reads with no toke
   } finally { lake.close(); }
 });
 
-test("on OneLake: a table followed as it changes", { skip }, async () => {
+test("on OneLake: a table followed as it changes, the old rows read until it is synced on from where it got to", { skip }, async () => {
   const lake = await openOnLake();
+  // A connection of its own for each read, as the engine gives readDelta: the commits are read at the same time.
+  const withConn = async fn => { const c = await lake.db.connect(); try { return await fn(c); } finally { c.closeSync(); } };
   try {
     // A folder of its own: onelaketable.test.mjs follows the local churn at the same time.
     const own = join(FIXTURES, "remote"), local = join(own, "churn").replace(/\\/g, "/"), root = `${TABLES}/lakeci_churn`;
+    let before = null;
     for (let step = 0; step < 5; step++) {
       const out = JSON.parse(execFileSync("python", [HERE("../fixtures/lake/make_tables.py"), own, "churn", String(step)], { encoding: "utf8" }));
       execFileSync("python", [HERE("../fixtures/lake/upload.py"), local, httpsOf(root)], { env: { ...process.env, ONELAKE_TOKEN: TOKEN } });
-      const state = await readDelta(lake.c, root);
+      // The commit has landed, and the lake reads what it was last synced to.
+      if (before) assert.equal(await fingerprint(lake.c, "lake.churn", before.names), before.rows, `before its sync, ${out.steps[step]} isn't seen`);
+      const t0 = Date.now();
+      const state = await readDelta(lake.c, root, { ...(before ? { from: before.state.version, base: before.state.log } : {}), withConn });
+      console.log(`churn after ${out.steps[step]}: ${state.commitsRead} commit(s) read in ${Date.now() - t0}ms${state.whole ? ", whole" : ""}`);
+      assert.equal(state.whole, !before);
       await syncTable(lake.c, "churn", state, { dvDir: lake.dvDir });
-      const same = await H.sameRows(lake.c, "lake.churn", `delta_scan(${H.q(root)})`, state.fields.map(f => f.name));
+      const names = state.fields.map(f => f.name);
+      const same = await H.sameRows(lake.c, "lake.churn", `delta_scan(${H.q(root)})`, names);
       assert.deepEqual([same.onlyInFirst, same.onlyInSecond], [0, 0], `after ${out.steps[step]}: ${JSON.stringify(same)}`);
+      before = { state, names, rows: await fingerprint(lake.c, "lake.churn", names) };
     }
   } finally { lake.close(); }
 });

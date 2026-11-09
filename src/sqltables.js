@@ -92,8 +92,46 @@ function createSqlTables({ onelake, paths, offlineReason = () => null, tableRead
     }, e => e.notListed && !fresh);
   }
 
+  // A table the lake holds, from what the catalog keeps alone: no request, and nothing refreshed behind it, as
+  // finding out that it moved is the sync service's (syncworker.js). `held` asks the engine what its lake table is.
+  // Null for anything else, which resolves as it always has. A Refresh over its lakehouse since it was read says
+  // { sync }: it reads its metadata again, and the engine syncs it.
+  async function heldAt(ref, held) {
+    const kept = onelake.cached;
+    if (!kept) return null;
+    const ws = (((await kept.workspaces()) || {}).value || []).find(w => same(w, ref.workspace));
+    if (!ws) return null;
+    let dir = ref.dir;
+    if (!dir) {
+      const hit = (((await kept.items(ws)) || {}).value || []).find(i => sqlKind(i.kind) === ref.kind && same(displayName(i.name), ref.item));
+      if (!hit) return null;
+      dir = hit.name;
+    }
+    const lh = { workspace: ws, item: dir };
+    const t = (((await kept.tables(lh)) || {}).value || []).find(x => same(x.schema || 'dbo', ref.schema || 'dbo') && same(x.table, ref.table));
+    if (!t) return null;
+    const where = { workspace: ws, item: dir, schema: t.schema || 'dbo', table: t.table };
+    if (tableRead && await tableRead.held(where)) return null;
+    const m = await kept.table(lh, t);
+    const meta = m && m.value;
+    if (!meta || meta.empty || meta.notValid || !meta.format || !meta.metadataLocation) return null;
+    const deltaTable = deltaTableOf(meta);
+    const lake = await held({ deltaTable, metadataLocation: meta.metadataLocation }).catch(() => null);
+    if (!lake || !lake.name) return null;
+    if (onelake.refreshedSince && m.at < onelake.refreshedSince(lh)) return { sync: true };
+    return {
+      kind: ref.kind, workspace: ws, item: displayName(dir), schema: t.schema || 'dbo', table: t.table,
+      listed: { workspace: ws, item: dir, schema: t.schema || '', table: t.table },
+      // As the lake has it: its snapshot is what a statement reads.
+      at: Number.isFinite(lake.at) ? lake.at : m.at, metadataLocation: lake.location || meta.metadataLocation,
+      deltaTable, tableUuid: meta.tableUuid || null, lake: lake.name,
+    };
+  }
+
   // `secured`: the engine found this table's files refused, so it is read through the table read API.
-  async function resolveAt(ref, fresh, { secured = false, signal } = {}) {
+  async function resolveAt(ref, fresh, { secured = false, signal, held = null } = {}) {
+    const inLake = held && !fresh && !secured ? await heldAt(ref, held) : null;
+    if (inLake && !inLake.sync) return inLake;
     const { ws, dir } = await locate(ref, fresh);
     const lh = { workspace: ws, item: dir };
     const listing = await onelake.tables(lh, { fresh }).catch(() => null);
@@ -139,23 +177,25 @@ function createSqlTables({ onelake, paths, offlineReason = () => null, tableRead
     named.listed = { workspace: ws, item: dir, schema: t.schema || '', table: t.table };
     if (meta.empty) return { ...named, emptySql: (await paths()).emptyTableSql(meta.schemaFields) };
     // Its log is read by the engine, into the lake (engine-host.js lakeTable).
-    return { ...named, metadataLocation: meta.metadataLocation, deltaTable: deltaTableOf(meta) };
+    return { ...named, metadataLocation: meta.metadataLocation, deltaTable: deltaTableOf(meta), tableUuid: meta.tableUuid || null,
+             ...(inLake ? { sync: true } : {}) };
   }
 
   // A table's SQL name, found in OneLake. The parts are matched as DuckDB matches names, ignoring
   // case, against what the store lists (the tree's own listings, so a table the tree has shown
   // resolves without a request), and answered spelled as OneLake spells them. `fresh` reads past
   // the cache: the engine's way of asking again once a read has failed.
-  async function resolve(ref, { fresh = false, secured = false, signal } = {}) {
+  // `held`: the engine's word on what the lake holds (heldAt).
+  async function resolve(ref, { fresh = false, secured = false, signal, held = null } = {}) {
     const from = namedFrom.get(nameKey(ref.kind, ref.workspace, ref.item));
-    if (!from) return resolveAt(ref, fresh, { secured, signal });
+    if (!from) return resolveAt(ref, fresh, { secured, signal, held });
     // Named from GUIDs, so the name may be what moved: a renamed item resolves under its new name,
     // and answers to the name the SQL wrote, which a compiled model query goes on using.
     const asWritten = { workspace: ref.workspace, item: ref.item };
     const r = await revalidate(
       o => onelake.itemNamed(from.wsId, from.itemId, o)
         .then(it => ({ workspace: it.workspace, item: displayName(it.item) }), () => asWritten),
-      at => resolveAt({ ...ref, ...at }, fresh, { secured, signal }),
+      at => resolveAt({ ...ref, ...at }, fresh, { secured, signal, held }),
       e => e.notListed);
     return same(r.workspace, ref.workspace) && same(r.item, ref.item) ? r : { ...r, ...asWritten };
   }

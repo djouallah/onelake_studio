@@ -596,3 +596,53 @@ test("a reset stops what is under way and notes nothing about it", async () => {
   await settled();
   assert.equal(usage.rows.size, 0);
 });
+
+// The lake's tables, as the engine lists them, and what was asked of it.
+function fakeLake(world, rows) {
+  const syncs = [];
+  return { syncs, rows, ready: () => true, tables: async () => rows, othersRunning: async () => !!world.busy, ttlMs: () => DAY,
+    sync: async w => { syncs.push(w); const r = rows.find(x => x.listed.table === w.listed.table); r.location = w.metadataLocation; return { commitsRead: 1 }; } };
+}
+const lakeRow = (table, location) => ({ name: `t_${table}`, folder: `abfss://w@h/${table}`, format: "delta", location,
+  listed: { workspace: "a", item: "gold.Lakehouse", schema: "dbo", table } });
+const tick = async worker => { await worker.tick(); for (let i = 0; i < 5; i++) await settled(); };
+
+test("a lake table whose snapshot moved in the catalog is synced, once; one that didn't move isn't", async () => {
+  const world0 = { busy: false };
+  const lake = fakeLake(world0, [lakeRow("t", "abfss://w@h/t/metadata/1.metadata.json"), lakeRow("u", "abfss://w@h/u/metadata/1.metadata.json")]);
+  const { world, onelake, worker } = setup({ workspaces: ["a"], usage: fakeUsage([]), lake });
+  for (const table of ["t", "u"]) await onelake.table({ workspace: "a", item: "gold.Lakehouse" }, { schema: "dbo", table });
+  await tick(worker);
+  assert.deepEqual(lake.syncs, [], "the lake has what the catalog has");
+  // A commit lands on t: the catalog's next read of it, at the table TTL for one not in use, finds it.
+  world.location = t => `abfss://w@h/${t.table}/metadata/${t.table === "t" ? 2 : 1}.metadata.json`;
+  world.now += 2 * DAY;
+  world.calls.length = 0;
+  await tick(worker);
+  assert.ok(world.calls.includes("table t") && world.calls.includes("table u"), world.calls.join(", "));
+  assert.deepEqual(lake.syncs.map(w => [w.listed.table, w.deltaTable, w.metadataLocation]),
+    [["t", "abfss://w@h/t", "abfss://w@h/t/metadata/2.metadata.json"]]);
+  await tick(worker);
+  assert.equal(lake.syncs.length, 1, "synced to it already");
+  assert.equal((await worker.progress()).lake.last.table, "lakehouse.a.gold.dbo.t");
+});
+
+test("a lake sync waits while someone runs a statement, and isn't asked of another window or with no engine", async () => {
+  const state = { busy: true };
+  const lake = fakeLake(state, [lakeRow("t", "abfss://w@h/t/metadata/0.metadata.json")]);
+  const { onelake, worker } = setup({ workspaces: ["a"], usage: fakeUsage([]), lake });
+  await onelake.table({ workspace: "a", item: "gold.Lakehouse" }, { schema: "dbo", table: "t" });
+  await tick(worker);
+  assert.equal(lake.syncs.length, 0, "someone is at work");
+  state.busy = false;
+  await tick(worker);
+  assert.equal(lake.syncs.length, 1);
+
+  for (const more of [{ lease: () => false }, { lake: { ...fakeLake(state, [lakeRow("t", "x")]), ready: () => false } }]) {
+    const other = more.lake || fakeLake(state, [lakeRow("t", "x")]);
+    const s = setup({ workspaces: ["a"], usage: fakeUsage([]), lake: other, ...more });
+    await s.onelake.table({ workspace: "a", item: "gold.Lakehouse" }, { schema: "dbo", table: "t" });
+    await tick(s.worker);
+    assert.equal(other.syncs.length, 0, JSON.stringify(Object.keys(more)));
+  }
+});

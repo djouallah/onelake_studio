@@ -487,6 +487,8 @@ function createRemote({ onGone = () => {}, ...cfg }) {
       connectLocal: () => local.connect(),
       setStorageToken: token => ask({ storageToken: token }),
       lakeTable: t => ask({ lakeTable: t }),
+      lakeSync: t => ask({ lakeSync: t }),
+      lakeTables: () => ask({ lakeTables: true }),
       lakeStats: () => ask({ lakeStats: true }),
       stats: () => ask({ stats: true }),
       othersRunning: () => ask({ othersRunning: true }),

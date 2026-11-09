@@ -37,7 +37,7 @@ const { sqlStr, quoteIdent, assertReads, checkedRead, tableRefs, fileRefs, files
 const { SQL_KINDS, sqlName, abfssUrl, MODEL_CATALOG, modelSqlName } = require('./names');
 const { revalidate, sameAnswer } = require('./store');
 const { mapPool } = require('./http');
-const { readDelta, readIceberg, syncTable, attachLake } = require('./onelaketable');
+const { readDelta, readIceberg, syncTable, attachLake, syncedOf, syncedAll } = require('./onelaketable');
 const { createTableService, httpsDownload, openedSince, heldOn } = require('./tableservice');
 const { tableReadCopies, TABLE_READ_FOLDER } = require('./tableread');
 
@@ -572,27 +572,55 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
 
   // A table's name in the lake: by its folder, so a new snapshot of it is the same table.
   const lakeNameOf = folder => `t_${createHash('sha256').update(String(folder).toLowerCase()).digest('hex').slice(0, 24)}`;
-  const lakeSynced = new Map();   // lake name -> what it was synced from: the catalog's `at` and location
+  const folderOf = ({ deltaTable, metadataLocation }) => deltaTable || String(metadataLocation).replace(/\/metadata\/[^/]+$/, '');
+  // Whether the lake has the table at all, synced by a version that kept no studio_synced.
+  const inLake = async name => (await withConn(c => c.runAndReadAll(
+    `SELECT count(*)::INTEGER AS n FROM duckdb_tables() WHERE database_name = 'lake' AND table_name = ${sqlStr(name)}`), agentLive)).getRowObjects()[0].n > 0;
   /**
-   * The lake table that reads `t`, synced from its metadata when that moved: its name in `lake`. Offline, the
-   * lake table as it was last synced, or no name if it never was.
+   * The lake table that reads a table: its name in `lake`, as it was last synced, with nothing asked of OneLake.
+   * Finding out that the table moved is the sync service's (syncworker.js, lakeSync). Only a table the lake has no
+   * record of is synced first, which reads its log once; `fresh` syncs it whatever. Offline, a table never synced
+   * here has no name, and so does any with `check`, which also says when and from where it was synced.
    */
-  async function lakeTable({ deltaTable, metadataLocation, at, fresh = false, offline = false }) {
+  async function lakeTable(which) {
     if (!capabilities.lake) throw new Error('this engine has no lake');
-    const folder = deltaTable || String(metadataLocation).replace(/\/metadata\/[^/]+$/, '');
-    const name = lakeNameOf(folder), since = `${at}|${metadataLocation}`;
-    if (!fresh && lakeSynced.get(name) === since) return { name };
-    const known = async () => (await withConn(c => c.runAndReadAll(
-      `SELECT count(*)::INTEGER AS n FROM duckdb_tables() WHERE database_name = 'lake' AND table_name = ${sqlStr(name)}`), agentLive)).getRowObjects()[0].n > 0;
-    // Offline, what was synced last; none for a table never synced here, which the window says (sourceOf).
-    if (offline) return { name: await known() ? name : null };
-    await admin(async () => {
-      const state = deltaTable ? await readDelta(conn, deltaTable) : await readIceberg(conn, metadataLocation);
-      await syncTable(conn, name, state, { dvDir: duckdbPath(lakeDirs.deletes), held: await heldNow() });
-    });
-    lakeSynced.set(name, since);
-    return { name };
+    const name = lakeNameOf(folderOf(which));
+    const was = await withConn(c => syncedOf(c, name), agentLive);
+    if (which.check) return was ? { name, location: was.location, at: was.syncedAt } : { name: null };
+    if (which.offline) return { name: was || await inLake(name) ? name : null };
+    if (was && !which.fresh) return { name };
+    return lakeSync(which);
   }
+
+  // One sync of a table at a time: another asked for meanwhile waits for it, and goes on from where it got to.
+  const lakeSyncs = new Map();
+  function lakeSync(which) {
+    if (!capabilities.lake) return Promise.reject(new Error('this engine has no lake'));
+    const name = lakeNameOf(folderOf(which));
+    const run = (lakeSyncs.get(name) || Promise.resolve()).catch(() => {}).then(() => syncOnce(name, which));
+    lakeSyncs.set(name, run);
+    run.catch(() => {}).finally(() => { if (lakeSyncs.get(name) === run) lakeSyncs.delete(name); });
+    return run;
+  }
+  // The log is read on a connection of its own, so a statement's view isn't held up by it: only the lake's own
+  // writes go in turn with the host's statements (admin). A Delta table goes on from the version last synced, the
+  // same table's: one dropped and made again at its path has another id.
+  async function syncOnce(name, which) {
+    const folder = folderOf(which);
+    return withConn(async c => {
+      const was = await syncedOf(c, name);
+      const same = was && was.log && (!was.uuid || !which.uuid || was.uuid === String(which.uuid));
+      const state = which.deltaTable
+        ? await readDelta(c, which.deltaTable, { ...(same ? { from: Number(was.version), base: was.log } : {}), withConn: fn => withConn(fn, agentLive) })
+        : await readIceberg(c, which.metadataLocation);
+      const synced = { folder, location: which.metadataLocation || null, listed: which.listed || null, uuid: which.uuid || null };
+      const r = await admin(async () => syncTable(conn, name, state, { dvDir: duckdbPath(lakeDirs.deletes), held: await heldNow(), synced }));
+      return { name, version: String(state.version), added: r.added, ended: r.ended, commitsRead: state.commitsRead == null ? null : state.commitsRead };
+    }, agentLive);
+  }
+  // Every lake table and what it was last synced from: what the sync service watches.
+  const lakeTablesHere = () => withConn(c => syncedAll(c), agentLive);
+  const lakeOf = which => (remote ? instance.lakeTable(which) : lakeTable(which));
   // The service's own connection is the admin one: inside admin() already, so asked of it directly. None
   // before the service's first look has made its table.
   const heldNow = () => heldOn(conn).catch(() => new Map());
@@ -673,7 +701,9 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
   // What a table reads: its view's name, where that goes, and the view's source.
   async function sourceOf(ref, o) {
     if (!resolveTable) throw new Error('this engine cannot name OneLake tables');
-    const r = await resolveTable(ref, { ...o, secured: refusedHere.has(sqlName(ref).toLowerCase()) });
+    // `held`: what the lake holds of a table, so one it holds is named from what the catalog keeps alone (sqltables.js).
+    const held = capabilities.lake ? w => lakeOf({ deltaTable: w.deltaTable || null, metadataLocation: w.metadataLocation, check: true }) : null;
+    const r = await resolveTable(ref, { ...o, secured: refusedHere.has(sqlName(ref).toLowerCase()), held });
     let source;
     if (r.emptySql != null) source = String(r.emptySql);
     else if (Array.isArray(r.arrowFiles)) {
@@ -685,11 +715,13 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
     }
     else if (r.deltaTable != null || isOneLakeMetadata(r.metadataLocation)) {
       if (r.deltaTable != null && !isOneLakeTable(r.deltaTable)) throw new Error(`OneLake gave ${sqlName(r)} no readable folder (${String(r.deltaTable).slice(0, 120)})`);
-      const which = { deltaTable: r.deltaTable || null, metadataLocation: r.deltaTable ? null : r.metadataLocation, at: r.at,
-                      fresh: !!(o && o.fresh), offline: !!offlineReason() };
+      // `sync`: a Refresh covered the table since it was last synced, which asks OneLake again.
+      const which = { deltaTable: r.deltaTable || null, metadataLocation: r.metadataLocation || null, at: r.at,
+                      listed: r.listed || null, uuid: r.tableUuid || null,
+                      fresh: !!(o && o.fresh) || !!r.sync, offline: !!offlineReason() };
       if (capabilities.lake) {
-        let name;
-        try { ({ name } = await (remote ? instance.lakeTable(which) : lakeTable(which))); }
+        let name = r.lake || null;
+        try { if (!name) ({ name } = await lakeOf(which)); }
         catch (e) {
           // OneLake refused this user the table's log: a table with OneLake security, read through the table read API.
           if (!FORBIDDEN.test(String(e && e.message)) || refusedHere.has(sqlName(ref).toLowerCase())) throw e;
@@ -1211,6 +1243,9 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
   const relisten = () => admin(() => restartListener(conn, served, serve.token));
   // What the table service holds and has done: for Performance, and the tests.
   const lakeStats = () => init().then(() => (remote ? instance.lakeStats() : lakeService ? lakeService.stats() : null));
+  // The sync service's (syncworker.js): the lake's tables, and one synced now.
+  const lakeTables = () => init().then(() => (remote ? instance.lakeTables() : capabilities.lake ? lakeTablesHere() : []));
+  const syncLakeTable = which => init().then(() => (remote ? instance.lakeSync(which) : lakeSync(which)));
   // serve: the OneLake token a window sends, over the control pipe.
   const setStorageToken = token => init().then(() => admin(() => issueSecret(token)));
   // What the Logs tab shows.
@@ -1252,10 +1287,10 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
     }
   }
 
-  // A table kept, behind everything (syncworker.js, modeldata.js): its DuckLake table synced to the latest
-  // snapshot, which naming it does (sourceOf, lakeTable). Nothing of it is read: which files come here is the
-  // table service's, the ones statements open, and the sync keeps a copy of every file still live. Not a page
-  // method, and nobody reading it, so it doesn't count as use.
+  // A table kept, behind everything (syncworker.js, modeldata.js): its DuckLake table synced now, which naming it
+  // with `fresh` does (sourceOf, lakeSync). Nothing of it is read: which files come here is the table service's, the
+  // ones statements open, and the sync keeps a copy of every file still live. Not a page method, and nobody reading
+  // it, so it doesn't count as use.
   const keepTable = (name, { signal } = {}) => agentQuery(`DESCRIBE ${name}`, { signal, fresh: true, used: false, mark: KEEP_MARK });
 
   // Whether anyone has a statement running on this server, a table being kept aside. Over the control
@@ -1337,7 +1372,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
   }
 
   const api = { call, close, copyToTemp, exportTo, agentQuery, keepTable, othersRunning, catalogChanged, warm, maxRows, forTab, boot, stats,
-                readLog, emptyLog, relisten, setStorageToken, lakeTable, lakeStats, logs, clearLogs };
+                readLog, emptyLog, relisten, setStorageToken, lakeTable, lakeSync: syncLakeTable, lakeTables, lakeStats, logs, clearLogs };
   return api;
 }
 

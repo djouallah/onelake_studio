@@ -7,6 +7,10 @@
   after that the table reads from disk, and offline. A file no snapshot names any more is deleted on its own, and past
   the disk cache's size the least recently read go. The block cache (cache_httpfs) is gone. Keep offline and tables
   in use keep their table current, and bring down only what queries read.
+- **A query on a table you have read before starts at once.** It reads the table as this machine last synced it, and
+  asks OneLake nothing first, even after a restart: a table whose log has many commits used to wait over a minute
+  for them. The background sync finds new snapshots: every hour for a table in use, once a day for the rest, or on
+  **Refresh** of its lakehouse. A sync reads only the commits since the last one, 16 at a time.
 - **The disk cache keeps 256 GB by default, up from 64.** `onelakeStudio.diskCacheMaxGB` still sets it.
 - **A model has a Report, next to Model and Pivot.** Its first tiles are picked from the model: its first measures as
   figures, the first by the date table's year, by a dimension, and a top 10. Each tile is a SELECT over the model. The

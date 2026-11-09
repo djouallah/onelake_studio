@@ -320,6 +320,14 @@ function createCore({
       read: (name, o) => (engines.current() ? engines.current().keepTable(name, o) : Promise.reject(Object.assign(new Error('no engine'), { cancelled: true }))),
       held: () => !!modelData && modelData.busy(),
     },
+    // What the lake holds, synced to each new snapshot the catalog finds (engine-host.js lakeSync).
+    lake: {
+      ready: () => !!engines.current() && !engines.resetting(),
+      tables: () => (engines.current() ? engines.current().lakeTables() : Promise.resolve([])),
+      sync: which => (engines.current() ? engines.current().lakeSync(which) : Promise.reject(Object.assign(new Error('no engine'), { cancelled: true }))),
+      othersRunning: () => (engines.current() ? engines.current().othersRunning() : Promise.resolve(true)),
+      ttlMs: tableTtlMs,
+    },
     log,
   });
   subscribe({ dispose: () => syncWorker.stop() });
