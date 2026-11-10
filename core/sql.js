@@ -161,6 +161,27 @@ function isRead(text) {
   return !!main && READS.has(main);
 }
 
+// Where the storage secret may go. DuckDB gives a secret to every URL that starts with one of its scopes, and a
+// OneLake URL has its workspace before its host (abfss://<workspace>@<host>/), so "any workspace on OneLake" can't
+// be said as one prefix. The scope is then a list: OneLake's host for the URLs written host first, which DuckDB's
+// own listings answer in, and one prefix for each workspace a URL was handed over in, spelled as it was.
+// A URL that starts with none of them gets no token: one on another host, and one put together from pieces.
+const ONELAKE_SCOPES = ['abfss://onelake.dfs.fabric.microsoft.com/', 'abfs://onelake.dfs.fabric.microsoft.com/'];
+/** The scope a OneLake URL is in, 'abfss://<workspace>@<host>/', or null for any other URL. */
+function scopeOfUrl(url) {
+  const m = /^(abfss?):\/\/([^/]*)\//i.exec(String(url));
+  return m && ONELAKE_HOST.test(m[2].slice(m[2].lastIndexOf('@') + 1)) ? `${m[1]}://${m[2]}/` : null;
+}
+/** The scopes of the OneLake URLs a statement's text holds, a quote in a workspace's name doubled as SQL writes it. */
+function oneLakeScopes(text) {
+  const out = new Set();
+  for (const [, scheme, authority] of String(text).matchAll(/\b(abfss?):\/\/((?:[^/'"\r\n]|'')*)\//gi)) {
+    const scope = scopeOfUrl(`${scheme}://${authority.replace(/''/g, "'")}/`);
+    if (scope) out.add(scope);
+  }
+  return [...out];
+}
+
 const refuse = why => {
   throw new Error(`Read only: OneLake Studio never writes, and ${why}.`);
 };
@@ -197,8 +218,8 @@ function oneStatement(sql) {
   if (/\b(?:write_blob|write_log)"?\s*\(/i.test(called)) refuse('this function writes');
   // query('…' || '…') runs SQL no name above can be found in, DuckDB having joined the text up first.
   if (/\bquery(?:_table)?"?\s*\(/i.test(called)) refuse('query() runs what no check here can read');
-  // The OneLake secret goes with any abfss:// URL, whatever its host. A URL joined up from pieces gets past
-  // this: DuckDB joins the text after it, and nothing else checks the host a statement itself names.
+  // A URL on another host is refused here, where it can be said why. One joined up from pieces gets past this,
+  // DuckDB joining the text after it, and reads nothing: the secret's scope names no such place (ONELAKE_SCOPES).
   for (const [, authority] of kept.matchAll(/\b(?:abfss?|az|azure):\/\/([^/'"\r\n]*)/gi)) {
     const host = authority.slice(authority.lastIndexOf('@') + 1);
     if (host.includes('.') && !ONELAKE_HOST.test(host)) refuse(`${host} is not OneLake`);
@@ -602,4 +623,4 @@ function readsCatalog(sql) {
   return /\bshow\b/i.test(s) || CATALOG_READS.test(s);
 }
 
-module.exports = { sqlStr, quoteIdent, assertOneLakeUrl, assertReads, checkedRead, tableRefs, fileRefs, filesReadBy, namedError, catalogStatement, isShowAllTables, withoutComments, ALL_TABLES_COUNTED, COLUMNS_NOT_READ, readsCatalog };
+module.exports = { sqlStr, quoteIdent, assertOneLakeUrl, ONELAKE_SCOPES, scopeOfUrl, oneLakeScopes, assertReads, checkedRead, tableRefs, fileRefs, filesReadBy, namedError, catalogStatement, isShowAllTables, withoutComments, ALL_TABLES_COUNTED, COLUMNS_NOT_READ, readsCatalog };

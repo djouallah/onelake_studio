@@ -15,8 +15,9 @@
   its files change.
 - **Table files come down faster.** Six at a time, not four, written as they arrive, and a download the connection
   dropped is tried once more.
-- **A table can't send your sign-in elsewhere.** A table's own metadata names its files, and a name on another host was
-  followed with the OneLake token. A table that names a file outside OneLake is now refused, and says so.
+- **Your sign-in goes only to OneLake.** The OneLake token used to go with any `abfss://` URL DuckDB read, whatever its
+  host: one a table's own metadata named, or one a statement put together from pieces. It now goes only to OneLake's
+  host and the workspaces being read, and a table that names a file anywhere else is refused, and says so.
 - **The code is one folder for each part:** `core/`, `extension/`, `page/`, `cli/`, `desktop/`, `fabric_app/`,
   `xmla/`. The command line is `cli/cli.mjs` (it was `bin/cli.mjs`); the agent skill is rewritten with the new path
   when a window starts.

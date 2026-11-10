@@ -322,6 +322,26 @@ test("a URL from a table's metadata is OneLake's or refused; a local path passes
   assert.throws(() => httpsOf("abfss://x@evil.example.com/f.parquet"), /is not on OneLake/);
 });
 
+// The storage secret's scope: OneLake's own places, each spelled as its URL was.
+test("a OneLake URL's scope is its workspace on OneLake's host, and no other URL has one", () => {
+  const { scopeOfUrl, oneLakeScopes, ONELAKE_SCOPES } = require("../../core/sql.js");
+  const H = "onelake.dfs.fabric.microsoft.com";
+  assert.equal(scopeOfUrl(`abfss://ws@${H}/i.Lakehouse/Tables/t`), `abfss://ws@${H}/`);
+  assert.equal(scopeOfUrl(`abfss://ANZ Retail Demo@${H}/i/Files/a b.csv`), `abfss://ANZ Retail Demo@${H}/`);
+  assert.equal(scopeOfUrl(`abfs://${H}/ws/i/Files/x`), `abfs://${H}/`);
+  assert.equal(scopeOfUrl(`abfss://ws@westus-${H}/i/x`), `abfss://ws@westus-${H}/`);
+  for (const no of ["abfss://x@evil.example.com/f", `abfss://${H}@evil.example.com/f`, `abfss://ws@${H}.evil.example.com/f`,
+                    `https://${H}/ws/i/x`, "az://container/f", "C:/lake/t/a.parquet", `abfss://ws@${H}`]) {
+    assert.equal(scopeOfUrl(no), null, no);
+  }
+  assert.ok(ONELAKE_SCOPES.every(s => scopeOfUrl(s) === s), "the scopes always there are OneLake's host");
+  assert.deepEqual(oneLakeScopes(`SELECT * FROM read_csv('abfss://ws@${H}/i/Files/a.csv') JOIN 'zip://abfss://Other WS@${H}/i/Files/z.zip/b.csv' USING (k)
+    WHERE note = 'abfss://x@evil.example.com/f' AND p = 'abfss://O''Brien@${H}/x'`),
+    [`abfss://ws@${H}/`, `abfss://Other WS@${H}/`, `abfss://O'Brien@${H}/`]);
+  // Put together from pieces, no URL is there to read a scope from: it gets no token.
+  assert.deepEqual(oneLakeScopes("SELECT * FROM read_parquet('abfss://x@' || 'evil.example.com/f')"), []);
+});
+
 // The table service's download: written as it arrives, tried once more when the connection or the server failed.
 test("a download is written whole, tried again once after a failure, and a refusal is final", async () => {
   const { httpsDownload } = require("../../core/lake/tableservice.js");

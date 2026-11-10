@@ -33,7 +33,7 @@ const fsp = require('node:fs/promises');
 const { join } = require('node:path');
 const os = require('node:os');
 const { randomBytes, createHash } = require('node:crypto');
-const { sqlStr, quoteIdent, assertReads, checkedRead, tableRefs, fileRefs, filesReadBy, namedError, catalogStatement, readsCatalog, withoutComments, COLUMNS_NOT_READ } = require('../sql');
+const { sqlStr, quoteIdent, ONELAKE_SCOPES, scopeOfUrl, oneLakeScopes, assertReads, checkedRead, tableRefs, fileRefs, filesReadBy, namedError, catalogStatement, readsCatalog, withoutComments, COLUMNS_NOT_READ } = require('../sql');
 const { SQL_KINDS, sqlName, abfssUrl, MODEL_CATALOG, modelSqlName } = require('../names');
 const { revalidate, sameAnswer } = require('../onelake/store');
 const { mapPool } = require('../onelake/http');
@@ -234,6 +234,10 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
   // The token the storage secret was built from. A DuckDB secret holds its token BY
   // VALUE, so when VS Code hands back a different one the secret is reissued.
   let authToken = null;
+  // Where the storage secret goes (sql.js ONELAKE_SCOPES): every OneLake place this engine was handed a URL in.
+  // `secretToken` is the token of the secret this engine's own DuckDB holds, to issue it again when a place is new.
+  const storageScopes = new Set(ONELAKE_SCOPES);
+  let secretToken = null;
 
   // The host's own statements run one at a time: two CREATE SECRETs racing is not a race
   // worth having.
@@ -546,6 +550,14 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
     try { await attachLake(conn, duckdbPath(lakeDirs.meta)); }
     catch (e) { throw new Error(`the lake could not be opened, so no OneLake table can be read: ${e.message}`); }
     capabilities.lake = true;
+    // The places its tables were synced from in an earlier run: their files are read with no sync to say so.
+    try {
+      const kept = await conn.runAndReadAll(`SELECT DISTINCT regexp_extract(p, '^(abfss?://[^/]*/)', 1) AS scope FROM (
+        SELECT path AS p FROM system_internal.ducklake_table
+        UNION ALL SELECT path FROM system_internal.ducklake_data_file WHERE NOT path_is_relative
+        UNION ALL SELECT path FROM system_internal.ducklake_delete_file WHERE NOT path_is_relative) WHERE p LIKE 'abfs%'`);
+      for (const { scope } of kept.getRowObjects()) if (scope && scopeOfUrl(scope) === scope) storageScopes.add(scope);
+    } catch (e) { onWarn(`the lake's places could not be read, so each is known again when its table syncs — ${e.message}`); }
     lakeService = createTableService({
       withConn: fn => admin(() => fn(conn)),
       filesDir: duckdbPath(lakeDirs.files),
@@ -611,9 +623,14 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
     return withConn(async c => {
       const was = await syncedOf(c, name);
       const same = was && was.log && (!was.uuid || !which.uuid || was.uuid === String(which.uuid));
+      // Before anything of it is read: where the table is, and for an Iceberg table where its manifests say its
+      // files are. A Delta table's files are under its folder, but for a deletion vector kept by its full path.
+      const allow = urls => allowStorage(urls.map(scopeOfUrl));
+      await allow([which.deltaTable || which.metadataLocation]);
       const state = which.deltaTable
         ? await readDelta(c, which.deltaTable, { ...(same ? { from: Number(was.version), base: was.log } : {}), withConn: fn => withConn(fn, agentLive) })
-        : await readIceberg(c, which.metadataLocation);
+        : await readIceberg(c, which.metadataLocation, { allow });
+      await allow(state.files.filter(f => f.deletes && f.deletes.dv && f.deletes.dv.storageType === 'p').map(f => f.deletes.dv.pathOrInlineDv));
       const synced = { folder, location: which.metadataLocation || null, listed: which.listed || null, uuid: which.uuid || null };
       const r = await admin(async () => syncTable(conn, name, state, { dvDir: duckdbPath(lakeDirs.deletes), held: await heldNow(), synced }));
       return { name, version: String(state.version), added: r.added, ended: r.ended, commitsRead: state.commitsRead == null ? null : state.commitsRead };
@@ -649,19 +666,34 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
     await admin(async () => {
       if (token === authToken) return;
       // On the shared engine, over the control pipe: a statement sent over Quack is in its log.
-      if (remote) await instance.setStorageToken(token);
+      if (remote) await instance.setStorageToken(token, [...storageScopes]);
       else await issueSecret(token);
       authToken = token;
     });
     return token;
   }
-  // A parameter, so the token is in no statement's text, whatever logs them.
+  // A parameter, so the token is in no statement's text, whatever logs them. Scoped to the OneLake places this
+  // engine knows (storageScopes): a URL anywhere else, whoever wrote it, is read with no token.
   async function issueSecret(token) {
-    const p = await conn.prepare('CREATE OR REPLACE SECRET onelake_storage (TYPE azure, PROVIDER access_token, ACCESS_TOKEN ?)');
+    const p = await conn.prepare(`CREATE OR REPLACE SECRET onelake_storage (TYPE azure, PROVIDER access_token, ACCESS_TOKEN ?,
+      SCOPE [${[...storageScopes].map(sqlStr).join(', ')}])`);
     p.bindVarchar(1, token);
     await p.run();
+    secretToken = token;
     // And the table service's downloads: the one place the token is kept outside DuckDB's secret.
     lakeToken = token;
+  }
+
+  // OneLake places about to be read (their scopes, sql.js): the secret is issued again when one is new. On the
+  // shared engine the server holds the secret, and is told. Anything that is not a OneLake scope is dropped.
+  async function allowStorage(scopes) {
+    const fresh = [...new Set(scopes)].filter(s => s && scopeOfUrl(s) === s && !storageScopes.has(s));
+    if (!fresh.length) return;
+    for (const s of fresh) storageScopes.add(s);
+    await admin(async () => {
+      if (remote) await instance.allowStorage(fresh);
+      else if (secretToken) await issueSecret(secretToken);
+    });
   }
 
   async function withAuthRetry(run, canRetry = () => true) {
@@ -676,7 +708,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
       // The same token: a file handle opened with an older one may still be what was refused, put
       // back by a read that was using it when the token moved on. Issued again, which lets those go,
       // and tried once more; a second refusal is the token's own, and is said.
-      if (fresh === stale) await admin(() => (remote ? instance.setStorageToken(fresh) : issueSecret(fresh)));
+      if (fresh === stale) await admin(() => (remote ? instance.setStorageToken(fresh, [...storageScopes]) : issueSecret(fresh)));
       return run();
     }
   }
@@ -952,6 +984,8 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
         const { statement, written } = await withFileUrls(sql, fresh);
         files = written;
         refuseOffline(statement);
+        // Every OneLake URL the statement reads by name: a file it names, a URL written in it, a view's source.
+        await allowStorage(oneLakeScopes([statement, ...tables.map(t => t.source || '')].join('\n')));
         for (const t of tables) await makeView(t);
         const result = await run(catalogStatement(sql) || statement);
         rowsRead(sql, tables, statement, used);
@@ -1248,7 +1282,12 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
   const lakeTables = () => init().then(() => (remote ? instance.lakeTables() : capabilities.lake ? lakeTablesHere() : []));
   const syncLakeTable = which => init().then(() => (remote ? instance.lakeSync(which) : lakeSync(which)));
   // serve: the OneLake token a window sends, over the control pipe.
-  const setStorageToken = token => init().then(() => admin(() => issueSecret(token)));
+  // With it, the OneLake places that window reads: a server started since has none of them.
+  const setStorageToken = (token, scopes = []) => init().then(() => admin(() => {
+    for (const s of scopes) if (scopeOfUrl(s) === s) storageScopes.add(s);
+    return issueSecret(token);
+  }));
+  const allowStorageHere = scopes => init().then(() => allowStorage(scopes));
   // What the Logs tab shows.
   const logs = limit => init().then(() => (remote ? instance.logs(limit) : []));
   const clearLogs = () => init().then(() => (remote ? instance.clearLogs() : undefined));
@@ -1373,7 +1412,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
   }
 
   const api = { call, close, copyToTemp, exportTo, agentQuery, keepTable, othersRunning, catalogChanged, warm, maxRows, forTab, boot, stats,
-                readLog, emptyLog, relisten, setStorageToken, lakeTable, lakeSync: syncLakeTable, lakeTables, lakeStats, logs, clearLogs };
+                readLog, emptyLog, relisten, setStorageToken, allowStorage: allowStorageHere, lakeTable, lakeSync: syncLakeTable, lakeTables, lakeStats, logs, clearLogs };
   return api;
 }
 

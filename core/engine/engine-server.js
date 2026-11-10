@@ -123,7 +123,10 @@ async function main({ token, pipe, options, logFile, idleMs = 60_000, logsFile =
   // What a window asks over the pipe rather than Quack: nothing here is in Quack's log, the token above all.
   async function answer(msg) {
     await booted;
-    if (msg.storageToken) { await engine.setStorageToken(String(msg.storageToken)); return true; }
+    const scopes = Array.isArray(msg.storageScopes) ? msg.storageScopes.map(String) : [];
+    if (msg.storageToken) { await engine.setStorageToken(String(msg.storageToken), scopes); return true; }
+    // OneLake places a window is about to read: the secret here goes nowhere it wasn't told (sql.js ONELAKE_SCOPES).
+    if (msg.storageScopes) { await engine.allowStorage(scopes); return true; }
     // A OneLake table's lake table, synced here, where the lake is (engine-host.js lakeTable, lakeSync).
     if (msg.lakeTable) return engine.lakeTable(msg.lakeTable);
     if (msg.lakeSync) return engine.lakeSync(msg.lakeSync);

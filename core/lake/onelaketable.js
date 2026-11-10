@@ -234,11 +234,13 @@ async function readDelta(c, root, { version: upTo = Infinity, from = null, base 
 // ---------------------------------------------------------------------------- Iceberg
 
 /** An Iceberg table at the snapshot its metadata file names. Its own position-delete files serve as they are. */
-async function readIceberg(c, metadataLocation) {
+async function readIceberg(c, metadataLocation, { allow = async () => {} } = {}) {
   const schema = await rows(c, `DESCRIBE SELECT * FROM iceberg_scan(${q(metadataLocation)})`);
   const listed = await rows(c, `SELECT content, file_path, record_count FROM iceberg_metadata(${q(metadataLocation)}) WHERE status <> 'DELETED'`);
   // What the manifests name is read with the OneLake token, here and by every statement after: only on OneLake.
   for (const m of listed) assertOneLakeUrl(m.file_path);
+  // And said to the engine before they are read: the storage secret goes only where it was told (sql.js).
+  await allow(listed.map(m => m.file_path));
   const sizes = listed.length
     ? new Map((await rows(c, `SELECT filename, size FROM read_blob([${listed.map(m => q(m.file_path)).join(', ')}])`)).map(r => [r.filename, Number(r.size)]))
     : new Map();

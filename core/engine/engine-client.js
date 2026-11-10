@@ -485,7 +485,8 @@ function createRemote({ onGone = () => {}, ...cfg }) {
       // token goes this way for that reason: a statement sent over Quack is in the log.
       // A connection on this window's own DuckDB, for what needs no server: asking its parser.
       connectLocal: () => local.connect(),
-      setStorageToken: token => ask({ storageToken: token }),
+      setStorageToken: (token, scopes = []) => ask({ storageToken: token, storageScopes: scopes }),
+      allowStorage: scopes => ask({ storageScopes: scopes }),
       lakeTable: t => ask({ lakeTable: t }),
       lakeSync: t => ask({ lakeSync: t }),
       lakeTables: () => ask({ lakeTables: true }),
