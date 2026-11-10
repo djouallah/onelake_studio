@@ -49,6 +49,10 @@ jobs:
           run=$(gh run list -R "$GITHUB_REPOSITORY" --workflow extension.yml --commit "$GITHUB_SHA" --event workflow_dispatch --status success \
                   --json databaseId -q '.[0].databaseId // empty')
           [ -n "$run" ] || { echo "no green full Extension run for $GITHUB_SHA: gh workflow run extension.yml --ref main, let it pass, then tag"; exit 1; }
+          # The lake's own tests (DuckLake, and the real OneLake) are another workflow's: green on this commit too.
+          lake=$(gh run list -R "$GITHUB_REPOSITORY" --workflow lake-tables.yml --commit "$GITHUB_SHA" --status success \
+                   --json databaseId -q '.[0].databaseId // empty')
+          [ -n "$lake" ] || { echo "no green Lake tables run for $GITHUB_SHA: gh workflow run lake-tables.yml --ref main, let it pass, then tag"; exit 1; }
           echo "Publishing what run $run built: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$run" >> "$GITHUB_STEP_SUMMARY"
           echo "run=$run" >> "$GITHUB_OUTPUT"
           echo "version=$version" >> "$GITHUB_OUTPUT"

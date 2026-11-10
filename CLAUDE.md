@@ -15,8 +15,8 @@ locally first. Never install a vsix for ordinary testing.
    `package-lock.json`, and give the CHANGELOG's *Unreleased* items that version's heading, before
    anything is built: the release publishes this build as it is and builds nothing. Push to `main`
    and run the full build on it (`gh workflow run extension.yml --ref main`: every platform and the
-   installer; a push builds only win32-x64 and linux-x64). Wait for that run to be green, and
-   download its vsix for this machine:
+   installer; a push builds only win32-x64 and linux-x64). Wait for that run to be green, and the
+   push's "Lake tables" run too (the release asks for both), and download its vsix for this machine:
 
    ```sh
    gh run download <run-id> -n vsix-win32-x64 -D <scratch dir>

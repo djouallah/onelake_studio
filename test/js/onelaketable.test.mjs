@@ -11,6 +11,8 @@ import { dirname, join } from "node:path";
 
 const FIXTURES = process.env.LAKE_FIXTURES;
 const skip = !FIXTURES && "LAKE_FIXTURES is not set: the lake is tested by its own workflow";
+// The lake's workflow sets NO_SKIP: there, nothing to read is a failure.
+if (skip && process.env.NO_SKIP) throw new Error(skip);
 const require = createRequire(import.meta.url);
 const H = skip ? null : await import("./lake-helpers.mjs");
 const { readDelta, syncTable, META } = require("../../core/lake/onelaketable.js");

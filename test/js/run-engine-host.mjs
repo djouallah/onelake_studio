@@ -28,7 +28,8 @@ const { createEngineHost } = require("../../core/engine/engine-host.js");
 const root = join(fileURLToPath(new URL(".", import.meta.url)), "..", "..");
 const APP = join(root, "page");
 const PORT = 5207;
-const CHROME = "C:/Program Files/Google/Chrome/Application/chrome.exe";
+const CHROME = process.env.CHROME_PATH ||
+  (process.platform === "win32" ? "C:/Program Files/Google/Chrome/Application/chrome.exe" : "/usr/bin/google-chrome");
 
 let pass = 0, fail = 0;
 const ok = (cond, msg) => { if (cond) { pass++; console.log("ok  —", msg); }

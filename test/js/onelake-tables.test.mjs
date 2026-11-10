@@ -12,6 +12,8 @@ import { join } from "node:path";
 
 const { LAKE_FIXTURES: FIXTURES, ONELAKE_TABLES: TABLES, ONELAKE_TOKEN: TOKEN } = process.env;
 const skip = !(FIXTURES && TABLES && TOKEN) && "LAKE_FIXTURES, ONELAKE_TABLES and ONELAKE_TOKEN are set only by the lake's workflow";
+// The lake's workflow sets NO_SKIP: there, a sign-in that gave no token is a failure.
+if (skip && process.env.NO_SKIP) throw new Error(skip);
 const require = createRequire(import.meta.url);
 const H = skip ? null : await import("./lake-helpers.mjs");
 const { readDelta, syncTable, META } = require("../../core/lake/onelaketable.js");
@@ -30,6 +32,10 @@ async function openOnLake(token = TOKEN) {
 // A table's rows in one value: their count, and the sum of each row's hash.
 const fingerprint = async (c, src, names) => JSON.stringify(await H.rowsOf(c,
   `SELECT count(*)::BIGINT AS n, sum(hash(to_json(x)::VARCHAR))::HUGEINT::VARCHAR AS h FROM (SELECT ${names.map(H.qi).join(", ")} FROM ${src}) x`));
+
+test("every case was written, so every case is read on OneLake", { skip }, () => {
+  assert.deepEqual(Object.entries(cases).filter(([, v]) => !v.made), []);
+});
 
 for (const [name, info] of Object.entries(cases)) {
   test(`${name} on OneLake: the same rows as delta_scan`, { skip: skip || (!info.made && `not written: ${info.why}`) }, async () => {

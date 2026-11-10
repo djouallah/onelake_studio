@@ -259,8 +259,10 @@ test("Stop reaches a statement still being prepared: it answers at once, and nev
 
 // With a cache folder the engine keeps OneLake tables in the lake, which needs the ducklake build the bundle has.
 const LAKE_BUILD = join(BUNDLED, "ducklake.duckdb_extension");
+// CI sets NO_SKIP where the bundle was fetched: there, a build that is missing fails these, not skips them.
+const NO_LAKE = !existsSync(LAKE_BUILD) && !process.env.NO_SKIP;
 
-test("offline with the lake: a table never read here says so at once, with nothing sent", { skip: !existsSync(LAKE_BUILD) }, async t => {
+test("offline with the lake: a table never read here says so at once, with nothing sent", { skip: NO_LAKE }, async t => {
   const extDir = await mkdtemp(join(tmpdir(), "onelake-ext-"));
   const cacheDir = await mkdtemp(join(tmpdir(), "onelake-cache-"));
   const METADATA = "abfss://ws@onelake.dfs.fabric.microsoft.com/lh.Lakehouse/Tables/dbo/t/metadata/1.metadata.json";
@@ -294,7 +296,7 @@ test("offline with the lake: a table never read here says so at once, with nothi
   assert.ok((await engine.call("query", ["SELECT count(*) AS n FROM system_internal.ducklake_snapshot"])).rows[0].n > 0);
 });
 
-test("the internet going during a read is checked once, and the statement runs again, offline", { skip: !existsSync(LAKE_BUILD) }, async t => {
+test("the internet going during a read is checked once, and the statement runs again, offline", { skip: NO_LAKE }, async t => {
   const extDir = await mkdtemp(join(tmpdir(), "onelake-ext-"));
   const cacheDir = await mkdtemp(join(tmpdir(), "onelake-cache-"));
   let reason = null;
@@ -323,7 +325,7 @@ test("the internet going during a read is checked once, and the statement runs a
   assert.equal(opened, 4, "run again once the check found no internet");
 });
 
-test("a read that fails with the internet still there stays that failure, and runs once", { skip: !existsSync(LAKE_BUILD) }, async t => {
+test("a read that fails with the internet still there stays that failure, and runs once", { skip: NO_LAKE }, async t => {
   const extDir = await mkdtemp(join(tmpdir(), "onelake-ext-"));
   const cacheDir = await mkdtemp(join(tmpdir(), "onelake-cache-"));
   let checks = 0;
@@ -571,7 +573,7 @@ test("native engine host", async t => {
   });
 
   await t.test("bundled extensions load from the package, not the network", async () => {
-    if (!existsSync(BUNDLED)) return t.skip("no bundled extensions (run fetch-extensions.mjs)");
+    if (!existsSync(BUNDLED) && !process.env.NO_SKIP) return t.skip("no bundled extensions (run fetch-extensions.mjs)");
     const fromRepo = warnings.filter(w => /bundled '.*' would not load/.test(w));
     assert.deepEqual(fromRepo, [], fromRepo.join(" | "));
     const r = await engine.call("query", [
@@ -609,7 +611,7 @@ test("native engine host", async t => {
   });
 
   await t.test("a database file's catalog says what it holds, DuckDB's and SQLite's", async () => {
-    if (!existsSync(BUNDLED)) return t.skip("no bundled extensions (run fetch-extensions.mjs)");
+    if (!existsSync(BUNDLED) && !process.env.NO_SKIP) return t.skip("no bundled extensions (run fetch-extensions.mjs)");
     const { dbCatalogSql, dbCatalog, dbCountSql } = await import("../../page/paths.js");
     const { DuckDBInstance } = require("@duckdb/node-api");
     const { DatabaseSync } = await import("node:sqlite");
@@ -830,7 +832,7 @@ async function writeArrowStream(file, select) {
   } finally { c.closeSync(); duck.closeSync(); }
 }
 
-test("a table with OneLake security: a 403 moves it to its Arrow files, under the same name, and only it", { skip: !existsSync(LAKE_BUILD) }, async t => {
+test("a table with OneLake security: a 403 moves it to its Arrow files, under the same name, and only it", { skip: NO_LAKE }, async t => {
   const extDir = await mkdtemp(join(tmpdir(), "onelake-ext-"));
   const cacheDir = await mkdtemp(join(tmpdir(), "onelake-cache-"));
   const copy = join(cacheDir, "secured", "abc", "1");
@@ -901,7 +903,7 @@ async function deltaCommit(c, root, version, from, to) {
   await writeFile(join(root, "_delta_log", `${String(version).padStart(20, "0")}.json`), lines.map(l => JSON.stringify(l)).join("\n") + "\n");
 }
 
-test("a table the lake holds is read as it is, with nothing asked of OneLake, after a restart too; a sync reads only what is new", { skip: !existsSync(LAKE_BUILD) }, async t => {
+test("a table the lake holds is read as it is, with nothing asked of OneLake, after a restart too; a sync reads only what is new", { skip: NO_LAKE }, async t => {
   const H = await import("./lake-helpers.mjs");
   const { syncTable } = require("../../core/lake/onelaketable.js");
   const extDir = await mkdtemp(join(tmpdir(), "onelake-ext-"));

@@ -16,3 +16,12 @@ test("every test file runs somewhere, and every name is a file", async () => {
   for (const f of files) assert.ok(running.has(f), `${f} runs nowhere`);
   for (const f of running) assert.ok(files.includes(f), `${f} is named, and there is no such file`);
 });
+
+// The scripts that drive a browser or an installed build are run by name too.
+test("every run-*.mjs is run by the workflow", async () => {
+  const workflow = await readFile(new URL("../../.github/workflows/extension.yml", import.meta.url), "utf8");
+  for (const dir of ["js", "e2e"]) {
+    const scripts = (await readdir(new URL(`../${dir}/`, import.meta.url))).filter(f => /^run-.+\.mjs$/.test(f));
+    for (const f of scripts) assert.ok(workflow.includes(`node test/${dir}/${f}`), `test/${dir}/${f} runs nowhere`);
+  }
+});

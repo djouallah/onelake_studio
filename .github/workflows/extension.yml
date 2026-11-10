@@ -1,6 +1,6 @@
 # CI for the VS Code extension: what a release ships is built here, once.
 #
-# Every push and pull request runs test, engine and cli-os, then packages win32-x64 (what is installed
+# Every push and pull request runs test, engine, cli-os and page, then packages win32-x64 (what is installed
 # here to try) and linux-x64 (what the browser test runs), and the browser, standalone and desktop
 # tests: a few minutes. The full build, every platform's package and the desktop installer built,
 # installed and started over the last release, is a manual run (workflow_dispatch, 30 minutes, the
@@ -13,7 +13,8 @@
 #   (the "Refresh extension lockfile" workflow does it against the public registry), give the
 #   CHANGELOG's Unreleased items that version's heading, commit, push to main, and run the full
 #   build on it: gh workflow run extension.yml --ref main. Try that run's vsix. Then  git tag ext-v<that version> && git push origin ext-v<that version>
-#   and release.yml publishes this run's packages and installer, found by the tag's commit.
+#   and release.yml publishes this run's packages and installer, found by the tag's commit. It
+#   also asks for a green "Lake tables" run (lake-tables.yml) on that commit.
 #
 # PLATFORM-SPECIFIC, and it has to be. DuckDB runs natively in the extension host now:
 # @duckdb/node-bindings loads a 37MB platform library, and npm only ever installs the binding
@@ -120,10 +121,18 @@ jobs:
   # The native engine itself, on the DuckDB that ships: real @duckdb/node-api, its linux
   # binding, and the extensions DuckDB installs on first use. npm test cannot cover this —
   # it runs without node_modules — and it is where a DuckDB major bump breaks.
+  # On Windows too, where most people run it: the engine's own two files. The command line's
+  # steps stay on Linux; cli-os and standalone have Windows.
   engine:
-    runs-on: ubuntu-26.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-26.04, target: linux-x64 }
+          - { os: windows-latest, target: win32-x64 }
+    runs-on: ${{ matrix.os }}
     # A statement that never ends is a failure, not a job that waits for six hours.
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
@@ -137,20 +146,26 @@ jobs:
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: duckdb-extensions
-          key: duckdb-extensions-linux-x64-${{ hashFiles('scripts/fetch-extensions.mjs', 'package-lock.json') }}
-      - run: node scripts/fetch-extensions.mjs linux-x64
+          key: duckdb-extensions-${{ matrix.target }}-${{ hashFiles('scripts/fetch-extensions.mjs', 'package-lock.json') }}
+      - run: node scripts/fetch-extensions.mjs ${{ matrix.target }}
+      # NO_SKIP: the bundle was fetched just above, so a test that would skip for want of it fails.
       - run: node --test test/js/engine-host.test.mjs test/js/engine-server.test.mjs
+        env:
+          NO_SKIP: 1
       # test/sql/*.test (sqllogictest) through the command line's sql: needs dax-sql (vendor/),
       # the tree the prepare job keeps in the cache.
-      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+      - if: runner.os == 'Linux'
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: vendor
           key: vendor-${{ hashFiles('scripts/vendor.mjs', 'scripts/fetch-retry.mjs', 'core/vendored.js') }}
-      - run: node scripts/vendor.mjs
+      - if: runner.os == 'Linux'
+        run: node scripts/vendor.mjs
       # The command line over all of it, as an agent meets it: the real process, no stand-ins but
       # OneLake. Measured here because only this job reaches `sql` and `model`; the spawned
       # cli/cli.mjs is counted too, through the NODE_V8_COVERAGE it inherits.
       - name: The command line, on the real engine, with its coverage
+        if: runner.os == 'Linux'
         run: >-
           node --test --experimental-test-coverage
           --test-coverage-include=cli/cli.mjs --test-coverage-include=cli/agent.js --test-coverage-include=cli/bridge.js
@@ -171,6 +186,39 @@ jobs:
         with:
           node-version: 24
       - run: node --test test/js/bridge.test.mjs test/js/agent.test.mjs test/js/cli.test.mjs test/js/cli-contract.test.mjs test/js/cli-catalog.test.mjs test/js/cli-docs.test.mjs test/js/standalone.test.mjs
+
+  # The page itself, in headless Chrome on the real engine, with no VS Code: the palette and the
+  # tree's messages (run-vscode-host), the message bridge (run-engine-host), and a model file,
+  # .bim and Ossie, in the semantic view (run-panel-semantic).
+  page:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: vendor
+          key: vendor-${{ hashFiles('scripts/vendor.mjs', 'scripts/fetch-retry.mjs', 'core/vendored.js') }}
+      - run: node scripts/vendor.mjs
+      - name: Chrome
+        run: |
+          set -euo pipefail
+          if ! command -v google-chrome >/dev/null; then
+            curl -fsSL --retry 3 -o "$RUNNER_TEMP/chrome.deb" https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
+            sudo apt-get install -y "$RUNNER_TEMP/chrome.deb"
+          fi
+          google-chrome --version
+      - run: node test/js/run-vscode-host.mjs
+      - if: always()
+        run: node test/js/run-engine-host.mjs
+      - if: always()
+        run: node test/js/run-panel-semantic.mjs
 
   # What every vsix carries whatever its platform, built once and kept in the cache for the
   # five package legs, which then restore it rather than build it five times: the webview's and
@@ -195,7 +243,7 @@ jobs:
       - run: node scripts/function-bundle.mjs
 
   package:
-    needs: [test, engine, cli-os, prepare]
+    needs: [test, engine, cli-os, page, prepare]
     runs-on: ubuntu-26.04
     strategy:
       # Every leg's failure is worth seeing in the same run; a release needs ALL of them green

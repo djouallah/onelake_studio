@@ -57,6 +57,7 @@ jobs:
       - run: node --test test/js/onelaketable.test.mjs
         env:
           LAKE_FIXTURES: ${{ env.FIXTURES_DIR }}
+          NO_SKIP: 1
 
   onelake:
     runs-on: ubuntu-26.04
@@ -115,3 +116,4 @@ jobs:
       - run: node --test test/js/onelake-tables.test.mjs
         env:
           LAKE_FIXTURES: ${{ env.FIXTURES_DIR }}
+          NO_SKIP: 1
