@@ -139,7 +139,7 @@ const displayName = item => basename(item).replace(/\.[^.]+$/, "");
 const isStaging = name => /^(DataflowsStaging|Staging(Lakehouse|Warehouse)ForDataflows_)/i.test(String(name));
 
 // DuckDB's reserved words (duckdb_keywords(), 'reserved' and 'type_function'): a part
-// spelled like one must be quoted to be a name. The panel's twin is app/paths.js sqlPart;
+// spelled like one must be quoted to be a name. The panel's twin is page/paths.js sqlPart;
 // a test holds them equal.
 const RESERVED = new Set(("all analyse analyze and anti any array as asc asof asymmetric at authorization binary " +
   "both by case cast check collate collation column columns concurrently constraint create cross default " +
@@ -158,7 +158,7 @@ const sqlPart = s => {
 const sqlName = r =>
   [r.kind, r.workspace, r.item, r.schema || "dbo", r.table].map(sqlPart).join(".");
 // A semantic model's SQL name: semanticmodel.<workspace>.<model>, in a catalog of its own as a
-// lakehouse's tables are in theirs (app/semantic.js names its views the same way).
+// lakehouse's tables are in theirs (page/semantic.js names its views the same way).
 const MODEL_CATALOG = "semanticmodel";
 const modelSqlName = (workspace, model) => [MODEL_CATALOG, workspace, model].map(sqlPart).join(".");
 // The same, for a table the tree knows by its item's directory name ("data.Lakehouse").

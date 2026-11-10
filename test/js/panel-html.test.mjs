@@ -1,4 +1,4 @@
-// The panel's page: app/index.html, the extension's own template, filled in by
+// The panel's page: page/index.html, the extension's own template, filled in by
 // extension/html.js. Tested against the real template, because the failure that
 // matters is the quiet one — a placeholder that went missing is a page that comes up
 // blank, or one whose CSP or config never arrived.
@@ -13,7 +13,7 @@ const require = createRequire(import.meta.url);
 const { renderPage } = require("../../extension/html.js");
 
 const root = join(fileURLToPath(new URL(".", import.meta.url)), "..", "..");
-const APP = join(root, "app");
+const APP = join(root, "page");
 const INDEX = await readFile(join(APP, "index.html"), "utf8");
 const read = f => readFile(join(APP, f), "utf8");
 
@@ -33,9 +33,9 @@ test("every placeholder is filled, and nothing is left over", () => {
   const out = renderPage(INDEX, OPTS);
   assert.ok(!/\{\{\w+\}\}/.test(out), "no placeholder survives");
   assert.ok(out.includes(`content="default-src 'none'; script-src 'nonce-N0NCE'"`), "the CSP is in the page's own meta");
-  assert.ok(out.includes(`<script type="module" nonce="N0NCE" src="https://webview.test/app/app.js">`),
+  assert.ok(out.includes(`<script type="module" nonce="N0NCE" src="https://webview.test/page/app.js">`),
     "app.js loads from the page's base, with the nonce");
-  assert.ok(out.includes(`href="https://webview.test/app/explore/explore.css"`), "and so does the stylesheet");
+  assert.ok(out.includes(`href="https://webview.test/page/explore/explore.css"`), "and so does the stylesheet");
   assert.ok(out.includes(`window.ONELAKE_STUDIO_CONFIG = ${JSON.stringify(OPTS.config)}`), "the config is inlined");
 });
 
@@ -89,7 +89,7 @@ test("a .bim opens as the semantic model view", async () => {
 test("the page's libraries are exactly what vendor.mjs ships", async () => {
   const { PINS, VENDOR } = require("../../core/vendored.js");
   globalThis.window = { ONELAKE_STUDIO_CONFIG: { vendorBase: "https://webview.test/vendor/", pins: PINS } };
-  const cdn = await import("../../app/cdn.js");
+  const cdn = await import("../../page/cdn.js");
   delete globalThis.window;
   for (const key of ["echarts", "daxSql", "marked", "dompurify", "yaml"]) assert.ok(PINS[key], `${key} is pinned`);
   assert.ok(VENDOR.esm.includes(PINS.marked) && VENDOR.esm.includes(PINS.dompurify), "the markdown renderer is vendored");

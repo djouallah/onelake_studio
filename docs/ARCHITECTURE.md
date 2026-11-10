@@ -29,12 +29,12 @@ SHOW ALL TABLES;
 | Rule | What it means | Where it is held |
 | --- | --- | --- |
 | **One name per object** | A table has five parts and a model has three. A file is `'lakehouse.<workspace>.<item>/Files/<path>'`. | [NAMING.md](NAMING.md), [`core/names.js`](../core/names.js) |
-| **SQL only** | A model is read with `AGG("measure")` in SQL. There is no DAX query. Excel's MDX is a second way in, and is compiled to that same SQL. An exported Fabric app on a semantic model runs the DAX that dax-sql makes of that SQL. | [`app/semantic.js`](../app/semantic.js), [`xmla/`](../xmla/) |
+| **SQL only** | A model is read with `AGG("measure")` in SQL. There is no DAX query. Excel's MDX is a second way in, and is compiled to that same SQL. An exported Fabric app on a semantic model runs the DAX that dax-sql makes of that SQL. | [`page/semantic.js`](../page/semantic.js), [`xmla/`](../xmla/) |
 | **Read only** | Nothing is written to Fabric or OneLake. The host takes one read per statement, from a tab or the command line, and DuckDB's own parser checks it. The three exceptions each ask first: Export to Fabric (the app), Create Semantic Model, and Upload Files… into a lakehouse's `Files/`. | `assertReads` and `checkedRead` in [`core/sql.js`](../core/sql.js) |
 | **Cache first** | Every answer from OneLake or Fabric is kept on this machine and served from there first. It is trusted until using it fails, then read again once. | [`core/onelake/onelake.js`](../core/onelake/onelake.js), [`core/onelake/store.js`](../core/onelake/store.js) |
 | **Works offline** | A feature that reads data works from what this machine holds, with no network. What isn't held says so at once, never on a timeout. Only writing to Fabric needs a connection: Export to Fabric, Create Semantic Model and Upload Files…. The exported Fabric app is online by design, and this rule doesn't apply to it. | [`core/onelake/connectivity.js`](../core/onelake/connectivity.js), [`core/onelake/http.js`](../core/onelake/http.js), the lake in [`core/lake/tableservice.js`](../core/lake/tableservice.js) |
 | **The host does the work** | Sign-in, the read-only guard and OneLake's listings, metadata and `Files/` bytes are in the host, and DuckDB's reads are in the server it starts. A tab is a view: it holds no token and makes no network request. | [`core/host.js`](../core/host.js), [`extension/panel.js`](../extension/panel.js), [`core/engine/engine-client.js`](../core/engine/engine-client.js) |
-| **A table's Visual is a SQL starter** | It builds a first SQL. Its only actions are Edit SQL and Close. | [`app/app.js`](../app/app.js) |
+| **A table's Visual is a SQL starter** | It builds a first SQL. Its only actions are Edit SQL and Close. | [`page/app.js`](../page/app.js) |
 
 ## Out of scope
 
@@ -50,7 +50,7 @@ Results computed from a semantic model are not guaranteed to match Power BI.
 
 ```
  Tree            Tabs, Explore           Command line, agent skill     Excel
- (VS Code)       (webview, app/)         (cli/cli.mjs)                 (PivotTable)
+ (VS Code)       (webview, page/)         (cli/cli.mjs)                 (PivotTable)
       |                 |                        |                         |
       |          one message channel       local pipe or socket      XMLA on 127.0.0.1
       |            (core/host.js)            (cli/bridge.js, cli/agent.js)  (xmla/)
@@ -258,7 +258,7 @@ result's later rows aren't in that time, since DuckDB doesn't log them. It is ke
 file every two seconds ([`core/engine/enginelog.js`](../core/engine/enginelog.js)), up to `onelakeStudio.logMaxGB`, the oldest going first.
 It holds your SQL and its errors in plain text, and never the OneLake token. A row reopens its SQL in a new tab, not run.
 A semantic model's query runs as the SQL dax-sql compiles it to, with the query as written in a comment in front
-([`app/semantic.js`](../app/semantic.js)), so its row shows what was asked and, opened, what it compiled to. It reopens
+([`page/semantic.js`](../page/semantic.js)), so its row shows what was asked and, opened, what it compiled to. It reopens
 as what was asked.
 `SELECT * FROM duckdb_logs` answers in a SQL box for what is still in memory.
 
@@ -428,7 +428,7 @@ shows offline, and it is asked again when the table is opened or its Tables node
 - **A database file** is recognised by its header, never its extension. A DuckDB file is attached
   read-only and block-read on demand. A SQLite file is copied by the host into the engine's temp
   directory and attached read-only, capped at 200 MB.
-  - **It opens on what it holds** ([`app/dbview.js`](../app/dbview.js)): a tree of its schemas, tables, views and
+  - **It opens on what it holds** ([`page/dbview.js`](../page/dbview.js)): a tree of its schemas, tables, views and
     columns beside the SQL box, with a filter, and an overview of the file. This comes from DuckDB's catalog, so no
     table's rows are read. The tree stays while queries run in that tab.
   - **A table or view** opens as a table in OneLake does: Stats (columns, keys, indexes, its definition), Data and
@@ -452,7 +452,7 @@ shows offline, and it is asked again when the table is opened or its Tables node
 
 ## The SQL box and results
 
-SQL is written in a box in each tab ([`app/app.js`](../app/app.js)), not in VS Code's editor. **A query
+SQL is written in a box in each tab ([`page/app.js`](../page/app.js)), not in VS Code's editor. **A query
 never opens a `.sql` file**, because opening one starts every SQL extension installed, on the extension
 host every extension shares, and a click on Run then waits behind them with nothing on screen. A `.sql`
 file you open yourself is left to those extensions. The box reacts by itself: a click says *Running…* at
@@ -482,9 +482,9 @@ once and counts, though the answer still comes through the host.
 
 Results show in the tab:
 
-- **Grid** ([`app/grid.js`](../app/grid.js)): every row scrolls, cells select and copy, and a filter box
+- **Grid** ([`page/grid.js`](../page/grid.js)): every row scrolls, cells select and copy, and a filter box
   keeps the rows that hold its text.
-- **Chart** ([`app/chart.js`](../app/chart.js)): draws the rows on screen. Nothing is queried again.
+- **Chart** ([`page/chart.js`](../page/chart.js)): draws the rows on screen. Nothing is queried again.
 - **Profile:** each column of the result, over every row the query returns (`SUMMARIZE`).
 - **Export…** writes every row to a CSV, Parquet or Excel file. The engine writes it, through VS Code's
   save dialog. SQL typed by hand still cannot `COPY`.
@@ -559,7 +559,7 @@ holds those lakehouses, else `--workspace`, and the error names the workspaces w
 
 ## Explore
 
-A semantic model opens as **Explore** ([`app/explore/`](../app/explore/)), on three pages: Model, Visual and Report
+A semantic model opens as **Explore** ([`page/explore/`](../page/explore/)), on three pages: Model, Visual and Report
 (Visual is the `pivot` page in the code). It opens on Model. The Fabric app is its Report alone.
 - **The bar** holds the page tabs, then each page's own: Model's Keep offline at the left, its Diagram | YAML, Create
   Semantic Model (a model file only) and Open in Excel at the right; Visual's Show plan, Download CSV and Add to report; the Report's Add text and Export to Fabric.
@@ -594,7 +594,7 @@ A semantic model opens as **Explore** ([`app/explore/`](../app/explore/)), on th
     the other tiles' picks filter it, a click on it picks nothing, and its format can show a second measure as its change
     (▲ or ▼, coloured good or bad).
   - **Format** opens a pane at the right of the view: how the Visual is drawn, kept with its shelves as their
-    `format` ([`format.js`](../app/explore/format.js)), so a Report tile made from it, or edited with ✎, draws the same.
+    `format` ([`format.js`](../page/explore/format.js)), so a Report tile made from it, or edited with ✎, draws the same.
     What it offers follows the mark: a chart's series colours, data labels, legend, axis titles and value range, its
     measures in one plot (each a bar, a line, an area or a dashed line, on the left axis or the right), each measure's
     total as a line (`totalLine`: the query asks for its totals), the highest point labelled, a zoom slider; a
@@ -603,16 +603,16 @@ A semantic model opens as **Explore** ([`app/explore/`](../app/explore/)), on th
     `#,##0.0a` writes 1.2K, `0%` a percent). A change is drawn at once from the rows there are (`formatChart` over a
     chart's ECharts option, the rest through `formatLook` into Visual's own drawing); the total line runs the query
     again. A tile from before kept its format on the tile: it is read as its Visual's (`tileOf` in
-    [`report.js`](../app/explore/report.js)), and the first save writes it there.
+    [`report.js`](../page/explore/report.js)), and the first save writes it there.
   - **Show plan** puts, in place of the view, the profile of the shelves' query (`profile.js`: DuckDB's `EXPLAIN ANALYZE` as totals, a timeline and the
     costly operators) next to its plan tree.
   - **Add to report** puts the view on the Report, as a tile (Report, below).
 - **Report:** pages of tiles, each tile a Visual (`pivot`, its shelves) or text, drawn as Visual draws it or as
-  Markdown ([`report.js`](../app/explore/report.js)). No tile holds SQL: a tile's query is Visual's, from its shelves.
+  Markdown ([`report.js`](../page/explore/report.js)). No tile holds SQL: a tile's query is Visual's, from its shelves.
   A tile of an older report that holds SQL (`kpi`, `bar`, `line`, `table`) says it is not a Visual tile, to be built
   again in Visual. A tile that fails says so in its box, and the rest still draw.
   - **Filter bar:** the report's `filters` (`[{ field, style }]`), over the pages' names on every page (`drawBar` in
-    [`view.js`](../app/explore/view.js)): a dropdown of one value, a list to tick (searched, 150 shown), or dates from
+    [`view.js`](../page/explore/view.js)): a dropdown of one value, a list to tick (searched, 150 shown), or dates from
     and to with 3d, 7d, 30d, 1y and All back from the latest day the column has. A filter's values are a query of their
     own, as the Filters shelf lists them (`valuesSql`). What is picked is a condition of every tile's query
     (`ctx.where`), but those that do not follow it (a tile's `ignore`, set in the Theme pane); a pick draws
@@ -620,7 +620,7 @@ A semantic model opens as **Explore** ([`app/explore/`](../app/explore/)), on th
     one (a column and its style) and a filter's ✕ takes it out, saved like every other edit.
   - **Pages:** the report is `{ pages: [{ name, tiles }] }`; one written before pages, `{ tiles }`, is one page, Page 1
     (`reportPages`), and the first save writes it as pages (`withPages`). Their names sit over the tiles and one page is
-    on screen (`reportAt` in [`view.js`](../app/explore/view.js)); each page is drawn the first time it is shown and kept,
+    on screen (`reportAt` in [`view.js`](../page/explore/view.js)); each page is drawn the first time it is shown and kept,
     hidden, with its picks, until the Report is drawn again. Its tiles wait while it is not on screen, and a tile running
     on a page left is stopped and runs again when it is back. A click on a name shows it, a double-click renames it,
     dragged onto another name it moves there, its ✕ deletes it (a page with tiles asks first; the last page has none),
@@ -631,8 +631,8 @@ A semantic model opens as **Explore** ([`app/explore/`](../app/explore/)), on th
     headings, `**bold**`, `*italic*`, http(s) links, `-` lists, paragraphs), built as elements, never as HTML. A
     double-click edits it in a box in place, kept by Done or Ctrl+Enter. Picks don't touch it.
   - **Theme:** the Report bar's **Theme** opens a pane at the right of the tiles (`drawTheme` in
-    [`view.js`](../app/explore/view.js); over them on a narrow window). It writes the report's `theme`: `palette`
-    (`PALETTES` in [`theme.js`](../app/explore/theme.js)), `textSize`, and `colors`, a colour by value (a column's
+    [`view.js`](../page/explore/view.js); over them on a narrow window). It writes the report's `theme`: `palette`
+    (`PALETTES` in [`theme.js`](../page/explore/theme.js)), `textSize`, and `colors`, a colour by value (a column's
     values, picked in the pane) that every tile draws that value in: a series, a bar, a treemap's box, a map's points. A
     Visual's own colours win over it. Under it, each tile of the page on screen: its title shown or not
     (`showTitle`) and its size (`titleSize`), and the filter bar's filters it follows (`ignore` lists those it does
@@ -649,13 +649,13 @@ A semantic model opens as **Explore** ([`app/explore/`](../app/explore/)), on th
     [`fabric_app/export/exportflow.js`](../fabric_app/export/exportflow.js)), over the tiles they were drawn from: a report that changed since (an
     edit to its file) is refused and drawn again. The pages' +, ✕, renames and moves save the same way. The Fabric app's
     Report only reads, so it has none of them.
-  - **Editing a tile:** a pivot tile's ✎ opens its shelves in Visual (`editTile` in [`view.js`](../app/explore/view.js)),
+  - **Editing a tile:** a pivot tile's ✎ opens its shelves in Visual (`editTile` in [`view.js`](../page/explore/view.js)),
     under a strip with its title, **Update tile** and **Cancel**. Update writes the shelves and the title into that tile,
     its layout kept; a title that was its shelves' own follows the new ones. Either way Visual's shelves from before come
     back, and the Report is on screen again. Add to report still adds a new tile from there.
   - **Drawn again** when the zip changes, while the tab is on screen: a person or an agent edits the report and sees it.
   - A tile is `{ title, kind: 'pivot', pivot, layout?, wide?, showTitle?, titleSize?, ignore? }`, `pivot` the shelves as Visual keeps them; its SQL
-    is Visual's (`pivotQuery`), and it is drawn by Visual's own code (`pivotView` in [`explore.js`](../app/explore/explore.js)),
+    is Visual's (`pivotQuery`), and it is drawn by Visual's own code (`pivotView` in [`explore.js`](../page/explore/explore.js)),
     so it keeps every mark. A slicer is a `pivot` tile whose mark is `slicer` (Visual, above). The tiles are laid out on 12 columns and rows of 10px:
     `layout` (`{ x, y, w, h }`) is where a tile's grip and ◢ put it. `arrange` places them: the tile moved stays where
     it is put, every other tile floats up as far as it can and down past what it would overlap, and then all float up
@@ -830,7 +830,7 @@ and the command line's `export` takes no `--mode`.
 - **`rayfin/`:** `rayfin.yml` and the function (`openCatalog`, for a client-side app).
 
 [`fabric_app/export/exportapp.js`](../fabric_app/export/exportapp.js) writes the local copy from `fabric_app/`, Studio's
-`app/explore/` and dax-sql, as one zip (`appFiles`, `writeApp`). What is uploaded is built in memory from it
+`page/explore/` and dax-sql, as one zip (`appFiles`, `writeApp`). What is uploaded is built in memory from it
 (`buildDist`): `site/` stamped with the build, the packages from `vendor/webapp`, and `rayfin.config.json`, zipped
 in-process.
 
@@ -1097,7 +1097,7 @@ every window. The rest apply at once.
 | `core/models/semviews.js` | The models opened, per account. |
 | `extension/tree.js`, `core/doubleclick.js` | The explorer, and a double click in it counting as one click. |
 | `core/title.js` | What the sidebar's header and a tab's title say. |
-| `app/querytext.js` | The SQL box's statements, error positions and variables. |
+| `page/querytext.js` | The SQL box's statements, error positions and variables. |
 | `extension/panel.js`, `core/host.js`, `extension/html.js`, `extension/webview.js` | A tab's webview, its channel, and its page. |
 | `extension/performance.js`, `extension/logs.js` | The Performance and Logs tabs. |
 | `core/onelake/catalogfile.js`, `core/onelake/catalogtables.js`, `core/onelake/syncworker.js` | What is remembered, in SQLite, the catalog's tables there, and what keeps them current and looks after tables in use. |
@@ -1109,8 +1109,8 @@ every window. The rest apply at once.
 | `fabric_app/export/exportapp.js`, `fabric_app/export/fabricapp.js`, `fabric_app/export/onelakewrite.js` | Export to Fabric. |
 | `fabric_app/export/pbimodel.js`, `fabric_app/export/fabricmodel.js` | Export to Fabric's semantic model (DirectQuery, Direct Lake): its TMSL, and its writes. |
 | `core/vendored.js` | The one list of pinned third-party code the webview runs, dax-sql included. |
-| [`app/`](../app/) | A tab's page: `index.html`, `app.js`, `data.js`, `grid.js`, `chart.js`, `docview.js`, `dbview.js`, `paths.js`, `semantic.js`, `cdn.js`, `host.js`, `vscode-api.js`. |
-| [`app/explore/`](../app/explore/) | Explore, shared with the Fabric app. |
+| [`page/`](../page/) | A tab's page: `index.html`, `app.js`, `data.js`, `grid.js`, `chart.js`, `docview.js`, `dbview.js`, `paths.js`, `semantic.js`, `cdn.js`, `host.js`, `vscode-api.js`. |
+| [`page/explore/`](../page/explore/) | Explore, shared with the Fabric app. |
 | [`fabric_app/`](../fabric_app/) | The template for an exported app. |
 | [`test/`](../test/) | `js/`: the `node --test` suite and browser runners. Its `cli*.test.mjs` run `cli/cli.mjs` as a process. `sql/`: SQL statements and their answers (sqllogictest), run through the agent's `sql`. `e2e/`: the vsix in a real VS Code server and headless Chrome, signed out, and signed in with no internet. |
 | [`scripts/`](../scripts/) | Packaging: bundle, stage-webview, vendor, function-bundle, fetch-extensions, check-binding, fetch-binding, fetch-retry, make-icon. The website: build-website, and website-shots, which takes its screenshots in the installed app. |

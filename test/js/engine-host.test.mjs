@@ -495,7 +495,7 @@ test("native engine host", async t => {
       [["cat1", "Sales Model", "['model']"]]);
     r = await engine.call("query", ["SHOW TABLES FROM semanticmodel.cat1"]);
     assert.deepEqual(r.rows, [{ name: "Sales Model" }]);
-    // What SHOW SEMANTIC VIEWS reads (app/semantic.js): the catalog has the model, opened or not.
+    // What SHOW SEMANTIC VIEWS reads (page/semantic.js): the catalog has the model, opened or not.
     r = await engine.call("query", ["SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'semanticmodel'"]);
     assert.deepEqual(r.rows, [{ schema_name: "cat1", view_name: "Sales Model" }]);
     await assert.rejects(engine.call("query", ['SELECT * FROM semanticmodel.cat1."Sales Model"']),
@@ -610,7 +610,7 @@ test("native engine host", async t => {
 
   await t.test("a database file's catalog says what it holds, DuckDB's and SQLite's", async () => {
     if (!existsSync(BUNDLED)) return t.skip("no bundled extensions (run fetch-extensions.mjs)");
-    const { dbCatalogSql, dbCatalog, dbCountSql } = await import("../../app/paths.js");
+    const { dbCatalogSql, dbCatalog, dbCountSql } = await import("../../page/paths.js");
     const { DuckDBInstance } = require("@duckdb/node-api");
     const { DatabaseSync } = await import("node:sqlite");
     const catalogOf = async (alias, estimated) => {

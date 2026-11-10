@@ -2,8 +2,8 @@
 // most is that they stay text.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { dbObjectHtml, dbOverviewHtml } from "../../app/dbview.js";
-import { dbCatalog } from "../../app/paths.js";
+import { dbObjectHtml, dbOverviewHtml } from "../../page/dbview.js";
+import { dbCatalog } from "../../page/paths.js";
 
 const EVIL = `<img src=x onerror="alert(1)">`;
 const catalog = dbCatalog({

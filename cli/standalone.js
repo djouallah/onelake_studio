@@ -80,7 +80,7 @@ function pageOf(extensionDir) {
   const packaged = join(extensionDir, 'webview');
   return existsSync(join(packaged, 'index.html'))
     ? { page: packaged, readme: join(packaged, 'README.md') }
-    : { page: join(extensionDir, 'app'), readme: join(extensionDir, 'README.md') };
+    : { page: join(extensionDir, 'page'), readme: join(extensionDir, 'README.md') };
 }
 
 function buildOf(extensionDir) {

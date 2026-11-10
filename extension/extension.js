@@ -358,7 +358,7 @@ async function activate(context) {
   buildItem.name = 'OneLake Studio build';
   buildItem.text = `$(database) OneLake ${version} · ${commit}${dev ? ' · dev' : ''}`;
   buildItem.tooltip = dev
-    ? `OneLake Studio ${version} at commit ${commit}, running from the checkout (F5) — the panel serves app/`
+    ? `OneLake Studio ${version} at commit ${commit}, running from the checkout (F5) — the panel serves page/`
     : `OneLake Studio ${version}, packaged at commit ${commit}`;
   buildItem.command = 'onelakeStudio.showLog';
   buildItem.show();
@@ -741,7 +741,7 @@ async function activateInner(context) {
     }
   }
   // The title bar's Open in OneLake Studio, on a .bim or an Ossie .yaml open as text: by the text of
-  // every open document (app/semantic.js's isOssie: a top-level version and datasets), so a dbt
+  // every open document (page/semantic.js's isOssie: a top-level version and datasets), so a dbt
   // schema.yml has none, and a file restored with the window has it as soon as this starts.
   const isModelText = d => d.uri.scheme === 'file' && (/\.bim$/i.test(d.fileName)
     || (/\.ya?ml$/i.test(d.fileName) && /^datasets:/m.test(d.getText()) && /^version:/m.test(d.getText())));

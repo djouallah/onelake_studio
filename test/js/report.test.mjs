@@ -1,9 +1,9 @@
-// app/explore/report.js and explore.js: a Report's queries. A tile's query is always Visual's,
+// page/explore/report.js and explore.js: a Report's queries. A tile's query is always Visual's,
 // generated from its shelves; a pick in one tile is a condition of every other tile's own query.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-const { pickWhere } = await import("../../app/explore/report.js");
+const { pickWhere } = await import("../../page/explore/report.js");
 const BOROUGH = '"dim_zone"."Borough"';
 
 test("a pick is a condition as the Filters shelf writes one", () => {
@@ -17,7 +17,7 @@ test("a pick is a condition as the Filters shelf writes one", () => {
   assert.deepEqual(pickWhere("dim_date.Year", { range: [null, null] }), [], "no ends: no condition");
 });
 
-const { modelFields, pivotQuery, pivotTitle, pivotView, autoMark } = await import("../../app/explore/explore.js");
+const { modelFields, pivotQuery, pivotTitle, pivotView, autoMark } = await import("../../page/explore/explore.js");
 const MODEL = { tables: [
   { name: "dim_zone", columns: [{ name: "Borough", dataType: "string" }, { name: "Zone", dataType: "string" },
                                 { name: "Lat", dataType: "double" }, { name: "Lon", dataType: "double" }] },
@@ -213,7 +213,7 @@ test("Visual's fields leave out a hidden table, its measures too, and hidden col
 });
 
 // The Report's grid: 12 columns, rows of 10px.
-const { arrange, COLUMNS, MIN_ROWS } = await import("../../app/explore/report.js");
+const { arrange, COLUMNS, MIN_ROWS } = await import("../../page/explore/report.js");
 const at = list => list.map(({ x, y, w, h }) => [x, y, w, h]);
 
 test("tiles with no place go in the first place they fit", () => {
@@ -239,7 +239,7 @@ test("a tile put over others pushes them down; the rest float up", () => {
     [[6, 0, 6, 10], [6, 10, 6, 10], [0, 20, 12, 10]]);
 });
 
-const { reportPages, withPages, newPageName, markdownBlocks } = await import("../../app/explore/report.js");
+const { reportPages, withPages, newPageName, markdownBlocks } = await import("../../page/explore/report.js");
 
 test("a report's pages: its own, or a report from before pages as one, Page 1", () => {
   const tiles = [{ title: "a", kind: "kpi", sql: "SELECT 1 FROM model" }];
@@ -266,8 +266,8 @@ test("a text tile's Markdown: headings, paragraphs, lists, bold, italic and http
   assert.deepEqual(markdownBlocks("a\r\nb\r\n\r\nc"), [{ p: ["a b"] }, { p: ["c"] }]);
 });
 
-const { formatChart, numberFormat } = await import("../../app/explore/report.js");
-const { formatValue, byValueBackground } = await import("../../app/explore/draw.js");
+const { formatChart, numberFormat } = await import("../../page/explore/report.js");
+const { formatValue, byValueBackground } = await import("../../page/explore/draw.js");
 
 test("a number style is a format string, and percent and K/M/B are written", () => {
   assert.equal(numberFormat("auto"), null);
@@ -323,7 +323,7 @@ test("a zoom slider under a chart's plot, on its category axis", () => {
   assert.equal(out.grid.bottom, 38);
 });
 
-const { tileOf } = await import("../../app/explore/report.js");
+const { tileOf } = await import("../../page/explore/report.js");
 
 test("an older tile's format goes into its Visual's, but for its title and the filters it does not follow", () => {
   const old = { title: "x", kind: "pivot", pivot: { rows: ["dim_zone.Borough"], values: ["Total Fare"] },

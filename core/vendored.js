@@ -1,7 +1,7 @@
 'use strict';
 // The third-party code the webview runs, pinned — the ONE list. vendor.mjs downloads exactly
 // these into vendor/ at package time, and panel.js hands the page the same pins
-// (config.pins) along with the webview URI of that directory, so app/cdn.js builds every
+// (config.pins) along with the webview URI of that directory, so page/cdn.js builds every
 // URL from here. Nothing is loaded from a CDN at run time; a version bumped here is the
 // version that ships and the version the page asks for.
 const PINS = {

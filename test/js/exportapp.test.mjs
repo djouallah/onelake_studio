@@ -14,7 +14,7 @@ import { execFileSync } from "node:child_process";
 const require = createRequire(import.meta.url);
 const { planExport, planOnModel, modelDoc, appFiles, engineOf, readApp, writeApp, unzip, vendorFiles, vendorSize, buildDist, zip, crc32, rayfinYml,
         appName, dfsUrl, MARKER, REPORT, fingerprint, localChanges } = require("../../fabric_app/export/exportapp.js");
-const semantic = await import("../../app/semantic.js");
+const semantic = await import("../../page/semantic.js");
 const { firstRows, counting, kept, MAX_ROWS } = await import("../../fabric_app/site/storage/modelrows.js");
 
 const WS = "0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0";
@@ -180,9 +180,9 @@ async function fixture(root) {
     "daxsql/src/dialects/duckdb.js": "// dialect\n",
     "daxsql/formats/tmsl.js": "// tmsl\n",
     "daxsql/formats/ossie.js": "import { tmslToModel } from './tmsl.js';\n",
-    "app/explore/view.js": "import { renderModel } from './model.js';\nimport { escapeHtml } from '../paths.js';\n",
-    "app/explore/explore.js": "// explore\n", "app/explore/model.js": "// model\n",
-    "app/explore/explore.css": "/* css */\n", "app/paths.js": "// paths\n",
+    "page/explore/view.js": "import { renderModel } from './model.js';\nimport { escapeHtml } from '../paths.js';\n",
+    "page/explore/explore.js": "// explore\n", "page/explore/model.js": "// model\n",
+    "page/explore/explore.css": "/* css */\n", "page/paths.js": "// paths\n",
     "webapp/npm/@duckdb/duckdb-wasm@1.0.0/+esm.js": 'import{a}from"../../apache-arrow@17.0.0/+esm.js";\n',
     "webapp/npm/apache-arrow@17.0.0/+esm.js": "// arrow\n",
     "webapp/duckdb-ext/v2.0.0/wasm_eh/icu.duckdb_extension.wasm": "x".repeat(2048),
@@ -193,7 +193,7 @@ async function fixture(root) {
     await mkdir(dirname(join(root, p)), { recursive: true });
     await writeFile(join(root, p), s);
   }
-  return { fabricAppDir: join(root, "fabric_app"), daxSqlDir: join(root, "daxsql"), appDir: join(root, "app"),
+  return { fabricAppDir: join(root, "fabric_app"), daxSqlDir: join(root, "daxsql"), appDir: join(root, "page"),
            webappDir: join(root, "webapp") };
 }
 
@@ -417,7 +417,7 @@ test("site/report.json: no tiles at first, kept by every export; never a local c
 });
 
 test("the shipped page and its data source parse; the page reads its model from the site, and the function reads none", async () => {
-  for (const p of ["app/explore/report.js", "fabric_app/site/app.js", "fabric_app/site/storage/data.js", "fabric_app/site/storage/catalog.js",
+  for (const p of ["page/explore/report.js", "fabric_app/site/app.js", "fabric_app/site/storage/data.js", "fabric_app/site/storage/catalog.js",
                    "fabric_app/site/storage/modeldata.js"]) {
     execFileSync(process.execPath, ["--check", new URL(`../../${p}`, import.meta.url).pathname.replace(/^\/(\w:)/, "$1")]);
   }

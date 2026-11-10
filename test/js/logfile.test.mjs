@@ -116,7 +116,7 @@ test("a database that died is said once it shows, and nothing else is taken for 
 
 test("a semantic model's query is logged as written and as compiled, apart again in Logs", async () => {
   const { sourceOf, isSetup } = require("../../core/engine/enginelog.js");
-  const { withSource, compileModelSql } = await import("../../app/explore/query.js");
+  const { withSource, compileModelSql } = await import("../../page/explore/query.js");
   // The Pivot's queries go the same way; SQL with no model in it runs as written.
   const compiler = { compileStatement: t => ({ sql: t.includes("semanticmodel") ? "SELECT 1" : t }) };
   assert.equal(sourceOf(compileModelSql(compiler, 'SELECT AGG("m") FROM semanticmodel.ws.m')).source, 'SELECT AGG("m") FROM semanticmodel.ws.m');

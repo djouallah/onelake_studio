@@ -2,7 +2,7 @@
 // =============================================================================
 // sql.js — SQL text helpers for the extension host
 // =============================================================================
-// The CJS twins of the two helpers in app/paths.js, which is ESM and loads in the
+// The CJS twins of the two helpers in page/paths.js, which is ESM and loads in the
 // webview. Both files must agree on what these do — they build the same statements from
 // the two sides of the bridge — and each is one line for exactly that reason: the
 // definition IS the contract, and anything more would give the copies room to diverge.

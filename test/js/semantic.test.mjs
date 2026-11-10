@@ -1,8 +1,8 @@
-// app/semantic.js: which YAML in Files/ is an Apache Ossie model, and opens as one.
+// page/semantic.js: which YAML in Files/ is an Apache Ossie model, and opens as one.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-const { isOssie, isOssiePath } = await import("../../app/semantic.js");
+const { isOssie, isOssiePath } = await import("../../page/semantic.js");
 
 test("an Ossie model is told from any other YAML by its text", () => {
   const ossie = "# models/aac/model.bim as Apache Ossie\nversion: 0.2.0.dev0\nname: aac\ndatasets:\n  - name: dim_calendar\n";
@@ -19,7 +19,7 @@ test("a .yaml or .yml is read as Ossie, anything else as TMSL", () => {
 });
 
 test("only a statement about a semantic model waits for the views", async () => {
-  const { aboutModels } = await import("../../app/semantic.js");
+  const { aboutModels } = await import("../../page/semantic.js");
   for (const sql of ['SELECT AGG("x") FROM SemanticModel.ws.m', "SHOW SEMANTIC VIEWS", "show semantic metrics in semanticmodel.ws.m",
                      "DESCRIBE semanticmodel.ws.m"]) assert.equal(aboutModels(sql), true, sql);
   // Nor is a shorter name a model's.
@@ -29,7 +29,7 @@ test("only a statement about a semantic model waits for the views", async () => 
 });
 
 test("Explore's upper bound on a date takes in that whole day, on a timestamp too", async () => {
-  const { modelSql, buildQuery } = await import("../../app/explore/explore.js");
+  const { modelSql, buildQuery } = await import("../../page/explore/explore.js");
   const column = id => (id === "t.d" ? { table: "t", name: "d", type: "date" } : id === "t.s" ? { table: "t", name: "s", type: "text" } : null);
   const where = (...w) => modelSql({ select: { d: "t.d" }, where: w }, column);
   assert.match(where(["t.d", "<=", "2026-01-31"]), /"?d"? < DATE '2026-02-01'/);
@@ -43,7 +43,7 @@ test("Explore's upper bound on a date takes in that whole day, on a timestamp to
 
 // A semantic model's one SQL name, and the ones a statement names that are not open yet.
 test("a model is semanticmodel.ws.model, and a statement's unopened models are found", async () => {
-  const { modelSqlName, unopenedModels, defineView } = await import("../../app/semantic.js");
+  const { modelSqlName, unopenedModels, defineView } = await import("../../page/semantic.js");
   assert.equal(modelSqlName("a ws", "Sales"), 'semanticmodel."a ws".Sales');
   assert.deepEqual(unopenedModels('SELECT AGG(x) FROM SemanticModel."a ws"."Sales Model" JOIN semanticmodel.b.c ON 1=1'),
     [{ workspace: "a ws", model: "Sales Model" }, { workspace: "b", model: "c" }]);
@@ -55,7 +55,7 @@ test("a model is semanticmodel.ws.model, and a statement's unopened models are f
 });
 
 test("Model's YAML colours a model's file and changes none of its text", async () => {
-  const { prettyModelText, PRETTY_MAX } = await import("../../app/explore/pretty.js");
+  const { prettyModelText, PRETTY_MAX } = await import("../../page/explore/pretty.js");
   const plain = html => html.replace(/<[^>]*>/g, "").replace(/&lt;/g, "<").replace(/&gt;/g, ">")
     .replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, "&");
   const yaml = [
@@ -97,7 +97,7 @@ test("Model's YAML colours a model's file and changes none of its text", async (
 });
 
 test("Model's YAML sets a custom_extensions block apart, line by line, and nothing after it", async () => {
-  const { prettyModelText, extensionVendors } = await import("../../app/explore/pretty.js");
+  const { prettyModelText, extensionVendors } = await import("../../page/explore/pretty.js");
   const yaml = [
     "datasets:",
     "  - name: fct",
@@ -124,7 +124,7 @@ test("Model's YAML sets a custom_extensions block apart, line by line, and nothi
 });
 
 test("Model's YAML sets apart an expression in a dialect other than Ossie SQL, its whole item", async () => {
-  const { prettyModelText, foreignDialects } = await import("../../app/explore/pretty.js");
+  const { prettyModelText, foreignDialects } = await import("../../page/explore/pretty.js");
   const yaml = [
     "metrics:",                              // 0
     "  - name: ytd",                         // 1
@@ -153,7 +153,7 @@ test("Model's YAML sets apart an expression in a dialect other than Ossie SQL, i
 });
 
 test("a profile shows no planning or rows scanned it doesn't carry", async () => {
-  const { parseProfile } = await import("../../app/explore/profile.js");
+  const { parseProfile } = await import("../../page/explore/profile.js");
   // One timed run (the exported app's on a semantic model, modeldata.js): its time, and its operators' rows.
   const endpoint = parseProfile({ latency: 5.66, operator: [{ operator_name: "TOP", operator_timing: 5.66, operator_cardinality: 5000,
     children: [{ operator_name: "TABLE SCAN", operator_timing: 0, operator_cardinality: 100000, extra_info: { Table: "t" }, children: [] }] }] });
@@ -170,7 +170,7 @@ test("a profile shows no planning or rows scanned it doesn't carry", async () =>
 });
 
 test("a profile's time is the clock's, not every thread's added up", async () => {
-  const { parseProfile } = await import("../../app/explore/profile.js");
+  const { parseProfile } = await import("../../page/explore/profile.js");
   // 3 s on 8 threads: the operators' times add up to 24 s.
   const p = parseProfile({ latency: 3, planner: 0.004, cumulative_rows_scanned: 0,
     operator: [{ operator_type: "HASH_GROUP_BY", operator_timing: 16, operator_cardinality: 293430,

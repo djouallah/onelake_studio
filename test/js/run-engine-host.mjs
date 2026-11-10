@@ -26,7 +26,7 @@ const require = createRequire(import.meta.url);
 const { createEngineHost } = require("../../core/engine/engine-host.js");
 
 const root = join(fileURLToPath(new URL(".", import.meta.url)), "..", "..");
-const APP = join(root, "app");
+const APP = join(root, "page");
 const PORT = 5207;
 const CHROME = "C:/Program Files/Google/Chrome/Application/chrome.exe";
 

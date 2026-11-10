@@ -302,7 +302,7 @@ function createExport({ connectivity, modules, appToken, powerBiToken = appToken
     }
   };
 
-  // The Report a model's Report tab draws (app/explore/report.js), and Add to report and a tile's
+  // The Report a model's Report tab draws (page/explore/report.js), and Add to report and a tile's
   // ✕ save (reportSave): the site/report.json of the zip its last export was approved into; before
   // there is one, the file Studio keeps for the model (reportDir); else no tiles. { spec, stamp,
   // from }: `stamp` changes when the tiles do (reportStamp),

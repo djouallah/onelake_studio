@@ -20,7 +20,7 @@ const root = join(fileURLToPath(new URL(".", import.meta.url)), "..", "..");
 const PORT = 5199;
 const ORIGIN = `http://127.0.0.1:${PORT}`;
 
-// The app comes from app/ — the code the panel really runs. The README the
+// The app comes from page/ — the code the panel really runs. The README the
 // landing query reads is a file path, read by native DuckDB in the host, as packaged.
 //
 // The same server is the fake OneLake the HOST reads: /dfs for listings, /irc for the

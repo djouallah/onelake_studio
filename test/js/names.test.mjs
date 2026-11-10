@@ -122,15 +122,15 @@ test("what DuckDB ran says a file by its name: a lakehouse's Files/ only, and ne
     assert.equal(n.fileNamesIn(same), same);
 });
 
-test("the host and the panel quote a name the same way (core/names.js and app/paths.js sqlPart)", async () => {
-  const p = await import("../../app/paths.js");
+test("the host and the panel quote a name the same way (core/names.js and page/paths.js sqlPart)", async () => {
+  const p = await import("../../page/paths.js");
   assert.deepEqual([...n.RESERVED].sort(), [...p.RESERVED].sort());
   for (const s of [...p.RESERVED, "Order", "sales", "_x1", "1st", "a b", 'a"b', "café", "", 42])
     assert.equal(p.sqlPart(s), n.sqlPart(s), String(s));
   for (const [ws, item, rest] of [["aemo", "data", "a/x.parquet"], ["ANZ Retail", "gold_1", "a b.csv"], ["ws", "select", "x"], ["ws", "lh", ""]])
     assert.equal(p.fileSqlName(ws, `${item}.Lakehouse/Files${rest ? `/${rest}` : ""}`), n.fileSqlName({ workspace: ws, item: `${item}.Lakehouse` }, rest));
   // The model views are named alike on both sides: a model called `order` is quoted.
-  const semantic = await import("../../app/semantic.js");
+  const semantic = await import("../../page/semantic.js");
   assert.equal(semantic.modelSqlName("ws", "order"), n.modelSqlName("ws", "order"));
   assert.equal(semantic.modelSqlName("ws", "order"), 'semanticmodel.ws."order"');
 });

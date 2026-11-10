@@ -3,7 +3,7 @@
   // "Open OneLake Studio" from the command palette.
   //
   // The host runs from dist/extension.js, so F5 bundles the source first (tasks.json); the
-  // panel still serves app/ directly, so an edit to the page shows up on the next panel
+  // panel still serves page/ directly, so an edit to the page shows up on the next panel
   // open with no rebuild.
   "version": "0.2.0",
   "configurations": [

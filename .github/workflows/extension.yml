@@ -105,7 +105,7 @@ concurrency:
 jobs:
   # The extension's own suite (test/js/), once rather than once per platform: it reads only tracked
   # sources, so its answer cannot differ between legs. panel-html.test.mjs is the one that
-  # matters here — it runs the webview's HTML rewriting against the real app/index.html, and
+  # matters here — it runs the webview's HTML rewriting against the real page/index.html, and
   # a silent failure there ships a panel that reads OneLake with no token. Ahead of the
   # matrix, so a red test costs no build minutes.
   test:

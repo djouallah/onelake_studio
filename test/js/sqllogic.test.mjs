@@ -120,7 +120,7 @@ test("test/sql/*.test, through the command line's sql", async t => {
   });
   const agent = createAgent({
     onelake: {}, modelPath: () => "", engine: async () => engine, semviews: { texts: async () => [] },
-    appDir: join(ROOT, "app"), vendorDir: join(ROOT, "vendor"), daxSqlPin: PINS.daxSql, yamlPin: PINS.yaml,
+    appDir: join(ROOT, "page"), vendorDir: join(ROOT, "vendor"), daxSqlPin: PINS.daxSql, yamlPin: PINS.yaml,
   });
 
   const files = (await readdir(SQL_DIR)).filter(f => f.endsWith(".test")).sort();

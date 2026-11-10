@@ -2,7 +2,7 @@
 // =============================================================================
 // theme.js — the colours a tab's page and the window draw with
 // =============================================================================
-// The page (app/index.html) is written against VS Code's theme variables, so the app defines those
+// The page (page/index.html) is written against VS Code's theme variables, so the app defines those
 // names rather than the page having two ways of asking. Light and dark, by the system's setting.
 // =============================================================================
 

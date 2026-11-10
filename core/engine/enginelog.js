@@ -49,7 +49,7 @@ function statementOf(request) {
 }
 
 // A semantic model's query runs as what dax-sql compiled it to, with the statement as written in a
-// comment in front (app/explore/query.js withSource), from a tab's box or its Pivot: { source, sql } apart, source null for any other.
+// comment in front (page/explore/query.js withSource), from a tab's box or its Pivot: { source, sql } apart, source null for any other.
 // An EXPLAIN or SUMMARIZE of one has it after its first word, and keeps that word.
 const SOURCE = /\/\*semantic\n([\s\S]*?)\n\*\/\n/;
 function sourceOf(sql) {

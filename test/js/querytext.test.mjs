@@ -3,7 +3,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-const q = await import("../../app/querytext.js");
+const q = await import("../../page/querytext.js");
 const texts = (t, list) => list.map(s => t.slice(s.start, s.end));
 
 test("statements split on ';' outside quotes and comments, each from its first code", () => {

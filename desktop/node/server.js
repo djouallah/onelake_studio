@@ -113,7 +113,7 @@ function keysOf(text) {
  * @param {string[]} [o.roots]  the folders of the extension a page may load from
  * @param {(line: string) => void} [o.log]
  */
-function createServer({ uiDir, extensionDir, pageOf, rpc, roots = ['webview', 'app', 'vendor', 'media'], log = () => {} }) {
+function createServer({ uiDir, extensionDir, pageOf, rpc, roots = ['webview', 'page', 'vendor', 'media'], log = () => {} }) {
   const token = randomBytes(32).toString('hex');
   const clients = new Set();
   let backlog = [];

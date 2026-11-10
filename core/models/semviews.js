@@ -2,7 +2,7 @@
 // =============================================================================
 // semviews.js — where this machine keeps its semantic views
 // =============================================================================
-// dax-sql's createViews() (app/semantic.js) knows what a view is; this only remembers which
+// dax-sql's createViews() (page/semantic.js) knows what a view is; this only remembers which
 // ones exist, so they survive a restart and the panel and the command line see the same
 // list. A view is a pointer — { name, schema, path, created } — kept in the account's catalog file
 // (catalogfile.js); its model file stays where it is and is read from there. Nothing is ever
@@ -10,7 +10,7 @@
 //
 // A path is a local model file (a semantic model's local copy) or an abfss:// URL of one in a
 // lakehouse's Files/. A view is kept when a model is opened — a click, or a query that names it. A model file is a .bim (TMSL) or an Apache Ossie
-// model (.yaml or .yml); app/semantic.js reads either. `schema` is the model's workspace: SQL
+// model (.yaml or .yml); page/semantic.js reads either. `schema` is the model's workspace: SQL
 // names it semanticmodel.ws.model. A semantic model opened from the tree is a local copy of its
 // definition (extension.js fetchModel), and its view points at that.
 // =============================================================================

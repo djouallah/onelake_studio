@@ -16,7 +16,7 @@ const { createHostMethods, answer } = require("../../core/host.js");
 const { sqlKind, displayName } = require("../../core/names.js");
 
 const root = join(fileURLToPath(new URL(".", import.meta.url)), "..", "..");
-const APP = join(root, "app");
+const APP = join(root, "page");
 
 // The landing query reads this, by path, as the packaged panel does (panel.js readmeUrl).
 export const README = join(root, "README.md");

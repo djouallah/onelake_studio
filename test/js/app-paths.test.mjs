@@ -1,9 +1,9 @@
-// The panel's own app/paths.js — a separate copy from the website's, tested here.
+// The panel's own page/paths.js — a separate copy from the website's, tested here.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
 test("a never-written table gets an empty view typed from its Iceberg schema", async () => {
-  const { emptyTableSql, icebergToDuckType } = await import("../../app/paths.js");
+  const { emptyTableSql, icebergToDuckType } = await import("../../page/paths.js");
   assert.equal(icebergToDuckType("long"), "BIGINT");
   assert.equal(icebergToDuckType("decimal(10, 2)"), "DECIMAL(10,2)");
   assert.equal(icebergToDuckType("struct<a, b>"), "VARCHAR");
@@ -12,7 +12,7 @@ test("a never-written table gets an empty view typed from its Iceberg schema", a
 });
 
 test("a SQL box says a file by its name, with its reader only where DuckDB needs one", async () => {
-  const { fileSqlName, fileSource } = await import("../../app/paths.js");
+  const { fileSqlName, fileSource } = await import("../../page/paths.js");
   assert.equal(fileSqlName("aemo", "data.Lakehouse/Files/a/x.parquet"), "lakehouse.aemo.data/Files/a/x.parquet");
   assert.equal(fileSqlName("ANZ Retail", "select.Lakehouse/Files/a b.csv"), 'lakehouse."ANZ Retail"."select"/Files/a b.csv');
   assert.equal(fileSqlName("ws", "dw.Warehouse/Tables/x"), null);
@@ -48,7 +48,7 @@ const dbFixture = {
 };
 
 test("a database file's catalog: schemas by their whole path, tables before views, names that run", async () => {
-  const { dbCatalog, dbRowsText, dbCountSql } = await import("../../app/paths.js");
+  const { dbCatalog, dbRowsText, dbCountSql } = await import("../../page/paths.js");
   const c = dbCatalog(dbFixture);
   assert.deepEqual(c.schemas.map(s => s.name), ["sales", "sales.emea"], "what holds nothing isn't listed");
   assert.deepEqual(c.schemas[0].objects.map(o => o.name), ["customers", "Orders", "all_orders"]);
@@ -69,7 +69,7 @@ test("a database file's catalog: schemas by their whole path, tables before view
 });
 
 test("a database file's tree: what is open, and what a filter keeps", async () => {
-  const { dbCatalog, dbTreeRows } = await import("../../app/paths.js");
+  const { dbCatalog, dbTreeRows } = await import("../../page/paths.js");
   const c = dbCatalog(dbFixture);
   const names = o => dbTreeRows(c, o).map(r => r.name);
   assert.deepEqual(names(), ["sales", "customers", "Orders", "all_orders", "sales.emea", "select"]);
@@ -83,7 +83,7 @@ test("a database file's tree: what is open, and what a filter keeps", async () =
 });
 
 test("a result past the cap says so: the host sends a count for the rows it stopped sending", async () => {
-  const { rowCollector } = await import("../../app/paths.js");
+  const { rowCollector } = await import("../../page/paths.js");
   const fields = [{ name: "a", type: "BIGINT" }];
   const cut = rowCollector(2);
   cut.add({ fields, rows: [{ a: 1 }, { a: 2 }], numRows: 2 });
@@ -103,7 +103,7 @@ test("a result past the cap says so: the host sends a count for the rows it stop
 });
 
 test("an answer says how old its tables are, once that is worth saying", async () => {
-  const { ageNote } = await import("../../app/paths.js");
+  const { ageNote } = await import("../../page/paths.js");
   const HOUR = 3_600_000, now = 100 * 24 * HOUR;
   assert.equal(ageNote(null, now), "", "no table read");
   assert.equal(ageNote(now - HOUR / 2, now), "", "within the hour");
@@ -114,7 +114,7 @@ test("an answer says how old its tables are, once that is worth saying", async (
 });
 
 test("CSV quotes a cell holding a quote, a comma, or either line break", async () => {
-  const { toCsv } = await import("../../app/paths.js");
+  const { toCsv } = await import("../../page/paths.js");
   const rows = [{ a: 'x"y', b: "1,2" }, { a: "cr\rhere", b: "lf\nhere" }, { a: null, b: 3 }];
   assert.equal(toCsv(["a", "b"], rows),
     'a,b\r\n"x""y","1,2"\r\n"cr\rhere","lf\nhere"\r\n,3');

@@ -43,7 +43,7 @@ function closestTables(name, listing, max = 3) {
 /**
  * @param {object} o
  * @param {ReturnType<import('./onelake/onelake').createOneLake>} o.onelake
- * @param {() => Promise<{emptyTableSql(fields: object[]): string}>} o.paths  app/paths.js, loaded when needed
+ * @param {() => Promise<{emptyTableSql(fields: object[]): string}>} o.paths  page/paths.js, loaded when needed
  * @param {() => string|null} [o.offlineReason]  why OneLake cannot be asked now
  */
 // A table not written as Iceberg is read as Delta, from its own folder, which is where its converted

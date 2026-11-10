@@ -1,7 +1,7 @@
 // grid.js: what the grid's copies write, the inspector's text, and the order a sort gives.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { formatRows, inspectText, sortedRows, cellText, groupedText } from "../../app/grid.js";
+import { formatRows, inspectText, sortedRows, cellText, groupedText } from "../../page/grid.js";
 
 const fields = ["a", "b"];
 const rows = [{ a: 1, b: "x|y" }, { a: 2, b: "line\nbreak" }, { a: null, b: { k: [1] } }];
@@ -46,7 +46,7 @@ test("a sort orders numbers as numbers and puts empty cells last", () => {
 });
 
 test("a chart's first guess: a label across, a number up", async () => {
-  const { numericColumns, guessAxes } = await import("../../app/chart.js");
+  const { numericColumns, guessAxes } = await import("../../page/chart.js");
   const res = { fields: ["region", "sales", "year"], types: ["VARCHAR", "DOUBLE", "VARCHAR"],
                 rows: [{ region: "a", sales: 1.5, year: "2024" }, { region: "b", sales: 2, year: "2025" }] };
   assert.deepEqual(numericColumns(res), ["sales", "year"]);

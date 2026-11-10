@@ -20,7 +20,7 @@ import { panelHost, servePanel } from "./panel-host.mjs";
 const require = createRequire(import.meta.url);
 
 const root = join(fileURLToPath(new URL(".", import.meta.url)), "..", "..");
-const APP = join(root, "app");
+const APP = join(root, "page");
 const VENDOR = join(root, "vendor");
 const PORT = 5209;
 const ORIGIN = `http://127.0.0.1:${PORT}`;

@@ -9,7 +9,7 @@ import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 const { createAgent } = require("../../cli/agent.js");
 
-export const APP_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "app");
+export const APP_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "page");
 
 // A cache that knows "a ws" and "b ws" but has never listed "unseen"; anything that would
 // go to OneLake or Fabric is counted.

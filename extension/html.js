@@ -2,7 +2,7 @@
 // =============================================================================
 // html.js — the panel's page, filled in
 // =============================================================================
-// app/index.html is the extension's own template with four placeholders:
+// page/index.html is the extension's own template with four placeholders:
 //
 //   {{base}}    the webview URI of the page's directory (scripts, stylesheets)
 //   {{nonce}}   the CSP nonce on the two script tags

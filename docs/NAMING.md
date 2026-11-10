@@ -2,8 +2,8 @@
 
 This is the contract for how every object in OneLake Studio is named. Change the code to fit it, not the
 other way round. The code that holds it is [`core/names.js`](../core/names.js) and
-[`core/sql.js`](../core/sql.js) on the host, and [`app/semantic.js`](../app/semantic.js) and
-[`app/paths.js`](../app/paths.js) in the page.
+[`core/sql.js`](../core/sql.js) on the host, and [`page/semantic.js`](../page/semantic.js) and
+[`page/paths.js`](../page/paths.js) in the page.
 
 ## The point
 
@@ -217,7 +217,7 @@ same reason.
 These do not meet the contract yet:
 
 - **Two features read outside these names.** An app from Export to Fabric uses its own `v_<table>` views
-  (`fabric_app/site/app.js`), and Time travel writes `iceberg_scan` directly (`app/app.js`).
+  (`fabric_app/site/app.js`), and Time travel writes `iceberg_scan` directly (`page/app.js`).
 
 ## Tests that hold this
 

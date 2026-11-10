@@ -112,7 +112,7 @@ const agent = createAgent({
     agentQuery: (sql, o) => { const p = engine.agentQuery(sql, o); queries.push(p); return p; },
   }),
   modelPath: (ws, model) => modelFile(model),
-  appDir: join(ROOT, "app"), vendorDir: VENDOR, daxSqlPin: PINS.daxSql, yamlPin: PINS.yaml,
+  appDir: join(ROOT, "page"), vendorDir: VENDOR, daxSqlPin: PINS.daxSql, yamlPin: PINS.yaml,
   openModel: async ({ workspace, model }) => {
     opened.push(model);
     const { readFile } = await import("node:fs/promises");
@@ -206,9 +206,9 @@ test("--show-sql: the SQL a model query compiles to, never inside a --csv", asyn
   });
 });
 
-test("a Report tile with a pick from another tile runs filtered on the real engine (app/explore/report.js)", async () => {
-  const { pickWhere } = await import("../../app/explore/report.js");
-  const { modelFields, pivotQuery } = await import("../../app/explore/explore.js");
+test("a Report tile with a pick from another tile runs filtered on the real engine (page/explore/report.js)", async () => {
+  const { pickWhere } = await import("../../page/explore/report.js");
+  const { modelFields, pivotQuery } = await import("../../page/explore/explore.js");
   // The shop model's fields a tile names, as Visual reads them.
   const fields = modelFields({ tables: [
     { name: "dim_customer", columns: [{ name: "Region", dataType: "string" }] },

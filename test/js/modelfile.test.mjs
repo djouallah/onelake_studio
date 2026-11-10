@@ -10,7 +10,7 @@ import { join } from "node:path";
 
 const require = createRequire(import.meta.url);
 const { createModels } = require("../../core/models/models.js");
-const semantic = await import("../../app/semantic.js");
+const semantic = await import("../../page/semantic.js");
 
 const URL_ = "https://onelake.dfs.fabric.microsoft.com/0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0/11111111-2222-3333-4444-555555555555";
 const OSSIE = "version: 0.2.0.dev0\nname: sales\ndatasets:\n  - name: fct_sales\n";

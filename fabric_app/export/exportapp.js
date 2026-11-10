@@ -2,16 +2,16 @@
 // =============================================================================
 // exportapp.js — Export to Fabric: a model's Explore, as a Fabric app of its own
 // =============================================================================
-// Explore's button (app/explore/view.js) hands the host the model's text (to check it), where
+// Explore's button (page/explore/view.js) hands the host the model's text (to check it), where
 // it lives in OneLake (for a model opened from its local copy, where the export writes it), and
 // the shelves on screen. The local copy — the whole app, an agent's to grow later — is one zip on
 // this machine, <app>.zip, and what is published is built from it (buildDist, fabricapp.js):
 //   site/            fabric_app/site: the page (index.html, app.js) and its data source
 //                    (storage/: Fabric sign-in, the function's answer, DuckDB-WASM reading the
 //                    tables in the browser as views v_<table>)
-//   site/explore/    Studio's Explore (app/explore/), the same files the panel runs
+//   site/explore/    Studio's Explore (page/explore/), the same files the panel runs
 //   site/semantic/   dax-sql (PINS.daxSql): SQL over the model, as SQL over the views
-//   site/report.json the Report the app opens on (app/explore/report.js draws it): Studio's Report
+//   site/report.json the Report the app opens on (page/explore/report.js draws it): Studio's Report
 //                    tab's tiles (none at first), written once, then the zip's (Studio's Add to
 //                    report writes it too), and kept by every export
 //   site/explore.json  the shelves the first view shows
@@ -444,7 +444,7 @@ async function filesOf(root, to, skip = () => false) {
  * `redirects`: the app's sign-in redirects so far.
  * `model`: the model the page runs on, read (modelDoc's doc): site/model.json.
  * `modelText`, `modelFile`: client side, the model's text and its file's name, kept as model.ossie.yaml (setModelCopy).
- * `fabricAppDir`: the extension's fabric_app/; `appDir`: Studio's page modules (app/, or
+ * `fabricAppDir`: the extension's fabric_app/; `appDir`: Studio's page modules (page/, or
  * webview/ installed); `daxSqlDir`: vendor/npm/<PINS.daxSql>.
  */
 async function appFiles({ plan, state, model, modelText = null, modelFile = 'model.yaml', kept = null, redirects = [], fabricAppDir, appDir, daxSqlDir }) {
