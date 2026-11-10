@@ -637,10 +637,12 @@ export function mountExplore(root, ctx) {
   // --- The pages' names, over the tiles: a click shows one. A host that saves the Report: a
   // double-click renames one, its ✕ deletes it (asked first when it has tiles), dragged it moves,
   // and + adds one. A Report that only reads shows the names only when it has two pages or more.
-  let pageTabs = [];
+  // Each page's name beside its tab: while a page is renamed, an input is in the tab in its place.
+  let pageTabs = [], pageNames = [];
   function drawStrip() {
     const saves = !!ctx.report.save;
     pageStrip.hidden = !saves && shownPages.length < 2;
+    pageNames = [];
     pageTabs = shownPages.map((p, i) => {
       const name = el('button', { type: 'button', class: 'rp-page-name', role: 'tab',
         ...(saves ? { title: 'Double-click to rename, drag to move' } : {}),
@@ -651,8 +653,9 @@ export function mountExplore(root, ctx) {
           e.preventDefault();
           const next = (i + k + shownPages.length) % shownPages.length;
           showReportPage(next);
-          pageTabs[next].querySelector('.rp-page-name').focus();
+          pageNames[next].focus();
         } }, p.name);
+      pageNames.push(name);
       if (saves) name.addEventListener('dblclick', () => renamePageIn(i, name));
       const tab = el('div', { class: 'rp-page', 'data-page': i, draggable: saves ? 'true' : null }, name,
         saves && shownPages.length > 1 ? el('button', { type: 'button', class: 'rp-page-x', title: 'Delete this page',
@@ -671,12 +674,12 @@ export function mountExplore(root, ctx) {
     });
     pageStrip.replaceChildren(el('div', { class: 'rp-page-tabs', role: 'tablist', 'aria-label': 'Report pages' }, pageTabs),
       saves ? el('button', { type: 'button', class: 'rp-page-add', title: 'Add a page', 'aria-label': 'Add a page', onclick: () => addPage() }, '+') : null);
-    if (renameNext != null && pageTabs[renameNext]) renamePageIn(renameNext, pageTabs[renameNext].querySelector('.rp-page-name'));
+    if (renameNext != null && pageNames[renameNext]) renamePageIn(renameNext, pageNames[renameNext]);
     renameNext = null;
   }
   function markStrip() {
     pageTabs.forEach((t, k) => {
-      const on = k === reportAt, name = t.querySelector('.rp-page-name');
+      const on = k === reportAt, name = pageNames[k];
       t.classList.toggle('active', on);
       name.setAttribute('aria-selected', String(on));
       name.tabIndex = on ? 0 : -1;

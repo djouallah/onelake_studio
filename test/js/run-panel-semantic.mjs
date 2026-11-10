@@ -160,6 +160,21 @@ try {
   console.log("model query:", info, "|", rows);
   if (!/blue 5(\.0)? red 12\.5/.test(rows)) throw new Error(`model query: ${info} ${rows}`);
 
+  // The Report's +: a second page, its name ready to be typed, and the Report still drawn.
+  await page.click('#modelView .subtab[data-apage="report"]');
+  await page.locator("#modelView .rp-page-add").click();
+  await page.waitForFunction(() => document.querySelector("#modelView .rp-page-rename") || document.querySelector("#modelView .rp-report-page .ex-error, #modelView .ex-error"), { timeout: 30000 })
+    .catch(() => { throw new Error("the Report's + added no page"); });
+  const reportError = await page.locator("#modelView .ex-error").allTextContents();
+  if (reportError.length) throw new Error(`the Report's +: ${reportError.join(" | ")}`);
+  const pageNames = await page.locator("#modelView .rp-page").count();
+  if (pageNames !== 2) throw new Error(`the Report has ${pageNames} pages after its +, not 2`);
+  await page.keyboard.type("Second");
+  await page.keyboard.press("Enter");
+  await page.waitForFunction(() => [...document.querySelectorAll("#modelView .rp-page-name")].some(n => n.textContent === "Second"), { timeout: 30000 })
+    .catch(() => { throw new Error("the new page did not take the name typed"); });
+  console.log("report: a page added and named");
+
   // A model the extension downloaded to this machine arrives as text (open-model), not as
   // a OneLake path — the click in the tree — named by its workspace and its own name.
   await page.evaluate(text => window.postMessage({
@@ -193,7 +208,7 @@ try {
   console.log("RESULT: OK — a .bim and an Ossie .yaml opened in the panel as their model, and model queries ran on the native engine");
   code = 0;
 } catch (e) {
-  console.log("RESULT: FAILED —", e.message);
+  console.log("RESULT: FAILED —", e.message, String(e.stack).match(/run-panel-semantic\.mjs:\d+/)?.[0] ?? "");
 } finally {
   await browser?.close().catch(() => {});
   server.close();

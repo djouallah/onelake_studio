@@ -37,7 +37,15 @@ export function panelHost({ dfsOrigin, tableOrigin, engineOptions = {}, nameTabl
   };
   const engine = createEngineHost({ allowedPaths: [README], resolveTable, ...engineOptions });
   const statuses = [];
-  const methods = createHostMethods({ onelake, engine, nameTables, onStatus: m => statuses.push(m) });
+  // The Report's tiles, kept in memory by model: a host that saves them, as the extension does.
+  const reports = new Map();
+  const reportOf = m => reports.get(`${m.workspace}/${m.model}`) ?? { spec: { tiles: [] }, stamp: 0 };
+  const report = {
+    load: async m => reportOf(m),
+    stamp: async m => reportOf(m).stamp,
+    save: async m => { const stamp = reportOf(m).stamp + 1; reports.set(`${m.workspace}/${m.model}`, { spec: m.spec, stamp }); return { stamp }; },
+  };
+  const methods = createHostMethods({ onelake, engine, nameTables, report, onStatus: m => statuses.push(m) });
 
   // window.__hostCall(msg) answers one `call`: batches are posted into the page as
   // they come, and the closing result (or error) is what the call resolves to.
