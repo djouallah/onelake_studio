@@ -42,6 +42,8 @@
 // render's queries run side by side and a long one holds up only its own engine. A table is planned
 // and its files downloaded once, whichever engine opens it first; each engine then has its own
 // view (and its own copy of a small table). All the workers share the store.
+// An experiment, `?split=1`: a query's scan of a large table shared out between the engines,
+// each over its share of the files, and the rest of it run by one (split.js).
 //
 // The members the page calls:
 //   init            sign in, locate the tables, size them; nothing opened yet
@@ -58,6 +60,7 @@ import { createSnapshots } from "./snapshots.js";
 import { createKv } from "./kv.js";
 import { planTable, prefetchFiles, prioritize } from "./prefetch.js";
 import { columnsIn, readsAll, columnRanges, tailOf, piecesOf } from "./ranges.js";
+import { splitPlan, carried } from "./split.js";
 import { quoteIdent as ident, sqlStr as lit } from "../paths.js";
 
 const SMALL_BYTES = 32 * 1024 * 1024;   // a table up to this much Parquet is copied into memory
@@ -85,6 +88,11 @@ const ENGINES = (() => {
   try { const n = Number(new URLSearchParams(location.search).get('engines')); if (n >= 1 && n <= 4) return Math.floor(n); } catch (e) {}
   return 2;
 })();
+// An experiment (split.js): `?split=1` shares a large table's scan out between the engines.
+// With `split` in the URL at all (0 or 1), no result is read back from this browser and each
+// query's time is written to the console, so the two can be compared.
+const SPLIT_ASKED = (() => { try { return new URLSearchParams(location.search).get('split'); } catch (e) { return null; } })();
+const SPLIT = SPLIT_ASKED === '1', TIMED = SPLIT_ASKED != null;
 const STORE_WAIT = 30000;   // how long the page waits for the store's writer to answer
 
 // An Ossie dataset's table as schema.table, or null when it reads none. `source` is required
@@ -506,16 +514,77 @@ export function createDataSource({ onStatus = () => {}, onProgress = () => {} } 
     if (small(t))
       await e.conn.query(
         `CREATE OR REPLACE TABLE ${ident(name)} AS ${selectOf(name, record)}; CREATE OR REPLACE VIEW ${ident('v_' + name)} AS SELECT * FROM ${ident(name)}`);
-    else
+    else {
       await e.conn.query(
         `CREATE OR REPLACE VIEW ${ident('v_' + name)} AS ${selectOf(name, record)}`);
+      // This engine's share of the table's files (split.js).
+      const share = SPLIT ? sharesOf(record)[e.index] : [];
+      if (share.length)
+        await e.conn.query(`CREATE OR REPLACE VIEW ${ident('p_' + name)} AS ${selectOf(name, record, share)}`);
+    }
+  }
+  // A table's files dealt out between the engines, the largest first, each to the share with
+  // the fewest bytes so far: the same shares for the visit, so an engine reads the same footers.
+  const shares = new WeakMap();   // record -> [files], one list an engine
+  function sharesOf(record) {
+    if (!shares.has(record)) {
+      const out = Array.from({ length: ENGINES }, () => ({ files: [], bytes: 0 }));
+      for (const f of [...record.files].sort((a, b) => (b.size ?? 0) - (a.size ?? 0))) {
+        const least = out.reduce((a, b) => (b.bytes < a.bytes ? b : a));
+        least.files.push(f);
+        least.bytes += f.size ?? 0;
+      }
+      shares.set(record, out.map(x => x.files));
+    }
+    return shares.get(record);
+  }
+  // A query split (split.js): each CTE that reads a large table runs on every engine over its
+  // share of the files, its answer copied out as Parquet (the engine's own types: a result
+  // read by the page has its BIGINTs and DECIMALs as DOUBLEs); then the statement, over those
+  // answers, on one engine. Null when nothing of `sql` splits.
+  let splits = 0;
+  function splitRun(sql, options) {
+    if (!SPLIT || engines.length < 2) return null;
+    const plan = splitPlan(sql, n => { const t = located.get(n); return !!t && !small(t) && (t.record?.files.length ?? 0) >= 2; });
+    if (!plan) return null;
+    const id = ++splits, started = performance.now();
+    return (async () => {
+      const answers = await Promise.all(plan.parts.flatMap(part => {
+        const share = sharesOf(located.get(part.table).record);
+        return engines.filter(e => share[e.index].length).map(e => submit(async () => {
+          const t0 = performance.now();
+          await open(e, part.table);
+          await openFor(e, part.partialSql);
+          const name = `part_${id}_${part.cte}_${e.index}.parquet`;
+          // The answer's types, which the final statement gives back to what it adds up.
+          const types = Object.fromEntries((await e.conn.query(`DESCRIBE ${part.partialSql}`)).toArray().map(r => [r.column_name, r.column_type]));
+          await e.conn.query(`COPY (${carried(part.partialSql, types)}) TO ${lit(name)} (FORMAT parquet)`);
+          const bytes = await e.db.copyFileToBuffer(name);
+          await e.db.dropFile(name);
+          return { cte: part.cte, name, bytes, types, size: bytes.byteLength, engine: e.index, ms: Math.round(performance.now() - t0) };
+        }, { ...options, engine: e }));
+      }));
+      const partsDone = performance.now();
+      const final = plan.finalSql(cte => answers.filter(a => a.cte === cte).map(a => a.name), cte => answers.find(a => a.cte === cte)?.types);
+      const result = await submit(async e => {
+        for (const a of answers) await e.db.registerFileBuffer(a.name, a.bytes);
+        try {
+          await openFor(e, final);
+          return await e.conn.query(final);
+        } finally { for (const a of answers) await e.db.dropFile(a.name).catch(() => {}); }
+      }, { ...options, names: namedIn(final) });
+      console.log(`[split] ${Math.round(performance.now() - started)} ms: ${plan.parts.map(p => p.table).join(', ')} on ${engines.length} engines, ` +
+        `parts ${answers.map(a => `${a.cte}@${a.engine} ${a.ms} ms`).join(', ')} (${answers.reduce((n, a) => n + a.size, 0)} bytes), ` +
+        `the rest ${Math.round(performance.now() - partsDone)} ms`);
+      return result;
+    })();
   }
   // What a view reads: read_parquet over the files' local names. With delete files, the rows
   // whose file and position (file_row_number, 0-based as Iceberg's pos) a delete file names are
   // left out: `filename` is the local name, the delete file's file_path written the same way.
   const deletesOf = name => `__deletes_${name}`;
-  const selectOf = (name, record) => {
-    const files = `[${record.files.map(f => lit(localName(f.path))).join(', ')}]`;
+  const selectOf = (name, record, share = record.files) => {
+    const files = `[${share.map(f => lit(localName(f.path))).join(', ')}]`;
     if (!record.deleteFiles.length) return `SELECT * FROM read_parquet(${files})`;
     return `SELECT * EXCLUDE (__file, file_row_number)
       FROM read_parquet(${files}, filename = '__file', file_row_number = true) AS d
@@ -631,7 +700,7 @@ importScripts("${bundle.mainWorker}");`], { type: "text/javascript" }));
       const version = await db.getVersion();
       if (version !== DUCKDB) throw new Error(`the engine is DuckDB ${version}, but the site's extensions are for ${DUCKDB}`);
       if (!warmed) { warmed = true; warmExtensions(version); }
-      const e = { db, conn: await db.connect(), opened: new Map(), registered: new Set() };
+      const e = { index: i, db, conn: await db.connect(), opened: new Map(), registered: new Set() };
       engines[i] = e;
       queue.add(e);   // its setup below runs through the queue, on it
       // Installing needs a home directory.
@@ -676,14 +745,19 @@ importScripts("${bundle.mainWorker}");`], { type: "text/javascript" }));
     // back from this browser (results.js) instead: the page's own cache (explore/view.js) holds the
     // last 40 for the visit, this one survives a reload.
     query: async (sql, options) => {
-      const key = resultKey(sql);
+      const key = TIMED ? null : resultKey(sql);
       const saved = key && await results.get(key);
       if (saved) return saved;
       await enginesUp;
-      return healing(() => readyFor(sql).then(() => submit(async e => {
-        await openFor(e, sql);
-        return e.conn.query(sql);
-      }, { ...options, names: namedIn(sql) }))).then(r => {
+      return healing(() => readyFor(sql).then(() => splitRun(sql, options) ?? (async () => {
+        const started = performance.now();
+        const r = await submit(async e => {
+          await openFor(e, sql);
+          return e.conn.query(sql);
+        }, { ...options, names: namedIn(sql) });
+        if (TIMED) console.log(`[split] ${Math.round(performance.now() - started)} ms: one engine, ${namedIn(sql).join(', ')}`);
+        return r;
+      })())).then(r => {
         if (key) results.put(key, r);
         return r;
       });

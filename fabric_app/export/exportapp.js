@@ -497,7 +497,7 @@ const MODEL_ONLY = ['storage/modeldata.js', 'storage/modelrows.js'];
 // decodes with an Arrow of its own version (WEBAPP.rayfinSemanticModel). The other way round, the
 // client-side site keeps the connector's few hundred KB, which its page never loads.
 const DUCKDB_ONLY = {
-  site: ['storage/data.js', 'storage/blockcache.js', 'storage/catalog.js', 'storage/prefetch.js', 'storage/ranges.js',
+  site: ['storage/data.js', 'storage/blockcache.js', 'storage/catalog.js', 'storage/prefetch.js', 'storage/ranges.js', 'storage/split.js',
          'storage/queue.js', 'storage/results.js', 'storage/snapshots.js', 'storage/kv.js'],
   vendor: [/^npm\/@duckdb(\/|$)/, /^duckdb-ext(\/|$)/, new RegExp(`^npm/${WEBAPP.arrow.replace(/[.]/g, '\\.')}(/|$)`)],
 };
