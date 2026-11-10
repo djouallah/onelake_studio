@@ -58,7 +58,6 @@ and F5 has its own.
 | `lake_table` | item, schema, name, format, metadata location, version or snapshot, row count, bytes, file count |
 | `lake_column` | table, position, name, type, whether it partitions |
 | `snapshot` | table, version or snapshot id, time, operation, row and column changes, for History |
-| `data_file` | table, `abfss_path`, role, bytes, rows, begin and end version |
 | `lake_object` | a `Files/` entry: item, path, whether it is a folder, bytes, etag, last modified |
 | `semantic_model`, `app` | A workspace's listings from Fabric |
 | `semantic_view` | The models opened here: name, workspace, its file's path, when |
@@ -68,7 +67,9 @@ and F5 has its own.
 | `first_rows` | A table's first rows, per snapshot, so its Data tab opens at once. The one thing with a limit: 256 MB, oldest first |
 | `table_use` | How many statements read a table, per day: its name and a count, never the statement. Gone after 14 days |
 | `table_kept` | A table in use or kept offline, synced in the background to a snapshot: when, how big its files are, how long, why it failed and when to try again. Gone after 14 days |
-| `sync_state` | what was synced, when, its last error, when it is next due |
+| `listing_read`, `sync_failure` | When each listing was last read, and the last error of one that failed |
+| `model_offline` | The models kept offline |
+| `catalog_state` | One row: when the file was last cleared, what an older version's state was brought over, and which window holds the sync's lease |
 
 Every row says when it was last read from OneLake.
 
@@ -117,7 +118,7 @@ DuckDB and no server. A lease in the catalog file says which window sweeps the t
 - **Every window hears** what another wrote: a look at the file every few seconds (`PRAGMA data_version`), and the tree
   redraws what changed.
 - **Offline:** it asks nothing, and carries on by itself. Nothing waits on a timeout.
-- **A failure** is kept in `sync_state` and shown on its node as *refresh failed*. The last good rows are still served.
+- **A failure** is kept in `sync_failure` and shown on its node as *refresh failed*. The last good rows are still served.
 
 ## Tables in use
 
