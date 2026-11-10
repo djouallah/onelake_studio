@@ -130,6 +130,8 @@ async function published(s, said, zipName, engine, since) {
     if (!/\.(html|js)$/.test(path) || path.startsWith("vendor/")) continue;
     for (const [, spec] of bytes.toString("utf8").matchAll(/\b(?:from|import)\s*\(?\s*["'](\.{1,2}\/[^"'?]+\.js)(?:\?v=[\w-]+)?["']/g)) {
       const to = new URL(spec, new URL(path, "http://site/")).pathname.slice(1);
+      // The other engine's data source is left out (exportapp.js), and app.js imports it only when it is the site's.
+      if (to === (engine === "duckdb" ? "storage/modeldata.js" : "storage/data.js")) { assert.ok(!site.has(to), `${to} is the other engine's`); continue; }
       assert.ok(site.has(to), `${path} imports ${spec}, and the site has no ${to}`);
       imports++;
     }
@@ -156,15 +158,11 @@ test("on fabriccat: the model file made a Direct Lake semantic model, which answ
   const made = await s.flow.createSemanticModel({ file: FILE, name: MODEL, text, workspace: WS, path: PATH, mode: "directlake" });
   assert.match(made, new RegExp(`^Semantic model ${MODEL} (created|updated) in ${WS} \\(`));
 
-  const since = Date.now();
-  const said = await s.flow.exportExplore({ file: `${MODEL}.bim`, name: MODEL, text, state: null, model: { workspace: WS, name: MODEL } });
-  assert.match(said, new RegExp(`^Published to Fabric, on the semantic model ${MODEL}: https:`));
-  const marker = await published(s, said, "lakeci-model-explore.fabricapp", "semanticModel", since);
-  assert.equal(marker.semanticModel.name, MODEL);
-  assert.equal(marker.semanticModel.workspace, s.workspaceId);
-
+  const { createFabricModel } = require("../../fabric_app/export/fabricmodel.js");
+  const model = await createFabricModel({ getToken: async () => FABRIC_TOKEN, powerBiToken: async () => POWERBI_TOKEN }).find(s.workspaceId, MODEL);
+  assert.ok(model, `${WS} lists ${MODEL}`);
   // The model the app queries reads the table: its rows, counted in DAX.
-  const r = await fetch(`https://api.powerbi.com/v1.0/myorg/groups/${s.workspaceId}/datasets/${marker.semanticModel.id}/executeQueries`, {
+  const r = await fetch(`https://api.powerbi.com/v1.0/myorg/groups/${s.workspaceId}/datasets/${model.id}/executeQueries`, {
     method: "POST", headers: { authorization: `Bearer ${POWERBI_TOKEN}`, "content-type": "application/json" },
     body: JSON.stringify({ queries: [{ query: `EVALUATE ROW("n", COUNTROWS(${TABLE}), "total", [Total amount])` }] }),
   });
@@ -173,4 +171,12 @@ test("on fabriccat: the model file made a Direct Lake semantic model, which answ
   const [row] = JSON.parse(body).results[0].tables[0].rows;
   assert.equal(row["[n]"], ROWS);
   assert.ok(row["[total]"] > 0);
+
+  const since = Date.now();
+  const said = await s.flow.exportExplore({ file: `${MODEL}.bim`, name: MODEL, text, state: null, model: { workspace: WS, name: MODEL } });
+  assert.match(said, new RegExp(`^Published to Fabric, on the semantic model ${MODEL}: https:`));
+  const marker = await published(s, said, "lakeci-model-explore.fabricapp", "semanticModel", since);
+  assert.equal(marker.semanticModel.name, MODEL);
+  assert.equal(marker.semanticModel.workspace, s.workspaceId);
+  assert.equal(marker.semanticModel.id, model.id);
 });
