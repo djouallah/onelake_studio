@@ -121,17 +121,14 @@ export async function seedAccount({ dataDir, home }) {
   await mkdir(dirname(model), { recursive: true });
   await writeFile(model, stringify(tmslToOssie(BIM, "shop")));
 
-  // The model's Report, as an export's zip holds it: figures, a bar, a pivot and a slicer over the model, and a table that needs no rows
-  // from OneLake, so it has a row to click. Its first column is a constant, so it names the model
-  // column its clicks filter by (crossFilter).
+  // The model's Report, as an export's zip holds it: a card, a stacked bar and a slicer, each a Visual
+  // over the model, and one tile of SQL from before tiles were only Visuals, which says so.
   const report = join(home, "OneLakeStudio", "exports", "shop.zip");
   const tiles = [
-    { title: "Totals", kind: "kpi", sql: 'SELECT AGG("Total") AS "Total" FROM model' },
-    { title: "Total by Color", kind: "bar", sql: 'SELECT "Product"."Color" AS "Color", AGG("Total") AS "Total" FROM model GROUP BY ALL ORDER BY "Total" DESC' },
-    { title: "Total by Color", kind: "pivot", pivot: { rows: ["Product.Color"], values: ["Total"], mark: "stacked" } },
+    { title: "Totals", kind: "pivot", pivot: { rows: [], values: ["Total"], mark: "card" } },
+    { title: "Total by Color", kind: "pivot", pivot: { rows: ["Product.Color"], values: ["Total"], mark: "stacked", sort: "desc", top: 5 } },
     { title: "Color", kind: "pivot", pivot: { rows: ["Product.Color"], values: ["Total"], mark: "slicer", slicer: "list" } },
-    { title: "Colors", kind: "table", sql: `SELECT 'Red' AS "Color", 3 AS "Total" FROM model`,
-                                        crossFilter: '"Product"."Color"' }];
+    { title: "Old", kind: "table", sql: 'SELECT 1 AS "x" FROM model' }];
   await writeApp(report, new Map([["site/report.json", Buffer.from(JSON.stringify({ tiles }))]]), { e2e: true });
 
   return { saved, report, dbFile: { workspace: WORKSPACE, item: LAKEHOUSE.item, path: DB_FILE, bytes: dbBytes.length } };

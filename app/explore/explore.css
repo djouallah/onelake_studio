@@ -337,6 +337,13 @@ section.modelOpen #chartBtn { display: none; }
 .card-figure b { font-size: clamp(1.4rem, 45cqh, 3.2rem); line-height: 1.1; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--text); white-space: nowrap; }
 .card-many .card-figure b { font-size: clamp(1.2rem, 30cqh, 2.4rem); }
 .card-figure span { color: var(--muted); font-size: 0.78rem; text-align: center; }
+/* A card's change (▲/▼, good or bad) and its trend, under its figure. */
+.card-figure .card-change { font-size: 0.78rem; font-weight: 600; color: var(--muted); }
+.card-figure .card-change.good { color: var(--good, var(--ok)); }
+.card-figure .card-change.bad { color: var(--bad, var(--err)); }
+.card-trend { width: 100%; min-width: 120px; height: 28px; margin-top: 0.3rem; overflow: visible; }
+.card-trended { align-items: stretch; }
+.card-trended .card-figure { flex: 1; align-items: flex-start; }
 .rp-kpis { display: flex; flex-wrap: wrap; gap: 0.6rem 2.2rem; }
 .rp-kpi span { display: block; color: var(--muted); font-size: 0.78rem; }
 .rp-kpi b { font-size: 1.7rem; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--text); }
@@ -358,6 +365,27 @@ section.modelOpen #chartBtn { display: none; }
 .rp-x:hover, .rp-x:focus-visible { color: var(--text); }
 /* The Report's pages (view.js): their names over the tiles, the one on screen marked; a dragged
    tile's grip over another marks it too. */
+/* The report's filter bar (view.js drawBar), over its pages' names: each filter's name, then how
+   it is picked; + Filter adds one. */
+.rp-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 1.1rem; padding: var(--gap) var(--gutter) 0; font-size: 0.8rem; }
+.rp-bar[hidden] { display: none; }
+.rp-bar-item { display: inline-flex; align-items: center; gap: 0.4rem; }
+.rp-bar-label { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--faint); font-weight: 600; }
+.rp-bar select, .rp-bar input[type=date], .rp-bar-pick { font: inherit; color: var(--text); background: var(--input-bg); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 0.2rem 0.45rem; }
+.rp-bar-pick { cursor: pointer; }
+.rp-bar-dates { display: inline-flex; align-items: center; gap: 0.3rem; flex-wrap: wrap; }
+.rp-bar-to { color: var(--faint); }
+.rp-bar-preset { background: none; border: 1px solid var(--border); border-radius: 999px; color: var(--muted); font: inherit; font-size: 0.75rem; padding: 0.1rem 0.55rem; cursor: pointer; }
+.rp-bar-preset:hover, .rp-bar-preset:focus-visible { color: var(--text); border-color: var(--muted); }
+.rp-bar-x, .rp-bar-add { background: none; border: none; color: var(--faint); font: inherit; cursor: pointer; padding: 0.1rem 0.35rem; border-radius: var(--radius); }
+.rp-bar-x:hover, .rp-bar-add:hover, .rp-bar-x:focus-visible, .rp-bar-add:focus-visible { color: var(--text); background: var(--hover-soft); }
+.rp-bar-form { display: inline-flex; align-items: center; gap: 0.4rem; }
+.rp-bar-pop { position: fixed; z-index: 20; width: 280px; max-height: 60vh; display: flex; flex-direction: column; gap: 0.4rem; padding: 0.6rem; background: var(--raised); border: 1px solid var(--border); border-radius: var(--radius-sm); box-shadow: var(--shadow); font-size: 0.8rem; }
+.rp-bar-pop input[type=search] { font: inherit; color: var(--text); background: var(--input-bg); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 0.25rem 0.45rem; }
+.rp-bar-values { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 0.1rem; }
+.rp-bar-values label { display: flex; align-items: center; gap: 0.45rem; color: var(--text); }
+.rp-bar-pop-foot { display: flex; justify-content: flex-end; gap: 0.4rem; }
+.rp-pane-values { display: flex; flex-direction: column; gap: 0.25rem; max-height: 220px; overflow: auto; padding-left: calc(88px + 0.5rem); }
 .rp-pages { display: flex; flex-wrap: wrap; align-items: center; gap: 0.3rem; padding: var(--gap) var(--gutter) 0; font-size: 0.8rem; }
 .rp-pages[hidden], .rp-page-view[hidden] { display: none; }
 .rp-page-tabs { display: flex; flex-wrap: wrap; gap: 0.3rem; }

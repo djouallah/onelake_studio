@@ -1,91 +1,29 @@
-// app/explore/report.js: cross filtering's SQL. A pick in one tile is a WHERE in every other
-// tile's SQL, on the model column the picked tile's first column is.
+// app/explore/report.js and explore.js: a Report's queries. A tile's query is always Visual's,
+// generated from its shelves; a pick in one tile is a condition of every other tile's own query.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-const { firstColumn, columnOf, sqlLiteral, withFilters } = await import("../../app/explore/report.js");
-
-const BAR = 'SELECT "dim_zone"."Borough" AS "Borough", AGG("Total Fare") AS "Total Fare" FROM model GROUP BY ALL ' +
-            'ORDER BY "Total Fare" DESC FETCH FIRST 12 ROWS WITH TIES';
+const { pickWhere } = await import("../../app/explore/report.js");
 const BOROUGH = '"dim_zone"."Borough"';
 
-test("a tile's first column, as the model names it", () => {
-  assert.deepEqual(firstColumn(BAR), { ref: BOROUGH, table: "dim_zone", column: "Borough" });
-  assert.deepEqual(firstColumn('select dim_date.Year, AGG("x") from model group by all'), { ref: "dim_date.Year", table: "dim_date", column: "Year" });
-  assert.deepEqual(firstColumn("SELECT 'Product'[Color] AS c FROM model"), { ref: "'Product'[Color]", table: "Product", column: "Color" });
-  assert.deepEqual(firstColumn('SELECT "a ""b"".c"."d" FROM model'), { ref: '"a ""b"".c"."d"', table: 'a "b".c', column: "d" });
-  assert.deepEqual(firstColumn("\n  -- by region\n  SELECT Region r, AGG(n) FROM model"), { ref: "Region", table: null, column: "Region" });
-  // Anything but a column: no clicks.
-  for (const sql of ['SELECT AGG("Total") AS "Total" FROM model', "SELECT 'Red' AS \"Color\" FROM model",
-                     'SELECT "t"."c" + 1 AS x FROM model', 'SELECT DISTINCT "t"."c" FROM model', "SELECT CASE WHEN 1 THEN 2 END FROM model",
-                     "SELECT * FROM model", "", undefined]) {
-    assert.equal(firstColumn(sql), null, String(sql));
-  }
-  assert.deepEqual(columnOf(' "Product"."Color" '), { ref: '"Product"."Color"', table: "Product", column: "Color" });
-  assert.equal(columnOf("AGG(x)"), null);
-  assert.equal(columnOf("a.b.c"), null);
+test("a pick is a condition as the Filters shelf writes one", () => {
+  assert.deepEqual(pickWhere("dim_zone.Borough", { value: "Bronx" }), [["dim_zone.Borough", "=", "Bronx"]]);
+  assert.deepEqual(pickWhere("dim_zone.Borough", { value: null }), [["dim_zone.Borough", "blank"]], "a blank");
+  assert.deepEqual(pickWhere("dim_date.Year", { values: [2024, null] }), [["dim_date.Year", "in", [2024, null]]]);
+  assert.deepEqual(pickWhere("dim_date.Year", { values: [] }), [], "nothing ticked: no condition");
+  assert.deepEqual(pickWhere("dim_date.Year", { range: [2021, null] }), [["dim_date.Year", ">=", 2021]]);
+  assert.deepEqual(pickWhere("dim_date.Date", { range: ["2021-01-01", "2021-01-31"] }),
+    [["dim_date.Date", ">=", "2021-01-01"], ["dim_date.Date", "<=", "2021-01-31"]]);
+  assert.deepEqual(pickWhere("dim_date.Year", { range: [null, null] }), [], "no ends: no condition");
 });
 
-test("a value as its column's literal", () => {
-  assert.equal(sqlLiteral("Manhattan", "string"), "'Manhattan'");
-  assert.equal(sqlLiteral("O'Brien's", "string"), "'O''Brien''s'");
-  assert.equal(sqlLiteral(2024, "int64"), "2024");
-  assert.equal(sqlLiteral(-1.5, undefined), "-1.5");
-  assert.equal(sqlLiteral(7, "string"), "'7'", "a number in a text column is text");
-  assert.equal(sqlLiteral("2024", "int64"), "2024", "a whole number handed over as text");
-  assert.equal(sqlLiteral(12345678901234567890n, "int64"), "12345678901234567890");
-  assert.equal(sqlLiteral("2024-03-01", "dateTime"), "DATE '2024-03-01'");
-  assert.equal(sqlLiteral("2024-03-01T00:00:00.000Z", "dateTime"), "DATE '2024-03-01'");
-  assert.equal(sqlLiteral("2024-03-01T08:30:00", "dateTime"), "TIMESTAMP '2024-03-01 08:30:00'");
-  assert.equal(sqlLiteral("2024-03-01", "string"), "'2024-03-01'", "a date's text in a text column stays text");
-  assert.equal(sqlLiteral(true, "boolean"), "TRUE");
-  assert.equal(sqlLiteral("false", "boolean"), "FALSE");
-  assert.equal(sqlLiteral("1; DROP", "int64"), "'1; DROP'", "only a number is written bare");
-  assert.throws(() => sqlLiteral(NaN), /can't be a filter/);
-});
-
-test("a pick goes in as a WHERE, before GROUP BY", () => {
-  assert.equal(withFilters(BAR, []), BAR, "no pick, the SQL as written");
-  assert.equal(withFilters(BAR, [{ ref: '"dim_date"."Year"', value: 2024, type: "int64" }]),
-    'SELECT "dim_zone"."Borough" AS "Borough", AGG("Total Fare") AS "Total Fare" FROM model WHERE "dim_date"."Year" = 2024 GROUP BY ALL ' +
-    'ORDER BY "Total Fare" DESC FETCH FIRST 12 ROWS WITH TIES');
-  // A figure's tile: nothing after FROM model.
-  assert.equal(withFilters('SELECT AGG("Trips") AS "Trips" FROM model', [{ ref: BOROUGH, value: "Manhattan", type: "string" }]),
-    `SELECT AGG("Trips") AS "Trips" FROM model WHERE ${BOROUGH} = 'Manhattan'`);
-  assert.equal(withFilters('SELECT AGG("Trips") FROM model;\n', [{ ref: BOROUGH, value: "Queens" }]),
-    `SELECT AGG("Trips") FROM model WHERE ${BOROUGH} = 'Queens';\n`);
-  assert.equal(withFilters('SELECT AGG("Trips") FROM model -- all trips', [{ ref: BOROUGH, value: "Queens" }]),
-    `SELECT AGG("Trips") FROM model WHERE ${BOROUGH} = 'Queens' -- all trips`, "before a comment, not in it");
-  assert.equal(withFilters('SELECT d.y, AGG("n") FROM model\nGROUP BY ALL\nORDER BY 1', [{ ref: "d.m", value: 3 }]),
-    'SELECT d.y, AGG("n") FROM model WHERE d.m = 3\nGROUP BY ALL\nORDER BY 1');
-});
-
-test("a pick ANDs to the WHERE a tile has", () => {
-  const sql = `SELECT "dim_zone"."Zone" AS "Zone", AGG("Trips") AS "Trips" FROM model WHERE "dim_zone"."Borough" = 'Queens' OR "x"."y" BETWEEN 1 AND 2 ` +
-              'GROUP BY ALL ORDER BY "Trips" DESC LIMIT 10';
-  assert.equal(withFilters(sql, [{ ref: '"dim_date"."Year"', value: 2024, type: "int64" }, { ref: '"pay"."Type"', value: "Card" }]),
-    `SELECT "dim_zone"."Zone" AS "Zone", AGG("Trips") AS "Trips" FROM model WHERE ("dim_zone"."Borough" = 'Queens' OR "x"."y" BETWEEN 1 AND 2) ` +
-    `AND "dim_date"."Year" = 2024 AND "pay"."Type" = 'Card' GROUP BY ALL ORDER BY "Trips" DESC LIMIT 10`);
-  // A WHERE at the end, with words in strings and parentheses that are not clauses.
-  assert.equal(withFilters("SELECT a.b FROM model WHERE a.c IN ('GROUP BY', 'x') AND (a.d > 1)", [{ ref: "a.b", value: "it's" }]),
-    "SELECT a.b FROM model WHERE (a.c IN ('GROUP BY', 'x') AND (a.d > 1)) AND a.b = 'it''s'");
-});
-
-test("a blank is IS NULL, and a FROM in parentheses is not the tile's", () => {
-  assert.equal(withFilters('SELECT AGG("Trips") FROM model ORDER BY 1', [{ ref: BOROUGH, value: null }]),
-    `SELECT AGG("Trips") FROM model WHERE ${BOROUGH} IS NULL ORDER BY 1`);
-  assert.equal(withFilters("SELECT EXTRACT(year FROM d.day) AS y FROM model GROUP BY ALL", [{ ref: BOROUGH, value: undefined }]),
-    `SELECT EXTRACT(year FROM d.day) AS y FROM model WHERE ${BOROUGH} IS NULL GROUP BY ALL`);
-  assert.equal(withFilters('SELECT "FROM" FROM model', [{ ref: '"t"."FROM"', value: 1 }]), 'SELECT "FROM" FROM model WHERE "t"."FROM" = 1');
-  assert.throws(() => withFilters("SELECT 1", [{ ref: BOROUGH, value: "x" }]), /no FROM/);
-});
-
-// A pivot tile: Pivot's shelves, as Add to report saves them, run as Pivot's own query.
 const { modelFields, pivotQuery, pivotTitle, pivotView, autoMark } = await import("../../app/explore/explore.js");
 const MODEL = { tables: [
-  { name: "dim_zone", columns: [{ name: "Borough", dataType: "string" }] },
+  { name: "dim_zone", columns: [{ name: "Borough", dataType: "string" }, { name: "Zone", dataType: "string" },
+                                { name: "Lat", dataType: "double" }, { name: "Lon", dataType: "double" }] },
+  { name: "dim_date", columns: [{ name: "Date", dataType: "dateTime" }, { name: "Year", dataType: "int64" }] },
   { name: "trips", columns: [{ name: "fare", dataType: "double" }], measures: [{ name: "Total Fare" }] },
-], relationships: [{ fromTable: "trips", toTable: "dim_zone" }] };
+], relationships: [{ fromTable: "trips", toTable: "dim_zone" }, { fromTable: "trips", toTable: "dim_date" }] };
 const PIVOT_SQL = 'SELECT "dim_zone"."Borough" AS "Borough", AGG("Total Fare") AS "Total Fare"\nFROM model\nGROUP BY ALL\n' +
                   'ORDER BY "Borough"\nFETCH FIRST 5000 ROWS WITH TIES';
 
@@ -94,8 +32,10 @@ test("a pivot tile runs Pivot's query, and a click on it picks its first Rows fi
   const { state, sql, field } = pivotQuery({ rows: ["dim_zone.Borough"], values: ["Total Fare"], mark: "bar" }, fields);
   assert.deepEqual([state.cols, state.filters, state.totals], [[], [], false], "every shelf there");
   assert.equal(sql, PIVOT_SQL);
-  assert.deepEqual(field, { table: "dim_zone", column: "Borough", ref: BOROUGH });
-  // No Rows: its first Columns field.
+  assert.deepEqual(field, { id: "dim_zone.Borough", table: "dim_zone", column: "Borough", ref: BOROUGH });
+  // No Rows: its first Columns field; a map, its points' name.
+  assert.equal(pivotQuery({ rows: ["dim_zone.Lat", "dim_zone.Lon", "dim_zone.Zone"], values: ["Total Fare"], mark: "map" }, fields).field.column, "Zone");
+  assert.equal(pivotQuery({ rows: ["dim_zone.Lat", "dim_zone.Lon"], values: ["Total Fare"], mark: "map" }, fields).field, null);
   assert.deepEqual(pivotQuery({ cols: ["dim_zone.Borough"], values: ["Total Fare"] }, fields).field.column, "Borough");
   assert.equal(pivotQuery({ values: ["Total Fare"] }, fields).field, null, "nothing to pick");
   for (const [saved, why] of [[null, /the shelves/], [[], /the shelves/], [{ rows: "dim_zone.Borough" }, /rows is a list/], [{}, /no fields/]]) {
@@ -103,14 +43,16 @@ test("a pivot tile runs Pivot's query, and a click on it picks its first Rows fi
   }
 });
 
-test("another tile's pick goes in a pivot tile's query, beside its own filters", () => {
+test("another tile's pick goes in a tile's own query, beside its own filters", () => {
   const fields = modelFields(MODEL);
-  const pick = [{ ref: BOROUGH, value: "Bronx", type: "string" }];
-  assert.equal(withFilters(pivotQuery({ rows: ["dim_zone.Borough"], values: ["Total Fare"] }, fields).sql, pick),
-               PIVOT_SQL.replace("FROM model", `FROM model WHERE ${BOROUGH} = 'Bronx'`));
+  const piv = pivotQuery({ rows: ["dim_zone.Borough"], values: ["Total Fare"] }, fields);
+  assert.equal(piv.sqlWith([]), piv.sql);
+  assert.equal(piv.sqlWith(pickWhere("dim_zone.Borough", { value: "Bronx" })),
+               PIVOT_SQL.replace("FROM model\n", `FROM model\nWHERE ${BOROUGH} = 'Bronx'\n`));
   const own = pivotQuery({ rows: ["dim_zone.Borough"], values: ["Total Fare"],
-                           filters: [{ field: "dim_zone.Borough", op: "notIn", values: ["Queens"] }] }, fields).sql;
-  assert.match(withFilters(own, pick), /\nWHERE \(\("dim_zone"\."Borough" NOT IN \('Queens'\) OR "dim_zone"\."Borough" IS NULL\)\) AND "dim_zone"\."Borough" = 'Bronx'\nGROUP BY ALL\n/);
+                           filters: [{ field: "dim_zone.Borough", op: "notIn", values: ["Queens"] }] }, fields);
+  assert.match(own.sqlWith(pickWhere("dim_zone.Borough", { value: "Bronx" })),
+    /\nWHERE \("dim_zone"\."Borough" NOT IN \('Queens'\) OR "dim_zone"\."Borough" IS NULL\)\n  AND "dim_zone"\."Borough" = 'Bronx'\nGROUP BY ALL\n/);
 });
 
 test("a pivot tile's title: its values by its rows and columns", () => {
@@ -133,24 +75,17 @@ test("a pivot tile's chart: the pick bright, the rest dim, and a click's row key
   assert.deepEqual(pivotView(s, rows, "bar", look, { on() {}, active: false }).option.series[0].data, [10, 20]);
 });
 
-test("a slicer's values go in as IN, a blank among them as IS NULL", () => {
-  const sql = 'SELECT AGG("Total Fare") AS "Total Fare" FROM model';
-  assert.equal(withFilters(sql, [{ ref: BOROUGH, values: ["Bronx"], type: "string" }]),
-               `SELECT AGG("Total Fare") AS "Total Fare" FROM model WHERE ${BOROUGH} IN ('Bronx')`);
-  assert.equal(withFilters(sql, [{ ref: BOROUGH, values: ["Bronx", "O'Hare"], type: "string" }]),
-               `SELECT AGG("Total Fare") AS "Total Fare" FROM model WHERE ${BOROUGH} IN ('Bronx', 'O''Hare')`);
-  assert.equal(withFilters(sql, [{ ref: BOROUGH, values: [null, "Bronx"], type: "string" }]),
-               `SELECT AGG("Total Fare") AS "Total Fare" FROM model WHERE (${BOROUGH} IS NULL OR ${BOROUGH} IN ('Bronx'))`);
-  assert.equal(withFilters(sql, [{ ref: BOROUGH, values: [null], type: "string" }]),
-               `SELECT AGG("Total Fare") AS "Total Fare" FROM model WHERE ${BOROUGH} IS NULL`);
-  assert.equal(withFilters(sql, [{ ref: BOROUGH, values: [], type: "string" }]), sql, "nothing ticked: no filter");
-  // Typed by the column, beside a click's pick, ANDed to the tile's own WHERE.
-  const own = `${sql} WHERE "dim_zone"."Zone" <> 'x' GROUP BY ALL`;
-  assert.equal(withFilters(own, [{ ref: '"dim_date"."Date"', values: ["2024-03-01", "2024-03-02"], type: "dateTime" },
-                                 { ref: '"dim_date"."Year"', values: [2024], type: "int64" },
-                                 { ref: BOROUGH, value: "Bronx", type: "string" }]),
-               `${sql} WHERE ("dim_zone"."Zone" <> 'x') AND "dim_date"."Date" IN (DATE '2024-03-01', DATE '2024-03-02') AND ` +
-               `"dim_date"."Year" IN (2024) AND ${BOROUGH} = 'Bronx' GROUP BY ALL`);
+test("a slicer's values go in as IN, a blank among them as IS NULL, each typed by its column", () => {
+  const fields = modelFields(MODEL);
+  const piv = pivotQuery({ values: ["Total Fare"], mark: "card" }, fields);
+  const base = 'SELECT AGG("Total Fare") AS "Total Fare"\nFROM model';
+  assert.equal(piv.sql, base);
+  const w = (id, p) => piv.sqlWith(pickWhere(id, p));
+  assert.equal(w("dim_zone.Borough", { values: ["Bronx", "O'Hare"] }), `${base}\nWHERE ${BOROUGH} IN ('Bronx', 'O''Hare')`);
+  assert.equal(w("dim_zone.Borough", { values: [null, "Bronx"] }), `${base}\nWHERE (${BOROUGH} IS NULL OR ${BOROUGH} IN ('Bronx'))`);
+  assert.equal(w("dim_zone.Borough", { values: [null] }), `${base}\nWHERE ${BOROUGH} IS NULL`);
+  assert.equal(w("dim_date.Year", { values: [2024] }), `${base}\nWHERE "dim_date"."Year" IN (2024)`);
+  assert.equal(w("dim_date.Date", { values: ["2024-03-01"] }), `${base}\nWHERE "dim_date"."Date" IN (DATE '2024-03-01')`);
 });
 
 test("a chart of one measure draws no title over its plot; one of several, a title each", () => {
@@ -166,40 +101,98 @@ test("a chart of one measure draws no title over its plot; one of several, a tit
 });
 
 test("a slicer's range: both ends, one end, a date's last day kept whole", () => {
-  const sql = 'SELECT AGG("Total Fare") AS "Total Fare" FROM model';
-  const date = '"dim_date"."Date"', year = '"dim_date"."Year"';
-  assert.equal(withFilters(sql, [{ ref: year, range: [2021, 2023], type: "int64" }]), `${sql} WHERE ${year} >= 2021 AND ${year} <= 2023`);
-  assert.equal(withFilters(sql, [{ ref: year, range: [2021, null], type: "int64" }]), `${sql} WHERE ${year} >= 2021`);
-  assert.equal(withFilters(sql, [{ ref: date, range: [null, "2023-12-31"], type: "dateTime" }]), `${sql} WHERE ${date} < DATE '2024-01-01'`);
-  assert.equal(withFilters(sql, [{ ref: date, range: ["2021-01-01", "2021-01-31"], type: "dateTime" }]),
-               `${sql} WHERE ${date} >= DATE '2021-01-01' AND ${date} < DATE '2021-02-01'`);
-  assert.equal(withFilters(sql, [{ ref: year, range: [null, null], type: "int64" }]), sql, "no ends: no filter");
+  const fields = modelFields(MODEL);
+  const piv = pivotQuery({ values: ["Total Fare"], mark: "card" }, fields);
+  const base = 'SELECT AGG("Total Fare") AS "Total Fare"\nFROM model';
+  const w = (id, p) => piv.sqlWith(pickWhere(id, p));
+  assert.equal(w("dim_date.Year", { range: [2021, 2023] }), `${base}\nWHERE "dim_date"."Year" >= 2021\n  AND "dim_date"."Year" <= 2023`);
+  assert.equal(w("dim_date.Year", { range: [2021, null] }), `${base}\nWHERE "dim_date"."Year" >= 2021`);
+  assert.equal(w("dim_date.Date", { range: [null, "2023-12-31"] }), `${base}\nWHERE "dim_date"."Date" < DATE '2024-01-01'`);
+  assert.equal(w("dim_date.Year", { range: [null, null] }), base, "no ends: no filter");
 });
 
 test("a slicer is a Visual: its query lists the values that have the measure, and it is named for its column", () => {
   const fields = modelFields(MODEL);
   const { state, sql, field } = pivotQuery({ rows: ["dim_zone.Borough"], values: ["Total Fare"], mark: "slicer", slicer: "buttons" }, fields);
   assert.equal(sql, PIVOT_SQL);
-  assert.deepEqual(field, { table: "dim_zone", column: "Borough", ref: BOROUGH });
+  assert.deepEqual(field, { id: "dim_zone.Borough", table: "dim_zone", column: "Borough", ref: BOROUGH });
   assert.equal(state.slicer, "buttons");
   assert.equal(pivotTitle(state), "Borough");
   assert.equal(pivotQuery({ rows: ["dim_zone.Borough"], mark: "slicer" }, fields).state.slicer, "list", "List unless picked");
 });
 
-test("a card is its Values over every row its filters keep: Rows and Columns left out, nothing to pick", () => {
+test("a card is its Values over every row its filters keep; a field on Rows is its trend, under its total", () => {
   const fields = modelFields(MODEL);
-  const { sql, field } = pivotQuery({ rows: ["dim_zone.Borough"], values: ["Total Fare"], mark: "card", totals: true,
-                                      filters: [{ field: "dim_zone.Borough", op: "in", values: ["Bronx"] }] }, fields);
-  assert.equal(sql, `SELECT AGG("Total Fare") AS "Total Fare"
-FROM model
-WHERE ${BOROUGH} IN ('Bronx')`);
+  const { sql, field, sqlWith } = pivotQuery({ rows: [], values: ["Total Fare"], mark: "card",
+                                               filters: [{ field: "dim_zone.Borough", op: "in", values: ["Bronx"] }] }, fields);
+  assert.equal(sql, `SELECT AGG("Total Fare") AS "Total Fare"\nFROM model\nWHERE ${BOROUGH} IN ('Bronx')`);
   assert.equal(field, null, "a click on a card picks nothing");
-  assert.equal(withFilters(sql, [{ ref: BOROUGH, value: "Queens", type: "string" }]),
-               `SELECT AGG("Total Fare") AS "Total Fare"
-FROM model
-WHERE (${BOROUGH} IN ('Bronx')) AND ${BOROUGH} = 'Queens'`, "another tile's pick filters it");
+  assert.equal(sqlWith(pickWhere("dim_zone.Borough", { value: "Queens" })),
+               `SELECT AGG("Total Fare") AS "Total Fare"\nFROM model\nWHERE ${BOROUGH} IN ('Bronx')\n  AND ${BOROUGH} = 'Queens'`, "another tile's pick filters it");
+  // Rows: the trend, and its total the figure; Columns left out.
+  const trend = pivotQuery({ rows: ["dim_date.Date"], cols: ["dim_zone.Borough"], values: ["Total Fare"], mark: "card" }, fields);
+  assert.match(trend.sql, /^SELECT "dim_date"\."Date" AS "Date", AGG\("Total Fare"\) AS "Total Fare", GROUPING\("dim_date"\."Date"\) AS "__rows_total"\nFROM model\nGROUP BY ROLLUP\("dim_date"\."Date"\)\nORDER BY "Date"/);
   assert.throws(() => pivotQuery({ rows: ["dim_zone.Borough"], mark: "card" }, fields), /Values/);
   assert.equal(pivotTitle({ rows: [], cols: [], values: ["Total Fare"], mark: "card" }), "Total Fare");
+});
+
+test("Top N keeps the first rows as they are sorted, ties kept; a filter on a measure is a HAVING", () => {
+  const fields = modelFields(MODEL);
+  assert.equal(pivotQuery({ rows: ["dim_zone.Borough"], values: ["Total Fare"], sort: "desc", top: 15 }, fields).sql,
+    'SELECT "dim_zone"."Borough" AS "Borough", AGG("Total Fare") AS "Total Fare"\nFROM model\nGROUP BY ALL\n' +
+    'ORDER BY "Total Fare" DESC, "Borough"\nFETCH FIRST 15 ROWS WITH TIES');
+  assert.equal(pivotQuery({ rows: ["dim_zone.Borough"], values: ["Total Fare"],
+                            filters: [{ field: "Total Fare", op: "range", min: 0.5, measure: true }] }, fields).sql,
+    'SELECT "dim_zone"."Borough" AS "Borough", AGG("Total Fare") AS "Total Fare"\nFROM model\nGROUP BY ALL\n' +
+    'HAVING "Total Fare" >= 0.5\nORDER BY "Borough"\nFETCH FIRST 5000 ROWS WITH TIES', "by its name in the SELECT");
+  assert.match(pivotQuery({ rows: ["dim_zone.Borough"], values: ["\0sum\0trips.fare"],
+                            filters: [{ field: "Total Fare", op: "range", min: 1, max: 9, measure: true }] }, fields).sql,
+    /\nHAVING AGG\("Total Fare"\) >= 1\n  AND AGG\("Total Fare"\) <= 9\n/, "a measure not shown, as itself");
+});
+
+test("measures in one plot: each drawn as it says, on its axis; the total as a line; the highest labelled", () => {
+  const fields = modelFields(MODEL);
+  const s = pivotQuery({ rows: ["dim_zone.Borough"], values: ["Total Fare", "\0sum\0trips.fare"], mark: "bar", totals: true }, fields).state;
+  const rows = [{ Borough: "Bronx", "Total Fare": 10, "Sum of fare": 1, __rows_total: 0 },
+                { Borough: "Queens", "Total Fare": 20, "Sum of fare": 2, __rows_total: 0 },
+                { Borough: null, "Total Fare": 30, "Sum of fare": 3, __rows_total: 1 }];
+  const look = { fields, palette: ["#111", "#222"], css: () => "#999",
+                 measures: { "Sum of fare": { as: "dashed", axis: "right" } }, totalLine: true, maxLabel: true };
+  const o = pivotView(s, rows, "bar", look).option;
+  assert.equal(o.grid.length, 1, "one plot");
+  assert.deepEqual(o.yAxis.map(a => a.position), [undefined, "right"]);
+  assert.deepEqual(o.series.map(x => [x.name, x.type, x.yAxisIndex, x.lineStyle?.type]),
+    [["Total Fare", "bar", 0, undefined], ["Sum of fare", "line", 1, "dashed"]]);
+  assert.deepEqual(o.series[0].data, [10, 20], "the total row is no bar");
+  assert.equal(o.series[0].markLine.data[0].yAxis, 30, "the total, a line across");
+  assert.deepEqual(o.series[0].markPoint.data, [{ type: "max" }]);
+  // Without it, one plot each, as before.
+  assert.equal(pivotView(s, rows, "bar", { fields, palette: ["#111"], css: () => "" }).option.grid.length, 2);
+});
+
+test("a value's own colour (the report's theme) colours its bar, its series, its box", () => {
+  const fields = modelFields(MODEL);
+  const s = pivotQuery({ rows: ["dim_zone.Borough"], values: ["Total Fare"], mark: "bar" }, fields).state;
+  const rows = [{ Borough: "Bronx", "Total Fare": 10 }, { Borough: "Queens", "Total Fare": 20 }];
+  const look = { fields, palette: ["#111"], css: () => "#999", valueColors: { Bronx: "#abcdef" } };
+  assert.deepEqual(pivotView(s, rows, "bar", look).option.series[0].data, [{ value: 10, itemStyle: { color: "#abcdef" } }, 20]);
+  const tree = pivotView({ ...s, mark: "treemap" }, rows, "treemap", look).option.series[0];
+  assert.equal(tree.type, "treemap");
+  assert.deepEqual(tree.data.map(d => [d.name, d.value, d.itemStyle.color]), [["Bronx", 10, "#abcdef"], ["Queens", 20, "#111"]]);
+});
+
+test("a calendar: a strip a year, newest first, each day its figure; a map's points over the world", () => {
+  const fields = modelFields(MODEL);
+  const s = pivotQuery({ rows: ["dim_date.Date"], values: ["Total Fare"], mark: "calendar" }, fields).state;
+  const rows = [{ Date: "2024-12-31", "Total Fare": 5 }, { Date: "2025-01-01", "Total Fare": 7 }];
+  const cal = pivotView(s, rows, "calendar", { fields, palette: ["#111"], css: () => "#999" }).option;
+  assert.deepEqual(cal.calendar.map(c => c.range), ["2025", "2024"]);
+  assert.deepEqual(cal.series.map(x => x.data), [[["2025-01-01", 7]], [["2024-12-31", 5]]]);
+  const m = pivotQuery({ rows: ["dim_zone.Lat", "dim_zone.Lon", "dim_zone.Zone"], values: ["Total Fare"], mark: "map" }, fields).state;
+  const map = pivotView(m, [{ Lat: -33.9, Lon: 151.2, Zone: "Sydney", "Total Fare": 4 }, { Lat: -37.8, Lon: 145, Zone: "Melbourne", "Total Fare": 1 }],
+    "map", { fields, palette: ["#111"], css: () => "#999" }).option;
+  assert.equal(map.geo.map, "world");
+  assert.deepEqual(map.series[0].data.map(d => [d.name, d.value]), [["Sydney", [151.2, -33.9, 4]], ["Melbourne", [145, -37.8, 1]]]);
 });
 
 test("Automatic: a card for Values alone, a table for no Values", () => {
@@ -214,7 +207,7 @@ test("Visual's fields leave out a hidden table, its measures too, and hidden col
     ...MODEL.tables.map(t => (t.name === "trips" ? { ...t, columns: [...t.columns, { name: "secret", dataType: "string", isHidden: true }] } : t)),
     { name: "stg_log", isHidden: true, columns: [{ name: "path", dataType: "string" }], measures: [{ name: "Files" }] },
   ], relationships: MODEL.relationships });
-  assert.deepEqual(tables.map(t => t.name), ["dim_zone", "trips"]);
+  assert.deepEqual(tables.map(t => t.name), ["dim_date", "dim_zone", "trips"]);
   assert.ok(!byId.has("stg_log.path") && !byId.has("Files") && !byId.has("trips.secret"));
   assert.ok(byId.has("trips.fare") && byId.has("Total Fare"));
 });
@@ -322,4 +315,10 @@ test("a chart's format over its option: colours by series, legend, axis titles a
     yAxis: [{ type: "value" }, { type: "value" }], series: [] }, { xTitle: "Day", yMin: 5 });
   assert.deepEqual(multi.xAxis.map(a => a.name), [undefined, "Day"]);
   assert.deepEqual(multi.yAxis.map(a => a.min), [5, 5]);
+});
+
+test("a zoom slider under a chart's plot, on its category axis", () => {
+  const out = formatChart({ grid: { left: 4, right: 16, top: 12, bottom: 8 }, xAxis: { type: "category" }, yAxis: { type: "value" }, series: [] }, { zoom: true });
+  assert.deepEqual(out.dataZoom.map(z => [z.type, z.xAxisIndex]), [["inside", [0]], ["slider", [0]]]);
+  assert.equal(out.grid.bottom, 38);
 });

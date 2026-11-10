@@ -207,26 +207,36 @@ test("--show-sql: the SQL a model query compiles to, never inside a --csv", asyn
 });
 
 test("a Report tile with a pick from another tile runs filtered on the real engine (app/explore/report.js)", async () => {
-  const { withFilters } = await import("../../app/explore/report.js");
-  const BAR = 'SELECT "dim_customer"."Region" AS "Region", AGG("Total Sales") AS "Total Sales" FROM model GROUP BY ALL ' +
-              'ORDER BY "Total Sales" DESC FETCH FIRST 12 ROWS WITH TIES';
-  const KPI = 'SELECT AGG("Total Sales") AS "Total Sales" FROM model';
-  const REGION = '"dim_customer"."Region"';
+  const { pickWhere } = await import("../../app/explore/report.js");
+  const { modelFields, pivotQuery } = await import("../../app/explore/explore.js");
+  // The shop model's fields a tile names, as Visual reads them.
+  const fields = modelFields({ tables: [
+    { name: "dim_customer", columns: [{ name: "Region", dataType: "string" }] },
+    { name: "fct_sales", columns: [{ name: "customer_id", dataType: "int64" }], measures: [{ name: "Total Sales" }] },
+  ], relationships: [{ fromTable: "fct_sales", toTable: "dim_customer" }] });
+  const BAR = pivotQuery({ rows: ["dim_customer.Region"], values: ["Total Sales"], mark: "bar", sort: "desc", top: 12 }, fields);
+  const KPI = pivotQuery({ values: ["Total Sales"], mark: "card" }, fields);
   await withAgent(agent, async ({ cli }) => {
     // A tile's SQL says FROM model; the command line names the model.
-    const rows = async (sql, filters) => {
-      const text = withFilters(sql, filters).replace(/\bFROM model\b/, "FROM semanticmodel.shop.sales_model");
+    const rows = async (piv, where) => {
+      const text = piv.sqlWith(where).replace(/\bFROM model\b/, "FROM semanticmodel.shop.sales_model");
       const r = await cli(["sql", text, "--json"]);
       assert.equal(r.code, EXIT.OK, `${text}\n${r.stdout}${r.stderr}`);
       return JSON.parse(r.stdout).rows.map(row => row.map(v => (typeof v === "string" && /^-?\d+(\.\d+)?$/.test(v) ? Number(v) : v)));
     };
-    assert.deepEqual(await rows(KPI, [{ ref: REGION, value: "East", type: "string" }]), [[12.5]]);
-    assert.deepEqual(await rows(BAR, [{ ref: '"fct_sales"."customer_id"', value: 2, type: "int64" }]), [["West", 5]]);
-    assert.deepEqual(await rows(BAR, [{ ref: REGION, value: null, type: "string" }]), [], "a blank: no customer has none");
-    assert.deepEqual(await rows(BAR, [{ ref: REGION, value: "O'Brien", type: "string" }]), [], "a quote in the value");
-    // Two picks, ANDed to the tile's own WHERE.
-    const own = BAR.replace("FROM model", `FROM model WHERE ${REGION} <> 'West' OR ${REGION} IS NULL`);
-    assert.deepEqual(await rows(own, [{ ref: '"fct_sales"."customer_id"', value: 1, type: "int64" }, { ref: REGION, value: "East" }]), [["East", 12.5]]);
+    assert.deepEqual(await rows(KPI, pickWhere("dim_customer.Region", { value: "East" })), [[12.5]]);
+    assert.deepEqual(await rows(BAR, pickWhere("fct_sales.customer_id", { value: 2 })), [["West", 5]]);
+    assert.deepEqual(await rows(BAR, pickWhere("dim_customer.Region", { value: null })), [], "a blank: no customer has none");
+    assert.deepEqual(await rows(BAR, pickWhere("dim_customer.Region", { value: "O'Brien" })), [], "a quote in the value");
+    // Two picks, ANDed to the tile's own filter.
+    const own = pivotQuery({ rows: ["dim_customer.Region"], values: ["Total Sales"], mark: "bar", sort: "desc", top: 12,
+                             filters: [{ field: "dim_customer.Region", op: "notIn", values: ["West"] }] }, fields);
+    assert.deepEqual(await rows(own, [...pickWhere("fct_sales.customer_id", { value: 1 }), ...pickWhere("dim_customer.Region", { value: "East" })]), [["East", 12.5]]);
+    // A filter on the measure: a HAVING the compiler takes.
+    const having = pivotQuery({ rows: ["dim_customer.Region"], values: ["Total Sales"], mark: "bar",
+                                filters: [{ field: "Total Sales", op: "range", min: 6, measure: true }] }, fields);
+    const kept = await rows(having, []);
+    assert.ok(kept.length && kept.every(([, v]) => v >= 6), JSON.stringify(kept));
   });
 });
 

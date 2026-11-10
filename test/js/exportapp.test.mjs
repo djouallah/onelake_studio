@@ -332,10 +332,11 @@ test("the local copy is one zip: the whole app but its packages, written and rea
     const agents = files.get("AGENTS.md").toString();
     assert.match(agents, /- `fct_sales` ← `mart\.fct_sales`/);
     assert.match(agents, /power bi\/nem\.Lakehouse\/Files\/semantic_model\/ossie\.yaml/);
-    assert.match(agents, /## The Report: yours to grow[\s\S]*`site\/report\.json`[\s\S]*FROM semanticmodel\.<workspace>\.sales/);
+    assert.match(agents, /## The Report: yours to grow[\s\S]*`site\/report\.json`[\s\S]*no tile holds SQL/);
     assert.match(agents, /```json\n([\s\S]*?)\n```/);
     const example = JSON.parse(/```json\n([\s\S]*?)\n```/.exec(agents)[1]);
-    assert.ok(example.pages[0].tiles[1].sql.startsWith('SELECT "dim_region"'), "its example is JSON");
+    assert.deepEqual(example.pages[0].tiles[1].pivot.rows, ["dim_region.Region"], "its example is JSON");
+    assert.ok(example.pages.every(p => p.tiles.every(t => t.sql === undefined)), "a Visual tile, never SQL");
     assert.equal(example.pages[0].tiles[0].kind, "text", "with a text tile");
 
     // Written as one file and read back: the same entries, and the marker apart.

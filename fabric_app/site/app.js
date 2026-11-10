@@ -49,6 +49,12 @@ const echartsReady = new Promise((resolve, reject) => {
   document.head.append(s);
 });
 echartsReady.catch(() => {});
+// The world's outline a map draws over, read the first time a map is drawn.
+const worldMap = async () => {
+  const r = await fetch(new URL("./vendor/npm/echarts@4.9.0/map/json/world.json", import.meta.url));
+  if (!r.ok) throw new Error(`the world's map: ${r.status}`);
+  return r.json();
+};
 
 // An Arrow result as Explore reads one: the column names, the rows as plain objects.
 const resultOf = table => ({
@@ -78,7 +84,29 @@ function download(name, text) {
   return true;
 }
 
+// The header's ☀/☾: the theme, kept in this browser; the class on the body tells Explore to draw
+// its charts again in it (view.js).
+function themeSwitch() {
+  const b = document.getElementById("theme-toggle");
+  if (!b) return;
+  const show = () => {
+    const light = document.documentElement.dataset.theme === "light";
+    b.textContent = light ? "☾" : "☀";
+    b.title = light ? "Dark" : "Light";
+  };
+  b.addEventListener("click", () => {
+    const t = document.documentElement.dataset.theme === "light" ? "dark" : "light";
+    document.documentElement.dataset.theme = t;
+    try { localStorage.setItem("theme", t); } catch {}
+    document.body.className = `theme-${t}`;
+    show();
+  });
+  show();
+}
+const titled = text => { const h = document.getElementById("app-title"); if (h) h.textContent = text; };
+
 export async function start() {
+  themeSwitch();
   try {
     const first = await siteJson("explore.json", null);
     const { engine, name: modelName } = (await siteJson("engine.json", {})) || {};
@@ -96,6 +124,7 @@ export async function start() {
     // What SQL calls the model: its own name when SQL can write it bare, else "model".
     const name = /^[A-Za-z_]\w*$/.test(String(doc.name ?? "")) ? doc.name : "model";
     document.title = `${doc.name || name} · Explore`;
+    titled(doc.name || name);
     status("");
     boot.done();
     const compiler = createCompiler(tmslToModel(bim), { tableSource: t => `v_${t.name}`, castOutput: EXPLORE_CASTS });
@@ -105,6 +134,7 @@ export async function start() {
       run: async sql => resultOf(await data.query(sql)),
       report, pages: ["report"],
       echarts: () => echartsReady,
+      worldMap,
       saveText: download,
       loadState: key => { try { return JSON.parse(localStorage.getItem(key)) ?? first; } catch { return first; } },
       saveState: (key, s) => { try { localStorage.setItem(key, JSON.stringify(s)); } catch {} },
@@ -144,6 +174,7 @@ async function startModel(first, modelName) {
   const bim = Array.isArray(doc.datasets) ? ossieToTmsl(doc) : doc;
   const name = /^[A-Za-z_]\w*$/.test(String(doc.name ?? "")) ? doc.name : "model";
   document.title = `${doc.name || name} · Explore`;
+  titled(doc.name || name);
   status("");
   boot.done();
   const run = async sql => {
@@ -157,6 +188,7 @@ async function startModel(first, modelName) {
     report, pages: ["report"],
     shownSql: sql => data.shownSql(sql),
     echarts: () => echartsReady,
+    worldMap,
     saveText: download,
     loadState: key => { try { return JSON.parse(localStorage.getItem(key)) ?? first; } catch { return first; } },
     saveState: (key, s) => { try { localStorage.setItem(key, JSON.stringify(s)); } catch {} },

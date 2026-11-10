@@ -27,7 +27,8 @@ const ROW_TOTAL = '__rows_total', COL_TOTAL = '__columns_total';
 const TYPES = { string: 'text', int64: 'number', double: 'number', decimal: 'number', dateTime: 'date', boolean: 'bool' };
 const ICONS = { text: 'Abc', number: '#', date: '▦', bool: '◐', measure: 'Σ' };
 const MARKS = [['auto', 'Automatic'], ['table', 'Table'], ['highlight', 'Highlight'], ['bar', 'Bar'], ['stacked', 'Stacked'],
-  ['line', 'Line'], ['area', 'Area'], ['heatmap', 'Heatmap'], ['scatter', 'Scatter'], ['slicer', 'Slicer'], ['card', 'Card']];
+  ['line', 'Line'], ['area', 'Area'], ['heatmap', 'Heatmap'], ['scatter', 'Scatter'], ['treemap', 'Treemap'], ['calendar', 'Calendar'],
+  ['map', 'Map'], ['slicer', 'Slicer'], ['card', 'Card']];
 // How a slicer is drawn (slicerView); Range only for a date or a number.
 const SLICER_STYLES = [['list', 'List'], ['buttons', 'Buttons'], ['dropdown', 'Dropdown'], ['range', 'Range']];
 const SHELVES = [['rows', 'Rows'], ['cols', 'Columns'], ['values', 'Values'], ['filters', 'Filters']];
@@ -104,7 +105,8 @@ export function buildQuery(s, { cap = CAP, today = localToday() } = {}) {
   if (!s.rows.length && !s.cols.length && !s.values.length) return null;
   if (s.mark === 'card') {
     if (!s.values.length) throw new Error('A card shows the fields on Values: put a measure there.');
-    s = { ...s, rows: [], cols: [], totals: false };
+    // Its figures are the total; a field on Rows (a date) is its trend, the rows under that total.
+    s = { ...s, rows: s.rows.slice(0, 1), cols: [], totals: s.rows.length > 0 };
   }
   const dims = [...s.rows, ...s.cols];
   const select = {};
@@ -115,8 +117,11 @@ export function buildQuery(s, { cap = CAP, today = localToday() } = {}) {
     select[name] = a ? { [a.agg]: a.col } : id;
   }
   const q = { select };
-  const where = s.filters.flatMap(f => conditions(f, today));
+  // A filter on a measure is on the figures shown (HAVING); on a column, on the rows (WHERE).
+  const where = s.filters.filter(f => !f.measure).flatMap(f => conditions(f, today));
   if (where.length) q.where = where;
+  const having = s.filters.filter(f => f.measure).flatMap(f => conditions(f, today));
+  if (having.length) q.having = having;
   if (s.totals && s.values.length && dims.length) {
     q.totals = {};
     if (s.rows.length) q.totals[ROW_TOTAL] = [...s.rows];
@@ -124,7 +129,10 @@ export function buildQuery(s, { cap = CAP, today = localToday() } = {}) {
   }
   const order = s.sort === 'desc' && s.values.length ? [[nameOf(s.values[0]), 'desc'], ...dims.map(nameOf)] : dims.map(nameOf);
   if (order.length) q.orderBy = order;
-  if (cap && order.length) q.top = cap;
+  // Top N: its first n rows, ties kept, as it is sorted; else the cap, when there is one.
+  const top = Number.isInteger(s.top) && s.top > 0 && order.length ? s.top : null;
+  if (top != null) q.top = cap ? Math.min(top, cap) : top;
+  else if (cap && order.length) q.top = cap;
   return q;
 }
 
@@ -195,8 +203,17 @@ export function modelSql(q, column, from = 'model', plain = null) {
     : plain && columnsOnly ? '' : Object.values(q.select).some(isColumn) ? 'GROUP BY ALL' : '';
   const order = (q.orderBy ?? []).map(o => Array.isArray(o) ? `${name(o[0])} ${o[1].toUpperCase()}` : name(o));
   const distinct = plain && columnsOnly && !rolled.length ? 'DISTINCT ' : '';
+  // HAVING: a measure by its name in the SELECT, or as itself when it is not there.
+  const figure = m => { const alias = Object.entries(q.select).find(([, x]) => x === m)?.[0]; return alias ? name(alias) : expr(m); };
+  const having = ([m, op, ...a]) => {
+    const x = figure(m), num = v => sqlVal(Number(v));
+    if (op === 'between') return `${x} BETWEEN ${num(a[0])} AND ${num(a[1])}`;
+    if (op === 'blank' || op === 'notBlank') return `${x} IS ${op === 'blank' ? '' : 'NOT '}NULL`;
+    return `${x} ${op} ${num(a[0])}`;
+  };
   return [`SELECT ${distinct}${items.join(', ')}`, `FROM ${plain ? plain.from : from}`,
     q.where?.length ? `WHERE ${q.where.map(cond).join('\n  AND ')}` : '', group,
+    q.having?.length ? `HAVING ${q.having.map(having).join('\n  AND ')}` : '',
     order.length ? `ORDER BY ${order.join(', ')}` : '',
     q.top == null ? '' : plain ? `LIMIT ${q.top}` : `FETCH FIRST ${q.top} ROWS WITH TIES`].filter(Boolean).join('\n');
 }
@@ -260,6 +277,15 @@ function shelfField(fields, id) {
   return c && { id, kind: 'measure', type: 'measure', name: nameOf(id), agg: a.agg, column: c,
     format: a.agg === 'count' || a.agg === 'distinct' ? '#,0' : c.format };
 }
+/**
+ * The SQL of a column's values, as the Filters shelf lists them: each once, in order (`desc`:
+ * the largest first), the first `top`. A Report's filter bar and its colours by value ask it.
+ */
+export function valuesSql(fields, id, { top = 1000, desc = false } = {}) {
+  const columnOf = x => { const f = fields.byId.get(x); return f && f.kind === 'column' ? { table: f.table, name: f.name, type: f.type } : null; };
+  return modelSql({ select: { v: id }, orderBy: [desc ? ['v', 'desc'] : 'v'], top }, columnOf, 'model');
+}
+
 /** The names the shelves' Values have in their query's rows (a Report's format pane lists them). */
 export const valueNames = s => (s?.values ?? []).map(nameOf);
 // A field's format string: a Report tile's own for its name (look.formats), else the model's.
@@ -278,8 +304,14 @@ export function pivotQuery(saved, fields) {
   if (!q) throw new Error("the tile's pivot has no fields on its shelves");
   const columnOf = id => { const f = fields.byId.get(id); return f && f.kind === 'column' ? { table: f.table, name: f.name, type: f.type } : null; };
   // A card has no rows to click: it picks nothing.
-  const first = state.mark === 'card' ? null : columnOf(state.rows[0] ?? state.cols[0]);
-  return { state, sql: modelSql(q, columnOf, 'model'), field: first && { table: first.table, column: first.name, ref: `${qid(first.table)}.${qid(first.name)}` } };
+  // A map picks its points' name (its third Rows field), not their latitude.
+  const firstId = state.mark === 'card' ? null : state.mark === 'map' ? state.rows[2] ?? null : state.rows[0] ?? state.cols[0];
+  const first = firstId == null ? null : columnOf(firstId);
+  // `sqlWith(where)`: the same query with more conditions (a Report's picks in other tiles, its
+  // filter bar), each as the Filters shelf writes one: [id, op, ...values].
+  const sqlWith = (where = []) => modelSql(where.length ? { ...q, where: [...(q.where ?? []), ...where] } : q, columnOf, 'model');
+  return { state, sql: sqlWith(), sqlWith,
+           field: first && { id: firstId, table: first.table, column: first.name, ref: `${qid(first.table)}.${qid(first.name)}` } };
 }
 
 /** What a Report's tile of these shelves is called: its values by its rows and columns. */
@@ -299,10 +331,12 @@ const same = (a, b) => (a ?? null) === (b ?? null);
  * The rows of the shelves' query drawn as `mark` says ('auto': autoMark's), the Pivot page's
  * and a Report's tile's alike: { node }, a table or why there is none, or { option, keyAt }, an
  * ECharts option and the row key of a click on it (null: none). `s`: the shelves the rows are
- * of; `look`: { fields, palette, css, styles?, formats?, byValue?, labels? } — a Report tile's
- * own: `formats`, a format string by a field's name, over the model's; `byValue`, a table's
- * measures coloured by their value, 'background' or 'bar', by name; `labels`, a chart's values
- * written on it. `pick` (a Report's tile): { on(key), active,
+ * of; `look`: { fields, palette, css, styles?, formats?, byValue?, labels?, measures?, totalLine?,
+ * maxLabel?, valueColors?, change?, goodWhen? } — a Report tile's own: `formats`, a format
+ * string by a field's name, over the model's; `byValue`, a table's measures coloured by their
+ * value, 'background' or 'bar', by name; `labels`, a chart's values written on it; `measures`,
+ * `totalLine`, `maxLabel` (pivotChart); `valueColors`, a colour by a value's label (the report's
+ * theme); `change`, `goodWhen` (cardView). `pick` (a Report's tile): { on(key), active,
  * value } — what a click on a row key calls, and the first field's value picked: its row bright,
  * the others dim. `sel`: a slicer's (slicerView).
  */
@@ -316,19 +350,46 @@ export function pivotView(s, rows, mark, look, pick = null, sel = null) {
   return typeof out === 'string' ? { node: el('div', { class: 'ex-empty' }, out) } : out;
 }
 
-// A card: each field on Values as one figure, from the one row its query answers (buildQuery
-// leaves its Rows and Columns out), in its format, else grouped with at most two decimals. Its
-// name is under it only when there are several: a Report's tile is titled for one.
+// A card: each field on Values as one figure, in its format, else grouped with at most two
+// decimals. Its query's total row has the figures when a field is on Rows (buildQuery), and the
+// rows under it are the first figure's trend, a line under it; else its one row has them. A
+// Report tile's `look.change`, the name of a measure on Values, is the first figure's change
+// (▲ or ▼, good when it goes `look.goodWhen`, up by default) rather than a figure of its own.
+// A figure's name is under it only when there are several: a Report's tile is titled for one.
 function cardView(s, rows, look) {
-  const row = rows[0] ?? {}, many = s.values.length > 1;
+  const total = (s.rows.length ? rows.find(r => r[ROW_TOTAL]) : rows[0]) ?? {};
+  const trend = s.rows.length ? rows.filter(r => !r[ROW_TOTAL]) : [];
+  const change = look.change ? s.values.find(id => nameOf(id) === look.change) : null;
+  const shown = s.values.filter(id => id !== change);
+  const many = shown.length > 1;
   const text = id => {
-    const v = row[nameOf(id)], format = formatOf(look, id);
+    const v = total[nameOf(id)], format = formatOf(look, id);
     return v == null ? '(blank)' : typeof v === 'number' && !format ? v.toLocaleString('en-US', { maximumFractionDigits: 2 }) : formatValue(v, format);
   };
-  return el('div', { class: `card-figures${many ? ' card-many' : ''}` }, s.values.map(id =>
-    el('div', { class: 'card-figure' }, el('b', {}, text(id)), many ? el('span', {}, nameOf(id)) : null)));
+  const changeLine = () => {
+    const v = total[nameOf(change)];
+    if (typeof v !== 'number') return null;
+    if (!v) return el('span', { class: 'card-change' }, 'unchanged');
+    const good = look.goodWhen === 'down' ? v < 0 : v > 0;
+    const format = formatOf(look, change);
+    return el('span', { class: `card-change ${good ? 'good' : 'bad'}` },
+      `${v > 0 ? '▲' : '▼'} ${format ? formatValue(Math.abs(v), format) : Math.abs(v).toLocaleString('en-US', { maximumFractionDigits: 2 })}`);
+  };
+  return el('div', { class: `card-figures${many ? ' card-many' : ''}${trend.length > 1 ? ' card-trended' : ''}` }, shown.map((id, i) =>
+    el('div', { class: 'card-figure' }, el('b', {}, text(id)), many ? el('span', {}, nameOf(id)) : null,
+      i === 0 && change ? changeLine() : null,
+      i === 0 && trend.length > 1 ? sparkline(trend.map(r => r[nameOf(id)]), look.palette[0]) : null)));
 }
 
+// A line of values, left to right, drawn to fill its box (a card's trend).
+function sparkline(values, color) {
+  const xs = values.map(v => (typeof v === 'number' && Number.isFinite(v) ? v : null));
+  const [lo, hi] = extent(xs);
+  const y = v => (hi > lo ? 22 - 20 * (v - lo) / (hi - lo) : 12);
+  const points = xs.map((v, i) => (v == null ? null : `${(100 * i / Math.max(1, xs.length - 1)).toFixed(2)},${y(v).toFixed(2)}`)).filter(Boolean);
+  return el('svg:svg', { class: 'card-trend', viewBox: '0 0 100 24', preserveAspectRatio: 'none', 'aria-hidden': 'true' },
+    el('svg:polyline', { points: points.join(' '), fill: 'none', stroke: color, 'stroke-width': '1.5', 'vector-effect': 'non-scaling-stroke' }));
+}
 // A slicer: the values of the first Rows field (else Columns) as the rows have them, in the query's
 // order, each with the first measure's figure (a value with none is not in the rows), drawn as
 // `sel.style` says: a list to tick, buttons, a dropdown of the list, or a range for a date or a
@@ -509,6 +570,101 @@ function pivotChart(s, piv, mark, look, pick) {
   // A point's value, dim when a pick is on and its key is not the one picked.
   const point = (key, value) => (dimmed(pick, key) ? { value, itemStyle: { opacity: DIM } } : value);
 
+  // A value's own colour (a Report's theme gives a fuel, a region, one colour everywhere), else the palette's.
+  const valueColor = key => look.valueColors?.[label(key)];
+  const seriesColor = (b, j) => valueColor(b) ?? color(j);
+  // The figure of row key `a` (with no Columns field, its one cell).
+  const figure = (a, n) => piv.cell(a, s.cols.length ? piv.colKeys[0] : [])?.[n];
+
+  if (mark === 'treemap') {
+    if (!s.rows.length || !s.values.length) return 'A treemap needs a field on Rows (two for two levels) and a measure on Values: its size.';
+    const m = s.values[0], n = nameOf(m), deep = s.rows.length > 1;
+    const tops = new Map();
+    for (const a of piv.rowKeys) {
+      const v = figure(a, n);
+      if (typeof v !== 'number' || !(v > 0)) continue;
+      const top = label([a[0]]);
+      if (!tops.has(top)) {
+        const c = valueColor([a[0]]) ?? color(tops.size);
+        tops.set(top, { name: top, key: [a[0]], itemStyle: { color: c }, ...(deep ? { children: [] } : { value: v }) });
+      }
+      // The second level's boxes in their first level's colour; ECharts sums a first level's size.
+      if (deep) tops.get(top).children.push({ name: label([a[1]]), value: v, key: [a[0]], itemStyle: { color: tops.get(top).itemStyle.color } });
+    }
+    const border = css('--card');
+    return {
+      option: {
+        tooltip: { formatter: p => `${esc((p.treePathInfo ?? []).slice(1).map(x => x.name).join(' › '))}<br><b>${esc(fmt(m, p.value))}</b>` },
+        series: [{ type: 'treemap', data: [...tops.values()], roam: false, nodeClick: deep ? 'zoomToNode' : false,
+          breadcrumb: { show: deep, bottom: 0, itemStyle: { color: css('--raised'), borderColor: css('--border'), textStyle: { color: css('--text') } } },
+          left: 0, right: 0, top: 0, bottom: deep ? 28 : 0, label: { show: true, formatter: '{b}', fontSize: 11 },
+          upperLabel: { show: deep, height: 18, color: '#fff', fontSize: 11 },
+          levels: [{ itemStyle: { borderColor: border, borderWidth: 2, gapWidth: 2 } }, { itemStyle: { borderColor: border, borderWidth: 1, gapWidth: 1 } }] }],
+      },
+      keyAt: () => null,
+    };
+  }
+  if (mark === 'calendar') {
+    const f0 = fields.byId.get(s.rows[0]);
+    if (!f0 || f0.type !== 'date' || !s.values.length) return 'A calendar needs a date column on Rows and a measure on Values: a day\'s colour.';
+    const m = s.values[0], n = nameOf(m);
+    const keyOf = new Map();
+    const days = [];
+    for (const a of piv.rowKeys) {
+      const d = /^\d{4}-\d{2}-\d{2}/.exec(String(a[0] ?? ''))?.[0], v = figure(a, n);
+      if (!d || typeof v !== 'number') continue;
+      keyOf.set(d, a);
+      days.push([d, v]);
+    }
+    if (!days.length) return 'No days to show.';
+    const years = [...new Set(days.map(d => d[0].slice(0, 4)))].sort().reverse();
+    const [lo, hi] = extent(days.map(d => d[1]));
+    const band = 100 / years.length;
+    const muted = css('--muted');
+    return {
+      option: {
+        tooltip: { formatter: p => `${esc(p.value[0])}<br>${esc(n)}: <b>${esc(fmt(m, p.value[1]))}</b>` },
+        visualMap: { min: lo, max: hi, calculable: true, orient: 'horizontal', left: 'center', bottom: 0, itemHeight: 120,
+          inRange: { color: [css('--raised'), color(0)] }, formatter: v => fmt(m, v) },
+        calendar: years.map((y, i) => ({ range: y, top: `${i * band + 4}%`, height: `${band - 16}%`, left: 36, right: 12, cellSize: ['auto', 'auto'],
+          firstDay: 1, splitLine: { show: false }, itemStyle: { color: css('--raised'), borderColor: css('--card'), borderWidth: 2 },
+          dayLabel: { color: muted, fontSize: 10, firstDay: 1 }, monthLabel: { color: muted, fontSize: 10 }, yearLabel: { color: muted, fontSize: 11 } })),
+        series: years.map((y, i) => ({ type: 'heatmap', coordinateSystem: 'calendar', calendarIndex: i,
+          data: days.filter(d => d[0].startsWith(y)).map(d => (dimmed(pick, keyOf.get(d[0])) ? { value: d, itemStyle: { opacity: DIM } } : d)) })),
+      },
+      keyAt: e => keyOf.get(e.value?.[0]) ?? null,
+    };
+  }
+  if (mark === 'map') {
+    // Rows: a latitude, a longitude, then a name if there is one; the first measure each point's
+    // size; a column on Columns its colour. Drawn over the world's map, centred on the points.
+    if (s.rows.length < 2 || !s.values.length) return 'A map needs a latitude and a longitude on Rows (then a name), and a measure on Values: a point\'s size.';
+    const m = s.values[0], n = nameOf(m), named = s.rows.length > 2;
+    const groups = s.cols.length ? piv.colKeys.slice(0, SERIES_CAP) : [[]];
+    const num = v => (v == null || v === '' ? NaN : Number(v));
+    const points = groups.map(b => piv.rowKeys.map(a => ({ a, v: piv.cell(a, b)?.[n] }))
+      .filter(p => typeof p.v === 'number' && Number.isFinite(num(p.a[0])) && Number.isFinite(num(p.a[1]))));
+    const all = points.flat();
+    if (!all.length) return 'No points with a latitude and a longitude to show.';
+    const top = Math.max(...all.map(p => Math.abs(p.v))) || 1;
+    const [la0, la1] = extent(all.map(p => num(p.a[0]))), [lo0, lo1] = extent(all.map(p => num(p.a[1])));
+    const span = Math.max((lo1 - lo0) * 1.25, (la1 - la0) * 2.2, 1);
+    return {
+      option: {
+        geo: { map: 'world', roam: true, center: [(lo0 + lo1) / 2, (la0 + la1) / 2], zoom: Math.max(1, Math.min(40, 360 / span)),
+          itemStyle: { areaColor: css('--raised'), borderColor: css('--border') }, emphasis: { disabled: true }, select: { disabled: true }, silent: true },
+        legend: groups.length > 1 ? { type: 'scroll', bottom: 0, data: groups.map(label) } : undefined,
+        tooltip: { trigger: 'item', formatter: p => `${esc(p.data.name)}${groups.length > 1 ? ` · ${esc(p.seriesName)}` : ''}<br>${esc(n)}: <b>${esc(fmt(m, p.data.v))}</b>` },
+        series: groups.map((b, i) => ({
+          type: 'scatter', coordinateSystem: 'geo', name: label(b), itemStyle: { color: seriesColor(b, i), opacity: 0.85 },
+          symbolSize: d => Math.max(5, Math.sqrt(Math.abs(d[2]) / top) * 25),
+          data: points[i].map(p => ({ name: named ? label([p.a[2]]) : `${p.a[0]}, ${p.a[1]}`, value: [num(p.a[1]), num(p.a[0]), p.v], v: p.v,
+            key: named ? [p.a[2]] : null, ...(named && dimmed(pick, [p.a[2]]) ? { itemStyle: { opacity: DIM } } : {}) })),
+        })),
+      },
+      keyAt: e => e.data?.key ?? null,
+    };
+  }
   if (mark === 'heatmap') {
     if (!s.rows.length || !s.cols.length) return 'A heatmap needs a field on Rows and one on Columns.';
     const m = s.values[0], n = nameOf(m);
@@ -549,49 +705,84 @@ function pivotChart(s, piv, mark, look, pick) {
       keyAt: e => keys[e.seriesIndex]?.[e.dataIndex] ?? null,
     };
   }
-  // Bar, stacked bar, line, area: one plot per measure, the series the column keys.
-  const ms = s.values.slice(0, MULTIPLES);
+  // Bar, stacked bar, line, area: one plot per measure, the series the column keys. A Report
+  // tile's `look.measures` ({ measure: { as, axis } }) puts its measures in one plot instead, each
+  // drawn as it says (bar, line, area, or a dashed line), on the left axis or the right one.
+  // `look.totalLine`: each measure's total (the query's own Totals row) as a line across;
+  // `look.maxLabel`: each series' highest point labelled.
+  const combine = !!(look.measures && Object.keys(look.measures).length) && s.values.length > 1;
+  const ms = s.values.slice(0, combine ? SERIES_CAP : MULTIPLES);
   const xField = fields.byId.get(byCols ? s.cols[0] : s.rows[0]);
-  const flat = (mark === 'bar' || mark === 'stacked') && xField?.type === 'text';   // names read across, bars lie down
-  const legend = shown.length > 1;
+  const flat = !combine && (mark === 'bar' || mark === 'stacked') && xField?.type === 'text';   // names read across, bars lie down
+  const plots = combine ? 1 : ms.length;
+  // One series a measure, in one plot: each named, and coloured, for its measure.
+  const named = combine && shown.length === 1;
+  const legend = shown.length > 1 || combine;
+  const asOf = m => (combine ? look.measures[nameOf(m)]?.as : null) ?? (mark === 'line' ? 'line' : mark === 'area' ? 'area' : 'bar');
+  const onRight = m => combine && look.measures[nameOf(m)]?.axis === 'right';
+  const right = ms.some(onRight);
   // One plot has no title over it: the Values shelf, or a Report tile's title, names its measure,
   // and a title there sat on the axis's top label. Several have one each, over their own plot.
-  const one = ms.length === 1;
+  const one = plots === 1;
   const grids = one ? [{ grid: { left: 4, right: 16, containLabel: true, top: legend ? 36 : 14, bottom: cut ? 24 : 8 } }]
-    : stackedGrids(ms.length, legend ? 7 : 0);
+    : stackedGrids(plots, legend ? 7 : 0);
   const catAxis = (i, more) => ({ type: 'category', gridIndex: i, data: cats.map(label), inverse: flat,
-    axisLabel: { show: flat || i === ms.length - 1, hideOverlap: true }, ...more });
-  const valAxis = (i, m) => ({ type: 'value', gridIndex: i,
-    axisLabel: { formatter: v => fmt(m, v), hideOverlap: true }, splitNumber: ms.length > 2 ? 2 : 4 });
-  const lines = mark === 'line' || mark === 'area';
+    axisLabel: { show: flat || i === plots - 1, hideOverlap: true }, ...more });
+  const valAxis = (i, m, side) => ({ type: 'value', gridIndex: i, ...(side === 'right' ? { position: 'right', splitLine: { show: false } } : {}),
+    axisLabel: { formatter: v => fmt(m, v), hideOverlap: true }, splitNumber: plots > 2 ? 2 : 4 });
+  const lines = combine ? ms.some(m => asOf(m) !== 'bar') : mark === 'line' || mark === 'area';
+  const bars = combine ? ms.some(m => asOf(m) === 'bar') : !lines;
   // A line marks the pick across its plot, as its points are not drawn.
   const marked = pick?.active && lines ? cats.findIndex(a => same(a[0], pick.value)) : -1;
+  const muted = css('--muted');
+  const xAxis = combine ? [catAxis(0, { boundaryGap: bars })]
+    : ms.map((m, i) => flat ? valAxis(i, m) : catAxis(i, { boundaryGap: mark === 'bar' || mark === 'stacked' }));
+  const yAxis = combine ? [valAxis(0, ms.find(m => !onRight(m)) ?? ms[0]), ...(right ? [valAxis(0, ms.find(onRight), 'right')] : [])]
+    : ms.map((m, i) => flat ? catAxis(i) : valAxis(i, m));
   return {
     option: {
       tooltip: { trigger: 'axis', confine: true, axisPointer: { type: lines ? 'line' : 'shadow' },
         formatter: ps => [esc(ps[0]?.axisValueLabel), ...ps.filter(p => p.value != null).map(p => {
-          const m = ms[Math.floor(p.seriesIndex / shown.length)];
-          return `${p.marker}${shown.length > 1 ? `${esc(p.seriesName)} · ` : ''}${esc(nameOf(m))}: <b>${esc(fmt(m, p.value))}</b>`;
+          const m = ms[Math.floor(p.seriesIndex / shown.length)], b = shown[p.seriesIndex % shown.length];
+          return `${p.marker}${shown.length > 1 ? `${esc(label(b))} · ` : ''}${esc(nameOf(m))}: <b>${esc(fmt(m, p.value))}</b>`;
         })].join('<br>') },
-      legend: legend ? { type: 'scroll', top: 0, data: shown.map(label) } : undefined,
+      legend: legend ? { type: 'scroll', top: 0 } : undefined,
       title: one ? (cut ? [{ text: cut.trim(), right: 16, bottom: 0, textStyle: { fontSize: 11, fontWeight: 400 } }] : [])
         : ms.map((m, i) => ({ text: i ? nameOf(m) : nameOf(m) + cut, top: grids[i].title, left: 4, textStyle: { fontSize: 12, fontWeight: 600 } })),
       grid: grids.map(g => g.grid),
-      dataZoom: !flat && cats.length > 60 ? [{ type: 'inside', xAxisIndex: ms.map((_, i) => i) }] : [],
-      xAxis: ms.map((m, i) => flat ? valAxis(i, m) : catAxis(i, { boundaryGap: mark === 'bar' || mark === 'stacked' })),
-      yAxis: ms.map((m, i) => flat ? catAxis(i) : valAxis(i, m)),
-      series: ms.flatMap((m, i) => shown.map((b, j) => ({
-        type: lines ? 'line' : 'bar', name: label(b), xAxisIndex: i, yAxisIndex: i,
-        stack: mark === 'stacked' || mark === 'area' ? `s${i}` : undefined,
-        areaStyle: mark === 'area' ? { opacity: 0.85 } : undefined, showSymbol: false, connectNulls: false,
-        itemStyle: { color: color(j) }, lineStyle: mark === 'line' ? { width: 1.6 } : undefined,
-        barMaxWidth: 28, large: cats.length > 400,
-        ...(look.labels ? { label: { show: true, position: flat ? 'right' : mark === 'stacked' || mark === 'area' ? 'inside' : 'top',
-          fontSize: 10, formatter: p => fmt(m, p.value) } } : {}),
-        data: cats.map(a => point(a, at(a, b)?.[nameOf(m)] ?? null)),
-        ...(marked >= 0 && j === 0 ? { markLine: { silent: true, symbol: 'none', label: { show: false },
-          data: [flat ? { yAxis: label(cats[marked]) } : { xAxis: label(cats[marked]) }] } } : {}),
-      }))),
+      dataZoom: !flat && cats.length > 60 ? [{ type: 'inside', xAxisIndex: xAxis.map((_, i) => i) }] : [],
+      xAxis, yAxis,
+      series: ms.flatMap((m, i) => shown.map((b, j) => {
+        const as = asOf(m), type = as === 'bar' ? 'bar' : 'line';
+        const c = named ? valueColor([nameOf(m)]) ?? color(i) : seriesColor(b, j);
+        const total = look.totalLine && !byCols && shown.length === 1 ? piv.cell(null, b)?.[nameOf(m)] : null;
+        const across = [
+          ...(marked >= 0 && i === 0 && j === 0 ? [flat ? { yAxis: label(cats[marked]) } : { xAxis: label(cats[marked]) }] : []),
+          ...(typeof total === 'number' ? [{ ...(flat ? { xAxis: total } : { yAxis: total }), lineStyle: { type: 'dashed', color: muted },
+            label: { show: true, position: 'insideEndTop', color: muted, fontSize: 11, formatter: `Total ${fmt(m, total)}` } }] : []),
+        ];
+        // A bar of a value with its own colour (one series): that colour.
+        const own = a => (shown.length === 1 && !named && type === 'bar' ? valueColor(a) : null);
+        return {
+          type, name: named ? nameOf(m) : combine ? `${label(b)} · ${nameOf(m)}` : label(b),
+          xAxisIndex: combine ? 0 : i, yAxisIndex: combine ? (right && onRight(m) ? 1 : 0) : i,
+          stack: (mark === 'stacked' || mark === 'area') && as !== 'line' && as !== 'dashed' ? `s${i}` : undefined,
+          areaStyle: as === 'area' ? { opacity: 0.85 } : undefined, showSymbol: false, connectNulls: false,
+          itemStyle: { color: c, ...(flat && mark === 'bar' ? { borderRadius: [0, 4, 4, 0] } : {}) },
+          lineStyle: type === 'line' ? { width: as === 'dashed' ? 1.5 : 1.6, color: c, ...(as === 'dashed' ? { type: 'dashed' } : {}) } : undefined,
+          barMaxWidth: 18, large: cats.length > 400,
+          ...(look.labels ? { label: { show: true, position: flat ? 'right' : as === 'bar' && mark === 'stacked' || as === 'area' ? 'inside' : 'top',
+            fontSize: 10, formatter: p => fmt(m, p.value) } } : {}),
+          ...(look.maxLabel ? { markPoint: { symbol: 'circle', symbolSize: 6, itemStyle: { color: c }, data: [{ type: 'max' }],
+            label: { position: 'top', fontSize: 11, fontWeight: 600, color: css('--text'), formatter: p => fmt(m, p.value) } } } : {}),
+          data: cats.map(a => {
+            const p = point(a, at(a, b)?.[nameOf(m)] ?? null), oc = own(a);
+            if (!oc) return p;
+            return p && typeof p === 'object' ? { ...p, itemStyle: { ...p.itemStyle, color: oc } } : { value: p, itemStyle: { color: oc } };
+          }),
+          ...(across.length ? { markLine: { silent: true, symbol: 'none', label: { show: false }, data: across } } : {}),
+        };
+      })),
     },
     keyAt: e => cats[e.dataIndex] ?? null,
   };
@@ -608,6 +799,7 @@ function pivotChart(s, piv, mark, look, pick) {
 //   loadState()      the shelves kept from the last visit (or null)
 //   saveState(s)     keep the shelves for the next visit
 //   noSlicer         (optional) no Slicer mark (a table's Visual, which only builds SQL)
+//   mapReady()       (optional) the world's map registered with ECharts (a promise), before a map is drawn
 export function createExplorer(root, ctx) {
   let fields = null, state = load(), drag = null, seq = 0, timer = null, result = null, pop = null;
   // What the Visual page's slicer has picked: shown only, nothing filters here.
@@ -640,9 +832,13 @@ export function createExplorer(root, ctx) {
   const totals = el('input', { type: 'checkbox' });
   const sort = el('select', { 'aria-label': 'Sort' }, el('option', { value: 'fields' }, 'Sort by fields'),
     el('option', { value: 'desc' }, 'Sort by first value ↓'));
+  // Top N: the first n rows as they are sorted, ties kept.
+  const TOPS = [0, 1, 3, 5, 10, 15, 20, 25, 50, 100];
+  const top = el('select', { 'aria-label': 'Top', title: 'Keep the first rows, as they are sorted (ties kept)' },
+    TOPS.map(n => el('option', { value: n }, n ? `Top ${n}` : 'All rows')));
   const info = el('span', { class: 'ex-info' });
   const tools = el('div', { class: 'ex-tools' }, marks,
-    el('label', { class: 'ex-check' }, totals, 'Totals'), sort,
+    el('label', { class: 'ex-check' }, totals, 'Totals'), sort, top,
     el('button', { type: 'button', class: 'btn-explore', title: 'Swap rows and columns', onclick: () => {
       [state.rows, state.cols] = [state.cols, state.rows]; changed(); } }, '⇄ Swap'),
     el('button', { type: 'button', class: 'btn-explore', onclick: () => { state = { ...EMPTY(), mark: state.mark }; changed(); } }, 'Clear'),
@@ -660,6 +856,13 @@ export function createExplorer(root, ctx) {
   search.addEventListener('input', renderFields);
   totals.addEventListener('change', () => { state.totals = totals.checked; changed(); });
   sort.addEventListener('change', () => { state.sort = sort.value; changed(); });
+  top.addEventListener('change', () => {
+    const n = Number(top.value);
+    state.top = n || null;
+    // The top of a measure, largest first, unless it is sorted already.
+    if (n && state.sort === 'fields' && state.values.length) state.sort = 'desc';
+    changed();
+  });
   for (const [k, m] of MARKS) {
     if (k === 'slicer' && ctx.noSlicer) continue;
     marks.append(el('button', { type: 'button', class: 'ex-mark', 'data-mark': k,
@@ -675,7 +878,7 @@ export function createExplorer(root, ctx) {
   const fieldOf = id => shelfField(fields, id);
 
   // --- Drag and drop: a field onto a shelf, a chip along or between shelves, or off them ---
-  const accepts = (shelf, f) => f && (shelf === 'values' || f.kind === 'column');
+  const accepts = (shelf, f) => f && (shelf === 'values' || f.kind === 'column' || (shelf === 'filters' && f.kind === 'measure'));
   for (const [k, box] of Object.entries(shelfEls)) {
     box.addEventListener('dragover', e => {
       const f = drag && fieldOf(drag.id);
@@ -690,7 +893,7 @@ export function createExplorer(root, ctx) {
       if (!drag) return;
       const f = fieldOf(drag.id);
       if (!f) return;
-      const to = f.kind === 'measure' ? 'values' : k;   // a measure dropped on Rows goes to Values
+      const to = f.kind === 'measure' && k !== 'filters' ? 'values' : k;   // a measure dropped on Rows goes to Values
       const chip = e.target.closest('.ex-chip');
       const at = chip && to === k ? Number(chip.dataset.index) : null;
       place(drag, to, at);
@@ -703,7 +906,10 @@ export function createExplorer(root, ctx) {
   function entry(shelf, i) { return shelf === 'filters' ? state.filters[i].field : state[shelf][i]; }
   function removeAt(shelf, i) { state[shelf].splice(i, 1); changed(); }
   function place({ id, from, index }, to, at) {
-    let item = to === 'filters' ? { field: id, op: fields.byId.get(id).type === 'text' || fields.byId.get(id).type === 'bool' ? 'in' : 'range', values: [] } : id;
+    // A measure on Filters filters the figures shown: a range of them.
+    const fd = fields.byId.get(id);
+    let item = to !== 'filters' ? id : fd.kind === 'measure' ? { field: id, op: 'range', measure: true }
+      : { field: id, op: fd.type === 'text' || fd.type === 'bool' ? 'in' : 'range', values: [] };
     if (from) {
       const [moved] = state[from].splice(index, 1);
       if (from === to && at != null && at > index) at--;
@@ -744,7 +950,7 @@ export function createExplorer(root, ctx) {
   function fieldKey(e, f) {
     if (e.ctrlKey || e.metaKey || e.altKey) return;
     const to = { r: 'rows', c: 'cols', f: 'filters', v: 'values' }[e.key.toLowerCase()];
-    if (!to || (f.kind === 'measure' && to !== 'values')) return;
+    if (!to || (f.kind === 'measure' && to !== 'values' && to !== 'filters')) return;
     e.preventDefault();
     place({ id: f.id }, to, null);
     if (to !== 'filters') focusField(f.id);
@@ -769,9 +975,9 @@ export function createExplorer(root, ctx) {
     const term = search.value.trim().toLowerCase();
     const used = new Set([...state.rows, ...state.cols, ...state.values]);
     const item = f => {
-      const shelvesFor = f.kind === 'measure' ? 'V: Values' : 'R: Rows, C: Columns, F: Filters, V: Values';
+      const shelvesFor = f.kind === 'measure' ? 'V: Values, F: Filters' : 'R: Rows, C: Columns, F: Filters, V: Values';
       const b = el('button', { type: 'button', class: `ex-field${used.has(f.id) ? ' ex-used' : ''}${f.derived ? ' ex-derived' : ''}`,
-        draggable: 'true', 'data-field': f.id, 'aria-keyshortcuts': f.kind === 'measure' ? 'V' : 'R C F V',
+        draggable: 'true', 'data-field': f.id, 'aria-keyshortcuts': f.kind === 'measure' ? 'V F' : 'R C F V',
         title: `${f.description ?? f.id} (${shelvesFor})`, onclick: () => { add(f); focusField(f.id); },
         onkeydown: e => fieldKey(e, f) },
         // Under the column it is worked out from, by what it is of it.
@@ -830,12 +1036,14 @@ export function createExplorer(root, ctx) {
         return chip;
       }));
       if (!items.length) box.append(el('span', { class: 'ex-hint' },
-        k === 'values' ? 'Drop measures, or columns to summarise, here' : k === 'filters' ? 'Drop a column to filter on it' : 'Drop columns here'));
+        k === 'values' ? 'Drop measures, or columns to summarise, here' : k === 'filters' ? 'Drop a column, or a measure, to filter on it' : 'Drop columns here'));
     }
   }
   function renderControls() {
     totals.checked = state.totals;
     sort.value = state.sort;
+    if (state.top && !TOPS.includes(state.top)) top.append(el('option', { value: state.top }, `Top ${state.top}`));
+    top.value = String(state.top || 0);
     const auto = fields ? autoMark(state, fields) : 'table';
     for (const b of marks.children) {
       const on = b.dataset.mark === state.mark;
@@ -902,7 +1110,8 @@ export function createExplorer(root, ctx) {
     pop.addEventListener('keydown', e => { if (e.key === 'Escape') closePop(); if (e.key === 'Enter' && e.target.tagName === 'INPUT' && e.target.type !== 'checkbox') apply(); });
     showPop(anchor);
 
-    const modes = fd.type === 'text' || fd.type === 'bool'
+    const modes = fd.kind === 'measure' ? [['range', 'Range of the figures'], ['blank', 'Blank'], ['notBlank', 'Not blank']]
+      : fd.type === 'text' || fd.type === 'bool'
       ? [['in', 'Keep only'], ['notIn', 'Exclude'], ['blank', 'Blank'], ['notBlank', 'Not blank']]
       : [['range', 'Range'], ...(fd.type === 'date' ? [['last', 'Last n days']] : []), ['blank', 'Blank'], ['notBlank', 'Not blank']];
     const mode = el('select', { 'aria-label': 'Condition' }, modes.map(([v, t]) => el('option', { value: v }, t)));
@@ -1042,6 +1251,7 @@ export function createExplorer(root, ctx) {
   }
 
   // --- Drawing ---
+  let mapLoaded = false;
   function draw() {
     // A query that settles after the view is gone must not build a chart nobody disposes.
     if (destroyed) return;
@@ -1061,6 +1271,15 @@ export function createExplorer(root, ctx) {
       chartBox.hidden = true;
       table.hidden = false;
       table.replaceChildren(view.node);
+      return;
+    }
+    // A map draws over the world's outline, read the first time one is drawn.
+    if (view.option.geo && ctx.mapReady && !mapLoaded) {
+      chartBox.hidden = true;
+      table.hidden = false;
+      table.replaceChildren(el('div', { class: 'ex-empty' }, 'Loading the map…'));
+      ctx.mapReady().then(() => { mapLoaded = true; draw(); },
+        e => table.replaceChildren(el('div', { class: 'ex-empty ex-error' }, `The map could not be read: ${e.message}`)));
       return;
     }
     table.hidden = true;

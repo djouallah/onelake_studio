@@ -28,12 +28,12 @@
 import { escapeHtml, toCsv } from '../paths.js';
 import { renderModel } from './model.js';
 import { el } from './dom.js';
-import { createExplorer, pivotTitle } from './explore.js';
+import { createExplorer, pivotTitle, modelFields, valuesSql } from './explore.js';
 import { compileModelSql } from './query.js';
 import { createPlanView, profileSql, elapsed, profileColors } from './profile.js';
 import { PALETTE, PALETTES, registerChartTheme } from './theme.js';
 import { prettyModelText, extensionVendors, foreignDialects } from './pretty.js';
-import { drawReport, reportPages, withPages, newPageName, NUMBER_STYLES } from './report.js';
+import { drawReport, reportPages, withPages, newPageName, pickWhere, NUMBER_STYLES } from './report.js';
 
 const PAGES = [['model', 'Model'], ['pivot', 'Visual'], ['report', 'Report']];
 const PREVIEW_ROWS = 500;
@@ -50,6 +50,7 @@ const REPORT_POLL_MS = 2000;
 //                    query.js's EXPLORE_CASTS
 //   run(sql)         a compiled SQL's result: { fields, rows, numRows, truncated?, limit? }
 //   echarts()        ECharts (a promise)
+//   worldMap()       (optional) the world's outline, a GeoJSON (a promise): what a map draws over
 //   saveText(name, text)  a CSV saved: answers where (or null: dismissed)
 //   loadState(key), saveState(key, s)  the shelves, between visits
 //   setStatus(text, kind)  (optional) the host's status line
@@ -201,7 +202,9 @@ export function mountExplore(root, ctx) {
   const pageHost = el('div', { class: 'rp-page-host' });
   // A tile's 🖌 opens the format pane at the right of the tiles (formatting, below).
   const formatPane = el('aside', { class: 'rp-pane', hidden: true, 'aria-label': 'Format' });
-  const reportPage = el('div', { class: 'report-page', hidden: true }, pageStrip, el('div', { class: 'rp-work' }, pageHost, formatPane));
+  // The report's filter bar, over its pages' names (drawBar, below).
+  const filterBar = el('div', { class: 'rp-bar', hidden: true });
+  const reportPage = el('div', { class: 'report-page', hidden: true }, filterBar, pageStrip, el('div', { class: 'rp-work' }, pageHost, formatPane));
   const modelPage = el('div', { class: 'model-page' });
   const pivotPage = el('div', { class: 'explore-page', hidden: true });
   // Over Visual while a Report tile is edited there (editTile): its title, Update tile and Cancel.
@@ -326,14 +329,6 @@ export function mountExplore(root, ctx) {
   }
   const leftWhileRunning = () => { const was = reportLeft; reportLeft = false; return was; };
   const reportEcharts = async () => { const ec = await ctx.echarts(); registerChartTheme(ec, css); return ec; };
-  // A model column's dataType, for a pick's literal (report.js): by its table, or the one column
-  // of its name when there is no table.
-  const columnType = (table, column) => {
-    const is = (a, b) => String(a).toLowerCase() === String(b).toLowerCase();
-    const found = (ctx.tmsl?.tables ?? []).filter(t => table == null || is(t.name, table))
-      .flatMap(t => (t.columns ?? []).filter(c => is(c.name, column)));
-    return found.length === 1 ? found[0].dataType : undefined;
-  };
   // Add to report changed the tiles while the Report was not on screen: drawn again when it is.
   let reportChanged = false;
   // The report on screen and the stamp it was read at: what a save writes over (saveSpec); its pages
@@ -361,6 +356,7 @@ export function mountExplore(root, ctx) {
       dropPages();
       pageHost.replaceChildren();
       reportAt = Math.max(0, Math.min(reportAt, shownPages.length - 1));
+      drawBar();
       drawStrip();
       showReportPage(reportAt);
       if (formatting) drawPane();
@@ -392,15 +388,161 @@ export function mountExplore(root, ctx) {
   function pageCtx(i) {
     const saves = !!ctx.report.save;
     return { sql: reportSql, echarts: reportEcharts, shown: () => reportShown(i), leftWhileRunning,
-             cancel: ctx.cancel, columnType, model: ctx.tmsl, css,
+             cancel: ctx.cancel, model: ctx.tmsl, css,
              remove: saves ? removeTile : undefined, layout: saves ? layoutTiles : undefined,
              duplicate: saves ? duplicateTile : undefined, rename: saves ? renameTile : undefined,
              edit: saves ? editTile : undefined, setText: saves ? setText : undefined,
              toPage: saves && shownPages.length > 1 ? { at: pageUnder, drop: tileToPage } : undefined,
              format: saves ? openFormat : undefined,
+             where: barWhere, mapReady,
              // The pane's colours follow the series the tile draws.
              drawn: k => { if (formatting?.tab === 'tile' && formatting.page === i && formatting.index === k && seriesChanged()) drawPane(); } };
   }
+
+  // The world's map, registered with ECharts the first time a map is drawn (the host's file).
+  let mapP = null;
+  const mapReady = () => (mapP ??= (async () => {
+    const ec = await ctx.echarts();
+    if (ec.getMap?.('world')) return;
+    if (!ctx.worldMap) throw new Error('this window has no map of the world');
+    ec.registerMap('world', await ctx.worldMap());
+  })().catch(e => { mapP = null; throw e; }));
+
+  // --- The filter bar: the report's `filters` ([{ field, style }]), over every page. What is
+  // picked in one is a condition of every tile's query, but those whose format ignores it, as the
+  // Filters shelf writes one (report.js pickWhere): a dropdown's one value, a list's values, or
+  // dates from and to (with 3d, 7d, 30d, 1y and All, back from the latest day the column has).
+  // Picked, the pages are drawn again, and their picks in tiles go. A host that saves the Report:
+  // + Filter adds one, its ✕ takes it out.
+  const barPicks = new Map();   // field -> { values } | { range: [from, to] }
+  let barFields = null;
+  const reportFields = () => (barFields ??= modelFields(ctx.tmsl));
+  const barFilters = () => (Array.isArray(shownReport?.spec?.filters) ? shownReport.spec.filters.filter(x => x && typeof x.field === 'string') : []);
+  function barWhere(tile) {
+    const ignored = new Set(Array.isArray(tile?.format?.ignore) ? tile.format.ignore : []);
+    return barFilters().filter(x => !ignored.has(x.field) && barPicks.has(x.field)).flatMap(x => pickWhere(x.field, barPicks.get(x.field)));
+  }
+  const barValues = new Map();  // field (and 'latest:'+field) -> a promise of its values
+  const valuesOf = (id, opts = {}) => {
+    const key = `${opts.desc ? 'latest' : ''}:${opts.top ?? ''}:${id}`;
+    if (!barValues.has(key)) {
+      barValues.set(key, reportSql(valuesSql(reportFields(), id, opts)).then(r => r.rows.map(x => x.v))
+        .catch(e => { barValues.delete(key); throw e; }));
+    }
+    return barValues.get(key);
+  };
+  // The bar's picks changed: every page drawn again with them, its tiles' picks gone.
+  function barChanged() {
+    dropPages();
+    pageHost.replaceChildren();
+    showReportPage(reportAt);
+    if (formatting) drawPane();
+    drawBar();
+  }
+  const fieldName = id => reportFields().byId.get(id)?.name ?? id;
+  const DAY = 864e5;
+  const dayBack = (d, n) => new Date(Date.parse(`${d}T00:00:00Z`) - n * DAY).toISOString().slice(0, 10);
+  function drawBar() {
+    const saves = !!ctx.report.save, filters = barFilters();
+    for (const k of [...barPicks.keys()]) if (!filters.some(x => x.field === k)) barPicks.delete(k);
+    filterBar.hidden = !filters.length && !saves;
+    const items = filters.map(x => {
+      const label = el('span', { class: 'rp-bar-label' }, fieldName(x.field));
+      const remove = saves ? el('button', { type: 'button', class: 'rp-bar-x', title: 'Take this filter out of the report',
+        'aria-label': `Take the filter on ${fieldName(x.field)} out`, onclick: () => removeFilter(x.field) }, '✕') : null;
+      return el('div', { class: 'rp-bar-item' }, label, barControl(x), remove);
+    });
+    filterBar.replaceChildren(...items, saves ? addFilterButton() : null);
+  }
+  function barControl(x) {
+    const id = x.field, picked = barPicks.get(id);
+    if (x.style === 'dates') {
+      const from = el('input', { type: 'date', value: picked?.range?.[0] ?? '', 'aria-label': `${fieldName(id)} from` });
+      const to = el('input', { type: 'date', value: picked?.range?.[1] ?? '', 'aria-label': `${fieldName(id)} to` });
+      const set = range => { if (range[0] || range[1]) barPicks.set(id, { range: [range[0] || null, range[1] || null] }); else barPicks.delete(id); barChanged(); };
+      from.addEventListener('change', () => set([from.value, to.value]));
+      to.addEventListener('change', () => set([from.value, to.value]));
+      const preset = (t, days) => el('button', { type: 'button', class: 'rp-bar-preset', onclick: async () => {
+        if (!days) { set([null, null]); return; }
+        try {
+          const latest = String((await valuesOf(id, { top: 1, desc: true }))[0] ?? '').slice(0, 10);
+          if (/^\d{4}-\d{2}-\d{2}$/.test(latest)) set([dayBack(latest, days - 1), latest]);
+        } catch (e) { setStatus(`${fieldName(id)}: ${e.message}`, 'error'); }
+      } }, t);
+      return el('span', { class: 'rp-bar-dates' }, from, el('span', { class: 'rp-bar-to' }, 'to'), to,
+        preset('3d', 3), preset('7d', 7), preset('30d', 30), preset('1y', 365), preset('All', 0));
+    }
+    if (x.style === 'list') {
+      const n = picked?.values?.length ?? 0;
+      const b = el('button', { type: 'button', class: 'rp-bar-pick', 'aria-haspopup': 'dialog' }, n ? `${n === 1 ? String(picked.values[0] ?? '(blank)') : `${n} selected`} ▾` : 'All ▾');
+      b.addEventListener('click', () => openList(id, b));
+      return b;
+    }
+    // A dropdown: All, or one value.
+    const sel = el('select', { 'aria-label': fieldName(id) }, el('option', { value: '' }, 'All'));
+    valuesOf(id).then(values => {
+      sel.append(...values.map((v, i) => el('option', { value: String(i), selected: picked?.values?.length === 1 && picked.values[0] === v }, v == null ? '(blank)' : String(v))));
+      sel.onchange = () => { if (sel.value === '') barPicks.delete(id); else barPicks.set(id, { values: [values[Number(sel.value)]] }); barChanged(); };
+    }, e => sel.append(el('option', { disabled: true }, e.message)));
+    return sel;
+  }
+  // A list filter's values to tick, searched, under its button; Apply keeps them.
+  let barPop = null;
+  const closeBarPop = () => { barPop?.remove(); barPop = null; };
+  async function openList(id, anchor) {
+    closeBarPop();
+    const picked = new Set(barPicks.get(id)?.values ?? []);
+    const find = el('input', { type: 'search', placeholder: 'Search', 'aria-label': `Search ${fieldName(id)}` });
+    const boxes = el('div', { class: 'rp-bar-values' }, el('p', { class: 'rp-say' }, 'Reading values…'));
+    const apply = () => { if (picked.size) barPicks.set(id, { values: [...picked] }); else barPicks.delete(id); closeBarPop(); barChanged(); };
+    barPop = el('div', { class: 'rp-bar-pop', role: 'dialog', 'aria-label': fieldName(id) }, find, boxes,
+      el('div', { class: 'rp-bar-pop-foot' }, btn('Clear', () => { picked.clear(); apply(); }), btn('Cancel', closeBarPop), btn('Apply', apply, true)));
+    barPop.addEventListener('keydown', e => { if (e.key === 'Escape') closeBarPop(); });
+    const r = anchor.getBoundingClientRect();
+    Object.assign(barPop.style, { left: `${Math.max(8, r.left)}px`, top: `${r.bottom + 4}px` });
+    document.body.append(barPop);
+    let values;
+    try { values = await valuesOf(id); } catch (e) { boxes.replaceChildren(el('p', { class: 'rp-say error' }, e.message)); return; }
+    // At most 150 shown: the search narrows them.
+    const show = () => {
+      const term = find.value.toLowerCase();
+      const hits = values.filter(v => String(v ?? '(blank)').toLowerCase().includes(term));
+      boxes.replaceChildren(...hits.slice(0, 150).map(v => {
+        const c = el('input', { type: 'checkbox', checked: picked.has(v) });
+        c.addEventListener('change', () => { if (c.checked) picked.add(v); else picked.delete(v); });
+        return el('label', {}, c, v == null ? '(blank)' : String(v));
+      }), hits.length > 150 ? el('p', { class: 'rp-say' }, `the first 150 of ${hits.length}: search for the rest`) : null);
+    };
+    find.addEventListener('input', show);
+    show();
+    find.focus();
+  }
+  // + Filter: a column of the model and how it is picked, added to the bar.
+  function addFilterButton() {
+    const add = el('button', { type: 'button', class: 'rp-bar-add', title: 'Add a filter over every page' }, '+ Filter');
+    add.addEventListener('click', () => {
+      const cols = reportFields().tables.flatMap(t => t.columns.filter(c => !c.derived).map(c => [c.id, `${t.name} › ${c.name}`, c.type]));
+      const used = new Set(barFilters().map(x => x.field));
+      const col = el('select', { 'aria-label': 'Column' }, cols.filter(([id]) => !used.has(id)).map(([id, t]) => el('option', { value: id }, t)));
+      const style = el('select', { 'aria-label': 'How it is picked' },
+        el('option', { value: 'dropdown' }, 'Dropdown'), el('option', { value: 'list' }, 'List'), el('option', { value: 'dates' }, 'Dates'));
+      const fit = () => { if (cols.find(([id]) => id === col.value)?.[2] === 'date') style.value = 'dates'; else if (style.value === 'dates') style.value = 'dropdown'; };
+      col.addEventListener('change', fit);
+      fit();
+      const form = el('div', { class: 'rp-bar-form' }, col, style,
+        btn('Add', () => addFilter({ field: col.value, style: style.value }), true), btn('Cancel', () => drawBar()));
+      add.replaceWith(form);
+      col.focus();
+    });
+    return add;
+  }
+  const saveFilters = next => inTurn(async () => {
+    try { await saveSpec(pages => pages, { filters: next.length ? next : undefined }); }
+    catch (e) { setStatus(`Filter: ${e.message}`, 'error'); }
+    if (!destroyed) drawReportPage();
+  });
+  const addFilter = x => { if (x.field) saveFilters([...barFilters(), x]); };
+  const removeFilter = id => { barPicks.delete(id); saveFilters(barFilters().filter(x => x.field !== id)); };
 
   // --- The format pane, a tile's 🖌: its Tile tab sets what the tile shows (its `format`), its
   // Report tab the report's theme. A change is drawn at once (report.js restyle; a theme draws
@@ -428,6 +570,12 @@ export function mountExplore(root, ctx) {
     const out = {};
     for (const [k, v] of Object.entries(f)) {
       if (v === undefined || v === null || v === '') continue;
+      if (Array.isArray(v)) { if (v.length) out[k] = v; continue; }
+      if (k === 'measures') {
+        const kept = Object.fromEntries(Object.entries(v).map(([m, d]) => [m, cleanFormat(d ?? {})]).filter(([, d]) => Object.keys(d).length));
+        if (Object.keys(kept).length) out[k] = kept;
+        continue;
+      }
       if (typeof v === 'object') {
         const kept = Object.fromEntries(Object.entries(v).filter(([, x]) => x !== undefined && x !== null && x !== ''));
         if (Object.keys(kept).length) out[k] = kept;
@@ -491,7 +639,19 @@ export function mountExplore(root, ctx) {
         paneRow('X axis title', paneInput(f.xTitle, v => set({ xTitle: v.trim() || undefined }), 'X axis title')),
         paneRow('Y axis title', paneInput(f.yTitle, v => set({ yTitle: v.trim() || undefined }), 'Y axis title')),
         paneRow('Y from', paneInput(f.yMin, v => set({ yMin: v === '' ? undefined : Number(v) }), 'Y axis from', 'number'),
-          el('span', { class: 'rp-pane-label' }, 'to'), paneInput(f.yMax, v => set({ yMax: v === '' ? undefined : Number(v) }), 'Y axis to', 'number')));
+          el('span', { class: 'rp-pane-label' }, 'to'), paneInput(f.yMax, v => set({ yMax: v === '' ? undefined : Number(v) }), 'Y axis to', 'number')),
+        paneRow('Total line', paneCheck(f.totalLine, v => set({ totalLine: v || undefined }), 'Each measure\'s total as a line across')),
+        paneRow('Highest point', paneCheck(f.maxLabel, v => set({ maxLabel: v || undefined }), 'Label the highest point')),
+        paneRow('Zoom slider', paneCheck(f.zoom, v => set({ zoom: v || undefined }), 'A zoom slider under the chart')));
+      // Several measures: one plot, each drawn as it says, on the left axis or the right one.
+      if (about.numbers.length > 1) {
+        const drawn = (n, patch) => set({ measures: { ...f.measures, [n]: { ...f.measures?.[n], ...patch } } });
+        rows.push(el('h3', { class: 'rp-pane-sub' }, 'Measures in one plot'), ...about.numbers.map(n => paneRow(n,
+          paneSelect(f.measures?.[n]?.as ?? 'auto', [['auto', 'As the chart'], ['bar', 'Bar'], ['line', 'Line'], ['area', 'Area'], ['dashed', 'Dashed line']],
+            v => drawn(n, { as: v === 'auto' ? undefined : v }), `Draw ${n} as`),
+          paneSelect(f.measures?.[n]?.axis ?? 'left', [['left', 'Left'], ['right', 'Right']], v => drawn(n, { axis: v === 'left' ? undefined : v }), `Axis of ${n}`))),
+          f.measures ? el('button', { type: 'button', class: 'rp-pane-reset', onclick: () => { set({ measures: undefined }); drawPane(); } }, 'One plot each') : null);
+      }
     }
     if (about.kind === 'table') {
       if (about.numbers.length) {
@@ -505,11 +665,26 @@ export function mountExplore(root, ctx) {
       rows.push(paneRow('Number size', paneSelect(f.figureSize ?? 'M', SIZES, v => set({ figureSize: v === 'M' ? undefined : v }), 'Number size')),
         paneRow('Colour', paneColour(f.figureColor ?? css('--text'), v => set({ figureColor: v }), 'Colour of the numbers'),
           f.figureColor ? el('button', { type: 'button', class: 'rp-pane-reset', onclick: () => { set({ figureColor: undefined }); drawPane(); } }, 'Reset') : null));
+      // The change: a measure on Values shown under the figure as ▲ or ▼.
+      if (about.numbers.length > 1) {
+        rows.push(paneRow('Change', paneSelect(f.change ?? '', [['', 'None'], ...about.numbers.slice(1).map(n => [n, n])],
+          v => set({ change: v || undefined }), 'The measure shown as the change')),
+          paneRow('Good when', paneSelect(f.goodWhen ?? 'up', [['up', 'It goes up'], ['down', 'It goes down']],
+            v => set({ goodWhen: v === 'up' ? undefined : v }), 'When the change is good')));
+      }
     }
     if (about.kind !== 'slicer' && about.kind !== 'text' && about.numbers.length) {
       rows.push(el('h3', { class: 'rp-pane-sub' }, 'Numbers'), ...about.numbers.map(n => paneRow(n,
         paneSelect(f.numbers?.[n] ?? 'auto', NUMBER_STYLES.map(([k, t]) => [k, t]),
           v => set({ numbers: { ...f.numbers, [n]: v === 'auto' ? undefined : v } }), `Numbers of ${n}`))));
+    }
+    // The filter bar's filters this tile follows (all, unless it ignores some).
+    const bar = barFilters();
+    if (about.kind !== 'text' && bar.length) {
+      const ignored = new Set(f.ignore ?? []);
+      rows.push(el('h3', { class: 'rp-pane-sub' }, 'Follows the filters'), ...bar.map(x => paneRow(fieldName(x.field),
+        paneCheck(!ignored.has(x.field), v => set({ ignore: v ? (f.ignore ?? []).filter(k => k !== x.field) : [...(f.ignore ?? []), x.field] }),
+          `Follow the filter on ${fieldName(x.field)}`))));
     }
     return rows;
   }
@@ -519,6 +694,7 @@ export function mountExplore(root, ctx) {
     if (!formatting) return;
     const { page, index } = formatting;
     const format = cleanFormat({ ...formatting.format, ...patch });
+    const refilter = 'ignore' in patch;
     formatting.format = format;
     viewOf()?.restyle(index, format);
     inTurn(async () => {
@@ -531,6 +707,7 @@ export function mountExplore(root, ctx) {
             return Object.keys(format).length ? { ...rest, format } : rest;
           }) };
         }, page);
+        if (refilter && !destroyed) barChanged();
       } catch (e) {
         setStatus(`Format: ${e.message}`, 'error');
         if (!destroyed) drawReportPage();
@@ -551,8 +728,25 @@ export function mountExplore(root, ctx) {
     const sizes = el('div', { class: 'subtabs', role: 'group', 'aria-label': 'Text size' }, SIZES.map(([k, t]) =>
       el('button', { type: 'button', class: `subtab${size === k ? ' active' : ''}`, 'aria-pressed': String(size === k),
         onclick: () => setTheme({ textSize: k === 'M' ? undefined : k }) }, t)));
-    return [paneRow('Colours', el('div', { class: 'rp-pane-palettes' }, colours)), paneRow('Text size', sizes),
+    return [paneRow('Colours', el('div', { class: 'rp-pane-palettes' }, colours)), paneRow('Text size', sizes), ...valueColourRows(theme),
       el('p', { class: 'rp-say' }, "Every page. A tile's own colours win over the Report's.")];
+  }
+  // Colours by value: a column's values, each given a colour that every tile draws it in.
+  let colourColumn = null;
+  function valueColourRows(theme) {
+    const cols = reportFields().tables.flatMap(t => t.columns.filter(c => c.type === 'text').map(c => [c.id, `${t.name} › ${c.name}`]));
+    const pick = paneSelect(colourColumn ?? '', [['', 'Pick a column'], ...cols], v => { colourColumn = v || null; drawPane(); }, 'Column whose values get colours');
+    const list = el('div', { class: 'rp-pane-values' });
+    if (colourColumn) {
+      list.append(el('p', { class: 'rp-say' }, 'Reading values…'));
+      valuesOf(colourColumn, { top: 60 }).then(values => {
+        const set = theme.colors ?? {};
+        list.replaceChildren(...values.filter(v => v != null).map((v, i) => el('label', { class: 'rp-pane-swatch' },
+          paneColour(set[String(v)] ?? PALETTE[i % PALETTE.length], c => setTheme({ colors: { ...theme.colors, [String(v)]: c } }), `Colour of ${v}`), String(v))));
+      }, e => list.replaceChildren(el('p', { class: 'rp-say error' }, e.message)));
+    }
+    return [paneRow('Value colours', pick,
+      theme.colors ? el('button', { type: 'button', class: 'rp-pane-reset', onclick: () => setTheme({ colors: undefined }) }, 'Reset') : null), list];
   }
   // The report's theme changed: saved, and the page drawn again in it.
   const setTheme = patch => inTurn(async () => {
@@ -955,11 +1149,15 @@ export function mountExplore(root, ctx) {
     bodyClass = document.body.className;
     // A frame later: VS Code sets the new colour variables beside the class.
     requestAnimationFrame(() => {
-      if (!echarts || destroyed) return;
-      registerChartTheme(echarts, css);
-      for (const [box, c] of charts) { resized.unobserve(box); c.dispose(); }
-      charts.clear();
-      explorer?.redraw();
+      if (destroyed) return;
+      if (echarts) {
+        registerChartTheme(echarts, css);
+        for (const [box, c] of charts) { resized.unobserve(box); c.dispose(); }
+        charts.clear();
+        explorer?.redraw();
+      }
+      // The Report's tiles too, each drawn again in the theme (reportEcharts registers it).
+      if (ctx.report && reportSeq && shownReport) barChanged();
     });
   });
   themed.observe(document.body, { attributes: true, attributeFilter: ['class'] });
@@ -992,6 +1190,7 @@ export function mountExplore(root, ctx) {
       },
       palette: () => PALETTE,
       css,
+      mapReady,
       loadState: () => ctx.loadState(ctx.stateKey ?? `explore.${ctx.name}`),
       saveState: s => ctx.saveState(ctx.stateKey ?? `explore.${ctx.name}`, s),
     });
@@ -1165,6 +1364,7 @@ export function mountExplore(root, ctx) {
       keepOffline?.destroy();
       clearInterval(reportTimer);
       dropPages();
+      closeBarPop();
       explorer?.destroy();
       results.clear();
       resized.disconnect();

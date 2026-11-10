@@ -279,50 +279,57 @@ tables, columns and measures a tile can name.
 { "pages": [
   { "name": "Sales", "tiles": [
     { "title": "", "kind": "text", "text": "# Sales\\nRevenue is **net of returns**." },
-    { "title": "Revenue by Region", "kind": "bar",
-      "sql": "SELECT \\"dim_region\\".\\"Region\\" AS \\"Region\\", AGG(\\"Revenue\\") AS \\"Revenue\\" FROM model GROUP BY ALL ORDER BY \\"Revenue\\" DESC",
-      "formats": { "Revenue": "#,##0" },
-      "echarts": { "series": [{ "itemStyle": { "color": "#199e70" } }] } }
+    { "title": "Revenue by Region", "kind": "pivot",
+      "pivot": { "rows": ["dim_region.Region"], "values": ["Revenue"], "filters": [], "mark": "bar", "sort": "desc", "top": 10 },
+      "format": { "numbers": { "Revenue": "int" } } }
   ] }
 ] }
 \`\`\`
 
+- A tile is a Visual (\`pivot\`) or \`text\`, nothing else: no tile holds SQL. A Visual's query is generated from its
+  shelves, the same SELECT over the model as OneLake Studio's Visual writes. ${onModel(plan)
+  ? 'The page turns it into DAX and runs it on the semantic model.' : 'The page compiles it (dax-sql) to SQL over the tables, and DuckDB-WASM runs it.'}
 - \`pages\` are shown by name over the tiles, one at a time, in this order; a click on one in a tile filters only
   the tiles of its page. An older report, \`{ "tiles": [...] }\`, is one page, Page 1.
-- \`kind\` is \`kpi\` (one row, each column a figure), \`bar\` or \`line\` (the first column across, every other a
-  series), \`table\`, \`pivot\`, or \`text\`. \`"wide": true\` gives a tile the whole row.
-- \`text\` has no \`sql\`: its \`text\` is a few lines of Markdown (\`#\` to \`###\` headings, \`**bold**\`, \`*italic*\`,
-  \`[a link](https://…)\`, \`- \` lists), and nothing else of Markdown or HTML.
-- \`pivot\` has no \`sql\`: its \`pivot\` is Explore's shelves, as **Add to report** saves them, and it is drawn as
-  Visual draws them: \`{ "rows": ["dim_region.Region"], "cols": [], "values": ["Revenue"], "filters": [], "mark": "bar" }\`.
-  A column is \`table.column\`, a measure its name; \`mark\` is \`auto\`, \`table\`, \`highlight\`, \`bar\`, \`stacked\`,
-  \`line\`, \`area\`, \`heatmap\`, \`scatter\` or \`card\`. A click picks its first Rows field (else Columns).
+- \`pivot\` is Explore's shelves, as **Add to report** saves them, drawn as Visual draws them:
+  \`{ "rows": ["dim_region.Region"], "cols": [], "values": ["Revenue"], "filters": [], "mark": "bar" }\`.
+  A column is \`table.column\`, a measure its name; a column summarised on Values is \`"\\u0000sum\\u0000table.column"\`
+  (\`sum\`, \`avg\`, \`min\`, \`max\`, \`count\`, \`distinct\`). \`mark\` is \`auto\`, \`table\`, \`highlight\`, \`bar\`, \`stacked\`,
+  \`line\`, \`area\`, \`heatmap\`, \`scatter\`, \`card\`, \`slicer\`, \`treemap\`, \`calendar\` or \`map\`. \`"totals": true\` adds
+  the totals. \`"sort": "desc"\` orders by the first measure, largest first, and \`"top": n\` keeps its first n rows (ties
+  kept). A click picks its first Rows field (else Columns), and filters the page's other tiles by it.
+- \`filters\` (the shelf): each \`{ "field": "<column>", "op": ... }\`: \`"in"\` or \`"notIn"\` with \`"values": [...]\`,
+  \`"range"\` with \`"min"\` and/or \`"max"\`, \`"last"\` with \`"n"\` (the last n days, to today), \`"blank"\` or \`"notBlank"\`.
+  On a measure, \`{ "field": "<measure>", "op": "range", "min": ..., "max": ..., "measure": true }\` keeps the rows whose
+  figure is in that range (a HAVING): \`{ "field": "Curtailed MWh", "op": "range", "min": 0.001, "measure": true }\`.
 - A card is a \`pivot\` tile whose \`mark\` is \`card\`: each field on Values as one big figure, over every row its
-  filters keep (its Rows and Columns are left out). Other tiles' picks filter it, and a click on it picks nothing:
-  \`{ "rows": [], "cols": [], "values": ["Revenue"], "filters": [], "mark": "card" }\`. \`auto\` draws a card too when
-  only Values has fields.
+  filters keep. A date column on Rows adds its trend under the figure, and a second measure on Values (the model's
+  own change measure) is shown as its change, ▲ or ▼:
+  \`{ "rows": [], "cols": [], "values": ["Revenue"], "filters": [], "mark": "card" }\`.
 - A slicer is a \`pivot\` tile whose \`mark\` is \`slicer\`: it lists the values of its first Rows field (those with a
   figure, when a measure is on Values, which it shows beside each), and what is picked in it filters every other tile.
   \`"slicer"\` says how it is drawn: \`list\`, \`buttons\`, \`dropdown\`, or \`range\` (a date or a number):
   \`{ "rows": ["dim_date.Year"], "values": ["Revenue"], "filters": [], "mark": "slicer", "slicer": "buttons" }\`.
+- \`treemap\`: Rows are its levels (one or two), the first measure its size. \`calendar\`: a date column on Rows, the
+  first measure a day's colour, one strip per year. \`map\`: Rows are a latitude, a longitude and optionally a name; the
+  first measure a point's size, and a column on Columns its colour.
+- \`text\`'s \`text\` is a few lines of Markdown (\`#\` to \`###\` headings, \`**bold**\`, \`*italic*\`, \`[a link](https://…)\`,
+  \`- \` lists), and nothing else of Markdown or HTML.
 - The tiles are laid out on 12 columns and rows of 10 pixels: \`"layout": { "x": 0, "y": 0, "w": 4, "h": 30 }\` puts a
   tile at the first column and row, 4 columns wide and 300 pixels tall, as its grip and its ◢ in OneLake Studio set
-  it. Every tile floats up as far as it can; one with no layout goes in the first place it fits.
-- \`sql\` is one SELECT over the model, \`FROM model\`: its columns as \`"table"."column"\`, its measures as
-  \`AGG("measure")\`, \`GROUP BY ALL\`, \`ORDER BY\`, \`FETCH FIRST n ROWS WITH TIES\`. ${onModel(plan)
-  ? 'The page turns it into DAX and runs it on the semantic model.' : 'The page compiles it (dax-sql) to SQL over the tables, and DuckDB-WASM runs it.'}
-- \`formats\`: a column's format string, as the model writes one (\`#,##0.00\`).
+  it. Every tile floats up as far as it can; one with no layout goes in the first place it fits. \`"wide": true\`
+  gives a tile with no layout the whole row.
 - \`format\`: what OneLake Studio's format pane (a tile's 🖌) sets, any of: \`"title": false\`, \`"titleSize": "S"\` or
   \`"L"\`, \`"colors": { "<series>": "#rrggbb" }\`, \`"labels": true\`, \`"legend"\` (\`top\`, \`bottom\`, \`right\`, \`off\`),
-  \`"xTitle"\`, \`"yTitle"\`, \`"yMin"\`, \`"yMax"\`, \`"byValue": { "<measure>": "background" | "bar" }\`, \`"banded": true\`,
-  \`"figureSize"\`, \`"figureColor"\`, and \`"numbers": { "<field>": "int" | "dec2" | "short" | "pct" | "usd" }\`.
-- \`theme\`, beside \`pages\`: \`{ "palette": "ocean" | "warm" | "mono", "textSize": "S" | "L" }\`, for every page.
-- \`echarts\` (bar and line): an ECharts option merged over the tile's own, for anything the kinds don't say.
-- \`crossFilter\` (bar, line and table): a click on a bar, a point or a row filters every other tile by its first column's
-  value, as a WHERE on the model column that column is. When the first column is not a model column, name one here,
-  \`"table"."column"\`; \`false\` makes the tile take no clicks.
-- Try a tile's SQL before it goes in: OneLake Studio's SQL box, or its command line's \`sql\`, runs it with the
-  model's own name in place of \`model\`: \`FROM semanticmodel.<workspace>.${plan.modelName}\`.
+  \`"xTitle"\`, \`"yTitle"\`, \`"yMin"\`, \`"yMax"\`, \`"zoom": true\`, \`"maxLabel": true\`, \`"totalLine": true\` (the total of
+  each measure as a line across, from the query's own totals), \`"measures": { "<measure>": { "as": "bar" | "line" |
+  "area" | "dashed", "axis": "right" } }\` (several measures in one plot), \`"byValue": { "<measure>": "background" |
+  "bar" }\`, \`"banded": true\`, \`"figureSize"\`, \`"figureColor"\`, \`"goodWhen": "down"\` (a card's change), \`"ignore":
+  ["<filter bar field>"]\`, and \`"numbers": { "<field>": "int" | "dec2" | "short" | "pct" | "usd" }\`.
+- \`theme\`, beside \`pages\`: \`{ "palette": "ocean" | "warm" | "mono", "textSize": "S" | "L", "colors": { "<value>":
+  "#rrggbb" } }\` for every page; \`colors\` gives a value of any column (a fuel, a region) the same colour in every tile.
+- \`filters\`, beside \`pages\`: the filter bar over every page, each \`{ "field": "table.column", "style": "dropdown" |
+  "list" | "dates" }\`. What a viewer picks in it filters every tile, but those whose \`format.ignore\` names it.
 - This is a zip: unzip it, edit, and zip it again with the same entries at its root.
 
 ## Layers

@@ -14,6 +14,23 @@
   banded rows, a card's number size and colour, and each number's style (1,234, 1,234.56, 1.2K, 12%, $1,234). Every
   change shows at once and is saved. The pane's **Report** tab sets the colours and text size of every page. The
   Fabric app draws each tile as it was formatted.
+- **Every Report tile is a Visual.** A tile's query is always the one Visual writes from its fields; no tile holds SQL
+  of its own. A tile of an older report that held SQL says so, and is built again in Visual.
+- **Top N and filters on measures in Visual.** **Top** keeps the first 1 to 100 rows as they are sorted, ties kept. A
+  measure dropped on Filters keeps the rows whose figure is in a range ("curtailed above 0").
+- **Treemap, Calendar and Map** are new marks in Visual. A treemap's boxes are its Rows (one or two levels), sized by
+  the measure; a calendar colours each day of a date column, one strip a year; a map puts a point for each latitude
+  and longitude on Rows, sized by the measure and coloured by a column on Columns. The map's outline of the world ships
+  with OneLake Studio and the app.
+- **A card's trend and change.** A date on a card's Rows draws its trend under the figure. In the format pane, a second
+  measure on Values can be the card's change, ▲ or ▼, green when it goes the good way.
+- **A filter bar over the Report.** **+ Filter** adds a filter on a column to every page: a dropdown, a list to tick, or
+  dates from and to with 3d, 7d, 30d, 1y and All. A tile can stop following one (format pane, "Follows the filters").
+- **More in the format pane.** Several measures in one chart, each a bar, a line, an area or a dashed line, on the left
+  axis or the right one; each measure's total as a line across; the highest point labelled; a zoom slider. The Report
+  tab gives a column's values (a fuel, a region) one colour in every tile.
+- **The Fabric app's look.** A header with the model's name, and a light theme beside the dark one (☀/☾), kept in
+  the browser, or the system's when none is picked.
 
 ## 0.2.19
 

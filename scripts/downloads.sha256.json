@@ -142,6 +142,7 @@
   "https://cdn.jsdelivr.net/npm/dax-sql@0.1.7/src/sql.js": "9cf6e64816a869f168903e0ec1b1beedea087642e7d52745d2028cdb0d880721",
   "https://cdn.jsdelivr.net/npm/dax-sql@0.1.7/src/views.js": "34dbe69d42d3558d8b6c49421c004e324e297dab632632ecbfe4bac11588070a",
   "https://cdn.jsdelivr.net/npm/dompurify@3.4.12/+esm": "33617be2736b969786490c966e89cb88504a7b15ec25ba55cfab29c98acf686e",
+  "https://cdn.jsdelivr.net/npm/echarts@4.9.0/map/json/world.json": "049b334579e5a42d5d16c72d014d380e048e39fc1504049f212acb589484d2fa",
   "https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js": "e84270bd0cd5bdf60fefc26d00c2a391cb2e81f4d26a7a9ee16185a54773a3cf",
   "https://cdn.jsdelivr.net/npm/flatbuffers@24.3.25/+esm": "e2e255fa750cc1ba9c2dbae40290cc8cb00a39546c926f86a49164ad1dea308f",
   "https://cdn.jsdelivr.net/npm/flatbuffers@25.9.23/+esm": "8bf085ff60454b7494ce2988568a069137137db46035e7d9b62dde68266182b6",

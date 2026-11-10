@@ -148,8 +148,9 @@ VS Code extension); nothing is written to Fabric or OneLake.
   nothing was published. The app is one file, `<app>.fabricapp` (a zip), and is the model's Report alone.
 - To grow that report: edit `site/report.json` in the file (its `AGENTS.md` says how: unzip, edit, zip again). A
   client-side app's model is `model.ossie.yaml` beside it, the model the app runs on.
-  Each tile is `{ title, kind, sql }`, its SQL a SELECT over the model `FROM model`, which `sql` tries first with the
-  model's own name. OneLake Studio's Report tab draws the zip's report as it changes; `export` again publishes it.
+  Each tile is a Visual, `{ title, kind: "pivot", pivot }`, its `pivot` Explore's shelves (fields, measures, filters,
+  mark, sort, top), or `{ kind: "text", text }`: never SQL, the tile's query is generated from its shelves. The report
+  is `{ pages: [{ name, tiles }] }`. OneLake Studio's Report tab draws the zip's report as it changes; `export` again publishes it.
   No export rewrites that file.
 - The same downloads are shared with the OneLake Studio VS Code extension
   (in the extension's cache folder, under `models/<account>/<ws>/<model>.ossie.yaml`).

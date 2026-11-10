@@ -1,51 +1,45 @@
 // =============================================================================
-// explore/report.js — a model's Report: tiles, each one SELECT over the model, drawn
+// explore/report.js — a model's Report: pages of tiles, each tile a Visual, drawn
 // =============================================================================
 // The Report is data (site/report.json in Export to Fabric's zip, or the file Studio keeps before
-// an export; no tiles before either): { pages: [{ name, tiles }] }, each page's tiles
-// [{ title, kind, sql, formats?, echarts?, wide?, crossFilter? }]. A report written before pages,
-// { tiles }, is one page, Page 1 (reportPages), and is written back as pages (withPages). The host
-// draws the pages' names and one page at a time; this draws a page's tiles. A tile's SQL is a
-// SELECT over the model, FROM model, in the SQL the SQL box takes.
-//   kind 'kpi'    one row: each column a figure
-//   kind 'bar'    the first column across, every other column a series (also 'line')
-//   kind 'table'  the rows as they are
-//   kind 'pivot'  no sql: `pivot` is Visual's shelves ({ rows, cols, values, filters, mark, totals,
-//                 sort, slicer }, as Add to report saves them), drawn as Visual draws them
+// an export; no tiles before either): { pages: [{ name, tiles }], theme? }. A report written
+// before pages, { tiles }, is one page, Page 1 (reportPages), and is written back as pages
+// (withPages). The host draws the pages' names and one page at a time; this draws a page's tiles.
+// A tile's query is always Visual's, generated from its shelves: no tile holds SQL.
+//   kind 'pivot'  `pivot` is Visual's shelves ({ rows, cols, values, filters, mark, totals, sort,
+//                 top, slicer }, as Add to report saves them), drawn as Visual draws them
 //                 (explore.js). Its mark 'slicer' is a slicer: what is picked in it (values, or a
 //                 range) filters every other tile, and it does not run again when they change.
-//   kind 'text'   no sql: `text`, a few lines of Markdown (# headings, **bold**, *italic*,
+//   kind 'text'   `text`, a few lines of Markdown (# headings, **bold**, *italic*,
 //                 [links](https://…), - lists), drawn as it is; picks don't touch it. A host that
 //                 saves the Report edits it in place (a double-click on it: `setText`).
+// Any other tile (an older report's tiles of SQL: kpi, bar, line, table) says it is not a Visual
+// tile, and is built again in Visual.
 // The tiles are laid out on a grid of 12 columns and rows of 10 pixels: `layout` ({ x, y, w, h },
 // the column and row a tile starts at, and how many it spans) is where its grip and its ◢ put it.
 // Every tile floats up as far as it can, and a tile placed over others pushes them down (arrange);
 // a tile with no layout goes in the first place it fits, as wide and tall as its kind is. A host
 // that saves the Report places them (`layout`), takes them out (`remove`), copies them
-// (`duplicate`), renames them (a double-click on the title: `rename`) and, for a pivot tile, opens
-// its shelves in Visual (`edit`). A grip dropped on another page's name moves the tile there
-// (`toPage`).
-// `formats`: a column's format string; `echarts` (bar, line): an ECharts option merged over the
-// tile's own, over its `format` (what the host's format pane sets: below, formatChart). The
-// report's `theme` sets its colours and its text's size. A tile that fails says so in its own box,
-// and the rest still draw.
-// Cross filtering: a click on a bar, a line's point or a table's row picks that row's first value,
-// and every other tile runs again with it as a WHERE on the model column the tile's first column
-// is. `crossFilter` names that column when the first is not one ("table"."column"), or is false
-// for a tile that takes no clicks. A pivot tile picks its first Rows field (else Columns). The
-// tile clicked stays whole, its pick bright; the same click again clears it, as the pick's ✕ above
-// the tiles does. Picks in several tiles all apply.
+// (`duplicate`), renames them (a double-click on the title: `rename`) and opens a tile's shelves
+// in Visual (`edit`). A grip dropped on another page's name moves the tile there (`toPage`).
+// A tile's `format` is what the host's format pane sets (below, formatChart); the report's
+// `theme` sets its colours and its text's size. A tile that fails says so in its own box, and the
+// rest still draw.
+// Cross filtering: a click on a bar, a point or a row picks its first Rows field's value (else
+// Columns'), and every other tile runs again with it as a condition of its own query, as its
+// Filters shelf writes one (pickWhere). The tile clicked stays whole, its pick bright; the same
+// click again clears it, as the pick's ✕ above the tiles does. Picks in several tiles all apply.
+// The host's `where` (its filter bar) is in every tile's query too.
 // The same file in the panel and in Export to Fabric's app: the host says how SQL runs (`sql`).
 // =============================================================================
 
-import { sqlStr } from '../paths.js';
 import { el } from './dom.js';
-import { formatValue, byValueBackground, extent } from './draw.js';
 import { PALETTE, PALETTES } from './theme.js';
-import { shiftDate } from './draw.js';
 import { autoMark, modelFields, pivotQuery, pivotView, valueNames } from './explore.js';
 
-const KINDS = new Set(['kpi', 'bar', 'line', 'table', 'pivot', 'text']);
+const KINDS = new Set(['pivot', 'text']);
+// The marks drawn as a shape of their own, with no axes: what the format pane offers them is less.
+const SHAPES = new Set(['treemap', 'calendar', 'map']);
 // The grid a tile is laid out on: its columns, the height of a row in pixels, the fewest rows a
 // tile has, and the rows an arrow key moves or resizes it by.
 export const COLUMNS = 12, ROW = 10, MIN_ROWS = 6, ROW_KEY = 2;
@@ -174,8 +168,10 @@ export function merge(a, b) {
 // { title: false, titleSize: 'S'|'L', colors: { series: '#rrggbb' }, labels: true,
 //   legend: 'top'|'bottom'|'right'|'off', xTitle, yTitle, yMin, yMax,
 //   numbers: { field: style }, byValue: { field: 'background'|'bar' }, banded: true,
-//   figureSize: 'S'|'L', figureColor: '#rrggbb' }, every key optional: left out, as before.
-// The report's own `theme`: { palette: a PALETTES name, textSize: 'S'|'L' }.
+//   figureSize: 'S'|'L', figureColor: '#rrggbb', zoom: true, maxLabel: true, totalLine: true,
+//   measures: { measure: { as: 'bar'|'line'|'area'|'dashed', axis: 'right' } }, change: measure,
+//   goodWhen: 'down', ignore: [filter bar field] }, every key optional: left out, as before.
+// The report's own `theme`: { palette: a PALETTES name, textSize: 'S'|'L', colors: { value: '#rrggbb' } }.
 
 // A number's style, as the pane names it, and the format string it is.
 export const NUMBER_STYLES = [['auto', 'Auto', null], ['int', '1,234', '#,##0'], ['dec2', '1,234.56', '#,##0.00'],
@@ -232,6 +228,13 @@ export function formatChart(option, f = {}, { textSize, label } = {}) {
     }
   }
   if (font && o.legend) o.legend = { ...o.legend, textStyle: { ...o.legend.textStyle, fontSize: font } };
+  // A zoom slider under the plot, on its category axes (and a wheel or a pinch inside it).
+  if (f.zoom && [...xs, ...ys].some(isCat)) {
+    const on = xs.some(isCat) ? { xAxisIndex: xs.map((a, i) => (isCat(a) ? i : -1)).filter(i => i >= 0) }
+      : { yAxisIndex: ys.map((a, i) => (isCat(a) ? i : -1)).filter(i => i >= 0) };
+    o.dataZoom = [{ type: 'inside', ...on }, { type: 'slider', ...on, height: 18, bottom: 4, ...(on.yAxisIndex ? { width: 18, right: 4, height: undefined, bottom: undefined } : {}) }];
+    room(on.yAxisIndex ? 'right' : 'bottom', 30);
+  }
   if (o.grid != null) o.grid = Array.isArray(option.grid) ? grids : grids[0];
   const colors = f.colors && typeof f.colors === 'object' ? f.colors : {};
   o.series = list(o.series).map(s => {
@@ -243,144 +246,21 @@ export function formatChart(option, f = {}, { textSize, label } = {}) {
   return o;
 }
 
-// A value as the tile says: its format's number style, else its column's format string, else a
-// number grouped, at most two decimals.
-function formatter(tile) {
-  const own = c => numberFormat(tile.format?.numbers?.[c]) ?? tile.formats?.[c];
-  return (column, v) => { const f = own(column); return f || typeof v !== 'number' ? formatValue(v, f) : v.toLocaleString('en-US', { maximumFractionDigits: 2 }); };
-}
-
-// --- Cross filtering: a pick, as a WHERE in a tile's SQL ---------------------------
-
-// A name as SQL over the model writes one: "quoted", [bracketed], `ticked`, or bare.
-const NAME = String.raw`"(?:[^"]|"")*"|\[[^\]]*\]|` + '`[^`]*`' + String.raw`|[A-Za-z_]\w*`;
-// A column: table.column, 'table'[column] as DAX writes it, or a name alone.
-const COLUMN = String.raw`'(?:[^']|'')*'\s*\[[^\]]*\]|(?:${NAME})(?:\s*\.\s*(?:${NAME}))?`;
-// The first SELECT item, when it is a column: what follows it is a comma, its alias or FROM.
-const FIRST = new RegExp(String.raw`^(?:\s|--[^\n]*|/\*[\s\S]*?\*/)*SELECT\s+(${COLUMN})(?!\w)\s*(?=$|,|AS\b|FROM\b|["\[` + '`' + String.raw`A-Za-z_])`, 'i');
-// Bare words a first item can start with that are not a column.
-const NOT_COLUMNS = new Set(['ALL', 'DISTINCT', 'CASE', 'NOT', 'NULL', 'TRUE', 'FALSE']);
-const unquote = p => (p[0] === '"' ? p.slice(1, -1).replace(/""/g, '"') : p[0] === '[' || p[0] === '`' ? p.slice(1, -1) : p);
-
-/** A column as written: { ref, table, column }, the names unquoted (table null for a name alone); null when it is not one. */
-export function columnOf(text) {
-  const ref = String(text ?? '').trim();
-  if (!new RegExp(`^(?:${COLUMN})$`).test(ref)) return null;
-  const dax = /^'((?:[^']|'')*)'\s*\[([^\]]*)\]$/.exec(ref);
-  const parts = dax ? [dax[1].replace(/''/g, "'"), dax[2]] : ref.match(new RegExp(NAME, 'g')).map(unquote);
-  if (parts.length === 1 && /^[A-Za-z_]/.test(ref) && NOT_COLUMNS.has(ref.toUpperCase())) return null;
-  return { ref, table: parts.length === 2 ? parts[0] : null, column: parts[parts.length - 1] };
-}
-
-/** The model column a tile's SQL starts with: its first SELECT item, when that is a column (columnOf), else null. */
-export function firstColumn(sql) {
-  const m = FIRST.exec(String(sql ?? ''));
-  return m ? columnOf(m[1]) : null;
-}
-
-const NUMBER = /^-?\d+(?:\.\d+)?(?:e[+-]?\d+)?$/i;
+// --- Cross filtering: a pick, as conditions of the other tiles' own queries -------------
 
 /**
- * A value as a literal of SQL over the model, by its column's type (the model's dataType, when
- * known): a date's text as DATE (TIMESTAMP when it has a time of day), a number as a number, a
- * boolean as TRUE or FALSE, anything else as quoted text.
+ * A pick on model column `id`, as the Filters shelf writes conditions ([id, op, ...values],
+ * explore.js modelSql): { value } is = value (a blank, IS NULL); a slicer's { values } is IN (a
+ * blank among them, IS NULL), none ticked no condition; its { range: [lo, hi] } is >= lo and
+ * <= hi, either end left out when null (a date's last day kept whole, as the shelf keeps it).
  */
-export function sqlLiteral(value, type) {
-  if (typeof value === 'boolean') return value ? 'TRUE' : 'FALSE';
-  if (typeof value === 'bigint') return String(value);
-  if (typeof value === 'number') {
-    if (!Number.isFinite(value)) throw new Error(`${value} can't be a filter`);
-    return type === 'string' ? sqlStr(value) : String(value);
+export function pickWhere(id, p) {
+  if (Array.isArray(p.range)) {
+    const [lo, hi] = p.range;
+    return [...(lo != null ? [[id, '>=', lo]] : []), ...(hi != null ? [[id, '<=', hi]] : [])];
   }
-  const s = String(value);
-  if (type === 'dateTime') {
-    const m = /^(\d{4}-\d{2}-\d{2})(?:[T ](\d{2}:\d{2}(?::\d{2})?))?/.exec(s);
-    if (m) return m[2] && !/^00:00(?::00)?$/.test(m[2]) ? `TIMESTAMP '${m[1]} ${m[2]}'` : `DATE '${m[1]}'`;
-  }
-  if ((type === 'int64' || type === 'double' || type === 'decimal') && NUMBER.test(s)) return s;
-  if (type === 'boolean' && /^(true|false)$/i.test(s)) return s.toUpperCase();
-  return sqlStr(s);
-}
-
-// SQL's tokens: where each starts and ends, and the words and semicolons outside parentheses,
-// past strings, quoted names and comments.
-function tokens(sql) {
-  const out = [];
-  const n = sql.length;
-  let i = 0, depth = 0;
-  while (i < n) {
-    const c = sql[i];
-    if (/\s/.test(c)) { i++; continue; }
-    if (c === '-' && sql[i + 1] === '-') { while (i < n && sql[i] !== '\n') i++; continue; }
-    if (c === '/' && sql[i + 1] === '*') { const e = sql.indexOf('*/', i + 2); i = e < 0 ? n : e + 2; continue; }
-    const at = i;
-    let word = null;
-    if (c === "'" || c === '"' || c === '`' || c === '[') {
-      const close = c === '[' ? ']' : c;
-      for (i++; i < n; i++) {
-        if (sql[i] !== close) continue;
-        if (close !== ']' && sql[i + 1] === close) { i++; continue; }
-        break;
-      }
-      i++;
-    } else if (/[A-Za-z_]/.test(c)) {
-      while (i < n && /[\w$]/.test(sql[i])) i++;
-      word = sql.slice(at, i).toUpperCase();
-    } else {
-      i++;
-      if (c === ')') depth--;
-    }
-    out.push({ at, end: Math.min(i, n), top: depth === 0, word, semi: c === ';' });
-    if (c === '(') depth++;
-  }
-  return out;
-}
-
-// What can follow FROM model, a WHERE first.
-const CLAUSES = new Set(['WHERE', 'GROUP', 'HAVING', 'QUALIFY', 'WINDOW', 'ORDER', 'LIMIT', 'OFFSET', 'FETCH']);
-
-// A pick as a condition: { ref, value } is `ref = literal`, or `ref IS NULL` for a blank; a
-// slicer's { ref, values } is `ref IN (…)`, with a blank among them `ref IS NULL OR …`, and its
-// { ref, range: [lo, hi] } `ref >= lo AND ref <= hi`, either end left out when null: a date's
-// last day is kept whole (`< the day after`), as Visual's own filter keeps it. An empty list is
-// no condition.
-function condition(f) {
-  if (Array.isArray(f.range)) {
-    const [lo, hi] = f.range;
-    const day = f.type === 'dateTime' && hi != null && /^\d{4}-\d{2}-\d{2}/.exec(String(hi));
-    return [lo != null ? `${f.ref} >= ${sqlLiteral(lo, f.type)}` : null,
-      day ? `${f.ref} < ${sqlLiteral(shiftDate(day[0], 1), f.type)}` : hi != null ? `${f.ref} <= ${sqlLiteral(hi, f.type)}` : null]
-      .filter(Boolean).join(' AND ') || null;
-  }
-  if (!Array.isArray(f.values)) return f.value == null ? `${f.ref} IS NULL` : `${f.ref} = ${sqlLiteral(f.value, f.type)}`;
-  const named = f.values.filter(v => v != null);
-  const inList = named.length ? `${f.ref} IN (${named.map(v => sqlLiteral(v, f.type)).join(', ')})` : null;
-  if (named.length === f.values.length) return inList;
-  return inList ? `(${f.ref} IS NULL OR ${inList})` : `${f.ref} IS NULL`;
-}
-
-/**
- * A tile's SQL with picks as its WHERE (condition): added after FROM, before GROUP BY and the
- * rest, or ANDed to the WHERE it has, which is put in parentheses.
- */
-export function withFilters(sql, filters) {
-  const conds = (filters ?? []).map(condition).filter(Boolean);
-  if (!conds.length) return sql;
-  const cond = conds.join(' AND ');
-  const toks = tokens(sql);
-  const clause = t => t.top && (CLAUSES.has(t.word) || t.semi);
-  const from = toks.findIndex(t => t.top && t.word === 'FROM');
-  if (from < 0) throw new Error("the tile's SQL has no FROM, so it can't be filtered");
-  const after = (i, ok) => { const j = toks.findIndex((t, k) => k > i && ok(t)); return j < 0 ? toks.length : j; };
-  // The end of the token before the i-th: what is inserted goes there, before any comment.
-  const endBefore = i => toks[i - 1].end;
-  const next = after(from, clause);
-  if (toks[next]?.word !== 'WHERE') {
-    const at = endBefore(next);
-    return `${sql.slice(0, at)} WHERE ${cond}${sql.slice(at)}`;
-  }
-  const a = toks[next].end, b = endBefore(after(next, t => clause(t) && t.word !== 'WHERE'));
-  return `${sql.slice(0, a)} (${sql.slice(a, b).trim()}) AND ${cond}${sql.slice(b)}`;
+  if (Array.isArray(p.values)) return p.values.length ? [[id, 'in', p.values]] : [];
+  return [p.value == null ? [id, 'blank'] : [id, '=', p.value]];
 }
 
 const same = (a, b) => (a ?? null) === (b ?? null);
@@ -390,8 +270,8 @@ const same = (a, b) => (a ?? null) === (b ?? null);
  * 'studio' registered; shown() (optional), a promise that settles once the Report is on screen;
  * leftWhileRunning() (optional), whether the host stopped the tile running because the Report was
  * left (and forgets it); cancel() (optional), stops the tile running, when a pick changes it;
- * columnType(table, column) (optional), a model column's dataType (table null: the one column of
- * that name), for a pick's literal; model, the model (model.js's tmslOf), for pivot tiles; css(name)
+ * where (optional), conditions in every tile's query, as the Filters shelf writes them (the host's
+ * filter bar); model, the model (model.js's tmslOf); css(name)
  * (optional), a CSS token's value, for a pivot's tints; remove(index) (optional), a ✕ on each tile
  * that takes it out of the report; layout(tiles) (optional), a grip on each tile that drags it
  * anywhere on the grid and a ◢ that drags its size (or the arrow keys, on either), drawn there at
@@ -417,6 +297,8 @@ export function drawReport(root, spec, ctx) {
   const tiles = Array.isArray(spec?.tiles) ? spec.tiles : null;
   // The report's theme: its colours, and the size of its text.
   const palette = PALETTES[spec?.theme?.palette] ?? PALETTE;
+  // A value's own colour in every tile (a fuel, a region): { label: '#rrggbb' }.
+  const valueColors = spec?.theme?.colors && typeof spec.theme.colors === 'object' ? spec.theme.colors : null;
   const textSize = TEXT_SIZES[spec?.theme?.textSize] ? spec.theme.textSize : null;
   const grid = el('div', { class: `rp${textSize ? ` rp-text-${textSize}` : ''}` });
   const chips = el('div', { class: 'rp-filters', hidden: true });
@@ -433,11 +315,12 @@ export function drawReport(root, spec, ctx) {
     const body = el('div', { class: 'rp-body' }, el('p', { class: 'rp-say' }, 'Waiting…'));
     // A pivot tile's shelves and query; a broken one says why when it runs (drawPivot).
     let piv = null;
-    if (tile?.kind === 'pivot' && fields) try { piv = pivotQuery(tile.pivot, fields); } catch (_) { /* drawPivot says */ }
+    if (tile?.kind === 'pivot' && fields) try { piv = shelvesQuery(tile); } catch (_) { /* drawPivot says */ }
     const mark = piv && (piv.state.mark === 'auto' ? autoMark(piv.state, fields) : piv.state.mark);
     // A pivot's chart of several measures is a plot each, one above the other: taller.
-    const plots = piv && mark !== 'heatmap' && mark !== 'scatter' && mark !== 'slicer' ? Math.min(piv.state.values.length, 4) : 1;
-    const wide = tile.wide ?? (tile.kind === 'kpi' || tile.kind === 'table' || mark === 'table' || mark === 'highlight' || mark === 'heatmap');
+    const plots = piv && !SHAPES.has(mark) && mark !== 'heatmap' && mark !== 'scatter' && mark !== 'slicer' && !tile.format?.measures
+      ? Math.min(piv.state.values.length, 4) : 1;
+    const wide = tile.wide ?? (mark === 'table' || mark === 'highlight' || mark === 'heatmap' || mark === 'calendar');
     const title = String(tile.title ?? '');
     const text = tile?.kind === 'text';
     const job = { tile, body, piv, on: text ? null : pickColumn(tile, piv), dirty: !text, asking: false, chart: null, box: null, repaint: null };
@@ -447,8 +330,8 @@ export function drawReport(root, spec, ctx) {
     // Not drawn again when a pick changes: a slicer keeps its values, a text tile has no query.
     job.still = job.slicer || text;
     // What the format pane offers it (about).
-    job.kind = text ? 'text' : job.slicer ? 'slicer' : mark === 'card' || tile.kind === 'kpi' ? 'card'
-      : tile.kind === 'table' || mark === 'table' || mark === 'highlight' || (piv && !piv.state.values.length) ? 'table' : 'chart';
+    job.kind = text ? 'text' : job.slicer ? 'slicer' : mark === 'card' ? 'card' : SHAPES.has(mark) ? 'shape'
+      : mark === 'table' || mark === 'highlight' || (piv && !piv.state.values.length) ? 'table' : 'chart';
     job.plots = plots;
     job.at = startAt(tile, { wide, mark, plots });
     const name = title || 'this tile';
@@ -540,14 +423,15 @@ export function drawReport(root, spec, ctx) {
 
   // The model column a click on this tile filters the others by, with its type; null: no clicks.
   function pickColumn(tile, piv) {
-    if (tile.kind === 'kpi' || tile.crossFilter === false) return null;
-    const c = tile.kind === 'pivot' ? piv?.field
-      : typeof tile.crossFilter === 'string' ? columnOf(tile.crossFilter) : firstColumn(tile.sql);
-    return c && { ...c, type: ctx.columnType?.(c.table, c.column) };
+    return tile.kind === 'pivot' && piv?.field ? piv.field : null;
   }
-  // The picks of every other tile, as withFilters takes them.
-  const filtersFor = job => [...picks].filter(([j]) => j !== job)
-    .map(([j, p]) => ({ ref: j.on.ref, type: j.on.type, ...(p.values ? { values: p.values } : p.range ? { range: p.range } : { value: p.value }) }));
+  // What every other tile picked, and the host's filter bar: conditions of this tile's query.
+  const whereFor = job => [...(typeof ctx.where === 'function' ? ctx.where(job.tile) : ctx.where ?? []),
+    ...[...picks].filter(([j]) => j !== job).flatMap(([j, p]) => pickWhere(j.on.id, p))];
+  // A tile's query: its shelves', with the totals when its format draws them as a line.
+  function shelvesQuery(tile) {
+    return pivotQuery(tile.format?.totalLine ? { ...tile.pivot, totals: true } : tile.pivot, fields);
+  }
 
   // --- Where a tile is: its grip drags it anywhere, its ◢ drags its size; arrow keys on either ---
   // A tile with no layout yet: as wide and tall as its kind (and a slicer's style) is, the size an
@@ -556,7 +440,7 @@ export function drawReport(root, spec, ctx) {
     if (tile.layout && typeof tile.layout === 'object') return { ...tile.layout };
     const style = mark === 'slicer' ? tile.pivot?.slicer : null;
     const rows = mark === 'slicer' ? ({ dropdown: 8, range: 9, buttons: 10 }[style] ?? 28)
-      : mark === 'card' ? 10 : tile.kind === 'kpi' || tile.kind === 'text' ? 12 : wide ? 36 : plots > 1 ? 14 + 18 * plots : 32;
+      : mark === 'card' ? 10 : tile.kind === 'text' ? 12 : mark === 'calendar' ? 40 : SHAPES.has(mark) ? 36 : wide ? 36 : plots > 1 ? 14 + 18 * plots : 32;
     const w = tile.size?.w ?? (mark === 'slicer' || mark === 'card' ? 3 : wide || tile.kind === 'text' ? COLUMNS : COLUMNS / 2);
     return { x: null, y: null, w, h: tile.size?.h > 0 ? Math.ceil(tile.size.h / ROW) : rows };
   }
@@ -714,95 +598,11 @@ export function drawReport(root, spec, ctx) {
 
   async function drawTile(job) {
     const { tile } = job;
-    if (!KINDS.has(tile.kind)) throw new Error(`a tile's kind is kpi, bar, line, table, pivot or text, not ${JSON.stringify(tile.kind)}`);
-    if (tile.kind === 'pivot') return drawPivot(job);
-    if (typeof tile.sql !== 'string' || !tile.sql.trim()) throw new Error('the tile has no sql');
-    if (tile.crossFilter != null && tile.crossFilter !== false && !(typeof tile.crossFilter === 'string' && columnOf(tile.crossFilter))) {
-      throw new Error(`a tile's crossFilter is a model column ("table"."column") or false, not ${JSON.stringify(tile.crossFilter)}`);
+    if (!KINDS.has(tile.kind)) {
+      throw new Error(tile.sql != null ? 'Not a Visual tile: build it again in Visual and add it to the report.'
+        : `a tile's kind is pivot or text, not ${JSON.stringify(tile.kind)}`);
     }
-    const sql = withFilters(tile.sql, filtersFor(job));
-    job.asking = true;
-    let res;
-    try { res = await ctx.sql(sql); } finally { job.asking = false; }
-    // A pick changed the tile while it ran: this answer is not its own any more.
-    if (gone || job.dirty) return;
-    job.res = res;
-    await paintTile(job);
-  }
-
-  // A SQL tile's answer (job.res) drawn, as its format says: run once, drawn again when only
-  // its format changes (restyle).
-  async function paintTile(job) {
-    const { tile, body, res } = job;
-    clear(job);
-    const f = tile.format ?? {};
-    const fmt = formatter(tile);
-    job.numbers = res.fields.filter(c => res.rows.some(r => typeof r[c] === 'number'));
-    if (!res.rows.length) { body.replaceChildren(el('p', { class: 'rp-say' }, 'No rows.')); return; }
-    if (tile.kind === 'kpi') {
-      const row = res.rows[0];
-      body.replaceChildren(el('div', { class: 'rp-kpis' },
-        res.fields.map(c => el('div', { class: 'rp-kpi' }, el('span', {}, c), el('b', {}, fmt(c, row[c]))))));
-      return;
-    }
-    const [x, ...ys] = res.fields;
-    const pickRow = (r, label) => job.on && pick(job, x, r[x], label);
-    if (tile.kind === 'table') {
-      // Its columns coloured by value (format.byValue), against the range of the rows shown.
-      const ranges = Object.fromEntries(Object.entries(f.byValue ?? {}).filter(([c, how]) => how && res.fields.includes(c))
-        .map(([c]) => [c, extent(res.rows.map(r => r[c]))]));
-      const cell = (r, c) => {
-        const td = el('td', typeof r[c] === 'number' ? { class: 'num' } : {}, fmt(c, r[c]));
-        if (ranges[c]) td.style.background = byValueBackground(f.byValue[c], r[c], ranges[c], palette[0]);
-        return td;
-      };
-      const rows = res.rows.map(r => el('tr', job.on ? {
-        class: 'rp-pick', tabindex: 0, onclick: () => pickRow(r, fmt(x, r[x])),
-        onkeydown: e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pickRow(r, fmt(x, r[x])); } },
-      } : {}, res.fields.map(c => cell(r, c))));
-      body.replaceChildren(el('div', { class: 'rp-table' }, el('table', {},
-        el('thead', {}, el('tr', {}, res.fields.map(c => el('th', {}, c)))),
-        el('tbody', {}, rows))));
-      // The pick's row highlighted.
-      job.repaint = () => { const p = picks.get(job); res.rows.forEach((r, i) => rows[i].classList.toggle('rp-on', !!p && same(r[x], p.value))); };
-      job.repaint();
-      return;
-    }
-    // A chart: the first column across, the others up.
-    const box = el('div', { class: 'rp-chart' });
-    body.replaceChildren(box);
-    const echarts = await ctx.echarts();
-    if (gone || job.dirty || job.body.firstChild !== box) return;
-    const chart = echarts.init(box, 'studio');
-    Object.assign(job, { chart, box });
-    resized.observe(box);
-    const cats = res.rows.map(r => (r[x] == null ? '(blank)' : String(r[x])));
-    // The series' data: with a pick among the rows, its bar or point bright and the others dim; a
-    // line marks it too.
-    const picked = () => {
-      const p = picks.get(job);
-      const at = p ? res.rows.findIndex(r => same(r[x], p.value)) : -1;
-      return ys.map((c, s) => ({
-        data: res.rows.map(r => (at < 0 ? r[c] : { value: r[c], itemStyle: { opacity: same(r[x], p.value) ? 1 : DIM } })),
-        ...(tile.kind === 'line' && s === 0
-          ? { markLine: { silent: true, symbol: 'none', label: { show: false }, data: at < 0 ? [] : [{ xAxis: cats[at] }] } } : {}),
-      }));
-    };
-    const option = formatChart({
-      aria: { enabled: true },
-      color: palette,
-      tooltip: { trigger: 'axis', valueFormatter: v => fmt(ys[0], v) },
-      legend: ys.length > 1 ? { top: 0 } : undefined,
-      grid: { left: 8, right: 16, top: ys.length > 1 ? 32 : 12, bottom: 8, containLabel: true },
-      xAxis: { type: 'category', data: cats },
-      yAxis: { type: 'value' },
-      series: picked().map((s, i) => ({ name: ys[i], type: tile.kind, cursor: job.on ? 'pointer' : 'default', ...s,
-        ...(tile.kind === 'line' ? { showSymbol: res.rows.length <= 60 } : {}) })),
-    }, f, { textSize, label: (name, v) => fmt(name, v) });
-    job.series = ys.map((name, i) => ({ name, color: f.colors?.[name] ?? palette[i % palette.length] }));
-    chart.setOption(tile.echarts && typeof tile.echarts === 'object' ? merge(option, tile.echarts) : option);
-    if (job.on) chart.on('click', e => { if (e.componentType === 'series' && res.rows[e.dataIndex]) pickRow(res.rows[e.dataIndex], cats[e.dataIndex]); });
-    job.repaint = () => chart.setOption({ series: picked() });
+    return drawPivot(job);
   }
 
   // A pivot tile: its shelves' query, with the other tiles' picks, drawn as Pivot draws it.
@@ -810,9 +610,9 @@ export function drawReport(root, spec, ctx) {
     const { tile } = job;
     if (!fields) throw new Error('a pivot tile needs the model, and the Report was given none');
     // Its shelves read again, to say what is wrong with them.
-    const piv = job.piv ?? pivotQuery(tile.pivot, fields);
+    const piv = job.piv ?? shelvesQuery(tile);
     job.piv = piv;
-    const sql = withFilters(piv.sql, filtersFor(job));
+    const sql = piv.sqlWith(whereFor(job));
     job.asking = true;
     let res;
     try { res = await ctx.sql(sql); } finally { job.asking = false; }
@@ -830,7 +630,8 @@ export function drawReport(root, spec, ctx) {
     job.numbers = valueNames(piv.state);
     if (!res.rows.length) { body.replaceChildren(el('p', { class: 'rp-say' }, 'No rows.')); return; }
     const formats = Object.fromEntries(Object.entries(f.numbers ?? {}).map(([k, s]) => [k, numberFormat(s)]).filter(([, v]) => v));
-    const look = { fields, palette, css: ctx.css ?? (() => ''), formats, byValue: f.byValue, labels: !!f.labels };
+    const look = { fields, palette, css: ctx.css ?? (() => ''), formats, byValue: f.byValue, labels: !!f.labels,
+      measures: f.measures, totalLine: !!f.totalLine, maxLabel: !!f.maxLabel, valueColors, change: f.change, goodWhen: f.goodWhen };
     const pickOf = () => {
       if (!job.on) return null;
       const p = picks.get(job);
@@ -870,6 +671,11 @@ export function drawReport(root, spec, ctx) {
       job.series = [...seen].map(([name, color]) => ({ name, color }));
       job.chart.setOption({ aria: { enabled: true }, ...option }, true);
     };
+    // A map draws over the world's outline, read the first time one is drawn.
+    if (first.option?.geo && ctx.mapReady) {
+      await ctx.mapReady();
+      if (gone || job.dirty || job.res !== res) return;
+    }
     paint(first);
     job.repaint = () => { if (job.quiet) { job.quiet = false; return; } paint(view()); };
   }
@@ -879,10 +685,20 @@ export function drawReport(root, spec, ctx) {
   function restyle(i, format) {
     const job = jobs[i];
     if (!job) return;
+    const totals = !!job.tile.format?.totalLine !== !!format?.totalLine;
     job.tile = { ...job.tile, format };
     styleTile(job);
-    if (job.kind === 'text' || !job.res || job.dirty || running === job) return;
-    (job.tile.kind === 'pivot' ? paintPivot(job) : paintTile(job))
+    if (job.kind === 'text') return;
+    // The total line asks for the totals: its query runs again.
+    if (totals && job.tile.kind === 'pivot' && fields) {
+      try { job.piv = shelvesQuery(job.tile); } catch (_) { /* drawPivot says */ }
+      job.dirty = true;
+      say(job, 'Waiting…');
+      pump();
+      return;
+    }
+    if (!job.res || job.dirty || running === job) return;
+    paintPivot(job)
       .then(() => ctx.drawn?.(i), e => say(job, e?.message || String(e), ' error'));
   }
 
@@ -894,8 +710,9 @@ export function drawReport(root, spec, ctx) {
       root.replaceChildren();
     },
     restyle,
-    // What the format pane offers tile `i`: its kind ('chart', 'table', 'card', 'slicer' or
-    // 'text'), its series as drawn ({ name, color }) and its fields with numbers; null: no tile.
+    // What the format pane offers tile `i`: its kind ('chart', 'table', 'card', 'slicer', 'shape'
+    // (a treemap, a calendar, a map) or 'text'), its series as drawn ({ name, color }) and its fields
+    // with numbers; null: no tile.
     about: i => (jobs[i] ? { kind: jobs[i].kind, series: jobs[i].series ?? [], numbers: jobs[i].numbers ?? [] } : null),
     // The tile being formatted, outlined (-1: none).
     mark: i => jobs.forEach((j, k) => j.section.classList.toggle('rp-formatting', k === i)),

@@ -310,6 +310,12 @@ const loadEcharts = () => (echartsP ??= new Promise((resolve, reject) => {
   s.onerror = () => reject(new Error(`could not load ${s.src}`));
   document.head.append(s);
 }).catch(e => { echartsP = null; throw e; }));
+// The world's outline a map draws over (Explore's map mark), from the vendored copy.
+const loadWorldMap = async () => {
+  const r = await fetch(npmFile(PINS.worldMap, 'map/json/world.json'));
+  if (!r.ok) throw new Error(`the world's map: ${r.status}`);
+  return r.json();
+};
 function closeModelView() {
   if (!modelView) return;
   modelView.destroy();
@@ -360,6 +366,7 @@ async function openModelView(file, text = null, { fromOneLake = text == null } =
       run: runModelSql,
       cancel: () => engine.cancelLoad(),
       echarts: loadEcharts,
+      worldMap: loadWorldMap,
       setStatus,
       saveText: (name, text) => engine.saveText(name, text),
       copyText,
@@ -1200,6 +1207,7 @@ async function openPivot() {
       run: runModelSql,
       cancel: () => engine.cancelLoad(),
       echarts: loadEcharts,
+      worldMap: loadWorldMap,
       setStatus,
       saveText: (name, text) => engine.saveText(name, text),
       copyText,

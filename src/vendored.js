@@ -13,6 +13,9 @@ const PINS = {
   yaml: 'yaml@2.9.1',
   // Explore's charts — a classic script (dist/echarts.min.js), not a +esm closure.
   echarts: 'echarts@5.5.1',
+  // The world's outline a map tile draws over: ECharts 4's map/json/world.json, a plain GeoJSON
+  // (ECharts 5 ships no maps). Only that file of the package.
+  worldMap: 'echarts@4.9.0',
   // The DAX-to-SQL compiler behind semantic models (semantic.js), from npm.
   daxSql: 'dax-sql@0.1.7',
 };
@@ -36,12 +39,13 @@ const WEBAPP = {
   // decodes its Arrow answer with an Arrow of its own (not `arrow` above, DuckDB's).
   rayfinSemanticModel: '@microsoft/rayfin-connector-fabric-semanticmodel@1.36.1',
   echarts: PINS.echarts,
+  worldMap: PINS.worldMap,
 };
 
 // What vendor.mjs fetches for each pin.
 const VENDOR = {
   esm: [PINS.marked, PINS.dompurify, PINS.yaml],          // npm/<pkg>/+esm, with its closure
-  files: [`${PINS.echarts}/dist/echarts.min.js`],          // npm/<pkg>/<path>, as is
+  files: [`${PINS.echarts}/dist/echarts.min.js`, `${PINS.worldMap}/map/json/world.json`],          // npm/<pkg>/<path>, as is
   // A package's own files, as published (npm/<pkg>@<v>/…): its modules import each other by
   // relative path, so the files the page needs are listed by pattern.
   packages: [
@@ -52,7 +56,7 @@ const VENDOR = {
   webapp: {
     esm: [WEBAPP.duckdbWasm, WEBAPP.arrow, WEBAPP.rayfinClient, WEBAPP.rayfinFabric, WEBAPP.rayfinSemanticModel],
     files: [`${WEBAPP.duckdbWasm}/dist/duckdb-base.wasm`, `${WEBAPP.duckdbWasm}/dist/duckdb-browser-base.worker.js`,
-            `${WEBAPP.echarts}/dist/echarts.min.js`],
+            `${WEBAPP.echarts}/dist/echarts.min.js`, `${WEBAPP.worldMap}/map/json/world.json`],
     extensions: { duckdb: WEBAPP.duckdb, platform: 'wasm_eh', names: WEBAPP.extensions },
   },
 };

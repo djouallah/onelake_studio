@@ -572,21 +572,40 @@ A semantic model opens as **Explore** ([`app/explore/`](../app/explore/)), on th
     counted, and its chip switches to average, min, max, count or distinct count.
   - Totals are off until you tick them, and a view cut at 5,000 rows leaves them out.
   - Every view is one `SELECT … FROM <model>` in dax-sql's SQL (`modelSql`): columns, `AGG("measure")`,
-    summarised columns and `ROLLUP` totals.
+    summarised columns and `ROLLUP` totals. Its query is always generated from the shelves: nothing else writes a
+    Visual's or a Report tile's SQL.
+  - **Top** keeps the first n rows as they are sorted, ties kept (`FETCH FIRST n ROWS WITH TIES`; picking one sorts by
+    the first measure, largest first, when the sort was by fields). A measure dropped on Filters filters the figures
+    shown: a range of them, a `HAVING` (by its name when it is on Values, else as `AGG("measure")`).
+  - **Treemap**, **Calendar** and **Map** are marks too (`pivotChart`): a treemap's levels are Rows (one or two), its
+    size the first measure; a calendar is a date column on Rows, a strip a year, each day coloured by the first
+    measure; a map is a latitude, a longitude and a name on Rows, each point sized by the first measure and coloured by
+    a column on Columns, over the world's outline (ECharts 4's `world.json`, vendored and pinned like ECharts, read the
+    first time a map is drawn: `ctx.worldMap`).
   - **Show SQL** swaps the pivot for that SQL in a box you can edit and run.
   - **Slicer** is a mark like the others (`slicerView`): the values of the first Rows field, those the query answers
     (with a measure on Values, only those with a figure, shown beside each; a filter narrows them too), drawn as a list,
     buttons, a dropdown of the list, or a range for a date or a number, picked by a switch over it (`state.slicer`). On
     Visual it only shows; on the Report it filters. A table's Visual has no Slicer: it only builds SQL.
   - **Card** is a mark too (`cardView`): each field on Values as one figure, in its format string, over every row its
-    filters keep. Its query leaves Rows and Columns out (`buildQuery`), and Automatic picks it when only Values has
-    fields. On the Report the other tiles' picks filter it, and a click on it picks nothing.
+    filters keep. Its query leaves Columns out (`buildQuery`); a field on Rows (a date) is its trend, a line under the
+    figure, and the figure is then the query's total row. Automatic picks it when only Values has fields. On the Report
+    the other tiles' picks filter it, a click on it picks nothing, and its format can show a second measure as its change
+    (▲ or ▼, coloured good or bad).
   - **Show plan** profiles it (`profile.js`: DuckDB's `EXPLAIN ANALYZE` as totals, a timeline and the
     costly operators) next to its plan tree.
   - **Add to report** puts the view on the Report, as a tile (Report, below).
-- **Report:** pages of tiles, each tile a SELECT over the model `FROM model`, a pivot or text, drawn as figures, a bar
-  or line chart, a table, Markdown, or as Visual draws it ([`report.js`](../app/explore/report.js)). A tile that fails
-  says so in its box, and the rest still draw.
+- **Report:** pages of tiles, each tile a Visual (`pivot`, its shelves) or text, drawn as Visual draws it or as
+  Markdown ([`report.js`](../app/explore/report.js)). No tile holds SQL: a tile's query is Visual's, from its shelves.
+  A tile of an older report that holds SQL (`kpi`, `bar`, `line`, `table`) says it is not a Visual tile, to be built
+  again in Visual. A tile that fails says so in its box, and the rest still draw.
+  - **Filter bar:** the report's `filters` (`[{ field, style }]`), over the pages' names on every page (`drawBar` in
+    [`view.js`](../app/explore/view.js)): a dropdown of one value, a list to tick (searched, 150 shown), or dates from
+    and to with 3d, 7d, 30d, 1y and All back from the latest day the column has. A filter's values are a query of their
+    own, as the Filters shelf lists them (`valuesSql`). What is picked is a condition of every tile's query
+    (`ctx.where`), but those whose format ignores it (`format.ignore`, the pane's "Follows the filters"); a pick draws
+    every page again, and the picks in its tiles go. The viewer's picks are this visit's only. Studio's + Filter adds
+    one (a column and its style) and a filter's ✕ takes it out, saved like every other edit.
   - **Pages:** the report is `{ pages: [{ name, tiles }] }`; one written before pages, `{ tiles }`, is one page, Page 1
     (`reportPages`), and the first save writes it as pages (`withPages`). Their names sit over the tiles and one page is
     on screen (`reportAt` in [`view.js`](../app/explore/view.js)); each page is drawn the first time it is shown and kept,
@@ -609,8 +628,13 @@ A semantic model opens as **Explore** ([`app/explore/`](../app/explore/)), on th
     like every other edit. A chart's format goes over its ECharts option (`formatChart`), a pivot's numbers, colours by
     value and labels through Visual's own drawing (`look.formats`, `byValue`, `labels` in
     [`explore.js`](../app/explore/explore.js)). The Report tab writes the report's `theme`: `palette` (`PALETTES` in
-    [`theme.js`](../app/explore/theme.js)) and `textSize`, for every page; it draws the page again. A tile's own
-    colours win over the theme's. The pane closes when its tile or page moves or goes.
+    [`theme.js`](../app/explore/theme.js)), `textSize`, and `colors`, a colour by value (a column's values, picked
+    in the pane), which every tile draws that value in: a series, a bar, a treemap's box, a map's points; it draws the
+    page again. A tile's own colours win over the theme's. A chart's format also has `measures` (several measures in one
+    plot, each drawn as a bar, a line, an area or a dashed line, on the left axis or the right one), `totalLine` (each
+    measure's total as a dashed line across, from the query's own totals: the tile's query asks for them), `maxLabel`
+    (each series' highest point labelled) and `zoom` (a slider under it); a card's `change` (the measure shown as its
+    change) and `goodWhen`. The pane closes when its tile or page moves or goes.
   - **Which tiles:** the model's Export to Fabric zip's `site/report.json`, when it has one (the zip its last export was
     approved into); else the file Studio keeps for the model until its first export (`<storage>/reports/`, by its
     workspace and name); else none: a Report starts empty. The first export writes Studio's file, or no tiles, into
@@ -626,32 +650,29 @@ A semantic model opens as **Explore** ([`app/explore/`](../app/explore/)), on th
   - **Editing a tile:** a pivot tile's ✎ opens its shelves in Visual (`editTile` in [`view.js`](../app/explore/view.js)),
     under a strip with its title, **Update tile** and **Cancel**. Update writes the shelves and the title into that tile,
     its layout kept; a title that was its shelves' own follows the new ones. Either way Visual's shelves from before come
-    back, and the Report is on screen again. Add to report still adds a new tile from there. A tile with `sql` has no ✎:
-    its SQL is the file's.
+    back, and the Report is on screen again. Add to report still adds a new tile from there.
   - **Drawn again** when the zip changes, while the tab is on screen: a person or an agent edits the report and sees it.
-  - A tile is `{ title, kind, sql, formats?, echarts?, wide?, crossFilter? }`: `kind` is `kpi`, `bar`, `line` or `table`,
-    `formats` a column's format string, `echarts` an ECharts option merged over the tile's own. A `pivot` tile is
-    `{ title, kind: 'pivot', pivot }`, `pivot` the shelves as Visual keeps them; its SQL is Visual's (`pivotQuery`), and it
-    is drawn by Visual's own code (`pivotView` in [`explore.js`](../app/explore/explore.js)), so it keeps every mark. A
-    slicer is a `pivot` tile whose mark is `slicer` (Visual, above). The tiles are laid out on 12 columns and rows of 10px:
+  - A tile is `{ title, kind: 'pivot', pivot, format?, layout?, wide? }`, `pivot` the shelves as Visual keeps them; its SQL
+    is Visual's (`pivotQuery`), and it is drawn by Visual's own code (`pivotView` in [`explore.js`](../app/explore/explore.js)),
+    so it keeps every mark. A slicer is a `pivot` tile whose mark is `slicer` (Visual, above). The tiles are laid out on 12 columns and rows of 10px:
     `layout` (`{ x, y, w, h }`) is where a tile's grip and ◢ put it. `arrange` places them: the tile moved stays where
     it is put, every other tile floats up as far as it can and down past what it would overlap, and then all float up
     once more, so a gap under a short tile is filled. A tile with no layout goes in the first place it fits, as big as
     its kind is (a slicer 3 columns, a chart 6, figures and tables 12). The tiles are kept top to bottom.
-  - **Cross filtering:** a click on a bar, a line's point or a table's row picks its first column's value, and every other
-    tile runs again with it as a `WHERE` on the model column that first column is (`withFilters`: before `GROUP BY`, ANDed
-    to a `WHERE` the tile has, `IS NULL` for a blank, the literal typed by the model's column). A pivot tile picks its
-    first Rows field (else Columns). A slicer's pick is its values, a `WHERE … IN (…)` on every other tile (`IS NULL` for a
-    blank among them), or its range, `>=` and `<=` (a date's last day kept whole); it does not run again when other picks
-    change. The tile clicked stays whole, its pick bright and the rest dim. The same click
-    again, or the pick's ✕ in the bar above the tiles, clears it; picks in several tiles all apply. A figures tile takes
-    no clicks. `crossFilter` names the model column when the first column is not one, or is `false` for a tile that takes
-    none. The tiles still run one at a time, and a pick stops the tile running when it changes it. A pick filters only
+  - **Cross filtering:** a click on a bar, a point, a row or a day picks the tile's first Rows field's value (else
+    Columns'; a map's, its points' name), and every other tile runs again with it as a condition of its own query, as its
+    Filters shelf writes one (`pickWhere`, then `sqlWith`: `= value`, `IS NULL` for a blank, the literal typed by the
+    model's column). A slicer's pick is its values, `IN (…)` (`IS NULL` for a blank among them), or its range, `>=` and
+    `<=` (a date's last day kept whole); it does not run again when other picks change. The tile clicked stays whole, its pick bright and the rest dim. The same click
+    again, or the pick's ✕ in the bar above the tiles, clears it; picks in several tiles all apply. A card takes no
+    clicks, nor does a treemap (a click zooms into its box). The tiles still run one at a time, and a pick stops the tile running when it changes it. A pick filters only
     the tiles of its own page.
 
 `view.js` is host-neutral: the host passes in the compiler, how to run SQL, and where ECharts comes
 from. **A tab** runs it on the native engine. **The Fabric app** runs the
-same files on DuckDB-WASM.
+same files on DuckDB-WASM. Its page ([`fabric_app/site/index.html`](../fabric_app/site/index.html)) names the model in
+its header and is dark, unless the viewer picks light there (☀/☾, kept in that browser) or the system prefers it; the
+chrome is the text's colour, and colour is for the data. A switch draws every chart again in the new theme.
 
 ## Opening files from disk
 

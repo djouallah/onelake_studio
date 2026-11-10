@@ -7,23 +7,47 @@
 <title>Explore</title>
 <link rel="stylesheet" href="./explore/explore.css">
 <style>
-  /* Black, always: no light theme. explore.css's tokens, and the sign-in gate's
-     (storage/auth.js: --bg, --muted, --accent, --on-accent). */
+  /* Dark, unless the viewer picked light (☀/☾, kept in this browser) or the system prefers it:
+     set before the first paint, below. explore.css's tokens, and the sign-in gate's
+     (storage/auth.js: --bg, --muted, --accent, --on-accent). The chrome is the text's colour;
+     colour is for the data. */
   :root {
     color-scheme: dark;
     --bg: #0a0c10; --panel: #0e1116; --panel2: #12151c; --card: #12151c; --raised: #181c25; --input-bg: #0e1116;
     --border: #262b36; --row-line: #1c212b;
     --text: #f2f4f8; --muted: #9aa3b2; --faint: #6b7483; --disabled: #4a515e;
-    --accent: #3987e5; --accent2: #58a6ff; --on-accent: #0a0c10;
+    --accent: #f2f4f8; --accent2: #c9d1d9; --on-accent: #0a0c10;
     --hairline: rgba(255,255,255,0.07); --hover: rgba(255,255,255,0.07); --hover-soft: rgba(255,255,255,0.035);
-    --err: #f85149; --bad: #f85149; --ok: #3fb950; --warn: #d29922;
+    --err: #f85149; --bad: #f85149; --ok: #3fb950; --good: #3fb950; --warn: #d29922;
     --shadow: 0 12px 32px rgba(0,0,0,0.5);
-    --radius: 14px; --radius-sm: 8px; --gutter: 1.5rem; --gap: 1rem;
+    --card-shadow: inset 0 1px 0 rgba(255,255,255,0.03), 0 8px 24px rgba(0,0,0,0.25);
+    --radius: 14px; --radius-sm: 8px; --gutter: 2rem; --gap: 1rem;
   }
+  :root[data-theme="light"] {
+    color-scheme: light;
+    --bg: #f4f3ef; --panel: #ffffff; --panel2: #faf9f6; --card: #ffffff; --raised: #faf9f6; --input-bg: #ffffff;
+    --border: #dcdad2; --row-line: #ecebe5;
+    --text: #14161a; --muted: #5c6068; --faint: #82858c; --disabled: #a9abb0;
+    --accent: #14161a; --accent2: #3a3d44; --on-accent: #ffffff;
+    --hairline: rgba(20,22,26,0.09); --hover: rgba(20,22,26,0.09); --hover-soft: rgba(20,22,26,0.06);
+    --err: #cf222e; --bad: #cf222e; --ok: #1a7f37; --good: #1a7f37; --warn: #9a6700;
+    --shadow: 0 12px 32px rgba(60,55,40,0.18);
+    --card-shadow: 0 1px 2px rgba(60,55,40,0.06), 0 8px 24px rgba(60,55,40,0.06);
+  }
+  @media (max-width: 700px) { :root { --gutter: 1rem; --gap: 0.75rem; } }
   * { box-sizing: border-box; }
   [hidden] { display: none !important; }
   html, body { margin: 0; min-height: 100%; background: var(--bg); }
-  body { color: var(--text); font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  body { color: var(--text); font: 15px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; -webkit-font-smoothing: antialiased; }
+  /* The app's header: the model's name, and the theme's switch. */
+  .app-head { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: 0.8rem var(--gutter) 0; flex: none; }
+  .app-head h1 { margin: 0; font-size: 1.15rem; font-weight: 750; letter-spacing: -0.01em; }
+  #theme-toggle { background: none; border: 1px solid var(--border); border-radius: 999px; color: var(--muted); cursor: pointer;
+                  width: 2rem; height: 2rem; font-size: 0.95rem; line-height: 1; }
+  #theme-toggle:hover, #theme-toggle:focus-visible { color: var(--text); border-color: var(--muted); }
+  .rp-tile, .rp-pane { box-shadow: var(--card-shadow); }
+  .rp-tile h2 { font-size: 0.95rem; font-weight: 650; color: var(--text); }
+  .subtab { font-size: 0.85rem; }
   button, input, select, textarea { font: inherit; color: inherit; }
   input, select { background: var(--input-bg); border: 1px solid var(--border); border-radius: 6px; padding: 0.2rem 0.4rem; }
   ::-webkit-scrollbar { width: 10px; height: 10px; background: var(--bg); }
@@ -72,8 +96,21 @@
   @keyframes spin { to { transform: rotate(360deg); } }
   @media (prefers-reduced-motion: reduce) { #boot .spin { animation-duration: 3s; } }
 </style>
+<script>
+  // The theme before the first paint: the viewer's pick, else the system's, else dark.
+  (() => {
+    let t = null;
+    try { t = localStorage.getItem("theme"); } catch {}
+    if (t !== "light" && t !== "dark") t = matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+    document.documentElement.dataset.theme = t;
+  })();
+</script>
 </head>
 <body>
+<header class="app-head">
+  <h1 id="app-title"></h1>
+  <button type="button" id="theme-toggle" aria-label="Light or dark"></button>
+</header>
 <main id="explore">
   <div id="boot" role="status" aria-live="polite">
     <div class="spin"></div>
