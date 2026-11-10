@@ -50,6 +50,7 @@
 
 import * as duckdb from "../vendor/npm/@duckdb/duckdb-wasm@1.33.1-dev114.0/+esm.js";
 import { engineQueue } from "./queue.js";
+import { OPEN, SETTINGS } from "./session.js";
 import { createResults } from "./results.js";
 import { createAuth } from "./auth.js";
 import { createCatalog } from "./catalog.js";
@@ -626,14 +627,7 @@ importScripts("${bundle.mainWorker}");`], { type: "text/javascript" }));
     await Promise.all(Array.from({ length: ENGINES }, async (_, i) => {
       const db = new duckdb.AsyncDuckDB(new duckdb.ConsoleLogger(), new Worker(workerUrl));
       await db.instantiate(bundle.mainModule, bundle.pthreadWorker);
-      // Its file system reads a registered https file by range, after a HEAD with
-      // Range: bytes=0- that the store answers 206; never the whole file at once. All three are
-      // needed: with forceFullHTTPReads left out (on), a file opens with no request and fails.
-      // A number reaches JavaScript as a number: a BIGINT, HUGEINT or DECIMAL comes out of the
-      // engine as a DOUBLE (duckdb-wasm's own casts, on every result), not as a BigInt or an
-      // unscaled integer. The compiler leaves the engine's types alone (semantic/query.js).
-      await db.open({ filesystem: { reliableHeadRequests: true, allowFullHTTPReads: false, forceFullHTTPReads: false },
-        query: { castBigIntToDouble: true, castDecimalToDouble: true } });
+      await db.open(OPEN);   // session.js
       const version = await db.getVersion();
       if (version !== DUCKDB) throw new Error(`the engine is DuckDB ${version}, but the site's extensions are for ${DUCKDB}`);
       if (!warmed) { warmed = true; warmExtensions(version); }
@@ -643,9 +637,7 @@ importScripts("${bundle.mainWorker}");`], { type: "text/javascript" }));
       // Installing needs a home directory.
       await q(e, `SET home_directory = '/tmp'; SET custom_extension_repository = ${lit(EXT_REPO)}; ${EXTENSIONS.map(x => `INSTALL ${x}; LOAD ${x};`).join(' ')}`);
       try { localStorage.setItem(EXT_KEY, version); } catch (x) {}
-      // Iceberg's files never change once written: a Parquet footer read holds for the session.
-      await q(e, 'SET parquet_metadata_cache = true;');
-      await q(e, "SET preserve_insertion_order = false;");
+      for (const sql of SETTINGS) await q(e, sql);   // session.js
       return e;
     }));
     URL.revokeObjectURL(workerUrl);
