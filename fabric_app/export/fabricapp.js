@@ -23,7 +23,7 @@
 // No `vscode` import: the extension passes in its token.
 // =============================================================================
 
-const { authedFetch, fabricMessage, listPages, retryAfterMs } = require('./http');
+const { authedFetch, fabricMessage, listPages, retryAfterMs } = require('../../src/http');
 
 const FABRIC_API = 'https://api.fabric.microsoft.com/v1';
 const ITEM_TYPE = 'AppBackend';

@@ -55,10 +55,10 @@ const REPORT_POLL_MS = 2000;
 //   htmlPlan         Show plan's tree as DuckDB's HTML page in a frame (the Fabric app), else
 //                    its text plan (the panel: its CSP runs no inline script)
 //   exportToFabric(state)  (optional) the Report's Export to Fabric button: the Report published as
-//                    a Fabric app (src/exportapp.js; `state`, the shelves, or null), on what the model
+//                    a Fabric app (fabric_app/export/exportapp.js; `state`, the shelves, or null), on what the model
 //                    is, so nothing is asked here; answers what to say when it is done
 //   createSemanticModel()  (optional) a model file's Create Semantic Model button, on the Model page:
-//                    the tree's own (src/exportflow.js), its dialog the host's; answers what to say
+//                    the tree's own (fabric_app/export/exportflow.js), its dialog the host's; answers what to say
 //   openInExcel()    (optional) the Open in Excel button: this model in a new workbook, as a live
 //                    PivotTable (xmla); answers what to say when it is open
 //   keepOffline      (optional) { state(), set(on) }: the Keep offline switch beside the tabs, every

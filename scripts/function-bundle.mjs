@@ -4,7 +4,7 @@
 // The app's functions (openCatalog, and semanticModel for DirectQuery and Direct Lake: fabric_app/rayfin/
 // functions, tracked here) are TypeScript with npm dependencies. Fabric takes them as a zip of one esbuild bundle plus its
 // metadata (deploymetadata.json, generated from the source by the TypeScript compiler), the
-// two sent as a multipart form (src/fabricapp.js). Nothing in either names an item, a
+// two sent as a multipart form (fabric_app/export/fabricapp.js). Nothing in either names an item, a
 // workspace or a secret's value, so the package is built ONCE, here, at package time, and
 // ships in the vsix: nobody who exports needs Node, npm or the Rayfin CLI.
 //
@@ -29,7 +29,7 @@ import { createRequire } from "node:module";
 import { createHash } from "node:crypto";
 
 const require = createRequire(import.meta.url);
-const { CLIENT_VERSION } = require("../src/fabricapp.js");
+const { CLIENT_VERSION } = require("../fabric_app/export/fabricapp.js");
 
 const here = join(dirname(fileURLToPath(import.meta.url)), "..");   // the extension root
 const OUT = join(here, "fabric-function");

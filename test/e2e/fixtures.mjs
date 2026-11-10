@@ -12,7 +12,7 @@ const require = createRequire(import.meta.url);
 const { createStore } = require("../../src/store.js");
 const { createOneLake } = require("../../src/onelake.js");
 const { PINS } = require("../../src/vendored.js");
-const { writeApp } = require("../../src/exportapp.js");
+const { writeApp } = require("../../fabric_app/export/exportapp.js");
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const VENDOR = join(root, "vendor");
@@ -39,7 +39,7 @@ export const NEVER_READ = "lakehouse.e2e.data.dbo.neverread";
 export const MODEL = "semanticmodel.e2e.shop";
 export const MODEL_QUERY = `SELECT Product.Color, AGG("Total") FROM ${MODEL} GROUP BY ALL`;
 export const SAVED_QUERY = "kept";
-// Where the extension keeps the zip a model's Report tab draws (src/exportflow.js reportKey).
+// Where the extension keeps the zip a model's Report tab draws (fabric_app/export/exportflow.js reportKey).
 export const REPORT_KEY = `exportReport:${WORKSPACE}/shop`;
 
 const LAKEHOUSE = { workspace: WORKSPACE, item: "data.Lakehouse" };

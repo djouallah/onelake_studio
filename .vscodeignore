@@ -37,6 +37,8 @@ test/**
 
 # Export to Fabric's template ships as source; a local npm install in its function never does.
 fabric_app/**/node_modules/**
+# Its export is the host's code, and is in dist/extension.js.
+fabric_app/export/**
 
 # Rules for agents working in this repo.
 CLAUDE.md

@@ -473,7 +473,7 @@ once and counts, though the answer still comes through the host.
     when there is no local copy yet) and Copy SQL Name. A file is read from OneLake after the save
     dialog, so a cancel reads nothing.
   - **A folder** (Files/ itself, or one under it): **Upload Files…**, Copy SQL Name and Refresh. Upload picks files on
-    this computer and writes each into that folder ([`src/onelakewrite.js`](../src/onelakewrite.js)): a name already
+    this computer and writes each into that folder ([`fabric_app/export/onelakewrite.js`](../fabric_app/export/onelakewrite.js)): a name already
     there asks Replace or Skip, each file is written beside the target in 32 MB pieces and renamed into place, so a
     cancel or a failure leaves what was there, and the folder is listed again. It needs a connection, as Export does,
     and OneLake's own refusal is shown when the lakehouse is read-only to you.
@@ -646,7 +646,7 @@ A semantic model opens as **Explore** ([`app/explore/`](../app/explore/)), on th
     either), drawn there at once with nothing run again. ⧉ adds a copy after the tiles, as big as the tile, in the first
     place it fits, and a double-click on a title renames it in place. A tile's tools show only while the pointer or the
     keyboard is on it. All write where the tiles are kept, one save after another (`reportSave` in
-    [`src/exportflow.js`](../src/exportflow.js)), over the tiles they were drawn from: a report that changed since (an
+    [`fabric_app/export/exportflow.js`](../fabric_app/export/exportflow.js)), over the tiles they were drawn from: a report that changed since (an
     edit to its file) is refused and drawn again. The pages' +, ✕, renames and moves save the same way. The Fabric app's
     Report only reads, so it has none of them.
   - **Editing a tile:** a pivot tile's ✎ opens its shelves in Visual (`editTile` in [`view.js`](../app/explore/view.js)),
@@ -683,7 +683,7 @@ A model file or an app's file on this machine opens in a tab, as one from the tr
   model, its tables OneLake's by the names in it, in the workspace that holds them (`modelFile` in
   [`src/models.js`](../src/models.js)). One whose tables more than one workspace could hold says so, and is opened from
   its lakehouse's `Files/` instead. Another YAML is a document, and says it is not a model.
-- **An app's file**, `.fabricapp` (`openApp` in [`src/exportflow.js`](../src/exportflow.js)): on the Report page, which
+- **An app's file**, `.fabricapp` (`openApp` in [`fabric_app/export/exportflow.js`](../fabric_app/export/exportflow.js)): on the Report page, which
   draws this file; its Add to report writes here, and its next export saves here. A semantic model's app opens that
   model, as the tree's click does. A client-side app opens on its own `model.ossie.yaml`, the app as it is, and Export to
   Fabric there publishes this file as it is: no Save dialog, and no question about its changes.
@@ -705,10 +705,10 @@ A `.bim` or Ossie `.yaml` in a lakehouse's `Files/` has a ⛁ in the tree (`mode
 the same button on Explore's Model page when it is open there (`fabric.createSemanticModel`, [`src/host.js`](../src/host.js)):
 **Create Semantic Model** makes the Power BI semantic model of it, named for the file, in the file's workspace, on Direct
 Lake (refreshed once made) or DirectQuery (its SQL endpoint signed in to by SSO) (`createSemanticModel` in
-[`src/exportflow.js`](../src/exportflow.js)), and nothing else: no app, no zip, no Report. One dialog asks which: its
+[`fabric_app/export/exportflow.js`](../fabric_app/export/exportflow.js)), and nothing else: no app, no zip, no Report. One dialog asks which: its
 buttons are the two modes, and it says the workspace, the file, and whether a model of that name is there, whose
 definition is then replaced (*Update the semantic model …?*). The definition is TMSL made from the file
-([`src/pbimodel.js`](../src/pbimodel.js)), written over the Fabric API ([`src/fabricmodel.js`](../src/fabricmodel.js)).
+([`fabric_app/export/pbimodel.js`](../fabric_app/export/pbimodel.js)), written over the Fabric API ([`fabric_app/export/fabricmodel.js`](../fabric_app/export/fabricmodel.js)).
 Direct Lake takes no calculated column: a model with one is refused before anything is written, and the message says to
 make it DirectQuery. The workspace's semantic models are listed again after. The command line's
 `semanticmodel <ws> <item> <Files/path> --mode directlake|directquery` (Direct Lake without it) asks nothing for a new
@@ -792,7 +792,7 @@ and the command line's `export` takes no `--mode`.
   available through ctx.Tokens. Use the fabric-semanticmodel connector instead",
   [Connect Functions to external resources](https://learn.microsoft.com/en-us/fabric/apps/functions-connect-external-resources)).
   So the page queries the model through the app's `fabric-semanticmodel` connector. The export declares it in the app's settings
-  (`model`, with the semantic model's workspace and id, [`src/fabricapp.js`](../src/fabricapp.js)), and writes it into
+  (`model`, with the semantic model's workspace and id, [`fabric_app/export/fabricapp.js`](../fabric_app/export/fabricapp.js)), and writes it into
   the local copy's `rayfin.yml`. The function has no token for the model and runs no query.
 - **The page** ([`storage/modeldata.js`](../fabric_app/site/storage/modeldata.js), chosen by `site/engine.json`) turns
   Explore's query over the model into DAX with dax-sql's `sqlToDax` (the copy in `site/semantic/`), runs it through the
@@ -829,12 +829,12 @@ and the command line's `export` takes no `--mode`.
   their columns and runs the query again.
 - **`rayfin/`:** `rayfin.yml` and the function (`openCatalog`, for a client-side app).
 
-[`src/exportapp.js`](../src/exportapp.js) writes the local copy from `fabric_app/`, Studio's
+[`fabric_app/export/exportapp.js`](../fabric_app/export/exportapp.js) writes the local copy from `fabric_app/`, Studio's
 `app/explore/` and dax-sql, as one zip (`appFiles`, `writeApp`). What is uploaded is built in memory from it
 (`buildDist`): `site/` stamped with the build, the packages from `vendor/webapp`, and `rayfin.config.json`, zipped
 in-process.
 
-**Publishing** ([`src/fabricapp.js`](../src/fabricapp.js)) is the REST sequence that `rayfin up` runs,
+**Publishing** ([`fabric_app/export/fabricapp.js`](../fabric_app/export/fabricapp.js)) is the REST sequence that `rayfin up` runs,
 in the same order, with the user's Fabric-audience token:
 
 1. Find the item, or create it.
@@ -1079,7 +1079,7 @@ every window. The rest apply at once.
 | `src/signin.js`, `src/settings.js`, `src/readlog.js` | When a session is asked for, and its tokens. What the settings mean. What a window says about its reads. |
 | `src/engines.js` | The engine this window reads with, the background engine, and the catalog files. |
 | `src/queries.js`, `src/models.js` | Saved queries on disk. A model's local copy, and what the cache can name. |
-| `src/exportflow.js` | Export to Fabric, from its first question to the published app. |
+| `fabric_app/export/exportflow.js` | Export to Fabric, from its first question to the published app. |
 | `src/skill.js`, `src/diskuse.js` | The agent skill's file. How much a folder holds. |
 | `src/names.js` | What items hold tables, and how a table or model is named. |
 | `src/sql.js` | The read-only guard, `tableRefs`, and `SHOW` rewriting. |
@@ -1106,8 +1106,8 @@ every window. The rest apply at once.
 | `src/desktop/`, `desktop/` | The desktop app: VS Code's API for the extension, its server, its window and its Tauri shell. |
 | `src/standalone.js`, `src/msalsession.js`, `src/tokenstore.js` | The command line with VS Code closed: `core.js` with no editor, its sign-in, and its token cache. |
 | `src/diaglog.js` | A window's own log. |
-| `src/exportapp.js`, `src/fabricapp.js`, `src/onelakewrite.js` | Export to Fabric. |
-| `src/pbimodel.js`, `src/fabricmodel.js` | Export to Fabric's semantic model (DirectQuery, Direct Lake): its TMSL, and its writes. |
+| `fabric_app/export/exportapp.js`, `fabric_app/export/fabricapp.js`, `fabric_app/export/onelakewrite.js` | Export to Fabric. |
+| `fabric_app/export/pbimodel.js`, `fabric_app/export/fabricmodel.js` | Export to Fabric's semantic model (DirectQuery, Direct Lake): its TMSL, and its writes. |
 | `src/vendored.js` | The one list of pinned third-party code the webview runs, dax-sql included. |
 | [`app/`](../app/) | A tab's page: `index.html`, `app.js`, `data.js`, `grid.js`, `chart.js`, `docview.js`, `dbview.js`, `paths.js`, `semantic.js`, `cdn.js`, `host.js`, `vscode-api.js`. |
 | [`app/explore/`](../app/explore/) | Explore, shared with the Fabric app. |

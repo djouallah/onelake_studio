@@ -78,7 +78,7 @@ const EXTENSIONS = ['parquet', 'icu'];
 const EXT_REPO = `${VENDOR}duckdb-ext`;
 // The local store DuckDB reads from, and its worker's only way out (blockcache.js).
 const BLOCKCACHE = new URL('./blockcache.js' + new URL(import.meta.url).search, import.meta.url).href;
-// The model, the site's own (src/exportapp.js, setModel), of this build.
+// The model, the site's own (fabric_app/export/exportapp.js, setModel), of this build.
 const MODEL_JSON = new URL("../model.json" + new URL(import.meta.url).search, import.meta.url).href;
 const ENGINES = (() => {
   try { const n = Number(new URLSearchParams(location.search).get('engines')); if (n >= 1 && n <= 4) return Math.floor(n); } catch (e) {}

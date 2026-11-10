@@ -2,7 +2,7 @@
 // explore/theme.js — Explore's chart theme and series colours, from the page's CSS tokens
 // =============================================================================
 // Pure: no CDN, no host. view.js uses it in the panel, and Export to Fabric's page
-// (src/exportapp.js) uses the same file, so a chart looks the same in both.
+// (fabric_app/export/exportapp.js) uses the same file, so a chart looks the same in both.
 // =============================================================================
 
 // Series colours, each of them mid-toned enough for a dark or a light card.

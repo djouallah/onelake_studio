@@ -95,7 +95,7 @@ function namedInWorkspace(s) {
 // The lakehouses a model reads, each once: by GUID, { workspace, item }, from a Direct Lake
 // expression; by name, { workspaceName, itemName }, from tables named item.schema.table, in
 // `workspace`, the model's. The one an Ossie model reads is its Iceberg catalog (Export to
-// Fabric, src/exportapp.js).
+// Fabric, fabric_app/export/exportapp.js).
 export function lakehousesOf(bim, workspace = null) {
   const out = new Map();
   for (const l of lakeExpressions(bim).values()) out.set(`${l.workspace}/${l.item}`, l);

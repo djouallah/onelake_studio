@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { semanticTmsl, definitionOf } = require("../../src/pbimodel.js");
+const { semanticTmsl, definitionOf } = require("../../fabric_app/export/pbimodel.js");
 
 const WS = "0F1E2D3C-4B5A-6978-8796-A5B4C3D2E1F0", LH = "11111111-2222-3333-4444-555555555555";
 // An Ossie model as ossieToTmsl writes it: tables named nem.mart.<table>, no expression.

@@ -32,8 +32,8 @@ const { serveBridge } = require('./bridge');
 const { PINS } = require('./vendored');
 const { createQueries } = require('./queries');
 const { createModels } = require('./models');
-const { createOneLakeWriter } = require('./onelakewrite');
-const { createExport } = require('./exportflow');
+const { createOneLakeWriter } = require('../fabric_app/export/onelakewrite');
+const { createExport } = require('../fabric_app/export/exportflow');
 const { createEngines } = require('./engines');
 
 const SESSION_WAIT_MS = 5_000;

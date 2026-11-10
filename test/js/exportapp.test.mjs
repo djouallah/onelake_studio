@@ -13,7 +13,7 @@ import { execFileSync } from "node:child_process";
 
 const require = createRequire(import.meta.url);
 const { planExport, planOnModel, modelDoc, appFiles, engineOf, readApp, writeApp, unzip, vendorFiles, vendorSize, buildDist, zip, crc32, rayfinYml,
-        appName, dfsUrl, MARKER, REPORT, fingerprint, localChanges } = require("../../src/exportapp.js");
+        appName, dfsUrl, MARKER, REPORT, fingerprint, localChanges } = require("../../fabric_app/export/exportapp.js");
 const semantic = await import("../../app/semantic.js");
 const { firstRows, counting, kept, MAX_ROWS } = await import("../../fabric_app/site/storage/modelrows.js");
 

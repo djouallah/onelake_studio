@@ -676,7 +676,7 @@ export function createEngine({
   // read from Fabric the first time) and keeps it — { name, schema, path, text }.
   const semanticOpen = ref => callHost("semantic.open", [ref]);
   // Export to Fabric: the model's text and the Explore shelves to the host, which writes the
-  // app's zip and publishes it (src/exportapp.js); answers what to tell the user.
+  // app's zip and publishes it (fabric_app/export/exportapp.js); answers what to tell the user.
   const exportExplore = x => callHost("fabric.exportExplore", [x]);
   const createSemanticModel = x => callHost("fabric.createSemanticModel", [x]);
   // The Report tab: a model's tiles ({ spec, stamp }), what changes when they do, and the tiles

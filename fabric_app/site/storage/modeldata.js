@@ -26,9 +26,9 @@ import { ossieToTmsl } from "../semantic/formats/ossie.js";
 // The site's own copy (vendor/, src/vendored.js WEBAPP.rayfinSemanticModel): the connector's
 // runtime, which decodes its Arrow answer.
 const SEMANTIC_MODEL_ESM = new URL("../vendor/npm/@microsoft/rayfin-connector-fabric-semanticmodel@1.36.1/+esm.js", import.meta.url).href;
-// The connector's name in the app's settings (src/fabricapp.js, MODEL_CONNECTOR).
+// The connector's name in the app's settings (fabric_app/export/fabricapp.js, MODEL_CONNECTOR).
 const CONNECTOR = "model";
-// The model the semantic model was made from (src/exportapp.js, writeModel), of this build.
+// The model the semantic model was made from (fabric_app/export/exportapp.js, writeModel), of this build.
 const MODEL_JSON = new URL("../model.json" + new URL(import.meta.url).search, import.meta.url).href;
 
 // Explore wraps its query in DuckDB's SQL (its preview as text, its count, its plan and profile:

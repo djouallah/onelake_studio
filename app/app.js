@@ -376,7 +376,7 @@ async function openModelView(file, text = null, { fromOneLake = text == null } =
       // the panel's CSP runs no inline script (DuckDB's HTML plan): its text plan instead.
       profileSet: false,
       htmlPlan: false,
-      // Explore as a Fabric app of its own (src/exportapp.js). A model file in OneLake: the app reads
+      // Explore as a Fabric app of its own (fabric_app/export/exportapp.js). A model file in OneLake: the app reads
       // it where it is, and the tables of the one lakehouse it names, or a semantic model is made of it;
       // one that names no lakehouse or several has no button. A Power BI semantic model: the app
       // queries it as it is, whatever it reads, and nothing is asked or written for it. A client-side
@@ -399,7 +399,7 @@ async function openModelView(file, text = null, { fromOneLake = text == null } =
         set: on => engine.setOffline({ workspace: m.schema, model: m.view, on }),
       },
       // The Report tab: the tiles in this model's Export to Fabric zip, else the file the host
-      // keeps for it, else none (src/exportflow.js reportOf), drawn again when they change; Add
+      // keeps for it, else none (fabric_app/export/exportflow.js reportOf), drawn again when they change; Add
       // to report and a tile's ✕ save them (reportSave). It opens on Model, or on the Report for an app's file.
       report: {
         load: () => engine.modelReport({ workspace: m.schema, model: m.view }),

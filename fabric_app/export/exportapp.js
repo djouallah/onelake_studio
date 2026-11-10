@@ -48,10 +48,10 @@ const fsp = require('node:fs/promises');
 const zlib = require('node:zlib');
 const deflateRaw = require('node:util').promisify(zlib.deflateRaw);
 const { createHash } = require('node:crypto');
-const { crc32 } = require('./crc32');
-const { TABLE_ORIGIN } = require('./catalog');
-const { dfsFileUrl, stripBom } = require('./names');
-const { PINS, WEBAPP } = require('./vendored');
+const { crc32 } = require('../../src/crc32');
+const { TABLE_ORIGIN } = require('../../src/catalog');
+const { dfsFileUrl, stripBom } = require('../../src/names');
+const { PINS, WEBAPP } = require('../../src/vendored');
 const { modelConnector, MODEL_CONNECTOR } = require('./fabricapp');
 
 // The zip's record of what was published, and the Report: written when the zip has none, and

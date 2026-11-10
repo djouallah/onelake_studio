@@ -10,7 +10,7 @@ const os = require('node:os');
 const { existsSync } = require('node:fs');
 const fsp = require('node:fs/promises');
 const { createHash } = require('node:crypto');
-const { PINS } = require('./vendored');
+const { PINS } = require('../../src/vendored');
 const { planExport, planOnModel, modelDoc, appFiles, setModel, setModelCopy, modelCopyOf, tablesOf, engineOf, readApp, writeApp, vendorFiles, vendorSize, buildDist,
         fingerprint, zip, rayfinYml, REPORT, APP_EXT } = require('./exportapp');
 const { createFabricApp, tenantOf } = require('./fabricapp');

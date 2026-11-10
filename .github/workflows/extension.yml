@@ -191,7 +191,7 @@ jobs:
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: fabric-function
-          key: fabric-function-${{ hashFiles('scripts/function-bundle.mjs', 'src/fabricapp.js', 'fabric_app/rayfin/**') }}
+          key: fabric-function-${{ hashFiles('scripts/function-bundle.mjs', 'fabric_app/export/fabricapp.js', 'fabric_app/rayfin/**') }}
       - run: node scripts/function-bundle.mjs
 
   package:
@@ -251,7 +251,7 @@ jobs:
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: fabric-function
-          key: fabric-function-${{ hashFiles('scripts/function-bundle.mjs', 'src/fabricapp.js', 'fabric_app/rayfin/**') }}
+          key: fabric-function-${{ hashFiles('scripts/function-bundle.mjs', 'fabric_app/export/fabricapp.js', 'fabric_app/rayfin/**') }}
       - run: node scripts/function-bundle.mjs
 
       # The staged page (stage-webview.mjs) and the host's bundle (bundle.mjs) are built by

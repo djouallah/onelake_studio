@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { createFabricModel } = require("../../src/fabricmodel.js");
+const { createFabricModel } = require("../../fabric_app/export/fabricmodel.js");
 
 const WS = "0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0";
 const API = "https://api.fabric.microsoft.com/v1";
