@@ -8,7 +8,7 @@
 // hold tables, what a kind is called) is names.js; caching the answers is onelake.js.
 // =============================================================================
 
-const { strip, basename, displayName, holdsTables, itemKind, DFS_ORIGIN, dfsFileUrl } = require('./names');
+const { strip, basename, displayName, holdsTables, itemKind, DFS_ORIGIN, dfsFileUrl } = require('../names');
 const { authedFetch: send, discard, limiter, mapPool, oneLakeMessage, okJson } = require('./http');
 
 const TABLE_ORIGIN = 'https://onelake.table.fabric.microsoft.com';

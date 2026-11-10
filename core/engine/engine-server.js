@@ -25,7 +25,7 @@ const crypto = require('node:crypto');
 const { dirname, join } = require('node:path');
 const { createEngineHost } = require('./engine-host');
 const { openClient } = require('./engine-client');
-const { createLogFile } = require('./logfile');
+const { createLogFile } = require('../logfile');
 const { createLogKeeper } = require('./enginelog');
 
 const sameToken = (a, b) => {

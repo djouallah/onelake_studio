@@ -40,7 +40,7 @@ const boot = {
 };
 
 // ECharts, off the critical path: loaded beside everything else, waited for only when a
-// chart is drawn. The site's own copy (vendor/, src/vendored.js WEBAPP).
+// chart is drawn. The site's own copy (vendor/, core/vendored.js WEBAPP).
 const echartsReady = new Promise((resolve, reject) => {
   const s = Object.assign(document.createElement("script"),
     { src: new URL("./vendor/npm/echarts@5.5.1/dist/echarts.min.js", import.meta.url).href, async: true });

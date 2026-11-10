@@ -7,7 +7,7 @@ import { createRequire } from "node:module";
 import { READS, WRITES } from "./sql-disagreements.mjs";
 
 const require = createRequire(import.meta.url);
-const { assertReads, checkedRead, isShowAllTables, readsCatalog } = require("../../src/sql.js");
+const { assertReads, checkedRead, isShowAllTables, readsCatalog } = require("../../core/sql.js");
 
 const ALLOWED = [
   // A schema or table of the user's can be called ducklake_something: only the lake's functions are refused.
@@ -170,7 +170,7 @@ test("SHOW ALL TABLES is known however it is written, and nothing else is", () =
 
 // tableRefs: the five-part names a statement reads, which the engine opens before running it.
 test("a statement's tables are its five-part names under a kind, however they are written", () => {
-  const { tableRefs } = require("../../src/sql.js");
+  const { tableRefs } = require("../../core/sql.js");
   const KINDS = ["lakehouse", "warehouse", "sqldatabase", "mirroreddatabase"];
   const refs = sql => tableRefs(sql, KINDS);
   assert.deepEqual(refs("SELECT * FROM Lakehouse.aemo.data.dbo.dim_duid"),
@@ -197,7 +197,7 @@ test("a statement's tables are its five-part names under a kind, however they ar
 });
 
 test("filesReadBy: the OneLake files a statement reads, and not one that is only a value", () => {
-  const { filesReadBy } = require("../../src/sql.js");
+  const { filesReadBy } = require("../../core/sql.js");
   const A = "abfss://w@onelake.dfs.fabric.microsoft.com/i.Lakehouse/Files/a.parquet";
   const Z = "abfss://w@onelake.dfs.fabric.microsoft.com/i.Lakehouse/Files/a.zip";
   assert.deepEqual(filesReadBy(`SELECT * FROM '${A}'`), [A]);
@@ -214,7 +214,7 @@ test("filesReadBy: the OneLake files a statement reads, and not one that is only
 
 // fileRefs: the file names a statement reads, which the engine turns into URLs before running it.
 test("a file's name counts only where SQL reads a file, and one that is wrong is refused", () => {
-  const { fileRefs } = require("../../src/sql.js");
+  const { fileRefs } = require("../../core/sql.js");
   const KINDS = ["lakehouse", "warehouse", "sqldatabase", "mirroreddatabase"];
   const refs = sql => fileRefs(sql, KINDS);
   const F = "'lakehouse.aemo.data/Files/x.parquet'";
@@ -265,7 +265,7 @@ test("a file's name counts only where SQL reads a file, and one that is wrong is
 });
 
 test("DuckDB's error says a file as it was written, with its caret still on what it points at", () => {
-  const { namedError } = require("../../src/sql.js");
+  const { namedError } = require("../../core/sql.js");
   const written = [{ url: "abfss://a@h/d.Lakehouse/Files", name: "LAKEHOUSE.A.D/Files" }];
   assert.equal(namedError('IO Error: No files found that match the pattern "abfss://a@h/d.Lakehouse/Files/x.parquet"', written),
     'IO Error: No files found that match the pattern "LAKEHOUSE.A.D/Files/x.parquet"');
@@ -281,7 +281,7 @@ test("DuckDB's error says a file as it was written, with its caret still on what
 
 // catalogStatement: the SHOW statements answered with whole schema paths; nothing else.
 test("SHOW ALL TABLES, SHOW SCHEMAS and SHOW TABLES FROM a nested schema are rewritten, nothing else", () => {
-  const { catalogStatement, readsCatalog } = require("../../src/sql.js");
+  const { catalogStatement, readsCatalog } = require("../../core/sql.js");
   for (const sql of ["SHOW ALL TABLES", "show all tables;", "  Show  All\n Tables ; ", "-- all of it\nSHOW ALL TABLES",
                      "SHOW SCHEMAS", "show schemas;"]) {
     assert.match(catalogStatement(sql) || "", /duckdb_schemas\(\)/, sql);
@@ -303,8 +303,8 @@ test("SHOW ALL TABLES, SHOW SCHEMAS and SHOW TABLES FROM a nested schema are rew
 
 // assertOneLakeUrl: what a table's own metadata names is read with the OneLake token, so a URL there is OneLake's.
 test("a URL from a table's metadata is OneLake's or refused; a local path passes", () => {
-  const { assertOneLakeUrl } = require("../../src/sql.js");
-  const { httpsOf } = require("../../src/tableservice.js");
+  const { assertOneLakeUrl } = require("../../core/sql.js");
+  const { httpsOf } = require("../../core/lake/tableservice.js");
   for (const ok of ["abfss://ws@onelake.dfs.fabric.microsoft.com/i.Lakehouse/Tables/t/a.parquet",
                     "abfss://ws@westus-onelake.dfs.fabric.microsoft.com/i/a.parquet",
                     "https://onelake.blob.fabric.microsoft.com/ws/i/a.parquet",

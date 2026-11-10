@@ -421,8 +421,8 @@ test("the shipped page and its data source parse; the page reads its model from 
                    "fabric_app/site/storage/modeldata.js"]) {
     execFileSync(process.execPath, ["--check", new URL(`../../${p}`, import.meta.url).pathname.replace(/^\/(\w:)/, "$1")]);
   }
-  // Every package the page runs is the site's own (vendor/, src/vendored.js WEBAPP), at the pins.
-  const { WEBAPP, VENDOR } = require("../../src/vendored.js");
+  // Every package the page runs is the site's own (vendor/, core/vendored.js WEBAPP), at the pins.
+  const { WEBAPP, VENDOR } = require("../../core/vendored.js");
   for (const p of ["app.js", "storage/data.js", "storage/results.js", "storage/auth.js", "storage/blockcache.js", "index.html"]) {
     const s = await readFile(new URL(`../../fabric_app/site/${p}`, import.meta.url), "utf8");
     assert.doesNotMatch(s, /cdn\.jsdelivr\.net|unpkg\.com|esm\.sh|extensions\.duckdb\.org|getJsDelivrBundles/, `${p} loads nothing remote`);

@@ -29,7 +29,7 @@
 // No `vscode` import: driven from tests with a fake clock.
 // =============================================================================
 
-const { isStaging, holdsTables, sqlNameOf, fmtBytes } = require('./names');
+const { isStaging, holdsTables, sqlNameOf, fmtBytes } = require('../names');
 
 const EVERY_MS = 15_000;
 const JOBS_PER_TICK = 5;

@@ -15,7 +15,7 @@ import { fileURLToPath } from "node:url";
 import { READS, WRITES } from "./sql-disagreements.mjs";
 
 const require = createRequire(import.meta.url);
-const { createEngineHost, jsonSafe, sameSources, isOneLakeMetadata, isOneLakeTable, duckdbPath, READ_FAILURE, AUTH_FAILURE, FORBIDDEN } = require("../../src/engine-host.js");
+const { createEngineHost, jsonSafe, sameSources, isOneLakeMetadata, isOneLakeTable, duckdbPath, READ_FAILURE, AUTH_FAILURE, FORBIDDEN } = require("../../core/engine/engine-host.js");
 
 // What fetch-extensions.mjs put next to the extension, when CI ran it for this platform.
 const BUNDLED = join(fileURLToPath(new URL(".", import.meta.url)), "..", "..", "duckdb-extensions");
@@ -903,7 +903,7 @@ async function deltaCommit(c, root, version, from, to) {
 
 test("a table the lake holds is read as it is, with nothing asked of OneLake, after a restart too; a sync reads only what is new", { skip: !existsSync(LAKE_BUILD) }, async t => {
   const H = await import("./lake-helpers.mjs");
-  const { syncTable } = require("../../src/onelaketable.js");
+  const { syncTable } = require("../../core/lake/onelaketable.js");
   const extDir = await mkdtemp(join(tmpdir(), "onelake-ext-"));
   const cacheDir = await mkdtemp(join(tmpdir(), "onelake-cache-"));
   const FOLDER = "abfss://ws@onelake.dfs.fabric.microsoft.com/lh.Lakehouse/Tables/dbo/t";

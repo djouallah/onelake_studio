@@ -8,7 +8,7 @@
 // =============================================================================
 
 const { createHash } = require('node:crypto');
-const { createTokenHold } = require('./http');
+const { createTokenHold } = require('./onelake/http');
 
 // OneLake accepts tokens in the storage
 // audience only, and this one covers both the data reads and the Iceberg catalog. It is

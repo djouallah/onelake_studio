@@ -6,10 +6,10 @@
 const { dirname, basename, extname, resolve } = require('node:path');
 const { existsSync, renameSync } = require('node:fs');
 const fsp = require('node:fs/promises');
-const { walkCached } = require('./onelake');
+const { walkCached } = require('../onelake/onelake');
 const { modelAccountDir, modelCopyPath } = require('./fabric');
 const { readFromOneLake } = require('./sqlendpoint');
-const { fmtBytes, sqlKind, displayName, MODEL_CATALOG, modelSqlName, stripBom } = require('./names');
+const { fmtBytes, sqlKind, displayName, MODEL_CATALOG, modelSqlName, stripBom } = require('../names');
 
 /**
  * @param {object} o

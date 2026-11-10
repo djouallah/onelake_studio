@@ -1,4 +1,4 @@
-// Tests for src/sqlendpoint.js — a Direct Lake model over a SQL endpoint, pointed at the item
+// Tests for core/models/sqlendpoint.js — a Direct Lake model over a SQL endpoint, pointed at the item
 // behind it. No network: Fabric and OneLake are canned here, and fabric.test.mjs has the requests.
 
 import { test } from "node:test";
@@ -7,7 +7,7 @@ import { createRequire } from "node:module";
 import { lakehousesOf, directLakeTables } from "../../app/semantic.js";
 
 const require = createRequire(import.meta.url);
-const { readFromOneLake, sqlEndpointOf, guidOfLabel } = require("../../src/sqlendpoint.js");
+const { readFromOneLake, sqlEndpointOf, guidOfLabel } = require("../../core/models/sqlendpoint.js");
 
 // 11111111-2222-3333-4444-555555555555, as a Fabric SQL host writes it.
 const WS_ID = "11111111-2222-3333-4444-555555555555";

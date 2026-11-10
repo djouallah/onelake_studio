@@ -13,7 +13,7 @@
 // A table with no source there (a calculated table, a calculation group) keeps its own partitions.
 // =============================================================================
 
-const { DFS_ORIGIN } = require('../../src/names');
+const { DFS_ORIGIN } = require('../../core/names');
 
 const MODES = { directLake: 'Direct Lake', directQuery: 'DirectQuery' };
 const EXPRESSION = 'DatabaseQuery';

@@ -22,9 +22,9 @@
 
 const { createHash } = require('node:crypto');
 const { mkdirSync, writeFileSync } = require('node:fs');
-const { sqlStr: q, quoteIdent: qi, assertOneLakeUrl } = require('./sql');
-const { DFS_ORIGIN } = require('./names');
-const { crc32 } = require('./crc32');
+const { sqlStr: q, quoteIdent: qi, assertOneLakeUrl } = require('../sql');
+const { DFS_ORIGIN } = require('../names');
+const { crc32 } = require('../crc32');
 
 // The lake's metadata, by a name a statement can read it by: system_internal.ducklake_snapshot and the rest.
 const META = 'system_internal';

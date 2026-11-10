@@ -635,7 +635,7 @@ export function createEngine({
   }
 
   // ---------------------------------------------------------------------------
-  // Read-only SQL. The host's guard says what may run (src/sql.js), and the text goes to it as written:
+  // Read-only SQL. The host's guard says what may run (core/sql.js), and the text goes to it as written:
   // a scanner here changed string values with no error.
   // ---------------------------------------------------------------------------
   // `onRows` hears how many rows have arrived, for a result that takes a while.
@@ -668,7 +668,7 @@ export function createEngine({
   const saveOneLakeFile = (lh, file) =>
     callHost("host.saveFile", [{ name: file.name, workspace: lh.workspace, path: file.path }]);
 
-  // Semantic models kept by the host (src/semviews.js): every one opened here, with its text,
+  // Semantic models kept by the host (core/models/semviews.js): every one opened here, with its text,
   // and one just opened kept — `schema` is its workspace: semanticmodel.ws.name.
   const semanticViews = () => callHost("semantic.views", [{}]);
   const semanticKeep = (name, path, schema) => callHost("semantic.keep", [{ name, path, schema }]);
@@ -686,7 +686,7 @@ export function createEngine({
   const modelReportSave = x => callHost("model.reportSave", [x]);
   // Open in Excel: a semantic model, by its names (xmla); answers what to tell the user.
   const openInExcel = x => callHost("excel.open", [x]);
-  // Keep offline: a semantic model's tables on this machine (src/modeldata.js); both answer what to show.
+  // Keep offline: a semantic model's tables on this machine (core/models/modeldata.js); both answer what to show.
   const offlineState = x => callHost("model.offlineState", [x]);
   const setOffline = x => callHost("model.setOffline", [x]);
   // A semantic model's Direct Lake tables (named by GUID) as SQL names (semantic.js).

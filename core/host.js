@@ -34,8 +34,8 @@ const ENGINE_METHODS = new Set(['query', 'stream', 'cancel', 'info', 'fileView',
 
 /**
  * @param {object} o
- * @param {ReturnType<import('./onelake').createOneLake>} o.onelake
- * @param {ReturnType<import('./engine-host').createEngineHost>} o.engine
+ * @param {ReturnType<import('./onelake/onelake').createOneLake>} o.onelake
+ * @param {ReturnType<import('./engine/engine-host').createEngineHost>} o.engine
  * @param {(message: string) => void} [o.onStatus]  why a catalog call is taking long
  * @param {(name: string, bytes: Uint8Array) => Promise<string|null>} [o.saveFile]
  *        ask where to save, write it, answer the path (null: dismissed)

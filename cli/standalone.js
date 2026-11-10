@@ -15,17 +15,17 @@
 const { join, resolve } = require('node:path');
 const { mkdirSync, readFileSync, writeFileSync, renameSync, existsSync } = require('node:fs');
 const { EXIT, failureJson } = require('./bridge');
-const { createConnectivity, probeOf } = require('../src/connectivity');
-const { useConnectivity, inTime } = require('../src/http');
-const { createSignIn } = require('../src/signin');
-const { createSettings } = require('../src/settings');
-const { createReadLog } = require('../src/readlog');
-const { createDiagLog } = require('../src/diaglog');
-const { createCore } = require('../src/core');
+const { createConnectivity, probeOf } = require('../core/onelake/connectivity');
+const { useConnectivity, inTime } = require('../core/onelake/http');
+const { createSignIn } = require('../core/signin');
+const { createSettings } = require('../core/settings');
+const { createReadLog } = require('../core/readlog');
+const { createDiagLog } = require('../core/diaglog');
+const { createCore } = require('../core/core');
 const { createTokenStore } = require('./tokenstore');
 const { createMsalSession } = require('./msalsession');
 const { connectionString, openInExcel } = require('../xmla/excel');
-const { DFS_ORIGIN, modelSqlName } = require('../src/names');
+const { DFS_ORIGIN, modelSqlName } = require('../core/names');
 
 const EXTENSION_ID = 'djouallah.onelake-studio';
 const SETTLE_MS = 2_000;

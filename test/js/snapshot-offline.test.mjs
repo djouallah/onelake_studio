@@ -7,10 +7,10 @@ import { join } from "node:path";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { createOneLake } = require("../../src/onelake.js");
-const { createStore } = require("../../src/store.js");
-const { createCatalogFile } = require("../../src/catalogfile.js");
-const { createSqlTables } = require("../../src/sqltables.js");
+const { createOneLake } = require("../../core/onelake/onelake.js");
+const { createStore } = require("../../core/onelake/store.js");
+const { createCatalogFile } = require("../../core/onelake/catalogfile.js");
+const { createSqlTables } = require("../../core/sqltables.js");
 
 const lh = { workspace: "ws", item: "gold.Lakehouse" };
 const t = { schema: "dbo", table: "orders" };

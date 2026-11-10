@@ -18,10 +18,10 @@
 // this with fakes of both.
 // =============================================================================
 
-const { sqlStr } = require('./sql');
+const { sqlStr } = require('../sql');
 const { mapPool } = require('./http');
-const names = require('./names');
-const deltalog = require('./deltalog');
+const names = require('../names');
+const deltalog = require('../lake/deltalog');
 const { revalidate } = require('./store');
 
 const PEEK_ROWS = 100;

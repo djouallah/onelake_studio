@@ -20,8 +20,8 @@ Module._load = function (id, ...rest) {
 };
 const require = createRequire(import.meta.url);
 const { LakehouseTree } = require("../../extension/tree.js");
-const { createOneLake } = require("../../src/onelake.js");
-const { createStore } = require("../../src/store.js");
+const { createOneLake } = require("../../core/onelake/onelake.js");
+const { createStore } = require("../../core/onelake/store.js");
 
 const WS = "w", ITEM = "i.Lakehouse";
 const file = (name, version) => ({ name, path: `${ITEM}/Files/${name}`, isDir: false, bytes: 3, version });

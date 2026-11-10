@@ -23,7 +23,7 @@ export const EXPLORE_CASTS = {
 };
 
 // The statement as written goes in front of what dax-sql compiled it to, as a comment, so Logs shows
-// both (src/enginelog.js sourceOf reads it back). DuckDB nests comments, so a `/*` in it is escaped
+// both (core/engine/enginelog.js sourceOf reads it back). DuckDB nests comments, so a `/*` in it is escaped
 // as well as a `*/`, with a backslash, and a backslash is doubled.
 export const withSource = (sql, compiled) =>
   `/*semantic\n${String(sql).trim().replace(/;+\s*$/, "").replace(/\\/g, "\\\\").replace(/\/(?=\*)|\*(?=\/)/g, "$&\\")}\n*/\n${compiled}`;

@@ -15,8 +15,8 @@
 
 const { randomBytes } = require('node:crypto');
 const fsp = require('node:fs/promises');
-const { DFS_ORIGIN, dfsFileUrl } = require('../../src/names');
-const { authedFetch, oneLakeMessage } = require('../../src/http');
+const { DFS_ORIGIN, dfsFileUrl } = require('../../core/names');
+const { authedFetch, oneLakeMessage } = require('../../core/onelake/http');
 
 const TIMEOUT_MS = 5 * 60_000;
 // One append's bytes: a big file is many requests, each with its own timeout, and one in memory at a time.

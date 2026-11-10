@@ -19,7 +19,7 @@ node_modules/**
 
 # The extension host's source: what ships is dist/extension.js, which scripts/bundle.mjs
 # builds from it.
-src/**
+core/**
 extension/**
 xmla/**
 # The command line's: in dist/extension.js and dist/standalone.js too, but for what runs outside

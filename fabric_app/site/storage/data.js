@@ -14,7 +14,7 @@
 // https://store.local/... (duckdb-wasm's own file system): no httpfs, no SAS in any view, and
 // its worker refuses every other request (blockcache.js). The engine is duckdb-wasm's npm
 // release (DuckDB 2.0), with two of DuckDB's signed extensions: parquet, and icu for time
-// zones (TIMESTAMPTZ). All of it ships with the site, in vendor/ (src/vendored.js, WEBAPP):
+// zones (TIMESTAMPTZ). All of it ships with the site, in vendor/ (core/vendored.js, WEBAPP):
 // nothing is loaded from a CDN or DuckDB's repository.
 //
 // A table is opened when a query first names its view, v_<table>, so the first paint pays only
@@ -64,7 +64,7 @@ const SMALL_BYTES = 32 * 1024 * 1024;   // a table up to this much Parquet is co
 // downloads what was missed, with whole columns, so a query needs one or two at most.
 const HEALS = 8;
 const BATCH_MS = 20;   // how long a larger table's new columns gather into one download
-// The site's own copy of the engine (vendor/, src/vendored.js WEBAPP), the base build: the page
+// The site's own copy of the engine (vendor/, core/vendored.js WEBAPP), the base build: the page
 // needs Chrome or Edge 121+, which always runs it.
 const VENDOR = new URL('../vendor/', import.meta.url).href;
 const WASM = `${VENDOR}npm/@duckdb/duckdb-wasm@1.33.1-dev114.0/dist/`;

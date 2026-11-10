@@ -10,7 +10,7 @@
 
 const fs = require('node:fs');
 const { dirname, join } = require('node:path');
-const { shortHash } = require('./catalogfile');
+const { shortHash } = require('./onelake/catalogfile');
 
 const SCHEMA = `
   PRAGMA busy_timeout = 500;

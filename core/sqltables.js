@@ -8,10 +8,10 @@
 // its GUIDs, with no TTL, and is asked about again only when the name it gave stops resolving.
 // =============================================================================
 
-const { revalidate } = require('./store');
-const { offlineError } = require('./http');
+const { revalidate } = require('./onelake/store');
+const { offlineError } = require('./onelake/http');
 const { sqlKind, sqlName, displayName, abfssUrl } = require('./names');
-const { tableDirOf } = require('./deltalog');
+const { tableDirOf } = require('./lake/deltalog');
 
 const same = (a, b) => String(a).toLowerCase() === String(b).toLowerCase();
 
@@ -42,7 +42,7 @@ function closestTables(name, listing, max = 3) {
 
 /**
  * @param {object} o
- * @param {ReturnType<import('./onelake').createOneLake>} o.onelake
+ * @param {ReturnType<import('./onelake/onelake').createOneLake>} o.onelake
  * @param {() => Promise<{emptyTableSql(fields: object[]): string}>} o.paths  app/paths.js, loaded when needed
  * @param {() => string|null} [o.offlineReason]  why OneLake cannot be asked now
  */

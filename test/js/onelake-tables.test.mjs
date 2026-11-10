@@ -14,8 +14,8 @@ const { LAKE_FIXTURES: FIXTURES, ONELAKE_TABLES: TABLES, ONELAKE_TOKEN: TOKEN } 
 const skip = !(FIXTURES && TABLES && TOKEN) && "LAKE_FIXTURES, ONELAKE_TABLES and ONELAKE_TOKEN are set only by the lake's workflow";
 const require = createRequire(import.meta.url);
 const H = skip ? null : await import("./lake-helpers.mjs");
-const { readDelta, syncTable, META } = require("../../src/onelaketable.js");
-const { createTableService, httpsDownload, openedSince, httpsOf } = require("../../src/tableservice.js");
+const { readDelta, syncTable, META } = require("../../core/lake/onelaketable.js");
+const { createTableService, httpsDownload, openedSince, httpsOf } = require("../../core/lake/tableservice.js");
 const HERE = p => new URL(p, import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1");
 const cases = skip ? {} : JSON.parse(readFileSync(join(FIXTURES, "cases.json"), "utf8"));
 

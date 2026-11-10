@@ -3,7 +3,7 @@
 // =============================================================================
 // Inside the extension. vendor.mjs puts every pinned library under vendor/, and
 // panel.js hands the page that directory's webview URI (config.vendorBase) and the pins
-// themselves (config.pins, from src/vendored.js — the one list). Nothing here reaches a
+// themselves (config.pins, from core/vendored.js — the one list). Nothing here reaches a
 // CDN, and nothing here can name a version the extension did not ship.
 // =============================================================================
 

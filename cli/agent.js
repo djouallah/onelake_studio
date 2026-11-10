@@ -35,12 +35,12 @@
 const { join } = require('node:path');
 const { pathToFileURL } = require('node:url');
 const fsp = require('node:fs/promises');
-const { fmtBytes, hasFilesArea, isStaging, kindLabel, sqlNameOf, fileSqlName } = require('../src/names');
-const { mapPool, offlineError } = require('../src/http');
-const { walkCached } = require('../src/onelake');
-const { readJob } = require('../src/syncworker');
-const { editDistance } = require('../src/sqltables');
-const { sqlStr, isShowAllTables, ALL_TABLES_COUNTED } = require('../src/sql');
+const { fmtBytes, hasFilesArea, isStaging, kindLabel, sqlNameOf, fileSqlName } = require('../core/names');
+const { mapPool, offlineError } = require('../core/onelake/http');
+const { walkCached } = require('../core/onelake/onelake');
+const { readJob } = require('../core/onelake/syncworker');
+const { editDistance } = require('../core/sqltables');
+const { sqlStr, isShowAllTables, ALL_TABLES_COUNTED } = require('../core/sql');
 const { EXIT, checkRequest, failureJson } = require('./bridge');
 const { buildCube } = require('../xmla/cube');
 
@@ -63,12 +63,12 @@ const fence = (lang, text) => '```' + lang + '\n' + String(text).trim() + '\n```
 
 /**
  * @param {object} o
- * @param {ReturnType<import('../src/onelake').createOneLake>} o.onelake
+ * @param {ReturnType<import('../core/onelake/onelake').createOneLake>} o.onelake
  * @param {() => Promise<object>} o.engine   the extension's engine (engine-host.js)
  * @param {(ws: string, model: string) => string} o.modelPath  where a model's .yaml is downloaded
  * @param {string} o.appDir                  the panel's modules (semantic.js, paths.js)
  * @param {string} o.vendorDir               the vendored DAX compiler and YAML reader
- * @param {ReturnType<import('../src/semviews').createSemViews>} o.semviews  the views this machine keeps
+ * @param {ReturnType<import('../core/models/semviews').createSemViews>} o.semviews  the views this machine keeps
  * @param {(x: object) => Promise<string>} [o.exportApp]  Explore's Export to Fabric (extension.js)
  * @param {(x: object) => Promise<string>} [o.createModel]  the tree's Create Semantic Model (exportflow.js)
  * @param {(n: {workspace: string, model: string, modelId: string}) => Promise<{path: string, text: string}>} [o.fetchModel]

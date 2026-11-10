@@ -8,12 +8,12 @@ import { join } from "node:path";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { createDiagLog, outputLogOf } = require("../../src/diaglog.js");
+const { createDiagLog, outputLogOf } = require("../../core/diaglog.js");
 const { createAgent } = require("../../cli/agent.js");
-const { createCatalogFile } = require("../../src/catalogfile.js");
-const { createSyncWorker } = require("../../src/syncworker.js");
-const { createOneLake } = require("../../src/onelake.js");
-const { createStore } = require("../../src/store.js");
+const { createCatalogFile } = require("../../core/onelake/catalogfile.js");
+const { createSyncWorker } = require("../../core/onelake/syncworker.js");
+const { createOneLake } = require("../../core/onelake/onelake.js");
+const { createStore } = require("../../core/onelake/store.js");
 const { EXIT } = require("../../cli/bridge.js");
 
 const channel = () => {

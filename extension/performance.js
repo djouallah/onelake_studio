@@ -9,7 +9,7 @@
 
 const vscode = require('vscode');
 const crypto = require('node:crypto');
-const { fmtBytes } = require('../src/names');
+const { fmtBytes } = require('../core/names');
 
 const EVERY_MS = 2_000;
 const DISK_EVERY_MS = 30_000;   // a stat per file, and a disk cache holds thousands

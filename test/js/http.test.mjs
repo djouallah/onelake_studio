@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { authedFetch, createTokenHold, inTime, listPages, mapPool, fabricMessage, useConnectivity } = require("../../src/http.js");
+const { authedFetch, createTokenHold, inTime, listPages, mapPool, fabricMessage, useConnectivity } = require("../../core/onelake/http.js");
 
 test("a provider that stalls gets a few seconds, and what it says later still counts", async () => {
   assert.equal(await inTime(Promise.resolve("on time"), 1000), "on time");

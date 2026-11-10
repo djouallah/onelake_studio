@@ -9,8 +9,8 @@ import { richAgent, fakeOneLake, APP_DIR } from "./agent-fixtures.mjs";
 const require = createRequire(import.meta.url);
 const { EXIT, exitName, COMMANDS } = require("../../cli/bridge.js");
 const { createAgent } = require("../../cli/agent.js");
-const { modelFileName } = require("../../src/fabric.js");
-const { ALL_TABLES_COUNTED } = require("../../src/sql.js");
+const { modelFileName } = require("../../core/models/fabric.js");
+const { ALL_TABLES_COUNTED } = require("../../core/sql.js");
 
 // What a query answers, without an engine: `numRows` may be more than the rows that came back.
 const fakeEngine = (rows = [{ a: 1, b: "x,y" }, { a: 2, b: null }], numRows = rows.length) => ({

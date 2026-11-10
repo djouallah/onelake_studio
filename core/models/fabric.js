@@ -14,7 +14,7 @@
 
 const { join } = require('node:path');
 const { createHash } = require('node:crypto');
-const { authedFetch, discard, fabricMessage, listPages, mapPool, okJson, retryAfterMs } = require('./http');
+const { authedFetch, discard, fabricMessage, listPages, mapPool, okJson, retryAfterMs } = require('../onelake/http');
 
 const FABRIC_API = 'https://api.fabric.microsoft.com/v1';
 const FETCH_TIMEOUT_MS = 60_000;

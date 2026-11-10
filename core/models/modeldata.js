@@ -17,8 +17,8 @@
 //
 // No `vscode` import: driven from tests with a fake clock.
 // =============================================================================
-const { SQL_KINDS, fmtBytes, fileNamesIn } = require('./names');
-const { tableRefs } = require('./sql');
+const { SQL_KINDS, fmtBytes, fileNamesIn } = require('../names');
+const { tableRefs } = require('../sql');
 
 const EVERY_MS = 15_000;
 const FRESH_MS = 3600 * 1000;      // a table kept offline is no further behind OneLake than this

@@ -15,10 +15,10 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { withAgent, csvRows } from "./cli-harness.mjs";
 
 const require = createRequire(import.meta.url);
-const { createEngineHost } = require("../../src/engine-host.js");
+const { createEngineHost } = require("../../core/engine/engine-host.js");
 const { createAgent } = require("../../cli/agent.js");
-const { PINS } = require("../../src/vendored.js");
-const { sqlName } = require("../../src/names.js");
+const { PINS } = require("../../core/vendored.js");
+const { sqlName } = require("../../core/names.js");
 const { EXIT } = require("../../cli/bridge.js");
 
 const ROOT = join(fileURLToPath(new URL(".", import.meta.url)), "..", "..");

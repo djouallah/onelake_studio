@@ -30,7 +30,7 @@ execSync("npx --yes esbuild@0.28.1 extension/extension.js --bundle --platform=no
   " --target=node20 --external:vscode --external:@duckdb/node-bindings --log-level=warning" +
   " --outfile=dist/extension.js", { cwd: here, stdio: "inherit" });
 // The shared engine's process (engine-server.js), started by a window, with no editor around it.
-execSync("npx --yes esbuild@0.28.1 src/engine-server.js --bundle --platform=node --format=cjs" +
+execSync("npx --yes esbuild@0.28.1 core/engine/engine-server.js --bundle --platform=node --format=cjs" +
   " --target=node20 --external:@duckdb/node-bindings --log-level=warning" +
   " --outfile=dist/engine-server.js", { cwd: here, stdio: "inherit" });
 

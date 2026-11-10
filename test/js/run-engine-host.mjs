@@ -23,7 +23,7 @@ import { chromium } from "playwright-core";
 import { panelHost, servePanel } from "./panel-host.mjs";
 
 const require = createRequire(import.meta.url);
-const { createEngineHost } = require("../../src/engine-host.js");
+const { createEngineHost } = require("../../core/engine/engine-host.js");
 
 const root = join(fileURLToPath(new URL(".", import.meta.url)), "..", "..");
 const APP = join(root, "app");

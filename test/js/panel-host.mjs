@@ -1,5 +1,5 @@
 // The extension host the panel talks to, minus VS Code: a real native engine-host and the
-// real host methods (src/host.js) over a real catalog and store, pointed at
+// real host methods (core/host.js) over a real catalog and store, pointed at
 // whatever fake OneLake the harness serves. The browser harnesses install it on a page
 // in place of the webview's bridge, so the page under test is answered by the same code
 // panel.js answers it with.
@@ -8,12 +8,12 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const require = createRequire(import.meta.url);
-const { createEngineHost } = require("../../src/engine-host.js");
-const { createCatalog } = require("../../src/catalog.js");
-const { createStore } = require("../../src/store.js");
-const { createOneLake } = require("../../src/onelake.js");
-const { createHostMethods, answer } = require("../../src/host.js");
-const { sqlKind, displayName } = require("../../src/names.js");
+const { createEngineHost } = require("../../core/engine/engine-host.js");
+const { createCatalog } = require("../../core/onelake/catalog.js");
+const { createStore } = require("../../core/onelake/store.js");
+const { createOneLake } = require("../../core/onelake/onelake.js");
+const { createHostMethods, answer } = require("../../core/host.js");
+const { sqlKind, displayName } = require("../../core/names.js");
 
 const root = join(fileURLToPath(new URL(".", import.meta.url)), "..", "..");
 const APP = join(root, "app");
@@ -62,7 +62,7 @@ export function panelHost({ dfsOrigin, tableOrigin, engineOptions = {}, nameTabl
 import { readFile } from "node:fs/promises";
 import { extname } from "node:path";
 const { renderPage } = require("../../extension/html.js");
-const { PINS } = require("../../src/vendored.js");
+const { PINS } = require("../../core/vendored.js");
 
 const VENDOR = join(root, "vendor");
 const MIME = { ".js": "text/javascript; charset=utf-8", ".html": "text/html; charset=utf-8",

@@ -19,11 +19,11 @@
 import { createAuth } from "./auth.js";
 import { firstRows, counting, kept, MAX_ROWS } from "./modelrows.js";
 import { createCompiler, parseQuery } from "../semantic/src/index.js";
-import { printDaxQuery } from "../semantic/src/sql.js";
+import { printDaxQuery } from "../semantic/core/sql.js";
 import { tmslToModel } from "../semantic/formats/tmsl.js";
 import { ossieToTmsl } from "../semantic/formats/ossie.js";
 
-// The site's own copy (vendor/, src/vendored.js WEBAPP.rayfinSemanticModel): the connector's
+// The site's own copy (vendor/, core/vendored.js WEBAPP.rayfinSemanticModel): the connector's
 // runtime, which decodes its Arrow answer.
 const SEMANTIC_MODEL_ESM = new URL("../vendor/npm/@microsoft/rayfin-connector-fabric-semanticmodel@1.36.1/+esm.js", import.meta.url).href;
 // The connector's name in the app's settings (fabric_app/export/fabricapp.js, MODEL_CONNECTOR).

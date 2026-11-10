@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { createConnectivity, probeOf } = require("../../src/connectivity.js");
+const { createConnectivity, probeOf } = require("../../core/onelake/connectivity.js");
 
 test("the probe: a line too busy to answer in time gets a longer try, and a refusal is known at once", async () => {
   const timeout = () => Object.assign(new Error("timed out"), { name: "TimeoutError" });

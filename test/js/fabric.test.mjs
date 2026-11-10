@@ -1,4 +1,4 @@
-// Tests for src/fabric.js — a workspace's semantic models and apps, and a model's .bim,
+// Tests for core/models/fabric.js — a workspace's semantic models and apps, and a model's .bim,
 // read from the Fabric API. Read only: there is no write path to test, and the module
 // takes no storage token at all.
 //
@@ -10,7 +10,7 @@ import { createRequire } from "node:module";
 import { join } from "node:path";
 
 const require = createRequire(import.meta.url);
-const fabricModule = require("../../src/fabric.js");
+const fabricModule = require("../../core/models/fabric.js");
 const { createFabric, modelFileName, modelCopyPath } = fabricModule;
 
 const WS_ID = "11111111-2222-3333-4444-555555555555";

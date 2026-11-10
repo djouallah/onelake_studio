@@ -2,7 +2,7 @@
 # (scripts/pinned-downloads.mjs). It never changes a hash already there.
 #
 # Run it from the Actions tab (or `gh workflow run download-hashes.yml`) after moving a pin in
-# src/vendored.js, a DuckDB version, or the disk cache's build.
+# core/vendored.js, a DuckDB version, or the disk cache's build.
 name: Refresh download hashes
 
 on:

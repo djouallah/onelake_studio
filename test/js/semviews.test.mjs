@@ -8,8 +8,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const require = createRequire(import.meta.url);
-const { createSemViews } = require("../../src/semviews.js");
-const { createCatalogFile } = require("../../src/catalogfile.js");
+const { createSemViews } = require("../../core/models/semviews.js");
+const { createCatalogFile } = require("../../core/onelake/catalogfile.js");
 
 // Each account's catalog file, as the extension has them.
 const opened = [];

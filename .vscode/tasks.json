@@ -1,6 +1,6 @@
 {
-  // F5's preLaunchTask: the extension host runs from dist/extension.js, built from src/. vendor/
-  // is fetched first, so a pin bumped in src/vendored.js is what the page loads (vendor.mjs does
+  // F5's preLaunchTask: the extension host runs from dist/extension.js, built from the source. vendor/
+  // is fetched first, so a pin bumped in core/vendored.js is what the page loads (vendor.mjs does
   // nothing when vendor/ already holds the pins).
   "version": "2.0.0",
   "tasks": [

@@ -5,9 +5,9 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { createStore } = require("../../src/store.js");
-const { createOneLake } = require("../../src/onelake.js");
-const { createSqlTables } = require("../../src/sqltables.js");
+const { createStore } = require("../../core/onelake/store.js");
+const { createOneLake } = require("../../core/onelake/onelake.js");
+const { createSqlTables } = require("../../core/sqltables.js");
 
 const LOC = "abfss://ws@onelake.dfs.fabric.microsoft.com/lh.Lakehouse/Tables/dbo/t/metadata/1.metadata.json";
 const metadata = {
@@ -173,7 +173,7 @@ test("past the cache, every read goes to OneLake", async () => {
 });
 
 test("a Delta table is read from its own folder, and an Iceberg one from its metadata", async c => {
-  const { createSqlTables } = require("../../src/sqltables.js");
+  const { createSqlTables } = require("../../core/sqltables.js");
   let format = "delta", location = "abfss://ANZ Retail Demo@onelake.dfs.fabric.microsoft.com/lh.Lakehouse/Tables/dbo/t/metadata/v3.metadata.json";
   const onelake = {
     workspaces: async () => ["ws"],
@@ -195,7 +195,7 @@ test("a Delta table is read from its own folder, and an Iceberg one from its met
 });
 
 test("a Delta table answers its folder, and its log is left to the engine, which reads it into the lake", async () => {
-  const { createSqlTables } = require("../../src/sqltables.js");
+  const { createSqlTables } = require("../../core/sqltables.js");
   const onelake = {
     workspaces: async () => ["ws"],
     items: async () => [{ name: "lh.Lakehouse", kind: "Lakehouse" }],

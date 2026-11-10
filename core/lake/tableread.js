@@ -31,7 +31,7 @@ const fsp = require('node:fs/promises');
 const { createHash, randomBytes } = require('node:crypto');
 const { Readable, Transform } = require('node:stream');
 const { pipeline } = require('node:stream/promises');
-const { authedFetch, offlineError } = require('./http');
+const { authedFetch, offlineError } = require('../onelake/http');
 
 const TABLE_READ_ORIGIN = 'https://onelake.table.fabric.microsoft.com';
 // A POST may scan the whole table before it answers.

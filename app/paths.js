@@ -4,7 +4,7 @@
 // Plain functions over strings and plain objects: no DOM, no network, no DuckDB. This is
 // where the bugs that silently return the WRONG DATA live (cache keys that collide,
 // comment stripping that eats string literals), and none of them are reachable by
-// clicking around. What OneLake's names and metadata MEAN is the host's (src/names.js).
+// clicking around. What OneLake's names and metadata MEAN is the host's (core/names.js).
 // =============================================================================
 
 export const DFS_HOST = "onelake.dfs.fabric.microsoft.com";
@@ -132,7 +132,7 @@ export const stripBom = s => String(s).replace(/^\uFEFF/, "");
 export const sqlStr = v => "'" + String(v).replace(/'/g, "''") + "'";
 export const quoteIdent = v => '"' + String(v).replace(/"/g, '""') + '"';
 // DuckDB's reserved words (duckdb_keywords(), 'reserved' and 'type_function'): a name spelled
-// like one must be quoted. src/names.js keeps the host's twin; a test holds them equal.
+// like one must be quoted. core/names.js keeps the host's twin; a test holds them equal.
 export const RESERVED = new Set(("all analyse analyze and anti any array as asc asof asymmetric at authorization binary " +
   "both by case cast check collate collation column columns concurrently constraint create cross default " +
   "deferrable desc describe distinct do else end except false fetch for foreign freeze from full generated " +
@@ -146,7 +146,7 @@ export const sqlPart = v => {
   const s = String(v);
   return /^[A-Za-z_][A-Za-z0-9_]*$/.test(s) && !RESERVED.has(s.toLowerCase()) ? s : quoteIdent(s);
 };
-// A file's SQL name (src/names.js fileSqlName; a test holds them equal), from its workspace and its
+// A file's SQL name (core/names.js fileSqlName; a test holds them equal), from its workspace and its
 // path from the item, "data.Lakehouse/Files/x.parquet". null for a path no lakehouse holds.
 export const fileSqlName = (ws, path) => {
   const m = /^([^/]+)\.Lakehouse\/Files(?:\/(.*))?$/i.exec(strip(path));

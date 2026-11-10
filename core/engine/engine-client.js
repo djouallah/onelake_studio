@@ -32,9 +32,9 @@ const crypto = require('node:crypto');
 const { spawn } = require('node:child_process');
 const { join } = require('node:path');
 const { DuckDBInstance } = require('@duckdb/node-api');
-const { sqlStr } = require('./sql');
-const { shortHash } = require('./catalogfile');
-const { logFileOf } = require('./logfile');
+const { sqlStr } = require('../sql');
+const { shortHash } = require('../onelake/catalogfile');
+const { logFileOf } = require('../logfile');
 
 const CONNECT_MS = 5_000;
 const BOOT_MS = 180_000;       // a first boot may be downloading its extensions

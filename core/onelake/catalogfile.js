@@ -20,7 +20,7 @@ const fs = require('node:fs');
 const fsp = require('node:fs/promises');
 const crypto = require('node:crypto');
 const { dirname, join } = require('node:path');
-const { sqlStr } = require('./sql');
+const { sqlStr } = require('../sql');
 const { createCatalogTables, CATALOG_SCHEMA } = require('./catalogtables');
 
 const SCHEMA_VERSION = 4;

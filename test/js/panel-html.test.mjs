@@ -84,10 +84,10 @@ test("a .bim opens as the semantic model view", async () => {
   assert.match(app, /semantic\.setTableNamer\(/, "a model's Direct Lake tables are named by the host");
 });
 
-// One pin list (src/vendored.js): vendor.mjs downloads it, panel.js injects it, cdn.js
+// One pin list (core/vendored.js): vendor.mjs downloads it, panel.js injects it, cdn.js
 // builds URLs from it.
 test("the page's libraries are exactly what vendor.mjs ships", async () => {
-  const { PINS, VENDOR } = require("../../src/vendored.js");
+  const { PINS, VENDOR } = require("../../core/vendored.js");
   globalThis.window = { ONELAKE_STUDIO_CONFIG: { vendorBase: "https://webview.test/vendor/", pins: PINS } };
   const cdn = await import("../../app/cdn.js");
   delete globalThis.window;

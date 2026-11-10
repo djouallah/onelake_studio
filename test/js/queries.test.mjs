@@ -8,7 +8,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const require = createRequire(import.meta.url);
-const { createQueries, queryStem } = require("../../src/queries.js");
+const { createQueries, queryStem } = require("../../core/queries.js");
 
 async function setup(account = "a@contoso.com") {
   const root = await mkdtemp(join(tmpdir(), "queries-"));

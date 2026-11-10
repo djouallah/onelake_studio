@@ -33,13 +33,13 @@ const fsp = require('node:fs/promises');
 const { join } = require('node:path');
 const os = require('node:os');
 const { randomBytes, createHash } = require('node:crypto');
-const { sqlStr, quoteIdent, assertReads, checkedRead, tableRefs, fileRefs, filesReadBy, namedError, catalogStatement, readsCatalog, withoutComments, COLUMNS_NOT_READ } = require('./sql');
-const { SQL_KINDS, sqlName, abfssUrl, MODEL_CATALOG, modelSqlName } = require('./names');
-const { revalidate, sameAnswer } = require('./store');
-const { mapPool } = require('./http');
-const { readDelta, readIceberg, syncTable, attachLake, syncedOf, syncedAll } = require('./onelaketable');
-const { createTableService, httpsDownload, openedSince, heldOn } = require('./tableservice');
-const { tableReadCopies, TABLE_READ_FOLDER } = require('./tableread');
+const { sqlStr, quoteIdent, assertReads, checkedRead, tableRefs, fileRefs, filesReadBy, namedError, catalogStatement, readsCatalog, withoutComments, COLUMNS_NOT_READ } = require('../sql');
+const { SQL_KINDS, sqlName, abfssUrl, MODEL_CATALOG, modelSqlName } = require('../names');
+const { revalidate, sameAnswer } = require('../onelake/store');
+const { mapPool } = require('../onelake/http');
+const { readDelta, readIceberg, syncTable, attachLake, syncedOf, syncedAll } = require('../lake/onelaketable');
+const { createTableService, httpsDownload, openedSince, heldOn } = require('../lake/tableservice');
+const { tableReadCopies, TABLE_READ_FOLDER } = require('../lake/tableread');
 
 
 // Rows are read in chunks so no single postMessage carries a whole 200k-row grid, and so a tab

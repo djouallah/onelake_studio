@@ -10,9 +10,9 @@ import { createRequire } from "node:module";
 import { DatabaseSync } from "node:sqlite";
 
 const require = createRequire(import.meta.url);
-const { createCatalogFile, catalogFileOf, stateFileOf } = require("../../src/catalogfile.js");
-const { createStore, sameAnswer } = require("../../src/store.js");
-const { summarize, walkCached, createOneLake } = require("../../src/onelake.js");
+const { createCatalogFile, catalogFileOf, stateFileOf } = require("../../core/onelake/catalogfile.js");
+const { createStore, sameAnswer } = require("../../core/onelake/store.js");
+const { summarize, walkCached, createOneLake } = require("../../core/onelake/onelake.js");
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
@@ -572,8 +572,8 @@ test("reading what is remembered loads no DuckDB", async t => {
   const { store } = open();
   await store.put("workspaces", ["kept"]);
   const script = `
-    const { createCatalogFile } = require(${JSON.stringify(require.resolve("../../src/catalogfile.js"))});
-    const { createStore } = require(${JSON.stringify(require.resolve("../../src/store.js"))});
+    const { createCatalogFile } = require(${JSON.stringify(require.resolve("../../core/onelake/catalogfile.js"))});
+    const { createStore } = require(${JSON.stringify(require.resolve("../../core/onelake/store.js"))});
     const backend = createCatalogFile({ file: ${JSON.stringify(file)} });
     createStore({ dir: null, backend }).peek("workspaces").then(value => {
       backend.close();

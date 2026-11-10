@@ -2,7 +2,7 @@
 // host.js — the page's one channel to the extension host
 // =============================================================================
 // Everything the page needs from outside itself is a `call`: a DuckDB statement or a
-// OneLake read, answered by src/host.js. Results are plain JSON — columns as
+// OneLake read, answered by core/host.js. Results are plain JSON — columns as
 // { name, type } with DuckDB's own type names, rows as objects — so nothing here pretends
 // to be a database driver.
 //

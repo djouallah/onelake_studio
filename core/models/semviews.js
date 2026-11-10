@@ -18,7 +18,7 @@
 const fsp = require('node:fs/promises');
 const { join, dirname, relative, isAbsolute } = require('node:path');
 
-const { ONELAKE_FILE_URL: ABFSS } = require('./names');
+const { ONELAKE_FILE_URL: ABFSS } = require('../names');
 
 const exists = p => fsp.access(p).then(() => true, () => false);
 

@@ -1,8 +1,8 @@
 # Naming convention
 
 This is the contract for how every object in OneLake Studio is named. Change the code to fit it, not the
-other way round. The code that holds it is [`src/names.js`](../src/names.js) and
-[`src/sql.js`](../src/sql.js) on the host, and [`app/semantic.js`](../app/semantic.js) and
+other way round. The code that holds it is [`core/names.js`](../core/names.js) and
+[`core/sql.js`](../core/sql.js) on the host, and [`app/semantic.js`](../app/semantic.js) and
 [`app/paths.js`](../app/paths.js) in the page.
 
 ## The point
@@ -145,8 +145,8 @@ also say that this is a file and not a table.
 
 **This one is a parser's work, unlike a table's name.** DuckDB can't read it, so the engine gives it the
 file's `abfss://` URL before the statement runs, finding the workspace and item in the kept listings as it
-does for a table (`fileRefs` in [`src/sql.js`](../src/sql.js), `withFileUrls` in
-[`src/engine-host.js`](../src/engine-host.js)). So that nothing is read from the wrong place:
+does for a table (`fileRefs` in [`core/sql.js`](../core/sql.js), `withFileUrls` in
+[`core/engine/engine-host.js`](../core/engine/engine-host.js)). So that nothing is read from the wrong place:
 
 - **It is only a file where SQL reads one:** after `FROM`, `JOIN`, `DESCRIBE`, `SUMMARIZE` or `PIVOT`, or as
   the first argument of a table function, alone or in a list. `WHERE p = 'lakehouse.a.b/Files/c'` is a string.

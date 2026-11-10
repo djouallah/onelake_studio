@@ -16,7 +16,7 @@
 // No `vscode` import: the extension passes in its tokens.
 // =============================================================================
 
-const { authedFetch, fabricMessage, listPages, retryAfterMs } = require('../../src/http');
+const { authedFetch, fabricMessage, listPages, retryAfterMs } = require('../../core/onelake/http');
 
 const FABRIC_API = 'https://api.fabric.microsoft.com/v1';
 const POWER_BI_API = 'https://api.powerbi.com/v1.0/myorg';

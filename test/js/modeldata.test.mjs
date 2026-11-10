@@ -7,8 +7,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const require = createRequire(import.meta.url);
-const { createModelData } = require("../../src/modeldata.js");
-const { createCatalogFile } = require("../../src/catalogfile.js");
+const { createModelData } = require("../../core/models/modeldata.js");
+const { createCatalogFile } = require("../../core/onelake/catalogfile.js");
 
 const CATALOG = "semanticmodel.ws.sales", MODEL = "sales";
 const FACT = "lakehouse.ws.data.dbo.fact", DIM = "lakehouse.ws.data.dbo.dim";

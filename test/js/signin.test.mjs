@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { createSignIn, SCOPES } = require("../../src/signin.js");
+const { createSignIn, SCOPES } = require("../../core/signin.js");
 
 const STORAGE = "https://storage.azure.com/user_impersonation";
 const FABRIC = "https://api.fabric.microsoft.com/.default";

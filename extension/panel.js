@@ -12,10 +12,10 @@ const vscode = require('vscode');
 const crypto = require('node:crypto');
 const { TextDecoder } = require('node:util');
 const { renderPage } = require('./html');
-const { answer } = require('../src/host');
+const { answer } = require('../core/host');
 const { webviewRoot } = require('./webview');
-const { PINS } = require('../src/vendored');
-const { NAME } = require('../src/title');
+const { PINS } = require('../core/vendored');
+const { NAME } = require('../core/title');
 
 // A webview is a sandboxed iframe with no CSP of its own, so this is the only thing
 // between the page and the network — and the page needs none. Its scripts are its own and
@@ -159,7 +159,7 @@ async function openPanelUncontended(context, { onOpened, onBoot, onBootFailed, e
       // Open in Excel's button: Excel's provider is Windows only (xmla/excel.js).
       windows: process.platform === 'win32',
       // Where the vendored libraries are (cdn.js builds every URL from it), and which
-      // versions — src/vendored.js, the same list vendor.mjs shipped.
+      // versions — core/vendored.js, the same list vendor.mjs shipped.
       vendorBase: panel.webview.asWebviewUri(vendorUri).toString(),
       pins: PINS,
       // The landing query reads the packaged README. A filesystem path, not a webview

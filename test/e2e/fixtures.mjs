@@ -1,5 +1,5 @@
 // What a machine holds after an account has used OneLake Studio: its listings and table metadata
-// in the store, written by the real src/store.js and src/onelake.js, a saved query, and a semantic
+// in the store, written by the real core/onelake/store.js and core/onelake/onelake.js, a saved query, and a semantic
 // model's local copy. No rows: those are the engine's disk cache, and nothing here can read them.
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
@@ -9,9 +9,9 @@ import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const require = createRequire(import.meta.url);
-const { createStore } = require("../../src/store.js");
-const { createOneLake } = require("../../src/onelake.js");
-const { PINS } = require("../../src/vendored.js");
+const { createStore } = require("../../core/onelake/store.js");
+const { createOneLake } = require("../../core/onelake/onelake.js");
+const { PINS } = require("../../core/vendored.js");
 const { writeApp } = require("../../fabric_app/export/exportapp.js");
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..", "..");

@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { settleFileCache, LAYOUT } = require("../../src/filecache.js");
+const { settleFileCache, LAYOUT } = require("../../core/lake/filecache.js");
 
 async function setup(t) {
   const root = await mkdtemp(join(tmpdir(), "onelake-filecache-"));

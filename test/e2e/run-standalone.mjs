@@ -14,7 +14,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const require = createRequire(import.meta.url);
-const { createCatalogFile, catalogFileOf } = require("../../src/catalogfile.js");
+const { createCatalogFile, catalogFileOf } = require("../../core/onelake/catalogfile.js");
 
 const extension = process.argv[2];
 assert.ok(existsSync(join(extension, "dist", "standalone.js")), "no dist/standalone.js in the vsix");

@@ -14,8 +14,8 @@
 // from the wrong item would give an answer that looks right.
 // =============================================================================
 
-const { mapPool } = require('./http');
-const { DFS_ORIGIN, sqlKind, displayName } = require('./names');
+const { mapPool } = require('../onelake/http');
+const { DFS_ORIGIN, sqlKind, displayName } = require('../names');
 
 const lc = s => String(s).toLowerCase();
 const text = e => (Array.isArray(e) ? e.join('\n') : String(e ?? ''));

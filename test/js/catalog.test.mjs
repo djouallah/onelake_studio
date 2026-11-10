@@ -1,4 +1,4 @@
-// Tests for src/catalog.js — the listing the sidebar tree draws from.
+// Tests for core/onelake/catalog.js — the listing the sidebar tree draws from.
 //
 // A listing that goes wrong shows up as a tree that quietly disagrees with OneLake about
 // what a workspace contains. The parts that have actually cost bugs are covered here —
@@ -13,7 +13,7 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { createCatalog } = require("../../src/catalog.js");
+const { createCatalog } = require("../../core/onelake/catalog.js");
 
 
 // A fetch stub. `answers` maps a matcher to a response; every request is recorded so a

@@ -1,7 +1,7 @@
 // =============================================================================
 // semantic.js — semantic views: Power BI models (.bim, or Ossie .yaml) that SQL can name
 // =============================================================================
-// The statements and the compiling are dax-sql's, vendored at the pin in src/vendored.js —
+// The statements and the compiling are dax-sql's, vendored at the pin in core/vendored.js —
 // its createViews() is the one implementation of
 //
 //   SHOW SEMANTIC VIEWS | SHOW SEMANTIC DIMENSIONS IN … [FOR METRIC m] | SHOW SEMANTIC METRICS IN …
@@ -14,7 +14,7 @@
 // model's tables from OneLake — each table's expression names a workspace and an item by GUID,
 // the host names them (setTableNamer) and the compiled SQL reads each by its SQL name,
 // lakehouse.ws.item.schema.table, the one any query writes — and where views are kept
-// (the extension host, per account: src/semviews.js). This module is shared by the panel and
+// (the extension host, per account: core/models/semviews.js). This module is shared by the panel and
 // the host's command line (cli/agent.js); `modules` lets the host hand in the compiler.
 // =============================================================================
 import { PINS, npmFile, npmEsm } from "./cdn.js";
@@ -108,7 +108,7 @@ export function lakehousesOf(bim, workspace = null) {
 
 // What kind of model it is, as a phrase for saying why it cannot be opened: "an Import
 // model", "a DirectQuery model", "a composite model", or Direct Lake over a SQL endpoint the
-// host could not read from OneLake (src/sqlendpoint.js). A partition without a mode
+// host could not read from OneLake (core/models/sqlendpoint.js). A partition without a mode
 // (or "default") takes the model's defaultMode, which is Import when absent.
 export function storageMode(bim) {
   const fallback = lc(bim?.model?.defaultMode || "import");

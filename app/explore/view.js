@@ -62,7 +62,7 @@ const REPORT_POLL_MS = 2000;
 //   openInExcel()    (optional) the Open in Excel button: this model in a new workbook, as a live
 //                    PivotTable (xmla); answers what to say when it is open
 //   keepOffline      (optional) { state(), set(on) }: the Keep offline switch beside the tabs, every
-//                    table of this model on this machine (src/modeldata.js); both answer what it shows:
+//                    table of this model on this machine (core/models/modeldata.js); both answer what it shows:
 //                    { on, say, tone, meter, tip, busy }
 //   editSql(sql)     (optional) the Edit SQL button: the shelves' query, all its rows, handed
 //                    to the host's own SQL editor, which runs it and saves its CSV, so Show plan

@@ -1,7 +1,7 @@
 // =============================================================================
 // vendor.mjs — the webview's third-party code, inside the extension
 // =============================================================================
-// Downloads what src/vendored.js pins — the markdown renderer, ECharts and the dax-sql
+// Downloads what core/vendored.js pins — the markdown renderer, ECharts and the dax-sql
 // compiler — into vendor/, which panel.js serves to the page as webview
 // resources. Nothing the page runs comes from a CDN at run time. Export to Fabric copies
 // dax-sql from here into the app it writes, and vendor/webapp/ — the web app's own packages
@@ -41,7 +41,7 @@ async function get(url) {
   finally { active--; const next = waiting.shift(); if (next) next(); }
 }
 
-const { VENDOR } = createRequire(import.meta.url)("../src/vendored.js");
+const { VENDOR } = createRequire(import.meta.url)("../core/vendored.js");
 
 const here = join(dirname(fileURLToPath(import.meta.url)), "..");   // the extension root
 const OUT = join(here, "vendor");

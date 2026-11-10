@@ -5,7 +5,7 @@
 // says an error is, and the query variables. app.js turns these into Run and Plan.
 // =============================================================================
 
-// Where a comment, a quoted text or a $$ string ends, as DuckDB reads them (src/sql.js has the same for
+// Where a comment, a quoted text or a $$ string ends, as DuckDB reads them (core/sql.js has the same for
 // the guard). A line comment stops at either line break, block comments nest, a backslash escapes in an
 // E'...' string, and a '$' in a word opens nothing.
 const WORD = /[A-Za-z0-9_$\u0080-\uffff]/;

@@ -48,10 +48,10 @@ const fsp = require('node:fs/promises');
 const zlib = require('node:zlib');
 const deflateRaw = require('node:util').promisify(zlib.deflateRaw);
 const { createHash } = require('node:crypto');
-const { crc32 } = require('../../src/crc32');
-const { TABLE_ORIGIN } = require('../../src/catalog');
-const { dfsFileUrl, stripBom } = require('../../src/names');
-const { PINS, WEBAPP } = require('../../src/vendored');
+const { crc32 } = require('../../core/crc32');
+const { TABLE_ORIGIN } = require('../../core/onelake/catalog');
+const { dfsFileUrl, stripBom } = require('../../core/names');
+const { PINS, WEBAPP } = require('../../core/vendored');
 const { modelConnector, MODEL_CONNECTOR } = require('./fabricapp');
 
 // The zip's record of what was published, and the Report: written when the zip has none, and

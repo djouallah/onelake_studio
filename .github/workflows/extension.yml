@@ -145,7 +145,7 @@ jobs:
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: vendor
-          key: vendor-${{ hashFiles('scripts/vendor.mjs', 'scripts/fetch-retry.mjs', 'src/vendored.js') }}
+          key: vendor-${{ hashFiles('scripts/vendor.mjs', 'scripts/fetch-retry.mjs', 'core/vendored.js') }}
       - run: node scripts/vendor.mjs
       # The command line over all of it, as an agent meets it: the real process, no stand-ins but
       # OneLake. Measured here because only this job reaches `sql` and `model`; the spawned
@@ -186,7 +186,7 @@ jobs:
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: vendor
-          key: vendor-${{ hashFiles('scripts/vendor.mjs', 'scripts/fetch-retry.mjs', 'src/vendored.js') }}
+          key: vendor-${{ hashFiles('scripts/vendor.mjs', 'scripts/fetch-retry.mjs', 'core/vendored.js') }}
       - run: node scripts/vendor.mjs
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
@@ -217,7 +217,7 @@ jobs:
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: vendor
-          key: vendor-${{ hashFiles('scripts/vendor.mjs', 'scripts/fetch-retry.mjs', 'src/vendored.js') }}
+          key: vendor-${{ hashFiles('scripts/vendor.mjs', 'scripts/fetch-retry.mjs', 'core/vendored.js') }}
 
       # NOT a plain `npm ci`. The eight platform bindings are optionalDependencies gated on
       # os/cpu, so a plain install drops 37MB of the RUNNER's platform into node_modules — and
@@ -297,11 +297,11 @@ jobs:
           for f in fabric_app/site/app.js fabric_app/site/storage/data.js fabric_app/rayfin/rayfin.yml webview/explore/view.js; do
             grep -qx "extension/$f" <<<"$files" || { echo "no $f in the vsix"; exit 1; }
           done
-          # The web app's own packages (src/vendored.js VENDOR.webapp): its page loads nothing from a CDN.
-          webapp=$(node -e "const w = require('./src/vendored.js').VENDOR.webapp, x = w.extensions;
+          # The web app's own packages (core/vendored.js VENDOR.webapp): its page loads nothing from a CDN.
+          webapp=$(node -e "const w = require('./core/vendored.js').VENDOR.webapp, x = w.extensions;
             console.log([...w.esm.map(p => 'npm/' + p + '/+esm.js'), ...w.files.map(f => 'npm/' + f),
               ...x.names.map(n => 'duckdb-ext/' + x.duckdb + '/' + x.platform + '/' + n + '.duckdb_extension.wasm')].join(' '))")
-          [ -n "$webapp" ] || { echo "no web app packages listed in src/vendored.js"; exit 1; }
+          [ -n "$webapp" ] || { echo "no web app packages listed in core/vendored.js"; exit 1; }
           for f in $webapp; do
             grep -qxF "extension/vendor/webapp/$f" <<<"$files" || { echo "no vendor/webapp/$f in the vsix"; exit 1; }
           done
@@ -368,7 +368,7 @@ jobs:
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: vendor
-          key: vendor-${{ hashFiles('scripts/vendor.mjs', 'scripts/fetch-retry.mjs', 'src/vendored.js') }}
+          key: vendor-${{ hashFiles('scripts/vendor.mjs', 'scripts/fetch-retry.mjs', 'core/vendored.js') }}
       - run: node scripts/vendor.mjs
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:

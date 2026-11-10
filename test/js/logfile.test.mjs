@@ -8,8 +8,8 @@ import { join } from "node:path";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { createLogFile, logFileOf } = require("../../src/logfile.js");
-const { catalogFileOf } = require("../../src/catalogfile.js");
+const { createLogFile, logFileOf } = require("../../core/logfile.js");
+const { catalogFileOf } = require("../../core/onelake/catalogfile.js");
 
 async function setup(t) {
   const dir = await mkdtemp(join(tmpdir(), "onelake-log-"));
@@ -102,7 +102,7 @@ test("its file is the account's, and is not the catalog", () => {
 });
 
 test("a database that died is said once it shows, and nothing else is taken for it", async () => {
-  const { createLogKeeper } = require("../../src/enginelog.js");
+  const { createLogKeeper } = require("../../core/engine/enginelog.js");
   const said = [], fatal = [];
   let error = new Error("IO Error: a hiccup");
   const keeper = createLogKeeper({ engine: { readLog: async () => { throw error; } }, logs: {}, maxBytes: 1, log: l => said.push(l), onFatal: m => fatal.push(m) });
@@ -115,7 +115,7 @@ test("a database that died is said once it shows, and nothing else is taken for 
 });
 
 test("a semantic model's query is logged as written and as compiled, apart again in Logs", async () => {
-  const { sourceOf, isSetup } = require("../../src/enginelog.js");
+  const { sourceOf, isSetup } = require("../../core/engine/enginelog.js");
   const { withSource, compileModelSql } = await import("../../app/explore/query.js");
   // The Pivot's queries go the same way; SQL with no model in it runs as written.
   const compiler = { compileStatement: t => ({ sql: t.includes("semanticmodel") ? "SELECT 1" : t }) };

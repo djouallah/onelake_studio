@@ -69,7 +69,7 @@ const FATAL = /database has been invalidated/i;
 /**
  * @param {object} o
  * @param {{readLog: Function, emptyLog: Function}} o.engine
- * @param {ReturnType<import('./logfile').createLogFile>} o.logs
+ * @param {ReturnType<import('../logfile').createLogFile>} o.logs
  * @param {number} o.maxBytes  how much to keep; 0 keeps none
  * @param {(line: string) => void} [o.log]
  * @param {(message: string) => void} [o.onFatal]  the database has died under this process, for good

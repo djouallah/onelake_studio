@@ -1,4 +1,4 @@
-# OneLake tables through DuckLake (src/onelaketable.js, src/tableservice.js), tested on every push to main.
+# OneLake tables through DuckLake (core/lake/onelaketable.js, core/lake/tableservice.js), tested on every push to main.
 #
 #   local:   every case of test/fixtures/lake/make_tables.py, written here by delta-rs (deletion vectors and a
 #            checkpoint in parts written as Spark writes them), read through DuckLake against delta_scan; a table

@@ -9,7 +9,7 @@ import { join } from "node:path";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { createStore, revalidate } = require("../../src/store.js");
+const { createStore, revalidate } = require("../../core/onelake/store.js");
 
 test("revalidate: a kept answer is trusted until using it fails, then read again once", async () => {
   const stale = () => Object.assign(new Error("stale"), { stale: true });

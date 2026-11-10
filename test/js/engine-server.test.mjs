@@ -13,15 +13,15 @@ import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 
 const require = createRequire(import.meta.url);
-const { createEngineHost, KEEP_MARK } = require("../../src/engine-host.js");
-const { createRemote, stopServer, openClient, pipePath, lineReader, LOST } = require("../../src/engine-client.js");
-const { createCatalogFile } = require("../../src/catalogfile.js");
-const { createLogFile, logFileOf } = require("../../src/logfile.js");
-const { openOldState } = require("../../src/oldstate.js");
+const { createEngineHost, KEEP_MARK } = require("../../core/engine/engine-host.js");
+const { createRemote, stopServer, openClient, pipePath, lineReader, LOST } = require("../../core/engine/engine-client.js");
+const { createCatalogFile } = require("../../core/onelake/catalogfile.js");
+const { createLogFile, logFileOf } = require("../../core/logfile.js");
+const { openOldState } = require("../../core/engine/oldstate.js");
 const { DuckDBInstance } = require("@duckdb/node-api");
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
-const SCRIPT = join(root, "src", "engine-server.js");
+const SCRIPT = join(root, "core", "engine", "engine-server.js");
 const BUNDLED = join(root, "duckdb-extensions");
 const LONG = "SELECT sum(hash(x)) FROM range(100000000000000) t(x)";
 const sleep = ms => new Promise(r => setTimeout(r, ms));

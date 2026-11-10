@@ -10,10 +10,10 @@ import { withAgent } from "./cli-harness.mjs";
 
 const require = createRequire(import.meta.url);
 const { createAgent } = require("../../cli/agent.js");
-const { createOneLake } = require("../../src/onelake.js");
-const { createStore } = require("../../src/store.js");
-const { createCatalogFile } = require("../../src/catalogfile.js");
-const { createSyncWorker } = require("../../src/syncworker.js");
+const { createOneLake } = require("../../core/onelake/onelake.js");
+const { createStore } = require("../../core/onelake/store.js");
+const { createCatalogFile } = require("../../core/onelake/catalogfile.js");
+const { createSyncWorker } = require("../../core/onelake/syncworker.js");
 const { EXIT } = require("../../cli/bridge.js");
 
 const LAKEHOUSE = "gold.Lakehouse";

@@ -32,9 +32,9 @@ import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 
 const require = createRequire(import.meta.url);
-const { createEngineHost } = require("../../src/engine-host.js");
+const { createEngineHost } = require("../../core/engine/engine-host.js");
 const { createAgent } = require("../../cli/agent.js");
-const { PINS } = require("../../src/vendored.js");
+const { PINS } = require("../../core/vendored.js");
 
 const ROOT = join(fileURLToPath(new URL(".", import.meta.url)), "..", "..");
 const SQL_DIR = join(ROOT, "test", "sql");

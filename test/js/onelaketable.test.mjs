@@ -13,8 +13,8 @@ const FIXTURES = process.env.LAKE_FIXTURES;
 const skip = !FIXTURES && "LAKE_FIXTURES is not set: the lake is tested by its own workflow";
 const require = createRequire(import.meta.url);
 const H = skip ? null : await import("./lake-helpers.mjs");
-const { readDelta, syncTable, META } = require("../../src/onelaketable.js");
-const { createTableService } = require("../../src/tableservice.js");
+const { readDelta, syncTable, META } = require("../../core/lake/onelaketable.js");
+const { createTableService } = require("../../core/lake/tableservice.js");
 const MAKE = new URL("../fixtures/lake/make_tables.py", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1");
 const fwd = p => p.replace(/\\/g, "/");
 

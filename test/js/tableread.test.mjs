@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { createTableRead, tableReadCopies } = require("../../src/tableread.js");
+const { createTableRead, tableReadCopies } = require("../../core/lake/tableread.js");
 
 const TABLE = { workspace: "my ws", item: "data.Lakehouse", schema: "dbo", table: "sales" };
 const json = (status, body) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });

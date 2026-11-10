@@ -8,7 +8,7 @@ import { join } from "node:path";
 
 const require = createRequire(import.meta.url);
 const { DuckDBInstance } = require("@duckdb/node-api");
-const { attachLake } = require("../../src/onelaketable.js");
+const { attachLake } = require("../../core/lake/onelaketable.js");
 
 const BUNDLED = new URL("../../duckdb-extensions/", import.meta.url);
 const q = s => `'${String(s).replace(/'/g, "''")}'`;

@@ -21,7 +21,7 @@
 
 const { mkdirSync, renameSync, rmSync, openSync, readSync, closeSync, statSync, writeFileSync } = require('node:fs');
 const { dirname, join } = require('node:path');
-const { sqlStr: q, assertOneLakeUrl } = require('./sql');
+const { sqlStr: q, assertOneLakeUrl } = require('../sql');
 const { META, rows } = require('./onelaketable');
 
 const HELD = `${META}.studio_held`;

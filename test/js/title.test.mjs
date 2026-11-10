@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { NAME, placeOf, tabTitle } = require("../../src/title.js");
+const { NAME, placeOf, tabTitle } = require("../../core/title.js");
 
 const GUID = "72f988bf-86f1-41af-91ab-2d7cd011db47";
 

@@ -6,8 +6,8 @@
 const { join, dirname, isAbsolute } = require('node:path');
 const { existsSync, statSync } = require('node:fs');
 const fsp = require('node:fs/promises');
-const { createCatalogFile, catalogFileOf, stateFileOf, shortHash } = require('./catalogfile');
-const { createLogFile, logFileOf } = require('./logfile');
+const { createCatalogFile, catalogFileOf, stateFileOf, shortHash } = require('../onelake/catalogfile');
+const { createLogFile, logFileOf } = require('../logfile');
 
 /**
  * @param {object} o

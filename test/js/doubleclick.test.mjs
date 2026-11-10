@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { firstClicks } = require("../../src/doubleclick.js");
+const { firstClicks } = require("../../core/doubleclick.js");
 
 function clicks() {
   let t = 1000;

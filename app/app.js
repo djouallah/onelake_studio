@@ -420,7 +420,7 @@ async function openModelView(file, text = null, { fromOneLake = text == null } =
   }
 }
 
-// Semantic views the host keeps (src/semviews.js), defined once the engine is up so SQL can
+// Semantic views the host keeps (core/models/semviews.js), defined once the engine is up so SQL can
 // name them; every query waits for this. One that no longer reads is skipped, and says so.
 let viewsListed = Promise.resolve([]);
 let viewsReady = Promise.resolve();

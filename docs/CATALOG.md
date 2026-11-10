@@ -95,7 +95,7 @@ Every row says when it was last read from OneLake.
 
 ## The sync worker
 
-**It runs in a window's extension host, not the server** ([`src/syncworker.js`](../src/syncworker.js)). That is where
+**It runs in a window's extension host, not the server** ([`core/onelake/syncworker.js`](../core/onelake/syncworker.js)). That is where
 VS Code's sign-in, proxy and certificates already are, so no token or network path has to move, and syncing needs no
 DuckDB and no server. A lease in the catalog file says which window sweeps the tenant, and another takes over within
 90 seconds when that one goes.
