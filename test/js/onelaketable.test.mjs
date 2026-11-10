@@ -55,13 +55,23 @@ for (const [name, info] of Object.entries(cases)) {
         JOIN ${META}.ducklake_table t ON t.table_id = s.table_id AND t.end_snapshot IS NULL WHERE t.table_name = ${H.q(name)}`);
       const count = async (src, where) => Number((await H.rowsOf(lake.c, `SELECT count(*)::BIGINT AS n FROM ${src} WHERE ${where}`))[0].n);
       for (const k of kept) {
-        const lit = v => (/date/i.test(k.type) ? `DATE ${H.q(v)}` : v);
+        const lit = v => (/timestamp/i.test(k.type) ? `${/tz|zone/i.test(k.type) ? "TIMESTAMPTZ" : "TIMESTAMP"} ${H.q(v)}`
+          : /date/i.test(k.type) ? `DATE ${H.q(v)}` : v);
         for (const where of [`${H.qi(k.col)} = ${lit(k.lo)}`, `${H.qi(k.col)} = ${lit(k.hi)}`, `${H.qi(k.col)} < ${lit(k.lo)}`,
                              `${H.qi(k.col)} > ${lit(k.hi)}`, `${H.qi(k.col)} BETWEEN ${lit(k.lo)} AND ${lit(k.hi)}`, `${H.qi(k.col)} IS NULL`]) {
           assert.equal(await count(`lake.${H.qi(name)}`, where), await count(`delta_scan(${H.q(root)})`, where), `${name}: ${where}`);
         }
       }
+      // And the bounds are for skipping only: the lowest and highest values asked for are the files' own.
+      for (const col of new Set(kept.map(k => k.col))) {
+        const ends = async src => JSON.stringify((await H.rowsOf(lake.c, `SELECT min(${H.qi(col)})::VARCHAR AS lo, max(${H.qi(col)})::VARCHAR AS hi, count(${H.qi(col)})::BIGINT AS n FROM ${src}`))[0]);
+        assert.equal(await ends(`lake.${H.qi(name)}`), await ends(`delta_scan(${H.q(root)})`), `${name}: min, max and count of ${col}`);
+      }
       if (name === "plain") assert.ok(kept.some(k => k.col === "id"), "plain's id has stats in the lake");
+      if (name === "types") {
+        for (const col of ["i8", "i16", "i32", "d", "ts", "ts_ntz"]) assert.ok(kept.some(k => k.col === col), `types' ${col} has stats in the lake`);
+        for (const col of ["f32", "dec", "txt", "flag"]) assert.ok(!kept.some(k => k.col === col), `types' ${col} has none`);
+      }
     } finally { lake.close(); }
   });
 }

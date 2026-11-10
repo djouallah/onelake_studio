@@ -129,12 +129,24 @@ const addOf = a => {
 };
 
 // A column's lowest or highest value in a file, as DuckLake keeps one (text), or null where the log's word can't
-// be taken as exact. Only whole numbers and dates are: a long past 2^53 has lost digits as JSON, a string is cut
-// at a length the table sets, a timestamp is cut to milliseconds, and a wrong bound would skip a file that holds
-// the rows asked for. A column without one is read as before.
-const STAT_TYPES = new Set(['BIGINT', 'INTEGER', 'SMALLINT', 'TINYINT', 'DATE']);
-function statText(type, v) {
+// be taken as a bound: a wrong one would skip a file that holds the rows asked for. Whole numbers and dates are
+// exact. A timestamp is cut to milliseconds in the log, which leaves the lowest a bound and the highest short of
+// one, so the highest is taken a millisecond later (`upper`). Not kept: a long past 2^53, which has lost digits
+// as JSON, a string, cut at a length the table sets, and decimals and floats. A column without one is read as before.
+const STAT_TYPES = new Set(['BIGINT', 'INTEGER', 'SMALLINT', 'TINYINT', 'DATE', 'TIMESTAMPTZ', 'TIMESTAMP']);
+// 2024-01-02T03:04:05.123Z, as the log writes one: in UTC where the column has a zone, with none where it hasn't.
+const STAT_TIME = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,6}))?(Z|[+-]00:?00)?$/;
+function statText(type, v, upper = false) {
   if (type === 'DATE') return typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : null;
+  if (type === 'TIMESTAMPTZ' || type === 'TIMESTAMP') {
+    const m = typeof v === 'string' ? STAT_TIME.exec(v) : null;
+    if (!m || !!m[8] !== (type === 'TIMESTAMPTZ')) return null;
+    const ms = Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6], Math.floor(Number(`0.${m[7] || 0}`) * 1000)) + (upper ? 1 : 0);
+    // Years 1 to 9999 only, where the text below is what it looks like.
+    if (!Number.isFinite(ms) || +m[1] < 1 || new Date(ms).getUTCFullYear() > 9999) return null;
+    const text = new Date(ms).toISOString();   // 2024-01-02T03:04:05.124Z
+    return `${text.slice(0, 10)} ${text.slice(11, 23)}${type === 'TIMESTAMPTZ' ? '+00' : ''}`;
+  }
   return Number.isSafeInteger(v) ? String(v) : null;
 }
 
@@ -380,7 +392,7 @@ async function syncTable(c, name, state, { dvDir, held = new Map(), synced = nul
       rowId += Number(records);
       f.partitionValues.forEach((v, i) => partitionRows.push(`(${me}, ${tid}, ${i}, ${v == null ? 'NULL' : q(v)})`));
       if (f.stats) for (const s of statCols) {
-        const min = statText(s.type, f.stats.min[s.physical]), max = statText(s.type, f.stats.max[s.physical]);
+        const min = statText(s.type, f.stats.min[s.physical]), max = statText(s.type, f.stats.max[s.physical], true);
         if (min == null || max == null) continue;
         const nulls = Number.isSafeInteger(f.stats.nulls[s.physical]) ? f.stats.nulls[s.physical] : null;
         statRows.push(`(${me}, ${tid}, ${s.id}, ${nulls == null ? 'NULL' : Number(records) - nulls}, ${nulls == null ? 'NULL' : nulls}, ${q(min)}, ${q(max)})`);

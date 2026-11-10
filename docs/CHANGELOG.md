@@ -22,7 +22,8 @@
   clicked (or at once, with `tableOpensOn` set to `data`). The click used to read its first rows in the background,
   which synced the table and brought its files to this machine.
 - **A filter skips the files its rows can't be in.** For a Delta table, each file's lowest and highest value of a
-  whole-number or date column is kept, so `WHERE id = 42` or a date range opens only the files that can hold it. It
+  whole-number, date or timestamp column is kept, so `WHERE id = 42` or a range of dates opens only the files that can
+  hold it. It
   used to open every file of the table, each a request to OneLake. A table read before this gets them the next time
   its files change.
 - **Table files come down faster.** Six at a time, not four, written as they arrive, and a download the connection
