@@ -30,6 +30,18 @@ export function formatValue(v, format) {
   return `${v < 0 ? '-' : ''}${m?.[1] ?? ''}${text}${unit}`;
 }
 
+// A value on a chart's axis: short (10M, $2.5K), where formatValue writes every digit; the tooltip
+// keeps the format's own. A percent, and a format that is short already, are written as they are.
+export function axisValue(v, format) {
+  if (typeof v !== 'number' || !Number.isFinite(v)) return formatValue(v, format);
+  const m = /^([$€£]?)[#,]*0(?:\.0+)?(%|a)?$/.exec(format ?? '');
+  const n = Math.abs(v);
+  if (!n && m?.[2] !== '%') return `${m?.[1] ?? ''}0`;
+  if (m?.[2] || n < 1000) return n < 1000 && !m?.[2] && !Number.isInteger(v) && !format ? String(Number(v.toFixed(2))) : formatValue(v, format);
+  const [d, unit] = n >= 1e9 ? [1e9, 'B'] : n >= 1e6 ? [1e6, 'M'] : [1e3, 'K'];
+  return `${v < 0 ? '-' : ''}${m?.[1] ?? ''}${Number((n / d).toFixed(1))}${unit}`;
+}
+
 // Explore's highlight table: how strong a cell's tint is, 6% to 60% of the colour, between the
 // smallest and the largest value shown.
 export const shade = (v, min, max) => v == null || !(max > min) ? 0 : Math.round(6 + 54 * (v - min) / (max - min));

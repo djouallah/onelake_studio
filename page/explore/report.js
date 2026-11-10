@@ -36,7 +36,7 @@
 
 import { el } from './dom.js';
 import { PALETTE, PALETTES } from './theme.js';
-import { autoMark, modelFields, pivotQuery, pivotView } from './explore.js';
+import { autoMark, modelFields, pivotQuery, pivotView, icon } from './explore.js';
 import { formatChart, formatLook, TEXT_SIZES } from './format.js';
 
 const KINDS = new Set(['pivot', 'text']);
@@ -265,7 +265,7 @@ export function drawReport(root, spec, ctx) {
     const text = tile?.kind === 'text';
     const job = { tile, body, piv, on: text ? null : pickColumn(tile, piv), dirty: !text, asking: false, chart: null, box: null, repaint: null };
     const grip = ctx.layout ? el('button', { type: 'button', class: 'rp-tool rp-grip', title: 'Drag to move, or move with the arrow keys',
-      'aria-label': `Move ${title || 'this tile'}`, onpointerdown: e => dragFrom(e, job, 'move'), onkeydown: e => keyed(e, job, 'move') }, '⠿') : null;
+      'aria-label': `Move ${title || 'this tile'}`, onpointerdown: e => dragFrom(e, job, 'move'), onkeydown: e => keyed(e, job, 'move') }, icon('grip')) : null;
     job.slicer = mark === 'slicer';
     // Not drawn again when a pick changes: a slicer keeps its values, a text tile has no query.
     job.still = job.slicer || text;
@@ -273,16 +273,18 @@ export function drawReport(root, spec, ctx) {
     job.plots = plots;
     job.at = startAt(tile, { wide, mark, plots });
     const name = title || 'this tile';
-    const tool = (glyph, tip, label, onclick) => el('button', { type: 'button', class: 'rp-tool', title: tip, 'aria-label': label, onclick }, glyph);
+    const tool = (ico, tip, label, onclick) => el('button', { type: 'button', class: 'rp-tool', title: tip, 'aria-label': label, onclick }, icon(ico));
     const heading = el('h2', ctx.rename ? { title: 'Double-click to rename', ondblclick: () => renameIn(job, heading, heading.textContent) } : {}, title);
     job.section = el('section', { class: `rp-tile${job.slicer ? ' rp-slicer-tile' : ''}${mark === 'card' ? ' rp-card-tile' : ''}${text ? ' rp-text-tile' : ''}` },
-      el('div', { class: 'rp-head' }, grip, heading,
-        ctx.edit && tile.kind === 'pivot' ? tool('✎', 'Edit this visual', `Edit ${name}`, () => ctx.edit(jobs.indexOf(job))) : null,
-        ctx.duplicate ? tool('⧉', 'Duplicate', `Duplicate ${name}`, () => ctx.duplicate(jobs.indexOf(job))) : null,
-        ctx.remove ? tool('✕', 'Remove from the report', `Remove ${name} from the report`, () => ctx.remove(jobs.indexOf(job))) : null),
+      el('div', { class: 'rp-head' }, heading),
+      // Its tools, over its top right corner while the pointer or the keyboard is on it: they take no room.
+      el('div', { class: 'rp-tools' }, grip,
+        ctx.edit && tile.kind === 'pivot' ? tool('edit', 'Edit this visual', `Edit ${name}`, () => ctx.edit(jobs.indexOf(job))) : null,
+        ctx.duplicate ? tool('copy', 'Duplicate', `Duplicate ${name}`, () => ctx.duplicate(jobs.indexOf(job))) : null,
+        ctx.remove ? tool('close', 'Remove from the report', `Remove ${name} from the report`, () => ctx.remove(jobs.indexOf(job))) : null),
       body,
       ctx.layout ? el('button', { type: 'button', class: 'rp-resize', title: 'Drag to resize, or resize with the arrow keys',
-        'aria-label': `Resize ${title || 'this tile'}`, onpointerdown: e => dragFrom(e, job, 'size'), onkeydown: e => keyed(e, job, 'size') }, '◢') : null);
+        'aria-label': `Resize ${title || 'this tile'}`, onpointerdown: e => dragFrom(e, job, 'size'), onkeydown: e => keyed(e, job, 'size') }, icon('resize')) : null);
     grid.append(job.section);
     styleTile(job);
     if (text) drawText(job);
@@ -519,7 +521,7 @@ export function drawReport(root, spec, ctx) {
       const text = p.values || p.range ? `${p.field}: ${p.label}` : `${p.field} = ${p.value == null || p.label === '' ? '(blank)' : p.label}`;
       return el('span', { class: 'rp-chip' }, el('span', {}, text),
         el('button', { type: 'button', class: 'rp-x', title: 'Clear this filter', 'aria-label': `Clear ${text}`,
-          onclick: () => { picks.delete(job); changed(job); } }, '✕'));
+          onclick: () => { picks.delete(job); changed(job); } }, icon('close')));
     }));
   }
 
@@ -583,7 +585,7 @@ export function drawReport(root, spec, ctx) {
       if (!job.chart) {
         const box = el('div', { class: 'rp-chart' });
         body.replaceChildren(box);
-        const chart = echarts.init(box, 'studio');
+        const chart = echarts.init(box, ctx.chartTheme ?? 'studio');
         Object.assign(job, { chart, box });
         resized.observe(box);
         if (job.on) chart.on('click', e => { const key = e.componentType === 'series' && keyAt?.(e); if (key) pickOf().on(key); });

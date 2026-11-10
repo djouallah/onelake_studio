@@ -316,7 +316,15 @@ export function mountExplore(root, ctx) {
     for (const w of now) w.go();
   }
   const leftWhileRunning = () => { const was = reportLeft; reportLeft = false; return was; };
-  const reportEcharts = async () => { const ec = await ctx.echarts(); registerChartTheme(ec, css); return ec; };
+  // The Report's charts are drawn in the Report's own colours (its theme's background), read off its page.
+  const reportCss = name => getComputedStyle(reportPage).getPropertyValue(name).trim();
+  const reportEcharts = async () => { const ec = await ctx.echarts(); registerChartTheme(ec, reportCss, 'report'); return ec; };
+  // The report's background (its theme's): the editor's, or the Report's own dark or light.
+  const BACKGROUNDS = [['editor', 'Editor'], ['dark', 'Dark'], ['light', 'Light']];
+  function paintBackground() {
+    const bg = shownReport?.spec?.theme?.background;
+    for (const [k] of BACKGROUNDS) reportPage.classList.toggle(`rp-bg-${k}`, k !== 'editor' && k === bg);
+  }
   // Add to report changed the tiles while the Report was not on screen: drawn again when it is.
   let reportChanged = false;
   // The report on screen and the stamp it was read at: what a save writes over (saveSpec); its pages
@@ -341,6 +349,7 @@ export function mountExplore(root, ctx) {
       reportStamp = stamp ?? null;
       shownReport = { spec, stamp: reportStamp };
       shownPages = reportPages(spec);
+      paintBackground();
       dropPages();
       pageHost.replaceChildren();
       reportAt = Math.max(0, Math.min(reportAt, shownPages.length - 1));
@@ -375,7 +384,7 @@ export function mountExplore(root, ctx) {
   function pageCtx(i) {
     const saves = !!ctx.report.save;
     return { sql: reportSql, echarts: reportEcharts, shown: () => reportShown(i), leftWhileRunning,
-             cancel: ctx.cancel, parallel: ctx.reportParallel, model: ctx.tmsl, css,
+             cancel: ctx.cancel, parallel: ctx.reportParallel, model: ctx.tmsl, css: reportCss, chartTheme: 'report',
              remove: saves ? removeTile : undefined, layout: saves ? layoutTiles : undefined,
              duplicate: saves ? duplicateTile : undefined, rename: saves ? renameTile : undefined,
              edit: saves ? editTile : undefined, setText: saves ? setText : undefined,
@@ -592,7 +601,12 @@ export function mountExplore(root, ctx) {
     const sizes = el('div', { class: 'subtabs', role: 'group', 'aria-label': 'Text size' }, SIZES.map(([k, t]) =>
       el('button', { type: 'button', class: `subtab${size === k ? ' active' : ''}`, 'aria-pressed': String(size === k),
         onclick: () => setTheme({ textSize: k === 'M' ? undefined : k }) }, t)));
-    return [paneRow('Colours', el('div', { class: 'rp-pane-palettes' }, colours)), paneRow('Text size', sizes), ...valueColourRows(theme),
+    const bg = BACKGROUNDS.some(([k]) => k === theme.background) ? theme.background : 'editor';
+    const backgrounds = el('div', { class: 'subtabs', role: 'group', 'aria-label': 'Background' }, BACKGROUNDS.map(([k, t]) =>
+      el('button', { type: 'button', class: `subtab${bg === k ? ' active' : ''}`, 'aria-pressed': String(bg === k),
+        title: k === 'editor' ? "The editor's colours, whatever its theme" : `The Report's own ${k} colours, in any editor theme`,
+        onclick: () => setTheme({ background: k === 'editor' ? undefined : k }) }, t)));
+    return [paneRow('Background', backgrounds), paneRow('Colours', el('div', { class: 'rp-pane-palettes' }, colours)), paneRow('Text size', sizes), ...valueColourRows(theme),
       el('p', { class: 'rp-say' }, "Every page. A tile's own colours win over the Report's.")];
   }
   // Colours by value: a column's values, each given a colour that every tile draws it in.

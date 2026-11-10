@@ -636,7 +636,8 @@ A semantic model opens as **Explore** ([`page/explore/`](../page/explore/)), on 
     headings, `**bold**`, `*italic*`, http(s) links, `-` lists, paragraphs), built as elements, never as HTML. A
     double-click edits it in a box in place, kept by Done or Ctrl+Enter. Picks don't touch it.
   - **Theme:** the Report bar's **Theme** opens a pane at the right of the tiles (`drawTheme` in
-    [`view.js`](../page/explore/view.js); over them on a narrow window). It writes the report's `theme`: `palette`
+    [`view.js`](../page/explore/view.js); over them on a narrow window). It writes the report's `theme`: `background`
+    (the Report's own dark or light colours, on its page and in its charts, in any editor theme; left out, the editor's), `palette`
     (`PALETTES` in [`theme.js`](../page/explore/theme.js)), `textSize`, and `colors`, a colour by value (a column's
     values, picked in the pane) that every tile draws that value in: a series, a bar, a treemap's box, a map's points. A
     Visual's own colours win over it. Under it, each tile of the page on screen: its title shown or not

@@ -12,7 +12,7 @@
 // itself.
 // =============================================================================
 
-import { formatValue, byValueBackground, extent, stackedGrids, shiftDate } from './draw.js';
+import { formatValue, axisValue, byValueBackground, extent, stackedGrids, shiftDate } from './draw.js';
 import { el } from './dom.js';
 import { formatChart, formatLook, formatRows, cleanFormat } from './format.js';
 import { escapeHtml, quoteIdent as qid, sqlStr, sqlPart as bare } from '../paths.js';
@@ -53,8 +53,14 @@ const ICON_PATHS = {
   cols: 'M4 3v10M8 3v10M12 3v10',
   rows: 'M3 4h10M3 8h10M3 12h10',
   down: 'M4 6l4 4 4-4',
+  // A Report tile's tools (report.js).
+  grip: 'M6 4a.6.6 0 1 0 .01 0M10 4a.6.6 0 1 0 .01 0M6 8a.6.6 0 1 0 .01 0M10 8a.6.6 0 1 0 .01 0M6 12a.6.6 0 1 0 .01 0M10 12a.6.6 0 1 0 .01 0',
+  edit: 'M3 13l1-3.5L10.5 3 13 5.5 6.5 12zM9.5 4L12 6.5',
+  copy: 'M5.5 5.5h7V13h-7zM3.5 10.5V3h7',
+  close: 'M4 4l8 8M12 4l-8 8',
+  resize: 'M13 7l-6 6M13 11l-2 2',
 };
-const icon = name => el('svg:svg', { class: 'ex-ico', viewBox: '0 0 16 16', 'aria-hidden': 'true' }, el('svg:path', { d: ICON_PATHS[name] }));
+export const icon = name => el('svg:svg', { class: 'ex-ico', viewBox: '0 0 16 16', 'aria-hidden': 'true' }, el('svg:path', { d: ICON_PATHS[name] }));
 const MARKS = [['auto', 'Automatic'], ['table', 'Table'], ['highlight', 'Highlight'], ['bar', 'Bar'], ['stacked', 'Stacked'],
   ['line', 'Line'], ['area', 'Area'], ['heatmap', 'Heatmap'], ['scatter', 'Scatter'], ['treemap', 'Treemap'], ['calendar', 'Calendar'],
   ['map', 'Map'], ['slicer', 'Slicer'], ['card', 'Card']];
@@ -474,14 +480,14 @@ function slicerView(s, rows, look, sel) {
   }
   // A button that says what is picked, opening the list in a small window under it.
   function dropdown() {
-    const say = () => `${name}: ${!ticked.size ? 'All' : ticked.size === 1 ? shown([...ticked][0]) : `${ticked.size} selected`} ▾`;
-    const b = el('button', { type: 'button', class: 'slicer-drop', 'aria-haspopup': 'dialog' }, say());
+    const say = () => [el('span', {}, !ticked.size ? 'All' : ticked.size === 1 ? shown([...ticked][0]) : `${ticked.size} selected`), icon('down')];
+    const b = el('button', { type: 'button', class: 'slicer-drop', 'aria-haspopup': 'dialog', 'aria-label': name }, say());
     let pop = null;
     const close = () => { pop?.remove(); pop = null; document.removeEventListener('pointerdown', outside, true); };
     const outside = e => { if (pop && !pop.contains(e.target) && !b.contains(e.target)) close(); };
     b.addEventListener('click', () => {
       if (pop) { close(); return; }
-      pop = el('div', { class: 'ex-pop slicer-drop-pop', role: 'dialog', 'aria-label': name }, listOf(() => { b.textContent = say(); }));
+      pop = el('div', { class: 'ex-pop slicer-drop-pop', role: 'dialog', 'aria-label': name }, listOf(() => { b.replaceChildren(...say()); }));
       pop.addEventListener('keydown', e => { if (e.key === 'Escape') { close(); b.focus(); } });
       document.body.append(pop);
       const r = b.getBoundingClientRect();
@@ -729,8 +735,8 @@ function pivotChart(s, piv, mark, look, pick) {
         tooltip: { trigger: 'item', formatter: p => `${esc(p.data.name)}<br>${esc(nameOf(mx))}: <b>${esc(fmt(mx, p.data.value[0]))}</b><br>${esc(nameOf(my))}: <b>${esc(fmt(my, p.data.value[1]))}</b>` },
         legend: shown.length > 1 ? { type: 'scroll', top: 0 } : undefined,
         grid: { left: 4, right: 16, top: shown.length > 1 ? 56 : 32, bottom: 24, containLabel: true },
-        xAxis: { type: 'value', name: nameOf(mx) + cut, nameLocation: 'middle', nameGap: 26, scale: true, axisLabel: { formatter: v => fmt(mx, v) } },
-        yAxis: { type: 'value', name: nameOf(my), scale: true, axisLabel: { formatter: v => fmt(my, v) } },
+        xAxis: { type: 'value', name: nameOf(mx) + cut, nameLocation: 'middle', nameGap: 26, scale: true, axisLabel: { formatter: v => axisValue(v, formatOf(look, mx)) } },
+        yAxis: { type: 'value', name: nameOf(my), scale: true, axisLabel: { formatter: v => axisValue(v, formatOf(look, my)) } },
         series: shown.map((b, i) => ({
           type: 'scatter', name: label(b), symbolSize: 8, itemStyle: { color: color(i), opacity: 0.8 },
           data: keys[i].map(a => { const r = at(a, b); return { name: label(a), value: [r[nx], r[ny]], ...(dimmed(pick, a) ? { itemStyle: { opacity: DIM } } : {}) }; }),
@@ -772,7 +778,7 @@ function pivotChart(s, piv, mark, look, pick) {
   const valAxis = (i, m, side) => ({ type: 'value', gridIndex: i, ...(side === 'right' ? { position: 'right', splitLine: { show: false } } : {}),
     ...(valName && flat ? { name: valName, nameLocation: 'middle', nameGap: 26 }
       : valName ? { name: valName, nameLocation: 'end', nameTextStyle: { align: 'left' } } : {}),
-    axisLabel: { formatter: v => fmt(m, v), hideOverlap: true }, splitNumber: plots > 2 ? 2 : 4 });
+    axisLabel: { formatter: v => axisValue(v, formatOf(look, m)), hideOverlap: true }, splitNumber: plots > 2 ? 2 : 4 });
   const lines = combine ? ms.some(m => asOf(m) !== 'bar') : mark === 'line' || mark === 'area';
   const bars = combine ? ms.some(m => asOf(m) === 'bar') : !lines;
   // A line marks the pick across its plot, as its points are not drawn.
@@ -811,8 +817,8 @@ function pivotChart(s, piv, mark, look, pick) {
           xAxisIndex: combine ? 0 : i, yAxisIndex: combine ? (right && onRight(m) ? 1 : 0) : i,
           stack: (mark === 'stacked' || mark === 'area') && as !== 'line' && as !== 'dashed' ? `s${i}` : undefined,
           areaStyle: as === 'area' ? { opacity: 0.7 } : undefined, showSymbol: false, connectNulls: false,
-          itemStyle: { color: c, ...(flat && mark === 'bar' ? { borderRadius: [0, 4, 4, 0] } : {}) },
-          lineStyle: type === 'line' ? { width: as === 'dashed' ? 1.5 : 1.6, color: c, ...(as === 'dashed' ? { type: 'dashed' } : {}) } : undefined,
+          itemStyle: { color: c },
+          lineStyle: type === 'line' ? { width: as === 'dashed' ? 1.5 : cats.length > 300 ? 1 : 1.6, color: c, ...(as === 'dashed' ? { type: 'dashed' } : {}) } : undefined,
           barMaxWidth: 56, barCategoryGap: '28%', barGap: '8%', large: cats.length > 400,
           ...(look.labels ? { label: { show: true, position: flat ? 'right' : as === 'bar' && mark === 'stacked' || as === 'area' ? 'inside' : 'top',
             fontSize: 10, formatter: p => fmt(m, p.value) } } : {}),

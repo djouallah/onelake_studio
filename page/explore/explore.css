@@ -16,6 +16,8 @@
   --dim-ink: color-mix(in srgb, var(--pill-dim) 65%, var(--text)); --fig-ink: color-mix(in srgb, var(--pill-fig) 65%, var(--text));
   /* A table's header and its totals. */
   --band: color-mix(in srgb, var(--text) 7%, var(--card));
+  /* A Report tile: a little lighter, or darker, than the page it sits on. */
+  --tile: color-mix(in srgb, var(--text) 5%, var(--bg));
 }
 /* The view takes the place of the results (app.js: section.modelOpen). A column, so Visual is as tall
    as the tab; a table's Visual (#pivotView) the same. */
@@ -155,7 +157,7 @@ section.modelOpen #chartBtn { display: none; }
 .ex-icon { flex: none; width: 1.7rem; display: inline-flex; justify-content: center; font-size: 11px; font-weight: 700; font-style: normal; color: var(--dim-ink); }
 .ex-icon.ex-measure { color: var(--fig-ink); font-size: 13px; }
 /* The page's icons (explore.js icon): line drawings in the text's colour. */
-.ex-ico { width: 16px; height: 16px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.3; stroke-linecap: round; stroke-linejoin: round; }
+.ex-ico { width: 16px; height: 16px; flex: none; pointer-events: none; fill: none; stroke: currentColor; stroke-width: 1.3; stroke-linecap: round; stroke-linejoin: round; }
 .ex-icon .ex-ico { width: 13px; height: 13px; }
 
 /* The tools, then the Filters card and the Marks card (the mark, and Values). */
@@ -324,7 +326,7 @@ section.modelOpen #chartBtn { display: none; }
    fills it, scrolling when it is more. A tile keeps a gap below it inside its rows. On a narrow
    window each tile is full width, one under another, as tall as its rows. */
 .rp { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); grid-auto-rows: 10px; column-gap: var(--gap); row-gap: 0; padding: var(--gap) var(--gutter) 1.5rem; }
-.rp-tile { position: relative; background: var(--card); border: 1px solid var(--hairline); border-radius: var(--radius); padding: 0.8rem 1rem; min-width: 0; min-height: 0; margin-bottom: var(--gap); display: flex; flex-direction: column; gap: 0.5rem; overflow: hidden; }
+.rp-tile { --surface: var(--tile); position: relative; background: var(--tile); border: 1px solid var(--border); border-radius: var(--radius); padding: 0.6rem 0.8rem; min-width: 0; min-height: 0; margin-bottom: var(--gap); display: flex; flex-direction: column; gap: 0.35rem; overflow: hidden; }
 @media (max-width: 700px) {
   .rp { grid-auto-rows: auto; row-gap: var(--gap); }
   .rp-tile { grid-column: 1 / -1 !important; grid-row: auto !important; height: var(--rp-h); margin-bottom: 0; }
@@ -335,19 +337,25 @@ section.modelOpen #chartBtn { display: none; }
 .rp-body .rp-slicer { flex: 1; min-height: 0; }
 .rp-body .rp-slicer .ex-values, .rp-body .slicer-pills { max-height: none; flex: 1; min-height: 0; }
 /* Its ◢: dragged, or the arrow keys. */
-.rp-resize { position: absolute; right: 2px; bottom: 2px; background: none; border: none; color: var(--faint); font-size: 11px; line-height: 1; padding: 0.15rem; cursor: nwse-resize; border-radius: var(--radius-sm); opacity: 0.6; touch-action: none; }
+.rp-resize { position: absolute; right: 1px; bottom: 1px; display: flex; background: none; border: none; color: var(--faint); padding: 0; cursor: nwse-resize; border-radius: var(--radius-sm); opacity: 0; touch-action: none; }
+.rp-resize .ex-ico, .rp-tool .ex-ico { width: 14px; height: 14px; }
 .rp-tile:hover .rp-resize, .rp-resize:focus-visible { opacity: 1; }
 .rp-resize:hover, .rp-resize:focus-visible { color: var(--text); background: var(--hover-soft); }
-.rp-tile h2 { margin: 0; font-size: 13px; font-weight: 600; color: var(--muted); }
+.rp-tile h2 { margin: 0; font-size: 13px; font-weight: 600; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rp-head { display: flex; align-items: center; gap: 0.5rem; }
+/* No title (a text tile, or one whose title is off): no row for it. */
+.rp-head:not(:has(h2:not(:empty), input)), .rp-notitle .rp-head { display: none; }
 .rp-head h2 { flex: 1; min-width: 0; }
 .rp-head h2[title] { cursor: text; }
 /* A tile's tools: its grip (dragged, or the arrow keys), ✎, ⧉ and ✕, shown while the pointer or the
    keyboard is on the tile, as the tree's row actions are. */
-.rp-tool { background: none; border: none; color: var(--faint); font: inherit; cursor: pointer; padding: 0.1rem 0.35rem; border-radius: var(--radius); opacity: 0; }
-.rp-tile:hover .rp-tool, .rp-tile:focus-within .rp-tool { opacity: 1; }
+.rp-tools { position: absolute; top: 4px; right: 4px; z-index: 3; display: flex; gap: 1px; padding: 1px; background: var(--tile); border: 1px solid var(--border); border-radius: var(--radius-sm); opacity: 0; pointer-events: none; }
+.rp-tools:empty { display: none; }
+.rp-tile:hover .rp-tools, .rp-tile:focus-within .rp-tools, .rp-tile.rp-dragging .rp-tools { opacity: 1; pointer-events: auto; }
+.rp-tool { display: flex; align-items: center; justify-content: center; width: 22px; height: 22px; padding: 0; background: none; border: none; color: var(--muted); cursor: pointer; border-radius: var(--radius-sm); }
+/* (the tools show with their box, above) */
 .rp-tool:hover, .rp-tool:focus-visible { color: var(--text); background: var(--hover-soft); }
-.rp-grip { cursor: grab; padding: 0.1rem 0.3rem; }
+.rp-grip { cursor: grab; }
 .rp-rename { flex: 1; min-width: 0; font: inherit; font-size: 13px; font-weight: 600; color: var(--text); background: var(--input-bg); border: 1px solid var(--accent); border-radius: var(--radius-sm); padding: 0.05rem 0.35rem; }
 .rp-tile.rp-dragging, .rp-tile.rp-resizing { outline: 2px dashed var(--accent); outline-offset: -2px; user-select: none; z-index: 1; }
 .rp-grip { touch-action: none; }
@@ -364,7 +372,10 @@ section.modelOpen #chartBtn { display: none; }
 .slicer-pill { background: var(--raised); color: var(--text); border: 1px solid var(--border); border-radius: var(--radius-sm); font: inherit; padding: 0.22rem 0.75rem; cursor: pointer; }
 .slicer-pill:hover { background: var(--hover-soft); }
 .slicer-pill[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
-.slicer-drop { width: 100%; text-align: left; background: var(--input-bg); color: var(--text); border: 1px solid var(--border); border-radius: var(--radius-sm); font: inherit; font-size: 13px; padding: 0.35rem 0.6rem; cursor: pointer; }
+.slicer-drop { display: inline-flex; align-items: center; justify-content: space-between; gap: 0.6rem; min-width: 9rem; max-width: 100%; text-align: left; background: var(--input-bg); color: var(--text); border: 1px solid var(--border); border-radius: var(--radius-sm); font: inherit; font-size: 13px; padding: 0.25rem 0.5rem; cursor: pointer; }
+.slicer-drop > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.slicer-drop .ex-ico { width: 12px; height: 12px; color: var(--muted); }
+.slicer-dropdown { align-self: flex-start; max-width: 100%; }
 .slicer-range { flex-direction: row; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
 .slicer-range label { display: inline-flex; align-items: center; gap: 0.35rem; color: var(--muted); }
 /* Visual's slicer: its styles over it, in the result area. */
@@ -404,7 +415,7 @@ section.modelOpen #chartBtn { display: none; }
 .rp-kpi b { font-size: 1.7rem; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--text); }
 .rp-table { overflow: auto; max-height: 420px; }
 .rp-table table { border-collapse: collapse; width: 100%; font-size: 13px; }
-.rp-table th { text-align: left; color: var(--muted); font-weight: 600; border-bottom: 1px solid var(--border); padding: 0.35rem 0.6rem; position: sticky; top: 0; background: var(--card); }
+.rp-table th { text-align: left; color: var(--muted); font-weight: 600; border-bottom: 1px solid var(--border); padding: 0.35rem 0.6rem; position: sticky; top: 0; background: var(--tile); }
 .rp-table td { border-bottom: 1px solid var(--row-line); padding: 0.3rem 0.6rem; }
 .rp-table td.num { text-align: right; font-variant-numeric: tabular-nums; }
 .rp-table tr.rp-pick { cursor: pointer; }
@@ -460,8 +471,8 @@ section.modelOpen #chartBtn { display: none; }
 .rp-tile.rp-leaving { opacity: 0.45; }
 /* A tile's format (report.js styleTile): no title (its tools stay), the title's size, a card's
    figures' size and colour, banded rows; and the report's text size. */
-.rp-notitle .rp-head h2 { visibility: hidden; }
-.rp-notitle .rp-head:not(:has(button)) { display: none; }
+/* A tile whose title is off: .rp-head, above. */
+
 .rp-title-S h2 { font-size: 0.75rem; }
 .rp-title-L h2 { font-size: 1.05rem; color: var(--text); }
 .rp-text-S .rp-table table, .rp-text-S .rp-pivot table, .rp-text-S .rp-text { font-size: 0.74rem; }
@@ -517,3 +528,21 @@ section.modelOpen #chartBtn { display: none; }
 .explore-editing-say { font-weight: 600; }
 .explore-editing label { display: inline-flex; align-items: center; gap: 0.4rem; flex: 1; min-width: 12rem; color: var(--muted); }
 .explore-editing-title { flex: 1; min-width: 0; font: inherit; color: var(--text); background: var(--input-bg); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 0.2rem 0.5rem; }
+
+/* A Report tile's figure: under its title, at the left. */
+.rp-tile .card-figures { justify-content: flex-start; }
+.rp-tile .card-figure { align-items: flex-start; }
+.rp-tile .card-figure span { text-align: left; }
+/* The Report fills the tab, on its own background when its theme has one (view.js paintBackground):
+   the page's, the tiles' and the text's colours, the same in any editor theme. Its charts read
+   them off this element (the `report` chart theme). */
+.report-page { flex: 1 0 auto; }
+.report-page.rp-bg-dark, .report-page.rp-bg-light { background: var(--bg); color: var(--text); }
+.report-page.rp-bg-dark { color-scheme: dark;
+  --bg: #0f1115; --tile: #181b21; --card: #181b21; --raised: #1e222a; --input-bg: #12151b; --panel2: #12151b;
+  --border: #2b303b; --hairline: #2b303b; --row-line: #232833; --text: #e8ebf0; --muted: #a1a9b6; --faint: #838c9a; --disabled: #545c69;
+  --hover: rgba(255,255,255,0.08); --hover-soft: rgba(255,255,255,0.04); --band: #20242c; }
+.report-page.rp-bg-light { color-scheme: light;
+  --bg: #f2f3f5; --tile: #ffffff; --card: #ffffff; --raised: #ffffff; --input-bg: #ffffff; --panel2: #ffffff;
+  --border: #d5d9e0; --hairline: #d5d9e0; --row-line: #e7e9ee; --text: #1b1f26; --muted: #57606c; --faint: #6a7380; --disabled: #a3aab5;
+  --hover: rgba(0,0,0,0.06); --hover-soft: rgba(0,0,0,0.03); --band: #eef0f3; }

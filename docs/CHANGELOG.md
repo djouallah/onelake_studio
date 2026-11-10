@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **The Report looks the part.** A tile's title is in the text colour and lines up with what is under it; its tools
+  (move, edit, copy, remove, resize) are icons over its corner, shown while the pointer is on it, so they take no room.
+  A text tile with no title has no empty row above it. A figure sits under its name, at the left. A chart's axis says
+  `$10M`, not `$10,000,000.00`; the tooltip keeps the full number. A slicer's dropdown shows only what is picked.
+  Bars have square ends. **Theme** has a **Background**: the editor's colours, or the Report's own Dark or Light, the
+  same in any editor theme.
 - **Visual has a new look.** It fills the tab, in flat panes: the fields, then the tools over a Filters card and a Marks
   card (the mark, and Values), then Columns and Rows over the view, and a status line with the row count and Top. A pill
   is solid: one colour for a column, another for a figure, and a summarised column reads `SUM(Qty)`. The mark is picked

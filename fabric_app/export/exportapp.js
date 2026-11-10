@@ -328,7 +328,7 @@ tables, columns and measures a tile can name.
   card's change), and \`"numbers": { "<field>": "int" | "dec2" | "short" | "pct" | "usd" }\`.
 - A tile's own, beside \`pivot\`: \`"showTitle": false\`, \`"titleSize": "S"\` or \`"L"\`, and \`"ignore": ["<filter bar
   field>"]\`, the filter bar's filters it does not follow.
-- \`theme\`, beside \`pages\`: \`{ "palette": "ocean" | "warm" | "mono", "textSize": "S" | "L", "colors": { "<value>":
+- \`theme\`, beside \`pages\`: \`{ "background": "dark" | "light", "palette": "ocean" | "warm" | "mono", "textSize": "S" | "L", "colors": { "<value>":
   "#rrggbb" } }\` for every page; \`colors\` gives a value of any column (a fuel, a region) the same colour in every tile.
 - \`filters\`, beside \`pages\`: the filter bar over every page, each \`{ "field": "table.column", "style": "dropdown" |
   "list" | "dates" }\`. What a viewer picks in it filters every tile, but those whose \`ignore\` names it.
