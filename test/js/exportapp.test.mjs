@@ -421,6 +421,23 @@ test("the shipped page and its data source parse; the page reads its model from 
                    "fabric_app/site/storage/modeldata.js"]) {
     execFileSync(process.execPath, ["--check", new URL(`../../${p}`, import.meta.url).pathname.replace(/^\/(\w:)/, "$1")]);
   }
+  // Every module the site's own files import is one an export uploads (appFiles): the site's, the
+  // page's explore/ and paths.js, or dax-sql's src/ and formats/ under semantic/. A path no export
+  // writes fails in the browser only, as "Failed to fetch dynamically imported module".
+  const siteDir = new URL("../../fabric_app/site/", import.meta.url);
+  const there = async u => readFile(u).then(() => true, () => false);
+  for (const rel of await readdir(siteDir, { recursive: true })) {
+    const p = rel.replace(/\\/g, "/");
+    if (!p.endsWith(".js") || p.startsWith("vendor/")) continue;
+    const s = await readFile(new URL(p, siteDir), "utf8");
+    for (const [, spec] of s.matchAll(/\b(?:from|import)\s*\(?\s*["'](\.{1,2}\/[\w./@+-]+\.js)["']/g)) {
+      const to = new URL(spec, new URL(p, "http://site/")).pathname.slice(1);
+      const ok = to.startsWith("vendor/") || /^semantic\/(src\/[\w./-]+|formats\/(tmsl|ossie|ossie-sql))\.js$/.test(to)
+        || (to === "paths.js" || to.startsWith("explore/")
+          ? await there(new URL(`../../page/${to}`, import.meta.url)) : await there(new URL(to, siteDir)));
+      assert.ok(ok, `${p} imports ${spec}, which no export uploads`);
+    }
+  }
   // Every package the page runs is the site's own (vendor/, core/vendored.js WEBAPP), at the pins.
   const { WEBAPP, VENDOR } = require("../../core/vendored.js");
   for (const p of ["app.js", "storage/data.js", "storage/results.js", "storage/auth.js", "storage/blockcache.js", "index.html"]) {

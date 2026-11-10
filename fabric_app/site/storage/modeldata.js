@@ -19,7 +19,7 @@
 import { createAuth } from "./auth.js";
 import { firstRows, counting, kept, MAX_ROWS } from "./modelrows.js";
 import { createCompiler, parseQuery } from "../semantic/src/index.js";
-import { printDaxQuery } from "../semantic/core/sql.js";
+import { printDaxQuery } from "../semantic/src/sql.js";
 import { tmslToModel } from "../semantic/formats/tmsl.js";
 import { ossieToTmsl } from "../semantic/formats/ossie.js";
 
