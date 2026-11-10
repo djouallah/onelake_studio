@@ -222,6 +222,9 @@ jobs:
       # The Fabric app's store: a query that reads bytes it lacks, answered right once they are downloaded.
       - if: always()
         run: node test/js/run-store-heal.mjs
+      # The Fabric app's split (?split=1): a query shared out between engines answers as it does whole.
+      - if: always()
+        run: node test/js/run-split.mjs
 
   # What every vsix carries whatever its platform, built once and kept in the cache for the
   # five package legs, which then restore it rather than build it five times: the webview's and
