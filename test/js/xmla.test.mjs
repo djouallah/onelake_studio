@@ -1,4 +1,4 @@
-// src/xmla: Excel's PivotTable answered. The statements below are what Excel 16 and MSOLAP 17
+// xmla: Excel's PivotTable answered. The statements below are what Excel 16 and MSOLAP 17
 // sent to this server, word for word; the shapes are the contract, so a change to one is a
 // change to what a PivotTable can do.
 import { test } from "node:test";
@@ -7,13 +7,13 @@ import { createRequire } from "node:module";
 import http from "node:http";
 
 const require = createRequire(import.meta.url);
-const { parseRequest, esc, unesc } = require("../../src/xmla/soap.js");
-const { buildCube, resolve, memberUnique, nameParts } = require("../../src/xmla/cube.js");
-const { parseSelect, slicerTemplate } = require("../../src/xmla/mdx.js");
-const { execute, literal, condition } = require("../../src/xmla/cellset.js");
-const { discover, discoverServer } = require("../../src/xmla/rowsets.js");
-const { createHandler, PING } = require("../../src/xmla/server.js");
-const { connectionString, connectionValue, openInExcel, SCRIPT } = require("../../src/xmla/excel.js");
+const { parseRequest, esc, unesc } = require("../../xmla/soap.js");
+const { buildCube, resolve, memberUnique, nameParts } = require("../../xmla/cube.js");
+const { parseSelect, slicerTemplate } = require("../../xmla/mdx.js");
+const { execute, literal, condition } = require("../../xmla/cellset.js");
+const { discover, discoverServer } = require("../../xmla/rowsets.js");
+const { createHandler, PING } = require("../../xmla/server.js");
+const { connectionString, connectionValue, openInExcel, SCRIPT } = require("../../xmla/excel.js");
 
 const CATALOG = "semanticmodel.demo.sales";
 const col = (name, dataType, extra = {}) => ({ name, dataType, ...extra });

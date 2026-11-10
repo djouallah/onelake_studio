@@ -24,7 +24,7 @@ const { createDiagLog } = require('./diaglog');
 const { createCore } = require('./core');
 const { createTokenStore } = require('./tokenstore');
 const { createMsalSession } = require('./msalsession');
-const { connectionString, openInExcel } = require('./xmla/excel');
+const { connectionString, openInExcel } = require('../xmla/excel');
 const { DFS_ORIGIN, modelSqlName } = require('./names');
 
 const EXTENSION_ID = 'djouallah.onelake-studio';

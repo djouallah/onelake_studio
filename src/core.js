@@ -24,8 +24,8 @@ const { inTime } = require('./http');
 const { createFabric, modelAccountDir } = require('./fabric');
 const { modelSqlName } = require('./names');
 const { createAgent } = require('./agent');
-const { serveXmla } = require('./xmla/server');
-const { openInExcel } = require('./xmla/excel');
+const { serveXmla } = require('../xmla/server');
+const { openInExcel } = require('../xmla/excel');
 const { createModelData } = require('./modeldata');
 const { createSemViews } = require('./semviews');
 const { serveBridge } = require('./bridge');
@@ -471,7 +471,7 @@ function createCore({
     set: ({ workspace, model, on }) => modelData.set(modelSqlName(workspace, model), model, on),
   };
 
-  // Open in Excel (src/xmla): the endpoint a PivotTable connects to. Its port and token outlive a
+  // Open in Excel (xmla): the endpoint a PivotTable connects to. Its port and token outlive a
   // reload, since a saved workbook holds them, and F5 has its own so it doesn't lose the port to
   // the installed build. Not opened until the command has been used once; after that, whenever a
   // window starts, so a saved workbook refreshes with VS Code open.

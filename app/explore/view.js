@@ -60,7 +60,7 @@ const REPORT_POLL_MS = 2000;
 //   createSemanticModel()  (optional) a model file's Create Semantic Model button, on the Model page:
 //                    the tree's own (src/exportflow.js), its dialog the host's; answers what to say
 //   openInExcel()    (optional) the Open in Excel button: this model in a new workbook, as a live
-//                    PivotTable (src/xmla); answers what to say when it is open
+//                    PivotTable (xmla); answers what to say when it is open
 //   keepOffline      (optional) { state(), set(on) }: the Keep offline switch beside the tabs, every
 //                    table of this model on this machine (src/modeldata.js); both answer what it shows:
 //                    { on, say, tone, meter, tip, busy }

@@ -156,7 +156,7 @@ async function openPanelUncontended(context, { onOpened, onBoot, onBootFailed, e
       draft: draft || null,
       // What makes this tab's views its own, on an engine other tabs share (data.js uniqueView).
       viewTag: viewTag || null,
-      // Open in Excel's button: Excel's provider is Windows only (src/xmla/excel.js).
+      // Open in Excel's button: Excel's provider is Windows only (xmla/excel.js).
       windows: process.platform === 'win32',
       // Where the vendored libraries are (cdn.js builds every URL from it), and which
       // versions — src/vendored.js, the same list vendor.mjs shipped.

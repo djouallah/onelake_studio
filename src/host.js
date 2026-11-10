@@ -107,7 +107,7 @@ function createHostMethods({ onelake, engine, onStatus = () => {}, saveFile = nu
       return report.save({ workspace: String(x.workspace), model: String(x.model), spec: x.spec,
                            stamp: typeof x.stamp === 'number' ? x.stamp : null });
     },
-    // Open in Excel (src/xmla): a semantic model, by its names alone.
+    // Open in Excel (xmla): a semantic model, by its names alone.
     'excel.open': async x => {
       if (!openInExcel) throw new Error('Open in Excel is not available here');
       if (!x || !x.workspace || !x.model) throw new Error('Open in Excel needs a semantic model');

@@ -21,6 +21,7 @@ node_modules/**
 # builds from it. bridge.js is the exception — bin/cli.mjs requires it from outside the
 # editor, where the bundle (it needs `vscode`) cannot load.
 src/**
+xmla/**
 !src/bridge.js
 # Packaging scripts, run from the checkout.
 scripts/**

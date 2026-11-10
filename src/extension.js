@@ -140,7 +140,7 @@ let exportExplore = null;
 let createSemanticModel = null;
 // The Report tab's tiles (exportflow.js reportOf), the page's model.report; set by activateInner, as above.
 let modelReport = null;
-// Open in Excel (src/xmla), the page's excel.open; set by activateInner, as above.
+// Open in Excel (xmla), the page's excel.open; set by activateInner, as above.
 let openExcel = null;
 // Keep offline (modeldata.js), the page's model.offlineState and model.setOffline; set by activateInner, as above.
 let keepOffline = null;

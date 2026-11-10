@@ -684,7 +684,7 @@ export function createEngine({
   const modelReport = x => callHost("model.report", [x]);
   const modelReportStamp = x => callHost("model.reportStamp", [x]);
   const modelReportSave = x => callHost("model.reportSave", [x]);
-  // Open in Excel: a semantic model, by its names (src/xmla); answers what to tell the user.
+  // Open in Excel: a semantic model, by its names (xmla); answers what to tell the user.
   const openInExcel = x => callHost("excel.open", [x]);
   // Keep offline: a semantic model's tables on this machine (src/modeldata.js); both answer what to show.
   const offlineState = x => callHost("model.offlineState", [x]);
