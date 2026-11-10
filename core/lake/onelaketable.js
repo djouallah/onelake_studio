@@ -134,13 +134,15 @@ const addOf = a => {
 // one, so the highest is taken a millisecond later (`upper`). Not kept: a long past 2^53, which has lost digits
 // as JSON, a string, cut at a length the table sets, and decimals and floats. A column without one is read as before.
 const STAT_TYPES = new Set(['BIGINT', 'INTEGER', 'SMALLINT', 'TINYINT', 'DATE', 'TIMESTAMPTZ', 'TIMESTAMP']);
-// 2024-01-02T03:04:05.123Z, as the log writes one: in UTC where the column has a zone, with none where it hasn't.
+// 2024-01-02T03:04:05.123Z, as the log writes one.
 const STAT_TIME = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,6}))?(Z|[+-]00:?00)?$/;
 function statText(type, v, upper = false) {
   if (type === 'DATE') return typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : null;
   if (type === 'TIMESTAMPTZ' || type === 'TIMESTAMP') {
     const m = typeof v === 'string' ? STAT_TIME.exec(v) : null;
-    if (!m || !!m[8] !== (type === 'TIMESTAMPTZ')) return null;
+    // A column with a zone must say UTC. One without is the same clock time however it is written: Spark gives
+    // it no zone, and delta-rs ends it with a Z.
+    if (!m || (type === 'TIMESTAMPTZ' && !m[8])) return null;
     const ms = Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6], Math.floor(Number(`0.${m[7] || 0}`) * 1000)) + (upper ? 1 : 0);
     // Years 1 to 9999 only, where the text below is what it looks like.
     if (!Number.isFinite(ms) || +m[1] < 1 || new Date(ms).getUTCFullYear() > 9999) return null;
