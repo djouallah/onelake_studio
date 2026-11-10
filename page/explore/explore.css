@@ -10,10 +10,9 @@
   --bad: var(--err); --shadow: 0 12px 32px rgba(0,0,0,0.5);
   --radius: 4px; --radius-sm: 3px; --gutter: 0.9rem; --gap: 0.75rem;
   --measure: #e3b341;
-  /* A pill's two colours: a column, and a figure (a measure, or a column summarised). Solid under
-     white text in any theme; `-ink` is the same colour as text, on the theme's own background. */
-  --pill-dim: #2f6fb7; --pill-fig: #17875f; --on-pill: #fff;
-  --dim-ink: color-mix(in srgb, var(--pill-dim) 65%, var(--text)); --fig-ink: color-mix(in srgb, var(--pill-fig) 65%, var(--text));
+  /* A pill: a column's is plain, a figure's (a measure, or a column summarised) is in the measure's colour. */
+  --pill: color-mix(in srgb, var(--text) 13%, var(--bg)); --pill-figure: color-mix(in srgb, var(--measure) 26%, var(--bg));
+  --pill-figure-line: color-mix(in srgb, var(--measure) 65%, var(--bg));
   /* A table's header and its totals. */
   --band: color-mix(in srgb, var(--text) 7%, var(--card));
   /* A Report tile: a little lighter, or darker, than the page it sits on. */
@@ -131,7 +130,7 @@ section.modelOpen #chartBtn { display: none; }
 .m-mark { fill: var(--faint); font-size: 11px; font-weight: 700; }
 .m-rel.m-on .m-mark { fill: var(--text); }
 .m-card.m-off, .m-rel.m-off { opacity: 0.2; }
-/* Visual (explore.js): the fields; then the tools over the Filters and Marks cards; then Columns and
+/* Visual (explore.js): the fields; then the tools over the Filters and Show as cards; then Columns and
    Rows over the view; and the status line under them all. Flat panes that touch, as tall as the tab:
    only the fields, the cards and the view scroll. */
 .explore-page { flex: 1 1 auto; min-height: 460px; display: flex; flex-direction: column; }
@@ -153,14 +152,14 @@ section.modelOpen #chartBtn { display: none; }
 .ex-tag { margin-left: auto; font-size: 11px; font-style: normal; color: var(--faint); }
 /* Between a table's columns and its measures. */
 .ex-sep { height: 1px; margin: 0.2rem 0.4rem 0.2rem 0.8rem; background: var(--border); }
-/* A field's type, in its pill's colour: a column's, or a measure's. */
-.ex-icon { flex: none; width: 1.7rem; display: inline-flex; justify-content: center; font-size: 11px; font-weight: 700; font-style: normal; color: var(--dim-ink); }
-.ex-icon.ex-measure { color: var(--fig-ink); font-size: 13px; }
+/* A field's type: a measure's in the measure's colour. */
+.ex-icon { flex: none; width: 1.7rem; display: inline-flex; justify-content: center; font-size: 11px; font-weight: 700; font-style: normal; color: var(--muted); }
+.ex-icon.ex-measure { color: var(--measure); font-size: 13px; }
 /* The page's icons (explore.js icon): line drawings in the text's colour. */
 .ex-ico { width: 16px; height: 16px; flex: none; pointer-events: none; fill: none; stroke: currentColor; stroke-width: 1.3; stroke-linecap: round; stroke-linejoin: round; }
 .ex-icon .ex-ico { width: 13px; height: 13px; }
 
-/* The tools, then the Filters card and the Marks card (the mark, and Values). */
+/* The tools, then the Filters card and the Show as card (the mark, and Values). */
 .ex-side { display: flex; flex-direction: column; overflow: auto; }
 .ex-toolbar { display: flex; flex: none; align-items: center; gap: 0.1rem; padding: 0.3rem 0.4rem; border-bottom: 1px solid var(--border); }
 .ex-tool { display: inline-flex; align-items: center; justify-content: center; gap: 0.3rem; height: 26px; min-width: 26px; padding: 0 0.3rem; font: inherit; font-size: 12px; color: var(--muted); background: none; border: 1px solid transparent; border-radius: var(--radius-sm); cursor: pointer; }
@@ -187,9 +186,9 @@ section.modelOpen #chartBtn { display: none; }
 .ex-card .ex-drop { flex-direction: column; flex-wrap: nowrap; align-items: stretch; min-height: 2.6rem; padding: 0.2rem; background: var(--input-bg); border: 1px solid var(--border); border-radius: var(--radius-sm); }
 .ex-drop.ex-over, .ex-ghost.ex-over { background: color-mix(in srgb, var(--accent) 18%, transparent); }
 .ex-hint { font-size: 12px; color: var(--faint); padding: 0 0.2rem; }
-/* A pill: solid, a column's colour or a figure's. */
-.ex-chip { display: inline-flex; align-items: center; min-width: 0; height: 20px; font-size: 12px; color: var(--on-pill); background: var(--pill-dim); border-radius: var(--radius-sm); cursor: grab; }
-.ex-chip.ex-measure { background: var(--pill-fig); }
+/* A pill: a column's plain, a figure's in the measure's colour. */
+.ex-chip { display: inline-flex; align-items: center; min-width: 0; height: 20px; font-size: 12px; color: var(--text); background: var(--pill); border: 1px solid var(--border); border-radius: var(--radius-sm); cursor: grab; }
+.ex-chip.ex-measure { background: var(--pill-figure); border-color: var(--pill-figure-line); }
 .ex-chip.ex-missing { opacity: 0.5; text-decoration: line-through; }
 .ex-chip.ex-derived { font-style: italic; }
 .ex-chip button { height: 100%; background: none; border: none; color: inherit; font: inherit; cursor: pointer; }
@@ -455,8 +454,8 @@ section.modelOpen #chartBtn { display: none; }
 .rp-pages { display: flex; flex-wrap: wrap; align-items: center; gap: 0.3rem; padding: var(--gap) var(--gutter) 0; font-size: 12px; }
 .rp-pages[hidden], .rp-page-view[hidden] { display: none; }
 .rp-page-tabs { display: flex; flex-wrap: wrap; gap: 0.3rem; }
-.rp-page { display: inline-flex; align-items: center; border: 1px solid transparent; border-radius: var(--radius-sm); }
-.rp-page.active { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, var(--raised)); }
+.rp-page { display: inline-flex; align-items: center; border: solid transparent; border-width: 2px 0; }
+.rp-page.active { border-bottom-color: var(--accent); }
 .rp-page.rp-drop { outline: 2px dashed var(--accent); outline-offset: 1px; }
 .rp-page-name { padding: 0.2rem 0.8rem; font: inherit; font-weight: 600; color: var(--muted); background: none; border: none; border-radius: var(--radius-sm); cursor: pointer; }
 .rp-page.active .rp-page-name, .rp-page-name:hover { color: var(--text); }

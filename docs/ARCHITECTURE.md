@@ -569,9 +569,9 @@ A semantic model opens as **Explore** ([`page/explore/`](../page/explore/)), on 
 - **Visual:** drag columns onto Rows, Columns and Filters and measures onto Values, drawn as a pivot or
   a chart.
   - It is as tall as the tab, in flat panes: the fields; then the tools (swap, sort, totals, clear, Format) over the
-    Filters card and the Marks card, which holds the mark and Values; then Columns and Rows over the view; and a status
-    line under them all, with the row count and Top. A pill is solid, in one colour for a column and another for a
-    figure (a measure, or a column summarised, written `SUM(Qty)`). The mark is picked from a list under its button,
+    Filters card and the Show as card, which holds the mark and Values; then Columns and Rows over the view; and a status
+    line under them all, with the row count and Top. A pill is plain for a column and in the measure's colour for a
+    figure (a measure, or a column summarised). The mark is picked from a list under its button,
     which says what Automatic picked. An empty view shows where Columns and Rows go, and takes a drop there.
   - A column dropped on Values is summarised, as in Power BI: a number is summed and anything else
     counted, and its chip switches to average, min, max, count or distinct count.

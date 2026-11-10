@@ -50,8 +50,6 @@ const ICON_PATHS = {
   totals: 'M12 4V3H4l4 5-4 5h8v-1',
   clear: 'M3 4h10M6 4V2.5h4V4M4.5 4l.7 9.5h5.6l.7-9.5',
   format: 'M2 5h6M11 5h3M2 11h3M8 11h6M9.5 3.5v3M6.5 9.5v3',
-  cols: 'M4 3v10M8 3v10M12 3v10',
-  rows: 'M3 4h10M3 8h10M3 12h10',
   down: 'M4 6l4 4 4-4',
   // A Report tile's tools (report.js).
   grip: 'M6 4a.6.6 0 1 0 .01 0M10 4a.6.6 0 1 0 .01 0M6 8a.6.6 0 1 0 .01 0M10 8a.6.6 0 1 0 .01 0M6 12a.6.6 0 1 0 .01 0M10 12a.6.6 0 1 0 .01 0',
@@ -75,8 +73,6 @@ const AGGS = [['sum', 'Sum'], ['avg', 'Average'], ['min', 'Min'], ['max', 'Max']
   ['count', 'Count'], ['distinct', 'Count (distinct)']];
 const AGG_LABEL = Object.fromEntries(AGGS);
 const AGG_SQL = { sum: 'SUM', avg: 'AVG', min: 'MIN', max: 'MAX', count: 'COUNT', distinct: 'COUNT' };
-// A summarised column's pill: SUM(Qty). Its name in the result stays "Sum of Qty".
-const AGG_PILL = { sum: 'SUM', avg: 'AVG', min: 'MIN', max: 'MAX', count: 'CNT', distinct: 'CNTD' };
 const NUMBERS_ONLY = new Set(['sum', 'avg']);
 const aggId = (agg, col) => `\u0000${agg}\u0000${col}`;
 export const aggOf = id => { const m = /^\u0000(\w+)\u0000([\s\S]+)$/.exec(id); return m ? { agg: m[1], col: m[2] } : null; };
@@ -874,13 +870,13 @@ export function createExplorer(root, ctx) {
   const search = el('input', { type: 'search', class: 'ex-search', placeholder: 'Search fields', 'aria-label': 'Search fields' });
   const list = el('div', { class: 'ex-list' });
   const pane = el('div', { class: 'ex-fields' }, search, list);
-  // Four shelves: Columns and Rows over the view, Filters in its own card, Values in the Marks card.
+  // Four shelves: Columns and Rows over the view, Filters in its own card, Values in the Show as card.
   const shelfEls = Object.fromEntries(SHELVES.map(([k]) => [k, el('div', { class: 'ex-drop', 'data-shelf': k })]));
-  const shelfRow = (k, t) => el('div', { class: 'ex-shelf' }, el('span', { class: 'ex-shelf-name' }, icon(k), t), shelfEls[k]);
+  const shelfRow = (k, t) => el('div', { class: 'ex-shelf' }, el('span', { class: 'ex-shelf-name' }, t), shelfEls[k]);
   const shelves = el('div', { class: 'ex-shelves' }, shelfRow('cols', 'Columns'), shelfRow('rows', 'Rows'));
   const card = (t, ...kids) => el('section', { class: 'ex-card', 'aria-label': t }, el('h3', { class: 'ex-card-name' }, t), kids);
   // The mark: a button that says it, opening the list of them (openMarks).
-  const markBtn = el('button', { type: 'button', class: 'ex-mark-pick', 'aria-haspopup': 'listbox', 'aria-label': 'Mark', onclick: () => openMarks() });
+  const markBtn = el('button', { type: 'button', class: 'ex-mark-pick', 'aria-haspopup': 'listbox', 'aria-label': 'Show as', onclick: () => openMarks() });
   // The tools: a button each, lit while it is on.
   const tool = (ico, title, onclick, text) => el('button', { type: 'button', class: `ex-tool${text ? ' ex-tool-text' : ''}`, title, 'aria-label': text ? null : title, onclick }, icon(ico), text);
   const swapBtn = tool('swap', 'Swap rows and columns', () => { [state.rows, state.cols] = [state.cols, state.rows]; changed(); });
@@ -898,7 +894,7 @@ export function createExplorer(root, ctx) {
   const formatPane = el('aside', { class: 'rp-pane ex-format', hidden: true, 'aria-label': 'Format' });
   const toolbar = el('div', { class: 'ex-toolbar', role: 'toolbar', 'aria-label': 'Visual' }, swapBtn, sortBtn, totalsBtn, clearBtn, formatBtn);
   const side = el('div', { class: 'ex-side' }, toolbar, card('Filters', shelfEls.filters),
-    card('Marks', markBtn, el('div', { class: 'ex-card-sub' }, 'Values'), shelfEls.values));
+    card('Show as', markBtn, el('div', { class: 'ex-card-sub' }, 'Values'), shelfEls.values));
   // The status line, under everything: what the view holds, and Top N.
   const status = el('div', { class: 'ex-status' }, info, top);
   const table = el('div', { class: 'ex-table' });
@@ -935,7 +931,7 @@ export function createExplorer(root, ctx) {
   function openMarks() {
     if (pop?.classList.contains('ex-mark-menu')) { closePop(); return; }
     closePop();
-    pop = el('div', { class: 'ex-pop ex-mark-menu', role: 'listbox', 'aria-label': 'Mark' }, marksHere.map(([k, t]) =>
+    pop = el('div', { class: 'ex-pop ex-mark-menu', role: 'listbox', 'aria-label': 'Show as' }, marksHere.map(([k, t]) =>
       el('button', { type: 'button', role: 'option', class: `ex-mark${k === state.mark ? ' active' : ''}`, 'data-mark': k,
         'aria-selected': String(k === state.mark), onclick: () => { closePop(); setMark(k); markBtn.focus(); } }, icon(k), t)));
     pop.addEventListener('keydown', e => {
@@ -1080,10 +1076,7 @@ export function createExplorer(root, ctx) {
     }).filter(Boolean));   // a table with nothing matching the search draws nothing, not "null"
   }
   function chipText(shelf, i) {
-    if (shelf !== 'filters') {
-      const a = aggOf(state[shelf][i]);
-      return a ? `${AGG_PILL[a.agg] ?? a.agg}(${nameOf(a.col)})` : nameOf(state[shelf][i]);
-    }
+    if (shelf !== 'filters') return nameOf(state[shelf][i]);
     const f = state.filters[i], n = nameOf(f.field);
     if (f.op === 'in') return f.values.length ? `${n}: ${f.values.length > 2 ? `${f.values.length} values` : f.values.join(', ')}` : `${n}: all`;
     if (f.op === 'notIn') return `${n}: not ${f.values.length > 2 ? `${f.values.length} values` : f.values.join(', ')}`;
