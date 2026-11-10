@@ -130,8 +130,8 @@ try {
   console.log(`model page: ${cards} cards, ${rels} relationship(s)`);
   if (cards !== 2 || rels !== 1) throw new Error(`model page drew ${cards} cards and ${rels} relationships`);
   if (!await page.locator(".resultsWrap").isHidden()) throw new Error("the results are still on screen under the model view");
-  const css = await page.evaluate(() => getComputedStyle(document.querySelector("#modelView .subtabs")).borderRadius);
-  if (css !== "999px") throw new Error(`explore.css did not load (subtabs border-radius ${css})`);
+  const css = await page.evaluate(() => getComputedStyle(document.querySelector("#modelView .subtab-bar")).display);
+  if (css !== "flex") throw new Error(`explore.css did not load (the bar's display is ${css})`);
   const subtabs = await page.locator("#modelView [data-apage]").allTextContents();
   if (subtabs.join() !== "Model,Visual,Report") throw new Error(`Explore's pages are ${subtabs.join(", ")}, not Model, Visual and Report`);
 
@@ -147,7 +147,9 @@ try {
       await page.locator("#modelView .ex-search").fill(term);
       await page.locator("#modelView .ex-field", { hasText: name }).first().click();
     }
-    await page.locator('#modelView .ex-mark[data-mark="table"]').click();
+    // The mark's button opens the list of marks, on <body>.
+    await page.locator("#modelView .ex-mark-pick").click();
+    await page.locator('.ex-mark-menu .ex-mark[data-mark="table"]').click();
     await page.waitForFunction(() => /blue|Error/.test(document.querySelector("#modelView .ex-table")?.textContent ?? ""), { timeout: 60000 });
     return {
       info: await page.locator("#modelView .ex-info").innerText(),

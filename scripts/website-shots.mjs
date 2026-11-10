@@ -196,18 +196,17 @@ try {
     await tab().locator("button.subtab", { hasText: "Pivot" }).click();
     const field = name => tab().locator(".ex-field", { hasText: name }).first();
     await field("Mwh").waitFor({ timeout: 60_000 });
-    const zones = tab().locator(".ex-drop");    // rows, columns, values, filters
-    if (await tab().locator("button", { hasText: /^Clear$/ }).isEnabled().catch(() => false)) {
-      await tab().locator("button", { hasText: /^Clear$/ }).click();
-    }
-    await field("date").dragTo(zones.nth(0));
-    await field("Region").dragTo(zones.nth(1));
-    await field("Mwh").dragTo(zones.nth(2));
-    await field("year").dragTo(zones.nth(3));
+    const zone = shelf => tab().locator(`.ex-drop[data-shelf="${shelf}"]`);
+    await tab().locator('.ex-tool[title="Clear the shelves"]').click();
+    await field("date").dragTo(zone("rows"));
+    await field("Region").dragTo(zone("cols"));
+    await field("Mwh").dragTo(zone("values"));
+    await field("year").dragTo(zone("filters"));
     await tab().locator("input[type=number]:visible").first().fill("2025");
     await tab().locator("button", { hasText: /^Apply$/ }).click();
     await settle();
-    await tab().locator("button", { hasText: /^Area$/ }).first().click();
+    await tab().locator(".ex-mark-pick").click();
+    await tab().locator('.ex-mark-menu .ex-mark[data-mark="area"]').click();
     await page.waitForTimeout(3000);
     await shot("pivot");
   });

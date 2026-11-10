@@ -26,7 +26,35 @@ const SERIES_CAP = 24;        // series a chart draws at most
 const MULTIPLES = 4;          // measures a chart draws, one plot each
 const ROW_TOTAL = '__rows_total', COL_TOTAL = '__columns_total';
 const TYPES = { string: 'text', int64: 'number', double: 'number', decimal: 'number', dateTime: 'date', boolean: 'bool' };
-const ICONS = { text: 'Abc', number: '#', date: '▦', bool: '◐', measure: 'Σ' };
+// A field's type, before its name: letters, or one of the page's icons for a date.
+const ICONS = { text: 'Abc', number: '#', bool: 'T|F', measure: 'Σ' };
+// The page's icons, each one path on a 16 by 16 square, drawn as lines in the text's colour
+// (explore.css .ex-ico): the marks by their key, then the tools, the shelves and a date.
+const ICON_PATHS = {
+  auto: 'M8 2v4M8 10v4M2 8h4M10 8h4',
+  table: 'M2 3h12v10H2zM2 6.5h12M2 10h12M6 3v10',
+  highlight: 'M2 3h12v10H2zM2 8h12M8 3v10M9.5 9.5h3v2h-3z',
+  bar: 'M2 7h3v6H2zM6.5 3h3v10h-3zM11 9h3v4h-3z',
+  stacked: 'M2 6h3v7H2zM2 9.5h3M6.5 3h3v10h-3zM6.5 8h3M11 8h3v5h-3zM11 10.5h3',
+  line: 'M2 12l4-5 3 3 5-6',
+  area: 'M2 13V9l4-4 3 3 5-5v10z',
+  heatmap: 'M2 2h4v4H2zM6 6h4v4H6zM10 10h4v4h-4zM10 2h4v4h-4zM2 10h4v4H2z',
+  scatter: 'M4 11a1 1 0 1 0 .01 0M8 7a1 1 0 1 0 .01 0M12 4a1 1 0 1 0 .01 0M11 10a1 1 0 1 0 .01 0',
+  treemap: 'M2 3h12v10H2zM9 3v10M9 8h5M2 9h7',
+  calendar: 'M2 4h12v10H2zM2 7h12M5 2v3M11 2v3',
+  map: 'M8 14s4-4.2 4-7.5a4 4 0 0 0-8 0C4 9.8 8 14 8 14zM8 5.5a1 1 0 1 0 .01 0',
+  slicer: 'M2 3h12l-4.5 5.5V13l-3-1.5V8.5z',
+  card: 'M2 4h12v8H2zM4.5 7h4M4.5 9.5h7',
+  swap: 'M3 5h9l-2-2M13 11H4l2 2',
+  sort: 'M3 4h10M3 8h7M3 12h4',
+  totals: 'M12 4V3H4l4 5-4 5h8v-1',
+  clear: 'M3 4h10M6 4V2.5h4V4M4.5 4l.7 9.5h5.6l.7-9.5',
+  format: 'M2 5h6M11 5h3M2 11h3M8 11h6M9.5 3.5v3M6.5 9.5v3',
+  cols: 'M4 3v10M8 3v10M12 3v10',
+  rows: 'M3 4h10M3 8h10M3 12h10',
+  down: 'M4 6l4 4 4-4',
+};
+const icon = name => el('svg:svg', { class: 'ex-ico', viewBox: '0 0 16 16', 'aria-hidden': 'true' }, el('svg:path', { d: ICON_PATHS[name] }));
 const MARKS = [['auto', 'Automatic'], ['table', 'Table'], ['highlight', 'Highlight'], ['bar', 'Bar'], ['stacked', 'Stacked'],
   ['line', 'Line'], ['area', 'Area'], ['heatmap', 'Heatmap'], ['scatter', 'Scatter'], ['treemap', 'Treemap'], ['calendar', 'Calendar'],
   ['map', 'Map'], ['slicer', 'Slicer'], ['card', 'Card']];
@@ -41,6 +69,8 @@ const AGGS = [['sum', 'Sum'], ['avg', 'Average'], ['min', 'Min'], ['max', 'Max']
   ['count', 'Count'], ['distinct', 'Count (distinct)']];
 const AGG_LABEL = Object.fromEntries(AGGS);
 const AGG_SQL = { sum: 'SUM', avg: 'AVG', min: 'MIN', max: 'MAX', count: 'COUNT', distinct: 'COUNT' };
+// A summarised column's pill: SUM(Qty). Its name in the result stays "Sum of Qty".
+const AGG_PILL = { sum: 'SUM', avg: 'AVG', min: 'MIN', max: 'MAX', count: 'CNT', distinct: 'CNTD' };
 const NUMBERS_ONLY = new Set(['sum', 'avg']);
 const aggId = (agg, col) => `\u0000${agg}\u0000${col}`;
 export const aggOf = id => { const m = /^\u0000(\w+)\u0000([\s\S]+)$/.exec(id); return m ? { agg: m[1], col: m[2] } : null; };
@@ -506,7 +536,8 @@ function pivotTable(s, piv, highlight, look, pick) {
   // does, 'bar' fills the cell from the left, as far as its value is of the largest.
   const by = m => (highlight ? 'background' : look.byValue?.[nameOf(m)]);
   const ranges = Object.fromEntries(measures.filter(by).map(m => [m, extent(piv.rowKeys.flatMap(a => (s.cols.length ? piv.colKeys : [[]]).map(b => piv.cell(a, b)?.[nameOf(m)])))]));
-  const t = el('table', { class: `explore-table ex-pivot${look.banded ? ' ex-banded' : ''}` });
+  // One field on Rows: its values stay in view when the table is scrolled sideways (ex-stick).
+  const t = el('table', { class: `explore-table ex-pivot${look.banded ? ' ex-banded' : ''}${rowNames.length === 1 ? ' ex-stick' : ''}` });
   const head = el('thead');
   // One header line per column field, then the measures' names when there are several (or no column field).
   const lead = text => el('th', { class: 'ex-rowhead', scope: 'col' }, text);
@@ -727,11 +758,20 @@ function pivotChart(s, piv, mark, look, pick) {
   // One plot has no title over it: the Values shelf, or a Report tile's title, names its measure,
   // and a title there sat on the axis's top label. Several have one each, over their own plot.
   const one = plots === 1;
-  const grids = one ? [{ grid: { left: 4, right: 16, containLabel: true, top: legend ? 36 : 14, bottom: cut ? 24 : 8 } }]
+  // `look.axisNames` (Visual: { x, y }): one plot's axes named from the shelves, the category's
+  // field under it and its one measure on the value axis. Bars lying down keep their names' room:
+  // only their measure is named, under them.
+  const catName = one && look.axisNames?.x && !flat ? nameOf(byCols ? s.cols[0] : s.rows[0]) : null;
+  const valName = one && !combine && look.axisNames?.y ? nameOf(ms[0]) : null;
+  const under = catName || (valName && flat);
+  const grids = one ? [{ grid: { left: 4, right: 16, containLabel: true, top: (legend ? 36 : 14) + (valName && !flat ? 16 : 0), bottom: (cut ? 24 : 8) + (under ? 20 : 0) } }]
     : stackedGrids(plots, legend ? 7 : 0);
   const catAxis = (i, more) => ({ type: 'category', gridIndex: i, data: cats.map(label), inverse: flat,
-    axisLabel: { show: flat || i === plots - 1, hideOverlap: true }, ...more });
+    axisLabel: { show: flat || i === plots - 1, hideOverlap: true },
+    ...(catName ? { name: catName, nameLocation: 'middle', nameGap: 28 } : {}), ...more });
   const valAxis = (i, m, side) => ({ type: 'value', gridIndex: i, ...(side === 'right' ? { position: 'right', splitLine: { show: false } } : {}),
+    ...(valName && flat ? { name: valName, nameLocation: 'middle', nameGap: 26 }
+      : valName ? { name: valName, nameLocation: 'end', nameTextStyle: { align: 'left' } } : {}),
     axisLabel: { formatter: v => fmt(m, v), hideOverlap: true }, splitNumber: plots > 2 ? 2 : 4 });
   const lines = combine ? ms.some(m => asOf(m) !== 'bar') : mark === 'line' || mark === 'area';
   const bars = combine ? ms.some(m => asOf(m) === 'bar') : !lines;
@@ -770,10 +810,10 @@ function pivotChart(s, piv, mark, look, pick) {
           type, name: named ? nameOf(m) : combine ? `${label(b)} · ${nameOf(m)}` : label(b),
           xAxisIndex: combine ? 0 : i, yAxisIndex: combine ? (right && onRight(m) ? 1 : 0) : i,
           stack: (mark === 'stacked' || mark === 'area') && as !== 'line' && as !== 'dashed' ? `s${i}` : undefined,
-          areaStyle: as === 'area' ? { opacity: 0.85 } : undefined, showSymbol: false, connectNulls: false,
+          areaStyle: as === 'area' ? { opacity: 0.7 } : undefined, showSymbol: false, connectNulls: false,
           itemStyle: { color: c, ...(flat && mark === 'bar' ? { borderRadius: [0, 4, 4, 0] } : {}) },
           lineStyle: type === 'line' ? { width: as === 'dashed' ? 1.5 : 1.6, color: c, ...(as === 'dashed' ? { type: 'dashed' } : {}) } : undefined,
-          barMaxWidth: 18, large: cats.length > 400,
+          barMaxWidth: 56, barCategoryGap: '28%', barGap: '8%', large: cats.length > 400,
           ...(look.labels ? { label: { show: true, position: flat ? 'right' : as === 'bar' && mark === 'stacked' || as === 'area' ? 'inside' : 'top',
             fontSize: 10, formatter: p => fmt(m, p.value) } } : {}),
           ...(look.maxLabel ? { markPoint: { symbol: 'circle', symbolSize: 6, itemStyle: { color: c }, data: [{ type: 'max' }],
@@ -828,28 +868,33 @@ export function createExplorer(root, ctx) {
   const search = el('input', { type: 'search', class: 'ex-search', placeholder: 'Search fields', 'aria-label': 'Search fields' });
   const list = el('div', { class: 'ex-list' });
   const pane = el('div', { class: 'ex-fields' }, search, list);
-  const shelfEls = Object.fromEntries(SHELVES.map(([k, t]) => [k, el('div', { class: 'ex-drop', 'data-shelf': k })]));
-  const shelves = el('div', { class: 'ex-shelves' }, SHELVES.map(([k, t]) =>
-    el('div', { class: 'ex-shelf' }, el('span', { class: 'ex-shelf-name' }, t), shelfEls[k])));
-  const marks = el('div', { class: 'ex-marks', role: 'group', 'aria-label': 'Show me' });
-  const totals = el('input', { type: 'checkbox' });
-  const sort = el('select', { 'aria-label': 'Sort' }, el('option', { value: 'fields' }, 'Sort by fields'),
-    el('option', { value: 'desc' }, 'Sort by first value ↓'));
+  // Four shelves: Columns and Rows over the view, Filters in its own card, Values in the Marks card.
+  const shelfEls = Object.fromEntries(SHELVES.map(([k]) => [k, el('div', { class: 'ex-drop', 'data-shelf': k })]));
+  const shelfRow = (k, t) => el('div', { class: 'ex-shelf' }, el('span', { class: 'ex-shelf-name' }, icon(k), t), shelfEls[k]);
+  const shelves = el('div', { class: 'ex-shelves' }, shelfRow('cols', 'Columns'), shelfRow('rows', 'Rows'));
+  const card = (t, ...kids) => el('section', { class: 'ex-card', 'aria-label': t }, el('h3', { class: 'ex-card-name' }, t), kids);
+  // The mark: a button that says it, opening the list of them (openMarks).
+  const markBtn = el('button', { type: 'button', class: 'ex-mark-pick', 'aria-haspopup': 'listbox', 'aria-label': 'Mark', onclick: () => openMarks() });
+  // The tools: a button each, lit while it is on.
+  const tool = (ico, title, onclick, text) => el('button', { type: 'button', class: `ex-tool${text ? ' ex-tool-text' : ''}`, title, 'aria-label': text ? null : title, onclick }, icon(ico), text);
+  const swapBtn = tool('swap', 'Swap rows and columns', () => { [state.rows, state.cols] = [state.cols, state.rows]; changed(); });
+  const sortBtn = tool('sort', 'Sort by the first value, largest first', () => { state.sort = state.sort === 'desc' ? 'fields' : 'desc'; changed(); });
+  const totalsBtn = tool('totals', 'Totals', () => { state.totals = !state.totals; changed(); });
+  const clearBtn = tool('clear', 'Clear the shelves', () => { state = { ...EMPTY(), mark: state.mark }; changed(); });
   // Top N: the first n rows as they are sorted, ties kept.
   const TOPS = [0, 1, 3, 5, 10, 15, 20, 25, 50, 100];
   const top = el('select', { 'aria-label': 'Top', title: 'Keep the first rows, as they are sorted (ties kept)' },
     TOPS.map(n => el('option', { value: n }, n ? `Top ${n}` : 'All rows')));
   const info = el('span', { class: 'ex-info' });
   // Format: the pane at the right of the view, what the shelves' `format` says of how it is drawn.
-  const formatBtn = el('button', { type: 'button', class: 'btn-explore', 'aria-pressed': 'false', title: 'How this visual is drawn: colours, labels, numbers…' }, 'Format');
+  const formatBtn = tool('format', 'How this visual is drawn: colours, labels, numbers…', null, 'Format');
+  formatBtn.setAttribute('aria-pressed', 'false');
   const formatPane = el('aside', { class: 'rp-pane ex-format', hidden: true, 'aria-label': 'Format' });
-  const tools = el('div', { class: 'ex-tools' }, marks,
-    el('label', { class: 'ex-check' }, totals, 'Totals'), sort, top,
-    el('button', { type: 'button', class: 'btn-explore', title: 'Swap rows and columns', onclick: () => {
-      [state.rows, state.cols] = [state.cols, state.rows]; changed(); } }, '⇄ Swap'),
-    el('button', { type: 'button', class: 'btn-explore', onclick: () => { state = { ...EMPTY(), mark: state.mark }; changed(); } }, 'Clear'),
-    formatBtn,
-    info);
+  const toolbar = el('div', { class: 'ex-toolbar', role: 'toolbar', 'aria-label': 'Visual' }, swapBtn, sortBtn, totalsBtn, clearBtn, formatBtn);
+  const side = el('div', { class: 'ex-side' }, toolbar, card('Filters', shelfEls.filters),
+    card('Marks', markBtn, el('div', { class: 'ex-card-sub' }, 'Values'), shelfEls.values));
+  // The status line, under everything: what the view holds, and Top N.
+  const status = el('div', { class: 'ex-status' }, info, top);
   const table = el('div', { class: 'ex-table' });
   const chartBox = el('div', { class: 'ex-chart' });
   // Over the view while a query runs: a model query reads OneLake and can take a while,
@@ -858,12 +903,11 @@ export function createExplorer(root, ctx) {
   const busy = el('div', { class: 'ex-busy', hidden: true, role: 'status', 'aria-live': 'polite' },
     el('span', { class: 'ex-spinner', 'aria-hidden': 'true' }), busyText);
   const out = el('div', { class: 'ex-out' }, table, chartBox, busy);
-  root.replaceChildren(el('div', { class: 'ex' }, pane, el('div', { class: 'ex-main' }, shelves, tools, el('div', { class: 'ex-work' }, out, formatPane))));
+  root.replaceChildren(el('div', { class: 'ex' }, pane, side,
+    el('div', { class: 'ex-main' }, shelves, el('div', { class: 'ex-work' }, out, formatPane)), status));
   formatBtn.addEventListener('click', () => { formatOpen = !formatOpen; formatBtn.setAttribute('aria-pressed', String(formatOpen)); drawFormat(); draw(); });
 
   search.addEventListener('input', renderFields);
-  totals.addEventListener('change', () => { state.totals = totals.checked; changed(); });
-  sort.addEventListener('change', () => { state.sort = sort.value; changed(); });
   top.addEventListener('change', () => {
     const n = Number(top.value);
     state.top = n || null;
@@ -871,23 +915,41 @@ export function createExplorer(root, ctx) {
     if (n && state.sort === 'fields' && state.values.length) state.sort = 'desc';
     changed();
   });
-  for (const [k, m] of MARKS) {
-    if (k === 'slicer' && ctx.noSlicer) continue;
-    marks.append(el('button', { type: 'button', class: 'ex-mark', 'data-mark': k,
-      onclick: () => {
-        // A card asks a query of its own (buildQuery): to or from one runs again.
-        const asks = (state.mark === 'card') !== (k === 'card');
-        state.mark = k;
-        if (asks) { changed(); return; }
-        save(); renderControls(); draw();
-      } }, m));
+  // The marks there are here, and the one the shelves are drawn as.
+  const marksHere = MARKS.filter(([k]) => !(k === 'slicer' && ctx.noSlicer));
+  const shownMark = () => (state.mark === 'auto' ? (fields ? autoMark(state, fields) : 'table') : state.mark);
+  function setMark(k) {
+    // A card asks a query of its own (buildQuery): to or from one runs again.
+    const asks = (state.mark === 'card') !== (k === 'card');
+    state.mark = k;
+    if (asks) { changed(); return; }
+    save(); renderControls(); draw();
+  }
+  // The marks, in a list under their button; the one picked goes back to the button.
+  function openMarks() {
+    if (pop?.classList.contains('ex-mark-menu')) { closePop(); return; }
+    closePop();
+    pop = el('div', { class: 'ex-pop ex-mark-menu', role: 'listbox', 'aria-label': 'Mark' }, marksHere.map(([k, t]) =>
+      el('button', { type: 'button', role: 'option', class: `ex-mark${k === state.mark ? ' active' : ''}`, 'data-mark': k,
+        'aria-selected': String(k === state.mark), onclick: () => { closePop(); setMark(k); markBtn.focus(); } }, icon(k), t)));
+    pop.addEventListener('keydown', e => {
+      if (e.key === 'Escape') { closePop(); markBtn.focus(); return; }
+      const by = { ArrowDown: 1, ArrowUp: -1 }[e.key];
+      if (!by) return;
+      e.preventDefault();
+      const items = [...pop.children];
+      items[(items.indexOf(document.activeElement) + by + items.length) % items.length].focus();
+    });
+    showPop(markBtn);
+    pop.querySelector('.ex-mark.active')?.focus();
   }
 
   const fieldOf = id => shelfField(fields, id);
 
   // --- Drag and drop: a field onto a shelf, a chip along or between shelves, or off them ---
   const accepts = (shelf, f) => f && (shelf === 'values' || f.kind === 'column' || (shelf === 'filters' && f.kind === 'measure'));
-  for (const [k, box] of Object.entries(shelfEls)) {
+  // `box` takes what is dropped on it for shelf `k`: a shelf, or its place in an empty view (draw).
+  function dropZone(k, box) {
     box.addEventListener('dragover', e => {
       const f = drag && fieldOf(drag.id);
       if (!accepts(k, f) && !(f?.kind === 'measure' && k !== 'filters')) return;
@@ -907,7 +969,9 @@ export function createExplorer(root, ctx) {
       place(drag, to, at);
       drag = null;
     });
+    return box;
   }
+  for (const [k, box] of Object.entries(shelfEls)) dropZone(k, box);
   pane.addEventListener('dragover', e => { if (drag?.from) e.preventDefault(); });
   pane.addEventListener('drop', e => { e.preventDefault(); if (drag?.from) { removeAt(drag.from, drag.index); drag = null; } });
 
@@ -990,7 +1054,7 @@ export function createExplorer(root, ctx) {
         onkeydown: e => fieldKey(e, f) },
         // Under the column it is worked out from, by what it is of it.
         f.derived ? el('span', { class: 'ex-derived-of', 'aria-hidden': 'true' }, '↳') : null,
-        el('span', { class: `ex-icon ex-${f.type}` }, ICONS[f.type]),
+        el('span', { class: `ex-icon ex-${f.type}` }, f.type === 'date' ? icon('calendar') : ICONS[f.type]),
         f.derived ? [f.derived.as, el('span', { class: 'ex-tag' }, 'derived')] : f.name);
       b.addEventListener('dragstart', e => { drag = { id: f.id }; e.dataTransfer.setData('text/plain', f.id); e.dataTransfer.effectAllowed = 'copyMove'; });
       b.addEventListener('dragend', () => { drag = null; });
@@ -1004,13 +1068,16 @@ export function createExplorer(root, ctx) {
       const open = term || (openTables.has(t.name) ? openTables.get(t.name) : t.dimension || fields.tables.length === 1);
       const group = el('details', { class: 'ex-table-group', open: open ? true : null },
         el('summary', {}, t.name, t.kind && el('span', { class: 'ex-kind' }, t.kind)),
-        cols.map(item), ms.map(item));
+        cols.map(item), cols.length && ms.length ? el('div', { class: 'ex-sep', role: 'separator' }) : null, ms.map(item));
       group.addEventListener('toggle', () => { if (!search.value.trim()) openTables.set(t.name, group.open); });
       return group;
     }).filter(Boolean));   // a table with nothing matching the search draws nothing, not "null"
   }
   function chipText(shelf, i) {
-    if (shelf !== 'filters') return nameOf(state[shelf][i]);
+    if (shelf !== 'filters') {
+      const a = aggOf(state[shelf][i]);
+      return a ? `${AGG_PILL[a.agg] ?? a.agg}(${nameOf(a.col)})` : nameOf(state[shelf][i]);
+    }
     const f = state.filters[i], n = nameOf(f.field);
     if (f.op === 'in') return f.values.length ? `${n}: ${f.values.length > 2 ? `${f.values.length} values` : f.values.join(', ')}` : `${n}: all`;
     if (f.op === 'notIn') return `${n}: not ${f.values.length > 2 ? `${f.values.length} values` : f.values.join(', ')}`;
@@ -1036,8 +1103,7 @@ export function createExplorer(root, ctx) {
           el('button', { type: 'button', class: 'ex-chip-name', onclick: e => {
             if (k === 'filters') editFilter(i, e.currentTarget.parentNode);
             else if (summed) editAgg(i, e.currentTarget.parentNode);
-          } }, f?.kind === 'measure' ? el('span', { class: 'ex-chip-icon', 'aria-hidden': 'true' }, ICONS.measure) : null,
-            chipText(k, i), summed ? ' ▾' : null),
+          } }, chipText(k, i), summed || k === 'filters' ? icon('down') : null),
           el('button', { type: 'button', class: 'ex-x', 'aria-label': `Remove ${chipText(k, i)}`, onclick: () => removeAt(k, i) }, '×'));
         chip.addEventListener('dragstart', e => { drag = { id: entry(k, i), from: k, index: i }; e.dataTransfer.setData('text/plain', entry(k, i)); });
         chip.addEventListener('dragend', () => { drag = null; });
@@ -1049,17 +1115,14 @@ export function createExplorer(root, ctx) {
   }
   function renderControls() {
     if (formatOpen) drawFormat();
-    totals.checked = state.totals;
-    sort.value = state.sort;
+    totalsBtn.setAttribute('aria-pressed', String(!!state.totals));
+    sortBtn.setAttribute('aria-pressed', String(state.sort === 'desc'));
     if (state.top && !TOPS.includes(state.top)) top.append(el('option', { value: state.top }, `Top ${state.top}`));
     top.value = String(state.top || 0);
-    const auto = fields ? autoMark(state, fields) : 'table';
-    for (const b of marks.children) {
-      const on = b.dataset.mark === state.mark;
-      b.classList.toggle('active', on);
-      b.setAttribute('aria-pressed', String(on));
-      b.classList.toggle('ex-auto', state.mark === 'auto' && b.dataset.mark === auto);
-    }
+    // The mark's button: the mark, or Automatic and what it picked.
+    const name = k => MARKS.find(([m]) => m === k)?.[1] ?? k;
+    markBtn.replaceChildren(icon(shownMark()),
+      el('span', {}, state.mark === 'auto' ? `Automatic · ${name(shownMark())}` : name(state.mark)), icon('down'));
   }
 
   // --- The popups: a filter's editor, a summarised column's summary ---
@@ -1070,7 +1133,10 @@ export function createExplorer(root, ctx) {
     pop?.remove(); pop = null;
     document.removeEventListener('pointerdown', outside, true);
   }
-  function outside(e) { if (pop && !pop.contains(e.target)) closePop(); }
+  // A press on the marks' button while its list is open is that button's to close.
+  function outside(e) {
+    if (pop && !pop.contains(e.target) && !(pop.classList.contains('ex-mark-menu') && markBtn.contains(e.target))) closePop();
+  }
   function showPop(anchor) {
     document.body.append(pop);
     const r = anchor.getBoundingClientRect();
@@ -1267,12 +1333,17 @@ export function createExplorer(root, ctx) {
     if (!result) {
       chartBox.hidden = true;
       table.hidden = false;
+      // Nothing on the shelves: where Columns and Rows are in the view, each to drop a field on.
+      const ghost = k => dropZone(k, el('div', { class: `ex-ghost ex-ghost-${k}` }, 'Drop a field here'));
       table.replaceChildren(failure ? el('div', { class: 'ex-empty ex-error' }, failure)
-        : el('div', { class: 'ex-empty' }, fields
-          ? 'Drag columns onto Rows and Columns and measures onto Values, or click a field to add it. By keyboard: R, C, F or V on a field.' : 'Reading the model…'));
+        : !fields ? el('div', { class: 'ex-empty' }, 'Reading the model…')
+        : el('div', { class: 'ex-blank' }, ghost('cols'), ghost('rows'), el('div', { class: 'ex-empty' },
+          'Drag columns onto Rows and Columns and measures onto Values, or click a field to add it. By keyboard: R, C, F or V on a field.')));
       return;
     }
+    // Visual names a chart's axes from its shelves, where its format has no title of its own.
     const look = { fields, palette: ctx.palette(), css: ctx.css, ...formatLook(state.format),
+      axisNames: { x: !state.format?.xTitle, y: !state.format?.yTitle },
       styles: { value: state.slicer, set: k => { state.slicer = k; save(); draw(); } } };
     const view = pivotView(result.state, result.rows, state.mark, look, null,
       { style: state.slicer, ...preview, onChange: (next, quiet) => { preview = next; if (!quiet) draw(); } });

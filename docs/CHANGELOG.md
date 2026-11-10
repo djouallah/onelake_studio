@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **Visual has a new look.** It fills the tab, in flat panes: the fields, then the tools over a Filters card and a Marks
+  card (the mark, and Values), then Columns and Rows over the view, and a status line with the row count and Top. A pill
+  is solid: one colour for a column, another for a figure, and a summarised column reads `SUM(Qty)`. The mark is picked
+  from a list with an icon each, and its button says what Automatic picked. Swap, sort, totals, clear and Format are
+  icons. An empty view shows where Columns and Rows go and takes a drop there. Bars are wider, a chart's axes are named
+  from the shelves, and the pivot's table has a header band and keeps its row names in view when scrolled sideways.
+  Add to report is the lit button, not Download CSV. The Report and Model pages get the same square corners.
 - **A Fabric app's Report draws its tiles side by side.** They ran one after another, so the app's second engine sat
   idle and each tile's columns were downloaded on their own. Every tile now asks at once: the engines take a query
   each, and what the tiles read between them comes down as one batch. On a semantic model, four tiles ask at a time.

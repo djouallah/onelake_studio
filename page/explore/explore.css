@@ -8,30 +8,39 @@
   --faint: #6e7681; --disabled: #484f58; --on-accent: #fff;
   --hairline: rgba(255,255,255,0.07); --hover: rgba(255,255,255,0.07); --hover-soft: rgba(255,255,255,0.035);
   --bad: var(--err); --shadow: 0 12px 32px rgba(0,0,0,0.5);
-  --radius: 10px; --radius-sm: 6px; --gutter: 0.9rem; --gap: 0.75rem;
-  /* Explore: a measure (the model's, or a column summarised on Values) against a column. */
+  --radius: 4px; --radius-sm: 3px; --gutter: 0.9rem; --gap: 0.75rem;
   --measure: #e3b341;
+  /* A pill's two colours: a column, and a figure (a measure, or a column summarised). Solid under
+     white text in any theme; `-ink` is the same colour as text, on the theme's own background. */
+  --pill-dim: #2f6fb7; --pill-fig: #17875f; --on-pill: #fff;
+  --dim-ink: color-mix(in srgb, var(--pill-dim) 65%, var(--text)); --fig-ink: color-mix(in srgb, var(--pill-fig) 65%, var(--text));
+  /* A table's header and its totals. */
+  --band: color-mix(in srgb, var(--text) 7%, var(--card));
 }
-/* The view takes the place of the results (app.js: section.modelOpen). */
+/* The view takes the place of the results (app.js: section.modelOpen). A column, so Visual is as tall
+   as the tab; a table's Visual (#pivotView) the same. */
 #modelView { flex: 1; overflow: auto; min-height: 0; }
+#modelView, #pivotView { display: flex; flex-direction: column; }
+#modelView > *, #pivotView > * { flex-shrink: 0; }
 section.modelOpen .resultsWrap, section.modelOpen #csvBtn, section.modelOpen #profileBtn,
 section.modelOpen #chartBtn { display: none; }
-.sm-title { font-size: 0.8rem; color: var(--muted); flex: 0 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sm-title { font-size: 12px; color: var(--muted); flex: 0 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .sm-title code { color: var(--text); }
-.sm-plan { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.72rem; line-height: 1.4; white-space: pre; overflow-x: auto; margin: 0; }
+.sm-plan { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11px; line-height: 1.4; white-space: pre; overflow-x: auto; margin: 0; }
 /* The studio styles every input; Explore's checkboxes keep their own size. */
 .ex input[type=checkbox], .ex-pop input[type=checkbox] { padding: 0; }
 
-/* One row, always: what doesn't fit is cut, never wrapped, so nothing moves. */
-.subtab-bar { display: flex; flex-wrap: nowrap; align-items: center; justify-content: space-between; gap: 1rem; padding: var(--gap) var(--gutter) 0; }
-.subtabs { display: flex; flex: none; gap: 0.15rem; padding: 0.2rem; background: var(--card); border: 1px solid var(--hairline); border-radius: 999px; }
-.subtab { padding: 0.32rem 0.9rem; font-size: 0.8rem; font-weight: 600; color: var(--muted); background: none; border: none; border-radius: 999px; cursor: pointer; transition: color 0.15s, background 0.15s; }
+/* One row, always: what doesn't fit is cut, never wrapped, so nothing moves. The pages' names are
+   plain text, the one on screen underlined. */
+.subtab-bar { display: flex; flex: none; flex-wrap: nowrap; align-items: center; justify-content: space-between; gap: 1rem; min-height: 38px; padding: 0 var(--gutter); border-bottom: 1px solid var(--border); }
+.subtabs { display: flex; flex: none; gap: 0.1rem; }
+.subtab { padding: 0.3rem 0.8rem; font-size: 13px; font-weight: 600; color: var(--muted); background: none; border: solid transparent; border-width: 2px 0; border-radius: 0; cursor: pointer; transition: color 0.15s, border-color 0.15s; }
 .subtab:hover { color: var(--text); }
-.subtab.active { color: var(--on-accent); background: var(--accent); }
+.subtab.active { color: var(--text); border-bottom-color: var(--accent); }
 
 /* Keep offline, beside the tabs: it belongs to the whole model. */
 .keep-offline[hidden] { display: none; }
-.keep-offline { display: inline-flex; align-items: center; flex: 1 1 auto; gap: 0.45rem; min-width: 0; margin-right: auto; font-size: 0.78rem; }
+.keep-offline { display: inline-flex; align-items: center; flex: 1 1 auto; gap: 0.45rem; min-width: 0; margin-right: auto; font-size: 12px; }
 .keep-offline label { font-weight: 600; cursor: pointer; white-space: nowrap; }
 .keep-switch { position: relative; flex: none; width: 28px; height: 16px; padding: 0; border: 0; border-radius: 999px; background: var(--disabled); cursor: pointer; transition: background 0.15s; }
 .keep-switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 50%; background: #fff; transition: transform 0.15s; }
@@ -50,15 +59,15 @@ section.modelOpen #chartBtn { display: none; }
 
 /* --- SQL page --- */
 .explore-controls { display: flex; gap: 0.8rem; padding: var(--gap) var(--gutter) 0.8rem; align-items: center; flex-wrap: wrap; }
-.btn-explore { padding: 0.18rem 0.7rem; border: 1px solid var(--border); border-radius: 999px; font-size: 0.76rem; font-weight: 600; line-height: 1.4; white-space: nowrap; background: none; color: var(--text); cursor: pointer; transition: border-color 0.15s, background 0.15s, color 0.15s; }
+.btn-explore { padding: 0.18rem 0.7rem; border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: 12px; font-weight: 600; line-height: 1.4; white-space: nowrap; background: none; color: var(--text); cursor: pointer; transition: border-color 0.15s, background 0.15s, color 0.15s; }
 .btn-explore:hover { border-color: var(--muted); }
 .btn-explore.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
 .btn-explore.primary:hover { opacity: 0.88; }
 .btn-explore:disabled { opacity: 0.5; cursor: not-allowed; }
-.explore-info { font-size: 0.8rem; color: var(--muted); padding: 0 var(--gutter); }
+.explore-info { font-size: 12px; color: var(--muted); padding: 0 var(--gutter); }
 .explore-table-wrap { margin: 0.6rem var(--gutter) 1.5rem; overflow: auto; max-height: 60vh; border-radius: var(--radius); }
-.explore-table { width: 100%; border-collapse: collapse; font-size: 0.8rem; font-variant-numeric: tabular-nums; }
-.explore-table th { position: sticky; top: 0; background: var(--card); color: var(--muted); font-size: 0.74rem; font-weight: 600; padding: 0.5rem 0.7rem; border-bottom: 1px solid var(--border); text-align: left; }
+.explore-table { width: 100%; border-collapse: collapse; font-size: 12px; font-variant-numeric: tabular-nums; }
+.explore-table th { position: sticky; top: 0; background: var(--card); color: var(--muted); font-size: 12px; font-weight: 600; padding: 0.5rem 0.7rem; border-bottom: 1px solid var(--border); text-align: left; }
 .explore-table td { padding: 0.35rem 0.7rem; border-bottom: 1px solid var(--row-line); color: var(--text); }
 .explore-table tr:hover td { background: var(--hover-soft); }
 /* Analyze, Model: the star (an SVG, model.js) and the table picked. */
@@ -68,8 +77,8 @@ section.modelOpen #chartBtn { display: none; }
 .report-page[hidden], .model-page[hidden], .explore-sql-page[hidden], .explore-page[hidden], .model-area[hidden], .text-file[hidden] { display: none; }
 /* Model's Diagram | YAML: the model drawn, or its file (pretty.js's tk-* spans). */
 .model-switch { padding: 0.12rem; }
-.model-switch .subtab { padding: 0.16rem 0.65rem; font-size: 0.74rem; }
-.text-file { margin: var(--gap) var(--gutter) 1.5rem; font-family: var(--vscode-editor-font-family, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace); font-size: 0.82rem; line-height: 1.45;
+.model-switch .subtab { padding: 0.16rem 0.65rem; font-size: 12px; }
+.text-file { margin: var(--gap) var(--gutter) 1.5rem; font-family: var(--vscode-editor-font-family, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace); font-size: 13px; line-height: 1.45;
   white-space: pre; overflow-x: auto; tab-size: 4; padding: 0.75rem 1rem; background: var(--card); border: 1px solid var(--hairline); border-radius: var(--radius-sm); }
 .tk-key { color: var(--vscode-debugTokenExpression-name, #79c0ff); }
 .tk-str { color: var(--vscode-debugTokenExpression-string, #a5d6ff); }
@@ -79,7 +88,7 @@ section.modelOpen #chartBtn { display: none; }
 /* A custom_extensions block: amber, with a bar down its left that moves no text. */
 .tk-ext, .tk-ext span { color: var(--vscode-editorWarning-foreground, #cca700); }
 .tk-ext { box-shadow: inset 2px 0 0 var(--vscode-editorWarning-foreground, #cca700); }
-.text-file-note { margin: var(--gap) var(--gutter) 0; font-size: 0.74rem; color: var(--muted); }
+.text-file-note { margin: var(--gap) var(--gutter) 0; font-size: 12px; color: var(--muted); }
 .text-file-note[hidden] { display: none; }
 .text-file-note .swatch { display: inline-block; width: 3px; height: 0.9em; margin-right: 0.45rem; vertical-align: -0.1em;
   background: var(--vscode-editorWarning-foreground, #cca700); }
@@ -87,23 +96,23 @@ section.modelOpen #chartBtn { display: none; }
 .model-diagram, .model-panel { background: var(--card); border: 1px solid var(--hairline); border-radius: var(--radius); overflow: auto; }
 .model-diagram { padding: 0.8rem; display: flex; }
 .model-diagram svg { display: block; flex: none; width: 100%; min-width: 640px; height: auto; margin: auto; font-family: inherit; }
-.model-panel { padding: 0.9rem 1rem; font-size: 0.82rem; max-height: 75vh; }
+.model-panel { padding: 0.9rem 1rem; font-size: 13px; max-height: 75vh; }
 .model-panel h3 { font-size: 1rem; font-weight: 700; margin: 0 0 0.3rem; display: flex; align-items: center; gap: 0.5rem; }
-.model-panel h4 { font-size: 0.7rem; color: var(--faint); text-transform: uppercase; letter-spacing: 0.06em; font-weight: 600; margin: 1.1rem 0 0.4rem; }
+.model-panel h4 { font-size: 11px; color: var(--faint); text-transform: uppercase; letter-spacing: 0.06em; font-weight: 600; margin: 1.1rem 0 0.4rem; }
 .model-panel p { color: var(--muted); line-height: 1.5; margin: 0.35rem 0; }
-.model-panel .m-src { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.75rem; color: var(--faint); }
+.model-panel .m-src { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; color: var(--faint); }
 .model-panel .m-hint { color: var(--faint); }
 .model-panel a { color: var(--text); }
-.m-tag { font-size: 0.66rem; font-weight: 600; color: var(--muted); border: 1px solid var(--border); border-radius: 999px; padding: 0 0.45rem; margin-left: 0.4rem; white-space: nowrap; vertical-align: 1px; }
+.m-tag { font-size: 11px; font-weight: 600; color: var(--muted); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 0 0.45rem; margin-left: 0.4rem; white-space: nowrap; vertical-align: 1px; }
 .model-panel h3 .m-tag { margin-left: 0; }
-.m-rels { list-style: none; margin: 0; padding: 0; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.76rem; }
+.m-rels { list-style: none; margin: 0; padding: 0; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; }
 .m-rels li { padding: 0.2rem 0; border-bottom: 1px solid var(--row-line); }
 .m-cols td { vertical-align: top; }
-.m-desc { color: var(--faint); font-size: 0.74rem; line-height: 1.4; margin-top: 0.15rem; }
+.m-desc { color: var(--faint); font-size: 12px; line-height: 1.4; margin-top: 0.15rem; }
 .m-measure { border-bottom: 1px solid var(--row-line); padding: 0.35rem 0; }
 .m-measure summary { cursor: pointer; font-weight: 600; }
-.m-fmt { float: right; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.72rem; font-weight: 400; color: var(--faint); }
-.m-measure pre { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.74rem; line-height: 1.5; background: var(--input-bg); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 0.5rem 0.65rem; margin: 0.45rem 0 0.3rem; overflow-x: auto; white-space: pre; }
+.m-fmt { float: right; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11px; font-weight: 400; color: var(--faint); }
+.m-measure pre { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; line-height: 1.5; background: var(--input-bg); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 0.5rem 0.65rem; margin: 0.45rem 0 0.3rem; overflow-x: auto; white-space: pre; }
 .m-card { cursor: pointer; outline: none; transition: opacity 0.15s; }
 .m-box { fill: var(--card); stroke: var(--border); stroke-width: 1; transition: stroke 0.15s; }
 .m-card.dim .m-box { fill: var(--raised); }
@@ -120,97 +129,141 @@ section.modelOpen #chartBtn { display: none; }
 .m-mark { fill: var(--faint); font-size: 11px; font-weight: 700; }
 .m-rel.m-on .m-mark { fill: var(--text); }
 .m-card.m-off, .m-rel.m-off { opacity: 0.2; }
-/* Analyze, Explore: fields on the left, shelves, the controls and the view (explore.js). */
-.explore-page { padding: var(--gap) var(--gutter) 1.5rem; }
-.ex { display: grid; grid-template-columns: 250px minmax(0, 1fr); gap: var(--gap); min-height: 70vh; }
-.ex-fields, .ex-main { background: var(--card); border: 1px solid var(--hairline); border-radius: var(--radius); min-height: 0; }
-.ex-fields { display: flex; flex-direction: column; padding: 0.6rem; max-height: 80vh; }
-.ex-search, .ex-pop input[type=search], .rp-slicer input[type=search], .rp-slicer input[type=date], .rp-slicer input[type=number], .ex-pop input[type=number], .ex-pop input[type=date], .ex-pop select, .ex-tools select {
-  font-size: 0.8rem; background: var(--input-bg); color: var(--text); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 0.32rem 0.55rem; }
-.ex-search { width: 100%; margin-bottom: 0.5rem; }
+/* Visual (explore.js): the fields; then the tools over the Filters and Marks cards; then Columns and
+   Rows over the view; and the status line under them all. Flat panes that touch, as tall as the tab:
+   only the fields, the cards and the view scroll. */
+.explore-page { flex: 1 1 auto; min-height: 460px; display: flex; flex-direction: column; }
+.ex { flex: 1 1 0; min-height: 0; display: grid; grid-template-columns: 230px 200px minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto; }
+.ex-fields, .ex-side { min-height: 0; background: var(--card); border-right: 1px solid var(--border); }
+.ex-fields { display: flex; flex-direction: column; padding: 0.5rem 0.4rem 0; }
+.ex-search, .ex-pop input[type=search], .rp-slicer input[type=search], .rp-slicer input[type=date], .rp-slicer input[type=number], .ex-pop input[type=number], .ex-pop input[type=date], .ex-pop select, .ex-status select {
+  font-size: 12px; background: var(--input-bg); color: var(--text); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 0.28rem 0.5rem; }
+.ex-search { width: 100%; margin-bottom: 0.4rem; }
 .ex-list { overflow: auto; flex: 1 1 0; min-height: 0; }
-.ex-table-group summary { cursor: pointer; font-size: 0.78rem; font-weight: 700; padding: 0.35rem 0.2rem; display: flex; align-items: baseline; gap: 0.4rem; }
-.ex-kind { font-size: 0.66rem; font-weight: 500; color: var(--faint); }
-.ex-field { display: flex; align-items: center; gap: 0.45rem; width: 100%; text-align: left; font-size: 0.78rem; color: var(--text); background: none; border: none; border-radius: var(--radius-sm); padding: 0.2rem 0.4rem 0.2rem 0.9rem; cursor: grab; }
+.ex-table-group summary { cursor: pointer; font-size: 12px; font-weight: 700; padding: 0.3rem 0.2rem; display: flex; align-items: baseline; gap: 0.4rem; }
+.ex-kind { font-size: 11px; font-weight: 500; color: var(--faint); }
+.ex-field { display: flex; align-items: center; gap: 0.4rem; width: 100%; height: 22px; text-align: left; font-size: 12px; color: var(--text); background: none; border: none; border-radius: var(--radius-sm); padding: 0 0.4rem 0 0.8rem; cursor: grab; white-space: nowrap; overflow: hidden; }
 .ex-field:hover { background: var(--hover); }
 .ex-field.ex-used { color: var(--muted); }
 /* A column worked out from another (a table's date grains): under it, in italics, tagged. */
-.ex-field.ex-derived { padding-left: 1.2rem; font-style: italic; color: var(--muted); }
+.ex-field.ex-derived { padding-left: 1.1rem; font-style: italic; color: var(--muted); }
 .ex-derived-of { color: var(--faint); font-style: normal; }
-.ex-tag { margin-left: auto; font-size: 0.62rem; font-style: normal; color: var(--faint); border: 1px dashed var(--border); border-radius: 4px; padding: 0 0.3rem; }
-.ex-chip.ex-derived { border-style: dashed; font-style: italic; }
-.ex-icon { flex: none; width: 1.8rem; font-size: 0.64rem; font-weight: 700; color: var(--faint); text-align: center; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
-.ex-icon.ex-measure { color: var(--measure); font-size: 0.82rem; }
-.ex-main { display: flex; flex-direction: column; padding: 0.6rem 0.8rem; gap: 0.5rem; min-width: 0; }
-.ex-shelves { display: grid; gap: 0.3rem; }
-.ex-shelf { display: grid; grid-template-columns: 4.6rem minmax(0, 1fr); align-items: center; gap: 0.5rem; }
-.ex-shelf-name { font-size: 0.7rem; color: var(--faint); text-transform: uppercase; letter-spacing: 0.06em; font-weight: 600; }
-.ex-drop { display: flex; flex-wrap: wrap; gap: 0.3rem; min-height: 2rem; padding: 0.22rem; border: 1px dashed var(--border); border-radius: var(--radius-sm); align-items: center; transition: border-color 0.15s, background 0.15s; }
-.ex-drop.ex-over { border-color: var(--muted); background: var(--hover-soft); }
-.ex-hint { font-size: 0.74rem; color: var(--faint); padding: 0 0.3rem; }
-.ex-chip { display: inline-flex; align-items: center; border: 1px solid var(--border); background: var(--raised); border-radius: 999px; font-size: 0.76rem; cursor: grab; }
-.ex-chip.ex-measure { border-color: var(--measure); background: color-mix(in srgb, var(--measure) 14%, var(--raised)); }
-.ex-chip-icon { color: var(--measure); font-weight: 700; margin-right: 0.3rem; }
+.ex-tag { margin-left: auto; font-size: 11px; font-style: normal; color: var(--faint); }
+/* Between a table's columns and its measures. */
+.ex-sep { height: 1px; margin: 0.2rem 0.4rem 0.2rem 0.8rem; background: var(--border); }
+/* A field's type, in its pill's colour: a column's, or a measure's. */
+.ex-icon { flex: none; width: 1.7rem; display: inline-flex; justify-content: center; font-size: 11px; font-weight: 700; font-style: normal; color: var(--dim-ink); }
+.ex-icon.ex-measure { color: var(--fig-ink); font-size: 13px; }
+/* The page's icons (explore.js icon): line drawings in the text's colour. */
+.ex-ico { width: 16px; height: 16px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.3; stroke-linecap: round; stroke-linejoin: round; }
+.ex-icon .ex-ico { width: 13px; height: 13px; }
+
+/* The tools, then the Filters card and the Marks card (the mark, and Values). */
+.ex-side { display: flex; flex-direction: column; overflow: auto; }
+.ex-toolbar { display: flex; flex: none; align-items: center; gap: 0.1rem; padding: 0.3rem 0.4rem; border-bottom: 1px solid var(--border); }
+.ex-tool { display: inline-flex; align-items: center; justify-content: center; gap: 0.3rem; height: 26px; min-width: 26px; padding: 0 0.3rem; font: inherit; font-size: 12px; color: var(--muted); background: none; border: 1px solid transparent; border-radius: var(--radius-sm); cursor: pointer; }
+.ex-tool:hover, .ex-tool:focus-visible { color: var(--text); background: var(--hover); outline: none; }
+.ex-tool[aria-pressed="true"] { color: var(--text); background: var(--hover); border-color: var(--border); }
+.ex-tool-text { margin-left: auto; }
+.ex-card { display: flex; flex: none; flex-direction: column; gap: 0.35rem; padding: 0.45rem 0.5rem 0.6rem; border-bottom: 1px solid var(--border); }
+.ex-card-name, .ex-card-sub, .ex-shelf-name { margin: 0; font-size: 11px; font-weight: 600; color: var(--muted); }
+.ex-card-sub { margin-top: 0.25rem; }
+.ex-mark-pick { display: flex; align-items: center; gap: 0.45rem; width: 100%; height: 26px; padding: 0 0.4rem; font: inherit; font-size: 12px; text-align: left; color: var(--text); background: var(--input-bg); border: 1px solid var(--border); border-radius: var(--radius-sm); cursor: pointer; }
+.ex-mark-pick > span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ex-pop.ex-mark-menu { width: 200px; max-height: 70vh; overflow: auto; padding: 0.3rem; gap: 0.05rem; }
+.ex-mark { display: flex; align-items: center; gap: 0.5rem; width: 100%; padding: 0.25rem 0.45rem; font: inherit; font-size: 12px; text-align: left; color: var(--text); background: none; border: none; border-radius: var(--radius-sm); cursor: pointer; }
+.ex-mark:hover, .ex-mark:focus-visible { background: var(--hover); outline: none; }
+.ex-mark.active { background: var(--hover); font-weight: 700; }
+.ex-mark .ex-ico, .ex-mark-pick .ex-ico { color: var(--muted); }
+
+/* Columns and Rows, a line each over the view. */
+.ex-main { display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--bg); }
+.ex-shelves { flex: none; }
+.ex-shelf { display: grid; grid-template-columns: 6.2rem minmax(0, 1fr); align-items: stretch; min-height: 30px; border-bottom: 1px solid var(--border); }
+.ex-shelf-name { display: flex; align-items: center; gap: 0.4rem; padding: 0 0.6rem; background: var(--card); border-right: 1px solid var(--border); }
+.ex-drop { display: flex; flex-wrap: wrap; align-items: center; gap: 0.25rem; min-height: 28px; padding: 0.2rem 0.4rem; transition: background 0.15s; }
+.ex-card .ex-drop { flex-direction: column; flex-wrap: nowrap; align-items: stretch; min-height: 2.6rem; padding: 0.2rem; background: var(--input-bg); border: 1px solid var(--border); border-radius: var(--radius-sm); }
+.ex-drop.ex-over, .ex-ghost.ex-over { background: color-mix(in srgb, var(--accent) 18%, transparent); }
+.ex-hint { font-size: 12px; color: var(--faint); padding: 0 0.2rem; }
+/* A pill: solid, a column's colour or a figure's. */
+.ex-chip { display: inline-flex; align-items: center; min-width: 0; height: 20px; font-size: 12px; color: var(--on-pill); background: var(--pill-dim); border-radius: var(--radius-sm); cursor: grab; }
+.ex-chip.ex-measure { background: var(--pill-fig); }
 .ex-chip.ex-missing { opacity: 0.5; text-decoration: line-through; }
-.ex-chip button { background: none; border: none; color: var(--text); font: inherit; cursor: pointer; }
-.ex-chip-name { padding: 0.18rem 0.2rem 0.18rem 0.65rem; }
-.ex-chip .ex-x { padding: 0.18rem 0.55rem 0.18rem 0.3rem; color: var(--faint); }
-.ex-chip .ex-x:hover { color: var(--text); }
-.ex-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 0.45rem; }
-.ex-tools .btn-explore { padding: 0.28rem 0.75rem; font-size: 0.76rem; }
-.ex-marks { display: flex; flex-wrap: wrap; gap: 0.1rem; padding: 0.15rem; border: 1px solid var(--hairline); border-radius: 999px; }
-.ex-mark { padding: 0.22rem 0.6rem; font-size: 0.74rem; font-weight: 600; color: var(--muted); background: none; border: 1px solid transparent; border-radius: 999px; cursor: pointer; }
-.ex-mark:hover { color: var(--text); }
-.ex-mark.active { color: var(--on-accent); background: var(--accent); }
-.ex-mark.ex-auto { border-color: var(--muted); color: var(--text); }
-.ex-check { display: inline-flex; align-items: center; gap: 0.3rem; font-size: 0.78rem; color: var(--muted); }
-.ex-info { font-size: 0.76rem; color: var(--muted); margin-left: auto; }
-.ex-error { color: var(--bad); font-size: 0.8rem; }
+.ex-chip.ex-derived { font-style: italic; }
+.ex-chip button { height: 100%; background: none; border: none; color: inherit; font: inherit; cursor: pointer; }
+.ex-chip-name { display: inline-flex; flex: 1 1 auto; align-items: center; gap: 0.2rem; min-width: 0; padding: 0 0.15rem 0 0.5rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
+.ex-chip-name .ex-ico { width: 11px; height: 11px; }
+.ex-chip .ex-x { flex: none; padding: 0 0.4rem 0 0.25rem; opacity: 0.75; }
+.ex-chip .ex-x:hover { opacity: 1; }
+.ex-chip:focus-within { outline: 2px solid var(--text); outline-offset: 1px; }
+
+/* The status line: what the view holds, and how many of its rows are kept. */
+.ex-status { grid-column: 1 / -1; display: flex; align-items: center; justify-content: space-between; gap: 0.8rem; min-height: 26px; padding: 0.1rem 0.6rem; background: var(--card); border-top: 1px solid var(--border); }
+.ex-status select { flex: none; padding: 0.05rem 0.3rem; color: var(--muted); background: none; border-color: transparent; }
+.ex-status select:hover, .ex-status select:focus-visible { color: var(--text); border-color: var(--border); }
+.ex-info { min-width: 0; font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ex-error { color: var(--bad); font-size: 12px; }
 .ex-info.ex-warn { color: var(--warn, var(--bad)); }
 .ex-empty.ex-error { white-space: pre-wrap; overflow-wrap: anywhere; }
-.ex-out { flex: 1 1 auto; min-height: 340px; display: flex; flex-direction: column; position: relative; }
+
+/* The view, and Visual's Format pane at its right. `--surface`: what a table's fixed cells stand on. */
+.ex-work { display: flex; align-items: stretch; flex: 1 1 0; min-width: 0; min-height: 0; }
+.ex-work > .ex-out { flex: 1 1 auto; min-width: 0; }
+.ex-work > .ex-format { position: static; max-height: none; margin: 0; overflow: auto; border: 0; border-left: 1px solid var(--border); border-radius: 0; box-shadow: none; }
+.ex-out { --surface: var(--bg); position: relative; display: flex; flex-direction: column; min-height: 0; padding: 0.5rem 0.6rem; }
 /* A query running: the last view dimmed under a spinner and how long it has taken. */
 .ex-out.ex-running > .ex-table, .ex-out.ex-running > .ex-chart { opacity: 0.35; transition: opacity 0.2s; }
-.ex-busy { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; gap: 0.6rem; z-index: 2;
-  font-size: 0.9rem; font-weight: 600; color: var(--text); pointer-events: none; }
+.ex-busy { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; gap: 0.6rem; z-index: 3;
+  font-size: 13px; font-weight: 600; color: var(--text); pointer-events: none; }
 .ex-busy[hidden] { display: none; }
 .ex-spinner { width: 1.3rem; height: 1.3rem; border-radius: 50%; border: 2.5px solid var(--border); border-top-color: var(--accent); animation: ex-spin 0.8s linear infinite; }
 @keyframes ex-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .ex-spinner { animation-duration: 2.4s; } }
-.ex-table { overflow: auto; flex: 1 1 0; min-height: 0; max-height: 65vh; }
-.ex-chart { flex: 1 1 0; min-height: 340px; }
+.ex-table { overflow: auto; flex: 1 1 0; min-height: 0; }
+.ex-chart { flex: 1 1 0; min-height: 0; }
 .ex-table[hidden], .ex-chart[hidden] { display: none; }
-.ex-empty { color: var(--faint); font-size: 0.85rem; padding: 3rem 1rem; text-align: center; }
+.ex-empty { color: var(--faint); font-size: 13px; padding: 3rem 1rem; text-align: center; }
+/* Nothing on the shelves: where Columns and Rows are, in the view, to drop a field on. */
+.ex-blank { display: grid; grid-template-columns: 2.2rem minmax(0, 1fr); grid-template-rows: 2.2rem minmax(0, 1fr); height: 100%; min-height: 240px; border: 1px solid var(--border); }
+.ex-ghost { display: flex; align-items: center; justify-content: center; font-size: 12px; color: var(--faint); background: var(--card); white-space: nowrap; }
+.ex-ghost-cols { grid-column: 2; grid-row: 1; border-bottom: 1px solid var(--border); }
+.ex-ghost-rows { grid-column: 1; grid-row: 2; border-right: 1px solid var(--border); writing-mode: vertical-rl; transform: rotate(180deg); }
+.ex-blank > .ex-empty { grid-column: 2; grid-row: 2; align-self: center; }
+/* The pivot's table: its header on a band, a line between its row names and its figures, and, with
+   one field on Rows, that field's values kept in view when the table is scrolled sideways. */
 .ex-pivot th, .ex-pivot td { white-space: nowrap; }
-.ex-pivot tbody th { text-align: left; font-weight: 500; color: var(--text); padding: 0.35rem 0.7rem; border-bottom: 1px solid var(--row-line); position: static; background: none; font-size: 0.8rem; }
+.ex-pivot thead { position: sticky; top: 0; z-index: 2; }
+.ex-pivot thead th { position: static; color: var(--text); background: var(--band); }
+.ex-pivot tbody th { text-align: left; font-weight: 500; color: var(--text); padding: 0.35rem 0.7rem; border-bottom: 1px solid var(--row-line); position: static; background: none; font-size: 12px; }
 .ex-pivot tbody th.ex-repeat { color: transparent; }
 .ex-pivot .ex-num { text-align: right; }
-.ex-pivot .ex-colhead { text-align: center; border-left: 1px solid var(--row-line); }
-.ex-pivot thead th { position: static; }
-.ex-pivot thead { position: sticky; top: 0; z-index: 1; background: var(--card); }
-.ex-pivot tr.ex-total td, .ex-pivot tr.ex-total th { font-weight: 700; border-top: 1px solid var(--border); }
-.ex-pop { position: fixed; z-index: 950; width: 300px; background: var(--raised); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow); padding: 0.7rem; font-size: 0.8rem; display: flex; flex-direction: column; gap: 0.5rem; }
-.ex-pop-head { font-weight: 700; font-size: 0.78rem; }
+.ex-pivot .ex-colhead { text-align: center; border-left: 1px solid var(--border); }
+.ex-pivot tbody th:has(+ td), .ex-pivot thead .ex-rowhead:has(+ th:not(.ex-rowhead)) { border-right: 1px solid var(--border); }
+.ex-pivot.ex-stick tbody th { position: sticky; left: 0; z-index: 1; background: var(--surface, var(--card)); }
+.ex-pivot.ex-stick tr.rp-on > th { background: linear-gradient(color-mix(in srgb, var(--accent) 22%, transparent) 0 0), var(--surface, var(--card)); }
+.ex-pivot tr.ex-total td, .ex-pivot tr.ex-total th { font-weight: 700; border-top: 1px solid var(--border); background: var(--band); }
+.ex-pop { position: fixed; z-index: 950; width: 300px; background: var(--raised); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); padding: 0.7rem; font-size: 12px; display: flex; flex-direction: column; gap: 0.5rem; }
+.ex-pop-head { font-weight: 700; font-size: 12px; }
 .ex-pop-body, .ex-pop-body > div { display: flex; flex-direction: column; gap: 0.45rem; }
 .ex-pop label { display: flex; align-items: center; gap: 0.45rem; color: var(--muted); }
 .ex-pop label input[type=number], .ex-pop label input[type=date] { flex: 1; min-width: 0; }
 .ex-pop .ex-values { max-height: 240px; overflow: auto; gap: 0.1rem; }
 .ex-values label { color: var(--text); }
 .ex-pop .ex-row { flex-direction: row; align-items: center; }
-.ex-row .btn-explore, .ex-pop-foot .btn-explore { padding: 0.25rem 0.7rem; font-size: 0.74rem; }
+.ex-row .btn-explore, .ex-pop-foot .btn-explore { padding: 0.25rem 0.7rem; font-size: 12px; }
 .ex-pop-foot { display: flex; justify-content: flex-end; gap: 0.4rem; }
 /* A summarised column's summaries: one button each, the current one lit. */
 .ex-aggs { display: flex; flex-direction: column; gap: 0.1rem; }
 .ex-agg { text-align: left; font: inherit; color: var(--text); background: none; border: none; border-radius: var(--radius-sm); padding: 0.32rem 0.55rem; cursor: pointer; }
 .ex-agg:hover, .ex-agg:focus-visible { background: var(--hover); outline: none; }
-.ex-agg.active { color: var(--on-accent); background: var(--accent); }
+.ex-agg.active { background: var(--hover); font-weight: 700; }
 
 /* A narrow panel (Claude open beside it) keeps the fields beside the view, in a slimmer
    column; only a very narrow one stacks them, and then the list is given a height of its
    own — stacked with none, its flex: 1 1 0 collapsed it to the search box. */
 @media (max-width: 900px) {
   .model-page { grid-template-columns: 1fr; }
-  .ex { grid-template-columns: 190px minmax(0, 1fr); }
+  .ex { grid-template-columns: 180px 170px minmax(0, 1fr); }
 }
 /* Each page's actions, at the right of the subtab bar. */
 .explore-actions { display: flex; flex: none; gap: 0.4rem; margin-left: auto; }
@@ -219,36 +272,36 @@ section.modelOpen #chartBtn { display: none; }
 /* Show plan (profile.js): the profile, and the plan's tree. */
 .explore-plan { flex: 1 1 auto; min-height: 420px; display: flex; padding: 0 var(--gutter) 1rem; }
 .explore-plan[hidden], .explore-table-wrap[hidden] { display: none; }
-.plan-frame { flex: 1 1 auto; width: 100%; min-height: 420px; border: 1px solid var(--hairline); border-radius: 8px; background: var(--card); }
+.plan-frame { flex: 1 1 auto; width: 100%; min-height: 420px; border: 1px solid var(--hairline); border-radius: var(--radius); background: var(--card); }
 .pf-view { flex: 1 1 auto; display: flex; flex-direction: column; min-width: 0; gap: 0.6rem; }
-.pf-tabs { display: flex; gap: 0.15rem; padding: 0.2rem; background: var(--card); border: 1px solid var(--hairline); border-radius: 999px; align-self: flex-start; }
-.pf-tab { padding: 0.28rem 0.85rem; font-size: 0.78rem; font-weight: 600; color: var(--muted); background: none; border: none; border-radius: 999px; cursor: pointer; }
+.pf-tabs { display: flex; gap: 0.15rem; padding: 0.2rem; background: var(--card); border: 1px solid var(--hairline); border-radius: var(--radius-sm); align-self: flex-start; }
+.pf-tab { padding: 0.28rem 0.85rem; font-size: 12px; font-weight: 600; color: var(--muted); background: none; border: none; border-radius: var(--radius-sm); cursor: pointer; }
 .pf-tab:hover { color: var(--text); }
 .pf-tab.active { color: var(--on-accent); background: var(--accent); }
 .pf-sql { position: relative; align-self: flex-start; max-width: min(100%, 100ch); box-sizing: border-box; background: var(--card); border: 1px solid var(--hairline); border-radius: var(--radius); padding: 0.7rem 0.85rem; }
 .pf-sql .sm-plan { white-space: pre-wrap; overflow-wrap: anywhere; padding-right: 4.5rem; }
 .pf-copy { position: absolute; top: 0.5rem; right: 0.5rem; background: var(--card); }
 .pf-body { flex: 1 1 auto; min-height: 0; overflow: auto; display: flex; flex-direction: column; }
-.pf-wait { display: flex; align-items: center; gap: 0.7rem; padding: 2rem 0.5rem; font-size: 0.95rem; font-weight: 600; color: var(--text); }
+.pf-wait { display: flex; align-items: center; gap: 0.7rem; padding: 2rem 0.5rem; font-size: 13px; font-weight: 600; color: var(--text); }
 .pf-wait-time { font-variant-numeric: tabular-nums; color: var(--muted); }
 .pf { display: flex; flex-direction: column; gap: 1rem; }
 .pf-tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 0.5rem; }
 .pf-tile { background: var(--card); border: 1px solid var(--hairline); border-radius: var(--radius); padding: 0.55rem 0.75rem; }
-.pf-label { font-size: 0.68rem; color: var(--faint); text-transform: uppercase; letter-spacing: 0.06em; font-weight: 600; }
+.pf-label { font-size: 11px; color: var(--faint); text-transform: uppercase; letter-spacing: 0.06em; font-weight: 600; }
 .pf-value { font-size: 1.15rem; font-weight: 700; font-variant-numeric: tabular-nums; margin-top: 0.15rem; }
-.pf-sub { font-size: 0.72rem; color: var(--muted); }
-.pf-section h4 { font-size: 0.8rem; font-weight: 700; margin: 0 0 0.4rem; display: flex; align-items: baseline; gap: 0.6rem; flex-wrap: wrap; }
-.pf-note { font-size: 0.7rem; font-weight: 400; color: var(--faint); }
-.pf-legend { display: flex; flex-wrap: wrap; gap: 0.9rem; font-size: 0.72rem; color: var(--muted); margin-bottom: 0.4rem; }
+.pf-sub { font-size: 11px; color: var(--muted); }
+.pf-section h4 { font-size: 12px; font-weight: 700; margin: 0 0 0.4rem; display: flex; align-items: baseline; gap: 0.6rem; flex-wrap: wrap; }
+.pf-note { font-size: 11px; font-weight: 400; color: var(--faint); }
+.pf-legend { display: flex; flex-wrap: wrap; gap: 0.9rem; font-size: 11px; color: var(--muted); margin-bottom: 0.4rem; }
 .pf-legend > span { display: inline-flex; align-items: center; gap: 0.3rem; }
 .pf-dot { display: inline-block; width: 0.6rem; height: 0.6rem; border-radius: 2px; margin-right: 0.35rem; flex: none; }
 .pf-gantt { border: 1px solid var(--hairline); border-radius: var(--radius); max-height: 46vh; overflow: auto; }
-.pf-row { display: grid; grid-template-columns: minmax(180px, 34%) minmax(0, 1fr) 4.5rem; align-items: center; gap: 0.6rem; padding: 0.18rem 0.6rem; border-bottom: 1px solid var(--row-line); font-size: 0.76rem; }
+.pf-row { display: grid; grid-template-columns: minmax(180px, 34%) minmax(0, 1fr) 4.5rem; align-items: center; gap: 0.6rem; padding: 0.18rem 0.6rem; border-bottom: 1px solid var(--row-line); font-size: 12px; }
 .pf-row:hover { background: var(--hover-soft); }
 .pf-row[hidden] { display: none; }
-.pf-fold { margin-left: auto; padding: 0.2rem 0.7rem; font-size: 0.72rem; }
+.pf-fold { margin-left: auto; padding: 0.2rem 0.7rem; font-size: 11px; }
 .pf-name { display: flex; align-items: center; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: 600; }
-.pf-detail { margin-left: 0.5rem; font-weight: 400; color: var(--faint); overflow: hidden; text-overflow: ellipsis; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.7rem; }
+.pf-detail { margin-left: 0.5rem; font-weight: 400; color: var(--faint); overflow: hidden; text-overflow: ellipsis; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11px; }
 .pf-track { position: relative; height: 0.8rem; background: var(--hover-soft); border-radius: 2px; }
 .pf-bar { position: absolute; top: 0; bottom: 0; border-radius: 2px; }
 .pf-ms { text-align: right; font-variant-numeric: tabular-nums; color: var(--muted); }
@@ -256,11 +309,14 @@ section.modelOpen #chartBtn { display: none; }
 .pf-num { text-align: right; font-variant-numeric: tabular-nums; }
 .pf-share { display: inline-block; min-width: 3.2rem; background: linear-gradient(to right, color-mix(in srgb, var(--accent) 35%, transparent) var(--w), transparent var(--w)); border-radius: 2px; padding: 0 0.3rem; }
 .pf-off { color: var(--bad); font-weight: 600; }
-.pf-what { max-width: 32rem; overflow: hidden; text-overflow: ellipsis; color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.72rem; }
+.pf-what { max-width: 32rem; overflow: hidden; text-overflow: ellipsis; color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11px; }
 
 @media (max-width: 560px) {
-  .ex { grid-template-columns: 1fr; min-height: 0; }
-  .ex-fields { height: 40vh; }
+  .explore-page { display: block; }
+  .ex { grid-template-columns: 1fr; grid-template-rows: auto; }
+  .ex-fields { height: 34vh; }
+  .ex-fields, .ex-side { border-right: 0; border-bottom: 1px solid var(--border); }
+  .ex-main { min-height: 420px; }
 }
 
 /* The Report (report.js): its tiles in a grid, figures, charts and tables. */
@@ -279,10 +335,10 @@ section.modelOpen #chartBtn { display: none; }
 .rp-body .rp-slicer { flex: 1; min-height: 0; }
 .rp-body .rp-slicer .ex-values, .rp-body .slicer-pills { max-height: none; flex: 1; min-height: 0; }
 /* Its ◢: dragged, or the arrow keys. */
-.rp-resize { position: absolute; right: 2px; bottom: 2px; background: none; border: none; color: var(--faint); font-size: 0.7rem; line-height: 1; padding: 0.15rem; cursor: nwse-resize; border-radius: var(--radius-sm); opacity: 0.6; touch-action: none; }
+.rp-resize { position: absolute; right: 2px; bottom: 2px; background: none; border: none; color: var(--faint); font-size: 11px; line-height: 1; padding: 0.15rem; cursor: nwse-resize; border-radius: var(--radius-sm); opacity: 0.6; touch-action: none; }
 .rp-tile:hover .rp-resize, .rp-resize:focus-visible { opacity: 1; }
 .rp-resize:hover, .rp-resize:focus-visible { color: var(--text); background: var(--hover-soft); }
-.rp-tile h2 { margin: 0; font-size: 0.85rem; font-weight: 600; color: var(--muted); }
+.rp-tile h2 { margin: 0; font-size: 13px; font-weight: 600; color: var(--muted); }
 .rp-head { display: flex; align-items: center; gap: 0.5rem; }
 .rp-head h2 { flex: 1; min-width: 0; }
 .rp-head h2[title] { cursor: text; }
@@ -292,11 +348,11 @@ section.modelOpen #chartBtn { display: none; }
 .rp-tile:hover .rp-tool, .rp-tile:focus-within .rp-tool { opacity: 1; }
 .rp-tool:hover, .rp-tool:focus-visible { color: var(--text); background: var(--hover-soft); }
 .rp-grip { cursor: grab; padding: 0.1rem 0.3rem; }
-.rp-rename { flex: 1; min-width: 0; font: inherit; font-size: 0.85rem; font-weight: 600; color: var(--text); background: var(--input-bg); border: 1px solid var(--accent); border-radius: var(--radius-sm); padding: 0.05rem 0.35rem; }
+.rp-rename { flex: 1; min-width: 0; font: inherit; font-size: 13px; font-weight: 600; color: var(--text); background: var(--input-bg); border: 1px solid var(--accent); border-radius: var(--radius-sm); padding: 0.05rem 0.35rem; }
 .rp-tile.rp-dragging, .rp-tile.rp-resizing { outline: 2px dashed var(--accent); outline-offset: -2px; user-select: none; z-index: 1; }
 .rp-grip { touch-action: none; }
 /* A slicer: its column's values to tick. */
-.rp-slicer { display: flex; flex-direction: column; gap: 0.4rem; font-size: 0.82rem; }
+.rp-slicer { display: flex; flex-direction: column; gap: 0.4rem; font-size: 13px; }
 .rp-slicer-bar { display: flex; gap: 0.4rem; }
 .rp-slicer-bar input { flex: 1; min-width: 0; }
 .rp-slicer .ex-values { display: flex; flex-direction: column; gap: 0.1rem; max-height: 240px; overflow: auto; }
@@ -304,17 +360,17 @@ section.modelOpen #chartBtn { display: none; }
 /* A slicer's other styles (explore.js slicerView): buttons, a dropdown of the list, a range. */
 .rp-slicer .ex-values label .slicer-value { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .slicer-figure { color: var(--muted); font-variant-numeric: tabular-nums; }
-.slicer-pills { display: flex; flex-wrap: wrap; gap: 0.35rem; max-height: 240px; overflow: auto; font-size: 0.82rem; }
-.slicer-pill { background: var(--raised); color: var(--text); border: 1px solid var(--border); border-radius: 999px; font: inherit; padding: 0.22rem 0.75rem; cursor: pointer; }
+.slicer-pills { display: flex; flex-wrap: wrap; gap: 0.35rem; max-height: 240px; overflow: auto; font-size: 13px; }
+.slicer-pill { background: var(--raised); color: var(--text); border: 1px solid var(--border); border-radius: var(--radius-sm); font: inherit; padding: 0.22rem 0.75rem; cursor: pointer; }
 .slicer-pill:hover { background: var(--hover-soft); }
 .slicer-pill[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
-.slicer-drop { width: 100%; text-align: left; background: var(--input-bg); color: var(--text); border: 1px solid var(--border); border-radius: var(--radius-sm); font: inherit; font-size: 0.82rem; padding: 0.35rem 0.6rem; cursor: pointer; }
+.slicer-drop { width: 100%; text-align: left; background: var(--input-bg); color: var(--text); border: 1px solid var(--border); border-radius: var(--radius-sm); font: inherit; font-size: 13px; padding: 0.35rem 0.6rem; cursor: pointer; }
 .slicer-range { flex-direction: row; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
 .slicer-range label { display: inline-flex; align-items: center; gap: 0.35rem; color: var(--muted); }
 /* Visual's slicer: its styles over it, in the result area. */
 .slicer-view { display: flex; flex-direction: column; gap: 0.6rem; max-width: 420px; padding: 0.6rem 0; }
 .slicer-styles { align-self: flex-start; padding: 0.12rem; }
-.slicer-styles .subtab { padding: 0.16rem 0.65rem; font-size: 0.74rem; }
+.slicer-styles .subtab { padding: 0.16rem 0.65rem; font-size: 12px; }
 .slicer-styles .subtab:disabled { opacity: 0.45; cursor: default; }
 /* A pivot tile's table: Pivot's own (explore.js), its rows picked by a click. */
 .rp-pivot { overflow: auto; max-height: 420px; }
@@ -332,11 +388,7 @@ section.modelOpen #chartBtn { display: none; }
 .card-S .card-figure b { font-size: clamp(1rem, 30cqh, 2rem); }
 .card-L .card-figure b { font-size: clamp(1.8rem, 60cqh, 4.4rem); }
 .ex-banded :where(tbody tr:nth-child(even) > *) { background-color: var(--hover-soft); }
-/* Visual's Format pane, at the right of the view. */
-.ex-work { display: flex; align-items: flex-start; gap: var(--gap); min-width: 0; min-height: 0; flex: 1 1 auto; }
-.ex-work > .ex-out { flex: 1 1 auto; min-width: 0; }
-.ex-work > .ex-format { margin: 0; position: static; max-height: 70vh; }
-.rp-pane-head strong { font-size: 0.85rem; }
+.rp-pane-head strong { font-size: 13px; }
 .rp-pane-tile { border-top: 1px solid var(--row-line); padding-top: 0.35rem; display: flex; flex-direction: column; gap: 0.2rem; }
 .card-many .card-figure b { font-size: clamp(1.2rem, 30cqh, 2.4rem); }
 .card-figure span { color: var(--muted); font-size: 0.78rem; text-align: center; }
@@ -351,7 +403,7 @@ section.modelOpen #chartBtn { display: none; }
 .rp-kpi span { display: block; color: var(--muted); font-size: 0.78rem; }
 .rp-kpi b { font-size: 1.7rem; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--text); }
 .rp-table { overflow: auto; max-height: 420px; }
-.rp-table table { border-collapse: collapse; width: 100%; font-size: 0.82rem; }
+.rp-table table { border-collapse: collapse; width: 100%; font-size: 13px; }
 .rp-table th { text-align: left; color: var(--muted); font-weight: 600; border-bottom: 1px solid var(--border); padding: 0.35rem 0.6rem; position: sticky; top: 0; background: var(--card); }
 .rp-table td { border-bottom: 1px solid var(--row-line); padding: 0.3rem 0.6rem; }
 .rp-table td.num { text-align: right; font-variant-numeric: tabular-nums; }
@@ -360,9 +412,9 @@ section.modelOpen #chartBtn { display: none; }
 .rp-table tr.rp-pick:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .rp-table tr.rp-on td { background: color-mix(in srgb, var(--accent) 22%, transparent); }
 /* Cross filtering's picks, above the tiles: one chip each, its ✕ clears it. */
-.rp-filters { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; padding: var(--gap) var(--gutter) 0; font-size: 0.8rem; color: var(--muted); }
+.rp-filters { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; padding: var(--gap) var(--gutter) 0; font-size: 12px; color: var(--muted); }
 .rp-filters[hidden] { display: none; }
-.rp-chip { display: inline-flex; align-items: center; border: 1px solid var(--accent); background: color-mix(in srgb, var(--accent) 14%, var(--raised)); border-radius: 999px; color: var(--text); }
+.rp-chip { display: inline-flex; align-items: center; border: 1px solid var(--accent); background: color-mix(in srgb, var(--accent) 14%, var(--raised)); border-radius: var(--radius-sm); color: var(--text); }
 .rp-chip > span { padding: 0.18rem 0.2rem 0.18rem 0.65rem; }
 .rp-x { background: none; border: none; color: var(--faint); font: inherit; cursor: pointer; padding: 0.18rem 0.55rem 0.18rem 0.3rem; }
 .rp-x:hover, .rp-x:focus-visible { color: var(--text); }
@@ -370,40 +422,40 @@ section.modelOpen #chartBtn { display: none; }
    tile's grip over another marks it too. */
 /* The report's filter bar (view.js drawBar), over its pages' names: each filter's name, then how
    it is picked; + Filter adds one. */
-.rp-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 1.1rem; padding: var(--gap) var(--gutter) 0; font-size: 0.8rem; }
+.rp-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 1.1rem; padding: var(--gap) var(--gutter) 0; font-size: 12px; }
 .rp-bar[hidden] { display: none; }
 .rp-bar-item { display: inline-flex; align-items: center; gap: 0.4rem; }
-.rp-bar-label { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--faint); font-weight: 600; }
+.rp-bar-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--faint); font-weight: 600; }
 .rp-bar select, .rp-bar input[type=date], .rp-bar-pick { font: inherit; color: var(--text); background: var(--input-bg); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 0.2rem 0.45rem; }
 .rp-bar-pick { cursor: pointer; }
 .rp-bar-dates { display: inline-flex; align-items: center; gap: 0.3rem; flex-wrap: wrap; }
 .rp-bar-to { color: var(--faint); }
-.rp-bar-preset { background: none; border: 1px solid var(--border); border-radius: 999px; color: var(--muted); font: inherit; font-size: 0.75rem; padding: 0.1rem 0.55rem; cursor: pointer; }
+.rp-bar-preset { background: none; border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--muted); font: inherit; font-size: 12px; padding: 0.1rem 0.55rem; cursor: pointer; }
 .rp-bar-preset:hover, .rp-bar-preset:focus-visible { color: var(--text); border-color: var(--muted); }
 .rp-bar-x, .rp-bar-add { background: none; border: none; color: var(--faint); font: inherit; cursor: pointer; padding: 0.1rem 0.35rem; border-radius: var(--radius); }
 .rp-bar-x:hover, .rp-bar-add:hover, .rp-bar-x:focus-visible, .rp-bar-add:focus-visible { color: var(--text); background: var(--hover-soft); }
 .rp-bar-form { display: inline-flex; align-items: center; gap: 0.4rem; }
-.rp-bar-pop { position: fixed; z-index: 20; width: 280px; max-height: 60vh; display: flex; flex-direction: column; gap: 0.4rem; padding: 0.6rem; background: var(--raised); border: 1px solid var(--border); border-radius: var(--radius-sm); box-shadow: var(--shadow); font-size: 0.8rem; }
+.rp-bar-pop { position: fixed; z-index: 20; width: 280px; max-height: 60vh; display: flex; flex-direction: column; gap: 0.4rem; padding: 0.6rem; background: var(--raised); border: 1px solid var(--border); border-radius: var(--radius-sm); box-shadow: var(--shadow); font-size: 12px; }
 .rp-bar-pop input[type=search] { font: inherit; color: var(--text); background: var(--input-bg); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 0.25rem 0.45rem; }
 .rp-bar-values { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 0.1rem; }
 .rp-bar-values label { display: flex; align-items: center; gap: 0.45rem; color: var(--text); }
 .rp-bar-pop-foot { display: flex; justify-content: flex-end; gap: 0.4rem; }
 .rp-pane-values { display: flex; flex-direction: column; gap: 0.25rem; max-height: 220px; overflow: auto; padding-left: calc(88px + 0.5rem); }
-.rp-pages { display: flex; flex-wrap: wrap; align-items: center; gap: 0.3rem; padding: var(--gap) var(--gutter) 0; font-size: 0.8rem; }
+.rp-pages { display: flex; flex-wrap: wrap; align-items: center; gap: 0.3rem; padding: var(--gap) var(--gutter) 0; font-size: 12px; }
 .rp-pages[hidden], .rp-page-view[hidden] { display: none; }
 .rp-page-tabs { display: flex; flex-wrap: wrap; gap: 0.3rem; }
-.rp-page { display: inline-flex; align-items: center; border: 1px solid transparent; border-radius: 999px; }
+.rp-page { display: inline-flex; align-items: center; border: 1px solid transparent; border-radius: var(--radius-sm); }
 .rp-page.active { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, var(--raised)); }
 .rp-page.rp-drop { outline: 2px dashed var(--accent); outline-offset: 1px; }
-.rp-page-name { padding: 0.2rem 0.8rem; font: inherit; font-weight: 600; color: var(--muted); background: none; border: none; border-radius: 999px; cursor: pointer; }
+.rp-page-name { padding: 0.2rem 0.8rem; font: inherit; font-weight: 600; color: var(--muted); background: none; border: none; border-radius: var(--radius-sm); cursor: pointer; }
 .rp-page.active .rp-page-name, .rp-page-name:hover { color: var(--text); }
 .rp-page-name:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .rp-page-x { background: none; border: none; color: var(--faint); font: inherit; cursor: pointer; padding: 0.2rem 0.55rem 0.2rem 0; margin-left: -0.45rem; opacity: 0; }
 .rp-page:hover .rp-page-x, .rp-page:focus-within .rp-page-x { opacity: 1; }
 .rp-page-x:hover, .rp-page-x:focus-visible { color: var(--text); }
-.rp-page-add { background: none; border: none; color: var(--muted); font: inherit; font-size: 0.95rem; line-height: 1; cursor: pointer; padding: 0.15rem 0.5rem; border-radius: var(--radius); }
+.rp-page-add { background: none; border: none; color: var(--muted); font: inherit; font-size: 13px; line-height: 1; cursor: pointer; padding: 0.15rem 0.5rem; border-radius: var(--radius); }
 .rp-page-add:hover, .rp-page-add:focus-visible { color: var(--text); background: var(--hover-soft); }
-.rp-page-rename { font: inherit; font-weight: 600; color: var(--text); background: var(--input-bg); border: 1px solid var(--accent); border-radius: 999px; padding: 0.15rem 0.7rem; }
+.rp-page-rename { font: inherit; font-weight: 600; color: var(--text); background: var(--input-bg); border: 1px solid var(--accent); border-radius: var(--radius-sm); padding: 0.15rem 0.7rem; }
 .rp-page-ask { display: inline-flex; align-items: center; gap: 0.4rem; margin-left: 0.6rem; color: var(--text); }
 .rp-tile.rp-leaving { opacity: 0.45; }
 /* A tile's format (report.js styleTile): no title (its tools stay), the title's size, a card's
@@ -418,10 +470,10 @@ section.modelOpen #chartBtn { display: none; }
 /* The format pane, at the right of the tiles; over them on a narrow window. */
 .rp-work { display: flex; align-items: flex-start; min-width: 0; }
 .rp-page-host { flex: 1; min-width: 0; }
-.rp-pane { flex: none; width: 300px; position: sticky; top: 0; max-height: 100vh; overflow: auto; margin: var(--gap) var(--gutter) 0 0; background: var(--card); border: 1px solid var(--hairline); border-radius: var(--radius); padding: 0.6rem 0.8rem 0.9rem; font-size: 0.8rem; box-sizing: border-box; }
+.rp-pane { flex: none; width: 300px; position: sticky; top: 0; max-height: 100vh; overflow: auto; margin: var(--gap) var(--gutter) 0 0; background: var(--card); border: 1px solid var(--hairline); border-radius: var(--radius); padding: 0.6rem 0.8rem 0.9rem; font-size: 12px; box-sizing: border-box; }
 .rp-pane[hidden] { display: none; }
 .rp-pane-head { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; margin-bottom: 0.5rem; }
-.rp-pane-head .subtab { padding: 0.2rem 0.75rem; font-size: 0.78rem; }
+.rp-pane-head .subtab { padding: 0.2rem 0.75rem; font-size: 12px; }
 .rp-pane-x { background: none; border: none; color: var(--faint); font: inherit; cursor: pointer; padding: 0.15rem 0.4rem; border-radius: var(--radius); }
 .rp-pane-x:hover, .rp-pane-x:focus-visible { color: var(--text); background: var(--hover-soft); }
 .rp-pane-body { display: flex; flex-direction: column; gap: 0.45rem; }
@@ -435,21 +487,21 @@ section.modelOpen #chartBtn { display: none; }
 .rp-pane-swatch { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rp-pane-colour { width: 1.6rem; height: 1.25rem; padding: 0; border: 1px solid var(--border); border-radius: var(--radius-sm); background: none; cursor: pointer; flex: none; }
 .rp-pane-reset { background: none; border: none; color: var(--accent); font: inherit; cursor: pointer; padding: 0; }
-.rp-pane-sub { margin: 0.5rem 0 0; font-size: 0.74rem; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+.rp-pane-sub { margin: 0.5rem 0 0; font-size: 12px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
 .rp-pane-palettes { display: flex; flex-direction: column; gap: 0.3rem; }
 .rp-pane-palette > span:first-of-type { width: 3.4rem; }
 .rp-pane-chips { display: inline-flex; gap: 2px; }
 .rp-pane-chips i { width: 10px; height: 10px; border-radius: 2px; }
-.rp-pane .subtabs .subtab { padding: 0.16rem 0.6rem; font-size: 0.74rem; }
+.rp-pane .subtabs .subtab { padding: 0.16rem 0.6rem; font-size: 12px; }
 .rp-pane > .rp-pane-body > .rp-say { margin-top: 0.4rem; }
 @media (max-width: 700px) {
   .rp-pane { position: fixed; top: 0; right: 0; bottom: 0; max-height: none; width: min(320px, 92vw); margin: 0; z-index: 5; border-radius: 0; box-shadow: var(--shadow); }
 }
 /* A text tile: its Markdown, or the box it is written in. */
-.rp-text { flex: 1; min-height: 0; overflow: auto; font-size: 0.86rem; line-height: 1.45; color: var(--text); }
+.rp-text { flex: 1; min-height: 0; overflow: auto; font-size: 13px; line-height: 1.45; color: var(--text); }
 .rp-text h3 { margin: 0 0 0.4rem; font-size: 1.2rem; font-weight: 600; }
 .rp-text h4 { margin: 0 0 0.35rem; font-size: 1rem; font-weight: 600; }
-.rp-text h5 { margin: 0 0 0.3rem; font-size: 0.88rem; font-weight: 600; color: var(--muted); }
+.rp-text h5 { margin: 0 0 0.3rem; font-size: 13px; font-weight: 600; color: var(--muted); }
 .rp-text p, .rp-text ul { margin: 0 0 0.45rem; }
 .rp-text ul { padding-left: 1.2rem; }
 .rp-text a { color: var(--accent); }
@@ -457,10 +509,10 @@ section.modelOpen #chartBtn { display: none; }
 .rp-text-edit { flex: 1; min-height: 60px; width: 100%; box-sizing: border-box; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.8rem; line-height: 1.5; background: var(--input-bg); color: var(--text); border: 1px solid var(--accent); border-radius: var(--radius); padding: 0.5rem 0.7rem; resize: none; }
 .rp-text-edit:focus { outline: none; }
 .rp-text-bar { display: flex; align-items: center; justify-content: space-between; gap: 0.6rem; }
-.rp-say { margin: 0; color: var(--muted); font-size: 0.82rem; }
+.rp-say { margin: 0; color: var(--muted); font-size: 13px; }
 .rp-say.error { color: var(--err); white-space: pre-wrap; }
 /* Over Visual while a Report tile is edited there (view.js editTile). */
-.explore-editing { display: flex; flex-wrap: wrap; align-items: center; gap: 0.6rem; margin: var(--gap) var(--gutter) 0; padding: 0.45rem 0.8rem; border: 1px solid var(--accent); border-radius: var(--radius); background: color-mix(in srgb, var(--accent) 10%, var(--card)); font-size: 0.8rem; }
+.explore-editing { display: flex; flex-wrap: wrap; align-items: center; gap: 0.6rem; margin: var(--gap) var(--gutter) 0; padding: 0.45rem 0.8rem; border: 1px solid var(--accent); border-radius: var(--radius); background: color-mix(in srgb, var(--accent) 10%, var(--card)); font-size: 12px; }
 .explore-editing[hidden] { display: none; }
 .explore-editing-say { font-weight: 600; }
 .explore-editing label { display: inline-flex; align-items: center; gap: 0.4rem; flex: 1; min-width: 12rem; color: var(--muted); }

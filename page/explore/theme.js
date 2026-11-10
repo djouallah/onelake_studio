@@ -29,7 +29,9 @@ export function registerChartTheme(echarts, css, name = 'studio') {
       pageTextStyle: { color: muted }, pageIconColor: muted, pageIconInactiveColor: css('--disabled') },
     tooltip: { backgroundColor: css('--raised'), borderColor: line, borderWidth: 1, padding: [8, 12],
       textStyle: { color: text, fontSize: 12 }, extraCssText: `border-radius:10px;box-shadow:${css('--shadow')};` },
-    categoryAxis: axis, valueAxis: axis, timeAxis: axis,
+    // A value axis is its grid lines and its labels: no line of its own, no ticks.
+    categoryAxis: { ...axis, axisTick: { ...axis.axisTick, alignWithLabel: true } },
+    valueAxis: { ...axis, axisLine: { show: false }, axisTick: { show: false } }, timeAxis: axis,
     dataZoom: { borderColor: 'transparent', backgroundColor: split, fillerColor: css('--hover'),
       textStyle: { color: muted } },
     visualMap: { textStyle: { color: muted }, handleStyle: { color: css('--card'), borderColor: muted } },

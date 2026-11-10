@@ -568,9 +568,14 @@ A semantic model opens as **Explore** ([`page/explore/`](../page/explore/)), on 
   relationships. Click a table for its columns, measures (with their DAX) and relationships.
 - **Visual:** drag columns onto Rows, Columns and Filters and measures onto Values, drawn as a pivot or
   a chart.
+  - It is as tall as the tab, in flat panes: the fields; then the tools (swap, sort, totals, clear, Format) over the
+    Filters card and the Marks card, which holds the mark and Values; then Columns and Rows over the view; and a status
+    line under them all, with the row count and Top. A pill is solid, in one colour for a column and another for a
+    figure (a measure, or a column summarised, written `SUM(Qty)`). The mark is picked from a list under its button,
+    which says what Automatic picked. An empty view shows where Columns and Rows go, and takes a drop there.
   - A column dropped on Values is summarised, as in Power BI: a number is summed and anything else
     counted, and its chip switches to average, min, max, count or distinct count.
-  - Totals are off until you tick them, and a view cut at 5,000 rows leaves them out.
+  - Totals are off until turned on, and a view cut at 5,000 rows leaves them out.
   - Every view is one `SELECT … FROM <model>` in dax-sql's SQL (`modelSql`): columns, `AGG("measure")`,
     summarised columns and `ROLLUP` totals. Its query is always generated from the shelves: nothing else writes a
     Visual's or a Report tile's SQL.

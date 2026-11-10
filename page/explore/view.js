@@ -156,7 +156,8 @@ export function mountExplore(root, ctx) {
     'data-apage': k, 'aria-selected': String(!i), tabindex: i ? '-1' : '0' }, t));
   const planToggle = btn('Show plan', () => (planMode ? closePlan() : openPlan()));
   planToggle.title = "The plan of this visual's query: its profile and its tree";
-  const csvBtn = btn('Download CSV', download, true);
+  // One button of the bar is lit: Add to report where the host saves the Report, else Download CSV.
+  const csvBtn = btn('Download CSV', download, !ctx.report?.save);
   const exportBtn = ctx.exportToFabric ? btn('Export to Fabric', () => exportApp()) : null;
   if (exportBtn) exportBtn.title = 'Publish this Report, on this model, as a Fabric app (a local copy is written too)';
   // What the host does and says how it went, with the button waiting meanwhile.
@@ -189,6 +190,7 @@ export function mountExplore(root, ctx) {
   if (editBtn) editBtn.title = 'This query in the SQL box, to take further by hand (the pivot is kept)';
   const closeBtn = ctx.close ? btn('Close', ctx.close) : null;
   const addBtn = ctx.report?.save ? hostBtn('Add to report', 'Adding…', () => addToReport(), 'This visual, as it is, as a tile of the Report') : null;
+  addBtn?.classList.add('primary');
   const textBtn = ctx.report?.save ? hostBtn('Add text', 'Adding…', () => addText(), 'A text tile on this page: headings, bold, links and lists') : null;
   // Each page's buttons, at the right of the bar: Visual's, the Report's, the Model's.
   const actions = el('div', { class: 'explore-actions', hidden: true },
