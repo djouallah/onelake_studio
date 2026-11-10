@@ -2,9 +2,11 @@
 // explore/report.js — a model's Report: tiles, each one SELECT over the model, drawn
 // =============================================================================
 // The Report is data (site/report.json in Export to Fabric's zip, or the file Studio keeps before
-// an export; no tiles before either): { tiles: [{ title, kind, sql, formats?, echarts?,
-// wide?, crossFilter? }] }. A tile's SQL is a SELECT over the model, FROM model, in the SQL the SQL
-// box takes.
+// an export; no tiles before either): { pages: [{ name, tiles }] }, each page's tiles
+// [{ title, kind, sql, formats?, echarts?, wide?, crossFilter? }]. A report written before pages,
+// { tiles }, is one page, Page 1 (reportPages), and is written back as pages (withPages). The host
+// draws the pages' names and one page at a time; this draws a page's tiles. A tile's SQL is a
+// SELECT over the model, FROM model, in the SQL the SQL box takes.
 //   kind 'kpi'    one row: each column a figure
 //   kind 'bar'    the first column across, every other column a series (also 'line')
 //   kind 'table'  the rows as they are
@@ -12,13 +14,17 @@
 //                 sort, slicer }, as Add to report saves them), drawn as Visual draws them
 //                 (explore.js). Its mark 'slicer' is a slicer: what is picked in it (values, or a
 //                 range) filters every other tile, and it does not run again when they change.
+//   kind 'text'   no sql: `text`, a few lines of Markdown (# headings, **bold**, *italic*,
+//                 [links](https://…), - lists), drawn as it is; picks don't touch it. A host that
+//                 saves the Report edits it in place (a double-click on it: `setText`).
 // The tiles are laid out on a grid of 12 columns and rows of 10 pixels: `layout` ({ x, y, w, h },
 // the column and row a tile starts at, and how many it spans) is where its grip and its ◢ put it.
 // Every tile floats up as far as it can, and a tile placed over others pushes them down (arrange);
 // a tile with no layout goes in the first place it fits, as wide and tall as its kind is. A host
 // that saves the Report places them (`layout`), takes them out (`remove`), copies them
 // (`duplicate`), renames them (a double-click on the title: `rename`) and, for a pivot tile, opens
-// its shelves in Visual (`edit`).
+// its shelves in Visual (`edit`). A grip dropped on another page's name moves the tile there
+// (`toPage`).
 // `formats`: a column's format string; `echarts` (bar, line): an ECharts option merged over the
 // tile's own. A tile that fails says so in its own box, and the rest still draw.
 // Cross filtering: a click on a bar, a line's point or a table's row picks that row's first value,
@@ -37,10 +43,83 @@ import { PALETTE } from './theme.js';
 import { shiftDate } from './draw.js';
 import { autoMark, modelFields, pivotQuery, pivotView } from './explore.js';
 
-const KINDS = new Set(['kpi', 'bar', 'line', 'table', 'pivot']);
+const KINDS = new Set(['kpi', 'bar', 'line', 'table', 'pivot', 'text']);
 // The grid a tile is laid out on: its columns, the height of a row in pixels, the fewest rows a
 // tile has, and the rows an arrow key moves or resizes it by.
 export const COLUMNS = 12, ROW = 10, MIN_ROWS = 6, ROW_KEY = 2;
+
+// --- Pages ---------------------------------------------------------------------------
+
+/**
+ * A report's pages: [{ name, tiles }], its own `pages`, or a report written before pages
+ * ({ tiles }) as one, Page 1. A page with no name is named for where it is. `tiles` is the
+ * page's as written (not a list: drawReport says so). No pages at all is one empty page.
+ */
+export function reportPages(spec) {
+  if (Array.isArray(spec?.pages) && !spec.pages.length) return [{ name: 'Page 1', tiles: [] }];
+  if (Array.isArray(spec?.pages)) {
+    return spec.pages.map((p, i) => ({ ...(p && typeof p === 'object' ? p : {}), name: String(p?.name ?? '').trim() || `Page ${i + 1}`, tiles: p?.tiles }));
+  }
+  return [{ name: 'Page 1', tiles: spec?.tiles }];
+}
+
+/** The report with these pages, as pages: a report written before them loses its own `tiles`. */
+export function withPages(spec, pages) {
+  const { tiles: _, ...rest } = spec && typeof spec === 'object' ? spec : {};
+  return { ...rest, pages };
+}
+
+/** A new page's name: Page n, n one more than the pages there are, or the next no page has. */
+export function newPageName(pages) {
+  for (let n = pages.length + 1; ; n++) if (!pages.some(p => p.name === `Page ${n}`)) return `Page ${n}`;
+}
+
+// --- A text tile's Markdown: nothing in it is HTML --------------------------------------
+
+// **bold**, *italic*, and [a link](https://…): only http and https links.
+const INLINE = /\*\*(.+?)\*\*|\*(.+?)\*|\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g;
+// A line's text as its parts: a string, or { b }, { i }, { a, href }.
+function inline(text) {
+  const out = [];
+  let at = 0;
+  for (const m of text.matchAll(INLINE)) {
+    if (m.index > at) out.push(text.slice(at, m.index));
+    out.push(m[1] != null ? { b: m[1] } : m[2] != null ? { i: m[2] } : { a: m[3], href: m[4] });
+    at = m.index + m[0].length;
+  }
+  if (at < text.length) out.push(text.slice(at));
+  return out;
+}
+
+/**
+ * Markdown's few forms, as blocks: { h: 1-3, parts }, { p: parts }, { ul: [parts] }; # to ###
+ * headings, - (or *) lists, and paragraphs, which a blank line, a heading or a list ends.
+ */
+export function markdownBlocks(text) {
+  const out = [];
+  let para = [], list = null;
+  const endPara = () => { if (para.length) out.push({ p: inline(para.join(' ')) }); para = []; };
+  for (const line of String(text ?? '').split(/\r?\n/)) {
+    const head = /^(#{1,3})\s+(.*)$/.exec(line), item = /^\s*[-*]\s+(.*)$/.exec(line);
+    if (!line.trim()) { endPara(); list = null; }
+    else if (head) { endPara(); list = null; out.push({ h: head[1].length, parts: inline(head[2].trim()) }); }
+    else if (item) {
+      endPara();
+      if (!list) out.push(list = { ul: [] });
+      list.ul.push(inline(item[1].trim()));
+    } else { list = null; para.push(line.trim()); }
+  }
+  endPara();
+  return out;
+}
+
+// The blocks as elements: a heading under the tile's own title is h3 to h5.
+function markdownNodes(text) {
+  const parts = ps => ps.map(p => (typeof p === 'string' ? p : p.b != null ? el('strong', {}, p.b) : p.i != null ? el('em', {}, p.i)
+    : el('a', { href: p.href, target: '_blank', rel: 'noopener noreferrer' }, p.a)));
+  return markdownBlocks(text).map(b => (b.h ? el(`h${b.h + 2}`, {}, parts(b.parts)) : b.p ? el('p', {}, parts(b.p))
+    : el('ul', {}, b.ul.map(li => el('li', {}, parts(li))))));
+}
 
 /**
  * Every tile at its place on the grid: { x, y, w, h } each, in columns and rows. The tile at
@@ -242,8 +321,12 @@ const same = (a, b) => (a ?? null) === (b ?? null);
  * anywhere on the grid and a ◢ that drags its size (or the arrow keys, on either), drawn there at
  * once: `tiles` is each tile, in its new order (top to bottom), as { from: its index before, layout };
  * duplicate(index) (optional), a ⧉ that copies a tile; rename(index, title) (optional), a double-click
- * on a title that edits it in place; edit(index) (optional), a ✎ on a pivot tile that opens it in Visual.
- * Returns { destroy }.
+ * on a title that edits it in place; edit(index) (optional), a ✎ on a pivot tile that opens it in Visual;
+ * setText(index, text) (optional), a double-click on a text tile that edits its Markdown in place;
+ * toPage (optional), { at(x, y), drop(index, page) }: while a grip is dragged, at() answers the
+ * other page whose name is under the pointer (and marks it), or null; dropped there, the tile is
+ * put back on this page's grid and drop() moves it.
+ * `spec` is one page, { tiles }. Returns { destroy }.
  * The tiles run one at a time, top to bottom: each is a scan of the model's tables, and the engine
  * gives one query all it has, where several at once share it, keep each other waiting, and keep
  * anything else the tab asks waiting too. A tile waits while the Report is off screen; one stopped
@@ -255,9 +338,9 @@ export function drawReport(root, spec, ctx) {
   const grid = el('div', { class: 'rp' });
   const chips = el('div', { class: 'rp-filters', hidden: true });
   root.replaceChildren(chips, grid);
-  if (!tiles) grid.append(el('p', { class: 'rp-say error' }, 'The report has no "tiles" list.'));
-  else if (!tiles.length) grid.append(el('p', { class: 'rp-say' }, ctx.remove
-    ? 'The report has no tiles yet. Build a view in Visual and click Add to report.' : 'The report has no tiles yet.'));
+  if (!tiles) grid.append(el('p', { class: 'rp-say error' }, 'The page has no "tiles" list.'));
+  else if (!tiles.length) grid.append(el('p', { class: 'rp-say rp-empty' }, ctx.remove
+    ? 'The page has no tiles yet. Build a view in Visual and click Add to report.' : 'The page has no tiles.'));
   let gone = false, pumping = false, running = null;
   // What a click picked, by the tile it was picked in: { field, value, label }, in the order picked.
   const picks = new Map();
@@ -273,16 +356,19 @@ export function drawReport(root, spec, ctx) {
     const plots = piv && mark !== 'heatmap' && mark !== 'scatter' && mark !== 'slicer' ? Math.min(piv.state.values.length, 4) : 1;
     const wide = tile.wide ?? (tile.kind === 'kpi' || tile.kind === 'table' || mark === 'table' || mark === 'highlight' || mark === 'heatmap');
     const title = String(tile.title ?? '');
-    const job = { tile, body, piv, on: pickColumn(tile, piv), dirty: true, asking: false, chart: null, box: null, repaint: null };
+    const text = tile?.kind === 'text';
+    const job = { tile, body, piv, on: text ? null : pickColumn(tile, piv), dirty: !text, asking: false, chart: null, box: null, repaint: null };
     const grip = ctx.layout ? el('button', { type: 'button', class: 'rp-tool rp-grip', title: 'Drag to move, or move with the arrow keys',
       'aria-label': `Move ${title || 'this tile'}`, onpointerdown: e => dragFrom(e, job, 'move'), onkeydown: e => keyed(e, job, 'move') }, '⠿') : null;
     job.slicer = mark === 'slicer';
+    // Not drawn again when a pick changes: a slicer keeps its values, a text tile has no query.
+    job.still = job.slicer || text;
     job.plots = plots;
     job.at = startAt(tile, { wide, mark, plots });
     const name = title || 'this tile';
     const tool = (glyph, tip, label, onclick) => el('button', { type: 'button', class: 'rp-tool', title: tip, 'aria-label': label, onclick }, glyph);
     const heading = el('h2', ctx.rename ? { title: 'Double-click to rename', ondblclick: () => renameIn(job, heading, heading.textContent) } : {}, title);
-    job.section = el('section', { class: `rp-tile${job.slicer ? ' rp-slicer-tile' : ''}${mark === 'card' ? ' rp-card-tile' : ''}` },
+    job.section = el('section', { class: `rp-tile${job.slicer ? ' rp-slicer-tile' : ''}${mark === 'card' ? ' rp-card-tile' : ''}${text ? ' rp-text-tile' : ''}` },
       el('div', { class: 'rp-head' }, grip, heading,
         ctx.edit && tile.kind === 'pivot' ? tool('✎', 'Edit this visual', `Edit ${name}`, () => ctx.edit(jobs.indexOf(job))) : null,
         ctx.duplicate ? tool('⧉', 'Duplicate', `Duplicate ${name}`, () => ctx.duplicate(jobs.indexOf(job))) : null,
@@ -291,10 +377,42 @@ export function drawReport(root, spec, ctx) {
       ctx.layout ? el('button', { type: 'button', class: 'rp-resize', title: 'Drag to resize, or resize with the arrow keys',
         'aria-label': `Resize ${title || 'this tile'}`, onpointerdown: e => dragFrom(e, job, 'size'), onkeydown: e => keyed(e, job, 'size') }, '◢') : null);
     grid.append(job.section);
+    if (text) drawText(job);
     return job;
   });
   layOut(arrange(jobs.map(j => j.at)));
   pump();
+
+  // A text tile: its Markdown drawn. A host that saves the Report: a double-click edits it in a box
+  // in its place, kept by Done (or Ctrl+Enter), put back by Esc.
+  function drawText(job) {
+    const md = String(job.tile.text ?? '');
+    const nodes = markdownNodes(md);
+    const shown = el('div', { class: 'rp-text', ...(ctx.setText ? { title: 'Double-click to edit' } : {}) },
+      nodes.length ? nodes : el('p', { class: 'rp-say' }, ctx.setText ? 'Double-click to write text.' : ''));
+    if (ctx.setText) shown.addEventListener('dblclick', e => { if (!e.target.closest('a')) editText(job); });
+    job.body.replaceChildren(shown);
+  }
+  function editText(job) {
+    const box = el('textarea', { class: 'rp-text-edit', 'aria-label': 'Text, in Markdown', spellcheck: 'true' });
+    box.value = String(job.tile.text ?? '');
+    const done = keep => {
+      if (keep && box.value !== String(job.tile.text ?? '')) {
+        job.tile = { ...job.tile, text: box.value };
+        ctx.setText(jobs.indexOf(job), box.value);
+      }
+      drawText(job);
+    };
+    box.addEventListener('keydown', e => {
+      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); done(true); }
+      else if (e.key === 'Escape') { e.preventDefault(); done(false); }
+    });
+    job.body.replaceChildren(el('div', { class: 'rp-text-editing' }, box,
+      el('div', { class: 'rp-text-bar' },
+        el('span', { class: 'rp-say' }, '# heading, **bold**, *italic*, [link](https://…), - list'),
+        el('button', { type: 'button', class: 'btn-explore primary', onclick: () => done(true) }, 'Done'))));
+    box.focus();
+  }
 
   // A double-click on a title: an input in its place; Enter or leaving it keeps what is typed, Esc
   // puts the title back.
@@ -336,8 +454,8 @@ export function drawReport(root, spec, ctx) {
     if (tile.layout && typeof tile.layout === 'object') return { ...tile.layout };
     const style = mark === 'slicer' ? tile.pivot?.slicer : null;
     const rows = mark === 'slicer' ? ({ dropdown: 8, range: 9, buttons: 10 }[style] ?? 28)
-      : mark === 'card' ? 10 : tile.kind === 'kpi' ? 12 : wide ? 36 : plots > 1 ? 14 + 18 * plots : 32;
-    const w = tile.size?.w ?? (mark === 'slicer' || mark === 'card' ? 3 : wide ? COLUMNS : COLUMNS / 2);
+      : mark === 'card' ? 10 : tile.kind === 'kpi' || tile.kind === 'text' ? 12 : wide ? 36 : plots > 1 ? 14 + 18 * plots : 32;
+    const w = tile.size?.w ?? (mark === 'slicer' || mark === 'card' ? 3 : wide || tile.kind === 'text' ? COLUMNS : COLUMNS / 2);
     return { x: null, y: null, w, h: tile.size?.h > 0 ? Math.ceil(tile.size.h / ROW) : rows };
   }
   // Each tile where `places` says, in the same order as the tiles.
@@ -381,8 +499,15 @@ export function drawReport(root, spec, ctx) {
     const grabX = Math.floor((e.clientX - r.left) / g.col), grabY = Math.floor((e.clientY - r.top) / ROW);
     handle.setPointerCapture(e.pointerId);
     s.classList.add(what === 'move' ? 'rp-dragging' : 'rp-resizing');
+    // Over another page's name (ctx.toPage): the tile goes there when dropped.
+    let onPage = null;
     const move = m => {
       const c = cells();
+      if (what === 'move' && ctx.toPage) {
+        onPage = ctx.toPage.at(m.clientX, m.clientY);
+        s.classList.toggle('rp-leaving', onPage != null);
+        if (onPage != null) return;
+      }
       if (what === 'move') {
         put(job, { x: Math.max(0, Math.min(COLUMNS - job.at.w, Math.floor((m.clientX - c.left) / c.col) - grabX)),
           y: Math.max(0, Math.floor((m.clientY - c.top) / ROW) - grabY) });
@@ -394,7 +519,14 @@ export function drawReport(root, spec, ctx) {
     };
     const done = () => {
       for (const [t, f] of [['pointermove', move], ['pointerup', done], ['pointercancel', done]]) handle.removeEventListener(t, f);
-      s.classList.remove('rp-dragging', 'rp-resizing');
+      s.classList.remove('rp-dragging', 'rp-resizing', 'rp-leaving');
+      if (onPage != null) {
+        // To another page: this page's grid as it was, and the host moves the tile.
+        ctx.toPage.at(null);
+        layOut(was);
+        ctx.toPage.drop(jobs.indexOf(job), onPage);
+        return;
+      }
       // Kept when any tile is somewhere else now, the one dragged or one it pushed.
       if (jobs.some((j, i) => ['x', 'y', 'w', 'h'].some(k => j.at[k] !== was[i][k]))) keep();
     };
@@ -461,7 +593,7 @@ export function drawReport(root, spec, ctx) {
   function changed(job) {
     drawChips();
     job.repaint?.();
-    for (const j of jobs) if (j !== job && !j.slicer) { j.dirty = true; say(j, 'Waiting…'); }
+    for (const j of jobs) if (j !== job && !j.still) { j.dirty = true; say(j, 'Waiting…'); }
     // Stopped only while its query runs: once answered, its drawing is dropped (drawTile).
     if (running && running !== job && running.asking && running.dirty) ctx.cancel?.();
     pump();
@@ -480,7 +612,7 @@ export function drawReport(root, spec, ctx) {
 
   async function drawTile(job) {
     const { tile, body } = job;
-    if (!KINDS.has(tile.kind)) throw new Error(`a tile's kind is kpi, bar, line, table or pivot, not ${JSON.stringify(tile.kind)}`);
+    if (!KINDS.has(tile.kind)) throw new Error(`a tile's kind is kpi, bar, line, table, pivot or text, not ${JSON.stringify(tile.kind)}`);
     if (tile.kind === 'pivot') return drawPivot(job);
     if (typeof tile.sql !== 'string' || !tile.sql.trim()) throw new Error('the tile has no sql');
     if (tile.crossFilter != null && tile.crossFilter !== false && !(typeof tile.crossFilter === 'string' && columnOf(tile.crossFilter))) {

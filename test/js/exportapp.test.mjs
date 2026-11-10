@@ -334,7 +334,9 @@ test("the local copy is one zip: the whole app but its packages, written and rea
     assert.match(agents, /power bi\/nem\.Lakehouse\/Files\/semantic_model\/ossie\.yaml/);
     assert.match(agents, /## The Report: yours to grow[\s\S]*`site\/report\.json`[\s\S]*FROM semanticmodel\.<workspace>\.sales/);
     assert.match(agents, /```json\n([\s\S]*?)\n```/);
-    assert.ok(JSON.parse(/```json\n([\s\S]*?)\n```/.exec(agents)[1]).tiles[0].sql.startsWith('SELECT "dim_region"'), "its example is JSON");
+    const example = JSON.parse(/```json\n([\s\S]*?)\n```/.exec(agents)[1]);
+    assert.ok(example.pages[0].tiles[1].sql.startsWith('SELECT "dim_region"'), "its example is JSON");
+    assert.equal(example.pages[0].tiles[0].kind, "text", "with a text tile");
 
     // Written as one file and read back: the same entries, and the marker apart.
     const zipPath = join(root, "out", `${plan.name}.zip`);
@@ -392,7 +394,7 @@ test("site/report.json: no tiles at first, kept by every export; never a local c
     const dirs = await fixture(root);
     const plan = planExport(OSSIE, "sales.yaml", "sales", mods(bimOf(URL_)), WHERE);
     const first = await appFiles({ plan, state: null, model: doc(), modelText: OSSIE, modelFile: "ossie.yaml", ...dirs });
-    assert.deepEqual(JSON.parse(first.get(REPORT).toString()), { tiles: [] });
+    assert.deepEqual(JSON.parse(first.get(REPORT).toString()), { pages: [{ name: "Page 1", tiles: [] }] });
     const mine = Buffer.from('{ "tiles": [{ "title": "mine", "kind": "kpi", "sql": "SELECT 1 FROM model" }] }');
     const again = await appFiles({ plan, state: null, model: doc(), modelText: OSSIE, modelFile: "ossie.yaml", kept: mine, ...dirs });
     assert.equal(again.get(REPORT), mine, "the zip's own report, as it is");

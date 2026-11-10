@@ -7,6 +7,13 @@
   2 of a 4 GB table's 22 columns, that is 340 MB in about 13 s instead of 4 GB in about 2 minutes. A column a chart
   reads later comes down when that chart first needs it. Tables of 32 MB or less still come down whole.
 
+- **A Report has pages.** Their names sit over the tiles: click one to show it, double-click to rename it, drag it to
+  reorder, and **+** adds a page. Hover over a name for its ✕; a page with tiles asks first. Add to report puts the
+  visual on the page last shown, and a tile's grip dropped on another page's name moves it there. Each page keeps its
+  own picks. A report from before pages opens as one page, Page 1. The Fabric app shows the names when it has two
+  pages or more.
+- **Text tiles.** The Report's **Add text** adds a text tile to the page: double-click it to write headings, **bold**,
+  *italic*, links and lists, then **Done**.
 - **Edit a Report tile.** Hover over a tile for its tools. ✎ opens the visual in Visual, on its own fields, with a strip
   above it: change the fields, the mark or the title, then **Update tile**, and the tile changes where it is. **Cancel**
   leaves it as it was. Either way Visual gets back the fields it had before. ⧉ copies a tile, and a double-click on a

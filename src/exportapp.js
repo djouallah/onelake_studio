@@ -206,7 +206,7 @@ function planOnModel(doc, name, model) {
 
 // site/report.json is the zip owner's: written once, with the tiles Studio's Report tab kept for the
 // model or none, and kept by every later export. Studio's Report tab draws the same file.
-const EMPTY_REPORT = '{\n  "tiles": []\n}\n';
+const EMPTY_REPORT = '{\n  "pages": [\n    { "name": "Page 1", "tiles": [] }\n  ]\n}\n';
 
 // fabric_app/rayfin/rayfin.yml, for this app: its own id and name, its sign-in redirects, and on a
 // semantic model ({ workspace, id }) its connector, as fabricapp.js declares it to Fabric.
@@ -276,16 +276,23 @@ ${onModel(plan) ? '' : `\`model.ossie.yaml\` (\`model.bim\` for a .bim model), a
 tables, columns and measures a tile can name.
 `}
 \`\`\`json
-{ "tiles": [
-  { "title": "Revenue by Region", "kind": "bar",
-    "sql": "SELECT \\"dim_region\\".\\"Region\\" AS \\"Region\\", AGG(\\"Revenue\\") AS \\"Revenue\\" FROM model GROUP BY ALL ORDER BY \\"Revenue\\" DESC",
-    "formats": { "Revenue": "#,##0" },
-    "echarts": { "series": [{ "itemStyle": { "color": "#199e70" } }] } }
+{ "pages": [
+  { "name": "Sales", "tiles": [
+    { "title": "", "kind": "text", "text": "# Sales\\nRevenue is **net of returns**." },
+    { "title": "Revenue by Region", "kind": "bar",
+      "sql": "SELECT \\"dim_region\\".\\"Region\\" AS \\"Region\\", AGG(\\"Revenue\\") AS \\"Revenue\\" FROM model GROUP BY ALL ORDER BY \\"Revenue\\" DESC",
+      "formats": { "Revenue": "#,##0" },
+      "echarts": { "series": [{ "itemStyle": { "color": "#199e70" } }] } }
+  ] }
 ] }
 \`\`\`
 
+- \`pages\` are shown by name over the tiles, one at a time, in this order; a click on one in a tile filters only
+  the tiles of its page. An older report, \`{ "tiles": [...] }\`, is one page, Page 1.
 - \`kind\` is \`kpi\` (one row, each column a figure), \`bar\` or \`line\` (the first column across, every other a
-  series), \`table\`, or \`pivot\`. \`"wide": true\` gives a tile the whole row.
+  series), \`table\`, \`pivot\`, or \`text\`. \`"wide": true\` gives a tile the whole row.
+- \`text\` has no \`sql\`: its \`text\` is a few lines of Markdown (\`#\` to \`###\` headings, \`**bold**\`, \`*italic*\`,
+  \`[a link](https://…)\`, \`- \` lists), and nothing else of Markdown or HTML.
 - \`pivot\` has no \`sql\`: its \`pivot\` is Explore's shelves, as **Add to report** saves them, and it is drawn as
   Visual draws them: \`{ "rows": ["dim_region.Region"], "cols": [], "values": ["Revenue"], "filters": [], "mark": "bar" }\`.
   A column is \`table.column\`, a measure its name; \`mark\` is \`auto\`, \`table\`, \`highlight\`, \`bar\`, \`stacked\`,
@@ -317,7 +324,7 @@ tables, columns and measures a tile can name.
 
 | Layer | Path | |
 |---|---|---|
-| Report | \`site/report.json\` | the page the app opens on: yours, kept by every export |
+| Report | \`site/report.json\` | the pages the app shows: yours, kept by every export |
 | Page | \`site/index.html\`, \`site/app.js\` | the Report over the data source |
 | Explore | \`site/explore/\` | OneLake Studio's, the same files the extension runs; \`report.js\` draws the Report, with Visual's drawing for a pivot tile |
 | Compiler | \`site/semantic/src/\`, \`site/semantic/formats/\` | dax-sql (\`${PINS.daxSql}\`): SQL over the model, as SQL over \`v_<table>\` |

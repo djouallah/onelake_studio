@@ -338,7 +338,10 @@ function createExport({ connectivity, modules, appToken, powerBiToken = appToken
   // since `stamp`, the one they were drawn from: a person's or an agent's edit is never lost.
   // Answers { stamp }.
   async function reportSave({ workspace, model, spec, stamp }) {
-    if (!spec || typeof spec !== 'object' || !Array.isArray(spec.tiles)) throw new Error('a report is { "tiles": [...] }');
+    if (!spec || typeof spec !== 'object' || (Array.isArray(spec.pages)
+      ? !spec.pages.every(p => p && typeof p === 'object' && Array.isArray(p.tiles)) : !Array.isArray(spec.tiles))) {
+      throw new Error('a report is { "pages": [{ "name": "…", "tiles": [...] }] }');
+    }
     const home = await reportHome({ workspace, model });
     if (stamp != null && stamp !== (home.st ? home.st.mtimeMs : 0)) {
       throw new Error('the report changed since it was drawn: it is drawn again as it is now, so try once more');

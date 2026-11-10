@@ -9,15 +9,18 @@
 //             Show plan puts the query's profile and plan in place of the results
 //             (profile.js). Download CSV writes the pivot's rows, or the box's. Add to report
 //             (a host that saves the Report) puts the visual on the Report as a tile.
-//   Report    tiles the host reads (ctx.report: Export to Fabric's report.json, or the file the
-//             host keeps before an export; none at first), each a SELECT over the model or
-//             a visual (a slicer among them), drawn by report.js; a ✕ takes one out, its grip
-//             moves it, ⧉ copies it, a double-click renames it, and ✎ opens a visual's shelves in
-//             Visual under a strip that updates the tile (a host that saves the Report)
+//   Report    pages of tiles the host reads (ctx.report: Export to Fabric's report.json, or the
+//             file the host keeps before an export; none at first), each tile a SELECT over the
+//             model, a visual (a slicer among them) or text, drawn by report.js, one page at a
+//             time under the pages' names. A host that saves the Report: + adds a page, a
+//             double-click renames one, its ✕ deletes it, and dragged it moves; a tile's ✕ takes
+//             it out, its grip moves it (onto a page's name: to that page), ⧉ copies it, a
+//             double-click renames it, ✎ opens a visual's shelves in Visual under a strip that
+//             updates the tile, and Add text adds a text tile
 // Model's Diagram | YAML (or BIM) shows the model drawn, or its file as written (pretty.js).
 // The bar: the page tabs, then each page's own: Model's Keep offline, then Diagram | YAML, Create
-// Semantic Model (a model file only) and Open in Excel at the right; Visual's Show SQL, Download CSV and Add to report; the Report's Export to
-// Fabric, which publishes the Report as a Fabric app.
+// Semantic Model (a model file only) and Open in Excel at the right; Visual's Show SQL, Download CSV and Add to report; the Report's Add
+// text and Export to Fabric, which publishes the Report as a Fabric app.
 // The same file in the panel and in Export to Fabric's app: the host says how a model's SQL is compiled
 // and run, and where ECharts comes from (`ctx`); nothing here knows the engine.
 // =============================================================================
@@ -30,7 +33,7 @@ import { compileModelSql } from './query.js';
 import { createPlanView, profileSql, elapsed, profileColors } from './profile.js';
 import { PALETTE, registerChartTheme } from './theme.js';
 import { prettyModelText, extensionVendors, foreignDialects } from './pretty.js';
-import { drawReport } from './report.js';
+import { drawReport, reportPages, withPages, newPageName } from './report.js';
 
 const PAGES = [['model', 'Model'], ['pivot', 'Visual'], ['report', 'Report']];
 const PREVIEW_ROWS = 500;
@@ -70,11 +73,12 @@ const REPORT_POLL_MS = 2000;
 //   plainSql         (optional) { from, measure(name) }: editSql's query as SQL over one table
 //                    (explore.js's modelSql), else SQL over the model
 //   close()          (optional) a Close button, after Edit SQL
-//   report           (optional) the Report page's tiles: { load(), stamp()?, save()? }. load answers
-//                    { spec, stamp } (report.js's spec); stamp(), asked while the page is on
-//                    screen, answers a value that changes when the tiles do; save(spec, stamp)
-//                    writes the tiles, refused when they changed since `stamp` (Add to report and
-//                    the tiles' ✕: none, a Report that only reads). No report: no page
+//   report           (optional) the Report page's pages: { load(), stamp()?, save()? }. load answers
+//                    { spec, stamp } (report.js's spec: { pages }, or { tiles } as written before
+//                    pages); stamp(), asked while the page is on screen, answers a value that
+//                    changes when the report does; save(spec, stamp) writes it, always as pages,
+//                    refused when it changed since `stamp` (Add to report, the tiles' ✕ and the
+//                    pages' +: none, a Report that only reads). No report: no page
 //   pages            (optional) the pages shown, of 'model', 'pivot', 'report' (default: all
 //                    there are), in that order. One page: no page tabs.
 //   openOn           (optional) the page it opens on (default: the first shown)
@@ -187,11 +191,15 @@ export function mountExplore(root, ctx) {
   if (editBtn) editBtn.title = 'This query in the SQL box, to take further by hand (the pivot is kept)';
   const closeBtn = ctx.close ? btn('Close', ctx.close) : null;
   const addBtn = ctx.report?.save ? hostBtn('Add to report', 'Adding…', () => addToReport(), 'This visual, as it is, as a tile of the Report') : null;
+  const textBtn = ctx.report?.save ? hostBtn('Add text', 'Adding…', () => addText(), 'A text tile on this page: headings, bold, links and lists') : null;
   // Each page's buttons, at the right of the bar: Visual's, the Report's, the Model's.
   const actions = el('div', { class: 'explore-actions', hidden: true },
     ...(editBtn ? [editBtn, closeBtn] : [sqlToggle, csvBtn, addBtn]));
-  const reportActions = exportBtn ? el('div', { class: 'explore-actions', hidden: true }, exportBtn) : null;
-  const reportPage = el('div', { class: 'report-page', hidden: true });
+  const reportActions = exportBtn || textBtn ? el('div', { class: 'explore-actions', hidden: true }, textBtn, exportBtn) : null;
+  // The Report: its pages' names (reportStrip), then a page's tiles, each page drawn once it is shown.
+  const pageStrip = el('div', { class: 'rp-pages', hidden: true });
+  const pageHost = el('div', { class: 'rp-page-host' });
+  const reportPage = el('div', { class: 'report-page', hidden: true }, pageStrip, pageHost);
   const modelPage = el('div', { class: 'model-page' });
   const pivotPage = el('div', { class: 'explore-page', hidden: true });
   // Over Visual while a Report tile is edited there (editTile): its title, Update tile and Cancel.
@@ -270,7 +278,7 @@ export function mountExplore(root, ctx) {
     reportPage.hidden = p !== 'report';
     if (ctx.report) {
       if (p === 'report') {
-        for (const go of reportWaiters.splice(0)) go();
+        wakeReport();
         if (!reportSeq || reportChanged) drawReportPage();
       } else if (reportRuns.size && ctx.cancel) {
         // The Report left with a tile running: stopped, so what is asked next has the engine. The
@@ -290,9 +298,11 @@ export function mountExplore(root, ctx) {
     if (p === 'pivot') openExplorer();
   }
 
-  // --- Report: the host's tiles (ctx.report.load), drawn; drawn again when they change ---
-  // Its SQL says FROM model, whatever the model is called here.
-  let reportView = null, reportStamp = null, reportTimer = null, reportSeq = 0;
+  // --- Report: the host's pages (ctx.report.load), drawn; drawn again when they change ---
+  // Its SQL says FROM model, whatever the model is called here. One page on screen (reportAt);
+  // each page shown is drawn once and kept, hidden, with its picks, until the Report is drawn again.
+  let reportStamp = null, reportTimer = null, reportSeq = 0, reportAt = 0;
+  const pageViews = new Map();   // page index -> { box, view }
   // A tile's query, shared while it runs: the Report drawn again (its file changed) asks the same
   // SQL again, and waits on the run already going rather than starting a second.
   const reportRuns = new Map();   // sql -> its run, while it runs
@@ -302,8 +312,16 @@ export function mountExplore(root, ctx) {
     if (!reportRuns.has(sql)) reportRuns.set(sql, run(sql).finally(() => reportRuns.delete(sql)));
     return reportRuns.get(sql);
   };
-  // What report.js waits on before each tile, and asks when one was stopped (drawReport).
-  const reportShown = () => (page === 'report' ? Promise.resolve() : new Promise(r => reportWaiters.push(r)));
+  // What report.js waits on before each tile of page `at`: that page on screen. And what it asks
+  // when one was stopped (drawReport).
+  const reportShown = at => (page === 'report' && reportAt === at ? Promise.resolve()
+    : new Promise(go => reportWaiters.push({ at, go })));
+  function wakeReport() {
+    if (page !== 'report') return;
+    const now = reportWaiters.filter(w => w.at === reportAt);
+    reportWaiters = reportWaiters.filter(w => w.at !== reportAt);
+    for (const w of now) w.go();
+  }
   const leftWhileRunning = () => { const was = reportLeft; reportLeft = false; return was; };
   const reportEcharts = async () => { const ec = await ctx.echarts(); registerChartTheme(ec, css); return ec; };
   // A model column's dataType, for a pick's literal (report.js): by its table, or the one column
@@ -316,49 +334,269 @@ export function mountExplore(root, ctx) {
   };
   // Add to report changed the tiles while the Report was not on screen: drawn again when it is.
   let reportChanged = false;
-  // The tiles on screen and the stamp they were read at: what a save writes over (saveReport).
-  let shownReport = null;
+  // The report on screen and the stamp it was read at: what a save writes over (saveSpec); its pages
+  // (report.js reportPages), and the tiles of the page on screen.
+  let shownReport = null, shownPages = [];
+  const shownTiles = () => (Array.isArray(shownPages[reportAt]?.tiles) ? shownPages[reportAt].tiles : []);
+  // The pages drawn so far, gone; whatever waited on one of them is let go (it sees it is gone).
+  function dropPages() {
+    for (const { view } of pageViews.values()) view.destroy();
+    pageViews.clear();
+    for (const w of reportWaiters.splice(0)) w.go();
+  }
+  // A page's name after a + is ready to rename (drawStrip).
+  let renameNext = null;
   async function drawReportPage() {
     const my = ++reportSeq;
     reportChanged = false;
-    if (!reportView) reportPage.replaceChildren(el('div', { class: 'ex-empty' }, 'Reading the report…'));
+    if (!pageViews.size) pageHost.replaceChildren(el('div', { class: 'ex-empty' }, 'Reading the report…'));
     try {
       const { spec, stamp } = await ctx.report.load();
       if (my !== reportSeq || destroyed) return;
       reportStamp = stamp ?? null;
       shownReport = { spec, stamp: reportStamp };
-      reportView?.destroy();
-      const saves = !!ctx.report.save;
-      reportView = drawReport(reportPage, spec, { sql: reportSql, echarts: reportEcharts, shown: reportShown, leftWhileRunning,
-                                                  cancel: ctx.cancel, columnType, model: ctx.tmsl, css,
-                                                  remove: saves ? removeTile : undefined, layout: saves ? layoutTiles : undefined,
-                                                  duplicate: saves ? duplicateTile : undefined, rename: saves ? renameTile : undefined,
-                                                  edit: saves ? editTile : undefined });
+      shownPages = reportPages(spec);
+      dropPages();
+      pageHost.replaceChildren();
+      reportAt = Math.max(0, Math.min(reportAt, shownPages.length - 1));
+      drawStrip();
+      showReportPage(reportAt);
     } catch (e) {
       if (my !== reportSeq || destroyed) return;
-      reportView?.destroy();
-      reportView = null;
-      reportPage.replaceChildren(el('div', { class: 'ex-error' }, `The report could not be read: ${e.message}`));
+      dropPages();
+      pageStrip.hidden = true;
+      pageHost.replaceChildren(el('div', { class: 'ex-error' }, `The report could not be read: ${e.message}`));
     }
   }
+  // Page `i` on screen: drawn the first time; the page left keeps its picks. A tile running on the
+  // page left is stopped, and runs again when its page is back.
+  function showReportPage(i) {
+    if (i !== reportAt && reportRuns.size && ctx.cancel) { reportLeft = true; ctx.cancel(); }
+    reportAt = i;
+    if (!pageViews.has(i)) {
+      const box = el('div', { class: 'rp-page-view' });
+      pageHost.append(box);
+      pageViews.set(i, { box, view: drawReport(box, { tiles: shownPages[i]?.tiles }, pageCtx(i)) });
+    }
+    for (const [k, { box }] of pageViews) box.hidden = k !== i;
+    markStrip();
+    if (addBtn) addBtn.title = `This visual, as it is, as a tile of ${shownPages.length > 1 ? `the page ${shownPages[i].name}` : 'the Report'}`;
+    wakeReport();
+  }
+  function pageCtx(i) {
+    const saves = !!ctx.report.save;
+    return { sql: reportSql, echarts: reportEcharts, shown: () => reportShown(i), leftWhileRunning,
+             cancel: ctx.cancel, columnType, model: ctx.tmsl, css,
+             remove: saves ? removeTile : undefined, layout: saves ? layoutTiles : undefined,
+             duplicate: saves ? duplicateTile : undefined, rename: saves ? renameTile : undefined,
+             edit: saves ? editTile : undefined, setText: saves ? setText : undefined,
+             toPage: saves && shownPages.length > 1 ? { at: pageUnder, drop: tileToPage } : undefined };
+  }
+
+  // --- The pages' names, over the tiles: a click shows one. A host that saves the Report: a
+  // double-click renames one, its ✕ deletes it (asked first when it has tiles), dragged it moves,
+  // and + adds one. A Report that only reads shows the names only when it has two pages or more.
+  let pageTabs = [];
+  function drawStrip() {
+    const saves = !!ctx.report.save;
+    pageStrip.hidden = !saves && shownPages.length < 2;
+    pageTabs = shownPages.map((p, i) => {
+      const name = el('button', { type: 'button', class: 'rp-page-name', role: 'tab',
+        ...(saves ? { title: 'Double-click to rename, drag to move' } : {}),
+        onclick: () => { if (i !== reportAt) showReportPage(i); },
+        onkeydown: e => {
+          const k = { ArrowRight: 1, ArrowLeft: -1 }[e.key];
+          if (!k) return;
+          e.preventDefault();
+          const next = (i + k + shownPages.length) % shownPages.length;
+          showReportPage(next);
+          pageTabs[next].querySelector('.rp-page-name').focus();
+        } }, p.name);
+      if (saves) name.addEventListener('dblclick', () => renamePageIn(i, name));
+      const tab = el('div', { class: 'rp-page', 'data-page': i, draggable: saves ? 'true' : null }, name,
+        saves && shownPages.length > 1 ? el('button', { type: 'button', class: 'rp-page-x', title: 'Delete this page',
+          'aria-label': `Delete the page ${p.name}`, onclick: () => askDelete(i) }, '✕') : null);
+      if (saves) {
+        tab.addEventListener('dragstart', e => { e.dataTransfer.setData('text/x-report-page', String(i)); e.dataTransfer.effectAllowed = 'move'; });
+        tab.addEventListener('dragover', e => { if (e.dataTransfer.types.includes('text/x-report-page')) { e.preventDefault(); tab.classList.add('rp-drop'); } });
+        tab.addEventListener('dragleave', () => tab.classList.remove('rp-drop'));
+        tab.addEventListener('drop', e => {
+          tab.classList.remove('rp-drop');
+          const from = Number(e.dataTransfer.getData('text/x-report-page'));
+          if (Number.isInteger(from) && from !== i) { e.preventDefault(); movePage(from, i); }
+        });
+      }
+      return tab;
+    });
+    pageStrip.replaceChildren(el('div', { class: 'rp-page-tabs', role: 'tablist', 'aria-label': 'Report pages' }, pageTabs),
+      saves ? el('button', { type: 'button', class: 'rp-page-add', title: 'Add a page', 'aria-label': 'Add a page', onclick: () => addPage() }, '+') : null);
+    if (renameNext != null && pageTabs[renameNext]) renamePageIn(renameNext, pageTabs[renameNext].querySelector('.rp-page-name'));
+    renameNext = null;
+  }
+  function markStrip() {
+    pageTabs.forEach((t, k) => {
+      const on = k === reportAt, name = t.querySelector('.rp-page-name');
+      t.classList.toggle('active', on);
+      name.setAttribute('aria-selected', String(on));
+      name.tabIndex = on ? 0 : -1;
+    });
+  }
+  // A dragged tile's grip at (x, y): the other page whose name is under it, marked; null (and
+  // nothing marked) when there is none, or x is null.
+  function pageUnder(x, y) {
+    const tab = x == null ? null : document.elementFromPoint(x, y)?.closest?.('.rp-page');
+    const k = tab && pageStrip.contains(tab) ? Number(tab.dataset.page) : null;
+    const to = k != null && k !== reportAt ? k : null;
+    pageTabs.forEach((t, j) => t.classList.toggle('rp-drop', j === to));
+    return to;
+  }
+  // A page's name, typed in its place: Enter or leaving it keeps it, Esc puts it back.
+  function renamePageIn(i, name) {
+    const was = shownPages[i].name;
+    const input = el('input', { type: 'text', class: 'rp-page-rename', value: was, 'aria-label': 'Page name', size: Math.max(6, was.length) });
+    let done = false;
+    const end = keep => {
+      if (done) return;
+      done = true;
+      const next = input.value.trim();
+      input.replaceWith(name);
+      if (keep && next && next !== was) { name.textContent = next; renamePage(i, next); }
+    };
+    input.addEventListener('keydown', e => {
+      if (e.key === 'Enter') { e.preventDefault(); end(true); }
+      else if (e.key === 'Escape') { e.preventDefault(); end(false); }
+    });
+    input.addEventListener('blur', () => end(true));
+    name.replaceWith(input);
+    input.focus();
+    input.select();
+  }
+  // A page's ✕: an empty page goes; one with tiles asks first, beside the names.
+  function askDelete(i) {
+    const n = Array.isArray(shownPages[i]?.tiles) ? shownPages[i].tiles.length : 0;
+    if (!n) { deletePage(i); return; }
+    pageStrip.querySelector('.rp-page-ask')?.remove();
+    const ask = el('div', { class: 'rp-page-ask', role: 'alertdialog', 'aria-label': 'Delete the page' },
+      el('span', {}, `Delete "${shownPages[i].name}" and its ${n === 1 ? 'tile' : `${n} tiles`}?`),
+      btn('Delete', () => { ask.remove(); deletePage(i); }, true), btn('Cancel', () => ask.remove()));
+    pageStrip.append(ask);
+    ask.querySelector('button').focus();
+  }
+
   // Every save, one after another: each writes over the one before, by the stamp it answered
   // (two quick moves would otherwise both write over the first stamp, and the second be refused).
   let saving = Promise.resolve();
   const inTurn = work => (saving = saving.then(work, work));
-  // `edit(spec)`: the tiles to save, from those on screen (else read, when the Report was never
-  // drawn), saved over them: refused when they changed since, by a person or an agent.
-  async function saveReport(edit) {
+  // `edit(pages)`: the pages to save, from those on screen (else read, when the Report was never
+  // drawn), each page's tiles a list, saved over them as pages: refused when they changed since,
+  // by a person or an agent.
+  async function saveSpec(edit) {
     const base = shownReport ?? await ctx.report.load();
-    const spec = edit({ ...base.spec, tiles: Array.isArray(base.spec?.tiles) ? base.spec.tiles : [] });
+    const pages = edit(reportPages(base.spec).map(p => ({ ...p, tiles: Array.isArray(p.tiles) ? p.tiles : [] })));
+    const spec = withPages(base.spec, pages);
     const saved = await ctx.report.save(spec, base.stamp ?? null);
     shownReport = { spec, stamp: saved?.stamp ?? null };
+    shownPages = reportPages(spec);
     // So the look every few seconds does not draw again what is on screen.
     reportStamp = shownReport.stamp;
     return spec;
   }
+  // `edit(page)`: page `at` (the one on screen), { name, tiles }, as it is to be saved.
+  const saveReport = (edit, at = reportAt) => saveSpec(pages => {
+    if (!pages[at]) throw new Error('the page is no longer on the report');
+    return pages.map((p, k) => (k === at ? edit(p) : p));
+  });
+
+  // + : a page after the others, on screen, its name ready to rename.
+  const addPage = () => inTurn(async () => {
+    let at = null;
+    try {
+      await saveSpec(pages => { at = pages.length; return [...pages, { name: newPageName(pages), tiles: [] }]; });
+    } catch (e) {
+      at = null;
+      setStatus(`Add a page: ${e.message}`, 'error');
+    }
+    if (at != null) { reportAt = at; renameNext = at; }
+    if (!destroyed) drawReportPage();
+  });
+  // A page's name, typed in its place (drawn already): only saved, drawn again when refused.
+  const renamePage = (i, name) => inTurn(async () => {
+    try { await saveReport(p => ({ ...p, name }), i); }
+    catch (e) {
+      setStatus(`Rename the page: ${e.message}`, 'error');
+      if (!destroyed) drawReportPage();
+    }
+  });
+  const deletePage = i => inTurn(async () => {
+    const name = shownPages[i]?.name;
+    try {
+      await saveSpec(pages => {
+        if (!pages[i] || pages.length < 2) throw new Error('a report keeps one page at least');
+        return pages.filter((_, k) => k !== i);
+      });
+      if (reportAt > i || reportAt >= shownPages.length) reportAt = Math.max(0, reportAt - 1);
+      setStatus(`Deleted the page "${name}".`, 'ok');
+    } catch (e) {
+      setStatus(`Delete the page: ${e.message}`, 'error');
+    }
+    if (!destroyed) drawReportPage();
+  });
+  // A name dragged onto another: the page goes where that one is, the page on screen stays on screen.
+  const movePage = (from, to) => inTurn(async () => {
+    try {
+      const order = shownPages.map((_, k) => k);
+      order.splice(to, 0, ...order.splice(from, 1));
+      await saveSpec(pages => {
+        if (!pages[from] || !pages[to]) throw new Error('the page is no longer on the report');
+        return order.map(k => pages[k]);
+      });
+      reportAt = order.indexOf(reportAt);
+    } catch (e) {
+      setStatus(`Move the page: ${e.message}`, 'error');
+    }
+    if (!destroyed) drawReportPage();
+  });
+  // A tile's grip dropped on another page's name: the tile goes there, as big as it was, in the
+  // first place it fits; the page on screen stays.
+  const tileToPage = (i, to) => inTurn(async () => {
+    const tile = shownTiles()[i], name = shownPages[to]?.name;
+    try {
+      await saveSpec(pages => {
+        const from = pages[reportAt];
+        if (!from?.tiles[i] || !pages[to]) throw new Error('the tile or the page is no longer on the report');
+        const { layout, size: _, ...moved } = from.tiles[i];
+        if (layout?.w && layout?.h) moved.layout = { w: layout.w, h: layout.h };
+        return pages.map((p, k) => (k === reportAt ? { ...p, tiles: p.tiles.filter((_, j) => j !== i) }
+          : k === to ? { ...p, tiles: [...p.tiles, moved] } : p));
+      });
+      setStatus(`Moved "${tile?.title || 'the tile'}" to the page ${name}.`, 'ok');
+    } catch (e) {
+      setStatus(`Move the tile: ${e.message}`, 'error');
+    }
+    if (!destroyed) drawReportPage();
+  });
+  // Add text: an empty text tile after this page's own, written in by a double-click on it.
+  const addText = () => inTurn(async () => {
+    await saveReport(p => ({ ...p, tiles: [...p.tiles, { title: '', kind: 'text', text: '' }] }));
+    if (!destroyed) drawReportPage();
+    return 'Added a text tile: double-click it to write.';
+  });
+  // A text tile's Markdown, typed in its place (report.js drew it already): only saved, drawn again
+  // when the save is refused.
+  const setText = (i, text) => inTurn(async () => {
+    try {
+      await saveReport(p => {
+        if (!p.tiles[i]) throw new Error('the tile is no longer on the report');
+        return { ...p, tiles: p.tiles.map((t, j) => (j === i ? { ...t, text } : t)) };
+      });
+    } catch (e) {
+      setStatus(`Text: ${e.message}`, 'error');
+      if (!destroyed) drawReportPage();
+    }
+  });
   // The ✕ on a tile: the tiles without it, and drawn again (their answers are kept: run()).
   const removeTile = i => inTurn(async () => {
-    const tile = shownReport?.spec.tiles?.[i];
+    const tile = shownTiles()[i];
     try {
       await saveReport(spec => ({ ...spec, tiles: spec.tiles.filter((_, j) => j !== i) }));
       setStatus(`Removed "${tile?.title ?? 'the tile'}" from the report.`, 'ok');
@@ -383,7 +621,7 @@ export function mountExplore(root, ctx) {
   });
   // A tile's ⧉: a copy of it after the Report's own tiles, as big as it is, in the first place it fits.
   const duplicateTile = i => inTurn(async () => {
-    const tile = shownReport?.spec.tiles?.[i];
+    const tile = shownTiles()[i];
     try {
       await saveReport(spec => {
         if (!spec.tiles[i]) throw new Error('the tile is no longer on the report');
@@ -414,7 +652,7 @@ export function mountExplore(root, ctx) {
   // Visual had before, put back once the edit is done. A second ✎ keeps those first shelves.
   let editing = null;
   async function editTile(i) {
-    const tile = shownReport?.spec.tiles?.[i];
+    const tile = shownTiles()[i];
     if (tile?.kind !== 'pivot' || !tile.pivot) return;
     show('pivot');
     await openExplorer();
@@ -422,7 +660,7 @@ export function mountExplore(root, ctx) {
     await explorer.ready;
     const title = String(tile.title ?? '');
     const own = (() => { try { return pivotTitle({ rows: [], cols: [], values: [], ...tile.pivot }); } catch { return null; } })();
-    editing = { index: i, title, auto: title === own, before: editing?.before ?? explorer.state() };
+    editing = { index: i, page: reportAt, title, auto: title === own, before: editing?.before ?? explorer.state() };
     explorer.setState(tile.pivot);
     titleBox.value = title;
     if (sqlMode) closeSql();
@@ -439,7 +677,7 @@ export function mountExplore(root, ctx) {
       await saveReport(spec => {
         if (!spec.tiles[index]) throw new Error('the tile is no longer on the report');
         return { ...spec, tiles: spec.tiles.map((t, j) => (j === index ? { ...t, title, pivot: state } : t)) };
-      });
+      }, editing.page);
     } catch (e) {
       setStatus(`Update tile: ${e.message}`, 'error');
       return;
@@ -451,21 +689,24 @@ export function mountExplore(root, ctx) {
   function endEdit(saved) {
     if (!editing) return;
     const { before } = editing;
+    reportAt = editing.page;
     editing = null;
     explorer?.setState(before);
     if (saved) reportChanged = true;
     show('report');
   }
-  // Add to report: the shelves on screen, as a pivot tile after the Report's own. Read first: the
-  // Report may have changed, or never been drawn, since.
+  // Add to report: the shelves on screen, as a pivot tile after the tiles of the page last on screen.
+  // Read first: the Report may have changed, or never been drawn, since.
   const addToReport = () => inTurn(async () => {
     const state = explorer?.state();
     if (!state || !explorer.query()) throw new Error('put a field on the shelves first');
     const title = pivotTitle(state);
     shownReport = await ctx.report.load();
+    shownPages = reportPages(shownReport.spec);
+    reportAt = Math.max(0, Math.min(reportAt, shownPages.length - 1));
     await saveReport(spec => ({ ...spec, tiles: [...spec.tiles, { title, kind: 'pivot', pivot: state }] }));
     if (page === 'report') drawReportPage(); else reportChanged = true;
-    return `Added "${title}" to the report.`;
+    return `Added "${title}" to ${shownPages.length > 1 ? `the page ${shownPages[reportAt].name}` : 'the report'}.`;
   });
   // While the Report is on screen, its file is looked at every few seconds (ctx.report.stamp):
   // an edit to it, by a person or an agent, is drawn without a click.
@@ -743,7 +984,7 @@ export function mountExplore(root, ctx) {
       destroyed = true;
       keepOffline?.destroy();
       clearInterval(reportTimer);
-      reportView?.destroy();
+      dropPages();
       explorer?.destroy();
       results.clear();
       resized.disconnect();

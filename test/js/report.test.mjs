@@ -245,3 +245,30 @@ test("a tile put over others pushes them down; the rest float up", () => {
   assert.deepEqual(at(arrange(tiles.map((t, i) => (i === 0 ? { ...t, x: 6 } : t)), 0)),
     [[6, 0, 6, 10], [6, 10, 6, 10], [0, 20, 12, 10]]);
 });
+
+const { reportPages, withPages, newPageName, markdownBlocks } = await import("../../app/explore/report.js");
+
+test("a report's pages: its own, or a report from before pages as one, Page 1", () => {
+  const tiles = [{ title: "a", kind: "kpi", sql: "SELECT 1 FROM model" }];
+  assert.deepEqual(reportPages({ tiles }), [{ name: "Page 1", tiles }]);
+  assert.deepEqual(reportPages({ pages: [{ name: "Sales", tiles }, { name: " ", tiles: [] }, {}] }),
+    [{ name: "Sales", tiles }, { name: "Page 2", tiles: [] }, { name: "Page 3", tiles: undefined }], "a page with no name is named for where it is");
+  assert.deepEqual(reportPages({ pages: [] }), [{ name: "Page 1", tiles: [] }], "no pages: one empty page");
+  assert.deepEqual(reportPages({}), [{ name: "Page 1", tiles: undefined }], "no list: drawn as a page that says so");
+  // Written back as pages: the old list goes, anything else is kept.
+  assert.deepEqual(withPages({ tiles, theme: "x" }, [{ name: "Page 1", tiles }]), { theme: "x", pages: [{ name: "Page 1", tiles }] });
+  assert.equal(newPageName([{ name: "Page 1" }, { name: "Sales" }, { name: "Trend" }]), "Page 4");
+  assert.equal(newPageName([{ name: "Page 1" }, { name: "Page 2" }, { name: "Page 3" }].slice(1)), "Page 4", "the next name no page has");
+});
+
+test("a text tile's Markdown: headings, paragraphs, lists, bold, italic and http links only", () => {
+  assert.deepEqual(markdownBlocks("# Sales overview\nFigures are **net of returns**.\nSource: [AEMO](https://aemo.com.au)\n\n- *one*\n- two\n### Notes"), [
+    { h: 1, parts: ["Sales overview"] },
+    { p: ["Figures are ", { b: "net of returns" }, ". Source: ", { a: "AEMO", href: "https://aemo.com.au" }] },
+    { ul: [[{ i: "one" }], ["two"]] },
+    { h: 3, parts: ["Notes"] },
+  ]);
+  assert.deepEqual(markdownBlocks("[x](javascript:alert(1)) <b>hi</b>"), [{ p: ["[x](javascript:alert(1)) <b>hi</b>"] }], "no other link, no HTML: text as it is");
+  assert.deepEqual(markdownBlocks(""), []);
+  assert.deepEqual(markdownBlocks("a\r\nb\r\n\r\nc"), [{ p: ["a b"] }, { p: ["c"] }]);
+});

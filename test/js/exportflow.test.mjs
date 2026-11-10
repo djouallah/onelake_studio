@@ -279,6 +279,12 @@ test("before an export, the Report is kept in Studio's file, and a save over a n
   await assert.rejects(flow.reportSave({ ...MODEL, spec: { tiles: [] }, stamp: first.stamp }), /changed since it was drawn/);
   assert.deepEqual((await flow.reportOf(OPENED)).spec, TILES);
   await assert.rejects(flow.reportSave({ ...MODEL, spec: { title: "no tiles" }, stamp }), /a report is/);
+  await assert.rejects(flow.reportSave({ ...MODEL, spec: { pages: [{ name: "Sales" }] }, stamp }), /a report is/, "a page with no tiles list");
+  // Pages, as the Report saves them now.
+  const PAGES = { pages: [{ name: "Sales", tiles: TILES.tiles }, { name: "Notes", tiles: [{ title: "", kind: "text", text: "# Hi" }] }] };
+  const paged = await flow.reportSave({ ...MODEL, spec: PAGES, stamp });
+  assert.deepEqual((await flow.reportOf(OPENED)).spec, PAGES);
+  assert.ok(paged.stamp != null);
   await done();
 });
 

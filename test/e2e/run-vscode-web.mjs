@@ -599,6 +599,10 @@ async function modelMatrix() {
     check("the Report has tiles", tiles.length > 0, String(tiles.length));
     const bad = tiles.filter(t => UNCOMPILED.test(t));
     check("no tile's SQL reached DuckDB uncompiled", bad.length === 0, bad.join(" | "));
+    // The zip's report is from before pages ({ tiles }): one page, Page 1, with + to add another.
+    const names = await f.locator("#modelView .rp-page-name").allInnerTexts();
+    check("its tiles are one page, Page 1", names.length === 1 && names[0] === "Page 1", names.join(" | "));
+    check("a page can be added", await f.locator("#modelView .rp-page-add").isVisible());
   }, 180000);
 
   await step("Model: a row picked in one tile filters the others", async () => {

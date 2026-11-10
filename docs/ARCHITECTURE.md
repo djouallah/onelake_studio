@@ -562,7 +562,7 @@ holds those lakehouses, else `--workspace`, and the error names the workspaces w
 A semantic model opens as **Explore** ([`app/explore/`](../app/explore/)), on three pages: Model, Visual and Report
 (Visual is the `pivot` page in the code). It opens on Model. The Fabric app is its Report alone.
 - **The bar** holds the page tabs, then each page's own: Model's Keep offline at the left, its Diagram | YAML, Create
-  Semantic Model (a model file only) and Open in Excel at the right; Visual's Show SQL, Download CSV and Add to report; the Report's Export to Fabric.
+  Semantic Model (a model file only) and Open in Excel at the right; Visual's Show SQL, Download CSV and Add to report; the Report's Add text and Export to Fabric.
 
 - **Model:** its tables as a star, dimensions in the middle and facts around them, with its
   relationships. Click a table for its columns, measures (with their DAX) and relationships.
@@ -584,9 +584,21 @@ A semantic model opens as **Explore** ([`app/explore/`](../app/explore/)), on th
   - **Show plan** profiles it (`profile.js`: DuckDB's `EXPLAIN ANALYZE` as totals, a timeline and the
     costly operators) next to its plan tree.
   - **Add to report** puts the view on the Report, as a tile (Report, below).
-- **Report:** tiles, each a SELECT over the model `FROM model` or a pivot, drawn as figures, a bar or line chart, a
-  table, or as Visual draws it ([`report.js`](../app/explore/report.js)). A tile that fails says so in its box, and the
-  rest still draw.
+- **Report:** pages of tiles, each tile a SELECT over the model `FROM model`, a pivot or text, drawn as figures, a bar
+  or line chart, a table, Markdown, or as Visual draws it ([`report.js`](../app/explore/report.js)). A tile that fails
+  says so in its box, and the rest still draw.
+  - **Pages:** the report is `{ pages: [{ name, tiles }] }`; one written before pages, `{ tiles }`, is one page, Page 1
+    (`reportPages`), and the first save writes it as pages (`withPages`). Their names sit over the tiles and one page is
+    on screen (`reportAt` in [`view.js`](../app/explore/view.js)); each page is drawn the first time it is shown and kept,
+    hidden, with its picks, until the Report is drawn again. Its tiles wait while it is not on screen, and a tile running
+    on a page left is stopped and runs again when it is back. A click on a name shows it, a double-click renames it,
+    dragged onto another name it moves there, its ✕ deletes it (a page with tiles asks first; the last page has none),
+    and + adds Page n after the others, its name ready to rename. A tile's grip dropped on another page's name moves the
+    tile to the end of that page, as big as it was. Add to report and Add text add to the page on screen. The Fabric
+    app's Report shows the names only with two pages or more, and only to switch.
+  - **Text:** `{ title, kind: 'text', text }`, `text` a few lines of Markdown (`markdownBlocks`: `#` to `###`
+    headings, `**bold**`, `*italic*`, http(s) links, `-` lists, paragraphs), built as elements, never as HTML. A
+    double-click edits it in a box in place, kept by Done or Ctrl+Enter. Picks don't touch it.
   - **Which tiles:** the model's Export to Fabric zip's `site/report.json`, when it has one (the zip its last export was
     approved into); else the file Studio keeps for the model until its first export (`<storage>/reports/`, by its
     workspace and name); else none: a Report starts empty. The first export writes Studio's file, or no tiles, into
@@ -597,7 +609,8 @@ A semantic model opens as **Explore** ([`app/explore/`](../app/explore/)), on th
     place it fits, and a double-click on a title renames it in place. A tile's tools show only while the pointer or the
     keyboard is on it. All write where the tiles are kept, one save after another (`reportSave` in
     [`src/exportflow.js`](../src/exportflow.js)), over the tiles they were drawn from: a report that changed since (an
-    edit to its file) is refused and drawn again. The Fabric app's Report only reads, so it has none of them.
+    edit to its file) is refused and drawn again. The pages' +, ✕, renames and moves save the same way. The Fabric app's
+    Report only reads, so it has none of them.
   - **Editing a tile:** a pivot tile's ✎ opens its shelves in Visual (`editTile` in [`view.js`](../app/explore/view.js)),
     under a strip with its title, **Update tile** and **Cancel**. Update writes the shelves and the title into that tile,
     its layout kept; a title that was its shelves' own follows the new ones. Either way Visual's shelves from before come
@@ -621,7 +634,8 @@ A semantic model opens as **Explore** ([`app/explore/`](../app/explore/)), on th
     change. The tile clicked stays whole, its pick bright and the rest dim. The same click
     again, or the pick's ✕ in the bar above the tiles, clears it; picks in several tiles all apply. A figures tile takes
     no clicks. `crossFilter` names the model column when the first column is not one, or is `false` for a tile that takes
-    none. The tiles still run one at a time, and a pick stops the tile running when it changes it.
+    none. The tiles still run one at a time, and a pick stops the tile running when it changes it. A pick filters only
+    the tiles of its own page.
 
 `view.js` is host-neutral: the host passes in the compiler, how to run SQL, and where ECharts comes
 from. **A tab** runs it on the native engine. **The Fabric app** runs the
