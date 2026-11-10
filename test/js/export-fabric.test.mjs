@@ -1,7 +1,11 @@
 // Export to Fabric for real (fabric_app/export/exportflow.js), as the CI identity, on fabriccat: a model
 // file of the lakehouse's lakeci_plain table published as a client-side app with its function, then made a
-// Direct Lake semantic model, and that model's app. Nothing is faked but the dialogs, which answer yes.
-// Both apps and the model stay in the workspace, and each run replaces them.
+// Direct Lake semantic model. Nothing is faked but the dialogs, which answer yes. The app and the model
+// stay in the workspace, and each run replaces them.
+//
+// Not here: the semantic model's own app, and a DAX query of the model. Fabric refuses a service principal
+// both, on a model it made itself: the app's connector with "Could not verify Build permission on semantic
+// model" (HTTP 403), the query with PowerBINotAuthorizedException. Both need a person signed in.
 //
 // FABRIC_TOKEN, POWERBI_TOKEN and ONELAKE_TOKEN are the identity's tokens for the Fabric API, the Power BI
 // API and storage; ONELAKE_CI_WORKSPACE and ONELAKE_CI_LAKEHOUSE name where. Needs vendor/ and
@@ -152,7 +156,7 @@ test("on fabriccat: a model file's app is published, client side, with its funct
   assert.equal(marker.lakehouseId, s.lakehouseId);
 });
 
-test("on fabriccat: the model file made a Direct Lake semantic model, refreshed, and its app is published", { skip, timeout: 20 * 60_000 }, async () => {
+test("on fabriccat: the model file made a Direct Lake semantic model, and refreshed", { skip, timeout: 20 * 60_000 }, async () => {
   const s = await setup();
   const text = JSON.stringify(bimOf(s.workspaceId, s.lakehouseId, "lakeci model"), null, 2);
   const made = await s.flow.createSemanticModel({ file: FILE, name: MODEL, text, workspace: WS, path: PATH, mode: "directlake" });
@@ -161,11 +165,4 @@ test("on fabriccat: the model file made a Direct Lake semantic model, refreshed,
   const { createFabricModel } = require("../../fabric_app/export/fabricmodel.js");
   const model = await createFabricModel({ getToken: async () => FABRIC_TOKEN, powerBiToken: async () => POWERBI_TOKEN }).find(s.workspaceId, MODEL);
   assert.ok(model, `${WS} lists ${MODEL}`);
-  const since = Date.now();
-  const said = await s.flow.exportExplore({ file: `${MODEL}.bim`, name: MODEL, text, state: null, model: { workspace: WS, name: MODEL } });
-  assert.match(said, new RegExp(`^Published to Fabric, on the semantic model ${MODEL}: https:`));
-  const marker = await published(s, said, "lakeci-model-explore.fabricapp", "semanticModel", since);
-  assert.equal(marker.semanticModel.name, MODEL);
-  assert.equal(marker.semanticModel.workspace, s.workspaceId);
-  assert.equal(marker.semanticModel.id, model.id);
 });

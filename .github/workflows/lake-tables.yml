@@ -120,9 +120,9 @@ jobs:
           NO_SKIP: 1
 
   # Export to Fabric, for real, as the same identity (test/js/export-fabric.test.mjs): a model file of
-  # lakeci_plain published as a client-side app with its function, made a Direct Lake semantic model, and
-  # that model's app. The apps (lakeci-explore, lakeci-model-explore) and the model (lakeci_model) stay in
-  # the workspace, replaced by each run.
+  # lakeci_plain published as a client-side app with its function, and made a Direct Lake semantic model.
+  # The app (lakeci-explore) and the model (lakeci_model) stay in the workspace, replaced by each run.
+  # A semantic model's own app is not published here: Fabric refuses a service principal its connector.
   export:
     needs: onelake
     runs-on: ubuntu-26.04
