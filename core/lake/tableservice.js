@@ -19,7 +19,9 @@
 // No `vscode` import. The engine passes in its connection, the token and how to download.
 // =============================================================================
 
-const { mkdirSync, renameSync, rmSync, openSync, readSync, closeSync, statSync, writeFileSync } = require('node:fs');
+const { mkdirSync, renameSync, rmSync, openSync, readSync, closeSync, statSync, createWriteStream } = require('node:fs');
+const { Readable } = require('node:stream');
+const { pipeline } = require('node:stream/promises');
 const { dirname, join } = require('node:path');
 const { sqlStr: q, assertOneLakeUrl } = require('../sql');
 const { META, rows } = require('./onelaketable');
@@ -58,7 +60,13 @@ function localOf(filesDir, url) {
  * @param {() => number} [o.now]
  * @param {(line: string) => void} [o.log]
  */
-function createTableService({ withConn, filesDir, download, maxBytes = 10 * 1024 ** 3, parallel = 4,
+// Downloads at once: OneLake's throughput is what is waited for, and six at once measured about twice as fast as one
+// (docs/CATALOG.md).
+const PARALLEL = 6;
+// A download that failed where a second try can mend it waits this long, and is tried once more.
+const RETRY_MS = 1000;
+
+function createTableService({ withConn, filesDir, download, maxBytes = 10 * 1024 ** 3, parallel = PARALLEL,
                               graceMs = 15 * 60 * 1000, now = Date.now, log = () => {} }) {
   const queued = new Map();   // OneLake URL -> its expected size
   const busy = new Set();
@@ -198,14 +206,25 @@ function createTableService({ withConn, filesDir, download, maxBytes = 10 * 1024
   return { noteOpened, tidy, held, idle, stats, close() { closed = true; queued.clear(); } };
 }
 
-/** A download over HTTPS with a bearer token: the whole file, written to dst. */
-function httpsDownload({ getToken, fetchImpl = fetch }) {
-  return async (url, dst) => {
+/**
+ * A download over HTTPS with a bearer token: the whole file, written to dst as it arrives, so a large file is
+ * never held whole in memory and the engine's process isn't stopped for one write. Tried once more when the
+ * connection or the server failed; a refusal (a 4xx but 429) is final.
+ */
+function httpsDownload({ getToken, fetchImpl = fetch, sleep = ms => new Promise(r => setTimeout(r, ms)) }) {
+  const once = async (url, dst) => {
     const res = await fetchImpl(httpsOf(url), { headers: { Authorization: `Bearer ${await getToken()}`, 'x-ms-version': '2023-11-03' } });
-    if (!res.ok) throw new Error(`OneLake answered ${res.status}`);
-    const buf = Buffer.from(await res.arrayBuffer());
-    writeFileSync(dst, buf);
+    if (!res.ok) throw Object.assign(new Error(`OneLake answered ${res.status}`), { status: res.status });
+    await pipeline(Readable.fromWeb(res.body), createWriteStream(dst));
     return statSync(dst).size;
+  };
+  return async (url, dst) => {
+    try { return await once(url, dst); }
+    catch (e) {
+      if (e.status && e.status !== 429 && e.status < 500) throw e;
+      await sleep(RETRY_MS);
+      return once(url, dst);
+    }
   };
 }
 

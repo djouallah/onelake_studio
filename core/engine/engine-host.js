@@ -37,7 +37,7 @@ const { sqlStr, quoteIdent, assertReads, checkedRead, tableRefs, fileRefs, files
 const { SQL_KINDS, sqlName, abfssUrl, MODEL_CATALOG, modelSqlName } = require('../names');
 const { revalidate, sameAnswer } = require('../onelake/store');
 const { mapPool } = require('../onelake/http');
-const { readDelta, readIceberg, syncTable, attachLake, syncedOf, syncedAll } = require('../lake/onelaketable');
+const { readDelta, readIceberg, syncTable, attachLake, syncedOf, syncedBrief, syncedAll } = require('../lake/onelaketable');
 const { createTableService, httpsDownload, openedSince, heldOn } = require('../lake/tableservice');
 const { tableReadCopies, TABLE_READ_FOLDER } = require('../lake/tableread');
 
@@ -585,7 +585,8 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
   async function lakeTable(which) {
     if (!capabilities.lake) throw new Error('this engine has no lake');
     const name = lakeNameOf(folderOf(which));
-    const was = await withConn(c => syncedOf(c, name), agentLive);
+    // Asked before every statement that names the table: without its log.
+    const was = await withConn(c => syncedBrief(c, name), agentLive);
     if (which.check) return was ? { name, location: was.location, at: was.syncedAt } : { name: null };
     if (which.offline) return { name: was || await inLake(name) ? name : null };
     if (was && !which.fresh) return { name };

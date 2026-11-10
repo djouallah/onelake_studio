@@ -321,3 +321,35 @@ test("a URL from a table's metadata is OneLake's or refused; a local path passes
   assert.equal(httpsOf("abfss://ws@onelake.dfs.fabric.microsoft.com/i/a.parquet"), "https://onelake.dfs.fabric.microsoft.com/ws/i/a.parquet");
   assert.throws(() => httpsOf("abfss://x@evil.example.com/f.parquet"), /is not on OneLake/);
 });
+
+// The table service's download: written as it arrives, tried once more when the connection or the server failed.
+test("a download is written whole, tried again once after a failure, and a refusal is final", async () => {
+  const { httpsDownload } = require("../../core/lake/tableservice.js");
+  const { mkdtemp, readFile, rm } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const dir = await mkdtemp(join(tmpdir(), "onelake-download-"));
+  const url = "abfss://ws@onelake.dfs.fabric.microsoft.com/i.Lakehouse/Tables/t/a.parquet";
+  try {
+    const asked = [];
+    const answers = [() => { throw new Error("socket hang up"); }, () => new Response("PAR1 the file PAR1")];
+    const download = httpsDownload({ getToken: async () => "tok", sleep: async () => {},
+      fetchImpl: async (u, o) => { asked.push([u, o.headers.Authorization]); return answers.shift()(); } });
+    const dst = join(dir, "a.parquet.part");
+    assert.equal(await download(url, dst), 18);
+    assert.equal(await readFile(dst, "utf8"), "PAR1 the file PAR1");
+    assert.deepEqual(asked, Array(2).fill(["https://onelake.dfs.fabric.microsoft.com/ws/i.Lakehouse/Tables/t/a.parquet", "Bearer tok"]));
+
+    let calls = 0;
+    const refused = httpsDownload({ getToken: async () => "tok", sleep: async () => {},
+      fetchImpl: async () => { calls++; return new Response("no", { status: 403 }); } });
+    await assert.rejects(refused(url, dst), /OneLake answered 403/);
+    assert.equal(calls, 1);
+
+    calls = 0;
+    const busy = httpsDownload({ getToken: async () => "tok", sleep: async () => {},
+      fetchImpl: async () => (++calls === 1 ? new Response("busy", { status: 503 }) : new Response("PAR1")) });
+    assert.equal(await busy(url, dst), 4);
+    assert.equal(calls, 2);
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});

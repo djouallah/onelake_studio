@@ -95,8 +95,9 @@ function dvFileOf(root, dv) {
 }
 
 // A deletion vector as the blob DuckLake reads: its length, the magic and bitmap, a CRC. Sliced out of its .bin,
-// where it is exactly that at its offset, or built around an inline one.
-async function deletionBlob(c, root, dv) {
+// where it is exactly that at its offset, or built around an inline one. `bins` keeps each .bin read: one holds
+// many files' vectors, and over OneLake each read of it is a request.
+async function deletionBlob(c, root, dv, bins = new Map()) {
   if (dv.storageType === 'i') {
     const data = z85(dv.pathOrInlineDv).subarray(0, dv.sizeInBytes);
     const len = Buffer.alloc(4); len.writeUInt32BE(data.length);
@@ -104,8 +105,9 @@ async function deletionBlob(c, root, dv) {
     return Buffer.concat([len, data, crc]);
   }
   // As hex: a BLOB through the JSON row reader comes back as escaped text, not its bytes.
-  const [hex] = await one(c, `SELECT hex(content) FROM read_blob(${q(dvFileOf(root, dv))})`);
-  const b = Buffer.from(hex, 'hex'), at = dv.offset == null ? 1 : Number(dv.offset), size = b.readUInt32BE(at);
+  const file = dvFileOf(root, dv);
+  if (!bins.has(file)) bins.set(file, one(c, `SELECT hex(content) FROM read_blob(${q(file)})`).then(([hex]) => Buffer.from(hex, 'hex')));
+  const b = await bins.get(file), at = dv.offset == null ? 1 : Number(dv.offset), size = b.readUInt32BE(at);
   if (size !== Number(dv.sizeInBytes)) throw new Error(`a deletion vector's size is ${size} in its file and ${dv.sizeInBytes} in the log`);
   return b.subarray(at, at + 4 + size + 4);
 }
@@ -172,7 +174,7 @@ async function readDelta(c, root, { version: upTo = Infinity, from = null, base 
     const dv = x.deletionVector;
     return dv ? `${x.path}\0${dv.storageType}${dv.pathOrInlineDv}${dv.offset == null ? '' : `@${dv.offset}`}` : x.path;
   };
-  const live = new Map();
+  const live = new Map(), bins = new Map();
   let meta = null;
   const apply = a => {
     if (a.metaData) meta = a.metaData;
@@ -208,7 +210,7 @@ async function readDelta(c, root, { version: upTo = Infinity, from = null, base 
     columnMapping: (meta.configuration && meta.configuration['delta.columnMapping.mode']) || 'none',
     // What the next read goes on from.
     log: { metaData: meta, adds: [...live.values()] },
-    readDeletes: f => deletionBlob(c, root, f.deletes.dv),
+    readDeletes: f => deletionBlob(c, root, f.deletes.dv, bins),
   };
 }
 
@@ -406,9 +408,14 @@ async function syncedOf(c, name) {
   const [r] = await rows(c, `SELECT * FROM ${SYNCED} WHERE name = ${q(name)}`);
   return r ? { ...syncedRow(r), log: r.log ? JSON.parse(r.log) : null } : null;
 }
+/** The same without its log, which for a big table is megabytes to parse: where it was synced from, and when. */
+async function syncedBrief(c, name) {
+  const [r] = await rows(c, `SELECT * EXCLUDE (log) FROM ${SYNCED} WHERE name = ${q(name)}`);
+  return r ? syncedRow(r) : null;
+}
 /** Every lake table and what it was last synced from, without the logs. */
 async function syncedAll(c) {
   return (await rows(c, `SELECT * EXCLUDE (log) FROM ${SYNCED} ORDER BY name`)).map(syncedRow);
 }
 
-module.exports = { readDelta, readIceberg, syncTable, attachLake, syncedOf, syncedAll, rows, META };
+module.exports = { readDelta, readIceberg, syncTable, attachLake, syncedOf, syncedBrief, syncedAll, rows, META };
