@@ -334,7 +334,17 @@ section.modelOpen #chartBtn { display: none; }
 .card-figures { flex: 1; min-height: 0; display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 0.6rem 2.2rem; container-type: size; }
 .explore-page .card-figures { min-height: 160px; }
 .card-figure { display: flex; flex-direction: column; align-items: center; min-width: 0; }
-.card-figure b { font-size: clamp(1.4rem, 45cqh, 3.2rem); line-height: 1.1; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--text); white-space: nowrap; }
+.card-figure b { font-size: clamp(1.4rem, 45cqh, 3.2rem); line-height: 1.1; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--card-figure, var(--text)); white-space: nowrap; }
+/* A Visual's format (format.js): a card's figures smaller or larger, a table's rows banded. */
+.card-S .card-figure b { font-size: clamp(1rem, 30cqh, 2rem); }
+.card-L .card-figure b { font-size: clamp(1.8rem, 60cqh, 4.4rem); }
+.ex-banded :where(tbody tr:nth-child(even) > *) { background-color: var(--hover-soft); }
+/* Visual's Format pane, at the right of the view. */
+.ex-work { display: flex; align-items: flex-start; gap: var(--gap); min-width: 0; min-height: 0; flex: 1 1 auto; }
+.ex-work > .ex-out { flex: 1 1 auto; min-width: 0; }
+.ex-work > .ex-format { margin: 0; position: static; max-height: 70vh; }
+.rp-pane-head strong { font-size: 0.85rem; }
+.rp-pane-tile { border-top: 1px solid var(--row-line); padding-top: 0.35rem; display: flex; flex-direction: column; gap: 0.2rem; }
 .card-many .card-figure b { font-size: clamp(1.2rem, 30cqh, 2.4rem); }
 .card-figure span { color: var(--muted); font-size: 0.78rem; text-align: center; }
 /* A card's change (▲/▼, good or bad) and its trend, under its figure. */
@@ -409,16 +419,9 @@ section.modelOpen #chartBtn { display: none; }
 .rp-notitle .rp-head:not(:has(button)) { display: none; }
 .rp-title-S h2 { font-size: 0.75rem; }
 .rp-title-L h2 { font-size: 1.05rem; color: var(--text); }
-.rp-tile .card-figure b, .rp-tile .rp-kpi b { color: var(--rp-figure, var(--text)); }
-.rp-figure-S .card-figure b { font-size: clamp(1rem, 30cqh, 2rem); }
-.rp-figure-S .rp-kpi b { font-size: 1.2rem; }
-.rp-figure-L .card-figure b { font-size: clamp(1.8rem, 60cqh, 4.4rem); }
-.rp-figure-L .rp-kpi b { font-size: 2.4rem; }
-.rp-banded :where(tbody tr:nth-child(even) > *) { background-color: var(--hover-soft); }
 .rp-text-S .rp-table table, .rp-text-S .rp-pivot table, .rp-text-S .rp-text { font-size: 0.74rem; }
 .rp-text-L .rp-table table, .rp-text-L .rp-pivot table, .rp-text-L .rp-text { font-size: 0.95rem; }
 .rp-text-L .rp-tile h2 { font-size: 0.95rem; }
-.rp-tile.rp-formatting { outline: 2px dashed var(--accent); outline-offset: -2px; }
 /* The format pane, at the right of the tiles; over them on a narrow window. */
 .rp-work { display: flex; align-items: flex-start; min-width: 0; }
 .rp-page-host { flex: 1; min-width: 0; }

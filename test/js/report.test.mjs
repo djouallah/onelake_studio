@@ -322,3 +322,22 @@ test("a zoom slider under a chart's plot, on its category axis", () => {
   assert.deepEqual(out.dataZoom.map(z => [z.type, z.xAxisIndex]), [["inside", [0]], ["slider", [0]]]);
   assert.equal(out.grid.bottom, 38);
 });
+
+const { tileOf } = await import("../../app/explore/report.js");
+
+test("an older tile's format goes into its Visual's, but for its title and the filters it does not follow", () => {
+  const old = { title: "x", kind: "pivot", pivot: { rows: ["dim_zone.Borough"], values: ["Total Fare"] },
+                format: { title: false, titleSize: "L", ignore: ["dim_date.Date"], labels: true, numbers: { "Total Fare": "int" } } };
+  const now = { title: "x", kind: "pivot", showTitle: false, titleSize: "L", ignore: ["dim_date.Date"],
+                pivot: { rows: ["dim_zone.Borough"], values: ["Total Fare"], format: { labels: true, numbers: { "Total Fare": "int" } } } };
+  assert.deepEqual(tileOf(old), now);
+  assert.deepEqual(reportPages({ tiles: [old] })[0].tiles[0], now, "read so, and saved so");
+  const plain = { title: "y", kind: "pivot", pivot: { rows: [], values: ["Total Fare"] } };
+  assert.equal(tileOf(plain), plain, "a tile with no format of its own, as it is");
+});
+
+test("a Visual's total line asks its query for the totals", () => {
+  const fields = modelFields(MODEL);
+  const { sql } = pivotQuery({ rows: ["dim_zone.Borough"], values: ["Total Fare"], mark: "bar", format: { totalLine: true } }, fields);
+  assert.match(sql, /GROUPING\("dim_zone"\."Borough"\) AS "__rows_total"[\s\S]*GROUP BY ROLLUP\("dim_zone"\."Borough"\)/);
+});

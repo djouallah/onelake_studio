@@ -14,6 +14,7 @@
 
 import { formatValue, byValueBackground, extent, stackedGrids, shiftDate } from './draw.js';
 import { el } from './dom.js';
+import { formatChart, formatLook, formatRows, cleanFormat } from './format.js';
 import { escapeHtml, quoteIdent as qid, sqlStr, sqlPart as bare } from '../paths.js';
 
 // A tooltip formatter's string is rendered as HTML: anything from the data goes in escaped.
@@ -122,7 +123,7 @@ export function buildQuery(s, { cap = CAP, today = localToday() } = {}) {
   if (where.length) q.where = where;
   const having = s.filters.filter(f => f.measure).flatMap(f => conditions(f, today));
   if (having.length) q.having = having;
-  if (s.totals && s.values.length && dims.length) {
+  if ((s.totals || s.format?.totalLine) && s.values.length && dims.length) {
     q.totals = {};
     if (s.rows.length) q.totals[ROW_TOTAL] = [...s.rows];
     if (s.cols.length) q.totals[COL_TOTAL] = [...s.cols];
@@ -375,7 +376,9 @@ function cardView(s, rows, look) {
     return el('span', { class: `card-change ${good ? 'good' : 'bad'}` },
       `${v > 0 ? '▲' : '▼'} ${format ? formatValue(Math.abs(v), format) : Math.abs(v).toLocaleString('en-US', { maximumFractionDigits: 2 })}`);
   };
-  return el('div', { class: `card-figures${many ? ' card-many' : ''}${trend.length > 1 ? ' card-trended' : ''}` }, shown.map((id, i) =>
+  const sized = look.figureSize === 'S' || look.figureSize === 'L' ? ` card-${look.figureSize}` : '';
+  const colour = /^#[0-9a-f]{6}$/i.test(look.figureColor ?? '') ? `--card-figure:${look.figureColor}` : null;
+  return el('div', { class: `card-figures${many ? ' card-many' : ''}${trend.length > 1 ? ' card-trended' : ''}${sized}`, style: colour }, shown.map((id, i) =>
     el('div', { class: 'card-figure' }, el('b', {}, text(id)), many ? el('span', {}, nameOf(id)) : null,
       i === 0 && change ? changeLine() : null,
       i === 0 && trend.length > 1 ? sparkline(trend.map(r => r[nameOf(id)]), look.palette[0]) : null)));
@@ -503,7 +506,7 @@ function pivotTable(s, piv, highlight, look, pick) {
   // does, 'bar' fills the cell from the left, as far as its value is of the largest.
   const by = m => (highlight ? 'background' : look.byValue?.[nameOf(m)]);
   const ranges = Object.fromEntries(measures.filter(by).map(m => [m, extent(piv.rowKeys.flatMap(a => (s.cols.length ? piv.colKeys : [[]]).map(b => piv.cell(a, b)?.[nameOf(m)])))]));
-  const t = el('table', { class: 'explore-table ex-pivot' });
+  const t = el('table', { class: `explore-table ex-pivot${look.banded ? ' ex-banded' : ''}` });
   const head = el('thead');
   // One header line per column field, then the measures' names when there are several (or no column field).
   const lead = text => el('th', { class: 'ex-rowhead', scope: 'col' }, text);
@@ -837,11 +840,15 @@ export function createExplorer(root, ctx) {
   const top = el('select', { 'aria-label': 'Top', title: 'Keep the first rows, as they are sorted (ties kept)' },
     TOPS.map(n => el('option', { value: n }, n ? `Top ${n}` : 'All rows')));
   const info = el('span', { class: 'ex-info' });
+  // Format: the pane at the right of the view, what the shelves' `format` says of how it is drawn.
+  const formatBtn = el('button', { type: 'button', class: 'btn-explore', 'aria-pressed': 'false', title: 'How this visual is drawn: colours, labels, numbers…' }, 'Format');
+  const formatPane = el('aside', { class: 'rp-pane ex-format', hidden: true, 'aria-label': 'Format' });
   const tools = el('div', { class: 'ex-tools' }, marks,
     el('label', { class: 'ex-check' }, totals, 'Totals'), sort, top,
     el('button', { type: 'button', class: 'btn-explore', title: 'Swap rows and columns', onclick: () => {
       [state.rows, state.cols] = [state.cols, state.rows]; changed(); } }, '⇄ Swap'),
     el('button', { type: 'button', class: 'btn-explore', onclick: () => { state = { ...EMPTY(), mark: state.mark }; changed(); } }, 'Clear'),
+    formatBtn,
     info);
   const table = el('div', { class: 'ex-table' });
   const chartBox = el('div', { class: 'ex-chart' });
@@ -851,7 +858,8 @@ export function createExplorer(root, ctx) {
   const busy = el('div', { class: 'ex-busy', hidden: true, role: 'status', 'aria-live': 'polite' },
     el('span', { class: 'ex-spinner', 'aria-hidden': 'true' }), busyText);
   const out = el('div', { class: 'ex-out' }, table, chartBox, busy);
-  root.replaceChildren(el('div', { class: 'ex' }, pane, el('div', { class: 'ex-main' }, shelves, tools, out)));
+  root.replaceChildren(el('div', { class: 'ex' }, pane, el('div', { class: 'ex-main' }, shelves, tools, el('div', { class: 'ex-work' }, out, formatPane))));
+  formatBtn.addEventListener('click', () => { formatOpen = !formatOpen; formatBtn.setAttribute('aria-pressed', String(formatOpen)); drawFormat(); draw(); });
 
   search.addEventListener('input', renderFields);
   totals.addEventListener('change', () => { state.totals = totals.checked; changed(); });
@@ -1040,6 +1048,7 @@ export function createExplorer(root, ctx) {
     }
   }
   function renderControls() {
+    if (formatOpen) drawFormat();
     totals.checked = state.totals;
     sort.value = state.sort;
     if (state.top && !TOPS.includes(state.top)) top.append(el('option', { value: state.top }, `Top ${state.top}`));
@@ -1263,7 +1272,7 @@ export function createExplorer(root, ctx) {
           ? 'Drag columns onto Rows and Columns and measures onto Values, or click a field to add it. By keyboard: R, C, F or V on a field.' : 'Reading the model…'));
       return;
     }
-    const look = { fields, palette: ctx.palette(), css: ctx.css,
+    const look = { fields, palette: ctx.palette(), css: ctx.css, ...formatLook(state.format),
       styles: { value: state.slicer, set: k => { state.slicer = k; save(); draw(); } } };
     const view = pivotView(result.state, result.rows, state.mark, look, null,
       { style: state.slicer, ...preview, onChange: (next, quiet) => { preview = next; if (!quiet) draw(); } });
@@ -1285,8 +1294,40 @@ export function createExplorer(root, ctx) {
     table.hidden = true;
     chartBox.hidden = false;
     const chart = ctx.chart(chartBox);
-    chart.setOption({ aria: { enabled: true }, ...view.option }, true);
+    const option = formatChart(view.option, state.format ?? {});
+    chart.setOption({ aria: { enabled: true }, ...option }, true);
     chart.resize();
+    // Each series once, with the colour it is drawn in: the Format pane's swatches.
+    const seen = new Map();
+    const palette = ctx.palette();
+    for (const x of option.series ?? []) if (x.name != null && !seen.has(x.name)) seen.set(x.name, x.itemStyle?.color ?? palette[seen.size % palette.length]);
+    const series = [...seen].map(([name, color]) => ({ name, color }));
+    if (JSON.stringify(series) !== JSON.stringify(drawnSeries)) { drawnSeries = series; if (formatOpen) drawFormat(); }
+  }
+
+  // --- Format: the pane's rows for what is drawn (format.js formatRows); a change is kept with
+  // the shelves and drawn at once from the rows there are, but the total line, which asks for
+  // the totals: then the query runs again.
+  let formatOpen = false, drawnSeries = [];
+  function formatKind() {
+    const m = state.mark === 'auto' && fields ? autoMark(state, fields) : state.mark;
+    return m === 'card' ? 'card' : m === 'slicer' ? 'slicer' : m === 'treemap' || m === 'calendar' || m === 'map' ? 'shape'
+      : m === 'table' || m === 'highlight' || !state.values.length ? 'table' : 'chart';
+  }
+  function drawFormat() {
+    formatPane.hidden = !formatOpen;
+    if (!formatOpen) { formatPane.replaceChildren(); return; }
+    const about = { kind: formatKind(), series: formatKind() === 'chart' ? drawnSeries : [], numbers: valueNames(state) };
+    const set = patch => {
+      const next = cleanFormat({ ...state.format, ...patch });
+      if (Object.keys(next).length) state.format = next; else delete state.format;
+      if ('totalLine' in patch) changed(); else { save(); draw(); }
+    };
+    formatPane.replaceChildren(
+      el('div', { class: 'rp-pane-head' }, el('strong', {}, 'Format'),
+        el('button', { type: 'button', class: 'rp-pane-x', title: 'Close', 'aria-label': 'Close the format pane',
+          onclick: () => formatBtn.click() }, '✕')),
+      el('div', { class: 'rp-pane-body' }, formatRows(state.format ?? {}, about, set, { redraw: drawFormat, css: ctx.css })));
   }
 
   // --- Start ---

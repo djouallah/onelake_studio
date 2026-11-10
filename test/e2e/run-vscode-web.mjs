@@ -603,13 +603,14 @@ async function modelMatrix() {
     const names = await f.locator("#modelView .rp-page-name").allInnerTexts();
     check("its tiles are one page, Page 1", names.length === 1 && names[0] === "Page 1", names.join(" | "));
     check("a page can be added", await f.locator("#modelView .rp-page-add").isVisible());
-    // A tile's 🖌: the format pane at the right, on that tile; its ✕ closes it.
-    await f.locator('#modelView .rp-tile button[title="Format"]').first().click({ force: true });
-    const pane = f.locator("#modelView .rp-pane");
-    check("🖌 opens the format pane", await pane.isVisible() && /Tile[\s\S]*Report[\s\S]*Title/.test(await pane.innerText()), await pane.innerText());
-    check("the tile is outlined", await f.locator("#modelView .rp-tile.rp-formatting").count() === 1);
+    // The Report's Theme: its pane at the right, the report's colours and the page's tiles; its ✕ closes it.
+    // A tile's look is its Visual's: no 🖌 on a tile.
+    check("a tile has no format tool of its own", await f.locator('#modelView .rp-tile button[title="Format"]').count() === 0);
+    await f.locator("#modelView .explore-actions button", { hasText: "Theme" }).click();
+    const pane = f.locator("#modelView .report-page .rp-pane");
+    check("Theme opens its pane", await pane.isVisible() && /Theme[\s\S]*Colours[\s\S]*Tiles on this page/.test(await pane.innerText()), await pane.innerText());
     await pane.locator(".rp-pane-x").click();
-    check("its ✕ closes it", await pane.isHidden() && await f.locator("#modelView .rp-tile.rp-formatting").count() === 0);
+    check("its ✕ closes it", await pane.isHidden());
   }, 180000);
 
   await step("Model: every tile is a Visual; one of SQL says so", async () => {

@@ -280,8 +280,8 @@ tables, columns and measures a tile can name.
   { "name": "Sales", "tiles": [
     { "title": "", "kind": "text", "text": "# Sales\\nRevenue is **net of returns**." },
     { "title": "Revenue by Region", "kind": "pivot",
-      "pivot": { "rows": ["dim_region.Region"], "values": ["Revenue"], "filters": [], "mark": "bar", "sort": "desc", "top": 10 },
-      "format": { "numbers": { "Revenue": "int" } } }
+      "pivot": { "rows": ["dim_region.Region"], "values": ["Revenue"], "filters": [], "mark": "bar", "sort": "desc", "top": 10,
+                 "format": { "numbers": { "Revenue": "int" } } } }
   ] }
 ] }
 \`\`\`
@@ -319,17 +319,19 @@ tables, columns and measures a tile can name.
   tile at the first column and row, 4 columns wide and 300 pixels tall, as its grip and its ◢ in OneLake Studio set
   it. Every tile floats up as far as it can; one with no layout goes in the first place it fits. \`"wide": true\`
   gives a tile with no layout the whole row.
-- \`format\`: what OneLake Studio's format pane (a tile's 🖌) sets, any of: \`"title": false\`, \`"titleSize": "S"\` or
-  \`"L"\`, \`"colors": { "<series>": "#rrggbb" }\`, \`"labels": true\`, \`"legend"\` (\`top\`, \`bottom\`, \`right\`, \`off\`),
+- \`pivot.format\`: how the Visual is drawn, as OneLake Studio's Visual's Format pane sets it, kept with its shelves:
+  any of \`"colors": { "<series>": "#rrggbb" }\`, \`"labels": true\`, \`"legend"\` (\`top\`, \`bottom\`, \`right\`, \`off\`),
   \`"xTitle"\`, \`"yTitle"\`, \`"yMin"\`, \`"yMax"\`, \`"zoom": true\`, \`"maxLabel": true\`, \`"totalLine": true\` (the total of
   each measure as a line across, from the query's own totals), \`"measures": { "<measure>": { "as": "bar" | "line" |
   "area" | "dashed", "axis": "right" } }\` (several measures in one plot), \`"byValue": { "<measure>": "background" |
-  "bar" }\`, \`"banded": true\`, \`"figureSize"\`, \`"figureColor"\`, \`"goodWhen": "down"\` (a card's change), \`"ignore":
-  ["<filter bar field>"]\`, and \`"numbers": { "<field>": "int" | "dec2" | "short" | "pct" | "usd" }\`.
+  "bar" }\`, \`"banded": true\`, \`"figureSize"\`, \`"figureColor"\`, \`"change": "<measure>"\` and \`"goodWhen": "down"\` (a
+  card's change), and \`"numbers": { "<field>": "int" | "dec2" | "short" | "pct" | "usd" }\`.
+- A tile's own, beside \`pivot\`: \`"showTitle": false\`, \`"titleSize": "S"\` or \`"L"\`, and \`"ignore": ["<filter bar
+  field>"]\`, the filter bar's filters it does not follow.
 - \`theme\`, beside \`pages\`: \`{ "palette": "ocean" | "warm" | "mono", "textSize": "S" | "L", "colors": { "<value>":
   "#rrggbb" } }\` for every page; \`colors\` gives a value of any column (a fuel, a region) the same colour in every tile.
 - \`filters\`, beside \`pages\`: the filter bar over every page, each \`{ "field": "table.column", "style": "dropdown" |
-  "list" | "dates" }\`. What a viewer picks in it filters every tile, but those whose \`format.ignore\` names it.
+  "list" | "dates" }\`. What a viewer picks in it filters every tile, but those whose \`ignore\` names it.
 - This is a zip: unzip it, edit, and zip it again with the same entries at its root.
 
 ## Layers

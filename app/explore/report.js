@@ -22,8 +22,9 @@
 // that saves the Report places them (`layout`), takes them out (`remove`), copies them
 // (`duplicate`), renames them (a double-click on the title: `rename`) and opens a tile's shelves
 // in Visual (`edit`). A grip dropped on another page's name moves the tile there (`toPage`).
-// A tile's `format` is what the host's format pane sets (below, formatChart); the report's
-// `theme` sets its colours and its text's size. A tile that fails says so in its own box, and the
+// A tile's look is its Visual's: the shelves' `format`, set in Visual's Format pane (format.js).
+// The tile's own are where it is and its title (`showTitle`, `titleSize`), and the filter bar's
+// filters it does not follow (`ignore`). The report's `theme` sets its colours and its text's size. A tile that fails says so in its own box, and the
 // rest still draw.
 // Cross filtering: a click on a bar, a point or a row picks its first Rows field's value (else
 // Columns'), and every other tile runs again with it as a condition of its own query, as its
@@ -35,7 +36,8 @@
 
 import { el } from './dom.js';
 import { PALETTE, PALETTES } from './theme.js';
-import { autoMark, modelFields, pivotQuery, pivotView, valueNames } from './explore.js';
+import { autoMark, modelFields, pivotQuery, pivotView } from './explore.js';
+import { formatChart, formatLook, TEXT_SIZES } from './format.js';
 
 const KINDS = new Set(['pivot', 'text']);
 // The marks drawn as a shape of their own, with no axes: what the format pane offers them is less.
@@ -54,10 +56,12 @@ export const COLUMNS = 12, ROW = 10, MIN_ROWS = 6, ROW_KEY = 2;
 export function reportPages(spec) {
   if (Array.isArray(spec?.pages) && !spec.pages.length) return [{ name: 'Page 1', tiles: [] }];
   if (Array.isArray(spec?.pages)) {
-    return spec.pages.map((p, i) => ({ ...(p && typeof p === 'object' ? p : {}), name: String(p?.name ?? '').trim() || `Page ${i + 1}`, tiles: p?.tiles }));
+    return spec.pages.map((p, i) => ({ ...(p && typeof p === 'object' ? p : {}), name: String(p?.name ?? '').trim() || `Page ${i + 1}`, tiles: tilesOf(p?.tiles) }));
   }
-  return [{ name: 'Page 1', tiles: spec?.tiles }];
+  return [{ name: 'Page 1', tiles: tilesOf(spec?.tiles) }];
 }
+
+const tilesOf = tiles => (Array.isArray(tiles) ? tiles.map(tileOf) : tiles);
 
 /** The report with these pages, as pages: a report written before them loses its own `tiles`. */
 export function withPages(spec, pages) {
@@ -164,86 +168,24 @@ export function merge(a, b) {
   return b === undefined ? a : b;
 }
 
-// --- A tile's format (the Report's format pane): `format`, beside what the tile shows -------
-// { title: false, titleSize: 'S'|'L', colors: { series: '#rrggbb' }, labels: true,
-//   legend: 'top'|'bottom'|'right'|'off', xTitle, yTitle, yMin, yMax,
-//   numbers: { field: style }, byValue: { field: 'background'|'bar' }, banded: true,
-//   figureSize: 'S'|'L', figureColor: '#rrggbb', zoom: true, maxLabel: true, totalLine: true,
-//   measures: { measure: { as: 'bar'|'line'|'area'|'dashed', axis: 'right' } }, change: measure,
-//   goodWhen: 'down', ignore: [filter bar field] }, every key optional: left out, as before.
-// The report's own `theme`: { palette: a PALETTES name, textSize: 'S'|'L', colors: { value: '#rrggbb' } }.
-
-// A number's style, as the pane names it, and the format string it is.
-export const NUMBER_STYLES = [['auto', 'Auto', null], ['int', '1,234', '#,##0'], ['dec2', '1,234.56', '#,##0.00'],
-  ['short', '1.2K', '#,##0.0a'], ['pct', '12%', '0%'], ['usd', '$1,234', '$#,##0']];
-/** A number style's format string; null for Auto or one it does not know. */
-export const numberFormat = style => NUMBER_STYLES.find(([k]) => k === style)?.[2] ?? null;
-const TEXT_SIZES = { S: 10, L: 14 };
+export { NUMBER_STYLES, numberFormat, formatChart } from './format.js';
 
 /**
- * A chart's ECharts option with a tile's format over it (`f`): series colours by name, the
- * legend's place (off, or one shown where there was none), the category axis's title, the value
- * axes' title and range, and, with `textSize`, the size of its axes' and legend's text. `label`
- * (fmt(series, value)): every series' values written on it, when f.labels. Pure: the option
- * given is not changed.
+ * A tile as it is kept now: an older tile's `format` (the Report's own pane wrote it) goes into
+ * its Visual's shelves, but for its title's (`showTitle`, `titleSize`) and the filters it does
+ * not follow (`ignore`), which are the tile's.
  */
-export function formatChart(option, f = {}, { textSize, label } = {}) {
-  const o = { ...option };
-  const list = v => (v == null ? [] : Array.isArray(v) ? v : [v]);
-  const put = (key, items) => { if (o[key] != null) o[key] = Array.isArray(option[key]) ? items : items[0]; };
-  const grids = list(o.grid).map(g => ({ ...g }));
-  const room = (side, px) => grids.forEach(g => { if (typeof g[side] === 'number') g[side] += px; });
-  const font = TEXT_SIZES[textSize];
-  const num = v => typeof v === 'number' && Number.isFinite(v);
-  const axisOf = a => {
-    const out = { ...a, ...(font ? { axisLabel: { ...a.axisLabel, fontSize: font } } : {}) };
-    if (a.type === 'value' || a.type === 'log') {
-      if (f.yTitle) Object.assign(out, { name: f.yTitle, nameLocation: 'end', nameTextStyle: { align: 'left' } });
-      if (num(f.yMin)) out.min = f.yMin;
-      if (num(f.yMax)) out.max = f.yMax;
-    }
-    return out;
+export function tileOf(t) {
+  if (!t || typeof t !== 'object' || !t.format || typeof t.format !== 'object') return t;
+  const { format: { title, titleSize, ignore, ...look }, ...tile } = t;
+  return {
+    ...tile,
+    ...(title === false ? { showTitle: false } : {}),
+    ...(titleSize ? { titleSize } : {}),
+    ...(Array.isArray(ignore) && ignore.length ? { ignore } : {}),
+    ...(tile.kind === 'pivot' && tile.pivot && typeof tile.pivot === 'object' && Object.keys(look).length
+      ? { pivot: { ...tile.pivot, format: { ...look, ...tile.pivot.format } } } : {}),
   };
-  const xs = list(o.xAxis).map(axisOf), ys = list(o.yAxis).map(axisOf);
-  // The category axis's title under the last one drawn with its labels (several plots share it).
-  // The x axes first: a heatmap's rows are a category axis too. Bars lying down have theirs up the side.
-  const isCat = a => a.type === 'category' || a.type === 'time';
-  const last = axes => [...axes].reverse().find(a => isCat(a) && a.axisLabel?.show !== false) ?? [...axes].reverse().find(isCat);
-  const titled = last(xs) ?? last(ys);
-  if (f.xTitle && titled) {
-    Object.assign(titled, { name: f.xTitle, nameLocation: 'middle', nameGap: xs.includes(titled) ? 30 : 60 });
-    if (xs.includes(titled)) room('bottom', 22);
-  }
-  put('xAxis', xs);
-  put('yAxis', ys);
-  if (f.legend === 'off') o.legend = { ...o.legend, show: false };
-  else if (f.legend) {
-    const at = { top: { top: 0, left: 'center', orient: 'horizontal' }, bottom: { top: 'auto', bottom: 0, left: 'center', orient: 'horizontal' },
-      right: { top: 'middle', right: 0, left: 'auto', orient: 'vertical' } }[f.legend];
-    if (at) {
-      o.legend = { type: 'scroll', ...o.legend, show: true, ...at };
-      if (f.legend === 'bottom') room('bottom', 26);
-      if (f.legend === 'right') room('right', 110);
-      if (f.legend === 'top' && !option.legend) grids.forEach(g => { if (typeof g.top === 'number') g.top = Math.max(g.top, 32); });
-    }
-  }
-  if (font && o.legend) o.legend = { ...o.legend, textStyle: { ...o.legend.textStyle, fontSize: font } };
-  // A zoom slider under the plot, on its category axes (and a wheel or a pinch inside it).
-  if (f.zoom && [...xs, ...ys].some(isCat)) {
-    const on = xs.some(isCat) ? { xAxisIndex: xs.map((a, i) => (isCat(a) ? i : -1)).filter(i => i >= 0) }
-      : { yAxisIndex: ys.map((a, i) => (isCat(a) ? i : -1)).filter(i => i >= 0) };
-    o.dataZoom = [{ type: 'inside', ...on }, { type: 'slider', ...on, height: 18, bottom: 4, ...(on.yAxisIndex ? { width: 18, right: 4, height: undefined, bottom: undefined } : {}) }];
-    room(on.yAxisIndex ? 'right' : 'bottom', 30);
-  }
-  if (o.grid != null) o.grid = Array.isArray(option.grid) ? grids : grids[0];
-  const colors = f.colors && typeof f.colors === 'object' ? f.colors : {};
-  o.series = list(o.series).map(s => {
-    const c = colors[s.name];
-    return { ...s,
-      ...(c ? { itemStyle: { ...s.itemStyle, color: c }, ...(s.type === 'line' ? { lineStyle: { ...s.lineStyle, color: c } } : {}) } : {}),
-      ...(f.labels && label ? { label: { show: true, position: 'top', fontSize: 10, formatter: p => label(s.name, p.value) } } : {}) };
-  });
-  return o;
 }
 
 // --- Cross filtering: a pick, as conditions of the other tiles' own queries -------------
@@ -282,11 +224,7 @@ const same = (a, b) => (a ?? null) === (b ?? null);
  * toPage (optional), { at(x, y), drop(index, page) }: while a grip is dragged, at() answers the
  * other page whose name is under the pointer (and marks it), or null; dropped there, the tile is
  * put back on this page's grid and drop() moves it.
- * format(index) (optional), a 🖌 on each tile that opens the host's format pane on it; drawn(index)
- * (optional), told each time a tile has drawn (the pane's series follow what is drawn).
- * `spec` is one page and the report's theme, { tiles, theme? }. Returns { destroy, restyle(index,
- * format), about(index), mark(index) }: a tile drawn again with a new format, what the pane offers
- * it, and the tile the pane is on, outlined.
+ * `spec` is one page and the report's theme, { tiles, theme? }. Returns { destroy }.
  * The tiles run one at a time, top to bottom: each is a scan of the model's tables, and the engine
  * gives one query all it has, where several at once share it, keep each other waiting, and keep
  * anything else the tab asks waiting too. A tile waits while the Report is off screen; one stopped
@@ -315,10 +253,10 @@ export function drawReport(root, spec, ctx) {
     const body = el('div', { class: 'rp-body' }, el('p', { class: 'rp-say' }, 'Waiting…'));
     // A pivot tile's shelves and query; a broken one says why when it runs (drawPivot).
     let piv = null;
-    if (tile?.kind === 'pivot' && fields) try { piv = shelvesQuery(tile); } catch (_) { /* drawPivot says */ }
+    if (tile?.kind === 'pivot' && fields) try { piv = pivotQuery(tile.pivot, fields); } catch (_) { /* drawPivot says */ }
     const mark = piv && (piv.state.mark === 'auto' ? autoMark(piv.state, fields) : piv.state.mark);
     // A pivot's chart of several measures is a plot each, one above the other: taller.
-    const plots = piv && !SHAPES.has(mark) && mark !== 'heatmap' && mark !== 'scatter' && mark !== 'slicer' && !tile.format?.measures
+    const plots = piv && !SHAPES.has(mark) && mark !== 'heatmap' && mark !== 'scatter' && mark !== 'slicer' && !tile.pivot?.format?.measures
       ? Math.min(piv.state.values.length, 4) : 1;
     const wide = tile.wide ?? (mark === 'table' || mark === 'highlight' || mark === 'heatmap' || mark === 'calendar');
     const title = String(tile.title ?? '');
@@ -330,8 +268,6 @@ export function drawReport(root, spec, ctx) {
     // Not drawn again when a pick changes: a slicer keeps its values, a text tile has no query.
     job.still = job.slicer || text;
     // What the format pane offers it (about).
-    job.kind = text ? 'text' : job.slicer ? 'slicer' : mark === 'card' ? 'card' : SHAPES.has(mark) ? 'shape'
-      : mark === 'table' || mark === 'highlight' || (piv && !piv.state.values.length) ? 'table' : 'chart';
     job.plots = plots;
     job.at = startAt(tile, { wide, mark, plots });
     const name = title || 'this tile';
@@ -339,7 +275,6 @@ export function drawReport(root, spec, ctx) {
     const heading = el('h2', ctx.rename ? { title: 'Double-click to rename', ondblclick: () => renameIn(job, heading, heading.textContent) } : {}, title);
     job.section = el('section', { class: `rp-tile${job.slicer ? ' rp-slicer-tile' : ''}${mark === 'card' ? ' rp-card-tile' : ''}${text ? ' rp-text-tile' : ''}` },
       el('div', { class: 'rp-head' }, grip, heading,
-        ctx.format ? tool('🖌', 'Format', `Format ${name}`, () => ctx.format(jobs.indexOf(job))) : null,
         ctx.edit && tile.kind === 'pivot' ? tool('✎', 'Edit this visual', `Edit ${name}`, () => ctx.edit(jobs.indexOf(job))) : null,
         ctx.duplicate ? tool('⧉', 'Duplicate', `Duplicate ${name}`, () => ctx.duplicate(jobs.indexOf(job))) : null,
         ctx.remove ? tool('✕', 'Remove from the report', `Remove ${name} from the report`, () => ctx.remove(jobs.indexOf(job))) : null),
@@ -352,18 +287,11 @@ export function drawReport(root, spec, ctx) {
     return job;
   });
 
-  // The classes and colour a tile's format gives its box: no title, the title's size, a card's
-  // figures' size and colour, a table's banded rows.
+  // The tile's title: none, or its size.
   function styleTile(job) {
-    const f = job.tile.format ?? {}, c = job.section.classList;
-    c.toggle('rp-notitle', f.title === false);
-    for (const s of ['S', 'L']) {
-      c.toggle(`rp-title-${s}`, f.titleSize === s);
-      c.toggle(`rp-figure-${s}`, f.figureSize === s);
-    }
-    c.toggle('rp-banded', !!f.banded);
-    if (/^#[0-9a-f]{6}$/i.test(f.figureColor ?? '')) job.section.style.setProperty('--rp-figure', f.figureColor);
-    else job.section.style.removeProperty('--rp-figure');
+    const c = job.section.classList;
+    c.toggle('rp-notitle', job.tile.showTitle === false);
+    for (const s of ['S', 'L']) c.toggle(`rp-title-${s}`, job.tile.titleSize === s);
   }
   layOut(arrange(jobs.map(j => j.at)));
   pump();
@@ -428,11 +356,6 @@ export function drawReport(root, spec, ctx) {
   // What every other tile picked, and the host's filter bar: conditions of this tile's query.
   const whereFor = job => [...(typeof ctx.where === 'function' ? ctx.where(job.tile) : ctx.where ?? []),
     ...[...picks].filter(([j]) => j !== job).flatMap(([j, p]) => pickWhere(j.on.id, p))];
-  // A tile's query: its shelves', with the totals when its format draws them as a line.
-  function shelvesQuery(tile) {
-    return pivotQuery(tile.format?.totalLine ? { ...tile.pivot, totals: true } : tile.pivot, fields);
-  }
-
   // --- Where a tile is: its grip drags it anywhere, its ◢ drags its size; arrow keys on either ---
   // A tile with no layout yet: as wide and tall as its kind (and a slicer's style) is, the size an
   // earlier build kept (`size`, in pixels) when it has one, at no place yet (arrange finds one).
@@ -553,7 +476,7 @@ export function drawReport(root, spec, ctx) {
         job.dirty = false;
         running = job;
         say(job, 'Running…');
-        try { await drawTile(job); if (!gone) ctx.drawn?.(jobs.indexOf(job)); }
+        try { await drawTile(job); }
         catch (e) {
           if (gone) return;
           // Stopped because the Report was left, or because a pick changed it: again.
@@ -610,7 +533,7 @@ export function drawReport(root, spec, ctx) {
     const { tile } = job;
     if (!fields) throw new Error('a pivot tile needs the model, and the Report was given none');
     // Its shelves read again, to say what is wrong with them.
-    const piv = job.piv ?? shelvesQuery(tile);
+    const piv = job.piv ?? pivotQuery(tile.pivot, fields);
     job.piv = piv;
     const sql = piv.sqlWith(whereFor(job));
     job.asking = true;
@@ -626,12 +549,9 @@ export function drawReport(root, spec, ctx) {
   async function paintPivot(job) {
     const { tile, body, res, piv } = job;
     clear(job);
-    const f = tile.format ?? {};
-    job.numbers = valueNames(piv.state);
+    const f = piv.state.format ?? {};
     if (!res.rows.length) { body.replaceChildren(el('p', { class: 'rp-say' }, 'No rows.')); return; }
-    const formats = Object.fromEntries(Object.entries(f.numbers ?? {}).map(([k, s]) => [k, numberFormat(s)]).filter(([, v]) => v));
-    const look = { fields, palette, css: ctx.css ?? (() => ''), formats, byValue: f.byValue, labels: !!f.labels,
-      measures: f.measures, totalLine: !!f.totalLine, maxLabel: !!f.maxLabel, valueColors, change: f.change, goodWhen: f.goodWhen };
+    const look = { fields, palette, css: ctx.css ?? (() => ''), ...formatLook(f), valueColors };
     const pickOf = () => {
       if (!job.on) return null;
       const p = picks.get(job);
@@ -665,10 +585,6 @@ export function drawReport(root, spec, ctx) {
         if (job.on) chart.on('click', e => { const key = e.componentType === 'series' && keyAt?.(e); if (key) pickOf().on(key); });
       }
       const option = formatChart(v.option, f, { textSize });
-      // Each series once, with the colour it is drawn in (the pane's swatches).
-      const seen = new Map();
-      for (const s of option.series ?? []) if (s.name != null && !seen.has(s.name)) seen.set(s.name, s.itemStyle?.color ?? palette[seen.size % palette.length]);
-      job.series = [...seen].map(([name, color]) => ({ name, color }));
       job.chart.setOption({ aria: { enabled: true }, ...option }, true);
     };
     // A map draws over the world's outline, read the first time one is drawn.
@@ -680,28 +596,6 @@ export function drawReport(root, spec, ctx) {
     job.repaint = () => { if (job.quiet) { job.quiet = false; return; } paint(view()); };
   }
 
-  // The tile at `i` drawn again with `format`, from the answer it has (nothing runs); one not
-  // answered yet draws with it when it is.
-  function restyle(i, format) {
-    const job = jobs[i];
-    if (!job) return;
-    const totals = !!job.tile.format?.totalLine !== !!format?.totalLine;
-    job.tile = { ...job.tile, format };
-    styleTile(job);
-    if (job.kind === 'text') return;
-    // The total line asks for the totals: its query runs again.
-    if (totals && job.tile.kind === 'pivot' && fields) {
-      try { job.piv = shelvesQuery(job.tile); } catch (_) { /* drawPivot says */ }
-      job.dirty = true;
-      say(job, 'Waiting…');
-      pump();
-      return;
-    }
-    if (!job.res || job.dirty || running === job) return;
-    paintPivot(job)
-      .then(() => ctx.drawn?.(i), e => say(job, e?.message || String(e), ' error'));
-  }
-
   return {
     destroy() {
       gone = true;
@@ -709,12 +603,5 @@ export function drawReport(root, spec, ctx) {
       resized.disconnect();
       root.replaceChildren();
     },
-    restyle,
-    // What the format pane offers tile `i`: its kind ('chart', 'table', 'card', 'slicer', 'shape'
-    // (a treemap, a calendar, a map) or 'text'), its series as drawn ({ name, color }) and its fields
-    // with numbers; null: no tile.
-    about: i => (jobs[i] ? { kind: jobs[i].kind, series: jobs[i].series ?? [], numbers: jobs[i].numbers ?? [] } : null),
-    // The tile being formatted, outlined (-1: none).
-    mark: i => jobs.forEach((j, k) => j.section.classList.toggle('rp-formatting', k === i)),
   };
 }

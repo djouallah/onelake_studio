@@ -33,7 +33,8 @@ import { compileModelSql } from './query.js';
 import { createPlanView, profileSql, elapsed, profileColors } from './profile.js';
 import { PALETTE, PALETTES, registerChartTheme } from './theme.js';
 import { prettyModelText, extensionVendors, foreignDialects } from './pretty.js';
-import { drawReport, reportPages, withPages, newPageName, pickWhere, NUMBER_STYLES } from './report.js';
+import { drawReport, reportPages, withPages, newPageName, pickWhere } from './report.js';
+import { cleanFormat, paneRow, paneSelect, paneCheck, paneColour, SIZES } from './format.js';
 
 const PAGES = [['model', 'Model'], ['pivot', 'Visual'], ['report', 'Report']];
 const PREVIEW_ROWS = 500;
@@ -196,11 +197,13 @@ export function mountExplore(root, ctx) {
   // Each page's buttons, at the right of the bar: Visual's, the Report's, the Model's.
   const actions = el('div', { class: 'explore-actions', hidden: true },
     ...(editBtn ? [editBtn, closeBtn] : [sqlToggle, csvBtn, addBtn]));
-  const reportActions = exportBtn || textBtn ? el('div', { class: 'explore-actions', hidden: true }, textBtn, exportBtn) : null;
+  const themeBtn = ctx.report?.save ? btn('Theme', () => toggleTheme()) : null;
+  if (themeBtn) { themeBtn.title = "The report's colours and text, and its tiles' titles and filters"; themeBtn.setAttribute('aria-pressed', 'false'); }
+  const reportActions = exportBtn || textBtn ? el('div', { class: 'explore-actions', hidden: true }, themeBtn, textBtn, exportBtn) : null;
   // The Report: its pages' names (reportStrip), then a page's tiles, each page drawn once it is shown.
   const pageStrip = el('div', { class: 'rp-pages', hidden: true });
   const pageHost = el('div', { class: 'rp-page-host' });
-  // A tile's 🖌 opens the format pane at the right of the tiles (formatting, below).
+  // The Report's Theme opens its pane at the right of the tiles (drawTheme, below).
   const formatPane = el('aside', { class: 'rp-pane', hidden: true, 'aria-label': 'Format' });
   // The report's filter bar, over its pages' names (drawBar, below).
   const filterBar = el('div', { class: 'rp-bar', hidden: true });
@@ -359,7 +362,7 @@ export function mountExplore(root, ctx) {
       drawBar();
       drawStrip();
       showReportPage(reportAt);
-      if (formatting) drawPane();
+      if (themeOpen) drawTheme();
     } catch (e) {
       if (my !== reportSeq || destroyed) return;
       dropPages();
@@ -378,9 +381,8 @@ export function mountExplore(root, ctx) {
       pageViews.set(i, { box, view: drawReport(box, { tiles: shownPages[i]?.tiles, theme: shownReport?.spec?.theme }, pageCtx(i)) });
     }
     for (const [k, { box }] of pageViews) box.hidden = k !== i;
-    // The pane is on a tile of the page it was opened on.
-    if (formatting && formatting.page !== i) closeFormat();
-    else if (formatting) pageViews.get(i).view.mark(formatting.index);
+    // The Theme pane lists the tiles of the page on screen.
+    if (themeOpen) drawTheme();
     markStrip();
     if (addBtn) addBtn.title = `This visual, as it is, as a tile of ${shownPages.length > 1 ? `the page ${shownPages[i].name}` : 'the Report'}`;
     wakeReport();
@@ -393,10 +395,7 @@ export function mountExplore(root, ctx) {
              duplicate: saves ? duplicateTile : undefined, rename: saves ? renameTile : undefined,
              edit: saves ? editTile : undefined, setText: saves ? setText : undefined,
              toPage: saves && shownPages.length > 1 ? { at: pageUnder, drop: tileToPage } : undefined,
-             format: saves ? openFormat : undefined,
-             where: barWhere, mapReady,
-             // The pane's colours follow the series the tile draws.
-             drawn: k => { if (formatting?.tab === 'tile' && formatting.page === i && formatting.index === k && seriesChanged()) drawPane(); } };
+             where: barWhere, mapReady };
   }
 
   // The world's map, registered with ECharts the first time a map is drawn (the host's file).
@@ -419,7 +418,7 @@ export function mountExplore(root, ctx) {
   const reportFields = () => (barFields ??= modelFields(ctx.tmsl));
   const barFilters = () => (Array.isArray(shownReport?.spec?.filters) ? shownReport.spec.filters.filter(x => x && typeof x.field === 'string') : []);
   function barWhere(tile) {
-    const ignored = new Set(Array.isArray(tile?.format?.ignore) ? tile.format.ignore : []);
+    const ignored = new Set(Array.isArray(tile?.ignore) ? tile.ignore : []);
     return barFilters().filter(x => !ignored.has(x.field) && barPicks.has(x.field)).flatMap(x => pickWhere(x.field, barPicks.get(x.field)));
   }
   const barValues = new Map();  // field (and 'latest:'+field) -> a promise of its values
@@ -436,7 +435,6 @@ export function mountExplore(root, ctx) {
     dropPages();
     pageHost.replaceChildren();
     showReportPage(reportAt);
-    if (formatting) drawPane();
     drawBar();
   }
   const fieldName = id => reportFields().byId.get(id)?.name ?? id;
@@ -544,176 +542,57 @@ export function mountExplore(root, ctx) {
   const addFilter = x => { if (x.field) saveFilters([...barFilters(), x]); };
   const removeFilter = id => { barPicks.delete(id); saveFilters(barFilters().filter(x => x.field !== id)); };
 
-  // --- The format pane, a tile's 🖌: its Tile tab sets what the tile shows (its `format`), its
-  // Report tab the report's theme. A change is drawn at once (report.js restyle; a theme draws
-  // the page again) and saved, one after another; ✕ closes it. On the page it was opened on only.
-  let formatting = null;   // { page, index, tab: 'tile' | 'report', format, series }
-  const viewOf = () => pageViews.get(reportAt)?.view;
-  function openFormat(i) {
-    formatting = { page: reportAt, index: i, tab: 'tile', format: shownTiles()[i]?.format ?? {}, series: '' };
-    viewOf()?.mark(i);
-    drawPane();
+  // --- The Theme pane (the Report's Theme): the report's colours, its text size and its colours by
+  // value, for every page; and each tile of the page on screen: its title shown or not and its
+  // size, and the filter bar's filters it follows. A change is saved, and the page drawn again.
+  // A tile's look is its Visual's: its Format pane, in Visual (✎).
+  let themeOpen = false;
+  function toggleTheme() {
+    themeOpen = !themeOpen;
+    themeBtn?.setAttribute('aria-pressed', String(themeOpen));
+    drawTheme();
   }
-  function closeFormat() {
-    if (!formatting) return;
-    formatting = null;
-    for (const { view } of pageViews.values()) view.mark(-1);
-    formatPane.hidden = true;
-    formatPane.replaceChildren();
-  }
-  function seriesChanged() {
-    const names = JSON.stringify(viewOf()?.about(formatting.index)?.series ?? []);
-    return names !== formatting.series;
-  }
-  // A format with nothing left unset: no undefined key, no empty list of colours, numbers or colours by value.
-  function cleanFormat(f) {
-    const out = {};
-    for (const [k, v] of Object.entries(f)) {
-      if (v === undefined || v === null || v === '') continue;
-      if (Array.isArray(v)) { if (v.length) out[k] = v; continue; }
-      if (k === 'measures') {
-        const kept = Object.fromEntries(Object.entries(v).map(([m, d]) => [m, cleanFormat(d ?? {})]).filter(([, d]) => Object.keys(d).length));
-        if (Object.keys(kept).length) out[k] = kept;
-        continue;
-      }
-      if (typeof v === 'object') {
-        const kept = Object.fromEntries(Object.entries(v).filter(([, x]) => x !== undefined && x !== null && x !== ''));
-        if (Object.keys(kept).length) out[k] = kept;
-      } else out[k] = v;
-    }
-    return out;
-  }
-  // The pane's controls, each a row: its label, then its controls.
-  const paneRow = (label, ...kids) => el('div', { class: 'rp-pane-row' }, el('span', { class: 'rp-pane-label' }, label),
-    el('div', { class: 'rp-pane-ctl' }, ...kids));
-  const paneSelect = (value, options, set, label) => {
-    const s = el('select', { 'aria-label': label }, options.map(([v, t]) => el('option', { value: v, selected: v === value }, t)));
-    s.addEventListener('change', () => set(s.value));
-    return s;
-  };
-  const paneCheck = (on, set, label) => {
-    const c = el('input', { type: 'checkbox', checked: !!on, 'aria-label': label });
-    c.addEventListener('change', () => set(c.checked));
-    return c;
-  };
-  const paneInput = (value, set, label, type = 'text') => {
-    const i = el('input', { type, class: 'rp-pane-input', value: value ?? '', 'aria-label': label });
-    i.addEventListener('change', () => set(i.value));
-    return i;
-  };
-  const hex = c => (/^#[0-9a-f]{6}$/i.test(c ?? '') ? c : '#888888');
-  const paneColour = (value, set, label) => {
-    const i = el('input', { type: 'color', class: 'rp-pane-colour', value: hex(value), 'aria-label': label, title: label });
-    i.addEventListener('change', () => set(i.value));
-    return i;
-  };
-  const SIZES = [['S', 'S'], ['M', 'M'], ['L', 'L']];
-  function drawPane() {
-    if (!formatting) return;
-    const tile = shownTiles()[formatting.index];
-    if (formatting.page !== reportAt || !tile) { closeFormat(); return; }
-    formatPane.hidden = false;
-    const tab = (key, label) => el('button', { type: 'button', class: `subtab${formatting.tab === key ? ' active' : ''}`, role: 'tab',
-      'aria-selected': String(formatting.tab === key), onclick: () => { formatting.tab = key; drawPane(); } }, label);
+  function drawTheme() {
+    formatPane.hidden = !themeOpen;
+    if (!themeOpen) { formatPane.replaceChildren(); return; }
     formatPane.replaceChildren(
-      el('div', { class: 'rp-pane-head' }, el('div', { class: 'subtabs', role: 'tablist', 'aria-label': 'Format' }, tab('tile', 'Tile'), tab('report', 'Report')),
-        el('button', { type: 'button', class: 'rp-pane-x', title: 'Close', 'aria-label': 'Close the format pane', onclick: closeFormat }, '✕')),
-      el('div', { class: 'rp-pane-body' }, formatting.tab === 'tile' ? tileRows() : themeRows()));
+      el('div', { class: 'rp-pane-head' }, el('strong', {}, 'Theme'),
+        el('button', { type: 'button', class: 'rp-pane-x', title: 'Close', 'aria-label': 'Close the theme pane', onclick: toggleTheme }, '✕')),
+      el('div', { class: 'rp-pane-body' }, themeRows(), tileRows()));
   }
+  // The page's tiles: each one's title, and the filters it follows.
   function tileRows() {
-    const f = formatting.format;
-    const about = viewOf()?.about(formatting.index) ?? { kind: 'chart', series: [], numbers: [] };
-    formatting.series = JSON.stringify(about.series);
-    const set = patch => setFormat(patch);
-    const rows = [paneRow('Title', el('label', { class: 'rp-pane-check' }, paneCheck(f.title !== false, v => set({ title: v ? undefined : false }), 'Show the title'), 'show'),
-      el('span', { class: 'rp-pane-label' }, 'Size'), paneSelect(f.titleSize ?? 'M', SIZES, v => set({ titleSize: v === 'M' ? undefined : v }), 'Title size'))];
-    if (about.kind === 'chart') {
-      if (about.series.length) {
-        rows.push(paneRow('Colours', ...about.series.map(s => el('label', { class: 'rp-pane-swatch' },
-          paneColour(f.colors?.[s.name] ?? s.color, v => set({ colors: { ...f.colors, [s.name]: v } }), `Colour of ${s.name}`), s.name)),
-          f.colors ? el('button', { type: 'button', class: 'rp-pane-reset', onclick: () => { set({ colors: undefined }); drawPane(); } }, 'Reset') : null));
-      }
-      rows.push(paneRow('Data labels', paneCheck(f.labels, v => set({ labels: v || undefined }), 'Data labels')),
-        paneRow('Legend', paneSelect(f.legend ?? 'auto', [['auto', 'Auto'], ['top', 'Top'], ['bottom', 'Bottom'], ['right', 'Right'], ['off', 'Off']],
-          v => set({ legend: v === 'auto' ? undefined : v }), 'Legend')),
-        paneRow('X axis title', paneInput(f.xTitle, v => set({ xTitle: v.trim() || undefined }), 'X axis title')),
-        paneRow('Y axis title', paneInput(f.yTitle, v => set({ yTitle: v.trim() || undefined }), 'Y axis title')),
-        paneRow('Y from', paneInput(f.yMin, v => set({ yMin: v === '' ? undefined : Number(v) }), 'Y axis from', 'number'),
-          el('span', { class: 'rp-pane-label' }, 'to'), paneInput(f.yMax, v => set({ yMax: v === '' ? undefined : Number(v) }), 'Y axis to', 'number')),
-        paneRow('Total line', paneCheck(f.totalLine, v => set({ totalLine: v || undefined }), 'Each measure\'s total as a line across')),
-        paneRow('Highest point', paneCheck(f.maxLabel, v => set({ maxLabel: v || undefined }), 'Label the highest point')),
-        paneRow('Zoom slider', paneCheck(f.zoom, v => set({ zoom: v || undefined }), 'A zoom slider under the chart')));
-      // Several measures: one plot, each drawn as it says, on the left axis or the right one.
-      if (about.numbers.length > 1) {
-        const drawn = (n, patch) => set({ measures: { ...f.measures, [n]: { ...f.measures?.[n], ...patch } } });
-        rows.push(el('h3', { class: 'rp-pane-sub' }, 'Measures in one plot'), ...about.numbers.map(n => paneRow(n,
-          paneSelect(f.measures?.[n]?.as ?? 'auto', [['auto', 'As the chart'], ['bar', 'Bar'], ['line', 'Line'], ['area', 'Area'], ['dashed', 'Dashed line']],
-            v => drawn(n, { as: v === 'auto' ? undefined : v }), `Draw ${n} as`),
-          paneSelect(f.measures?.[n]?.axis ?? 'left', [['left', 'Left'], ['right', 'Right']], v => drawn(n, { axis: v === 'left' ? undefined : v }), `Axis of ${n}`))),
-          f.measures ? el('button', { type: 'button', class: 'rp-pane-reset', onclick: () => { set({ measures: undefined }); drawPane(); } }, 'One plot each') : null);
-      }
-    }
-    if (about.kind === 'table') {
-      if (about.numbers.length) {
-        rows.push(el('h3', { class: 'rp-pane-sub' }, 'Colour by value'), ...about.numbers.map(n => paneRow(n,
-          paneSelect(f.byValue?.[n] ?? 'none', [['none', 'None'], ['background', 'Background'], ['bar', 'Bar']],
-            v => set({ byValue: { ...f.byValue, [n]: v === 'none' ? undefined : v } }), `Colour ${n} by value`))));
-      }
-      rows.push(paneRow('Banded rows', paneCheck(f.banded, v => set({ banded: v || undefined }), 'Banded rows')));
-    }
-    if (about.kind === 'card') {
-      rows.push(paneRow('Number size', paneSelect(f.figureSize ?? 'M', SIZES, v => set({ figureSize: v === 'M' ? undefined : v }), 'Number size')),
-        paneRow('Colour', paneColour(f.figureColor ?? css('--text'), v => set({ figureColor: v }), 'Colour of the numbers'),
-          f.figureColor ? el('button', { type: 'button', class: 'rp-pane-reset', onclick: () => { set({ figureColor: undefined }); drawPane(); } }, 'Reset') : null));
-      // The change: a measure on Values shown under the figure as ▲ or ▼.
-      if (about.numbers.length > 1) {
-        rows.push(paneRow('Change', paneSelect(f.change ?? '', [['', 'None'], ...about.numbers.slice(1).map(n => [n, n])],
-          v => set({ change: v || undefined }), 'The measure shown as the change')),
-          paneRow('Good when', paneSelect(f.goodWhen ?? 'up', [['up', 'It goes up'], ['down', 'It goes down']],
-            v => set({ goodWhen: v === 'up' ? undefined : v }), 'When the change is good')));
-      }
-    }
-    if (about.kind !== 'slicer' && about.kind !== 'text' && about.numbers.length) {
-      rows.push(el('h3', { class: 'rp-pane-sub' }, 'Numbers'), ...about.numbers.map(n => paneRow(n,
-        paneSelect(f.numbers?.[n] ?? 'auto', NUMBER_STYLES.map(([k, t]) => [k, t]),
-          v => set({ numbers: { ...f.numbers, [n]: v === 'auto' ? undefined : v } }), `Numbers of ${n}`))));
-    }
-    // The filter bar's filters this tile follows (all, unless it ignores some).
-    const bar = barFilters();
-    if (about.kind !== 'text' && bar.length) {
-      const ignored = new Set(f.ignore ?? []);
-      rows.push(el('h3', { class: 'rp-pane-sub' }, 'Follows the filters'), ...bar.map(x => paneRow(fieldName(x.field),
-        paneCheck(!ignored.has(x.field), v => set({ ignore: v ? (f.ignore ?? []).filter(k => k !== x.field) : [...(f.ignore ?? []), x.field] }),
-          `Follow the filter on ${fieldName(x.field)}`))));
-    }
-    return rows;
+    const tiles = shownTiles(), bar = barFilters();
+    if (!tiles.length) return [];
+    return [el('h3', { class: 'rp-pane-sub' }, 'Tiles on this page'), ...tiles.map((t, i) => {
+      const name = String(t.title ?? '') || (t.kind === 'text' ? 'Text' : 'Untitled');
+      const ignored = new Set(Array.isArray(t.ignore) ? t.ignore : []);
+      return el('div', { class: 'rp-pane-tile' },
+        paneRow(name, el('label', { class: 'rp-pane-check' }, paneCheck(t.showTitle !== false, v => setTile(i, { showTitle: v ? undefined : false }),
+          `Show the title of ${name}`), 'title'),
+          paneSelect(t.titleSize ?? 'M', SIZES, v => setTile(i, { titleSize: v === 'M' ? undefined : v }), `Title size of ${name}`)),
+        ...(t.kind === 'text' ? [] : bar.map(x => paneRow('', el('label', { class: 'rp-pane-check' },
+          paneCheck(!ignored.has(x.field), v => setTile(i, { ignore: v ? [...ignored].filter(k => k !== x.field) : [...ignored, x.field] }),
+            `${name} follows the filter on ${fieldName(x.field)}`), `follows ${fieldName(x.field)}`)))));
+    })];
   }
-  // A tile's format changed by `patch`: drawn at once, then saved; refused, the Report is drawn
-  // again as it is now.
-  function setFormat(patch) {
-    if (!formatting) return;
-    const { page, index } = formatting;
-    const format = cleanFormat({ ...formatting.format, ...patch });
-    const refilter = 'ignore' in patch;
-    formatting.format = format;
-    viewOf()?.restyle(index, format);
-    inTurn(async () => {
-      try {
-        await saveReport(p => {
-          if (!p.tiles[index]) throw new Error('the tile is no longer on the report');
-          return { ...p, tiles: p.tiles.map((t, j) => {
-            if (j !== index) return t;
-            const { format: _, ...rest } = t;
-            return Object.keys(format).length ? { ...rest, format } : rest;
-          }) };
-        }, page);
-        if (refilter && !destroyed) barChanged();
-      } catch (e) {
-        setStatus(`Format: ${e.message}`, 'error');
-        if (!destroyed) drawReportPage();
-      }
-    });
-  }
+  // A tile's own keys changed by `patch` (undefined, or an empty list: taken out); saved, and the page drawn again.
+  const setTile = (i, patch) => inTurn(async () => {
+    try {
+      await saveReport(p => {
+        if (!p.tiles[i]) throw new Error('the tile is no longer on the report');
+        return { ...p, tiles: p.tiles.map((t, j) => {
+          if (j !== i) return t;
+          const next = { ...t, ...patch };
+          for (const [k, v] of Object.entries(patch)) if (v === undefined || (Array.isArray(v) && !v.length)) delete next[k];
+          return next;
+        }) };
+      });
+    } catch (e) {
+      setStatus(`Theme: ${e.message}`, 'error');
+    }
+    if (!destroyed) drawReportPage();
+  });
   const PALETTE_NAMES = [['studio', 'Studio'], ['ocean', 'Ocean'], ['warm', 'Warm'], ['mono', 'Mono']];
   function themeRows() {
     const theme = shownReport?.spec?.theme ?? {};
@@ -735,7 +614,7 @@ export function mountExplore(root, ctx) {
   let colourColumn = null;
   function valueColourRows(theme) {
     const cols = reportFields().tables.flatMap(t => t.columns.filter(c => c.type === 'text').map(c => [c.id, `${t.name} › ${c.name}`]));
-    const pick = paneSelect(colourColumn ?? '', [['', 'Pick a column'], ...cols], v => { colourColumn = v || null; drawPane(); }, 'Column whose values get colours');
+    const pick = paneSelect(colourColumn ?? '', [['', 'Pick a column'], ...cols], v => { colourColumn = v || null; drawTheme(); }, 'Column whose values get colours');
     const list = el('div', { class: 'rp-pane-values' });
     if (colourColumn) {
       list.append(el('p', { class: 'rp-say' }, 'Reading values…'));
@@ -752,7 +631,7 @@ export function mountExplore(root, ctx) {
   const setTheme = patch => inTurn(async () => {
     const theme = cleanFormat({ ...(shownReport?.spec?.theme ?? {}), ...patch });
     try { await saveSpec(pages => pages, { theme: Object.keys(theme).length ? theme : undefined }); }
-    catch (e) { setStatus(`Format: ${e.message}`, 'error'); }
+    catch (e) { setStatus(`Theme: ${e.message}`, 'error'); }
     if (!destroyed) drawReportPage();
   });
 
@@ -894,7 +773,6 @@ export function mountExplore(root, ctx) {
   });
   const deletePage = i => inTurn(async () => {
     const name = shownPages[i]?.name;
-    closeFormat();
     try {
       await saveSpec(pages => {
         if (!pages[i] || pages.length < 2) throw new Error('a report keeps one page at least');
@@ -909,7 +787,6 @@ export function mountExplore(root, ctx) {
   });
   // A name dragged onto another: the page goes where that one is, the page on screen stays on screen.
   const movePage = (from, to) => inTurn(async () => {
-    closeFormat();
     try {
       const order = shownPages.map((_, k) => k);
       order.splice(to, 0, ...order.splice(from, 1));
@@ -927,7 +804,6 @@ export function mountExplore(root, ctx) {
   // first place it fits; the page on screen stays.
   const tileToPage = (i, to) => inTurn(async () => {
     const tile = shownTiles()[i], name = shownPages[to]?.name;
-    closeFormat();
     try {
       await saveSpec(pages => {
         const from = pages[reportAt];
@@ -965,7 +841,6 @@ export function mountExplore(root, ctx) {
   // The ✕ on a tile: the tiles without it, and drawn again (their answers are kept: run()).
   const removeTile = i => inTurn(async () => {
     const tile = shownTiles()[i];
-    closeFormat();
     try {
       await saveReport(spec => ({ ...spec, tiles: spec.tiles.filter((_, j) => j !== i) }));
       setStatus(`Removed "${tile?.title ?? 'the tile'}" from the report.`, 'ok');
@@ -977,12 +852,7 @@ export function mountExplore(root, ctx) {
   // A tile's grip or ◢: laid out on screen already (report.js), so only saved: each tile in its new
   // order, with its place; an earlier build's `size` goes. Drawn again only when the save is
   // refused, as the file is now.
-  const layoutTiles = list => {
-    // The tiles are in their new order on screen already: the pane follows its tile.
-    if (formatting?.page === reportAt) formatting.index = list.findIndex(l => l.from === formatting.index);
-    return layoutSave(list);
-  };
-  const layoutSave = list => inTurn(async () => {
+  const layoutTiles = list => inTurn(async () => {
     try {
       await saveReport(spec => ({ ...spec, tiles: list.map(({ from, layout }) => {
         const { size: _, ...tile } = spec.tiles[from];

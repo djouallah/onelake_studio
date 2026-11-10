@@ -592,6 +592,17 @@ A semantic model opens as **Explore** ([`app/explore/`](../app/explore/)), on th
     figure, and the figure is then the query's total row. Automatic picks it when only Values has fields. On the Report
     the other tiles' picks filter it, a click on it picks nothing, and its format can show a second measure as its change
     (▲ or ▼, coloured good or bad).
+  - **Format** opens a pane at the right of the view: how the Visual is drawn, kept with its shelves as their
+    `format` ([`format.js`](../app/explore/format.js)), so a Report tile made from it, or edited with ✎, draws the same.
+    What it offers follows the mark: a chart's series colours, data labels, legend, axis titles and value range, its
+    measures in one plot (each a bar, a line, an area or a dashed line, on the left axis or the right), each measure's
+    total as a line (`totalLine`: the query asks for its totals), the highest point labelled, a zoom slider; a
+    table's colours by value (a tint, or a bar) and banded rows; a card's figures' size and colour and a measure as its
+    change (▲/▼, good when it goes `goodWhen`); and each number's style (`NUMBER_STYLES`, each a format string:
+    `#,##0.0a` writes 1.2K, `0%` a percent). A change is drawn at once from the rows there are (`formatChart` over a
+    chart's ECharts option, the rest through `formatLook` into Visual's own drawing); the total line runs the query
+    again. A tile from before kept its format on the tile: it is read as its Visual's (`tileOf` in
+    [`report.js`](../app/explore/report.js)), and the first save writes it there.
   - **Show plan** profiles it (`profile.js`: DuckDB's `EXPLAIN ANALYZE` as totals, a timeline and the
     costly operators) next to its plan tree.
   - **Add to report** puts the view on the Report, as a tile (Report, below).
@@ -603,7 +614,7 @@ A semantic model opens as **Explore** ([`app/explore/`](../app/explore/)), on th
     [`view.js`](../app/explore/view.js)): a dropdown of one value, a list to tick (searched, 150 shown), or dates from
     and to with 3d, 7d, 30d, 1y and All back from the latest day the column has. A filter's values are a query of their
     own, as the Filters shelf lists them (`valuesSql`). What is picked is a condition of every tile's query
-    (`ctx.where`), but those whose format ignores it (`format.ignore`, the pane's "Follows the filters"); a pick draws
+    (`ctx.where`), but those that do not follow it (a tile's `ignore`, set in the Theme pane); a pick draws
     every page again, and the picks in its tiles go. The viewer's picks are this visit's only. Studio's + Filter adds
     one (a column and its style) and a filter's ✕ takes it out, saved like every other edit.
   - **Pages:** the report is `{ pages: [{ name, tiles }] }`; one written before pages, `{ tiles }`, is one page, Page 1
@@ -618,23 +629,13 @@ A semantic model opens as **Explore** ([`app/explore/`](../app/explore/)), on th
   - **Text:** `{ title, kind: 'text', text }`, `text` a few lines of Markdown (`markdownBlocks`: `#` to `###`
     headings, `**bold**`, `*italic*`, http(s) links, `-` lists, paragraphs), built as elements, never as HTML. A
     double-click edits it in a box in place, kept by Done or Ctrl+Enter. Picks don't touch it.
-  - **Format:** a tile's 🖌 opens the format pane at the right of the tiles (`openFormat` in
-    [`view.js`](../app/explore/view.js); over them on a narrow window), the tile outlined. Its Tile tab writes the tile's
-    `format`: `title` (false: none), `titleSize`, a chart's `colors` by series name, `labels`, `legend`, `xTitle`,
-    `yTitle`, `yMin`, `yMax`; a table's `byValue` (a measure's cells tinted, or filled as a bar, by value) and `banded`;
-    a card's `figureSize` and `figureColor`; `numbers`, a field's number style (`NUMBER_STYLES`, each a format string:
-    `#,##0.0a` writes 1.2K, `0%` a percent). What it offers is the tile's (`about`: its kind, its series as drawn, its
-    fields with numbers). A change is drawn at once from the answer the tile has, nothing run (`restyle`), then saved
-    like every other edit. A chart's format goes over its ECharts option (`formatChart`), a pivot's numbers, colours by
-    value and labels through Visual's own drawing (`look.formats`, `byValue`, `labels` in
-    [`explore.js`](../app/explore/explore.js)). The Report tab writes the report's `theme`: `palette` (`PALETTES` in
-    [`theme.js`](../app/explore/theme.js)), `textSize`, and `colors`, a colour by value (a column's values, picked
-    in the pane), which every tile draws that value in: a series, a bar, a treemap's box, a map's points; it draws the
-    page again. A tile's own colours win over the theme's. A chart's format also has `measures` (several measures in one
-    plot, each drawn as a bar, a line, an area or a dashed line, on the left axis or the right one), `totalLine` (each
-    measure's total as a dashed line across, from the query's own totals: the tile's query asks for them), `maxLabel`
-    (each series' highest point labelled) and `zoom` (a slider under it); a card's `change` (the measure shown as its
-    change) and `goodWhen`. The pane closes when its tile or page moves or goes.
+  - **Theme:** the Report bar's **Theme** opens a pane at the right of the tiles (`drawTheme` in
+    [`view.js`](../app/explore/view.js); over them on a narrow window). It writes the report's `theme`: `palette`
+    (`PALETTES` in [`theme.js`](../app/explore/theme.js)), `textSize`, and `colors`, a colour by value (a column's
+    values, picked in the pane) that every tile draws that value in: a series, a bar, a treemap's box, a map's points. A
+    Visual's own colours win over it. Under it, each tile of the page on screen: its title shown or not
+    (`showTitle`) and its size (`titleSize`), and the filter bar's filters it follows (`ignore` lists those it does
+    not). Each change is saved, and the page drawn again. A tile's look is its Visual's (Format, above), edited by ✎.
   - **Which tiles:** the model's Export to Fabric zip's `site/report.json`, when it has one (the zip its last export was
     approved into); else the file Studio keeps for the model until its first export (`<storage>/reports/`, by its
     workspace and name); else none: a Report starts empty. The first export writes Studio's file, or no tiles, into
@@ -652,7 +653,7 @@ A semantic model opens as **Explore** ([`app/explore/`](../app/explore/)), on th
     its layout kept; a title that was its shelves' own follows the new ones. Either way Visual's shelves from before come
     back, and the Report is on screen again. Add to report still adds a new tile from there.
   - **Drawn again** when the zip changes, while the tab is on screen: a person or an agent edits the report and sees it.
-  - A tile is `{ title, kind: 'pivot', pivot, format?, layout?, wide? }`, `pivot` the shelves as Visual keeps them; its SQL
+  - A tile is `{ title, kind: 'pivot', pivot, layout?, wide?, showTitle?, titleSize?, ignore? }`, `pivot` the shelves as Visual keeps them; its SQL
     is Visual's (`pivotQuery`), and it is drawn by Visual's own code (`pivotView` in [`explore.js`](../app/explore/explore.js)),
     so it keeps every mark. A slicer is a `pivot` tile whose mark is `slicer` (Visual, above). The tiles are laid out on 12 columns and rows of 10px:
     `layout` (`{ x, y, w, h }`) is where a tile's grip and ◢ put it. `arrange` places them: the tile moved stays where

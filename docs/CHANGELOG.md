@@ -9,11 +9,13 @@
   pages or more.
 - **Text tiles.** The Report's **Add text** adds a text tile to the page: double-click it to write headings, **bold**,
   *italic*, links and lists, then **Done**.
-- **Format a Report tile.** A tile's 🖌 opens a pane at the right: its title (shown or not, and its size), a chart's
-  series colours, data labels, legend, axis titles and value range, a table's colour by value (a tint or a bar) and
-  banded rows, a card's number size and colour, and each number's style (1,234, 1,234.56, 1.2K, 12%, $1,234). Every
-  change shows at once and is saved. The pane's **Report** tab sets the colours and text size of every page. The
-  Fabric app draws each tile as it was formatted.
+- **Format a Visual.** Visual's **Format** opens a pane at the right of the view: a chart's series colours, data
+  labels, legend, axis titles and value range, a table's colour by value (a tint or a bar) and banded rows, a card's
+  number size and colour, and each number's style (1,234, 1,234.56, 1.2K, 12%, $1,234). It is kept with the Visual's
+  fields, so a Report tile draws it the same, and ✎ edits it there. Every change shows at once.
+- **The Report's Theme.** The Report's **Theme** sets the colours and text size of every page, gives a column's values
+  (a fuel, a region) one colour in every tile, and for each tile of the page whether its title shows, its size, and
+  which filters of the filter bar it follows.
 - **Every Report tile is a Visual.** A tile's query is always the one Visual writes from its fields; no tile holds SQL
   of its own. A tile of an older report that held SQL says so, and is built again in Visual.
 - **Top N and filters on measures in Visual.** **Top** keeps the first 1 to 100 rows as they are sorted, ties kept. A
@@ -22,13 +24,12 @@
   the measure; a calendar colours each day of a date column, one strip a year; a map puts a point for each latitude
   and longitude on Rows, sized by the measure and coloured by a column on Columns. The map's outline of the world ships
   with OneLake Studio and the app.
-- **A card's trend and change.** A date on a card's Rows draws its trend under the figure. In the format pane, a second
-  measure on Values can be the card's change, ▲ or ▼, green when it goes the good way.
+- **A card's trend and change.** A date on a card's Rows draws its trend under the figure. In Visual's Format pane, a
+  second measure on Values can be the card's change, ▲ or ▼, green when it goes the good way.
 - **A filter bar over the Report.** **+ Filter** adds a filter on a column to every page: a dropdown, a list to tick, or
-  dates from and to with 3d, 7d, 30d, 1y and All. A tile can stop following one (format pane, "Follows the filters").
-- **More in the format pane.** Several measures in one chart, each a bar, a line, an area or a dashed line, on the left
-  axis or the right one; each measure's total as a line across; the highest point labelled; a zoom slider. The Report
-  tab gives a column's values (a fuel, a region) one colour in every tile.
+  dates from and to with 3d, 7d, 30d, 1y and All. A tile can stop following one (Theme).
+- **More in Format.** Several measures in one chart, each a bar, a line, an area or a dashed line, on the left axis or
+  the right one; each measure's total as a line across; the highest point labelled; a zoom slider.
 - **The Fabric app's look.** A header with the model's name; the page's controls in the text's colour, so colour is
   for the data; cards with a soft shadow.
 
