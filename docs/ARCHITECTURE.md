@@ -50,13 +50,13 @@ Results computed from a semantic model are not guaranteed to match Power BI.
 
 ```
  Tree            Tabs, Explore           Command line, agent skill     Excel
- (VS Code)       (webview, page/)         (cli/cli.mjs)                 (PivotTable)
+ (VS Code)       (webview, page/)        (cli/cli.mjs)                 (PivotTable)
       |                 |                        |                         |
       |          one message channel       local pipe or socket      XMLA on 127.0.0.1
-      |            (core/host.js)            (cli/bridge.js, cli/agent.js)  (xmla/)
+      |           (core/host.js)        (cli/bridge.js, cli/agent.js)    (xmla/)
       v                 v                        v                         v
  +-------------------------------------------------------------+
- |  Extension host (src/), one per window                      |
+ |  Extension host (extension/, core/), one per window         |
  |  sign-in  |  cache-first OneLake  |  the read-only guard    |
  +-------------------------------------------------------------+
       |                  |  Quack, control pipe
@@ -900,9 +900,9 @@ local pipe or socket ([`cli/bridge.js`](../cli/bridge.js)). The extension answer
 [`cli/standalone.js`](../cli/standalone.js), which is [`core/core.js`](../core/core.js) with no editor around it:
 
 - **Sign-in:** `signin` opens the browser, once, as the Azure CLI's public client through MSAL
-  ([`cli/msalsession.js`](../cli/msalsession.js)). No app registration. A tenant's admin can block that client, and only
+  ([`core/msalsession.js`](../core/msalsession.js)). No app registration. A tenant's admin can block that client, and only
   this is affected: the extension's sign-in stays VS Code's. The token cache is encrypted for this Windows user
-  with DPAPI ([`cli/tokenstore.js`](../cli/tokenstore.js)).
+  with DPAPI ([`core/tokenstore.js`](../core/tokenstore.js)).
 - **The same cache:** a session's account id is MSAL's `homeAccountId` in both, so one person has one account key, and the
   files are VS Code's for this extension. The tenant and the proxy come from VS Code's `settings.json`.
 - **Its own engine:** VS Code's server has its session token in VS Code's secret storage, so this one is a server of its
@@ -1071,52 +1071,107 @@ every window. The rest apply at once.
 
 ## Where the code is
 
-| Folder or file | What it holds |
+One folder for each part. `core/` is what every part is built on, and loads no editor: only `core/core.js`,
+which puts a window together, names another part ([`test/js/core-no-editor.test.mjs`](../test/js/core-no-editor.test.mjs)
+holds both). The host's code ships bundled, with `@duckdb/node-api`, as `dist/extension.js`,
+`dist/engine-server.js` and `dist/standalone.js`.
+
+| Folder | What it holds |
 | --- | --- |
-| [`src/`](../src/) | The extension host and the server. Ship bundled, with `@duckdb/node-api`, as `dist/extension.js` and `dist/engine-server.js`. |
-| `extension/extension.js` | What is VS Code's: activation, commands, the tree's view, dialogs and the status bar. It hands the rest in. |
-| `core/core.js` | What a window builds that isn't about how it looks: the store, the catalog, the command line, Excel, and what happens when the account moves. Nothing it loads needs VS Code. |
-| `core/signin.js`, `core/settings.js`, `core/readlog.js` | When a session is asked for, and its tokens. What the settings mean. What a window says about its reads. |
-| `core/engine/engines.js` | The engine this window reads with, the background engine, and the catalog files. |
-| `core/queries.js`, `core/models/models.js` | Saved queries on disk. A model's local copy, and what the cache can name. |
-| `fabric_app/export/exportflow.js` | Export to Fabric, from its first question to the published app. |
-| `cli/skill.js`, `core/diskuse.js` | The agent skill's file. How much a folder holds. |
-| `core/names.js` | What items hold tables, and how a table or model is named. |
-| `core/sql.js` | The read-only guard, `tableRefs`, and `SHOW` rewriting. |
-| `core/engine/engine-host.js` | The native DuckDB engine: what the server boots, and how a window prepares and runs a statement. |
-| `core/onelake/catalog.js`, `core/onelake/onelake.js`, `core/onelake/store.js` | OneLake requests, cache first, and the store. |
-| `core/sqltables.js` | A table's SQL name found in OneLake, and a model's GUIDs named. |
-| `core/onelake/connectivity.js` | Whether this window is offline, and why. |
-| `core/onelake/http.js` | How the host asks OneLake and the Fabric API for anything. |
-| `core/lake/deltalog.js` | A Delta table's own log, for Stats and History. |
-| `core/lake/onelaketable.js` | A Delta or Iceberg table kept in the lake from its own metadata. |
-| `core/lake/tableservice.js` | The files statements read, brought here one at a time, and let go when no snapshot names them. |
-| `core/lake/tableread.js` | A table with OneLake security, read through OneLake's table read API and kept in the cache folder. |
-| `core/models/fabric.js` | A workspace's semantic models and apps, and a model's definition. |
-| `core/models/sqlendpoint.js` | A Direct Lake model over a SQL endpoint, pointed at the item behind it. |
-| `core/models/semviews.js` | The models opened, per account. |
-| `extension/tree.js`, `core/doubleclick.js` | The explorer, and a double click in it counting as one click. |
-| `core/title.js` | What the sidebar's header and a tab's title say. |
-| `page/querytext.js` | The SQL box's statements, error positions and variables. |
-| `extension/panel.js`, `core/host.js`, `extension/html.js`, `extension/webview.js` | A tab's webview, its channel, and its page. |
-| `extension/performance.js`, `extension/logs.js` | The Performance and Logs tabs. |
-| `core/onelake/catalogfile.js`, `core/onelake/catalogtables.js`, `core/onelake/syncworker.js` | What is remembered, in SQLite, the catalog's tables there, and what keeps them current and looks after tables in use. |
-| `core/engine/engine-server.js`, `core/engine/engine-client.js`, `core/engine/enginelog.js`, `core/logfile.js` | The server: its process, a window's side of it, and its log. |
-| `cli/agent.js`, `cli/bridge.js`, `cli/cli.mjs` | The command line. |
-| `desktop/node/`, `desktop/` | The desktop app: VS Code's API for the extension, its server, its window and its Tauri shell. |
-| `cli/standalone.js`, `cli/msalsession.js`, `cli/tokenstore.js` | The command line with VS Code closed: `core.js` with no editor, its sign-in, and its token cache. |
-| `core/diaglog.js` | A window's own log. |
-| `fabric_app/export/exportapp.js`, `fabric_app/export/fabricapp.js`, `fabric_app/export/onelakewrite.js` | Export to Fabric. |
-| `fabric_app/export/pbimodel.js`, `fabric_app/export/fabricmodel.js` | Export to Fabric's semantic model (DirectQuery, Direct Lake): its TMSL, and its writes. |
-| `core/vendored.js` | The one list of pinned third-party code the webview runs, dax-sql included. |
-| [`page/`](../page/) | A tab's page: `index.html`, `app.js`, `data.js`, `grid.js`, `chart.js`, `docview.js`, `dbview.js`, `paths.js`, `semantic.js`, `cdn.js`, `host.js`, `vscode-api.js`. |
-| [`page/explore/`](../page/explore/) | Explore, shared with the Fabric app. |
-| [`fabric_app/`](../fabric_app/) | The template for an exported app. |
-| [`test/`](../test/) | `js/`: the `node --test` suite and browser runners. Its `cli*.test.mjs` run `cli/cli.mjs` as a process. `sql/`: SQL statements and their answers (sqllogictest), run through the agent's `sql`. `e2e/`: the vsix in a real VS Code server and headless Chrome, signed out, and signed in with no internet. |
-| [`scripts/`](../scripts/) | Packaging: bundle, stage-webview, vendor, function-bundle, fetch-extensions, check-binding, fetch-binding, fetch-retry, make-icon. The website: build-website, and website-shots, which takes its screenshots in the installed app. |
-| [`media/`](../media/) | Icons. |
-| `docs/` | This file, the naming contract, the catalog specification and the changelog, which the website renders as pages of its own; an index and a screenshot for GitHub. |
-| [`website/`](../website/) | The public website: static HTML and its screenshots, built with the docs by `scripts/build-website.mjs` and deployed by `.github/workflows/pages.yml`. |
+| [`core/`](../core/) | What reads OneLake, with no editor. |
+| [`extension/`](../extension/) | What is VS Code's. |
+| [`page/`](../page/) | A tab's page, and Explore in `page/explore/`, shared with the Fabric app. |
+| [`cli/`](../cli/) | The command line and the agent skill. |
+| [`desktop/`](../desktop/) | The desktop app. |
+| [`fabric_app/`](../fabric_app/) | Export to Fabric, and the app it exports. |
+| [`xmla/`](../xmla/) | Excel's XMLA endpoint. |
+| [`test/`](../test/), [`scripts/`](../scripts/), `docs/`, [`website/`](../website/), [`media/`](../media/) | Tests, packaging, these documents, the public website, icons. |
+
+### core/
+
+| File | What it holds |
+| --- | --- |
+| `core.js` | What a window builds that isn't about how it looks: the store, the catalog, the command line, Excel, and what happens when the account moves. |
+| `host.js` | What a tab's page may ask over its channel. |
+| `names.js` | What items hold tables, and how a table or model is named. |
+| `sql.js` | The read-only guard, `tableRefs`, `SHOW` rewriting, and which hosts are OneLake's. |
+| `sqltables.js` | A table's SQL name found in OneLake, and a model's GUIDs named. |
+| `signin.js`, `settings.js` | When a session is asked for, and its tokens. What the settings mean. |
+| `msalsession.js`, `tokenstore.js`, `home.js` | With no VS Code: a sign-in of its own, its token cache, and where the files and settings are. |
+| `readlog.js`, `diaglog.js`, `logfile.js` | What a window says about its reads, its own log, and the log file. |
+| `queries.js` | Saved queries on disk. |
+| `title.js`, `doubleclick.js` | What the sidebar's header and a tab's title say. A double click counting as one click. |
+| `vendored.js` | The one list of pinned third-party code the page runs, dax-sql included. |
+| `crc32.js`, `diskuse.js` | A checksum. How much a folder holds. |
+| `engine/engine-host.js` | The native DuckDB engine: what the server boots, and how a window prepares and runs a statement. |
+| `engine/engine-server.js`, `engine/engine-client.js`, `engine/enginelog.js` | The server: its process, a window's side of it, and its log. |
+| `engine/engines.js` | The engine this window reads with, the background engine, and the catalog files. |
+| `engine/oldstate.js` | An older version's state file, brought over once. |
+| `onelake/catalog.js`, `onelake/onelake.js`, `onelake/store.js` | OneLake requests, cache first, and the store. |
+| `onelake/http.js`, `onelake/connectivity.js` | How the host asks OneLake and the Fabric API for anything. Whether this window is offline, and why. |
+| `onelake/catalogfile.js`, `onelake/catalogtables.js`, `onelake/syncworker.js` | What is remembered, in SQLite, the catalog's tables there, and what keeps them current and looks after tables in use. |
+| `lake/onelaketable.js` | A Delta or Iceberg table kept in the lake from its own metadata. |
+| `lake/tableservice.js` | The files statements read, brought here as they are read, and let go when no snapshot names them. |
+| `lake/tableread.js` | A table with OneLake security, read through OneLake's table read API and kept in the cache folder. |
+| `lake/deltalog.js`, `lake/filecache.js` | A Delta table's own log, for Stats and History. An older cache folder, tidied once. |
+| `models/fabric.js` | A workspace's semantic models and apps, and a model's definition. |
+| `models/models.js`, `models/modeldata.js`, `models/semviews.js` | A model's local copy, Keep offline, and the models opened, per account. |
+| `models/sqlendpoint.js` | A Direct Lake model over a SQL endpoint, pointed at the item behind it. |
+
+### extension/
+
+| File | What it holds |
+| --- | --- |
+| `extension.js` | Activation, commands, the tree's view, dialogs and the status bar. It hands the rest in. |
+| `tree.js` | The explorer. |
+| `panel.js`, `webview.js`, `html.js` | A tab's webview and its page. |
+| `performance.js`, `logs.js` | The Performance and Logs tabs. |
+
+### page/
+
+| File | What it holds |
+| --- | --- |
+| `index.html`, `app.js` | A tab's page. |
+| `data.js`, `host.js`, `vscode-api.js` | Tables and files asked of the host, over the page's side of the channel. |
+| `grid.js`, `chart.js`, `dbview.js`, `docview.js` | The grid, the chart, a database file's view and a document's. |
+| `querytext.js` | The SQL box's statements, error positions and variables. |
+| `paths.js`, `semantic.js` | Names and paths, and semantic views. The command line loads these two as well. |
+| `cdn.js` | Where the pinned third-party code is loaded from. |
+| `explore/` | Explore: Model, Visual and Report. Copied into an exported Fabric app. |
+
+### cli/
+
+| File | What it holds |
+| --- | --- |
+| `cli.mjs` | The command line: what an agent runs. |
+| `bridge.js`, `agent.js` | The pipe it asks the running app over, and the answers. |
+| `standalone.js` | The command line with VS Code closed: `core.js` with no editor. |
+| `skill.js`, `SKILL.md` | The agent skill, and what installs it. |
+
+### desktop/
+
+| Folder | What it holds |
+| --- | --- |
+| `node/` | The app's Node process: VS Code's API for the extension, its server, dialogs, theme and update check. |
+| `ui/` | The window: tree, tabs and menus. |
+| `splash/`, `src-tauri/` | The Tauri shell and its installer. |
+
+### fabric_app/
+
+| Folder | What it holds |
+| --- | --- |
+| `export/` | Export to Fabric, from its first question to the published app (`exportflow.js`, `exportapp.js`, `fabricapp.js`), a semantic model's TMSL and writes (`pbimodel.js`, `fabricmodel.js`), and writes to OneLake (`onelakewrite.js`). |
+| `site/` | The exported app's page, and its two data sources in `storage/`. |
+| `rayfin/` | The app's project and its function. |
+
+### test/ and scripts/
+
+- **`test/js/`** is the `node --test` suite and browser runners. Its `cli*.test.mjs` run `cli/cli.mjs` as a process.
+- **`test/sql/`** is SQL statements and their answers (sqllogictest), run through the agent's `sql`.
+- **`test/e2e/`** is the vsix in a real VS Code server and headless Chrome, signed out, and signed in with no internet.
+- **`scripts/`** is packaging (bundle, bundle-desktop, stage-webview, vendor, function-bundle, fetch-extensions,
+  check-binding, fetch-binding, fetch-retry, pinned-downloads, release-notes, make-icon) and the website
+  (build-website, and website-shots, which takes its screenshots in the installed app).
 
 `dist/`, `webview/`, `vendor/`, `duckdb-extensions/`, `fabric-function/` and `blog/` are ignored by git.
 The first five are build output or fetched at package time, so do not edit them.

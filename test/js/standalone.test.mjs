@@ -9,9 +9,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const require = createRequire(import.meta.url);
-const { pathsOf, parseSettings, keptIn } = require("../../cli/standalone.js");
-const { createMsalSession, scopesFor, CLIENT_ID } = require("../../cli/msalsession.js");
-const { createTokenStore, dpapiProtect, dpapiUnprotect } = require("../../cli/tokenstore.js");
+const { pathsOf, parseSettings, keptIn } = require("../../core/home.js");
+const { createMsalSession, scopesFor, CLIENT_ID } = require("../../core/msalsession.js");
+const { createTokenStore, dpapiProtect, dpapiUnprotect } = require("../../core/tokenstore.js");
 
 const temp = () => mkdtemp(join(tmpdir(), "standalone-"));
 
