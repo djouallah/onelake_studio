@@ -6,10 +6,10 @@ import { createRequire } from "node:module";
 import { fakeOneLake, richAgent, stubVendor, APP_DIR } from "./agent-fixtures.mjs";
 
 const require = createRequire(import.meta.url);
-const { EXIT } = require("../../src/bridge.js");
+const { EXIT } = require("../../cli/bridge.js");
 
 test("models and items --fresh: every workspace read now, and one that fails is a note", async () => {
-  const { createAgent } = require("../../src/agent.js");
+  const { createAgent } = require("../../cli/agent.js");
   const onelake = {
     workspaces: async () => ["b ws", "a ws", "broken"],
     models: async w => {
@@ -37,7 +37,7 @@ test("models and items --fresh: every workspace read now, and one that fails is 
 });
 
 test("models and items: every cached workspace, counted, and nothing fetched", async () => {
-  const { createAgent } = require("../../src/agent.js");
+  const { createAgent } = require("../../cli/agent.js");
   const onelake = fakeOneLake();
   const agent = createAgent({ onelake, modelPath: () => "/nowhere/x.bim" });
 
@@ -58,7 +58,7 @@ test("models and items: every cached workspace, counted, and nothing fetched", a
 });
 
 test("a listing or metadata not cached says so; --fresh is what reads it", async () => {
-  const { createAgent } = require("../../src/agent.js");
+  const { createAgent } = require("../../cli/agent.js");
   const onelake = fakeOneLake();
   const agent = createAgent({ onelake, modelPath: () => "/nowhere/x.bim" });
 
@@ -133,7 +133,7 @@ test("export: a model file in Files/, or a semantic model's local copy", async (
   const vendorDir = await mkdtemp(join(tmpdir(), "agent-vendor-"));
   try {
     await stubVendor(vendorDir);
-    const { createAgent } = require("../../src/agent.js");
+    const { createAgent } = require("../../cli/agent.js");
     const onelake = fakeOneLake();
     onelake.readBytes = async (ws, path) => new TextEncoder().encode(`model at ${ws}/${path}`);
     onelake.cached.models = async ws => ws === "a ws" ? { value: [{ id: "m1", name: "Sales" }, { id: "m2", name: "Ops" }], at: Date.now() } : null;

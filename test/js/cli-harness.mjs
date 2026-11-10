@@ -1,4 +1,4 @@
-// The command line as an agent meets it: the real bin/cli.mjs in a process of its own, its real
+// The command line as an agent meets it: the real cli/cli.mjs in a process of its own, its real
 // exit code and its two real streams, over a real pipe to a bridge served here.
 import { spawn } from "node:child_process";
 import { tmpdir } from "node:os";
@@ -7,9 +7,9 @@ import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { serveBridge } = require("../../src/bridge.js");
+const { serveBridge } = require("../../cli/bridge.js");
 
-export const CLI = fileURLToPath(new URL("../../bin/cli.mjs", import.meta.url));
+export const CLI = fileURLToPath(new URL("../../cli/cli.mjs", import.meta.url));
 
 let seq = 0;
 export const bridgeName = () => (process.platform === "win32"

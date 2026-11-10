@@ -1,5 +1,5 @@
 // The command line and the catalog: the real SQLite file, the real store and OneLake behind it, the
-// real bin/cli.mjs over a real pipe, and every way out to the network refused.
+// real cli/cli.mjs over a real pipe, and every way out to the network refused.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -9,12 +9,12 @@ import { createRequire } from "node:module";
 import { withAgent } from "./cli-harness.mjs";
 
 const require = createRequire(import.meta.url);
-const { createAgent } = require("../../src/agent.js");
+const { createAgent } = require("../../cli/agent.js");
 const { createOneLake } = require("../../src/onelake.js");
 const { createStore } = require("../../src/store.js");
 const { createCatalogFile } = require("../../src/catalogfile.js");
 const { createSyncWorker } = require("../../src/syncworker.js");
-const { EXIT } = require("../../src/bridge.js");
+const { EXIT } = require("../../cli/bridge.js");
 
 const LAKEHOUSE = "gold.Lakehouse";
 const metadata = {
@@ -289,7 +289,7 @@ test("a table-exists check, timed cold and warm", async t => {
     const r = await cli(["exists", "sales", "gold", "dbo.t4999"]);
     assert.equal(r.code, EXIT.OK, r.stderr);
     const whole = performance.now() - t0;
-    console.log(`exists over 5,003 tables: cold ${cold.toFixed(1)}ms, warm ${warm.toFixed(1)}ms, a no with the closest names ${noMs.toFixed(1)}ms, through bin/cli.mjs ${whole.toFixed(0)}ms`);
+    console.log(`exists over 5,003 tables: cold ${cold.toFixed(1)}ms, warm ${warm.toFixed(1)}ms, a no with the closest names ${noMs.toFixed(1)}ms, through cli/cli.mjs ${whole.toFixed(0)}ms`);
     assert.ok(whole < 5000, `${whole}ms`);
   });
   assert.ok(cold < 1000 && warm < 1000, `cold ${cold}ms, warm ${warm}ms`);

@@ -2,7 +2,7 @@
 // =============================================================================
 // standalone.js — the command line with VS Code closed
 // =============================================================================
-// core.js with no editor around it. bin/cli.mjs comes here when nothing answers on the bridge, and for
+// core.js with no editor around it. cli/cli.mjs comes here when nothing answers on the bridge, and for
 // the commands only this does: signin, signout and serve. What a window remembers is the same files, so
 // the same person has the same cache with VS Code open or not. The engine is a server of its own, since
 // VS Code's has its session token in VS Code's secret storage: the two share the catalog and the disk
@@ -15,17 +15,17 @@
 const { join, resolve } = require('node:path');
 const { mkdirSync, readFileSync, writeFileSync, renameSync, existsSync } = require('node:fs');
 const { EXIT, failureJson } = require('./bridge');
-const { createConnectivity, probeOf } = require('./connectivity');
-const { useConnectivity, inTime } = require('./http');
-const { createSignIn } = require('./signin');
-const { createSettings } = require('./settings');
-const { createReadLog } = require('./readlog');
-const { createDiagLog } = require('./diaglog');
-const { createCore } = require('./core');
+const { createConnectivity, probeOf } = require('../src/connectivity');
+const { useConnectivity, inTime } = require('../src/http');
+const { createSignIn } = require('../src/signin');
+const { createSettings } = require('../src/settings');
+const { createReadLog } = require('../src/readlog');
+const { createDiagLog } = require('../src/diaglog');
+const { createCore } = require('../src/core');
 const { createTokenStore } = require('./tokenstore');
 const { createMsalSession } = require('./msalsession');
 const { connectionString, openInExcel } = require('../xmla/excel');
-const { DFS_ORIGIN, modelSqlName } = require('./names');
+const { DFS_ORIGIN, modelSqlName } = require('../src/names');
 
 const EXTENSION_ID = 'djouallah.onelake-studio';
 const SETTLE_MS = 2_000;

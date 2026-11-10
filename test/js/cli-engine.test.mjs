@@ -1,4 +1,4 @@
-// The command line with nothing stood in for but OneLake itself: the real bin/cli.mjs, bridge and
+// The command line with nothing stood in for but OneLake itself: the real cli/cli.mjs, bridge and
 // agent, the real engine, dax-sql and YAML reader, over tables that answer with rows. This is the
 // path a skill takes: list, read the model, run what it printed, compute a measure.
 //
@@ -16,10 +16,10 @@ import { withAgent, csvRows } from "./cli-harness.mjs";
 
 const require = createRequire(import.meta.url);
 const { createEngineHost } = require("../../src/engine-host.js");
-const { createAgent } = require("../../src/agent.js");
+const { createAgent } = require("../../cli/agent.js");
 const { PINS } = require("../../src/vendored.js");
 const { sqlName } = require("../../src/names.js");
-const { EXIT } = require("../../src/bridge.js");
+const { EXIT } = require("../../cli/bridge.js");
 
 const ROOT = join(fileURLToPath(new URL(".", import.meta.url)), "..", "..");
 const BUNDLED = join(ROOT, "duckdb-extensions");

@@ -7,8 +7,8 @@ import { withAgent, csvRows } from "./cli-harness.mjs";
 import { richAgent, fakeOneLake, APP_DIR } from "./agent-fixtures.mjs";
 
 const require = createRequire(import.meta.url);
-const { EXIT, exitName, COMMANDS } = require("../../src/bridge.js");
-const { createAgent } = require("../../src/agent.js");
+const { EXIT, exitName, COMMANDS } = require("../../cli/bridge.js");
+const { createAgent } = require("../../cli/agent.js");
 const { modelFileName } = require("../../src/fabric.js");
 const { ALL_TABLES_COUNTED } = require("../../src/sql.js");
 

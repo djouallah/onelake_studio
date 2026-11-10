@@ -8,11 +8,11 @@ import { createRequire } from "node:module";
 import { run, bridgeName } from "./cli-harness.mjs";
 
 const require = createRequire(import.meta.url);
-const { COMMANDS, EXIT } = require("../../src/bridge.js");
+const { COMMANDS, EXIT } = require("../../cli/bridge.js");
 
 // (The one option of node's own it names is how it runs the command line.)
-const SKILL = (await readFile(new URL("../../claude-skill/SKILL.md", import.meta.url), "utf8")).replaceAll("node --no-warnings", "node");
-const CLI_SOURCE = await readFile(new URL("../../bin/cli.mjs", import.meta.url), "utf8");
+const SKILL = (await readFile(new URL("../../cli/SKILL.md", import.meta.url), "utf8")).replaceAll("node --no-warnings", "node");
+const CLI_SOURCE = await readFile(new URL("../../cli/cli.mjs", import.meta.url), "utf8");
 const { stdout: HELP } = await run(["--help"], { path: bridgeName() });
 
 // Every option the parser takes, read from the parser's own tables.

@@ -1,4 +1,4 @@
-// bin/cli.mjs, the process: what an agent's shell sees. Nothing here calls agent.run itself.
+// cli/cli.mjs, the process: what an agent's shell sees. Nothing here calls agent.run itself.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
@@ -7,7 +7,7 @@ import { run, withBridge, withAgent, bridgeName } from "./cli-harness.mjs";
 import { richAgent } from "./agent-fixtures.mjs";
 
 const require = createRequire(import.meta.url);
-const { EXIT, MAX_REQUEST } = require("../../src/bridge.js");
+const { EXIT, MAX_REQUEST } = require("../../cli/bridge.js");
 
 const NOBODY = { path: bridgeName() };   // no extension listening
 

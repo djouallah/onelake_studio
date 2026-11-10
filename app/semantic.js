@@ -15,7 +15,7 @@
 // the host names them (setTableNamer) and the compiled SQL reads each by its SQL name,
 // lakehouse.ws.item.schema.table, the one any query writes — and where views are kept
 // (the extension host, per account: src/semviews.js). This module is shared by the panel and
-// the host's command line (src/agent.js); `modules` lets the host hand in the compiler.
+// the host's command line (cli/agent.js); `modules` lets the host hand in the compiler.
 // =============================================================================
 import { PINS, npmFile, npmEsm } from "./cdn.js";
 import { quoteIdent, sqlStr, sqlPart, stripBom, basename } from "./paths.js";

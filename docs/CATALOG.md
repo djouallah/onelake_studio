@@ -188,7 +188,7 @@ fails with an `IO Error`, for that table's listing and metadata.
 
 ## The command line
 
-**Without `--fresh`, `src/agent.js` makes no OneLake or Fabric call.** `ls`, `items`, `models`, `files`, `find`,
+**Without `--fresh`, `cli/agent.js` makes no OneLake or Fabric call.** `ls`, `items`, `models`, `files`, `find`,
 `table` and `exists` read the catalog with the same code as the tree. `status` and `log` ask nothing either.
 
 **Does a table exist (`exists`):** from the listings alone, so it needs no table's metadata, though what is held about one
@@ -387,6 +387,6 @@ Through CI and F5, as for everything here.
 - **e2e (signed in, no internet):** the tree, listings, Stats and History answer, a table already read returns rows,
   and what isn't held fails at once.
 - **Timing, in CI and on a real machine:** activation to a drawn tree with no server, signed out, with no internet;
-  and a table-exists check through `bin/cli.mjs`, warm and cold.
+  and a table-exists check through `cli/cli.mjs`, warm and cold.
 - **On a real tenant:** synced from empty with the tree usable throughout, online to offline and back, two windows,
   and a table added in Fabric appearing with no click.

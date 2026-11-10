@@ -33,7 +33,7 @@ import { fileURLToPath } from "node:url";
 
 const require = createRequire(import.meta.url);
 const { createEngineHost } = require("../../src/engine-host.js");
-const { createAgent } = require("../../src/agent.js");
+const { createAgent } = require("../../cli/agent.js");
 const { PINS } = require("../../src/vendored.js");
 
 const ROOT = join(fileURLToPath(new URL(".", import.meta.url)), "..", "..");

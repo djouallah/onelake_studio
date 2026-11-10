@@ -9,12 +9,12 @@ import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
 const { createDiagLog, outputLogOf } = require("../../src/diaglog.js");
-const { createAgent } = require("../../src/agent.js");
+const { createAgent } = require("../../cli/agent.js");
 const { createCatalogFile } = require("../../src/catalogfile.js");
 const { createSyncWorker } = require("../../src/syncworker.js");
 const { createOneLake } = require("../../src/onelake.js");
 const { createStore } = require("../../src/store.js");
-const { EXIT } = require("../../src/bridge.js");
+const { EXIT } = require("../../cli/bridge.js");
 
 const channel = () => {
   const lines = [];

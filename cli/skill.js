@@ -1,6 +1,6 @@
 'use strict';
 // skill.js — the agent skill's file (Claude Code, GitHub Copilot).
-// bin/cli.mjs is this extension's modules from a shell; claude-skill/SKILL.md tells an agent
+// cli/cli.mjs is this extension's modules from a shell; cli/SKILL.md tells an agent
 // when and how to run it. Installing writes the skill to ~/.claude/skills/onelake/ — read by
 // Claude Code and by GitHub Copilot in VS Code, so one copy serves both — with the
 // path of THIS install's cli.mjs filled in — a path that changes with every update, so a skill
@@ -15,8 +15,8 @@ const SKILL_MARKER = 'Installed by the OneLake Studio extension';
 const skillFile = () => join(os.homedir(), '.claude', 'skills', 'onelake', 'SKILL.md');
 
 async function writeSkill(extensionDir) {
-  const template = await fsp.readFile(join(extensionDir, 'claude-skill', 'SKILL.md'), 'utf8');
-  const cli = join(extensionDir, 'bin', 'cli.mjs').replace(/\\/g, '/');
+  const template = await fsp.readFile(join(extensionDir, 'cli', 'SKILL.md'), 'utf8');
+  const cli = join(extensionDir, 'cli', 'cli.mjs').replace(/\\/g, '/');
   const text = template.split('{{cli}}').join(cli);
   const file = skillFile();
   const before = await fsp.readFile(file, 'utf8').catch(() => null);

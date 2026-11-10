@@ -1,22 +1,22 @@
 #!/usr/bin/env node
 // =============================================================================
-// bin/cli.mjs — ask OneLake Studio, from a shell
+// cli/cli.mjs — ask OneLake Studio, from a shell
 // =============================================================================
-// A doorbell first: the arguments go to the extension over a local pipe (src/bridge.js), the
-// extension answers with its own sign-in, cache and engine (src/agent.js), and this prints the
+// A doorbell first: the arguments go to the extension over a local pipe (cli/bridge.js), the
+// extension answers with its own sign-in, cache and engine (cli/agent.js), and this prints the
 // answer — the answer alone on stdout, notes on stderr, and the exit code an agent can branch on
 // (EXIT, in bridge.js). With VS Code closed, on Windows, the same answer comes from dist/standalone.js,
 // on a sign-in of its own (signin). `serve` is always that: it stays, for Excel to connect to.
 // Written for an agent to run. Read only, but for export, which you confirm in VS Code.
 //
-//   node bin/cli.mjs --help
+//   node cli/cli.mjs --help
 // =============================================================================
 import { createRequire } from "node:module";
 import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 const require = createRequire(import.meta.url);
-const { askBridge, EXIT, failureJson, checkRequest, MAX_REQUEST } = require("../src/bridge.js");
+const { askBridge, EXIT, failureJson, checkRequest, MAX_REQUEST } = require("./bridge.js");
 
 const USAGE = {
   ls: `  ls                                  workspaces

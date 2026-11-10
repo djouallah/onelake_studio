@@ -18,7 +18,7 @@ const { createCatalogFile, catalogFileOf } = require("../../src/catalogfile.js")
 
 const extension = process.argv[2];
 assert.ok(existsSync(join(extension, "dist", "standalone.js")), "no dist/standalone.js in the vsix");
-const cli = join(extension, "bin", "cli.mjs");
+const cli = join(extension, "cli", "cli.mjs");
 const home = await mkdtemp(join(tmpdir(), "onelake-standalone-"));
 const env = { ...process.env, ONELAKE_STUDIO_HOME: home, ONELAKE_STUDIO_BRIDGE: `\\\\.\\pipe\\onelake-nobody-${process.pid}` };
 

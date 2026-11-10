@@ -50,10 +50,10 @@ Results computed from a semantic model are not guaranteed to match Power BI.
 
 ```
  Tree            Tabs, Explore           Command line, agent skill     Excel
- (VS Code)       (webview, app/)         (bin/cli.mjs)                 (PivotTable)
+ (VS Code)       (webview, app/)         (cli/cli.mjs)                 (PivotTable)
       |                 |                        |                         |
       |          one message channel       local pipe or socket      XMLA on 127.0.0.1
-      |            (src/host.js)            (src/bridge.js, src/agent.js)  (xmla/)
+      |            (src/host.js)            (cli/bridge.js, cli/agent.js)  (xmla/)
       v                 v                        v                         v
  +-------------------------------------------------------------+
  |  Extension host (src/), one per window                      |
@@ -892,17 +892,17 @@ command, menu, tab and message is the same code in both, and a change to the ext
 
 ## The command line and the agent skill
 
-**[`bin/cli.mjs`](../bin/cli.mjs) is a doorbell first.** It hands its arguments to the running extension over a
-local pipe or socket ([`src/bridge.js`](../src/bridge.js)). The extension answers
-([`src/agent.js`](../src/agent.js)) with its own sign-in, cache, engine and compiler.
+**[`cli/cli.mjs`](../cli/cli.mjs) is a doorbell first.** It hands its arguments to the running extension over a
+local pipe or socket ([`cli/bridge.js`](../cli/bridge.js)). The extension answers
+([`cli/agent.js`](../cli/agent.js)) with its own sign-in, cache, engine and compiler.
 
 **With VS Code closed,** on Windows with Node 22.5 or later, the same answer comes from
-[`src/standalone.js`](../src/standalone.js), which is [`src/core.js`](../src/core.js) with no editor around it:
+[`cli/standalone.js`](../cli/standalone.js), which is [`src/core.js`](../src/core.js) with no editor around it:
 
 - **Sign-in:** `signin` opens the browser, once, as the Azure CLI's public client through MSAL
-  ([`src/msalsession.js`](../src/msalsession.js)). No app registration. A tenant's admin can block that client, and only
+  ([`cli/msalsession.js`](../cli/msalsession.js)). No app registration. A tenant's admin can block that client, and only
   this is affected: the extension's sign-in stays VS Code's. The token cache is encrypted for this Windows user
-  with DPAPI ([`src/tokenstore.js`](../src/tokenstore.js)).
+  with DPAPI ([`cli/tokenstore.js`](../cli/tokenstore.js)).
 - **The same cache:** a session's account id is MSAL's `homeAccountId` in both, so one person has one account key, and the
   files are VS Code's for this extension. The tenant and the proxy come from VS Code's `settings.json`.
 - **Its own engine:** VS Code's server has its session token in VS Code's secret storage, so this one is a server of its
@@ -917,11 +917,11 @@ model file, with no VS Code. The model takes the name `semanticmodel.<workspace>
 file's name, or `--workspace` and `--name`, as [NAMING.md](NAMING.md#files) says of a model made from a file. Excel's
 PivotTables are its only client. **`--open`** opens a new workbook on it.
 
-**The skill** is [`claude-skill/SKILL.md`](../claude-skill/SKILL.md). **Install Agent Skill** writes it to
+**The skill** is [`cli/SKILL.md`](../cli/SKILL.md). **Install Agent Skill** writes it to
 `~/.claude/skills/onelake/`, where Claude Code and GitHub Copilot in VS Code (agent mode) look for
 personal skills, and it follows the extension through updates.
 
-`node bin/cli.mjs --help` is the full reference for commands and options. An agent should branch on:
+`node cli/cli.mjs --help` is the full reference for commands and options. An agent should branch on:
 
 | Exit code | Meaning |
 | --- | --- |
@@ -1080,7 +1080,7 @@ every window. The rest apply at once.
 | `src/engines.js` | The engine this window reads with, the background engine, and the catalog files. |
 | `src/queries.js`, `src/models.js` | Saved queries on disk. A model's local copy, and what the cache can name. |
 | `fabric_app/export/exportflow.js` | Export to Fabric, from its first question to the published app. |
-| `src/skill.js`, `src/diskuse.js` | The agent skill's file. How much a folder holds. |
+| `cli/skill.js`, `src/diskuse.js` | The agent skill's file. How much a folder holds. |
 | `src/names.js` | What items hold tables, and how a table or model is named. |
 | `src/sql.js` | The read-only guard, `tableRefs`, and `SHOW` rewriting. |
 | `src/engine-host.js` | The native DuckDB engine: what the server boots, and how a window prepares and runs a statement. |
@@ -1102,9 +1102,9 @@ every window. The rest apply at once.
 | `src/performance.js`, `src/logs.js` | The Performance and Logs tabs. |
 | `src/catalogfile.js`, `src/catalogtables.js`, `src/syncworker.js` | What is remembered, in SQLite, the catalog's tables there, and what keeps them current and looks after tables in use. |
 | `src/engine-server.js`, `src/engine-client.js`, `src/enginelog.js`, `src/logfile.js` | The server: its process, a window's side of it, and its log. |
-| `src/agent.js`, `src/bridge.js`, `bin/cli.mjs` | The command line. |
+| `cli/agent.js`, `cli/bridge.js`, `cli/cli.mjs` | The command line. |
 | `src/desktop/`, `desktop/` | The desktop app: VS Code's API for the extension, its server, its window and its Tauri shell. |
-| `src/standalone.js`, `src/msalsession.js`, `src/tokenstore.js` | The command line with VS Code closed: `core.js` with no editor, its sign-in, and its token cache. |
+| `cli/standalone.js`, `cli/msalsession.js`, `cli/tokenstore.js` | The command line with VS Code closed: `core.js` with no editor, its sign-in, and its token cache. |
 | `src/diaglog.js` | A window's own log. |
 | `fabric_app/export/exportapp.js`, `fabric_app/export/fabricapp.js`, `fabric_app/export/onelakewrite.js` | Export to Fabric. |
 | `fabric_app/export/pbimodel.js`, `fabric_app/export/fabricmodel.js` | Export to Fabric's semantic model (DirectQuery, Direct Lake): its TMSL, and its writes. |
@@ -1112,8 +1112,7 @@ every window. The rest apply at once.
 | [`app/`](../app/) | A tab's page: `index.html`, `app.js`, `data.js`, `grid.js`, `chart.js`, `docview.js`, `dbview.js`, `paths.js`, `semantic.js`, `cdn.js`, `host.js`, `vscode-api.js`. |
 | [`app/explore/`](../app/explore/) | Explore, shared with the Fabric app. |
 | [`fabric_app/`](../fabric_app/) | The template for an exported app. |
-| [`claude-skill/`](../claude-skill/) | The agent skill. |
-| [`test/`](../test/) | `js/`: the `node --test` suite and browser runners. Its `cli*.test.mjs` run `bin/cli.mjs` as a process. `sql/`: SQL statements and their answers (sqllogictest), run through the agent's `sql`. `e2e/`: the vsix in a real VS Code server and headless Chrome, signed out, and signed in with no internet. |
+| [`test/`](../test/) | `js/`: the `node --test` suite and browser runners. Its `cli*.test.mjs` run `cli/cli.mjs` as a process. `sql/`: SQL statements and their answers (sqllogictest), run through the agent's `sql`. `e2e/`: the vsix in a real VS Code server and headless Chrome, signed out, and signed in with no internet. |
 | [`scripts/`](../scripts/) | Packaging: bundle, stage-webview, vendor, function-bundle, fetch-extensions, check-binding, fetch-binding, fetch-retry, make-icon. The website: build-website, and website-shots, which takes its screenshots in the installed app. |
 | [`media/`](../media/) | Icons. |
 | `docs/` | This file, the naming contract, the catalog specification and the changelog, which the website renders as pages of its own; an index and a screenshot for GitHub. |

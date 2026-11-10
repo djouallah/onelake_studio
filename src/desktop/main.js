@@ -12,9 +12,9 @@ const { existsSync, mkdirSync, readFileSync, appendFileSync } = require('node:fs
 const vscode = require('vscode');
 const { createServer } = require('./server');
 const dialogs = require('./dialogs');
-const { pathsOf, readSettings, keptIn } = require('../standalone');
-const { createMsalSession } = require('../msalsession');
-const { createTokenStore } = require('../tokenstore');
+const { pathsOf, readSettings, keptIn } = require('../../cli/standalone');
+const { createMsalSession } = require('../../cli/msalsession');
+const { createTokenStore } = require('../../cli/tokenstore');
 const extension = require('../extension');
 const { checkUpdate } = require('./update');
 

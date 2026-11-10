@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { createAgent } = require("../../src/agent.js");
+const { createAgent } = require("../../cli/agent.js");
 
 export const APP_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "app");
 

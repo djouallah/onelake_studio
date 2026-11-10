@@ -18,11 +18,16 @@ node_modules/**
 !node_modules/@duckdb/node-bindings-*/**
 
 # The extension host's source: what ships is dist/extension.js, which scripts/bundle.mjs
-# builds from it. bridge.js is the exception — bin/cli.mjs requires it from outside the
-# editor, where the bundle (it needs `vscode`) cannot load.
+# builds from it.
 src/**
 xmla/**
-!src/bridge.js
+# The command line's: in dist/extension.js and dist/standalone.js too, but for what runs outside
+# the editor. cli.mjs is what an agent runs, bridge.js is what it requires (the bundle needs
+# `vscode` and cannot load there), and SKILL.md is the skill's template.
+cli/**
+!cli/cli.mjs
+!cli/bridge.js
+!cli/SKILL.md
 # Packaging scripts, run from the checkout.
 scripts/**
 **/*.vsix

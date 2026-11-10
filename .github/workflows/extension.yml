@@ -149,11 +149,11 @@ jobs:
       - run: node scripts/vendor.mjs
       # The command line over all of it, as an agent meets it: the real process, no stand-ins but
       # OneLake. Measured here because only this job reaches `sql` and `model`; the spawned
-      # bin/cli.mjs is counted too, through the NODE_V8_COVERAGE it inherits.
+      # cli/cli.mjs is counted too, through the NODE_V8_COVERAGE it inherits.
       - name: The command line, on the real engine, with its coverage
         run: >-
           node --test --experimental-test-coverage
-          --test-coverage-include=bin/cli.mjs --test-coverage-include=src/agent.js --test-coverage-include=src/bridge.js
+          --test-coverage-include=cli/cli.mjs --test-coverage-include=cli/agent.js --test-coverage-include=cli/bridge.js
           test/js/sqllogic.test.mjs test/js/cli-engine.test.mjs
           test/js/cli.test.mjs test/js/cli-contract.test.mjs test/js/agent.test.mjs test/js/bridge.test.mjs
 
@@ -285,13 +285,13 @@ jobs:
           for e in iceberg azure httpfs avro quack ducklake; do
             unzip -Z1 "$vsix" | grep -qx "extension/duckdb-extensions/$e.duckdb_extension"               || { echo "the vsix does not bundle the $e extension"; exit 1; }
           done
-          # The host ships as dist/extension.js (scripts/bundle.mjs): src/ stays out but for
-          # bridge.js, which bin/cli.mjs requires, and node-api's JavaScript is in the bundle.
+          # The host ships as dist/extension.js (scripts/bundle.mjs): its source stays out but for
+          # cli/bridge.js, which cli/cli.mjs requires, and node-api's JavaScript is in the bundle.
           files=$(unzip -Z1 "$vsix")
           grep -qx 'extension/dist/extension.js' <<<"$files" || { echo "no dist/extension.js in the vsix"; exit 1; }
           grep -qx 'extension/dist/engine-server.js' <<<"$files" || { echo "no dist/engine-server.js in the vsix"; exit 1; }
           grep -qx 'extension/dist/standalone.js' <<<"$files" || { echo "no dist/standalone.js in the vsix"; exit 1; }
-          grep -qx 'extension/src/bridge.js' <<<"$files" || { echo "no src/bridge.js — bin/cli.mjs needs it"; exit 1; }
+          grep -qx 'extension/cli/bridge.js' <<<"$files" || { echo "no cli/bridge.js — cli/cli.mjs needs it"; exit 1; }
           # Export to Fabric writes its app from fabric_app/ and Studio's Explore (webview/explore),
           # and deploys the prebuilt function.
           for f in fabric_app/site/app.js fabric_app/site/storage/data.js fabric_app/rayfin/rayfin.yml webview/explore/view.js; do
@@ -308,21 +308,21 @@ jobs:
           for f in source.zip deploymetadata.json; do
             grep -qx "extension/fabric-function/$f" <<<"$files" || { echo "no fabric-function/$f in the vsix"; exit 1; }
           done
-          stray=$(grep -E '^extension/src/' <<<"$files" | grep -vx 'extension/src/bridge.js' || true)
-          [ -z "$stray" ] || { echo "src/ shipped beside the bundle: $stray"; exit 1; }
+          stray=$(grep -E '^extension/(src|core|xmla|cli|fabric_app/export)/' <<<"$files"                   | grep -vxE 'extension/cli/(cli.mjs|bridge.js|SKILL.md)' || true)
+          [ -z "$stray" ] || { echo "source shipped beside the bundle: $stray"; exit 1; }
           ! grep -q '^extension/node_modules/@duckdb/node-api/' <<<"$files" \
             || { echo "@duckdb/node-api shipped beside the bundle"; exit 1; }
           echo "ok — $vsix carries $dirs and nothing else, bundles its DuckDB extensions, and runs from dist/extension.js"
 
-      # The command line runs from the vsix alone, beside no src/ but bridge.js: a require that
+      # The command line runs from the vsix alone, beside no source but bridge.js: a require that
       # packaging dropped fails here, not on an agent. Nothing listens, so `ls` must say exit 3.
       - name: The vsix's command line must run
         run: |
           set -euo pipefail
           unpacked="$RUNNER_TEMP/vsix-cli"
           rm -rf "$unpacked" && mkdir -p "$unpacked"
-          unzip -q "$(ls *.vsix)" 'extension/bin/*' 'extension/src/*' 'extension/package.json' -d "$unpacked"
-          cli="$unpacked/extension/bin/cli.mjs"
+          unzip -q "$(ls *.vsix)" 'extension/cli/*' 'extension/package.json' -d "$unpacked"
+          cli="$unpacked/extension/cli/cli.mjs"
           node "$cli" --version | grep -q '^onelake-studio ' || { echo "--version did not answer"; exit 1; }
           node "$cli" --help | grep -q 'exit codes:' || { echo "--help did not answer"; exit 1; }
           code=0
