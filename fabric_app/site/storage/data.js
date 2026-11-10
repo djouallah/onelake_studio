@@ -532,6 +532,8 @@ export function createDataSource({ onStatus = () => {}, onProgress = () => {} } 
 
   // A new snapshot planned by the page, at once, off every engine: opening the table waits for it.
   let access = null;
+  // The engines and the store, starting (init): what a query that computes waits for.
+  let enginesUp = null;
   function planFor(t) {
     return (t.m ? Promise.resolve(t.m) : metadataOf(t.location)).then(m => planTable(t.name, m, f => https(f, sas || access.sas)));
   }
@@ -550,6 +552,14 @@ export function createDataSource({ onStatus = () => {}, onProgress = () => {} } 
       if (!location) return null;
       const record = snapshots.get(name, location);
       if (record) return { name, location, m: null, bytes: record.bytes, record };
+      // The function's answer holds the snapshot (an app exported since it did): no metadata.json to fetch, which
+      // was a request to OneLake for each table before the first tile. All a plan reads of it is put back together.
+      const told = access.snapshots?.[t.source];
+      if (told) {
+        const m = told.manifestList ? { 'current-snapshot-id': 1, snapshots: [{ 'snapshot-id': 1, 'manifest-list': told.manifestList }] }
+          : { snapshots: [] };
+        return { name, location, m, bytes: told.bytes ?? null };
+      }
       try {
         const m = await metadataOf(location);
         const s = (m.snapshots ?? []).find(s => String(s['snapshot-id']) === String(m['current-snapshot-id']));
@@ -595,7 +605,9 @@ export function createDataSource({ onStatus = () => {}, onProgress = () => {} } 
     ready.catch(() => {});   // awaited below
 
     // Single-threaded (the base bundle): the page is not cross-origin isolated. ENGINES of them,
-    // started together.
+    // started together, and not waited for here: a tile whose result this browser kept (results.js) draws with
+    // no engine, and the tables' plans and downloads need none. A query that needs one waits (`enginesUp`).
+    enginesUp = (async () => {
     const bundle = BUNDLE;
     const workerUrl = URL.createObjectURL(
       // The store lets the worker fetch extensions from EXT_REPO, and nothing else.
@@ -634,6 +646,8 @@ importScripts("${bundle.mainWorker}");`], { type: "text/javascript" }));
     channel.postMessage({ ping: true });
     await Promise.race([storeReady, new Promise((_, reject) => setTimeout(() =>
       reject(new Error('no local store in this browser (OPFS with shared access handles, Chrome or Edge 121+)')), STORE_WAIT))]);
+    })();
+    enginesUp.catch(() => {});   // said by the first query that needs an engine
 
     await signed;
     onStatus('Reading the model and its tables from the lakehouse…');
@@ -666,6 +680,7 @@ importScripts("${bundle.mainWorker}");`], { type: "text/javascript" }));
       const key = resultKey(sql);
       const saved = key && await results.get(key);
       if (saved) return saved;
+      await enginesUp;
       return healing(() => readyFor(sql).then(() => submit(async e => {
         await openFor(e, sql);
         return e.conn.query(sql);

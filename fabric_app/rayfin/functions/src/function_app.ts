@@ -108,11 +108,26 @@ async function catalogPrefix(endpoint: string, ws: string, lh: string, token: st
   return prefix;
 }
 
+// What the page plans a table from: its current snapshot's manifest list and the size of its files. The
+// catalog's answer holds the table's whole metadata, so the page need not fetch metadata.json for each table.
+type Snapshot = { manifestList: string | null; bytes: number | null };
+function snapshotOf(m: any): Snapshot | null {
+  if (!m || typeof m !== 'object') return null;
+  const current = m['current-snapshot-id'];
+  // A table nothing was written to has no snapshot, and no files.
+  if (current == null || current === -1) return { manifestList: null, bytes: 0 };
+  const s = (Array.isArray(m.snapshots) ? m.snapshots : []).find((x: any) => String(x?.['snapshot-id']) === String(current));
+  if (!s?.['manifest-list']) return null;
+  const bytes = Number(s.summary?.['total-files-size']);
+  return { manifestList: String(s['manifest-list']), bytes: Number.isFinite(bytes) ? bytes : null };
+}
+
 // Each table's current metadata.json, a few at a time. A table the catalog does not have is
 // `missing`: the page shows no data where it reads it, as it does for a table not deployed.
 async function loadTables(endpoint: string, prefix: string, tables: string[], token: string):
-    Promise<{ metadata: Record<string, string>; missing: string[] }> {
+    Promise<{ metadata: Record<string, string>; snapshots: Record<string, Snapshot>; missing: string[] }> {
   const metadata: Record<string, string> = {};
+  const snapshots: Record<string, Snapshot> = {};
   const missing: string[] = [];
   await eachLimited(tables, CATALOG_CONCURRENCY, async t => {
     const [ns, name] = t.split('.');
@@ -121,8 +136,10 @@ async function loadTables(endpoint: string, prefix: string, tables: string[], to
     const location = body?.['metadata-location'];
     if (status !== 200 || !location) throw new Error(`${t}: HTTP ${status} ${body?.error?.message ?? 'no metadata-location'}`);
     metadata[t] = location;
+    const snapshot = snapshotOf(body?.metadata);
+    if (snapshot) snapshots[t] = snapshot;
   });
-  return { metadata, missing: missing.sort() };
+  return { metadata, snapshots, missing: missing.sort() };
 }
 
 // Window for both the delegation key and the SAS: now-skew .. +55 min. OneLake caps the key window
@@ -195,7 +212,8 @@ function signFolderSas(blobPath: string, permissions: string, key: DelegationKey
 udf.func(
   'openCatalog',
   async (ctx: RayfinContext<BlankAppSchema, AudienceType.Storage>, tables: string): Promise<{
-    metadata: Record<string, string>; missing: string[]; sas: Record<string, string>; expiresOn: string;
+    metadata: Record<string, string>; snapshots: Record<string, Snapshot>; missing: string[];
+    sas: Record<string, string>; expiresOn: string;
   } | { error: string }> => {
     let step = 'the table names';
     try {
@@ -225,7 +243,7 @@ udf.func(
         const folder = tableFolder(location);
         sas[folder] = signFolderSas(`/${ws}/${lh}/Tables/${folder}`, 'r', key, start, expiry);
       }
-      return { metadata: catalog.metadata,
+      return { metadata: catalog.metadata, snapshots: catalog.snapshots,
                missing: [...catalog.missing, ...bad].sort(), sas, expiresOn: iso(expiry) };
     } catch (e) {
       return { error: `${step}: ${e instanceof Error ? e.message : String(e)}` };

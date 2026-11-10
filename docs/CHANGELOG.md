@@ -9,7 +9,11 @@
 - **A Fabric app tries a failed download again**, twice, where the connection or the server failed. One dropped
   request among a table's hundreds used to fail the tile. A table whose plan failed once is planned again by the next
   tile, not left failed until the page is reloaded.
-- **A Fabric app starts its engines while it signs in.**
+- **A Fabric app starts its engines while it signs in**, and a visit whose tiles this browser already has draws
+  without waiting for them.
+- **A Fabric app asks OneLake less before its first tile.** The app's function already read each table's snapshot
+  from the catalog and threw it away; the page then fetched it again, a request for every table of the model. The
+  function now hands it over. An app exported before this fetches as it did until it is exported again.
 - **A window no longer waits for the sign-in to answer.** With an account already known, a tab opens and the engine
   starts on what this machine holds. VS Code's account provider shares one thread with every other extension, and at
   startup it could take half a minute to answer: a click in that time sat on "Opening OneLake Studio…", and the
