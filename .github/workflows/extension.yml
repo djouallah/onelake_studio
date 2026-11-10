@@ -449,7 +449,7 @@ jobs:
       - run: node test/e2e/run-standalone.mjs "${{ runner.temp }}/unpacked/extension"
 
   # The desktop app: the win32-x64 vsix's files, with Node, and the extension bundled again with
-  # `vscode` pointing at src/desktop/vscode.js. Driven in Edge first, as WebView2 is Edge, then built into
+  # `vscode` pointing at desktop/node/vscode.js. Driven in Edge first, as WebView2 is Edge, then built into
   # an installer, installed as a person would, and started once.
   desktop:
     needs: package

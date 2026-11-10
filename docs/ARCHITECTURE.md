@@ -851,9 +851,9 @@ The function's deploy package (an esbuild bundle plus its metadata) is built onc
 
 ## The desktop app
 
-**The app is the extension.** Its Node process ([`src/desktop/main.js`](../src/desktop/main.js)) runs
+**The app is the extension.** Its Node process ([`desktop/node/main.js`](../desktop/node/main.js)) runs
 [`src/extension.js`](../src/extension.js) as it is, bundled with `vscode` pointing at
-[`src/desktop/vscode.js`](../src/desktop/vscode.js): the part of VS Code's API the extension uses, and no more. So every
+[`desktop/node/vscode.js`](../desktop/node/vscode.js): the part of VS Code's API the extension uses, and no more. So every
 command, menu, tab and message is the same code in both, and a change to the extension is a change to the app.
 
 - **The window** ([`desktop/ui/`](../desktop/ui/)) draws what VS Code otherwise would: the tree, the tab strip, menus,
@@ -866,13 +866,13 @@ command, menu, tab and message is the same code in both, and a change to the ext
   page's storage, whose origin's port is new each start.
 - **A tab** is the same page as the extension's, in an iframe, with `acquireVsCodeApi` and VS Code's theme variables given
   to it in its own CSP.
-- **The connection** is an HTTP server on `127.0.0.1` ([`src/desktop/server.js`](../src/desktop/server.js)): messages out
+- **The connection** is an HTTP server on `127.0.0.1` ([`desktop/node/server.js`](../desktop/node/server.js)): messages out
   as server-sent events, back as POSTs. The first request's token becomes an `HttpOnly`, `SameSite=Strict` cookie, and
   anything without it, with another `Host` or another `Origin`, is refused. A tab's page is served from a second port,
   another origin: it reaches only its own files, can't reach into the window's page, and talks to the window by
   `postMessage`, as a webview does. The window's port refuses its requests, so only the window runs commands, changes
   settings or closes the app.
-- **What needs Windows** ([`src/desktop/dialogs.js`](../src/desktop/dialogs.js)): the save and folder dialogs, the clipboard
+- **What needs Windows** ([`desktop/node/dialogs.js`](../desktop/node/dialogs.js)): the save and folder dialogs, the clipboard
   and Explorer, through PowerShell, as Open in Excel is.
 - **Sign-in** is the command line's: MSAL as the Azure CLI's public client, with the token cache under DPAPI, and the same
   `signin` for both. No app registration.
@@ -885,7 +885,7 @@ command, menu, tab and message is the same code in both, and a change to the ext
   Closing the window closes the process's stdin, and it ends; if the process ends first, the splash comes back with
   Restart. A second start shows the first window, and the window's size and place are kept. The installer is per user.
 - **Updates:** at start, and on Help › Check for Updates, the latest release's tag is compared with this version
-  ([`src/desktop/update.js`](../src/desktop/update.js)). A newer one is said in the status bar, with a link to the
+  ([`desktop/node/update.js`](../desktop/node/update.js)). A newer one is said in the status bar, with a link to the
   installer. Offline, nothing is said. The app downloads and installs nothing itself.
 - **CI's `desktop` job** drives the window in Edge, which is what WebView2 is, on the real engine, then builds the
   installer, installs it and starts it once. Its screenshots and the installer are the run's artifacts.
@@ -1103,7 +1103,7 @@ every window. The rest apply at once.
 | `src/catalogfile.js`, `src/catalogtables.js`, `src/syncworker.js` | What is remembered, in SQLite, the catalog's tables there, and what keeps them current and looks after tables in use. |
 | `src/engine-server.js`, `src/engine-client.js`, `src/enginelog.js`, `src/logfile.js` | The server: its process, a window's side of it, and its log. |
 | `cli/agent.js`, `cli/bridge.js`, `cli/cli.mjs` | The command line. |
-| `src/desktop/`, `desktop/` | The desktop app: VS Code's API for the extension, its server, its window and its Tauri shell. |
+| `desktop/node/`, `desktop/` | The desktop app: VS Code's API for the extension, its server, its window and its Tauri shell. |
 | `cli/standalone.js`, `cli/msalsession.js`, `cli/tokenstore.js` | The command line with VS Code closed: `core.js` with no editor, its sign-in, and its token cache. |
 | `src/diaglog.js` | A window's own log. |
 | `fabric_app/export/exportapp.js`, `fabric_app/export/fabricapp.js`, `fabric_app/export/onelakewrite.js` | Export to Fabric. |

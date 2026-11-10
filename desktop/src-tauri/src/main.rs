@@ -1,5 +1,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
-// The desktop app's window. All it does is start the app's Node process (src/desktop/main.js), show a
+// The desktop app's window. All it does is start the app's Node process (desktop/node/main.js), show a
 // splash until that says where it is, and then open that page. Everything else is the extension's.
 // After its first line, each line the Node process says is something only the window can do: exit, zoom.
 // When it ends, the splash comes back with Restart. A file the app is started with (a double-click on a

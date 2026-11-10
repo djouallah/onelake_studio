@@ -392,7 +392,7 @@ async function activateInner(context) {
     signIn, connectivity, settings, readLog,
     extensionDir: context.extensionUri.fsPath, storageDir: context.globalStorageUri.fsPath,
     production: context.extensionMode === vscode.ExtensionMode.Production, dev,
-    // The desktop app's (src/desktop/main.js); VS Code gives none.
+    // The desktop app's (desktop/node/main.js); VS Code gives none.
     serverTag: context.serverTag || '',
     memento: context.globalState, secrets: context.secrets,
     httpProxy: () => vscode.workspace.getConfiguration('http').get('proxy', ''),
@@ -727,7 +727,7 @@ async function activateInner(context) {
 
   // A .fabricapp, or a model named as Ossie's tools name one (*.ossie.yaml), opened in VS Code opens in
   // OneLake Studio: its editor hands the file to openPath and closes its own empty tab ("Reopen Editor
-  // With… Text Editor" still shows the text). The desktop app opens files itself (src/desktop/main.js).
+  // With… Text Editor" still shows the text). The desktop app opens files itself (desktop/node/main.js).
   if (vscode.window.registerCustomEditorProvider) {
     for (const viewType of ['onelakeStudio.fabricApp', 'onelakeStudio.ossieModel']) {
       context.subscriptions.push(vscode.window.registerCustomEditorProvider(viewType, {

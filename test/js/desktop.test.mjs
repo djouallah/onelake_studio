@@ -12,10 +12,10 @@ import vm from "node:vm";
 const require = createRequire(import.meta.url);
 const { when } = await import("../../desktop/ui/when.js");
 const { chordOf, BROWSER_KEYS } = await import("../../desktop/ui/keys.js");
-const { newer, checkUpdate, DOWNLOAD } = require("../../src/desktop/update.js");
-const { createServer, pageFor } = require("../../src/desktop/server.js");
-const vscode = require("../../src/desktop/vscode.js");
-const { filterOf, openDialog } = require("../../src/desktop/dialogs.js");
+const { newer, checkUpdate, DOWNLOAD } = require("../../desktop/node/update.js");
+const { createServer, pageFor } = require("../../desktop/node/server.js");
+const vscode = require("../../desktop/node/vscode.js");
+const { filterOf, openDialog } = require("../../desktop/node/dialogs.js");
 const pkg = require("../../package.json");
 
 test("every when clause the extension's menus use reads as VS Code reads it", () => {

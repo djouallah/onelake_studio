@@ -1,5 +1,5 @@
 // The window: the tree, the tabs and what VS Code would otherwise draw around them. Everything it
-// shows comes from the extension (src/desktop/vscode.js): the tree's nodes, the tabs' pages, and the
+// shows comes from the extension (desktop/node/vscode.js): the tree's nodes, the tabs' pages, and the
 // menus and commands its package.json declares. This file decides how they look, and what every
 // Windows app has around them: a menu bar, the keys, About, a tree that can be put away.
 import { when } from './when.js';

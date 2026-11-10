@@ -15,7 +15,7 @@ const dialogs = require('./dialogs');
 const { pathsOf, readSettings, keptIn } = require('../../cli/standalone');
 const { createMsalSession } = require('../../cli/msalsession');
 const { createTokenStore } = require('../../cli/tokenstore');
-const extension = require('../extension');
+const extension = require('../../src/extension');
 const { checkUpdate } = require('./update');
 
 const { desktop } = vscode;
