@@ -9,6 +9,11 @@
   pages or more.
 - **Text tiles.** The Report's **Add text** adds a text tile to the page: double-click it to write headings, **bold**,
   *italic*, links and lists, then **Done**.
+- **Format a Report tile.** A tile's 🖌 opens a pane at the right: its title (shown or not, and its size), a chart's
+  series colours, data labels, legend, axis titles and value range, a table's colour by value (a tint or a bar) and
+  banded rows, a card's number size and colour, and each number's style (1,234, 1,234.56, 1.2K, 12%, $1,234). Every
+  change shows at once and is saved. The pane's **Report** tab sets the colours and text size of every page. The
+  Fabric app draws each tile as it was formatted.
 
 ## 0.2.19
 

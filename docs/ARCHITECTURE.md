@@ -599,6 +599,18 @@ A semantic model opens as **Explore** ([`app/explore/`](../app/explore/)), on th
   - **Text:** `{ title, kind: 'text', text }`, `text` a few lines of Markdown (`markdownBlocks`: `#` to `###`
     headings, `**bold**`, `*italic*`, http(s) links, `-` lists, paragraphs), built as elements, never as HTML. A
     double-click edits it in a box in place, kept by Done or Ctrl+Enter. Picks don't touch it.
+  - **Format:** a tile's 🖌 opens the format pane at the right of the tiles (`openFormat` in
+    [`view.js`](../app/explore/view.js); over them on a narrow window), the tile outlined. Its Tile tab writes the tile's
+    `format`: `title` (false: none), `titleSize`, a chart's `colors` by series name, `labels`, `legend`, `xTitle`,
+    `yTitle`, `yMin`, `yMax`; a table's `byValue` (a measure's cells tinted, or filled as a bar, by value) and `banded`;
+    a card's `figureSize` and `figureColor`; `numbers`, a field's number style (`NUMBER_STYLES`, each a format string:
+    `#,##0.0a` writes 1.2K, `0%` a percent). What it offers is the tile's (`about`: its kind, its series as drawn, its
+    fields with numbers). A change is drawn at once from the answer the tile has, nothing run (`restyle`), then saved
+    like every other edit. A chart's format goes over its ECharts option (`formatChart`), a pivot's numbers, colours by
+    value and labels through Visual's own drawing (`look.formats`, `byValue`, `labels` in
+    [`explore.js`](../app/explore/explore.js)). The Report tab writes the report's `theme`: `palette` (`PALETTES` in
+    [`theme.js`](../app/explore/theme.js)) and `textSize`, for every page; it draws the page again. A tile's own
+    colours win over the theme's. The pane closes when its tile or page moves or goes.
   - **Which tiles:** the model's Export to Fabric zip's `site/report.json`, when it has one (the zip its last export was
     approved into); else the file Studio keeps for the model until its first export (`<storage>/reports/`, by its
     workspace and name); else none: a Report starts empty. The first export writes Studio's file, or no tiles, into

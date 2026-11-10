@@ -312,6 +312,11 @@ tables, columns and measures a tile can name.
   \`AGG("measure")\`, \`GROUP BY ALL\`, \`ORDER BY\`, \`FETCH FIRST n ROWS WITH TIES\`. ${onModel(plan)
   ? 'The page turns it into DAX and runs it on the semantic model.' : 'The page compiles it (dax-sql) to SQL over the tables, and DuckDB-WASM runs it.'}
 - \`formats\`: a column's format string, as the model writes one (\`#,##0.00\`).
+- \`format\`: what OneLake Studio's format pane (a tile's 🖌) sets, any of: \`"title": false\`, \`"titleSize": "S"\` or
+  \`"L"\`, \`"colors": { "<series>": "#rrggbb" }\`, \`"labels": true\`, \`"legend"\` (\`top\`, \`bottom\`, \`right\`, \`off\`),
+  \`"xTitle"\`, \`"yTitle"\`, \`"yMin"\`, \`"yMax"\`, \`"byValue": { "<measure>": "background" | "bar" }\`, \`"banded": true\`,
+  \`"figureSize"\`, \`"figureColor"\`, and \`"numbers": { "<field>": "int" | "dec2" | "short" | "pct" | "usd" }\`.
+- \`theme\`, beside \`pages\`: \`{ "palette": "ocean" | "warm" | "mono", "textSize": "S" | "L" }\`, for every page.
 - \`echarts\` (bar and line): an ECharts option merged over the tile's own, for anything the kinds don't say.
 - \`crossFilter\` (bar, line and table): a click on a bar, a point or a row filters every other tile by its first column's
   value, as a WHERE on the model column that column is. When the first column is not a model column, name one here,

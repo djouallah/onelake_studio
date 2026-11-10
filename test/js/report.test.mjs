@@ -272,3 +272,54 @@ test("a text tile's Markdown: headings, paragraphs, lists, bold, italic and http
   assert.deepEqual(markdownBlocks(""), []);
   assert.deepEqual(markdownBlocks("a\r\nb\r\n\r\nc"), [{ p: ["a b"] }, { p: ["c"] }]);
 });
+
+const { formatChart, numberFormat } = await import("../../app/explore/report.js");
+const { formatValue, byValueBackground } = await import("../../app/explore/draw.js");
+
+test("a number style is a format string, and percent and K/M/B are written", () => {
+  assert.equal(numberFormat("auto"), null);
+  assert.equal(numberFormat("nope"), null);
+  assert.equal(formatValue(1234567, numberFormat("int")), "1,234,567");
+  assert.equal(formatValue(1234.5, numberFormat("dec2")), "1,234.50");
+  assert.equal(formatValue(1234.5, numberFormat("short")), "1.2K");
+  assert.equal(formatValue(-2500000, numberFormat("short")), "-2.5M");
+  assert.equal(formatValue(3.2e9, numberFormat("short")), "3.2B");
+  assert.equal(formatValue(12, numberFormat("short")), "12.0");
+  assert.equal(formatValue(0.123, numberFormat("pct")), "12%");
+  assert.equal(formatValue(0.1234, "0.0%"), "12.3%", "a model's own percent format");
+  assert.equal(formatValue(1234, numberFormat("usd")), "$1,234");
+});
+
+test("a table's cell coloured by its value: a tint, or a bar as long as its share of the largest", () => {
+  assert.equal(byValueBackground("bar", 50, [0, 100], "#123456"),
+    "linear-gradient(90deg, color-mix(in srgb, #123456 38%, transparent) 50%, transparent 50%)");
+  assert.equal(byValueBackground("bar", 0, [0, 100], "#123456"), "");
+  assert.match(byValueBackground("background", 100, [0, 100], "#123456"), /color-mix\(in srgb, #123456 60%, transparent\)/);
+  assert.equal(byValueBackground("background", "x", [0, 100], "#123456"), "", "only a number");
+});
+
+test("a chart's format over its option: colours by series, legend, axis titles and range, labels", () => {
+  const option = { legend: undefined, grid: { left: 8, right: 16, top: 12, bottom: 8, containLabel: true },
+    xAxis: { type: "category", data: ["a", "b"] }, yAxis: { type: "value" },
+    series: [{ name: "Revenue", type: "bar", data: [1, 2] }, { name: "Cost", type: "line", data: [1, 1] }] };
+  assert.deepEqual(formatChart(option, {}), { ...option, series: option.series }, "no format, the same chart");
+  const out = formatChart(option, { colors: { Cost: "#ff0000" }, legend: "bottom", xTitle: "Region", yTitle: "AUD", yMin: 0, yMax: 10, labels: true },
+    { textSize: "L", label: (s, v) => `${s}=${v}` });
+  assert.equal(out.series[1].itemStyle.color, "#ff0000");
+  assert.equal(out.series[1].lineStyle.color, "#ff0000", "a line's line too");
+  assert.equal(out.series[0].itemStyle, undefined, "a series with no colour of its own keeps the palette's");
+  assert.deepEqual([out.legend.show, out.legend.bottom], [true, 0]);
+  assert.equal(out.grid.bottom, 8 + 22 + 26, "room for the axis title and the legend under the plot");
+  assert.deepEqual([out.xAxis.name, out.xAxis.nameLocation], ["Region", "middle"]);
+  assert.deepEqual([out.yAxis.name, out.yAxis.min, out.yAxis.max], ["AUD", 0, 10]);
+  assert.equal(out.xAxis.axisLabel.fontSize, 14);
+  assert.equal(out.series[0].label.formatter({ value: 3 }), "Revenue=3");
+  assert.equal(option.series[1].itemStyle, undefined, "the option given is not changed");
+  assert.equal(formatChart({ ...option, legend: { top: 0 } }, { legend: "off" }).legend.show, false);
+  // Several plots: arrays stay arrays; the title goes under the last category axis that has labels.
+  const multi = formatChart({ grid: [{ top: "9%" }, { top: "59%" }],
+    xAxis: [{ type: "category", axisLabel: { show: false } }, { type: "category", axisLabel: { show: true } }],
+    yAxis: [{ type: "value" }, { type: "value" }], series: [] }, { xTitle: "Day", yMin: 5 });
+  assert.deepEqual(multi.xAxis.map(a => a.name), [undefined, "Day"]);
+  assert.deepEqual(multi.yAxis.map(a => a.min), [5, 5]);
+});

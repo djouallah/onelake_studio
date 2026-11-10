@@ -12,22 +12,39 @@ export function shiftDate(date, n) {
   return d.toISOString().slice(0, 10);
 }
 
-// A value written as a model's format string says (Power BI's: `#,##0`, `0.0`, `$#,##0.00`):
-// the decimals after the point, grouping with a comma, a leading currency sign. Text, dates
-// and a format it does not read are written as they are.
+// A value written as a model's format string says (Power BI's: `#,##0`, `0.0`, `$#,##0.00`,
+// `0.0%`): the decimals after the point, grouping with a comma, a leading currency sign, a
+// trailing % (the value times 100). A trailing `a` (`#,##0.0a`, the Report's 1.2K) writes it
+// in thousands, millions or billions, K, M or B. Text, dates and a format it does not read are
+// written as they are.
 export function formatValue(v, format) {
   if (v == null || v === '') return '';
   if (typeof v !== 'number') return String(v);
-  const m = /^([$€£]?)([#,]*0)(?:\.(0+))?$/.exec(format ?? '');
+  const m = /^([$€£]?)([#,]*0)(?:\.(0+))?(%|a)?$/.exec(format ?? '');
   const digits = m ? (m[3]?.length ?? 0) : Number.isInteger(v) ? 0 : 2;
-  const text = Math.abs(v).toLocaleString('en-US', { minimumFractionDigits: digits, maximumFractionDigits: digits,
+  let n = Math.abs(v), unit = '';
+  if (m?.[4] === '%') { n *= 100; unit = '%'; }
+  else if (m?.[4] === 'a') [n, unit] = n >= 1e9 ? [n / 1e9, 'B'] : n >= 1e6 ? [n / 1e6, 'M'] : n >= 1e3 ? [n / 1e3, 'K'] : [n, ''];
+  const text = n.toLocaleString('en-US', { minimumFractionDigits: digits, maximumFractionDigits: digits,
     useGrouping: m ? m[2].includes(',') : false });
-  return `${v < 0 ? '-' : ''}${m?.[1] ?? ''}${text}`;
+  return `${v < 0 ? '-' : ''}${m?.[1] ?? ''}${text}${unit}`;
 }
 
 // Explore's highlight table: how strong a cell's tint is, 6% to 60% of the colour, between the
 // smallest and the largest value shown.
 export const shade = (v, min, max) => v == null || !(max > min) ? 0 : Math.round(6 + 54 * (v - min) / (max - min));
+// A Report table's cell coloured by its value (a CSS background; '' for none): 'background'
+// tints it as the highlight does, 'bar' fills it from the left, as far as its size is of the
+// largest one's.
+export function byValueBackground(how, v, [lo, hi], color) {
+  if (typeof v !== 'number' || !Number.isFinite(v)) return '';
+  if (how === 'bar') {
+    const top = Math.max(Math.abs(lo), Math.abs(hi)), p = top ? Math.round(100 * Math.abs(v) / top) : 0;
+    return p ? `linear-gradient(90deg, color-mix(in srgb, ${color} 38%, transparent) ${p}%, transparent ${p}%)` : '';
+  }
+  const p = shade(v, lo, hi);
+  return p ? `color-mix(in srgb, ${color} ${p}%, transparent)` : '';
+}
 export const extent = values => {
   const xs = values.filter(v => typeof v === 'number' && Number.isFinite(v));
   return xs.length ? [Math.min(...xs), Math.max(...xs)] : [0, 0];

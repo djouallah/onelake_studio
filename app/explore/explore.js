@@ -12,7 +12,7 @@
 // itself.
 // =============================================================================
 
-import { formatValue, shade, extent, stackedGrids, shiftDate } from './draw.js';
+import { formatValue, byValueBackground, extent, stackedGrids, shiftDate } from './draw.js';
 import { el } from './dom.js';
 import { escapeHtml, quoteIdent as qid, sqlStr, sqlPart as bare } from '../paths.js';
 
@@ -260,6 +260,10 @@ function shelfField(fields, id) {
   return c && { id, kind: 'measure', type: 'measure', name: nameOf(id), agg: a.agg, column: c,
     format: a.agg === 'count' || a.agg === 'distinct' ? '#,0' : c.format };
 }
+/** The names the shelves' Values have in their query's rows (a Report's format pane lists them). */
+export const valueNames = s => (s?.values ?? []).map(nameOf);
+// A field's format string: a Report tile's own for its name (look.formats), else the model's.
+const formatOf = (look, id) => look?.formats?.[nameOf(id)] ?? shelfField(look?.fields, id)?.format;
 
 /**
  * A Report's tile of saved shelves: { state }, every shelf there, { sql }, the SELECT over the
@@ -295,7 +299,10 @@ const same = (a, b) => (a ?? null) === (b ?? null);
  * The rows of the shelves' query drawn as `mark` says ('auto': autoMark's), the Pivot page's
  * and a Report's tile's alike: { node }, a table or why there is none, or { option, keyAt }, an
  * ECharts option and the row key of a click on it (null: none). `s`: the shelves the rows are
- * of; `look`: { fields, palette, css, styles? }. `pick` (a Report's tile): { on(key), active,
+ * of; `look`: { fields, palette, css, styles?, formats?, byValue?, labels? } — a Report tile's
+ * own: `formats`, a format string by a field's name, over the model's; `byValue`, a table's
+ * measures coloured by their value, 'background' or 'bar', by name; `labels`, a chart's values
+ * written on it. `pick` (a Report's tile): { on(key), active,
  * value } — what a click on a row key calls, and the first field's value picked: its row bright,
  * the others dim. `sel`: a slicer's (slicerView).
  */
@@ -315,7 +322,7 @@ export function pivotView(s, rows, mark, look, pick = null, sel = null) {
 function cardView(s, rows, look) {
   const row = rows[0] ?? {}, many = s.values.length > 1;
   const text = id => {
-    const v = row[nameOf(id)], format = shelfField(look.fields, id)?.format;
+    const v = row[nameOf(id)], format = formatOf(look, id);
     return v == null ? '(blank)' : typeof v === 'number' && !format ? v.toLocaleString('en-US', { maximumFractionDigits: 2 }) : formatValue(v, format);
   };
   return el('div', { class: `card-figures${many ? ' card-many' : ''}` }, s.values.map(id =>
@@ -334,7 +341,7 @@ function slicerView(s, rows, look, sel) {
   const field = id && look.fields.byId.get(id);
   if (!field) return el('div', { class: 'ex-empty' }, 'A slicer needs a column on Rows.');
   const name = nameOf(id), m = s.values[0];
-  const fmt = v => formatValue(v, shelfField(look.fields, m)?.format);
+  const fmt = v => formatValue(v, formatOf(look, m));
   const figures = new Map();
   for (const r of rows) if (!r[ROW_TOTAL] && !r[COL_TOTAL] && !figures.has(r[name])) figures.set(r[name], m ? r[nameOf(m)] : null);
   const values = [...figures.keys()];
@@ -417,8 +424,9 @@ function slicerView(s, rows, look, sel) {
 // A key not picked, while a pick is on.
 const dimmed = (pick, key) => !!pick?.active && !same(key?.[0], pick.value);
 
-function pivotTable(s, piv, highlight, { fields, palette }, pick) {
-  const fmt = (id, v) => formatValue(v, shelfField(fields, id)?.format);
+function pivotTable(s, piv, highlight, look, pick) {
+  const { palette } = look;
+  const fmt = (id, v) => formatValue(v, formatOf(look, id));
   const measures = s.values, rowNames = s.rows.map(nameOf);
   const colKeys = [...piv.colKeys, ...(s.cols.length && piv.hasColTotal ? [null] : [])];
   const rowKeys = [...piv.rowKeys, ...(piv.hasRowTotal ? [null] : [])];
@@ -430,7 +438,10 @@ function pivotTable(s, piv, highlight, { fields, palette }, pick) {
   }
   const tint = palette[0];
   // Only for the highlight, which reads them: every cell is two string keys here.
-  const ranges = !highlight ? {} : Object.fromEntries(measures.map(m => [m, extent(piv.rowKeys.flatMap(a => piv.colKeys.map(b => piv.cell(a, b)?.[nameOf(m)])))]));
+  // A Report tile's measures coloured by value (look.byValue): 'background' tints as the highlight
+  // does, 'bar' fills the cell from the left, as far as its value is of the largest.
+  const by = m => (highlight ? 'background' : look.byValue?.[nameOf(m)]);
+  const ranges = Object.fromEntries(measures.filter(by).map(m => [m, extent(piv.rowKeys.flatMap(a => (s.cols.length ? piv.colKeys : [[]]).map(b => piv.cell(a, b)?.[nameOf(m)])))]));
   const t = el('table', { class: 'explore-table ex-pivot' });
   const head = el('thead');
   // One header line per column field, then the measures' names when there are several (or no column field).
@@ -474,10 +485,7 @@ function pivotTable(s, piv, highlight, { fields, palette }, pick) {
       for (const m of measures) {
         const v = r?.[nameOf(m)];
         const td = el('td', { class: 'ex-num' }, fmt(m, v));
-        if (highlight && a && b) {
-          const [lo, hi] = ranges[m], p = shade(v, lo, hi);
-          if (p) td.style.background = `color-mix(in srgb, ${tint} ${p}%, transparent)`;
-        }
+        if (ranges[m] && a && b) td.style.background = byValueBackground(by(m), v, ranges[m], tint);
         tr.append(td);
       }
     }
@@ -487,8 +495,9 @@ function pivotTable(s, piv, highlight, { fields, palette }, pick) {
   return t;
 }
 
-function pivotChart(s, piv, mark, { fields, palette, css }, pick) {
-  const fmt = (id, v) => formatValue(v, shelfField(fields, id)?.format);
+function pivotChart(s, piv, mark, look, pick) {
+  const { fields, palette, css } = look;
+  const fmt = (id, v) => formatValue(v, formatOf(look, id));
   const color = i => palette[i % palette.length];
   // The categories are the row keys; with no row field, the column keys are.
   const byCols = !s.rows.length;
@@ -577,6 +586,8 @@ function pivotChart(s, piv, mark, { fields, palette, css }, pick) {
         areaStyle: mark === 'area' ? { opacity: 0.85 } : undefined, showSymbol: false, connectNulls: false,
         itemStyle: { color: color(j) }, lineStyle: mark === 'line' ? { width: 1.6 } : undefined,
         barMaxWidth: 28, large: cats.length > 400,
+        ...(look.labels ? { label: { show: true, position: flat ? 'right' : mark === 'stacked' || mark === 'area' ? 'inside' : 'top',
+          fontSize: 10, formatter: p => fmt(m, p.value) } } : {}),
         data: cats.map(a => point(a, at(a, b)?.[nameOf(m)] ?? null)),
         ...(marked >= 0 && j === 0 ? { markLine: { silent: true, symbol: 'none', label: { show: false },
           data: [flat ? { yAxis: label(cats[marked]) } : { xAxis: label(cats[marked]) }] } } : {}),

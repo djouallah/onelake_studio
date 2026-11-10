@@ -603,6 +603,13 @@ async function modelMatrix() {
     const names = await f.locator("#modelView .rp-page-name").allInnerTexts();
     check("its tiles are one page, Page 1", names.length === 1 && names[0] === "Page 1", names.join(" | "));
     check("a page can be added", await f.locator("#modelView .rp-page-add").isVisible());
+    // A tile's 🖌: the format pane at the right, on that tile; its ✕ closes it.
+    await f.locator('#modelView .rp-tile button[title="Format"]').first().click({ force: true });
+    const pane = f.locator("#modelView .rp-pane");
+    check("🖌 opens the format pane", await pane.isVisible() && /Tile[\s\S]*Report[\s\S]*Title/.test(await pane.innerText()), await pane.innerText());
+    check("the tile is outlined", await f.locator("#modelView .rp-tile.rp-formatting").count() === 1);
+    await pane.locator(".rp-pane-x").click();
+    check("its ✕ closes it", await pane.isHidden() && await f.locator("#modelView .rp-tile.rp-formatting").count() === 0);
   }, 180000);
 
   await step("Model: a row picked in one tile filters the others", async () => {
