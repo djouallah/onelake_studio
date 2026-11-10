@@ -68,9 +68,12 @@ export function createModelSource({ onStatus = () => {} } = {}) {
 
   async function init() {
     onStatus("Signing in to Fabric…");
+    // The model needs no session: fetched while the sign-in is asked for.
+    const read = fetch(MODEL_JSON);
+    read.catch(() => {});
     await auth.signIn();
     onStatus("Reading the model…");
-    const r = await fetch(MODEL_JSON);
+    const r = await read;
     if (!r.ok) throw new Error(`the site has no model.json (HTTP ${r.status}): export the app again`);
     doc = await r.json();
     compiler = createCompiler(tmslToModel(Array.isArray(doc.datasets) ? ossieToTmsl(doc) : doc));

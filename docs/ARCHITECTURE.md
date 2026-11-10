@@ -667,7 +667,7 @@ A semantic model opens as **Explore** ([`page/explore/`](../page/explore/)), on 
     model's column). A slicer's pick is its values, `IN (…)` (`IS NULL` for a blank among them), or its range, `>=` and
     `<=` (a date's last day kept whole); it does not run again when other picks change. The tile clicked stays whole, its pick bright and the rest dim. The same click
     again, or the pick's ✕ in the bar above the tiles, clears it; picks in several tiles all apply. A card takes no
-    clicks, nor does a treemap (a click zooms into its box). The tiles still run one at a time, and a pick stops the tile running when it changes it. A pick filters only
+    clicks, nor does a treemap (a click zooms into its box). The tiles still run one at a time (in a Fabric app, side by side: its engines take a query each), and a pick stops the tile running when it changes it. A pick filters only
     the tiles of its own page.
 
 `view.js` is host-neutral: the host passes in the compiler, how to run SQL, and where ECharts comes

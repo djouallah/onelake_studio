@@ -48,11 +48,27 @@ async function limited(fn, table) {
   active++;
   try { return await fn(); } finally { active--; next()?.(); }
 }
-const get = (url, table) => limited(async () => {
+// A request the connection or the server failed is asked again, twice at most and a little later each time: one
+// dropped among a table's hundreds would otherwise fail the tile. A refusal (a 4xx but 429) is final, and so is
+// an answer of the wrong size.
+const RETRY_MS = [500, 2000];
+async function retried(fn) {
+  for (let n = 0; ; n++) {
+    try { return await fn(); }
+    catch (e) {
+      const again = n < RETRY_MS.length && (e?.status == null ? e instanceof TypeError : e.status === 429 || e.status >= 500);
+      if (!again) throw e;
+      await new Promise(r => setTimeout(r, RETRY_MS[n]));
+    }
+  }
+}
+const failed = (r, what) => Object.assign(new Error(`${what}HTTP ${r.status}`), { status: r.status });
+
+const get = (url, table) => limited(() => retried(async () => {
   const r = await fetch(url);
-  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  if (!r.ok) throw failed(r, '');
   return new Uint8Array(await r.arrayBuffer());
-}, table);
+}), table);
 
 // The files of a table the store lacks, whole or the pieces of them a query reads, six at a
 // time, each handed to the worker's store (store(path, bytes, f), resolved once it is kept):
@@ -64,10 +80,13 @@ export async function prefetchFiles(name, files, url, store, onFile = () => {}, 
   if (!order.includes(name)) order.push(name);
   return Promise.all(files.map(f => limited(async () => {
     const piece = f.from != null, length = piece ? f.to - f.from + 1 : f.size;
-    const r = await fetch(url(f.path), { cache: 'no-store', ...(piece ? { headers: { Range: `bytes=${f.from}-${f.to}` } } : {}) });
-    // A piece is a 206: a 200 is the whole file.
-    if (!r.ok || (piece && r.status !== 206)) throw new Error(`${f.path.split('/').pop()}: HTTP ${r.status}`);
-    const bytes = await body(r, Number(r.headers.get('content-length')) || length, onBytes);
+    const bytes = await retried(async () => {
+      const r = await fetch(url(f.path), { cache: 'no-store', ...(piece ? { headers: { Range: `bytes=${f.from}-${f.to}` } } : {}) });
+      // A piece is a 206: a 200 is the whole file.
+      if (!r.ok) throw failed(r, `${f.path.split('/').pop()}: `);
+      if (piece && r.status !== 206) throw new Error(`${f.path.split('/').pop()}: HTTP ${r.status}`);
+      return body(r, Number(r.headers.get('content-length')) || length, onBytes);
+    });
     const size = bytes.byteLength;   // read first: the store takes the bytes (transferred)
     if (piece && size !== length) throw new Error(`${f.path.split('/').pop()}: ${size} bytes for a range of ${length}`);
     await store(f.path, bytes, f);

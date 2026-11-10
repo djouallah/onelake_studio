@@ -306,7 +306,14 @@ export function createDataSource({ onStatus = () => {}, onProgress = () => {} } 
 
   // The table's record, planned by the page (`planning`, started at load).
   async function planned(name, t) {
-    const record = { location: t.location, bytes: t.bytes, ...(await t.planning).record };
+    let plan;
+    try { plan = await t.planning; }
+    catch (e) {
+      // Planned again by the next query: one request that failed is not the table's answer for the visit.
+      if (!t.error) { t.planning = planFor(t); t.planning.catch(() => {}); }
+      throw e;
+    }
+    const record = { location: t.location, bytes: t.bytes, ...plan.record };
     snapshots.put(name, record);
     t.record = record;
     return record;
@@ -567,7 +574,10 @@ export function createDataSource({ onStatus = () => {}, onProgress = () => {} } 
     storeWorkerOf();   // the store's writer, waiting for the lock from the start
     // Before sign-in: a kept answer from the function is what lets the page start without one.
     await kv.load();
-    await auth.signIn();
+    // Asked for, and waited for below: the model and the engines need no session, and start meanwhile. Only the
+    // function's answer waits for it.
+    const signed = auth.signIn();
+    signed.catch(() => {});
     onStatus("Loading the query engine…");
     // The model, the function's answer (where its tables are, the SAS), the tables' sizes and
     // their plans, while DuckDB's bundle loads: none of them needs it.
@@ -575,7 +585,7 @@ export function createDataSource({ onStatus = () => {}, onProgress = () => {} } 
       if (!r.ok) throw new Error(`the site has no model.json (HTTP ${r.status}): export the app again`);
       return r.json();
     });
-    const ready = Promise.all([modelRead, catalog.open()]).then(async ([doc, answer]) => {
+    const ready = Promise.all([modelRead, signed.then(() => catalog.open())]).then(async ([doc, answer]) => {
       access = answer;
       model = doc;
       tables = modelTables(model);
@@ -625,6 +635,7 @@ importScripts("${bundle.mainWorker}");`], { type: "text/javascript" }));
     await Promise.race([storeReady, new Promise((_, reject) => setTimeout(() =>
       reject(new Error('no local store in this browser (OPFS with shared access handles, Chrome or Edge 121+)')), STORE_WAIT))]);
 
+    await signed;
     onStatus('Reading the model and its tables from the lakehouse…');
     await ready;
     renewLater();

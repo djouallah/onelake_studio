@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- **A Fabric app's Report draws its tiles side by side.** They ran one after another, so the app's second engine sat
+  idle and each tile's columns were downloaded on their own. Every tile now asks at once: the engines take a query
+  each, and what the tiles read between them comes down as one batch. On a semantic model, four tiles ask at a time.
+  `?engines=4` in the app's address gives it four engines to try on a large model.
+- **A Fabric app tries a failed download again**, twice, where the connection or the server failed. One dropped
+  request among a table's hundreds used to fail the tile. A table whose plan failed once is planned again by the next
+  tile, not left failed until the page is reloaded.
+- **A Fabric app starts its engines while it signs in.**
 - **A window no longer waits for the sign-in to answer.** With an account already known, a tab opens and the engine
   starts on what this machine holds. VS Code's account provider shares one thread with every other extension, and at
   startup it could take half a minute to answer: a click in that time sat on "Opening OneLake Studio…", and the

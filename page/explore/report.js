@@ -225,8 +225,10 @@ const same = (a, b) => (a ?? null) === (b ?? null);
  * `spec` is one page and the report's theme, { tiles, theme? }. Returns { destroy }.
  * The tiles run one at a time, top to bottom: each is a scan of the model's tables, and the engine
  * gives one query all it has, where several at once share it, keep each other waiting, and keep
- * anything else the tab asks waiting too. A tile waits while the Report is off screen; one stopped
- * (`cancelled`, by the host when the Report was left) runs again when it is back.
+ * anything else the tab asks waiting too. `ctx.parallel` (optional) is how many may run at once where that
+ * isn't so: a Fabric app's engines each take one query, and its downloads are shared by what is asked together.
+ * A tile waits while the Report is off screen; one stopped (`cancelled`, by the host when the Report was left)
+ * runs again when it is back.
  */
 export function drawReport(root, spec, ctx) {
   const resized = new ResizeObserver(entries => { for (const e of entries) jobs.find(j => j.box === e.target)?.chart.resize(); });
@@ -242,7 +244,9 @@ export function drawReport(root, spec, ctx) {
   if (!tiles) grid.append(el('p', { class: 'rp-say error' }, 'The page has no "tiles" list.'));
   else if (!tiles.length) grid.append(el('p', { class: 'rp-say rp-empty' }, ctx.remove
     ? 'The page has no tiles yet. Build a view in Visual and click Add to report.' : 'The page has no tiles.'));
-  let gone = false, pumping = false, running = null;
+  let gone = false, active = 0;
+  // How many tiles run at once: one, unless the host says more (ctx.parallel).
+  const atOnce = Math.max(1, Number(ctx.parallel) || 1);
   // What a click picked, by the tile it was picked in: { field, value, label }, in the order picked.
   const picks = new Map();
   // The model's fields, for pivot tiles: read once, when there is one.
@@ -461,31 +465,33 @@ export function drawReport(root, spec, ctx) {
     job.body.replaceChildren(el('p', { class: `rp-say${cls}` }, text));
   }
 
-  // The tiles waiting to run, one at a time, top to bottom: the first time, then those a pick
+  // The tiles waiting to run, top to bottom, `atOnce` at a time: the first time, then those a pick
   // changed. One a pick changes while it runs is stopped (ctx.cancel) or, where the host can't
-  // stop it, its answer is dropped; either way it runs again.
-  async function pump() {
-    if (pumping) return;
-    pumping = true;
-    try {
-      for (let job; (job = jobs.find(j => j.dirty));) {
-        await ctx.shown?.();
-        if (gone) return;
-        job.dirty = false;
-        running = job;
-        say(job, 'Running…');
-        try { await drawTile(job); }
-        catch (e) {
-          if (gone) return;
-          // Stopped because the Report was left, or because a pick changed it: again.
-          const left = e?.cancelled && ctx.leftWhileRunning?.();
-          if (job.dirty || left) { job.dirty = true; say(job, 'Waiting…'); continue; }
-          say(job, e?.cancelled ? 'Stopped.' : e?.message || String(e), e?.cancelled ? '' : ' error');
-          // Stopped by Stop: no more tiles, until a pick asks for them.
-          if (e?.cancelled) for (const j of jobs.filter(x => x.dirty)) { j.dirty = false; say(j, 'Stopped.'); }
-        } finally { running = null; }
-      }
-    } finally { pumping = false; }
+  // stop it, its answer is dropped; either way it runs again, once it has ended (`busy`).
+  function pump() {
+    while (!gone && active < atOnce) {
+      const job = jobs.find(j => j.dirty && !j.busy);
+      if (!job) return;
+      job.busy = true;
+      active++;
+      runTile(job).catch(() => {}).finally(() => { job.busy = false; active--; pump(); });
+    }
+  }
+  async function runTile(job) {
+    await ctx.shown?.();
+    if (gone) return;
+    job.dirty = false;
+    say(job, 'Running…');
+    try { await drawTile(job); }
+    catch (e) {
+      if (gone) return;
+      // Stopped because the Report was left, or because a pick changed it: again.
+      const left = e?.cancelled && ctx.leftWhileRunning?.();
+      if (job.dirty || left) { job.dirty = true; say(job, 'Waiting…'); return; }
+      say(job, e?.cancelled ? 'Stopped.' : e?.message || String(e), e?.cancelled ? '' : ' error');
+      // Stopped by Stop: no more tiles, until a pick asks for them.
+      if (e?.cancelled) for (const j of jobs.filter(x => x.dirty)) { j.dirty = false; say(j, 'Stopped.'); }
+    }
   }
 
   // A click's value in `job` (`label`: as the tile shows it), picked, or cleared when it is the
@@ -502,7 +508,7 @@ export function drawReport(root, spec, ctx) {
     job.repaint?.();
     for (const j of jobs) if (j !== job && !j.still) { j.dirty = true; say(j, 'Waiting…'); }
     // Stopped only while its query runs: once answered, its drawing is dropped (drawTile).
-    if (running && running !== job && running.asking && running.dirty) ctx.cancel?.();
+    if (jobs.some(j => j.busy && j !== job && j.asking && j.dirty)) ctx.cancel?.();
     pump();
   }
 

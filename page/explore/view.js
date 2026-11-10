@@ -373,7 +373,7 @@ export function mountExplore(root, ctx) {
   function pageCtx(i) {
     const saves = !!ctx.report.save;
     return { sql: reportSql, echarts: reportEcharts, shown: () => reportShown(i), leftWhileRunning,
-             cancel: ctx.cancel, model: ctx.tmsl, css,
+             cancel: ctx.cancel, parallel: ctx.reportParallel, model: ctx.tmsl, css,
              remove: saves ? removeTile : undefined, layout: saves ? layoutTiles : undefined,
              duplicate: saves ? duplicateTile : undefined, rename: saves ? renameTile : undefined,
              edit: saves ? editTile : undefined, setText: saves ? setText : undefined,

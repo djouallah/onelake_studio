@@ -112,7 +112,9 @@ export async function start() {
       name, tmsl: tmslOf(bim),
       compiler,
       run: async sql => resultOf(await data.query(sql)),
-      report, pages: ["report"],
+      // Every tile asks at once: the engines take a query each (storage/queue.js), and the columns the tiles
+      // read between them come down as one batch (storage/data.js), not a tile's at a time.
+      report, pages: ["report"], reportParallel: Infinity,
       echarts: () => echartsReady,
       worldMap,
       saveText: download,
@@ -165,7 +167,8 @@ async function startModel(first, modelName) {
     name, tmsl: tmslOf(bim),
     compiler: { isDax: t => /^\s*(DEFINE|EVALUATE)\b/i.test(t), compileStatement: text => ({ sql: text }) },
     run,
-    report, pages: ["report"],
+    // Each tile is a request to the model: four at a time, not one after another.
+    report, pages: ["report"], reportParallel: 4,
     echarts: () => echartsReady,
     worldMap,
     saveText: download,
