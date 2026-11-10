@@ -18,7 +18,7 @@ const INDEX = await readFile(join(APP, "index.html"), "utf8");
 const read = f => readFile(join(APP, f), "utf8");
 
 const OPTS = {
-  base: "https://webview.test/app/",
+  base: "https://webview.test/page/",
   nonce: "N0NCE",
   csp: "default-src 'none'; script-src 'nonce-N0NCE'",
   config: {
