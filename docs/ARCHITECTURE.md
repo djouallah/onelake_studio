@@ -562,7 +562,7 @@ holds those lakehouses, else `--workspace`, and the error names the workspaces w
 A semantic model opens as **Explore** ([`app/explore/`](../app/explore/)), on three pages: Model, Visual and Report
 (Visual is the `pivot` page in the code). It opens on Model. The Fabric app is its Report alone.
 - **The bar** holds the page tabs, then each page's own: Model's Keep offline at the left, its Diagram | YAML, Create
-  Semantic Model (a model file only) and Open in Excel at the right; Visual's Show SQL, Download CSV and Add to report; the Report's Add text and Export to Fabric.
+  Semantic Model (a model file only) and Open in Excel at the right; Visual's Show plan, Download CSV and Add to report; the Report's Add text and Export to Fabric.
 
 - **Model:** its tables as a star, dimensions in the middle and facts around them, with its
   relationships. Click a table for its columns, measures (with their DAX) and relationships.
@@ -582,7 +582,8 @@ A semantic model opens as **Explore** ([`app/explore/`](../app/explore/)), on th
     measure; a map is a latitude, a longitude and a name on Rows, each point sized by the first measure and coloured by
     a column on Columns, over the world's outline (ECharts 4's `world.json`, vendored and pinned like ECharts, read the
     first time a map is drawn: `ctx.worldMap`).
-  - **Show SQL** swaps the pivot for that SQL in a box you can edit and run.
+  - Visual has no SQL box: its query is its shelves' (a JSON visual query, kept as the shelves), and the SQL is made
+    from it behind the scenes. Nobody, a person or an agent, writes SQL into a Visual or a Report tile.
   - **Slicer** is a mark like the others (`slicerView`): the values of the first Rows field, those the query answers
     (with a measure on Values, only those with a figure, shown beside each; a filter narrows them too), drawn as a list,
     buttons, a dropdown of the list, or a range for a date or a number, picked by a switch over it (`state.slicer`). On
@@ -603,7 +604,7 @@ A semantic model opens as **Explore** ([`app/explore/`](../app/explore/)), on th
     chart's ECharts option, the rest through `formatLook` into Visual's own drawing); the total line runs the query
     again. A tile from before kept its format on the tile: it is read as its Visual's (`tileOf` in
     [`report.js`](../app/explore/report.js)), and the first save writes it there.
-  - **Show plan** profiles it (`profile.js`: DuckDB's `EXPLAIN ANALYZE` as totals, a timeline and the
+  - **Show plan** puts, in place of the view, the profile of the shelves' query (`profile.js`: DuckDB's `EXPLAIN ANALYZE` as totals, a timeline and the
     costly operators) next to its plan tree.
   - **Add to report** puts the view on the Report, as a tile (Report, below).
 - **Report:** pages of tiles, each tile a Visual (`pivot`, its shelves) or text, drawn as Visual draws it or as

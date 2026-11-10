@@ -140,8 +140,8 @@ export function buildQuery(s, { cap = CAP, today = localToday() } = {}) {
 // The query as a SELECT over the model, in dax-sql's SQL: the model's columns
 // ("table"."column") and its measures as AGG("name"), a summarised column as SUM(…) and its
 // kin, FROM the model, WHERE, GROUP BY ALL or ROLLUP for a total (GROUPING names it), ORDER BY,
-// FETCH FIRST n ROWS WITH TIES. What Explore runs and what Show SQL shows: the compiler builds
-// the same plan from it as from DAX. `column(id)`: the model's column of an id, { table, name },
+// FETCH FIRST n ROWS WITH TIES. What Explore runs, made behind the scenes from the shelves:
+// the compiler builds its plan from it. `column(id)`: the model's column of an id, { table, name },
 // or null (a measure); `from`: the model's name in SQL.
 // Names are quoted, and summaries are aggregates.
 // `plain`: { from, measure(name), column(name, quote)? } for SQL over one table as a person
@@ -1346,8 +1346,8 @@ export function createExplorer(root, ctx) {
     // The theme changed: the chart is drawn again in the new one.
     redraw: () => { if (fields) draw(); },
     // The shelves as one SELECT over the model, and its conditions, or null. As the pivot runs
-    // it by default (its first CAP rows: what Show SQL fills its box with, so its text is the
-    // query the pivot ran); `cap: 0` for all its rows (Download CSV).
+    // it by default (its first CAP rows: the query Show plan profiles); `cap: 0` for all its rows
+    // (Download CSV).
     // `plain`: as SQL over one table (modelSql's). `totals: false` leaves the totals' rows and
     // their marking columns out, for a file of just the rows (Download CSV).
     query: ({ cap = CAP, plain = null, totals = true } = {}) => {

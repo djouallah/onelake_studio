@@ -2,8 +2,8 @@
 // explore/query.js — Explore's SQL over the model, compiled to SQL over its tables
 // =============================================================================
 // Explore asks in SQL over the model (explore.js's modelSql: SELECT "table"."column",
-// AGG("measure") … FROM <model>), and so does Show SQL's box, where that SELECT may be the whole
-// text or a relation inside any other SQL. dax-sql compiles each SELECT over the model in place
+// AGG("measure") … FROM <model>), made from its shelves; so does the tab's SQL box, where that
+// SELECT may be the whole text or a relation inside any other SQL. dax-sql compiles each SELECT over the model in place
 // (compileStatement): DAX's filter context, context transition, relationships and blanks, as
 // the measures say. One compiler per model, built by the host with its own `tableSource` (the
 // panel: the engine's views of the Direct Lake tables; the Fabric app: v_<table>) and these

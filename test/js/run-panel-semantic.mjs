@@ -135,30 +135,28 @@ try {
   const subtabs = await page.locator("#modelView [data-apage]").allTextContents();
   if (subtabs.join() !== "Model,Visual,Report") throw new Error(`Explore's pages are ${subtabs.join(", ")}, not Model, Visual and Report`);
 
-  // A model query, compiled by dax-sql and run on the native engine, from the Pivot's Show SQL:
-  // a measure on the shelves (so the box has a query to start from), then the box's own SQL.
-  // The Pivot loads ECharts as a classic script from the vendored tree — the CSP must admit it.
-  async function modelQuery(sql) {
+  // A model query, compiled by dax-sql and run on the native engine, from Visual's shelves: Total
+  // by Product's Color, as a table. Visual has no SQL box: its query is its shelves'.
+  // Visual loads ECharts as a classic script from the vendored tree — the CSP must admit it.
+  async function modelQuery() {
     await page.click('#modelView .subtab[data-apage="pivot"]');
     await page.waitForFunction(() => !!window.echarts, { timeout: 60000 })
-      .catch(() => { throw new Error("ECharts never loaded for the Pivot"); });
+      .catch(() => { throw new Error("ECharts never loaded for the Visual"); });
     // Fact tables start collapsed; a search opens the groups it matches.
-    await page.locator("#modelView .ex-search").fill("Total");
-    await page.locator("#modelView .ex-field", { hasText: /^.?Total$/ }).first().click();
-    await page.locator("#modelView .explore-actions .btn-explore", { hasText: "Show SQL" }).click();
-    const box = page.locator("#modelView .explore-sql-page");
-    await box.locator("textarea").fill(sql);
-    await box.locator(".btn-explore.primary", { hasText: "Run" }).click();
-    await page.waitForFunction(() => /rows|Error/.test(document.querySelector("#modelView .explore-sql-page .explore-info").textContent), { timeout: 60000 });
+    for (const [term, name] of [["Total", /^.?Total$/], ["Color", /Color$/]]) {
+      await page.locator("#modelView .ex-search").fill(term);
+      await page.locator("#modelView .ex-field", { hasText: name }).first().click();
+    }
+    await page.locator('#modelView .ex-mark[data-mark="table"]').click();
+    await page.waitForFunction(() => /blue|Error/.test(document.querySelector("#modelView .ex-table")?.textContent ?? ""), { timeout: 60000 });
     return {
-      info: await box.locator(".explore-info").innerText(),
-      rows: (await box.locator(".explore-table").innerText()).replace(/\s+/g, " "),
+      info: await page.locator("#modelView .ex-info").innerText(),
+      rows: (await page.locator("#modelView .ex-table").innerText()).replace(/\s+/g, " "),
     };
   }
-  const { info, rows } = await modelQuery(
-    `SELECT * FROM (SELECT Product.Color, AGG(Total) AS total FROM semanticmodel.ws.shop GROUP BY ALL) ORDER BY Color`);
+  const { info, rows } = await modelQuery();
   console.log("model query:", info, "|", rows);
-  if (!/^2 rows/.test(info) || !/blue 5(\.0)? red 12\.5/.test(rows)) throw new Error(`model query: ${info} ${rows}`);
+  if (!/blue 5(\.0)? red 12\.5/.test(rows)) throw new Error(`model query: ${info} ${rows}`);
 
   // A model the extension downloaded to this machine arrives as text (open-model), not as
   // a OneLake path — the click in the tree — named by its workspace and its own name.
@@ -171,10 +169,9 @@ try {
     .catch(async () => { throw new Error(`a downloaded model never opened — status: ${await page.locator("#status").innerText()}`); });
   const localCards = await page.locator("#modelView .m-card").count();
   if (localCards !== 2) throw new Error(`the downloaded model drew ${localCards} cards`);
-  const { info: localInfo, rows: localRows } = await modelQuery(
-    `SELECT * FROM (SELECT Product.Color, AGG(Total) AS total FROM semanticmodel.ws."Local Model" GROUP BY ALL) ORDER BY Color`);
+  const { info: localInfo, rows: localRows } = await modelQuery();
   console.log("downloaded model:", localInfo, "|", localRows);
-  if (!/^2 rows/.test(localInfo) || !/blue 5(\.0)? red 12\.5/.test(localRows)) throw new Error(`downloaded model query: ${localInfo} ${localRows}`);
+  if (!/blue 5(\.0)? red 12\.5/.test(localRows)) throw new Error(`downloaded model query: ${localInfo} ${localRows}`);
 
   // An Ossie .yaml in Files/ opens as the same model, and its view answers the same query.
   await page.evaluate(path => window.postMessage({
@@ -186,10 +183,9 @@ try {
   const ossieCards = await page.locator("#modelView .m-card").count();
   const ossieRels = await page.locator("#modelView .m-rel").count();
   if (ossieCards !== 2 || ossieRels !== 1) throw new Error(`the Ossie model drew ${ossieCards} cards and ${ossieRels} relationships`);
-  const { info: ossieInfo, rows: ossieRows } = await modelQuery(
-    `SELECT * FROM (SELECT Product.Color, AGG(Total) AS total FROM semanticmodel.ws.shop_ossie GROUP BY ALL) ORDER BY Color`);
+  const { info: ossieInfo, rows: ossieRows } = await modelQuery();
   console.log("ossie model:", ossieInfo, "|", ossieRows);
-  if (!/^2 rows/.test(ossieInfo) || !/blue 5(\.0)? red 12\.5/.test(ossieRows)) throw new Error(`Ossie model query: ${ossieInfo} ${ossieRows}`);
+  if (!/blue 5(\.0)? red 12\.5/.test(ossieRows)) throw new Error(`Ossie model query: ${ossieInfo} ${ossieRows}`);
 
   if (csp.length) throw new Error(`Content-Security-Policy refused something: ${csp.join(" | ")}`);
   console.log("RESULT: OK — a .bim and an Ossie .yaml opened in the panel as their model, and model queries ran on the native engine");

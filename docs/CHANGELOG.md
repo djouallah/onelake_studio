@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **Visual has no SQL box.** Its query is always the one it makes from its fields. **Show plan** takes Show SQL's
+  place: the profile and the plan tree of that query, in place of the view, and **Show visual** goes back.
 - **A Report has pages.** Their names sit over the tiles: click one to show it, double-click to rename it, drag it to
   reorder, and **+** adds a page. Hover over a name for its ✕; a page with tiles asks first. Add to report puts the
   visual on the page last shown, and a tile's grip dropped on another page's name moves it there. Each page keeps its

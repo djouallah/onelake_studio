@@ -15,7 +15,6 @@
 //   await data.init()        signs in, and reads the model the semantic model was made from
 //   data.model()             that model
 //   await data.run(sql)      Explore's SQL ({ fields, rows, numRows, truncated, limit }); its wrappers, below
-//   await data.shownSql(q)   the DAX a query over the model runs as (a plan's SQL tab)
 // =============================================================================
 import { createAuth } from "./auth.js";
 import { firstRows, counting, kept, MAX_ROWS } from "./modelrows.js";
@@ -159,5 +158,5 @@ export function createModelSource({ onStatus = () => {} } = {}) {
       operator_cardinality: table.rows.length, extra_info: {}, children: [] }] });
   }
 
-  return { init, model: () => doc, run, shownSql: dax };
+  return { init, model: () => doc, run };
 }

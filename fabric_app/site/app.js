@@ -166,7 +166,6 @@ async function startModel(first, modelName) {
     compiler: { isDax: t => /^\s*(DEFINE|EVALUATE)\b/i.test(t), compileStatement: text => ({ sql: text }) },
     run,
     report, pages: ["report"],
-    shownSql: sql => data.shownSql(sql),
     echarts: () => echartsReady,
     worldMap,
     saveText: download,

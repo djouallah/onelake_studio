@@ -20,7 +20,6 @@ section.modelOpen #chartBtn { display: none; }
 .sm-title { font-size: 0.8rem; color: var(--muted); flex: 0 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .sm-title code { color: var(--text); }
 .sm-plan { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.72rem; line-height: 1.4; white-space: pre; overflow-x: auto; margin: 0; }
-.explore-sql-head label { font-size: 0.7rem; color: var(--faint); text-transform: uppercase; letter-spacing: 0.06em; font-weight: 600; }
 /* The studio styles every input; Explore's checkboxes keep their own size. */
 .ex input[type=checkbox], .ex-pop input[type=checkbox] { padding: 0; }
 
@@ -58,11 +57,6 @@ section.modelOpen #chartBtn { display: none; }
 .btn-explore.primary:hover { opacity: 0.88; }
 .btn-explore:disabled { opacity: 0.5; cursor: not-allowed; }
 .explore-info { font-size: 0.8rem; color: var(--muted); padding: 0 var(--gutter); }
-.explore-sql { padding: 0 var(--gutter) 0.4rem; }
-.explore-sql-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.4rem; }
-.explore-sql-head label span { text-transform: none; letter-spacing: 0; font-weight: 400; color: var(--faint); }
-.explore-sql textarea { width: 100%; min-height: 120px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.8rem; line-height: 1.5; background: var(--input-bg); color: var(--text); border: 1px solid var(--border); border-radius: var(--radius); padding: 0.7rem 0.9rem; resize: vertical; white-space: pre; }
-.explore-sql textarea:focus { outline: none; border-color: var(--accent); }
 .explore-table-wrap { margin: 0.6rem var(--gutter) 1.5rem; overflow: auto; max-height: 60vh; border-radius: var(--radius); }
 .explore-table { width: 100%; border-collapse: collapse; font-size: 0.8rem; font-variant-numeric: tabular-nums; }
 .explore-table th { position: sticky; top: 0; background: var(--card); color: var(--muted); font-size: 0.74rem; font-weight: 600; padding: 0.5rem 0.7rem; border-bottom: 1px solid var(--border); text-align: left; }
