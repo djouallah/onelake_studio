@@ -6,6 +6,7 @@
 #   onelake: the same cases uploaded to fabriccat (workspace tmp, lakehouse data, Tables/test/lakeci_*), read
 #            there, and the table service for real: what a statement reads comes down over HTTPS, and reads with
 #            the token gone.
+#   export:  Export to Fabric from this checkout, published to the same workspace (test/js/export-fabric.test.mjs).
 #
 # Signing in to fabriccat: no secret. The job's OIDC subject is what the federated credential on the Entra app
 # `fabric-github-deploy` trusts (onelake-studio-main), the app the other repos' workflows sign in as. Subjects carry the owner's and the repository's ids, so it is
@@ -116,4 +117,52 @@ jobs:
       - run: node --test test/js/onelake-tables.test.mjs
         env:
           LAKE_FIXTURES: ${{ env.FIXTURES_DIR }}
+          NO_SKIP: 1
+
+  # Export to Fabric, for real, as the same identity (test/js/export-fabric.test.mjs): a model file of
+  # lakeci_plain published as a client-side app with its function, made a Direct Lake semantic model, and
+  # that model's app. The apps (lakeci-explore, lakeci-model-explore) and the model (lakeci_model) stay in
+  # the workspace, replaced by each run.
+  export:
+    needs: onelake
+    runs-on: ubuntu-26.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      ONELAKE_CI_WORKSPACE: ${{ vars.ONELAKE_CI_WORKSPACE }}
+      ONELAKE_CI_LAKEHOUSE: ${{ vars.ONELAKE_CI_LAKEHOUSE }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 24
+      # What an export uploads besides the checkout: the page's packages and the function's deploy package,
+      # the caches the Extension workflow's prepare job keeps.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: vendor
+          key: vendor-${{ hashFiles('scripts/vendor.mjs', 'scripts/fetch-retry.mjs', 'core/vendored.js') }}
+      - run: node scripts/vendor.mjs
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: fabric-function
+          key: fabric-function-${{ hashFiles('scripts/function-bundle.mjs', 'fabric_app/export/fabricapp.js', 'fabric_app/rayfin/**') }}
+      - run: node scripts/function-bundle.mjs
+      - name: Sign in to fabriccat as fabric-github-deploy
+        uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3
+        with:
+          client-id: ${{ vars.ONELAKE_CI_CLIENT_ID }}
+          tenant-id: ${{ vars.ONELAKE_CI_TENANT_ID }}
+          allow-no-subscriptions: true
+      - name: Tokens for the Fabric API, the Power BI API and OneLake
+        run: |
+          for pair in FABRIC_TOKEN=https://api.fabric.microsoft.com POWERBI_TOKEN=https://analysis.windows.net/powerbi/api ONELAKE_TOKEN=https://storage.azure.com; do
+            t=$(az account get-access-token --resource "${pair#*=}" --query accessToken -o tsv)
+            echo "::add-mask::$t"
+            echo "${pair%%=*}=$t" >> "$GITHUB_ENV"
+          done
+      - run: node --test test/js/export-fabric.test.mjs
+        env:
           NO_SKIP: 1
