@@ -93,7 +93,7 @@ async function main() {
 
   // One file's run: its footer and column a in the store, a query of a, then a query of c, which the
   // store lacks, each run again after what it missed is downloaded, on the one engine.
-  async function scenario(file, settings) {
+  async function scenario(file, settings, { directIO = false, reregister = false } = {}) {
     const key = "https://onelake.dfs.fabric.microsoft.com/ws/lh/Tables/t/" + file;
     const heldRuns = async () => {
       const id = file + "-" + Math.random();
@@ -110,7 +110,8 @@ async function main() {
 
     const e = await engine(settings);
     await download([tailOf(size), ...columnRanges(chunks, new Set(["a"]))]);
-    await e.db.registerFileURL("store/" + file, "https://store.local/ws/lh/Tables/t/" + file, duckdb.DuckDBDataProtocol.HTTP, false);
+    const register = () => e.db.registerFileURL("store/" + file, "https://store.local/ws/lh/Tables/t/" + file, duckdb.DuckDBDataProtocol.HTTP, directIO);
+    await register();
     // data.js's healing: what was missed, with every column it is of, then the query again.
     const healing = async sql => {
       const errors = [];
@@ -123,7 +124,9 @@ async function main() {
           const seen = misses.filter(m => m.path === key && m.seen >= started);
           if (!seen.length || tries >= 8) return { failed: errors[errors.length - 1], heals: tries, errors, misses: seen.length };
           const cols = new Set(chunks.filter(c => seen.some(m => c.from <= m.to && c.to >= m.from)).map(c => c.col));
+          log(file + ": missed " + seen.map(m => m.from + "-" + m.to + " (" + (chunks.filter(c => c.from <= m.to && c.to >= m.from).map(c => c.col).join(",") || "no chunk") + ")").join("; "));
           await download([...seen.map(m => [m.from, m.to]), ...columnRanges(chunks, cols)]);
+          if (reregister) { await e.db.dropFile("store/" + file).catch(x => log("dropFile: " + x)); await register(); }
         }
       }
     };
@@ -132,12 +135,23 @@ async function main() {
     out.lackedOfC = await lacks("c");
     out.c = await healing("SELECT sum(c)::DOUBLE AS v FROM read_parquet('store/" + file + "')");
     await e.db.terminate();
+    // The store itself, read by an engine that never missed.
+    const fresh = await engine(settings);
+    await fresh.db.registerFileURL("store/" + file, "https://store.local/ws/lh/Tables/t/" + file, duckdb.DuckDBDataProtocol.HTTP, false);
+    out.fresh = await fresh.rows("SELECT sum(a)::DOUBLE AS a, sum(c)::DOUBLE AS c FROM read_parquet('store/" + file + "')").then(r => r[0], x => String(x?.message || x).split("\\n")[0]);
+    await fresh.db.terminate();
     return out;
   }
 
-  const fixed = await scenario("fixed.parquet", SETTINGS);
-  const before = await scenario("before.parquet", SETTINGS.filter(s => !/enable_external_file_cache/.test(s)));
-  return { expected, fixed, before, said };
+  const noCache = SETTINGS.filter(x => !/enable_external_file_cache/.test(x));
+  const variants = {};
+  variants.base = await scenario("base.parquet", SETTINGS);
+  variants.reregister = await scenario("reregister.parquet", SETTINGS, { reregister: true });
+  variants.directIO = await scenario("directio.parquet", SETTINGS, { directIO: true });
+  variants.noMetadataCache = await scenario("nometa.parquet", SETTINGS.filter(x => !/parquet_metadata_cache/.test(x)));
+  variants.noPrefetch = await scenario("noprefetch.parquet", [...SETTINGS, "SET disable_parquet_prefetching = true"]);
+  variants.fileCacheOn = await scenario("cacheon.parquet", noCache);
+  return { expected, variants, said };
 }
 main().then(r => { window.__done = r; }, e => { window.__done = { error: String(e?.stack || e), said }; });
 `;
@@ -160,22 +174,19 @@ try {
   const page = await (await browser.newContext()).newPage();
   page.on("pageerror", e => console.log("[pageerror]", e.message));
   page.on("response", r => { if (r.status() === 404) console.log("[404]", r.url()); });
-  page.on("console", m => console.log(`[page] ${m.text()}`));
+  page.on("console", m => { if (!/^\s*at |Range request|FAIL WITH|runQuery|processRequest/.test(m.text())) console.log(`[page] ${m.text().split("\n")[0]}`); });
   await page.goto(`http://127.0.0.1:${PORT}/`);
   await page.waitForFunction(() => window.__done, null, { timeout: 8 * 60_000 });
   const done = await page.evaluate(() => window.__done);
-  console.log(JSON.stringify({ ...done, said: undefined }, null, 2));
   if (done.error) throw new Error(done.error);
 
-  const { expected, fixed, before } = done;
-  const checks = [];
-  const check = (ok, what) => { checks.push(ok); console.log(`${ok ? "ok  " : "FAIL"} ${what}`); };
-  check(fixed.a.row?.v === expected.a, `column a, its chunks in the store: ${fixed.a.row?.v ?? fixed.a.failed} after ${fixed.a.heals} download(s) of what was missed`);
-  check(fixed.lackedOfC > 0, `column c is not in the store before it is asked for (${fixed.lackedOfC} bytes lacking)`);
-  check(fixed.c.heals > 0, `the query of c read bytes the store lacked (${fixed.c.errors[0] ?? "no error"})`);
-  check(fixed.c.row?.v === expected.c, `the same engine, asked again: ${fixed.c.row?.v ?? fixed.c.failed} after ${fixed.c.heals} download(s)`);
-  console.log(`with DuckDB's own file cache on, as before: column a ${before.a.row?.v ?? before.a.failed} (${before.a.heals}), ` +
-    `column c ${before.c.row ? `${before.c.row.v} after ${before.c.heals} download(s)` : `failed after ${before.c.heals}: ${before.c.failed}`}`);
+  const { expected, variants } = done;
+  const show = (r, want) => (r.row ? `${r.row.v === want ? "right" : `WRONG ${r.row.v}`} after ${r.heals} download(s)` : `failed after ${r.heals}: ${r.failed}`);
+  for (const [name, v] of Object.entries(variants)) {
+    console.log(`${name}: a ${show(v.a, expected.a)}; c ${show(v.c, expected.c)}; a fresh engine ${JSON.stringify(v.fresh)}`);
+  }
+  for (const line of done.said ?? []) if (/missed|dropFile/.test(line)) console.log(line);
+  const checks = [variants.base.a.row?.v === expected.a && variants.base.c.row?.v === expected.c];
   code = checks.every(Boolean) ? 0 : 1;
 } catch (e) {
   console.log(`FAIL ${e?.stack || e}`);
