@@ -31,6 +31,7 @@ const { createReadLog } = require('../core/readlog');
 const { createSettings } = require('../core/settings');
 const { queryStem } = require('../core/queries');
 const { createCore } = require('../core/core');
+const { commitOf } = require('../core/home');
 const { dirBytes, treeBytes, removeDir } = require('../core/diskuse');
 const { SKILL_MARKER, skillFile, writeSkill, refreshSkill } = require('../cli/skill');
 const { createHostMethods } = require('../core/host');
@@ -302,12 +303,7 @@ function buildCommit(context, dev) {
       return commit;
     } catch (_) { return 'dev'; }
   }
-  try {
-    const stamp = JSON.parse(require('node:fs').readFileSync(
-      join(context.extensionUri.fsPath, 'webview', 'build.json'), 'utf8'));
-    if (stamp && stamp.commit) return String(stamp.commit);
-  } catch (_) {}
-  return 'unknown';
+  return commitOf(context.extensionUri.fsPath);
 }
 
 // ---------------------------------------------------------------------------

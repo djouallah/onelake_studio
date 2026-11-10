@@ -691,7 +691,7 @@ A model file or an app's file on this machine opens in a tab, as one from the tr
   tools (its compliance suite and grader) name a model `*.ossie.yaml`. Studio's own copies are named so too.
 - **In VS Code**, a `.fabricapp` and a `*.ossie.yaml` open in OneLake Studio by default (custom editors that hand them
   over and close their own tab; *Reopen Editor With… > Text Editor* shows the text). A `.bim` or an Ossie `.yaml` opens as text, with **Open in OneLake Studio** on the editor's title bar, by
-  what the editor holds (`onelakeStudio.activeIsModel`), so other YAML has none; Explorer's right-click offers it on a
+  what the file holds (`onelakeStudio.modelPaths`), so other YAML has none; Explorer's right-click offers it on a
   `.yaml`, `.yml`, `.bim` or `.fabricapp`.
 - **In the desktop app**, File › Open… (Ctrl+O); a double-click on a `.fabricapp`, whose default app it is; and
   Windows' "Open with" on a `.yaml`, `.yml` or `.bim`, which lists it without becoming their default (the installer,

@@ -85,10 +85,10 @@ function bridge(id, nonce, shell, keys) {
 }
 
 /** A tab's page, as a webview would have it. `shell` is the window's origin, `keys` the chords it takes. */
-function pageFor(html, id, dark, { shell = '', keys = [] } = {}) {
+function pageFor(html, id, { shell = '', keys = [] } = {}) {
   const nonce = (/'nonce-([^']+)'/.exec(html) || [])[1] || '';
-  const head = `<style>${themeCss(dark)}\n${PAGE_DEFAULTS}</style>${bridge(id, nonce, shell, keys)}`;
-  const cls = dark ? 'vscode-dark' : 'vscode-light';
+  const head = `<style>${themeCss()}\n${PAGE_DEFAULTS}</style>${bridge(id, nonce, shell, keys)}`;
+  const cls = 'vscode-dark';
   const withBody = /<body[^>]*\bclass="/i.test(html)
     ? html.replace(/(<body[^>]*\bclass=")/i, `$1${cls} `)
     : html.replace(/<body\b/i, `<body class="${cls}"`);
@@ -166,7 +166,7 @@ function createServer({ uiDir, extensionDir, pageOf, rpc, roots = ['webview', 'p
       const html = pageOf(id);
       if (html == null) { res.writeHead(404); res.end(); return; }
       res.writeHead(200, { 'Content-Type': MIME['.html'], 'Cache-Control': 'no-store' });
-      res.end(pageFor(html, id, url.searchParams.get('dark') === '1', { shell: origin(), keys: keysOf(url.searchParams.get('keys')) }));
+      res.end(pageFor(html, id, { shell: origin(), keys: keysOf(url.searchParams.get('keys')) }));
       return;
     }
     if (pages) { res.writeHead(404); res.end(); return; }
@@ -175,7 +175,7 @@ function createServer({ uiDir, extensionDir, pageOf, rpc, roots = ['webview', 'p
     if (path.startsWith('/ui/')) return serveFile(res, join(uiDir, path.slice(4)), resolve(uiDir));
     if (path === '/theme.css') {
       res.writeHead(200, { 'Content-Type': MIME['.css'], 'Cache-Control': 'no-store' });
-      res.end(themeCss(url.searchParams.get('dark') === '1'));
+      res.end(themeCss());
       return;
     }
     if (path === '/events') {

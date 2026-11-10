@@ -85,8 +85,8 @@ function appName(s) {
 // An Ossie dataset's table as schema.table, or null when it reads none. `source` is required
 // by the spec, so a model from Power BI has one even for a calculation group or a calculated
 // table: its partition, kept in the POWER_BI extension, says it has no entity. A bare name is
-// in dbo, as in a TMSL partition; item.schema.table is its last two parts. The page and the function read it the same way
-// (fabric_app/site/storage/data.js, fabric_app/rayfin/functions/src/function_app.ts).
+// in dbo, as in a TMSL partition; item.schema.table is its last two parts. The page reads it the same way
+// (fabric_app/site/storage/data.js).
 function ossieSource(d) {
   const pbi = (d.custom_extensions ?? []).find(e => String(e.vendor_name).toUpperCase() === 'POWER_BI');
   let partition;

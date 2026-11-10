@@ -972,7 +972,7 @@ async function main() {
   }, 240000);
   await close();
 
-  const ours = pageErrors.filter(e => /vscode-resource|vscode-cdn|\/app\/|\/webview\//.test(e));
+  const ours = pageErrors.filter(e => /vscode-resource|vscode-cdn|\/page\/|\/webview\//.test(e));
   check("the panel's page threw nothing", ours.length === 0, ours.slice(0, 5).join("\n---\n"));
 }
 

@@ -12,7 +12,7 @@ const { existsSync, mkdirSync, readFileSync, appendFileSync } = require('node:fs
 const vscode = require('vscode');
 const { createServer } = require('./server');
 const dialogs = require('./dialogs');
-const { pathsOf, readSettings, keptIn } = require('../../core/home');
+const { pathsOf, readSettings, keptIn, commitOf } = require('../../core/home');
 const { createMsalSession } = require('../../core/msalsession');
 const { createTokenStore } = require('../../core/tokenstore');
 const extension = require('../../extension/extension');
@@ -24,11 +24,6 @@ const WELCOME = 'Browse OneLake with your Microsoft account. There is nothing to
 
 // To the Tauri shell, after the first line: { do: 'exit' } or { do: 'zoom', factor }.
 const shell = request => process.stdout.write(`${JSON.stringify(request)}\n`);
-
-// The commit this build was packaged at, as the status bar's stamp reads it.
-function commitOf(extensionDir) {
-  try { return String(JSON.parse(readFileSync(join(extensionDir, 'webview', 'build.json'), 'utf8')).commit || 'unknown'); } catch (_) { return 'unknown'; }
-}
 
 async function main() {
   const extensionDir = join(__dirname, '..');

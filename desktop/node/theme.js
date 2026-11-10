@@ -3,7 +3,7 @@
 // theme.js — the colours a tab's page and the window draw with
 // =============================================================================
 // The page (page/index.html) is written against VS Code's theme variables, so the app defines those
-// names rather than the page having two ways of asking. Light and dark, by the system's setting.
+// names rather than the page having two ways of asking. Dark, whatever Windows is set to.
 // =============================================================================
 
 const SHARED = {
@@ -31,27 +31,10 @@ const DARK = {
   'list-warningForeground': '#cca700', 'list-errorForeground': '#f88070', 'statusBar-background': '#181818', 'statusBar-foreground': '#cccccc',
 };
 
-const LIGHT = {
-  foreground: '#3b3b3b', descriptionForeground: '#6f6f6f', disabledForeground: '#9e9e9e', errorForeground: '#c72e0f',
-  focusBorder: '#005fb8', contrastBorder: 'transparent', 'widget-shadow': 'rgba(0,0,0,.16)',
-  'editor-background': '#ffffff', 'editorWidget-background': '#f8f8f8', 'editorWidget-border': '#c8c8c8',
-  'editorGroupHeader-tabsBackground': '#f8f8f8', 'editorWarning-foreground': '#bf8803',
-  'sideBar-background': '#f8f8f8', 'panel-border': '#e5e5e5', 'menu-background': '#ffffff',
-  'input-background': '#ffffff', 'input-foreground': '#3b3b3b', 'input-border': '#cecece',
-  'dropdown-background': '#ffffff', 'dropdown-foreground': '#3b3b3b', 'dropdown-border': '#cecece',
-  'button-background': '#005fb8', 'button-foreground': '#ffffff', 'button-hoverBackground': '#0258a8', 'button-border': 'rgba(0,0,0,.1)',
-  'button-secondaryBackground': '#e5e5e5', 'button-secondaryForeground': '#3b3b3b', 'button-secondaryHoverBackground': '#cccccc',
-  'list-activeSelectionBackground': '#e8e8e8', 'list-activeSelectionForeground': '#000000', 'list-hoverBackground': '#f2f2f2',
-  'keybindingTable-headerBackground': 'rgba(59,59,59,.04)', 'tree-tableOddRowsBackground': 'rgba(59,59,59,.04)',
-  'testing-iconPassed': '#388a34', 'textCodeBlock-background': '#f2f2f2', 'textLink-foreground': '#005fb8',
-  'debugTokenExpression-name': '#9b46b0', 'debugTokenExpression-string': '#a31515', 'debugTokenExpression-number': '#098658', 'debugTokenExpression-boolean': '#0000ff',
-  'list-warningForeground': '#855f00', 'list-errorForeground': '#b01011', 'statusBar-background': '#f8f8f8', 'statusBar-foreground': '#3b3b3b',
-};
-
-function themeCss(dark) {
-  const all = { ...SHARED, ...(dark ? DARK : LIGHT) };
+function themeCss() {
+  const all = { ...SHARED, ...DARK };
   const vars = Object.entries(all).map(([k, v]) => `--vscode-${k}: ${v};`).join(' ');
-  return `:root { color-scheme: ${dark ? 'dark' : 'light'}; ${vars} }`;
+  return `:root { color-scheme: dark; ${vars} }`;
 }
 
 // What VS Code puts in every webview, which the page was written on top of.
@@ -60,4 +43,4 @@ const PAGE_DEFAULTS = `body { background: transparent; color: var(--vscode-foreg
 a { color: var(--vscode-textLink-foreground); }
 code { font-family: var(--vscode-editor-font-family); }`;
 
-module.exports = { themeCss, PAGE_DEFAULTS, DARK, LIGHT, SHARED };
+module.exports = { themeCss, PAGE_DEFAULTS };

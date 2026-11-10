@@ -239,7 +239,7 @@ async function answer({ methods, engine }, msg, post) {
     else throw new Error(`unknown method: ${method}`);
     post({ type: 'result', id, value });
   } catch (e) {
-    post({ type: 'error', id, message: (e && e.message) || String(e), cancelled: !!(e && e.cancelled), ...(e && e.notValid ? { notValid: true } : {}), ...(e && e.offline ? { offline: true } : {}) });
+    post({ type: 'error', id, message: (e && e.message) || String(e), cancelled: !!(e && e.cancelled), ...(e && e.notValid ? { notValid: true } : {}) });
   }
 }
 

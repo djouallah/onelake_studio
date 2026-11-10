@@ -168,8 +168,6 @@ export function merge(a, b) {
   return b === undefined ? a : b;
 }
 
-export { NUMBER_STYLES, numberFormat, formatChart } from './format.js';
-
 /**
  * A tile as it is kept now: an older tile's `format` (the Report's own pane wrote it) goes into
  * its Visual's shelves, but for its title's (`showTitle`, `titleSize`) and the filters it does

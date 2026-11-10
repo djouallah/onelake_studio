@@ -14,9 +14,8 @@
 
 const { join } = require('node:path');
 const { createHash } = require('node:crypto');
-const { authedFetch, discard, fabricMessage, listPages, mapPool, okJson, retryAfterMs } = require('../onelake/http');
+const { FABRIC_API, authedFetch, discard, fabricOk, listPages, mapPool, okJson, retryAfterMs } = require('../onelake/http');
 
-const FABRIC_API = 'https://api.fabric.microsoft.com/v1';
 const FETCH_TIMEOUT_MS = 60_000;
 const MAX_PAGES = 200;
 // getDefinition is a long-running operation. A model's definition is seconds of work; two
@@ -59,16 +58,7 @@ function createFabric({ getFabricToken, apiBase = FABRIC_API,
     authedFetch(url, { getToken, method, body, headers, timeoutMs: FETCH_TIMEOUT_MS, who: 'the Fabric API',
                        attempts: 4, backoffMs: () => 5000, sleep });
 
-  async function fabricJson(url, what, opts) {
-    const r = await call(getFabricToken, url, opts);
-    if (!r.ok) {
-      const said = await fabricMessage(r);
-      const e = new Error(`${what} failed (HTTP ${r.status})` + (said ? ` — ${said}` : ''));
-      e.status = r.status;
-      throw e;
-    }
-    return r;
-  }
+  const fabricJson = async (url, what, opts) => fabricOk(await call(getFabricToken, url, opts), what);
 
   // Fabric's list calls page with continuationToken and say so in the body.
   const listAll = (path, what) => listPages(`${apiBase}${path}`,

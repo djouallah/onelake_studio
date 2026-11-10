@@ -24,7 +24,7 @@ const { createDiagLog } = require('../core/diaglog');
 const { createCore } = require('../core/core');
 const { createTokenStore } = require('../core/tokenstore');
 const { createMsalSession } = require('../core/msalsession');
-const { pathsOf, readSettings, keptIn } = require('../core/home');
+const { pathsOf, readSettings, keptIn, commitOf } = require('../core/home');
 const { connectionString, openInExcel } = require('../xmla/excel');
 const { DFS_ORIGIN, modelSqlName } = require('../core/names');
 
@@ -39,10 +39,9 @@ function pageOf(extensionDir) {
 }
 
 function buildOf(extensionDir) {
-  let version = '?', commit = 'unknown';
+  let version = '?';
   try { version = JSON.parse(readFileSync(join(extensionDir, 'package.json'), 'utf8')).version; } catch (_) {}
-  try { commit = String(JSON.parse(readFileSync(join(extensionDir, 'webview', 'build.json'), 'utf8')).commit); } catch (_) {}
-  return { version, commit, dev: false };
+  return { version, commit: commitOf(extensionDir), dev: false };
 }
 
 /** A window with no window: what `core.js` is handed when there is no editor. */

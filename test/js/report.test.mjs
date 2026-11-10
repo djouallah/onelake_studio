@@ -266,7 +266,7 @@ test("a text tile's Markdown: headings, paragraphs, lists, bold, italic and http
   assert.deepEqual(markdownBlocks("a\r\nb\r\n\r\nc"), [{ p: ["a b"] }, { p: ["c"] }]);
 });
 
-const { formatChart, numberFormat } = await import("../../page/explore/report.js");
+const { formatChart, numberFormat } = await import("../../page/explore/format.js");
 const { formatValue, byValueBackground } = await import("../../page/explore/draw.js");
 
 test("a number style is a format string, and percent and K/M/B are written", () => {

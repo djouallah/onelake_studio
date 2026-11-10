@@ -34,13 +34,13 @@ test("every when clause the extension's menus use reads as VS Code reads it", ()
 
 test("a tab's page gets VS Code's bridge in its own CSP, its theme, and its body class", () => {
   const html = `<!doctype html><html><head><meta http-equiv="Content-Security-Policy" content="script-src 'nonce-abc+/='"></head><body><p>x</p></body></html>`;
-  const page = pageFor(html, "7", true);
+  const page = pageFor(html, "7");
   assert.match(page, /<script nonce="abc\+\/=">/);
   assert.match(page, /acquireVsCodeApi/);
   assert.match(page, /--vscode-editor-background/);
   assert.match(page, /<body class="vscode-dark">/);
-  assert.match(pageFor(`<head></head><body class="a">`, "1", false), /<body class="vscode-light a">/);
-  assert.equal(pageFor(`<head></head><body>`, "1", false).includes("$&"), false);
+  assert.match(pageFor(`<head></head><body class="a">`, "1"), /<body class="vscode-dark a">/);
+  assert.equal(pageFor(`<head></head><body>`, "1").includes("$&"), false);
 });
 
 function request(port, path, { cookie = "", host = `127.0.0.1:${port}`, origin, method = "GET", body } = {}) {
@@ -261,7 +261,7 @@ test("keys: named as the window's shortcuts are, and the browser's own do nothin
 
 test("a tab's page posts the window's keys to the window's origin, keeps its own, and right-clicks off the menus show the browser's only on text", () => {
   const shell = "http://127.0.0.1:5";
-  const page = pageFor("<head></head><body>", "1", true, { shell, keys: ["ctrl+b", "f5"] });
+  const page = pageFor("<head></head><body>", "1", { shell, keys: ["ctrl+b", "f5"] });
   assert.match(page, /input, textarea/);
   assert.equal(page.includes("olsKeydown"), false, "it reaches nothing of the window's but postMessage");
   // The bridge, run as the page runs it.

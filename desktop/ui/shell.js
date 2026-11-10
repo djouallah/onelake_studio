@@ -6,8 +6,6 @@ import { when } from './when.js';
 import { chordOf, BROWSER_KEYS } from './keys.js';
 
 const VIEW = 'onelakeStudio.explorer';
-const dark = true;   // the app is dark, whatever Windows is
-document.getElementById('theme').href = `/theme.css?dark=${dark ? 1 : 0}`;
 const $ = id => document.getElementById(id);
 
 function h(tag, attrs = {}, ...kids) {
@@ -603,7 +601,7 @@ function on(m) {
       if (!t) break;
       t.loaded = false;
       // From the pages' port, another origin than this page's (server.js), told which keys are the window's.
-      t.page.src = `${boot.pages}/tab/${encodeURIComponent(m.id)}?dark=${dark ? 1 : 0}&rev=${m.rev}&keys=${encodeURIComponent(tabKeys())}`;
+      t.page.src = `${boot.pages}/tab/${encodeURIComponent(m.id)}?rev=${m.rev}&keys=${encodeURIComponent(tabKeys())}`;
       break;
     }
     case 'tab-post': tabMessage(m.id, m.msg); break;

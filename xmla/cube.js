@@ -16,7 +16,7 @@ const NO_MEASURES = '__No measures defined';
 const lc = s => String(s).toLowerCase();
 const br = s => `[${String(s).replace(/\]/g, ']]')}]`;
 
-const qid = s => `"${String(s).replace(/"/g, '""')}"`;
+const { quoteIdent: qid } = require('../core/sql');
 const columnRef = c => `${qid(c.table)}.${qid(c.name)}`;
 
 function buildCube(catalog, bim, sqlName) {

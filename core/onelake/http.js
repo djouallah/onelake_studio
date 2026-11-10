@@ -123,6 +123,39 @@ async function bodyMessage(r, pick) {
 const fabricMessage = r => bodyMessage(r, j => j && (j.message || (j.error && j.error.message)));
 const oneLakeMessage = r => bodyMessage(r, j => j && j.error && j.error.message);
 
+// What the Fabric REST clients share (models/fabric.js, and the export's fabricapp.js and fabricmodel.js).
+const FABRIC_API = 'https://api.fabric.microsoft.com/v1';
+/** An answer the Fabric API gave, which must be OK or one of `ok`: else `what` failed, with what it said. */
+async function fabricOk(r, what, ok = []) {
+  if (r.ok || ok.includes(r.status)) return r;
+  const said = await fabricMessage(r);
+  throw Object.assign(new Error(`${what} failed (HTTP ${r.status})` + (said ? ` — ${said}` : '')), { status: r.status });
+}
+// An answer's body as JSON, or as its text when it isn't JSON.
+const jsonOrText = async r => { const t = await r.text(); try { return JSON.parse(t); } catch (_) { return t; } };
+// Whether an item has this display name, whatever its case.
+const namedLike = name => i => String(i.displayName).toLowerCase() === String(name).toLowerCase();
+/**
+ * A long-running operation (202 + Location), asked with `call` until it has Succeeded: every `waitMs`, or
+ * as its Retry-After says, `polls` times at most.
+ */
+async function waitFabricOperation(r, what, { call, sleep, waitMs, polls }) {
+  const location = r.headers.get('location');
+  if (!location) return;
+  let wait = retryAfterMs(r, waitMs);
+  for (let i = 0; i < polls; i++) {
+    await sleep(wait);
+    const p = await call(location, { what });
+    const op = await jsonOrText(p);
+    if (op.status === 'Succeeded') return;
+    if (op.status === 'Failed' || op.status === 'Undefined') {
+      throw new Error(`${what} failed — ${(op.error && (op.error.message || op.error.errorCode)) || op.status}`);
+    }
+    wait = retryAfterMs(p, waitMs);
+  }
+  throw new Error(`${what} did not finish`);
+}
+
 // The body of an answer that said OK. One that can't be read fails, as the connection going part way
 // or the timeout, which covers the body too: taken for an empty answer, it would be kept, over what was known.
 // `before`: the text, changed before it is parsed.
@@ -175,4 +208,5 @@ async function mapPool(items, fn, limit) {
   return out;
 }
 
-module.exports = { createTokenHold, inTime, authedFetch, discard, retryAfterMs, fabricMessage, oneLakeMessage, okJson, listPages, limiter, mapPool, useConnectivity, offlineError };
+module.exports = { FABRIC_API, fabricOk, jsonOrText, namedLike, waitFabricOperation,
+  createTokenHold, inTime, authedFetch, discard, retryAfterMs, fabricMessage, oneLakeMessage, okJson, listPages, limiter, mapPool, useConnectivity, offlineError };

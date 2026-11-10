@@ -189,8 +189,7 @@ function createCore({
   adoptLooseQueries().then(() => view.queriesChanged(), () => {});
   engines.setCacheRoot(engines.fileCacheRootFor());
   engines.setCacheAccount(storeAccount);
-  // An account's disk cache at this build's block size before the engine reads it (filecache.js). What was
-  // kept whole went with the old blocks, so it is read whole again.
+  // An account's cache folder tidied before the engine reads it (filecache.js): an older build's blocks go.
   const settleCache = account => {
     const dir = settings.keepsDiskCache() ? engines.fileCacheDirFor(account) : null;
     if (!dir) return;

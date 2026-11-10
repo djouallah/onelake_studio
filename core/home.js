@@ -57,4 +57,10 @@ function keptIn(file) {
   };
 }
 
-module.exports = { pathsOf, parseSettings, readSettings, keptIn };
+// The commit this build was packaged at (scripts/stage-webview.mjs writes it), as the status bar's stamp reads it.
+function commitOf(extensionDir) {
+  try { return String(JSON.parse(readFileSync(join(extensionDir, 'webview', 'build.json'), 'utf8')).commit || 'unknown'); }
+  catch (_) { return 'unknown'; }
+}
+
+module.exports = { pathsOf, parseSettings, readSettings, keptIn, commitOf };

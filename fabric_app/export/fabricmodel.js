@@ -16,14 +16,11 @@
 // No `vscode` import: the extension passes in its tokens.
 // =============================================================================
 
-const { authedFetch, fabricMessage, listPages, retryAfterMs } = require('../../core/onelake/http');
+const { FABRIC_API, authedFetch, fabricOk, jsonOrText: json, namedLike: byName, listPages, retryAfterMs, waitFabricOperation } = require('../../core/onelake/http');
 
-const FABRIC_API = 'https://api.fabric.microsoft.com/v1';
 const POWER_BI_API = 'https://api.powerbi.com/v1.0/myorg';
 const FETCH_TIMEOUT_MS = 120_000;
 const POLLS = 120;   // with Retry-After, a few minutes
-
-const byName = name => i => String(i.displayName).toLowerCase() === String(name).toLowerCase();
 
 /**
  * @param {object} o
@@ -37,13 +34,8 @@ function createFabricModel({ getToken, powerBiToken, sqlToken, apiBase = FABRIC_
     const r = await authedFetch(url, { getToken: token, fetchImpl, method, body, timeoutMs: FETCH_TIMEOUT_MS, who,
                                        headers: body == null ? {} : { 'content-type': 'application/json' },
                                        retry: [429, 502, 503, 504], attempts: 4, backoffMs: a => 2000 * 2 ** (a - 1), sleep });
-    if (!r.ok && !ok.includes(r.status)) {
-      const said = await fabricMessage(r);
-      throw Object.assign(new Error(`${what} failed (HTTP ${r.status})` + (said ? ` — ${said}` : '')), { status: r.status });
-    }
-    return r;
+    return fabricOk(r, what, ok);
   }
-  const json = async r => { const t = await r.text(); try { return JSON.parse(t); } catch (_) { return t; } };
   const pbi = (url, o = {}) => call(`${pbiBase}${url}`, { token: powerBiToken, who: 'the Power BI API', ...o });
 
   const list = ws => listPages(`${apiBase}/workspaces/${ws}/semanticModels`,
@@ -53,22 +45,7 @@ function createFabricModel({ getToken, powerBiToken, sqlToken, apiBase = FABRIC_
   const find = async (ws, name) => (await list(ws)).find(byName(name)) || null;
 
   // A long-running operation (202 + Location), to Succeeded.
-  async function waitOperation(r, what) {
-    const location = r.headers.get('location');
-    if (!location) return;
-    let wait = retryAfterMs(r, 3000);
-    for (let i = 0; i < POLLS; i++) {
-      await sleep(wait);
-      const p = await call(location, { what });
-      const op = await json(p);
-      if (op.status === 'Succeeded') return;
-      if (op.status === 'Failed' || op.status === 'Undefined') {
-        throw new Error(`${what} failed — ${(op.error && (op.error.message || op.error.errorCode)) || op.status}`);
-      }
-      wait = retryAfterMs(p, 3000);
-    }
-    throw new Error(`${what} did not finish`);
-  }
+  const waitOperation = (r, what) => waitFabricOperation(r, what, { call, sleep, waitMs: 3000, polls: POLLS });
 
   // The model called `name` with this definition: the one `id` names, else a new one. Returns
   // { id }.

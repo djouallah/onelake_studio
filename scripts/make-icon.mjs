@@ -2,8 +2,8 @@
 // field will not take an SVG, unlike the activity-bar icon beside it).
 //
 // Written by hand rather than pulled from a package: node has zlib (crc32 from Node 20.15
-// and 22.2), a PNG is a CRC'd header plus one deflate stream, and this repo has no runtime dependencies anywhere
-// else either. Run: node scripts/make-icon.mjs
+// and 22.2), and a PNG is a CRC'd header plus one deflate stream.
+// Run: node scripts/make-icon.mjs
 import { deflateSync, crc32 } from "node:zlib";
 import { writeFile, mkdir } from "node:fs/promises";
 

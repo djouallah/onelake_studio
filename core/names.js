@@ -17,7 +17,7 @@ const stripBom = s => String(s).replace(/^\uFEFF/, "");
 // Percent-encode a RAW path — one whose segments are literal names, not URI escapes.
 // This is only correct for paths that came out of a DFS listing (`.name`), where a
 // space is a space. Applying it to a path taken from Iceberg metadata would turn an
-// existing %20 into %2520; see toHttps for that side.
+// existing %20 into %2520.
 const encPath = p => strip(p).split("/").map(encodeURIComponent).join("/");
 
 // OneLake's DFS endpoint, and a file on it by the names the tree knows it by (the workspace,

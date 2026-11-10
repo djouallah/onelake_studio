@@ -23,9 +23,8 @@
 // No `vscode` import: the extension passes in its token.
 // =============================================================================
 
-const { authedFetch, fabricMessage, listPages, retryAfterMs } = require('../../core/onelake/http');
+const { FABRIC_API, authedFetch, fabricOk, jsonOrText: json, namedLike: byName, listPages, retryAfterMs, waitFabricOperation } = require('../../core/onelake/http');
 
-const FABRIC_API = 'https://api.fabric.microsoft.com/v1';
 const ITEM_TYPE = 'AppBackend';
 const MONIKER = 'X-Ms-Workload-Resource-Moniker';
 const PORTAL_URL = 'https://app.fabric.microsoft.com/';
@@ -36,8 +35,6 @@ const FETCH_TIMEOUT_MS = 120_000;
 const MAX_ZIP_BYTES = 100 * 1024 * 1024;
 const FUNCTION_POLL_MS = 10_000;
 const FUNCTION_POLLS = 30;   // ~5 minutes, as the CLI waits
-
-const byName = name => i => String(i.displayName).toLowerCase() === String(name).toLowerCase();
 
 // The semantic model's connector, as rayfin.yml declares one (`rayfin connector add`, rayfin-tools-common
 // 1.36's CONNECTOR_CATALOG): delegated is the only auth it takes. The page calls it by this name
@@ -63,13 +60,8 @@ function createFabricApp({ getToken, apiBase = FABRIC_API, log = () => {},
     const r = await authedFetch(url, { getToken, fetchImpl, method, headers, body, timeoutMs: FETCH_TIMEOUT_MS,
                                        who: 'the Fabric API', retry, attempts: 5,
                                        backoffMs: attempt => 2000 * 2 ** (attempt - 1), sleep });
-    if (!r.ok) {
-      const said = await fabricMessage(r);
-      throw Object.assign(new Error(`${what} failed (HTTP ${r.status})` + (said ? ` — ${said}` : '')), { status: r.status });
-    }
-    return r;
+    return fabricOk(r, what);
   }
-  const json = async r => { const t = await r.text(); try { return JSON.parse(t); } catch (_) { return t; } };
 
   function listItems(ws) {
     const what = 'Listing the workspace\'s apps';
@@ -128,22 +120,7 @@ function createFabricApp({ getToken, apiBase = FABRIC_API, log = () => {},
   }
 
   // A long-running operation (202 + Location), to Succeeded.
-  async function waitOperation(r, what) {
-    const location = r.headers.get('location');
-    if (!location) return;
-    let wait = retryAfterMs(r, 5000);
-    for (let i = 0; i < 60; i++) {
-      await sleep(wait);
-      const p = await call(location, { what });
-      const op = await json(p);
-      if (op.status === 'Succeeded') return;
-      if (op.status === 'Failed' || op.status === 'Undefined') {
-        throw new Error(`${what} failed — ${(op.error && (op.error.message || op.error.errorCode)) || op.status}`);
-      }
-      wait = retryAfterMs(p, 5000);
-    }
-    throw new Error(`${what} did not finish`);
-  }
+  const waitOperation = (r, what) => waitFabricOperation(r, what, { call, sleep, waitMs: 5000, polls: 60 });
 
   const endpoint = (ws, id) => `${apiBase}/workspaces/${ws}/appBackends/${id}`;
 

@@ -1,8 +1,7 @@
 /* =============================================================================
    explore/explore.css — the semantic model view (view.js): subtabs, Model, SQL, Explore
    =============================================================================
-   Ported from the Analyze tab of analytics-as-code's dashboard. Its tokens that the studio
-   does not have are defined here, on :root because Explore's filter popup lives on <body>;
+   The tokens Explore draws with that the studio does not have are defined here, on :root because Explore's filter popup lives on <body>;
    --border, --text, --muted and --accent are the studio's own. */
 :root {
   --card: var(--panel); --raised: #1c2330; --input-bg: var(--panel2); --row-line: #21262d;
@@ -217,7 +216,7 @@ section.modelOpen #chartBtn { display: none; }
 .explore-actions { display: flex; flex: none; gap: 0.4rem; margin-left: auto; }
 .explore-actions[hidden], .subtabs[hidden] { display: none; }
 
-/* Show plan (profile.js): the profile, and the plan's tree. Ported from analytics-as-code. */
+/* Show plan (profile.js): the profile, and the plan's tree. */
 .explore-plan { flex: 1 1 auto; min-height: 420px; display: flex; padding: 0 var(--gutter) 1rem; }
 .explore-plan[hidden], .explore-table-wrap[hidden] { display: none; }
 .plan-frame { flex: 1 1 auto; width: 100%; min-height: 420px; border: 1px solid var(--hairline); border-radius: 8px; background: var(--card); }
