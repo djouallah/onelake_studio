@@ -2,7 +2,7 @@
 // =============================================================================
 // main.js — the desktop app's Node process
 // =============================================================================
-// Starts src/extension.js with `vscode` pointing at vscode.js, serves the window (server.js), and says
+// Starts extension/extension.js with `vscode` pointing at vscode.js, serves the window (server.js), and says
 // on stdout where: one line of JSON, for the Tauri shell to navigate to. Each line after that is something
 // only the shell can do: exit, zoom. It ends when its stdin does, which is when the shell does.
 // =============================================================================
@@ -15,7 +15,7 @@ const dialogs = require('./dialogs');
 const { pathsOf, readSettings, keptIn } = require('../../cli/standalone');
 const { createMsalSession } = require('../../cli/msalsession');
 const { createTokenStore } = require('../../cli/tokenstore');
-const extension = require('../../src/extension');
+const extension = require('../../extension/extension');
 const { checkUpdate } = require('./update');
 
 const { desktop } = vscode;

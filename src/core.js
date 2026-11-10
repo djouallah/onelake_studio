@@ -4,7 +4,7 @@
 // =============================================================================
 // The store, the catalog, the engine, the command line, Excel and what happens when the account
 // moves. It has no editor in it: the sign-in, what is kept, the folders, the questions and what's on
-// screen are handed in, and src/extension.js is what hands them in today.
+// screen are handed in, and extension/extension.js is what hands them in today.
 // =============================================================================
 
 const { join } = require('node:path');

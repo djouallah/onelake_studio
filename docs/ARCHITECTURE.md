@@ -33,7 +33,7 @@ SHOW ALL TABLES;
 | **Read only** | Nothing is written to Fabric or OneLake. The host takes one read per statement, from a tab or the command line, and DuckDB's own parser checks it. The three exceptions each ask first: Export to Fabric (the app), Create Semantic Model, and Upload Files… into a lakehouse's `Files/`. | `assertReads` and `checkedRead` in [`src/sql.js`](../src/sql.js) |
 | **Cache first** | Every answer from OneLake or Fabric is kept on this machine and served from there first. It is trusted until using it fails, then read again once. | [`src/onelake.js`](../src/onelake.js), [`src/store.js`](../src/store.js) |
 | **Works offline** | A feature that reads data works from what this machine holds, with no network. What isn't held says so at once, never on a timeout. Only writing to Fabric needs a connection: Export to Fabric, Create Semantic Model and Upload Files…. The exported Fabric app is online by design, and this rule doesn't apply to it. | [`src/connectivity.js`](../src/connectivity.js), [`src/http.js`](../src/http.js), the lake in [`src/tableservice.js`](../src/tableservice.js) |
-| **The host does the work** | Sign-in, the read-only guard and OneLake's listings, metadata and `Files/` bytes are in the host, and DuckDB's reads are in the server it starts. A tab is a view: it holds no token and makes no network request. | [`src/host.js`](../src/host.js), [`src/panel.js`](../src/panel.js), [`src/engine-client.js`](../src/engine-client.js) |
+| **The host does the work** | Sign-in, the read-only guard and OneLake's listings, metadata and `Files/` bytes are in the host, and DuckDB's reads are in the server it starts. A tab is a view: it holds no token and makes no network request. | [`src/host.js`](../src/host.js), [`extension/panel.js`](../extension/panel.js), [`src/engine-client.js`](../src/engine-client.js) |
 | **A table's Visual is a SQL starter** | It builds a first SQL. Its only actions are Edit SQL and Close. | [`app/app.js`](../app/app.js) |
 
 ## Out of scope
@@ -251,7 +251,7 @@ Outside those files there is **one cache folder**, `file-cache-v1`, with a folde
 `secured\`. A semantic model's `.yaml` copy is under `models\<account>\`. Saved queries are yours, under
 `~/OneLakeStudio/queries`.
 
-**Logs** ([`src/logs.js`](../src/logs.js)), a node in the tree, with one tab per window. The record is DuckDB's own: its `Quack` log has a row per
+**Logs** ([`extension/logs.js`](../extension/logs.js)), a node in the tree, with one tab per window. The record is DuckDB's own: its `Quack` log has a row per
 statement with the time to its first rows and any error, for every tab, window and the command line. A large
 result's later rows aren't in that time, since DuckDB doesn't log them. It is kept in memory
 (file storage can't be read back on Windows, since DuckDB locks its own file), and the server moves it to the log
@@ -262,7 +262,7 @@ A semantic model's query runs as the SQL dax-sql compiles it to, with the query 
 as what was asked.
 `SELECT * FROM duckdb_logs` answers in a SQL box for what is still in memory.
 
-**Performance** ([`src/performance.js`](../src/performance.js)), a node in the tree, with one tab per window. Live charts of
+**Performance** ([`extension/performance.js`](../extension/performance.js)), a node in the tree, with one tab per window. Live charts of
 memory, cores in use, queries per second and the disk cache, while the tab is on screen. Nothing is stored. It has no
 SQL box, no Stop and no Restart.
 
@@ -401,7 +401,7 @@ A table can be part here and part on OneLake, and DuckDB opens each file where i
 
 ## The explorer
 
-The tree ([`src/tree.js`](../src/tree.js)) lists workspaces, then lakehouses, warehouses, SQL and
+The tree ([`extension/tree.js`](../extension/tree.js)) lists workspaces, then lakehouses, warehouses, SQL and
 mirrored databases, their tables and files, semantic models and apps. *Queries*, **Logs** and
 **Performance** come after them, and stay there when a listing fails or finds nothing. Workspaces can be pinned, and the tree can be filtered to one type.
 
@@ -678,7 +678,7 @@ its header and is black, always; the chrome is the text's colour, and colour is 
 ## Opening files from disk
 
 A model file or an app's file on this machine opens in a tab, as one from the tree does (`openPath` in
-[`src/extension.js`](../src/extension.js), the command `onelakeStudio.openPath`).
+[`extension/extension.js`](../extension/extension.js), the command `onelakeStudio.openPath`).
 - **A model file**, a `.bim`, or a `.yaml`/`.yml` that is an Ossie model (a top-level `version:` and `datasets:`): its
   model, its tables OneLake's by the names in it, in the workspace that holds them (`modelFile` in
   [`src/models.js`](../src/models.js)). One whose tables more than one workspace could hold says so, and is opened from
@@ -701,7 +701,7 @@ A model file or an app's file on this machine opens in a tab, as one from the tr
 
 ## Create Semantic Model
 
-A `.bim` or Ossie `.yaml` in a lakehouse's `Files/` has a ⛁ in the tree (`modelFile`, [`src/tree.js`](../src/tree.js)), and
+A `.bim` or Ossie `.yaml` in a lakehouse's `Files/` has a ⛁ in the tree (`modelFile`, [`extension/tree.js`](../extension/tree.js)), and
 the same button on Explore's Model page when it is open there (`fabric.createSemanticModel`, [`src/host.js`](../src/host.js)):
 **Create Semantic Model** makes the Power BI semantic model of it, named for the file, in the file's workspace, on Direct
 Lake (refreshed once made) or DirectQuery (its SQL endpoint signed in to by SSO) (`createSemanticModel` in
@@ -852,7 +852,7 @@ The function's deploy package (an esbuild bundle plus its metadata) is built onc
 ## The desktop app
 
 **The app is the extension.** Its Node process ([`desktop/node/main.js`](../desktop/node/main.js)) runs
-[`src/extension.js`](../src/extension.js) as it is, bundled with `vscode` pointing at
+[`extension/extension.js`](../extension/extension.js) as it is, bundled with `vscode` pointing at
 [`desktop/node/vscode.js`](../desktop/node/vscode.js): the part of VS Code's API the extension uses, and no more. So every
 command, menu, tab and message is the same code in both, and a change to the extension is a change to the app.
 
@@ -1074,7 +1074,7 @@ every window. The rest apply at once.
 | Folder or file | What it holds |
 | --- | --- |
 | [`src/`](../src/) | The extension host and the server. Ship bundled, with `@duckdb/node-api`, as `dist/extension.js` and `dist/engine-server.js`. |
-| `src/extension.js` | What is VS Code's: activation, commands, the tree's view, dialogs and the status bar. It hands the rest in. |
+| `extension/extension.js` | What is VS Code's: activation, commands, the tree's view, dialogs and the status bar. It hands the rest in. |
 | `src/core.js` | What a window builds that isn't about how it looks: the store, the catalog, the command line, Excel, and what happens when the account moves. Nothing it loads needs VS Code. |
 | `src/signin.js`, `src/settings.js`, `src/readlog.js` | When a session is asked for, and its tokens. What the settings mean. What a window says about its reads. |
 | `src/engines.js` | The engine this window reads with, the background engine, and the catalog files. |
@@ -1095,11 +1095,11 @@ every window. The rest apply at once.
 | `src/fabric.js` | A workspace's semantic models and apps, and a model's definition. |
 | `src/sqlendpoint.js` | A Direct Lake model over a SQL endpoint, pointed at the item behind it. |
 | `src/semviews.js` | The models opened, per account. |
-| `src/tree.js`, `src/doubleclick.js` | The explorer, and a double click in it counting as one click. |
+| `extension/tree.js`, `src/doubleclick.js` | The explorer, and a double click in it counting as one click. |
 | `src/title.js` | What the sidebar's header and a tab's title say. |
 | `app/querytext.js` | The SQL box's statements, error positions and variables. |
-| `src/panel.js`, `src/host.js`, `src/html.js`, `src/webview.js` | A tab's webview, its channel, and its page. |
-| `src/performance.js`, `src/logs.js` | The Performance and Logs tabs. |
+| `extension/panel.js`, `src/host.js`, `extension/html.js`, `extension/webview.js` | A tab's webview, its channel, and its page. |
+| `extension/performance.js`, `extension/logs.js` | The Performance and Logs tabs. |
 | `src/catalogfile.js`, `src/catalogtables.js`, `src/syncworker.js` | What is remembered, in SQLite, the catalog's tables there, and what keeps them current and looks after tables in use. |
 | `src/engine-server.js`, `src/engine-client.js`, `src/enginelog.js`, `src/logfile.js` | The server: its process, a window's side of it, and its log. |
 | `cli/agent.js`, `cli/bridge.js`, `cli/cli.mjs` | The command line. |

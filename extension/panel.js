@@ -12,10 +12,10 @@ const vscode = require('vscode');
 const crypto = require('node:crypto');
 const { TextDecoder } = require('node:util');
 const { renderPage } = require('./html');
-const { answer } = require('./host');
+const { answer } = require('../src/host');
 const { webviewRoot } = require('./webview');
-const { PINS } = require('./vendored');
-const { NAME } = require('./title');
+const { PINS } = require('../src/vendored');
+const { NAME } = require('../src/title');
 
 // A webview is a sandboxed iframe with no CSP of its own, so this is the only thing
 // between the page and the network — and the page needs none. Its scripts are its own and

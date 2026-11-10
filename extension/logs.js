@@ -9,7 +9,7 @@
 
 const vscode = require('vscode');
 const crypto = require('node:crypto');
-const { fileNamesIn } = require('./names');
+const { fileNamesIn } = require('../src/names');
 
 const EVERY_MS = 3_000;
 const SHOWN = 1_000;

@@ -25,7 +25,7 @@ export async function renderMarkdown(text) {
     purify.addHook('afterSanitizeAttributes', node => {
       // Only an image carried in the document itself can be drawn: a relative one (the
       // README's screenshot) has nothing to resolve against in this page, which has no
-      // <base>, and the panel's CSP (img-src, src/panel.js) blocks a remote one. Either
+      // <base>, and the panel's CSP (img-src, extension/panel.js) blocks a remote one. Either
       // is hidden rather than drawn as a broken icon.
       if (node.tagName === 'IMG' && !/^(data|blob):/i.test(node.getAttribute('src') || '')) {
         node.setAttribute('hidden', '');

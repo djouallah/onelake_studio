@@ -61,7 +61,7 @@ export function panelHost({ dfsOrigin, tableOrigin, engineOptions = {}, nameTabl
 // ---------------------------------------------------------------------------
 import { readFile } from "node:fs/promises";
 import { extname } from "node:path";
-const { renderPage } = require("../../src/html.js");
+const { renderPage } = require("../../extension/html.js");
 const { PINS } = require("../../src/vendored.js");
 
 const VENDOR = join(root, "vendor");

@@ -19,7 +19,7 @@ Module._load = function (id, ...rest) {
     : load.call(this, id, ...rest);
 };
 const require = createRequire(import.meta.url);
-const { LakehouseTree } = require("../../src/tree.js");
+const { LakehouseTree } = require("../../extension/tree.js");
 const { createOneLake } = require("../../src/onelake.js");
 const { createStore } = require("../../src/store.js");
 

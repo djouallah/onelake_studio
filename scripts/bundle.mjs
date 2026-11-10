@@ -26,7 +26,7 @@ const here = join(dirname(fileURLToPath(import.meta.url)), "..");   // the exten
 const out = join(here, "dist", "extension.js");
 
 // One string, not an argv: npx is npx.cmd on Windows, which Node only spawns through a shell.
-execSync("npx --yes esbuild@0.28.1 src/extension.js --bundle --platform=node --format=cjs" +
+execSync("npx --yes esbuild@0.28.1 extension/extension.js --bundle --platform=node --format=cjs" +
   " --target=node20 --external:vscode --external:@duckdb/node-bindings --log-level=warning" +
   " --outfile=dist/extension.js", { cwd: here, stdio: "inherit" });
 // The shared engine's process (engine-server.js), started by a window, with no editor around it.

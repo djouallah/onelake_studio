@@ -18,8 +18,8 @@
 // =============================================================================
 
 const vscode = require('vscode');
-const { fmtBytes, hasFilesArea, isMirrored, kindLabel, strip, sqlNameOf } = require('./names');
-const { mapPool } = require('./http');
+const { fmtBytes, hasFilesArea, isMirrored, kindLabel, strip, sqlNameOf } = require('../src/names');
+const { mapPool } = require('../src/http');
 
 // What the explorer's filter offers: an item type as kindLabel says it, or a Fabric listing.
 const TREE_FILTERS = [
@@ -45,8 +45,8 @@ const sqlNameOrNull = n => { try { return sqlNameOf(n, n); } catch (_) { return 
 class LakehouseTree {
   /**
    * @param {object} deps
-   * @param {ReturnType<import('./onelake').createOneLake>} deps.onelake  cache-first OneLake
-   * @param {import('./fabric').createFabric} [deps.fabric]  semantic models and apps (Fabric REST)
+   * @param {ReturnType<import('../src/onelake').createOneLake>} deps.onelake  cache-first OneLake
+   * @param {import('../src/fabric').createFabric} [deps.fabric]  semantic models and apps (Fabric REST)
    * @param {() => Promise<boolean>} [deps.hasFabric]        a Fabric token, without a prompt?
    * @param {() => boolean} deps.isSignedIn
    * @param {{ get: () => string[] }} [deps.favorites]   pinned workspace names, persisted

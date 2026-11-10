@@ -1,7 +1,7 @@
 // =============================================================================
 // bundle-desktop.mjs — the desktop app's Node process: dist/desktop.js
 // =============================================================================
-// The extension itself, src/extension.js, with `vscode` pointing at desktop/node/vscode.js: the app
+// The extension itself, extension/extension.js, with `vscode` pointing at desktop/node/vscode.js: the app
 // is the same code. Run by CI's desktop job only, so a vsix never carries it.
 //
 // It must load, as bundle.mjs checks of the extension: DuckDB is required lazily, and opening the

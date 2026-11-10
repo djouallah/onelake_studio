@@ -2,7 +2,7 @@
 // =============================================================================
 // vscode.js — what the extension asks of VS Code, answered with no VS Code
 // =============================================================================
-// The desktop app is the extension: src/extension.js, unchanged, bundled with `vscode` pointing here
+// The desktop app is the extension: extension/extension.js, unchanged, bundled with `vscode` pointing here
 // (scripts/bundle-desktop.mjs). So every command, menu, tab and message is the same code in both, and
 // a change to the extension is a change to the app. This is the part of VS Code's API it uses, and
 // no more. What needs a person goes to the window through `host`, and what needs Windows goes to

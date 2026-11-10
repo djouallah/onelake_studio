@@ -1,5 +1,5 @@
 // The panel's page: app/index.html, the extension's own template, filled in by
-// src/html.js. Tested against the real template, because the failure that
+// extension/html.js. Tested against the real template, because the failure that
 // matters is the quiet one — a placeholder that went missing is a page that comes up
 // blank, or one whose CSP or config never arrived.
 import { test } from "node:test";
@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { renderPage } = require("../../src/html.js");
+const { renderPage } = require("../../extension/html.js");
 
 const root = join(fileURLToPath(new URL(".", import.meta.url)), "..", "..");
 const APP = join(root, "app");

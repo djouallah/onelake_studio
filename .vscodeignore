@@ -20,6 +20,7 @@ node_modules/**
 # The extension host's source: what ships is dist/extension.js, which scripts/bundle.mjs
 # builds from it.
 src/**
+extension/**
 xmla/**
 # The command line's: in dist/extension.js and dist/standalone.js too, but for what runs outside
 # the editor. cli.mjs is what an agent runs, bridge.js is what it requires (the bundle needs

@@ -13,7 +13,7 @@ Module._load = function (id, ...rest) {
   return id === "vscode" ? { EventEmitter } : load.call(this, id, ...rest);
 };
 const require = createRequire(import.meta.url);
-const { LakehouseTree, TREE_FILTERS } = require("../../src/tree.js");
+const { LakehouseTree, TREE_FILTERS } = require("../../extension/tree.js");
 
 const WORKSPACES = {
   sales: {
