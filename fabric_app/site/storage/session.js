@@ -20,9 +20,12 @@ export const SETTINGS = [
   // Iceberg's files never change once written: a Parquet footer read holds for the session.
   'SET parquet_metadata_cache = true',
   'SET preserve_insertion_order = false',
-  // DuckDB's own cache of the files it reads, off. The store is the cache, and DuckDB's keeps what a
-  // read gave it when the store lacked the bytes (a 404): the query run again, once the page has
-  // downloaded them, read the same bad bytes ("Snappy decompression failure") until the page was
-  // reloaded. It also reads whole blocks around each read, which are bytes the page did not download.
-  'SET enable_external_file_cache = false',
 ];
+
+// How a store file is registered (registerFileURL's directIO): read straight from the store, each read
+// the bytes DuckDB asked for. Without it DuckDB-WASM reads through a buffer of its own, in pages of
+// about 1 MB around each read: bytes of other columns, which the page did not download, so a query of
+// a column the store held missed anyway; and a page a miss left unfilled stayed in that buffer, so the
+// query run again, once the bytes were downloaded, failed with "Snappy decompression failure" until
+// the page was reloaded (test/js/run-store-heal.mjs runs both ways).
+export const DIRECT_IO = true;

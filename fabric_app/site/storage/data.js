@@ -50,7 +50,7 @@
 
 import * as duckdb from "../vendor/npm/@duckdb/duckdb-wasm@1.33.1-dev114.0/+esm.js";
 import { engineQueue } from "./queue.js";
-import { OPEN, SETTINGS } from "./session.js";
+import { OPEN, SETTINGS, DIRECT_IO } from "./session.js";
 import { createResults } from "./results.js";
 import { createAuth } from "./auth.js";
 import { createCatalog } from "./catalog.js";
@@ -490,7 +490,7 @@ export function createDataSource({ onStatus = () => {}, onProgress = () => {} } 
   async function register(e, files) {
     for (const f of files) {
       if (e.registered.has(f.path)) continue;
-      await e.db.registerFileURL(localName(f.path), localUrl(f.path), duckdb.DuckDBDataProtocol.HTTP, false);
+      await e.db.registerFileURL(localName(f.path), localUrl(f.path), duckdb.DuckDBDataProtocol.HTTP, DIRECT_IO);
       e.registered.add(f.path);
     }
   }

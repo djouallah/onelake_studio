@@ -1,11 +1,11 @@
 // The Fabric app's store, in real Chrome: a query that reads bytes the store lacks fails, the page
 // downloads them, and the SAME engine, asked again, answers right. The real blockcache.js (the store
 // worker and DuckDB's worker), the real ranges.js, DuckDB-WASM from vendor/, and the engine opened and
-// set as data.js does it (storage/session.js). The Parquet file is written by DuckDB-WASM itself: four
+// set, and its file registered, as data.js does it (storage/session.js). The Parquet file is written by DuckDB-WASM itself: four
 // columns, one of them wide, so that a query of one column leaves the others out of the store.
 //
-// A second engine, with DuckDB's own file cache left on, runs the same steps on a second file and is only
-// reported: it is how the page was before, when the query run again read the same bad bytes.
+// A second engine, its file read through DuckDB-WASM's own buffer, runs the same steps on a second file and is
+// only reported: it is how the page was before, when the query run again read the same bad bytes.
 //
 // No sign-in, no OneLake. Run: node scripts/vendor.mjs && node test/js/run-store-heal.mjs
 import http from "node:http";
@@ -27,7 +27,7 @@ const TYPES = { ".js": "text/javascript", ".wasm": "application/wasm", ".html": 
 // The page: everything runs in it, and it leaves what happened in window.__done.
 const PAGE = `
 import * as duckdb from "/site/vendor/npm/${WEBAPP.duckdbWasm}/+esm.js";
-import { OPEN, SETTINGS } from "/site/storage/session.js";
+import { OPEN, SETTINGS, DIRECT_IO } from "/site/storage/session.js";
 import { columnRanges, piecesOf, tailOf } from "/site/storage/ranges.js";
 
 const DIST = location.origin + "/site/vendor/npm/${WEBAPP.duckdbWasm}/dist/";
@@ -93,7 +93,7 @@ async function main() {
 
   // One file's run: its footer and column a in the store, a query of a, then a query of c, which the
   // store lacks, each run again after what it missed is downloaded, on the one engine.
-  async function scenario(file, settings, { directIO = false, reregister = false } = {}) {
+  async function scenario(file, directIO) {
     const key = "https://onelake.dfs.fabric.microsoft.com/ws/lh/Tables/t/" + file;
     const heldRuns = async () => {
       const id = file + "-" + Math.random();
@@ -108,7 +108,7 @@ async function main() {
     };
     const lacks = async col => piecesOf(key, size, columnRanges(chunks, new Set([col])), await heldRuns()).reduce((n, p) => n + p.to - p.from + 1, 0);
 
-    const e = await engine(settings);
+    const e = await engine(SETTINGS);
     await download([tailOf(size), ...columnRanges(chunks, new Set(["a"]))]);
     const register = () => e.db.registerFileURL("store/" + file, "https://store.local/ws/lh/Tables/t/" + file, duckdb.DuckDBDataProtocol.HTTP, directIO);
     await register();
@@ -126,7 +126,6 @@ async function main() {
           const cols = new Set(chunks.filter(c => seen.some(m => c.from <= m.to && c.to >= m.from)).map(c => c.col));
           log(file + ": missed " + seen.map(m => m.from + "-" + m.to + " (" + (chunks.filter(c => c.from <= m.to && c.to >= m.from).map(c => c.col).join(",") || "no chunk") + ")").join("; "));
           await download([...seen.map(m => [m.from, m.to]), ...columnRanges(chunks, cols)]);
-          if (reregister) { await e.db.dropFile("store/" + file).catch(x => log("dropFile: " + x)); await register(); }
         }
       }
     };
@@ -136,22 +135,16 @@ async function main() {
     out.c = await healing("SELECT sum(c)::DOUBLE AS v FROM read_parquet('store/" + file + "')");
     await e.db.terminate();
     // The store itself, read by an engine that never missed.
-    const fresh = await engine(settings);
-    await fresh.db.registerFileURL("store/" + file, "https://store.local/ws/lh/Tables/t/" + file, duckdb.DuckDBDataProtocol.HTTP, false);
-    out.fresh = await fresh.rows("SELECT sum(a)::DOUBLE AS a, sum(c)::DOUBLE AS c FROM read_parquet('store/" + file + "')").then(r => r[0], x => String(x?.message || x).split("\\n")[0]);
+    const fresh = await engine(SETTINGS);
+    await fresh.db.registerFileURL("store/" + file, "https://store.local/ws/lh/Tables/t/" + file, duckdb.DuckDBDataProtocol.HTTP, DIRECT_IO);
+    out.fresh = await fresh.rows("SELECT sum(a)::DOUBLE AS a, sum(c)::DOUBLE AS c FROM read_parquet('store/" + file + "')").then(r => r[0], x => ({ failed: String(x?.message || x).split("\\n")[0] }));
     await fresh.db.terminate();
     return out;
   }
 
-  const noCache = SETTINGS.filter(x => !/enable_external_file_cache/.test(x));
-  const variants = {};
-  variants.base = await scenario("base.parquet", SETTINGS);
-  variants.reregister = await scenario("reregister.parquet", SETTINGS, { reregister: true });
-  variants.directIO = await scenario("directio.parquet", SETTINGS, { directIO: true });
-  variants.noMetadataCache = await scenario("nometa.parquet", SETTINGS.filter(x => !/parquet_metadata_cache/.test(x)));
-  variants.noPrefetch = await scenario("noprefetch.parquet", [...SETTINGS, "SET disable_parquet_prefetching = true"]);
-  variants.fileCacheOn = await scenario("cacheon.parquet", noCache);
-  return { expected, variants, said };
+  const shipped = await scenario("shipped.parquet", DIRECT_IO);
+  const buffered = await scenario("buffered.parquet", false);
+  return { expected, shipped, buffered, said };
 }
 main().then(r => { window.__done = r; }, e => { window.__done = { error: String(e?.stack || e), said }; });
 `;
@@ -180,13 +173,17 @@ try {
   const done = await page.evaluate(() => window.__done);
   if (done.error) throw new Error(done.error);
 
-  const { expected, variants } = done;
+  const { expected, shipped, buffered } = done;
+  for (const line of done.said ?? []) if (/missed/.test(line)) console.log(line);
   const show = (r, want) => (r.row ? `${r.row.v === want ? "right" : `WRONG ${r.row.v}`} after ${r.heals} download(s)` : `failed after ${r.heals}: ${r.failed}`);
-  for (const [name, v] of Object.entries(variants)) {
-    console.log(`${name}: a ${show(v.a, expected.a)}; c ${show(v.c, expected.c)}; a fresh engine ${JSON.stringify(v.fresh)}`);
-  }
-  for (const line of done.said ?? []) if (/missed|dropFile/.test(line)) console.log(line);
-  const checks = [variants.base.a.row?.v === expected.a && variants.base.c.row?.v === expected.c];
+  const checks = [];
+  const check = (ok, what) => { checks.push(ok); console.log(`${ok ? "ok  " : "FAIL"} ${what}`); };
+  check(shipped.a.row?.v === expected.a && shipped.a.heals === 0, `column a, its chunks in the store, is read with nothing more downloaded: ${show(shipped.a, expected.a)}`);
+  check(shipped.lackedOfC > 0, `column c is not in the store before it is asked for (${shipped.lackedOfC} bytes lacking)`);
+  check(shipped.c.heals > 0, `the query of c read bytes the store lacked (${shipped.c.errors[0] ?? "no error"})`);
+  check(shipped.c.row?.v === expected.c, `the same engine, asked again: ${show(shipped.c, expected.c)}`);
+  check(shipped.fresh.a === expected.a && shipped.fresh.c === expected.c, `an engine that never missed reads the same store: ${JSON.stringify(shipped.fresh)}`);
+  console.log(`through DuckDB-WASM's own buffer, as before: column a ${show(buffered.a, expected.a)}; column c ${show(buffered.c, expected.c)}`);
   code = checks.every(Boolean) ? 0 : 1;
 } catch (e) {
   console.log(`FAIL ${e?.stack || e}`);
