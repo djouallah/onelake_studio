@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.19
 
 - **A Fabric app downloads only the columns its Report reads.** A table larger than 32 MB used to come down whole
   before its first chart drew. Now only each file's footer and the columns the charts read come down. On a Report over
