@@ -362,6 +362,7 @@ function signs one. The page needs a browser with OPFS shared access handles (Ch
 // A zip's entries, path -> bytes: the ones zip() writes (deflated), and stored ones, as another tool
 // re-zips the app. Folders are left out, a backslash is a slash, and one top folder holding every
 // entry (a folder zipped whole) is taken off.
+const MAX_ENTRY_BYTES = 256 * 1024 * 1024;
 function unzip(buf) {
   const end = buf.lastIndexOf(Buffer.from([0x50, 0x4b, 0x05, 0x06]));
   if (end < 0) throw new Error('no zip directory');
@@ -379,7 +380,12 @@ function unzip(buf) {
     if (method !== 0 && method !== 8) throw new Error(`${name} is compressed in a way this can't read (method ${method})`);
     const start = local + 30 + buf.readUInt16LE(local + 26) + buf.readUInt16LE(local + 28);
     const packed = buf.subarray(start, start + size);
-    const data = method === 8 ? zlib.inflateRawSync(packed) : Buffer.from(packed);
+    // No more than the entry says it holds, and no entry that says more than an app's file could: a few
+    // kilobytes can otherwise unpack to all the memory there is.
+    if (raw > MAX_ENTRY_BYTES) throw new Error(`${name} is too big to be an app's file`);
+    let data;
+    try { data = method === 8 ? zlib.inflateRawSync(packed, { maxOutputLength: Math.max(1, raw) }) : Buffer.from(packed); }
+    catch { throw new Error(`${name} is damaged`); }
     if (data.length !== raw || crc32(data) !== crc) throw new Error(`${name} is damaged`);
     out.set(name, data);
   }

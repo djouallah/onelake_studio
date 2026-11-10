@@ -21,24 +21,29 @@
 
 const { mkdirSync, renameSync, rmSync, openSync, readSync, closeSync, statSync, writeFileSync } = require('node:fs');
 const { dirname, join } = require('node:path');
-const { sqlStr: q } = require('./sql');
+const { sqlStr: q, assertOneLakeUrl } = require('./sql');
 const { META, rows } = require('./onelaketable');
 
 const HELD = `${META}.studio_held`;
 // What is held here, by the path the lake gave a file before its copy came, on connection `c`.
 const heldOn = async c => new Map((await rows(c, `SELECT path, local FROM ${HELD} WHERE unread_since IS NULL`)).map(r => [r.path, r.local]));
 
-// abfss://<workspace>@<host>/<rest> -> https://<host>/<workspace>/<rest>, which a GET reads.
+// abfss://<workspace>@<host>/<rest> -> https://<host>/<workspace>/<rest>, which a GET reads. Only OneLake's
+// host: the GET carries the token, and the path is one a table's metadata named.
 function httpsOf(url) {
   const m = /^abfss?:\/\/([^@/]+)@([^/]+)\/(.+)$/.exec(url);
   if (!m) throw new Error(`not a OneLake path: ${url}`);
+  assertOneLakeUrl(url);
   return `https://${m[2]}/${m[1]}/${m[3]}`;
 }
 // Where a file's copy goes: its workspace, item and folders kept, so a Delta partition's col=value folder is in
 // the copy's path as DuckLake reads it.
 function localOf(filesDir, url) {
   const m = /^abfss?:\/\/([^@/]+)@[^/]+\/(.+)$/.exec(url);
-  if (!m || m[2].split('/').some(p => p === '..' || p === '.')) throw new Error(`not a OneLake path: ${url}`);
+  // No part may climb out of filesDir: not the workspace's either, and not by a backslash, which Windows reads
+  // as a folder.
+  if (!m || url.includes('\\') || [m[1], ...m[2].split('/')].some(p => p === '..' || p === '.')) throw new Error(`not a OneLake path: ${url}`);
+  assertOneLakeUrl(url);
   return join(filesDir, m[1], ...m[2].split('/')).replace(/\\/g, '/');
 }
 
@@ -111,11 +116,10 @@ function createTableService({ withConn, filesDir, download, maxBytes = 10 * 1024
     renameSync(part, local);
     // Opened once, as DuckDB will, before anything reads it from here.
     const fd = openSync(local, 'r');
-    try {
-      const tail = Buffer.alloc(4);
-      readSync(fd, tail, 0, 4, size - 4);
-      if (tail.toString('latin1') !== 'PAR1') throw new Error('not a Parquet file');
-    } finally { closeSync(fd); }
+    const tail = Buffer.alloc(4);
+    try { readSync(fd, tail, 0, 4, size - 4); } finally { closeSync(fd); }
+    // Not left here under a name the lake could come to read.
+    if (tail.toString('latin1') !== 'PAR1') { rmSync(local, { force: true }); throw new Error('not a Parquet file'); }
     counts.downloaded++; counts.bytes += size;
     const swapped = await withConn(async c => {
       await c.run('BEGIN');

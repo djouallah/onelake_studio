@@ -167,6 +167,17 @@ const refuse = why => {
 
 const ONELAKE_HOST = /^(?:[a-z0-9-]+-)?onelake\.(?:dfs|blob)\.fabric\.microsoft\.com$/i;
 
+// A path a table's own metadata names, or one about to be asked for with the OneLake token: a URL must be
+// OneLake's. The token goes with any abfss:// URL whatever its host, so a log or a manifest that names another
+// host would hand it over. A local path (a test's folder, a copy kept here) has no host, and passes.
+function assertOneLakeUrl(url) {
+  const m = /^([a-z][a-z0-9+.-]+):\/\/([^/?#]*)/i.exec(String(url));
+  if (!m || m[1].toLowerCase() === 'file') return url;
+  const host = m[2].slice(m[2].lastIndexOf('@') + 1);
+  if (!ONELAKE_HOST.test(host)) throw new Error(`${String(url).slice(0, 200)} is not on OneLake, so it is not read`);
+  return url;
+}
+
 // The statement's text with comments and the insides of quotes gone, or refused: more than one
 // statement, an empty one, or Quack.
 function oneStatement(sql) {
@@ -187,7 +198,7 @@ function oneStatement(sql) {
   // query('…' || '…') runs SQL no name above can be found in, DuckDB having joined the text up first.
   if (/\bquery(?:_table)?"?\s*\(/i.test(called)) refuse('query() runs what no check here can read');
   // The OneLake secret goes with any abfss:// URL, whatever its host. A URL joined up from pieces gets past
-  // this, and the disk cache refuses it there too.
+  // this: DuckDB joins the text after it, and nothing else checks the host a statement itself names.
   for (const [, authority] of kept.matchAll(/\b(?:abfss?|az|azure):\/\/([^/'"\r\n]*)/gi)) {
     const host = authority.slice(authority.lastIndexOf('@') + 1);
     if (host.includes('.') && !ONELAKE_HOST.test(host)) refuse(`${host} is not OneLake`);
@@ -591,4 +602,4 @@ function readsCatalog(sql) {
   return /\bshow\b/i.test(s) || CATALOG_READS.test(s);
 }
 
-module.exports = { sqlStr, quoteIdent, assertReads, checkedRead, tableRefs, fileRefs, filesReadBy, namedError, catalogStatement, isShowAllTables, withoutComments, ALL_TABLES_COUNTED, COLUMNS_NOT_READ, readsCatalog };
+module.exports = { sqlStr, quoteIdent, assertOneLakeUrl, assertReads, checkedRead, tableRefs, fileRefs, filesReadBy, namedError, catalogStatement, isShowAllTables, withoutComments, ALL_TABLES_COUNTED, COLUMNS_NOT_READ, readsCatalog };

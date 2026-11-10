@@ -22,7 +22,7 @@
 
 const { createHash } = require('node:crypto');
 const { mkdirSync, writeFileSync } = require('node:fs');
-const { sqlStr: q, quoteIdent: qi } = require('./sql');
+const { sqlStr: q, quoteIdent: qi, assertOneLakeUrl } = require('./sql');
 const { DFS_ORIGIN } = require('./names');
 const { crc32 } = require('./crc32');
 
@@ -85,7 +85,8 @@ const uuidOf = b => { const h = b.toString('hex'); return `${h.slice(0, 8)}-${h.
 // Where a deletion vector's .bin is: an absolute path ('p'), or one named by a Z85 UUID under an optional
 // prefix folder ('u'). An inline one ('i') has none.
 function dvFileOf(root, dv) {
-  if (dv.storageType === 'p') return dv.pathOrInlineDv.replace(/^file:\/\/\//, '');
+  // The log's own word for where it is, read with the OneLake token: only on OneLake.
+  if (dv.storageType === 'p') return assertOneLakeUrl(dv.pathOrInlineDv).replace(/^file:\/\/\//, '');
   if (dv.storageType === 'u') {
     const p = dv.pathOrInlineDv, prefix = p.slice(0, -20);
     return `${root}/${prefix ? `${prefix}/` : ''}deletion_vector_${uuidOf(z85(p.slice(-20)))}.bin`;
@@ -195,7 +196,7 @@ async function readDelta(c, root, { version: upTo = Infinity, from = null, base 
   const files = [...live.values()].map(a => ({
     key: a.path,
     // The log's paths are URIs; the files' own names aren't.
-    path: decodeURIComponent(a.path),
+    path: assertOneLakeUrl(decodeURIComponent(a.path)),
     size: a.size,
     records: a.records == null ? null : Number(a.records),
     partitionValues: partitionColumns.map(k => (a.partitionValues[k] != null ? String(a.partitionValues[k]) : null)),
@@ -217,6 +218,8 @@ async function readDelta(c, root, { version: upTo = Infinity, from = null, base 
 async function readIceberg(c, metadataLocation) {
   const schema = await rows(c, `DESCRIBE SELECT * FROM iceberg_scan(${q(metadataLocation)})`);
   const listed = await rows(c, `SELECT content, file_path, record_count FROM iceberg_metadata(${q(metadataLocation)}) WHERE status <> 'DELETED'`);
+  // What the manifests name is read with the OneLake token, here and by every statement after: only on OneLake.
+  for (const m of listed) assertOneLakeUrl(m.file_path);
   const sizes = listed.length
     ? new Map((await rows(c, `SELECT filename, size FROM read_blob([${listed.map(m => q(m.file_path)).join(', ')}])`)).map(r => [r.filename, Number(r.size)]))
     : new Map();

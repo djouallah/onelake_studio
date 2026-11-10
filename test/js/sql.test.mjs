@@ -300,3 +300,24 @@ test("SHOW ALL TABLES, SHOW SCHEMAS and SHOW TABLES FROM a nested schema are rew
   assert.ok(!readsCatalog("SELECT 'duckdb_tables' AS x"));
   assert.ok(!readsCatalog("SELECT * FROM lakehouse.ws.lh.dbo.t"));
 });
+
+// assertOneLakeUrl: what a table's own metadata names is read with the OneLake token, so a URL there is OneLake's.
+test("a URL from a table's metadata is OneLake's or refused; a local path passes", () => {
+  const { assertOneLakeUrl } = require("../../src/sql.js");
+  const { httpsOf } = require("../../src/tableservice.js");
+  for (const ok of ["abfss://ws@onelake.dfs.fabric.microsoft.com/i.Lakehouse/Tables/t/a.parquet",
+                    "abfss://ws@westus-onelake.dfs.fabric.microsoft.com/i/a.parquet",
+                    "https://onelake.blob.fabric.microsoft.com/ws/i/a.parquet",
+                    "part-0.parquet", "year=2024/part-0.parquet", "C:/lake/t/a.parquet", "file:///C:/lake/t/a.bin"]) {
+    assert.equal(assertOneLakeUrl(ok), ok);
+  }
+  for (const no of ["abfss://x@evil.example.com/f.parquet", "abfs://x@acct.dfs.core.windows.net/f.parquet",
+                    "abfss://ws@onelake.dfs.fabric.microsoft.com.evil.example.com/f.parquet",
+                    "abfss://onelake.dfs.fabric.microsoft.com@evil.example.com/f.parquet",
+                    "https://evil.example.com/f.parquet", "az://container/f.parquet", "s3://bucket/f.parquet"]) {
+    assert.throws(() => assertOneLakeUrl(no), /is not on OneLake/, no);
+  }
+  // The table service's GET carries the token.
+  assert.equal(httpsOf("abfss://ws@onelake.dfs.fabric.microsoft.com/i/a.parquet"), "https://onelake.dfs.fabric.microsoft.com/ws/i/a.parquet");
+  assert.throws(() => httpsOf("abfss://x@evil.example.com/f.parquet"), /is not on OneLake/);
+});
