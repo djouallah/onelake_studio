@@ -772,8 +772,13 @@ and the command line's `export` takes no `--mode`.
 **The template** ([`fabric_app/`](../fabric_app/))
 - **`site/`:** the page, black always. Its data source (`storage/`) signs in with Rayfin's Fabric SSO,
   takes the model and the tables' locations from the app's function with a read-only SAS per table, and downloads
-  the tables' files into the browser, where DuckDB-WASM (DuckDB 2.0), shipped in the site's `vendor/`, reads them as `v_<table>`
-  views.
+  what the Report reads of the tables into the browser, where DuckDB-WASM (DuckDB 2.0), shipped in the site's `vendor/`,
+  reads them as `v_<table>` views. A table of 32 MB or less comes down whole. Of a larger one, only each file's footer
+  and the columns a query names come down, before it runs ([`storage/ranges.js`](../fabric_app/site/storage/ranges.js)):
+  each file's chunks of them are one request where they are less than 8 MB apart, since OneLake takes about 0.6 s per
+  request whatever its size. Measured on 2026-11-10, a Report over 2 of 22 columns of a 4 GB table came down in
+  12–19 s instead of 123 s. If DuckDB reads bytes the store lacks, the store says which, and the page downloads them with
+  their columns and runs the query again.
 - **`rayfin/`:** `rayfin.yml` and the function (`openCatalog`, for a client-side app).
 
 [`src/exportapp.js`](../src/exportapp.js) writes the local copy from `fabric_app/`, Studio's

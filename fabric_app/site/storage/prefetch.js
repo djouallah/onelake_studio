@@ -15,12 +15,13 @@
 //                                           the snapshot's manifests and how many were not in
 //                                           the manifest cache.
 //   prefetchFiles(name, files, url, store, onFile, onBytes)
-//                                           each Parquet file whole, six at a time, handed to
-//                                           the worker's store (store(path, bytes), resolved
-//                                           once kept; blockcache.js); onBytes(n) as each
-//                                           part of a file arrives, onFile(bytes) as each one
-//                                           is done. files: [{ path, size }]. Returns the
-//                                           sizes; a file that fails to download throws.
+//                                           each file whole, or a piece of it, six at a time,
+//                                           handed to the worker's store (store(path, bytes, f),
+//                                           resolved once kept; blockcache.js); onBytes(n) as
+//                                           each part of one arrives, onFile(bytes, f) as each
+//                                           one is done. files: [{ path, size }], with { from, to }
+//                                           for a piece (ranges.js). Returns the sizes; one
+//                                           that fails to download throws.
 // =============================================================================
 
 // OneLake answers HTTP/1.1 only, so a browser keeps six connections to it: more would queue.
@@ -53,21 +54,24 @@ const get = (url, table) => limited(async () => {
   return new Uint8Array(await r.arrayBuffer());
 }, table);
 
-// The files of a table the store lacks, whole, six at a time, each handed to the worker's
-// store (store(path, bytes), resolved once it is kept): DuckDB reads them there. Not through
-// the browser's HTTP cache, which does not keep a response of 70-100 MB. Returns each file's
-// size.
+// The files of a table the store lacks, whole or the pieces of them a query reads, six at a
+// time, each handed to the worker's store (store(path, bytes, f), resolved once it is kept):
+// DuckDB reads them there. Not through the browser's HTTP cache, which does not keep a response
+// of 70-100 MB. Returns each one's size.
 // A file is read as it arrives, so a page downloading files of 250 MB shows bytes coming
 // (onBytes) long before the first file is done.
 export async function prefetchFiles(name, files, url, store, onFile = () => {}, onBytes = () => {}) {
   if (!order.includes(name)) order.push(name);
   return Promise.all(files.map(f => limited(async () => {
-    const r = await fetch(url(f.path), { cache: 'no-store' });
-    if (!r.ok) throw new Error(`${f.path.split('/').pop()}: HTTP ${r.status}`);
-    const bytes = await body(r, Number(r.headers.get('content-length')) || f.size, onBytes);
+    const piece = f.from != null, length = piece ? f.to - f.from + 1 : f.size;
+    const r = await fetch(url(f.path), { cache: 'no-store', ...(piece ? { headers: { Range: `bytes=${f.from}-${f.to}` } } : {}) });
+    // A piece is a 206: a 200 is the whole file.
+    if (!r.ok || (piece && r.status !== 206)) throw new Error(`${f.path.split('/').pop()}: HTTP ${r.status}`);
+    const bytes = await body(r, Number(r.headers.get('content-length')) || length, onBytes);
     const size = bytes.byteLength;   // read first: the store takes the bytes (transferred)
-    await store(f.path, bytes);
-    onFile(size);
+    if (piece && size !== length) throw new Error(`${f.path.split('/').pop()}: ${size} bytes for a range of ${length}`);
+    await store(f.path, bytes, f);
+    onFile(size, f);
     return { path: f.path, size };
   }, name)));
 }

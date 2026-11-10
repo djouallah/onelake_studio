@@ -2,11 +2,13 @@
 // blockcache.js — the local store DuckDB reads its files from, and its only way out
 // =============================================================================
 // A classic script, loaded into DuckDB's worker before the engine (data.js). DuckDB reads
-// nothing from the network: the page downloads every file a table needs (prefetch.js) and
-// hands it to this store before the table's view is created, and DuckDB reads the files by
-// names registered to https://store.local/... (duckdb-wasm's own HTTP file system; no httpfs).
-// store.local is not a host: this script answers it from the store, and a file the store does
-// not hold is an error (404), not a request. No SAS ever reaches this worker.
+// nothing from the network: the page downloads what a query reads (prefetch.js: a small table's
+// files whole, a larger one's footers and the column chunks its queries read, ranges.js) and
+// hands it to this store before the query runs, and DuckDB reads the files by names registered
+// to https://store.local/... (duckdb-wasm's own HTTP file system; no httpfs). store.local is not
+// a host: this script answers it from the store, and bytes the store does not hold are an
+// error (404), not a request, which it tells the page ({ miss }) so the page can download them
+// and run the query again. No SAS ever reaches this worker.
 // The one other request a worker may make is DuckDB downloading its extensions from the site's
 // own copy (self.DUCKDB_EXT_REPO, set by data.js: <site>/vendor/duckdb-ext/v<version>/wasm_eh/...),
 // each kept here whole after its first load (a file under its version never changes). Every
@@ -15,9 +17,10 @@
 //
 // A file is kept in OPFS in blocks of BLOCK bytes under its OneLake path without the SAS
 // (https://onelake.dfs.fabric.microsoft.com/<ws>/<lh>/...; store.local/<ws>/<lh>/... reads it).
-// An Iceberg file is never rewritten in place, so a block is never checked again. duckdb-wasm
-// asks a HEAD with Range: bytes=0- first and reads by range only if that answers 206 with a
-// Content-Length; then the footer, then column chunks.
+// An Iceberg file is never rewritten in place, so a block is never checked again, and a file
+// may be held in part: its size and some of its blocks. duckdb-wasm asks a HEAD with
+// Range: bytes=0- first and reads by range only if that answers 206 with a Content-Length;
+// then the footer, then column chunks.
 //
 // Two OPFS files, in blockcache/: blocks.bin (the blocks, appended) and index.jsonl (where
 // each block is, and each file's size), read back at start. Over CAP_BYTES the store starts
@@ -41,16 +44,22 @@
 //   { reset }          the writer started the store over (sent by the writer to the readers);
 //   { missing, id }    store paths: the writer answers { id, missing } with those it does not
 //                      hold whole;
-//   { stored }         the writer kept a file it was handed, or { stored, error } when it
-//                      could not. Not the browser's HTTP cache: it does not keep a response of
-//                      70-100 MB.
-// A file reaches the writer as { store, bytes }: posted by the page to its tab's store worker,
-// or on 'blockcache-store' between store workers (and from a DuckDB worker, an extension).
+//   { held, id }       store paths: the writer answers { id, held: { path: { size, runs } } }
+//                      for those it holds any of, runs [[n0, n1]] of the block numbers it has;
+//   { stored, at }     the writer kept a file, or the piece of it at byte `at`, it was handed,
+//                      or { stored, at, error } when it could not. Not the browser's HTTP
+//                      cache: it does not keep a response of 70-100 MB;
+//   { miss, from, to } a DuckDB worker answered 404 to a read of bytes [from, to] of a file
+//                      the store does not hold them of.
+// A file reaches the writer as { store, bytes, at, size }: the bytes from `at` (0, or on a
+// block) of a file of `size` bytes, whole blocks but at the file's end; posted by the page to
+// its tab's store worker, or on 'blockcache-store' between store workers (and from a DuckDB
+// worker, an extension, whole).
 // =============================================================================
 (() => {
   const WRITER = self.BLOCKCACHE_ROLE === 'writer';   // this tab's store worker, else a DuckDB worker
-  const BLOCK = 256 * 1024;
-  // Whole files of every table read, and over the cap the store starts over: the cap is well
+  const BLOCK = 256 * 1024;   // ranges.js aligns the page's pieces on it
+  // What every table read needed, and over the cap the store starts over: the cap is well
   // above what a model's tables hold, so it has room to grow.
   const CAP_BYTES = 64 * 1024 * 1024 * 1024;
   const VERSION = 1;
@@ -147,6 +156,18 @@
     for (let n = 0; n * BLOCK < f.size; n++) if (!where.has(`${path}#${n}`)) return false;
     return true;
   }
+  // A file held in any part: its size and the runs [[n0, n1]] of the blocks it has, or null.
+  function heldOf(path) {
+    const f = files.get(path);
+    if (!f || !(f.size > 0)) return null;
+    const runs = [];
+    for (let n = 0; n * BLOCK < f.size; n++) {
+      if (!where.has(`${path}#${n}`)) continue;
+      const last = runs[runs.length - 1];
+      if (last && last[1] === n - 1) last[1] = n; else runs.push([n, n]);
+    }
+    return { size: f.size, runs };
+  }
 
   const announce = () => { try { bc?.postMessage({ writer: true }); } catch (e) {} };
   // This worker writes from now on: from what the index says, or from an empty store when the
@@ -159,7 +180,7 @@
     end = blocks.getSize();
     announce();
     // What this tab handed over while another worker wrote, kept now.
-    for (const [path, bytes] of [...pending]) { pending.delete(path); keepAndSay(path, bytes); }
+    for (const [key, p] of [...pending]) { pending.delete(key); keepAndSay(p.path, p.bytes, p.at, p.size); }
   }
   // The writer's lock, waited for: granted at once when no one holds it, else when the
   // worker holding it ends (its tab closed), and held until this worker ends. Without the Locks
@@ -194,47 +215,49 @@
       const d = e.data ?? {};
       if (d.ping && writable) announce();
       if (d.missing && d.id != null && writable) bc.postMessage({ id: d.id, missing: d.missing.filter(p => !whole(p)) });
+      if (d.held && d.id != null && writable)
+        bc.postMessage({ id: d.id, held: Object.fromEntries(d.held.map(p => [p, heldOf(p)]).filter(([, h]) => h)) });
       if (d.reset && !writable) forget();
       if (WRITER) {
         // Kept by the writer (this tab's file, or another's): no longer held here.
-        if (d.stored) pending.delete(d.stored);
+        if (d.stored) pending.delete(`${d.stored}@${d.at ?? 0}`);
         // A new writer, after a tab closed: what this tab still holds is handed to it.
-        if (d.writer && !writable) for (const [path, bytes] of pending) pass(path, bytes);
+        if (d.writer && !writable) for (const p of pending.values()) pass(p.path, p.bytes, p.at, p.size);
       }
     };
   } catch (e) {}
 
-  // The files handed to the writer. `pending`: this tab's, held until the writer says it kept
-  // them (a store worker that does not write).
-  const pending = new Map();   // path -> bytes
+  // The files and pieces handed to the writer. `pending`: this tab's, held until the writer says
+  // it kept them (a store worker that does not write).
+  const pending = new Map();   // `${path}@${at}` -> { path, bytes, at, size }
   // Only a store worker keeps 'blockcache-store' open: a channel gets its own copy of every
   // message, listened to or not, so a DuckDB worker opens one just to send (an extension).
   let storeBc = null;
   if (WRITER) { try { storeBc = new BroadcastChannel('blockcache-store'); } catch (e) {} }
-  const pass = (path, bytes) => {
+  const pass = (path, bytes, at = 0, size = bytes.byteLength) => {
     try {
-      if (storeBc) return storeBc.postMessage({ store: path, bytes });
+      if (storeBc) return storeBc.postMessage({ store: path, bytes, at, size });
       const once = new BroadcastChannel('blockcache-store');
-      once.postMessage({ store: path, bytes });
+      once.postMessage({ store: path, bytes, at, size });
       once.close();
     } catch (e) {}
   };
-  function keepAndSay(path, bytes) {
+  function keepAndSay(path, bytes, at = 0, size = bytes.byteLength) {
     let error = null;
-    try { const b = new Uint8Array(bytes); keep(path, b, b.length); }
+    try { keep(path, new Uint8Array(bytes), size, at); }
     catch (x) { error = String(x?.message || x); }
-    try { bc?.postMessage(error ? { stored: path, error } : { stored: path }); } catch (e) {}
+    try { bc?.postMessage(error ? { stored: path, at, error } : { stored: path, at }); } catch (e) {}
   }
-  function storeBytes(path, bytes) {
-    if (writable) return keepAndSay(path, bytes);
-    pending.set(path, bytes);
-    pass(path, bytes);
+  function storeBytes(path, bytes, at = 0, size = bytes.byteLength) {
+    if (writable) return keepAndSay(path, bytes, at, size);
+    pending.set(`${path}@${at}`, { path, bytes, at, size });
+    pass(path, bytes, at, size);
   }
   if (WRITER) {
     // From this tab's page, transferred.
-    self.onmessage = e => { const d = e.data ?? {}; if (d.store && d.bytes) storeBytes(d.store, d.bytes); };
+    self.onmessage = e => { const d = e.data ?? {}; if (d.store && d.bytes) storeBytes(d.store, d.bytes, d.at, d.size); };
     // From the other tabs' store workers, and the DuckDB workers' extensions: the writer keeps them.
-    if (storeBc) storeBc.onmessage = e => { const d = e.data ?? {}; if (writable && d.store && d.bytes) keepAndSay(d.store, d.bytes); };
+    if (storeBc) storeBc.onmessage = e => { const d = e.data ?? {}; if (writable && d.store && d.bytes) keepAndSay(d.store, d.bytes, d.at, d.size); };
   }
 
   // A response DuckDB reads as if it came from a server: status, bytes and the headers it asks.
@@ -261,19 +284,22 @@
     return out;
   }
 
-  // Keeps a whole file, `body` of `size` bytes, as blocks (the writer only). Over the browser's
-  // quota the store starts over and the file is written once more: a full store that failed
-  // every write from then on would never hold a table again.
-  function keep(path, body, size, retried = false) {
+  // Keeps `body`, the bytes from `at` of a file of `size` bytes (the whole file when `at` is 0
+  // and it is that long), as blocks (the writer only). Over the browser's quota the store
+  // starts over and the bytes are written once more: a full store that failed every write from
+  // then on would never hold a table again.
+  function keep(path, body, size, at = 0, retried = false) {
     if (!writable) return;
+    if (at % BLOCK || (body.length % BLOCK && at + body.length !== size) || at + body.length > size)
+      throw new Error(`bytes ${at}-${at + body.length - 1} of a file of ${size} are not on the store's blocks`);
     if (end > CAP_BYTES) reset();   // before the size is recorded: a reset clears it
     try {
       if (!files.has(path)) { files.set(path, { size }); log({ f: path, s: size }); }
-      for (let n = 0; n * BLOCK < size; n++) {
+      for (let n = at / BLOCK; n * BLOCK < at + body.length; n++) {
         const key = `${path}#${n}`;
         const len = Math.min(BLOCK, size - n * BLOCK);
         if (where.has(key)) continue;
-        blocks.write(body.subarray(n * BLOCK, n * BLOCK + len), { at: end });
+        blocks.write(body.subarray(n * BLOCK - at, n * BLOCK - at + len), { at: end });
         where.set(key, [end, len]);
         log({ k: key, o: end, l: len });
         end += len;
@@ -282,25 +308,30 @@
     } catch (e) {
       if (e?.name !== 'QuotaExceededError' || retried) throw e;
       reset();
-      keep(path, body, size, true);
+      keep(path, body, size, at, true);
     }
   }
 
-  // A store.local read, answered from the store: a HEAD (its size; 206 when asked with a
-  // range, as duckdb-wasm checks), a range, or the whole file. Not held: 404.
+  // A store.local read, answered from the store: a HEAD (its size, for a file held in any part;
+  // 206 when asked with a range, as duckdb-wasm checks), a range, or the whole file. Bytes not
+  // held: 404, and the page is told which ({ miss }).
   function local(xhr) {
     if (!blocks || (xhr.__bcM !== 'GET' && xhr.__bcM !== 'HEAD')) return answer(xhr, 404, null);
     const path = storeKey(xhr.__bcU);
     sameStore();
     let f = files.get(path);
-    if (!f || !whole(path)) { freshIndex(); f = files.get(path); }   // the writer may have it by now
-    if (!f || !whole(path)) return answer(xhr, 404, null);
+    if (!f) { freshIndex(); f = files.get(path); }   // the writer may have it by now
+    if (!f) return answer(xhr, 404, null);
     const r = /^bytes=(\d+)-(\d*)$/.exec(xhr.__bcR || '');
     if (xhr.__bcM === 'HEAD') return answer(xhr, r ? 206 : 200, null, { 'Content-Length': f.size, 'Accept-Ranges': 'bytes' });
     const a = r ? Number(r[1]) : 0, b = r && r[2] !== '' ? Math.min(Number(r[2]), f.size - 1) : f.size - 1;
     if (a > b) return answer(xhr, 404, null);
-    const out = fromStore(path, a, b);
-    if (!out) return answer(xhr, 404, null);
+    let out = fromStore(path, a, b);
+    if (!out) { freshIndex(); out = fromStore(path, a, b); }
+    if (!out) {
+      try { bc?.postMessage({ miss: path, from: a, to: b }); } catch (e) {}
+      return answer(xhr, 404, null);
+    }
     return answer(xhr, r ? 206 : 200, out.buffer, { 'Content-Length': out.length, 'Accept-Ranges': 'bytes',
       ...(r ? { 'Content-Range': `bytes ${a}-${b}/${f.size}` } : {}) });
   }

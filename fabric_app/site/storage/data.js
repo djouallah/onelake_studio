@@ -9,8 +9,8 @@
 // `source`, or a TMSL table's Direct Lake partition: schema.table).
 // The page is the only thing that reads OneLake, and the SAS never leaves it: it plans each
 // table itself (metadata.json, manifest list, manifests: prefetch.js's planTable) and
-// downloads every file a table's view reads into the local store (OPFS, blockcache.js) before
-// the view is created. DuckDB reads only that store, by names registered to
+// downloads what a query reads into the local store (OPFS, blockcache.js) before the query
+// runs. DuckDB reads only that store, by names registered to
 // https://store.local/... (duckdb-wasm's own file system): no httpfs, no SAS in any view, and
 // its worker refuses every other request (blockcache.js). The engine is duckdb-wasm's npm
 // release (DuckDB 2.0), with two of DuckDB's signed extensions: parquet, and icu for time
@@ -21,11 +21,17 @@
 // for the tables it reads. Opening it: its record (the snapshot's live data and delete files),
 // planned by the page at load, or kept from an earlier visit in this browser (snapshots.js,
 // keyed by the metadata location the function gave: a commit always writes a new one); then
-// the files the store lacks downloaded, six at a time; then its view, on each engine. A table
-// whose files are small (SMALL_BYTES, from its metadata.json) is copied into the engine's memory
-// and its view reads that; a larger one is read in place, read_parquet over its files. A
-// table's position deletes are applied by its view. A table the page cannot plan, or that a
-// view cannot read (equality deletes, a deletion vector), fails: there is no other way in.
+// what the store lacks downloaded, six at a time; then its view, on each engine. A table whose
+// files are small (SMALL_BYTES, from its metadata.json) comes down whole and is copied into the
+// engine's memory, and its view reads that. A larger one is read in place, read_parquet over
+// its files, and only what its queries read comes down (ranges.js): each file's footer, from
+// which DuckDB gives the table's layout (parquet_metadata, the byte range of each column in each
+// row group), then the chunks of the columns a query names, before it runs, the ones the store
+// holds left out. Should DuckDB still read bytes the store lacks, the store says which
+// ({ miss }): the page downloads them, with the columns they are of, and runs the query again.
+// A table's position deletes are applied by its view; its delete files come down whole. A
+// table the page cannot plan, or that a view cannot read (equality deletes, a deletion vector),
+// fails: there is no other way in.
 // Only the tables a query names are downloaded and opened: none in the background, as a
 // slow connection would spend itself on tables no chart reads.
 // Each view is at the snapshot the catalog named (catalog.js keeps that answer up to ~55
@@ -50,9 +56,14 @@ import { createCatalog } from "./catalog.js";
 import { createSnapshots } from "./snapshots.js";
 import { createKv } from "./kv.js";
 import { planTable, prefetchFiles, prioritize } from "./prefetch.js";
+import { columnsIn, readsAll, columnRanges, tailOf, piecesOf } from "./ranges.js";
 import { quoteIdent as ident, sqlStr as lit } from "../paths.js";
 
 const SMALL_BYTES = 32 * 1024 * 1024;   // a table up to this much Parquet is copied into memory
+// How many times a query is run again after the store said it lacked bytes it read: each time
+// downloads what was missed, with whole columns, so a query needs one or two at most.
+const HEALS = 8;
+const BATCH_MS = 20;   // how long a larger table's new columns gather into one download
 // The site's own copy of the engine (vendor/, src/vendored.js WEBAPP), the base build: the page
 // needs Chrome or Edge 121+, which always runs it.
 const VENDOR = new URL('../vendor/', import.meta.url).href;
@@ -149,9 +160,13 @@ export function createDataSource({ onStatus = () => {}, onProgress = () => {} } 
   // A kept answer from the function needs no session: the page starts without the Rayfin SDK.
   const auth = createAuth({ ready: catalog.fresh });
   let tables = new Map(), model = null;
-  // table name -> { location, bytes, planning, record, stored, ready }.
-  // `ready`: the table's record, its files all in the store: once for every engine.
+  // table name -> { location, bytes, planning, record, stored, ready, layout, coming,
+  // gathering, downloading }. `ready`: the table's record, and in the store a small table's
+  // files, or a larger one's footers and its layout ({ columns, files: path -> { size, chunks } }):
+  // once for every engine. `coming`: each column (lowercase) a larger table's queries named, its
+  // download; `gathering`, the batch of them not started yet, and `downloading`, the last one.
   const located = new Map();
+  const small = t => t.bytes != null && t.bytes <= SMALL_BYTES;
 
   // The engines: each its worker, connection, the tables opened on it (`opened`: name ->
   // promise of its opening) and the files registered on it. One queue feeds them all
@@ -174,14 +189,17 @@ export function createDataSource({ onStatus = () => {}, onProgress = () => {} } 
   }
 
   // The store, over its channel (blockcache.js): its writer says it is there ({ writer }), what
-  // it lacks ({ missing, id }), and that a file handed to it is kept ({ stored }).
+  // it lacks or holds ({ missing, id }, { held, id }), and that a file or a piece handed to it
+  // is kept ({ stored, at }); a DuckDB worker, the bytes it read that the store lacked ({ miss }),
+  // kept a minute for the query that failed on them.
   const channel = new BroadcastChannel('blockcache');
   let storeUp;
   const storeReady = new Promise(r => { storeUp = r; });
   // Each key holds the waiters for its answer: the same file can be handed over twice at once,
   // and the one answer settles both.
   const answers = new Map();   // id -> [resolve], for { missing }
-  const stored = new Map();    // store path -> [resolve], for { store }
+  const stored = new Map();    // `${store path}@${at}` -> [resolve], for { store }
+  let misses = [];             // [{ path, from, to, seen }], store paths
   // What was asked and not answered yet, to ask again of a new writer: one that took over from
   // a closed tab never saw the question.
   const unanswered = new Map();   // the waiters' list -> send
@@ -195,7 +213,11 @@ export function createDataSource({ onStatus = () => {}, onProgress = () => {} } 
   channel.onmessage = ({ data: d }) => {
     if (d?.writer) { storeUp(); for (const send of [...unanswered.values()]) send(); }
     if (d?.id != null) settle(answers, d.id, d);
-    if (d?.stored) settle(stored, d.stored, d);
+    if (d?.stored) settle(stored, `${d.stored}@${d.at ?? 0}`, d);
+    if (d?.miss) {
+      const now = Date.now();
+      misses = [...misses.filter(m => now - m.seen < 60000), { path: d.miss, from: d.from, to: d.to, seen: now }];
+    }
   };
   // `resend`: false for a send that cannot be repeated (bytes transferred away).
   const waitFor = (map, key, send, what, { resend = true } = {}) => new Promise((resolve, reject) => {
@@ -218,16 +240,23 @@ export function createDataSource({ onStatus = () => {}, onProgress = () => {} } 
     const missing = new Set((await waitFor(answers, id, () => channel.postMessage({ missing: paths.map(storePath), id }), 'what it holds')).missing);
     return paths.filter(p => missing.has(storePath(p)));
   }
+  // The blocks the store holds of each of `paths` (abfss): path -> runs [[n0, n1]].
+  async function held(paths) {
+    const id = `${Date.now()}-${Math.random()}`;
+    const d = await waitFor(answers, id, () => channel.postMessage({ held: paths.map(storePath), id }), 'what it holds');
+    return new Map(paths.map(p => [p, d.held?.[storePath(p)]?.runs ?? []]));
+  }
   // This tab's store worker (blockcache.js, the writer's role): the downloads go to it,
   // transferred rather than copied, and it hands them to whichever store worker writes (and
   // again to a new one, after a tab closes). The DuckDB workers only read the store.
   let storeWorker = null;
   const storeWorkerOf = () => storeWorker ??= new Worker(URL.createObjectURL(new Blob(
     [`self.BLOCKCACHE_ROLE = 'writer';\nimportScripts(${JSON.stringify(BLOCKCACHE)});\n`], { type: 'text/javascript' })));
-  // A whole file the page downloaded, handed to the store: resolved once the writer keeps it,
-  // rejected when it says it could not. `bytes` (an ArrayBuffer) is the store's from then on.
-  const toStore = (path, bytes) =>
-    waitFor(stored, storePath(path), () => storeWorkerOf().postMessage({ store: storePath(path), bytes }, [bytes]),
+  // A file the page downloaded, whole or the piece of it from `at` (of a file of `size` bytes),
+  // handed to the store: resolved once the writer keeps it, rejected when it says it could not.
+  // `bytes` (an ArrayBuffer) is the store's from then on.
+  const toStore = (path, bytes, at = 0, size = bytes.byteLength) =>
+    waitFor(stored, `${storePath(path)}@${at}`, () => storeWorkerOf().postMessage({ store: storePath(path), bytes, at, size }, [bytes]),
             path.split('/').pop(), { resend: false })
       .then(d => { if (d?.error) throw new Error(`the local store could not keep ${path.split('/').pop()}: ${d.error}`); });
 
@@ -250,16 +279,30 @@ export function createDataSource({ onStatus = () => {}, onProgress = () => {} } 
       catch (err) {
         if (!t.stored) throw err;
         snapshots.drop(name); t.record = null; t.stored = false; t.ready = null;
+        t.layout = null; t.coming = new Map(); t.gathering = t.downloading = null;
         t.planning = planFor(t);
         await bind(e, name, t, await readyOf(name, t));
       }
     })().catch(err => { e.opened.delete(name); throw err; })).get(name);
   }
-  const readyOf = (name, t) => t.ready ??= (async () => {
-    const record = t.record ?? await planned(name, t);
-    await local(name, t, record);
-    return record;
-  })().catch(err => { t.ready = null; throw err; });
+  // The table ready for `sql` (none: as it is): its record, and in the store a small table's
+  // files, or a larger one's footers, its layout and the chunks of the columns `sql` names. A
+  // table whose files' sizes are not all known comes down whole.
+  function readyOf(name, t, sql) {
+    const ready = t.ready ??= (async () => {
+      const record = t.record ?? await planned(name, t);
+      // What a view cannot read (no data file, a file that is not Parquet such as a deletion
+      // vector, an equality delete) is an error: there is no other way in.
+      if (record.scan) throw new Error(`${name}: not readable as Parquet with position deletes (no data file, equality deletes or a deletion vector)`);
+      if (small(t) || !record.files.every(f => f.size > 0)) await local(name, t, [...record.files, ...record.deleteFiles]);
+      else {
+        await local(name, t, record.deleteFiles);
+        t.layout = await layoutOf(name, t, record);
+      }
+      return record;
+    })().catch(err => { t.ready = null; throw err; });
+    return sql == null ? ready : ready.then(record => (t.layout ? columnsFor(name, t, sql) : null)).then(() => ready);
+  }
 
   // The table's record, planned by the page (`planning`, started at load).
   async function planned(name, t) {
@@ -268,19 +311,132 @@ export function createDataSource({ onStatus = () => {}, onProgress = () => {} } 
     t.record = record;
     return record;
   }
-  // Every file of the record in the store: the ones it lacks downloaded, six at a time, and
-  // checked kept. A large table shows how far it has got (onProgress): a first visit
-  // downloads it whole before its charts draw.
-  async function local(name, t, record) {
-    const all = [...record.files, ...record.deleteFiles];
-    const missing = new Set(await lacking(all.map(f => f.path)));
-    if (!missing.size) return;
-    const fresh = all.filter(f => missing.has(f.path));
-    const shown = !(t.bytes != null && t.bytes <= SMALL_BYTES);
+  // `files` in the store whole: the ones it lacks downloaded.
+  async function local(name, t, files) {
+    if (!files.length) return;
+    const missing = new Set(await lacking(files.map(f => f.path)));
+    await download(name, t, files.filter(f => missing.has(f.path)));
+  }
+  // A larger table's layout, from its files' footers: its columns, and each file's size and the
+  // byte range of each column in each row group, with its bloom filter (which DuckDB reads to
+  // skip a row group). The footers come down first, each file's last bytes (ranges.js TAIL),
+  // and DuckDB reads them from the store (parquet_metadata); a footer longer than that is
+  // downloaded when DuckDB misses it (healing).
+  async function layoutOf(name, t, record) {
+    const runs = await held(record.files.map(f => f.path));
+    await download(name, t, record.files.flatMap(f => piecesOf(f.path, f.size, [tailOf(f.size)], runs.get(f.path))));
+    const rows = await healing(() => submit(async e => {
+      await register(e, record.files);
+      const r = await e.conn.query(`SELECT file_name, path_in_schema, dictionary_page_offset, data_page_offset,
+          total_compressed_size, bloom_filter_offset, bloom_filter_length
+        FROM parquet_metadata([${record.files.map(f => lit(localName(f.path))).join(', ')}])`);
+      return r.toArray().map(x => x.toJSON());
+    }));
+    const byName = new Map(record.files.flatMap(f => [[localName(f.path), f.path], [localUrl(f.path), f.path]]));
+    const files = new Map(record.files.map(f => [f.path, { size: f.size, chunks: [] }]));
+    const columns = new Set();
+    for (const r of rows) {
+      const file = files.get(byName.get(r.file_name));
+      if (!file) continue;
+      // A nested column's leaves are "s, x": the table's column is the first part.
+      const col = String(r.path_in_schema).split(', ')[0];
+      columns.add(col);
+      // A dictionary comes before its data pages; some writers say 0 for none.
+      const data = Number(r.data_page_offset), dict = r.dictionary_page_offset == null ? null : Number(r.dictionary_page_offset);
+      const from = dict != null && dict > 0 && dict < data ? dict : data;
+      file.chunks.push({ col, from, to: from + Number(r.total_compressed_size) - 1 });
+      if (r.bloom_filter_offset != null && Number(r.bloom_filter_length) > 0)
+        file.chunks.push({ col, from: Number(r.bloom_filter_offset), to: Number(r.bloom_filter_offset) + Number(r.bloom_filter_length) - 1 });
+    }
+    return { columns: [...columns], files };
+  }
+  // The chunks of the columns `sql` names of a larger table, in the store. Those no query named
+  // before come down together, so that a file's chunks merge into fewer requests (ranges.js).
+  function columnsFor(name, t, sql) {
+    const named = (readsAll(sql, name) ? t.layout.columns : columnsIn(sql, t.layout.columns)).map(c => c.toLowerCase());
+    const fresh = named.filter(c => !t.coming.has(c));
+    if (fresh.length) comingFor(name, t, fresh);
+    return Promise.all(named.map(c => t.coming.get(c)));
+  }
+  // The download of the columns `cols` (lowercase) of a larger table, and of the byte ranges
+  // `extra` ([{ path, from, to }], what DuckDB missed), each column's promise in t.coming until
+  // it fails. A render sends its queries together: their new columns join one batch, gathered
+  // for BATCH_MS and downloaded once the table's batch before it is done, so a file's chunks
+  // merge into fewer requests and no block comes down twice. Every column wanted so far is in
+  // the ranges, so a new chunk merges with the held ones it is near (held blocks are left out).
+  function comingFor(name, t, cols, extra = []) {
+    let batch = t.gathering;
+    if (!batch) {
+      batch = t.gathering = { cols: new Set(), extra: [] };
+      const before = t.downloading ?? Promise.resolve();
+      batch.done = (async () => {
+        await new Promise(r => setTimeout(r, BATCH_MS));
+        if (t.gathering === batch) t.gathering = null;
+        await before.catch(() => {});
+        const wanted = new Set(t.coming.keys());
+        const paths = [...t.layout.files.keys()];
+        const runs = await held(paths);
+        await download(name, t, paths.flatMap(p => {
+          const f = t.layout.files.get(p);
+          const ranges = [...columnRanges(f.chunks, wanted), ...batch.extra.filter(x => x.path === p).map(x => [x.from, x.to])];
+          return piecesOf(p, f.size, ranges, runs.get(p));
+        }));
+      })();
+      t.downloading = batch.done;
+      batch.done.catch(() => { for (const c of batch.cols) if (t.coming.get(c) === batch.done) t.coming.delete(c); });
+    }
+    for (const c of cols) { batch.cols.add(c); t.coming.set(c, batch.done); }
+    batch.extra.push(...extra);
+    return batch.done;
+  }
+  // fn run, and when it fails having read bytes the store lacks (its { miss }), those downloaded,
+  // with every column they are of in each file of their table, and fn run again: HEALS times
+  // at most.
+  async function healing(fn) {
+    for (let tries = 0; ; tries++) {
+      const started = Date.now();
+      try { return await fn(); }
+      catch (err) {
+        if (err?.skipped) throw err;
+        // The store's word comes on a channel of its own, maybe after the query's error.
+        await new Promise(r => setTimeout(r, 200));
+        const seen = misses.filter(m => m.seen >= started);
+        if (!seen.length || tries >= HEALS) throw err;
+        console.warn(`[store] a query read ${seen.length} range(s) the store lacked; downloading them and running it again`, seen);
+        await fetchMissed(seen);
+      }
+    }
+  }
+  async function fetchMissed(seen) {
+    for (const t of located.values()) {
+      const files = new Map((t.record?.files ?? []).map(f => [storePath(f.path), f]));
+      const extra = seen.filter(m => files.has(m.path)).map(m => ({ path: files.get(m.path).path, from: m.from, to: m.to }));
+      if (!extra.length) continue;
+      if (!t.layout) {
+        // Its footers, before its layout: the bytes missed alone.
+        const runs = await held(extra.map(x => x.path));
+        await download(t.name, t, extra.flatMap(x => piecesOf(x.path, files.get(storePath(x.path)).size, [[x.from, x.to]], runs.get(x.path))));
+        continue;
+      }
+      const cols = new Set();
+      for (const x of extra) for (const c of t.layout.files.get(x.path)?.chunks ?? []) if (c.from <= x.to && c.to >= x.from) cols.add(c.col.toLowerCase());
+      await comingFor(t.name, t, [...cols], extra);
+    }
+  }
+  // `items` into the store, six at a time: whole files ({ path, size }) or pieces of them
+  // ({ path, size, from, to }), then checked kept. A large table shows how far it has got
+  // (onProgress): what a query reads comes down before its charts draw.
+  async function download(name, t, items) {
+    if (!items.length) return;
+    const shown = !small(t);
+    const left = new Map();   // path -> its items not done yet
+    for (const f of items) left.set(f.path, (left.get(f.path) ?? 0) + 1);
+    const count = left.size;
     // `got` counts bytes as they arrive, not files done: a file of 250 MB, six at a time, is
     // ~1.5 GB before the first one is done. The speed is over the last 10 s, and with it how
     // long is left, once 10 s have passed.
-    const whole = t.bytes && fresh.length === all.length ? t.bytes : null;
+    const length = f => (f.from != null ? f.to - f.from + 1 : f.size);
+    const whole = items.every(f => length(f) > 0) ? items.reduce((s, f) => s + length(f), 0) : null;
     const MB = n => Math.round(n / 1048576).toLocaleString('en-US');
     let done = 0, got = 0, drawn = 0;
     const started = Date.now(), seen = [[started, 0]];
@@ -299,36 +455,43 @@ export function createDataSource({ onStatus = () => {}, onProgress = () => {} } 
       const r = rate();
       const left = r > 0 && whole ? Math.max(whole - got, 0) / r : null;
       const time = left == null ? '' : left < 90 ? `, about ${Math.max(Math.round(left), 1)} s left` : `, about ${Math.round(left / 60)} min left`;
-      onProgress({ label: `Downloading ${name}`, done, total: fresh.length,
-        detail: `Downloading ${name}: ${done} of ${fresh.length} files, ${MB(got)} MB${whole ? ` of ${MB(whole)} MB` : ''}` +
+      onProgress({ label: `Downloading ${name}`, done, total: count,
+        detail: `Downloading ${name}: ${done} of ${count} files, ${MB(got)} MB${whole ? ` of ${MB(whole)} MB` : ''}` +
           `${r > 0 ? `, ${r < 10485760 ? (r / 1048576).toFixed(1) : MB(r)} MB/s${time}` : ''}. Kept in this browser for the next visit.` });
     };
     progress(true);
     try {
-      await prefetchFiles(name, fresh, f => https(f, sas), toStore,
-        () => { done++; progress(true); }, n => { got += n; progress(); });
+      await prefetchFiles(name, items, f => https(f, sas),
+        (path, bytes, f) => (f.from != null ? toStore(path, bytes, f.from, f.size) : toStore(path, bytes)),
+        (size, f) => { left.set(f.path, left.get(f.path) - 1); if (!left.get(f.path)) done++; progress(true); },
+        n => { got += n; progress(); });
     } finally { if (shown) onProgress(null); }
-    const still = await lacking(fresh.map(f => f.path));
-    if (still.length) throw new Error(`${name}: ${still.length} files not in the local store after their download`);
+    const wholes = items.filter(f => f.from == null), pieces = items.filter(f => f.from != null);
+    const still = new Set(await lacking(wholes.map(f => f.path)));
+    if (pieces.length) {
+      const runs = await held([...new Set(pieces.map(f => f.path))]);
+      for (const f of pieces) if (piecesOf(f.path, f.size, [[f.from, f.to]], runs.get(f.path)).length) still.add(f.path);
+    }
+    if (still.size) throw new Error(`${name}: ${still.size} files not in the local store after their download`);
   }
-  // The table's view on engine `e`, over a copy in its memory or over the files.
-  async function bind(e, name, t, record) {
-    const small = t.bytes != null && t.bytes <= SMALL_BYTES;
-    // What a view cannot read (no data file, a file that is not Parquet such as a deletion
-    // vector, an equality delete) is an error: there is no other way in.
-    if (record.scan) throw new Error(`${name}: not readable as Parquet with position deletes (no data file, equality deletes or a deletion vector)`);
-    for (const f of [...record.files, ...record.deleteFiles]) {
+  // The files registered on engine `e`, by their local names.
+  async function register(e, files) {
+    for (const f of files) {
       if (e.registered.has(f.path)) continue;
       await e.db.registerFileURL(localName(f.path), localUrl(f.path), duckdb.DuckDBDataProtocol.HTTP, false);
       e.registered.add(f.path);
     }
+  }
+  // The table's view on engine `e`, over a copy in its memory or over the files.
+  async function bind(e, name, t, record) {
+    await register(e, [...record.files, ...record.deleteFiles]);
     // The positions the delete files remove, read once per session into memory.
     if (record.deleteFiles.length)
       await e.conn.query(
         `CREATE OR REPLACE TABLE ${ident(deletesOf(name))} AS
          SELECT DISTINCT regexp_replace(file_path, '^abfss?://([^@/]+)@([^/]+)/', 'store/\\1/') AS path, pos
          FROM read_parquet([${record.deleteFiles.map(f => lit(localName(f.path))).join(', ')}])`);
-    if (small)
+    if (small(t))
       await e.conn.query(
         `CREATE OR REPLACE TABLE ${ident(name)} AS ${selectOf(name, record)}; CREATE OR REPLACE VIEW ${ident('v_' + name)} AS SELECT * FROM ${ident(name)}`);
     else
@@ -351,13 +514,13 @@ export function createDataSource({ onStatus = () => {}, onProgress = () => {} } 
   async function openFor(e, sql) {
     for (const name of namedIn(sql)) await open(e, name);
   }
-  // Every table a query names, planned and its files in the store, all of them together and
-  // before the query takes an engine: a download holds no engine, and one table's download does
-  // not wait for another's. Their files go first in the downloads.
+  // Every table a query names, planned and what the query reads of it in the store, all of them
+  // together and before the query takes an engine: a download holds no engine, and one table's
+  // download does not wait for another's. Their files go first in the downloads.
   function readyFor(sql) {
     const names = namedIn(sql);
     prioritize(...names);
-    return Promise.all(names.map(n => readyOf(n, located.get(n))));
+    return Promise.all(names.map(n => readyOf(n, located.get(n), sql)));
   }
 
   // A new snapshot planned by the page, at once, off every engine: opening the table waits for it.
@@ -395,7 +558,7 @@ export function createDataSource({ onStatus = () => {}, onProgress = () => {} } 
       const planning = t.record ? null : t.error ? Promise.reject(t.error) : planFor(t);
       planning?.catch(() => {});   // thrown when the table opens
       located.set(t.name, { name: t.name, location: t.location, bytes: t.bytes, planning, record: t.record ?? null,
-        stored: !!t.record, ready: null });
+        stored: !!t.record, ready: null, layout: null, coming: new Map(), gathering: null, downloading: null });
     }
   }
 
@@ -492,10 +655,10 @@ importScripts("${bundle.mainWorker}");`], { type: "text/javascript" }));
       const key = resultKey(sql);
       const saved = key && await results.get(key);
       if (saved) return saved;
-      return readyFor(sql).then(() => submit(async e => {
+      return healing(() => readyFor(sql).then(() => submit(async e => {
         await openFor(e, sql);
         return e.conn.query(sql);
-      }, { ...options, names: namedIn(sql) })).then(r => {
+      }, { ...options, names: namedIn(sql) }))).then(r => {
         if (key) results.put(key, r);
         return r;
       });

@@ -322,7 +322,7 @@ tables, columns and measures a tile can name.
 | Explore | \`site/explore/\` | OneLake Studio's, the same files the extension runs; \`report.js\` draws the Report, with Visual's drawing for a pivot tile |
 | Compiler | \`site/semantic/src/\`, \`site/semantic/formats/\` | dax-sql (\`${PINS.daxSql}\`): SQL over the model, as SQL over \`v_<table>\` |
 | Packages | \`site/vendor/\`, not in this zip | DuckDB-WASM (\`${WEBAPP.duckdbWasm}\`, DuckDB ${WEBAPP.duckdb}) with its ${WEBAPP.extensions.join(' and ')} extensions, Arrow, the Rayfin SDK and its semantic-model connector, ECharts: OneLake Studio's own, added when it publishes; nothing from a CDN |
-| Data source | \`site/storage/\` | signs in (Rayfin Fabric SSO), asks the function, downloads the tables into the browser (OPFS), DuckDB-WASM |
+| Data source | \`site/storage/\` | signs in (Rayfin Fabric SSO), asks the function, downloads into the browser (OPFS) what the Report reads of the tables (of a large one, only the columns it reads: \`storage/ranges.js\`), DuckDB-WASM |
 | Function | \`rayfin/functions/src/function_app.ts\` | reads the model, the tables' metadata locations, a read-only SAS on \`Tables/\`; on a semantic model it is not deployed |
 
 Tables the app reads (\`v_<table>\` ← \`schema.table\`):
@@ -470,8 +470,8 @@ const MODEL_ONLY = ['storage/modeldata.js', 'storage/modelrows.js'];
 // decodes with an Arrow of its own version (WEBAPP.rayfinSemanticModel). The other way round, the
 // client-side site keeps the connector's few hundred KB, which its page never loads.
 const DUCKDB_ONLY = {
-  site: ['storage/data.js', 'storage/blockcache.js', 'storage/catalog.js', 'storage/prefetch.js', 'storage/queue.js',
-         'storage/results.js', 'storage/snapshots.js', 'storage/kv.js'],
+  site: ['storage/data.js', 'storage/blockcache.js', 'storage/catalog.js', 'storage/prefetch.js', 'storage/ranges.js',
+         'storage/queue.js', 'storage/results.js', 'storage/snapshots.js', 'storage/kv.js'],
   vendor: [/^npm\/@duckdb(\/|$)/, /^duckdb-ext(\/|$)/, new RegExp(`^npm/${WEBAPP.arrow.replace(/[.]/g, '\\.')}(/|$)`)],
 };
 
