@@ -14,7 +14,7 @@
 //                                           snapshots.js keeps (without location and bytes),
 //                                           the snapshot's manifests and how many were not in
 //                                           the manifest cache.
-//   prefetchFiles(name, files, url, store, onFile, onBytes)
+//   prefetchFiles(name, files, url, store, onFile, onBytes, renew)
 //                                           each file whole, or a piece of it, six at a time,
 //                                           handed to the worker's store (store(path, bytes, f),
 //                                           resolved once kept; blockcache.js); onBytes(n) as
@@ -51,11 +51,15 @@ async function limited(fn, table) {
 // A request the connection or the server failed is asked again, twice at most and a little later each time: one
 // dropped among a table's hundreds would otherwise fail the tile. A refusal (a 4xx but 429) is final, and so is
 // an answer of the wrong size.
+// A 403 is the SAS run out, where the page can get another (`renew`): asked for once, and the request made
+// again with it. A laptop that slept past the SAS's hour wakes to this.
 const RETRY_MS = [500, 2000];
-async function retried(fn) {
+async function retried(fn, renew = null) {
+  let renewed = false;
   for (let n = 0; ; n++) {
     try { return await fn(); }
     catch (e) {
+      if (e?.status === 403 && renew && !renewed) { renewed = true; try { await renew(); } catch { throw e; } n--; continue; }
       const again = n < RETRY_MS.length && (e?.status == null ? e instanceof TypeError : e.status === 429 || e.status >= 500);
       if (!again) throw e;
       await new Promise(r => setTimeout(r, RETRY_MS[n]));
@@ -76,7 +80,7 @@ const get = (url, table) => limited(() => retried(async () => {
 // of 70-100 MB. Returns each one's size.
 // A file is read as it arrives, so a page downloading files of 250 MB shows bytes coming
 // (onBytes) long before the first file is done.
-export async function prefetchFiles(name, files, url, store, onFile = () => {}, onBytes = () => {}) {
+export async function prefetchFiles(name, files, url, store, onFile = () => {}, onBytes = () => {}, renew = null) {
   if (!order.includes(name)) order.push(name);
   return Promise.all(files.map(f => limited(async () => {
     const piece = f.from != null, length = piece ? f.to - f.from + 1 : f.size;
@@ -86,7 +90,7 @@ export async function prefetchFiles(name, files, url, store, onFile = () => {}, 
       if (!r.ok) throw failed(r, `${f.path.split('/').pop()}: `);
       if (piece && r.status !== 206) throw new Error(`${f.path.split('/').pop()}: HTTP ${r.status}`);
       return body(r, Number(r.headers.get('content-length')) || length, onBytes);
-    });
+    }, renew);
     const size = bytes.byteLength;   // read first: the store takes the bytes (transferred)
     if (piece && size !== length) throw new Error(`${f.path.split('/').pop()}: ${size} bytes for a range of ${length}`);
     await store(f.path, bytes, f);

@@ -181,6 +181,10 @@ export function createDataSource({ onStatus = () => {}, onProgress = () => {} } 
   // page open longer than them gets new ones shortly before they expire (a failed renewal is tried
   // again a minute later); the views read the store, so no view changes.
   let sas = null;
+  // A download refused: the SAS it was signed with has run out before the timer below got to it. One renewal,
+  // whoever was refused; the URL is built for each request, so the next try is signed with the new one.
+  let renewing = null;
+  const renewSas = () => (renewing ||= catalog.open({ renew: true }).then(a => { sas = a.sas; }).finally(() => { renewing = null; }));
   function renewLater() {
     setTimeout(async () => {
       try { sas = (await catalog.open({ renew: true })).sas; renewLater(); }
@@ -471,7 +475,7 @@ export function createDataSource({ onStatus = () => {}, onProgress = () => {} } 
       await prefetchFiles(name, items, f => https(f, sas),
         (path, bytes, f) => (f.from != null ? toStore(path, bytes, f.from, f.size) : toStore(path, bytes)),
         (size, f) => { left.set(f.path, left.get(f.path) - 1); if (!left.get(f.path)) done++; progress(true); },
-        n => { got += n; progress(); });
+        n => { got += n; progress(); }, renewSas);
     } finally { if (shown) onProgress(null); }
     const wholes = items.filter(f => f.from == null), pieces = items.filter(f => f.from != null);
     const still = new Set(await lacking(wholes.map(f => f.path)));
@@ -582,6 +586,9 @@ export function createDataSource({ onStatus = () => {}, onProgress = () => {} } 
 
   async function init() {
     storeWorkerOf();   // the store's writer, waiting for the lock from the start
+    // The browser may drop a site's storage when the disk is short: asked to keep this one, which is gigabytes
+    // of downloads. It answers with no prompt, and a no changes nothing.
+    try { navigator.storage?.persist?.().catch(() => {}); } catch (e) {}
     // Before sign-in: a kept answer from the function is what lets the page start without one.
     await kv.load();
     // Asked for, and waited for below: the model and the engines need no session, and start meanwhile. Only the
@@ -674,8 +681,8 @@ importScripts("${bundle.mainWorker}");`], { type: "text/javascript" }));
     model: () => model,
     // `options`: the page's for the queue (queue.js): `stale`, `early`, `later`.
     // A result already computed on these snapshots, on this visit or an earlier one, is read
-    // back from this browser (results.js) instead: the page's own cache (runQuery) holds the
-    // last 200 for the visit, this one survives a reload.
+    // back from this browser (results.js) instead: the page's own cache (explore/view.js) holds the
+    // last 40 for the visit, this one survives a reload.
     query: async (sql, options) => {
       const key = resultKey(sql);
       const saved = key && await results.get(key);

@@ -69,9 +69,14 @@ const siteJson = (name, missing) => fetch(new URL(`./${name}${v}`, import.meta.u
   .then(r => (r.ok ? r.text() : null), () => null)
   .then(text => { try { return text == null ? missing : JSON.parse(text); } catch { return missing; } });
 
+// What the page runs on and its Report, asked for now, together: each was asked for when the one before had
+// answered, and report.json only once the engines were up.
+const engineRead = siteJson("engine.json", {});
+const reportRead = siteJson("report.json", null);
+
 // The Report's tiles (explore/report.js), as the export wrote them: report.json.
 const report = { load: async () => {
-  const spec = await siteJson("report.json", null);
+  const spec = await reportRead;
   if (!spec) throw new Error("the site has no report.json: export the app again");
   return { spec, stamp: null };
 } };
@@ -88,8 +93,9 @@ const titled = text => { const h = document.getElementById("app-title"); if (h) 
 
 export async function start() {
   try {
-    const first = await siteJson("explore.json", null);
-    const { engine, name: modelName } = (await siteJson("engine.json", {})) || {};
+    // The shelves a first Visual would show (explore.json): the app shows the Report alone, so they aren't fetched.
+    const first = null;
+    const { engine, name: modelName } = (await engineRead) || {};
     if (engine === "semanticModel") return await startModel(first, modelName);
     const { createDataSource } = await import("./storage/data.js");
     const data = createDataSource({

@@ -6,6 +6,8 @@
   idle and each tile's columns were downloaded on their own. Every tile now asks at once: the engines take a query
   each, and what the tiles read between them comes down as one batch. On a semantic model, four tiles ask at a time.
   `?engines=4` in the app's address gives it four engines to try on a large model.
+- **A Fabric app left open past an hour keeps reading.** A download refused because its signature ran out (a laptop
+  that slept) is signed again and retried. The app also asks the browser to keep its downloads when the disk is short.
 - **A Fabric app tries a failed download again**, twice, where the connection or the server failed. One dropped
   request among a table's hundreds used to fail the tile. A table whose plan failed once is planned again by the next
   tile, not left failed until the page is reloaded.
