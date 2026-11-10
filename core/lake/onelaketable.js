@@ -118,9 +118,25 @@ const asObject = m => (Array.isArray(m) ? Object.fromEntries(m.map(x => [x.key, 
 // A deletion vector's descriptor, the same however the log wrote it: a checkpoint has every field, a commit some.
 const dvOf = dv => (dv ? { storageType: dv.storageType, pathOrInlineDv: dv.pathOrInlineDv, offset: dv.offset == null ? null : Number(dv.offset),
   sizeInBytes: Number(dv.sizeInBytes), cardinality: Number(dv.cardinality) } : null);
-// An add as it is kept between reads: what its file needs, not its column stats.
-const addOf = a => ({ path: a.path, size: Number(a.size), partitionValues: a.partitionValues || {}, deletionVector: dvOf(a.deletionVector),
-  records: a.stats ? (JSON.parse(a.stats).numRecords ?? null) : (a.records ?? null) });
+// An add as it is kept between reads: what its file needs. Its column stats ride along for the sync that reads
+// them and no further (not enumerable, so never in what is kept): the lake has them once the file is in it.
+const addOf = a => {
+  const s = a.stats ? JSON.parse(a.stats) : null;
+  const add = { path: a.path, size: Number(a.size), partitionValues: a.partitionValues || {}, deletionVector: dvOf(a.deletionVector),
+    records: s ? (s.numRecords ?? null) : (a.records ?? null) };
+  if (s && s.minValues && s.maxValues) Object.defineProperty(add, 'stats', { value: { min: s.minValues, max: s.maxValues, nulls: s.nullCount || {} } });
+  return add;
+};
+
+// A column's lowest or highest value in a file, as DuckLake keeps one (text), or null where the log's word can't
+// be taken as exact. Only whole numbers and dates are: a long past 2^53 has lost digits as JSON, a string is cut
+// at a length the table sets, a timestamp is cut to milliseconds, and a wrong bound would skip a file that holds
+// the rows asked for. A column without one is read as before.
+const STAT_TYPES = new Set(['BIGINT', 'INTEGER', 'SMALLINT', 'TINYINT', 'DATE']);
+function statText(type, v) {
+  if (type === 'DATE') return typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : null;
+  return Number.isSafeInteger(v) ? String(v) : null;
+}
 
 // The commits' text, in their order: COMMITS_AT_ONCE at a time, each on a connection of its own, or in one read on `c`.
 async function commitTexts(c, files, withConn) {
@@ -203,6 +219,7 @@ async function readDelta(c, root, { version: upTo = Infinity, from = null, base 
     records: a.records == null ? null : Number(a.records),
     partitionValues: partitionColumns.map(k => (a.partitionValues[k] != null ? String(a.partitionValues[k]) : null)),
     deletes: a.deletionVector ? { count: a.deletionVector.cardinality, dv: a.deletionVector } : null,
+    stats: a.stats || null,
   }));
   return {
     format: 'delta', version, root, commitsRead: newer.length, whole: !goesOn,
@@ -344,7 +361,13 @@ async function syncTable(c, name, state, { dvDir, held = new Map(), synced = nul
     await c.run(`INSERT INTO ${META}.ducklake_name_mapping VALUES ${mapping.join(', ')}`);
 
     let id = Number(mid) + 1, rowId = Number(nextRow);
-    const dataRows = [], partitionRows = [], deleteRows = [];
+    const dataRows = [], partitionRows = [], deleteRows = [], statRows = [];
+    // The columns a file's stats can be kept for: at the top, of an exact type, and in the file (a partition
+    // column isn't). By their name in the files, as the log's stats name them.
+    const statCols = cols.filter(col => col.parent_column == null).map(col => {
+      const f = state.fields.find(x => x.name === col.column_name);
+      return f && STAT_TYPES.has(f.type) && !state.partitionColumns.includes(f.name) ? { id: col.column_id, physical: f.physical, type: f.type } : null;
+    }).filter(Boolean);
     for (const f of added) {
       const me = id++, local = held.get(f.path);
       let records = f.records;
@@ -354,6 +377,12 @@ async function syncTable(c, name, state, { dvDir, held = new Map(), synced = nul
       dataRows.push(`(${me}, ${tid}, ${snap}, ${q(local || f.path)}, ${relative}, 'parquet', ${Number(records)}, ${f.size}, NULL, ${rowId}, ${pid == null ? 'NULL' : pid}, ${mid})`);
       rowId += Number(records);
       f.partitionValues.forEach((v, i) => partitionRows.push(`(${me}, ${tid}, ${i}, ${v == null ? 'NULL' : q(v)})`));
+      if (f.stats) for (const s of statCols) {
+        const min = statText(s.type, f.stats.min[s.physical]), max = statText(s.type, f.stats.max[s.physical]);
+        if (min == null || max == null) continue;
+        const nulls = Number.isSafeInteger(f.stats.nulls[s.physical]) ? f.stats.nulls[s.physical] : null;
+        statRows.push(`(${me}, ${tid}, ${s.id}, ${nulls == null ? 'NULL' : Number(records) - nulls}, ${nulls == null ? 'NULL' : nulls}, ${q(min)}, ${q(max)})`);
+      }
       if (f.deletes && f.deletes.dv) {
         const blob = blobs.get(f.key), file = dvFile(f);
         mkdirSync(dvDir, { recursive: true });
@@ -366,6 +395,8 @@ async function syncTable(c, name, state, { dvDir, held = new Map(), synced = nul
     if (dataRows.length) await c.run(`INSERT INTO ${META}.ducklake_data_file (data_file_id, table_id, begin_snapshot, path, path_is_relative, file_format,
       record_count, file_size_bytes, footer_size, row_id_start, partition_id, mapping_id) VALUES ${dataRows.join(', ')}`);
     if (partitionRows.length) await c.run(`INSERT INTO ${META}.ducklake_file_partition_value VALUES ${partitionRows.join(', ')}`);
+    if (statRows.length) await c.run(`INSERT INTO ${META}.ducklake_file_column_stats (data_file_id, table_id, column_id, value_count, null_count,
+      min_value, max_value) VALUES ${statRows.join(', ')}`);
     if (deleteRows.length) await c.run(`INSERT INTO ${META}.ducklake_delete_file (delete_file_id, table_id, begin_snapshot, data_file_id, path,
       path_is_relative, format, delete_count, file_size_bytes, footer_size) VALUES ${deleteRows.join(', ')}`);
     const [count, bytes] = await one(c, `SELECT coalesce(sum(record_count), 0), coalesce(sum(file_size_bytes), 0) FROM ${META}.ducklake_data_file WHERE table_id = ${tid} AND end_snapshot IS NULL`);

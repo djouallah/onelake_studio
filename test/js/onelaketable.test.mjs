@@ -14,7 +14,7 @@ const skip = !FIXTURES && "LAKE_FIXTURES is not set: the lake is tested by its o
 const require = createRequire(import.meta.url);
 const H = skip ? null : await import("./lake-helpers.mjs");
 const { readDelta, syncTable, META } = require("../../core/lake/onelaketable.js");
-const { createTableService } = require("../../core/lake/tableservice.js");
+const { createTableService, openedSince } = require("../../core/lake/tableservice.js");
 const MAKE = new URL("../fixtures/lake/make_tables.py", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1");
 const fwd = p => p.replace(/\\/g, "/");
 
@@ -41,6 +41,53 @@ for (const [name, info] of Object.entries(cases)) {
     } finally { lake.close(); }
   });
 }
+
+// A file's column stats are in the lake (whole numbers and dates), so a filter skips files. A wrong bound would
+// lose rows with no error: every bound kept is asked for, and just past it, against delta_scan.
+for (const [name, info] of Object.entries(cases)) {
+  test(`${name}: a filter on a column with kept stats gives delta_scan's rows`, { skip: skip || (!info.made && `not written: ${info.why}`) }, async () => {
+    const lake = await H.openLake();
+    try {
+      const root = fwd(join(FIXTURES, name));
+      await syncTable(lake.c, name, await readDelta(lake.c, root), { dvDir: lake.dvDir });
+      const kept = await H.rowsOf(lake.c, `SELECT DISTINCT c.column_name AS col, c.column_type AS type, s.min_value AS lo, s.max_value AS hi
+        FROM ${META}.ducklake_file_column_stats s JOIN ${META}.ducklake_column c ON c.column_id = s.column_id AND c.table_id = s.table_id AND c.end_snapshot IS NULL
+        JOIN ${META}.ducklake_table t ON t.table_id = s.table_id AND t.end_snapshot IS NULL WHERE t.table_name = ${H.q(name)}`);
+      const count = async (src, where) => Number((await H.rowsOf(lake.c, `SELECT count(*)::BIGINT AS n FROM ${src} WHERE ${where}`))[0].n);
+      for (const k of kept) {
+        const lit = v => (/date/i.test(k.type) ? `DATE ${H.q(v)}` : v);
+        for (const where of [`${H.qi(k.col)} = ${lit(k.lo)}`, `${H.qi(k.col)} = ${lit(k.hi)}`, `${H.qi(k.col)} < ${lit(k.lo)}`,
+                             `${H.qi(k.col)} > ${lit(k.hi)}`, `${H.qi(k.col)} BETWEEN ${lit(k.lo)} AND ${lit(k.hi)}`, `${H.qi(k.col)} IS NULL`]) {
+          assert.equal(await count(`lake.${H.qi(name)}`, where), await count(`delta_scan(${H.q(root)})`, where), `${name}: ${where}`);
+        }
+      }
+      if (name === "plain") assert.ok(kept.some(k => k.col === "id"), "plain's id has stats in the lake");
+    } finally { lake.close(); }
+  });
+}
+
+test("a filter opens only the files whose stats can hold its rows", { skip: skip || (!cases.plain?.made && "not written") }, async () => {
+  const lake = await H.openLake();
+  try {
+    const root = fwd(join(FIXTURES, "plain"));
+    const state = await readDelta(lake.c, root);
+    await syncTable(lake.c, "plain", state, { dvDir: lake.dvDir });
+    assert.equal(state.files.length, 5);
+    await lake.c.run("CALL enable_logging(['FileSystem'], storage = 'memory');");
+    const opened = async sql => {
+      await lake.c.run("CALL truncate_duckdb_logs();");
+      const rows = await H.rowsOf(lake.c, sql);
+      const { paths } = await openedSince(lake.c, 0);
+      return { rows, files: paths.filter(p => p.endsWith(".parquet")).length };
+    };
+    const one = await opened("SELECT count(*)::INTEGER AS n FROM lake.plain WHERE id = 2500");
+    assert.deepEqual([one.rows[0].n, one.files], [1, 1], "one row, from the one file that can hold it");
+    const two = await opened("SELECT count(*)::INTEGER AS n FROM lake.plain WHERE id BETWEEN 900 AND 1100");
+    assert.deepEqual([two.rows[0].n, two.files], [201, 2]);
+    const none = await opened("SELECT count(*)::INTEGER AS n FROM lake.plain WHERE id > 100000");
+    assert.deepEqual([none.rows[0].n, none.files], [0, 0]);
+  } finally { lake.close(); }
+});
 
 test("one lake, table after table: each read right after its sync, as the engine does", { skip }, async () => {
   const lake = await H.openLake();
