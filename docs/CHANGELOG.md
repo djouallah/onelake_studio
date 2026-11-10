@@ -29,8 +29,8 @@
 - **More in the format pane.** Several measures in one chart, each a bar, a line, an area or a dashed line, on the left
   axis or the right one; each measure's total as a line across; the highest point labelled; a zoom slider. The Report
   tab gives a column's values (a fuel, a region) one colour in every tile.
-- **The Fabric app's look.** A header with the model's name, and a light theme beside the dark one (☀/☾), kept in
-  the browser, or the system's when none is picked.
+- **The Fabric app's look.** A header with the model's name; the page's controls in the text's colour, so colour is
+  for the data; cards with a soft shadow.
 
 ## 0.2.19
 

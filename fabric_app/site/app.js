@@ -84,29 +84,9 @@ function download(name, text) {
   return true;
 }
 
-// The header's ☀/☾: the theme, kept in this browser; the class on the body tells Explore to draw
-// its charts again in it (view.js).
-function themeSwitch() {
-  const b = document.getElementById("theme-toggle");
-  if (!b) return;
-  const show = () => {
-    const light = document.documentElement.dataset.theme === "light";
-    b.textContent = light ? "☾" : "☀";
-    b.title = light ? "Dark" : "Light";
-  };
-  b.addEventListener("click", () => {
-    const t = document.documentElement.dataset.theme === "light" ? "dark" : "light";
-    document.documentElement.dataset.theme = t;
-    try { localStorage.setItem("theme", t); } catch {}
-    document.body.className = `theme-${t}`;
-    show();
-  });
-  show();
-}
 const titled = text => { const h = document.getElementById("app-title"); if (h) h.textContent = text; };
 
 export async function start() {
-  themeSwitch();
   try {
     const first = await siteJson("explore.json", null);
     const { engine, name: modelName } = (await siteJson("engine.json", {})) || {};

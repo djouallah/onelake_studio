@@ -671,8 +671,7 @@ A semantic model opens as **Explore** ([`app/explore/`](../app/explore/)), on th
 `view.js` is host-neutral: the host passes in the compiler, how to run SQL, and where ECharts comes
 from. **A tab** runs it on the native engine. **The Fabric app** runs the
 same files on DuckDB-WASM. Its page ([`fabric_app/site/index.html`](../fabric_app/site/index.html)) names the model in
-its header and is dark, unless the viewer picks light there (☀/☾, kept in that browser) or the system prefers it; the
-chrome is the text's colour, and colour is for the data. A switch draws every chart again in the new theme.
+its header and is black, always; the chrome is the text's colour, and colour is for the data.
 
 ## Opening files from disk
 
