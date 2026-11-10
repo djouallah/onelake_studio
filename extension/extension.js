@@ -157,7 +157,10 @@ async function show(context, { newTab = false, ...options } = {}) {
   // With an account's cache to show, or after a Sign Out, no click prompts for a sign-in: it opens
   // on what is held.
   const noPrompt = !!knownAccount() || signedOutByChoice();
-  const token = noPrompt ? await hostToken() : await getToken(options);
+  // Not waited for then, either: the tab opens on what is held while the account provider answers, which at
+  // startup can take half a minute. The token is asked for now so it is there when a read wants it.
+  if (noPrompt) hostToken().catch(() => {});
+  const token = noPrompt ? null : await getToken(options);
   if (!token && !noPrompt) {
     const why = lastAuthError() ? `Sign-in failed: ${lastAuthError().message || lastAuthError()}`
                               : 'Sign-in was cancelled.';

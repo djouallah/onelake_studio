@@ -24,6 +24,21 @@ test("the probe: a line too busy to answer in time gets a longer try, and a refu
   assert.deepEqual(asked, [5000]);
 });
 
+test("a probe that failed while the thread was held is asked again, and believed when it wasn't", async () => {
+  const refused = () => new TypeError("fetch failed");
+  let asked = 0;
+  const probe = (answers, held) => probeOf(async () => { asked++; const a = answers.shift(); if (a) throw a; },
+    { watch: () => () => held.shift() });
+  assert.equal(await probe([refused(), null], [true, false])(), true, "held the first time: the second answer counts");
+  assert.equal(asked, 2);
+  asked = 0;
+  assert.equal(await probe([refused()], [false])(), false, "not held: no internet, at once");
+  assert.equal(asked, 1);
+  asked = 0;
+  assert.equal(await probe([refused(), refused(), refused(), null], [true, true, true, true])(), false, "held every time: three tries, no more");
+  assert.equal(asked, 3);
+});
+
 function setup(answer = true, everyMs = 60_000) {
   const w = { answer, probes: 0, changes: [] };
   w.c = createConnectivity({ everyMs, probe: async () => { w.probes++; return w.answer; }, onChange: r => w.changes.push(r) });

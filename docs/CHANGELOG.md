@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+- **A window no longer waits for the sign-in to answer.** With an account already known, a tab opens and the engine
+  starts on what this machine holds. VS Code's account provider shares one thread with every other extension, and at
+  startup it could take half a minute to answer: a click in that time sat on "Opening OneLake Studio…", and the
+  engine started only after it. A window whose thread was held was also told it had no internet for half a minute.
+- **Clicking a table reads none of its rows.** It opens on Stats, from the listing. Its rows are read when **Data** is
+  clicked (or at once, with `tableOpensOn` set to `data`). The click used to read its first rows in the background,
+  which synced the table and brought its files to this machine.
+- **A filter skips the files its rows can't be in.** For a Delta table, each file's lowest and highest value of a
+  whole-number or date column is kept, so `WHERE id = 42` or a date range opens only the files that can hold it. It
+  used to open every file of the table, each a request to OneLake. A table read before this gets them the next time
+  its files change.
+- **Table files come down faster.** Six at a time, not four, written as they arrive, and a download the connection
+  dropped is tried once more.
+- **A table can't send your sign-in elsewhere.** A table's own metadata names its files, and a name on another host was
+  followed with the OneLake token. A table that names a file outside OneLake is now refused, and says so.
+- **The code is one folder for each part:** `core/`, `extension/`, `page/`, `cli/`, `desktop/`, `fabric_app/`,
+  `xmla/`. The command line is `cli/cli.mjs` (it was `bin/cli.mjs`); the agent skill is rewritten with the new path
+  when a window starts.
 - **Visual has no SQL box.** Its query is always the one it makes from its fields. **Show plan** takes Show SQL's
   place: the profile and the plan tree of that query, in place of the view, and **Show visual** goes back.
 - **A Report has pages.** Their names sit over the tiles: click one to show it, double-click to rename it, drag it to

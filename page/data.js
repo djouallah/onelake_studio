@@ -543,31 +543,27 @@ export function createEngine({
   // host and kept there per snapshot — a table opened before shows its rows without a
   // request to OneLake. Kept here too, so coming back to a table renders instantly.
   //
-  // The memo holds the PROMISE, not the value, so it is also single-flight: the prefetch
-  // that starts when a table is selected and the Data tab that asks a moment later share
-  // one read — without this, the second call's cancelLoad() would kill the first
+  // The memo holds the PROMISE, not the value, so it is also single-flight: two askers a moment
+  // apart share one read — without this, the second call's cancelLoad() would kill the first
   // mid-read and start over. A peek that fails or is cancelled un-memoises itself.
-  //
-  // `quiet` is for the prefetch: its progress writing over the stats view's status read
-  // as the app being stuck.
   const rowsOutOfReach = (lh, t) => callHost("onelake.rowsOutOfReach", [{
     workspace: lh.workspace, item: lh.item, schema: t.schema || "", table: t.table,
   }]);
 
-  function peekTable(lh, t, { quiet = false } = {}) {
+  function peekTable(lh, t) {
     const key = tableKey(lh, t);
     if (peekC.has(key)) return peekC.get(key);
-    const p = doPeek(lh, t, key, quiet);
+    const p = doPeek(lh, t, key);
     peekC.set(key, p);
     p.catch(() => { if (peekC.get(key) === p) peekC.delete(key); });
     return p;
   }
 
-  async function doPeek(lh, t, key, quiet) {
+  async function doPeek(lh, t, key) {
     await cancelLoad();
     const gen = loadGen;
     const check = () => { if (gen !== loadGen) throw cancelledError(); };
-    const status = quiet ? () => {} : statusFor(gen);
+    const status = statusFor(gen);
     const label = labelFor(t);
 
     const resolved = await resolveTable(lh, t, label, check);

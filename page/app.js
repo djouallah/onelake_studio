@@ -698,10 +698,7 @@ async function selectTable(t) {
     }
     // Asked to land on the rows: the same as clicking Data.
     if (settings.tableOpensOn === 'data') { await peekIntoView(); return; }
-    // The Data tab's rows, started now: selecting a table is the strongest signal its
-    // data is about to be looked at. Quiet, superseded by any later click, and its
-    // failure is the Data tab's to report.
-    engine.peekTable(lakehouse, t, { quiet: true }).catch(() => {});
+    // Nothing of the table is read until Data is clicked: a first read syncs its log and brings its files here.
   } catch (e) {
     if (my !== selSeq) return;
     reportTableError(e);

@@ -38,6 +38,10 @@ const { createEngines } = require('./engine/engines');
 
 const SESSION_WAIT_MS = 5_000;
 const SESSION_SETTLE_MS = 3_000;
+// How long a click, or the engine's start, gives the account provider when this window already knows its
+// account. The provider shares the extension host's one thread with every other extension, and at startup it has
+// been seen to take half a minute to answer.
+const SESSION_MOMENT_MS = 500;
 
 // Calls of fn one at a time, each after the last has settled.
 function serialized(fn) {
@@ -247,11 +251,16 @@ function createCore({
   // Called wherever the identity may have moved; a no-op when it has not.
   // One at a time: two callers at once could both see the old account, or one return while
   // the other was still moving the store.
-  rebindStore = serialized(async function rebindStore() {
+  rebindStore = serialized(async function rebind() {
     // No internet: a provider refreshing a token could only hang, every click behind it, and nobody
     // can sign in as anyone else meanwhile.
     if (connectivity.noInternet()) return;
-    const session = await getSession({ createIfNone: false }).catch(() => null);
+    // With an account known, the provider gets a moment and no more: a tab opens and the engine starts on that
+    // account's cache, and whoever the provider names later is a session change like any other.
+    const asked = getSession({ createIfNone: false }).catch(() => null);
+    const session = knownAccount()
+      ? await inTime(asked, SESSION_MOMENT_MS, late => { if (late && accountKey(late) !== storeAccount) rebindStore(); })
+      : await asked;
     rememberAccount(session);
     // No session is not another account: the last one's cache is what there is to show.
     const key = accountKey(session) || (knownAccount() || {}).key || null;

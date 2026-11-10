@@ -24,13 +24,34 @@ const PROBE_EVERY_MS = 30_000;
 // isn't yet: a line a download is filling can take longer than that, and that line is online, so it gets
 // a longer second try before anything is called offline.
 const PROBE_MS = 5_000, PROBE_AGAIN_MS = 20_000;
-function probeOf(ask) {
-  return async () => {
+// A probe that failed while this process's one thread was held says nothing about the internet: its time ran
+// out, or its connection was dropped, with nobody there to take the answer. In VS Code the thread is every
+// extension's, and at startup it has been seen held for 15 seconds, which read as "no internet" for half a
+// minute. Such a probe is asked again, PROBE_TRIES times at most.
+const PROBE_TRIES = 3, HELD_TICK_MS = 500, HELD_MS = 2_000;
+/** Starts watching; the answer, when asked, is whether the thread was held for HELD_MS or more since. */
+function watchHeld() {
+  let last = performance.now(), held = false;
+  const look = () => { const at = performance.now(); if (at - last - HELD_TICK_MS >= HELD_MS) held = true; last = at; };
+  const timer = setInterval(look, HELD_TICK_MS);
+  if (timer.unref) timer.unref();
+  return () => { clearInterval(timer); look(); return held; };
+}
+function probeOf(ask, { watch = watchHeld } = {}) {
+  const once = async () => {
     try { await ask(PROBE_MS); return true; }
     catch (e) {
       if (!e || (e.name !== 'TimeoutError' && e.name !== 'AbortError')) return false;
     }
     return ask(PROBE_AGAIN_MS).then(() => true, () => false);
+  };
+  return async () => {
+    for (let n = 1; ; n++) {
+      const wasHeld = watch();
+      const answered = await once();
+      const held = wasHeld();
+      if (answered || !held || n >= PROBE_TRIES) return answered;
+    }
   };
 }
 
