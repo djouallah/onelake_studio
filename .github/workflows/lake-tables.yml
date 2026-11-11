@@ -210,5 +210,6 @@ jobs:
       - if: always()
         run: node test/js/run-fabric-local.mjs
         env:
-          # Power BI refuses the CI identity a Direct Lake model's DAX: the app on a semantic model must say so.
-          FABRIC_LOCAL_MODEL: refused
+          # Power BI answers the CI identity's DAX on lakeci_model (it did on 2026-11-11, where it was thought to refuse it):
+          # the app on a semantic model draws its Report. `refused` is for an identity Power BI turns down.
+          FABRIC_LOCAL_MODEL: answers

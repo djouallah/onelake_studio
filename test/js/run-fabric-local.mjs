@@ -17,8 +17,8 @@
 // ONELAKE_TOKEN (storage), FABRIC_TOKEN (the Fabric API, to find the ids) and POWERBI_TOKEN; ONELAKE_CI_WORKSPACE
 // and ONELAKE_CI_LAKEHOUSE by name: the lakehouse holds Tables/test/lakeci_plain (test/fixtures/lake/make_tables.py)
 // and the workspace the semantic model lakeci_model of it (test/js/export-fabric.test.mjs makes it).
-// FABRIC_LOCAL_MODEL: what Power BI does with that token's queries, `answers` (a person's) or `refused` (the CI
-// identity's: Power BI refuses a service principal a Direct Lake model's DAX), so the page must then say so.
+// FABRIC_LOCAL_MODEL: what Power BI does with that token's queries: `answers`, or `refused` for an identity it turns
+// down, when the page must say so.
 // RAYFIN_LOCAL: the rayfin-local executable (default: rayfin-local on PATH).
 // Run: node scripts/vendor.mjs && node test/js/run-fabric-local.mjs
 import { spawn, execSync, execFileSync } from "node:child_process";
