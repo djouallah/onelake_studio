@@ -94,7 +94,7 @@ async function setup() {
     ui, onRefresh() {}, log,
     // The site as it is uploaded, kept to be looked at.
     fabricAppOf: o => {
-      const app = appOf(o);
+      const app = appOf({ ...o, externalEntraExchange: true });
       return { ...app, publish: p => app.publish({ ...p, site: async config => { const z = await p.site(config); sites.push(z); return z; } }) };
     },
   });
@@ -154,7 +154,39 @@ test("on fabriccat: a model file's app is published, client side, with its funct
   const marker = await published(s, said, "lakeci-explore.fabricapp", "duckdb", since);
   assert.equal(marker.model, `${WS}/${PATH}`);
   assert.equal(marker.lakehouseId, s.lakehouseId);
+  await signedIn(s);
 });
+
+// The published app, asked as a viewer's page asks it, with no browser: the site's own SDK signs in with an
+// Entra token (the app is published with externalEntraExchange for this), then calls the deployed function.
+// A first look, which fails nothing yet: whether Fabric lets the CI identity in is what it is here to find out.
+async function signedIn(s) {
+  const { unzip } = require("../../fabric_app/export/exportapp.js");
+  const { WEBAPP } = require("../../core/vendored.js");
+  const config = JSON.parse(unzip(s.sites.at(-1)).get("rayfin.config.json").toString("utf8"));
+  const load = p => import(pathToFileURL(join(ROOT, "vendor", "webapp", "npm", p, "+esm.js")).href);
+  const say = line => console.log(`published app: ${line}`);
+  try {
+    const [rayfin, provider] = await Promise.all([load(WEBAPP.rayfinClient), load(WEBAPP.rayfinFabric)]);
+    const client = new rayfin.RayfinClient({ ...config, baseUrl: config.apiUrl, publishableKey: config.publishableKey, authStorage: false });
+    let signed = null;
+    for (const [name, token] of [["Power BI", POWERBI_TOKEN], ["Fabric API", FABRIC_TOKEN]]) {
+      try { await provider.signInWithEntraToken(client.auth, { entraToken: token }); signed = name; break; }
+      catch (e) { say(`sign-in with the identity's ${name} token: ${e?.code} ${e?.message}`); }
+    }
+    if (!signed) return say("the CI identity is not let in with either token");
+    say(`signed in with the identity's ${signed} token`);
+    const r = await client.functions.openCatalog.invoke({ tables: "" }, { timeoutMs: 240000 });
+    if (r?.error) return say(`the deployed function answered an error: ${r.error}`);
+    const location = r.metadata?.[`test.${TABLE}`];
+    say(`the deployed function answered: ${Object.keys(r.metadata ?? {}).join(", ")}; missing ${(r.missing ?? []).join(", ") || "none"}; SAS for ${Object.keys(r.sas ?? {}).join(", ")}`);
+    if (!location) return;
+    const folder = Object.keys(r.sas)[0];
+    const url = `${location.replace(/^abfss?:\/\/([^@/]+)@([^/]+)\//, "https://$2/$1/")}?${r.sas[folder]}`;
+    const read = await fetch(url);
+    say(`the table's metadata.json, read with the function's SAS: HTTP ${read.status}`);
+  } catch (e) { say(`failed: ${String(e?.stack || e).slice(0, 600)}`); }
+}
 
 test("on fabriccat: the model file made a Direct Lake semantic model, and refreshed", { skip, timeout: 20 * 60_000 }, async () => {
   const s = await setup();

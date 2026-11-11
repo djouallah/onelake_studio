@@ -52,7 +52,7 @@ const modelConnector = ({ workspace, id }) => ({
  * @param {(o?: {fresh?: boolean}) => Promise<string|null>} o.getToken  Fabric API audience
  * @param {(line: string) => void} [o.log]
  */
-function createFabricApp({ getToken, apiBase = FABRIC_API, log = () => {},
+function createFabricApp({ getToken, apiBase = FABRIC_API, log = () => {}, externalEntraExchange = false,
                            sleep = ms => new Promise(r => setTimeout(r, ms)), fetchImpl = fetch }) {
   // One request: a fresh token once on a 401, Retry-After waited out on a 429, and the
   // statuses the CLI treats as "not ready yet" (`retry`) retried with its backoff.
@@ -156,7 +156,10 @@ function createFabricApp({ getToken, apiBase = FABRIC_API, log = () => {},
   // A connector goes on the wire keyed by its name, its type as `connector` (rayfin-tools-common's
   // buildRuntimeSettingsPayload).
   const settings = (redirects, semanticModel) => ({
-    auth: { enabled: true, fabric: { enabled: true }, allowedRedirectUris: redirects },
+    // externalEntraExchange (Rayfin's services.auth.fabric.externalEntraExchange): whoever holds a delegated Entra
+    // token may trade it for a session of the app, with no browser, still under the item's permissions. Off, as
+    // Rayfin has it: only the test that signs in to a published app asks for it (test/js/export-fabric.test.mjs).
+    auth: { enabled: true, fabric: { enabled: true, ...(externalEntraExchange ? { externalEntraExchange: true } : {}) }, allowedRedirectUris: redirects },
     data: { enabled: false },
     storage: { enabled: false },
     functions: { enabled: true, auth: { type: 'application' } },
