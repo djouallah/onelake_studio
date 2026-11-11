@@ -7,6 +7,8 @@
   workspace its tables are in, when it names one lakehouse. Its `.fabricapp` opens and exports again the same way.
 - **dax-sql 0.2.0.** A query 0.1.7 answered no longer fails on Fabric's planner limits; object-level security is
   answered as Power BI answers it; a fact table is grouped by its keys before its joins under a slicer or a role too.
+- **A Fabric app shares out a least and a most below the joins too.** A tile's MIN or MAX of a large table, now
+  grouped by its keys before the joins, ran on one engine; its scan is shared out between the engines as a sum's is.
 
 ## 0.2.21
 

@@ -118,15 +118,30 @@ function splitBody(body, large) {
   const outer = selectOf(body);
   if (!outer) return null;
   let inner = null;
+  // Below the joins, each inner aggregate's kind (alias -> SUM, MIN or MAX): sums of sums and of
+  // counts add up over shares, as a minimum of minimums and a maximum of maximums do; a minimum of
+  // sums, or a sum of minimums, does not.
+  const kinds = new Map();
   if (opens.length) {
-    // Sums of sums and of counts add up over shares; a minimum of sums does not.
     inner = selectOf(body.slice(opens[0] + 1, closeOf(body, opens[0])));
-    if (!inner || /\b(?:MIN|MAX)\s*\(/i.test(plain)) return null;
+    if (!inner) return null;
     for (const x of inner.items) {
       if (/^c\d+$/.test(x.alias)) continue;
-      if (!/^a\d+$/.test(x.alias) || !sumLike(x.expr) || !mergeOf(x.expr)) return null;
+      if (!/^a\d+$/.test(x.alias) || !mergeOf(x.expr)) return null;
+      const extreme = /^(MIN|MAX)\s*\(/i.exec(x.expr);
+      if (extreme) kinds.set(x.alias, extreme[1].toUpperCase());
+      else if (sumLike(x.expr)) kinds.set(x.alias, 'SUM');
+      else return null;
     }
   }
+  // An outer aggregate over the inner ones: SUM only of sums, MIN or MAX only of its own kind, read whole.
+  const overInner = expr => {
+    const one = /^(MIN|MAX)\s*\(\s*\w+\."(a\d+)"\s*\)$/i.exec(expr);
+    if (one) return kinds.get(one[2]) === one[1].toUpperCase();
+    if (!/^SUM\s*\(/i.test(expr)) return false;
+    const read = [...expr.matchAll(/"(a\d+)"/g)].map(m => m[1]);
+    return read.length > 0 && read.every(a => kinds.get(a) === 'SUM');
+  };
   // Each column as the body gave it, its type too (`types`: alias -> type): adding up changes
   // it (a count's sum is a HUGEINT), and Parquet does not always keep it (carried()).
   const keys = [], aggs = [];
@@ -134,7 +149,7 @@ function splitBody(body, large) {
   for (const x of outer.items) {
     if (/^g\d+$/.test(x.alias)) { keys.push(types => typed(types, x.alias, `"${x.alias}"`)); continue; }
     const merge = /^a\d+$/.test(x.alias) && mergeOf(x.expr);
-    if (!merge || (inner && !/^SUM\s*\(/i.test(x.expr))) return null;
+    if (!merge || (inner && !overInner(x.expr))) return null;
     aggs.push(types => typed(types, x.alias, merge(`"${x.alias}"`)));
   }
   if (!aggs.length) return null;

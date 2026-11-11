@@ -36,14 +36,23 @@ test("a filter on a dimension (joined first), an aggregate's own filter, two fac
   assert.match(plan.finalSql(c => [c]), /^WITH f3 AS MATERIALIZED \(SELECT "g0" AS "g0", SUM\("a0"\) AS "a0" FROM read_parquet\(\['f3'\]\) GROUP BY ALL\), f6 AS \(SELECT .* FROM read_parquet\(\['f6'\]\) GROUP BY ALL\), f9 AS /);
 });
 
+test("below the joins, a minimum of minimums and a maximum of maximums add up beside sums of sums", () => {
+  const body = `SELECT j4."Color" AS "g0", SUM(p8."a0") AS "a0", MIN(p8."a1") AS "a1", MAX(p8."a2") AS "a2" FROM (SELECT t2."ProductKey" AS "c0", SUM(t2."Amount") AS "a0", MIN(t2."OrderDate") AS "a1", MAX(t2."Qty") AS "a2" FROM v_Sales AS t2 GROUP BY t2."ProductKey") AS p8 LEFT JOIN v_Product AS j4 ON j4."ProductKey" = p8."c0" GROUP BY j4."Color"`;
+  const plan = splitPlan(`WITH f3 AS (${body}) SELECT * FROM f3`, large);
+  assert.equal(plan.parts[0].table, "Sales");
+  assert.match(plan.finalSql(c => [c]), /SELECT "g0" AS "g0", SUM\("a0"\) AS "a0", MIN\("a1"\) AS "a1", MAX\("a2"\) AS "a2" FROM read_parquet\(\['f3'\]\) GROUP BY ALL/);
+});
+
 test("what does not add up is left as it is", () => {
   const no = body => assert.equal(splitPlan(`WITH f3 AS (${body}) SELECT * FROM f3`, large), null, body);
   // A distinct count, an average, a ratio in the body.
   no(`SELECT (COUNT(DISTINCT t2."CustomerKey") + MAX(CASE WHEN t2."CustomerKey" IS NULL THEN 1 ELSE 0 END)) AS "a0" FROM v_Sales AS t2`);
   no(`SELECT AVG(t2."Qty") AS "a0" FROM v_Sales AS t2`);
   no(`SELECT SUM(t2."Amount") / SUM(t2."Qty") AS "a0" FROM v_Sales AS t2`);
-  // A minimum of sums, below the joins.
+  // A minimum of sums, a sum of minimums, a maximum of minimums, below the joins.
   no(`SELECT j4."City" AS "g0", MIN(p6."a0") AS "a0" FROM (SELECT t2."CustomerKey" AS "c0", SUM(t2."Amount") AS "a0" FROM v_Sales AS t2 GROUP BY t2."CustomerKey") AS p6 LEFT JOIN v_Customer AS j4 ON j4."CustomerKey" = p6."c0" GROUP BY j4."City"`);
+  no(`SELECT j4."City" AS "g0", SUM(p6."a0") AS "a0" FROM (SELECT t2."CustomerKey" AS "c0", MIN(t2."Qty") AS "a0" FROM v_Sales AS t2 GROUP BY t2."CustomerKey") AS p6 LEFT JOIN v_Customer AS j4 ON j4."CustomerKey" = p6."c0" GROUP BY j4."City"`);
+  no(`SELECT j4."City" AS "g0", MAX(p6."a0") AS "a0" FROM (SELECT t2."CustomerKey" AS "c0", MIN(t2."Qty") AS "a0" FROM v_Sales AS t2 GROUP BY t2."CustomerKey") AS p6 LEFT JOIN v_Customer AS j4 ON j4."CustomerKey" = p6."c0" GROUP BY j4."City"`);
   // The table on a join's other side, or in a filter.
   no(`SELECT j."City" AS "g0", SUM(t."Amount") AS "a0" FROM v_Customer AS j LEFT JOIN v_Sales AS t ON t."CustomerKey" = j."CustomerKey" GROUP BY j."City"`);
   no(`SELECT SUM(j."Price") AS "a0" FROM v_Product AS j WHERE j."ProductKey" IN (SELECT t."ProductKey" FROM v_Sales AS t)`);

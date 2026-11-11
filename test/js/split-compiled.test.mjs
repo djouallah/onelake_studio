@@ -100,12 +100,13 @@ test("what the compiler writes is shared out as before, and answers the same sha
     }
     const said = Object.entries(splitBy).map(([k, v]) => `${k} ${v.split}/${v.of}`).join(", ");
     console.log(`shared out: ${said}`);
-    // How many of each value's 27 queries are shared out, with dax-sql as pinned. Sums and counts of Sales: all,
-    // whatever the grouping and the filter. Returns: not by a column of Sales or of Customer, which it does not
-    // reach. A least or a most: not when its CTE is grouped below the joins. A distinct count, an average: never.
+    // How many of each value's 27 queries are shared out, with dax-sql as pinned. Sums, counts, a least and a most
+    // of Sales or Returns: all, whatever the grouping and the filter, below the joins too. Red Total: not by
+    // Sales' own OrderDate under the Color slicer, whose rows' keys are read from Sales outside the CTE as well.
+    // A distinct count, an average: never.
     // A number that changes here is dax-sql writing its SQL another way: look at what, then change the number.
-    const WAS = { Total: 27, Quantity: 27, Orders: 27, "count of Qty": 27, Returned: 21, "Return Rate": 21, "Red Total": 17,
-                  "least Qty": 15, "most Amount": 15, "three at once": 15, Customers: 0, "Average Qty": 0 };
+    const WAS = { Total: 27, Quantity: 27, Orders: 27, "count of Qty": 27, Returned: 27, "Return Rate": 27, "Red Total": 25,
+                  "least Qty": 27, "most Amount": 27, "three at once": 27, Customers: 0, "Average Qty": 0 };
     for (const [name, was] of Object.entries(WAS)) {
       assert.equal(splitBy[name].of, 27, name);
       assert.equal(splitBy[name].split, was, `${name}: ${splitBy[name].split} of its queries are shared out, where ${was} were: ${said}`);
