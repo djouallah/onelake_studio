@@ -6,7 +6,8 @@
 #   onelake: the same cases uploaded to fabriccat (workspace tmp, lakehouse data, Tables/test/lakeci_*), read
 #            there, and the table service for real: what a statement reads comes down over HTTPS, and reads with
 #            the token gone.
-#   export:  Export to Fabric from this checkout, published to the same workspace (test/js/export-fabric.test.mjs).
+#   export:  Export to Fabric from this checkout, published to the same workspace (test/js/export-fabric.test.mjs);
+#            then the app's page in Chrome, reading a table of that lakehouse (test/js/run-fabric-app.mjs).
 #
 # Signing in to fabriccat: no secret. The job's OIDC subject is what the federated credential on the Entra app
 # `fabric-github-deploy` trusts (onelake-studio-main), the app the other repos' workflows sign in as. Subjects carry the owner's and the repository's ids, so it is
@@ -166,3 +167,24 @@ jobs:
       - run: node --test test/js/export-fabric.test.mjs
         env:
           NO_SKIP: 1
+      # The app's page for real, but for its sign-in (test/js/run-fabric-app.mjs): the site as an export uploads
+      # it, in Chrome, reading aemo.price from OneLake, each query whole and shared out between the engines
+      # (?split=1). With the identity's storage token for the downloads: tmp refuses a user-delegated SAS.
+      - if: always()
+        run: npm ci --omit=optional --ignore-scripts --no-audit --no-fund
+      - name: Chrome
+        if: always()
+        run: |
+          set -euo pipefail
+          if ! command -v google-chrome >/dev/null; then
+            curl -fsSL --retry 3 -o "$RUNNER_TEMP/chrome.deb" https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
+            sudo apt-get install -y "$RUNNER_TEMP/chrome.deb"
+          fi
+          google-chrome --version
+      - if: always()
+        run: node test/js/run-fabric-app.mjs
+        env:
+          FABRIC_APP_TABLE: aemo.price
+          FABRIC_APP_SUM: RRP
+          FABRIC_APP_BY: REGIONID
+          FABRIC_APP_AUTH: token
