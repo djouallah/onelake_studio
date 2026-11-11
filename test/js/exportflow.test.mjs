@@ -103,15 +103,15 @@ test("no token for the Fabric API stops it before a question", async () => {
   await done();
 });
 
-test("the Save dialog is the one question: named for the app, in Documents the first time; Cancel writes and remembers nothing", async () => {
+test("the Save dialog is the one question: named for the model file, in Documents the first time; Cancel writes and remembers nothing", async () => {
   const { exportExplore, asked, kept, done } = await setup({ answers: [null] });
   const e = await exportExplore(REQUEST).then(() => null, x => x);
   assert.equal(e.declined, true);
   assert.equal(e.message, "Export cancelled.");
   assert.equal(asked.length, 1);
   const o = asked[0].saveFile;
-  assert.match(o.defaultPath, /sales-model-explore\.fabricapp$/);
-  assert.equal(o.title, "Export sales-model-explore to Fabric");
+  assert.match(o.defaultPath, /[\\/]sales\.fabricapp$/, "the file's own name, its extension the app's");
+  assert.equal(o.title, "Export sales.fabricapp to Fabric");
   assert.equal(o.saveLabel, "Export");
   assert.deepEqual(o.filters, { "OneLake Studio app": ["fabricapp"] });
   assert.equal(kept.size, 0);
@@ -164,6 +164,7 @@ test("a semantic model opened from the tree is exported as it is: found by its w
   assert.equal(e.declined, true);
   assert.deepEqual(looked, [{ ws: "id-of-aemo", name: "NEM Sales" }]);
   assert.equal(asked.length, 1, "the Save dialog alone: no mode");
+  assert.match(asked[0].saveFile.defaultPath, /[\\/]NEM Sales\.fabricapp$/, "named for the semantic model");
   await done();
 });
 

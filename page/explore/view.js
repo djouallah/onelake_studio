@@ -1120,7 +1120,7 @@ export function mountExplore(root, ctx) {
       // Every column as DuckDB prints it: a DATE, TIMESTAMP or DECIMAL would otherwise be its raw number.
       const res = await run(`SELECT COLUMNS(*)::VARCHAR FROM (\n${compile(base)}\n)`, { fresh: true });
       const text = toCsv(res.fields, res.rows, { eol: '\n' }) + '\n';
-      const saved = await ctx.saveText(`${ctx.name}-explore.csv`, text);
+      const saved = await ctx.saveText(`${ctx.name}.csv`, text);
       if (saved) setStatus(`Saved ${res.rows.length.toLocaleString()} rows${typeof saved === 'string' ? ` to ${saved}` : ''}` +
         (res.truncated ? ` — stopped at the engine's cap of ${res.limit.toLocaleString()}; add a filter for all of them` : '') + '.',
         res.truncated ? 'warn' : 'ok');

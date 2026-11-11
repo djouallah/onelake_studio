@@ -2,6 +2,12 @@
 
 ## 0.2.21
 
+- **An Ossie model or a `.fabricapp` opened in VS Code opens in the desktop app, when it is installed.** This
+  includes a double-click in Windows on a `*.ossie.yaml`, which Windows hands to VS Code as a `.yaml`. Without the
+  app, it opens in the extension as before.
+- **An export is named after its model file.** Export to Fabric suggests `sales.fabricapp` for `sales.ossie.yaml`,
+  and `<model name>.fabricapp` for a semantic model, not `sales-model-explore.fabricapp`. The app keeps its name in
+  Fabric. The Visual's CSV download is `<model>.csv`.
 - **A Fabric app reads a large table with all its engines.** A query over a table of ten million rows or more ran on
   one engine while the others waited. Its scan is now shared out between them, each engine reading its share of the
   table's files, and one adds the answers up. Measured on a 3.6 GB table with four engines, a sum by a column went from

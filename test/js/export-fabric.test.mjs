@@ -151,7 +151,7 @@ test("on fabriccat: a model file's app is published, client side, with its funct
   const since = Date.now();
   const said = await s.flow.exportExplore({ file: FILE, name: "lakeci", text, state: null, workspace: WS, path: PATH });
   assert.match(said, /^Published to Fabric: https:/);
-  const marker = await published(s, said, "lakeci-explore.fabricapp", "duckdb", since);
+  const marker = await published(s, said, "lakeci.fabricapp", "duckdb", since);
   assert.equal(marker.model, `${WS}/${PATH}`);
   assert.equal(marker.lakehouseId, s.lakehouseId);
   await signedIn(s);

@@ -24,6 +24,11 @@ const MODE_OF = { directquery: 'directQuery', directlake: 'directLake' };
 const OLD_MARKER = '.onelake-studio-export.json';
 const oldMarker = dir => fsp.readFile(join(dir, OLD_MARKER), 'utf8')
   .then(t => { const m = JSON.parse(t); delete m.files; return m; }, () => null).catch(() => null);
+// The local copy's name before its extension: the model file's own name with no model extension
+// (sales.ossie.yaml is sales), or a semantic model's name, less what Windows refuses in a file name.
+// The app's name in Fabric is plan.name, and stays so.
+const localName = s => String(s || '').split(/[\\/]/).pop()
+  .replace(/(\.ossie)?\.(ya?ml|bim)$/i, '').replace(/[<>:"/\\|?*\x00-\x1f]/g, '').replace(/[. ]+$/, '').trim() || 'model';
 // Which zip a model's Report tab reads: the model by its workspace and its name, as the page knows it.
 const reportKey = (workspace, model) => `exportReport:${String(workspace).toLowerCase()}/${String(model).toLowerCase()}`;
 // The file a model's Report is kept in before it has a zip, in `reportDir`: by the same names.
@@ -126,20 +131,20 @@ function createExport({ connectivity, modules, appToken, powerBiToken = appToken
       const token = await appToken({ createIfNone: true });
       if (!token) throw new Error('not signed in to the Fabric API');
 
-      // The local copy, <app>.fabricapp, where the person saves it: the Save dialog is the export's one
+      // The local copy, <model>.fabricapp, where the person saves it: the Save dialog is the export's one
       // question, opened where this app was saved last, else in Documents. Saving over the file is
       // the dialog's own question; Cancel is a refusal, with nothing written. One an earlier export
       // saved as <app>.zip is offered under its new name, and renamed when saved there.
       const appKey = `${plan.workspace}/${plan.lakehouse ?? 'semanticmodel'}/${plan.name}`;
       const asApp = p => String(p).replace(/\.zip$/i, APP_EXT);
       const remembered = memento.get(`exportZip:${appKey}`);
-      const zipName = `${plan.name}${APP_EXT}`;
+      const zipName = `${localName(plan.semanticModel ? plan.semanticModel.name : file)}${APP_EXT}`;
       const oldZip = remembered && /\.zip$/i.test(remembered) && existsSync(remembered) ? remembered : null;
       const documents = join(os.homedir(), 'Documents');
       const outZip = appFile || await ui.saveFile({
         defaultPath: oldZip ? asApp(oldZip) : remembered && existsSync(dirname(remembered)) ? remembered
           : join(existsSync(documents) ? documents : os.homedir(), zipName),
-        title: `Export ${plan.name} to Fabric`, saveLabel: 'Export', filters: { 'OneLake Studio app': [APP_EXT.slice(1)] },
+        title: `Export ${zipName} to Fabric`, saveLabel: 'Export', filters: { 'OneLake Studio app': [APP_EXT.slice(1)] },
       });
       if (!outZip) throw declined('Export cancelled.');
       // An earlier export's folder, <app>/ with its marker: no longer written, but what it published

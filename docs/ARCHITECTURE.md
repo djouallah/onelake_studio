@@ -696,7 +696,11 @@ A model file or an app's file on this machine opens in a tab, as one from the tr
 - **A file named `<name>.ossie.yaml`** is a model by its name: the Apache Ossie spec names no extension, and Ossie's own
   tools (its compliance suite and grader) name a model `*.ossie.yaml`. Studio's own copies are named so too.
 - **In VS Code**, a `.fabricapp` and a `*.ossie.yaml` open in OneLake Studio by default (custom editors that hand them
-  over and close their own tab; *Reopen Editor With… > Text Editor* shows the text). A `.bim` or an Ossie `.yaml` opens as text, with **Open in OneLake Studio** on the editor's title bar, by
+  over and close their own tab; *Reopen Editor With… > Text Editor* shows the text). When the desktop app is installed,
+  they open in the app: the editor finds it by the key its installer writes (`OneLakeStudio.Model`'s open command) and
+  starts it with the file. Without the app, or if it fails to start, they open in the extension. This matters for a
+  Windows double-click on a `*.ossie.yaml`: Windows goes by the last extension only, `.yaml`, whose default is often
+  VS Code. A `.bim` or an Ossie `.yaml` opens as text, with **Open in OneLake Studio** on the editor's title bar, by
   what the file holds (`onelakeStudio.modelPaths`), so other YAML has none; Explorer's right-click offers it on a
   `.yaml`, `.yml`, `.bim` or `.fabricapp`.
 - **In the desktop app**, File › Open… (Ctrl+O); a double-click on a `.fabricapp`, whose default app it is; and
@@ -727,14 +731,16 @@ One of two writes, with Upload (above). The Report's **Export to Fabric** button
 the model's Report as a Fabric app, and nothing else of Explore (item type `AppBackend`, named
 `<model>-explore`). VS Code and the extension are all it needs: no CLI, no Node, no GitHub.
 
-**The local copy is one file**, `<model>-explore.fabricapp`, a zip with an extension of its own (as a `.vsix` is), so
+**The local copy is one file**, `<model>.fabricapp`, a zip with an extension of its own (as a `.vsix` is), so
 VS Code and the desktop app open it (Opening files from disk, below). It is the whole app but its packages (DuckDB-WASM,
 Arrow, the Rayfin SDK, ECharts), which are the extension's own and are added when it publishes, so the file is a few MB.
 It holds `site/`, `rayfin/`, `AGENTS.md` and `export.json`, the record of what was published, and a client-side app's
 model. Its report, `site/report.json`, is the Report tab's (Explore, above). No export writes that entry again, and it
 is not one of the local changes an export asks about, so a person or an agent grows it in the file and exports again to
-publish it. One an earlier export saved as `<model>-explore.zip` is offered under its new name, and renamed when saved
-there.
+publish it. The Save dialog first offers the model file's own name, its model extension (`.ossie.yaml`, `.yaml`, `.bim`)
+made `.fabricapp`: `sales.ossie.yaml` is `sales.fabricapp`, and a semantic model's app is `<model name>.fabricapp`. After
+that it offers where the app was saved last. The app's name in Fabric is still `<model>-explore`. One an earlier
+export saved as `<model>-explore.zip` is offered under its new name, and renamed when saved there.
 
 **The app runs on the model as exported**, never on the lakehouse's file as it is now:
 - **Client side**, the file holds its model, `model.ossie.yaml` (`model.bim` for a .bim; `model.yaml` from an earlier export still reads), and each publish makes the site's
@@ -759,7 +765,7 @@ and the command line's `export` takes no `--mode`.
 
 **What it writes**
 - **The app**, in Fabric.
-- **A local copy of the app**, one file, `<model>-explore.fabricapp`, where you save it. An earlier export's
+- **A local copy of the app**, one file, `<model>.fabricapp`, where you save it. An earlier export's
   `<model>-explore/` folder is no longer written; the app it published stays the zip's.
 
 **What a model file needs** (a semantic model exported as it is needs none of it)

@@ -724,16 +724,42 @@ async function activateInner(context) {
   const fileNameOf = n => sqlStr(fileSqlName(n, n.kind === 'dir' ? n.dir : String(n.path).replace(/^.*?\/Files\/?/, '')));
   const isFileNode = n => n.kind === 'file' || n.kind === 'dir';
 
+  // The desktop app's exe, when it is installed: the open command its installer writes for a model
+  // (desktop/src-tauri/hooks.nsh), and the uninstaller deletes. HKCR is both a per-user and a per-machine
+  // install. null anywhere else, or when the key or the exe is gone.
+  function installedApp() {
+    if (process.platform !== 'win32') return Promise.resolve(null);
+    return new Promise(resolve => {
+      require('node:child_process').execFile('reg.exe', ['query', 'HKCR\\OneLakeStudio.Model\\shell\\open\\command', '/ve'],
+        { windowsHide: true, timeout: 5000 }, (err, stdout) => {
+          const exe = !err && /"([^"]+\.exe)"/i.exec(String(stdout));
+          resolve(exe && existsSync(exe[1]) ? exe[1] : null);
+        });
+    });
+  }
+  // The file opened in the desktop app: true once it started, false if it could not. A running app
+  // gets the file from its single instance and comes to the front (desktop/src-tauri/src/main.rs).
+  function openInApp(exe, fsPath) {
+    return new Promise(resolve => {
+      const child = require('node:child_process').spawn(exe, [fsPath], { detached: true, stdio: 'ignore' });
+      child.once('spawn', () => { child.unref(); resolve(true); });
+      child.once('error', e => { if (out) out.appendLine(`the desktop app could not open ${fsPath}, so it opens here — ${(e && e.message) || e}`); resolve(false); });
+    });
+  }
+
   // A .fabricapp, or a model named as Ossie's tools name one (*.ossie.yaml), opened in VS Code opens in
-  // OneLake Studio: its editor hands the file to openPath and closes its own empty tab ("Reopen Editor
-  // With… Text Editor" still shows the text). The desktop app opens files itself (desktop/node/main.js).
+  // OneLake Studio: in the desktop app when it is installed, else here by openPath. Either way its editor
+  // closes its own empty tab ("Reopen Editor With… Text Editor" still shows the text). The desktop app's
+  // vscode has no custom editors: it opens files itself (desktop/node/main.js).
   if (vscode.window.registerCustomEditorProvider) {
     for (const viewType of ['onelakeStudio.fabricApp', 'onelakeStudio.ossieModel']) {
       context.subscriptions.push(vscode.window.registerCustomEditorProvider(viewType, {
         openCustomDocument: uri => ({ uri, dispose() {} }),
-        resolveCustomEditor: (doc, webviewPanel) => {
+        resolveCustomEditor: async (doc, webviewPanel) => {
           webviewPanel.webview.html = '<p>Opened in OneLake Studio.</p>';
           setTimeout(() => webviewPanel.dispose(), 0);
+          const exe = doc.uri.scheme === 'file' ? await installedApp() : null;
+          if (exe && await openInApp(exe, doc.uri.fsPath)) return;
           return openPath(doc.uri);
         },
       }, { supportsMultipleEditorsPerDocument: false }));
