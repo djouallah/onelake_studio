@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Export to Fabric: OneLake Studio</title>
+  <meta name="description" content="Export to Fabric publishes a model's Report as a Fabric app that people open in the browser. It is experimental and will change.">
+  <link rel="icon" href="icon.png">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="site-header">
+    <div class="wrap">
+      <a class="brand" href="./"><img src="icon.png" alt="" width="28" height="28">OneLake Studio</a>
+      <nav class="site-nav" aria-label="Main">
+        <a href="features.html">Features</a>
+        <a href="export-to-fabric.html" aria-current="page">Export to Fabric</a>
+        <a href="architecture.html">Architecture</a>
+        <a href="design.html">Design</a>
+        <a href="dax-sql.html">dax-sql</a>
+        <a href="changelog.html">Changelog</a>
+        <a href="https://github.com/djouallah/onelake_studio">GitHub</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <section class="intro">
+      <h1>Export to Fabric</h1>
+      <p class="lead">Export to Fabric publishes a model's Report as a Fabric app. People open it in the browser after signing in to Fabric, and use its tiles and slicers there with nothing to install.</p>
+    </section>
+
+    <section>
+      <h2 id="experimental">It is experimental, and it will change</h2>
+      <p>Export to Fabric is an experiment. It works today, but it is not finished, and you should not build on it yet.</p>
+      <ul>
+        <li>It is built on Fabric apps, which is new and still changing. When Fabric apps changes, the export and the apps it makes change with it.</li>
+        <li>What the export asks, what the app looks like, the .fabricapp file, and how the app signs in and reads its data can all change from one version of OneLake Studio to the next.</li>
+        <li>An app you publish today may need to be exported again after an update, and may stop working until you do.</li>
+        <li>Numbers computed from a semantic model aren't guaranteed to match Power BI.</li>
+      </ul>
+      <p>The rest of OneLake Studio only reads. Export to Fabric is one of the two features that write, with Upload Files, and it asks before it writes anything.</p>
+    </section>
+
+    <section>
+      <h2 id="what">What it publishes</h2>
+      <p>The export publishes the Report page of a model, as it is, with the Fabric REST API. Only people who can open the app in Fabric can load it.</p>
+      <p>The app is also saved on your computer as one .fabricapp file. Double-click it to open it again in OneLake Studio, on its Report page.</p>
+    </section>
+
+    <section>
+      <h2 id="kinds">Two kinds of app</h2>
+      <div class="table-box">
+        <table>
+          <thead>
+            <tr><th>Made from</th><th>How the app reads</th><th>What it needs</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>A Power BI semantic model</td><td>The page turns each query into DAX and runs it on the model, as the person viewing it. Nothing is written to the model.</td><td>Each viewer needs Build on the model.</td></tr>
+            <tr><td>A model file, an Ossie .yaml or a .bim</td><td>DuckDB runs in the browser and reads the lakehouse's tables. The app's function creates a read-only link for each table in the model, and for no other table.</td><td>The workspace must allow OneLake user-delegated SAS tokens. The tables are read with the rights of the app's owner.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>To put a model file's app on a Power BI semantic model instead, create the semantic model from the file first, then export that model.</p>
+      <p class="more"><a href="reference.html#export-to-fabric">Export to Fabric in detail</a></p>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="wrap">
+      <nav class="footer-nav" aria-label="Reference">
+        <a href="naming.html">Naming</a>
+        <a href="reference.html">Reference</a>
+        <a href="catalog.html">Catalog</a>
+      </nav>
+      <p>A personal project, not a Microsoft product or supported by Microsoft. Results computed from a semantic model aren't guaranteed to match Power BI. MIT License.</p>
+    </div>
+  </footer>
+</body>
+</html>
