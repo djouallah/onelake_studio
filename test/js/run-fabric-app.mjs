@@ -8,8 +8,9 @@
 // the answer is made here, by the function's own code (rayfin/functions/src/function_app.ts, its types stripped),
 // with the storage token of whoever runs this, and put where the page keeps it.
 //
-// The page is loaded twice, ?split=0 then ?split=1 (storage/split.js): the queries' answers must be the same,
-// and the ones that add up must have been shared out between the engines. Both loads' times are printed.
+// The page is loaded twice: with ?split=0, each query whole on one engine, then as a viewer opens it, where a
+// large table's scan is shared out between the engines (storage/split.js). The queries' answers must be the
+// same, and the ones that add up must have been shared out. Both loads' times are printed.
 //
 // ONELAKE_TOKEN (storage) and FABRIC_TOKEN (the Fabric API, to find the ids), ONELAKE_CI_WORKSPACE and
 // ONELAKE_CI_LAKEHOUSE by name; FABRIC_APP_TABLE (schema.table: a table of several files, over 32 MB, or nothing
@@ -145,7 +146,7 @@ try {
       r.text = text(table);
     } catch (e) { r.failed = String(e?.message || e).split("\\n")[0]; }
   }
-  window.__done = { out };
+  window.__done = { out, shared: data.shared() };
 } catch (e) { window.__done = { error: String(e?.stack || e) }; }
 `;
 
@@ -208,7 +209,7 @@ try {
     const logs = [];
     tab.on("pageerror", e => console.log("[pageerror]", e.message));
     tab.on("console", m => { const t = m.text(); if (t.startsWith("[split]") || t.startsWith("[store]")) logs.push(t.split("\n")[0]); });
-    await tab.goto(`http://127.0.0.1:${PORT}/test.html?split=${split}&engines=${ENGINES}`);
+    await tab.goto(`http://127.0.0.1:${PORT}/test.html?engines=${ENGINES}${split}`);
     let last = "";
     for (;;) {
       const done = await tab.evaluate(() => window.__done ?? null);
@@ -219,24 +220,27 @@ try {
     }
   };
   console.log(`whole: each query on one engine of ${ENGINES}`);
-  const whole = await load(0);
-  console.log(`split: each query's scan shared out between ${ENGINES} engines`);
-  const split = await load(1);
-  for (const line of split.logs) console.log(`  ${line}`);
+  const whole = await load("&split=0");
+  for (const line of whole.logs) console.log(`  ${line}`);
+  console.log(`as a viewer opens it: each query's scan shared out between ${ENGINES} engines`);
+  const split = await load("");
+  // Whole once more, the store read as it was for the load above: a visit's first run of each query, like for like.
+  const again = await load("&split=0");
 
   const checks = [];
   const check = (ok, what) => { checks.push(ok); console.log(`${ok ? "ok  " : "FAIL"} ${what}`); };
-  const shared = split.logs.filter(l => new RegExp(` on ${ENGINES} engines, `).test(l)).length;
   for (const [i, q] of queries.entries()) {
     const a = whole.out[i], b = split.out[i];
     if (a.failed || b.failed) { check(false, `${q.name}: ${a.failed ? `whole: ${a.failed}` : ""} ${b.failed ? `split: ${b.failed}` : ""}`); continue; }
     const ok = same(a.text, b.text);
-    check(ok, `${q.name}: ${a.rows} rows, the same split as whole; whole ${a.again} ms, split ${b.again} ms` +
+    // Each load's first run of the query, the store read by the load before it.
+    check(ok, `${q.name}: ${a.rows} rows, the same shared out as whole; whole ${again.out[i].ms} ms, shared out ${b.ms} ms` +
       (ok ? "" : `\n     whole ${a.text.slice(0, 400)}\n     split ${b.text.slice(0, 400)}`));
   }
   const wanted = queries.filter(q => q.splits).length;
-  // Each query is run twice.
-  check(shared === wanted * 2, `${shared} runs were shared out between the engines (${wanted} queries add up, each run twice)`);
+  // Each once: its second run is answered from the results this browser kept.
+  check(whole.shared === 0, `with ?split=0, ${whole.shared} queries were shared out`);
+  check(split.shared === wanted, `with nothing in the address, ${split.shared} queries were shared out between the engines (${wanted} add up)`);
   code = checks.every(Boolean) ? 0 : 1;
 } catch (e) {
   console.log(`FAIL ${e?.stack || e}`);

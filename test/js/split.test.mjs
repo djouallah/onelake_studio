@@ -1,5 +1,5 @@
 // split.js: a compiled query's scan of a large table shared out between the Fabric app's
-// engines (an experiment, ?split=1): which CTEs split, their partials, and the final statement.
+// engines: which CTEs split, their partials, and the final statement.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 

@@ -171,6 +171,9 @@ jobs:
           --test-coverage-include=cli/cli.mjs --test-coverage-include=cli/agent.js --test-coverage-include=cli/bridge.js
           test/js/sqllogic.test.mjs test/js/cli-engine.test.mjs
           test/js/cli.test.mjs test/js/cli-contract.test.mjs test/js/agent.test.mjs test/js/bridge.test.mjs
+      # The Fabric app's split on what the pinned dax-sql writes: each query whole and shared out, on DuckDB.
+      - if: runner.os == 'Linux'
+        run: node --test test/js/split-compiled.test.mjs
 
   # The command line where it runs for most people: a named pipe, not a socket, and another
   # shell's idea of an argument. Everything but the engine, so nothing to install.

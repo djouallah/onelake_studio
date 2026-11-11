@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+- **A Fabric app reads a large table with all its engines.** A query over a table of more than 32 MB ran on one
+  engine while the others waited. Its scan is now shared out between them, each engine reading its share of the
+  table's files, and one adds the answers up. Measured on a 3.6 GB table with four engines, a sum by a column went from
+  5.1 s to 1.2 s. Sums, counts, minimums and maximums are shared out; a distinct count or an average still runs on one
+  engine. The app starts as many engines as half the machine's cores, two at least and four at most.
+  `?split=0` in the app's address runs every query on one engine, to compare.
+- **The Report's + adds a page again.** It answered "The report could not be read" while the new page's name was
+  ready to be typed.
+
 ## 0.2.20
 
 - **The Report looks the part.** A tile's title is in the text colour and lines up with what is under it; its tools

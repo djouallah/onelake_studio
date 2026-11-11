@@ -37,13 +37,14 @@
 // Each view is at the snapshot the catalog named (catalog.js keeps that answer up to ~55
 // minutes, so a reload within it reads the same snapshots).
 // DuckDB-WASM runs single-threaded here, so the page runs a pool of engines (ENGINES, each its
-// own worker and memory, 2 by default (3 measured no faster, 2026-10-28); `?engines=N` in the
+// own worker and memory: half the machine's cores, 2 at least and 4 at most; `?engines=N` in the
 // URL, 1 to 4, to compare), fed by one queue: a free engine takes the next query, so a
 // render's queries run side by side and a long one holds up only its own engine. A table is planned
 // and its files downloaded once, whichever engine opens it first; each engine then has its own
 // view (and its own copy of a small table). All the workers share the store.
-// An experiment, `?split=1`: a query's scan of a large table shared out between the engines,
-// each over its share of the files, and the rest of it run by one (split.js).
+// A query's scan of a large table is shared out between the engines, each over its share of the
+// files, and the rest of it run by one (split.js): about four times faster on four engines
+// (3.6 GB, 2026-11-11). `?split=0` in the URL runs every query whole, to compare.
 //
 // The members the page calls:
 //   init            sign in, locate the tables, size them; nothing opened yet
@@ -86,13 +87,16 @@ const BLOCKCACHE = new URL('./blockcache.js' + new URL(import.meta.url).search, 
 const MODEL_JSON = new URL("../model.json" + new URL(import.meta.url).search, import.meta.url).href;
 const ENGINES = (() => {
   try { const n = Number(new URLSearchParams(location.search).get('engines')); if (n >= 1 && n <= 4) return Math.floor(n); } catch (e) {}
-  return 2;
+  // Half the cores: the page, the store's worker and the browser need the rest. Four engines shared a scan
+  // out about four times faster than one; eight, little more than four.
+  let cores = 4; try { cores = navigator.hardwareConcurrency || 4; } catch (e) {}
+  return Math.min(4, Math.max(2, Math.floor(cores / 2)));
 })();
-// An experiment (split.js): `?split=1` shares a large table's scan out between the engines.
+// A large table's scan is shared out between the engines (split.js), unless the URL says `?split=0`.
 // With `split` in the URL at all (0 or 1), no result is read back from this browser and each
 // query's time is written to the console, so the two can be compared.
 const SPLIT_ASKED = (() => { try { return new URLSearchParams(location.search).get('split'); } catch (e) { return null; } })();
-const SPLIT = SPLIT_ASKED === '1', TIMED = SPLIT_ASKED != null;
+const SPLIT = SPLIT_ASKED !== '0', TIMED = SPLIT_ASKED != null;
 const STORE_WAIT = 30000;   // how long the page waits for the store's writer to answer
 
 // An Ossie dataset's table as schema.table, or null when it reads none. `source` is required
@@ -542,7 +546,7 @@ export function createDataSource({ onStatus = () => {}, onProgress = () => {} } 
   // share of the files, its answer copied out as Parquet (the engine's own types: a result
   // read by the page has its BIGINTs and DECIMALs as DOUBLEs); then the statement, over those
   // answers, on one engine. Null when nothing of `sql` splits.
-  let splits = 0;
+  let splits = 0, shared = 0, splitFailed = false;
   function splitRun(sql, options) {
     if (!SPLIT || engines.length < 2) return null;
     const plan = splitPlan(sql, n => { const t = located.get(n); return !!t && !small(t) && (t.record?.files.length ?? 0) >= 2; });
@@ -573,7 +577,8 @@ export function createDataSource({ onStatus = () => {}, onProgress = () => {} } 
           return await e.conn.query(final);
         } finally { for (const a of answers) await e.db.dropFile(a.name).catch(() => {}); }
       }, { ...options, names: namedIn(final) });
-      console.log(`[split] ${Math.round(performance.now() - started)} ms: ${plan.parts.map(p => p.table).join(', ')} on ${engines.length} engines, ` +
+      shared++;
+      if (TIMED) console.log(`[split] ${Math.round(performance.now() - started)} ms: ${plan.parts.map(p => p.table).join(', ')} on ${engines.length} engines, ` +
         `parts ${answers.map(a => `${a.cte}@${a.engine} ${a.ms} ms`).join(', ')} (${answers.reduce((n, a) => n + a.size, 0)} bytes), ` +
         `the rest ${Math.round(performance.now() - partsDone)} ms`);
       return result;
@@ -740,6 +745,8 @@ importScripts("${bundle.mainWorker}");`], { type: "text/javascript" }));
     // The semantic model as the lakehouse holds it (an Ossie document or TMSL), once init has
     // answered.
     model: () => model,
+    // How many queries were shared out between the engines so far (split.js).
+    shared: () => shared,
     // `options`: the page's for the queue (queue.js): `stale`, `early`, `later`.
     // A result already computed on these snapshots, on this visit or an earlier one, is read
     // back from this browser (results.js) instead: the page's own cache (explore/view.js) holds the
@@ -749,7 +756,7 @@ importScripts("${bundle.mainWorker}");`], { type: "text/javascript" }));
       const saved = key && await results.get(key);
       if (saved) return saved;
       await enginesUp;
-      return healing(() => readyFor(sql).then(() => splitRun(sql, options) ?? (async () => {
+      const whole = async () => {
         const started = performance.now();
         const r = await submit(async e => {
           await openFor(e, sql);
@@ -757,7 +764,14 @@ importScripts("${bundle.mainWorker}");`], { type: "text/javascript" }));
         }, { ...options, names: namedIn(sql) });
         if (TIMED) console.log(`[split] ${Math.round(performance.now() - started)} ms: one engine, ${namedIn(sql).join(', ')}`);
         return r;
-      })())).then(r => {
+      };
+      // Shared out when it can be; should that fail, whole, on one engine: sharing a query out is for
+      // speed, and must not be why a tile has no answer. Said once, in the console.
+      return healing(() => readyFor(sql).then(() => splitRun(sql, options)?.catch(err => {
+        if (err?.skipped) throw err;
+        if (!splitFailed) { splitFailed = true; console.warn('[split] a query shared out between the engines failed, and runs whole instead', err); }
+        return whole();
+      }) ?? whole())).then(r => {
         if (key) results.put(key, r);
         return r;
       });

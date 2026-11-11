@@ -1,5 +1,5 @@
 // =============================================================================
-// split.js — a query's scan of a large table, shared out between the engines (an experiment)
+// split.js — a query's scan of a large table, shared out between the engines
 // =============================================================================
 // DuckDB-WASM runs one thread an engine, so a query over a large table uses one core while the
 // other engines wait. The compiler (dax-sql) reads a fact table inside a CTE of its own, a plain
