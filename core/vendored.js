@@ -17,7 +17,7 @@ const PINS = {
   // (ECharts 5 ships no maps). Only that file of the package.
   worldMap: 'echarts@4.9.0',
   // The DAX-to-SQL compiler behind semantic models (semantic.js), from npm.
-  daxSql: 'dax-sql@0.1.7',
+  daxSql: 'dax-sql@0.2.0',
 };
 
 // The web app's (Export to Fabric, fabric_app/site): everything its page runs, so it loads

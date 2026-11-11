@@ -5,6 +5,8 @@
 - **A model file opened from disk has Export to Fabric.** A `.bim` or Ossie `.yaml` on this machine, such as a
   semantic model downloaded from the tree, exports as a model file in a lakehouse does: client side, in the
   workspace its tables are in, when it names one lakehouse. Its `.fabricapp` opens and exports again the same way.
+- **dax-sql 0.2.0.** A query 0.1.7 answered no longer fails on Fabric's planner limits; object-level security is
+  answered as Power BI answers it; a fact table is grouped by its keys before its joins under a slicer or a role too.
 
 ## 0.2.21
 
