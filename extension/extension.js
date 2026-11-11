@@ -964,14 +964,31 @@ async function activateInner(context) {
       await vscode.env.clipboard.writeText(name);
       vscode.window.setStatusBarMessage(`Copied ${name}`, 3000);
     }),
-    // A file of the tree, or a semantic model's YAML (its local copy, read from Fabric first if there is
-    // none yet), saved where the save dialog says. A file is read from OneLake after the dialog.
+    // A file of the tree, as it is, or a semantic model in the format picked: Ossie, its local copy
+    // (read from Fabric first if there is none yet), or TMSL, Fabric's own model.bim, kept beside the
+    // copy (fetchModelBim). Saved where the save dialog says; a file is read from OneLake after it.
     vscode.commands.registerCommand('onelakeStudio.downloadFile', async n => {
       if (!n || !(n.kind === 'file' || (n.kind === 'semanticModel' && n.model))) return;
-      const name = n.kind === 'file' ? basename(String(n.path)) : modelFileName(n.model);
+      let tmsl = false;
+      if (n.kind === 'semanticModel') {
+        const ossieName = modelFileName(n.model);
+        const pick = await vscode.window.showQuickPick([
+          { label: 'Ossie', description: `${ossieName}    experimental`, tmsl: false },
+          { label: 'TMSL', description: `${ossieName.replace(/\.ossie\.yaml$/, '.bim')}    Power BI default`, tmsl: true },
+        ], { title: `Download ${n.model}` });
+        if (!pick) return;
+        tmsl = pick.tmsl;
+      }
+      const name = n.kind === 'file' ? basename(String(n.path))
+        : tmsl ? modelFileName(n.model).replace(/\.ossie\.yaml$/, '.bim') : modelFileName(n.model);
       try {
+        if (tmsl && connectivity.offline() && !existsSync(core.models.modelBimPath(n))) {
+          vscode.window.showInformationMessage(`${n.model}'s TMSL is read from Fabric, and this copy was read before it was kept: Refresh it once online.`);
+          return;
+        }
         const bytes = n.kind === 'file'
           ? () => onelake.readBytes(n.workspace, n.path)
+          : tmsl ? await core.models.fetchModelBim(n)
           : Buffer.from((await fetchModel(n)).text, 'utf8');
         const saved = await saveFile(name, bytes);
         if (saved) vscode.window.setStatusBarMessage(`Saved ${saved}`, 5000);

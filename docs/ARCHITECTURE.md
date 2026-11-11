@@ -469,8 +469,10 @@ once and counts, though the answer still comes through the host.
   reads it. **Clear Query Variables** forgets them, in every tab of the window.
 - **From the tree:** a table's right-click has Select Top Rows, Copy SQL Name and Copy Column List. Files, folders
   and semantic models have no right-click: their actions are icons on the row, shown on hover.
-  - **A file:** Download File… and Copy SQL Name. A semantic model: Download File… (its YAML, read from Fabric first
-    when there is no local copy yet) and Copy SQL Name. A file is read from OneLake after the save
+  - **A file:** Download File… and Copy SQL Name. A semantic model: Download File…, which asks Ossie (its local copy,
+    `<model>.ossie.yaml`, read from Fabric first when there is none yet; experimental) or TMSL (`<model>.bim`, Fabric's
+    own model.bim, kept beside the copy each time Fabric is read, so it downloads offline; Power BI's default), and Copy
+    SQL Name. A file is read from OneLake after the save
     dialog, so a cancel reads nothing.
   - **A folder** (Files/ itself, or one under it): **Upload Files…**, Copy SQL Name and Refresh. Upload picks files on
     this computer and writes each into that folder ([`fabric_app/export/onelakewrite.js`](../fabric_app/export/onelakewrite.js)): a name already

@@ -68,6 +68,10 @@ function createModels({ onelake, fabric, semviews, modules, modelsFolder, accoun
     return path;
   };
 
+  // Fabric's own definition of a model, its model.bim as getDefinition gives it, kept beside the copy
+  // each time Fabric is read: Download's TMSL, offline too.
+  const modelBimPath = n => modelPath(n).replace(/\.ossie\.yaml$/, '.bim');
+
   // A model's local copy (fetchModel), when there is one: the tree's check mark.
   const modelKey = n => `${n.workspace}|${n.modelId}`;
   const cachedModel = n => (existsSync(modelPath(n)) ? modelPath(n) : null);
@@ -89,6 +93,19 @@ function createModels({ onelake, fabric, semviews, modules, modelsFolder, accoun
   // `${path}|${fresh}`, lower-cased -> Promise<{ path, text }>: a fresh read never joins one that
   // may answer from the local copy, and one account's never joins another's.
   const fetching = new Map();
+  const writeWhole = async (to, body) => {
+    const partial = `${to}.${process.pid}.tmp`;
+    await fsp.writeFile(partial, body);
+    await fsp.rename(partial, to).catch(async e => { await fsp.rm(partial, { force: true }).catch(() => {}); throw e; });
+  };
+  // Fabric's model.bim of a model, as Fabric gave it: the one kept beside the copy, else read from
+  // Fabric now (with the copy, as a Refresh reads it). A copy from before it was kept has none.
+  async function fetchModelBim(n, { say = () => {} } = {}) {
+    const kept = await fsp.readFile(modelBimPath(n)).catch(() => null);
+    if (kept) return kept;
+    await fetchModel(n, { fresh: true, say });
+    return fsp.readFile(modelBimPath(n));
+  }
   function fetchModel(n, { fresh = false, say = () => {} } = {}) {
     const path = modelPath(n);
     const key = `${path}|${!!fresh}`.toLowerCase();
@@ -100,6 +117,7 @@ function createModels({ onelake, fabric, semviews, modules, modelsFolder, accoun
       }
       say('reading its definition from Fabric…');
       const bim = await fabric.getBim(n.workspace, n.modelId);
+      const bimBytes = Buffer.from(bim);
       let doc;
       try { doc = JSON.parse(stripBom(Buffer.from(bim).toString('utf8'))); }
       catch (e) { throw new Error(`its definition is not TMSL: ${e.message}`); }
@@ -140,9 +158,8 @@ function createModels({ onelake, fabric, semviews, modules, modelsFolder, accoun
       const text = compiler.stringifyYaml(ossie, { lineWidth: 0 });
       await fsp.mkdir(dirname(path), { recursive: true });
       // Whole or not at all: this file is what later opens trust, with nothing to say it was cut short.
-      const partial = `${path}.${process.pid}.tmp`;
-      await fsp.writeFile(partial, text);
-      await fsp.rename(partial, path).catch(async e => { await fsp.rm(partial, { force: true }).catch(() => {}); throw e; });
+      await writeWhole(modelBimPath(n), bimBytes);
+      await writeWhole(path, text);
       log(`downloaded ${n.workspace}/${n.model} -> ${path} (${fmtBytes(Buffer.byteLength(text))})`);
       onModelChanged(n);
       return { path, text };
@@ -281,7 +298,7 @@ function createModels({ onelake, fabric, semviews, modules, modelsFolder, accoun
 
   return {
     adoptModels, adopted: () => modelsAdopted,
-    modelPath, modelKey, cachedModel, unsupportedModels, unsupportedNote,
+    modelPath, modelBimPath, fetchModelBim, modelKey, cachedModel, unsupportedModels, unsupportedNote,
     fetchModel, walkTables, openSqlModel, completionNames, modelFile,
     forgetNames: () => { namesKept = null; },
   };

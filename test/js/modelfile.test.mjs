@@ -97,3 +97,16 @@ test("a model that reads no lakehouse is refused", async () => {
   await assert.rejects(models.modelFile(await file("x.yaml")), /reads no lakehouse/);
   await done();
 });
+
+test("a semantic model's TMSL is Fabric's model.bim kept beside its Ossie copy, read with no request", async () => {
+  const { models, done } = await setup();
+  const n = { kind: "semanticModel", workspace: "aemo", model: "NEM Sales", modelId: "m1" };
+  assert.match(models.modelBimPath(n), /[\/]aemo[\/]NEM Sales\.bim$/);
+  assert.equal(models.modelBimPath(n), models.modelPath(n).replace(/\.ossie\.yaml$/, ".bim"), "beside the copy");
+  const { mkdir } = await import("node:fs/promises");
+  const { dirname } = await import("node:path");
+  await mkdir(dirname(models.modelBimPath(n)), { recursive: true });
+  await writeFile(models.modelBimPath(n), '{"model":{}}');
+  assert.equal((await models.fetchModelBim(n)).toString("utf8"), '{"model":{}}', "the kept file, as it is: fabric is {} here");
+  await done();
+});
