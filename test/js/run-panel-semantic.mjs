@@ -181,10 +181,18 @@ try {
   // A Report tile's statement is one a person can run: Logs shows it as it was written (enginelog.js sourceOf)
   // and its Open puts it in a SQL box. It said FROM model, a name no SQL box takes. Here, what the Report
   // really sends; that such a statement runs is the command line's test (cli-engine.test.mjs).
+  // The model opened again first: the visual's own answer is kept by the view it ran in, and the tile asks the
+  // same thing, so in the same view it would be answered from there and send nothing.
   await page.click('#modelView .subtab[data-apage="pivot"]');
   await page.locator("#modelView button", { hasText: "Add to report" }).click();
+  await page.evaluate(path => window.postMessage({
+    type: "open-file", workspace: "ws", item: "shop.Lakehouse", path, bytes: 1,
+  }, "*"), BIM_PATH.slice(1).replace(/^ws\//, ""));
+  await page.waitForFunction(() => !document.getElementById("modelView").hidden && document.querySelector('#modelView .subtab[data-apage="report"]'), { timeout: 90000 });
   const before = host.calls.length;
   await page.click('#modelView .subtab[data-apage="report"]');
+  // The tile is on the page it was added to, the second one.
+  await page.locator("#modelView .rp-page-name", { hasText: "Second" }).click();
   await page.waitForFunction(() => /blue/.test(document.querySelector("#modelView .rp-tile table")?.textContent ?? ""), { timeout: 60000 })
     .catch(async () => { throw new Error(`the Report's tile never drew: ${(await page.locator("#modelView").innerText()).replace(/\s+/g, " ").slice(-300)}`); });
   const { sourceOf } = require("../../core/engine/enginelog.js");
