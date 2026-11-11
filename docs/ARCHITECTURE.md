@@ -707,6 +707,12 @@ A model file or an app's file on this machine opens in a tab, as one from the tr
   Windows' "Open with" on a `.yaml`, `.yml` or `.bim`, which lists it without becoming their default (the installer,
   [`desktop/src-tauri/hooks.nsh`](../desktop/src-tauri/hooks.nsh)). A file the app is started with reaches the Node
   process as a line on its stdin, `{"open":"<path>"}`, also when the app is already running (its single instance).
+  Windows lets only the person make the app `.yaml`'s default (*Open with › Choose another app › Always*), and a
+  double-click on a `*.ossie.yaml` then opens straight in the app, with no stop in VS Code. Any YAML then starts
+  the app's exe, which reads it before a window shows: a model (`*.ossie.yaml`, or a top-level `version:` and
+  `datasets:`) opens in the app, and any other YAML goes on to the program that opened it before, VS Code first
+  among `.yaml`'s other "Open with" programs, else Windows' own Open with dialog (`open_elsewhere` in
+  [`desktop/src-tauri/src/main.rs`](../desktop/src-tauri/src/main.rs)).
   A file dropped on the window is not opened: the window gets no path for it.
 
 ## Create Semantic Model

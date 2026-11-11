@@ -5,6 +5,10 @@
 - **An Ossie model or a `.fabricapp` opened in VS Code opens in the desktop app, when it is installed.** This
   includes a double-click in Windows on a `*.ossie.yaml`, which Windows hands to VS Code as a `.yaml`. Without the
   app, it opens in the extension as before.
+- **The desktop app can be `.yaml`'s default program, so an Ossie model opens straight in it.** Windows lets only you
+  choose it: right-click a `.yaml`, *Open with › Choose another app › OneLake Studio › Always*. A double-click on a
+  model then opens in the app with no stop in VS Code. Any other YAML, such as a dbt `schema.yml`, goes on to the
+  program that opened it before, VS Code first, and the app does not show.
 - **An export is named after its model file.** Export to Fabric suggests `sales.fabricapp` for `sales.ossie.yaml`,
   and `<model name>.fabricapp` for a semantic model, not `sales-model-explore.fabricapp`. The app keeps its name in
   Fabric. The Visual's CSV download is `<model>.csv`.

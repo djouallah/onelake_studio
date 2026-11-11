@@ -25,16 +25,121 @@ struct App {
     pending: Mutex<Vec<String>>,
 }
 
-// The files among a start's arguments that the app opens: a .fabricapp, a model .yaml, .yml or .bim.
+fn ext_of(p: &Path) -> String {
+    p.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase()
+}
+
+fn is_yaml(p: &Path) -> bool {
+    matches!(ext_of(p).as_str(), "yaml" | "yml")
+}
+
+// Whether a YAML file is an Ossie model: named *.ossie.yaml as Ossie's tools name one, or its top level
+// has the spec's version and datasets (page/semantic.js isOssie). A dbt schema.yml has neither.
+fn is_model_yaml(p: &Path) -> bool {
+    let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("").to_ascii_lowercase();
+    if name.ends_with(".ossie.yaml") || name.ends_with(".ossie.yml") {
+        return true;
+    }
+    let Ok(f) = File::open(p) else { return false };
+    let mut head = Vec::new();
+    let _ = std::io::Read::read_to_end(&mut std::io::Read::take(f, 1 << 20), &mut head);
+    let text = String::from_utf8_lossy(&head);
+    let text = text.trim_start_matches('\u{feff}');
+    text.lines().any(|l| l.starts_with("datasets:")) && text.lines().any(|l| l.starts_with("version:"))
+}
+
+// The files among a start's arguments that the app opens: a .fabricapp, a .bim, a model .yaml or .yml.
 fn files_in(args: &[String]) -> Vec<String> {
     args.iter().skip(1)
         .filter(|a| {
             let p = Path::new(a.as_str());
-            let ext = p.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
-            ["fabricapp", "yaml", "yml", "bim"].contains(&ext.as_str()) && p.is_file()
+            p.is_file() && match ext_of(p).as_str() {
+                "fabricapp" | "bim" => true,
+                "yaml" | "yml" => is_model_yaml(p),
+                _ => false,
+            }
         })
         .cloned()
         .collect()
+}
+
+// The YAML files among a start's arguments that are not models: when the app is .yaml's default
+// program, a double-click on any YAML starts it, and these go on to the program that opens YAML
+// otherwise, before a window shows.
+fn other_yaml_in(args: &[String]) -> Vec<String> {
+    args.iter().skip(1)
+        .filter(|a| { let p = Path::new(a.as_str()); is_yaml(p) && p.is_file() && !is_model_yaml(p) })
+        .cloned()
+        .collect()
+}
+
+// A key's values as reg.exe prints them, (name, text after its type); `default`: its default value alone.
+fn reg_values(key: &str, default: bool) -> Vec<(String, String)> {
+    let mut cmd = Command::new("reg.exe");
+    cmd.arg("query").arg(key).creation_flags(CREATE_NO_WINDOW);
+    if default { cmd.arg("/ve"); }
+    let Ok(out) = cmd.output() else { return vec![] };
+    String::from_utf8_lossy(&out.stdout).lines()
+        .filter_map(|l| {
+            let l = l.trim_start();
+            ["REG_EXPAND_SZ", "REG_SZ"].iter().find_map(|t| {
+                let at = l.find(&format!("    {t}"))?;
+                Some((l[..at].trim().to_string(), l[at + 4 + t.len()..].trim().to_string()))
+            })
+        })
+        .collect()
+}
+
+// %NAME% from the environment, as an REG_EXPAND_SZ command has it. %1, %L and %* are not names.
+fn expand_env(s: &str) -> String {
+    let mut out = String::new();
+    let mut rest = s;
+    while let Some(i) = rest.find('%') {
+        out.push_str(&rest[..i]);
+        let after = &rest[i + 1..];
+        let value = after.find('%').and_then(|j| {
+            let name = &after[..j];
+            let named = name.chars().next().is_some_and(|c| c.is_ascii_alphabetic())
+                && name.chars().all(|c| c.is_ascii_alphanumeric() || "_()".contains(c));
+            if named { std::env::var(name).ok().map(|v| (v, j)) } else { None }
+        });
+        match value {
+            Some((v, j)) => { out.push_str(&v); rest = &after[j + 1..]; }
+            None => { out.push('%'); rest = after; }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+// The other program that opens this extension: its ProgIds in "Open with", VS Code's first, and
+// each one's open command. Started with the file as Explorer would, else Windows' own "Open with".
+fn open_elsewhere(path: &str) {
+    let ext = format!(".{}", ext_of(Path::new(path)));
+    let mut ids: Vec<String> = reg_values(&format!(r"HKCR\{ext}\OpenWithProgids"), false).into_iter()
+        .map(|(name, _)| name)
+        .chain(reg_values(&format!(r"HKCR\{ext}"), true).into_iter().map(|(_, v)| v))
+        .filter(|id| !id.is_empty() && !id.eq_ignore_ascii_case("OneLakeStudio.Model"))
+        .collect();
+    ids.sort_by_key(|id| !id.to_ascii_lowercase().starts_with("vscode"));
+    for id in ids {
+        let Some((_, command)) = reg_values(&format!(r"HKCR\{id}\shell\open\command"), true).into_iter().next() else { continue };
+        let command = expand_env(&command);
+        let (exe, rest) = match command.strip_prefix('"').and_then(|c| c.split_once('"')) {
+            Some((exe, rest)) => (exe.to_string(), rest.to_string()),
+            None => match command.split_once(' ') {
+                Some((exe, rest)) => (exe.to_string(), format!(" {rest}")),
+                None => (command.clone(), String::new()),
+            },
+        };
+        if !Path::new(&exe).is_file() { continue; }
+        let rest = rest.replace("%1", path).replace("%L", path).replace("%l", path).replace("%*", "");
+        let rest = if rest.contains(path) { rest } else { format!("{rest} \"{path}\"") };
+        if Command::new(&exe).raw_arg(rest.trim()).spawn().is_ok() {
+            return;
+        }
+    }
+    let _ = Command::new("rundll32.exe").arg("shell32.dll,OpenAs_RunDLL").arg(path).spawn();
 }
 
 // A file to open: a line on the Node process's stdin, or kept until it runs.
@@ -139,6 +244,14 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
     // --smoke <file>: start, write what the Node process said, and exit. For CI.
     let smoke = args.iter().position(|a| a == "--smoke").and_then(|i| args.get(i + 1)).map(PathBuf::from);
+    // YAML that is not a model goes on to its own program; started with nothing else, the app is not shown.
+    let others = other_yaml_in(&args);
+    for path in &others {
+        open_elsewhere(path);
+    }
+    if !others.is_empty() && files_in(&args).is_empty() {
+        return;
+    }
     let mut builder = tauri::Builder::default();
     if smoke.is_none() {
         // A second start shows the first window: two would run two engines on the same cache.

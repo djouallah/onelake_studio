@@ -16,7 +16,9 @@
 !macroend
 
 ; A model file, .yaml, .yml or .bim, is OneLake Studio's to open from Windows' "Open with", and never made
-; its default: .fabricapp is the only file the app takes (tauri.conf.json fileAssociations).
+; its default: .fabricapp is the only file the app takes (tauri.conf.json fileAssociations). Windows lets
+; only the person make it .yaml's default (Open with > Always); then a YAML that is not a model goes on to
+; the program that had it, before a window shows (main.rs open_elsewhere).
 !macro OpenWithModel EXT
   WriteRegStr SHCTX "Software\Classes\${EXT}\OpenWithProgids" "OneLakeStudio.Model" ""
 !macroend
