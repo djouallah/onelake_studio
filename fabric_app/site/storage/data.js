@@ -54,7 +54,7 @@
 
 import * as duckdb from "../vendor/npm/@duckdb/duckdb-wasm@1.33.1-dev114.0/+esm.js";
 import { engineQueue } from "./queue.js";
-import { OPEN, SETTINGS, DIRECT_IO } from "./session.js";
+import { OPEN, SETTINGS, DIRECT_IO, openEngine } from "./session.js";
 import { createResults } from "./results.js";
 import { createAuth } from "./auth.js";
 import { createCatalog } from "./catalog.js";
@@ -709,7 +709,7 @@ importScripts("${bundle.mainWorker}");`], { type: "text/javascript" }));
     await Promise.all(Array.from({ length: ENGINES }, async (_, i) => {
       const db = new duckdb.AsyncDuckDB(new duckdb.ConsoleLogger(), new Worker(workerUrl));
       await db.instantiate(bundle.mainModule, bundle.pthreadWorker);
-      await db.open(OPEN);   // session.js
+      await openEngine(db);   // session.js: one at a time
       const version = await db.getVersion();
       if (version !== DUCKDB) throw new Error(`the engine is DuckDB ${version}, but the site's extensions are for ${DUCKDB}`);
       if (!warmed) { warmed = true; warmExtensions(version); }

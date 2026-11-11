@@ -39,7 +39,7 @@ const QUERIES = {
 // The page: everything runs in it, and it leaves what happened in window.__done.
 const PAGE = `
 import * as duckdb from "/site/vendor/npm/${WEBAPP.duckdbWasm}/+esm.js";
-import { OPEN, SETTINGS } from "/site/storage/session.js";
+import { OPEN, SETTINGS, openEngine } from "/site/storage/session.js";
 import { splitPlan, carried } from "/site/storage/split.js";
 
 const DIST = location.origin + "/site/vendor/npm/${WEBAPP.duckdbWasm}/dist/";
@@ -51,7 +51,7 @@ async function engine(index) {
   const db = new duckdb.AsyncDuckDB(new duckdb.VoidLogger(), new Worker(URL.createObjectURL(new Blob(
     ["importScripts(" + JSON.stringify(DIST + "duckdb-browser-base.worker.js") + ");"], { type: "text/javascript" }))));
   await db.instantiate(DIST + "duckdb-base.wasm", null);
-  await db.open(OPEN);
+  await openEngine(db);
   const conn = await db.connect();
   await conn.query("SET home_directory = '/tmp'; SET custom_extension_repository = '" + EXT_REPO + "'; INSTALL parquet; LOAD parquet;");
   for (const sql of SETTINGS) await conn.query(sql);

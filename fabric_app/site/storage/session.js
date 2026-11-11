@@ -16,6 +16,20 @@ export const OPEN = {
   query: { castBigIntToDouble: true, castDecimalToDouble: true },
 };
 
+// An engine opened (db.open), one at a time in this origin, whatever tab or worker asks. DuckDB-WASM's open mounts
+// the origin's OPFS scratch space, and a mount sweeps away the scratch folders of other workers it finds without an
+// owner: a worker that opens at the same time, between making its folder and taking it, has it taken, and its open
+// fails ("NoModificationAllowedError: ... createSyncAccessHandle ..."). Seen in CI with three engines opening at once
+// (test/js/run-split.mjs); the app opens two to four. An open is short, and one after another costs little.
+export function openEngine(db) {
+  const open = () => db.open(OPEN);
+  try { if (navigator.locks?.request) return navigator.locks.request('duckdb-wasm-open', open); } catch (e) { /* no locks: below */ }
+  const run = opening.then(open);
+  opening = run.catch(() => {});
+  return run;
+}
+let opening = Promise.resolve();
+
 export const SETTINGS = [
   // Iceberg's files never change once written: a Parquet footer read holds for the session.
   'SET parquet_metadata_cache = true',

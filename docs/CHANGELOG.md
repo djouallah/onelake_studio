@@ -19,7 +19,10 @@
 - **An exported app's function builds with its own build command.** `npm run build` in the local copy's
   `rayfin/functions` failed for want of Node's type definitions, so `rayfin dev` and `rayfin up` on it would have too.
 - **Closing the engine waits for what it is doing.** It let go of DuckDB while its own once-a-second look at what was
-  read could still be running, which could end the process with no message.
+  read could still be running.
+- **A Fabric app's engines start one after another.** Started together, one of them could fail to open
+  ("NoModificationAllowedError … createSyncAccessHandle"): DuckDB-WASM's open tidies the browser's scratch space,
+  and could take another engine's for an abandoned one. The app starts two to four engines.
 - **A Fabric app on a semantic model opens again.** In 0.2.20 its page stopped at "Failed to fetch dynamically imported
   module": it asked for one of its own files where no export puts it. Export the app again to fix one already published.
 - **A Fabric app's query over a large table no longer fails with "Snappy decompression failure".** When a query read

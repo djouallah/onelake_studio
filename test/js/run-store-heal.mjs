@@ -27,7 +27,7 @@ const TYPES = { ".js": "text/javascript", ".wasm": "application/wasm", ".html": 
 // The page: everything runs in it, and it leaves what happened in window.__done.
 const PAGE = `
 import * as duckdb from "/site/vendor/npm/${WEBAPP.duckdbWasm}/+esm.js";
-import { OPEN, SETTINGS, DIRECT_IO } from "/site/storage/session.js";
+import { OPEN, SETTINGS, DIRECT_IO, openEngine } from "/site/storage/session.js";
 import { columnRanges, piecesOf, tailOf } from "/site/storage/ranges.js";
 
 const DIST = location.origin + "/site/vendor/npm/${WEBAPP.duckdbWasm}/dist/";
@@ -42,7 +42,7 @@ async function engine(settings) {
   const db = new duckdb.AsyncDuckDB(new duckdb.VoidLogger(), worker(
     "self.DUCKDB_EXT_REPO = " + JSON.stringify(EXT_REPO) + ";\\nimportScripts(" + JSON.stringify(BLOCKCACHE) + ");\\nimportScripts(" + JSON.stringify(DIST + "duckdb-browser-base.worker.js") + ");"));
   await db.instantiate(DIST + "duckdb-base.wasm", null);
-  await db.open(OPEN);
+  await openEngine(db);
   const conn = await db.connect();
   await conn.query("SET home_directory = '/tmp'; SET custom_extension_repository = '" + EXT_REPO + "'; INSTALL parquet; LOAD parquet;");
   for (const sql of settings) await conn.query(sql);
