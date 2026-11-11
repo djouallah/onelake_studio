@@ -49,8 +49,11 @@ export function panelHost({ dfsOrigin, tableOrigin, engineOptions = {}, nameTabl
 
   // window.__hostCall(msg) answers one `call`: batches are posted into the page as
   // they come, and the closing result (or error) is what the call resolves to.
+  // Every call a page made, in order: what a test reads a statement back from, as Logs does.
+  const calls = [];
   async function install(page) {
     await page.exposeBinding("__hostCall", async ({ page: p }, msg) => {
+      calls.push(msg);
       let last = null;
       await answer({ methods, engine }, msg, m => {
         if (m.type === "batch") p.evaluate(x => window.postMessage(x, "*"), m).catch(() => {});
@@ -60,7 +63,7 @@ export function panelHost({ dfsOrigin, tableOrigin, engineOptions = {}, nameTabl
     });
   }
 
-  return { engine, methods, statuses, install, close: () => engine.close() };
+  return { engine, methods, statuses, calls, install, close: () => engine.close() };
 }
 
 // ---------------------------------------------------------------------------
