@@ -8,9 +8,10 @@
 // the answer is made here, by the function's own code (rayfin/functions/src/function_app.ts, its types stripped),
 // with the storage token of whoever runs this, and put where the page keeps it.
 //
-// The page is loaded twice: with ?split=0, each query whole on one engine, then as a viewer opens it, where a
-// large table's scan is shared out between the engines (storage/split.js). The queries' answers must be the
-// same, and the ones that add up must have been shared out. Both loads' times are printed.
+// The page is loaded three times (storage/split.js): with ?split=0, each query whole on one engine; with ?split=1,
+// the table's scan shared out between the engines whatever its size; and as a viewer opens it, where only a table of
+// ten million rows or more is shared out. The answers must be the same each time, and the queries that add up shared
+// out when they should be and not otherwise. The first two loads' times are printed.
 //
 // ONELAKE_TOKEN (storage) and FABRIC_TOKEN (the Fabric API, to find the ids), ONELAKE_CI_WORKSPACE and
 // ONELAKE_CI_LAKEHOUSE by name; FABRIC_APP_TABLE (schema.table: a table of several files, over 32 MB, or nothing
@@ -66,7 +67,9 @@ async function answerOf(ws, lh, table) {
   const { body } = await fn.getJson(`${endpoint}/v1/${prefix}/namespaces/${ns}/tables/${name}`, ONELAKE_TOKEN);
   const m = body.metadata;
   const schema = (m.schemas ?? []).find(s => s["schema-id"] === m["current-schema-id"]) ?? m.schema;
+  const current = (m.snapshots ?? []).find(s => s["snapshot-id"] === m["current-snapshot-id"]);
   return { answer: { metadata: catalog.metadata, snapshots: catalog.snapshots, missing: [], sas, expiresOn: fn.iso(expiry) },
+           rows: Number(current?.summary?.["total-records"] ?? NaN),
            columns: schema.fields.map(f => ({ name: f.name, type: typeof f.type === "string" ? f.type : f.type.type })) };
 }
 
@@ -170,8 +173,9 @@ try {
   const lake = (await fabric.listItems(WS)).find(i => i.type === "Lakehouse" && i.name.toLowerCase() === LAKEHOUSE.toLowerCase());
   if (!lake) throw new Error(`${WS} has no lakehouse ${LAKEHOUSE}`);
   const lh = String(lake.id).toLowerCase();
-  const { answer, columns } = await answerOf(ws, lh, TABLE);
-  console.log(`${TABLE}: ${answer.snapshots[TABLE]?.bytes ?? "?"} bytes; ${columns.map(c => `${c.name} ${c.type}`).join(", ")}`);
+  const { answer, columns, rows } = await answerOf(ws, lh, TABLE);
+  if (!(rows >= 0)) throw new Error(`${TABLE}: its snapshot does not say how many rows it has`);
+  console.log(`${TABLE}: ${rows} rows, ${answer.snapshots[TABLE]?.bytes ?? "?"} bytes;${columns.map(c => `${c.name} ${c.type}`).join(", ")}`);
   const { bim, queries } = modelOf(ws, lh, TABLE, columns);
 
   // The site, as an export uploads it.
@@ -222,25 +226,30 @@ try {
   console.log(`whole: each query on one engine of ${ENGINES}`);
   const whole = await load("&split=0");
   for (const line of whole.logs) console.log(`  ${line}`);
-  console.log(`as a viewer opens it: each query's scan shared out between ${ENGINES} engines`);
-  const split = await load("");
-  // Whole once more, the store read as it was for the load above: a visit's first run of each query, like for like.
-  const again = await load("&split=0");
+  console.log(`shared out: each query's scan between ${ENGINES} engines, whatever the table's size`);
+  const split = await load("&split=1");
+  for (const line of split.logs) console.log(`  ${line}`);
+  const big = rows >= 10_000_000;
+  console.log(`as a viewer opens it: a table of ${rows} rows is ${big ? "" : "not "}shared out`);
+  const viewer = await load("");
 
   const checks = [];
   const check = (ok, what) => { checks.push(ok); console.log(`${ok ? "ok  " : "FAIL"} ${what}`); };
   for (const [i, q] of queries.entries()) {
-    const a = whole.out[i], b = split.out[i];
-    if (a.failed || b.failed) { check(false, `${q.name}: ${a.failed ? `whole: ${a.failed}` : ""} ${b.failed ? `split: ${b.failed}` : ""}`); continue; }
-    const ok = same(a.text, b.text);
-    // Each load's first run of the query, the store read by the load before it.
-    check(ok, `${q.name}: ${a.rows} rows, the same shared out as whole; whole ${again.out[i].ms} ms, shared out ${b.ms} ms` +
-      (ok ? "" : `\n     whole ${a.text.slice(0, 400)}\n     split ${b.text.slice(0, 400)}`));
+    const a = whole.out[i], b = split.out[i], c = viewer.out[i];
+    const failed = [["whole", a], ["shared out", b], ["as a viewer", c]].filter(([, r]) => r.failed).map(([k, r]) => `${k}: ${r.failed}`);
+    if (failed.length) { check(false, `${q.name}: ${failed.join("; ")}`); continue; }
+    const ok = same(a.text, b.text) && same(a.text, c.text);
+    // Each one's second run: what it reads in the store, and its footers read.
+    check(ok, `${q.name}: ${a.rows} rows, the same shared out as whole; whole ${a.again} ms, shared out ${b.again} ms` +
+      (ok ? "" : `\n     whole ${a.text.slice(0, 400)}\n     shared out ${b.text.slice(0, 400)}\n     as a viewer ${c.text.slice(0, 400)}`));
   }
   const wanted = queries.filter(q => q.splits).length;
+  check(whole.shared === 0, `with ?split=0, ${whole.shared} runs were shared out`);
+  // Each query is run twice.
+  check(split.shared === wanted * 2, `with ?split=1, ${split.shared} runs were shared out between the engines (${wanted} queries add up, each run twice)`);
   // Each once: its second run is answered from the results this browser kept.
-  check(whole.shared === 0, `with ?split=0, ${whole.shared} queries were shared out`);
-  check(split.shared === wanted, `with nothing in the address, ${split.shared} queries were shared out between the engines (${wanted} add up)`);
+  check(viewer.shared === (big ? wanted : 0), `with nothing in the address, ${viewer.shared} queries of a table of ${rows} rows were shared out`);
   code = checks.every(Boolean) ? 0 : 1;
 } catch (e) {
   console.log(`FAIL ${e?.stack || e}`);

@@ -44,7 +44,8 @@
 // view (and its own copy of a small table). All the workers share the store.
 // A query's scan of a large table is shared out between the engines, each over its share of the
 // files, and the rest of it run by one (split.js): about four times faster on four engines
-// (3.6 GB, 2026-11-11). `?split=0` in the URL runs every query whole, to compare.
+// (3.6 GB, 2026-11-11). Only a table of ten million rows or more: a smaller one's scan is too short
+// to win back what sharing it out costs. `?split=0` in the URL runs every query whole, to compare.
 //
 // The members the page calls:
 //   init            sign in, locate the tables, size them; nothing opened yet
@@ -92,11 +93,14 @@ const ENGINES = (() => {
   let cores = 4; try { cores = navigator.hardwareConcurrency || 4; } catch (e) {}
   return Math.min(4, Math.max(2, Math.floor(cores / 2)));
 })();
-// A large table's scan is shared out between the engines (split.js), unless the URL says `?split=0`.
-// With `split` in the URL at all (0 or 1), no result is read back from this browser and each
-// query's time is written to the console, so the two can be compared.
+// A table's scan is shared out between the engines (split.js) when it has SPLIT_ROWS rows or more: sharing
+// out costs about 0.1 s whatever the table (the answers cross between engines), which a table of 4 million
+// rows did not win back, and one of tens of millions won back many times over (2026-11-11).
+// `?split=N` in the URL: tables of N rows or more instead; `?split=0`, none. With `split` in the URL at
+// all, no result is read back from this browser and each query's time is written to the console, to compare.
 const SPLIT_ASKED = (() => { try { return new URLSearchParams(location.search).get('split'); } catch (e) { return null; } })();
-const SPLIT = SPLIT_ASKED !== '0', TIMED = SPLIT_ASKED != null;
+const SPLIT_ROWS = SPLIT_ASKED == null || !(Number(SPLIT_ASKED) >= 0) ? 10_000_000 : Number(SPLIT_ASKED);
+const SPLIT = SPLIT_ROWS > 0, TIMED = SPLIT_ASKED != null;
 const STORE_WAIT = 30000;   // how long the page waits for the store's writer to answer
 
 // An Ossie dataset's table as schema.table, or null when it reads none. `source` is required
@@ -175,7 +179,7 @@ export function createDataSource({ onStatus = () => {}, onProgress = () => {} } 
   let tables = new Map(), model = null;
   // table name -> { location, bytes, planning, record, stored, ready, layout, coming,
   // gathering, downloading }. `ready`: the table's record, and in the store a small table's
-  // files, or a larger one's footers and its layout ({ columns, files: path -> { size, chunks } }):
+  // files, or a larger one's footers and its layout ({ columns, rows, files: path -> { size, chunks } }):
   // once for every engine. `coming`: each column (lowercase) a larger table's queries named, its
   // download; `gathering`, the batch of them not started yet, and `downloading`, the last one.
   const located = new Map();
@@ -352,16 +356,19 @@ export function createDataSource({ onStatus = () => {}, onProgress = () => {} } 
     const rows = await healing(() => submit(async e => {
       await register(e, record.files);
       const r = await e.conn.query(`SELECT file_name, path_in_schema, dictionary_page_offset, data_page_offset,
-          total_compressed_size, bloom_filter_offset, bloom_filter_length
+          total_compressed_size, bloom_filter_offset, bloom_filter_length, row_group_id, row_group_num_rows
         FROM parquet_metadata([${record.files.map(f => lit(localName(f.path))).join(', ')}])`);
       return r.toArray().map(x => x.toJSON());
     }));
     const byName = new Map(record.files.flatMap(f => [[localName(f.path), f.path], [localUrl(f.path), f.path]]));
     const files = new Map(record.files.map(f => [f.path, { size: f.size, chunks: [] }]));
     const columns = new Set();
+    // The table's rows: each file's row groups', counted once (a row group has a line a column).
+    const groups = new Map();
     for (const r of rows) {
       const file = files.get(byName.get(r.file_name));
       if (!file) continue;
+      groups.set(`${r.file_name} ${r.row_group_id}`, Number(r.row_group_num_rows));
       // A nested column's leaves are "s, x": the table's column is the first part.
       const col = String(r.path_in_schema).split(', ')[0];
       columns.add(col);
@@ -372,7 +379,7 @@ export function createDataSource({ onStatus = () => {}, onProgress = () => {} } 
       if (r.bloom_filter_offset != null && Number(r.bloom_filter_length) > 0)
         file.chunks.push({ col, from: Number(r.bloom_filter_offset), to: Number(r.bloom_filter_offset) + Number(r.bloom_filter_length) - 1 });
     }
-    return { columns: [...columns], files };
+    return { columns: [...columns], files, rows: [...groups.values()].reduce((n, x) => n + x, 0) };
   }
   // The chunks of the columns `sql` names of a larger table, in the store. Those no query named
   // before come down together, so that a file's chunks merge into fewer requests (ranges.js).
@@ -549,7 +556,8 @@ export function createDataSource({ onStatus = () => {}, onProgress = () => {} } 
   let splits = 0, shared = 0, splitFailed = false;
   function splitRun(sql, options) {
     if (!SPLIT || engines.length < 2) return null;
-    const plan = splitPlan(sql, n => { const t = located.get(n); return !!t && !small(t) && (t.record?.files.length ?? 0) >= 2; });
+    // A table worth sharing out: of several files, and of rows enough to win back what sharing out costs.
+    const plan = splitPlan(sql, n => { const t = located.get(n); return !!t && (t.record?.files.length ?? 0) >= 2 && (t.layout?.rows ?? 0) >= SPLIT_ROWS; });
     if (!plan) return null;
     const id = ++splits, started = performance.now();
     return (async () => {

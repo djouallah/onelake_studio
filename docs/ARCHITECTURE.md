@@ -834,13 +834,14 @@ and the command line's `export` takes no `--mode`.
   12–19 s instead of 123 s. If DuckDB reads bytes the store lacks, the store says which, and the page downloads them with
   their columns and runs the query again.
   DuckDB-WASM runs one thread an engine, so the page starts several (half the machine's cores, two at least and four
-  at most), and a query over a larger table is shared out between them
+  at most), and a query over a table of ten million rows or more is shared out between them
   ([`storage/split.js`](../fabric_app/site/storage/split.js)). dax-sql reads a fact table in a CTE of its own, a
   GROUP BY of keys and aggregates; each engine runs that CTE over its share of the table's files, the answers cross
   as Parquet (a few KB), and one engine adds them up and runs the rest of the statement. Only what adds up is
   shared out: sums, counts, minimums and maximums. A distinct count, an average, or a measure the compiler wrote as a
   subquery runs whole on one engine, as does any query whose sharing out fails. Measured on 2026-11-11 on a 3.6 GB
-  table with four engines: 5.1 s to 1.2 s for a sum by a column. `?split=0` in the address runs every query whole.
+  table with four engines: 5.1 s to 1.2 s for a sum by a column. On a table of 4 million rows sharing out cost more than it saved, about
+  0.1 s a query: hence the ten million. `?split=0` in the address runs every query whole.
 - **`rayfin/`:** `rayfin.yml` and the function (`openCatalog`, for a client-side app).
 
 [`fabric_app/export/exportapp.js`](../fabric_app/export/exportapp.js) writes the local copy from `fabric_app/`, Studio's
