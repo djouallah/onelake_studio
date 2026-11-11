@@ -1,4 +1,4 @@
-// The Fabric app, whole, on a local Rayfin backend (rayfin-local): the site and the function as an export makes
+// The Fabric app, whole, on a local Rayfin backend (fabric-local.mjs): the site and the function as an export makes
 // them, the page signing in through its own sign-in (storage/auth.js) and drawing its Report. Both kinds of app:
 //
 //   client side          the page asks its own function for the tables (storage/catalog.js, rayfin/functions'
@@ -7,9 +7,8 @@
 //   on a semantic model  the page turns each tile's query into DAX and runs it through its connector
 //                        (storage/modeldata.js), which asks Power BI with the Power BI token of whoever runs this.
 //
-// Where run-fabric-app.mjs puts the function's answer in the browser and starts from there, this starts where a
-// viewer does: no session, a sign-in, a call to the backend. rayfin-local stands in for Fabric's backend and
-// answers the SDK the same requests, so what is not proven here is Fabric's own hosting.
+// It starts where a viewer does: no session, a sign-in, a call to the backend. rayfin-local stands in for Fabric's
+// backend and answers the SDK the same requests, so what is not proven here is Fabric's own hosting.
 //
 // Two ways in, as a viewer has: a tab of its own (the Sign in with Fabric button, and the popup it opens), and
 // inside the Fabric frame (the backend's page that plays Fabric: initEmbeddedAuth).
@@ -21,19 +20,12 @@
 // down, when the page must say so.
 // RAYFIN_LOCAL: the rayfin-local executable (default: rayfin-local on PATH).
 // Run: node scripts/vendor.mjs && node test/js/run-fabric-local.mjs
-import { spawn, execSync, execFileSync } from "node:child_process";
-import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
-import { createInterface } from "node:readline";
 import { chromium } from "playwright-core";
+import { serveApp, CHROME } from "./fabric-local.mjs";
 
 const require = createRequire(import.meta.url);
-const root = join(fileURLToPath(new URL(".", import.meta.url)), "..", "..");
-const { PINS, WEBAPP } = require("../../core/vendored.js");
-const { appFiles, buildDist, vendorFiles, planOnModel } = require("../../fabric_app/export/exportapp.js");
+const { planOnModel } = require("../../fabric_app/export/exportapp.js");
 const { createFabric } = require("../../core/models/fabric.js");
 const { createFabricModel } = require("../../fabric_app/export/fabricmodel.js");
 
@@ -41,16 +33,11 @@ const { ONELAKE_TOKEN, FABRIC_TOKEN, POWERBI_TOKEN, ONELAKE_CI_WORKSPACE: WS, ON
 for (const [k, v] of Object.entries({ ONELAKE_TOKEN, FABRIC_TOKEN, POWERBI_TOKEN, ONELAKE_CI_WORKSPACE: WS, ONELAKE_CI_LAKEHOUSE: LAKEHOUSE }))
   if (!v) { console.log(`FAIL ${k} is not set`); process.exit(1); }
 if (!["answers", "refused"].includes(MODEL_DOES)) { console.log("FAIL FABRIC_LOCAL_MODEL is answers or refused"); process.exit(1); }
-const RAYFIN_LOCAL = process.env.RAYFIN_LOCAL || "rayfin-local";
-const CHROME = process.env.CHROME_PATH ||
-  (process.platform === "win32" ? "C:/Program Files/Google/Chrome/Application/chrome.exe" : "/usr/bin/google-chrome");
 const TABLE = "lakeci_plain", SOURCE = `test.${TABLE}`, MODEL = "lakeci_model";
 // The table, as make_tables.py writes it.
 const ROWS = 5000, TOTAL = 238834;
 // A user of the local backend's own, for its page that plays Fabric: in CI nobody is signed in to Azure as a person.
-const USER = "viewer@example.com", PASSWORD = "local-only-" + Math.random().toString(36).slice(2);
-// The version the site's packages are: rayfin-local reads a project with the project's own @microsoft/rayfin-core.
-const SDK = WEBAPP.rayfinClient.split("@").pop();
+const USER = { name: "viewer@example.com", password: "local-only-" + Math.random().toString(36).slice(2) };
 
 // The model: the lakehouse's lakeci_plain and a sum of it, as the semantic model lakeci_model has them; `rows`,
 // a count the client-side app's own model adds.
@@ -78,48 +65,15 @@ const reportOf = rows => ({ pages: [{ name: "Page 1", tiles: [
 const checks = [];
 const check = (ok, what) => { checks.push(ok); console.log(`${ok ? "ok  " : "FAIL"} ${what}`); };
 const digits = s => s.replace(/[,\s]/g, "");
-const npm = (what, cwd) => execSync(`npm ${what} --no-audit --no-fund --loglevel=error`, { cwd, stdio: ["ignore", "ignore", "inherit"] });
+let browser;
 
-// One app: its project as an export's local copy lays it out (rayfin/: rayfin.yml and the function; the site,
-// built), served by rayfin-local, opened both ways. `seen(page or frame, how)` says what a viewer must see.
-async function run(name, { plan, model, report, engine, env, seen }) {
-  let server, project, ok = false;
-  const said = [];
+// One app, opened both ways. `seen(page or frame, how)` says what a viewer must see.
+async function run(name, { seen, ...app }) {
   const before = checks.length;
+  let served = null;
   try {
-    const files = await appFiles({ plan, state: null, model, kept: Buffer.from(JSON.stringify(report)),
-                                   fabricAppDir: join(root, "fabric_app"), appDir: join(root, "page"), daxSqlDir: join(root, "vendor", "npm", PINS.daxSql) });
-    project = await mkdtemp(join(tmpdir(), "fabric-local-"));
-    const put = async (path, bytes) => { const to = join(project, path); await mkdir(dirname(to), { recursive: true }); await writeFile(to, bytes); };
-    for (const [path, bytes] of files) if (path.startsWith("rayfin/")) await put(path, bytes);
-    // The site's rayfin.config.json is the backend's to answer: where it is, and its key.
-    for (const [path, bytes] of buildDist(files, {}, await vendorFiles(join(root, "vendor", "webapp"), engine))) {
-      if (path !== "rayfin.config.json") await put(join("dist", path), bytes);
-    }
-    // The export's local copy has no package.json of its own.
-    await put("package.json", JSON.stringify({ name: plan.name, private: true, type: "module", dependencies: { "@microsoft/rayfin-core": SDK } }, null, 2));
-    console.log(`${name}: the project is ${project} (Rayfin ${SDK})`);
-    npm("install", project);
-    npm("ci", join(project, "rayfin", "functions"));
-    execFileSync(RAYFIN_LOCAL, ["users", "add", USER, "--password", PASSWORD, "-C", project], { stdio: ["ignore", "ignore", "inherit"] });
-
-    server = spawn(RAYFIN_LOCAL, ["serve", "--static", "--reuse-build", "--json", "--sign-in-as", "developer", "-C", project],
-      { env: { ...process.env, ...env }, stdio: ["pipe", "pipe", "pipe"] });
-    server.stderr.on("data", d => said.push(String(d)));
-    const ready = await new Promise((resolve, reject) => {
-      createInterface({ input: server.stdout }).on("line", line => {
-        let e; try { e = JSON.parse(line); } catch { return; }
-        if (e.type === "log") said.push(`[${e.source}] ${e.line}`);
-        else if (e.type !== "ready") said.push(`${e.type}: ${JSON.stringify(e).slice(0, 300)}`);
-        if (e.type === "ready") resolve(e);
-        if (e.type === "error" && e.fatal) reject(new Error(`rayfin-local: ${e.code} ${e.message} ${e.hint ?? ""}`));
-      });
-      server.on("exit", c => reject(new Error(`rayfin-local stopped (${c}) before it was ready`)));
-      setTimeout(() => reject(new Error("rayfin-local was not ready in 4 minutes")), 240_000);
-    });
-    console.log(`${name}: rayfin-local serves ${ready.appUrl}, functions ${ready.features.functions.names.join(", ") || "none"}, ` +
-      `connectors ${ready.features.connectors.map(c => `${c.name} (${c.type})`).join(", ") || "none"}, SDK ${ready.sdk.version} ${ready.sdk.supported ? "supported" : "NOT supported"}`);
-
+    served = await serveApp(name, { ...app, user: USER });
+    const { ready } = served;
     const watch = page => {
       page.on("pageerror", e => console.log("[pageerror]", e.message));
       page.on("response", r => { if (r.status() >= 400) console.log(`[${r.status()}]`, r.url().slice(0, 200)); });
@@ -145,8 +99,8 @@ async function run(name, { plan, model, report, engine, env, seen }) {
       watch(page);
       await page.goto(ready.embedUrl);
       // Fabric shows an app to someone signed in to Fabric: here, the local user.
-      await page.getByLabel("Username or email").first().fill(USER);
-      await page.getByLabel("Password").first().fill(PASSWORD);
+      await page.getByLabel("Username or email").first().fill(USER.name);
+      await page.getByLabel("Password").first().fill(USER.password);
       await page.getByLabel("Password").first().press("Enter");
       const frame = await (async () => {
         for (let i = 0; i < 120; i++) {
@@ -160,16 +114,10 @@ async function run(name, { plan, model, report, engine, env, seen }) {
       await seen(frame, `${name}, inside the Fabric frame`);
       await context.close();
     }
-    ok = checks.slice(before).every(Boolean);
   } catch (e) {
     check(false, `${name}: ${e?.stack || e}`);
   } finally {
-    if (!ok) for (const line of said.slice(-40)) console.log(`  ${String(line).trimEnd().slice(0, 400)}`);
-    if (server && server.exitCode == null) {
-      server.stdin.end();   // rayfin-local stops when its stdin closes
-      await new Promise(r => { server.on("exit", r); setTimeout(() => { server.kill(); r(); }, 15_000); });
-    }
-    if (project && ok) await rm(project, { recursive: true, force: true }).catch(() => {});
+    await served?.stop(checks.slice(before).every(Boolean));
   }
 }
 
@@ -201,7 +149,6 @@ const refused = async (frame, how) => {
     `${how}: Power BI refuses the query, and the page says so and what to ask for (${box.slice(0, 160)})`);
 };
 
-let browser;
 try {
   const fabric = createFabric({ getFabricToken: async () => FABRIC_TOKEN });
   const ws = String(await fabric.workspaceId(WS)).toLowerCase();
