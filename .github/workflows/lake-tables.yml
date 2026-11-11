@@ -169,7 +169,7 @@ jobs:
           NO_SKIP: 1
       # The app's page for real, but for its sign-in (test/js/run-fabric-app.mjs): the site as an export uploads
       # it, in Chrome, reading aemo.price from OneLake, each query whole and shared out between the engines
-      # (?split=1). With the identity's storage token for the downloads: tmp refuses a user-delegated SAS.
+      # (?split=1). The downloads go with the SAS the function's code signs: tmp allows user-delegated SAS tokens.
       - if: always()
         run: npm ci --omit=optional --ignore-scripts --no-audit --no-fund
       - name: Chrome
@@ -187,4 +187,3 @@ jobs:
           FABRIC_APP_TABLE: aemo.price
           FABRIC_APP_SUM: RRP
           FABRIC_APP_BY: REGIONID
-          FABRIC_APP_AUTH: token
