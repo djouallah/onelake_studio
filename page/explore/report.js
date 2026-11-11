@@ -255,7 +255,7 @@ export function drawReport(root, spec, ctx) {
     const body = el('div', { class: 'rp-body' }, el('p', { class: 'rp-say' }, 'Waiting…'));
     // A pivot tile's shelves and query; a broken one says why when it runs (drawPivot).
     let piv = null;
-    if (tile?.kind === 'pivot' && fields) try { piv = pivotQuery(tile.pivot, fields); } catch (_) { /* drawPivot says */ }
+    if (tile?.kind === 'pivot' && fields) try { piv = pivotQuery(tile.pivot, fields, ctx.name); } catch (_) { /* drawPivot says */ }
     const mark = piv && (piv.state.mark === 'auto' ? autoMark(piv.state, fields) : piv.state.mark);
     // A pivot's chart of several measures is a plot each, one above the other: taller.
     const plots = piv && !SHAPES.has(mark) && mark !== 'heatmap' && mark !== 'scatter' && mark !== 'slicer' && !tile.pivot?.format?.measures
@@ -539,7 +539,7 @@ export function drawReport(root, spec, ctx) {
     const { tile } = job;
     if (!fields) throw new Error('a pivot tile needs the model, and the Report was given none');
     // Its shelves read again, to say what is wrong with them.
-    const piv = job.piv ?? pivotQuery(tile.pivot, fields);
+    const piv = job.piv ?? pivotQuery(tile.pivot, fields, ctx.name);
     job.piv = piv;
     const sql = piv.sqlWith(whereFor(job));
     job.asking = true;

@@ -9,6 +9,8 @@
   engine. The app starts as many engines as half the machine's cores, two at least and four at most.
   A smaller table is read by one engine as before: sharing out costs about a tenth of a second, which its scan is too
   short to win back. `?split=0` in the app's address runs every query on one engine, to compare.
+- **A Report tile's statement names the model.** Logs showed a tile's query as `FROM model`, a name no SQL box
+  takes, so Open and Copy gave a statement that could not run. It now says the model's own name, as the Visual's does.
 - **The Report's + adds a page again.** It answered "The report could not be read" while the new page's name was
   ready to be typed.
 - **A viewer of an app on a semantic model needs Read on the model, not Build.** The app, the docs and the website

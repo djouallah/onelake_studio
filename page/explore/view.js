@@ -292,7 +292,8 @@ export function mountExplore(root, ctx) {
   }
 
   // --- Report: the host's pages (ctx.report.load), drawn; drawn again when they change ---
-  // Its SQL says FROM model, whatever the model is called here. One page on screen (reportAt);
+  // Its SQL names the model as SQL calls it here (ctx.name), so a tile's statement runs as it is from Logs or
+  // the SQL box; the tiles are saved with no name. One page on screen (reportAt);
   // each page shown is drawn once and kept, hidden, with its picks, until the Report is drawn again.
   let reportStamp = null, reportTimer = null, reportSeq = 0, reportAt = 0;
   const pageViews = new Map();   // page index -> { box, view }
@@ -300,8 +301,9 @@ export function mountExplore(root, ctx) {
   // SQL again, and waits on the run already going rather than starting a second.
   const reportRuns = new Map();   // sql -> its run, while it runs
   let reportLeft = false, reportWaiters = [];
+  const modelName = ctx.name || 'model';
   const reportSql = text => {
-    const sql = compileModelSql(ctx.compiler, text, 'model');
+    const sql = compileModelSql(ctx.compiler, text, modelName);
     if (!reportRuns.has(sql)) reportRuns.set(sql, run(sql).finally(() => reportRuns.delete(sql)));
     return reportRuns.get(sql);
   };
@@ -383,7 +385,7 @@ export function mountExplore(root, ctx) {
   }
   function pageCtx(i) {
     const saves = !!ctx.report.save;
-    return { sql: reportSql, echarts: reportEcharts, shown: () => reportShown(i), leftWhileRunning,
+    return { sql: reportSql, name: modelName, echarts: reportEcharts, shown: () => reportShown(i), leftWhileRunning,
              cancel: ctx.cancel, parallel: ctx.reportParallel, model: ctx.tmsl, css: reportCss, chartTheme: 'report',
              remove: saves ? removeTile : undefined, layout: saves ? layoutTiles : undefined,
              duplicate: saves ? duplicateTile : undefined, rename: saves ? renameTile : undefined,
@@ -419,7 +421,7 @@ export function mountExplore(root, ctx) {
   const valuesOf = (id, opts = {}) => {
     const key = `${opts.desc ? 'latest' : ''}:${opts.top ?? ''}:${id}`;
     if (!barValues.has(key)) {
-      barValues.set(key, reportSql(valuesSql(reportFields(), id, opts)).then(r => r.rows.map(x => x.v))
+      barValues.set(key, reportSql(valuesSql(reportFields(), id, { ...opts, name: modelName })).then(r => r.rows.map(x => x.v))
         .catch(e => { barValues.delete(key); throw e; }));
     }
     return barValues.get(key);

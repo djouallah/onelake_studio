@@ -313,10 +313,11 @@ function shelfField(fields, id) {
 /**
  * The SQL of a column's values, as the Filters shelf lists them: each once, in order (`desc`:
  * the largest first), the first `top`. A Report's filter bar and its colours by value ask it.
+ * `name`: what SQL calls the model where this runs (FROM it), as for a tile (pivotQuery).
  */
-export function valuesSql(fields, id, { top = 1000, desc = false } = {}) {
+export function valuesSql(fields, id, { top = 1000, desc = false, name = 'model' } = {}) {
   const columnOf = x => { const f = fields.byId.get(x); return f && f.kind === 'column' ? { table: f.table, name: f.name, type: f.type } : null; };
-  return modelSql({ select: { v: id }, orderBy: [desc ? ['v', 'desc'] : 'v'], top }, columnOf, 'model');
+  return modelSql({ select: { v: id }, orderBy: [desc ? ['v', 'desc'] : 'v'], top }, columnOf, name);
 }
 
 /** The names the shelves' Values have in their query's rows (a Report's format pane lists them). */
@@ -326,10 +327,13 @@ const formatOf = (look, id) => look?.formats?.[nameOf(id)] ?? shelfField(look?.f
 
 /**
  * A Report's tile of saved shelves: { state }, every shelf there, { sql }, the SELECT over the
- * model (FROM model) it runs, and { field }, the model column of its first Rows field (else
+ * model it runs, and { field }, the model column of its first Rows field (else
  * Columns) that a click on it picks, or null.
+ * `name`: what SQL calls the model where the tile runs, so that its statement is one a person can
+ * run as it is (Logs shows it, and opens it in the SQL box). A tile is saved as its shelves, with no
+ * name: the Report is the same whatever its model is called. `model` where the host names none.
  */
-export function pivotQuery(saved, fields) {
+export function pivotQuery(saved, fields, name = 'model') {
   if (!saved || typeof saved !== 'object' || Array.isArray(saved)) throw new Error("a pivot tile's pivot is the shelves: { rows, cols, values, filters, mark }");
   const state = { ...EMPTY(), ...saved };
   for (const k of ['rows', 'cols', 'values', 'filters']) if (!Array.isArray(state[k])) throw new Error(`a pivot tile's ${k} is a list`);
@@ -342,7 +346,7 @@ export function pivotQuery(saved, fields) {
   const first = firstId == null ? null : columnOf(firstId);
   // `sqlWith(where)`: the same query with more conditions (a Report's picks in other tiles, its
   // filter bar), each as the Filters shelf writes one: [id, op, ...values].
-  const sqlWith = (where = []) => modelSql(where.length ? { ...q, where: [...(q.where ?? []), ...where] } : q, columnOf, 'model');
+  const sqlWith = (where = []) => modelSql(where.length ? { ...q, where: [...(q.where ?? []), ...where] } : q, columnOf, name);
   return { state, sql: sqlWith(), sqlWith,
            field: first && { id: firstId, table: first.table, column: first.name, ref: `${qid(first.table)}.${qid(first.name)}` } };
 }
