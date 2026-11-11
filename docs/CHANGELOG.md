@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.21
 
 - **A Fabric app reads a large table with all its engines.** A query over a table of ten million rows or more ran on
   one engine while the others waited. Its scan is now shared out between them, each engine reading its share of the
@@ -11,6 +11,11 @@
   short to win back. `?split=0` in the app's address runs every query on one engine, to compare.
 - **The Report's + adds a page again.** It answered "The report could not be read" while the new page's name was
   ready to be typed.
+- **A Fabric app on a semantic model opens again.** In 0.2.20 its page stopped at "Failed to fetch dynamically imported
+  module": it asked for one of its own files where no export puts it. Export the app again to fix one already published.
+- **A Fabric app's query over a large table no longer fails with "Snappy decompression failure".** When a query read
+  bytes the browser had not downloaded yet, the app downloaded them and ran it again, and that second run failed until
+  the page was reloaded. It now reads right.
 
 ## 0.2.20
 
