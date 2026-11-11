@@ -179,7 +179,8 @@ try {
   console.log("report: a page added and named");
 
   // A Report tile's statement is one a person can run: Logs shows it as it was written (enginelog.js sourceOf)
-  // and its Open puts it in a new tab's SQL box. It said FROM model, a name no SQL box takes.
+  // and its Open puts it in a SQL box. It said FROM model, a name no SQL box takes. Here, what the Report
+  // really sends; that such a statement runs is the command line's test (cli-engine.test.mjs).
   await page.click('#modelView .subtab[data-apage="pivot"]');
   await page.locator("#modelView button", { hasText: "Add to report" }).click();
   const before = host.calls.length;
@@ -192,22 +193,7 @@ try {
   const tile = written.find(s => /AGG\("Total"\)/.test(s));
   if (!tile) throw new Error(`the Report's tile sent no statement over the model: ${written.join(" | ").slice(0, 300)}`);
   if (/\bFROM model\b/.test(tile)) throw new Error(`a Report tile's statement says FROM model, which no SQL box runs: ${tile}`);
-  // As Logs' Open does: a new tab, the statement in its box, and Run.
-  const tab = await ctx.newPage();
-  tab.on("pageerror", e => console.log("[pageerror]", e.message));
-  await bridge(tab);
-  await tab.goto(`${ORIGIN}/`);
-  await tab.waitForFunction(() => /DuckDB ready/.test(document.getElementById("status").textContent), { timeout: 120000 });
-  await tab.locator("#sqlEditor").fill(tile);
-  await tab.click("#runBtn");
-  await tab.waitForFunction(() => /blue/.test(document.querySelector(".resultsWrap")?.textContent ?? "") || /error|failed/i.test(document.getElementById("status").textContent), { timeout: 90000 })
-    .catch(() => {});
-  const ran = (await tab.locator(".resultsWrap").innerText()).replace(/\s+/g, " ");
-  if (!/blue/.test(ran) || !/red/.test(ran)) {
-    throw new Error(`a Report tile's statement, opened in a new tab, did not run: ${tile.replace(/\s+/g, " ")} — status: ${await tab.locator("#status").innerText()}`);
-  }
-  console.log(`report: a tile's statement runs from a new tab's box (${tile.replace(/\s+/g, " ").slice(0, 110)})`);
-  await tab.close();
+  console.log(`report: a tile's statement names the model (${tile.replace(/\s+/g, " ").slice(0, 110)})`);
 
   // A model the extension downloaded to this machine arrives as text (open-model), not as
   // a OneLake path — the click in the tree — named by its workspace and its own name.

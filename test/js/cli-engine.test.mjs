@@ -214,12 +214,15 @@ test("a Report tile with a pick from another tile runs filtered on the real engi
     { name: "dim_customer", columns: [{ name: "Region", dataType: "string" }] },
     { name: "fct_sales", columns: [{ name: "customer_id", dataType: "int64" }], measures: [{ name: "Total Sales" }] },
   ], relationships: [{ fromTable: "fct_sales", toTable: "dim_customer" }] });
-  const BAR = pivotQuery({ rows: ["dim_customer.Region"], values: ["Total Sales"], mark: "bar", sort: "desc", top: 12 }, fields);
-  const KPI = pivotQuery({ values: ["Total Sales"], mark: "card" }, fields);
+  const MODEL = "semanticmodel.shop.sales_model";
+  const BAR = pivotQuery({ rows: ["dim_customer.Region"], values: ["Total Sales"], mark: "bar", sort: "desc", top: 12 }, fields, MODEL);
+  const KPI = pivotQuery({ values: ["Total Sales"], mark: "card" }, fields, MODEL);
   await withAgent(agent, async ({ cli }) => {
-    // A tile's SQL says FROM model; the command line names the model.
+    // A tile's statement names the model as SQL calls it (pivotQuery's name), so it runs as it is written:
+    // the one Logs shows, and opens in a SQL box. It said FROM model, and this test wrote the name in for it.
     const rows = async (piv, where) => {
-      const text = piv.sqlWith(where).replace(/\bFROM model\b/, "FROM semanticmodel.shop.sales_model");
+      const text = piv.sqlWith(where);
+      assert.match(text, /FROM semanticmodel[.]shop[.]sales_model/);
       const r = await cli(["sql", text, "--json"]);
       assert.equal(r.code, EXIT.OK, `${text}\n${r.stdout}${r.stderr}`);
       return JSON.parse(r.stdout).rows.map(row => row.map(v => (typeof v === "string" && /^-?\d+(\.\d+)?$/.test(v) ? Number(v) : v)));
@@ -230,11 +233,11 @@ test("a Report tile with a pick from another tile runs filtered on the real engi
     assert.deepEqual(await rows(BAR, pickWhere("dim_customer.Region", { value: "O'Brien" })), [], "a quote in the value");
     // Two picks, ANDed to the tile's own filter.
     const own = pivotQuery({ rows: ["dim_customer.Region"], values: ["Total Sales"], mark: "bar", sort: "desc", top: 12,
-                             filters: [{ field: "dim_customer.Region", op: "notIn", values: ["West"] }] }, fields);
+                             filters: [{ field: "dim_customer.Region", op: "notIn", values: ["West"] }] }, fields, MODEL);
     assert.deepEqual(await rows(own, [...pickWhere("fct_sales.customer_id", { value: 1 }), ...pickWhere("dim_customer.Region", { value: "East" })]), [["East", 12.5]]);
     // A filter on the measure: a HAVING the compiler takes.
     const having = pivotQuery({ rows: ["dim_customer.Region"], values: ["Total Sales"], mark: "bar",
-                                filters: [{ field: "Total Sales", op: "range", min: 6, measure: true }] }, fields);
+                                filters: [{ field: "Total Sales", op: "range", min: 6, measure: true }] }, fields, MODEL);
     const kept = await rows(having, []);
     assert.ok(kept.length && kept.every(([, v]) => v >= 6), JSON.stringify(kept));
   });
