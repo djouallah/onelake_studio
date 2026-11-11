@@ -94,16 +94,18 @@ function createExport({ connectivity, modules, appToken, powerBiToken = appToken
   // semantic model of a model file is Create Semantic Model's, then exported as it is.
   // `appFile`: a client-side app's .fabricapp opened from disk (openApp), its own model.yaml the
   // `text`: the file is published as it is, with no Save dialog and no question about its changes.
-  const exportExplore = async ({ file, name, text, state, workspace, path, model, appFile = null }) => {
+  // `onDisk`: a model file from disk (extension.js openPath), in the workspace its tables are in, read
+  // client side like a OneLake file: the app runs on its copy of the model, so no OneLake path is needed.
+  const exportExplore = async ({ file, name, text, state, workspace, path, model, appFile = null, onDisk = false }) => {
     const declined = message => Object.assign(new Error(message), { declined: true });
     try {
       // The one thing that can't work from what is held, said before anything is asked.
       if (connectivity.offline()) {
         throw new Error(`Export to Fabric needs a connection, and ${connectivity.noInternet() ? 'there is no internet' : 'you are not signed in'}.`);
       }
-      const onItself = !path;
+      const onItself = !path && !(onDisk && workspace);
       if (onItself && !(model && model.workspace && model.name)) {
-        throw new Error('Export to Fabric needs a model that is a OneLake file, or one opened from the tree');
+        throw new Error('Export to Fabric needs a model that is a OneLake file, a file from disk in a workspace, or one opened from the tree');
       }
       // The semantic model's workspace and name: the model's own (semanticmodel.<ws>.<model>).
       const pbi = { workspace: model ? model.workspace : workspace, name: model ? model.name : name };
@@ -119,7 +121,7 @@ function createExport({ connectivity, modules, appToken, powerBiToken = appToken
         if (!existing) throw new Error(`${pbi.workspace} has no semantic model ${pbi.name} any more: Refresh the workspace`);
         plan = planOnModel(definition, name, { ...pbi, id: existing.id });
       } else {
-        plan = planExport(text, file, name, mods, { workspace, path }, await lakesOf(text, file, workspace));
+        plan = planExport(text, file, name, mods, onDisk ? { workspace, onDisk: true, path } : { workspace, path }, await lakesOf(text, file, workspace));
         plan.engine = 'duckdb';
       }
       // The function reads the tables client side; on a semantic model the page calls none, and none is deployed.

@@ -141,13 +141,18 @@ function modelDoc(text, fileName, { compiler, semantic }) {
  * What an export is, before anything is written: the app's name, its lakehouse and catalog,
  * the model's URL. Throws, saying why, when the model cannot make one.
  * `mods`: the agent's modules() — { compiler: { parseYaml, ossieToTmsl }, semantic };
- * `where`: the model file in OneLake, { workspace, path } (the path from its item); `lakes`: the
+ * `where`: the model file in OneLake, { workspace, path } (the path from its item), or a file on
+ * disk, { workspace, onDisk: true, path? }, in the workspace its tables are in: the app carries its own copy
+ * of the model either way, so where the file is only names the app's model; `lakes`: the
  * model's lakehouses by GUIDs, when the caller has resolved those its tables name in full.
  */
 function planExport(text, fileName, name, mods, where, lakes = null) {
   const { semantic } = mods;
-  if (!where || !where.workspace || !where.path) throw new Error(`${fileName} is not a OneLake file: the app reads its model from the lakehouse`);
-  if (!/^[^/]+\/Files\//.test(trimPath(where.path))) throw new Error(`${fileName} is not in a lakehouse's Files/`);
+  const onDisk = !!(where && where.onDisk && where.workspace);
+  if (!onDisk) {
+    if (!where || !where.workspace || !where.path) throw new Error(`${fileName} is not a OneLake file, nor a file from disk in a workspace`);
+    if (!/^[^/]+\/Files\//.test(trimPath(where.path))) throw new Error(`${fileName} is not in a lakehouse's Files/`);
+  }
   const { doc, bim } = modelDoc(text, fileName, mods);
   const found = lakes || semantic.lakehousesOf(bim);
   if (found.length !== 1) {
@@ -182,7 +187,9 @@ function planExport(text, fileName, name, mods, where, lakes = null) {
     warnings, title, name: appName(title), modelName: name, fileName,
     workspace: lake.workspace, lakehouse: lake.item,
     catalogUrl: `${TABLE_ORIGIN}/iceberg/${lake.workspace}/${lake.item}`,
-    modelPath: `${where.workspace}/${trimPath(where.path)}`,
+    // A file from disk is named by its workspace and file name (`path`: the name its app's export.json
+    // kept, exported again from the .fabricapp): no OneLake path is its own.
+    modelPath: `${where.workspace}/${trimPath(onDisk ? where.path || String(fileName).replace(/^.*[\\/]/, '') : where.path)}`,
     tables: [...sources],
   };
 }

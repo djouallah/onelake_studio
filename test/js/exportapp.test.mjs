@@ -52,6 +52,19 @@ test("the plan: its own -explore name, the lakehouse's catalog, where its model 
   assert.equal(dfsUrl("ws", "/a b.Lakehouse/Files/m#1.yaml"), "https://onelake.dfs.fabric.microsoft.com/ws/a%20b.Lakehouse/Files/m%231.yaml");
 });
 
+test("a model file from disk plans as a OneLake file does, named by its workspace and file name", () => {
+  const plan = planExport(OSSIE, "C:\\Users\\me\\Downloads\\sales.ossie.yaml", "sales", mods(bimOf(URL_)), { workspace: "power bi", onDisk: true });
+  assert.equal(plan.workspace, WS);
+  assert.equal(plan.lakehouse, LH);
+  assert.equal(plan.modelPath, "power bi/sales.ossie.yaml");
+  // Exported again from its .fabricapp: the name its export.json kept, whatever the copy inside is called.
+  const again = planExport(OSSIE, "model.ossie.yaml", "sales", mods(bimOf(URL_)), { workspace: "power bi", onDisk: true, path: "sales.ossie.yaml" });
+  assert.equal(again.modelPath, plan.modelPath);
+  assert.throws(() => planExport(OSSIE, "sales.bim", "sales", mods(bimOf("https://example.com/x")), { workspace: "w", onDisk: true }), /names no lakehouse/);
+  assert.throws(() => planExport(OSSIE, "sales.bim", "sales", mods(bimOf(URL_)), { onDisk: true }), /not a OneLake file/);
+  assert.throws(() => planExport(OSSIE, "sales.bim", "sales", mods(bimOf(URL_)), { workspace: "w", path: "sales.bim" }), /not in a lakehouse's Files/);
+});
+
 test("the plan: tables named item.schema.table read their lakehouse by name, and the caller gives its GUIDs", () => {
   // As dax-sql reads back nem.mart.fct_sales: all of it but the table is the schema.
   const named = t => ({ name: t, partitions: [{ source: { type: "entity", entityName: t, schemaName: "nem.mart" } }] });

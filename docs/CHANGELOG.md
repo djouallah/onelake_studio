@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- **A model file opened from disk has Export to Fabric.** A `.bim` or Ossie `.yaml` on this machine, such as a
+  semantic model downloaded from the tree, exports as a model file in a lakehouse does: client side, in the
+  workspace its tables are in, when it names one lakehouse. Its `.fabricapp` opens and exports again the same way.
+
 ## 0.2.21
 
 - **An Ossie model or a `.fabricapp` opened in VS Code opens in the desktop app, when it is installed.** This

@@ -70,16 +70,19 @@ function createHostMethods({ onelake, engine, onStatus = () => {}, saveFile = nu
     // the local copy goes and publishes it.
     'fabric.exportExplore': async x => {
       if (!exportExplore) throw new Error('Export to Fabric is not available here');
-      // A OneLake file (workspace + path), or a semantic model opened from its local copy
-      // (model: { workspace, name }), which the app queries as it is.
+      // A OneLake file (workspace + path), a file from disk in the workspace its tables are in
+      // (workspace + onDisk), or a semantic model opened from its local copy (model: { workspace, name }),
+      // which the app queries as it is.
       const model = x.model && x.model.workspace && x.model.name
         ? { workspace: String(x.model.workspace), name: String(x.model.name) } : null;
-      if (!(x.workspace && x.path) && !model) {
-        throw new Error('Export to Fabric needs a model that is a OneLake file, or one opened from the tree');
+      const onDisk = !!(x.onDisk && x.workspace);
+      if (!(x.workspace && x.path) && !onDisk && !model) {
+        throw new Error('Export to Fabric needs a model that is a OneLake file, a file from disk in a workspace, or one opened from the tree');
       }
       return exportExplore({ file: String(x.file || 'model'), name: String(x.name || 'model'),
                              text: String(x.text ?? ''), ...(x.appFile ? { appFile: String(x.appFile) } : {}),
-                             ...(x.workspace && x.path ? { workspace: String(x.workspace), path: String(x.path) } : { model }),
+                             ...(onDisk ? { workspace: String(x.workspace), onDisk: true, ...(x.path ? { path: String(x.path) } : {}) }
+                               : x.workspace && x.path ? { workspace: String(x.workspace), path: String(x.path) } : { model }),
                              state: x.state && typeof x.state === 'object' ? x.state : null });
     },
     // Create Semantic Model (exportflow.js), from Explore: a model file in OneLake. The host's dialog asks the rest.

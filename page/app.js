@@ -379,14 +379,19 @@ async function openModelView(file, text = null, { fromOneLake = text == null } =
       // Explore as a Fabric app of its own (fabric_app/export/exportapp.js). A model file in OneLake: the app reads
       // it where it is, and the tables of the one lakehouse it names, or a semantic model is made of it;
       // one that names no lakehouse or several has no button. A Power BI semantic model: the app
-      // queries it as it is, whatever it reads, and nothing is asked or written for it. A client-side
-      // app's file opened from disk: that file, published as it is (its model.yaml, its report).
+      // queries it as it is, whatever it reads, and nothing is asked or written for it. A model file
+      // from disk (a download, say): client side as a OneLake file is, in the workspace its tables are in,
+      // when it names one lakehouse. A client-side app's file opened from disk: that file, published as it
+      // is (its model.yaml, its report); one exported from a file on disk names no Files/ path.
       exportToFabric: file.appFile ? state => engine.exportExplore({ appFile: file.appFile, file: file.appModelFile, name: m.view,
-        text: bim, state, workspace: file.appModel.split('/')[0], path: file.appModel.split('/').slice(1).join('/') })
-        : (fromOneLake ? semantic.lakehousesOf(m.bim).length === 1 : !!file.modelWorkspace)
+        text: bim, state, workspace: file.appModel.split('/')[0], path: file.appModel.split('/').slice(1).join('/'),
+        onDisk: !/^[^/]+\/[^/]+\/Files\//i.test(file.appModel) })
+        : (fromOneLake || !file.modelWorkspace ? (fromOneLake || file.localWorkspace) && semantic.lakehousesOf(m.bim).length === 1 : true)
         ? state => engine.exportExplore(fromOneLake
           ? { file: file.name, name: m.view, text: bim, state, workspace: lakehouse.workspace, path: file.path }
-          : { file: file.name, name: m.view, text: bim, state, model: { workspace: file.modelWorkspace, name: file.modelName || m.view } })
+          : file.modelWorkspace
+          ? { file: file.name, name: m.view, text: bim, state, model: { workspace: file.modelWorkspace, name: file.modelName || m.view } }
+          : { file: file.name, name: m.view, text: bim, state, workspace: file.localWorkspace, onDisk: true })
         : undefined,
       // Any model, wherever its file is, by its SQL name. On Windows: Excel's provider is Windows only.
       // A model file in OneLake, made a Power BI semantic model as the tree's ⛁ does it. A semantic model is one already.

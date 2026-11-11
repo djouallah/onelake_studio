@@ -765,7 +765,9 @@ DirectQuery or Import, whatever it reads, and nothing is written to the model or
 model's workspace, and the model needs to name no lakehouse.
 
 **A model file** (a `.bim` or Ossie `.yaml` in a lakehouse's `Files/`) is exported client side: DuckDB in the browser
-reads its lakehouse's tables, and no semantic model is made. An app on a semantic model of the file is two steps:
+reads its lakehouse's tables, and no semantic model is made. A model file opened from disk (a download, say) is
+exported the same way, in the workspace its tables are in, when it names one lakehouse: the app carries its own copy,
+so no OneLake path is needed, and `export.json` names it `<workspace>/<file name>`. An app on a semantic model of the file is two steps:
 Create Semantic Model (above), then Export to Fabric on that model.
 
 What the app runs on is what was opened, so nothing is asked about it: the button goes straight to the questions below,
