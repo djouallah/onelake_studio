@@ -13,6 +13,7 @@
     "@microsoft/fabric-user-data-functions": "1.36.1"
   },
   "devDependencies": {
+    "@types/node": "^22.20.5",
     "rimraf": "^6.0.0",
     "typescript": "^5.8.0"
   }

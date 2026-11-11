@@ -230,6 +230,11 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
   // Set by close(), and final: a late call must not quietly rebuild a DuckDB that nobody
   // owns, holding the token of the account that was just signed out of.
   let closed = false;
+  // The engine's own timers (the lake's look at what was read, its tidying, the file cache's trim), stopped
+  // by close(); and its statements still running, which close() waits for before it lets go of DuckDB.
+  const timers = [];
+  const every = (fn, ms) => { const t = setInterval(fn, ms); t.unref(); timers.push(t); };
+  const inFlight = new Set();
 
   // The token the storage secret was built from. A DuckDB secret holds its token BY
   // VALUE, so when VS Code hands back a different one the secret is reissued.
@@ -255,18 +260,25 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
   // Connections cancel() reached. Their failure is a stop, not an error, and says so with
   // a flag the page reads — DuckDB's text for it ("Interrupted!") never said "cancel".
   const interrupted = new WeakSet();
-  async function withConn(fn, owner = live) {
-    const c = await instance.connect();
-    owner.add(c);
-    try { return await fn(c); }
-    catch (e) {
-      if (interrupted.has(c) && e && typeof e === 'object') { try { e.cancelled = true; } catch (_) {} }
-      throw e;
-    }
-    finally {
-      owner.delete(c);
-      try { c.closeSync(); } catch (_) {}
-    }
+  function withConn(fn, owner = live) {
+    const run = (async () => {
+      if (closed || !instance) throw new Error('the engine was closed');
+      const c = await instance.connect();
+      owner.add(c);
+      try { return await fn(c); }
+      catch (e) {
+        if (interrupted.has(c) && e && typeof e === 'object') { try { e.cancelled = true; } catch (_) {} }
+        throw e;
+      }
+      finally {
+        owner.delete(c);
+        try { c.closeSync(); } catch (_) {}
+      }
+    })();
+    inFlight.add(run);
+    const done = () => inFlight.delete(run);
+    run.then(done, done);
+    return run;
   }
 
   let tmpDir = null;
@@ -323,7 +335,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
           .catch(e => onWarn(`could not make the disk cache's folder ${fileCacheDir} — ${e.message}`));
         trimFileCache(fileCacheDir, fileCacheMaxBytes, onWarn);
         // A server can run for days.
-        if (serve) setInterval(() => trimFileCache(fileCacheDir, fileCacheMaxBytes, onWarn), FILE_CACHE_TRIM_MS).unref();
+        if (serve) every(() => trimFileCache(fileCacheDir, fileCacheMaxBytes, onWarn), FILE_CACHE_TRIM_MS);
       }
       mark('temp+disk cache');
       instance = await DuckDBInstance.create(':memory:', config);
@@ -569,16 +581,17 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
     // Off the boot: a window's statements never wait for these.
     let lastUs = 0;
     const poll = async () => {
+      if (closed) return;
       try {
         const got = await withConn(c => openedSince(c, lastUs), agentLive);
         lastUs = got.lastUs;
         // In a window's own engine nothing else reads the log, so what was read goes.
         if (!serve && got.paths.length) await withConn(c => c.run('CALL truncate_duckdb_logs();'), agentLive);
         if (got.paths.length && !offlineReason()) await lakeService.noteOpened(got.paths);
-      } catch (e) { onWarn(`the table service missed what was read — ${e.message}`); }
+      } catch (e) { if (!closed) onWarn(`the table service missed what was read — ${e.message}`); }
     };
-    setInterval(poll, LAKE_POLL_MS).unref();
-    setInterval(() => lakeService.tidy().catch(e => onWarn(`the table service could not tidy — ${e.message}`)), LAKE_TIDY_MS).unref();
+    every(poll, LAKE_POLL_MS);
+    every(() => { if (!closed) lakeService.tidy().catch(e => onWarn(`the table service could not tidy — ${e.message}`)); }, LAKE_TIDY_MS);
     if (!serve) await conn.run(`CALL enable_logging(['FileSystem'], storage = 'memory');`);
   }
 
@@ -1348,9 +1361,13 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
   // only leaves, and the server stays for the others and for a reload.
   async function close({ stop = false } = {}) {
     closed = true;
-    // Whatever is running is stopped first: closing an instance under a live query is
-    // the native binding's problem to survive, and there is no reason to make it one.
+    for (const t of timers.splice(0)) clearInterval(t);
+    // Whatever is running is stopped first, and waited for: closing an instance under a live query is
+    // the native binding's problem to survive, and it did not always (the lake's look at what was read,
+    // every second, was still on a thread of DuckDB's when the instance went: the process died with no
+    // word, in CI, on Windows and on Linux). A statement that will not stop in ten seconds is left.
     for (const c of running()) { try { c.interrupt(); } catch (_) {} }
+    await Promise.race([Promise.allSettled([...inFlight]), new Promise(r => { const t = setTimeout(r, 10_000); t.unref(); })]);
     // A boot still in flight finishes (or fails) before its handles are released.
     if (ready) await ready.catch(() => {});
     if (instance && instance.leave) await instance.leave({ stop }).catch(() => {});

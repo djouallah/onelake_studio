@@ -14,6 +14,10 @@
 - **A viewer of an app on a semantic model needs Read on the model, not Build.** The app, the docs and the website
   said Build. Build is needed to publish the app; a viewer with Read alone is answered. The box a refused viewer sees
   now says to ask the model's owner for access.
+- **An exported app's function builds with its own build command.** `npm run build` in the local copy's
+  `rayfin/functions` failed for want of Node's type definitions, so `rayfin dev` and `rayfin up` on it would have too.
+- **Closing the engine waits for what it is doing.** It let go of DuckDB while its own once-a-second look at what was
+  read could still be running, which could end the process with no message.
 - **A Fabric app on a semantic model opens again.** In 0.2.20 its page stopped at "Failed to fetch dynamically imported
   module": it asked for one of its own files where no export puts it. Export the app again to fix one already published.
 - **A Fabric app's query over a large table no longer fails with "Snappy decompression failure".** When a query read
