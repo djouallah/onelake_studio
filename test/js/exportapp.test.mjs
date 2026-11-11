@@ -60,9 +60,9 @@ test("a model file from disk plans as a OneLake file does, named by its workspac
   // Exported again from its .fabricapp: the name its export.json kept, whatever the copy inside is called.
   const again = planExport(OSSIE, "model.ossie.yaml", "sales", mods(bimOf(URL_)), { workspace: "power bi", onDisk: true, path: "sales.ossie.yaml" });
   assert.equal(again.modelPath, plan.modelPath);
-  assert.throws(() => planExport(OSSIE, "sales.bim", "sales", mods(bimOf("https://example.com/x")), { workspace: "w", onDisk: true }), /names no lakehouse/);
-  assert.throws(() => planExport(OSSIE, "sales.bim", "sales", mods(bimOf(URL_)), { onDisk: true }), /not a OneLake file/);
-  assert.throws(() => planExport(OSSIE, "sales.bim", "sales", mods(bimOf(URL_)), { workspace: "w", path: "sales.bim" }), /not in a lakehouse's Files/);
+  assert.throws(() => planExport(OSSIE, "sales.ossie.yaml", "sales", mods(bimOf("https://example.com/x")), { workspace: "w", onDisk: true }), /names no lakehouse/);
+  assert.throws(() => planExport(OSSIE, "sales.ossie.yaml", "sales", mods(bimOf(URL_)), { onDisk: true }), /not a OneLake file/);
+  assert.throws(() => planExport(OSSIE, "sales.ossie.yaml", "sales", mods(bimOf(URL_)), { workspace: "w", path: "sales.bim" }), /not in a lakehouse's Files/);
 });
 
 test("the plan: tables named item.schema.table read their lakehouse by name, and the caller gives its GUIDs", () => {
