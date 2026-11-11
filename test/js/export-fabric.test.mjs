@@ -19,7 +19,7 @@ import { join, basename } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const require = createRequire(import.meta.url);
-const { FABRIC_TOKEN, POWERBI_TOKEN, ONELAKE_TOKEN, ONELAKE_CI_WORKSPACE: WS, ONELAKE_CI_LAKEHOUSE: LAKEHOUSE } = process.env;
+const { FABRIC_TOKEN, POWERBI_TOKEN, ONELAKE_TOKEN, EXCHANGE_TOKEN, ONELAKE_CI_WORKSPACE: WS, ONELAKE_CI_LAKEHOUSE: LAKEHOUSE } = process.env;
 const skip = !(FABRIC_TOKEN && POWERBI_TOKEN && ONELAKE_TOKEN && WS && LAKEHOUSE)
   && "FABRIC_TOKEN, POWERBI_TOKEN, ONELAKE_TOKEN, ONELAKE_CI_WORKSPACE and ONELAKE_CI_LAKEHOUSE are set only by the lake's workflow";
 if (skip && process.env.NO_SKIP) throw new Error(skip);
@@ -94,7 +94,7 @@ async function setup() {
     ui, onRefresh() {}, log,
     // The site as it is uploaded, kept to be looked at.
     fabricAppOf: o => {
-      const app = appOf({ ...o, externalEntraExchange: true });
+      const app = appOf({ ...o, externalEntraExchange: !!EXCHANGE_TOKEN });
       return { ...app, publish: p => app.publish({ ...p, site: async config => { const z = await p.site(config); sites.push(z); return z; } }) };
     },
   });
@@ -159,33 +159,33 @@ test("on fabriccat: a model file's app is published, client side, with its funct
 
 // The published app, asked as a viewer's page asks it, with no browser: the site's own SDK signs in with an
 // Entra token (the app is published with externalEntraExchange for this), then calls the deployed function.
-// A first look, which fails nothing yet: whether Fabric lets the CI identity in is what it is here to find out.
+// Only with EXCHANGE_TOKEN, a person's delegated Power BI token with the scope Item.Execute.All (the Rayfin CLI's
+// sign-in gives one; the Azure CLI's cannot): Fabric turns down the CI identity's own tokens here (AUTH_FAILED,
+// tried 2026-11-11), a service principal's not being delegated. So this runs where a person runs the test, and
+// in CI the app is published as an export publishes it, with no exchange.
 async function signedIn(s) {
+  if (!EXCHANGE_TOKEN) return console.log("published app: not signed in to (no EXCHANGE_TOKEN: a person's token is needed)");
   const { unzip } = require("../../fabric_app/export/exportapp.js");
   const { WEBAPP } = require("../../core/vendored.js");
   const config = JSON.parse(unzip(s.sites.at(-1)).get("rayfin.config.json").toString("utf8"));
   const load = p => import(pathToFileURL(join(ROOT, "vendor", "webapp", "npm", p, "+esm.js")).href);
-  const say = line => console.log(`published app: ${line}`);
-  try {
-    const [rayfin, provider] = await Promise.all([load(WEBAPP.rayfinClient), load(WEBAPP.rayfinFabric)]);
-    const client = new rayfin.RayfinClient({ ...config, baseUrl: config.apiUrl, publishableKey: config.publishableKey, authStorage: false });
-    let signed = null;
-    for (const [name, token] of [["Power BI", POWERBI_TOKEN], ["Fabric API", FABRIC_TOKEN]]) {
-      try { await provider.signInWithEntraToken(client.auth, { entraToken: token }); signed = name; break; }
-      catch (e) { say(`sign-in with the identity's ${name} token: ${e?.code} ${e?.message}`); }
-    }
-    if (!signed) return say("the CI identity is not let in with either token");
-    say(`signed in with the identity's ${signed} token`);
-    const r = await client.functions.openCatalog.invoke({ tables: "" }, { timeoutMs: 240000 });
-    if (r?.error) return say(`the deployed function answered an error: ${r.error}`);
-    const location = r.metadata?.[`test.${TABLE}`];
-    say(`the deployed function answered: ${Object.keys(r.metadata ?? {}).join(", ")}; missing ${(r.missing ?? []).join(", ") || "none"}; SAS for ${Object.keys(r.sas ?? {}).join(", ")}`);
-    if (!location) return;
-    const folder = Object.keys(r.sas)[0];
-    const url = `${location.replace(/^abfss?:\/\/([^@/]+)@([^/]+)\//, "https://$2/$1/")}?${r.sas[folder]}`;
-    const read = await fetch(url);
-    say(`the table's metadata.json, read with the function's SAS: HTTP ${read.status}`);
-  } catch (e) { say(`failed: ${String(e?.stack || e).slice(0, 600)}`); }
+  const [rayfin, provider] = await Promise.all([load(WEBAPP.rayfinClient), load(WEBAPP.rayfinFabric)]);
+  const client = new rayfin.RayfinClient({ ...config, baseUrl: config.apiUrl, publishableKey: config.publishableKey, authStorage: false });
+  await provider.signInWithEntraToken(client.auth, { entraToken: EXCHANGE_TOKEN });
+  assert.ok(client.auth.getSession()?.isAuthenticated, "the published app gives a session for the token");
+  // What the page asks of its function (storage/catalog.js), of the function Fabric runs.
+  const r = await client.functions.openCatalog.invoke({ tables: "" }, { timeoutMs: 240000 });
+  assert.equal(r?.error, undefined, `the deployed function: ${r?.error}`);
+  const location = r.metadata?.[`test.${TABLE}`];
+  assert.ok(location, `the deployed function names test.${TABLE}'s metadata: ${JSON.stringify(r.metadata)}`);
+  assert.deepEqual(r.missing, []);
+  const folder = Object.keys(r.sas).find(f => location.includes(`/Tables/${f}/`));
+  assert.ok(folder, `a SAS for the table's folder: ${Object.keys(r.sas).join(", ")}`);
+  assert.match(r.sas[folder], /(^|&)sp=r(&|$)/, "the SAS is read-only");
+  // The SAS reads the table, as the page's downloads do.
+  const read = await fetch(`${location.replace(/^abfss?:\/\/([^@/]+)@([^/]+)\//, "https://$2/$1/")}?${r.sas[folder]}`);
+  assert.equal(read.status, 200, "the table's metadata.json, read with the deployed function's SAS");
+  console.log(`published app: signed in with no browser; its function named test.${TABLE} and its read-only SAS read it`);
 }
 
 test("on fabriccat: the model file made a Direct Lake semantic model, and refreshed", { skip, timeout: 20 * 60_000 }, async () => {
