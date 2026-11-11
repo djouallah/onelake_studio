@@ -11,6 +11,9 @@
   short to win back. `?split=0` in the app's address runs every query on one engine, to compare.
 - **The Report's + adds a page again.** It answered "The report could not be read" while the new page's name was
   ready to be typed.
+- **A viewer of an app on a semantic model needs Read on the model, not Build.** The app, the docs and the website
+  said Build. Build is needed to publish the app; a viewer with Read alone is answered. The box a refused viewer sees
+  now says to ask the model's owner for access.
 - **A Fabric app on a semantic model opens again.** In 0.2.20 its page stopped at "Failed to fetch dynamically imported
   module": it asked for one of its own files where no export puts it. Export the app again to fix one already published.
 - **A Fabric app's query over a large table no longer fails with "Snappy decompression failure".** When a query read

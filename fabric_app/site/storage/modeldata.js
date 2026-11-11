@@ -5,7 +5,8 @@
 // Explore's query over the model is turned into DAX here (dax-sql, semantic/) and runs on the
 // semantic model the export made of the model file, through the app's fabric-semanticmodel
 // connector. The connector is delegated, Fabric Apps' only way to a semantic model: the query runs
-// as whoever is signed in, with their permissions on the model, Build included.
+// as whoever is signed in, with their permissions on the model. Read is enough: a workspace Viewer with
+// no Build was answered (tried 2026-11-11), though Fabric checks Build on whoever publishes the app.
 // The model is the site's model.json: the definition the semantic model was made from, written by
 // the export beside the page. Not the lakehouse's file, which can change after the export when the
 // semantic model does not, and DAX written from it would name what the semantic model lacks.

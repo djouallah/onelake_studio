@@ -252,7 +252,9 @@ ${onModel(plan) ? `- Semantic model: \`${plan.semanticModel.name}\`, as it is in
   when it is exported again. It is the app's \`${MODEL_CONNECTOR}\` connector (\`connectors:\` in \`rayfin/rayfin.yml\`).
 - Engine: **the semantic model, as the viewer.** The page turns each of Explore's queries over the model into DAX
   (dax-sql) and runs it through that connector, which is delegated: as the person signed in, so each viewer needs
-  Build on the semantic model (https://learn.microsoft.com/en-us/fabric/apps/connectors). The tenant must have the
+  Read on the semantic model. Build is needed to publish the app, not to view it: a workspace Viewer, with Read and
+  no Build, was answered through the connector (tried 2026-11-11), whatever
+  https://learn.microsoft.com/en-us/fabric/apps/connectors says of Build. The tenant must have the
   Semantic Model Execute Queries REST API setting on. The page runs no DuckDB and reads no table (\`site/engine.json\`,
   \`site/storage/modeldata.js\`). The tables below and the layers' DuckDB parts are the client-side export's.
 ` : `- Model: \`model.ossie.yaml\` in this file (\`model.bim\` for a .bim), exported from \`${plan.modelPath}\`: the app

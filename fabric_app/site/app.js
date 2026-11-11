@@ -142,7 +142,7 @@ export async function start() {
 function showRefused(model) {
   if (document.getElementById("refused")) return;
   const card = document.createElement("div");
-  for (const t of [`You can't read the semantic model ${model}.`, "Ask its owner for Build permission on it, then reload."]) {
+  for (const t of [`You can't read the semantic model ${model}.`, "Ask its owner for access to it, then reload."]) {
     card.append(Object.assign(document.createElement("p"), { textContent: t }));
   }
   const box = Object.assign(document.createElement("div"), { id: "refused" });

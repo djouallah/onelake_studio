@@ -56,7 +56,7 @@
             <tr><th>Made from</th><th>How the app reads</th><th>What it needs</th></tr>
           </thead>
           <tbody>
-            <tr><td>A Power BI semantic model</td><td>The page turns each query into DAX and runs it on the model, as the person viewing it. Nothing is written to the model.</td><td>Each viewer needs Build on the model.</td></tr>
+            <tr><td>A Power BI semantic model</td><td>The page turns each query into DAX and runs it on the model, as the person viewing it. Nothing is written to the model.</td><td>Each viewer needs Read on the model. Whoever publishes the app needs Build on it.</td></tr>
             <tr><td>A model file, an Ossie .yaml or a .bim</td><td>DuckDB runs in the browser and reads the lakehouse's tables. The app's function creates a read-only link for each table in the model, and for no other table.</td><td>The workspace must allow OneLake user-delegated SAS tokens. The tables are read with the rights of the app's owner.</td></tr>
           </tbody>
         </table>
