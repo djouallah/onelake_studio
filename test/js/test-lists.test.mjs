@@ -18,8 +18,10 @@ test("every test file runs somewhere, and every name is a file", async () => {
 });
 
 // The scripts that drive a browser or an installed build are run by name too.
-test("every run-*.mjs is run by the workflow", async () => {
-  const workflow = await readFile(new URL("../../.github/workflows/extension.yml", import.meta.url), "utf8");
+// By the Extension workflow, or by the lake's, which has the tokens one of them needs.
+test("every run-*.mjs is run by a workflow", async () => {
+  const workflow = (await Promise.all(["extension.yml", "lake-tables.yml"].map(f =>
+    readFile(new URL(`../../.github/workflows/${f}`, import.meta.url), "utf8")))).join("\n");
   for (const dir of ["js", "e2e"]) {
     const scripts = (await readdir(new URL(`../${dir}/`, import.meta.url))).filter(f => /^run-.+\.mjs$/.test(f));
     for (const f of scripts) assert.ok(workflow.includes(`node test/${dir}/${f}`), `test/${dir}/${f} runs nowhere`);
