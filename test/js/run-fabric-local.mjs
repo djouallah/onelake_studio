@@ -122,7 +122,8 @@ async function run(name, { plan, model, report, engine, env, seen }) {
 
     const watch = page => {
       page.on("pageerror", e => console.log("[pageerror]", e.message));
-      page.on("response", r => { if (r.status() === 404) console.log("[404]", r.url()); });
+      page.on("response", r => { if (r.status() >= 400) console.log(`[${r.status()}]`, r.url().slice(0, 200)); });
+      page.on("console", m => { if (m.type() === "error") console.log("[console.error]", m.text().split(/\r?\n/)[0].slice(0, 300)); });
     };
     // A tab of its own: no session, so the gate's button, and the popup it opens.
     {
@@ -172,12 +173,17 @@ async function run(name, { plan, model, report, engine, env, seen }) {
   }
 }
 
+// What the page shows, for a wait that ran out.
+const shown = async frame => (await frame.locator("body").innerText().catch(() => "")).replace(/\s+/g, " ").trim().slice(0, 600);
+const waited = async (frame, wait, what) => {
+  try { await wait; } catch (e) { throw new Error(`${what}: ${String(e?.message || e).split(/\r?\n/)[0]}; the page says: ${await shown(frame)}`); }
+};
 // The Report's tiles, once both hold rows (or an error): each tile's text.
 const tilesOf = async frame => {
-  await frame.waitForFunction(() => {
+  await waited(frame, frame.waitForFunction(() => {
     const tiles = [...document.querySelectorAll(".rp-tile")];
     return tiles.length >= 2 && tiles.every(t => t.querySelector("table td, .ex-error"));
-  }, null, { timeout: 180_000 });
+  }, null, { timeout: 120_000 }), "the Report's tiles never drew");
   return frame.evaluate(() => [...document.querySelectorAll(".rp-tile")].map(t => t.innerText.replace(/\s+/g, " ").trim()));
 };
 const drawn = rows => async (frame, how) => {
@@ -189,7 +195,7 @@ const drawn = rows => async (frame, how) => {
 };
 // The model refusing whoever is signed in: the box over the page, naming the model and what to ask for.
 const refused = async (frame, how) => {
-  await frame.waitForSelector("#refused", { timeout: 180_000 });
+  await waited(frame, frame.waitForSelector("#refused", { timeout: 120_000 }), "no box says the model refused");
   const box = (await frame.locator("#refused").innerText()).replace(/\s+/g, " ").trim();
   check(box.includes(`You can't read the semantic model ${MODEL}.`) && /Ask its owner for access to it, then reload\./.test(box),
     `${how}: Power BI refuses the query, and the page says so and what to ask for (${box.slice(0, 160)})`);
