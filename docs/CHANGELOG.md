@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **Charts are drawn with more care.** A bar's free end is rounded. A line is thicker, ends in a dot on its last
+  value, and one alone in its chart has a fill that fades under it; an area alone fades the same way. Grid lines are
+  dashed and lighter, a category axis has no ticks, and the series under the pointer stays bright while the others dim.
 - **A Report's tiles stay on screen while a pick filters them.** A click on a bar or a row used to blank every
   other tile to "Waiting…" until its new answer came. Each now keeps what it shows, dimmed, and a chart's bars and
   lines move from the old values to the new.

@@ -362,6 +362,14 @@ export function pivotTitle(s) {
 
 // A Report's tile's other bars, points and cells, while one of its rows is picked.
 const DIM = 0.3;
+// The fill under a line: its colour at `a` at the line, fading to nothing at the axis. A colour
+// that is not '#rrggbb' is filled flat, at `a`.
+function fadeDown(c, a) {
+  const m = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(c ?? '');
+  if (!m) return { opacity: a };
+  const rgba = o => `rgba(${parseInt(m[1], 16)},${parseInt(m[2], 16)},${parseInt(m[3], 16)},${o})`;
+  return { opacity: 1, color: { type: 'linear', x: 0, y: 0, x2: 0, y2: 1, colorStops: [{ offset: 0, color: rgba(a) }, { offset: 1, color: rgba(0) }] } };
+}
 const same = (a, b) => (a ?? null) === (b ?? null);
 
 /**
@@ -720,7 +728,8 @@ function pivotChart(s, piv, mark, look, pick) {
         yAxis: { type: 'category', data: piv.rowKeys.map(label), inverse: true, splitArea: { show: true } },
         visualMap: { min: lo, max: hi, calculable: true, orient: 'horizontal', left: 'center', bottom: 0, itemHeight: 120,
           inRange: { color: [css('--raised'), color(0)] }, formatter: v => fmt(m, v) },
-        series: [{ type: 'heatmap', data: cells, label: { show: cells.length <= 150, formatter: p => fmt(m, p.value[2]), fontSize: 10 } }],
+        series: [{ type: 'heatmap', data: cells, itemStyle: { borderColor: css('--card'), borderWidth: 2, borderRadius: 3 },
+          label: { show: cells.length <= 150, formatter: p => fmt(m, p.value[2]), fontSize: 10 } }],
       },
       keyAt: e => piv.rowKeys[e.value?.[1]] ?? null,
     };
@@ -788,8 +797,12 @@ function pivotChart(s, piv, mark, look, pick) {
     : ms.map((m, i) => flat ? valAxis(i, m) : catAxis(i, { boundaryGap: mark === 'bar' || mark === 'stacked' }));
   const yAxis = combine ? [valAxis(0, ms.find(m => !onRight(m)) ?? ms[0]), ...(right ? [valAxis(0, ms.find(onRight), 'right')] : [])]
     : ms.map((m, i) => flat ? catAxis(i) : valAxis(i, m));
+  // One series alone in the chart: a line has a fill that fades under it.
+  const lone = ms.length * shown.length === 1;
   return {
     option: {
+      // Drawn in over half a second the first time; a chart of very many points is drawn at once.
+      animationDuration: 500, animationEasing: 'cubicOut', ...(cats.length > 400 ? { animation: false } : {}),
       tooltip: { trigger: 'axis', confine: true, axisPointer: { type: lines ? 'line' : 'shadow' },
         formatter: ps => [esc(ps[0]?.axisValueLabel), ...ps.filter(p => p.value != null).map(p => {
           const m = ms[Math.floor(p.seriesIndex / shown.length)], b = shown[p.seriesIndex % shown.length];
@@ -812,17 +825,29 @@ function pivotChart(s, piv, mark, look, pick) {
         ];
         // A bar of a value with its own colour (one series): that colour.
         const own = a => (shown.length === 1 && !named && type === 'bar' ? valueColor(a) : null);
+        const stack = (mark === 'stacked' || mark === 'area') && as !== 'line' && as !== 'dashed' ? `s${i}` : undefined;
+        // A bar's free end is rounded: of a stack, its last series'.
+        const round = type === 'bar' && (!stack || j === shown.length - 1) ? (flat ? [0, 3, 3, 0] : [3, 3, 0, 0]) : 0;
+        // A line ends in a dot, on its last value (not a stack's, whose points are sums).
+        const ends = type === 'line' && as !== 'dashed' && !stack && cats.length > 1 && cats.length <= 300;
+        const lastAt = ends ? cats.findLastIndex(a => typeof at(a, b)?.[nameOf(m)] === 'number') : -1;
+        const marks = [...(look.maxLabel ? [{ type: 'max' }] : []),
+          ...(lastAt >= 0 ? [{ coord: [lastAt, at(cats[lastAt], b)[nameOf(m)]], symbolSize: 7, label: { show: false } }] : [])];
         return {
           type, name: named ? nameOf(m) : combine ? `${label(b)} · ${nameOf(m)}` : label(b),
           xAxisIndex: combine ? 0 : i, yAxisIndex: combine ? (right && onRight(m) ? 1 : 0) : i,
-          stack: (mark === 'stacked' || mark === 'area') && as !== 'line' && as !== 'dashed' ? `s${i}` : undefined,
-          areaStyle: as === 'area' ? { opacity: 0.7 } : undefined, showSymbol: false, connectNulls: false,
-          itemStyle: { color: c },
-          lineStyle: type === 'line' ? { width: as === 'dashed' ? 1.5 : cats.length > 300 ? 1 : 1.6, color: c, ...(as === 'dashed' ? { type: 'dashed' } : {}) } : undefined,
-          barMaxWidth: 56, barCategoryGap: '28%', barGap: '8%', large: cats.length > 400,
+          stack,
+          // An area among others is solid enough to read as a stack; one alone, and a line alone, fades under its line.
+          areaStyle: as === 'area' ? (lone ? fadeDown(c, 0.4) : { opacity: 0.55 }) : type === 'line' && lone && as !== 'dashed' ? fadeDown(c, 0.22) : undefined,
+          showSymbol: false, connectNulls: false,
+          itemStyle: { color: c, ...(round ? { borderRadius: round } : {}) },
+          lineStyle: type === 'line' ? { width: as === 'dashed' ? 1.5 : cats.length > 300 ? 1 : 2.2, color: c, cap: 'round', join: 'round', ...(as === 'dashed' ? { type: 'dashed' } : {}) } : undefined,
+          barMaxWidth: 44, barCategoryGap: '28%', barGap: '8%', large: cats.length > 400,
+          // The series under the pointer bright, the others dimmed.
+          ...(!lone && cats.length <= 400 ? { emphasis: { focus: 'series' } } : {}),
           ...(look.labels ? { label: { show: true, position: flat ? 'right' : as === 'bar' && mark === 'stacked' || as === 'area' ? 'inside' : 'top',
             fontSize: 10, formatter: p => fmt(m, p.value) } } : {}),
-          ...(look.maxLabel ? { markPoint: { symbol: 'circle', symbolSize: 6, itemStyle: { color: c }, data: [{ type: 'max' }],
+          ...(marks.length ? { markPoint: { symbol: 'circle', symbolSize: 6, silent: true, itemStyle: { color: c }, data: marks,
             label: { position: 'top', fontSize: 11, fontWeight: 600, color: css('--text'), formatter: p => fmt(m, p.value) } } } : {}),
           data: cats.map(a => {
             const p = point(a, at(a, b)?.[nameOf(m)] ?? null), oc = own(a);
