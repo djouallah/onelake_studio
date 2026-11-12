@@ -206,7 +206,7 @@ every window is a client of it over DuckDB's Quack protocol ([`core/engine/engin
   Microsoft Account**, a restart and **Clear Cached OneLake Data** stop it for every window, and their tabs close.
 - **What is shared:** one memory budget, the blocks read, in memory, and the lake.
 - **Tabs:** each runs its own statements, and its Stop reaches only those, including one still opening its tables:
-  that one answers at once and never runs. Whatever the tree opens gets a new tab, and so does **New Query**. A tab's `Files/` views carry a tag, so two tabs' views never share a name.
+  that one answers at once and never runs. Whatever the tree opens gets a new tab, unless a tab shows it already: then that tab comes forward, as it is. **New Query** always gets a new tab. A tab's `Files/` views carry a tag, so two tabs' views never share a name.
 - **The session token:** a new random one per server, kept in VS Code's secret storage, and reaching the
   server over its stdin. Without it the port on `127.0.0.1` runs nothing. In the client's DuckDB it is a
   named secret, since an `ATTACH`'s `TOKEN` option shows in `duckdb_databases()`.
@@ -414,7 +414,7 @@ rewritten in OneLake goes back to the cloud. A wildcard marks no one file. **A f
 Delta log nor Iceberg metadata has a warning and says *not a valid table*. That is kept like any table's metadata, so it
 shows offline, and it is asked again when the table is opened or its Tables node is, so a folder that becomes a table stops saying so.
 
-**Clicking a table** opens it in a new tab: Data, Stats, History and Visual. The SQL box gets
+**Clicking a table** opens it in a new tab, or brings forward the tab that shows it: Data, Stats, History and Visual. The SQL box gets
 `SELECT * FROM <its name> LIMIT 100` to start from, not run. A file does the same with what its preview runs.
 - **Data** is hidden offline on a table with none of its rows read here, since all it could show is an error. The status
   line says why. It comes back with the connection.
@@ -424,7 +424,7 @@ shows offline, and it is asked again when the table is opened or its Tables node
   each snapshot says how its row count and columns differ from the table now.
 - **Visual** is the SQL starter described under the rules above.
 
-**Clicking a file** opens it in a new tab: Parquet, CSV, JSON, Excel, DuckDB, SQLite, and files inside a zip.
+**Clicking a file** opens it in a new tab, or brings forward the tab that shows it: Parquet, CSV, JSON, Excel, DuckDB, SQLite, and files inside a zip.
 - **A database file** is recognised by its header, never its extension. A DuckDB file is attached
   read-only and block-read on demand. A SQLite file is copied by the host into the engine's temp
   directory and attached read-only, capped at 200 MB.

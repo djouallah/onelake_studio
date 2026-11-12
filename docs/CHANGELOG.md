@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **A table or a file is not opened twice.** A click on a table, or on a file in `Files/`, that a tab shows
+  already brings that tab forward, as models already did, where it used to open another tab of the same name.
+- **The Model page: a table being dragged stays on screen.** One dragged past the drawing's edge used to vanish
+  until it was let go.
 - **The desktop app: small fixes.** Upload Files… has Cancel, as in VS Code. Settings shows its descriptions
   without the Markdown marks. Read Log keeps to one tab, shown at its end. A tree node opens at once and says
   Loading… while its listing is read. Closing a tab shows the one next to it, not the last.

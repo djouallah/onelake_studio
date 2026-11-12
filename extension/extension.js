@@ -548,9 +548,9 @@ async function activateInner(context) {
     nameActiveTab(tabName);
     return true;
   }
-  // What a tab is opened on, when that is a model: a Fabric semantic model, a model file from disk or
-  // from OneLake's Files/, an app's file. Null for anything else (a table, a query), which gets a
-  // new tab every time.
+  // What a tab is opened on: a table, a OneLake file, a Fabric semantic model, a model file from disk,
+  // an app's file. A click on one that a tab shows brings that tab forward. Null for a query, which
+  // gets a new tab every time.
   const pathKey = p => `path:${process.platform === 'win32' ? String(p).toLowerCase() : p}`;
   const modelTabKey = n => `model:${n.workspace}/${n.model}`;
   function tabKey(msg) {
@@ -558,7 +558,9 @@ async function activateInner(context) {
       return msg.appFile ? pathKey(msg.appFile) : msg.modelWorkspace ? modelTabKey({ workspace: msg.modelWorkspace, model: msg.modelName })
         : msg.path ? pathKey(msg.path) : null;
     }
-    if (msg.type === 'open-file' && /\.(bim|ya?ml)$/i.test(msg.path || '')) return `file:${msg.workspace}/${msg.item}/${msg.path}`;
+    // A table's and an item's names are matched ignoring case, as its SQL name is (NAMING.md); a path in Files/ is exact.
+    if (msg.type === 'open-table') return `table:${[msg.workspace, msg.item, msg.schema || 'dbo', msg.table].join('/').toLowerCase()}`;
+    if (msg.type === 'open-file' && msg.path) return `file:${`${msg.workspace}/${msg.item}`.toLowerCase()}/${msg.path}`;
     return null;
   }
 
