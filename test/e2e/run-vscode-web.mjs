@@ -584,7 +584,8 @@ async function cachedRunMatrix({ saved, home, dbFile }) {
 // (fixtures.mjs): tiles over the model (a pivot among them), and a table whose row needs no rows from OneLake, to click.
 // ---------------------------------------------------------------------------
 const tilesDone = f => until("every tile done", async () => {
-  const said = await f.locator("#modelView .rp-tile").evaluateAll(ts => ts.map(t => t.innerText));
+  // A tile that runs again keeps what it shows, dimmed (rp-stale), until its new answer is drawn.
+  const said = await f.locator("#modelView .rp-tile").evaluateAll(ts => ts.map(t => (t.classList.contains("rp-stale") ? "Waiting…" : t.innerText)));
   return said.length && said.every(t => !/Waiting…|Running…/.test(t)) && said;
 }, 90000);
 const UNCOMPILED = /Parser Error|Binder Error|Catalog Error|syntax error|AGG\(|\bSQL( syntax)?: /i;

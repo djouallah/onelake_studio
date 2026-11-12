@@ -30,6 +30,8 @@
 // Columns'), and every other tile runs again with it as a condition of its own query, as its
 // Filters shelf writes one (pickWhere). The tile clicked stays whole, its pick bright; the same
 // click again clears it, as the pick's ✕ above the tiles does. Picks in several tiles all apply.
+// A tile that runs again keeps what it shows, dimmed (rp-stale), until its new answer is drawn over
+// it: a chart's bars and lines move from the old values to the new.
 // The host's `where` (its filter bar) is in every tile's query too.
 // The same file in the panel and in Export to Fabric's app: the host says how SQL runs (`sql`).
 // =============================================================================
@@ -263,7 +265,7 @@ export function drawReport(root, spec, ctx) {
     const wide = tile.wide ?? (mark === 'table' || mark === 'highlight' || mark === 'heatmap' || mark === 'calendar');
     const title = String(tile.title ?? '');
     const text = tile?.kind === 'text';
-    const job = { tile, body, piv, on: text ? null : pickColumn(tile, piv), dirty: !text, asking: false, chart: null, box: null, repaint: null };
+    const job = { tile, body, piv, on: text ? null : pickColumn(tile, piv), dirty: !text, asking: false, chart: null, box: null, repaint: null, drawn: false };
     const grip = ctx.layout ? el('button', { type: 'button', class: 'rp-tool rp-grip', title: 'Drag to move, or move with the arrow keys',
       'aria-label': `Move ${title || 'this tile'}`, onpointerdown: e => dragFrom(e, job, 'move'), onkeydown: e => keyed(e, job, 'move') }, icon('grip')) : null;
     job.slicer = mark === 'slicer';
@@ -464,7 +466,15 @@ export function drawReport(root, spec, ctx) {
   }
   function say(job, text, cls = '') {
     clear(job);
+    job.drawn = false;
+    job.section.classList.remove('rp-stale');
     job.body.replaceChildren(el('p', { class: `rp-say${cls}` }, text));
+  }
+  // A tile that will run again: what it shows stays, dimmed, until its new answer is drawn; one
+  // that shows nothing yet says `text`.
+  function wait(job, text) {
+    if (job.drawn) job.section.classList.add('rp-stale');
+    else say(job, text);
   }
 
   // The tiles waiting to run, top to bottom, `atOnce` at a time: the first time, then those a pick
@@ -483,16 +493,19 @@ export function drawReport(root, spec, ctx) {
     await ctx.shown?.();
     if (gone) return;
     job.dirty = false;
-    say(job, 'Running…');
+    wait(job, 'Running…');
+    job.section.classList.add('rp-running');
     try { await drawTile(job); }
     catch (e) {
       if (gone) return;
       // Stopped because the Report was left, or because a pick changed it: again.
       const left = e?.cancelled && ctx.leftWhileRunning?.();
-      if (job.dirty || left) { job.dirty = true; say(job, 'Waiting…'); return; }
+      if (job.dirty || left) { job.dirty = true; wait(job, 'Waiting…'); return; }
       say(job, e?.cancelled ? 'Stopped.' : e?.message || String(e), e?.cancelled ? '' : ' error');
       // Stopped by Stop: no more tiles, until a pick asks for them.
       if (e?.cancelled) for (const j of jobs.filter(x => x.dirty)) { j.dirty = false; say(j, 'Stopped.'); }
+    } finally {
+      job.section.classList.remove('rp-running');
     }
   }
 
@@ -508,7 +521,7 @@ export function drawReport(root, spec, ctx) {
   function changed(job) {
     drawChips();
     job.repaint?.();
-    for (const j of jobs) if (j !== job && !j.still) { j.dirty = true; say(j, 'Waiting…'); }
+    for (const j of jobs) if (j !== job && !j.still) { j.dirty = true; wait(j, 'Waiting…'); }
     // Stopped only while its query runs: once answered, its drawing is dropped (drawTile).
     if (jobs.some(j => j.busy && j !== job && j.asking && j.dirty)) ctx.cancel?.();
     pump();
@@ -553,10 +566,9 @@ export function drawReport(root, spec, ctx) {
   // A pivot tile's answer (job.res) drawn as Visual draws it, with its format: a field's number
   // style, a table's colours by value, a chart's labels, and the chart's format over it.
   async function paintPivot(job) {
-    const { tile, body, res, piv } = job;
-    clear(job);
-    const f = piv.state.format ?? {};
-    if (!res.rows.length) { body.replaceChildren(el('p', { class: 'rp-say' }, 'No rows.')); return; }
+    const { body, res, piv } = job;
+    const f = piv.state.format ?? {};
+    if (!res.rows.length) { say(job, 'No rows.'); return; }
     const look = { fields, palette, css: ctx.css ?? (() => ''), ...formatLook(f), valueColors };
     const pickOf = () => {
       if (!job.on) return null;
@@ -578,20 +590,24 @@ export function drawReport(root, spec, ctx) {
     // A chart needs ECharts first; a table draws as it is.
     const echarts = first.node ? null : await ctx.echarts();
     if (gone || job.dirty || job.res !== res) return;
-    let keyAt = null;
+    // The chart the tile has is kept when its new answer is a chart too: drawn over, its bars and
+    // lines move to their new values. Its click reads this answer's keys and picks (job.keyAt, job.pickOf).
+    job.pickOf = pickOf;
     const paint = v => {
-      if (v.node) { body.replaceChildren(el('div', { class: 'rp-pivot' }, v.node)); return; }
-      keyAt = v.keyAt;
+      job.drawn = true;
+      job.section.classList.remove('rp-stale');
+      if (v.node) { clear(job); body.replaceChildren(el('div', { class: 'rp-pivot' }, v.node)); return; }
+      job.keyAt = v.keyAt;
       if (!job.chart) {
         const box = el('div', { class: 'rp-chart' });
         body.replaceChildren(box);
         const chart = echarts.init(box, ctx.chartTheme ?? 'studio');
         Object.assign(job, { chart, box });
         resized.observe(box);
-        if (job.on) chart.on('click', e => { const key = e.componentType === 'series' && keyAt?.(e); if (key) pickOf().on(key); });
+        if (job.on) chart.on('click', e => { const key = e.componentType === 'series' && job.keyAt?.(e); if (key) job.pickOf().on(key); });
       }
       const option = formatChart(v.option, f, { textSize });
-      job.chart.setOption({ aria: { enabled: true }, ...option }, true);
+      job.chart.setOption({ aria: { enabled: true }, animationDurationUpdate: 350, animationEasingUpdate: 'cubicOut', ...option }, true);
     };
     // A map draws over the world's outline, read the first time one is drawn.
     if (first.option?.geo && ctx.mapReady) {

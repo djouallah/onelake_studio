@@ -208,6 +208,8 @@ try {
   // The model opened again first: the visual's own answer is kept by the view it ran in, and the tile asks the
   // same thing, so in the same view it would be answered from there and send nothing.
   await page.click('#modelView .subtab[data-apage="pivot"]');
+  // Twice: two tiles, for a pick in one to filter the other.
+  await page.locator("#modelView button", { hasText: "Add to report" }).click();
   await page.locator("#modelView button", { hasText: "Add to report" }).click();
   await page.evaluate(path => window.postMessage({
     type: "open-file", workspace: "ws", item: "shop.Lakehouse", path, bytes: 1,
@@ -226,6 +228,31 @@ try {
   if (!tile) throw new Error(`the Report's tile sent no statement over the model: ${written.join(" | ").slice(0, 300)}`);
   if (/\bFROM model\b/.test(tile)) throw new Error(`a Report tile's statement says FROM model, which no SQL box runs: ${tile}`);
   console.log(`report: a tile's statement names the model (${tile.replace(/\s+/g, " ").slice(0, 110)})`);
+
+  // Cross filtering: a click on a row of one tile runs the other again. The other keeps its rows on
+  // screen until the new ones are drawn: a tile that had an answer never goes back to "Waiting…".
+  {
+    const tileCount = await page.locator("#modelView .rp-tile").count();
+    if (tileCount !== 2) throw new Error(`the Report's page has ${tileCount} tiles after two Add to report, not 2`);
+    await page.waitForFunction(() => [...document.querySelectorAll("#modelView .rp-tile")].every(t => /red/.test(t.querySelector("table")?.textContent ?? "")), { timeout: 60000 })
+      .catch(() => { throw new Error("the Report's two tiles never both drew"); });
+    await page.evaluate(() => {
+      window.__said = [];
+      new MutationObserver(() => {
+        for (const p of document.querySelectorAll("#modelView .rp-tile .rp-say")) window.__said.push(p.textContent);
+      }).observe(document.querySelector("#modelView .rp"), { childList: true, subtree: true });
+    });
+    await page.locator("#modelView .rp-tile").nth(0).locator("tr.rp-pick", { hasText: "blue" }).first().click();
+    await page.waitForFunction(() => {
+      const t = [...document.querySelectorAll("#modelView .rp-tile")][1], text = t?.querySelector("table")?.textContent ?? "";
+      return t && !t.classList.contains("rp-stale") && /blue/.test(text) && !/red/.test(text);
+    }, { timeout: 60000 })
+      .catch(async () => { throw new Error(`a pick in one tile never filtered the other: ${(await page.locator("#modelView .report-page").innerText()).replace(/\s+/g, " ").slice(-300)}`); });
+    const said = await page.evaluate(() => window.__said);
+    if (said.length) throw new Error(`a tile that had an answer was blanked while it ran again: ${said.join(" | ")}`);
+    if (await page.locator("#modelView .rp-chip").count() !== 1) throw new Error("the pick has no chip over the tiles");
+    console.log("report: a pick in one tile filtered the other, which kept its rows meanwhile");
+  }
 
   // A model the extension downloaded to this machine arrives as text (open-model), not as
   // a OneLake path — the click in the tree — named by its workspace and its own name.

@@ -474,6 +474,13 @@ section.modelOpen #chartBtn { display: none; }
 .rp-page-rename { font: inherit; font-weight: 600; color: var(--text); background: var(--input-bg); border: 1px solid var(--accent); border-radius: var(--radius-sm); padding: 0.15rem 0.7rem; }
 .rp-page-ask { display: inline-flex; align-items: center; gap: 0.4rem; margin-left: 0.6rem; color: var(--text); }
 .rp-tile.rp-leaving { opacity: 0.45; }
+/* A tile that runs again (report.js wait): what it shows stays, dimmed, and a line runs along its top
+   while its query does. */
+.rp-body { transition: opacity 0.2s; }
+.rp-tile.rp-stale .rp-body { opacity: 0.45; pointer-events: none; }
+.rp-tile.rp-stale.rp-running::before { content: ''; position: absolute; top: 0; left: 0; width: 30%; height: 2px; background: var(--accent); animation: rp-run 1.1s ease-in-out infinite; }
+@keyframes rp-run { from { transform: translateX(-100%); } to { transform: translateX(334%); } }
+@media (prefers-reduced-motion: reduce) { .rp-tile.rp-stale.rp-running::before { animation: none; width: 100%; opacity: 0.5; } }
 /* A tile's format (report.js styleTile): no title (its tools stay), the title's size, a card's
    figures' size and colour, banded rows; and the report's text size. */
 /* A tile whose title is off: .rp-head, above. */

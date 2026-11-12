@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **A Report's tiles stay on screen while a pick filters them.** A click on a bar or a row used to blank every
+  other tile to "Waiting…" until its new answer came. Each now keeps what it shows, dimmed, and a chart's bars and
+  lines move from the old values to the new.
 - **The Model page's tables can be moved.** Drag a table anywhere and its relationships' lines follow. *Auto
   arrange*, shown once a table has moved, puts them all back. Where they are lasts while the tab is open.
 - **A model that is open already is not opened twice.** A click on a semantic model, a model file or a
