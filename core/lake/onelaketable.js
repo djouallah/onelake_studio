@@ -250,6 +250,13 @@ async function readDelta(c, root, { version: upTo = Infinity, from = null, base 
 /** An Iceberg table at the snapshot its metadata file names. Its own position-delete files serve as they are. */
 async function readIceberg(c, metadataLocation, { allow = async () => {} } = {}) {
   const schema = await rows(c, `DESCRIBE SELECT * FROM iceberg_scan(${q(metadataLocation)})`);
+  // The table's folder and its manifest lists, where its metadata file says they are, said to the engine before
+  // iceberg_metadata reads them. Fabric writes them by the workspace's GUID, a OneLake place other than the name
+  // the metadata file was found by, and the storage secret goes only where it was told (sql.js): unsaid, they
+  // were asked for with no token, and OneLake answered Unauthorized.
+  const [{ content }] = await rows(c, `SELECT content FROM read_text(${q(metadataLocation)})`);
+  const meta = JSON.parse(content);
+  await allow([meta.location, ...(meta.snapshots || []).map(s => s['manifest-list'])].filter(Boolean).map(String));
   const listed = await rows(c, `SELECT content, file_path, record_count FROM iceberg_metadata(${q(metadataLocation)}) WHERE status <> 'DELETED'`);
   // What the manifests name is read with the OneLake token, here and by every statement after: only on OneLake.
   for (const m of listed) assertOneLakeUrl(m.file_path);

@@ -1293,7 +1293,8 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
   const lakeStats = () => init().then(() => (remote ? instance.lakeStats() : lakeService ? lakeService.stats() : null));
   // The sync service's (syncworker.js): the lake's tables, and one synced now.
   const lakeTables = () => init().then(() => (remote ? instance.lakeTables() : capabilities.lake ? lakeTablesHere() : []));
-  const syncLakeTable = which => init().then(() => (remote ? instance.lakeSync(which) : lakeSync(which)));
+  // On this window's token, as a statement is: the server's secret may hold one that expired since its last statement.
+  const syncLakeTable = which => init().then(() => withAuthRetry(() => (remote ? instance.lakeSync(which) : lakeSync(which))));
   // serve: the OneLake token a window sends, over the control pipe.
   // With it, the OneLake places that window reads: a server started since has none of them.
   const setStorageToken = (token, scopes = []) => init().then(() => admin(() => {

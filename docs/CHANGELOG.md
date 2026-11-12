@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **An Iceberg table no longer fails with Unauthorized on its first read.** Fabric names a table's manifest
+  lists by its workspace's GUID, and they were read before that place was given the token, so OneLake refused them
+  as an anonymous request. The background sync of tables in use now also gets a fresh token, as a statement does.
 - **A table or a file is not opened twice.** A click on a table, or on a file in `Files/`, that a tab shows
   already brings that tab forward, as models already did, where it used to open another tab of the same name.
 - **The Model page: a table being dragged stays on screen.** One dragged past the drawing's edge used to vanish
