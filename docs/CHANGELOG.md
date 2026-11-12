@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.22
 
 - **The Model page opens a table.** A double-click on a table, or Open table in its panel, opens the OneLake table
   behind it in a tab of its own, as a click in the tree does.
