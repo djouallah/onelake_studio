@@ -57,12 +57,14 @@ const ENGINE_METHODS = new Set(['query', 'stream', 'cancel', 'info', 'fileView',
  * @param {(name: string) => Promise<string|null>} [o.askVariable]
  *        a query variable's value, asked of the user; null when dismissed
  * @param {{ load: Function, stamp: Function, save?: Function }} [o.report]  the Report tab's tiles (exportflow.js reportOf, reportStamp, reportSave)
+ * @param {(sqlName: string) => Promise<void>} [o.openTable]
+ *        a OneLake table, by its five-part SQL name, opened in a tab as the tree opens it
  * @param {(x: {workspace: string, model: string}) => Promise<object>} [o.openModel]
  *        a semantic model a query names, opened from its local copy (read from Fabric the first
  *        time) and kept as a view: { name, schema, path, text }
  */
 function createHostMethods({ onelake, engine, onStatus = () => {}, saveFile = null, semviews = null, exportExplore = null, createSemanticModel = null, report = null, openInExcel = null, offlineState = null, setOffline = null,
-                             nameTables = null, exportResult = null, openDocument = null, copyText = null, saveQuery = null, saveDraft = null, askVariable = null, openModel = null, modelsDir = null }) {
+                             nameTables = null, exportResult = null, openDocument = null, copyText = null, saveQuery = null, saveDraft = null, askVariable = null, openModel = null, openTable = null, modelsDir = null }) {
   const views = () => { if (!semviews) throw new Error('semantic views are not available here'); return semviews; };
   return {
     // Export to Fabric (exportapp.js): the model's text (to check it), where it lives in
@@ -204,6 +206,11 @@ function createHostMethods({ onelake, engine, onStatus = () => {}, saveFile = nu
     'host.exportResult': async x => {
       if (!exportResult) throw new Error('export is not available here');
       return exportResult({ sql: String((x && x.sql) ?? ''), name: String((x && x.name) || 'query') });
+    },
+    // The Model page's table: the OneLake table behind it, in a tab of its own.
+    'host.openTable': async x => {
+      if (!openTable) throw new Error('opening a table is not available here');
+      await openTable(String((x && x.sqlName) ?? ''));
     },
     'host.openDocument': async x => {
       if (!openDocument) throw new Error('documents are not available here');

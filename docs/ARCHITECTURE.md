@@ -567,7 +567,9 @@ A semantic model opens as **Explore** ([`page/explore/`](../page/explore/)), on 
   Semantic Model (a model file only) and Open in Excel at the right; Visual's Show plan, Download CSV and Add to report; the Report's Add text and Export to Fabric.
 
 - **Model:** its tables as a star, dimensions in the middle and facts around them, with its
-  relationships. Click a table for its columns, measures (with their DAX) and relationships.
+  relationships. Click a table for its columns, measures (with their DAX) and relationships. Double-click it, or its
+  panel's Open table, for the OneLake table behind it in a tab of its own, as the tree opens it (`host.openTable`, by
+  its five-part name, placed in the tree's kept listings by `place` in [`core/sqltables.js`](../core/sqltables.js)).
 - **Visual:** drag columns onto Rows, Columns and Filters and measures onto Values, drawn as a pivot or
   a chart.
   - It is as tall as the tab, in flat panes: the fields; then the tools (swap, sort, totals, clear, Format) over the

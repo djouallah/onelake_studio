@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **The Model page opens a table.** A double-click on a table, or Open table in its panel, opens the OneLake table
+  behind it in a tab of its own, as a click in the tree does.
 - **An Iceberg table no longer fails with Unauthorized on its first read.** Fabric names a table's manifest
   lists by its workspace's GUID, and they were read before that place was given the token, so OneLake refused them
   as an anonymous request. The background sync of tables in use now also gets a fresh token, as a statement does.

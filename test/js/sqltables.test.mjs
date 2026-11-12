@@ -316,3 +316,12 @@ test("a Refresh over a lakehouse the lake holds a table of reads its metadata ag
   assert.equal(r.lake, undefined);
   assert.equal(count(w, "load"), 1);
 });
+
+test("a table's place in the tree, from its SQL name in any case, with nothing of the table read", async () => {
+  const w = world();
+  w.tables = [{ schema: "", table: "Trips" }];
+  const at = await w.sql.place({ kind: "lakehouse", workspace: "WS", item: "OLD", schema: "dbo", table: "trips" });
+  assert.deepEqual(at, { workspace: "ws", item: "old.Lakehouse", schema: "", table: "Trips" }, "spelled as OneLake lists it");
+  assert.equal(count(w, "load"), 0, "no metadata asked for");
+  await assert.rejects(w.sql.place({ ...ref(), table: "gone" }), /there is no table gone in old\.Lakehouse/);
+});

@@ -236,7 +236,17 @@ function createSqlTables({ onelake, paths, offlineReason = () => null, tableRead
     return out;
   }
 
-  return { resolve, resolveFile, nameTables, forget: () => namedFrom.clear() };
+  // Where a table's SQL name is in the tree: its workspace, its item's folder and its schema and name as OneLake
+  // spells them, from the kept listings. Nothing of the table is read: it is opened as a click in the tree opens it.
+  async function place(ref) {
+    const { ws, dir } = await locate(ref, false);
+    const listing = await onelake.tables({ workspace: ws, item: dir }).catch(() => null);
+    const hit = (listing || []).find(x => same(x.schema || 'dbo', ref.schema || 'dbo') && same(x.table, ref.table));
+    if (!hit) throw new Error(`${sqlName(ref)}: there is no table ${ref.table} in ${dir}`);
+    return { workspace: ws, item: dir, schema: hit.schema || '', table: hit.table };
+  }
+
+  return { resolve, resolveFile, nameTables, place, forget: () => namedFrom.clear() };
 }
 
 module.exports = { createSqlTables, editDistance };

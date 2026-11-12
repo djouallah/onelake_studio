@@ -5,7 +5,8 @@
 // A dimension is a table a
 // relationship points to, a fact any other: the model says it, not the names. Where each
 // card and line goes is draw.js's (modelPlaces, modelEdges). Drag a table to move it; hover it
-// to see what it reaches; click it for its columns, measures and relationships.
+// to see what it reaches; click it for its columns, measures and relationships; double-click it
+// for the OneLake table behind it, in a tab of its own (`openTable`).
 // =============================================================================
 
 import { modelPlaces, modelEdges, modelSize, MODEL_CARD } from './draw.js';
@@ -33,7 +34,7 @@ export function tmslOf(bim) {
 // Draws `model` (tmslOf's) into `root`, which it fills with the diagram and the side panel.
 // A card can be dragged anywhere: its lines follow, and Auto arrange puts every card back in the
 // star. Where a card was dragged to lasts as long as the drawing: nothing is written to the model.
-export function renderModel(root, model, { title = 'Semantic model' } = {}) {
+export function renderModel(root, model, { title = 'Semantic model', openTable = null } = {}) {
   let selected = null;
   const rels = model.relationships;
   const keys = name => [...new Set(rels.flatMap(r => [
@@ -77,6 +78,7 @@ export function renderModel(root, model, { title = 'Semantic model' } = {}) {
       if (dragged) { dragged = false; return; }
       select(t.name);
     });
+    g.addEventListener('dblclick', e => { e.stopPropagation(); if (openTable) openTable(t.name); });
     g.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); select(t.name); } });
     cards.append(g);
     return g;
@@ -182,7 +184,7 @@ export function renderModel(root, model, { title = 'Semantic model' } = {}) {
       out.push(el('h3', {}, title));
       out.push(el('p', {}, `${tables.length} tables · ${rels.length} relationships · ${measures.length} measures (${measures.filter(m => m.isHidden).length} hidden).`));
       if (model.description) out.push(el('p', {}, lines(model.description)));
-      out.push(el('p', { class: 'm-hint' }, 'Drag a table to move it. Hover it to see what it reaches; click it for its columns, measures and relationships.'));
+      out.push(el('p', { class: 'm-hint' }, `Drag a table to move it. Hover it to see what it reaches; click it for its columns, measures and relationships${openTable ? '; double-click it to open the table' : ''}.`));
       box.replaceChildren(...out);
       return;
     }
@@ -192,6 +194,7 @@ export function renderModel(root, model, { title = 'Semantic model' } = {}) {
     out.push(heading);
     const src = t.partitions?.[0]?.source;
     if (src?.entityName) out.push(el('p', { class: 'm-src' }, `${t.partitions[0].mode ?? ''} · ${src.schemaName ? `${src.schemaName}.` : ''}${src.entityName}`));
+    if (openTable) out.push(el('p', {}, el('button', { type: 'button', class: 'btn-explore', title: 'The OneLake table behind it, in a tab of its own', onclick: () => openTable(t.name) }, 'Open table')));
     if (t.description) out.push(el('p', {}, lines(t.description)));
 
     const mine = rels.filter(r => r.fromTable === t.name || r.toTable === t.name);

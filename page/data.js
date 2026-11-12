@@ -687,6 +687,8 @@ export function createEngine({
   const setOffline = x => callHost("model.setOffline", [x]);
   // A semantic model's Direct Lake tables (named by GUID) as SQL names (semantic.js).
   const nameTables = list => callHost("onelake.nameTables", [list]);
+  // A OneLake table, by its SQL name, in a tab of its own (the Model page's double-click).
+  const openTable = sqlName => callHost("host.openTable", [{ sqlName }]);
   // Export: the host asks for a format and a file and writes every row of `sql`.
   const exportResult = x => callHost("host.exportResult", [x]);
   // Rows as an untitled CSV or JSON document.
@@ -702,5 +704,5 @@ export function createEngine({
 
   return { init, reset, statTable, peekTable, rowsOutOfReach, deltaState, deltaHistory,
            loadFile, readFileBytes, saveText, saveOneLakeFile, runSql, describeLoad, fmtBytes, cancelLoad,
-           semanticViews, semanticKeep, semanticOpen, exportExplore, createSemanticModel, modelReport, modelReportStamp, modelReportSave, openInExcel, offlineState, setOffline, nameTables, saveQuery, saveDraft, askVariable, copyText, exportResult, openDocument };
+           semanticViews, semanticKeep, semanticOpen, exportExplore, createSemanticModel, modelReport, modelReportStamp, modelReportSave, openInExcel, offlineState, setOffline, nameTables, openTable, saveQuery, saveDraft, askVariable, copyText, exportResult, openDocument };
 }

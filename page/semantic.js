@@ -206,7 +206,8 @@ function itemOfIdent(ident) {
  * A semantic view of a model file's text (a .bim, or an Ossie .yaml), under `name` in
  * `schema`, the model's workspace: SQL names it semanticmodel.ws.model. `mode`: 'create',
  * 'replace' or 'if_not_exists' (dax-sql's). Returns what the model view draws:
- * { name (its SQL name), view, schema, file, sample, directLake, bim, exploreCompiler }.
+ * { name (its SQL name), view, schema, file, sample, directLake, bim, exploreCompiler, lakeTables }:
+ * `lakeTables`, each Direct Lake table's SQL name by its model table's name, lower-cased.
  */
 export async function defineView(name, path, text, mode = "replace", modules = null, schema = null) {
   if (!schema) throw new Error(`a semantic model is named ${MODEL_CATALOG}.<workspace>.<model>: ${name} has no workspace`);
@@ -231,7 +232,8 @@ export async function defineView(name, path, text, mode = "replace", modules = n
   // Explore's (explore/query.js): its rows go straight to the page, cast as EXPLORE_CASTS says.
   const exploreCompiler = createCompiler(tmslToModel(bim), { tableSource, castOutput: EXPLORE_CASTS });
   return { name: fullName(v), view: v.name, schema, file: basename(path), sample: sampleQuery(v),
-           directLake: lake.size, bim, exploreCompiler, done };
+           directLake: lake.size, bim, exploreCompiler, done,
+           lakeTables: Object.fromEntries([...lake].map(([table, l]) => [table, l.ident])) };
 }
 
 // A model opened from a file, in its workspace: under the semantic model's own name when it is

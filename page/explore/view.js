@@ -1025,7 +1025,7 @@ export function mountExplore(root, ctx) {
   }
 
   // --- Model ---
-  if (pages.some(([k]) => k === 'model')) renderModel(modelPage, ctx.tmsl, { title: `Semantic model ${ctx.name}` });
+  if (pages.some(([k]) => k === 'model')) renderModel(modelPage, ctx.tmsl, { title: `Semantic model ${ctx.name}`, openTable: ctx.openTable });
   let coloured = false;   // the file, coloured the first time it is shown
   function showText(on) {
     for (const [b, active] of [[diagramTab, !on], [fileTab, on]]) {

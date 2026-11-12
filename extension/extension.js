@@ -19,7 +19,7 @@ const os = require('node:os');
 const { existsSync } = require('node:fs');
 const { randomBytes } = require('node:crypto');
 const fsp = require('node:fs/promises');
-const { quoteIdent, sqlStr } = require('../core/sql');
+const { quoteIdent, sqlStr, tableRefs } = require('../core/sql');
 const { openPanel, setPanelTitle, nameActiveTab, closePanel, revealPanel, revealTab, panelOpen, postToPanel, postLive, panelSettings } = require('./panel');
 const { openPerformance, closePerformance } = require('./performance');
 const { openLogs, closeLogs } = require('./logs');
@@ -39,7 +39,7 @@ const { modelFileName, modelAccountDir } = require('../core/models/fabric');
 const { LakehouseTree, TREE_FILTERS } = require('./tree');
 const { firstClicks } = require('../core/doubleclick');
 const { webviewRoot } = require('./webview');
-const { fmtBytes, sqlName, sqlNameOf, fileSqlName, sqlPart, modelSqlName, DFS_ORIGIN } = require('../core/names');
+const { fmtBytes, sqlName, sqlNameOf, fileSqlName, sqlPart, modelSqlName, DFS_ORIGIN, SQL_KINDS } = require('../core/names');
 const { NAME, placeOf, tabTitle } = require('../core/title');
 const bundleLoaded = upMs();
 
@@ -149,6 +149,8 @@ let keepOffline = null;
 // kept as a semantic view; and a Direct Lake model's tables (by GUID) -> their SQL names. Set by activateInner.
 let openSqlModel = null;
 let nameModelTables = null;
+// The Model page's double-click on a table: that OneLake table, by its SQL name, opened as the tree opens it.
+let openTableByName = null;
 // Save Query, from the panel's SQL box. Set by activateInner.
 let saveQuery = null;
 
@@ -214,6 +216,7 @@ async function show(context, { newTab = false, key = null, ...options } = {}) {
       saveDraft: x => memento.update(QUERY_DRAFT_KEY, x),
       askVariable: askQueryVariable,
       openModel: x => (openSqlModel ? openSqlModel(x) : Promise.reject(new Error('OneLake Studio is still starting'))),
+      openTable: name => (openTableByName ? openTableByName(name) : Promise.reject(new Error('OneLake Studio is still starting'))),
     }),
     // The page could not bring the engine up. Everything it buffered is already gone;
     // this is the toast that stops the failure being a spinner that never moves.
@@ -563,6 +566,13 @@ async function activateInner(context) {
     if (msg.type === 'open-file' && msg.path) return `file:${`${msg.workspace}/${msg.item}`.toLowerCase()}/${msg.path}`;
     return null;
   }
+
+  openTableByName = async name => {
+    const [ref] = tableRefs(name, SQL_KINDS);
+    if (!ref) throw new Error(`${name} does not name a OneLake table`);
+    const at = await sqlTables.place(ref);
+    await openInPanel({ type: 'open-table', ...at });
+  };
 
   const askQueryName = (title, value) => vscode.window.showInputBox({
     title, value, prompt: `Kept in ${queriesFolder()}`,

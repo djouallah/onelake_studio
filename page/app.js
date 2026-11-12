@@ -401,6 +401,12 @@ async function openModelView(file, text = null, { fromOneLake = text == null } =
         ? () => engine.createSemanticModel({ file: file.name, text: bim, workspace: lakehouse.workspace, path: file.path })
         : undefined,
       openInExcel: cfg.windows ? () => engine.openInExcel({ workspace: m.schema, model: m.view }) : undefined,
+      // The Model page's table: the OneLake table behind it, in a tab of its own. Only a Direct Lake table has one.
+      openTable: table => {
+        const sqlName = m.lakeTables && m.lakeTables[String(table).toLowerCase()];
+        if (!sqlName) { setStatus(`${table} is not a OneLake table, so there is no table to open.`, 'error'); return; }
+        engine.openTable(sqlName).catch(e => setStatus(`Could not open ${table}: ${e.message}`, 'error'));
+      },
       keepOffline: {
         state: () => engine.offlineState({ workspace: m.schema, model: m.view }),
         set: on => engine.setOffline({ workspace: m.schema, model: m.view, on }),
