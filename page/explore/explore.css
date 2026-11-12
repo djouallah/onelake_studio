@@ -17,6 +17,8 @@
   --band: color-mix(in srgb, var(--text) 7%, var(--card));
   /* A Report tile: a little lighter, or darker, than the page it sits on. */
   --tile: color-mix(in srgb, var(--text) 5%, var(--bg));
+  /* It sits a little over its page: a soft shadow under it. */
+  --tile-shadow: 0 1px 2px rgba(0,0,0,0.14), 0 6px 18px rgba(0,0,0,0.10);
 }
 /* The view takes the place of the results (app.js: section.modelOpen). A column, so Visual is as tall
    as the tab; a table's Visual (#pivotView) the same. */
@@ -330,8 +332,12 @@ section.modelOpen #chartBtn { display: none; }
 /* 12 columns and rows of 10px (report.js arrange): a tile is placed by its layout, and its content
    fills it, scrolling when it is more. A tile keeps a gap below it inside its rows. On a narrow
    window each tile is full width, one under another, as tall as its rows. */
-.rp { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); grid-auto-rows: 10px; column-gap: var(--gap); row-gap: 0; padding: var(--gap) var(--gutter) 1.5rem; }
-.rp-tile { --surface: var(--tile); position: relative; background: var(--tile); border: 1px solid var(--border); border-radius: var(--radius); padding: 0.6rem 0.8rem; min-width: 0; min-height: 0; margin-bottom: var(--gap); display: flex; flex-direction: column; gap: 0.35rem; overflow: hidden; }
+.rp { --gap: 14px; display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); grid-auto-rows: 10px; column-gap: var(--gap); row-gap: 0; padding: var(--gap) var(--gutter) 1.5rem; }
+/* A tile: a surface with a hairline round it and a soft shadow under it, its corners its theme's (--tile-radius). */
+.rp-tile { --surface: var(--tile); position: relative; background: var(--tile); border: 1px solid var(--hairline); border-radius: var(--tile-radius, max(var(--radius), 10px)); box-shadow: var(--tile-shadow); padding: 0.75rem 0.95rem; min-width: 0; min-height: 0; margin-bottom: var(--gap); display: flex; flex-direction: column; gap: 0.4rem; overflow: hidden; }
+/* A text tile is words on the page, with no surface of its own. */
+.rp-tile.rp-text-tile { background: none; border-color: transparent; box-shadow: none; }
+.rp-tile.rp-text-tile:hover, .rp-tile.rp-text-tile:focus-within { border-color: var(--hairline); }
 @media (max-width: 700px) {
   .rp { grid-auto-rows: auto; row-gap: var(--gap); }
   .rp-tile { grid-column: 1 / -1 !important; grid-row: auto !important; height: var(--rp-h); margin-bottom: 0; }
@@ -346,7 +352,23 @@ section.modelOpen #chartBtn { display: none; }
 .rp-resize .ex-ico, .rp-tool .ex-ico { width: 14px; height: 14px; }
 .rp-tile:hover .rp-resize, .rp-resize:focus-visible { opacity: 1; }
 .rp-resize:hover, .rp-resize:focus-visible { color: var(--text); background: var(--hover-soft); }
-.rp-tile h2 { margin: 0; font-size: 13px; font-weight: 600; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rp-tile h2 { margin: 0; font-family: var(--title-font, inherit); font-size: 14px; font-weight: 600; line-height: 1.3; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Under the title: what the tile is of, in a few words. */
+.rp-titles { flex: 1; min-width: 0; }
+.rp-titles[title] { cursor: text; }
+.rp-sub { margin: 0.05rem 0 0; font-size: 12px; line-height: 1.3; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rp-sub[hidden] { display: none; }
+.rp-renaming { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.rp-rename.rp-rename-sub { font-size: 12px; font-weight: 400; }
+/* Over the report: its title, and when its tiles last had their answers (view.js drawTop). */
+.rp-top { display: flex; align-items: baseline; gap: 1rem; padding: var(--gap) var(--gutter) 0; }
+.rp-top[hidden] { display: none; }
+.rp-title { margin: 0; font-family: var(--title-font, inherit); font-size: 1.3rem; font-weight: 650; line-height: 1.25; letter-spacing: -0.01em; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rp-title[title] { cursor: text; }
+.rp-title.rp-title-none { font-weight: 400; color: var(--faint); opacity: 0; transition: opacity 0.15s; }
+.rp-top:hover .rp-title.rp-title-none { opacity: 1; }
+.rp-title-edit { flex: 1; min-width: 0; font: inherit; font-size: 1.3rem; font-weight: 650; color: var(--text); background: var(--input-bg); border: 1px solid var(--accent); border-radius: var(--radius-sm); padding: 0 0.35rem; }
+.rp-read { margin-left: auto; flex: none; font-size: 11px; color: var(--faint); font-variant-numeric: tabular-nums; }
 .rp-head { display: flex; align-items: center; gap: 0.5rem; }
 /* No title (a text tile, or one whose title is off): no row for it. */
 .rp-head:not(:has(h2:not(:empty), input)), .rp-notitle .rp-head { display: none; }

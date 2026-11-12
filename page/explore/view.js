@@ -205,7 +205,12 @@ export function mountExplore(root, ctx) {
   const formatPane = el('aside', { class: 'rp-pane', hidden: true, 'aria-label': 'Format' });
   // The report's filter bar, over its pages' names (drawBar, below).
   const filterBar = el('div', { class: 'rp-bar', hidden: true });
-  const reportPage = el('div', { class: 'report-page', hidden: true }, filterBar, pageStrip, el('div', { class: 'rp-work' }, pageHost, formatPane));
+  // Over them all: the report's title (its `title`; a host that saves it: a double-click edits it)
+  // and when its tiles last had their answers (drawTop, below).
+  const reportTitle = el('h1', { class: 'rp-title' });
+  const readAt = el('span', { class: 'rp-read' });
+  const reportTop = el('div', { class: 'rp-top', hidden: true }, reportTitle, readAt);
+  const reportPage = el('div', { class: 'report-page', hidden: true }, reportTop, filterBar, pageStrip, el('div', { class: 'rp-work' }, pageHost, formatPane));
   const modelPage = el('div', { class: 'model-page' });
   const pivotPage = el('div', { class: 'explore-page', hidden: true });
   // Over Visual while a Report tile is edited there (editTile): its title, Update tile and Cancel.
@@ -355,6 +360,7 @@ export function mountExplore(root, ctx) {
       dropPages();
       pageHost.replaceChildren();
       reportAt = Math.max(0, Math.min(reportAt, shownPages.length - 1));
+      drawTop();
       drawBar();
       drawStrip();
       showReportPage(reportAt);
@@ -391,8 +397,39 @@ export function mountExplore(root, ctx) {
              duplicate: saves ? duplicateTile : undefined, rename: saves ? renameTile : undefined,
              edit: saves ? editTile : undefined, setText: saves ? setText : undefined,
              toPage: saves && shownPages.length > 1 ? { at: pageUnder, drop: tileToPage } : undefined,
-             where: barWhere, mapReady };
+             where: barWhere, mapReady,
+             done: () => { readAt.textContent = `Data read ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`; } };
   }
+  // The report's title and its "data read" time, once it has a tile. A host that saves the Report
+  // and has no title yet: "Add a title", shown while the pointer is over the line.
+  function drawTop() {
+    const saves = !!ctx.report.save, title = String(shownReport?.spec?.title ?? '').trim();
+    reportTop.hidden = !shownPages.some(p => Array.isArray(p.tiles) && p.tiles.length);
+    reportTitle.textContent = title || (saves ? 'Add a title' : '');
+    reportTitle.classList.toggle('rp-title-none', !title);
+    if (saves) reportTitle.title = 'Double-click to edit'; else reportTitle.removeAttribute('title');
+  }
+  reportTitle.addEventListener('dblclick', () => {
+    if (!ctx.report.save) return;
+    const was = String(shownReport?.spec?.title ?? '').trim();
+    const input = el('input', { type: 'text', class: 'rp-title-edit', value: was, placeholder: 'Report title', 'aria-label': 'Report title' });
+    let done = false;
+    const end = keep => {
+      if (done) return;
+      done = true;
+      const next = input.value.trim();
+      input.replaceWith(reportTitle);
+      if (keep && next !== was) setTitle(next);
+    };
+    input.addEventListener('keydown', e => {
+      if (e.key === 'Enter') { e.preventDefault(); end(true); }
+      else if (e.key === 'Escape') { e.preventDefault(); end(false); }
+    });
+    input.addEventListener('blur', () => end(true));
+    reportTitle.replaceWith(input);
+    input.focus();
+    input.select();
+  });
 
   // The world's map, registered with ECharts the first time a map is drawn (the host's file).
   let mapP = null;
@@ -629,6 +666,11 @@ export function mountExplore(root, ctx) {
       theme.colors ? el('button', { type: 'button', class: 'rp-pane-reset', onclick: () => setTheme({ colors: undefined }) }, 'Reset') : null), list];
   }
   // The report's theme changed: saved, and the page drawn again in it.
+  const setTitle = title => inTurn(async () => {
+    try { await saveSpec(pages => pages, { title: title || undefined }); }
+    catch (e) { setStatus(`Title: ${e.message}`, 'error'); }
+    if (!destroyed) drawTop();
+  });
   const setTheme = patch => inTurn(async () => {
     const theme = cleanFormat({ ...(shownReport?.spec?.theme ?? {}), ...patch });
     try { await saveSpec(pages => pages, { theme: Object.keys(theme).length ? theme : undefined }); }
@@ -882,13 +924,17 @@ export function mountExplore(root, ctx) {
     }
     if (!destroyed) drawReportPage();
   });
-  // A tile's title, typed in its place (report.js drew it already): only saved, and drawn again
-  // when the save is refused.
-  const renameTile = (i, title) => inTurn(async () => {
+  // A tile's title, or its subtitle (`key`), typed in its place (report.js drew it already): only
+  // saved, and drawn again when the save is refused. A subtitle left empty is none.
+  const renameTile = (i, text, key = 'title') => inTurn(async () => {
     try {
       await saveReport(spec => {
         if (!spec.tiles[i]) throw new Error('the tile is no longer on the report');
-        return { ...spec, tiles: spec.tiles.map((t, j) => (j === i ? { ...t, title } : t)) };
+        return { ...spec, tiles: spec.tiles.map((t, j) => {
+          if (j !== i) return t;
+          const { [key]: _, ...rest } = t;
+          return key === 'subtitle' && !text ? rest : { ...t, [key]: text };
+        }) };
       });
     } catch (e) {
       setStatus(`Rename: ${e.message}`, 'error');

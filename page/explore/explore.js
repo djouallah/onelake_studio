@@ -434,8 +434,14 @@ function sparkline(values, color) {
   const [lo, hi] = extent(xs);
   const y = v => (hi > lo ? 22 - 20 * (v - lo) / (hi - lo) : 12);
   const points = xs.map((v, i) => (v == null ? null : `${(100 * i / Math.max(1, xs.length - 1)).toFixed(2)},${y(v).toFixed(2)}`)).filter(Boolean);
+  // Under the line, its colour fading to nothing.
+  const id = `trend-${Math.random().toString(36).slice(2, 8)}`;
+  const [first, last] = [points[0], points[points.length - 1]].map(p => p?.split(',')[0]);
   return el('svg:svg', { class: 'card-trend', viewBox: '0 0 100 24', preserveAspectRatio: 'none', 'aria-hidden': 'true' },
-    el('svg:polyline', { points: points.join(' '), fill: 'none', stroke: color, 'stroke-width': '1.5', 'vector-effect': 'non-scaling-stroke' }));
+    el('svg:defs', {}, el('svg:linearGradient', { id, x1: 0, y1: 0, x2: 0, y2: 1 },
+      el('svg:stop', { offset: 0, 'stop-color': color, 'stop-opacity': 0.3 }), el('svg:stop', { offset: 1, 'stop-color': color, 'stop-opacity': 0 }))),
+    points.length > 1 ? el('svg:polygon', { points: `${points.join(' ')} ${last},24 ${first},24`, fill: `url(#${id})`, stroke: 'none' }) : null,
+    el('svg:polyline', { points: points.join(' '), fill: 'none', stroke: color, 'stroke-width': '1.8', 'stroke-linejoin': 'round', 'stroke-linecap': 'round', 'vector-effect': 'non-scaling-stroke' }));
 }
 // A slicer: the values of the first Rows field (else Columns) as the rows have them, in the query's
 // order, each with the first measure's figure (a value with none is not in the rows), drawn as

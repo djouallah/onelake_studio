@@ -20,8 +20,8 @@
 // Every tile floats up as far as it can, and a tile placed over others pushes them down (arrange);
 // a tile with no layout goes in the first place it fits, as wide and tall as its kind is. A host
 // that saves the Report places them (`layout`), takes them out (`remove`), copies them
-// (`duplicate`), renames them (a double-click on the title: `rename`) and opens a tile's shelves
-// in Visual (`edit`). A grip dropped on another page's name moves the tile there (`toPage`).
+// (`duplicate`), renames them (a double-click on the title: `rename`, its title and the line under
+// it, `subtitle`) and opens a tile's shelves in Visual (`edit`). A grip dropped on another page's name moves the tile there (`toPage`).
 // A tile's look is its Visual's: the shelves' `format`, set in Visual's Format pane (format.js).
 // The tile's own are where it is and its title (`showTitle`, `titleSize`), and the filter bar's
 // filters it does not follow (`ignore`). The report's `theme` sets its colours and its text's size. A tile that fails says so in its own box, and the
@@ -218,8 +218,9 @@ const same = (a, b) => (a ?? null) === (b ?? null);
  * that takes it out of the report; layout(tiles) (optional), a grip on each tile that drags it
  * anywhere on the grid and a ◢ that drags its size (or the arrow keys, on either), drawn there at
  * once: `tiles` is each tile, in its new order (top to bottom), as { from: its index before, layout };
- * duplicate(index) (optional), a ⧉ that copies a tile; rename(index, title) (optional), a double-click
- * on a title that edits it in place; edit(index) (optional), a ✎ on a pivot tile that opens it in Visual;
+ * duplicate(index) (optional), a ⧉ that copies a tile; rename(index, text, key) (optional), a double-click
+ * on a title that edits it and its subtitle in place (`key` 'title' or 'subtitle'); done() (optional),
+ * called each time every tile has its answer; edit(index) (optional), a ✎ on a pivot tile that opens it in Visual;
  * setText(index, text) (optional), a double-click on a text tile that edits its Markdown in place;
  * toPage (optional), { at(x, y), drop(index, page) }: while a grip is dragged, at() answers the
  * other page whose name is under the pointer (and marks it), or null; dropped there, the tile is
@@ -276,9 +277,12 @@ export function drawReport(root, spec, ctx) {
     job.at = startAt(tile, { wide, mark, plots });
     const name = title || 'this tile';
     const tool = (ico, tip, label, onclick) => el('button', { type: 'button', class: 'rp-tool', title: tip, 'aria-label': label, onclick }, icon(ico));
-    const heading = el('h2', ctx.rename ? { title: 'Double-click to rename', ondblclick: () => renameIn(job, heading, heading.textContent) } : {}, title);
+    const heading = el('h2', {}, title);
+    // The line under the title: what the tile is of, in a few words.
+    const sub = el('p', { class: 'rp-sub', hidden: !tile.subtitle }, String(tile.subtitle ?? ''));
+    const titles = el('div', ctx.rename ? { class: 'rp-titles', title: 'Double-click to rename', ondblclick: () => renameIn(job, titles, heading, sub) } : { class: 'rp-titles' }, heading, sub);
     job.section = el('section', { class: `rp-tile${job.slicer ? ' rp-slicer-tile' : ''}${mark === 'card' ? ' rp-card-tile' : ''}${text ? ' rp-text-tile' : ''}` },
-      el('div', { class: 'rp-head' }, heading),
+      el('div', { class: 'rp-head' }, titles),
       // Its tools, over its top right corner while the pointer or the keyboard is on it: they take no room.
       el('div', { class: 'rp-tools' }, grip,
         ctx.edit && tile.kind === 'pivot' ? tool('edit', 'Edit this visual', `Edit ${name}`, () => ctx.edit(jobs.indexOf(job))) : null,
@@ -333,26 +337,34 @@ export function drawReport(root, spec, ctx) {
     box.focus();
   }
 
-  // A double-click on a title: an input in its place; Enter or leaving it keeps what is typed, Esc
-  // puts the title back.
-  function renameIn(job, heading, was) {
-    const input = el('input', { type: 'text', class: 'rp-rename', value: was, 'aria-label': 'Tile title' });
+  // A double-click on a title: two inputs in its place, the title and the subtitle under it; Enter
+  // or leaving them keeps what is typed (a title left empty stays as it was, a subtitle left empty
+  // is none), Esc puts both back.
+  function renameIn(job, titles, heading, sub) {
+    const was = { title: heading.textContent, subtitle: sub.textContent };
+    const title = el('input', { type: 'text', class: 'rp-rename', value: was.title, 'aria-label': 'Tile title' });
+    const subtitle = el('input', { type: 'text', class: 'rp-rename rp-rename-sub', value: was.subtitle, placeholder: 'Subtitle (optional)', 'aria-label': 'Tile subtitle' });
+    const form = el('div', { class: 'rp-renaming' }, title, subtitle);
     let done = false;
     const end = keep => {
       if (done) return;
       done = true;
-      const next = input.value.trim();
-      input.replaceWith(heading);
-      if (keep && next && next !== was) { heading.textContent = next; ctx.rename(jobs.indexOf(job), next); }
+      const next = { title: title.value.trim() || was.title, subtitle: subtitle.value.trim() };
+      form.replaceWith(titles);
+      if (!keep) return;
+      const i = jobs.indexOf(job);
+      if (next.title !== was.title) { heading.textContent = next.title; ctx.rename(i, next.title, 'title'); }
+      if (next.subtitle !== was.subtitle) { sub.textContent = next.subtitle; sub.hidden = !next.subtitle; ctx.rename(i, next.subtitle, 'subtitle'); }
     };
-    input.addEventListener('keydown', e => {
+    form.addEventListener('keydown', e => {
       if (e.key === 'Enter') { e.preventDefault(); end(true); }
       else if (e.key === 'Escape') { e.preventDefault(); end(false); }
     });
-    input.addEventListener('blur', () => end(true));
-    heading.replaceWith(input);
-    input.focus();
-    input.select();
+    // Kept when the focus leaves both, not when it goes from one to the other.
+    form.addEventListener('focusout', e => { if (!form.contains(e.relatedTarget)) end(true); });
+    titles.replaceWith(form);
+    title.focus();
+    title.select();
   }
 
   // The model column a click on this tile filters the others by, with its type; null: no clicks.
@@ -486,7 +498,13 @@ export function drawReport(root, spec, ctx) {
       if (!job) return;
       job.busy = true;
       active++;
-      runTile(job).catch(() => {}).finally(() => { job.busy = false; active--; pump(); });
+      runTile(job).catch(() => {}).finally(() => {
+        job.busy = false;
+        active--;
+        pump();
+        // Every tile has its answer: the host says when (its "data read" time).
+        if (!gone && !active && !jobs.some(j => j.dirty)) ctx.done?.();
+      });
     }
   }
   async function runTile(job) {

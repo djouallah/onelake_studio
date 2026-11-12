@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **A Report's tiles sit on their page.** A tile is a surface with a soft shadow under it and rounder corners, with
+  more room inside and between tiles; a text tile is words on the page, with no surface. A tile can have a subtitle
+  under its title: a double-click on the title edits both. A card's trend line has a fill that fades under it.
+- **A Report has a title, and says when its data was read.** Over the pages: the report's title (a double-click
+  writes one, where the Report is saved) and the time every tile last had its answer.
 - **Charts are drawn with more care.** A bar's free end is rounded. A line is thicker, ends in a dot on its last
   value, and one alone in its chart has a fill that fades under it; an area alone fades the same way. Grid lines are
   dashed and lighter, a category axis has no ticks, and the series under the pointer stays bright while the others dim.
