@@ -98,7 +98,8 @@ section.modelOpen #chartBtn { display: none; }
 .text-file-note:not([hidden]) + .text-file { margin-top: 0.4rem; }
 .model-diagram, .model-panel { background: var(--card); border: 1px solid var(--hairline); border-radius: var(--radius); overflow: auto; }
 .model-diagram { padding: 0.8rem; display: flex; position: relative; }
-.model-diagram svg { touch-action: none; display: block; flex: none; width: 100%; min-width: 640px; height: auto; margin: auto; font-family: inherit; }
+/* Not clipped to its viewBox: a card dragged past the drawing's edge stays on screen, and the drawing grows to it when it is let go (fit). */
+.model-diagram svg { touch-action: none; display: block; flex: none; width: 100%; min-width: 640px; height: auto; margin: auto; font-family: inherit; overflow: visible; }
 .model-panel { padding: 0.9rem 1rem; font-size: 13px; max-height: 75vh; }
 .model-panel h3 { font-size: 1rem; font-weight: 700; margin: 0 0 0.3rem; display: flex; align-items: center; gap: 0.5rem; }
 .model-panel h4 { font-size: 11px; color: var(--faint); text-transform: uppercase; letter-spacing: 0.06em; font-weight: 600; margin: 1.1rem 0 0.4rem; }
