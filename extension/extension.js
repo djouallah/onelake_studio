@@ -1053,7 +1053,11 @@ async function activateInner(context) {
       try {
         const text = Buffer.from(await onelake.readBytes(n.workspace, n.path)).toString('utf8');
         if (!createSemanticModel) throw new Error('OneLake Studio is still starting');
-        vscode.window.showInformationMessage(await createSemanticModel({ file, name, text, workspace: n.workspace, path: n.path }));
+        // Said in the status bar from the click to the end: Fabric is asked about the model before the dialog,
+        // and a Direct Lake refresh can take minutes after it.
+        const said = await vscode.window.withProgress({ location: vscode.ProgressLocation.Window, title: `Create Semantic Model: ${name}` },
+          () => createSemanticModel({ file, name, text, workspace: n.workspace, path: n.path }));
+        vscode.window.showInformationMessage(said);
       } catch (e) {
         // Cancelled: said, so a dialog closed without an answer doesn't look like one that worked.
         if (e && e.declined) { vscode.window.setStatusBarMessage(e.message, 8000); return; }

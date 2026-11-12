@@ -1,13 +1,13 @@
 # Changelog
 
-## Unreleased
+## 0.2.22
 
 - **The desktop app: a question waits for its answer.** A click beside a dialog such as *Update the semantic
   model* closed it as Cancel, and nothing said so. Only its buttons or Escape close it now, and a Create Semantic Model
   that is cancelled says *Not updated* in the status bar.
-
-## 0.2.22
-
+- **Create Semantic Model says it is working, from the click to the end.** The status bar shows it while Fabric is
+  asked about the model, in the dialog and through a Direct Lake refresh, which can take minutes; the log says when
+  the refresh has finished.
 - **The Model page opens a table.** A double-click on a table, or Open table in its panel, opens the OneLake table
   behind it in a tab of its own, as a click in the tree does.
 - **An Iceberg table no longer fails with Unauthorized on its first read.** Fabric names a table's manifest

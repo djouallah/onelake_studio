@@ -446,7 +446,9 @@ function createExport({ connectivity, modules, appToken, powerBiToken = appToken
       });
       // The workspace's semantic models, listed again: it is there now.
       onRefresh({ kind: 'models', workspace });
-      return `Semantic model ${modelName} ${existing ? 'updated' : 'created'} in ${workspace} (${MODES[engine]}).`;
+      const done = `Semantic model ${modelName} ${existing ? 'updated' : 'created'} in ${workspace} (${MODES[engine]}).`;
+      log(done);
+      return done;
     } catch (e) {
       if (!(e && e.declined)) log(`create semantic model from ${path || file} failed — ${(e && e.stack) || e}`);
       throw e;
