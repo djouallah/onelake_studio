@@ -634,12 +634,21 @@ A semantic model opens as **Explore** ([`page/explore/`](../page/explore/)), on 
     and + adds Page n after the others, its name ready to rename. A tile's grip dropped on another page's name moves the
     tile to the end of that page, as big as it was. Add to report and Add text add to the page on screen. The Fabric
     app's Report shows the names only with two pages or more, and only to switch.
+  - **While a tile runs again** (a pick, the filter bar): it keeps what it shows, dimmed (`rp-stale`), until its
+    new answer is drawn. A chart is drawn over, not made again, so its bars and lines move to their new values. Only a
+    tile with nothing drawn yet says Waiting… or Running….
+  - **Over the tiles:** the report's `title` (a double-click writes it) and the time every tile last had its
+    answer (`drawTop` in [`view.js`](../page/explore/view.js), told by the page's `done`). A tile has a `title`
+    and, under it, a `subtitle`: a double-click on either edits both.
   - **Text:** `{ title, kind: 'text', text }`, `text` a few lines of Markdown (`markdownBlocks`: `#` to `###`
     headings, `**bold**`, `*italic*`, http(s) links, `-` lists, paragraphs), built as elements, never as HTML. A
     double-click edits it in a box in place, kept by Done or Ctrl+Enter. Picks don't touch it.
   - **Theme:** the Report bar's **Theme** opens a pane at the right of the tiles (`drawTheme` in
-    [`view.js`](../page/explore/view.js); over them on a narrow window). It writes the report's `theme`: `background`
-    (the Report's own dark or light colours, on its page and in its charts, in any editor theme; left out, the editor's), `palette`
+    [`view.js`](../page/explore/view.js); over them on a narrow window). It writes the report's `theme`: `style`
+    (`STYLES` in [`theme.js`](../page/explore/theme.js): Paper, Midnight or Slate, the whole look at once, a class on
+    the report's page that sets its colours, its tiles' corners and its titles' font, with its own palette and its
+    charts' extras, `styleChart`; left out, Studio), `background` (for a report with no style: the Report's own dark
+    or light colours, on its page and in its charts, in any editor theme; left out, the editor's), `palette`
     (`PALETTES` in [`theme.js`](../page/explore/theme.js)), `textSize`, and `colors`, a colour by value (a column's
     values, picked in the pane) that every tile draws that value in: a series, a bar, a treemap's box, a map's points. A
     Visual's own colours win over it. Under it, each tile of the page on screen: its title shown or not
