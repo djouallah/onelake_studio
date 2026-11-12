@@ -1055,7 +1055,8 @@ async function activateInner(context) {
         if (!createSemanticModel) throw new Error('OneLake Studio is still starting');
         vscode.window.showInformationMessage(await createSemanticModel({ file, name, text, workspace: n.workspace, path: n.path }));
       } catch (e) {
-        if (e && e.declined) return;
+        // Cancelled: said, so a dialog closed without an answer doesn't look like one that worked.
+        if (e && e.declined) { vscode.window.setStatusBarMessage(e.message, 8000); return; }
         showError(`Create Semantic Model: ${(e && e.message) || e}`);
       }
     }),

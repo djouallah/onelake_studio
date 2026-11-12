@@ -523,7 +523,9 @@ function toast({ level = 'info', message, items = [], spinner = false }, answer 
 
 // One dialog at a time: a question asked while another is open waits its turn.
 let overlayTurn = Promise.resolve();
-function overlay(build) {
+// `modal`: a question to answer, which only its buttons or Escape close, as VS Code's do; a click beside it
+// closes a list or an input box only.
+function overlay(build, { modal = false } = {}) {
   const turn = overlayTurn.then(() => new Promise(resolve => {
     const box = $('overlay');
     // What had the keys, which gets them back: the tree, or a tab's page.
@@ -539,7 +541,7 @@ function overlay(build) {
     };
     box.replaceChildren(build(close));
     box.hidden = false;
-    box.onpointerdown = e => { if (e.target === box) close(null); };
+    box.onpointerdown = e => { if (e.target === box && !modal) close(null); };
     const focus = box.querySelector('input, button.primary, button');
     if (focus) focus.focus();
   }));
@@ -556,7 +558,7 @@ function modal({ level, message, detail, items }) {
         items.map((it, i) => h('button', { class: i ? 'secondary' : 'primary', onclick: () => close(it) }, it)),
         h('button', { class: 'secondary', onclick: () => close(null) }, 'Cancel')));
     return d;
-  });
+  }, { modal: true });
 }
 
 // A list to pick from: Go To, a question with choices, the filter.

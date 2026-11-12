@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- **The desktop app: a question waits for its answer.** A click beside a dialog such as *Update the semantic
+  model* closed it as Cancel, and nothing said so. Only its buttons or Escape close it now, and a Create Semantic Model
+  that is cancelled says *Not updated* in the status bar.
+
 ## 0.2.22
 
 - **The Model page opens a table.** A double-click on a table, or Open table in its panel, opens the OneLake table
