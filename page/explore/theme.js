@@ -14,7 +14,36 @@ export const PALETTES = {
   ocean: ['#2f7fc1', '#1fa2a6', '#5b6fd6', '#3cae7a', '#7d93c9', '#2a9bd8', '#6a5acd', '#4bb3c8', '#3a6ea5', '#58b38c'],
   warm: ['#d95926', '#c98500', '#d55181', '#b0762f', '#e66767', '#c06a2b', '#a8558a', '#d9932b', '#b8483a', '#cf7a52'],
   mono: ['#4a6fa5', '#6d8fbf', '#8fa9cf', '#3a5580', '#a9bcd9', '#5a7db3', '#2e4466', '#7f9cc7', '#c2d0e5', '#1f2f47'],
+  // A style's own (STYLES): earth colours on paper, bright ones on midnight, one blue then greys on slate.
+  paper: ['#b5532a', '#3f7d6e', '#c9973b', '#5b6c9a', '#8f4f6b', '#6f8f3e', '#a8703d', '#3d7fa3', '#93613f', '#7a7466'],
+  midnight: ['#5ea0ff', '#ff8a5c', '#3ddbb0', '#ffc857', '#ff6fa8', '#9b8cff', '#5fd4f0', '#b6e36a', '#ff7b7b', '#c59bff'],
+  slate: ['#2f6fde', '#4b5563', '#7b8794', '#a3acb9', '#1f2937', '#c5ccd6', '#64748b', '#94a3b8', '#374151', '#d1d5db'],
 };
+
+// A Report's style (its theme's `style`): the whole look at once. Each is a class on the report's
+// page (explore.css rp-style-<name>: its page's, tiles' and text's colours, its corners, its
+// titles' font), its own palette (PALETTES, by its name) until the theme picks another, and what
+// its charts add (styleChart). None is Studio: the editor's colours, or the theme's background.
+export const STYLES = {
+  paper: { name: 'Paper' },
+  midnight: { name: 'Midnight' },
+  slate: { name: 'Slate' },
+};
+
+/**
+ * A chart's option as the Report's `style` draws it: on midnight a line glows in its own colour,
+ * on slate a bar's ends are square. The option given is not changed; any other style, as it is.
+ */
+export function styleChart(option, style) {
+  if (!Array.isArray(option?.series) || (style !== 'midnight' && style !== 'slate')) return option;
+  return { ...option, series: option.series.map(s => {
+    if (style === 'midnight' && s.type === 'line' && s.lineStyle) {
+      return { ...s, lineStyle: { ...s.lineStyle, shadowBlur: 10, shadowColor: s.lineStyle.color ?? s.itemStyle?.color } };
+    }
+    if (style === 'slate' && s.type === 'bar' && s.itemStyle?.borderRadius) return { ...s, itemStyle: { ...s.itemStyle, borderRadius: 0 } };
+    return s;
+  }) };
+}
 
 // Registers ECharts theme `name`, its colours read off the page's tokens (`css(name)`).
 export function registerChartTheme(echarts, css, name = 'studio') {

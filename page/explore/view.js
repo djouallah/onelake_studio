@@ -30,7 +30,7 @@ import { el } from './dom.js';
 import { createExplorer, pivotTitle, modelFields, valuesSql } from './explore.js';
 import { compileModelSql } from './query.js';
 import { createPlanView, profileSql, elapsed, profileColors } from './profile.js';
-import { PALETTE, PALETTES, registerChartTheme } from './theme.js';
+import { PALETTE, PALETTES, STYLES, registerChartTheme } from './theme.js';
 import { prettyModelText, extensionVendors, foreignDialects } from './pretty.js';
 import { drawReport, reportPages, withPages, newPageName, pickWhere } from './report.js';
 import { cleanFormat, paneRow, paneSelect, paneCheck, paneColour, SIZES } from './format.js';
@@ -328,9 +328,12 @@ export function mountExplore(root, ctx) {
   const reportEcharts = async () => { const ec = await ctx.echarts(); registerChartTheme(ec, reportCss, 'report'); return ec; };
   // The report's background (its theme's): the editor's, or the Report's own dark or light.
   const BACKGROUNDS = [['editor', 'Editor'], ['dark', 'Dark'], ['light', 'Light']];
+  // A style (theme.js STYLES) has its own colours: the background is the theme's only without one.
+  const styleOf = theme => (Object.hasOwn(STYLES, theme?.style ?? '') ? theme.style : null);
   function paintBackground() {
-    const bg = shownReport?.spec?.theme?.background;
+    const theme = shownReport?.spec?.theme, style = styleOf(theme), bg = style ? null : theme?.background;
     for (const [k] of BACKGROUNDS) reportPage.classList.toggle(`rp-bg-${k}`, k !== 'editor' && k === bg);
+    for (const k of Object.keys(STYLES)) reportPage.classList.toggle(`rp-style-${k}`, k === style);
   }
   // Add to report changed the tiles while the Report was not on screen: drawn again when it is.
   let reportChanged = false;
@@ -630,9 +633,16 @@ export function mountExplore(root, ctx) {
   function themeRows() {
     const theme = shownReport?.spec?.theme ?? {};
     const name = `rp-palette-${Math.random().toString(36).slice(2, 8)}`;
-    const colours = PALETTE_NAMES.map(([k, t]) => {
-      const radio = el('input', { type: 'radio', name, value: k, checked: (theme.palette ?? 'studio') === k });
-      radio.addEventListener('change', () => setTheme({ palette: k === 'studio' ? undefined : k }));
+    // The whole look at once: Studio (the editor's colours, or the background picked below), or a style of its own.
+    const style = styleOf(theme);
+    const styles = el('div', { class: 'subtabs', role: 'group', 'aria-label': 'Style' }, [['studio', 'Studio'], ...Object.entries(STYLES).map(([k, s]) => [k, s.name])].map(([k, t]) =>
+      el('button', { type: 'button', class: `subtab${(style ?? 'studio') === k ? ' active' : ''}`, 'aria-pressed': String((style ?? 'studio') === k),
+        onclick: () => setTheme({ style: k === 'studio' ? undefined : k }) }, t)));
+    // A style's own colours come first, and are the ones in use until another is picked.
+    const own = style ?? 'studio';
+    const colours = [...(style ? [[style, STYLES[style].name]] : []), ...PALETTE_NAMES].map(([k, t]) => {
+      const radio = el('input', { type: 'radio', name, value: k, checked: (theme.palette ?? own) === k });
+      radio.addEventListener('change', () => setTheme({ palette: k === own ? undefined : k }));
       return el('label', { class: 'rp-pane-palette' }, radio, el('span', {}, t),
         el('span', { class: 'rp-pane-chips', 'aria-hidden': 'true' }, PALETTES[k].slice(0, 6).map(c => el('i', { style: `background:${c}` }))));
     });
@@ -645,7 +655,7 @@ export function mountExplore(root, ctx) {
       el('button', { type: 'button', class: `subtab${bg === k ? ' active' : ''}`, 'aria-pressed': String(bg === k),
         title: k === 'editor' ? "The editor's colours, whatever its theme" : `The Report's own ${k} colours, in any editor theme`,
         onclick: () => setTheme({ background: k === 'editor' ? undefined : k }) }, t)));
-    return [paneRow('Background', backgrounds), paneRow('Colours', el('div', { class: 'rp-pane-palettes' }, colours)), paneRow('Text size', sizes), ...valueColourRows(theme),
+    return [paneRow('Style', styles), ...(style ? [] : [paneRow('Background', backgrounds)]), paneRow('Colours', el('div', { class: 'rp-pane-palettes' }, colours)), paneRow('Text size', sizes), ...valueColourRows(theme),
       el('p', { class: 'rp-say' }, "Every page. A tile's own colours win over the Report's.")];
   }
   // Colours by value: a column's values, each given a colour that every tile draws it in.

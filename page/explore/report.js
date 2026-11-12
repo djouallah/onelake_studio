@@ -24,7 +24,7 @@
 // it, `subtitle`) and opens a tile's shelves in Visual (`edit`). A grip dropped on another page's name moves the tile there (`toPage`).
 // A tile's look is its Visual's: the shelves' `format`, set in Visual's Format pane (format.js).
 // The tile's own are where it is and its title (`showTitle`, `titleSize`), and the filter bar's
-// filters it does not follow (`ignore`). The report's `theme` sets its colours and its text's size. A tile that fails says so in its own box, and the
+// filters it does not follow (`ignore`). The report's `theme` sets its style, its colours and its text's size. A tile that fails says so in its own box, and the
 // rest still draw.
 // Cross filtering: a click on a bar, a point or a row picks its first Rows field's value (else
 // Columns'), and every other tile runs again with it as a condition of its own query, as its
@@ -37,7 +37,7 @@
 // =============================================================================
 
 import { el } from './dom.js';
-import { PALETTE, PALETTES } from './theme.js';
+import { PALETTE, PALETTES, STYLES, styleChart } from './theme.js';
 import { autoMark, modelFields, pivotQuery, pivotView, icon } from './explore.js';
 import { formatChart, formatLook, TEXT_SIZES } from './format.js';
 
@@ -236,8 +236,10 @@ const same = (a, b) => (a ?? null) === (b ?? null);
 export function drawReport(root, spec, ctx) {
   const resized = new ResizeObserver(entries => { for (const e of entries) jobs.find(j => j.box === e.target)?.chart.resize(); });
   const tiles = Array.isArray(spec?.tiles) ? spec.tiles : null;
-  // The report's theme: its colours, and the size of its text.
-  const palette = PALETTES[spec?.theme?.palette] ?? PALETTE;
+  // The report's theme: its style (the host paints its page; here its palette and its charts'
+  // extras), its colours, and the size of its text.
+  const style = Object.hasOwn(STYLES, spec?.theme?.style ?? '') ? spec.theme.style : null;
+  const palette = PALETTES[spec?.theme?.palette] ?? PALETTES[style] ?? PALETTE;
   // A value's own colour in every tile (a fuel, a region): { label: '#rrggbb' }.
   const valueColors = spec?.theme?.colors && typeof spec.theme.colors === 'object' ? spec.theme.colors : null;
   const textSize = TEXT_SIZES[spec?.theme?.textSize] ? spec.theme.textSize : null;
@@ -624,7 +626,7 @@ export function drawReport(root, spec, ctx) {
         resized.observe(box);
         if (job.on) chart.on('click', e => { const key = e.componentType === 'series' && job.keyAt?.(e); if (key) job.pickOf().on(key); });
       }
-      const option = formatChart(v.option, f, { textSize });
+      const option = styleChart(formatChart(v.option, f, { textSize }), style);
       job.chart.setOption({ aria: { enabled: true }, animationDurationUpdate: 350, animationEasingUpdate: 'cubicOut', ...option }, true);
     };
     // A map draws over the world's outline, read the first time one is drawn.

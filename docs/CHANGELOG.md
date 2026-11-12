@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **A Report has a style: the whole look at once.** *Theme › Style* is Studio, as before, or one of three of its own:
+  Paper (warm and light, titles in a serif, earth colours), Midnight (deep blue, round tiles, bright colours, lines
+  that glow) and Slate (cool grey, square flat tiles, one blue then greys). A style looks the same in any editor
+  theme, brings its own colours until another palette is picked, and is kept in the report (`theme.style`), so an
+  exported app has it too.
 - **A Report's tiles sit on their page.** A tile is a surface with a soft shadow under it and rounder corners, with
   more room inside and between tiles; a text tile is words on the page, with no surface. A tile can have a subtitle
   under its title: a double-click on the title edits both. A card's trend line has a fill that fades under it.

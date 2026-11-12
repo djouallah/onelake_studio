@@ -571,7 +571,26 @@ section.modelOpen #chartBtn { display: none; }
    the page's, the tiles' and the text's colours, the same in any editor theme. Its charts read
    them off this element (the `report` chart theme). */
 .report-page { flex: 1 0 auto; }
-.report-page.rp-bg-dark, .report-page.rp-bg-light { background: var(--bg); color: var(--text); }
+.report-page.rp-bg-dark, .report-page.rp-bg-light, .report-page[class*="rp-style-"] { background: var(--bg); color: var(--text); }
+/* A style (theme.js STYLES): the whole look at once, the same in any editor theme. Paper: warm and
+   light, its titles in a serif. Midnight: deep blue, its tiles round. Slate: cool grey, its tiles
+   square and flat. */
+.report-page.rp-style-paper { color-scheme: light;
+  --bg: #f6f1e7; --tile: #fffdf8; --card: #fffdf8; --raised: #fffdf8; --input-bg: #fffdf8; --panel2: #fffdf8;
+  --border: #ddd3c0; --hairline: #e6ddcc; --row-line: #ece5d6; --text: #2a2520; --muted: #6b6257; --faint: #8a8073; --disabled: #b5ab9c;
+  --hover: rgba(60,40,10,0.07); --hover-soft: rgba(60,40,10,0.035); --band: #f1eadb; --accent: #a4532a; --on-accent: #fffdf8;
+  --tile-radius: 6px; --tile-shadow: 0 1px 2px rgba(70,50,20,0.10), 0 4px 14px rgba(70,50,20,0.07);
+  --title-font: Georgia, "Iowan Old Style", "Palatino Linotype", "Times New Roman", serif; }
+.report-page.rp-style-midnight { color-scheme: dark;
+  --bg: #0b1020; --tile: #121a31; --card: #121a31; --raised: #18223f; --input-bg: #0e152a; --panel2: #0e152a;
+  --border: #26335a; --hairline: #1f2a4c; --row-line: #1a2444; --text: #e9eeff; --muted: #9aa8d1; --faint: #7482ad; --disabled: #48557d;
+  --hover: rgba(140,170,255,0.10); --hover-soft: rgba(140,170,255,0.05); --band: #18223f; --accent: #6ea8ff; --on-accent: #0b1020;
+  --tile-radius: 14px; --tile-shadow: 0 10px 30px rgba(0,0,0,0.45); }
+.report-page.rp-style-slate { color-scheme: light;
+  --bg: #e9ecef; --tile: #ffffff; --card: #ffffff; --raised: #ffffff; --input-bg: #ffffff; --panel2: #ffffff;
+  --border: #c9ced6; --hairline: #c9ced6; --row-line: #e4e7eb; --text: #1d232b; --muted: #56606c; --faint: #727c89; --disabled: #a9b0ba;
+  --hover: rgba(0,0,0,0.06); --hover-soft: rgba(0,0,0,0.03); --band: #eef0f3; --accent: #2f6fde; --on-accent: #ffffff;
+  --tile-radius: 2px; --tile-shadow: none; }
 .report-page.rp-bg-dark { color-scheme: dark;
   --bg: #0f1115; --tile: #181b21; --card: #181b21; --raised: #1e222a; --input-bg: #12151b; --panel2: #12151b;
   --border: #2b303b; --hairline: #2b303b; --row-line: #232833; --text: #e8ebf0; --muted: #a1a9b6; --faint: #838c9a; --disabled: #545c69;

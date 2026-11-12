@@ -335,10 +335,13 @@ tables, columns and measures a tile can name.
   "area" | "dashed", "axis": "right" } }\` (several measures in one plot), \`"byValue": { "<measure>": "background" |
   "bar" }\`, \`"banded": true\`, \`"figureSize"\`, \`"figureColor"\`, \`"change": "<measure>"\` and \`"goodWhen": "down"\` (a
   card's change), and \`"numbers": { "<field>": "int" | "dec2" | "short" | "pct" | "usd" }\`.
-- A tile's own, beside \`pivot\`: \`"showTitle": false\`, \`"titleSize": "S"\` or \`"L"\`, and \`"ignore": ["<filter bar
-  field>"]\`, the filter bar's filters it does not follow.
-- \`theme\`, beside \`pages\`: \`{ "background": "dark" | "light", "palette": "ocean" | "warm" | "mono", "textSize": "S" | "L", "colors": { "<value>":
-  "#rrggbb" } }\` for every page; \`colors\` gives a value of any column (a fuel, a region) the same colour in every tile.
+- A tile's own, beside \`pivot\`: \`"subtitle"\` (a line under its title), \`"showTitle": false\`, \`"titleSize": "S"\` or
+  \`"L"\`, and \`"ignore": ["<filter bar field>"]\`, the filter bar's filters it does not follow.
+- \`title\`, beside \`pages\`: the report's title, over its pages.
+- \`theme\`, beside \`pages\`: \`{ "style": "paper" | "midnight" | "slate", "background": "dark" | "light", "palette": "ocean" | "warm" |
+  "mono", "textSize": "S" | "L", "colors": { "<value>": "#rrggbb" } }\` for every page. A \`style\` is the whole look at once (the
+  page's, the tiles' and the text's colours, and its own palette), and \`background\` is for a report with none; \`colors\` gives a
+  value of any column (a fuel, a region) the same colour in every tile.
 - \`filters\`, beside \`pages\`: the filter bar over every page, each \`{ "field": "table.column", "style": "dropdown" |
   "list" | "dates" }\`. What a viewer picks in it filters every tile, but those whose \`ignore\` names it.
 - This is a zip: unzip it, edit, and zip it again with the same entries at its root.

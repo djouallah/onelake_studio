@@ -367,3 +367,34 @@ test("the model's lines are drawn from wherever its cards are", () => {
   assert.equal(stacked.many.anchor, "end");
   assert.equal(stacked.one.anchor, "end");
 });
+
+const { STYLES, PALETTES, styleChart } = await import("../../page/explore/theme.js");
+
+test("a Report's style has its own palette, and draws its charts its way", () => {
+  for (const k of Object.keys(STYLES)) assert.ok(Array.isArray(PALETTES[k]) && PALETTES[k].length >= 8, `${k} has a palette of its own`);
+  const option = { series: [
+    { type: "line", lineStyle: { color: "#123456", width: 2 } },
+    { type: "bar", itemStyle: { color: "#abcdef", borderRadius: [3, 3, 0, 0] } },
+  ] };
+  assert.equal(styleChart(option, null), option, "no style: the option as it is");
+  assert.equal(styleChart(option, "paper"), option);
+  const night = styleChart(option, "midnight");
+  assert.deepEqual(night.series[0].lineStyle, { color: "#123456", width: 2, shadowBlur: 10, shadowColor: "#123456" }, "a line glows in its own colour");
+  assert.equal(night.series[1], option.series[1], "its bars are as they were");
+  const slate = styleChart(option, "slate");
+  assert.equal(slate.series[1].itemStyle.borderRadius, 0, "a bar's ends are square");
+  assert.equal(slate.series[1].itemStyle.color, "#abcdef");
+  assert.deepEqual(option.series[1].itemStyle.borderRadius, [3, 3, 0, 0], "the option given is not changed");
+});
+
+test("a chart's bars are rounded at their free end, and a line alone fades under itself and ends in a dot", () => {
+  const fields = modelFields(MODEL);
+  const rows = [{ Borough: "Bronx", "Total Fare": 10 }, { Borough: "Queens", "Total Fare": 20 }];
+  const look = { fields, palette: ["#112233"], css: () => "#999" };
+  const bar = pivotView(pivotQuery({ rows: ["dim_zone.Borough"], values: ["Total Fare"], mark: "bar" }, fields).state, rows, "bar", look).option;
+  assert.ok(bar.series[0].itemStyle.borderRadius, "a bar's end is rounded");
+  assert.equal(bar.series[0].areaStyle, undefined);
+  const line = pivotView(pivotQuery({ rows: ["dim_zone.Borough"], values: ["Total Fare"], mark: "line" }, fields).state, rows, "line", look).option;
+  assert.equal(line.series[0].areaStyle.color.colorStops[1].color, "rgba(17,34,51,0)", "the fill fades to nothing");
+  assert.deepEqual(line.series[0].markPoint.data.map(d => d.coord), [[1, 20]], "a dot on its last value");
+});
