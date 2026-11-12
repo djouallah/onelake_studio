@@ -345,3 +345,25 @@ test("a Visual's total line asks its query for the totals", () => {
   const { sql } = pivotQuery({ rows: ["dim_zone.Borough"], values: ["Total Fare"], mark: "bar", format: { totalLine: true } }, fields);
   assert.match(sql, /GROUPING\("dim_zone"\."Borough"\) AS "__rows_total"[\s\S]*GROUP BY ROLLUP\("dim_zone"\."Borough"\)/);
 });
+
+const { modelPlaces, modelEdges, modelLayout } = await import("../../page/explore/draw.js");
+
+test("the model's lines are drawn from wherever its cards are", () => {
+  const tables = [{ name: "sales", lines: 2 }, { name: "date", lines: 2 }];
+  const rels = [{ fromTable: "sales", fromColumn: "d", toTable: "date", toColumn: "d" }];
+  const boxes = modelPlaces(tables, rels);
+  assert.deepEqual(modelLayout(tables, rels).edges, modelEdges(boxes, rels), "the star's lines are its boxes' lines");
+  const [star] = modelEdges(boxes, rels);
+  assert.equal(star.many.anchor, "start", "the fact is left of the dimension: its line leaves its right side");
+  // The fact dragged past the dimension, to its right: the line leaves its left side now.
+  const moved = { ...boxes, sales: { ...boxes.sales, x: boxes.date.x + 400, y: 300 } };
+  const [after] = modelEdges(moved, rels);
+  assert.equal(after.many.anchor, "end");
+  assert.equal(after.one.anchor, "start");
+  assert.notEqual(after.d, star.d);
+  // One above the other: both lines leave the left side.
+  const over = { ...boxes, sales: { ...boxes.sales, x: boxes.date.x + 20, y: 400 } };
+  const [stacked] = modelEdges(over, rels);
+  assert.equal(stacked.many.anchor, "end");
+  assert.equal(stacked.one.anchor, "end");
+});

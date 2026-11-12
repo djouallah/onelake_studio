@@ -76,8 +76,12 @@ export const stackedGrids = (n, top = 0) => Array.from({ length: n }, (_, i) => 
 // model's relationships between those tables. Pixels of the SVG: a card is MODEL_CARD.w wide,
 // its name in the first MODEL_CARD.head, then a line every MODEL_CARD.line. A line ends at a
 // port spread along the side of its card, in the order of the cards at its other ends.
+// Where the cards go (modelPlaces) and the lines between them (modelEdges) are apart: a card
+// dragged somewhere else (model.js) has its lines drawn again from where it is.
 export const MODEL_CARD = { w: 210, head: 30, line: 16, pad: 10, gap: 130, vgap: 16 };
-export function modelLayout(tables, rels) {
+
+/** Each table's box, { name: { x, y, w, h, dim } }: the star. */
+export function modelPlaces(tables, rels) {
   const { w, head, line, pad, gap, vgap } = MODEL_CARD;
   const dims = new Set(rels.map(r => r.toTable));
   const boxes = {};
@@ -98,16 +102,29 @@ export function modelLayout(tables, rels) {
     boxes[t.name] = { x: side ? 2 * (w + gap) : 0, y: top, w, h, dim: false };
     next[side] = top + h + vgap;
   });
-  // Which side of a card a line leaves from: towards the other card, or (two dimensions,
-  // one above the other) the left side of both.
-  const sideOf = (b, other) => b.x === other.x ? 'l' : b.x < other.x ? 'r' : 'l';
+  return boxes;
+}
+
+/** The relationships' lines between `boxes` (modelPlaces', or wherever the cards were dragged to). */
+export function modelEdges(boxes, rels) {
+  const { w, head, gap } = MODEL_CARD;
+  const middle = b => b.y + b.h / 2;
+  // Two cards one above the other (less than half a card apart, sideways).
+  const stacked = (a, b) => Math.abs(a.x - b.x) < w / 2;
+  // Which side of a card a line leaves from: towards the other card, or (one above the
+  // other) the left side of both.
+  const sideOf = (b, other) => stacked(b, other) ? 'l' : b.x < other.x ? 'r' : 'l';
   const ends = rels.map(r => {
     const a = boxes[r.fromTable], b = boxes[r.toTable];
-    return { r, a: { box: a, side: sideOf(a, b), other: b }, b: { box: b, side: sideOf(b, a), other: a } };
+    return { r, a: { box: a, name: r.fromTable, side: sideOf(a, b), other: b }, b: { box: b, name: r.toTable, side: sideOf(b, a), other: a } };
   });
-  const ports = {};
-  for (const e of ends) for (const end of [e.a, e.b]) (ports[`${end.box.x},${end.box.y},${end.side}`] ??= []).push(end);
-  for (const list of Object.values(ports)) {
+  const ports = new Map();
+  for (const e of ends) for (const end of [e.a, e.b]) {
+    const key = `${end.side}${end.name}`;
+    if (!ports.has(key)) ports.set(key, []);
+    ports.get(key).push(end);
+  }
+  for (const list of ports.values()) {
     list.sort((p, q) => middle(p.other) - middle(q.other));
     list.forEach((end, i) => {
       const b = end.box;
@@ -116,9 +133,10 @@ export function modelLayout(tables, rels) {
     });
   }
   const label = (end, text) => ({ x: end.side === 'r' ? end.x + 6 : end.x - 6, y: end.y - 4, anchor: end.side === 'r' ? 'start' : 'end', text });
-  const edges = ends.map(({ r, a, b }) => {
+  return ends.map(({ r, a, b }) => {
     const out = s => s === 'r' ? 1 : -1;
-    const reach = a.box.x === b.box.x ? 50 : gap / 2;
+    // How far a line goes straight out of its card before it turns: half the way to the other.
+    const reach = stacked(a.box, b.box) ? 50 : Math.max(30, Math.min(gap, Math.abs(b.x - a.x)) / 2);
     const c1 = [a.x + out(a.side) * reach, a.y], c2 = [b.x + out(b.side) * reach, b.y];
     return {
       from: r.fromTable, to: r.toTable, both: r.crossFilteringBehavior === 'bothDirections', active: r.isActive !== false,
@@ -127,6 +145,15 @@ export function modelLayout(tables, rels) {
       many: label(a, '*'), one: label(b, '1'),
     };
   });
-  const all = Object.values(boxes);
-  return { width: 3 * w + 2 * gap, height: all.length ? Math.max(...all.map(b => b.y + b.h)) : 0, boxes, edges };
+}
+
+/** How wide and tall the drawing of `boxes` is, never less than the star's three columns. */
+export function modelSize(boxes) {
+  const { w, gap } = MODEL_CARD, all = Object.values(boxes);
+  return { width: Math.max(3 * w + 2 * gap, ...all.map(b => b.x + b.w)), height: all.length ? Math.max(...all.map(b => b.y + b.h)) : 0 };
+}
+
+export function modelLayout(tables, rels) {
+  const boxes = modelPlaces(tables, rels);
+  return { ...modelSize(boxes), boxes, edges: modelEdges(boxes, rels) };
 }

@@ -95,8 +95,8 @@ section.modelOpen #chartBtn { display: none; }
   background: var(--vscode-editorWarning-foreground, #cca700); }
 .text-file-note:not([hidden]) + .text-file { margin-top: 0.4rem; }
 .model-diagram, .model-panel { background: var(--card); border: 1px solid var(--hairline); border-radius: var(--radius); overflow: auto; }
-.model-diagram { padding: 0.8rem; display: flex; }
-.model-diagram svg { display: block; flex: none; width: 100%; min-width: 640px; height: auto; margin: auto; font-family: inherit; }
+.model-diagram { padding: 0.8rem; display: flex; position: relative; }
+.model-diagram svg { touch-action: none; display: block; flex: none; width: 100%; min-width: 640px; height: auto; margin: auto; font-family: inherit; }
 .model-panel { padding: 0.9rem 1rem; font-size: 13px; max-height: 75vh; }
 .model-panel h3 { font-size: 1rem; font-weight: 700; margin: 0 0 0.3rem; display: flex; align-items: center; gap: 0.5rem; }
 .model-panel h4 { font-size: 11px; color: var(--faint); text-transform: uppercase; letter-spacing: 0.06em; font-weight: 600; margin: 1.1rem 0 0.4rem; }
@@ -114,7 +114,13 @@ section.modelOpen #chartBtn { display: none; }
 .m-measure summary { cursor: pointer; font-weight: 600; }
 .m-fmt { float: right; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11px; font-weight: 400; color: var(--faint); }
 .m-measure pre { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; line-height: 1.5; background: var(--input-bg); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 0.5rem 0.65rem; margin: 0.45rem 0 0.3rem; overflow-x: auto; white-space: pre; }
-.m-card { cursor: pointer; outline: none; transition: opacity 0.15s; }
+.m-card { cursor: grab; outline: none; transition: opacity 0.15s; }
+/* A card being dragged (model.js): nothing fades or selects while it moves. */
+.m-card.m-drag { cursor: grabbing; }
+.model-diagram:has(.m-drag) { user-select: none; }
+.model-diagram:has(.m-drag) .m-card, .model-diagram:has(.m-drag) .m-rel { transition: none; }
+.model-arrange { position: absolute; top: 0.5rem; right: 0.5rem; z-index: 1; background: var(--card); }
+.model-arrange[hidden] { display: none; }
 .m-box { fill: var(--card); stroke: var(--border); stroke-width: 1; transition: stroke 0.15s; }
 .m-card.dim .m-box { fill: var(--raised); }
 .m-card.m-on .m-box, .m-card:focus-visible .m-box { stroke: var(--muted); }

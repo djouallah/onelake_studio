@@ -132,6 +132,30 @@ try {
   const rels = await page.locator("#modelView .m-rel").count();
   console.log(`model page: ${cards} cards, ${rels} relationship(s)`);
   if (cards !== 2 || rels !== 1) throw new Error(`model page drew ${cards} cards and ${rels} relationships`);
+
+  // A card dragged: it moves, its line with it, and it is not picked. Auto arrange puts it back.
+  {
+    const card = page.locator("#modelView .m-card").first();
+    const edge = page.locator("#modelView .m-edge").first();
+    const arrange = page.locator("#modelView .model-arrange");
+    const [was, line] = [await card.getAttribute("transform"), await edge.getAttribute("d")];
+    if (!await arrange.isHidden()) throw new Error("Auto arrange shows before any card was moved");
+    const b = await card.boundingBox();
+    await page.mouse.move(b.x + 20, b.y + 10);
+    await page.mouse.down();
+    await page.mouse.move(b.x + 60, b.y + 70, { steps: 5 });
+    await page.mouse.up();
+    if (await card.getAttribute("transform") === was) throw new Error("a dragged card stayed where it was");
+    if (await edge.getAttribute("d") === line) throw new Error("a dragged card's line did not follow it");
+    if (await page.locator("#modelView .m-card.m-sel").count()) throw new Error("a drag picked the card");
+    if (await arrange.isHidden()) throw new Error("no Auto arrange after a card was moved");
+    await arrange.click();
+    if (await card.getAttribute("transform") !== was || await edge.getAttribute("d") !== line) throw new Error("Auto arrange did not put the card back");
+    if (!await arrange.isHidden()) throw new Error("Auto arrange still shows with every card in its place");
+    await card.click();
+    if (await page.locator("#modelView .m-card.m-sel").count() !== 1) throw new Error("a click on a card did not pick it");
+    await page.locator("#modelView .model-diagram svg").click({ position: { x: 2, y: 2 } });
+  }
   if (!await page.locator(".resultsWrap").isHidden()) throw new Error("the results are still on screen under the model view");
   const css = await page.evaluate(() => getComputedStyle(document.querySelector("#modelView .subtab-bar")).display);
   if (css !== "flex") throw new Error(`explore.css did not load (the bar's display is ${css})`);

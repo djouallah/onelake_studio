@@ -20,7 +20,7 @@ const { existsSync } = require('node:fs');
 const { randomBytes } = require('node:crypto');
 const fsp = require('node:fs/promises');
 const { quoteIdent, sqlStr } = require('../core/sql');
-const { openPanel, setPanelTitle, nameActiveTab, closePanel, revealPanel, panelOpen, postToPanel, postLive, panelSettings } = require('./panel');
+const { openPanel, setPanelTitle, nameActiveTab, closePanel, revealPanel, revealTab, panelOpen, postToPanel, postLive, panelSettings } = require('./panel');
 const { openPerformance, closePerformance } = require('./performance');
 const { openLogs, closeLogs } = require('./logs');
 const { createDiagLog, outputLogOf } = require('../core/diaglog');
@@ -152,7 +152,7 @@ let nameModelTables = null;
 // Save Query, from the panel's SQL box. Set by activateInner.
 let saveQuery = null;
 
-async function show(context, { newTab = false, ...options } = {}) {
+async function show(context, { newTab = false, key = null, ...options } = {}) {
   if (!newTab && revealPanel()) return true;
   // With an account's cache to show, or after a Sign Out, no click prompts for a sign-in: it opens
   // on what is held.
@@ -179,7 +179,7 @@ async function show(context, { newTab = false, ...options } = {}) {
   const eng = engines.ensureEngine({ readme: readme.fsPath });
   if (!eng) return false;
   const opened = await openPanel(context, {
-    newTab,
+    newTab, key,
     onOpened: logOpened, onBoot: logBoot, engine: eng, build: buildInfo,
     // The text the last tab closed with, for a tab opened to write in. One opened for what was
     // clicked starts from that (app.js offerInBox), and the draft stays for the next.
@@ -533,11 +533,33 @@ async function activateInner(context) {
 
   // Whether the panel is there to take it. Each one gets a tab of its own, so a click adds to what is
   // open and stops nothing. `tabName` is what the tab says: the table, file, model or saved query.
-  async function openInPanel(msg, tabName = msg.table || msg.modelName || msg.name || (msg.path && msg.path.split('/').pop())) {
-    if (!await showWithProgress({ createIfNone: true, newTab: true })) return false;
+  // A model, a model file or an app that a tab shows already (`key`, tabKey) is not opened again: its
+  // tab comes forward as it is, and this answers 'revealed'.
+  const openingKeys = new Set();   // being opened: a second click meanwhile makes no second tab
+  async function openInPanel(msg, tabName = msg.table || msg.modelName || msg.name || (msg.path && msg.path.split('/').pop()), key = tabKey(msg)) {
+    if (key && (revealTab(key) || openingKeys.has(key))) return 'revealed';
+    if (key) openingKeys.add(key);
+    try {
+      if (!await showWithProgress({ createIfNone: true, newTab: true, key })) return false;
+    } finally {
+      openingKeys.delete(key);
+    }
     postToPanel(msg);
     nameActiveTab(tabName);
     return true;
+  }
+  // What a tab is opened on, when that is a model: a Fabric semantic model, a model file from disk or
+  // from OneLake's Files/, an app's file. Null for anything else (a table, a query), which gets a
+  // new tab every time.
+  const pathKey = p => `path:${process.platform === 'win32' ? String(p).toLowerCase() : p}`;
+  const modelTabKey = n => `model:${n.workspace}/${n.model}`;
+  function tabKey(msg) {
+    if (msg.type === 'open-model') {
+      return msg.appFile ? pathKey(msg.appFile) : msg.modelWorkspace ? modelTabKey({ workspace: msg.modelWorkspace, model: msg.modelName })
+        : msg.path ? pathKey(msg.path) : null;
+    }
+    if (msg.type === 'open-file' && /\.(bim|ya?ml)$/i.test(msg.path || '')) return `file:${msg.workspace}/${msg.item}/${msg.path}`;
+    return null;
   }
 
   const askQueryName = (title, value) => vscode.window.showInputBox({
@@ -611,8 +633,11 @@ async function activateInner(context) {
 
   // A click on a model in the tree: its local copy (read from Fabric the first time), opened in
   // the panel. One progress notification from the click until the page says it is on screen.
-  async function openModel(n, { openOn = null } = {}) {
+  async function openModel(n, { openOn = null, key = null } = {}) {
     if (!n || n.kind !== 'semanticModel') return;
+    // Open already (`key`: the app's file it was opened from): its tab, with nothing read again.
+    key = key || modelTabKey(n);
+    if (revealTab(key)) return;
     const refused = unsupportedModels.get(modelKey(n));
     if (refused) {
       vscode.window.showInformationMessage(unsupportedNote(n, refused));
@@ -627,7 +652,9 @@ async function activateInner(context) {
           say('opening it in OneLake Studio…');
           const name = modelFileName(n.model);
           const opened = whenOpened(name);
-          if (!await openInPanel({ type: 'open-model', name, path, text, modelWorkspace: n.workspace, modelName: n.model, openOn })) return;
+          const went = await openInPanel({ type: 'open-model', name, path, text, modelWorkspace: n.workspace, modelName: n.model, openOn }, n.model, key);
+          // Its tab came forward: the page will not say it opened anything.
+          if (went !== true) return;
           await opened;
         });
     } catch (e) {
@@ -651,6 +678,8 @@ async function activateInner(context) {
     const fsPath = typeof arg === 'string' ? arg : arg && arg.fsPath ? arg.fsPath : editor ? editor.document.uri.fsPath : null;
     if (!fsPath) return;
     const name = basename(fsPath);
+    // Open already: its tab, before the file is read again.
+    if (revealTab(pathKey(fsPath))) return;
     try {
       if (/\.fabricapp$/i.test(fsPath)) return await openAppFile(fsPath);
       const found = await core.models.modelFile(fsPath);
@@ -672,7 +701,7 @@ async function activateInner(context) {
   async function openText(msg) {
     await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: `Opening ${msg.name}` }, async () => {
       const opened = whenOpened(msg.name);
-      if (!await openInPanel({ type: 'open-model', ...msg })) return;
+      if (await openInPanel({ type: 'open-model', ...msg }) !== true) return;
       await opened;
     });
   }
@@ -688,7 +717,7 @@ async function activateInner(context) {
       const name = app.semanticModel ? app.semanticModel.name : model;
       const m = (await onelake.models(workspace)).find(x => (app.semanticModel ? x.id === app.semanticModel.id : x.name === name));
       if (!m) throw new Error(`${workspace} has no semantic model ${name}: it was deleted or renamed`);
-      return openModel({ kind: 'semanticModel', workspace, model: m.name, modelId: m.id }, { openOn: 'report' });
+      return openModel({ kind: 'semanticModel', workspace, model: m.name, modelId: m.id }, { openOn: 'report', key: pathKey(fsPath) });
     }
     if (app.copy) {
       // Named for its model's format (model.ossie.yaml, model.bim): the tab reads the text by its name.
@@ -697,7 +726,7 @@ async function activateInner(context) {
     }
     // A file from before the app held its model: the model file in OneLake, as the tree opens it.
     const [ws, ...rest] = app.modelPath.split('/');
-    return openInPanel({ type: 'open-file', workspace: ws, item: rest[0], path: rest.join('/'), bytes: 0, openOn: 'report' });
+    return openInPanel({ type: 'open-file', workspace: ws, item: rest[0], path: rest.join('/'), bytes: 0, openOn: 'report' }, undefined, pathKey(fsPath));
   }
 
   // The local copies of a workspace's models, read from Fabric again, behind: Refresh of the workspace

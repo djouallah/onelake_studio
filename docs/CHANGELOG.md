@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **The Model page's tables can be moved.** Drag a table anywhere and its relationships' lines follow. *Auto
+  arrange*, shown once a table has moved, puts them all back. Where they are lasts while the tab is open.
+- **A model that is open already is not opened twice.** A click on a semantic model, a model file or a
+  `.fabricapp` that a tab shows brings that tab forward, as it is, where it used to open another.
 - **A model file opened from disk has Export to Fabric.** A `.bim` or Ossie `.yaml` on this machine, such as a
   semantic model downloaded from the tree, exports as a model file in a lakehouse does: client side, in the
   workspace its tables are in, when it names one lakehouse. Its `.fabricapp` opens and exports again the same way.

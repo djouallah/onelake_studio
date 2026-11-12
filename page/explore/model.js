@@ -4,11 +4,11 @@
 // =============================================================================
 // A dimension is a table a
 // relationship points to, a fact any other: the model says it, not the names. Where each
-// card and line goes is draw.js's (modelLayout). Hover a table to see what it reaches; click
-// it for its columns, measures and relationships.
+// card and line goes is draw.js's (modelPlaces, modelEdges). Drag a table to move it; hover it
+// to see what it reaches; click it for its columns, measures and relationships.
 // =============================================================================
 
-import { modelLayout, MODEL_CARD } from './draw.js';
+import { modelPlaces, modelEdges, modelSize, MODEL_CARD } from './draw.js';
 import { el } from './dom.js';
 
 const lines = v => Array.isArray(v) ? v.join('\n') : v ?? '';
@@ -31,6 +31,8 @@ export function tmslOf(bim) {
 }
 
 // Draws `model` (tmslOf's) into `root`, which it fills with the diagram and the side panel.
+// A card can be dragged anywhere: its lines follow, and Auto arrange puts every card back in the
+// star. Where a card was dragged to lasts as long as the drawing: nothing is written to the model.
 export function renderModel(root, model, { title = 'Semantic model' } = {}) {
   let selected = null;
   const rels = model.relationships;
@@ -38,28 +40,24 @@ export function renderModel(root, model, { title = 'Semantic model' } = {}) {
     ...(r.fromTable === name ? [r.fromColumn] : []), ...(r.toTable === name ? [r.toColumn] : [])]))];
   const tables = model.tables.map(t => ({ ...t, keys: keys(t.name), lines: 1 + keys(t.name).length }));
   const byName = Object.fromEntries(tables.map(t => [t.name, t]));
-  const layout = modelLayout(tables, rels);
+  // The star, and where each card is now.
+  const star = modelPlaces(tables, rels);
+  const places = Object.fromEntries(Object.entries(star).map(([k, b]) => [k, { ...b }]));
 
   const svg = el('svg:svg', { role: 'img', 'aria-label': 'The tables of the semantic model and their relationships' });
   const box = el('div', { class: 'model-panel' });
-  root.replaceChildren(el('div', { class: 'model-diagram' }), box);
-  root.firstChild.append(svg);
+  const arrange = el('button', { type: 'button', class: 'btn-explore model-arrange', hidden: true,
+    title: 'Put every table back where the automatic layout has it', onclick: () => autoArrange() }, 'Auto arrange');
+  root.replaceChildren(el('div', { class: 'model-diagram' }, arrange, svg), box);
 
-  svg.setAttribute('viewBox', `-12 -4 ${layout.width + 24} ${layout.height + 8}`);
-  svg.style.maxWidth = `${layout.width + 24}px`;
   const edges = el('svg:g'), cards = el('svg:g');
-  const edgeEls = layout.edges.map(e => {
-    const g = el('svg:g', { class: 'm-rel' });
-    g.dataset.from = e.from; g.dataset.to = e.to;
-    g.append(el('svg:path', { class: `m-edge${e.active ? '' : ' m-inactive'}`, d: e.d }));
-    for (const m of [e.many, e.one]) g.append(el('svg:text', { class: 'm-mark', x: m.x, y: m.y, 'text-anchor': m.anchor }, m.text));
-    if (e.both) g.append(el('svg:text', { class: 'm-mark', x: e.mid.x, y: e.mid.y, 'text-anchor': 'middle', dy: '-4' }, '⇅'));
-    edges.append(g);
-    return g;
-  });
+  let edgeEls = [];
+  // `dragging`: a card is held (no hover highlight meanwhile); `dragged`: it moved, so the click
+  // that follows is not a pick.
+  let dragging = false, dragged = false;
   const { w, head, line } = MODEL_CARD;
   const cardEls = tables.map(t => {
-    const b = layout.boxes[t.name];
+    const b = places[t.name];
     const g = el('svg:g', { class: `m-card ${b.dim ? 'dim' : 'fact'}`, transform: `translate(${b.x},${b.y})`, tabindex: 0, role: 'button', 'aria-label': t.name });
     g.dataset.name = t.name;
     g.append(el('svg:rect', { class: 'm-box', width: w, height: b.h, rx: 8 }));
@@ -68,17 +66,94 @@ export function renderModel(root, model, { title = 'Semantic model' } = {}) {
     const n = (a, word) => `${a?.length ?? 0} ${word}${a?.length === 1 ? '' : 's'}`;
     g.append(el('svg:text', { class: 'm-cap', x: 12, y: head + 13 }, `${b.dim ? 'dimension' : 'fact'} · ${n(t.columns, 'column')} · ${n(t.measures, 'measure')}`));
     t.keys.forEach((k, i) => g.append(el('svg:text', { class: 'm-key', x: 12, y: head + 13 + line * (i + 1) }, `⚷ ${k}`)));
-    g.addEventListener('pointerenter', () => highlight(t.name));
-    g.addEventListener('pointerleave', () => highlight(selected));
+    g.addEventListener('pointerenter', () => { if (!dragging) highlight(t.name); });
+    g.addEventListener('pointerleave', () => { if (!dragging) highlight(selected); });
     g.addEventListener('focus', () => highlight(t.name));
     g.addEventListener('blur', () => highlight(selected));
-    g.addEventListener('click', e => { e.stopPropagation(); select(t.name); });
+    g.addEventListener('pointerdown', e => dragFrom(e, g, t.name));
+    g.addEventListener('click', e => {
+      e.stopPropagation();
+      // The click that ends a drag is not a pick.
+      if (dragged) { dragged = false; return; }
+      select(t.name);
+    });
     g.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); select(t.name); } });
     cards.append(g);
     return g;
   });
   svg.replaceChildren(edges, cards);
-  svg.addEventListener('click', () => select(null));
+  svg.addEventListener('click', () => { if (dragged) { dragged = false; return; } select(null); });
+  drawEdges();
+  fit();
+
+  // The lines, from where the cards are.
+  function drawEdges() {
+    edgeEls = modelEdges(places, rels).map(e => {
+      const g = el('svg:g', { class: 'm-rel' });
+      g.dataset.from = e.from; g.dataset.to = e.to;
+      g.append(el('svg:path', { class: `m-edge${e.active ? '' : ' m-inactive'}`, d: e.d }));
+      for (const m of [e.many, e.one]) g.append(el('svg:text', { class: 'm-mark', x: m.x, y: m.y, 'text-anchor': m.anchor }, m.text));
+      if (e.both) g.append(el('svg:text', { class: 'm-mark', x: e.mid.x, y: e.mid.y, 'text-anchor': 'middle', dy: '-4' }, '⇅'));
+      return g;
+    });
+    edges.replaceChildren(...edgeEls);
+  }
+  // The drawing as large as what is in it.
+  function fit() {
+    const { width, height } = modelSize(places);
+    svg.setAttribute('viewBox', `-12 -4 ${width + 24} ${height + 8}`);
+    svg.style.maxWidth = `${width + 24}px`;
+  }
+
+  // --- A card dragged: it follows the pointer, its lines with it ---
+  const SLOP = 4;   // pixels a press may move and still be a click
+  function dragFrom(e, g, name) {
+    if (e.button !== 0) return;
+    const at = places[name], from = { x: at.x, y: at.y, px: e.clientX, py: e.clientY };
+    // Screen pixels to the drawing's own, as it is scaled now.
+    const m = svg.getScreenCTM();
+    const sx = m?.a || 1, sy = m?.d || 1;
+    let moved = false;
+    const move = v => {
+      const dx = v.clientX - from.px, dy = v.clientY - from.py;
+      if (!moved && Math.hypot(dx, dy) < SLOP) return;
+      if (!moved) {
+        moved = dragging = true;
+        g.setPointerCapture(e.pointerId);
+        g.classList.add('m-drag');
+      }
+      at.x = Math.max(0, Math.round(from.x + dx / sx));
+      at.y = Math.max(0, Math.round(from.y + dy / sy));
+      g.setAttribute('transform', `translate(${at.x},${at.y})`);
+      drawEdges();
+      highlight(name);
+    };
+    const done = () => {
+      for (const [t, f] of [['pointermove', move], ['pointerup', done], ['pointercancel', done]]) g.removeEventListener(t, f);
+      if (!moved) return;
+      dragging = false;
+      dragged = true;
+      g.classList.remove('m-drag');
+      fit();
+      highlight(selected);
+      arrange.hidden = !Object.keys(places).some(k => places[k].x !== star[k].x || places[k].y !== star[k].y);
+      // A drag let go off its card has no click after it.
+      setTimeout(() => { dragged = false; });
+    };
+    for (const [t, f] of [['pointermove', move], ['pointerup', done], ['pointercancel', done]]) g.addEventListener(t, f);
+  }
+  // Every card back in the star.
+  function autoArrange() {
+    for (const g of cardEls) {
+      const b = star[g.dataset.name];
+      Object.assign(places[g.dataset.name], { x: b.x, y: b.y });
+      g.setAttribute('transform', `translate(${b.x},${b.y})`);
+    }
+    drawEdges();
+    fit();
+    highlight(selected);
+    arrange.hidden = true;
+  }
 
   function highlight(name) {
     const near = new Set(name ? [name] : []);
@@ -107,7 +182,7 @@ export function renderModel(root, model, { title = 'Semantic model' } = {}) {
       out.push(el('h3', {}, title));
       out.push(el('p', {}, `${tables.length} tables · ${rels.length} relationships · ${measures.length} measures (${measures.filter(m => m.isHidden).length} hidden).`));
       if (model.description) out.push(el('p', {}, lines(model.description)));
-      out.push(el('p', { class: 'm-hint' }, 'Hover a table to see what it reaches; click it for its columns, measures and relationships.'));
+      out.push(el('p', { class: 'm-hint' }, 'Drag a table to move it. Hover it to see what it reaches; click it for its columns, measures and relationships.'));
       box.replaceChildren(...out);
       return;
     }

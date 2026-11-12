@@ -322,6 +322,8 @@ function closeModelView() {
   modelView = null;
   $('modelView').hidden = true;
   $('modelView').closest('section').classList.remove('modelOpen');
+  // The host keeps a model's tab as that model's while it shows it (panel.js revealTab).
+  vs.postMessage({ type: 'model-closed' });
 }
 
 // A .bim from Files/ (read through the host), or the .yaml the extension downloaded from

@@ -50,7 +50,9 @@ async function buildHtml(webview, siteUri, cfg) {
 }
 
 // The tabs of this window, each with its own views and its own Stop. Opening OneLake Studio again
-// reveals the active one; what the tree opens asks for another (openPanel's newTab).
+// reveals the active one; what the tree opens asks for another (openPanel's newTab). A tab opened
+// on a model, a model file or an app is that one's (its `key`) for as long as it shows it: opened
+// again, its tab comes forward (revealTab) and no other is made.
 const tabs = new Set();
 let active = null;
 
@@ -129,7 +131,7 @@ function openPanel(context, opts = {}) {
   return opening;
 }
 
-async function openPanelUncontended(context, { onOpened, onBoot, onBootFailed, engine, host, build, draft, viewTag } = {}) {
+async function openPanelUncontended(context, { onOpened, onBoot, onBootFailed, engine, host, build, draft, viewTag, key } = {}) {
   const closesBefore = closes;
   const { page: siteUri, readme: readmeUri } = await webviewRoot(context.extensionUri,
     { dev: context.extensionMode === vscode.ExtensionMode.Development });
@@ -185,7 +187,7 @@ async function openPanelUncontended(context, { onOpened, onBoot, onBootFailed, e
   const post = msg => { try { panel.webview.postMessage(msg); } catch (_) {} };
   const tabEngine = engine ? engine.forTab() : null;
   const onCall = engine ? wireEngine(panel, tabEngine, host(tabEngine, post)) : null;
-  const tab = { panel, number, ready: false, pending };
+  const tab = { panel, number, ready: false, pending, key: key || null };
   pending = null;
   // The panel's own listeners die with the panel. Pushed onto context.subscriptions they
   // piled up — one more pair per panel ever opened in the window.
@@ -206,6 +208,9 @@ async function openPanelUncontended(context, { onOpened, onBoot, onBootFailed, e
       // shape: a spinner that never moves and a message that never comes.
       tab.pending = null;
       if (onBootFailed) onBootFailed(String(msg.message || 'the engine failed to start'));
+    } else if (msg.type === 'model-closed') {
+      // The tab shows something else now (a query run from its box): it is no longer its model's.
+      tab.key = null;
     } else if (msg.type === 'show-log') {
       // The read indicator in the panel's status bar is clickable, and this is what it
       // does: the breakdown it summarises lives in the output channel.
@@ -262,4 +267,13 @@ function revealPanel() {
 // Whether there is a panel to put a name in.
 const panelOpen = () => tabs.size > 0;
 
-module.exports = { openPanel, setPanelTitle, nameActiveTab, closePanel, revealPanel, panelOpen, postToPanel, postLive, panelSettings };
+// The tab opened on `key`, brought forward where it is, and the tab a click lands in. False: none.
+function revealTab(key) {
+  const tab = key ? [...tabs].find(t => t.key === key) : null;
+  if (!tab) return false;
+  active = tab;
+  tab.panel.reveal(tab.panel.viewColumn);
+  return true;
+}
+
+module.exports = { openPanel, setPanelTitle, nameActiveTab, closePanel, revealPanel, revealTab, panelOpen, postToPanel, postLive, panelSettings };
