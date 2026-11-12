@@ -94,6 +94,24 @@ try {
     assert.equal(await page.locator("#side").evaluate(el => el.offsetWidth), 350);
   });
 
+  await step("the tree's keys: Home, End and the arrows move the selection", async () => {
+    await page.locator("#tree").focus();
+    // Where the selection is, counted from the first row and from the last.
+    const at = () => page.evaluate(() => {
+      const rows = [...document.querySelectorAll("#tree .row")];
+      const i = rows.indexOf(document.querySelector("#tree .row.selected"));
+      return [i, rows.length - 1 - i];
+    });
+    await page.keyboard.press("End");
+    assert.equal((await at())[1], 0);
+    await page.keyboard.press("Home");
+    assert.equal((await at())[0], 0);
+    await page.keyboard.press("ArrowDown");
+    assert.equal((await at())[0], 1);
+    assert.equal(await page.locator("#tree .row.selected").count(), 1);
+    assert.equal(await page.locator(".tab").count(), 0, "moving the selection opens nothing");
+  });
+
   await step("Help › About says which version this is", async () => {
     await page.locator("#menubar button", { hasText: "Help" }).click();
     await page.locator("#menu .entry", { hasText: "About OneLake Studio" }).click();
@@ -150,11 +168,29 @@ try {
     await page.screenshot({ path: join(shots, "4-logs.png") });
   });
 
-  await step("Settings come from the extension's own list", async () => {
+  await step("Help › Read Log has one tab, however often it is asked for", async () => {
+    for (let i = 0; i < 2; i++) {
+      await page.locator("#menubar button", { hasText: "Help" }).click();
+      await page.locator("#menu .entry", { hasText: "Read Log" }).click();
+      await page.locator(".tab.active", { hasText: "Read Log" }).waitFor();
+    }
+    assert.equal(await page.locator(".tab", { hasText: "Read Log" }).count(), 1);
+  });
+
+  await step("Settings come from the extension's own list, their descriptions with no Markdown left in them", async () => {
     await page.locator("#side-actions button[title='More Actions…']").click();
     await page.locator("#menu .entry", { hasText: "Settings" }).click();
     await page.locator(".settings-page .name", { hasText: "Select Top Rows" }).waitFor();
+    const about = await page.locator(".settings-page .about").allTextContents();
+    assert.deepEqual(about.filter(t => /`|\*\*/.test(t)), []);
+    assert.ok(await page.locator(".settings-page .about code").count() > 0, "code in a description is drawn as code");
     await page.screenshot({ path: join(shots, "5-settings.png") });
+  });
+
+  await step("closing a tab shows its neighbour, not the last one", async () => {
+    await page.locator(".tab", { hasText: "Logs" }).click();
+    await page.locator(".tab.active .close").click();
+    await page.locator(".tab.active", { hasText: "Read Log" }).waitFor();
   });
 
   await step("a tab's right-click closes the others", async () => {

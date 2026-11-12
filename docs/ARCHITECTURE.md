@@ -907,6 +907,16 @@ command, menu, tab and message is the same code in both, and a change to the ext
   window first, so a shortcut works wherever the focus is, and the browser's own (F5, Ctrl+P, Ctrl+F) do nothing.
   The tree's width, whether it shows, and the zoom are kept in `window-state.json` in the data folder, not in the
   page's storage, whose origin's port is new each start.
+- **The tree** has a tree's keys: up and down, Home and End, right to open a node and then to its first child, left
+  to close it and then to its parent. A node opens at once and says Loading… until its listing answers. Moving the
+  selection draws no row again.
+- **Tabs:** closing the one on screen shows its neighbour. Ctrl+W or Ctrl+F4 closes it, the wheel moves the strip
+  sideways, and a double-click on its empty part is a New Query. The keys go to the tab on screen, never to one left
+  behind, and a dialog that closes gives them back to where they were. **Read Log** has one tab, shown again at its
+  end.
+- **Work that can be cancelled** (Upload Files…) has Cancel on its message: `withProgress`'s `cancellable`, and the
+  click is the task's token (`progress.cancel`). A message that goes by itself stays while the pointer is on it.
+- **Settings** draws a description's `code` and bold as elements. Help › Open Data Folder opens the data folder.
 - **A tab** is the same page as the extension's, in an iframe, with `acquireVsCodeApi` and VS Code's theme variables given
   to it in its own CSP.
 - **The connection** is an HTTP server on `127.0.0.1` ([`desktop/node/server.js`](../desktop/node/server.js)): messages out

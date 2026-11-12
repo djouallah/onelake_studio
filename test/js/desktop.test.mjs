@@ -227,6 +227,32 @@ test("a quick pick: the window's choice is its selection", () => {
   assert.equal(chosen, "b");
 });
 
+test("progress: work that can be cancelled is told by the window's Cancel, once, and other work has none", async () => {
+  let told = 0;
+  const done = vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: "Uploading", cancellable: true }, async (progress, token) => {
+    token.onCancellationRequested(() => told++);
+    progress.report({ message: "a.csv" });
+    const { id, cancellable } = pushed.at(-1);
+    assert.equal(cancellable, true);
+    assert.equal(token.isCancellationRequested, false);
+    vscode.desktop.progressCancel(id);
+    vscode.desktop.progressCancel(id);
+    return token.isCancellationRequested;
+  });
+  assert.equal(await done, true);
+  assert.equal(told, 1);
+  assert.equal(pushed.at(-1).t, "progress-end");
+  // Cancel after the work ended reaches nothing.
+  vscode.desktop.progressCancel(pushed.at(-1).id);
+  assert.equal(told, 1);
+  await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: "Exporting" }, async (progress, token) => {
+    const { id, cancellable } = pushed.at(-1);
+    assert.equal(cancellable, false);
+    vscode.desktop.progressCancel(id);
+    assert.equal(token.isCancellationRequested, false);
+  });
+});
+
 test("a save dialog's filters, as Windows writes them", () => {
   assert.equal(filterOf({ CSV: ["csv"], Excel: ["xlsx", "xls"] }), "CSV|*.csv|Excel|*.xlsx;*.xls");
 });

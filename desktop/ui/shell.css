@@ -44,7 +44,8 @@ input, select { font: inherit; color: var(--vscode-input-foreground); background
 .row .label { overflow: hidden; text-overflow: ellipsis; flex: 0 1 auto; }
 .row .description { margin-left: 8px; color: var(--vscode-descriptionForeground); overflow: hidden; text-overflow: ellipsis; flex: 1 1 0; font-size: 12px; min-width: 0; }
 .row .inline { display: none; margin-left: auto; flex: none; gap: 2px; padding-left: 4px; }
-.row:hover .inline { display: flex; }
+.row:hover .inline, .row.selected .inline { display: flex; }
+.loading-row { height: 22px; display: flex; align-items: center; white-space: nowrap; color: var(--vscode-descriptionForeground); }
 
 #work { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 #tabs { display: flex; flex: none; overflow-x: auto; background: var(--vscode-editorGroupHeader-tabsBackground); scrollbar-width: thin; }
@@ -60,6 +61,7 @@ input, select { font: inherit; color: var(--vscode-input-foreground); background
 #empty { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; color: var(--vscode-descriptionForeground); }
 #empty h1 { font-weight: 400; font-size: 26px; margin: 0 0 8px; color: var(--vscode-foreground); }
 .page { overflow: auto; background: var(--vscode-editor-background); user-select: text; }
+.page:focus { outline: none; }
 .text-page { margin: 0; padding: 12px 20px; font: var(--vscode-editor-font-size)/1.45 var(--vscode-editor-font-family); white-space: pre; }
 .settings-page { padding: 16px 24px 40px; }
 .settings-page h2 { font-weight: 400; margin: 0 0 16px; }
@@ -67,6 +69,8 @@ input, select { font: inherit; color: var(--vscode-input-foreground); background
 .setting { max-width: 720px; margin-bottom: 18px; }
 .setting .name { font-weight: 600; margin-bottom: 2px; }
 .setting .about { color: var(--vscode-descriptionForeground); margin-bottom: 6px; }
+.setting .about code { font-family: var(--vscode-editor-font-family); background: var(--vscode-textCodeBlock-background); padding: 0 3px; border-radius: 3px; }
+.setting .about b { font-weight: 600; color: var(--vscode-foreground); }
 .setting input[type=text], .setting input[type=number] { width: 320px; }
 
 #status { display: flex; justify-content: space-between; height: 22px; flex: none; padding: 0 8px; font-size: 12px; background: var(--vscode-statusBar-background); color: var(--vscode-statusBar-foreground); border-top: 1px solid var(--vscode-panel-border); }

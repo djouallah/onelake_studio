@@ -88,7 +88,7 @@ async function main() {
         if (lines.length > 5000) lines.splice(0, 1000);
         try { appendFileSync(logFile, `${line}\n`); } catch (_) {}
       },
-      show() { server.push({ t: 'text-tab', title: 'Read Log', content: lines.join('\n') }); },
+      show() { server.push({ t: 'text-tab', title: 'Read Log', content: lines.join('\n'), log: true }); },
       dispose() {},
     }),
     copy: text => dialogs.copy(text),
@@ -139,6 +139,7 @@ async function main() {
       case 'pick.accept': desktop.pickAccept(args[0], args[1]); return null;
       case 'pick.button': desktop.pickButton(args[0], args[1]); return null;
       case 'pick.hide': desktop.pickHidden(args[0]); return null;
+      case 'progress.cancel': desktop.progressCancel(args[0]); return null;
       case 'settings.get': {
         // One section or a list of them, as VS Code takes either.
         const props = Object.assign({}, ...[].concat(packageJSON.contributes.configuration || []).map(s => s.properties || {}));
@@ -153,6 +154,8 @@ async function main() {
       case 'app.zoom': shell({ do: 'zoom', factor: Number(args[0]) || 1 }); return null;
       case 'app.open': return dialogs.openExternal(String(args[0]));
       case 'app.update': return checkUpdate(packageJSON.version);
+      // Help > Open Data Folder: this folder only, whatever the window says.
+      case 'app.openHome': dialogs.openFolder(home); return null;
       // File > Open…: an app's file or a model file, opened as a double-click would.
       case 'app.openFile': return run(async () => {
         const picked = await vscode.window.showOpenDialog({ canSelectFiles: true, canSelectMany: false, title: 'Open',

@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **The desktop app: small fixes.** Upload Files… has Cancel, as in VS Code. Settings shows its descriptions
+  without the Markdown marks. Read Log keeps to one tab, shown at its end. A tree node opens at once and says
+  Loading… while its listing is read. Closing a tab shows the one next to it, not the last.
+- **The desktop app: polish.** The tree takes Home, End, left to a node's parent and right to its first child, and
+  moving through a large lakehouse is no longer slow. A selected row shows its buttons. The mouse wheel scrolls the
+  tabs, Ctrl+F4 closes one, and a double-click on the strip's empty part starts a query. A message stays while the
+  pointer is on it. Help has Open Data Folder.
 - **A Report has a style: the whole look at once.** *Theme › Style* is Studio, as before, or one of three of its own:
   Paper (warm and light, titles in a serif, earth colours), Midnight (deep blue, round tiles, bright colours, lines
   that glow) and Slate (cool grey, square flat tiles, one blue then greys). A style looks the same in any editor

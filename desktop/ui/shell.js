@@ -40,6 +40,9 @@ function withIcons(text) {
   return out;
 }
 const plain = text => String(text || '').replace(/\$\([a-z0-9-]+(~spin)?\)\s*/g, '');
+// A setting's description: its `code` and **bold** as elements, the rest as text, never as markup.
+const described = text => plain(text).split(/(`[^`]+`|\*\*[^*]+\*\*)/).filter(Boolean).map(part =>
+  (/^`[^`]+`$/.test(part) ? h('code', {}, part.slice(1, -1)) : /^\*\*[^*]+\*\*$/.test(part) ? h('b', {}, part.slice(2, -2)) : part));
 
 // ---------------------------------------------------------------------------
 // Talking to the app
@@ -190,7 +193,19 @@ function toggle(n) {
   if (isOpen(n)) { open.delete(n.id); closed.add(n.id); draw(); return; }
   closed.delete(n.id);
   open.add(n.id);
-  reload();
+  draw();   // open at once, saying Loading… until its listing answers
+  // A listing that failed: closed again, so the next click asks again.
+  reload().then(() => { if (!kids.has(n.id) && open.delete(n.id)) draw(); });
+}
+
+const rowOf = id => (id == null ? null : tree.querySelector(`.row[data-id="${CSS.escape(id)}"]`));
+// The selected row, by its class: a lakehouse can draw thousands, and none is drawn again for this.
+function select(id) {
+  selected = id;
+  for (const r of tree.querySelectorAll('.row.selected')) r.classList.remove('selected');
+  const el = rowOf(id);
+  if (el) el.classList.add('selected');
+  return el;
 }
 
 // A node drawn with no tooltip (a table) asks for its own when the pointer rests on it, once, as VS
@@ -204,7 +219,7 @@ function tooltipSoon(n) {
     const text = await call('tree.tooltip', VIEW, n.id).catch(() => '');
     if (!text) return;
     n.tooltip = text;
-    const el = [...tree.querySelectorAll('.row')].find(r => r.dataset.id === n.id);
+    const el = rowOf(n.id);
     if (el) el.title = text;
   }, 300);
 }
@@ -215,15 +230,13 @@ function row(n, depth) {
     class: `row${selected === n.id ? ' selected' : ''}`, role: 'treeitem', title: n.tooltip || null,
     'aria-expanded': n.collapsible ? String(isOpen(n)) : null, draggable: n.dragText ? 'true' : null,
     onclick: () => {
-      selected = n.id;
-      if (n.clickable) { draw(); call('tree.click', VIEW, n.id).catch(() => {}); }
+      select(n.id);
+      if (n.clickable) call('tree.click', VIEW, n.id).catch(() => {});
       else if (n.collapsible) toggle(n);
-      else draw();
     },
     oncontextmenu: e => {
       e.preventDefault();
-      selected = n.id;
-      draw();
+      select(n.id);
       openMenu(e.clientX, e.clientY, entries('view/item/context', ctx({ view: VIEW, viewItem: n.contextValue }), { inline: false }),
         command => call('tree.run', VIEW, n.id, command).catch(() => {}));
     },
@@ -251,7 +264,9 @@ function draw() {
   const add = (parent, depth) => {
     for (const n of kids.get(parent) || []) {
       out.push(row(n, depth));
-      if (isOpen(n)) add(n.id, depth + 1);
+      if (!isOpen(n)) continue;
+      if (kids.has(n.id)) add(n.id, depth + 1);
+      else out.push(h('div', { class: 'loading-row', style: `padding-left: ${42 + (depth + 1) * 12}px` }, 'Loading…'));
     }
   };
   add('', 0);
@@ -259,20 +274,28 @@ function draw() {
   tree.scrollTop = top;
 }
 
+// The keys of any tree: up and down, Home and End, right to open a node and then to its first child,
+// left to close it and then to its parent.
 tree.addEventListener('keydown', e => {
   const rows = [...tree.querySelectorAll('.row')];
-  let i = rows.findIndex(r => r.dataset.id === selected);
-  const all = [...kids.values()].flat();
-  const node = id => all.find(n => n.id === id);
-  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-    i = Math.max(0, Math.min(rows.length - 1, i + (e.key === 'ArrowDown' ? 1 : -1)));
-    selected = rows[i] && rows[i].dataset.id;
-    draw();
-    const r = tree.querySelector('.row.selected');
-    if (r) r.scrollIntoView({ block: 'nearest' });
-  } else if ((e.key === 'ArrowRight' || e.key === 'ArrowLeft') && node(selected)) {
-    const n = node(selected);
-    if (n.collapsible && (e.key === 'ArrowRight') !== isOpen(n)) toggle(n);
+  const i = rows.findIndex(r => r.dataset.id === selected);
+  const go = id => { const el = select(id); if (el) el.scrollIntoView({ block: 'nearest' }); };
+  const at = k => { if (rows.length) go(rows[Math.max(0, Math.min(rows.length - 1, k))].dataset.id); };
+  let n = null, parent = null;
+  for (const [p, list] of kids) {
+    const found = list.find(x => x.id === selected);
+    if (found) { n = found; parent = p; break; }
+  }
+  if (e.key === 'ArrowDown') at(i + 1);
+  else if (e.key === 'ArrowUp') at(i - 1);
+  else if (e.key === 'Home') at(0);
+  else if (e.key === 'End') at(rows.length - 1);
+  else if (e.key === 'ArrowRight' && n) {
+    if (n.collapsible && !isOpen(n)) toggle(n);
+    else if ((kids.get(n.id) || []).length) go(kids.get(n.id)[0].id);
+  } else if (e.key === 'ArrowLeft' && n) {
+    if (n.collapsible && isOpen(n)) toggle(n);
+    else if (parent) go(parent);
   } else if (e.key === 'Enter' && rows[i]) rows[i].click();
   else return;
   e.preventDefault();
@@ -325,6 +348,8 @@ function addTab(id, title, page, { viewType = null } = {}) {
     } },
   h('span', { class: 'name' }, title),
   h('button', { class: 'icon close', title: 'Close', onclick: e => { e.stopPropagation(); closeTab(id); } }, h('span', { class: 'codicon codicon-close' })));
+  // A page of the window's own takes the keys as a tab's page does, so they never stay in a tab left behind.
+  if (!(page instanceof HTMLIFrameElement)) page.tabIndex = -1;
   $('tabs').append(el);
   $('pages').append(page);
   tabs.set(id, { id, el, page, viewType, loaded: false, waiting: [] });
@@ -335,11 +360,15 @@ function activate(id) {
   current = id;
   for (const t of tabs.values()) {
     t.el.classList.toggle('active', t.id === id);
+    t.el.setAttribute('aria-selected', String(t.id === id));
     t.page.classList.toggle('shown', t.id === id);
   }
   $('empty').hidden = tabs.size > 0;
   const t = tabs.get(id);
   if (t) t.el.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  // The keys were in another tab's page, which is hidden now: they go to this one.
+  const had = document.activeElement;
+  if (t && !t.page.contains(had) && [...tabs.values()].some(o => o.page.contains(had))) t.page.focus({ preventScroll: true });
   call('tab.shown', t && t.viewType ? id : null).catch(() => {});
 }
 
@@ -363,18 +392,39 @@ function cycle(d) {
 function dropTab(id) {
   const t = tabs.get(id);
   if (!t) return;
+  // The tab shown next is its neighbour: the one after it, or for the last tab, the one before it.
+  const all = [...tabs.keys()];
+  const next = all[all.indexOf(id) + 1] || all[all.indexOf(id) - 1];
   t.el.remove();
   t.page.remove();
   tabs.delete(id);
   if (current === id) {
-    const last = [...tabs.keys()].pop();
-    if (last) activate(last); else { current = null; $('empty').hidden = false; call('tab.shown', null).catch(() => {}); }
+    if (next) activate(next); else { current = null; $('empty').hidden = false; call('tab.shown', null).catch(() => {}); }
   }
 }
 
+// The tab strip: the wheel moves it sideways, and a double-click on its empty part is a new query.
+$('tabs').addEventListener('wheel', e => {
+  if (!e.deltaY || e.ctrlKey) return;
+  $('tabs').scrollLeft += e.deltaY;
+  e.preventDefault();
+}, { passive: false });
+$('tabs').addEventListener('dblclick', e => { if (e.target === $('tabs')) runCommand('onelakeStudio.newQuery'); });
+
 let localTabs = 0;
-function textTab(title, content) {
-  addTab(`local-${++localTabs}`, title, h('div', { class: 'page' }, h('pre', { class: 'text-page' }, content)));
+// `log`: the log has one tab, which shows it again as it is now, at its end.
+function textTab(title, content, log = false) {
+  let t = log ? [...tabs.values()].find(o => o.log) : null;
+  if (t) {
+    t.page.firstChild.textContent = content;
+    activate(t.id);
+  } else {
+    const id = `local-${++localTabs}`;
+    addTab(id, title, h('div', { class: 'page' }, h('pre', { class: 'text-page' }, content)));
+    t = tabs.get(id);
+    t.log = log;
+  }
+  if (log) t.page.scrollTop = t.page.scrollHeight;
 }
 
 async function settingsTab() {
@@ -398,7 +448,7 @@ async function settingsTab() {
           if (e.target.value !== '' && Number.isFinite(n)) set(n);
         } });
       } else input = h('input', { type: 'text', value: values[key] ?? '', spellcheck: 'false', onchange: e => set(e.target.value) });
-      page.append(h('div', { class: 'setting' }, h('div', { class: 'name' }, name), h('div', { class: 'about' }, plain(p.markdownDescription || p.description || '')), input));
+      page.append(h('div', { class: 'setting' }, h('div', { class: 'name' }, name), h('div', { class: 'about' }, described(p.markdownDescription || p.description || '')), input));
     }
   }
   const id = `local-${++localTabs}`;
@@ -461,7 +511,13 @@ function toast({ level = 'info', message, items = [], spinner = false }, answer 
       spinner ? null : h('button', { class: 'icon', title: 'Close', onclick: () => finish(null) }, h('span', { class: 'codicon codicon-close' }))),
     items.length ? h('div', { class: 'actions' }, items.map((it, i) => h('button', { class: i ? 'secondary' : 'primary', onclick: () => finish(it) }, it))) : null);
   $('toasts').append(el);
-  if (!items.length && !spinner) setTimeout(() => finish(null), level === 'error' ? 20000 : 8000);
+  if (!items.length && !spinner) {
+    // It goes by itself, but not while the pointer is on it: an error can be read, and copied.
+    const ms = level === 'error' ? 20000 : 8000;
+    let timer = setTimeout(() => finish(null), ms);
+    el.addEventListener('pointerenter', () => clearTimeout(timer));
+    el.addEventListener('pointerleave', () => { clearTimeout(timer); timer = setTimeout(() => finish(null), ms); });
+  }
   return { el, finish, text: el.querySelector('.text') };
 }
 
@@ -470,12 +526,15 @@ let overlayTurn = Promise.resolve();
 function overlay(build) {
   const turn = overlayTurn.then(() => new Promise(resolve => {
     const box = $('overlay');
+    // What had the keys, which gets them back: the tree, or a tab's page.
+    const before = document.activeElement;
     let closed = false;
     const close = v => {
       if (closed) return;
       closed = true;
       box.hidden = true;
       box.replaceChildren();
+      if (before && before !== document.body && before.isConnected) before.focus({ preventScroll: true });
       resolve(v);
     };
     box.replaceChildren(build(close));
@@ -612,7 +671,7 @@ function on(m) {
     }
     case 'tab-reveal': if (tabs.has(m.id)) activate(m.id); break;
     case 'tab-close': dropTab(m.id); break;
-    case 'text-tab': textTab(m.title, m.content); break;
+    case 'text-tab': textTab(m.title, m.content, !!m.log); break;
     case 'open-settings': settingsTab(); break;
     case 'status-item': statusItems.set(m.item.id, m.item); drawStatus(); break;
     case 'status-item-gone': statusItems.delete(m.id); drawStatus(); break;
@@ -625,9 +684,19 @@ function on(m) {
     case 'progress':
       progress.set(m.id, m);
       if (m.notify) {
-        const n = notices.get(m.id) || toast({ level: 'info', message: '', spinner: true });
+        let n = notices.get(m.id);
+        if (!n) {
+          n = toast({ level: 'info', message: '', spinner: true });
+          // Work that can be stopped (an upload) has Cancel; it stays until the work says it ended.
+          if (m.cancellable) {
+            n.el.append(h('div', { class: 'actions' }, h('button', { class: 'secondary', onclick: e => {
+              e.currentTarget.disabled = true;
+              call('progress.cancel', m.id).catch(() => {});
+            } }, 'Cancel')));
+          }
+          notices.set(m.id, n);
+        }
         n.text.textContent = m.message ? `${m.title}: ${m.message}` : m.title;
-        notices.set(m.id, n);
       }
       drawStatus();
       break;
@@ -771,7 +840,8 @@ const BAR = [
      { title: 'Install Agent Skill (Claude Code, GitHub Copilot)', command: 'onelakeStudio.installClaudeSkill' }],
     [{ title: 'Logs', command: 'onelakeStudio.showLogs' },
      { title: 'Read Log', command: 'onelakeStudio.showLog' },
-     { title: 'Performance', command: 'onelakeStudio.showPerformance' }],
+     { title: 'Performance', command: 'onelakeStudio.showPerformance' },
+     { title: 'Open Data Folder', run: () => call('app.openHome').catch(() => {}) }],
     [{ title: 'Check for Updates…', run: checkForUpdates }],
     [{ title: 'About OneLake Studio', run: about }],
   ] },
@@ -806,7 +876,10 @@ function about() {
     h('div', { class: 'detail' }, text),
     h('div', { class: 'actions' },
       h('button', { class: 'secondary', onclick: () => call('app.open', boot.homepage).catch(() => {}) }, 'Website'),
-      h('button', { class: 'secondary', onclick: () => navigator.clipboard.writeText(`OneLake Studio\n${text}`).catch(() => {}) }, 'Copy'),
+      h('button', { class: 'secondary', onclick: e => {
+        const b = e.currentTarget;
+        navigator.clipboard.writeText(`OneLake Studio\n${text}`).then(() => { b.textContent = 'Copied'; }).catch(() => {});
+      } }, 'Copy'),
       ok));
   });
 }
@@ -844,6 +917,7 @@ const KEYS = {
   'ctrl+o': () => openFile(),
   'ctrl+alt+o': () => runCommand('onelakeStudio.goTo'),
   'ctrl+w': () => { if (current) closeTab(current); },
+  'ctrl+f4': () => { if (current) closeTab(current); },
   'ctrl+tab': () => cycle(1),
   'ctrl+pagedown': () => cycle(1),
   'ctrl+shift+tab': () => cycle(-1),

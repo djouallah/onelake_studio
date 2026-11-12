@@ -274,6 +274,13 @@ function pickButton(id, i) {
 }
 
 const statusItems = new Map();
+// Work under way that can be cancelled, by its progress id.
+const progressTokens = new Map();
+/** The window's Cancel on a progress message. */
+function progressCancel(id) {
+  const cancel = progressTokens.get(id);
+  if (cancel) cancel();
+}
 const window_ = {
   showInformationMessage: (text, ...rest) => message('info', text, rest),
   showWarningMessage: (text, ...rest) => message('warning', text, rest),
@@ -282,14 +289,18 @@ const window_ = {
     host.push({ t: 'status-message', text: String(text), ms: ms || 3000 });
     return { dispose() {} };
   },
-  async withProgress({ title, location }, task) {
+  // `cancellable`: the window shows Cancel, and its click is the task's token (progressCancel).
+  async withProgress({ title, location, cancellable }, task) {
     const id = newId();
-    host.push({ t: 'progress', id, title: title || '', message: '', notify: location === ProgressLocation.Notification });
+    const cancelled = new EventEmitter();
+    const token = { isCancellationRequested: false, onCancellationRequested: cancelled.event };
+    const say = m => host.push({ t: 'progress', id, title: title || '', message: m || '', notify: location === ProgressLocation.Notification, cancellable: !!cancellable });
+    if (cancellable) progressTokens.set(id, () => { if (!token.isCancellationRequested) { token.isCancellationRequested = true; cancelled.fire(); } });
+    say('');
     try {
-      return await task(
-        { report: ({ message: m } = {}) => host.push({ t: 'progress', id, title: title || '', message: m || '', notify: location === ProgressLocation.Notification }) },
-        { isCancellationRequested: false, onCancellationRequested: () => ({ dispose() {} }) });
+      return await task({ report: ({ message: m } = {}) => say(m) }, token);
     } finally {
+      progressTokens.delete(id);
       host.push({ t: 'progress-end', id });
     }
   },
@@ -388,5 +399,5 @@ module.exports = {
   ExtensionMode, ProgressLocation, StatusBarAlignment, ViewColumn,
   commands, window: window_, workspace, env, authentication, languages, version: 'none',
   // For main.js and server.js, not the extension.
-  desktop: { contexts, panels, tabShown, treeChildren, treeTooltip, treeClick, treeRun, pickAccept, pickButton, pickHidden, settingChanged, statusItems, views, under },
+  desktop: { contexts, panels, tabShown, treeChildren, treeTooltip, treeClick, treeRun, pickAccept, pickButton, pickHidden, progressCancel, settingChanged, statusItems, views, under },
 };

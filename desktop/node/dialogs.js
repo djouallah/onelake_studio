@@ -97,10 +97,15 @@ function reveal(path, run = spawn) {
   run('explorer.exe', [`/select,${path}`], { detached: true, stdio: 'ignore' }).unref();
 }
 
+// A folder, opened in Explorer.
+function openFolder(path, run = spawn) {
+  run('explorer.exe', [path], { detached: true, stdio: 'ignore' }).unref();
+}
+
 function openExternal(url, run = spawn) {
   if (!/^https?:\/\//i.test(url)) return false;
   run('rundll32', ['url.dll,FileProtocolHandler', url], { detached: true, stdio: 'ignore' }).unref();
   return true;
 }
 
-module.exports = { saveDialog, openDialog, folderDialog, copy, reveal, openExternal, filterOf };
+module.exports = { saveDialog, openDialog, folderDialog, copy, reveal, openFolder, openExternal, filterOf };
