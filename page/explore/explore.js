@@ -1142,7 +1142,7 @@ export function createExplorer(root, ctx) {
         // Closed until opened, and as it was left; open while searching, to show what matched.
         const open = term || openFolders.get(key);
         const folder = el('details', { class: 'ex-folder', open: open ? true : null },
-          el('summary', {}, icon('folder'), name),
+          el('summary', {}, el('span', { class: 'ex-icon' }, icon('folder')), name),
           el('div', { class: 'ex-folder-body' }, contents(t, n, [...path, name])));
         folder.addEventListener('toggle', () => { if (!search.value.trim()) openFolders.set(key, folder.open); });
         return folder;
