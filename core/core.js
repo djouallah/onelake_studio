@@ -103,7 +103,7 @@ function createCore({
   // Set below: what an engine, a tab and the command line ask for by the time anything can ask.
   let onelake = null, semviews = null, rebindStore = null, onStoreCleared = () => {};
   let resolveSqlTable = null, resolveSqlFile = null, resolveSqlLakehouse = null, nameModelTables = null, cachedSqlTables = null;
-  let openSqlModel = null, saveQuery = null, openSqlFile = null, exportExplore = null, openApp = null, modelReport = null, openExcel = null, keepOffline = null;
+  let openSqlModel = null, saveQuery = null, exportExplore = null, openApp = null, modelReport = null, openExcel = null, keepOffline = null;
   let createSemanticModel = null;
 
   // What an engine asks of this window, whichever engine it is.
@@ -198,7 +198,6 @@ function createCore({
   });
   const { adoptLooseQueries } = queries;
   saveQuery = queries.saveQuery;
-  openSqlFile = queries.openSqlFile;
   adoptLooseQueries().then(() => view.queriesChanged(), () => {});
   engines.setCacheRoot(engines.fileCacheRootFor());
   engines.setCacheAccount(storeAccount);
@@ -605,7 +604,7 @@ function createCore({
   }
 
   return {
-    engines, onelake, semviews, rebindStore, exportExplore, openApp, createSemanticModel, modelReport, openExcel, keepOffline, openSqlModel, nameModelTables, saveQuery, openSqlFile,
+    engines, onelake, semviews, rebindStore, exportExplore, openApp, createSemanticModel, modelReport, openExcel, keepOffline, openSqlModel, nameModelTables, saveQuery,
     onStoreCleared: () => onStoreCleared(),
     // The cache folder moved from `old` (setCacheRoot): the store's Files/ bytes go to the new one too, and
     // this account's model copies move there, their views with them. Waited for before `old` is deleted.

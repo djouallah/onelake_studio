@@ -750,9 +750,9 @@ A statement in the SQL box or the command line's `sql` can write to a lakehouse,
 
 A model file, an app's file or a `.sql` file on this machine opens in a tab, as one from the tree does (`openPath` in
 [`extension/extension.js`](../extension/extension.js), the command `onelakeStudio.openPath`).
-- **A `.sql` file** opens in the SQL box, not run, in a tab named after it, as a saved query does. **Save** writes it
-  back to that file, and only a file opened so can be written (`openSqlFile` in [`core/queries.js`](../core/queries.js)).
-  A file open already brings its tab forward.
+- **A `.sql` file** opens in the SQL box, not run, in a tab named after it, as a saved query does. A file open already
+  brings its tab forward. **Save Query** keeps it under *Queries*, as any query. A `.sql` file in a lakehouse's `Files/`
+  opens in the box the same way, from the tree.
 - **A model file**, a `.bim`, or a `.yaml`/`.yml` that is an Ossie model (a top-level `version:` and `datasets:`): its
   model, its tables OneLake's by the names in it, in the workspace that holds them (`modelFile` in
   [`core/models/models.js`](../core/models/models.js)). One whose tables more than one workspace could hold says so, and is opened from

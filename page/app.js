@@ -239,6 +239,20 @@ async function openFile(m) {
 
 async function selectFile(file) {
   if (fileExt(file.name) === 'bim') return openModelView(file);
+  // A .sql file opens in the SQL box, its text not run, as a saved query does.
+  if (fileExt(file.name) === 'sql') {
+    const my = ++selSeq;
+    try {
+      await engineReady;
+      const text = new TextDecoder().decode(await engine.readFileBytes(lakehouse, file));
+      if (my !== selSeq) return;
+      activeFile = null;
+      openInBox(text, file.name.replace(/\.sql$/i, ''));
+    } catch (e) {
+      if (my === selSeq) setStatus(`Could not open ${file.name}: ${e.message}`, 'error');
+    }
+    return;
+  }
   // A .yaml is an Apache Ossie model when its text says so; any other is a document.
   if (['yaml', 'yml'].includes(fileExt(file.name))) {
     const my = ++selSeq;
@@ -1531,10 +1545,8 @@ function enterQuery(title) {
 }
 
 // The SQL box: written, run and saved here, so a query never opens a .sql file, and nothing else
-// in VS Code has a say in it. It holds one query: the saved one it came from, when it did. A .sql file
-// opened from disk is one too, and `boxFile` is its path: Save writes it back there.
+// in VS Code has a say in it. It holds one query: the saved one it came from, when it did.
 let activeQuery = null;
-let boxFile = null;
 const sameName = (a, b) => a != null && String(a).toLowerCase() === String(b).toLowerCase();
 function nameBoxQuery(name) {
   activeQuery = name;
@@ -1567,7 +1579,6 @@ function putInBox(sql) {
   typeInBox(box, sql);
   clearTimeout(draftTimer);     // what was put here isn't a draft to keep
   nameBoxQuery(null);
-  boxFile = null;
   box.setSelectionRange(0, 0);
 }
 // What was clicked, as SQL to start from: a click isn't a request to type, so the cursor stays where
@@ -1578,12 +1589,10 @@ function offerInBox(sql) {
   if (box.value.trim() && box.value !== offered) return;
   box.value = offered = sql;
   activeQuery = null;
-  boxFile = null;
 }
-function openInBox(sql, name, file = null) {
+function openInBox(sql, name) {
   putInBox(sql);
   nameBoxQuery(name);
-  boxFile = file;
   $('activeTable').textContent = name ? `Query: ${name}` : 'Query';
   setStatus(name ? `${name} — Run ▶ (Ctrl+Enter) to run it.` : 'Run ▶ (Ctrl+Enter) runs the statement under the cursor.');
 }
@@ -1675,16 +1684,16 @@ async function runOne(span, { plan = false, text }) {
     return false;
   }
 }
-// Save Query: back to the .sql file the box came from, over the saved query it came from, else as the next
-// free "Query N", with nothing asked (Rename in the tree names it).
+// Save Query: over the query the box came from, else as the next free "Query N", with nothing
+// asked (Rename in the tree names it).
 async function saveBox() {
   const sql = $('sqlEditor').value;
   if (!sql.trim()) { setStatus('Nothing to save: write a query first.'); return; }
   try {
-    const saved = await engine.saveQuery(activeQuery || '', sql, boxFile);
+    const saved = await engine.saveQuery(activeQuery || '', sql);
     nameBoxQuery(saved.name);
     if ($('activeTable').textContent.startsWith('Query')) $('activeTable').textContent = `Query: ${saved.name}`;
-    setStatus(saved.file ? `Saved to ${saved.file}.` : `Saved as ${saved.name} under Queries.`, 'ok');
+    setStatus(`Saved as ${saved.name} under Queries.`, 'ok');
   } catch (e) {
     setStatus('Could not save the query: ' + e.message, 'error');
   }
@@ -1858,8 +1867,8 @@ window.addEventListener('message', async e => {
       }
     }
     // SQL for the box, from the tree: a new query, a saved one, Select Top Rows (run at once).
-    // A .sql file from disk too, with its path: Save writes it back there.
-    else if (m.type === 'query') openInBox(String(m.sql ?? ''), m.name ? String(m.name) : null, m.file ? String(m.file) : null);
+    // A .sql file from disk too.
+    else if (m.type === 'query') openInBox(String(m.sql ?? ''), m.name ? String(m.name) : null);
     else if (m.type === 'run-sql') { openInBox(String(m.sql ?? ''), null); await runBox(); }
     // A lakehouse's Table Health: every table this machine holds, from the lake.
     else if (m.type === 'lakehouse-health') await showLakehouseHealth(m);

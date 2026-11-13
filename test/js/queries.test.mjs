@@ -76,17 +76,3 @@ test("loose queries move to the account's folder, never over one already there",
   assert.match(events.lines[0], /moved into/);
   await done();
 });
-
-test("a .sql file opened from disk is saved back where it is, and no file that wasn't opened is written", async () => {
-  const { root, queries, done } = await setup();
-  const file = join(root, "monthly.sql");
-  await writeFile(file, "SELECT 1", "utf8");
-  assert.equal(await queries.openSqlFile(file), "SELECT 1");
-  const saved = await queries.saveQuery({ name: "monthly", sql: "SELECT 2", file });
-  assert.equal(saved.file, file);
-  assert.equal(await readFile(file, "utf8"), "SELECT 2");
-  const other = join(root, "other.sql");
-  await assert.rejects(queries.saveQuery({ name: "other", sql: "SELECT 3", file: other }), /wasn't opened here/);
-  assert.deepEqual((await readdir(root)).sort(), ["monthly.sql"]);
-  await done();
-});

@@ -68,22 +68,7 @@ function createQueries({ root, account, log, onChange }) {
     return { name: stem, path };
   }
 
-  // A .sql file opened from disk (extension.js openPath): its text, for the SQL box, and Save writes it back there.
-  // Only a file opened so: a tab can't name any other file to be written.
-  const opened = new Set();
-  const fileKey = p => (process.platform === 'win32' ? String(p).toLowerCase() : String(p));
-  async function openSqlFile(path) {
-    const sql = await fsp.readFile(path, 'utf8');
-    opened.add(fileKey(path));
-    return sql;
-  }
-
-  const saveQuery = async ({ name, sql, file = null }) => {
-    if (file) {
-      if (!opened.has(fileKey(file))) throw new Error(`${file} wasn't opened here, so it isn't written`);
-      await fsp.writeFile(file, String(sql ?? ''), 'utf8');
-      return { name, path: file, file };
-    }
+  const saveQuery = async ({ name, sql }) => {
     if (!name || !queriesFolder()) return saveNewQuery(sql);
     const path = queryPath(name);
     await fsp.mkdir(queriesFolder(), { recursive: true });
@@ -92,7 +77,7 @@ function createQueries({ root, account, log, onChange }) {
     return { name, path };
   };
 
-  return { queriesFolder, adoptLooseQueries, listQueries, queryPath, saveQuery, openSqlFile };
+  return { queriesFolder, adoptLooseQueries, listQueries, queryPath, saveQuery };
 }
 
 module.exports = { createQueries, queryStem };
