@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.23
 
 - **Table Health doesn't ask an Iceberg table for V-Order,** which only a Delta table's files can have.
 - **A schema with no tables shows in the tree.** `CREATE SCHEMA` made it in OneLake, and the tree showed it only once it
