@@ -2,17 +2,17 @@
 # A write to a lakehouse is refused here too: this engine has none to write to (writes.test is the rest).
 
 statement error
-CREATE TABLE memory.main.x (a INT)
+CREATE TABLE onelake.main.x (a INT)
 ----
 Not run
 
 statement error
-INSERT INTO cat1.lh_lakehouse.dbo.t VALUES (1)
+INSERT INTO cat1.lh.dbo.t VALUES (1)
 ----
 Not run
 
 statement error
-DELETE FROM cat1.lh_lakehouse.dbo.t
+DELETE FROM cat1.lh.dbo.t
 ----
 Not run
 
@@ -59,7 +59,7 @@ WITH a AS (SELECT 1) COPY (SELECT 1) TO 'x.csv'
 Not run
 
 statement error
-WITH a AS (SELECT 1) DELETE FROM cat1.lh_lakehouse.dbo.t
+WITH a AS (SELECT 1) DELETE FROM cat1.lh.dbo.t
 ----
 Not run
 
@@ -69,7 +69,7 @@ EXPLAIN ANALYZE COPY (SELECT 1) TO 'x.csv'
 Not run
 
 statement error
-CREATE VIEW v AS DELETE FROM cat1.lh_lakehouse.dbo.t
+CREATE VIEW v AS DELETE FROM cat1.lh.dbo.t
 ----
 Not run
 
@@ -101,17 +101,17 @@ Not run
 
 # What the page sends to set up its reads is the page's. DROP is blocked for now, of anything.
 statement error
-DROP TABLE memory.main.not_a_table
+DROP TABLE onelake.main.not_a_table
 ----
 DROP is blocked
 
 statement error
-DROP TABLE IF EXISTS cat1.lh_lakehouse.dbo.no_such_table
+DROP TABLE IF EXISTS cat1.lh.dbo.no_such_table
 ----
 DROP is blocked
 
 statement error
-DROP VIEW cat1.lh_lakehouse.dbo.t
+DROP VIEW cat1.lh.dbo.t
 ----
 DROP is blocked
 

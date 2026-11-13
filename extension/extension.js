@@ -248,7 +248,7 @@ const onClick = fn => n => (treeClick(n) ? fn(n) : undefined);
 // What a new query (the Queries node's +) starts with. SHOW ALL TABLES is answered from the
 // cache (cachedSqlTables), so it lists only the tables seen in the tree.
 const NEW_QUERY_SQL = [
-  '-- New query. A table is named workspace.item_lakehouse.schema.table.',
+  '-- New query. A table is named workspace.lakehouse.schema.table.',
   '-- This lists only the tables cached on this machine: expand a lakehouse in the OneLake tree to add its tables.',
   'SHOW ALL TABLES;',
   '',

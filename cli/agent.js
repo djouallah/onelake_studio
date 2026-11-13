@@ -19,8 +19,9 @@
 //   table <ws> <item> <schema.table> metadata only
 //   exists <ws> <item> <schema.table>  yes (0), no with the closest names (1), or not cached (4)
 //   model <ws> <model>               relationships, columns, measures with DAX
-//   sql "<sql>"                      a table is workspace.item_kind.schema.table; a file is
-//                                    'ws.item_lakehouse/Files/x.parquet'; a semantic model is
+//   sql "<sql>"                      a table is workspace.lakehouse.schema.table (a warehouse's
+//                                    workspace.item_warehouse.schema.table); a file is
+//                                    'ws.lakehouse/Files/x.parquet'; a semantic model is
 //                                    ws.model_semanticmodel, AGG("m") its measure m; and SHOW
 //                                    SEMANTIC VIEWS / METRICS / DIMENSIONS; --show-sql the compiled SQL
 //   export <ws> <model>              Export to Fabric, as Explore's button: a semantic model, queried
@@ -697,7 +698,7 @@ function createAgent({ onelake, engine, modelPath, appDir, vendorDir, daxSqlPin,
         // Never into a --csv that will be parsed.
         if (opts.csv) io.note(shown); else io.out(`${fence('sql', shown)}\n`);
       }
-      // Tables are named workspace.item_kind.schema.table (`ls <ws> <item>` prints them), and
+      // Tables are named workspace.lakehouse.schema.table (`ls <ws> <item>` prints them), and
       // the engine opens each one a statement names as it runs it — a model's compiled SQL
       // names its Direct Lake tables the same way.
       // SHOW ALL TABLES holds every column of every table, too much for an agent's context: Markdown

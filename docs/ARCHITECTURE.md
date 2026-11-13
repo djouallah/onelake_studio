@@ -18,9 +18,9 @@ queried with SQL.
   and engine as a person in the editor.
 
 ```sql
-SELECT * FROM aemo.data_lakehouse.dbo.dim_duid;
+SELECT * FROM aemo.data.dbo.dim_duid;
 SELECT dim_region.Region, AGG("Registered MW") FROM aemo.nem_semanticmodel GROUP BY ALL;
-SELECT * FROM 'aemo.data_lakehouse/Files/x.parquet';
+SELECT * FROM 'aemo.data/Files/x.parquet';
 SHOW ALL TABLES;
 ```
 
@@ -28,7 +28,7 @@ SHOW ALL TABLES;
 
 | Rule | What it means | Where it is held |
 | --- | --- | --- |
-| **One name per object** | A table is `<workspace>.<item>_<kind>.<schema>.<table>`, or named by its GUIDs, and a model is `<workspace>.<model>_semanticmodel`. A file is `'<workspace>.<item>_lakehouse/Files/<path>'`. | [NAMING.md](NAMING.md), [`core/names.js`](../core/names.js) |
+| **One name per object** | A lakehouse table is `<workspace>.<lakehouse>.<schema>.<table>`, another item's `<workspace>.<item>_<kind>.<schema>.<table>`, either by its GUIDs too, and a model is `<workspace>.<model>_semanticmodel`. A file is `'<workspace>.<lakehouse>/Files/<path>'`. | [NAMING.md](NAMING.md), [`core/names.js`](../core/names.js) |
 | **SQL only** | A model is read with `AGG("measure")` in SQL. There is no DAX query. Excel's MDX is a second way in, and is compiled to that same SQL. An exported Fabric app on a semantic model runs the DAX that dax-sql makes of that SQL. | [`page/semantic.js`](../page/semantic.js), [`xmla/`](../xmla/) |
 | **Reads, and writes to a lakehouse only** | A statement reads, or writes to a lakehouse: its tables as Iceberg, through its Iceberg catalog, and its `Files/` by `COPY … TO` ([SQL writes](#sql-writes)). SQL writes nothing else, and DuckDB's own plan of each write is checked first. Export to Fabric (the app), Create Semantic Model and Upload Files… each ask first. | `assertReads`, `checkedRead`, `writeOf` and `checkPlan` in [`core/sql.js`](../core/sql.js), `runWrite` in [`core/engine/engine-host.js`](../core/engine/engine-host.js) |
 | **Cache first** | Every answer from OneLake or Fabric is kept on this machine and served from there first. It is trusted until using it fails, then read again once. | [`core/onelake/onelake.js`](../core/onelake/onelake.js), [`core/onelake/store.js`](../core/onelake/store.js) |
@@ -177,7 +177,7 @@ The engine is **DuckDB 2.0 running natively in a process of its own** ([The serv
   ask Fabric for an item's name. Only a statement that can name a model waits for that: one with
   `semantic` in it.
 - **Catalogs:** none of its own for names. A table's workspace, item and schema are nested schemas in the engine's
-  `memory` catalog, and a model is a view in its workspace's schema there. A workspace named like a catalog the engine
+  catalog, and a model is a view in its workspace's schema there. A workspace named like a catalog the engine
   has (`lake`, an attached database file) is read by GUIDs, and a database file named like a workspace is attached as
   `<name>_file`.
 - **Reading OneLake:** a Delta or Iceberg table through the lake ([Reading OneLake tables](#reading-onelake-tables)),
@@ -714,14 +714,14 @@ A statement in the SQL box or the command line's `sql` can write to a lakehouse,
 | --- | --- |
 | `CREATE TABLE … (…)`, `CREATE TABLE … AS …`, `INSERT INTO`, `UPDATE`, `DELETE`, `MERGE INTO`, `ALTER TABLE` | A lakehouse table, as Iceberg |
 | `CREATE SCHEMA` | A lakehouse with schemas |
-| `COPY (…) TO '<ws>.<lh>_lakehouse/Files/<path>'` | A file in its `Files/`: Parquet, CSV or JSON |
+| `COPY (…) TO '<ws>.<lh>/Files/<path>'` | A file in its `Files/`: Parquet, CSV or JSON |
 
-- **The names:** a table is `<ws>.<lh>_lakehouse.<schema>.<table>` ([NAMING.md](NAMING.md#a-writes-target)), and a
-  schema is `<ws>.<lh>_lakehouse.<schema>`.
+- **The names:** a table is `<ws>.<lh>.<schema>.<table>` ([NAMING.md](NAMING.md#a-writes-target)), and a
+  schema is `<ws>.<lh>.<schema>`.
 - **What is refused, before anything runs:** `DROP` of anything, for now; what DuckDB's Iceberg writer doesn't have
   (`CREATE OR REPLACE`, `INSERT OR REPLACE`, `ON CONFLICT`, `TRUNCATE`, `COPY … FROM`); a view, a macro, a secret or any
   other `CREATE`; a temporary table; a table that is Delta in OneLake, whose Iceberg face is read only; a warehouse, a
-  SQL or mirrored database; a name of the engine's own (`memory`, `lake`, `system_internal`, …); and a `COPY` to
+  SQL or mirrored database; a name of the engine's own (`lake`, `system_internal`, …); and a `COPY` to
   anywhere but a lakehouse's `Files/`. What OneLake's catalog itself turns down fails with its own error.
 - **How a table is written:** DuckDB writes Iceberg only through a catalog. So the host attaches the lakehouse's
   Iceberg REST catalog (`https://onelake.table.fabric.microsoft.com/iceberg`, the warehouse `<workspace>/<item>`) in the

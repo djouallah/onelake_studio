@@ -144,12 +144,14 @@ function createModels({ onelake, fabric, semviews, modules, modelsFolder, accoun
       if (lake.length) {
         try {
           const idents = await nameTables(lake.map(([, l]) => ({ ...l.lh, ...l.t })));
-          // ws.item_lakehouse.schema.table: the item is its name alone in item.schema.table.
+          // ws.item.schema.table, an item other than a lakehouse with its kind after it: the item is its name alone
+          // in item.schema.table.
           const parts = idents.map(semantic.nameParts);
           const items = new Set(parts.map(p => JSON.stringify(p.slice(0, 2).map(semantic.unquote)).toLowerCase()));
-          const item = parts.length && splitItem(semantic.unquote(parts[0][1]));
-          if (items.size === 1 && item && same(semantic.unquote(parts[0][0]), n.workspace)) {
-            names = new Map(lake.map(([table], i) => [table, [sqlPart(item.item), ...parts[i].slice(2)].join('.')]));
+          const part = parts.length ? semantic.unquote(parts[0][1]) : null;
+          const item = part == null ? null : (splitItem(part) || { item: part }).item;
+          if (items.size === 1 && item != null && same(semantic.unquote(parts[0][0]), n.workspace)) {
+            names = new Map(lake.map(([table], i) => [table, [sqlPart(item), ...parts[i].slice(2)].join('.')]));
           }
         } catch (e) {
           log(`${n.workspace}/${n.model}: its tables could not be named, so the copy keeps their Direct Lake expression — ${e.message}`);

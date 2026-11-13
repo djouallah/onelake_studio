@@ -23,7 +23,7 @@
 // The rest is the HOST's: copyToTemp(), a file the host fetched written where the lockdown
 // lets DuckDB open it, and exportTo(), a query's whole result written there. Neither takes a
 // path or a location from the page. query() and stream() make the view of every table a statement
-// names by its SQL name (ws.item_lakehouse.schema.table) before running it.
+// names by its SQL name (ws.lakehouse.schema.table) before running it.
 // =============================================================================
 
 const { DuckDBInstance } = require('@duckdb/node-api');
@@ -36,7 +36,7 @@ const { randomBytes, createHash } = require('node:crypto');
 const { sqlStr, quoteIdent, ONELAKE_SCOPES, scopeOfUrl, oneLakeScopes, assertReads, checkedRead, readsOnly, writeOf, checkPlan, checkPhysical,
         isUnserialized, ICE_PREFIX,
         tableRefs, oldTableName, fileRefs, filesReadBy, namedError, catalogStatement, readsCatalog, withoutComments, COLUMNS_NOT_READ } = require('../sql');
-const { sqlName, sqlPart, itemPart, abfssUrl, MODEL_KIND, modelSqlName } = require('../names');
+const { sqlName, sqlPart, itemPart, abfssUrl, MODEL_KIND, modelSqlName, ENGINE_DB } = require('../names');
 const { revalidate, sameAnswer } = require('../onelake/store');
 const { mapPool } = require('../onelake/http');
 const { readDelta, readIceberg, syncTable, attachLake, syncedOf, syncedBrief, syncedAll } = require('../lake/onelaketable');
@@ -346,7 +346,10 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
         if (serve) every(() => trimFileCache(fileCacheDir, fileCacheMaxBytes, onWarn), FILE_CACHE_TRIM_MS);
       }
       mark('temp+disk cache');
-      instance = await DuckDBInstance.create(':memory:', config);
+      // The engine's database is `onelake`, every OneLake name's: DuckDB names a database after its file, and
+      // the default database is every connection's, the shared server's own included, which a USE on each could
+      // never reach. Nothing in it outlives the engine: it is views over the lake, in this session's temp folder.
+      instance = await DuckDBInstance.create(join(tmpDir, `${ENGINE_DB}.duckdb`), config);
       mark('instance');
       conn = await instance.connect();
       mark('connect');
@@ -402,8 +405,8 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
       try { await conn.run(`SET GLOBAL TimeZone = 'UTC';`); }
       catch (e) { onWarn(`could not set DuckDB's time zone to UTC, so dates may not join — ${e.message}`); }
 
-      // A table's SQL name (ws.item_lakehouse.schema.t) is nested schemas in the engine's own
-      // catalog, `memory`, made as a statement names them (withTables); a semantic model's
+      // A table's SQL name (ws.lakehouse.schema.t) is nested schemas in the engine's database,
+      // `onelake`, made as a statement names them (withTables); a semantic model's
       // (ws.model_semanticmodel) is a view in its workspace's schema there, listed (listCatalog)
       // and queried through the page's semantic step, which compiles it before DuckDB sees it.
 
@@ -433,7 +436,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
         // A window's own guard (sql.js assertReads) refuses these already. This is one more wall, and
         // a text match, so not the only one: the session token is what keeps others out.
         // DuckLake's own functions write: one deletes files from a SELECT, and here the files are OneLake's.
-        await conn.run(`CREATE MACRO memory.main.studio_authorize(token, query) AS
+        await conn.run(`CREATE MACRO ${ENGINE_DB}.main.studio_authorize(token, query) AS
           CASE WHEN regexp_matches(lower(query), '(?s)quack_(serve|stop)|ducklake_[a-z0-9_]+"?([[:space:]]|/[*].*?[*]/|--[^\\n]*\\n)*[(]') THEN NULL ELSE query END;`);
         await conn.run(`SET GLOBAL quack_authorization_function = 'studio_authorize';`);
         // Port 0: the system picks a free one. A port already taken raises no error on Windows.
@@ -775,28 +778,33 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
     && duckdbPath(p).toLowerCase().startsWith(`${duckdbPath(fileCacheDir).toLowerCase()}/${TABLE_READ_FOLDER}/`);
   // A table's name as the statement wrote it: by its names, or by its GUIDs.
   const nameOf = ref => (ref.byGuid ? [ref.workspace, ref.item, ref.schema || 'dbo', ref.table].map(sqlPart).join('.') : sqlName(ref));
-  // Where its view goes: the nested schemas of that name, in the engine's own catalog.
-  const pathOf = ref => ['memory', ref.workspace, ref.byGuid ? ref.item : itemPart(ref.item, ref.kind), ref.schema || 'dbo'];
+  // Where its view goes: the nested schemas of that name, in the engine's database.
+  const pathOf = ref => [ENGINE_DB, ref.workspace, ref.byGuid ? ref.item : itemPart(ref.item, ref.kind), ref.schema || 'dbo'];
   // A catalog's name is found before a schema's: a workspace named like one of the engine's catalogs, or a database
   // file attached here, can't be reached by name, and nothing of the catalog is read in its place. Nor can one named
-  // like a schema DuckDB keeps in every catalog (tried: main.x_lakehouse.dbo.t is not found).
-  const ENGINE_NAMES = new Set(['memory', 'system', 'temp', 'lake', 'system_internal', 'main', 'pg_catalog', 'information_schema']);
+  // like a schema DuckDB keeps in every catalog (tried: main.x.dbo.t is not found).
+  const ENGINE_NAMES = new Set([ENGINE_DB, 'system', 'temp', 'lake', 'system_internal', 'main', 'pg_catalog', 'information_schema']);
   // The database files every tab has attached, by their lower-cased names.
   const attachedFiles = new Set();
-  function assertReachable(ref) {
-    if (ref.byGuid) return;
+  // Whether the name's first part is one of those. A bare lakehouse name (sql.js tableRefs) that starts with one is
+  // DuckDB's, a table of an attached database file say, and is left to it; any other name says why it can't be read.
+  function reachable(ref) {
+    if (ref.byGuid) return true;
     const ws = String(ref.workspace).toLowerCase();
-    if (!ENGINE_NAMES.has(ws) && !attachedFiles.has(ws) && !ws.startsWith(ICE_PREFIX)) return;
+    if (!ENGINE_NAMES.has(ws) && !attachedFiles.has(ws) && !ws.startsWith(ICE_PREFIX)) return true;
+    if (ref.bare) return false;
     throw new Error(`${sqlName(ref)}: ${ref.workspace} is also the name of a database or schema of this engine, which SQL finds ` +
       'first. Name the table by its GUIDs instead: "<workspace id>"."<item id>".<schema>.<table>');
   }
-  // What a table reads: its view's name, where that goes, and the view's source.
+  // What a table reads: its view's name, where that goes, and the view's source. Null for a bare name that isn't
+  // OneLake's, which DuckDB reads as it is.
   async function sourceOf(ref, o) {
     if (!resolveTable) throw new Error('this engine cannot name OneLake tables');
-    assertReachable(ref);
+    if (!reachable(ref)) return null;
     // `held`: what the lake holds of a table, so one it holds is named from what the catalog keeps alone (sqltables.js).
     const held = capabilities.lake ? w => lakeOf({ deltaTable: w.deltaTable || null, metadataLocation: w.metadataLocation, check: true }) : null;
     const r = await resolveTable(ref, { ...o, secured: refusedHere.has(nameOf(ref).toLowerCase()), held });
+    if (r == null) return null;
     let source;
     if (r.emptySql != null) source = String(r.emptySql);
     else if (Array.isArray(r.arrowFiles)) {
@@ -853,7 +861,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
       const path = parts.map(quoteIdent);
       const schemas = [];
       for (let k = 2; k <= path.length; k++) schemas.push(`CREATE SCHEMA IF NOT EXISTS ${path.slice(0, k).join('.')};`);
-      await conn.run([...schemas, `CREATE OR REPLACE VIEW memory.${name} AS ${source};`].join('\n'));
+      await conn.run([...schemas, `CREATE OR REPLACE VIEW ${ENGINE_DB}.${name} AS ${source};`].join('\n'));
       made.set(key, source);
       listed.delete(key);
     });
@@ -872,7 +880,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
   // { kind: 'semanticmodel', workspace, model }; anything else is a table.
   function placeOf(t) {
     if (t.kind === MODEL_KIND) {
-      return { name: modelSqlName(t.workspace, t.model), path: ['memory', t.workspace] };
+      return { name: modelSqlName(t.workspace, t.model), path: [ENGINE_DB, t.workspace] };
     }
     return { name: sqlName(t), path: pathOf(t) };
   }
@@ -924,15 +932,19 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
         // Unless this window listed it with no columns and now has them. Any window's statement that
         // names the table makes its view again first, so this can't leave one reading the wrong thing.
         const filling = String(made.get(key)).includes(COLUMNS_NOT_READ);
-        todo.push({ key, name, source, schemas, view: `CREATE ${remote && !filling ? 'VIEW IF NOT EXISTS' : 'OR REPLACE VIEW'} memory.${name} AS ${source};` });
+        todo.push({ key, name, source, schemas, view: `CREATE ${remote && !filling ? 'VIEW IF NOT EXISTS' : 'OR REPLACE VIEW'} ${ENGINE_DB}.${name} AS ${source};` });
       }
       const listedAs = x => { made.set(x.key, x.source); listed.set(x.key, x.name); };
       // In one call: a call per statement cost over a second at 300 entries. Run again one by
       // one if that fails, so a bad entry costs only itself; both kinds of statement can repeat.
       try {
-        if (todo.length) await conn.run([...new Set(todo.flatMap(x => x.schemas)), ...todo.map(x => x.view)].join('\n'));
+        // One transaction: the database is a file, and each commit is a write to disk (3,000 views took 7.4 s
+        // one commit each, 2.8 s in one).
+        if (todo.length) await conn.run(['BEGIN;', ...new Set(todo.flatMap(x => x.schemas)), ...todo.map(x => x.view), 'COMMIT;'].join('\n'));
         todo.forEach(listedAs);
       } catch (_) {
+        // A statement that failed left the transaction aborted: nothing more runs on this connection until it goes.
+        try { await conn.run('ROLLBACK;'); } catch (_) { /* none open */ }
         for (const x of todo) {
           try {
             for (const s of x.schemas) await conn.run(s);
@@ -945,7 +957,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
     await admin(async () => {
       for (const [key, name] of [...listed]) {
         if (want.has(key)) continue;
-        if (!remote) try { await conn.run(`DROP VIEW IF EXISTS memory.${name};`); } catch (_) {}
+        if (!remote) try { await conn.run(`DROP VIEW IF EXISTS ${ENGINE_DB}.${name};`); } catch (_) {}
         listed.delete(key);
         made.delete(key);
       }
@@ -976,7 +988,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
       refs.push(ref);
     }
     // A model's query names many, and past its age each can ask OneLake for its log.
-    return mapPool(refs, ref => sourceOf(ref, o), TABLES_AT_ONCE);
+    return (await mapPool(refs, ref => sourceOf(ref, o), TABLES_AT_ONCE)).filter(Boolean);
   }
 
   // The statement with each file it names as DuckDB reads it: its abfss:// URL. `written` is how to
@@ -1570,6 +1582,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
     const [ref] = tableRefs(`SELECT * FROM ${name}`);
     if (!ref || !resolveTable) throw new Error(`${name} does not name a OneLake table`);
     const r = await resolveTable(ref, {});
+    if (!r) throw new Error(`${name} does not name a OneLake table`);
     if (r.emptySql != null || (!r.deltaTable && !r.metadataLocation)) return null;
     const { name: lake } = await lakeOf({ deltaTable: r.deltaTable || null, metadataLocation: r.metadataLocation || null, check: true });
     if (!lake) throw new Error(`${name} is not in the lake yet`);

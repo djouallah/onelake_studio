@@ -13,7 +13,7 @@
 // .bim it stands for, and from there the two are one. What is this extension's: reading a Direct Lake
 // model's tables from OneLake — each table's expression names a workspace and an item by GUID,
 // the host names them (setTableNamer) and the compiled SQL reads each by its SQL name,
-// ws.item_lakehouse.schema.table, the one any query writes — and where views are kept
+// ws.lakehouse.schema.table, the one any query writes — and where views are kept
 // (the extension host, per account: core/models/semviews.js). This module is shared by the panel and
 // the host's command line (cli/agent.js); `modules` lets the host hand in the compiler.
 // =============================================================================
@@ -25,10 +25,10 @@ const lc = s => String(s).toLowerCase();
 
 // A model's SQL name is <workspace>.<model>_semanticmodel, its kind after its name as an item's
 // is, and nothing shorter (core/names.js modelSqlName). The engine lists it in its own catalog,
-// memory, where dax-sql keeps the view: dax-sql reaches a view by db.schema.name alone, so a
+// onelake, where dax-sql keeps the view: dax-sql reaches a view by db.schema.name alone, so a
 // statement's model names are given that catalog before dax-sql reads them (withCatalog).
 export const MODEL_KIND = "semanticmodel";
-const MODEL_DB = "memory";
+const MODEL_DB = "onelake";
 const SUFFIX = `_${MODEL_KIND}`;
 const viewName = model => `${model}${SUFFIX}`;
 // The model a view's name is: "nem_semanticmodel" -> "nem", null for one that is not a model's.
@@ -201,7 +201,7 @@ export function bimOf(path, text, mods) {
   catch (e) { throw new Error(`${basename(path)} is not a TMSL model: ${e.message}`); }
 }
 
-// Where a table's SQL name says it lives: its first two parts (ws.item_lakehouse), as written.
+// Where a table's SQL name says it lives: its first two parts (ws.lakehouse), as written.
 function itemOfIdent(ident) {
   let dots = 0, q = false;
   for (let i = 0; i < ident.length; i++) {
@@ -230,7 +230,7 @@ export async function defineView(name, path, text, mode = "replace", modules = n
   const tableSource = t => {
     const l = lake.get(lc(t.name));
     if (l) return l.ident;
-    throw new Error(`${t.name} is not a OneLake table, so it has no workspace.item_lakehouse.schema.table name to read`);
+    throw new Error(`${t.name} is not a OneLake table, so it has no workspace.lakehouse.schema.table name to read`);
   };
   // The items its tables are read from, by their SQL names — a model may read several.
   const where = [...new Set([...lake.values()].map(l => itemOfIdent(l.ident)))];
@@ -334,15 +334,16 @@ export async function tableModel(table, sqlName, columns, modules = null) {
   return { name: modelName(table), tmsl: bim.model, compiler, plainSql };
 }
 
-// The semantic models a statement names (ws.model_semanticmodel, or memory.ws.model_semanticmodel)
+// The semantic models a statement names (ws.model_semanticmodel, or onelake.ws.model_semanticmodel)
 // that are not views here yet, as [{ workspace, model }] as written: the host opens each before
 // the statement runs. Comments and string literals are skipped.
-const PART_RE = '(?:"(?:[^"]|"")*"|[A-Za-z_\\u00C0-\\uFFFF][A-Za-z0-9_$\\u00C0-\\uFFFF]*)';
+// A part: bare, or quoted in double quotes or backticks.
+const PART_RE = '(?:"(?:[^"]|"")*"|`(?:[^`]|``)*`|[A-Za-z_\\u00C0-\\uFFFF][A-Za-z0-9_$\\u00C0-\\uFFFF]*)';
 const DOT_RE = "\\s*\\.\\s*";
 // A whole dotted name, as group 1, or a comment or a string, which is skipped.
 const DOTTED = new RegExp(`--[^\\n]*|/\\*[\\s\\S]*?\\*/|'(?:[^']|'')*'|` +
   `(?<![.\\w$"\\u00C0-\\uFFFF])(${PART_RE}(?:${DOT_RE}${PART_RE})*)(?!${DOT_RE}${PART_RE})`, "g");
-const unq = x => (x[0] === '"' ? x.slice(1, -1).replace(/""/g, '"') : x);
+const unq = x => (x[0] === '"' ? x.slice(1, -1).replace(/""/g, '"') : x[0] === '`' ? x.slice(1, -1).replace(/``/g, '`') : x);
 const partsOf = name => [...name.matchAll(new RegExp(PART_RE, "g"))].map(m => unq(m[0]));
 // A dotted name's model, { workspace, model, qualified }, or null when it names none.
 function modelRef(parts) {
@@ -365,7 +366,7 @@ export function unopenedModels(sql) {
 }
 
 // The statement with each model it names in the catalog dax-sql keeps it in: ws.nem_semanticmodel
-// is memory.ws.nem_semanticmodel to dax-sql, which reaches a view by its whole db.schema.name.
+// is onelake.ws.nem_semanticmodel to dax-sql, which reaches a view by its whole db.schema.name.
 function withCatalog(sql) {
   const s = String(sql);
   if (!lc(s).includes(SUFFIX)) return s;

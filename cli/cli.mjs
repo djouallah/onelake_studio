@@ -37,9 +37,10 @@ const USAGE = {
                                         rows, no V-Order, small row groups), from what this machine
                                         holds: no OneLake request; a table no query read is "not read"`,
   model: "  model <ws> <model>                  relationships, columns, measures with their DAX",
-  sql: `  sql "<sql>"                         SQL that reads, or writes to a lakehouse; a table is workspace.item_kind.schema.table
-                                        (aemo.data_lakehouse.dbo.dim_duid); a file is
-                                        'aemo.data_lakehouse/Files/x.parquet'; a downloaded model is a
+  sql: `  sql "<sql>"                         SQL that reads, or writes to a lakehouse; a table is workspace.lakehouse.schema.table
+                                        (aemo.data.dbo.dim_duid; any other item has its kind after its name:
+                                        aemo.gold_warehouse.sales.orders, _sqldatabase, _mirroreddatabase); a file is
+                                        'aemo.data/Files/x.parquet'; a downloaded model is a
                                         table: SELECT d.col, AGG("measure") FROM ws.model_semanticmodel GROUP BY ALL
   sql -                               the SQL from stdin: no shell quoting to get wrong
     --show-sql                       print the SQL a model query compiles to`,

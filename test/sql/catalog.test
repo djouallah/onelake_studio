@@ -1,91 +1,87 @@
 # The catalog, listed as standard DuckDB lists it: SHOW, information_schema and the
 # duckdb_*() functions. Every table and model the cache knows is there, opened or not, and
 # each OneLake schema is named by its whole path (workspace.item_kind.schema), in the engine's
-# own catalog, memory.
+# own database, onelake.
 
 query TTTTTT rowsort
 SHOW ALL TABLES
 ----
-memory	cat1	Sales_semanticmodel	['model']	['VARCHAR']	false
-memory	cat1.lh_lakehouse.dbo	t	['a']	['BIGINT']	false
-memory	cat1.wh_warehouse.sales	e	['id']	['INTEGER']	false
-memory	cat2.lh_lakehouse.dbo	t	['b', 'c']	['VARCHAR', 'DECIMAL(10,2)']	false
+onelake	cat1	Sales_semanticmodel	['model']	['VARCHAR']	false
+onelake	cat1.lh.dbo	t	['a']	['BIGINT']	false
+onelake	cat1.wh_warehouse.sales	e	['id']	['INTEGER']	false
+onelake	cat2.lh.dbo	t	['b', 'c']	['VARCHAR', 'DECIMAL(10,2)']	false
 
 query TTT rowsort
 SHOW SCHEMAS
 ----
-memory	cat1	false
-memory	cat1.lh_lakehouse	false
-memory	cat1.lh_lakehouse.dbo	false
-memory	cat1.wh_warehouse	false
-memory	cat1.wh_warehouse.sales	false
-memory	cat2	false
-memory	cat2.lh_lakehouse	false
-memory	cat2.lh_lakehouse.dbo	false
-memory	main	true
-system	information_schema	false
-system	main	false
-system	pg_catalog	false
-temp	main	false
+onelake	cat1	false
+onelake	cat1.lh	false
+onelake	cat1.lh.dbo	false
+onelake	cat1.wh_warehouse	false
+onelake	cat1.wh_warehouse.sales	false
+onelake	cat2	false
+onelake	cat2.lh	false
+onelake	cat2.lh.dbo	false
+onelake	main	true
 
 query T rowsort
 SHOW DATABASES
 ----
-memory
+onelake
 
 statement ok
 SHOW TABLES
 
 query T
-SHOW TABLES FROM cat2.lh_lakehouse.dbo
+SHOW TABLES FROM cat2.lh.dbo
 ----
 t
 
 # Any case, and quoted parts.
 query T
-show tables from Cat1."lh_lakehouse".dbo;
+show tables from Cat1."lh".dbo;
 ----
 t
 
 query T
-SHOW TABLES FROM memory.cat2.lh_lakehouse.dbo
+SHOW TABLES FROM onelake.cat2.lh.dbo
 ----
 t
 
 query T
-SHOW TABLES FROM memory.cat1
+SHOW TABLES FROM onelake.cat1
 ----
 Sales_semanticmodel
 
 # information_schema and duckdb_views() are DuckDB's own: they name only the innermost of
 # the nested schemas, so the two workspaces' dbo.t are two rows that look alike.
 query TTT
-SELECT table_catalog, table_schema, table_name FROM information_schema.tables WHERE table_catalog = 'memory' AND table_schema <> 'main' ORDER BY ALL
+SELECT table_catalog, table_schema, table_name FROM information_schema.tables WHERE table_catalog = 'onelake' AND table_schema <> 'main' ORDER BY ALL
 ----
-memory	cat1	Sales_semanticmodel
-memory	dbo	t
-memory	dbo	t
-memory	sales	e
+onelake	cat1	Sales_semanticmodel
+onelake	dbo	t
+onelake	dbo	t
+onelake	sales	e
 
 query TTTT
-SELECT table_catalog, table_name, column_name, data_type FROM information_schema.columns WHERE table_catalog = 'memory' AND table_schema <> 'main' ORDER BY ALL
+SELECT table_catalog, table_name, column_name, data_type FROM information_schema.columns WHERE table_catalog = 'onelake' AND table_schema <> 'main' ORDER BY ALL
 ----
-memory	Sales_semanticmodel	model	VARCHAR
-memory	e	id	INTEGER
-memory	t	a	BIGINT
-memory	t	b	VARCHAR
-memory	t	c	DECIMAL(10,2)
+onelake	Sales_semanticmodel	model	VARCHAR
+onelake	e	id	INTEGER
+onelake	t	a	BIGINT
+onelake	t	b	VARCHAR
+onelake	t	c	DECIMAL(10,2)
 
 query TTT
 SELECT database_name, schema_name, view_name FROM duckdb_views() WHERE NOT internal ORDER BY ALL
 ----
-memory	cat1	Sales_semanticmodel
-memory	dbo	t
-memory	dbo	t
-memory	sales	e
+onelake	cat1	Sales_semanticmodel
+onelake	dbo	t
+onelake	dbo	t
+onelake	sales	e
 
 query I
-SELECT count(*) FROM duckdb_schemas() WHERE database_name = 'memory' AND schema_name <> 'main'
+SELECT count(*) FROM duckdb_schemas() WHERE database_name = 'onelake' AND schema_name <> 'main'
 ----
 8
 

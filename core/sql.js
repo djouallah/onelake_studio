@@ -14,7 +14,10 @@ const sqlStr = s => `'${String(s).replace(/'/g, "''")}'`;
 // A double-quoted identifier, for names that came from data rather than from this code.
 const quoteIdent = s => `"${String(s).replace(/"/g, '""')}"`;
 
-const { SQL_KINDS, splitItem, isGuid, sqlName, sqlPart } = require('./names');
+const { SQL_KINDS, splitItem, isGuid, sqlName, sqlPart, ENGINE_DB } = require('./names');
+// The engine's own catalogs, other than its database: a name starting with one is DuckDB's, never a workspace's.
+const OWN_CATALOGS = new Set(['temp', 'system', 'lake', 'system_internal']);
+const isOwnCatalog = s => OWN_CATALOGS.has(String(s).toLowerCase()) || /^ice_[0-9a-f]{16}$/i.test(String(s));
 
 // -----------------------------------------------------------------------------
 // Read only, enforced where the engine is
@@ -109,10 +112,10 @@ function scan(sql, keep = false) {
       out.push(' ');
       continue;
     }
-    if (c === "'" || c === '"') {
+    if (c === "'" || c === '"' || c === '`') {
       const start = i;
       i = quotedEnd(sql, i);
-      if (keep === true || (keep === NAMES && c === '"')) out.push(sql.slice(start, i));
+      if (keep === true || (keep === NAMES && c !== "'")) out.push(sql.slice(start, i));
       else out.push(c, c);
       continue;
     }
@@ -331,9 +334,9 @@ function tokens(sql) {
     const comment = commentEnd(s, i);
     if (comment !== -1) { i = comment; continue; }
     if (/\s/.test(c)) { i++; continue; }
-    if (c === '"' || c === "'") {
+    if (c === '"' || c === "'" || c === '`') {
       const end = quotedEnd(s, i);
-      out.push({ t: c === '"' ? 'name' : 'str', v: s.slice(i + 1, end - 1).split(c + c).join(c), start: i, end, depth });
+      out.push({ t: c === "'" ? 'str' : 'name', v: s.slice(i + 1, end - 1).split(c + c).join(c), start: i, end, depth });
       i = end;
       continue;
     }
@@ -353,11 +356,9 @@ function tokens(sql) {
 }
 
 const notRun = refuse;
-// The engine's own catalogs, which a write never goes to.
-const ENGINE_CATALOGS = new Set(['memory', 'temp', 'system', 'lake', 'system_internal']);
-const TABLE_SHAPE = 'a write goes to a lakehouse table: <workspace>.<lakehouse>_lakehouse.<schema>.<table>';
-const SCHEMA_SHAPE = 'a schema is made in a lakehouse: <workspace>.<lakehouse>_lakehouse.<schema>';
-const FILE_SHAPE = "COPY writes to a lakehouse's Files/: TO '<workspace>.<lakehouse>_lakehouse/Files/<path>'";
+const TABLE_SHAPE = 'a write goes to a lakehouse table: <workspace>.<lakehouse>.<schema>.<table>';
+const SCHEMA_SHAPE = 'a schema is made in a lakehouse: <workspace>.<lakehouse>.<schema>';
+const FILE_SHAPE = "COPY writes to a lakehouse's Files/: TO '<workspace>.<lakehouse>/Files/<path>'";
 // What DuckDB's plan of each is (checkPlan).
 const PLANS = { insert: 'LOGICAL_INSERT', update: 'LOGICAL_UPDATE', delete: 'LOGICAL_DELETE', merge: 'LOGICAL_MERGE_INTO',
                 'create table': 'LOGICAL_CREATE_TABLE', 'create schema': 'LOGICAL_CREATE_SCHEMA', alter: 'LOGICAL_ALTER',
@@ -409,23 +410,19 @@ function writeOf(sql) {
     const p = n.parts;
     const old = oldName(p);
     if (old) notRun(old);
-    if (ENGINE_CATALOGS.has(p[0].toLowerCase())) notRun(`${p[0]} is the engine's own, not a lakehouse: ${TABLE_SHAPE}`);
-    const it = p.length === 4 && splitItem(p[1]);
-    if (!it) notRun(TABLE_SHAPE);
-    if (it.kind !== 'lakehouse') notRun(`a write goes to a lakehouse only, and ${p[1]} is read only here`);
-    return { target: 'table', ref: { workspace: p[0], item: it.item, schema: p[2], table: p[3] }, start: n.start, end: n.end };
+    if (isOwnCatalog(p[0]) || p[0].toLowerCase() === ENGINE_DB) notRun(`${p[0]} is the engine's own, not a lakehouse: ${TABLE_SHAPE}`);
+    if (p.length !== 4) notRun(TABLE_SHAPE);
+    if (splitItem(p[1])) notRun(`a write goes to a lakehouse only, and ${p[1]} is read only here`);
+    return { target: 'table', ref: { workspace: p[0], item: p[1], schema: p[2], table: p[3] }, start: n.start, end: n.end };
   };
   const schema = at => {
     const n = nameAt(at);
     const p = n ? n.parts : [];
-    const it = p.length === 3 && splitItem(p[1]);
-    if (!it) {
-      const kind = p.length === 4 && SQL_KINDS.find(x => x === p[0].toLowerCase());
-      notRun(kind ? `${p.map(sqlPart).join('.')} is the old way to name a schema: it is ${[p[1], `${p[2]}_${kind}`, p[3]].map(sqlPart).join('.')} now`
-        : SCHEMA_SHAPE);
-    }
-    if (it.kind !== 'lakehouse') notRun(`a schema is made in a lakehouse only, and ${p[1]} is read only here`);
-    return { target: 'schema', ref: { workspace: p[0], item: it.item, schema: p[2] }, start: n.start, end: n.end };
+    const kind = p.length === 4 && SQL_KINDS.find(x => x === p[0].toLowerCase());
+    if (kind) notRun(`${p.map(sqlPart).join('.')} is the old way to name a schema: it is ${[p[1], kind === 'lakehouse' ? p[2] : `${p[2]}_${kind}`, p[3]].map(sqlPart).join('.')} now`);
+    if (p.length !== 3 || isOwnCatalog(p[0]) || p[0].toLowerCase() === ENGINE_DB) notRun(SCHEMA_SHAPE);
+    if (splitItem(p[1])) notRun(`a schema is made in a lakehouse only, and ${p[1]} is read only here`);
+    return { target: 'schema', ref: { workspace: p[0], item: p[1], schema: p[2] }, start: n.start, end: n.end };
   };
   const as = (what, found) => ({ what, plan: PLANS[what], ...found });
 
@@ -558,7 +555,7 @@ function statementsOf(sql) {
   for (let i = 0, n = s.length; i < n;) {
     const comment = commentEnd(s, i);
     if (comment !== -1) { i = comment; continue; }
-    if (s[i] === "'" || s[i] === '"') { i = quotedEnd(s, i); continue; }
+    if (s[i] === "'" || s[i] === '"' || s[i] === '`') { i = quotedEnd(s, i); continue; }
     if (s[i] === '$') { const end = dollarEnd(s, i); if (end !== -1) { i = end; continue; } }
     if (s[i] === ';') { out.push(s.slice(from, i)); from = i + 1; }
     i++;
@@ -570,15 +567,17 @@ function statementsOf(sql) {
 // -----------------------------------------------------------------------------
 // The OneLake tables a statement names
 // -----------------------------------------------------------------------------
-// Every dotted name of four or more parts whose second part is an item and its kind
-// (data_lakehouse, the kind one of `kinds`, names.js SQL_KINDS, matched as DuckDB matches
-// names: ignoring case), as { kind, workspace, item, schema, table }: the kind spelled as
-// `kinds` spells it, the rest as written, quotes undone. Or one whose first two parts are
-// GUIDs, the workspace's and the item's, as { byGuid: true, kind: null, workspace, item,
-// schema, table }. A fifth part on is a column of that table, and `memory.` in front is the
-// engine's catalog, which the name is in. Comments and string literals are skipped, so a
-// name in either is not a table. Any statement: a SELECT, a DESCRIBE, an EXPLAIN, a CREATE
-// VIEW over one.
+// Every dotted name of four or more parts, workspace.item.schema.table, as { kind, workspace, item,
+// schema, table }, the rest as written, quotes undone:
+//   - an item ending in _<kind> (gold_warehouse; names.js SUFFIXED_KINDS, any case) is that kind, and
+//     `asLakehouse` is the part whole, for a lakehouse that happens to be named so;
+//   - any other item is a lakehouse, and `bare` says the name may not be OneLake's at all (a struct's
+//     field, s.a.b.c): the engine reads it as a table only in a workspace it knows;
+//   - first two parts that are GUIDs, the workspace's and the item's: { byGuid: true, kind: null, … }.
+// A fifth part on is a column of that table, and `onelake.` in front is the engine's database, which the
+// name is in. A name starting with another of the engine's catalogs is DuckDB's. Comments and string
+// literals are skipped, so a name in either is not a table. Any statement: a SELECT, a DESCRIBE, an
+// EXPLAIN, a CREATE VIEW over one.
 const IDENT = new RegExp(`[A-Za-z_${LETTERS}][A-Za-z0-9_$${LETTERS}]*`, 'y');
 // The spaces and comments between two parts of a name.
 function pastSpace(s, j) {
@@ -596,14 +595,16 @@ function dottedNames(sql) {
   const n = s.length;
   const out = [];
   let i = 0;
-  const startsIdent = j => s[j] === '"' || (IDENT.lastIndex = j, IDENT.test(s));
+  // DuckDB quotes a name in double quotes, or in backticks as Spark does.
+  const startsIdent = j => s[j] === '"' || s[j] === '`' || (IDENT.lastIndex = j, IDENT.test(s));
   const ident = () => {
-    if (s[i] === '"') {
+    if (s[i] === '"' || s[i] === '`') {
+      const q = s[i];
       let v = '';
       i++;
       while (i < n) {
-        if (s[i] === '"') {
-          if (s[i + 1] === '"') { v += '"'; i += 2; continue; }
+        if (s[i] === q) {
+          if (s[i + 1] === q) { v += q; i += 2; continue; }
           i++;
           break;
         }
@@ -640,21 +641,21 @@ function dottedNames(sql) {
   }
   return out;
 }
-function tableRefs(sql, kinds = SQL_KINDS) {
+function tableRefs(sql) {
   const out = [];
   for (const all of dottedNames(sql)) {
-    const parts = all.length >= 5 && all[0].toLowerCase() === 'memory' ? all.slice(1) : all;
-    if (parts.length < 4) continue;
-    const it = splitItem(parts[1], kinds);
-    if (it) out.push({ kind: it.kind, workspace: parts[0], item: it.item, schema: parts[2], table: parts[3] });
-    else if (isGuid(parts[0]) && isGuid(parts[1])) {
-      out.push({ byGuid: true, kind: null, workspace: parts[0], item: parts[1], schema: parts[2], table: parts[3] });
-    }
+    const parts = all.length >= 5 && all[0].toLowerCase() === ENGINE_DB ? all.slice(1) : all;
+    if (parts.length < 4 || isOwnCatalog(parts[0]) || oldName(all)) continue;
+    const [workspace, item, schema, table] = parts;
+    if (isGuid(workspace) && isGuid(item)) { out.push({ byGuid: true, kind: null, workspace, item, schema, table }); continue; }
+    const it = splitItem(item);
+    out.push(it ? { kind: it.kind, workspace, item: it.item, schema, table, asLakehouse: item }
+                : { kind: 'lakehouse', workspace, item, schema, table, bare: true });
   }
   return out;
 }
-// A table named as it was before workspace.item_kind.schema.table, kind.workspace.item.schema.table:
-// why it is not one now, with how it is written, or null.
+// A table named as it was before, kind.workspace.item.schema.table: why it is not one now, with how it is
+// written, or null.
 function oldName(parts) {
   const kind = parts.length >= 5 && SQL_KINDS.find(k => k === String(parts[0]).toLowerCase());
   if (!kind || splitItem(parts[1])) return null;
@@ -673,18 +674,18 @@ function oldTableName(sql) {
 // -----------------------------------------------------------------------------
 // The files a statement names
 // -----------------------------------------------------------------------------
-// A file is '<workspace>.<item>_lakehouse/Files/<path>' (docs/NAMING.md). DuckDB can't read that, so
+// A file is '<workspace>.<lakehouse>/Files/<path>' (docs/NAMING.md). DuckDB can't read that, so
 // the engine gives it the file's abfss:// URL. A string that looks like one is only a file where SQL
 // reads a file: after FROM or JOIN (or a comma among them), after DESCRIBE, SUMMARIZE or PIVOT, or as
 // the first argument of a table function, alone or in a list. Anywhere else it is a value.
 //
 // A name that is wrong throws rather than going to DuckDB, which would look for it on the local disk,
-// and glob() would answer no rows with no error. A string with no dotted name before /Files or
-// /Tables is not one: 'data/x.parquet', 'x_lakehouse.parquet'.
+// and glob() would answer no rows with no error. A string with no dotted name before its first '/'
+// is not one: 'data/x.parquet', 'x.parquet'.
 const READS_FROM = new Set(['from', 'join', 'lateral', 'describe', 'desc', 'summarize', 'pivot', 'unpivot']);
 const NOT_FROM = new Set(['select', 'where', 'group', 'having', 'qualify', 'order', 'limit', 'offset', 'window',
                           'union', 'intersect', 'except', 'values']);
-const FILE_PART = new RegExp(`"((?:[^"]|"")*)"|([A-Za-z_${LETTERS}][A-Za-z0-9_$${LETTERS}]*)`, 'y');
+const FILE_PART = new RegExp(`"((?:[^"]|"")*)"|\`((?:[^\`]|\`\`)*)\`|([A-Za-z_${LETTERS}][A-Za-z0-9_$${LETTERS}]*)`, 'y');
 
 function fileName(value, kinds = SQL_KINDS) {
   const zip = /^zip:\/\//i.test(value) ? value.slice(0, 6) : '';
@@ -695,31 +696,29 @@ function fileName(value, kinds = SQL_KINDS) {
     FILE_PART.lastIndex = i;
     const m = FILE_PART.exec(text);
     if (!m) break;
-    parts.push(m[1] != null ? m[1].replace(/""/g, '"') : m[2]);
+    parts.push(m[1] != null ? m[1].replace(/""/g, '"') : m[2] != null ? m[2].replace(/``/g, '`') : m[3]);
     i = FILE_PART.lastIndex;
     if (text[i] !== '.') break;
     i++;
   }
   // Meant as a OneLake file: a name with a dot in it, then /Files or /Tables, however wrong the name is;
-  // or an item's part, ws.lh_lakehouse, then any path. Any other string is DuckDB's to read.
+  // or two parts, ws.lh, then any path. Any other string is DuckDB's to read.
   const rest = text.slice(i);
   const meant = (parts.length && /^[^/]*\/(?:Files|Tables)(?:\/|$)/i.test(rest) && (parts.length >= 2 || `${text.slice(0, i)}${rest.split('/')[0]}`.includes('.')))
-    || (parts.length === 2 && text[i] === '/' && splitItem(parts[1], kinds));
+    || (parts.length === 2 && text[i] === '/' && !isOwnCatalog(parts[0]));
   if (!meant) return null;
   const wrong = why => new Error(`'${value}': ${why}`);
-  const shape = "a file's name is <workspace>.<item>_lakehouse/Files/<path>, with a part that isn't a plain name in double quotes";
+  const shape = "a file's name is <workspace>.<lakehouse>/Files/<path>, with a part that isn't a plain name in double quotes";
   const oldKind = parts.length === 3 && text[i] === '/' && kinds.find(k => k.toLowerCase() === parts[0].toLowerCase());
-  if (oldKind) {
-    throw wrong(`this is the old way to name a file: it is '${[parts[1], `${parts[2]}_${oldKind}`].map(sqlPart).join('.')}${text.slice(i)}' now`);
-  }
-  const it = parts.length === 2 && text[i] === '/' && splitItem(parts[1], kinds);
-  if (!it) throw wrong(shape);
-  if (it.kind !== 'lakehouse') throw wrong('only a lakehouse has Files/');
-  const path = text.slice(i);
+  if (oldKind && oldKind !== 'lakehouse') throw wrong('only a lakehouse has Files/');
+  if (oldKind) throw wrong(`this is the old way to name a file: it is '${[parts[1], parts[2]].map(sqlPart).join('.')}${rest}' now`);
+  if (parts.length !== 2 || text[i] !== '/') throw wrong(shape);
+  if (splitItem(parts[1])) throw wrong('only a lakehouse has Files/');
+  const path = rest;
   if (/^\/Tables(\/|$)/.test(path)) throw wrong(`a table's name is ${text.slice(0, i)}.<schema>.<table>`);
   if (!/^\/Files(\/|$)/.test(path)) throw wrong(shape);
   if (path.split('/').some(s => s === '.' || s === '..')) throw wrong("a file's path can't hold . or ..");
-  return { zip, workspace: parts[0], item: it.item, path, written: `${text.slice(0, i)}/Files` };
+  return { zip, workspace: parts[0], item: parts[1], path, written: `${text.slice(0, i)}/Files` };
 }
 
 /**
@@ -764,15 +763,15 @@ function fileRefs(sql, kinds = SQL_KINDS) {
     const comment = commentEnd(s, i);
     if (comment !== -1) { i = comment; continue; }
     if (/\s/.test(c)) { i++; continue; }
-    if (c === "'" || c === '"') {
+    if (c === "'" || c === '"' || c === '`') {
       const end = quotedEnd(s, i);
       const text = s.slice(i + 1, end - 1);
       const ref = readsFile() ? fileName(text.split(c + c).join(c), kinds) : null;
       if (ref) refs.push({ ...ref, start: i, end, quote: c });
       // A quoted name is a name, never a keyword.
-      if (c === '"' && prev !== '.') beforeName = prev;
+      if (c !== "'" && prev !== '.') beforeName = prev;
       prev = c;
-      word = c === '"';
+      word = c !== "'";
       i = end;
       continue;
     }
@@ -841,7 +840,7 @@ function namedError(message, written) {
 // DuckDB's own SHOW ALL TABLES and SHOW SCHEMAS name only the innermost one: two
 // workspaces' dbo.t came out as one row, its columns merged. These answer the same columns
 // from DuckDB's own catalog functions, each schema named by its path from the catalog down,
-// a part quoted where SQL must quote it — so `memory` + `ws.lh_lakehouse.dbo` + `t` is the name
+// a part quoted where SQL must quote it — so `onelake` + `ws.lh.dbo` + `t` is the name
 // a query reads, with or without its catalog. Every other statement runs as written.
 const CATALOG_CTES = `WITH RECURSIVE
   kw AS (SELECT keyword_name AS w FROM duckdb_keywords() WHERE keyword_category IN ('reserved', 'type_function')),
@@ -851,8 +850,9 @@ const CATALOG_CTES = `WITH RECURSIVE
         FROM duckdb_schemas()
         -- The lake (engine-host.js): the engine's own copy of each OneLake table, by a hash of its folder. What a
         -- query names is the table's own name; these are how it is read. Its metadata, system_internal, is listed.
-        -- Nor a write's own Iceberg catalog, there for that one statement (engine-host.js runWrite).
-        WHERE database_name <> 'lake' AND NOT starts_with(database_name, '${ICE_PREFIX}')),
+        -- Nor a write's own Iceberg catalog, there for that one statement (engine-host.js runWrite), nor DuckDB's
+        -- own system and temp: what is listed is OneLake's, the lake's metadata, and a database file a tab opened.
+        WHERE database_name NOT IN ('lake', 'system', 'temp') AND NOT starts_with(database_name, '${ICE_PREFIX}')),
   p AS (SELECT database_oid, database_name, oid, q AS path, [n] AS parts FROM s WHERE parent_schema_oid IS NULL
         UNION ALL
         SELECT s.database_oid, s.database_name, s.oid, p.path || '.' || s.q, list_append(p.parts, s.n)
@@ -887,15 +887,21 @@ SELECT database_name, path AS schema_name,
        database_name = current_database() AND path = current_schema() AS current
 FROM p ORDER BY database_name, schema_name`;
 
+// The databases a user names: OneLake's, the lake's metadata, and a database file a tab opened; not the lake,
+// DuckDB's own, or a write's catalog.
+const SHOW_DATABASES = `SELECT database_name FROM duckdb_databases()
+WHERE NOT internal AND database_name NOT IN ('lake', 'system', 'temp') AND NOT starts_with(database_name, '${ICE_PREFIX}')
+ORDER BY database_name = '${ENGINE_DB}' DESC, database_name`;
+
 // A dotted name as SQL wrote it -> its parts, quotes undone; null when it is not one.
-const PART = new RegExp(`^\\s*(?:"((?:[^"]|"")*)"|([A-Za-z_${LETTERS}][A-Za-z0-9_$${LETTERS}]*))\\s*`);
+const PART = new RegExp(`^\\s*(?:"((?:[^"]|"")*)"|\`((?:[^\`]|\`\`)*)\`|([A-Za-z_${LETTERS}][A-Za-z0-9_$${LETTERS}]*))\\s*`);
 function dottedParts(text) {
   const parts = [];
   let rest = text;
   for (;;) {
     const m = PART.exec(rest);
     if (!m) return null;
-    parts.push(m[1] != null ? m[1].replace(/""/g, '"') : m[2]);
+    parts.push(m[1] != null ? m[1].replace(/""/g, '"') : m[2] != null ? m[2].replace(/``/g, '`') : m[3]);
     rest = rest.slice(m[0].length);
     if (!rest) return parts;
     if (rest[0] !== '.') return null;
@@ -911,8 +917,9 @@ function catalogStatement(sql) {
   const s = withoutComments(sql);
   if (isShowAllTables(s)) return SHOW_ALL_TABLES;
   if (/^show\s+schemas$/i.test(s)) return SHOW_SCHEMAS;
+  if (/^show\s+databases$/i.test(s)) return SHOW_DATABASES;
   // SHOW TABLES FROM [catalog.]schema…: DuckDB's parser takes two parts at most. An item's schema,
-  // ws.lh_lakehouse.dbo, is in the engine's own catalog, and is written without it.
+  // ws.lh.dbo, is in the engine's own catalog, and is written without it.
   const from = /^show\s+tables\s+(?:from|in)\s+([\s\S]+)$/i.exec(s);
   const parts = from && dottedParts(from[1]);
   if (!parts || parts.length < 2) return null;

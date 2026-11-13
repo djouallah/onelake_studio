@@ -23,14 +23,14 @@ node --no-warnings "{{cli}}" <command>
 | `find <text>` | every cached name containing it — items, tables, columns, semantic models, and a downloaded model's tables, columns and measures — for "which table has customer_id", "where is the Sales model". `--fresh` reads every listing first, which is slow on a large tenant; what it read stays cached if `--timeout` stops it |
 | `files <ws> <item> [<dir>]` | a lakehouse's Files/ listing, with sizes and SQL names |
 | `items [<ws>]` | every lakehouse and warehouse in every workspace (or one), counted by kind, with *staging* |
-| `ls <ws> <item>` | its tables with rows, size, files and last write, and their SQL names (`<ws>.<item>_lakehouse.<schema>.<table>`); `<item>` may omit its `.Lakehouse` suffix |
+| `ls <ws> <item>` | its tables with rows, size, files and last write, and their SQL names (`<ws>.<lakehouse>.<schema>.<table>`, another item's `<ws>.<item>_<kind>.<schema>.<table>`); `<item>` may omit its `.Lakehouse` suffix |
 | `table <ws> <item> <schema.table>` | rows, files, size, last write, columns — metadata only, no scan |
 | `exists <ws> <item> <schema.table>` | whether a table is there, in milliseconds, from the listings. Exit 0 yes, exit 1 no with the closest names (`--json`: `error.exists` is false, and `error.closest`), exit 4 never listed, so unknown. A folder found to have neither a Delta log nor Iceberg metadata is a no too (`error.notValid`). A bare name finds it in any schema. Prefer it to `table` or a query for this |
 | `health <ws> <item>` | each table's file layout and what it says: files, average size, deleted rows, and findings — many small files, many deleted rows, files without V-Order, small row groups — each with an action to consider. From what this machine holds of each table, with no OneLake request: a table no query has read yet is *not read* |
 | `model <ws> <model>` | relationships, columns, measures with their DAX, and an example query. A model not downloaded yet exits 4: add `--fresh` to download it |
-| `sql "<sql>"` | read-only SQL. A table is `workspace.item_kind.schema.table` — `aemo.data_lakehouse.dbo.dim_duid`; kind is `lakehouse`, `warehouse`, `sqldatabase` or `mirroreddatabase` (any case), or `"<workspace id>"."<item id>".schema.table` by GUIDs, a lakehouse without schemas is `dbo`, a part with spaces is `"quoted"` — any table, any workspace, joined freely. Every semantic model is a table too, `<ws>.<model>_semanticmodel`: `AGG("measure")` is the measure; and `SHOW SEMANTIC …` (below) |
+| `sql "<sql>"` | read-only SQL. A lakehouse table is `workspace.lakehouse.schema.table` — `aemo.data.dbo.dim_duid`, as Fabric's Spark names it; any other item has its kind after its name, `_warehouse`, `_sqldatabase` or `_mirroreddatabase` (`aemo.gold_warehouse.sales.orders`, any case), or `"<workspace id>"."<item id>".schema.table` by GUIDs, a lakehouse without schemas is `dbo`, a part with spaces is `"quoted"` or in backticks — any table, any workspace, joined freely. Every semantic model is a table too, `<ws>.<model>_semanticmodel`: `AGG("measure")` is the measure; and `SHOW SEMANTIC …` (below) |
 | `sql -` | the SQL from stdin. Prefer it for anything with quotes in it: `AGG("Total Sales")` does not survive every shell, PowerShell's above all |
-| `sql "SELECT * FROM '<ws>.<item>_lakehouse/Files/x.parquet'"` | a file is `'<ws>.<item>_lakehouse/Files/<path>'`, in single quotes, with its workspace and item spelled as in a table's name. Wildcards go in the path: `read_csv('aemo.data_lakehouse/Files/raw/*.csv', header=true)` |
+| `sql "SELECT * FROM '<ws>.<lakehouse>/Files/x.parquet'"` | a file is `'<ws>.<lakehouse>/Files/<path>'`, in single quotes, with its workspace and item spelled as in a table's name. Wildcards go in the path: `read_csv('aemo.data/Files/raw/*.csv', header=true)` |
 | `export <ws> <model>` | Export to Fabric, as Explore's button does it: publishes the model's Report as a Fabric app, which queries the semantic model as it is; nothing is written to the model. The model must have been downloaded once (opened in the tree, or `model <ws> <model> --fresh`) |
 | `export <ws> <item> <Files/path>` | the same, for a model file (`.bim`, Ossie `.yaml`) in a lakehouse's Files/: the app reads its tables client side, DuckDB in the browser. For an app on a semantic model of the file, run `semanticmodel` first, then `export <ws> <model>` |
 | `semanticmodel <ws> <item> <Files/path>` | the Power BI semantic model of a model file (`.bim`, Ossie `.yaml`) in a lakehouse's Files/, named for the file, in its workspace, and no app: `--mode directlake` (the default) or `directquery`. VS Code asks before it updates a model of that name; with VS Code closed it exits 3 |
@@ -129,7 +129,7 @@ VS Code extension); nothing is written to Fabric or OneLake.
 
 - Results are DAX compiled to SQL by dax-sql — say so if exactness against Power BI matters.
 - To check a measure against its raw data, `model` lists each table by its SQL name
-  (`sales.mart_lakehouse.dbo.fct_summary`); plain SQL naming it reads the table as stored.
+  (`sales.mart.dbo.fct_summary`); plain SQL naming it reads the table as stored.
 - Notes, timings and `--show-sql` under `--csv` go to stderr: keep `2>&1` off a `--csv` you mean to parse. A killed
   or timed-out command stops its query.
 - Listings and metadata (`ls`, `models`, `items`, `find`, `table`, `model`) come only from what the
@@ -145,7 +145,7 @@ VS Code extension); nothing is written to Fabric or OneLake.
   or a Refresh, not on every query. `table` may fail with a 403 for it while `sql` still reads it.
 - `sql` reads, and writes to a lakehouse only, with no question asked: its tables as Iceberg (`CREATE TABLE`,
   `CREATE TABLE … AS`, `INSERT`, `UPDATE`, `DELETE`, `MERGE INTO`, `ALTER TABLE`, `CREATE SCHEMA`) and its
-  `Files/` by `COPY (…) TO '<ws>.<lh>_lakehouse/Files/<path>'`. A target is `<ws>.<lh>_lakehouse.<schema>.<table>`.
+  `Files/` by `COPY (…) TO '<ws>.<lh>/Files/<path>'`. A target is `<ws>.<lh>.<schema>.<table>`.
   `DROP` is refused, and so is a write to a Delta table, a warehouse or anything
   not in a lakehouse. Write only when the user asks for it.
 - Several statements, separated by `;`, run in turn: the first that fails stops them, and the last one's rows are

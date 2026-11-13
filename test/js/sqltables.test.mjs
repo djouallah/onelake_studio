@@ -73,12 +73,36 @@ test("a name typed by hand that exists nowhere is one listing read and the plain
 
 test("an item's name, however old, asks Fabric once, ever", async () => {
   const w = world({ ttlMs: 0 });
-  assert.deepEqual(await w.sql.nameTables(GUIDS), ["ws.old_lakehouse.dbo.t"]);
+  assert.deepEqual(await w.sql.nameTables(GUIDS), ["ws.old.dbo.t"]);
   w.now += 365 * 24 * 3600 * 1000;
-  assert.deepEqual(await w.sql.nameTables(GUIDS), ["ws.old_lakehouse.dbo.t"]);
+  assert.deepEqual(await w.sql.nameTables(GUIDS), ["ws.old.dbo.t"]);
   await new Promise(r => setImmediate(r));   // a refresh behind the caller would have started by now
   assert.equal(count(w, "fabric"), 1);
   assert.equal(w.fabric.resets, 0);
+});
+
+test("a bare name is a table only in a workspace OneLake has; elsewhere it is DuckDB's, asked about once a minute", async () => {
+  const w = world();
+  const bare = (workspace, item = "old") => ({ ...ref(item), workspace, bare: true });
+  assert.equal((await w.sql.resolve(bare("ws"))).metadataLocation, LOC);
+  w.calls.length = 0;
+  assert.equal(await w.sql.resolve(bare("s")), null, "s.a.b.c, a struct's field, is no OneLake table");
+  assert.equal(count(w, "workspaces"), 1, "the listing is read again once, for a workspace made since");
+  assert.equal(await w.sql.resolve(bare("s")), null);
+  assert.equal(count(w, "workspaces"), 1);
+});
+
+test("an item that isn't there says what the name may have meant", async () => {
+  const w = world();
+  await assert.rejects(w.sql.resolve({ ...ref("old_lakehouse"), bare: true }),
+    /there is no lakehouse old_lakehouse in workspace ws — a lakehouse is named without _lakehouse: ws\.old\.dbo\.t/);
+});
+
+test("ws.x_warehouse is warehouse x, or the lakehouse named x_warehouse when that is all the workspace has", async () => {
+  const w = world();
+  w.items = ["x_warehouse.Lakehouse"];
+  const r = await w.sql.resolve({ kind: "warehouse", workspace: "ws", item: "x", schema: "dbo", table: "t", asLakehouse: "x_warehouse" });
+  assert.deepEqual([r.kind, r.item], ["lakehouse", "x_warehouse"]);
 });
 
 test("a table named by its GUIDs resolves as the item they stand for, asking Fabric once", async () => {
@@ -107,7 +131,7 @@ test("a renamed item: the compiled name goes on resolving, and the new name is k
 
   // The next time the panel names the model, with no call to Fabric.
   w.calls.length = 0;
-  assert.deepEqual(await w.sql.nameTables(GUIDS), ["ws.new_lakehouse.dbo.t"]);
+  assert.deepEqual(await w.sql.nameTables(GUIDS), ["ws.new.dbo.t"]);
   assert.equal(count(w, "fabric"), 0);
   // And the new name resolves in its own right.
   assert.equal((await w.sql.resolve(ref("new"))).item, "new");
@@ -166,12 +190,12 @@ test("offline, a kept listing cannot say an item does not exist", async () => {
 
 test("a file's lakehouse is found as a table's is: any case, and a miss says the file's name", async () => {
   const w = world();
-  const file = (workspace, item) => ({ workspace, item, written: `${workspace}.${item}_lakehouse/Files` });
+  const file = (workspace, item) => ({ workspace, item, written: `${workspace}.${item}/Files` });
   assert.deepEqual(await w.sql.resolveFile(file("WS", "OLD")), { workspace: "ws", item: "old.Lakehouse" });
   w.calls.length = 0;
   assert.deepEqual(await w.sql.resolveFile(file("ws", "old")), { workspace: "ws", item: "old.Lakehouse" });
   assert.deepEqual(w.calls, [], "from the cache");
-  await assert.rejects(w.sql.resolveFile(file("ws", "nosuch")), /ws\.nosuch_lakehouse\/Files: there is no lakehouse nosuch in workspace ws/);
+  await assert.rejects(w.sql.resolveFile(file("ws", "nosuch")), /ws\.nosuch\/Files: there is no lakehouse nosuch in workspace ws/);
 });
 
 test("past the cache, every read goes to OneLake", async () => {

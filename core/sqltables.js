@@ -10,7 +10,7 @@
 
 const { revalidate } = require('./onelake/store');
 const { offlineError } = require('./onelake/http');
-const { sqlKind, sqlName, displayName, abfssUrl, DFS_HOST } = require('./names');
+const { sqlKind, sqlName, sqlPart, kindLabel, displayName, abfssUrl, DFS_HOST } = require('./names');
 const { tableDirOf } = require('./lake/deltalog');
 
 const same = (a, b) => String(a).toLowerCase() === String(b).toLowerCase();
@@ -67,6 +67,18 @@ function createSqlTables({ onelake, paths, offlineReason = () => null, tableRead
   const namedFrom = new Map();
   const nameKey = (kind, workspace, item) => [kind, workspace, item].join('\u0000').toLowerCase();
 
+  // What the name may have meant, when its item isn't there: an item of that name of another kind, or a
+  // lakehouse written with the _lakehouse its name had for a while.
+  function nearItem(ref, ws, items) {
+    const named = (kind, item) => (ref.table ? sqlName({ ...ref, workspace: ws, kind, item })
+      : [ws, kind === 'lakehouse' ? item : `${item}_${kind}`].map(sqlPart).join('.'));
+    const other = items.find(i => sqlKind(i.kind) && sqlKind(i.kind) !== ref.kind && same(displayName(i.name), ref.item));
+    if (other) return ` — ${ref.item} is a ${kindLabel(other.kind)}: ${named(sqlKind(other.kind), displayName(other.name))}`;
+    const m = ref.kind === 'lakehouse' && /^(.+)_lakehouse$/i.exec(ref.item);
+    const base = m && items.find(i => sqlKind(i.kind) === 'lakehouse' && same(displayName(i.name), m[1]));
+    return base ? ` — a lakehouse is named without _lakehouse: ${named('lakehouse', displayName(base.name))}` : '';
+  }
+
   // The workspace and the item's directory, as OneLake spells them. `ref.name` says what is being
   // looked for, when it is not a table.
   async function locate(ref, fresh) {
@@ -87,7 +99,7 @@ function createSqlTables({ onelake, paths, offlineReason = () => null, tableRead
         // Offline, the kept listing is all there is, so it cannot say the item does not exist.
         const why = offlineReason();
         throw Object.assign(why ? offlineError(why, `${asked()}: ${ref.kind} ${ref.item}`)
-          : new Error(`${asked()}: there is no ${ref.kind} ${ref.item} in workspace ${ws}`), { notListed: true });
+          : new Error(`${asked()}: there is no ${ref.kind} ${ref.item} in workspace ${ws}${nearItem(ref, ws, items)}`), { notListed: true });
       }
       return { ws, dir: hit.name };
     }, e => e.notListed && !fresh);
@@ -201,8 +213,42 @@ function createSqlTables({ onelake, paths, offlineReason = () => null, tableRead
     namedFrom.set(nameKey(kind, it.workspace, item), { wsId: ref.workspace, itemId: ref.item });
     return { kind, workspace: it.workspace, item, schema: ref.schema, table: ref.table };
   }
+  // A bare name, ws.lh.schema.table, is a table only in a workspace OneLake has: anything else is DuckDB's
+  // own, a struct's field (s.a.b.c) say. A workspace the kept listing doesn't have is looked for again,
+  // at most once a minute for each name.
+  const missedAt = new Map();
+  async function knownWorkspace(name) {
+    const kept = await onelake.workspaces().catch(() => null);
+    if (!kept) return true;   // no listing to say otherwise: OneLake is asked, and says why
+    if (kept.some(w => same(w, name))) return true;
+    const key = String(name).toLowerCase();
+    if (offlineReason() || Date.now() - (missedAt.get(key) || 0) < 60_000) return false;
+    const fresh = await onelake.workspaces({ fresh: true }).catch(() => null);
+    if (fresh && fresh.some(w => same(w, name))) return true;
+    missedAt.set(key, Date.now());
+    return false;
+  }
+  // Which item a name means. ws.gold_warehouse.dbo.t is warehouse gold, unless the workspace has only a
+  // lakehouse named gold_warehouse; with both, the name means two tables, and is refused.
+  async function pick(ref) {
+    if (ref.bare) return (await knownWorkspace(ref.workspace)) ? ref : null;
+    if (ref.asLakehouse == null) return ref;
+    const workspaces = await onelake.workspaces().catch(() => []);
+    const ws = workspaces.find(w => same(w, ref.workspace)) || String(ref.workspace);
+    const items = await onelake.items(ws).catch(() => null);
+    if (!items) return ref;
+    const has = (kind, item) => items.some(i => sqlKind(i.kind) === kind && same(displayName(i.name), item));
+    const asKind = has(ref.kind, ref.item), asLakehouse = has('lakehouse', ref.asLakehouse);
+    if (asKind && asLakehouse) {
+      throw new Error(`${sqlName(ref)}: workspace ${ws} has both a ${kindLabel(ref.kind)} ${ref.item} and a lakehouse ` +
+        `${ref.asLakehouse}, so the name means two tables. Name the table by its GUIDs: "<workspace id>"."<item id>".<schema>.<table>`);
+    }
+    return asLakehouse ? { ...ref, kind: 'lakehouse', item: ref.asLakehouse, asLakehouse: undefined } : ref;
+  }
+  // Null for a bare name that isn't OneLake's (pick).
   async function resolve(ref, opts = {}) {
-    return resolveNamed(await byName(ref), opts);
+    const which = await pick(await byName(ref));
+    return which ? resolveNamed(which, opts) : null;
   }
   async function resolveNamed(ref, { fresh = false, secured = false, signal, held = null } = {}) {
     const from = namedFrom.get(nameKey(ref.kind, ref.workspace, ref.item));
@@ -257,7 +303,8 @@ function createSqlTables({ onelake, paths, offlineReason = () => null, tableRead
   // Where a table's SQL name is in the tree: its workspace, its item's folder and its schema and name as OneLake
   // spells them, from the kept listings. Nothing of the table is read: it is opened as a click in the tree opens it.
   async function place(asked) {
-    const ref = await byName(asked);
+    const ref = await pick(await byName(asked));
+    if (!ref) throw new Error(`${sqlName(asked)}: there is no workspace ${asked.workspace}`);
     const { ws, dir } = await locate(ref, false);
     const listing = await onelake.tables({ workspace: ws, item: dir }).catch(() => null);
     const hit = (listing || []).find(x => same(x.schema || 'dbo', ref.schema || 'dbo') && same(x.table, ref.table));

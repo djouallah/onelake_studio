@@ -35,7 +35,7 @@
         <h2>One SQL name for every table and model</h2>
         <p>A query can join tables from different items and workspaces with no setup. A Power BI semantic model is queried like a table, and <code>AGG("measure")</code> computes a measure.</p>
       </div>
-<pre><code>SELECT * FROM demo.data_lakehouse.aemo.duid;
+<pre><code>SELECT * FROM demo.data.aemo.duid;
 
 SELECT duid.Region, AGG("Mwh")
 FROM demo.DL_semanticmodel GROUP BY ALL;</code></pre>

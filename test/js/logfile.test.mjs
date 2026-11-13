@@ -122,7 +122,7 @@ test("a semantic model's query is logged as written and as compiled, apart again
   assert.equal(sourceOf(compileModelSql(compiler, 'SELECT AGG("m") FROM ws.m_semanticmodel')).source, 'SELECT AGG("m") FROM ws.m_semanticmodel');
   assert.equal(compileModelSql(compiler, "SELECT 2"), "SELECT 2");
   const asked = 'SELECT d.r, AGG("a */ b") /* nested /* */ FROM ws.m_semanticmodel -- \\*/ x\nGROUP BY ALL;';
-  const compiled = "SELECT r, sum(a) FROM ws.lh_lakehouse.dbo.f GROUP BY ALL";
+  const compiled = "SELECT r, sum(a) FROM ws.lh.dbo.f GROUP BY ALL";
   const ran = withSource(asked, compiled);
   assert.deepEqual(sourceOf(ran), { source: asked.replace(/;$/, ""), sql: compiled });
   assert.deepEqual(sourceOf(`SUMMARIZE ${ran}`), { source: asked.replace(/;$/, ""), sql: `SUMMARIZE ${compiled}` });

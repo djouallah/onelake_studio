@@ -32,16 +32,16 @@
 
     <section>
       <h2 id="names">One SQL name for every object</h2>
-      <p>Every table, file and semantic model in your tenant has one SQL name. The name is where Fabric keeps the object, with the item's type after its name. A table can also be named by its workspace's and item's GUIDs.</p>
+      <p>Every table, file and semantic model in your tenant has one SQL name. The name is where Fabric keeps the object. A lakehouse table is named as Fabric's Spark names it, and any other item has its type after its name. A table can also be named by its workspace's and item's GUIDs.</p>
       <div class="table-box names">
         <table>
           <thead>
             <tr><th>Object</th><th>Its name</th><th>Example</th></tr>
           </thead>
           <tbody>
-            <tr><td>A table</td><td><code>&lt;workspace&gt;.&lt;item&gt;_&lt;kind&gt;.&lt;schema&gt;.&lt;table&gt;</code></td><td><code>demo.data_lakehouse.aemo.duid</code></td></tr>
+            <tr><td>A table</td><td><code>&lt;workspace&gt;.&lt;lakehouse&gt;.&lt;schema&gt;.&lt;table&gt;</code>, another item's <code>&lt;workspace&gt;.&lt;item&gt;_&lt;kind&gt;.&lt;schema&gt;.&lt;table&gt;</code></td><td><code>demo.data.aemo.duid</code></td></tr>
             <tr><td>A semantic model</td><td><code>&lt;workspace&gt;.&lt;model&gt;_semanticmodel</code></td><td><code>demo.DL_semanticmodel</code></td></tr>
-            <tr><td>A file</td><td><code>'&lt;workspace&gt;.&lt;item&gt;_lakehouse/Files/&lt;path&gt;'</code></td><td><code>'demo.data_lakehouse/Files/x.parquet'</code></td></tr>
+            <tr><td>A file</td><td><code>'&lt;workspace&gt;.&lt;lakehouse&gt;/Files/&lt;path&gt;'</code></td><td><code>'demo.data/Files/x.parquet'</code></td></tr>
           </tbody>
         </table>
       </div>

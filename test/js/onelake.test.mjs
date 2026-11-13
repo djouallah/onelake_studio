@@ -371,7 +371,7 @@ test("the first rows are read once per snapshot, and the engine is not asked aga
   assert.deepEqual(p1.rows, [{ id: 1 }]);
   assert.equal(p2.cached, true);
   assert.equal(sql.length, 1);
-  assert.equal(sql[0], "SELECT * FROM ws.lh_lakehouse.dbo.a LIMIT 1000");
+  assert.equal(sql[0], "SELECT * FROM ws.lh.dbo.a LIMIT 1000");
 });
 
 test("the first rows follow the number asked for: fewer are served from what is kept, more are read", async () => {
@@ -387,7 +387,7 @@ test("the first rows follow the number asked for: fewer are served from what is 
   const more = await ol.peek(lh, t, run, 20);
   assert.equal(more.cached, false);
   assert.equal(more.rows.length, 20);
-  assert.deepEqual(sql, ["SELECT * FROM ws.lh_lakehouse.dbo.a LIMIT 10", "SELECT * FROM ws.lh_lakehouse.dbo.a LIMIT 20"]);
+  assert.deepEqual(sql, ["SELECT * FROM ws.lh.dbo.a LIMIT 10", "SELECT * FROM ws.lh.dbo.a LIMIT 20"]);
   // A table with fewer rows than were asked for has given them all: any number is served.
   assert.equal((await ol.peek(lh, t, run, 1000)).rows.length, 50);
   assert.equal((await ol.peek(lh, t, run, 5000)).cached, true);

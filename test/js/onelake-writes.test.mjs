@@ -88,7 +88,7 @@ test("SQL writes to a lakehouse on OneLake, and reads back what it wrote", { ski
   });
   const run = `w${Date.now().toString(36)}`;
   const schema = `lakeci_${run}`;
-  const lh = `${q(WS)}.${q(`${LH}_lakehouse`)}`;
+  const lh = `${q(WS)}.${q(LH)}`;
   const tbl = (name, s = "test") => `${lh}.${q(s)}.${q(name)}`;
   const file = `lakeci/${run}.parquet`;
   const made = [];   // [schema, table] to drop after
@@ -233,9 +233,9 @@ test("SQL writes to a lakehouse on OneLake, and reads back what it wrote", { ski
   });
 
   await t.test("COPY to the lakehouse's Files/, read back by its name", async () => {
-    await sql(`COPY (SELECT 7 AS seven) TO '${WS}.${LH}_lakehouse/Files/${file}' (FORMAT parquet)`);
+    await sql(`COPY (SELECT 7 AS seven) TO '${WS}.${LH}/Files/${file}' (FORMAT parquet)`);
     assert.deepEqual(norm(await back(`SELECT seven FROM read_parquet(${lit(`abfss://${WS}@${DFS}/${ITEM}/Files/${file}`)})`)), [{ seven: "7" }]);
-    assert.deepEqual(norm(await sql(`SELECT seven FROM '${WS}.${LH}_lakehouse/Files/${file}'`)), [{ seven: "7" }]);
+    assert.deepEqual(norm(await sql(`SELECT seven FROM '${WS}.${LH}/Files/${file}'`)), [{ seven: "7" }]);
     assert.ok(written.some(w => w.kind === "files" && w.dir === "lakeci"), "its folder is listed again");
   });
 

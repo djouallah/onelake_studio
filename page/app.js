@@ -44,7 +44,7 @@ const settings = { tableOpensOn: cfg.tableOpensOn, gridThousandsSeparator: cfg.g
 let engine = null;
 let engineReady = null;      // resolves when engine.init() has finished; gates every use of it
 let lakehouse = null;        // { workspace, item }
-let activeSqlName = null;    // the selected table's SQL name (ws.item_lakehouse.schema.table)
+let activeSqlName = null;    // the selected table's SQL name (ws.lakehouse.schema.table)
 // The SQL behind what is on screen (a query's, a table's first rows, a file's preview): what
 // Profile and Export work from.
 let currentSql = '';
@@ -1528,7 +1528,7 @@ async function saveActive() {
 }
 
 // A query from the box: the panel is the query's now, not the last table's or file's. A query
-// names its tables workspace.item_kind.schema.table, so it runs as it is, whatever was selected.
+// names its tables workspace.lakehouse.schema.table, so it runs as it is, whatever was selected.
 function enterQuery(title) {
   closeModelView();
   ++selSeq;                     // whatever was loading for the last click stands down

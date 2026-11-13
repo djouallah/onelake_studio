@@ -150,7 +150,7 @@ function createHostMethods({ onelake, engine, onStatus = () => {}, saveFile = nu
       if (!openModel) throw new Error('semantic models are not available here');
       return openModel({ workspace: String(x.workspace), model: String(x.model) });
     },
-    // A table's metadata, and its SQL name (ws.item_lakehouse.schema.table) for the editor.
+    // A table's metadata, and its SQL name (ws.lakehouse.schema.table) for the editor.
     'onelake.table': async x => {
       const lh = lhOf(x), t = tableOf(x);
       let sqlName = null;

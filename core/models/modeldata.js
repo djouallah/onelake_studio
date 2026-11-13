@@ -72,6 +72,7 @@ function createModelData({ tablesOf, resolve, cachedTable, read, usage, offlineR
     const [ref] = tableRefs(ident);
     if (!ref) throw new Error(`${ident} does not name a table`);
     const found = await resolve(ref, { fresh });
+    if (!found) throw new Error(`${ident} does not name a OneLake table`);
     let t = null;                // an empty table has nothing to bring down
     if (found.metadataLocation) {
       const held = await cachedTable(found.listed).catch(() => null);

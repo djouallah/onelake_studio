@@ -123,7 +123,7 @@ test("whether a table exists: yes with how old that is, no with the closest name
     assert.equal(body.data.workspace, "sales", "as OneLake spells it");
     assert.equal(body.data.item, LAKEHOUSE);
     assert.deepEqual(body.data.tables, ["dbo.orders"]);
-    assert.deepEqual(body.data.sqlNames, ["sales.gold_lakehouse.dbo.orders"]);
+    assert.deepEqual(body.data.sqlNames, ["sales.gold.dbo.orders"]);
     assert.ok(body.data.listingAsOf && body.cachedAt);
 
     r = await cli(["exists", "sales", "gold", "customers", "--json"]);

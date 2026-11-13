@@ -4,12 +4,12 @@
 query TTTTT
 SHOW SEMANTIC VIEWS
 ----
-memory	cat1	Sales_semanticmodel	NULL	NULL
+onelake	cat1	Sales_semanticmodel	NULL	NULL
 
 query TTTTT
 show semantic views;
 ----
-memory	cat1	Sales_semanticmodel	NULL	NULL
+onelake	cat1	Sales_semanticmodel	NULL	NULL
 
 statement error
 SHOW SEMANTIC VIEW

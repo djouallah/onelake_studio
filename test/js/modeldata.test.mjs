@@ -11,7 +11,7 @@ const { createModelData } = require("../../core/models/modeldata.js");
 const { createCatalogFile } = require("../../core/onelake/catalogfile.js");
 
 const CATALOG = "ws.sales_semanticmodel", MODEL = "sales";
-const FACT = "ws.data_lakehouse.dbo.fact", DIM = "ws.data_lakehouse.dbo.dim";
+const FACT = "ws.data.dbo.fact", DIM = "ws.data.dbo.dim";
 const HOUR = 3600 * 1000;
 const settled = async () => { for (let i = 0; i < 12; i++) await new Promise(r => setImmediate(r)); };
 
@@ -210,7 +210,7 @@ test("too much for the disk cache stays off and says why, with nothing read", as
 
 test("models already kept count toward what fits", async () => {
   const other = "ws.other_semanticmodel";
-  const { data, reads } = setup({ room: 5000, others: { [other]: ["ws.data_lakehouse.dbo.big"] }, sizes: { fact: 4000, dim: 10, big: 2000 } });
+  const { data, reads } = setup({ room: 5000, others: { [other]: ["ws.data.dbo.big"] }, sizes: { fact: 4000, dim: 10, big: 2000 } });
   const first = await data.set(other, "other", true);
   assert.equal(first.on, true);
   await settled();
@@ -356,7 +356,7 @@ test("a table that can't be found is named, and the others come down", async () 
 });
 
 test("an empty table has nothing to bring down", async () => {
-  const { data, reads } = setup({ tables: ["ws.data_lakehouse.dbo.empty", DIM] });
+  const { data, reads } = setup({ tables: ["ws.data.dbo.empty", DIM] });
   await data.set(CATALOG, MODEL, true);
   await settled();
   assert.deepEqual(reads.map(r => r.name), [DIM]);

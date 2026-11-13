@@ -2,11 +2,13 @@
 
 ## Unreleased
 
-- **New SQL names: the workspace comes first.** A table is `<workspace>.<item>_<kind>.<schema>.<table>`, such as
-  `aemo.data_lakehouse.dbo.dim_duid`, where it was `lakehouse.aemo.data.dbo.dim_duid`. A semantic model is
-  `<workspace>.<model>_semanticmodel`, and a file is `'<workspace>.<item>_lakehouse/Files/<path>'`. A table can also be
-  named by its workspace's and its item's GUIDs, `"<workspace id>"."<item id>".dbo.t`, which still reads after either is
-  renamed. A query that uses an old name is refused, and the error gives the name to use now.
+- **New SQL names, as Fabric's Spark writes them.** A lakehouse table is `<workspace>.<lakehouse>.<schema>.<table>`,
+  such as `aemo.data.dbo.dim_duid`, where it was `lakehouse.aemo.data.dbo.dim_duid`. Any other item has its kind after its
+  name: `aemo.gold_warehouse.sales.orders`, `_sqldatabase`, `_mirroreddatabase`. A semantic model is
+  `<workspace>.<model>_semanticmodel`, and a file is `'<workspace>.<lakehouse>/Files/<path>'`. A part can be quoted in
+  backticks as well as double quotes. A table can also be named by its workspace's and its item's GUIDs,
+  `"<workspace id>"."<item id>".dbo.t`, which still reads after either is renamed. A query that uses an old name is
+  refused, and the error gives the name to use now.
 - **Download Tables for Offline.** A cloud icon on a lakehouse, a warehouse, a schema or one table in the tree brings
   every table under it, or that table, onto this machine, whole, so it answers with no connection: on a flight, say. A notification counts the
   tables and the bytes, and Cancel keeps what came down. It says so when the tables won't fit the disk cache.
@@ -18,8 +20,8 @@
 - **SQL writes to a lakehouse.** A statement in the SQL box, or the command line's `sql`, can write a lakehouse's
   tables as Iceberg: `CREATE TABLE`, `CREATE TABLE … AS`, `INSERT`, `UPDATE`, `DELETE`, `MERGE INTO`, `ALTER TABLE`
   and `CREATE SCHEMA`, through the lakehouse's Iceberg catalog, with DuckDB's own Iceberg writer. A table is named
-  `<workspace>.<lakehouse>_lakehouse.<schema>.<table>`.
-  `COPY (…) TO '<workspace>.<lakehouse>_lakehouse/Files/<path>'` writes a file into its `Files/`. `DROP` is refused,
+  `<workspace>.<lakehouse>.<schema>.<table>`.
+  `COPY (…) TO '<workspace>.<lakehouse>/Files/<path>'` writes a file into its `Files/`. `DROP` is refused,
   and so is a write to a Delta table, a warehouse, or anything outside a lakehouse. Each write is checked against
   DuckDB's own plan of it before it runs. A write needs a connection.
 - **Several statements run in turn.** A selection with several statements runs each, in order, and stops at the first

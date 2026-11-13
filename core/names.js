@@ -107,19 +107,25 @@ const kindLabel = kind => {
 };
 
 // -----------------------------------------------------------------------------
-// A table's SQL name: workspace.item_kind.schema.table
+// A table's SQL name: workspace.lakehouse.schema.table
 // -----------------------------------------------------------------------------
 // One name per table, everywhere SQL is written (the panel, Explore, the command line, a
 // saved query), and unique by construction: it is the table's OneLake path
-// (<workspace>/<item>.<Kind>/Tables/<schema>/<table>) with the item's kind written after its
-// name. All four are nested schemas and a view in the engine's own catalog (engine-host.js), so
+// (<workspace>/<item>.<Kind>/Tables/<schema>/<table>). A lakehouse is named as Fabric's Spark
+// names it; any other item has its kind after its name (gold_warehouse), since a lakehouse and a
+// warehouse can share one. All four are nested schemas and a view in the engine's database,
+// `onelake` (engine-host.js), so
 //
-//   SELECT * FROM aemo.data_lakehouse.dbo.dim_duid
+//   SELECT * FROM aemo.data.dbo.dim_duid
 //
 // reads the same table whatever the panel has open. A lakehouse without schemas is `dbo`,
 // the one schema OneLake's catalog reports for it. The kind is the Fabric spelling, not the
 // internal one a OneLake directory carries.
 const SQL_KINDS = ["lakehouse", "warehouse", "sqldatabase", "mirroreddatabase"];
+// The kinds written after an item's name. A lakehouse's is not: it is most of what SQL reads and writes.
+const SUFFIXED_KINDS = ["warehouse", "sqldatabase", "mirroreddatabase"];
+// The engine's database, where every name below is. It is the default one, so a name needs nothing in front.
+const ENGINE_DB = "onelake";
 const SQL_KIND_OF = {
   lakehouse: "lakehouse", warehouse: "warehouse",
   sqldbnative: "sqldatabase", sqldatabase: "sqldatabase",
@@ -135,12 +141,11 @@ const sqlKind = kind => {
 const displayName = item => basename(item).replace(/\.[^.]+$/, "");
 // A semantic model's kind, written after its name as an item's is: aemo.nem_semanticmodel.
 const MODEL_KIND = "semanticmodel";
-// An item's part of a name: its name, then its kind. The kind is always written, so `x_lakehouse`
-// the lakehouse is `x_lakehouse_lakehouse`, and no two items share a part.
-const itemPart = (item, kind) => `${item}_${kind}`;
-// The other way, ignoring case as DuckDB does: "data_lakehouse" -> { item: "data", kind: "lakehouse" },
-// the kind as `kinds` spells it. null for a part that ends in none of them.
-function splitItem(part, kinds = SQL_KINDS) {
+// An item's part of a name: a lakehouse's name as it is, any other item's with its kind after it.
+const itemPart = (item, kind) => (kind === "lakehouse" ? String(item) : `${item}_${kind}`);
+// The other way, ignoring case as DuckDB does: "gold_warehouse" -> { item: "gold", kind: "warehouse" },
+// the kind as `kinds` spells it. null for a part that ends in none of them: a lakehouse's.
+function splitItem(part, kinds = SUFFIXED_KINDS) {
   const s = String(part);
   for (const k of kinds) {
     const end = s.length - k.length - 1;
@@ -184,19 +189,19 @@ function sqlNameOf(lh, t) {
   if (!kind) throw new Error(`${lh.item} holds no tables SQL can name`);
   return sqlName({ kind, workspace: lh.workspace, item: displayName(lh.item), schema: t.schema, table: t.table });
 }
-// A lakehouse's file or folder in SQL: <workspace>.<item>_lakehouse/Files/<path>, the item spelled as
+// A lakehouse's file or folder in SQL: <workspace>.<lakehouse>/Files/<path>, the item spelled as
 // in its tables' names. `path` is what follows Files/. Quoted as a string where a statement uses it,
 // since DuckDB reads a file only from one.
 function fileSqlName(lh, path = "") {
   if (!hasFilesArea(lh.item)) throw new Error(`${lh.item} has no Files area: only a lakehouse does`);
   const rest = strip(path);
-  return `${[lh.workspace, itemPart(displayName(lh.item), "lakehouse")].map(sqlPart).join(".")}/Files${rest ? `/${rest}` : ""}`;
+  return `${[lh.workspace, displayName(lh.item)].map(sqlPart).join(".")}/Files${rest ? `/${rest}` : ""}`;
 }
 // The abfss:// URLs of a lakehouse's Files/ in what DuckDB ran, under those names. One by GUIDs names
 // no item, and stays as it is.
 const FILE_URL = /abfss:\/\/([^@'"/]+)@onelake\.dfs\.fabric\.microsoft\.com\/([^/'"]+)\.Lakehouse\/Files(?=[/'"\s]|$)/gi;
 const fileNamesIn = text => String(text).replace(FILE_URL, (_, ws, item) =>
-  `${[ws, itemPart(item, "lakehouse")].map(sqlPart).join(".")}/Files`);
+  `${[ws, item].map(sqlPart).join(".")}/Files`);
 
 function icebergTypeName(t) {
   if (t == null) return "";
@@ -326,7 +331,7 @@ function fmtBytes(n) {
 module.exports = {
   strip, basename, stripBom, encPath, DFS_HOST, DFS_ORIGIN, dfsFileUrl, abfssUrl, ONELAKE_FILE_URL,
   itemKind, holdsTables, isMirrored, hasFilesArea, kindLabel,
-  SQL_KINDS, sqlKind, displayName, MODEL_KIND, itemPart, splitItem, isGuid, isStaging, RESERVED, sqlPart, sqlName, sqlNameOf,
+  SQL_KINDS, SUFFIXED_KINDS, ENGINE_DB, sqlKind, displayName, MODEL_KIND, itemPart, splitItem, isGuid, isStaging, RESERVED, sqlPart, sqlName, sqlNameOf,
   fileSqlName, fileNamesIn, modelSqlName,
   icebergTypeName, icebergFields, snapshotStats, sourceFormat, icebergHistory,
   fmtBytes,

@@ -23,7 +23,7 @@ test("only a statement about a semantic model waits for the views", async () => 
   for (const sql of ['SELECT AGG("x") FROM ws.m_semanticmodel', "SHOW SEMANTIC VIEWS", "show semantic metrics in ws.m_semanticmodel",
                      "DESCRIBE ws.m_semanticmodel"]) assert.equal(aboutModels(sql), true, sql);
   // Nor is a shorter name a model's.
-  for (const sql of ["SHOW ALL TABLES;", "SELECT * FROM w.lh_lakehouse.dbo.t", "SELECT 1", "SELECT AGG(Total) FROM shop", "DESCRIBE ws.SHOP"]) {
+  for (const sql of ["SHOW ALL TABLES;", "SELECT * FROM w.lh.dbo.t", "SELECT 1", "SELECT AGG(Total) FROM shop", "DESCRIBE ws.SHOP"]) {
     assert.equal(aboutModels(sql), false, sql);
   }
 });
@@ -64,9 +64,9 @@ test("a model is ws.model_semanticmodel, and a statement's unopened models are f
   // Each once; not in a string or a comment; a table's name is not a model's.
   assert.deepEqual(unopenedModels("SELECT * FROM w.m_semanticmodel, w . M_semanticmodel"), [{ workspace: "w", model: "m" }]);
   assert.deepEqual(unopenedModels("SELECT 'w.m_semanticmodel' -- w.m_semanticmodel\n/* w.m_semanticmodel */"), []);
-  assert.deepEqual(unopenedModels("SELECT * FROM w.lh_lakehouse.dbo.t, w.lh_lakehouse.dbo.x_semanticmodel, x_semanticmodel"), []);
+  assert.deepEqual(unopenedModels("SELECT * FROM w.lh.dbo.t, w.lh.dbo.x_semanticmodel, x_semanticmodel"), []);
   // In the engine's catalog, where it is listed, it is the same model.
-  assert.deepEqual(unopenedModels("SELECT * FROM memory.w.m_semanticmodel"), [{ workspace: "w", model: "m" }]);
+  assert.deepEqual(unopenedModels("SELECT * FROM onelake.w.m_semanticmodel"), [{ workspace: "w", model: "m" }]);
   await assert.rejects(defineView("Sales", "Sales.bim", "{}"), /<workspace>\.<model>_semanticmodel: Sales has no workspace/);
 });
 

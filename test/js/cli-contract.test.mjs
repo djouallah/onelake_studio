@@ -140,23 +140,23 @@ test("--csv and --json carry raw values; Markdown reads well", async () => {
       let r = await cli(["ls", "ws", "data", "--csv"]);
       assert.deepEqual(csvRows(r.stdout), [
         ["table", "sql_name", "rows", "bytes", "files", "last_write"],
-        ["customers", "ws.data_lakehouse.dbo.customers", "1200", "2500000", "3", "2026-10-01T08:30:00.000Z"],
-        ["orders", "ws.data_lakehouse.dbo.orders", "", "", "", ""],
+        ["customers", "ws.data.dbo.customers", "1200", "2500000", "3", "2026-10-01T08:30:00.000Z"],
+        ["orders", "ws.data.dbo.orders", "", "", "", ""],
       ]);
 
       r = await cli(["ls", "ws", "data", "--json"]);
       const body = JSON.parse(r.stdout);
       assert.deepEqual(body.rows, [
-        ["customers", "ws.data_lakehouse.dbo.customers", 1200, 2500000, 3, "2026-10-01T08:30:00.000Z"],
-        ["orders", "ws.data_lakehouse.dbo.orders", null, null, null, null],
+        ["customers", "ws.data.dbo.customers", 1200, 2500000, 3, "2026-10-01T08:30:00.000Z"],
+        ["orders", "ws.data.dbo.orders", null, null, null, null],
       ]);
       assert.deepEqual(body.columns.map(c => c.type), ["text", "text", "integer", "integer", "integer", "timestamp"]);
       assert.equal(body.complete, true);
       assert.match(body.cachedAt, /^\d{4}-\d\d-\d\dT/);
 
       r = await cli(["ls", "ws", "data"]);
-      assert.match(r.stdout, /\| customers \| ws\.data_lakehouse\.dbo\.customers \| 1,200 \| 2\.5 MB \| 3 \| 2026-10-01 08:30 \|/);
-      assert.match(r.stdout, /\| orders \| ws\.data_lakehouse\.dbo\.orders \| — \| — \| — \| — \|/);
+      assert.match(r.stdout, /\| customers \| ws\.data\.dbo\.customers \| 1,200 \| 2\.5 MB \| 3 \| 2026-10-01 08:30 \|/);
+      assert.match(r.stdout, /\| orders \| ws\.data\.dbo\.orders \| — \| — \| — \| — \|/);
 
       r = await cli(["models", "ws", "--csv"]);
       assert.deepEqual(csvRows(r.stdout), [
@@ -175,8 +175,8 @@ test("--csv and --json carry raw values; Markdown reads well", async () => {
 
       r = await cli(["files", "ws", "data", "Files/raw", "--csv"]);
       assert.deepEqual(csvRows(r.stdout), [["name", "sql_name", "type", "bytes"],
-        ["2026", "'ws.data_lakehouse/Files/raw/2026'", "folder", ""],
-        ["a.parquet", "'ws.data_lakehouse/Files/raw/a.parquet'", "file", "1000000"]]);
+        ["2026", "'ws.data/Files/raw/2026'", "folder", ""],
+        ["a.parquet", "'ws.data/Files/raw/a.parquet'", "file", "1000000"]]);
 
       r = await cli(["files", "ws", "data", "Files/empty", "--csv"]);
       assert.deepEqual(csvRows(r.stdout), [["name", "sql_name", "type", "bytes"]], "empty is the header, not a sentence");

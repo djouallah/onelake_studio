@@ -157,7 +157,7 @@ test("the skill's path: list, read the model, run what it printed, compute a mea
     assert.deepEqual(nameOf(model.tables.metrics).sort(), ["Customer Count", "Total Sales"]);
     assert.ok(nameOf(model.tables.dimensions).includes("Region"));
     const raw = model.tables.rawTables.rows.map(row => row[1]).sort();
-    assert.deepEqual(raw, ["shop.data_lakehouse.dbo.dim_customer", "shop.data_lakehouse.dbo.fct_sales"]);
+    assert.deepEqual(raw, ["shop.data.dbo.dim_customer", "shop.data.dbo.fct_sales"]);
 
     // The same model, for a person to read.
     r = await cli(["model", "shop", "sales_model"]);
@@ -192,13 +192,13 @@ test("--show-sql: the SQL a model query compiles to, never inside a --csv", asyn
     let r = await cli(["sql", REGIONS, "--show-sql", "--csv"]);
     assert.equal(r.code, EXIT.OK, r.stderr);
     assert.deepEqual(asRegions(csvRows(r.stdout).slice(1)), EXPECTED, "the CSV parses as if it had not been asked");
-    assert.match(r.stderr, /shop\.data_lakehouse\.dbo\.fct_sales/);
+    assert.match(r.stderr, /shop\.data\.dbo\.fct_sales/);
 
     r = await cli(["sql", REGIONS, "--show-sql"]);
-    assert.match(r.stdout, /^```sql\n[\s\S]*shop\.data_lakehouse\.dbo\.fct_sales[\s\S]*```/);
+    assert.match(r.stdout, /^```sql\n[\s\S]*shop\.data\.dbo\.fct_sales[\s\S]*```/);
 
     r = await cli(["sql", REGIONS, "--show-sql", "--json"]);
-    assert.match(JSON.parse(r.stdout).data.sql, /shop\.data_lakehouse\.dbo\.fct_sales/);
+    assert.match(JSON.parse(r.stdout).data.sql, /shop\.data\.dbo\.fct_sales/);
 
     // Plain SQL compiles to nothing: there is nothing to show.
     r = await cli(["sql", "SELECT 1 AS one", "--show-sql", "--csv"]);
@@ -269,8 +269,8 @@ test("SHOW ALL TABLES on the real engine: Markdown counts the columns, --json ha
     let r = await cli(["sql", "SHOW ALL TABLES"]);
     assert.equal(r.code, EXIT.OK, r.stderr);
     assert.match(r.stdout, /^\| database \| schema \| name \| columns \|$/m);
-    assert.match(r.stdout, /^\| memory \| shop \| sales_model_semanticmodel \| 1 \|$/m);
-    assert.match(r.stdout, /^\| memory \| shop\.data_lakehouse\.dbo \| fct_sales \| 2 \|$/m);
+    assert.match(r.stdout, /^\| onelake \| shop \| sales_model_semanticmodel \| 1 \|$/m);
+    assert.match(r.stdout, /^\| onelake \| shop\.data\.dbo \| fct_sales \| 2 \|$/m);
     assert.doesNotMatch(r.stdout, /column_names|VARCHAR/);
 
     r = await cli(["sql", "SHOW ALL TABLES", "--json"]);
@@ -338,7 +338,7 @@ test("a model table with no OneLake table is refused, never read by a shorter na
     const r = await cli(["sql", 'SELECT AGG("Total Sales") AS sales FROM shop.import_model_semanticmodel']);
     assert.equal(r.code, EXIT.FAILED, r.stdout);
     assert.equal(r.stdout, "");
-    assert.match(r.stderr, /fct_sales is not a OneLake table, so it has no workspace.item_lakehouse.schema.table name to read/);
+    assert.match(r.stderr, /fct_sales is not a OneLake table, so it has no workspace.lakehouse.schema.table name to read/);
   });
 });
 

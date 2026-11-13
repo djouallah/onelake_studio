@@ -159,8 +159,8 @@ try {
   await step("profile.png: a join over 128 million rows, and where its time went", async () => {
     await tab().locator("#sqlEditor").fill([
       "SELECT d.Region, d.FuelSourceDescriptor, sum(s.mw) / 12 AS mwh",
-      "FROM demo.data_lakehouse.aemo.summary s",
-      "JOIN demo.data_lakehouse.aemo.duid d USING (DUID)",
+      "FROM demo.data.aemo.summary s",
+      "JOIN demo.data.aemo.duid d USING (DUID)",
       "GROUP BY ALL",
       "ORDER BY mwh DESC;",
     ].join("\n"));

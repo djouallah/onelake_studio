@@ -63,7 +63,7 @@ test("warm() boots the engine and lists the catalog ahead of the first statement
   assert.equal(seen.length, 1);
   assert.equal(seen[0].count, 2);
   const r = await engine.call("query", ["SHOW ALL TABLES"]);
-  assert.deepEqual(r.rows.map(x => [x.schema, x.name]), [["w.lh_lakehouse.dbo", "t"]], "a bad entry costs only itself");
+  assert.deepEqual(r.rows.map(x => [x.schema, x.name]), [["w.lh.dbo", "t"]], "a bad entry costs only itself");
   assert.equal(warnings.filter(w => /bad could not be listed/.test(w)).length, 1, warnings.join(" | "));
   assert.equal(listings, 1, "the statement found the catalog already listed");
 });
@@ -88,13 +88,13 @@ test("with no cache folder: a OneLake table is refused, never read past the lake
 
   const t0 = Date.now();
   const FILE = `SELECT * FROM '${METADATA.replace("metadata/1.metadata.json", "x.parquet")}'`;
-  await assert.rejects(engine.call("query", ["SELECT * FROM w.lh_lakehouse.dbo.t"]),
-    /w\.lh_lakehouse\.dbo\.t: a OneLake table is read through the lake, and this engine has none/);
+  await assert.rejects(engine.call("query", ["SELECT * FROM w.lh.dbo.t"]),
+    /w\.lh\.dbo\.t: a OneLake table is read through the lake, and this engine has none/);
   await assert.rejects(engine.call("query", [FILE]), /This statement: reading rows needs OneLake, and there is no internet/);
   reason = "not signed in";
   await assert.rejects(engine.call("query", [FILE]), /you are not signed in/);
   const batches = [];
-  await assert.rejects(engine.call("stream", ["SELECT * FROM w.lh_lakehouse.dbo.t"], b => batches.push(b)), /read through the lake/);
+  await assert.rejects(engine.call("stream", ["SELECT * FROM w.lh.dbo.t"], b => batches.push(b)), /read through the lake/);
   assert.ok(Date.now() - t0 < 20000, "refused, not timed out");
 
   const r = await engine.call("query", ["SHOW ALL TABLES"]);
@@ -105,7 +105,7 @@ test("with no cache folder: a OneLake table is refused, never read past the lake
   for (const sql of [`SELECT '${url}' AS path`, `SELECT * FROM (VALUES ('${url}'), ('x')) t(path)`]) {
     assert.equal((await engine.call("query", [sql])).rows[0].path, url, sql);
   }
-  assert.deepEqual((await engine.call("query", ["SELECT * FROM w.lh_lakehouse.dbo.never_written"])).rows, []);
+  assert.deepEqual((await engine.call("query", ["SELECT * FROM w.lh.dbo.never_written"])).rows, []);
 });
 
 test("a file's name reaches DuckDB as its URL, one that can't be found never does, and a value stays a value", async t => {
@@ -127,13 +127,13 @@ test("a file's name reaches DuckDB as its URL, one that can't be found never doe
   });
 
   // Refused as a read of OneLake, which is what only its URL can be.
-  for (const sql of ["SELECT * FROM 'WS.lh_lakehouse/Files/x.parquet'", "SELECT * FROM read_csv('ws.lh_lakehouse/Files/*.csv', header = true)"]) {
+  for (const sql of ["SELECT * FROM 'WS.lh/Files/x.parquet'", "SELECT * FROM read_csv('ws.lh/Files/*.csv', header = true)"]) {
     await assert.rejects(engine.call("query", [sql]), /This statement: reading rows needs OneLake/, sql);
   }
   assert.deepEqual(asked, ["lh", "lh"]);
-  await assert.rejects(engine.call("query", ["SELECT * FROM glob('ws.nosuch_lakehouse/Files/*')"]), /there is no lakehouse nosuch/);
-  await assert.rejects(engine.call("query", ["SELECT * FROM glob('ws.lh_lakehouse/Tables/*')"]), /a table's name is/);
-  const value = "ws.nosuch_lakehouse/Files/x.parquet";
+  await assert.rejects(engine.call("query", ["SELECT * FROM glob('ws.nosuch/Files/*')"]), /there is no lakehouse nosuch/);
+  await assert.rejects(engine.call("query", ["SELECT * FROM glob('ws.lh/Tables/*')"]), /a table's name is/);
+  const value = "ws.nosuch/Files/x.parquet";
   assert.equal((await engine.call("query", [`SELECT '${value}' AS v`])).rows[0].v, value);
 });
 
@@ -212,7 +212,7 @@ test("an answer knows when its oldest table was read from OneLake, and fresh ask
     await engine.close();
     await rm(extDir, { recursive: true, force: true }).catch(() => {});
   });
-  const both = "SELECT * FROM w.lh_lakehouse.dbo.old, w.lh_lakehouse.dbo.new";
+  const both = "SELECT * FROM w.lh.dbo.old, w.lh.dbo.new";
   assert.equal((await engine.call("query", [both])).asOf, 1000);
   assert.equal((await engine.call("stream", [both], () => {})).asOf, 1000);
   assert.equal((await engine.call("query", ["SELECT 1"])).asOf, null, "no table, no age");
@@ -240,7 +240,7 @@ test("Stop reaches a statement still being prepared: it answers at once, and nev
   await engine.call("query", ["SELECT 1"]);
 
   const batches = [];
-  const running = engine.call("stream", ["SELECT * FROM w.lh_lakehouse.dbo.t"], b => batches.push(b));
+  const running = engine.call("stream", ["SELECT * FROM w.lh.dbo.t"], b => batches.push(b));
   while (!asked) await new Promise(r => setTimeout(r, 10));
   const at = Date.now();
   await engine.call("cancel");
@@ -254,7 +254,7 @@ test("Stop reaches a statement still being prepared: it answers at once, and nev
 
   // A Stop belongs to what was running when it came.
   await engine.call("cancel");
-  assert.deepEqual((await engine.call("query", ["SELECT * FROM w.lh_lakehouse.dbo.t"])).rows, [{ a: 1 }]);
+  assert.deepEqual((await engine.call("query", ["SELECT * FROM w.lh.dbo.t"])).rows, [{ a: 1 }]);
 });
 
 // With a cache folder the engine keeps OneLake tables in the lake, which needs the ducklake build the bundle has.
@@ -282,8 +282,8 @@ test("offline with the lake: a table never read here says so at once, with nothi
 
   const t0 = Date.now();
   const offline = e => { assert.equal(e.offline, true); return true; };
-  await assert.rejects(engine.call("query", ["SELECT * FROM w.lh_lakehouse.dbo.t"]),
-    e => /w\.lh_lakehouse\.dbo\.t: this table isn't cached on this machine, and there is no internet/.test(e.message) && offline(e));
+  await assert.rejects(engine.call("query", ["SELECT * FROM w.lh.dbo.t"]),
+    e => /w\.lh\.dbo\.t: this table isn't cached on this machine, and there is no internet/.test(e.message) && offline(e));
   // A file read past the lake isn't kept anywhere: refused at once too.
   await assert.rejects(engine.call("query", [`SELECT * FROM '${METADATA.replace("metadata/1.metadata.json", "x.parquet")}'`]),
     e => /This statement: reading rows needs OneLake/.test(e.message) && offline(e));
@@ -319,7 +319,7 @@ test("the internet going during a read is checked once, and the statement runs a
   });
 
   // The second run fails as the first did, now saying the engine is offline.
-  await assert.rejects(engine.call("query", ["SELECT * FROM w.lh_lakehouse.dbo.t"]), /IO Error[\s\S]*OneLake Studio is offline: no internet/);
+  await assert.rejects(engine.call("query", ["SELECT * FROM w.lh.dbo.t"]), /IO Error[\s\S]*OneLake Studio is offline: no internet/);
   assert.equal(checks, 1);
   // Asked, asked again after the failure, and then both once more for the second run.
   assert.equal(opened, 4, "run again once the check found no internet");
@@ -344,7 +344,7 @@ test("a read that fails with the internet still there stays that failure, and ru
     await rm(cacheDir, { recursive: true, force: true }).catch(() => {});
   });
 
-  await assert.rejects(engine.call("query", ["SELECT * FROM w.lh_lakehouse.dbo.t"]), /IO Error/);
+  await assert.rejects(engine.call("query", ["SELECT * FROM w.lh.dbo.t"]), /IO Error/);
   assert.equal(checks, 1);
   assert.equal(opened, 2, "asked, and asked again after the failure, and no second run");
 });
@@ -369,7 +369,7 @@ test("a read that fails asks for the table again, once, and only a read does", a
     await engine.close();
     await rm(extDir, { recursive: true, force: true }).catch(() => {});
   });
-  const name = table => `w.lh_lakehouse.dbo.${table}`;
+  const name = table => `w.lh.dbo.${table}`;
 
   await t.test("the table moved: the statement answers from where it is now", async () => {
     answers = { moved: { kept: BROKEN, fresh: "SELECT 7 AS answer" } };
@@ -453,11 +453,11 @@ test("native engine host", async t => {
   });
 
   await t.test("a table is read by its SQL name, opened by the statement that names it", async () => {
-    let r = await engine.call("query", ["SELECT answer, t FROM aemo.data_lakehouse.dbo.dim_duid"]);
+    let r = await engine.call("query", ["SELECT answer, t FROM aemo.data.dbo.dim_duid"]);
     assert.deepEqual(r.rows, [{ answer: 7, t: "dim_duid" }]);
     // Any case, quoted parts; the same view, made once.
     const before = resolved.length;
-    r = await engine.call("query", ['SELECT count(*)::INT AS n FROM AEMO."data_lakehouse".DBO.Dim_Duid']);
+    r = await engine.call("query", ['SELECT count(*)::INT AS n FROM AEMO."data".DBO.Dim_Duid']);
     assert.equal(r.rows[0].n, 1);
     assert.equal(resolved.length, before + 1, "asked again — the snapshot may have moved");
     // A join across kinds and workspaces, a name with spaces, and DESCRIBE.
@@ -469,7 +469,7 @@ test("native engine host", async t => {
     const { batches } = await collect("SELECT t FROM ws.db_sqldatabase.dbo.t1");
     assert.equal(batches[0].rows[0].t, "t1");
     // What does not resolve says why.
-    await assert.rejects(engine.call("query", ["SELECT * FROM ws.missing_lakehouse.dbo.t"]), /there is no lakehouse missing/);
+    await assert.rejects(engine.call("query", ["SELECT * FROM ws.missing.dbo.t"]), /there is no lakehouse missing/);
     // By GUIDs: resolved by what they stand for, and read from a view of that name.
     const W = "0f3c1a2b-1111-2222-3333-444455556666", I = "9a1b2c3d-aaaa-bbbb-cccc-ddddeeeeffff";
     r = await engine.call("query", [`SELECT answer, t FROM "${W}"."${I}".dbo.by_guid`]);
@@ -477,9 +477,19 @@ test("native engine host", async t => {
     assert.equal(resolved.at(-1).byGuid, true);
     // The old way says how it is written now, and a workspace named like one of the engine's databases is read by GUIDs.
     await assert.rejects(engine.call("query", ["SELECT * FROM lakehouse.aemo.data.dbo.dim_duid"]),
-      /the old way to name a table: it is aemo\.data_lakehouse\.dbo\.dim_duid now/);
-    await assert.rejects(engine.call("query", ["SELECT * FROM lake.x_lakehouse.dbo.t"]), /lake is also the name of a database or schema of this engine[\s\S]*GUIDs/);
-    await assert.rejects(engine.call("query", ["SELECT * FROM main.x_lakehouse.dbo.t"]), /main is also the name[\s\S]*GUIDs/);
+      /the old way to name a table: it is aemo\.data\.dbo\.dim_duid now/);
+    await assert.rejects(engine.call("query", ["SELECT * FROM main.x_warehouse.dbo.t"]), /main is also the name of a database or schema of this engine[\s\S]*GUIDs/);
+    // A bare name that starts with one of the engine's own is DuckDB's, and OneLake is not asked.
+    const asked = resolved.length;
+    await assert.rejects(engine.call("query", ["SELECT * FROM main.x.dbo.t"]), /does not exist/);
+    await assert.rejects(engine.call("query", ["SELECT * FROM system.main.x.y"]), /does not exist|not found/i);
+    assert.equal(resolved.length, asked);
+    // Backticks quote a name, as Spark writes it.
+    r = await engine.call("query", ["SELECT t FROM `anz ws`.`wh_warehouse`.sales.f"]);
+    assert.deepEqual(r.rows, [{ t: "f" }]);
+    // The engine's database in front is the same table.
+    r = await engine.call("query", ["SELECT t FROM onelake.aemo.data.dbo.dim_duid"]);
+    assert.deepEqual(r.rows, [{ t: "dim_duid" }]);
   });
 
   await t.test("the cached tables are DuckDB's catalog, each schema named by its whole path", async () => {
@@ -487,30 +497,30 @@ test("native engine host", async t => {
     const ours = rows => rows.filter(r => /^(cat1|"Cat ws")\./.test(r.schema));
     let r = await engine.call("query", ["SHOW ALL TABLES;"]);
     assert.deepEqual(ours(r.rows).map(x => [x.database, x.schema, x.name, x.column_names, x.column_types]), [
-      ["memory", '"Cat ws".lh_lakehouse.dbo', "t", "['b', 'c']", "['VARCHAR', 'DECIMAL(10,2)']"],
-      ["memory", "cat1.lh_lakehouse.dbo", "t", "['a']", "['BIGINT']"],
-      ["memory", "cat1.lh_lakehouse.dbo", "unread", "[]", "[]"],
-      ["memory", "cat1.wh_warehouse.sales", "e", "['id']", "['INTEGER']"],
+      ["onelake", '"Cat ws".lh.dbo', "t", "['b', 'c']", "['VARCHAR', 'DECIMAL(10,2)']"],
+      ["onelake", "cat1.lh.dbo", "t", "['a']", "['BIGINT']"],
+      ["onelake", "cat1.lh.dbo", "unread", "[]", "[]"],
+      ["onelake", "cat1.wh_warehouse.sales", "e", "['id']", "['INTEGER']"],
     ]);
     // Listed by name before its columns are known, and an error rather than no rows if it is ever read unnamed.
     const viewSql = async name => (await engine.call("query", [`SELECT sql FROM duckdb_views() WHERE view_name = '${name}' AND schema_name <> 'main'`])).rows[0].sql;
     assert.match(await viewSql("unread"), /is not open/);
     r = await engine.call("query", ["show schemas"]);
-    assert.ok(r.rows.some(x => x.database_name === "memory" && x.schema_name === '"Cat ws".lh_lakehouse.dbo'), JSON.stringify(r.rows));
-    r = await engine.call("query", ['SHOW TABLES FROM "cat ws".LH_lakehouse.dbo']);
+    assert.ok(r.rows.some(x => x.database_name === "onelake" && x.schema_name === '"Cat ws".lh.dbo'), JSON.stringify(r.rows));
+    r = await engine.call("query", ['SHOW TABLES FROM "cat ws".LH.dbo']);
     assert.deepEqual(r.rows, [{ name: "t" }]);
-    r = await engine.call("query", ['SHOW TABLES FROM memory."cat ws".LH_lakehouse.dbo']);
+    r = await engine.call("query", ['SHOW TABLES FROM onelake."cat ws".LH.dbo']);
     assert.deepEqual(r.rows, [{ name: "t" }]);
-    r = await engine.call("query", ["SELECT count(*)::INT AS n FROM information_schema.tables WHERE table_catalog = 'memory' AND table_name = 'e'"]);
+    r = await engine.call("query", ["SELECT count(*)::INT AS n FROM information_schema.tables WHERE table_catalog = 'onelake' AND table_name = 'e'"]);
     assert.equal(r.rows[0].n, 1);
     // A semantic model is a view in its workspace's schema, its kind after its name.
     r = await engine.call("query", ["SHOW ALL TABLES"]);
     assert.deepEqual(r.rows.filter(x => x.schema === "cat1").map(x => [x.database, x.name, x.column_names]),
-      [["memory", "Sales Model_semanticmodel", "['model']"]]);
-    r = await engine.call("query", ["SHOW TABLES FROM memory.cat1"]);
+      [["onelake", "Sales Model_semanticmodel", "['model']"]]);
+    r = await engine.call("query", ["SHOW TABLES FROM onelake.cat1"]);
     assert.deepEqual(r.rows, [{ name: "Sales Model_semanticmodel" }]);
     // What SHOW SEMANTIC VIEWS reads (page/semantic.js): the catalog has the model, opened or not.
-    r = await engine.call("query", ["SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'memory' AND view_name LIKE '%_semanticmodel'"]);
+    r = await engine.call("query", ["SELECT schema_name, view_name FROM duckdb_views() WHERE database_name = 'onelake' AND view_name LIKE '%_semanticmodel'"]);
     assert.deepEqual(r.rows, [{ schema_name: "cat1", view_name: "Sales Model_semanticmodel" }]);
     await assert.rejects(engine.call("query", ['SELECT * FROM cat1."Sales Model_semanticmodel"']),
       /cat1\."Sales Model_semanticmodel" is a semantic model that is not open/);
@@ -521,16 +531,16 @@ test("native engine host", async t => {
     assert.doesNotMatch(await viewSql("e"), /is not open/);
     assert.match(await viewSql("t"), /is not open/);
     // Named, it is the real table, and stays it when the cache is listed again.
-    r = await engine.call("query", ["SELECT answer FROM cat1.lh_lakehouse.dbo.t"]);
+    r = await engine.call("query", ["SELECT answer FROM cat1.lh.dbo.t"]);
     assert.deepEqual(r.rows, [{ answer: 7 }]);
     engine.catalogChanged();
     r = await engine.call("query", ["SHOW ALL TABLES"]);
-    assert.deepEqual(ours(r.rows).find(x => x.schema === "cat1.lh_lakehouse.dbo").column_names, "['answer', 't']");
+    assert.deepEqual(ours(r.rows).find(x => x.schema === "cat1.lh.dbo").column_names, "['answer', 't']");
     // A table the cache no longer holds leaves the catalog.
     cached = cached.filter(x => x.workspace !== "Cat ws");
     engine.catalogChanged();
     r = await engine.call("query", ["SHOW ALL TABLES"]);
-    assert.deepEqual(ours(r.rows).map(x => [x.schema, x.name]), [["cat1.lh_lakehouse.dbo", "t"], ["cat1.lh_lakehouse.dbo", "unread"], ["cat1.wh_warehouse.sales", "e"]]);
+    assert.deepEqual(ours(r.rows).map(x => [x.schema, x.name]), [["cat1.lh.dbo", "t"], ["cat1.lh.dbo", "unread"], ["cat1.wh_warehouse.sales", "e"]]);
     // Its columns read since: the same entry, now with them.
     cached = cached.map(x => (x.table === "unread" ? { ...x, columns: [{ name: "now", type: "BIGINT" }] } : x));
     engine.catalogChanged();
@@ -684,7 +694,7 @@ test("native engine host", async t => {
     // A file named like a workspace is attached under another name: under that one, the workspace's tables could not be named.
     const as = await engine.call("attachFile", [{ path: await engine.copyToTemp("ws/lh/Files/cat1.duckdb", await readFile(duck)), alias: "cat1" }]);
     assert.equal(as, "cat1_file");
-    assert.deepEqual((await engine.call("query", ["SELECT answer FROM cat1.lh_lakehouse.dbo.t"])).rows, [{ answer: 7 }]);
+    assert.deepEqual((await engine.call("query", ["SELECT answer FROM cat1.lh.dbo.t"])).rows, [{ answer: 7 }]);
     await engine.call("releaseFiles", [{ attached: ["cat1_file"] }]);
   });
 
@@ -778,9 +788,9 @@ test("with no cache folder, a Delta table is refused, never read past the lake, 
     await rm(extDir, { recursive: true, force: true }).catch(() => {});
   });
   await engine.warm();
-  await assert.rejects(engine.call("query", ["SELECT * FROM w.lh_lakehouse.dbo.t"]),
-    /w\.lh_lakehouse\.dbo\.t: a OneLake table is read through the lake, and this engine has none/);
-  const r = await engine.call("query", ["SELECT * FROM w.lh_lakehouse.dbo.never_written"]);
+  await assert.rejects(engine.call("query", ["SELECT * FROM w.lh.dbo.t"]),
+    /w\.lh\.dbo\.t: a OneLake table is read through the lake, and this engine has none/);
+  const r = await engine.call("query", ["SELECT * FROM w.lh.dbo.never_written"]);
   assert.equal(r.rows.length, 0);
 });
 
@@ -811,13 +821,13 @@ test("a statement that reads a table says it was used, and a table being kept do
     onTablesUsed: list => used.push(list.map(u => `${u.item}/${u.table}`)),
   });
   t.after(async () => { await engine.close(); await rm(extDir, { recursive: true, force: true }).catch(() => {}); });
-  const name = "w.i_lakehouse.dbo.t";
+  const name = "w.i.dbo.t";
 
   await engine.call("query", [`SELECT * FROM ${name}`]);
   assert.deepEqual(used, [["i.Lakehouse/t"]]);
   await engine.call("query", [`SELECT * FROM ${name}`]);
   assert.equal(used.length, 2, "every statement, not once per table");
-  await engine.call("query", [`SELECT * FROM ${name} JOIN w.i_lakehouse.dbo.u USING (a)`]);
+  await engine.call("query", [`SELECT * FROM ${name} JOIN w.i.dbo.u USING (a)`]);
   assert.deepEqual(used[2], ["i.Lakehouse/t", "i.Lakehouse/u"]);
   used.length = 0;
   await engine.call("query", [`DESCRIBE ${name}`]);
@@ -877,7 +887,7 @@ test("a table with OneLake security: a 403 moves it to its Arrow files, under th
     await rm(extDir, { recursive: true, force: true }).catch(() => {});
     await rm(cacheDir, { recursive: true, force: true }).catch(() => {});
   });
-  const name = table => `w.lh_lakehouse.dbo.${table}`;
+  const name = table => `w.lh.dbo.${table}`;
 
   const r = await engine.call("query", [`SELECT i, region FROM ${name("sec")} ORDER BY i`]);
   assert.deepEqual(r.rows.map(x => x.i), [0, 1, 2, 3, 4], "every stream, read as one table");
@@ -959,7 +969,7 @@ test("a table the lake holds is read as it is, with nothing asked of OneLake, af
   const syncedAt = async () => (await engine.lakeTables()).find(r => r.name === lakeName).syncedAt;
   const before = await syncedAt();
 
-  assert.equal((await engine.call("query", ["SELECT count(*)::INTEGER AS n FROM ws.lh_lakehouse.dbo.t"])).rows[0].n, 0);
+  assert.equal((await engine.call("query", ["SELECT count(*)::INTEGER AS n FROM ws.lh.dbo.t"])).rows[0].n, 0);
   assert.deepEqual(asked, [lakeName], "the engine says the lake holds it");
   assert.equal(await syncedAt(), before, "not synced");
 
@@ -982,7 +992,7 @@ test("a table the lake holds is read as it is, with nothing asked of OneLake, af
   await engine.close();
   engine = open();
   asked.length = 0;
-  assert.equal((await engine.call("query", ["SELECT count(*)::INTEGER AS n FROM ws.lh_lakehouse.dbo.t"])).rows[0].n, 0);
+  assert.equal((await engine.call("query", ["SELECT count(*)::INTEGER AS n FROM ws.lh.dbo.t"])).rows[0].n, 0);
   assert.deepEqual(asked, [lakeName]);
   assert.equal(await syncedAt(), before);
   assert.equal((await engine.lakeTable({ deltaTable: local, check: true })).name, first.name);
