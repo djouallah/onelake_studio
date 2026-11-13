@@ -18,7 +18,7 @@
 //
 // No `vscode` import: driven from tests with a fake clock.
 // =============================================================================
-const { SQL_KINDS, fmtBytes, fileNamesIn } = require('../names');
+const { fmtBytes, fileNamesIn } = require('../names');
 const { tableRefs } = require('../sql');
 
 const EVERY_MS = 15_000;
@@ -69,7 +69,7 @@ function createModelData({ tablesOf, resolve, cachedTable, read, usage, offlineR
   async function locate(ident, { fresh = false } = {}) {
     const kept = located.get(ident);
     if (!fresh && kept && now() - kept.at < MEMO_MS) return kept.t;
-    const [ref] = tableRefs(ident, SQL_KINDS);
+    const [ref] = tableRefs(ident);
     if (!ref) throw new Error(`${ident} does not name a table`);
     const found = await resolve(ref, { fresh });
     let t = null;                // an empty table has nothing to bring down

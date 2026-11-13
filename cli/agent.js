@@ -19,9 +19,9 @@
 //   table <ws> <item> <schema.table> metadata only
 //   exists <ws> <item> <schema.table>  yes (0), no with the closest names (1), or not cached (4)
 //   model <ws> <model>               relationships, columns, measures with DAX
-//   sql "<sql>"                      a table is Kind.workspace.item.schema.table; a file is
-//                                    'lakehouse.ws.item/Files/x.parquet'; a semantic model is
-//                                    semanticmodel.ws.model, AGG("m") its measure m; and SHOW
+//   sql "<sql>"                      a table is workspace.item_kind.schema.table; a file is
+//                                    'ws.item_lakehouse/Files/x.parquet'; a semantic model is
+//                                    ws.model_semanticmodel, AGG("m") its measure m; and SHOW
 //                                    SEMANTIC VIEWS / METRICS / DIMENSIONS; --show-sql the compiled SQL
 //   export <ws> <model>              Export to Fabric, as Explore's button: a semantic model, queried
 //   export <ws> <item> <Files/path>  as it is, or a model file in Files/, read client side
@@ -253,9 +253,9 @@ function createAgent({ onelake, engine, modelPath, appDir, vendorDir, daxSqlPin,
   async function syncViews(note) {
     const { semantic, compiler } = await modules();
     const kept = await semviews.texts();
-    const names = new Set();   // each view's SQL name (semanticmodel.ws.model), lower-cased
+    const names = new Set();   // each view's SQL name (ws.model_semanticmodel), lower-cased
     for (const v of kept) {
-      if (!v.schema) continue;   // named before models were semanticmodel.ws.model
+      if (!v.schema) continue;   // named before models were ws.model_semanticmodel
       try {
         if (v.error) throw new Error(v.error);
         const m = await semantic.defineView(v.name, v.path, v.text, 'replace', compiler, v.schema);
@@ -620,7 +620,7 @@ function createAgent({ onelake, engine, modelPath, appDir, vendorDir, daxSqlPin,
       const { semantic, compiler } = await modules();
       await syncViews(io.note);
       const text = await fsp.readFile(path, 'utf8');
-      // Named by its workspace and its own name: semanticmodel.ws.model.
+      // Named by its workspace and its own name: ws.model_semanticmodel.
       const m = await semantic.registerModel(path.split(/[\\/]/).pop(), text, compiler, ws, name);
       // Kept as a semantic view, as the panel keeps a model it opens.
       await semviews.put(m.view, path, ws);
@@ -697,7 +697,7 @@ function createAgent({ onelake, engine, modelPath, appDir, vendorDir, daxSqlPin,
         // Never into a --csv that will be parsed.
         if (opts.csv) io.note(shown); else io.out(`${fence('sql', shown)}\n`);
       }
-      // Tables are named Kind.workspace.item.schema.table (`ls <ws> <item>` prints them), and
+      // Tables are named workspace.item_kind.schema.table (`ls <ws> <item>` prints them), and
       // the engine opens each one a statement names as it runs it — a model's compiled SQL
       // names its Direct Lake tables the same way.
       // SHOW ALL TABLES holds every column of every table, too much for an agent's context: Markdown
@@ -894,7 +894,7 @@ function createAgent({ onelake, engine, modelPath, appDir, vendorDir, daxSqlPin,
     const text = view ? view.text : await fsp.readFile(path, 'utf8');
     const key = catalog.toLowerCase();
     const kept = cubes.get(key);
-    if (kept && kept.text === text && semantic.hasView([semantic.MODEL_CATALOG, ref.workspace, ref.model])) return kept.cube;
+    if (kept && kept.text === text && semantic.hasView(semantic.modelKey(ref.workspace, ref.model))) return kept.cube;
     const m = await semantic.registerModel(path.split(/[\\/]/).pop(), text, compiler, ref.workspace, ref.model);
     if (!view) await semviews.put(m.view, path, ref.workspace);
     defined.add(m.name.toLowerCase());

@@ -107,14 +107,14 @@ const kindLabel = kind => {
 };
 
 // -----------------------------------------------------------------------------
-// A table's SQL name: kind.workspace.item.schema.table
+// A table's SQL name: workspace.item_kind.schema.table
 // -----------------------------------------------------------------------------
 // One name per table, everywhere SQL is written (the panel, Explore, the command line, a
 // saved query), and unique by construction: it is the table's OneLake path
-// (<workspace>/<item>.<Kind>/Tables/<schema>/<table>) with the kind moved to the front, where
-// it names one of DuckDB's catalogs. The rest are nested schemas (engine-host.js), so
+// (<workspace>/<item>.<Kind>/Tables/<schema>/<table>) with the item's kind written after its
+// name. All four are nested schemas and a view in the engine's own catalog (engine-host.js), so
 //
-//   SELECT * FROM lakehouse.aemo.data.dbo.dim_duid
+//   SELECT * FROM aemo.data_lakehouse.dbo.dim_duid
 //
 // reads the same table whatever the panel has open. A lakehouse without schemas is `dbo`,
 // the one schema OneLake's catalog reports for it. The kind is the Fabric spelling, not the
@@ -125,7 +125,7 @@ const SQL_KIND_OF = {
   sqldbnative: "sqldatabase", sqldatabase: "sqldatabase",
   mountedrelationaldatabase: "mirroreddatabase",
 };
-// The catalog an item's tables are under: from its directory's kind ("SQLDbNative"), or the
+// The kind an item's tables are named with: from its directory's kind ("SQLDbNative"), or the
 // kind itself when that is already the SQL one. null for an item that holds no tables.
 const sqlKind = kind => {
   const k = String(kind || "");
@@ -133,6 +133,24 @@ const sqlKind = kind => {
 };
 // An item's name as Fabric shows it: its directory's name without the kind.
 const displayName = item => basename(item).replace(/\.[^.]+$/, "");
+// A semantic model's kind, written after its name as an item's is: aemo.nem_semanticmodel.
+const MODEL_KIND = "semanticmodel";
+// An item's part of a name: its name, then its kind. The kind is always written, so `x_lakehouse`
+// the lakehouse is `x_lakehouse_lakehouse`, and no two items share a part.
+const itemPart = (item, kind) => `${item}_${kind}`;
+// The other way, ignoring case as DuckDB does: "data_lakehouse" -> { item: "data", kind: "lakehouse" },
+// the kind as `kinds` spells it. null for a part that ends in none of them.
+function splitItem(part, kinds = SQL_KINDS) {
+  const s = String(part);
+  for (const k of kinds) {
+    const end = s.length - k.length - 1;
+    if (end > 0 && s[end] === "_" && s.slice(end + 1).toLowerCase() === k.toLowerCase()) return { item: s.slice(0, end), kind: k };
+  }
+  return null;
+}
+// A workspace or an item by its GUID: the other way to name a table, "<ws guid>"."<item guid>".dbo.t.
+const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const isGuid = s => GUID.test(String(s));
 
 // What a dataflow makes for its own staging, judged by the name Fabric gives it: an item or a
 // model with nothing in it to analyse.
@@ -156,30 +174,29 @@ const sqlPart = s => {
 };
 // { kind, workspace, item (as Fabric shows it), schema, table } -> its SQL name.
 const sqlName = r =>
-  [r.kind, r.workspace, r.item, r.schema || "dbo", r.table].map(sqlPart).join(".");
-// A semantic model's SQL name: semanticmodel.<workspace>.<model>, in a catalog of its own as a
-// lakehouse's tables are in theirs (page/semantic.js names its views the same way).
-const MODEL_CATALOG = "semanticmodel";
-const modelSqlName = (workspace, model) => [MODEL_CATALOG, workspace, model].map(sqlPart).join(".");
+  [r.workspace, itemPart(r.item, r.kind), r.schema || "dbo", r.table].map(sqlPart).join(".");
+// A semantic model's SQL name: <workspace>.<model>_semanticmodel, its kind after its name as an
+// item's is (page/semantic.js names its views the same way).
+const modelSqlName = (workspace, model) => [workspace, itemPart(model, MODEL_KIND)].map(sqlPart).join(".");
 // The same, for a table the tree knows by its item's directory name ("data.Lakehouse").
 function sqlNameOf(lh, t) {
   const kind = sqlKind(itemKind(lh.item));
   if (!kind) throw new Error(`${lh.item} holds no tables SQL can name`);
   return sqlName({ kind, workspace: lh.workspace, item: displayName(lh.item), schema: t.schema, table: t.table });
 }
-// A lakehouse's file or folder in SQL: lakehouse.<workspace>.<item>/Files/<path>, the item spelled as
+// A lakehouse's file or folder in SQL: <workspace>.<item>_lakehouse/Files/<path>, the item spelled as
 // in its tables' names. `path` is what follows Files/. Quoted as a string where a statement uses it,
 // since DuckDB reads a file only from one.
 function fileSqlName(lh, path = "") {
   if (!hasFilesArea(lh.item)) throw new Error(`${lh.item} has no Files area: only a lakehouse does`);
   const rest = strip(path);
-  return `${["lakehouse", lh.workspace, displayName(lh.item)].map(sqlPart).join(".")}/Files${rest ? `/${rest}` : ""}`;
+  return `${[lh.workspace, itemPart(displayName(lh.item), "lakehouse")].map(sqlPart).join(".")}/Files${rest ? `/${rest}` : ""}`;
 }
 // The abfss:// URLs of a lakehouse's Files/ in what DuckDB ran, under those names. One by GUIDs names
 // no item, and stays as it is.
 const FILE_URL = /abfss:\/\/([^@'"/]+)@onelake\.dfs\.fabric\.microsoft\.com\/([^/'"]+)\.Lakehouse\/Files(?=[/'"\s]|$)/gi;
 const fileNamesIn = text => String(text).replace(FILE_URL, (_, ws, item) =>
-  `${["lakehouse", ws, item].map(sqlPart).join(".")}/Files`);
+  `${[ws, itemPart(item, "lakehouse")].map(sqlPart).join(".")}/Files`);
 
 function icebergTypeName(t) {
   if (t == null) return "";
@@ -309,7 +326,8 @@ function fmtBytes(n) {
 module.exports = {
   strip, basename, stripBom, encPath, DFS_HOST, DFS_ORIGIN, dfsFileUrl, abfssUrl, ONELAKE_FILE_URL,
   itemKind, holdsTables, isMirrored, hasFilesArea, kindLabel,
-  SQL_KINDS, sqlKind, displayName, isStaging, RESERVED, sqlPart, sqlName, sqlNameOf, fileSqlName, fileNamesIn, MODEL_CATALOG, modelSqlName,
+  SQL_KINDS, sqlKind, displayName, MODEL_KIND, itemPart, splitItem, isGuid, isStaging, RESERVED, sqlPart, sqlName, sqlNameOf,
+  fileSqlName, fileNamesIn, modelSqlName,
   icebergTypeName, icebergFields, snapshotStats, sourceFormat, icebergHistory,
   fmtBytes,
 };

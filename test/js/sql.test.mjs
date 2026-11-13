@@ -11,8 +11,8 @@ const { assertReads, checkedRead, isShowAllTables, readsCatalog } = require("../
 
 const ALLOWED = [
   // A schema or table of the user's can be called ducklake_something: only the lake's functions are refused.
-  `SELECT * FROM lakehouse.tpch.dbt.ducklake_mart.dim_duid`,
-  `SELECT * FROM "sqldatabase"."tpch"."dbt_ducklake_meta"."dbo"."ducklake_snapshot"`,
+  `SELECT * FROM tpch.dbt_lakehouse.ducklake_mart.dim_duid`,
+  `SELECT * FROM "tpch"."dbt_ducklake_meta_sqldatabase"."dbo"."ducklake_snapshot"`,
   // The lake's metadata is read by its name.
   "SELECT * FROM system_internal.ducklake_data_file",
   "SELECT 42",
@@ -44,11 +44,11 @@ const ALLOWED = [
 // What a tab sets up to read a file is a host method now, so none of these is a statement's to do.
 const SETUP = [
   `CREATE OR REPLACE VIEW "data" AS SELECT * FROM read_parquet(['abfss://ws@onelake.dfs.fabric.microsoft.com/lh.Lakehouse/Files/data.parquet'])`,
-  `CREATE OR REPLACE VIEW lakehouse.ws.lh.dbo.t AS SELECT * FROM iceberg_scan('abfss://ws@onelake.dfs.fabric.microsoft.com/x.metadata.json')`,
+  `CREATE OR REPLACE VIEW ws.lh_lakehouse.dbo.t AS SELECT * FROM iceberg_scan('abfss://ws@onelake.dfs.fabric.microsoft.com/x.metadata.json')`,
   `ATTACH 'abfss://ws@onelake.dfs.fabric.microsoft.com/lh.Lakehouse/Files/a.duckdb' AS "a" (READ_ONLY)`,
   `ATTACH 'C:/tmp/copy_1_a.db' AS "a" (TYPE sqlite, READ_ONLY)`,
   `DETACH "a"`,
-  `DROP VIEW IF EXISTS lakehouse.ws.lh.dbo.t`,
+  `DROP VIEW IF EXISTS ws.lh_lakehouse.dbo.t`,
   `DROP TABLE IF EXISTS "__del_1"`,
   `DROP SCHEMA IF EXISTS "s" CASCADE`,
   `CREATE SCHEMA IF NOT EXISTS "nem"`,
@@ -168,32 +168,47 @@ test("SHOW ALL TABLES is known however it is written, and nothing else is", () =
   for (const sql of ["SHOW TABLES", "SELECT 'SHOW ALL TABLES'", "SELECT * FROM (SHOW ALL TABLES)"]) assert.ok(!isShowAllTables(sql), sql);
 });
 
-// tableRefs: the five-part names a statement reads, which the engine opens before running it.
-test("a statement's tables are its five-part names under a kind, however they are written", () => {
-  const { tableRefs } = require("../../core/sql.js");
+// tableRefs: the names a statement reads, which the engine opens before running it.
+test("a statement's tables are workspace.item_kind.schema.table, however they are written", () => {
+  const { tableRefs, oldTableName } = require("../../core/sql.js");
   const KINDS = ["lakehouse", "warehouse", "sqldatabase", "mirroreddatabase"];
   const refs = sql => tableRefs(sql, KINDS);
-  assert.deepEqual(refs("SELECT * FROM Lakehouse.aemo.data.dbo.dim_duid"),
+  assert.deepEqual(refs("SELECT * FROM aemo.data_Lakehouse.dbo.dim_duid"),
     [{ kind: "lakehouse", workspace: "aemo", item: "data", schema: "dbo", table: "dim_duid" }]);
   // Any case, quoted parts with spaces and doubled quotes, space around the dots.
-  assert.deepEqual(refs(`select 1 from lakehouse."ANZ ws"."my ""lh""" . dbo."t 1"`),
+  assert.deepEqual(refs(`select 1 from "ANZ ws"."my ""lh""_lakehouse" . dbo."t 1"`),
     [{ kind: "lakehouse", workspace: "ANZ ws", item: 'my "lh"', schema: "dbo", table: "t 1" }]);
-  // A join across kinds; a sixth part is a column.
-  assert.deepEqual(refs("SELECT w.Warehouse.x FROM Warehouse.ws.wh.sales.f w JOIN MirroredDatabase.ws.m.dbo.c ON Warehouse.ws.wh.sales.f.id = 1").map(r => r.kind + "." + r.table),
+  // The kind is the last _<kind>, so an item whose own name ends in one keeps it.
+  assert.deepEqual(refs("SELECT * FROM ws.x_lakehouse_lakehouse.dbo.t").map(r => r.item), ["x_lakehouse"]);
+  // The engine's catalog in front is the same name.
+  assert.deepEqual(refs("SELECT * FROM memory.aemo.data_lakehouse.dbo.t"),
+    [{ kind: "lakehouse", workspace: "aemo", item: "data", schema: "dbo", table: "t" }]);
+  // By GUIDs: the workspace's and the item's.
+  const W = "0f3c1a2b-1111-2222-3333-444455556666", I = "9a1b2c3d-aaaa-bbbb-cccc-ddddeeeeffff";
+  assert.deepEqual(refs(`SELECT * FROM "${W}"."${I}".dbo.t`),
+    [{ byGuid: true, kind: null, workspace: W, item: I, schema: "dbo", table: "t" }]);
+  // A join across kinds; a fifth part is a column.
+  assert.deepEqual(refs("SELECT w.Warehouse.x FROM ws.wh_Warehouse.sales.f w JOIN ws.m_MirroredDatabase.dbo.c ON ws.wh_warehouse.sales.f.id = 1").map(r => r.kind + "." + r.table),
     ["warehouse.f", "mirroreddatabase.c", "warehouse.f"]);
-  // Not tables: fewer parts, another first part, inside a string or a comment.
-  assert.deepEqual(refs("SELECT * FROM dbo.t, Lakehouse.a.b.c, x.Lakehouse.a.b.c.d"), []);
-  assert.deepEqual(refs("SELECT 'Lakehouse.a.b.c.d' -- Lakehouse.a.b.c.d\n /* Lakehouse.a.b.c.d */"), []);
+  // Not tables: fewer parts, no kind on the item, inside a string or a comment.
+  assert.deepEqual(refs("SELECT * FROM dbo.t, a.b_lakehouse.c, a.b.c.d, a.b_notebook.c.d, a._lakehouse.c.d"), []);
+  // The old way, kind first, is not a table: it is said with its name now.
+  assert.deepEqual(refs("SELECT * FROM lakehouse.aemo.data.dbo.t"), []);
+  assert.equal(oldTableName("SELECT * FROM Warehouse.aemo.data.dbo.t"),
+    "Warehouse.aemo.data.dbo.t is the old way to name a table: it is aemo.data_warehouse.dbo.t now");
+  assert.equal(oldTableName(`SELECT * FROM lakehouse."ANZ ws"."gold-1".dbo.t`).endsWith(`"ANZ ws"."gold-1_lakehouse".dbo.t now`), true);
+  assert.equal(oldTableName("SELECT * FROM aemo.data_lakehouse.dbo.t, 'lakehouse.a.b.c.d'"), null);
+  assert.deepEqual(refs("SELECT 'a.b_lakehouse.c.d' -- a.b_lakehouse.c.d\n /* a.b_lakehouse.c.d */"), []);
   // As DuckDB reads them: nested comments, an E-string, and a line comment a carriage return ends.
-  assert.deepEqual(refs("/* /* */ Lakehouse.a.b.c.d */ SELECT 1"), []);
-  assert.deepEqual(refs("SELECT E'\\' Lakehouse.a.b.c.d'"), []);
-  assert.equal(refs("SELECT 1 -- c\rFROM Lakehouse.a.b.c.d").length, 1);
+  assert.deepEqual(refs("/* /* */ a.b_lakehouse.c.d */ SELECT 1"), []);
+  assert.deepEqual(refs("SELECT E'\\' a.b_lakehouse.c.d'"), []);
+  assert.equal(refs("SELECT 1 -- c\rFROM a.b_lakehouse.c.d").length, 1);
   // DESCRIBE, EXPLAIN and a view's body name tables too.
-  assert.equal(refs("EXPLAIN ANALYZE SELECT count(*) FROM SQLDatabase.ws.db.dbo.t").length, 1);
-  assert.equal(refs("DESCRIBE Lakehouse.ws.lh.dbo.t").length, 1);
+  assert.equal(refs("EXPLAIN ANALYZE SELECT count(*) FROM ws.db_sqldatabase.dbo.t").length, 1);
+  assert.equal(refs("DESCRIBE ws.lh_lakehouse.dbo.t").length, 1);
   // A comment between its parts, and a Unicode space around it, are as DuckDB reads them.
-  assert.equal(refs("SELECT * FROM lakehouse.aemo /*c*/ .data.dbo.t").length, 1);
-  assert.equal(refs("SELECT * FROM lakehouse.aemo.data.dbo.t ").length, 1);
+  assert.equal(refs("SELECT * FROM aemo /*c*/ .data_lakehouse.dbo.t").length, 1);
+  assert.equal(refs("SELECT * FROM aemo.data_lakehouse.dbo.t ").length, 1);
 });
 
 test("filesReadBy: the OneLake files a statement reads, and not one that is only a value", () => {
@@ -217,15 +232,15 @@ test("a file's name counts only where SQL reads a file, and one that is wrong is
   const { fileRefs } = require("../../core/sql.js");
   const KINDS = ["lakehouse", "warehouse", "sqldatabase", "mirroreddatabase"];
   const refs = sql => fileRefs(sql, KINDS);
-  const F = "'lakehouse.aemo.data/Files/x.parquet'";
+  const F = "'aemo.data_lakehouse/Files/x.parquet'";
   assert.deepEqual(refs(`SELECT * FROM ${F}`),
-    [{ zip: "", workspace: "aemo", item: "data", path: "/Files/x.parquet", written: "lakehouse.aemo.data/Files", start: 14, end: 14 + F.length, quote: "'" }]);
+    [{ zip: "", workspace: "aemo", item: "data", path: "/Files/x.parquet", written: "aemo.data_lakehouse/Files", start: 14, end: 14 + F.length, quote: "'" }]);
   // Every place DuckDB reads one, each as DuckDB's own CLI was seen to read it.
   for (const sql of [`FROM ${F}`, `from (${F})`, `SELECT 1 FROM ${F} a, ${F} b`, `SELECT 1 FROM t JOIN ${F} ON true`, `DESCRIBE ${F}`, `SUMMARIZE ${F}`,
     `PIVOT ${F} ON a`, `DESCRIBE FROM ${F}`, `EXPLAIN SELECT * FROM ${F}`, `SELECT 1 FROM read_parquet(${F}, filename = true)`,
     `SELECT 1 FROM main.read_parquet(${F})`, `SELECT 1 FROM range(1) r, LATERAL read_parquet(${F})`, `SELECT 1 FROM t, glob(${F})`, `FROM (read_parquet(${F}))`,
     `SELECT 1 FROM read_parquet([${F}])`, `SELECT * FROM (SELECT * FROM ${F})`, `SELECT 1 WHERE EXISTS (FROM ${F})`, `SELECT 1 FROM a JOIN b ON x = 1, ${F}`,
-    `SELECT * FROM "lakehouse.aemo.data/Files/x.parquet"`]) {
+    `SELECT * FROM "aemo.data_lakehouse/Files/x.parquet"`]) {
     assert.ok(refs(sql).length >= 1, sql);
   }
   // A call's parentheses can hold a query, which reads as any other.
@@ -243,34 +258,36 @@ test("a file's name counts only where SQL reads a file, and one that is wrong is
     assert.deepEqual(refs(sql), [], sql);
   }
   // Not names at all, wherever they are.
-  for (const v of ["x.parquet", "lakehouse.parquet", "abfss://ws@h/lh.Lakehouse/Files/x", "/lakehouse/x/Files/y", "other.a.b/Files/x", "https://lakehouse.a.b/Files/x"]) {
+  for (const v of ["x.parquet", "lakehouse.parquet", "x_lakehouse.parquet", "abfss://ws@h/lh.Lakehouse/Files/x", "/lakehouse/x/Files/y",
+    "data/Files/x", "https://a.b_lakehouse/Files/x"]) {
     assert.deepEqual(refs(`SELECT * FROM '${v}'`), [], v);
   }
   // As a table's name is spelled, any case before the '/'; a doubled quote is one quote.
-  const anz = refs(`SELECT * FROM 'LAKEHOUSE."ANZ ""R"" a/b"."gold-1"/Files/a/b c/*.csv'`)[0];
+  const anz = refs(`SELECT * FROM '"ANZ ""R"" a/b"."gold-1_lakehouse"/Files/a/b c/*.csv'`)[0];
   assert.equal(anz.workspace, 'ANZ "R" a/b');
   assert.equal(anz.item, "gold-1");
   assert.equal(anz.path, "/Files/a/b c/*.csv");
-  assert.equal(refs(`SELECT * FROM 'lakehouse.a.b/Files/it''s.csv'`)[0].path, "/Files/it's.csv");
-  assert.equal(refs(`SELECT * FROM 'zip://lakehouse.a.b/Files/a.zip/b.csv'`)[0].zip, "zip://");
-  assert.equal(refs(`SELECT * FROM glob('lakehouse.a.b/Files')`)[0].path, "/Files");
+  assert.equal(refs(`SELECT * FROM 'a.b_lakehouse/Files/it''s.csv'`)[0].path, "/Files/it's.csv");
+  assert.equal(refs(`SELECT * FROM 'zip://a.b_lakehouse/Files/a.zip/b.csv'`)[0].zip, "zip://");
+  assert.equal(refs(`SELECT * FROM glob('a.b_lakehouse/Files')`)[0].path, "/Files");
   // Wrong, so never left to DuckDB, which would look on the disk or answer no rows.
-  for (const [v, why] of [["lakehouse.aemo.data/x.parquet", /a file's name is/], ["lakehouse.aemo/Files/x", /a file's name is/],
-    ["lakehouse.a.b.c/Files/x", /a file's name is/], ["lakehouse.aemo.*/Files/x", /a file's name is/], ["lakehouse.my-ws.data/Files/x", /a file's name is/],
-    ["lakehouse.a.b/files/x", /a file's name is/], ["warehouse.a.b/Files/x", /only a lakehouse/],
-    ["lakehouse.a.b/Tables/dbo/t/x.parquet", /a table's name is lakehouse\.a\.b\.<schema>\.<table>/],
-    ["lakehouse.a.b/Files/../Tables/dbo/t", /can't hold/], ["lakehouse.a.b/Files/./x", /can't hold/]]) {
+  for (const [v, why] of [["aemo.data_lakehouse/x.parquet", /a file's name is/], ["aemo.data/Files/x", /a file's name is/],
+    ["other.a.b/Files/x", /a file's name is/], ["a.b_lakehouse.c/Files/x", /a file's name is/], ["aemo.*/Files/x", /a file's name is/],
+    ["my-ws.data_lakehouse/Files/x", /a file's name is/], ["a.b_lakehouse/files/x", /a file's name is/], ["a.b_warehouse/Files/x", /only a lakehouse/],
+    ["lakehouse.aemo.data/Files/x", /the old way to name a file: it is 'aemo\.data_lakehouse\/Files\/x' now/],
+    ["a.b_lakehouse/Tables/dbo/t/x.parquet", /a table's name is a\.b_lakehouse\.<schema>\.<table>/],
+    ["a.b_lakehouse/Files/../Tables/dbo/t", /can't hold/], ["a.b_lakehouse/Files/./x", /can't hold/]]) {
     assert.throws(() => refs(`SELECT * FROM glob('${v}')`), why, v);
   }
 });
 
 test("DuckDB's error says a file as it was written, with its caret still on what it points at", () => {
   const { namedError } = require("../../core/sql.js");
-  const written = [{ url: "abfss://a@h/d.Lakehouse/Files", name: "LAKEHOUSE.A.D/Files" }];
+  const written = [{ url: "abfss://a@h/d.Lakehouse/Files", name: "A.D_lakehouse/Files" }];
   assert.equal(namedError('IO Error: No files found that match the pattern "abfss://a@h/d.Lakehouse/Files/x.parquet"', written),
-    'IO Error: No files found that match the pattern "LAKEHOUSE.A.D/Files/x.parquet"');
+    'IO Error: No files found that match the pattern "A.D_lakehouse/Files/x.parquet"');
   const before = "SELECT * FROM read_csv('abfss://a@h/d.Lakehouse/Files/x.csv', bad = 1)";
-  const after = "SELECT * FROM read_csv('LAKEHOUSE.A.D/Files/x.csv', bad = 1)";
+  const after = "SELECT * FROM read_csv('A.D_lakehouse/Files/x.csv', bad = 1)";
   const pointing = (line, at) => `Binder Error: no\n\nLINE 1: ${line}\n${" ".repeat("LINE 1: ".length + at)}^`;
   // Past the URL, on the function before it, and inside it.
   assert.equal(namedError(pointing(before, before.indexOf("bad")), written), pointing(after, after.indexOf("bad")));
@@ -286,11 +303,11 @@ test("SHOW ALL TABLES, SHOW SCHEMAS and SHOW TABLES FROM a nested schema are rew
                      "SHOW SCHEMAS", "show schemas;"]) {
     assert.match(catalogStatement(sql) || "", /duckdb_schemas\(\)/, sql);
   }
-  const from = catalogStatement('SHOW TABLES FROM lakehouse."ANZ ws".lh.dbo;');
-  assert.match(from, /lower\(p\.database_name\) = 'lakehouse'/);
-  assert.match(from, /= \['anz ws', 'lh', 'dbo'\]/);
+  const from = catalogStatement('SHOW TABLES FROM "ANZ ws".lh_lakehouse.dbo;');
+  assert.match(from, /lower\(p\.database_name\) = 'anz ws' AND .* = \['lh_lakehouse', 'dbo'\]/);
+  assert.match(from, /current_database\(\) AND .* = \['anz ws', 'lh_lakehouse', 'dbo'\]/);
   assert.match(catalogStatement("show tables in memory.main"), /= \['main'\]/);
-  for (const sql of ["SHOW TABLES", "SHOW TABLES FROM memory", "SHOW DATABASES", "SELECT 1", "DESCRIBE lakehouse.a.b.c.d",
+  for (const sql of ["SHOW TABLES", "SHOW TABLES FROM memory", "SHOW DATABASES", "SELECT 1", "DESCRIBE a.b_lakehouse.c.d",
                      "SHOW TABLES FROM a.b; DROP x", "SELECT 'SHOW ALL TABLES'"]) {
     assert.equal(catalogStatement(sql), null, sql);
   }
@@ -298,7 +315,7 @@ test("SHOW ALL TABLES, SHOW SCHEMAS and SHOW TABLES FROM a nested schema are rew
   assert.ok(readsCatalog("SELECT * FROM information_schema.tables"));
   assert.ok(readsCatalog("select * from duckdb_columns()"));
   assert.ok(!readsCatalog("SELECT 'duckdb_tables' AS x"));
-  assert.ok(!readsCatalog("SELECT * FROM lakehouse.ws.lh.dbo.t"));
+  assert.ok(!readsCatalog("SELECT * FROM ws.lh_lakehouse.dbo.t"));
 });
 
 // assertOneLakeUrl: what a table's own metadata names is read with the OneLake token, so a URL there is OneLake's.
@@ -379,7 +396,7 @@ test("a download is written whole, tried again once after a failure, and a refus
 // -----------------------------------------------------------------------------
 const { writeOf, checkPlan, statementsOf, readsOnly } = require("../../core/sql.js");
 
-test("a write is found with what it writes, and where, in either name", () => {
+test("a write is found with what it writes, and where", () => {
   const table = (sql, what, ref) => {
     const w = writeOf(sql);
     assert.equal(w.what, what, sql);
@@ -388,62 +405,67 @@ test("a write is found with what it writes, and where, in either name", () => {
     return w;
   };
   const t = { workspace: "aemo", item: "data", schema: "dbo", table: "monthly" };
-  table("INSERT INTO lakehouse.aemo.data.dbo.monthly SELECT 1", "insert", t);
-  table("insert into aemo.data.monthly values (1)", "insert", t);
-  table('INSERT INTO "aemo"."data"."monthly" BY NAME SELECT 1 AS a', "insert", t);
-  table("UPDATE aemo.data.monthly SET a = 1", "update", t);
-  table("DELETE FROM lakehouse.aemo.data.dbo.monthly WHERE a = 1", "delete", t);
-  table("MERGE INTO aemo.data.monthly m USING (SELECT 1 AS a) s ON m.a = s.a WHEN NOT MATCHED THEN INSERT VALUES (s.a)", "merge", t);
-  table("CREATE TABLE aemo.data.monthly (a INT)", "create table", t);
-  table("CREATE TABLE IF NOT EXISTS aemo.data.monthly AS SELECT 1 AS a", "create table", t);
-  table("ALTER TABLE aemo.data.monthly ADD COLUMN b INT", "alter", t);
-  table("WITH s AS (SELECT 1 AS a) INSERT INTO aemo.data.monthly SELECT * FROM s", "insert", t);
-  table('/* why */ INSERT INTO lakehouse."ANZ Retail"."gold-1".sales."order" SELECT 1', "insert",
+  table("INSERT INTO aemo.data_lakehouse.dbo.monthly SELECT 1", "insert", t);
+  table("insert into aemo.data_lakehouse.dbo.monthly values (1)", "insert", t);
+  table('INSERT INTO "aemo"."data_lakehouse"."dbo"."monthly" BY NAME SELECT 1 AS a', "insert", t);
+  table("UPDATE aemo.data_lakehouse.dbo.monthly SET a = 1", "update", t);
+  table("DELETE FROM aemo.data_lakehouse.dbo.monthly WHERE a = 1", "delete", t);
+  table("MERGE INTO aemo.data_lakehouse.dbo.monthly m USING (SELECT 1 AS a) s ON m.a = s.a WHEN NOT MATCHED THEN INSERT VALUES (s.a)", "merge", t);
+  table("CREATE TABLE aemo.data_lakehouse.dbo.monthly (a INT)", "create table", t);
+  table("CREATE TABLE IF NOT EXISTS aemo.data_lakehouse.dbo.monthly AS SELECT 1 AS a", "create table", t);
+  table("ALTER TABLE aemo.data_lakehouse.dbo.monthly ADD COLUMN b INT", "alter", t);
+  table("WITH s AS (SELECT 1 AS a) INSERT INTO aemo.data_lakehouse.dbo.monthly SELECT * FROM s", "insert", t);
+  table('/* why */ INSERT INTO "ANZ Retail"."gold-1_lakehouse".sales."order" SELECT 1', "insert",
         { workspace: "ANZ Retail", item: "gold-1", schema: "sales", table: "order" });
-  const s = writeOf("CREATE SCHEMA lakehouse.aemo.data.raw");
+  const s = writeOf("CREATE SCHEMA aemo.data_lakehouse.raw");
   assert.deepEqual([s.what, s.target, s.ref], ["create schema", "schema", { workspace: "aemo", item: "data", schema: "raw" }]);
-  assert.deepEqual(writeOf("CREATE SCHEMA IF NOT EXISTS aemo.data.raw").ref, { workspace: "aemo", item: "data", schema: "raw" });
+  assert.deepEqual(writeOf("CREATE SCHEMA IF NOT EXISTS aemo.data_lakehouse.raw").ref, { workspace: "aemo", item: "data", schema: "raw" });
 });
 
 test("where the target is written is where it is named again", () => {
-  const sql = "INSERT INTO  aemo . data . monthly SELECT * FROM lakehouse.aemo.data.dbo.scada";
+  const sql = "INSERT INTO  aemo . data_lakehouse . dbo . monthly SELECT * FROM aemo.data_lakehouse.dbo.scada";
   const w = writeOf(sql);
-  assert.equal(sql.slice(w.start, w.end), "aemo . data . monthly");
-  const c = "COPY (SELECT 1) TO 'lakehouse.aemo.data/Files/out/x.parquet' (FORMAT parquet)";
+  assert.equal(sql.slice(w.start, w.end), "aemo . data_lakehouse . dbo . monthly");
+  const c = "COPY (SELECT 1) TO 'aemo.data_lakehouse/Files/out/x.parquet' (FORMAT parquet)";
   const f = writeOf(c);
   assert.equal(f.what, "copy");
   assert.equal(f.target, "file");
-  assert.equal(c.slice(f.start, f.end), "'lakehouse.aemo.data/Files/out/x.parquet'");
+  assert.equal(c.slice(f.start, f.end), "'aemo.data_lakehouse/Files/out/x.parquet'");
   assert.deepEqual([f.ref.workspace, f.ref.item, f.ref.path], ["aemo", "data", "/Files/out/x.parquet"]);
-  assert.equal(writeOf("COPY lakehouse.aemo.data.dbo.t TO 'lakehouse.aemo.data/Files/t.csv'").target, "file");
+  assert.equal(writeOf("COPY aemo.data_lakehouse.dbo.t TO 'aemo.data_lakehouse/Files/t.csv'").target, "file");
 });
 
 test("what isn't one of DuckDB's Iceberg writes to a lakehouse is refused, saying why", () => {
   const refused = [
-    ["DROP TABLE aemo.data.monthly", /DROP is blocked/],
-    ["drop schema lakehouse.aemo.data.raw cascade", /DROP is blocked/],
-    ["TRUNCATE aemo.data.monthly", /TRUNCATE isn't/],
-    ["CREATE OR REPLACE TABLE aemo.data.monthly AS SELECT 1", /CREATE OR REPLACE isn't/],
-    ["INSERT OR REPLACE INTO aemo.data.monthly SELECT 1", /INSERT OR REPLACE isn't/],
-    ["INSERT INTO aemo.data.monthly SELECT 1 ON CONFLICT DO NOTHING", /ON CONFLICT isn't/],
-    ["CREATE VIEW aemo.data.v AS SELECT 1", /CREATE VIEW isn't a write to a lakehouse/],
+    ["DROP TABLE aemo.data_lakehouse.dbo.monthly", /DROP is blocked/],
+    ["drop schema aemo.data_lakehouse.raw cascade", /DROP is blocked/],
+    ["TRUNCATE aemo.data_lakehouse.dbo.monthly", /TRUNCATE isn't/],
+    ["CREATE OR REPLACE TABLE aemo.data_lakehouse.dbo.monthly AS SELECT 1", /CREATE OR REPLACE isn't/],
+    ["INSERT OR REPLACE INTO aemo.data_lakehouse.dbo.monthly SELECT 1", /INSERT OR REPLACE isn't/],
+    ["INSERT INTO aemo.data_lakehouse.dbo.monthly SELECT 1 ON CONFLICT DO NOTHING", /ON CONFLICT isn't/],
+    ["CREATE VIEW aemo.data_lakehouse.dbo.v AS SELECT 1", /CREATE VIEW isn't a write to a lakehouse/],
     ["CREATE TEMP TABLE x AS SELECT 1", /temporary/],
     ["CREATE MACRO m() AS 1", /CREATE MACRO isn't/],
     ["CREATE SECRET s (TYPE azure)", /CREATE SECRET isn't/],
-    ["ALTER VIEW aemo.data.v RENAME TO w", /only ALTER TABLE/],
-    ["INSERT INTO warehouse.aemo.data.dbo.t SELECT 1", /lakehouse only/],
+    ["ALTER VIEW aemo.data_lakehouse.dbo.v RENAME TO w", /only ALTER TABLE/],
+    ["INSERT INTO aemo.data_warehouse.dbo.t SELECT 1", /lakehouse only/],
     ["INSERT INTO memory.main.t SELECT 1", /engine's own/],
+    ["INSERT INTO memory.aemo.data_lakehouse.dbo.t SELECT 1", /engine's own/],
     ["INSERT INTO lake.main.t_x SELECT 1", /engine's own/],
     ["INSERT INTO system_internal.main.ducklake_data_file SELECT 1", /engine's own/],
+    ["INSERT INTO aemo.data.monthly SELECT 1", /a write goes to a lakehouse table/],
+    ["INSERT INTO lakehouse.aemo.data.dbo.monthly SELECT 1", /the old way to name a table: it is aemo\.data_lakehouse\.dbo\.monthly now/],
+    ["CREATE SCHEMA lakehouse.aemo.data.raw", /the old way to name a schema: it is aemo\.data_lakehouse\.raw now/],
+    ["CREATE SCHEMA aemo.data_warehouse.raw", /in a lakehouse only/],
     ["INSERT INTO t SELECT 1", /a write goes to a lakehouse table/],
-    ["INSERT INTO lakehouse.aemo.data.monthly SELECT 1", /a write goes to a lakehouse table/],
+    ["INSERT INTO aemo.data_lakehouse.monthly SELECT 1", /a write goes to a lakehouse table/],
     ["CREATE SCHEMA raw", /a schema is made in a lakehouse/],
     ["COPY (SELECT 1) TO 'x.csv'", /COPY writes to a lakehouse's Files/],
     ["COPY (SELECT 1) TO 'C:/Users/me/x.csv'", /COPY writes to a lakehouse's Files/],
     ["COPY (SELECT 1) TO 'abfss://ws@onelake.dfs.fabric.microsoft.com/lh/Files/x.csv'", /COPY writes to a lakehouse's Files/],
-    ["COPY (SELECT 1) TO 'lakehouse.aemo.data/Tables/dbo/t/x.parquet'", /a table's name/],
-    ["COPY (SELECT 1) TO 'warehouse.aemo.data/Files/x.csv'", /COPY writes to a lakehouse's Files|only a lakehouse/],
-    ["COPY aemo.data.t FROM 'lakehouse.aemo.data/Files/x.csv'", /COPY … FROM loads a table/],
+    ["COPY (SELECT 1) TO 'aemo.data_lakehouse/Tables/dbo/t/x.parquet'", /a table's name/],
+    ["COPY (SELECT 1) TO 'aemo.data_warehouse/Files/x.csv'", /COPY writes to a lakehouse's Files|only a lakehouse/],
+    ["COPY aemo.data_lakehouse.dbo.t FROM 'aemo.data_lakehouse/Files/x.csv'", /COPY … FROM loads a table/],
     ["COPY FROM DATABASE a TO b", /COPY/],
     ["ATTACH ':memory:' AS x", /ATTACH is not a read, nor one of the writes/],
     ["DETACH lakehouse", /DETACH is not a read/],
@@ -453,7 +475,7 @@ test("what isn't one of DuckDB's Iceberg writes to a lakehouse is refused, sayin
     ["CALL ducklake_cleanup_old_files('lake')", /the lake is kept by the engine/],
     ["INSERT INTO ice_0123456789abcdef.dbo.t SELECT 1", /a write's catalog is the engine's own/],
     ["SELECT * FROM ice_0123456789abcdef.dbo.t", /a write's catalog is the engine's own/],
-    ["INSERT INTO aemo.data.t SELECT 1; DROP TABLE aemo.data.t", /one statement at a time/],
+    ["INSERT INTO aemo.data_lakehouse.dbo.t SELECT 1; DROP TABLE aemo.data_lakehouse.dbo.t", /one statement at a time/],
   ];
   for (const [sql, why] of refused) {
     assert.throws(() => (readsOnly(sql) ? null : writeOf(sql)), err => /^Not run: /.test(err.message) && why.test(err.message), sql);
@@ -464,7 +486,7 @@ test("a read is no write, and goes the read's way", () => {
   for (const sql of ["SELECT 1", "WITH x AS (SELECT 1) SELECT * FROM x", "EXPLAIN SELECT 1", "SHOW ALL TABLES"]) {
     assert.equal(readsOnly(sql), true, sql);
   }
-  for (const sql of ["INSERT INTO aemo.data.t SELECT 1", "COPY (SELECT 1) TO 'lakehouse.a.b/Files/x.csv'"]) {
+  for (const sql of ["INSERT INTO aemo.data_lakehouse.dbo.t SELECT 1", "COPY (SELECT 1) TO 'a.b_lakehouse/Files/x.csv'"]) {
     assert.equal(readsOnly(sql), false, sql);
   }
 });

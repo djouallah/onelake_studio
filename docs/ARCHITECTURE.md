@@ -18,9 +18,9 @@ queried with SQL.
   and engine as a person in the editor.
 
 ```sql
-SELECT * FROM lakehouse.aemo.data.dbo.dim_duid;
-SELECT dim_region.Region, AGG("Registered MW") FROM semanticmodel.aemo.nem GROUP BY ALL;
-SELECT * FROM 'lakehouse.aemo.data/Files/x.parquet';
+SELECT * FROM aemo.data_lakehouse.dbo.dim_duid;
+SELECT dim_region.Region, AGG("Registered MW") FROM aemo.nem_semanticmodel GROUP BY ALL;
+SELECT * FROM 'aemo.data_lakehouse/Files/x.parquet';
 SHOW ALL TABLES;
 ```
 
@@ -28,7 +28,7 @@ SHOW ALL TABLES;
 
 | Rule | What it means | Where it is held |
 | --- | --- | --- |
-| **One name per object** | A table has five parts and a model has three. A file is `'lakehouse.<workspace>.<item>/Files/<path>'`. | [NAMING.md](NAMING.md), [`core/names.js`](../core/names.js) |
+| **One name per object** | A table is `<workspace>.<item>_<kind>.<schema>.<table>`, or named by its GUIDs, and a model is `<workspace>.<model>_semanticmodel`. A file is `'<workspace>.<item>_lakehouse/Files/<path>'`. | [NAMING.md](NAMING.md), [`core/names.js`](../core/names.js) |
 | **SQL only** | A model is read with `AGG("measure")` in SQL. There is no DAX query. Excel's MDX is a second way in, and is compiled to that same SQL. An exported Fabric app on a semantic model runs the DAX that dax-sql makes of that SQL. | [`page/semantic.js`](../page/semantic.js), [`xmla/`](../xmla/) |
 | **Reads, and writes to a lakehouse only** | A statement reads, or writes to a lakehouse: its tables as Iceberg, through its Iceberg catalog, and its `Files/` by `COPY … TO` ([SQL writes](#sql-writes)). SQL writes nothing else, and DuckDB's own plan of each write is checked first. Export to Fabric (the app), Create Semantic Model and Upload Files… each ask first. | `assertReads`, `checkedRead`, `writeOf` and `checkPlan` in [`core/sql.js`](../core/sql.js), `runWrite` in [`core/engine/engine-host.js`](../core/engine/engine-host.js) |
 | **Cache first** | Every answer from OneLake or Fabric is kept on this machine and served from there first. It is trusted until using it fails, then read again once. | [`core/onelake/onelake.js`](../core/onelake/onelake.js), [`core/onelake/store.js`](../core/onelake/store.js) |
@@ -81,9 +81,9 @@ the pin: the extension carries no copy of its own.
 The SQL box and the command line follow these steps. Explore compiles its own view
 and joins at step 3.
 
-1. **Open the models it names.** `unopenedModels` finds each `semanticmodel.<ws>.<model>` not open yet.
+1. **Open the models it names.** `unopenedModels` finds each `<ws>.<model>_semanticmodel` not open yet.
    The host opens it from its local copy, reading it from Fabric the first time.
-2. **Compile.** `semantic.statement` has dax-sql rewrite a model query as plain SQL over five-part table
+2. **Compile.** `semantic.statement` has dax-sql rewrite a model query as plain SQL over the tables'
    names. A statement that names no model passes through unchanged.
 3. **Check.** `assertReads` in the host refuses more than one statement, and anything that isn't a read. A
    statement that isn't a read goes to [SQL writes](#sql-writes) instead.
@@ -93,7 +93,7 @@ and joins at step 3.
 4. **Prepare.** `withTables` in [`core/engine/engine-host.js`](../core/engine/engine-host.js) does three things:
    - A statement that reads the catalog (`SHOW ALL TABLES`, `information_schema`) gets the catalog
      synced from the cache first.
-   - `withTables` makes a view for each five-part name: `tableRefs` finds the names,
+   - `withTables` makes a view for each table's name: `tableRefs` finds the names,
      `resolve` ([`core/sqltables.js`](../core/sqltables.js)) looks them up in the cached listings. The view
      is over the table's lake table ([Reading OneLake tables](#reading-onelake-tables)).
    - `withFileUrls` gives DuckDB each file's `abfss://` URL in place of its name: `fileRefs` finds the names, and
@@ -176,8 +176,10 @@ The engine is **DuckDB 2.0 running natively in a process of its own** ([The serv
 - **What a statement waits for:** each tab defines every kept semantic model when it opens, which can
   ask Fabric for an item's name. Only a statement that can name a model waits for that: one with
   `semantic` in it.
-- **Catalogs:** one attached `:memory:` catalog per kind (`lakehouse`, `warehouse`, `sqldatabase`,
-  `mirroreddatabase`), and one for `semanticmodel`. The workspace, item and schema are nested schemas.
+- **Catalogs:** none of its own for names. A table's workspace, item and schema are nested schemas in the engine's
+  `memory` catalog, and a model is a view in its workspace's schema there. A workspace named like a catalog the engine
+  has (`lake`, an attached database file) is read by GUIDs, and a database file named like a workspace is attached as
+  `<name>_file`.
 - **Reading OneLake:** a Delta or Iceberg table through the lake ([Reading OneLake tables](#reading-onelake-tables)),
   `Files/` objects through DuckDB's `azure` extension. A Delta table is never read through Fabric's Iceberg conversion,
   whose column ids can disagree with the files'. Which it is, and where, comes from the cache, so the catalog is never
@@ -273,7 +275,7 @@ A table can have OneLake security: roles with rules on its rows or its columns. 
 files, and often its metadata and Delta log, to a user those rules restrict, so DuckDB can't read it directly. Such a
 table is read through OneLake's table read API instead ([`core/lake/tableread.js`](../core/lake/tableread.js)), on the user's own
 storage token. The API applies the user's rules and answers Arrow streams, which DuckDB reads with `read_arrow`, from
-the `nanoarrow` extension shipped in the vsix. The table keeps its five-part name, so a join, a model and Explore read
+the `nanoarrow` extension shipped in the vsix. The table keeps its SQL name, so a join, a model and Explore read
 it as they read any table.
 
 - **The direct read comes first.** A user who may read the files never uses the API.
@@ -503,7 +505,7 @@ Results show in the tab:
 
 **A Power BI semantic model is a Fabric item.** It is not in OneLake: its list and its definition come
 from the Fabric REST API ([`core/models/fabric.js`](../core/models/fabric.js)). In SQL it is a **semantic view**, named
-`semanticmodel.<workspace>.<model>` and listed by `SHOW ALL TABLES` with the rest of the catalog. Every
+`<workspace>.<model>_semanticmodel` and listed by `SHOW ALL TABLES` with the rest of the catalog. Every
 workspace has one model of a name.
 
 **Opening one**
@@ -542,24 +544,24 @@ selected, and only when a query actually reads it. A model's query can be a subq
 SQL of your own.
 
 ```sql
-SELECT dim_region.Region, AGG("Registered MW") AS mw FROM semanticmodel.aemo.nem GROUP BY ALL;
+SELECT dim_region.Region, AGG("Registered MW") AS mw FROM aemo.nem_semanticmodel GROUP BY ALL;
 ```
 
 **Describing one.** These statements are dax-sql's (`createViews()`). Only those that read are taken.
 
 ```sql
 SHOW SEMANTIC VIEWS;
-SHOW SEMANTIC DIMENSIONS IN semanticmodel.ws.sales [FOR METRIC m];
-SHOW SEMANTIC METRICS IN semanticmodel.ws.sales;
-DESCRIBE semanticmodel.ws.sales;
-SELECT * FROM (SHOW SEMANTIC METRICS IN semanticmodel.ws.sales) WHERE ...;
+SHOW SEMANTIC DIMENSIONS IN ws.sales_semanticmodel [FOR METRIC m];
+SHOW SEMANTIC METRICS IN ws.sales_semanticmodel;
+DESCRIBE ws.sales_semanticmodel;
+SELECT * FROM (SHOW SEMANTIC METRICS IN ws.sales_semanticmodel) WHERE ...;
 ```
 
 **A model file is a file.** A `.bim` under `Files/`, or an [Apache Ossie](https://github.com/apache/ossie)
 `.yaml` or `.yml` whose top level has `version:` and `datasets:`, opens in the model view in place of
 the SQL box. dax-sql's `formats/ossie.js` turns Ossie into the `.bim` it stands for, metrics in DAX or in
 Ossie's SQL alike, and from there the two are one. These files can be stored anywhere and have no model name. A model created from one, for
-Fabric or only for a Fabric app, must be named `semanticmodel.<workspace>.<model>`, and it overwrites
+Fabric or only for a Fabric app, must be named `<workspace>.<model>_semanticmodel`, and it overwrites
 whatever we have under that name. See [NAMING.md](NAMING.md#files).
 
 **`serve <file>`** reads a model file on this computer ([`core/models/models.js`](../core/models/models.js) `modelFile`). Its
@@ -577,7 +579,7 @@ A semantic model opens as **Explore** ([`page/explore/`](../page/explore/)), on 
 - **Model:** its tables as a star, dimensions in the middle and facts around them, with its
   relationships. Click a table for its columns, measures (with their DAX) and relationships. Double-click it, or its
   panel's Open table, for the OneLake table behind it in a tab of its own, as the tree opens it (`host.openTable`, by
-  its five-part name, placed in the tree's kept listings by `place` in [`core/sqltables.js`](../core/sqltables.js)).
+  its SQL name, placed in the tree's kept listings by `place` in [`core/sqltables.js`](../core/sqltables.js)).
 - **Visual:** drag columns onto Rows, Columns and Filters and measures onto Values, drawn as a pivot or
   a chart.
   - It is as tall as the tab, in flat panes: the fields; then the tools (swap, sort, totals, clear, Format) over the
@@ -712,11 +714,10 @@ A statement in the SQL box or the command line's `sql` can write to a lakehouse,
 | --- | --- |
 | `CREATE TABLE … (…)`, `CREATE TABLE … AS …`, `INSERT INTO`, `UPDATE`, `DELETE`, `MERGE INTO`, `ALTER TABLE` | A lakehouse table, as Iceberg |
 | `CREATE SCHEMA` | A lakehouse with schemas |
-| `COPY (…) TO 'lakehouse.<ws>.<lh>/Files/<path>'` | A file in its `Files/`: Parquet, CSV or JSON |
+| `COPY (…) TO '<ws>.<lh>_lakehouse/Files/<path>'` | A file in its `Files/`: Parquet, CSV or JSON |
 
-- **The names:** a table is `lakehouse.<ws>.<lh>.<schema>.<table>`, or `<ws>.<lh>.<table>` in its `dbo`, only as a
-  write's target ([NAMING.md](NAMING.md#a-writes-target)). A schema is `lakehouse.<ws>.<lh>.<schema>` or
-  `<ws>.<lh>.<schema>`.
+- **The names:** a table is `<ws>.<lh>_lakehouse.<schema>.<table>` ([NAMING.md](NAMING.md#a-writes-target)), and a
+  schema is `<ws>.<lh>_lakehouse.<schema>`.
 - **What is refused, before anything runs:** `DROP` of anything, for now; what DuckDB's Iceberg writer doesn't have
   (`CREATE OR REPLACE`, `INSERT OR REPLACE`, `ON CONFLICT`, `TRUNCATE`, `COPY … FROM`); a view, a macro, a secret or any
   other `CREATE`; a temporary table; a table that is Delta in OneLake, whose Iceberg face is read only; a warehouse, a
@@ -1024,7 +1025,7 @@ local pipe or socket ([`cli/bridge.js`](../cli/bridge.js)). The extension answer
 - **Not here:** `export`, which asks for an OK in VS Code. Exit code 3 says so.
 
 **`serve <model.yaml|.bim>`** is always that, as it stays running: Excel's endpoint ([Open in Excel](#open-in-excel)) on a
-model file, with no VS Code. The model takes the name `semanticmodel.<workspace>.<model>`, from where its tables are and the
+model file, with no VS Code. The model takes the name `<workspace>.<model>_semanticmodel`, from where its tables are and the
 file's name, or `--workspace` and `--name`, as [NAMING.md](NAMING.md#files) says of a model made from a file. Excel's
 PivotTables are its only client. **`--open`** opens a new workbook on it.
 

@@ -13,7 +13,7 @@ export const WRITES = [
   `SELECT $é$'$é$ AS a ; ${COPY} --'`,              // a tag can hold more than ASCII
   `SELECT 1 -- c\r; ${COPY}`,                       // a carriage return ends a line comment
   `SELECT $$'$$ AS a ; ${COPY} --'`,           // a Unicode space is a space, so a $$ can open after one
-  `SELECT  $$'' pivot '$$; CREATE OR REPLACE VIEW lakehouse.a.b.c.t AS SELECT 'POISONED' v; --'`,
+  `SELECT  $$'' pivot '$$; CREATE OR REPLACE VIEW a.b_lakehouse.c.t AS SELECT 'POISONED' v; --'`,
   "WITH values AS (SELECT 1 a) DELETE FROM t WHERE a IN (SELECT a FROM (PIVOT (SELECT 2 a, 2 b) ON a USING sum(b) GROUP BY a))",
 ];
 

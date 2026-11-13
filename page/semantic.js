@@ -5,15 +5,15 @@
 // its createViews() is the one implementation of
 //
 //   SHOW SEMANTIC VIEWS | SHOW SEMANTIC DIMENSIONS IN … [FOR METRIC m] | SHOW SEMANTIC METRICS IN …
-//   DESCRIBE semanticmodel.ws.sales
-//   SELECT dim.Region, AGG("Sales") FROM semanticmodel.ws.sales GROUP BY ALL    (AGG(m) is measure m)
+//   DESCRIBE ws.sales_semanticmodel
+//   SELECT dim.Region, AGG("Sales") FROM ws.sales_semanticmodel GROUP BY ALL    (AGG(m) is measure m)
 //
 // and nothing here re-implements any of it. A model is TMSL (a .bim) or an Apache Ossie model
 // whose metrics are DAX (a .yaml or .yml): dax-sql's formats/ossie.js turns the latter into the
 // .bim it stands for, and from there the two are one. What is this extension's: reading a Direct Lake
 // model's tables from OneLake — each table's expression names a workspace and an item by GUID,
 // the host names them (setTableNamer) and the compiled SQL reads each by its SQL name,
-// lakehouse.ws.item.schema.table, the one any query writes — and where views are kept
+// ws.item_lakehouse.schema.table, the one any query writes — and where views are kept
 // (the extension host, per account: core/models/semviews.js). This module is shared by the panel and
 // the host's command line (cli/agent.js); `modules` lets the host hand in the compiler.
 // =============================================================================
@@ -23,11 +23,20 @@ import { EXPLORE_CASTS, withSource } from "./explore/query.js";
 
 const lc = s => String(s).toLowerCase();
 
-// The catalog every semantic model is named in, as lakehouse tables are in `lakehouse`: a
-// model's SQL name is semanticmodel.<workspace>.<model>, and nothing shorter.
-export const MODEL_CATALOG = "semanticmodel";
-export const modelSqlName = (workspace, name) => [MODEL_CATALOG, workspace, name].map(sqlPart).join(".");
-const fullName = v => modelSqlName(v.schema, v.name);
+// A model's SQL name is <workspace>.<model>_semanticmodel, its kind after its name as an item's
+// is, and nothing shorter (core/names.js modelSqlName). The engine lists it in its own catalog,
+// memory, where dax-sql keeps the view: dax-sql reaches a view by db.schema.name alone, so a
+// statement's model names are given that catalog before dax-sql reads them (withCatalog).
+export const MODEL_KIND = "semanticmodel";
+const MODEL_DB = "memory";
+const SUFFIX = `_${MODEL_KIND}`;
+const viewName = model => `${model}${SUFFIX}`;
+// The model a view's name is: "nem_semanticmodel" -> "nem", null for one that is not a model's.
+const modelOf = view => (lc(view).endsWith(SUFFIX) && view.length > SUFFIX.length ? String(view).slice(0, -SUFFIX.length) : null);
+export const modelSqlName = (workspace, name) => [workspace, viewName(name)].map(sqlPart).join(".");
+// A model's view, as hasView and the like take it.
+export const modelKey = (workspace, model) => [MODEL_DB, workspace, viewName(model)];
+const fullName = v => [v.schema, v.name].map(sqlPart).join(".");
 
 let modulesP = null;
 function compilerModules() {
@@ -192,25 +201,25 @@ export function bimOf(path, text, mods) {
   catch (e) { throw new Error(`${basename(path)} is not a TMSL model: ${e.message}`); }
 }
 
-// Where a table's SQL name says it lives: its first three parts (lakehouse.ws.item), as written.
+// Where a table's SQL name says it lives: its first two parts (ws.item_lakehouse), as written.
 function itemOfIdent(ident) {
   let dots = 0, q = false;
   for (let i = 0; i < ident.length; i++) {
     if (ident[i] === '"') q = !q;
-    else if (ident[i] === "." && !q && ++dots === 3) return ident.slice(0, i);
+    else if (ident[i] === "." && !q && ++dots === 2) return ident.slice(0, i);
   }
   return ident;
 }
 
 /**
- * A semantic view of a model file's text (a .bim, or an Ossie .yaml), under `name` in
- * `schema`, the model's workspace: SQL names it semanticmodel.ws.model. `mode`: 'create',
+ * A semantic view of a model file's text (a .bim, or an Ossie .yaml), of the model `name` in
+ * `schema`, the model's workspace: SQL names it ws.model_semanticmodel. `mode`: 'create',
  * 'replace' or 'if_not_exists' (dax-sql's). Returns what the model view draws:
- * { name (its SQL name), view, schema, file, sample, directLake, bim, exploreCompiler, lakeTables }:
+ * { name (its SQL name), view (the model's name), schema, file, sample, directLake, bim, exploreCompiler, lakeTables }:
  * `lakeTables`, each Direct Lake table's SQL name by its model table's name, lower-cased.
  */
 export async function defineView(name, path, text, mode = "replace", modules = null, schema = null) {
-  if (!schema) throw new Error(`a semantic model is named ${MODEL_CATALOG}.<workspace>.<model>: ${name} has no workspace`);
+  if (!schema) throw new Error(`a semantic model is named <workspace>.<model>${SUFFIX}: ${name} has no workspace`);
   const mods = await ready(modules);
   const { createCompiler, tmslToModel } = mods;
   const bim = bimOf(path, text, mods);
@@ -221,23 +230,23 @@ export async function defineView(name, path, text, mode = "replace", modules = n
   const tableSource = t => {
     const l = lake.get(lc(t.name));
     if (l) return l.ident;
-    throw new Error(`${t.name} is not a OneLake table, so it has no five-part name to read`);
+    throw new Error(`${t.name} is not a OneLake table, so it has no workspace.item_lakehouse.schema.table name to read`);
   };
   // The items its tables are read from, by their SQL names — a model may read several.
   const where = [...new Set([...lake.values()].map(l => itemOfIdent(l.ident)))];
-  const at = { path, mode, db: MODEL_CATALOG, schema, tableSource, tablesFrom: where.join(", ") || null };
-  const done = views.define(name, tmslToModel(bim), at);
-  const v = views.get([MODEL_CATALOG, schema, name]);
+  const at = { path, mode, db: MODEL_DB, schema, tableSource, tablesFrom: where.join(", ") || null };
+  const done = views.define(viewName(name), tmslToModel(bim), at);
+  const v = views.get(modelKey(schema, name));
   if (done === "created") lakes.set(lc(v.sqlName), lake);
   // Explore's (explore/query.js): its rows go straight to the page, cast as EXPLORE_CASTS says.
   const exploreCompiler = createCompiler(tmslToModel(bim), { tableSource, castOutput: EXPLORE_CASTS });
-  return { name: fullName(v), view: v.name, schema, file: basename(path), sample: sampleQuery(v),
+  return { name: fullName(v), view: modelOf(v.name), schema, file: basename(path), sample: sampleQuery(v),
            directLake: lake.size, bim, exploreCompiler, done,
            lakeTables: Object.fromEntries([...lake].map(([table, l]) => [table, l.ident])) };
 }
 
 // A model opened from a file, in its workspace: under the semantic model's own name when it is
-// one (the tree's click), else the file's — semanticmodel.ws.nem for nem.bim or nem.yaml.
+// one (the tree's click), else the file's — ws.nem_semanticmodel for nem.bim or nem.yaml.
 export const registerModel = (fileName, text, modules = null, schema = null, name = null) =>
   defineView(name || modelName(fileName), fileName, text, "replace", modules, schema);
 
@@ -325,45 +334,65 @@ export async function tableModel(table, sqlName, columns, modules = null) {
   return { name: modelName(table), tmsl: bim.model, compiler, plainSql };
 }
 
-// The semantic models a statement names (semanticmodel.ws.model) that are not views here yet,
-// as [{ workspace, model }] as written: the host opens each before the statement runs.
-// Comments and string literals are skipped.
+// The semantic models a statement names (ws.model_semanticmodel, or memory.ws.model_semanticmodel)
+// that are not views here yet, as [{ workspace, model }] as written: the host opens each before
+// the statement runs. Comments and string literals are skipped.
 const PART_RE = '(?:"(?:[^"]|"")*"|[A-Za-z_\\u00C0-\\uFFFF][A-Za-z0-9_$\\u00C0-\\uFFFF]*)';
 const DOT_RE = "\\s*\\.\\s*";
-const MODEL_REF = new RegExp(`--[^\\n]*|/\\*[\\s\\S]*?\\*/|'(?:[^']|'')*'|` +
-  `(${PART_RE})${DOT_RE}(${PART_RE})${DOT_RE}(${PART_RE})`, "g");
+// A whole dotted name, as group 1, or a comment or a string, which is skipped.
+const DOTTED = new RegExp(`--[^\\n]*|/\\*[\\s\\S]*?\\*/|'(?:[^']|'')*'|` +
+  `(?<![.\\w$"\\u00C0-\\uFFFF])(${PART_RE}(?:${DOT_RE}${PART_RE})*)(?!${DOT_RE}${PART_RE})`, "g");
+const unq = x => (x[0] === '"' ? x.slice(1, -1).replace(/""/g, '"') : x);
+const partsOf = name => [...name.matchAll(new RegExp(PART_RE, "g"))].map(m => unq(m[0]));
+// A dotted name's model, { workspace, model, qualified }, or null when it names none.
+function modelRef(parts) {
+  const p = parts.length === 3 && lc(parts[0]) === MODEL_DB ? parts.slice(1) : parts;
+  const model = p.length === 2 && modelOf(p[1]);
+  return model ? { workspace: p[0], model, qualified: p !== parts } : null;
+}
 export function unopenedModels(sql) {
   const s = String(sql);
-  if (!lc(s).includes(MODEL_CATALOG) || VIEW_DDL.test(s)) return [];   // CREATE / DROP: refused, not opened
-  const unq = x => (x[0] === '"' ? x.slice(1, -1).replace(/""/g, '"') : x);
+  if (!lc(s).includes(SUFFIX) || VIEW_DDL.test(s)) return [];   // CREATE / DROP: refused, not opened
   const out = [];
-  for (const m of s.matchAll(MODEL_REF)) {
-    if (!m[1] || lc(unq(m[1])) !== MODEL_CATALOG) continue;
-    const ref = { workspace: unq(m[2]), model: unq(m[3]) };
-    if (hasView([MODEL_CATALOG, ref.workspace, ref.model])) continue;
-    if (!out.some(r => lc(r.workspace) === lc(ref.workspace) && lc(r.model) === lc(ref.model))) out.push(ref);
+  for (const m of s.matchAll(DOTTED)) {
+    const ref = m[1] && modelRef(partsOf(m[1]));
+    if (!ref || hasView(modelKey(ref.workspace, ref.model))) continue;
+    if (!out.some(r => lc(r.workspace) === lc(ref.workspace) && lc(r.model) === lc(ref.model))) {
+      out.push({ workspace: ref.workspace, model: ref.model });
+    }
   }
   return out;
 }
 
+// The statement with each model it names in the catalog dax-sql keeps it in: ws.nem_semanticmodel
+// is memory.ws.nem_semanticmodel to dax-sql, which reaches a view by its whole db.schema.name.
+function withCatalog(sql) {
+  const s = String(sql);
+  if (!lc(s).includes(SUFFIX)) return s;
+  return s.replace(DOTTED, (all, name) => {
+    const ref = name && modelRef(partsOf(name));
+    return ref && !ref.qualified ? `${MODEL_DB}.${name}` : all;
+  });
+}
+
 // A model's SQL name read back: { workspace, model }, or null when it is not one.
-const WHOLE_NAME = new RegExp(`^(${PART_RE})${DOT_RE}(${PART_RE})${DOT_RE}(${PART_RE})$`);
 export function modelNameParts(sqlName) {
-  const m = WHOLE_NAME.exec(String(sqlName).trim());
-  const unq = x => (x[0] === '"' ? x.slice(1, -1).replace(/""/g, '"') : x);
-  return m && lc(unq(m[1])) === MODEL_CATALOG ? { workspace: unq(m[2]), model: unq(m[3]) } : null;
+  const s = String(sqlName).trim();
+  const whole = new RegExp(`^${PART_RE}(?:${DOT_RE}${PART_RE})*$`);
+  const ref = whole.test(s) && modelRef(partsOf(s));
+  return ref ? { workspace: ref.workspace, model: ref.model } : null;
 }
 
 export function dropView(name) {
   const v = views && views.get(name);
   if (!v) return;
-  views.drop([MODEL_CATALOG, v.schema, v.name], { ifExists: true });
+  views.drop([v.db, v.schema, v.name], { ifExists: true });
   lakes.delete(lc(v.sqlName));
 }
 
 export const hasView = name => !!(views && views.get(name));
 
-// Whether a statement can be about a semantic model: one is named semanticmodel.ws.model, and
+// Whether a statement can be about a semantic model: one is named ws.model_semanticmodel, and
 // described by SHOW SEMANTIC …. Any other statement has no use for the views, loaded or not. A
 // false yes costs only a wait.
 export function aboutModels(sql) {
@@ -380,17 +409,22 @@ function showViewsSql() {
   const o = rows.length
     ? `(VALUES ${rows.join(", ")}) o(schema_name, view_name, path, tables_from)`
     : "(SELECT NULL::VARCHAR AS schema_name, NULL::VARCHAR AS view_name, NULL::VARCHAR AS path, NULL::VARCHAR AS tables_from WHERE false) o";
+  // A model is a view named <model>_semanticmodel in a workspace's schema, which is a schema of the engine's
+  // catalog directly: a table of that name is in an item's schema, under its workspace.
   return `SELECT v.database_name, v.schema_name, v.view_name, o.path, o.tables_from
-FROM duckdb_views() v LEFT JOIN ${o}
+FROM duckdb_views() v JOIN duckdb_schemas() s ON s.database_oid = v.database_oid AND s.oid = v.schema_oid
+LEFT JOIN ${o}
   ON lower(o.schema_name) = lower(v.schema_name) AND lower(o.view_name) = lower(v.view_name)
-WHERE v.database_name = '${MODEL_CATALOG}' ORDER BY v.schema_name, v.view_name`;
+WHERE v.database_name = '${MODEL_DB}' AND s.parent_schema_oid IS NULL AND lower(v.schema_name) <> 'main'
+  AND lower(v.view_name) LIKE '%\\${SUFFIX}' ESCAPE '\\' AND length(v.view_name) > ${SUFFIX.length}
+ORDER BY v.schema_name, v.view_name`;
 }
 
 // dax-sql's CREATE and DROP SEMANTIC VIEW, which this extension does not take: a model is
 // there because Fabric has it (or a lakehouse's Files/ holds it), never because SQL made it.
 const VIEW_DDL = /^\s*(create(\s+or\s+replace)?|drop)\s+semantic\s+view\b/i;
 const NO_DDL ="Not run: a semantic model is not made or dropped " +
-  `in SQL — open one in the tree, or name it ${MODEL_CATALOG}.<workspace>.<model> in a query.`;
+  `in SQL — open one in the tree, or name it <workspace>.<model>${SUFFIX} in a query.`;
 
 /**
  * What a statement asks, in dax-sql's words (createViews().rewrite): null when it names no
@@ -406,7 +440,7 @@ export async function statement(sql, modules = null) {
     if (!/\bsemantic\b/i.test(String(sql))) return null;
     await ready(modules);
   }
-  const out = views.rewrite(sql);
+  const out = views.rewrite(withCatalog(sql));
   if (!out) return null;
   if (out.length !== 1) throw new Error("Run one statement at a time (no ';').");
   const [s] = out;

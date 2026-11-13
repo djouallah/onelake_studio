@@ -21,16 +21,16 @@ const VENDOR = join(root, "vendor");
 const DB_FILE = "data.Lakehouse/Files/shop.sqlite";
 // .sql files under Files/, one at its top and two in a folder: each opens in the SQL box.
 const SQL_FILES = {
-  "data.Lakehouse/Files/orders_count.sql": "select count(*) as orders from lakehouse.e2e.data.dbo.orders\n",
-  "data.Lakehouse/Files/queries/first_orders.sql": "select * from lakehouse.e2e.data.dbo.orders order by id limit 3\n",
-  "data.Lakehouse/Files/queries/orders_by_id.sql": "select id, count(*) as n from lakehouse.e2e.data.dbo.orders group by all order by id\n",
+  "data.Lakehouse/Files/orders_count.sql": "select count(*) as orders from e2e.data_lakehouse.dbo.orders\n",
+  "data.Lakehouse/Files/queries/first_orders.sql": "select * from e2e.data_lakehouse.dbo.orders order by id limit 3\n",
+  "data.Lakehouse/Files/queries/orders_by_id.sql": "select id, count(*) as n from e2e.data_lakehouse.dbo.orders group by all order by id\n",
 };
 const sqlFileBytes = Object.fromEntries(Object.entries(SQL_FILES).map(([p, s]) => [p, Buffer.from(s)]));
 const fileEntry = path => ({ name: path.split("/").pop(), path, isDir: false, bytes: sqlFileBytes[path].length, version: "v1" });
 // More saved queries beside `kept`, as files in the account's queries folder.
 const LOCAL_QUERIES = {
-  "orders sample": "select * from lakehouse.e2e.data.dbo.orders limit 10\n",
-  "total by color": `SELECT Product.Color, AGG("Total") FROM semanticmodel.e2e.shop GROUP BY ALL\n`,
+  "orders sample": "select * from e2e.data_lakehouse.dbo.orders limit 10\n",
+  "total by color": `SELECT Product.Color, AGG("Total") FROM e2e.shop_semanticmodel GROUP BY ALL\n`,
 };
 async function sqliteBytes() {
   const file = join(await mkdtemp(join(tmpdir(), "onelake-e2e-db-")), "shop.sqlite");
@@ -47,9 +47,9 @@ async function sqliteBytes() {
 export const EXTENSION_ID = "djouallah.onelake-studio";
 export const ACCOUNT = { key: "e2eaccount", queries: "e2e@contoso.com", tenant: "" };
 export const WORKSPACE = "e2e";
-export const TABLE = "lakehouse.e2e.data.dbo.orders";
-export const NEVER_READ = "lakehouse.e2e.data.dbo.neverread";
-export const MODEL = "semanticmodel.e2e.shop";
+export const TABLE = "e2e.data_lakehouse.dbo.orders";
+export const NEVER_READ = "e2e.data_lakehouse.dbo.neverread";
+export const MODEL = "e2e.shop_semanticmodel";
 export const MODEL_QUERY = `SELECT Product.Color, AGG("Total") FROM ${MODEL} GROUP BY ALL`;
 export const SAVED_QUERY = "kept";
 // Where the extension keeps the zip a model's Report tab draws (fabric_app/export/exportflow.js reportKey).
@@ -67,7 +67,7 @@ const metadata = () => ({
   snapshots: [{ "snapshot-id": 1, "timestamp-ms": 1, summary: { "total-records": "7", "total-data-files": "1" } }],
 });
 
-// Direct Lake, so a query of it reads its tables by their five-part names.
+// Direct Lake, so a query of it reads its tables by their SQL names.
 const partition = entityName => [{
   name: entityName, mode: "directLake",
   source: { type: "entity", entityName, schemaName: "dbo", expressionSource: "DatabaseQuery" },

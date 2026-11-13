@@ -12,9 +12,9 @@ a unique name, queried with SQL. Read only, cache first, and it works offline.
 
 - **Browse OneLake.** Workspaces, lakehouses, warehouses, SQL and mirrored databases, their tables
   and files, in one tree. Pin workspaces, or filter to one type, such as semantic models.
-- **Query with SQL.** Every table has one name, `lakehouse.workspace.item.schema.table`, and every
-  semantic model is `semanticmodel.workspace.model`. The type comes first because a lakehouse and
-  a warehouse can share a name. Join across items and workspaces;
+- **Query with SQL.** Every table has one name, `workspace.item_lakehouse.schema.table`, and every
+  semantic model is `workspace.model_semanticmodel`. The item's type is in its name because a lakehouse
+  and a warehouse can share a name. A table can also be named by its workspace's and item's GUIDs. Join across items and workspaces;
   `SHOW ALL TABLES` lists every one it knows about. Write it in a tab's SQL box; Ctrl+Enter runs
   the statement under the cursor, and the results show in that tab. Whatever you open gets a tab of its own.
 - **Look at a table in a click.** Columns, row count, first rows, and Delta or Iceberg stats and

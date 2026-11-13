@@ -15,7 +15,7 @@ const { discover, discoverServer } = require("../../xmla/rowsets.js");
 const { createHandler, PING } = require("../../xmla/server.js");
 const { connectionString, connectionValue, openInExcel, SCRIPT } = require("../../xmla/excel.js");
 
-const CATALOG = "semanticmodel.demo.sales";
+const CATALOG = "demo.sales_semanticmodel";
 const col = (name, dataType, extra = {}) => ({ name, dataType, ...extra });
 const BIM = { model: { tables: [
   { name: "Sales", columns: [col("amount", "double", { isHidden: true })], measures: [
@@ -489,13 +489,13 @@ test("through the port: a model's cube and a statement's answer", async () => {
 // Opening Excel
 // -----------------------------------------------------------------------------
 test("the connection string: plain XML, no prompt, and a name with its quotes", () => {
-  assert.equal(connectionValue("semanticmodel.ws.model"), "semanticmodel.ws.model");
-  assert.equal(connectionValue('semanticmodel."My WS".model'), `'semanticmodel."My WS".model'`);
+  assert.equal(connectionValue("ws.model_semanticmodel"), "ws.model_semanticmodel");
+  assert.equal(connectionValue('"My WS".model_semanticmodel'), `'"My WS".model_semanticmodel'`);
   assert.equal(connectionValue("a b"), '"a b"');
   assert.equal(connectionValue(`a"b'c`), '"a""b\'c"');
   assert.equal(connectionValue("a;Provider=evil"), '"a;Provider=evil"');
-  const s = connectionString({ port: 50000, token: "t", catalog: "semanticmodel.ws.m" });
-  assert.equal(s, "OLEDB;Provider=MSOLAP;Data Source=http://127.0.0.1:50000/t/;Initial Catalog=semanticmodel.ws.m;Protocol Format=XML;Transport Compression=None;Prompt=NoPrompt");
+  const s = connectionString({ port: 50000, token: "t", catalog: "ws.m_semanticmodel" });
+  assert.equal(s, "OLEDB;Provider=MSOLAP;Data Source=http://127.0.0.1:50000/t/;Initial Catalog=ws.m_semanticmodel;Protocol Format=XML;Transport Compression=None;Prompt=NoPrompt");
 });
 
 test("no model's name is ever part of the script: it comes through the environment", async () => {
@@ -509,7 +509,7 @@ test("no model's name is ever part of the script: it comes through the environme
     return child;
   };
   const evil = `x"; Remove-Item C:\\ -Recurse; "`;
-  await openInExcel({ port: 1, token: "t", catalog: `semanticmodel.ws."${evil}"`, name: evil }, run);
+  await openInExcel({ port: 1, token: "t", catalog: `ws."${evil}_semanticmodel"`, name: evil }, run);
   const { cmd, args, opts } = started[0];
   assert.equal(cmd, "powershell.exe");
   assert.ok(args.includes("-EncodedCommand"));

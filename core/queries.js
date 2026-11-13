@@ -3,7 +3,7 @@
 // queries.js — saved queries, on disk
 // =============================================================================
 // Saved queries: one .sql file each in ~/OneLakeStudio/queries/<account>/, beside the
-// downloaded models. They name their tables lakehouse.workspace.item.schema.table — names
+// downloaded models. They name their tables workspace.item_lakehouse.schema.table — names
 // that mean something in one tenant only — so each account (and tenant, when the
 // onelakeStudio.tenantId setting picks one) has its own, and signing in elsewhere shows
 // that account's. The tree lists them, and each opens in the panel's SQL box.

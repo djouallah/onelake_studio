@@ -37,10 +37,10 @@ const USAGE = {
                                         rows, no V-Order, small row groups), from what this machine
                                         holds: no OneLake request; a table no query read is "not read"`,
   model: "  model <ws> <model>                  relationships, columns, measures with their DAX",
-  sql: `  sql "<sql>"                         SQL that reads, or writes to a lakehouse; a table is kind.workspace.item.schema.table
-                                        (lakehouse.aemo.data.dbo.dim_duid); a file is
-                                        'lakehouse.aemo.data/Files/x.parquet'; a downloaded model is a
-                                        table: SELECT d.col, AGG("measure") FROM semanticmodel.ws.model GROUP BY ALL
+  sql: `  sql "<sql>"                         SQL that reads, or writes to a lakehouse; a table is workspace.item_kind.schema.table
+                                        (aemo.data_lakehouse.dbo.dim_duid); a file is
+                                        'aemo.data_lakehouse/Files/x.parquet'; a downloaded model is a
+                                        table: SELECT d.col, AGG("measure") FROM ws.model_semanticmodel GROUP BY ALL
   sql -                               the SQL from stdin: no shell quoting to get wrong
     --show-sql                       print the SQL a model query compiles to`,
   export: `  export <ws> <model>                 Export to Fabric, as Explore's button does it: the app
@@ -67,7 +67,7 @@ const USAGE = {
   serve: `  serve <model.yaml|.bim>             an OLAP server on a model file, for Excel's PivotTables, until
                                         stopped. Prints how to connect; a refresh sees an edit to the file
     --workspace <ws>                  its workspace, if it can't be read from where its tables are
-    --name <model>                    its name, if not the file's: semanticmodel.<ws>.<model>
+    --name <model>                    its name, if not the file's: <ws>.<model>_semanticmodel
     --open                            and a new workbook on it, in Excel`,
 };
 

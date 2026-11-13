@@ -69,7 +69,7 @@ test("a statement offline is resolved to the older snapshot", async c => {
   await w.moves(2);
   w.offline = true;
   const sql = createSqlTables({ onelake: w.onelake, paths: async () => ({}), offlineReason: () => "no internet" });
-  const r = await sql.resolve({ kind: "lakehouse", workspace: "ws", item: "gold", schema: "dbo", table: "orders", name: "lakehouse.ws.gold.dbo.orders" });
+  const r = await sql.resolve({ kind: "lakehouse", workspace: "ws", item: "gold", schema: "dbo", table: "orders", name: "ws.gold_lakehouse.dbo.orders" });
   assert.equal(r.metadataLocation, at(1));
 });
 

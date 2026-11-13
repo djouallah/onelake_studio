@@ -39,7 +39,7 @@ const node = (kind, label, extra) => ({ kind, label, ...extra });
 // The nodes a listing is behind.
 const LISTS = new Set(['workspace', 'tables', 'dir', 'models', 'apps']);
 
-// A table node's SQL name (lakehouse.ws.item.schema.table), or null for an item SQL cannot name.
+// A table node's SQL name (ws.item_lakehouse.schema.table), or null for an item SQL cannot name.
 const sqlNameOrNull = n => { try { return sqlNameOf(n, n); } catch (_) { return null; } };
 
 class LakehouseTree {
@@ -260,7 +260,7 @@ class LakehouseTree {
       case 'workspace':
         item.iconPath = new vscode.ThemeIcon(n.pinned ? 'star-full' : 'folder');
         break;
-      // Saved queries: .sql files, each naming its tables Kind.workspace.item.schema.table, so
+      // Saved queries: .sql files, each naming its tables workspace.item_kind.schema.table, so
       // one runs whatever the panel has open. A click opens it in the panel's SQL box.
       case 'queries':
         item.iconPath = new vscode.ThemeIcon('bookmark');

@@ -14,6 +14,8 @@
 // pass 2^53 are REAL: node:sqlite refuses to read an integer that large.
 // =============================================================================
 
+const { modelSqlName } = require('../names');
+
 const SCHEMA = `
   CREATE TABLE IF NOT EXISTS catalog_state (
     id INTEGER PRIMARY KEY CHECK (id = 1), cleared TEXT, imported INTEGER NOT NULL DEFAULT 0,
@@ -518,6 +520,16 @@ function createCatalogTables({ statement }) {
     },
     /** The semantic models kept offline (modeldata.js): { catalog (its SQL name), model }. */
     offlineModels() {
+      // One kept before models were named ws.model_semanticmodel is renamed: semanticmodel.ws.model.
+      const OLD = /^semanticmodel\.("(?:[^"]|"")*"|[^."]+)\.("(?:[^"]|"")*"|[^."]+)$/i;
+      for (const r of all('SELECT key, catalog, model, ts FROM model_offline')) {
+        const m = OLD.exec(r.catalog);
+        if (!m) continue;
+        const unq = p => (p[0] === '"' ? p.slice(1, -1).replace(/""/g, '"') : p);
+        const now = modelSqlName(unq(m[1]), unq(m[2]));
+        run('DELETE FROM model_offline WHERE key = ?', r.key);
+        run('INSERT OR REPLACE INTO model_offline VALUES (?, ?, ?, ?)', now.toLowerCase(), now, r.model, r.ts);
+      }
       return all('SELECT catalog, model FROM model_offline ORDER BY ts').map(r => ({ catalog: r.catalog, model: r.model }));
     },
     setOffline(catalog, model, on, at) {

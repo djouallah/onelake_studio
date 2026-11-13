@@ -115,5 +115,5 @@ test("a table's tooltip says how it is used, and is asked for when the pointer r
   assert.doesNotMatch(await said(), /over the/);
   reads = 0;
   assert.doesNotMatch(await said(), /Read whole|times in the last/);
-  assert.match(await said(), /lakehouse\.w\.i\.dbo\.t/);
+  assert.match(await said(), /w\.i_lakehouse\.dbo\.t/);
 });

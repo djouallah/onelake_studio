@@ -383,14 +383,21 @@ export function createEngine({
     }
 
     try {
-      // READ_ONLY is not optional: the file lives in OneLake and the app never writes.
+      // READ_ONLY is not optional: the file lives in OneLake and the app never writes. The engine
+      // answers the name it attached it as, which differs when the alias is a workspace's name.
+      let as;
       if (sqlite) {
         statusFor(gen)(`Copying ${file.name} (${fmtBytes(file.bytes)}) — SQLite is read from a local copy…`);
         const local = await callHost("onelake.localCopy", [{ workspace: lh.workspace, path: file.path }]);
         check();
-        await callHost("attachFile", [{ path: local, alias, sqlite: true }]);
+        as = await callHost("attachFile", [{ path: local, alias, sqlite: true }]);
       } else {
-        await callHost("attachFile", [{ path: url, alias }]);
+        as = await callHost("attachFile", [{ path: url, alias }]);
+      }
+      if (typeof as === "string" && as !== alias) {
+        viewNames.delete(alias);
+        viewNames.set(as, key);
+        alias = as;
       }
       res.attachments.push(alias);
       check();
@@ -672,7 +679,7 @@ export function createEngine({
     callHost("host.saveFile", [{ name: file.name, workspace: lh.workspace, path: file.path }]);
 
   // Semantic models kept by the host (core/models/semviews.js): every one opened here, with its text,
-  // and one just opened kept — `schema` is its workspace: semanticmodel.ws.name.
+  // and one just opened kept — `schema` is its workspace: ws.name_semanticmodel.
   const semanticViews = () => callHost("semantic.views", [{}]);
   const semanticKeep = (name, path, schema) => callHost("semantic.keep", [{ name, path, schema }]);
   // A semantic model a query names that no view has yet: the host opens it (its local copy,

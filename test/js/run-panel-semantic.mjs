@@ -28,7 +28,7 @@ const NONCE = "panelsemantic";
 const CHROME = process.env.CHROME_PATH ||
   (process.platform === "win32" ? "C:/Program Files/Google/Chrome/Application/chrome.exe" : "/usr/bin/google-chrome");
 
-// Direct Lake: a query reads its tables by their five-part names (ROWS below).
+// Direct Lake: a query reads its tables by their SQL names (ROWS below).
 const partition = entityName => [{
   name: entityName, mode: "directLake",
   source: { type: "entity", entityName, schemaName: "dbo", expressionSource: "DatabaseQuery" },

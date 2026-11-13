@@ -90,8 +90,8 @@ test("free from the cache: table sizes, more table fields, files, find, model co
   try {
     let r = await agent.run({ args: ["ls", "ws", "data"] });
     assert.equal(r.code, 0, r.err);
-    assert.match(r.out, /\| customers \| lakehouse\.ws\.data\.dbo\.customers \| 1,200 \| 2\.5 MB \| 3 \| 2026-10-01 08:30 \|/);
-    assert.match(r.out, /\| orders \| lakehouse\.ws\.data\.dbo\.orders \| — \| — \| — \| — \|/);
+    assert.match(r.out, /\| customers \| ws\.data_lakehouse\.dbo\.customers \| 1,200 \| 2\.5 MB \| 3 \| 2026-10-01 08:30 \|/);
+    assert.match(r.out, /\| orders \| ws\.data_lakehouse\.dbo\.orders \| — \| — \| — \| — \|/);
     assert.match(r.out, /2 table\(s\), 1 with metadata cached/);
 
     r = await agent.run({ args: ["table", "ws", "data", "customers"] });
@@ -102,7 +102,7 @@ test("free from the cache: table sizes, more table fields, files, find, model co
 
     r = await agent.run({ args: ["files", "ws", "data", "Files/raw"] });
     assert.equal(r.code, 0, r.err);
-    assert.match(r.out, /\| 2026 \| 'lakehouse\.ws\.data\/Files\/raw\/2026' \| folder \|/);
+    assert.match(r.out, /\| 2026 \| 'ws\.data_lakehouse\/Files\/raw\/2026' \| folder \|/);
     assert.match(r.out, /1 file\(s\), 1 folder\(s\), 1\.0 MB in Files\/raw/);
     r = await agent.run({ args: ["files", "ws", "dw"] });
     assert.match(r.err, /has no Files area/);

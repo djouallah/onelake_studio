@@ -137,7 +137,7 @@ try {
     });
     const served = JSON.parse(line);
     assert.equal(served.ok, true, line);
-    assert.equal(served.catalog, "semanticmodel.shop.sales");
+    assert.equal(served.catalog, "shop.sales_semanticmodel");
     assert.equal(served.measures, 1);
 
     const ping = await fetch(served.url);

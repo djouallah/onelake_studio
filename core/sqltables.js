@@ -187,7 +187,24 @@ function createSqlTables({ onelake, paths, offlineReason = () => null, tableRead
   // resolves without a request), and answered spelled as OneLake spells them. `fresh` reads past
   // the cache: the engine's way of asking again once a read has failed.
   // `held`: the engine's word on what the lake holds (heldAt).
-  async function resolve(ref, { fresh = false, secured = false, signal, held = null } = {}) {
+  // A table named by its GUIDs (sql.js tableRefs, byGuid) is first given its names, as a Direct Lake model's are:
+  // asked of Fabric once and kept, so it resolves offline after that.
+  async function byName(ref) {
+    if (!ref.byGuid) return ref;
+    const written = `"${ref.workspace}"."${ref.item}".${ref.schema}.${ref.table}`;
+    let it;
+    try { it = await onelake.itemNamed(ref.workspace, ref.item); }
+    catch (e) { throw Object.assign(new Error(`${written}: no item of yours has these GUIDs — ${e.message}`), { offline: e.offline, status: e.status }); }
+    const kind = sqlKind(String(it.item).replace(/^.*\./, ''));
+    if (!kind) throw new Error(`${written}: ${it.workspace}/${it.item} holds no tables SQL can name`);
+    const item = displayName(it.item);
+    namedFrom.set(nameKey(kind, it.workspace, item), { wsId: ref.workspace, itemId: ref.item });
+    return { kind, workspace: it.workspace, item, schema: ref.schema, table: ref.table };
+  }
+  async function resolve(ref, opts = {}) {
+    return resolveNamed(await byName(ref), opts);
+  }
+  async function resolveNamed(ref, { fresh = false, secured = false, signal, held = null } = {}) {
     const from = namedFrom.get(nameKey(ref.kind, ref.workspace, ref.item));
     if (!from) return resolveAt(ref, fresh, { secured, signal, held });
     // Named from GUIDs, so the name may be what moved: a renamed item resolves under its new name,
@@ -239,7 +256,8 @@ function createSqlTables({ onelake, paths, offlineReason = () => null, tableRead
 
   // Where a table's SQL name is in the tree: its workspace, its item's folder and its schema and name as OneLake
   // spells them, from the kept listings. Nothing of the table is read: it is opened as a click in the tree opens it.
-  async function place(ref) {
+  async function place(asked) {
+    const ref = await byName(asked);
     const { ws, dir } = await locate(ref, false);
     const listing = await onelake.tables({ workspace: ws, item: dir }).catch(() => null);
     const hit = (listing || []).find(x => same(x.schema || 'dbo', ref.schema || 'dbo') && same(x.table, ref.table));

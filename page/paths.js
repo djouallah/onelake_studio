@@ -151,7 +151,7 @@ export const sqlPart = v => {
 export const fileSqlName = (ws, path) => {
   const m = /^([^/]+)\.Lakehouse\/Files(?:\/(.*))?$/i.exec(strip(path));
   if (!m) return null;
-  return `${["lakehouse", ws, m[1]].map(sqlPart).join(".")}/Files${m[2] ? `/${m[2]}` : ""}`;
+  return `${[ws, `${m[1]}_lakehouse`].map(sqlPart).join(".")}/Files${m[2] ? `/${m[2]}` : ""}`;
 };
 
 // CSV: a cell is quoted when it holds a quote, a comma or a line break of either kind.

@@ -11,7 +11,7 @@
 // A path is a local model file (a semantic model's local copy) or an abfss:// URL of one in a
 // lakehouse's Files/. A view is kept when a model is opened — a click, or a query that names it. A model file is a .bim (TMSL) or an Apache Ossie
 // model (.yaml or .yml); page/semantic.js reads either. `schema` is the model's workspace: SQL
-// names it semanticmodel.ws.model. A semantic model opened from the tree is a local copy of its
+// names it ws.model_semanticmodel. A semantic model opened from the tree is a local copy of its
 // definition (extension.js fetchModel), and its view points at that.
 // =============================================================================
 

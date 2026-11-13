@@ -20,10 +20,10 @@ test("a .yaml or .yml is read as Ossie, anything else as TMSL", () => {
 
 test("only a statement about a semantic model waits for the views", async () => {
   const { aboutModels } = await import("../../page/semantic.js");
-  for (const sql of ['SELECT AGG("x") FROM SemanticModel.ws.m', "SHOW SEMANTIC VIEWS", "show semantic metrics in semanticmodel.ws.m",
-                     "DESCRIBE semanticmodel.ws.m"]) assert.equal(aboutModels(sql), true, sql);
+  for (const sql of ['SELECT AGG("x") FROM ws.m_semanticmodel', "SHOW SEMANTIC VIEWS", "show semantic metrics in ws.m_semanticmodel",
+                     "DESCRIBE ws.m_semanticmodel"]) assert.equal(aboutModels(sql), true, sql);
   // Nor is a shorter name a model's.
-  for (const sql of ["SHOW ALL TABLES;", "SELECT * FROM lakehouse.w.lh.dbo.t", "SELECT 1", "SELECT AGG(Total) FROM shop", "DESCRIBE ws.SHOP"]) {
+  for (const sql of ["SHOW ALL TABLES;", "SELECT * FROM w.lh_lakehouse.dbo.t", "SELECT 1", "SELECT AGG(Total) FROM shop", "DESCRIBE ws.SHOP"]) {
     assert.equal(aboutModels(sql), false, sql);
   }
 });
@@ -56,16 +56,18 @@ test("a visual asks for as many rows as the host's row limit, and Top N stays un
 });
 
 // A semantic model's one SQL name, and the ones a statement names that are not open yet.
-test("a model is semanticmodel.ws.model, and a statement's unopened models are found", async () => {
+test("a model is ws.model_semanticmodel, and a statement's unopened models are found", async () => {
   const { modelSqlName, unopenedModels, defineView } = await import("../../page/semantic.js");
-  assert.equal(modelSqlName("a ws", "Sales"), 'semanticmodel."a ws".Sales');
-  assert.deepEqual(unopenedModels('SELECT AGG(x) FROM SemanticModel."a ws"."Sales Model" JOIN semanticmodel.b.c ON 1=1'),
+  assert.equal(modelSqlName("a ws", "Sales"), '"a ws".Sales_semanticmodel');
+  assert.deepEqual(unopenedModels('SELECT AGG(x) FROM "a ws"."Sales Model_semanticmodel" JOIN b.c_semanticmodel ON 1=1'),
     [{ workspace: "a ws", model: "Sales Model" }, { workspace: "b", model: "c" }]);
   // Each once; not in a string or a comment; a table's name is not a model's.
-  assert.deepEqual(unopenedModels("SELECT * FROM semanticmodel.w.m, semanticmodel . w . M"), [{ workspace: "w", model: "m" }]);
-  assert.deepEqual(unopenedModels("SELECT 'semanticmodel.w.m' -- semanticmodel.w.m\n/* semanticmodel.w.m */"), []);
-  assert.deepEqual(unopenedModels("SELECT * FROM lakehouse.w.lh.dbo.t"), []);
-  await assert.rejects(defineView("Sales", "Sales.bim", "{}"), /semanticmodel\.<workspace>\.<model>: Sales has no workspace/);
+  assert.deepEqual(unopenedModels("SELECT * FROM w.m_semanticmodel, w . M_semanticmodel"), [{ workspace: "w", model: "m" }]);
+  assert.deepEqual(unopenedModels("SELECT 'w.m_semanticmodel' -- w.m_semanticmodel\n/* w.m_semanticmodel */"), []);
+  assert.deepEqual(unopenedModels("SELECT * FROM w.lh_lakehouse.dbo.t, w.lh_lakehouse.dbo.x_semanticmodel, x_semanticmodel"), []);
+  // In the engine's catalog, where it is listed, it is the same model.
+  assert.deepEqual(unopenedModels("SELECT * FROM memory.w.m_semanticmodel"), [{ workspace: "w", model: "m" }]);
+  await assert.rejects(defineView("Sales", "Sales.bim", "{}"), /<workspace>\.<model>_semanticmodel: Sales has no workspace/);
 });
 
 test("Model's YAML colours a model's file and changes none of its text", async () => {

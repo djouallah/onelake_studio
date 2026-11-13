@@ -10,8 +10,8 @@ const require = createRequire(import.meta.url);
 const { createModelData } = require("../../core/models/modeldata.js");
 const { createCatalogFile } = require("../../core/onelake/catalogfile.js");
 
-const CATALOG = "semanticmodel.ws.sales", MODEL = "sales";
-const FACT = "lakehouse.ws.data.dbo.fact", DIM = "lakehouse.ws.data.dbo.dim";
+const CATALOG = "ws.sales_semanticmodel", MODEL = "sales";
+const FACT = "ws.data_lakehouse.dbo.fact", DIM = "ws.data_lakehouse.dbo.dim";
 const HOUR = 3600 * 1000;
 const settled = async () => { for (let i = 0; i < 12; i++) await new Promise(r => setImmediate(r)); };
 
@@ -58,14 +58,14 @@ test("what's on is a row in the catalog: remembered after a restart, one per mod
     const one = createCatalogFile({ file });
     assert.deepEqual(one.offlineModels(), []);
     one.setOffline(CATALOG, MODEL, true, 1000);
-    one.setOffline("semanticmodel.ws.other", "other", true, 2000);
+    one.setOffline("ws.other_semanticmodel", "other", true, 2000);
     one.setOffline(CATALOG.toUpperCase(), MODEL, true, 500);
     assert.equal(one.offlineModels().length, 2);
     one.close();
     const two = createCatalogFile({ file });
     assert.deepEqual(two.offlineModels().map(m => m.model).sort(), ["other", "sales"]);
     two.setOffline(CATALOG, MODEL, false, 3000);
-    assert.deepEqual(two.offlineModels(), [{ catalog: "semanticmodel.ws.other", model: "other" }]);
+    assert.deepEqual(two.offlineModels(), [{ catalog: "ws.other_semanticmodel", model: "other" }]);
     two.close();
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
@@ -209,8 +209,8 @@ test("too much for the disk cache stays off and says why, with nothing read", as
 });
 
 test("models already kept count toward what fits", async () => {
-  const other = "semanticmodel.ws.other";
-  const { data, reads } = setup({ room: 5000, others: { [other]: ["lakehouse.ws.data.dbo.big"] }, sizes: { fact: 4000, dim: 10, big: 2000 } });
+  const other = "ws.other_semanticmodel";
+  const { data, reads } = setup({ room: 5000, others: { [other]: ["ws.data_lakehouse.dbo.big"] }, sizes: { fact: 4000, dim: 10, big: 2000 } });
   const first = await data.set(other, "other", true);
   assert.equal(first.on, true);
   await settled();
@@ -356,7 +356,7 @@ test("a table that can't be found is named, and the others come down", async () 
 });
 
 test("an empty table has nothing to bring down", async () => {
-  const { data, reads } = setup({ tables: ["lakehouse.ws.data.dbo.empty", DIM] });
+  const { data, reads } = setup({ tables: ["ws.data_lakehouse.dbo.empty", DIM] });
   await data.set(CATALOG, MODEL, true);
   await settled();
   assert.deepEqual(reads.map(r => r.name), [DIM]);

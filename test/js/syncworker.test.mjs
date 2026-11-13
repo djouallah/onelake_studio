@@ -368,7 +368,7 @@ test("while a model kept offline is coming down, the idle job holds off, and sto
   world.now += 3 * MIN;
   await worker.tick();
   assert.equal(keep.reads.length, 1);
-  assert.equal((await worker.progress()).used.keeping, "lakehouse.a.gold.dbo.t");
+  assert.equal((await worker.progress()).used.keeping, "a.gold_lakehouse.dbo.t");
   keep.held = () => true;
   await worker.tick();
   await settled();
@@ -416,7 +416,7 @@ test("a table in use is read whole once nobody has run anything for two minutes,
   assert.equal(keep.reads.length, 0, "not yet: it has been a minute");
   world.now += 2 * MIN;
   await worker.tick();
-  assert.deepEqual(keep.reads.map(r => r.name), ["lakehouse.a.gold.dbo.t"]);
+  assert.deepEqual(keep.reads.map(r => r.name), ["a.gold_lakehouse.dbo.t"]);
   world.now += MIN;
   await worker.tick();
   assert.equal(keep.reads.length, 1, "one at a time");
@@ -426,7 +426,7 @@ test("a table in use is read whole once nobody has run anything for two minutes,
   assert.equal(kept.error, null);
   assert.equal(kept.total, 1000);
   await worker.tick();
-  assert.equal(keep.reads[1].name, "lakehouse.a.gold.dbo.u");
+  assert.equal(keep.reads[1].name, "a.gold_lakehouse.dbo.u");
   keep.reads[1].resolve();
   await settled();
   await worker.tick();
@@ -497,7 +497,7 @@ test("a read that fails waits too, and says so in status", async () => {
   assert.match(usage.rows.get(world.location({ table: "t" })).error, /no such file/);
   await worker.tick();
   assert.equal(keep.reads.length, 1);
-  assert.equal((await worker.progress()).failures.at(-1).where, "keep lakehouse.a.gold.dbo.t");
+  assert.equal((await worker.progress()).failures.at(-1).where, "keep a.gold_lakehouse.dbo.t");
 });
 
 test("going offline stops it with nothing noted, and offline nothing starts", async () => {
@@ -534,7 +534,7 @@ test("too big, of no known size, or of too many files: not read whole, and a sma
   await worker.tick();
   world.now += 3 * MIN;
   await worker.tick();
-  assert.deepEqual(keep.reads.map(r => r.name), ["lakehouse.a.gold.dbo.small"]);
+  assert.deepEqual(keep.reads.map(r => r.name), ["a.gold_lakehouse.dbo.small"]);
   worker.stop();
 });
 
@@ -549,7 +549,7 @@ test("the tables in use share one limit, the most read first", async () => {
   await settled();
   world.now += DAY;
   await worker.tick();
-  assert.deepEqual(keep.reads.map(r => r.name), ["lakehouse.a.gold.dbo.first", "lakehouse.a.gold.dbo.third"], "second no longer fits");
+  assert.deepEqual(keep.reads.map(r => r.name), ["a.gold_lakehouse.dbo.first", "a.gold_lakehouse.dbo.third"], "second no longer fits");
   worker.stop();
 });
 
@@ -578,13 +578,13 @@ test("status says how much is kept, and what is under way", async () => {
   await worker.tick();
   let p = await worker.progress();
   assert.equal(p.used.tables, 1);
-  assert.equal(p.used.keeping, "lakehouse.a.gold.dbo.t");
+  assert.equal(p.used.keeping, "a.gold_lakehouse.dbo.t");
   keep.reads[0].resolve();
   await settled();
   p = await worker.progress();
   assert.equal(p.used.keeping, null);
   assert.equal(p.used.keptBytes, 1000);
-  assert.equal(p.used.last.table, "lakehouse.a.gold.dbo.t");
+  assert.equal(p.used.last.table, "a.gold_lakehouse.dbo.t");
   worker.stop();
 });
 
@@ -624,7 +624,7 @@ test("a lake table whose snapshot moved in the catalog is synced, once; one that
     [["t", "abfss://w@h/t", "abfss://w@h/t/metadata/2.metadata.json"]]);
   await tick(worker);
   assert.equal(lake.syncs.length, 1, "synced to it already");
-  assert.equal((await worker.progress()).lake.last.table, "lakehouse.a.gold.dbo.t");
+  assert.equal((await worker.progress()).lake.last.table, "a.gold_lakehouse.dbo.t");
 });
 
 test("a lake sync waits while someone runs a statement, and isn't asked of another window or with no engine", async () => {

@@ -60,7 +60,7 @@ const ENGINE_METHODS = new Set(['query', 'stream', 'cancel', 'info', 'fileView',
  *        a query variable's value, asked of the user; null when dismissed
  * @param {{ load: Function, stamp: Function, save?: Function }} [o.report]  the Report tab's tiles (exportflow.js reportOf, reportStamp, reportSave)
  * @param {(sqlName: string) => Promise<void>} [o.openTable]
- *        a OneLake table, by its five-part SQL name, opened in a tab as the tree opens it
+ *        a OneLake table, by its SQL name, opened in a tab as the tree opens it
  * @param {(x: {workspace: string, model: string}) => Promise<object>} [o.openModel]
  *        a semantic model a query names, opened from its local copy (read from Fabric the first
  *        time) and kept as a view: { name, schema, path, text }
@@ -133,7 +133,7 @@ function createHostMethods({ onelake, engine, onStatus = () => {}, saveFile = nu
     },
     // Semantic models (semviews.js): the ones this machine keeps, with their text, and one the
     // page just opened kept — its name in its schema, the model's workspace, so SQL names it
-    // semanticmodel.ws.model. The path is a local file or an abfss:// URL.
+    // ws.model_semanticmodel. The path is a local file or an abfss:// URL.
     'semantic.views': () => views().texts(),
     'semantic.keep': async x => {
       if (!x.schema) throw new Error('a semantic model is kept in its workspace');
@@ -150,7 +150,7 @@ function createHostMethods({ onelake, engine, onStatus = () => {}, saveFile = nu
       if (!openModel) throw new Error('semantic models are not available here');
       return openModel({ workspace: String(x.workspace), model: String(x.model) });
     },
-    // A table's metadata, and its SQL name (lakehouse.ws.item.schema.table) for the editor.
+    // A table's metadata, and its SQL name (ws.item_lakehouse.schema.table) for the editor.
     'onelake.table': async x => {
       const lh = lhOf(x), t = tableOf(x);
       let sqlName = null;

@@ -33,9 +33,9 @@ test("a pivot tile runs Pivot's query, and a click on it picks its first Rows fi
   assert.deepEqual([state.cols, state.filters, state.totals], [[], [], false], "every shelf there");
   assert.equal(sql, PIVOT_SQL);
   // Given what SQL calls the model where it runs, the tile's statement names it: one Logs can open and run.
-  const named = pivotQuery({ rows: ["dim_zone.Borough"], values: ["Total Fare"], mark: "bar" }, fields, "semanticmodel.ws.taxi");
-  assert.equal(named.sql, PIVOT_SQL.replace("FROM model", "FROM semanticmodel.ws.taxi"));
-  assert.match(named.sqlWith(pickWhere("dim_zone.Borough", { value: "Queens" })), /FROM semanticmodel\.ws\.taxi\nWHERE /);
+  const named = pivotQuery({ rows: ["dim_zone.Borough"], values: ["Total Fare"], mark: "bar" }, fields, "ws.taxi_semanticmodel");
+  assert.equal(named.sql, PIVOT_SQL.replace("FROM model", "FROM ws.taxi_semanticmodel"));
+  assert.match(named.sqlWith(pickWhere("dim_zone.Borough", { value: "Queens" })), /FROM ws\.taxi_semanticmodel\nWHERE /);
   assert.deepEqual(field, { id: "dim_zone.Borough", table: "dim_zone", column: "Borough", ref: BOROUGH });
   // No Rows: its first Columns field; a map, its points' name.
   assert.equal(pivotQuery({ rows: ["dim_zone.Lat", "dim_zone.Lon", "dim_zone.Zone"], values: ["Total Fare"], mark: "map" }, fields).field.column, "Zone");

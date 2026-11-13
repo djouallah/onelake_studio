@@ -121,13 +121,13 @@ const agent = createAgent({
   nameTables: async list => list.map(x => sqlName({ kind: "lakehouse", workspace: "shop", item: "data", schema: x.schema, table: x.table })),
 });
 const REGIONS = 'SELECT dim_customer.Region, AGG("Total Sales") AS sales, AGG("Customer Count") AS customers ' +
-                "FROM semanticmodel.shop.sales_model GROUP BY ALL ORDER BY 1";
+                "FROM shop.sales_model_semanticmodel GROUP BY ALL ORDER BY 1";
 const asRegions = rows => rows.map(([region, sales, customers]) => [region, Number(sales), Number(customers)]);
 const EXPECTED = [["East", 12.5, 1], ["West", 5, 1]];
 
 test("a query that names a model not open yet opens it, and answers", async () => {
   await withAgent(agent, async ({ cli }) => {
-    const r = await cli(["sql", 'SELECT AGG("Total Sales") AS sales FROM semanticmodel.shop.opened_model', "--json"]);
+    const r = await cli(["sql", 'SELECT AGG("Total Sales") AS sales FROM shop.opened_model_semanticmodel', "--json"]);
     assert.equal(r.code, EXIT.OK, r.stdout);
     assert.deepEqual(opened, ["opened_model"]);
     assert.equal(Number(JSON.parse(r.stdout).rows[0][0]), 17.5);
@@ -150,19 +150,19 @@ test("the skill's path: list, read the model, run what it printed, compute a mea
     r = await cli(["model", "shop", "sales_model", "--json"]);
     assert.equal(r.code, EXIT.OK, r.stdout);
     const model = JSON.parse(r.stdout);
-    assert.equal(model.data.name, "semanticmodel.shop.sales_model");
+    assert.equal(model.data.name, "shop.sales_model_semanticmodel");
     assert.equal(model.data.directLake, 2);
     assert.deepEqual(model.tables.relationships.rows, [["fct_sales[customer_id]", "dim_customer[customer_id]", true]]);
     const nameOf = t => { const i = t.columns.findIndex(c => c.name === "name"); return t.rows.map(row => row[i]); };
     assert.deepEqual(nameOf(model.tables.metrics).sort(), ["Customer Count", "Total Sales"]);
     assert.ok(nameOf(model.tables.dimensions).includes("Region"));
     const raw = model.tables.rawTables.rows.map(row => row[1]).sort();
-    assert.deepEqual(raw, ["lakehouse.shop.data.dbo.dim_customer", "lakehouse.shop.data.dbo.fct_sales"]);
+    assert.deepEqual(raw, ["shop.data_lakehouse.dbo.dim_customer", "shop.data_lakehouse.dbo.fct_sales"]);
 
     // The same model, for a person to read.
     r = await cli(["model", "shop", "sales_model"]);
     assert.equal(r.code, EXIT.OK, r.stderr);
-    for (const re of [/^# semanticmodel\.shop\.sales_model/m, /## Dimensions/, /## Metrics/, /## Raw tables/, /Total Sales/, /SUM/, /Example:/]) {
+    for (const re of [/^# shop\.sales_model_semanticmodel/m, /## Dimensions/, /## Metrics/, /## Raw tables/, /Total Sales/, /SUM/, /Example:/]) {
       assert.match(r.stdout, re);
     }
 
@@ -192,13 +192,13 @@ test("--show-sql: the SQL a model query compiles to, never inside a --csv", asyn
     let r = await cli(["sql", REGIONS, "--show-sql", "--csv"]);
     assert.equal(r.code, EXIT.OK, r.stderr);
     assert.deepEqual(asRegions(csvRows(r.stdout).slice(1)), EXPECTED, "the CSV parses as if it had not been asked");
-    assert.match(r.stderr, /lakehouse\.shop\.data\.dbo\.fct_sales/);
+    assert.match(r.stderr, /shop\.data_lakehouse\.dbo\.fct_sales/);
 
     r = await cli(["sql", REGIONS, "--show-sql"]);
-    assert.match(r.stdout, /^```sql\n[\s\S]*lakehouse\.shop\.data\.dbo\.fct_sales[\s\S]*```/);
+    assert.match(r.stdout, /^```sql\n[\s\S]*shop\.data_lakehouse\.dbo\.fct_sales[\s\S]*```/);
 
     r = await cli(["sql", REGIONS, "--show-sql", "--json"]);
-    assert.match(JSON.parse(r.stdout).data.sql, /lakehouse\.shop\.data\.dbo\.fct_sales/);
+    assert.match(JSON.parse(r.stdout).data.sql, /shop\.data_lakehouse\.dbo\.fct_sales/);
 
     // Plain SQL compiles to nothing: there is nothing to show.
     r = await cli(["sql", "SELECT 1 AS one", "--show-sql", "--csv"]);
@@ -214,7 +214,7 @@ test("a Report tile with a pick from another tile runs filtered on the real engi
     { name: "dim_customer", columns: [{ name: "Region", dataType: "string" }] },
     { name: "fct_sales", columns: [{ name: "customer_id", dataType: "int64" }], measures: [{ name: "Total Sales" }] },
   ], relationships: [{ fromTable: "fct_sales", toTable: "dim_customer" }] });
-  const MODEL = "semanticmodel.shop.sales_model";
+  const MODEL = "shop.sales_model_semanticmodel";
   const BAR = pivotQuery({ rows: ["dim_customer.Region"], values: ["Total Sales"], mark: "bar", sort: "desc", top: 12 }, fields, MODEL);
   const KPI = pivotQuery({ values: ["Total Sales"], mark: "card" }, fields, MODEL);
   await withAgent(agent, async ({ cli }) => {
@@ -334,10 +334,10 @@ test("a model file that does not parse: exit 1 and why, not a stack trace", asyn
 
 test("a model table with no OneLake table is refused, never read by a shorter name", async () => {
   await withAgent(agent, async ({ cli }) => {
-    const r = await cli(["sql", 'SELECT AGG("Total Sales") AS sales FROM semanticmodel.shop.import_model']);
+    const r = await cli(["sql", 'SELECT AGG("Total Sales") AS sales FROM shop.import_model_semanticmodel']);
     assert.equal(r.code, EXIT.FAILED, r.stdout);
     assert.equal(r.stdout, "");
-    assert.match(r.stderr, /fct_sales is not a OneLake table, so it has no five-part name to read/);
+    assert.match(r.stderr, /fct_sales is not a OneLake table, so it has no workspace.item_lakehouse.schema.table name to read/);
   });
 });
 

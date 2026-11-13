@@ -44,7 +44,7 @@ const settings = { tableOpensOn: cfg.tableOpensOn, gridThousandsSeparator: cfg.g
 let engine = null;
 let engineReady = null;      // resolves when engine.init() has finished; gates every use of it
 let lakehouse = null;        // { workspace, item }
-let activeSqlName = null;    // the selected table's SQL name (lakehouse.ws.item.schema.table)
+let activeSqlName = null;    // the selected table's SQL name (ws.item_lakehouse.schema.table)
 // The SQL behind what is on screen (a query's, a table's first rows, a file's preview): what
 // Profile and Export work from.
 let currentSql = '';
@@ -366,7 +366,7 @@ async function openModelView(file, text = null, { fromOneLake = text == null } =
     // engine's boot: only its queries need DuckDB, and runModelSql waits for it.
     if (fromOneLake) await engineReady;
     const bim = text != null ? text : new TextDecoder().decode(await engine.readFileBytes(lakehouse, file));
-    // semanticmodel.ws.model: the semantic model the tree opened, by its own workspace and
+    // ws.model_semanticmodel: the semantic model the tree opened, by its own workspace and
     // name; else the file, in the workspace it is in (a file from disk: the one its tables are in), by its name.
     const schema = file.modelWorkspace || file.localWorkspace || (fromOneLake && lakehouse ? lakehouse.workspace : null);
     const m = await semantic.registerModel(file.name, bim, null, schema, file.modelName);
@@ -470,7 +470,7 @@ async function loadViews() {
   const t0 = Date.now();
   const list = await viewsListed;
   for (const v of list) {
-    if (!v.schema) continue;   // named before models were semanticmodel.ws.model
+    if (!v.schema) continue;   // named before models were ws.model_semanticmodel
     try {
       if (v.error) throw new Error(v.error);
       await semantic.defineView(v.name, v.path, v.text, 'replace', null, v.schema);
@@ -480,7 +480,7 @@ async function loadViews() {
   reportBoot({ what: `${list.length} semantic views loaded`, stages: [], totalMs: Date.now() - t0 });
 }
 
-// The semantic models a statement names (semanticmodel.ws.model) that are not views here
+// The semantic models a statement names (ws.model_semanticmodel) that are not views here
 // yet, opened by the host — a local copy of each, read from Fabric the first time, and kept —
 // and defined, so the statement compiles as if they had been open all along.
 async function openModels(sql) {
@@ -1528,7 +1528,7 @@ async function saveActive() {
 }
 
 // A query from the box: the panel is the query's now, not the last table's or file's. A query
-// names its tables Kind.workspace.item.schema.table, so it runs as it is, whatever was selected.
+// names its tables workspace.item_kind.schema.table, so it runs as it is, whatever was selected.
 function enterQuery(title) {
   closeModelView();
   ++selSeq;                     // whatever was loading for the last click stands down

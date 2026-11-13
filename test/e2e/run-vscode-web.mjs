@@ -573,7 +573,7 @@ async function cachedRunMatrix({ saved, home, dbFile }) {
     const r = await runIt(MODEL_QUERY);
     settled("a model query", r);
     check("it stops where the rows aren't held, past the compiler", isError(r) && /isn't cached/.test(r.status) && !/AGG|Catalog Error|Binder/.test(r.status), r.status);
-    check("the model opened from its local copy", /opened semanticmodel\.e2e\.shop for a query/.test(await outputLog()));
+    check("the model opened from its local copy", /opened e2e\.shop_semanticmodel for a query/.test(await outputLog()));
     check("it ends at once, not on a timeout", r.ms < 30000, `${r.ms} ms`);
   });
 }

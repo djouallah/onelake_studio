@@ -89,34 +89,47 @@ test("a byte count reads as a size", () => {
   assert.equal(n.fmtBytes(0), "unknown size");
 });
 
-test("a table's SQL name is Kind.workspace.item.schema.table, quoted only where it must be", () => {
+test("a table's SQL name is workspace.item_kind.schema.table, quoted only where it must be", () => {
   assert.equal(n.sqlNameOf({ workspace: "aemo", item: "data.Lakehouse" }, { schema: "dbo", table: "dim_duid" }),
-    "lakehouse.aemo.data.dbo.dim_duid");
+    "aemo.data_lakehouse.dbo.dim_duid");
   // A lakehouse without schemas is dbo; Fabric's spelling of the kind, not the directory's.
   assert.equal(n.sqlNameOf({ workspace: "ws", item: "db.SQLDbNative" }, { schema: "", table: "t" }),
-    "sqldatabase.ws.db.dbo.t");
+    "ws.db_sqldatabase.dbo.t");
   assert.equal(n.sqlNameOf({ workspace: "ws", item: "m.MountedRelationalDatabase" }, { schema: "dbo", table: "t" }),
-    "mirroreddatabase.ws.m.dbo.t");
+    "ws.m_mirroreddatabase.dbo.t");
   assert.equal(n.sqlNameOf({ workspace: "ANZ Retail", item: "gold-1.Warehouse" }, { schema: "select", table: 'a"b' }),
-    'warehouse."ANZ Retail"."gold-1"."select"."a""b"');
+    '"ANZ Retail"."gold-1_warehouse"."select"."a""b"');
   assert.throws(() => n.sqlNameOf({ workspace: "ws", item: "nb.SynapseNotebook" }, { table: "t" }));
-  // One catalog per kind, and every table-holding item has one.
+  // The kind is always written, so an item whose name ends in one is still one item.
+  assert.equal(n.sqlNameOf({ workspace: "ws", item: "x_lakehouse.Lakehouse" }, { schema: "dbo", table: "t" }),
+    "ws.x_lakehouse_lakehouse.dbo.t");
+  // Every table-holding item has a kind.
   for (const k of ["Lakehouse", "Warehouse", "SQLDbNative", "MountedRelationalDatabase", "MirroredDatabase"])
     assert.ok(n.SQL_KINDS.includes(n.sqlKind(k)), k);
 });
 
+test("an item's part is read back as its name and its kind, the last _<kind> in any case", () => {
+  assert.deepEqual(n.splitItem("data_lakehouse"), { item: "data", kind: "lakehouse" });
+  assert.deepEqual(n.splitItem("Gold-1_WAREHOUSE"), { item: "Gold-1", kind: "warehouse" });
+  assert.deepEqual(n.splitItem("x_lakehouse_lakehouse"), { item: "x_lakehouse", kind: "lakehouse" });
+  assert.deepEqual(n.splitItem("nem_semanticmodel", [n.MODEL_KIND]), { item: "nem", kind: "semanticmodel" });
+  for (const no of ["data", "_lakehouse", "lakehouse", "data_notebook", "datalakehouse", "nem_semanticmodel"]) assert.equal(n.splitItem(no), null, no);
+  assert.ok(n.isGuid("0F3C1A2B-1111-2222-3333-444455556666"));
+  assert.ok(!n.isGuid("aemo") && !n.isGuid("0f3c1a2b-1111-2222-3333-44445555666"));
+});
+
 test("a file's SQL name is its lakehouse, as in a table's name, then its path under Files/", () => {
-  assert.equal(n.fileSqlName({ workspace: "aemo", item: "data.Lakehouse" }, "a/x.parquet"), "lakehouse.aemo.data/Files/a/x.parquet");
-  assert.equal(n.fileSqlName({ workspace: "aemo", item: "data.Lakehouse" }), "lakehouse.aemo.data/Files", "the folder itself");
-  assert.equal(n.fileSqlName({ workspace: "ANZ Retail", item: "select.Lakehouse" }, "a b.csv"), 'lakehouse."ANZ Retail"."select"/Files/a b.csv');
+  assert.equal(n.fileSqlName({ workspace: "aemo", item: "data.Lakehouse" }, "a/x.parquet"), "aemo.data_lakehouse/Files/a/x.parquet");
+  assert.equal(n.fileSqlName({ workspace: "aemo", item: "data.Lakehouse" }), "aemo.data_lakehouse/Files", "the folder itself");
+  assert.equal(n.fileSqlName({ workspace: "ANZ Retail", item: "select.Lakehouse" }, "a b.csv"), '"ANZ Retail".select_lakehouse/Files/a b.csv');
   assert.throws(() => n.fileSqlName({ workspace: "ws", item: "dw.Warehouse" }, "x"), /only a lakehouse/);
 });
 
 test("what DuckDB ran says a file by its name: a lakehouse's Files/ only, and never by GUID", () => {
   const host = "onelake.dfs.fabric.microsoft.com";
   assert.equal(n.fileNamesIn(`SELECT * FROM 'abfss://ANZ Retail@${host}/data.Lakehouse/Files/a b.csv'`),
-    `SELECT * FROM 'lakehouse."ANZ Retail".data/Files/a b.csv'`);
-  assert.equal(n.fileNamesIn(`FROM 'zip://abfss://ws@${host}/lh.Lakehouse/Files/a.zip/b.csv'`), "FROM 'zip://lakehouse.ws.lh/Files/a.zip/b.csv'");
+    `SELECT * FROM '"ANZ Retail".data_lakehouse/Files/a b.csv'`);
+  assert.equal(n.fileNamesIn(`FROM 'zip://abfss://ws@${host}/lh.Lakehouse/Files/a.zip/b.csv'`), "FROM 'zip://ws.lh_lakehouse/Files/a.zip/b.csv'");
   for (const same of [`abfss://ws@${host}/lh.Lakehouse/Tables/dbo/t/metadata/1.metadata.json`, `abfss://ws@${host}/dw.Warehouse/Files/x`,
                       `abfss://11111111-0000@${host}/22222222-0000/Files/x`, `abfss://ws@${host}/lh.Lakehouse/Filesystem/x`])
     assert.equal(n.fileNamesIn(same), same);
@@ -129,8 +142,10 @@ test("the host and the panel quote a name the same way (core/names.js and page/p
     assert.equal(p.sqlPart(s), n.sqlPart(s), String(s));
   for (const [ws, item, rest] of [["aemo", "data", "a/x.parquet"], ["ANZ Retail", "gold_1", "a b.csv"], ["ws", "select", "x"], ["ws", "lh", ""]])
     assert.equal(p.fileSqlName(ws, `${item}.Lakehouse/Files${rest ? `/${rest}` : ""}`), n.fileSqlName({ workspace: ws, item: `${item}.Lakehouse` }, rest));
-  // The model views are named alike on both sides: a model called `order` is quoted.
+  // The model views are named alike on both sides, quoted where the name with its kind must be.
   const semantic = await import("../../page/semantic.js");
-  assert.equal(semantic.modelSqlName("ws", "order"), n.modelSqlName("ws", "order"));
-  assert.equal(semantic.modelSqlName("ws", "order"), 'semanticmodel.ws."order"');
+  for (const [ws, model] of [["ws", "order"], ["ANZ Retail", "Sales Model"], ["select", "x"]])
+    assert.equal(semantic.modelSqlName(ws, model), n.modelSqlName(ws, model), model);
+  assert.equal(n.modelSqlName("ws", "order"), "ws.order_semanticmodel");
+  assert.equal(n.modelSqlName("ANZ Retail", "Sales Model"), '"ANZ Retail"."Sales Model_semanticmodel"');
 });

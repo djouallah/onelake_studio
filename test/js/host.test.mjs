@@ -84,7 +84,7 @@ test("Keep offline: a page names a model and on or off, and nothing else", async
 test("a table's metadata carries its SQL name", async () => {
   const { ask } = fixture();
   const [msg] = await ask("onelake.table", [{ workspace: "ws", item: "lh.Lakehouse", schema: "dbo", table: "t" }]);
-  assert.equal(msg.value.sqlName, "lakehouse.ws.lh.dbo.t");
+  assert.equal(msg.value.sqlName, "ws.lh_lakehouse.dbo.t");
 });
 
 test("a tab can ask whether a table's rows are out of reach", async () => {

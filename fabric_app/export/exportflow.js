@@ -107,7 +107,7 @@ function createExport({ connectivity, modules, appToken, powerBiToken = appToken
       if (onItself && !(model && model.workspace && model.name)) {
         throw new Error('Export to Fabric needs a model that is a OneLake file, a file from disk in a workspace, or one opened from the tree');
       }
-      // The semantic model's workspace and name: the model's own (semanticmodel.<ws>.<model>).
+      // The semantic model's workspace and name: the model's own (<ws>.<model>_semanticmodel).
       const pbi = { workspace: model ? model.workspace : workspace, name: model ? model.name : name };
       if (onItself) workspace = model.workspace;
       const mods = await modules();

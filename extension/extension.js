@@ -39,7 +39,7 @@ const { modelFileName, modelAccountDir } = require('../core/models/fabric');
 const { LakehouseTree, TREE_FILTERS } = require('./tree');
 const { firstClicks } = require('../core/doubleclick');
 const { webviewRoot } = require('./webview');
-const { fmtBytes, sqlName, sqlNameOf, fileSqlName, sqlPart, modelSqlName, DFS_ORIGIN, SQL_KINDS } = require('../core/names');
+const { fmtBytes, sqlName, sqlNameOf, fileSqlName, sqlPart, modelSqlName, DFS_ORIGIN } = require('../core/names');
 const { NAME, placeOf, tabTitle } = require('../core/title');
 const bundleLoaded = upMs();
 
@@ -145,7 +145,7 @@ let modelReport = null;
 let openExcel = null;
 // Keep offline (modeldata.js), the page's model.offlineState and model.setOffline; set by activateInner, as above.
 let keepOffline = null;
-// A semantic model a query names (semanticmodel.ws.model), opened: its local copy kept, and
+// A semantic model a query names (ws.model_semanticmodel), opened: its local copy kept, and
 // kept as a semantic view; and a Direct Lake model's tables (by GUID) -> their SQL names. Set by activateInner.
 let openSqlModel = null;
 let nameModelTables = null;
@@ -248,7 +248,7 @@ const onClick = fn => n => (treeClick(n) ? fn(n) : undefined);
 // What a new query (the Queries node's +) starts with. SHOW ALL TABLES is answered from the
 // cache (cachedSqlTables), so it lists only the tables seen in the tree.
 const NEW_QUERY_SQL = [
-  '-- New query. A table is named lakehouse.workspace.item.schema.table.',
+  '-- New query. A table is named workspace.item_lakehouse.schema.table.',
   '-- This lists only the tables cached on this machine: expand a lakehouse in the OneLake tree to add its tables.',
   'SHOW ALL TABLES;',
   '',
@@ -569,7 +569,7 @@ async function activateInner(context) {
   }
 
   openTableByName = async name => {
-    const [ref] = tableRefs(name, SQL_KINDS);
+    const [ref] = tableRefs(name);
     if (!ref) throw new Error(`${name} does not name a OneLake table`);
     const at = await sqlTables.place(ref);
     await openInPanel({ type: 'open-table', ...at });

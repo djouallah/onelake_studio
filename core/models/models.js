@@ -9,7 +9,7 @@ const fsp = require('node:fs/promises');
 const { walkCached } = require('../onelake/onelake');
 const { modelAccountDir, modelCopyPath } = require('./fabric');
 const { readFromOneLake } = require('./sqlendpoint');
-const { fmtBytes, sqlKind, displayName, MODEL_CATALOG, modelSqlName, stripBom } = require('../names');
+const { fmtBytes, sqlKind, displayName, MODEL_KIND, modelSqlName, stripBom, splitItem, sqlPart } = require('../names');
 
 /**
  * @param {object} o
@@ -144,10 +144,12 @@ function createModels({ onelake, fabric, semviews, modules, modelsFolder, accoun
       if (lake.length) {
         try {
           const idents = await nameTables(lake.map(([, l]) => ({ ...l.lh, ...l.t })));
+          // ws.item_lakehouse.schema.table: the item is its name alone in item.schema.table.
           const parts = idents.map(semantic.nameParts);
-          const items = new Set(parts.map(p => JSON.stringify(p.slice(0, 3).map(semantic.unquote)).toLowerCase()));
-          if (items.size === 1 && same(semantic.unquote(parts[0][1]), n.workspace)) {
-            names = new Map(lake.map(([table], i) => [table, parts[i].slice(2).join('.')]));
+          const items = new Set(parts.map(p => JSON.stringify(p.slice(0, 2).map(semantic.unquote)).toLowerCase()));
+          const item = parts.length && splitItem(semantic.unquote(parts[0][1]));
+          if (items.size === 1 && item && same(semantic.unquote(parts[0][0]), n.workspace)) {
+            names = new Map(lake.map(([table], i) => [table, [sqlPart(item.item), ...parts[i].slice(2)].join('.')]));
           }
         } catch (e) {
           log(`${n.workspace}/${n.model}: its tables could not be named, so the copy keeps their Direct Lake expression — ${e.message}`);
@@ -177,8 +179,8 @@ function createModels({ onelake, fabric, semviews, modules, modelsFolder, accoun
     const found = [];
     const all = await walkCached(onelake.cached);
     for (const w of (all && all.workspaces) || []) {
-      // Its semantic models, as the Fabric listing has them: semanticmodel.ws.model.
-      for (const m of w.models) found.push({ kind: MODEL_CATALOG, workspace: w.name, model: m.name, modelId: m.id });
+      // Its semantic models, as the Fabric listing has them: ws.model_semanticmodel.
+      for (const m of w.models) found.push({ kind: MODEL_KIND, workspace: w.name, model: m.name, modelId: m.id });
       for (const it of w.items) {
         const kind = sqlKind(it.kind);
         if (!kind) continue;
@@ -196,7 +198,7 @@ function createModels({ onelake, fabric, semviews, modules, modelsFolder, accoun
     }
     // And every model kept as a view: Fabric's, or a model file opened from a lakehouse's Files/.
     for (const v of await semviews.list()) {
-      if (v.schema) found.push({ kind: MODEL_CATALOG, workspace: v.schema, model: v.name });
+      if (v.schema) found.push({ kind: MODEL_KIND, workspace: v.schema, model: v.name });
     }
     return found;
   }
@@ -271,10 +273,10 @@ function createModels({ onelake, fabric, semviews, modules, modelsFolder, accoun
     if (namesKept && Date.now() - namesKept.at < 60_000) return namesKept.value;
     const value = (async () => {
       const found = await walkTables();
-      const tables = found.filter(f => f.kind !== MODEL_CATALOG && f.table).map(f => ({ ...f, columns: f.columns || [] }));
+      const tables = found.filter(f => f.kind !== MODEL_KIND && f.table).map(f => ({ ...f, columns: f.columns || [] }));
       const models = new Map();
       for (const f of found) {
-        if (f.kind !== MODEL_CATALOG) continue;
+        if (f.kind !== MODEL_KIND) continue;
         const key = `${f.workspace}|${f.model}`.toLowerCase();
         const m = models.get(key);
         if (m) m.modelId = m.modelId || f.modelId;

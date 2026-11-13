@@ -1,15 +1,15 @@
-# Semantic models: semanticmodel.workspace.model, in a catalog of their own. SHOW SEMANTIC
+# Semantic models: workspace.model_semanticmodel, a view in its workspace's schema. SHOW SEMANTIC
 # VIEWS lists every one the cache knows; one not opened yet has no file and no tables yet.
 
 query TTTTT
 SHOW SEMANTIC VIEWS
 ----
-semanticmodel	cat1	Sales	NULL	NULL
+memory	cat1	Sales_semanticmodel	NULL	NULL
 
 query TTTTT
 show semantic views;
 ----
-semanticmodel	cat1	Sales	NULL	NULL
+memory	cat1	Sales_semanticmodel	NULL	NULL
 
 statement error
 SHOW SEMANTIC VIEW
@@ -25,12 +25,18 @@ Sales
 statement error
 SELECT AGG("x") FROM cat1.Sales
 ----
-cat1
+Sales
 
 statement error
 DESCRIBE cat1.Sales
 ----
-cat1
+Sales
+
+# Nor is the old one.
+statement error
+SELECT AGG("x") FROM semanticmodel.cat1.Sales
+----
+semanticmodel
 
 # A model is never made or dropped in SQL.
 statement error
@@ -39,6 +45,6 @@ CREATE SEMANTIC VIEW cat1.x FROM 'x.bim'
 Not run
 
 statement error
-DROP SEMANTIC VIEW semanticmodel.cat1.Sales
+DROP SEMANTIC VIEW cat1.Sales_semanticmodel
 ----
 Not run
