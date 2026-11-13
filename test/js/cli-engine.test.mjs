@@ -222,7 +222,7 @@ test("a Report tile with a pick from another tile runs filtered on the real engi
     // the one Logs shows, and opens in a SQL box. It said FROM model, and this test wrote the name in for it.
     const rows = async (piv, where) => {
       const text = piv.sqlWith(where);
-      assert.match(text, /FROM semanticmodel[.]shop[.]sales_model/);
+      assert.match(text, /FROM shop[.]sales_model_semanticmodel/);
       const r = await cli(["sql", text, "--json"]);
       assert.equal(r.code, EXIT.OK, `${text}\n${r.stdout}${r.stderr}`);
       return JSON.parse(r.stdout).rows.map(row => row.map(v => (typeof v === "string" && /^-?\d+(\.\d+)?$/.test(v) ? Number(v) : v)));
@@ -269,7 +269,8 @@ test("SHOW ALL TABLES on the real engine: Markdown counts the columns, --json ha
     let r = await cli(["sql", "SHOW ALL TABLES"]);
     assert.equal(r.code, EXIT.OK, r.stderr);
     assert.match(r.stdout, /^\| database \| schema \| name \| columns \|$/m);
-    assert.match(r.stdout, /^\| semanticmodel \| shop \| sales_model \| 1 \|$/m);
+    assert.match(r.stdout, /^\| memory \| shop \| sales_model_semanticmodel \| 1 \|$/m);
+    assert.match(r.stdout, /^\| memory \| shop\.data_lakehouse\.dbo \| fct_sales \| 2 \|$/m);
     assert.doesNotMatch(r.stdout, /column_names|VARCHAR/);
 
     r = await cli(["sql", "SHOW ALL TABLES", "--json"]);
