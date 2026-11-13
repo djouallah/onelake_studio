@@ -10,6 +10,19 @@
   table counts as kept only once they are all here.
 - **Visual opens on Top 1000.** A new visual keeps its first 1,000 rows; *All rows* is in the same list, and stays
   picked once chosen.
+- **SQL writes to a lakehouse.** A statement in the SQL box, or the command line's `sql`, can write a lakehouse's
+  tables as Iceberg: `CREATE TABLE`, `CREATE TABLE … AS`, `INSERT`, `UPDATE`, `DELETE`, `MERGE INTO`, `ALTER TABLE`
+  and `CREATE SCHEMA`, through the lakehouse's Iceberg catalog, with DuckDB's own Iceberg writer. A table is named
+  `lakehouse.<workspace>.<lakehouse>.<schema>.<table>`, or `<workspace>.<lakehouse>.<table>` for `dbo`.
+  `COPY (…) TO 'lakehouse.<workspace>.<lakehouse>/Files/<path>'` writes a file into its `Files/`. `DROP` is refused,
+  and so is a write to a Delta table, a warehouse, or anything outside a lakehouse. Each write is checked against
+  DuckDB's own plan of it before it runs. A write needs a connection.
+- **Several statements run in turn.** A selection with several statements runs each, in order, and stops at the first
+  that fails, with the cursor on it. The status line says which one is running, and the last one's rows are shown.
+  The command line's `sql` does the same.
+- **A .sql file opens in the SQL box.** In VS Code a `.sql` file opens in OneLake Studio, as a saved query does, and
+  Save writes it back to the file. *Reopen Editor With… > Text Editor* shows the text. The desktop app opens one from
+  File › Open… and Windows' "Open with".
 - **Row limits follow the settings everywhere.** A table's Data tab, the query a table puts in the box, an
   internal table and a snapshot's query read *Select Top Rows* rows (1,000 by default), where they read 100. A
   Visual, a table's pivot and a Report tile ask for up to *Max Result Rows* (200,000 by default), where they

@@ -394,7 +394,7 @@ function createCatalog({ getToken, dfsOrigin = DFS_ORIGIN, tableOrigin = TABLE_O
   // One level of any directory under an item, workspace-relative: a table's _delta_log.
   const listDir = (ws, dir) => listPaths(ws, dir);
 
-  return { listWorkspaces, listItems, listTables, listFiles, listDir, loadTable, readBytes, reset, usePrefixStore };
+  return { listWorkspaces, listItems, listTables, listFiles, listDir, loadTable, readBytes, reset, usePrefixStore, ircPrefixFor };
 }
 
 module.exports = { createCatalog, TABLE_ORIGIN };

@@ -1,122 +1,124 @@
-# Read only: nothing a statement says can write, to OneLake or anywhere else.
+# What a statement may not do: write anywhere but a lakehouse, change the engine, or reach the disk.
+# A write to a lakehouse is refused here too: this engine has none to write to (writes.test is the rest).
 
 statement error
 CREATE TABLE memory.main.x (a INT)
 ----
-Read only
+Not run
 
 statement error
 INSERT INTO lakehouse.cat1.lh.dbo.t VALUES (1)
 ----
-Read only
+Not run
 
 statement error
 DELETE FROM lakehouse.cat1.lh.dbo.t
 ----
-Read only
+Not run
 
 statement error
 COPY (SELECT 1) TO 'x.csv'
 ----
-Read only
+Not run
 
 statement error
 SET enable_external_access = true
 ----
-Read only
+Not run
 
-statement error
+# Several statements run in turn: the last one's rows are the answer.
+query I
 SELECT 1; SELECT 2
 ----
-one statement at a time
+2
 
 # The same, hidden: nothing around a statement changes what it is.
 statement error
 /* a comment */ COPY (SELECT 1) TO 'x.csv'
 ----
-Read only
+Not run
 
 statement error
 SELECT 1 /* ; */; COPY (SELECT 1) TO 'x.csv'
 ----
-one statement at a time
+Not run
 
 statement error
 SELECT ';'; COPY (SELECT 1) TO 'x.csv'
 ----
-one statement at a time
+Not run
 
 statement error
 SELECT $$;$$; COPY (SELECT 1) TO 'x.csv'
 ----
-one statement at a time
+Not run
 
 statement error
 WITH a AS (SELECT 1) COPY (SELECT 1) TO 'x.csv'
 ----
-Read only
+Not run
 
 statement error
 WITH a AS (SELECT 1) DELETE FROM lakehouse.cat1.lh.dbo.t
 ----
-Read only
+Not run
 
 statement error
 EXPLAIN ANALYZE COPY (SELECT 1) TO 'x.csv'
 ----
-Read only
+Not run
 
 statement error
 CREATE VIEW v AS DELETE FROM lakehouse.cat1.lh.dbo.t
 ----
-Read only
+Not run
 
 # What changes the engine itself.
 statement error
 INSTALL httpfs
 ----
-Read only
+Not run
 
 statement error
 LOAD httpfs
 ----
-Read only
+Not run
 
 statement error
 CALL load_aws_credentials()
 ----
-Read only
+Not run
 
 statement error
 SET lock_configuration = false
 ----
-Read only
+Not run
 
 statement error
 ATTACH ':memory:' AS x
 ----
-Read only
+Not run
 
-# What the page sends to set up its reads is the page's. This is the command line, which reads.
+# What the page sends to set up its reads is the page's. DROP is blocked for now, of anything.
 statement error
 DROP TABLE memory.main.not_a_table
 ----
-DROP is not a read
+DROP is blocked
 
 statement error
 DROP TABLE IF EXISTS lakehouse.cat1.lh.dbo.no_such_table
 ----
-DROP is not a read
+DROP is blocked
 
 statement error
 DROP VIEW lakehouse.cat1.lh.dbo.t
 ----
-DROP is not a read
+DROP is blocked
 
 statement error
 DROP SCHEMA lakehouse.cat1 CASCADE
 ----
-DROP is not a read
+DROP is blocked
 
 statement error
 DETACH lakehouse
@@ -126,12 +128,12 @@ DETACH is not a read
 statement error
 CREATE VIEW v AS SELECT 1
 ----
-CREATE is not a read
+CREATE VIEW isn't a write to a lakehouse
 
 statement error
 CREATE SCHEMA s
 ----
-CREATE is not a read
+a schema is made in a lakehouse
 
 statement error
 ATTACH 'x.db' AS x (READ_ONLY)

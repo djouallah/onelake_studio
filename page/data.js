@@ -703,7 +703,7 @@ export function createEngine({
   // Text on the clipboard, by the host (the grid's copies).
   const copyText = text => callHost("host.copyText", [{ text }]);
   // Save Query: the box's SQL under Queries, over the one named, else as a new "Query N".
-  const saveQuery = (name, sql) => callHost("host.saveQuery", [{ name, sql }]);
+  const saveQuery = (name, sql, file = null) => callHost("host.saveQuery", [{ name, sql, file }]);
   // The box's text, for the next panel.
   const saveDraft = draft => callHost("host.saveDraft", [draft]);
   // A query variable's value, asked of the user: text, or null when dismissed.

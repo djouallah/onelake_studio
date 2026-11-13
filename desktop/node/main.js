@@ -156,10 +156,10 @@ async function main() {
       case 'app.update': return checkUpdate(packageJSON.version);
       // Help > Open Data Folder: this folder only, whatever the window says.
       case 'app.openHome': dialogs.openFolder(home); return null;
-      // File > Open…: an app's file or a model file, opened as a double-click would.
+      // File > Open…: an app's file, a model file or a .sql file, opened as a double-click would.
       case 'app.openFile': return run(async () => {
         const picked = await vscode.window.showOpenDialog({ canSelectFiles: true, canSelectMany: false, title: 'Open',
-          filters: { 'OneLake Studio app or model': ['fabricapp', 'yaml', 'yml', 'bim'] } });
+          filters: { 'OneLake Studio app, model or SQL': ['fabricapp', 'yaml', 'yml', 'bim', 'sql'] } });
         if (picked && picked.length) await vscode.commands.executeCommand('onelakeStudio.openPath', picked[0].fsPath);
       });
       default: throw new Error(`no method ${method}`);

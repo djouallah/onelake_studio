@@ -55,6 +55,12 @@
         "displayName": "OneLake Studio model",
         "selector": [{ "filenamePattern": "*.ossie.yaml" }],
         "priority": "default"
+      },
+      {
+        "viewType": "onelakeStudio.sqlFile",
+        "displayName": "OneLake Studio SQL",
+        "selector": [{ "filenamePattern": "*.sql" }],
+        "priority": "default"
       }
     ],
     "commands": [
@@ -340,7 +346,7 @@
       "explorer/context": [
         {
           "command": "onelakeStudio.openPath",
-          "when": "resourceScheme == file && resourceExtname =~ /^\\.(ya?ml|bim|fabricapp)$/i",
+          "when": "resourceScheme == file && resourceExtname =~ /^\\.(ya?ml|bim|fabricapp|sql)$/i",
           "group": "navigation@9"
         }
       ],
@@ -812,7 +818,7 @@
   },
   "scripts": {
     "vscode:prepublish": "node scripts/check-binding.mjs && node scripts/stage-webview.mjs && node scripts/vendor.mjs && node scripts/function-bundle.mjs && node scripts/bundle.mjs",
-    "test": "node --test test/js/pinned-downloads.test.mjs test/js/test-lists.test.mjs test/js/doubleclick.test.mjs test/js/tree-filter.test.mjs test/js/tree-cached.test.mjs test/js/syncworker.test.mjs test/js/app-paths.test.mjs test/js/catalog.test.mjs test/js/fabric.test.mjs test/js/sqlendpoint.test.mjs test/js/host.test.mjs test/js/names.test.mjs test/js/deltalog.test.mjs test/js/health.test.mjs test/js/onelaketable.test.mjs test/js/onelake-tables.test.mjs test/js/onelake.test.mjs test/js/panel-html.test.mjs test/js/sql.test.mjs test/js/store.test.mjs test/js/catalogfile.test.mjs test/js/logfile.test.mjs test/js/diaglog.test.mjs test/js/sqltables.test.mjs test/js/connectivity.test.mjs test/js/bridge.test.mjs test/js/xmla.test.mjs test/js/modeldata.test.mjs test/js/semviews.test.mjs test/js/modelfile.test.mjs test/js/semantic.test.mjs test/js/report.test.mjs test/js/agent.test.mjs test/js/cli.test.mjs test/js/cli-contract.test.mjs test/js/cli-catalog.test.mjs test/js/snapshot-offline.test.mjs test/js/tableread.test.mjs test/js/filecache.test.mjs test/js/cli-docs.test.mjs test/js/exportapp.test.mjs test/js/fabricapp.test.mjs test/js/ranges.test.mjs test/js/split.test.mjs test/js/onelakewrite.test.mjs test/js/http.test.mjs test/js/querytext.test.mjs test/js/grid.test.mjs test/js/dbview.test.mjs test/js/title.test.mjs test/js/signin.test.mjs test/js/queries.test.mjs test/js/exportflow.test.mjs test/js/export-fabric.test.mjs test/js/pbimodel.test.mjs test/js/fabricmodel.test.mjs test/js/core-no-editor.test.mjs test/js/standalone.test.mjs test/js/desktop.test.mjs"
+    "test": "node --test test/js/pinned-downloads.test.mjs test/js/test-lists.test.mjs test/js/doubleclick.test.mjs test/js/tree-filter.test.mjs test/js/tree-cached.test.mjs test/js/syncworker.test.mjs test/js/app-paths.test.mjs test/js/catalog.test.mjs test/js/fabric.test.mjs test/js/sqlendpoint.test.mjs test/js/host.test.mjs test/js/names.test.mjs test/js/deltalog.test.mjs test/js/health.test.mjs test/js/onelaketable.test.mjs test/js/onelake-tables.test.mjs test/js/onelake-writes.test.mjs test/js/onelake.test.mjs test/js/panel-html.test.mjs test/js/sql.test.mjs test/js/store.test.mjs test/js/catalogfile.test.mjs test/js/logfile.test.mjs test/js/diaglog.test.mjs test/js/sqltables.test.mjs test/js/connectivity.test.mjs test/js/bridge.test.mjs test/js/xmla.test.mjs test/js/modeldata.test.mjs test/js/semviews.test.mjs test/js/modelfile.test.mjs test/js/semantic.test.mjs test/js/report.test.mjs test/js/agent.test.mjs test/js/cli.test.mjs test/js/cli-contract.test.mjs test/js/cli-catalog.test.mjs test/js/snapshot-offline.test.mjs test/js/tableread.test.mjs test/js/filecache.test.mjs test/js/cli-docs.test.mjs test/js/exportapp.test.mjs test/js/fabricapp.test.mjs test/js/ranges.test.mjs test/js/split.test.mjs test/js/onelakewrite.test.mjs test/js/http.test.mjs test/js/querytext.test.mjs test/js/grid.test.mjs test/js/dbview.test.mjs test/js/title.test.mjs test/js/signin.test.mjs test/js/queries.test.mjs test/js/exportflow.test.mjs test/js/export-fabric.test.mjs test/js/pbimodel.test.mjs test/js/fabricmodel.test.mjs test/js/core-no-editor.test.mjs test/js/standalone.test.mjs test/js/desktop.test.mjs"
   },
   "devDependencies": {
     "@types/vscode": "^1.90.0",

@@ -151,8 +151,9 @@ let openSqlModel = null;
 let nameModelTables = null;
 // The Model page's double-click on a table: that OneLake table, by its SQL name, opened as the tree opens it.
 let openTableByName = null;
-// Save Query, from the panel's SQL box. Set by activateInner.
+// Save Query, from the panel's SQL box, and a .sql file from disk read for it. Set by activateInner.
 let saveQuery = null;
+let openSqlFile = null;
 
 async function show(context, { newTab = false, key = null, ...options } = {}) {
   if (!newTab && revealPanel()) return true;
@@ -437,7 +438,7 @@ async function activateInner(context) {
     mark: step => out && out.mark(step),
   });
   theCore = core;
-  ({ engines, onelake, semviews, rebindStore, exportExplore, createSemanticModel, modelReport, openExcel, keepOffline, openSqlModel, nameModelTables, saveQuery } = core);
+  ({ engines, onelake, semviews, rebindStore, exportExplore, createSemanticModel, modelReport, openExcel, keepOffline, openSqlModel, nameModelTables, saveQuery, openSqlFile } = core);
   const { fabric, sqlTables, syncWorker, favorites, accountTurn, sessionChanged, setSignedIn } = core;
   const { queriesFolder, listQueries, queryPath } = core.queries;
   const { modelKey, cachedModel, unsupportedModels, unsupportedNote, fetchModel, completionNames } = core.models;
@@ -684,8 +685,9 @@ async function activateInner(context) {
 
   // A file from disk: VS Code's Explorer or an editor's title bar, a .fabricapp's editor, the desktop
   // app's File > Open… or a double-click. A .fabricapp opens its model on the Report page, drawing this
-  // file; an Ossie .yaml or a .bim opens as a model, its tables OneLake's by the names in it. `arg`: a
-  // Uri, a path, or nothing (the active editor's file).
+  // file; an Ossie .yaml or a .bim opens as a model, its tables OneLake's by the names in it; a .sql file
+  // opens in the SQL box, as a saved query does, and Save writes it back. `arg`: a Uri, a path, or nothing
+  // (the active editor's file).
   async function openPath(arg) {
     const editor = vscode.window.activeTextEditor;
     const fsPath = typeof arg === 'string' ? arg : arg && arg.fsPath ? arg.fsPath : editor ? editor.document.uri.fsPath : null;
@@ -695,6 +697,12 @@ async function activateInner(context) {
     if (revealTab(pathKey(fsPath))) return;
     try {
       if (/\.fabricapp$/i.test(fsPath)) return await openAppFile(fsPath);
+      if (/\.sql$/i.test(fsPath)) {
+        if (!openSqlFile) throw new Error('OneLake Studio is still starting');
+        const sql = await openSqlFile(fsPath);
+        await openInPanel({ type: 'query', name: name.replace(/\.sql$/i, ''), sql, file: fsPath }, name, pathKey(fsPath));
+        return;
+      }
       const found = await core.models.modelFile(fsPath);
       const workspace = found.workspace || (found.choices && found.choices.length === 1 ? found.choices[0] : null);
       if (!workspace) {
@@ -794,7 +802,7 @@ async function activateInner(context) {
   // closes its own empty tab ("Reopen Editor With… Text Editor" still shows the text). The desktop app's
   // vscode has no custom editors: it opens files itself (desktop/node/main.js).
   if (vscode.window.registerCustomEditorProvider) {
-    for (const viewType of ['onelakeStudio.fabricApp', 'onelakeStudio.ossieModel']) {
+    for (const viewType of ['onelakeStudio.fabricApp', 'onelakeStudio.ossieModel', 'onelakeStudio.sqlFile']) {
       context.subscriptions.push(vscode.window.registerCustomEditorProvider(viewType, {
         openCustomDocument: uri => ({ uri, dispose() {} }),
         resolveCustomEditor: async (doc, webviewPanel) => {

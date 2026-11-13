@@ -82,8 +82,11 @@ let rowsOutOfReach = null;   // the table whose Data tab is hidden (checkDataTab
 const reportBoot = b => vs.postMessage({ type: 'boot', ...b });
 const reportOpened = (kind, label, ms) => vs.postMessage({ type: 'opened', kind, label, ms });
 
+// Which of several statements is running (runBox), said in front of what each says: "2/3 · ".
+let stepNote = '';
 function setStatus(msg, type = '') {
   const el = $('status');
+  if (stepNote) msg = `${stepNote} · ${msg}`;
   el.textContent = msg;
   el.className = type;
   // One ellipsised line; an error is long and its useful half is the tail. Hover for it,
@@ -902,7 +905,7 @@ async function runQuery({ sql, doc = true, ext = '', summarize = null } = {}) {
   let rowsSoFar = 0;
   setStatus('Running…');
   const ticker = setInterval(() => {
-    if (stale() || !$('status').textContent.startsWith('Running')) return;
+    if (stale() || !/^(?:\d+\/\d+ · )?Running/.test($('status').textContent)) return;
     setStatus(`Running… ${elapsed(asked)}${rowsSoFar ? `, ${rowsSoFar.toLocaleString('en')} rows so far` : ''}`);
   }, 1000);
   try {
@@ -1528,8 +1531,10 @@ function enterQuery(title) {
 }
 
 // The SQL box: written, run and saved here, so a query never opens a .sql file, and nothing else
-// in VS Code has a say in it. It holds one query: the saved one it came from, when it did.
+// in VS Code has a say in it. It holds one query: the saved one it came from, when it did. A .sql file
+// opened from disk is one too, and `activeFile` is its path: Save writes it back there.
 let activeQuery = null;
+let activeFile = null;
 const sameName = (a, b) => a != null && String(a).toLowerCase() === String(b).toLowerCase();
 function nameBoxQuery(name) {
   activeQuery = name;
@@ -1562,6 +1567,7 @@ function putInBox(sql) {
   typeInBox(box, sql);
   clearTimeout(draftTimer);     // what was put here isn't a draft to keep
   nameBoxQuery(null);
+  activeFile = null;
   box.setSelectionRange(0, 0);
 }
 // What was clicked, as SQL to start from: a click isn't a request to type, so the cursor stays where
@@ -1572,10 +1578,12 @@ function offerInBox(sql) {
   if (box.value.trim() && box.value !== offered) return;
   box.value = offered = sql;
   activeQuery = null;
+  activeFile = null;
 }
-function openInBox(sql, name) {
+function openInBox(sql, name, file = null) {
   putInBox(sql);
   nameBoxQuery(name);
+  activeFile = file;
   $('activeTable').textContent = name ? `Query: ${name}` : 'Query';
   setStatus(name ? `${name} — Run ▶ (Ctrl+Enter) to run it.` : 'Run ▶ (Ctrl+Enter) runs the statement under the cursor.');
 }
@@ -1618,6 +1626,21 @@ async function runBox({ plan = false } = {}) {
   const box = $('sqlEditor'), text = box.value;
   const span = boxStatement();
   if (!span) { setStatus('Nothing here to run: write a statement, or put the cursor in one.'); return; }
+  // A selection can hold several statements: each runs in turn, in order, and the run stops at the first that
+  // fails, with the cursor on it. What the last one answers is on screen.
+  const parts = statements(text.slice(span.start, span.end)).map(p => ({ start: span.start + p.start, end: span.start + p.end }));
+  if (parts.length <= 1) return runOne(parts[0] || span, { plan, text });
+  if (plan) { setStatus('Plan shows one statement: put the cursor in one, or select only that one.', 'warn'); return; }
+  try {
+    for (let i = 0; i < parts.length; i++) {
+      stepNote = `${i + 1}/${parts.length}`;
+      if (!await runOne(parts[i], { text })) return;
+    }
+  } finally { stepNote = ''; }
+}
+// One statement of the box, `span` of `text`: true when it ran.
+async function runOne(span, { plan = false, text }) {
+  const box = $('sqlEditor');
   const written = text.slice(span.start, span.end);
   try {
     // SET VARIABLE is the page's, not the engine's: kept here and answered at once. Bound now:
@@ -1625,15 +1648,15 @@ async function runBox({ plan = false } = {}) {
     const set = setVariable(written);
     if (set) {
       const value = await bindBoxVariables(set.value);
-      if (value == null) { setStatus('Cancelled: the variable has no value.'); return; }
+      if (value == null) { setStatus('Cancelled: the variable has no value.'); return false; }
       variables.set(set.name.toLowerCase(), value);
       setStatus(`${set.name} = ${value}`, 'ok');
-      return;
+      return true;
     }
     const sql = await bindBoxVariables(written);
-    if (sql == null) { setStatus('Cancelled: the query needs that variable.'); return; }
+    if (sql == null) { setStatus('Cancelled: the query needs that variable.'); return false; }
     // Before anything is cancelled: this Plan would be refused, and would have stopped the one under way.
-    if (plan && planning) { setStatus('A plan is still being measured: wait for it, then plan again.', 'warn'); return; }
+    if (plan && planning) { setStatus('A plan is still being measured: wait for it, then plan again.', 'warn'); return false; }
     enterQuery(activeQuery);
     // EXPLAIN [ANALYZE] written in the box is Plan: the profile and the tree, not two columns of text.
     // One with options, EXPLAIN (FORMAT json) …, runs as written: its text is what was asked for.
@@ -1641,24 +1664,27 @@ async function runBox({ plan = false } = {}) {
     const ok = plan || explain ? await showPlan(explain ? sql.slice(explain[0].length) : sql) : await runQuery({ sql });
     // The cursor goes where DuckDB says the error is, as the statement is written. Not a
     // selection: the next Ctrl+Enter runs the statement again, not one word of it.
-    if (!ok && lastRun.error && !lastRun.rewritten && box.value === text) {
-      const at = errorOffset(lastRun.error, written);
-      if (at != null) { box.focus(); box.setSelectionRange(span.start + at, span.start + at); }
+    // One of several with no place in it said: the statement's start.
+    if (!ok && lastRun.error && box.value === text) {
+      const at = lastRun.rewritten ? null : errorOffset(lastRun.error, written);
+      if (at != null || stepNote) { box.focus(); box.setSelectionRange(span.start + (at || 0), span.start + (at || 0)); }
     }
+    return ok;
   } catch (e) {
     setStatus('Could not run that: ' + e.message, 'error');
+    return false;
   }
 }
-// Save Query: over the query the box came from, else as the next free "Query N", with nothing
-// asked (Rename in the tree names it).
+// Save Query: back to the .sql file the box came from, over the saved query it came from, else as the next
+// free "Query N", with nothing asked (Rename in the tree names it).
 async function saveBox() {
   const sql = $('sqlEditor').value;
   if (!sql.trim()) { setStatus('Nothing to save: write a query first.'); return; }
   try {
-    const saved = await engine.saveQuery(activeQuery || '', sql);
+    const saved = await engine.saveQuery(activeQuery || '', sql, activeFile);
     nameBoxQuery(saved.name);
     if ($('activeTable').textContent.startsWith('Query')) $('activeTable').textContent = `Query: ${saved.name}`;
-    setStatus(`Saved as ${saved.name} under Queries.`, 'ok');
+    setStatus(saved.file ? `Saved to ${saved.file}.` : `Saved as ${saved.name} under Queries.`, 'ok');
   } catch (e) {
     setStatus('Could not save the query: ' + e.message, 'error');
   }
@@ -1832,7 +1858,8 @@ window.addEventListener('message', async e => {
       }
     }
     // SQL for the box, from the tree: a new query, a saved one, Select Top Rows (run at once).
-    else if (m.type === 'query') openInBox(String(m.sql ?? ''), m.name ? String(m.name) : null);
+    // A .sql file from disk too, with its path: Save writes it back there.
+    else if (m.type === 'query') openInBox(String(m.sql ?? ''), m.name ? String(m.name) : null, m.file ? String(m.file) : null);
     else if (m.type === 'run-sql') { openInBox(String(m.sql ?? ''), null); await runBox(); }
     // A lakehouse's Table Health: every table this machine holds, from the lake.
     else if (m.type === 'lakehouse-health') await showLakehouseHealth(m);

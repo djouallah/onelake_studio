@@ -104,12 +104,12 @@ test("a tab's files are its own: no statement or other tab can take them, and th
 
   for (const sql of ["DROP VIEW ones_view", "DROP SCHEMA lakehouse CASCADE", "DETACH lakehouse",
                      "CREATE OR REPLACE VIEW ones_view AS SELECT 2 AS a", "ATTACH ':memory:' AS x (READ_ONLY)"]) {
-    await assert.rejects(two.call("query", [sql]), /Read only/, sql);
+    await assert.rejects(two.call("query", [sql]), /Not run/, sql);
   }
   await two.call("releaseFiles", [{ views: ["ones_view"] }]);
   assert.deepEqual(await still(), [{ a: 1 }], "another tab's release takes nothing");
 
-  await assert.rejects(one.call("fileView", ["v", "COPY (SELECT 1) TO 'x.csv'"]), /Read only/);
+  await assert.rejects(one.call("fileView", ["v", "COPY (SELECT 1) TO 'x.csv'"]), /Not run/);
   await assert.rejects(one.call("attachFile", [{ path: "/etc/passwd", alias: "x" }]), /attached from OneLake/);
   await assert.rejects(one.call("attachFile", [{ path: "abfss://c@elsewhere.dfs.core.windows.net/x.duckdb", alias: "x" }]), /attached from OneLake/);
 
@@ -137,8 +137,8 @@ test("a statement streams, and an error reads as the statement rather than our w
 
 test("the guard refuses Quack's own functions, and the server's lockdown holds", async t => {
   const a = (await setup(t)).open();
-  await assert.rejects(a.call("query", ["SELECT * FROM quack_stop('quack:127.0.0.1:1')"]), /Read only/);
-  await assert.rejects(a.call("query", ["SELECT * FROM \"quack_serve\"('x')"]), /Read only/);
+  await assert.rejects(a.call("query", ["SELECT * FROM quack_stop('quack:127.0.0.1:1')"]), /Not run/);
+  await assert.rejects(a.call("query", ["SELECT * FROM \"quack_serve\"('x')"]), /Not run/);
   await assert.rejects(a.call("query", [`SELECT * FROM read_text(${JSON.stringify(SCRIPT).replace(/"/g, "'")})`]), /Permission|disabled/);
 });
 

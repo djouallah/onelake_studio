@@ -493,6 +493,8 @@ function createRemote({ onGone = () => {}, ...cfg }) {
       lakeStats: () => ask({ lakeStats: true }),
       lakeFetch: name => ask({ lakeFetch: name }),
       lakeStop: name => ask({ lakeStop: name }),
+      icebergAttach: w => ask({ icebergAttach: w }),
+      icebergDetach: w => ask({ icebergDetach: w }),
       stats: () => ask({ stats: true }),
       othersRunning: () => ask({ othersRunning: true }),
       logs: limit => ask({ logs: { limit } }),

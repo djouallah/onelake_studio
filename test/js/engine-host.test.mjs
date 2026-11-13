@@ -156,7 +156,7 @@ test("what the read-only guard takes as a read or a write, DuckDB's own parser d
   for (const sql of WRITES) {
     const j = await parsed(sql);
     assert.ok(j.error === true || j.statements.length !== 1, `DuckDB reads this as one query, so it is no way past the guard: ${sql}`);
-    await assert.rejects(engine.call("query", [sql]), /Read only/, sql);
+    await assert.rejects(engine.call("query", [sql]), /Not run/, sql);
   }
   // What the parser can't write as JSON still reads, under both walls.
   assert.equal((await engine.call("query", ["EXPLAIN SELECT 1"])).rows.length > 0, true);
@@ -167,14 +167,14 @@ test("what the read-only guard takes as a read or a write, DuckDB's own parser d
     "SELECT * FROM (PIVOT (SELECT 'x' AS k, 1 AS v) ON k IN ('x') USING sum(v))"])).rows, [{ x: 1 }]);
   assert.deepEqual((await engine.call("query", [
     "WITH x AS (SELECT 'x' AS k, 1 AS v) PIVOT x ON k USING sum(v)"])).rows, [{ x: 1 }]);
-  await assert.rejects(engine.call("query", ["SELECT * FROM query('SELECT * FROM quack' || '_stop(''quack:127.0.0.1:1'')')"]), /Read only/);
-  await assert.rejects(engine.call("query", ["SELECT write_log('forged', level := 'error', log_type := 'Quack')"]), /Read only/);
+  await assert.rejects(engine.call("query", ["SELECT * FROM query('SELECT * FROM quack' || '_stop(''quack:127.0.0.1:1'')')"]), /Not run/);
+  await assert.rejects(engine.call("query", ["SELECT write_log('forged', level := 'error', log_type := 'Quack')"]), /Not run/);
   // Nothing loads after the lockdown, with unsigned extensions allowed for ours.
   assert.deepEqual((await engine.call("query", [
     "SELECT current_setting('autoload_known_extensions') AS a, current_setting('autoinstall_known_extensions') AS b"])).rows, [{ a: false, b: false }]);
   await assert.rejects(engine.call("query", ["PRAGMA database_list"]), /PRAGMA is not a read/);
-  await assert.rejects(engine.call("query", ["SELECT * FROM ducklake_cleanup_old_files('lake', cleanup_all => true)"]), /Read only/);
-  await assert.rejects(engine.call("query", ["SELECT * FROM truncate_duckdb_logs()"]), /Read only/);
+  await assert.rejects(engine.call("query", ["SELECT * FROM ducklake_cleanup_old_files('lake', cleanup_all => true)"]), /Not run/);
+  await assert.rejects(engine.call("query", ["SELECT * FROM truncate_duckdb_logs()"]), /Not run/);
   // A mistake is DuckDB's own to report, with where it is.
   await assert.rejects(engine.call("query", ["SELECT 1 FROM"]), /syntax error/i);
   // An export goes inside a COPY of ours, so a read that closes its parenthesis isn't one.
@@ -586,7 +586,7 @@ test("native engine host", async t => {
     await assert.rejects(engine.call("query", [`SELECT * FROM read_csv('${p}')`]), /Permission|disabled by configuration/i,
       "reading a file the page has no business with is refused");
     await assert.rejects(engine.call("query", [`COPY (SELECT 1) TO '${join(outside, "out.csv").replace(/\\/g, "/")}'`]),
-      /Read only|Permission|disabled by configuration/i, "and so is writing one");
+      /Not run|Permission|disabled by configuration/i, "and so is writing one");
     await assert.rejects(engine.call("query", [`SELECT * FROM read_csv('${join(outside, "..", "x.csv").replace(/\\/g, "/")}')`]),
       /Permission|disabled by configuration|No files found/i, "dot-dot does not climb out");
   });
@@ -598,8 +598,8 @@ test("native engine host", async t => {
   });
 
   await t.test("the lockdown cannot be turned off from SQL", async () => {
-    await assert.rejects(engine.call("query", ["SET enable_external_access = true"]), /Read only|lock/i);
-    await assert.rejects(engine.call("query", ["SET allowed_directories = ['/']"]), /Read only|lock/i);
+    await assert.rejects(engine.call("query", ["SET enable_external_access = true"]), /Not run|lock/i);
+    await assert.rejects(engine.call("query", ["SET allowed_directories = ['/']"]), /Not run|lock/i);
   });
 
   await t.test("a file the host copied in reads, from the engine's temp directory", async () => {
@@ -682,7 +682,7 @@ test("native engine host", async t => {
     // A ';' before a closing comment isn't left inside the COPY's parenthesis.
     const noted = await engine.exportTo("SELECT 7 AS n; -- note", "parquet");
     assert.equal((await engine.call("query", [`SELECT n FROM '${noted}'`])).rows[0].n, 7);
-    await assert.rejects(engine.exportTo(`COPY (SELECT 1) TO '${path}'`, "csv"), /Read only/);
+    await assert.rejects(engine.exportTo(`COPY (SELECT 1) TO '${path}'`, "csv"), /Not run/);
     await assert.rejects(engine.exportTo("SELECT 1", "exe"), /no export format/);
   });
 

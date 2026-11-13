@@ -389,7 +389,7 @@ WHERE v.database_name = '${MODEL_CATALOG}' ORDER BY v.schema_name, v.view_name`;
 // dax-sql's CREATE and DROP SEMANTIC VIEW, which this extension does not take: a model is
 // there because Fabric has it (or a lakehouse's Files/ holds it), never because SQL made it.
 const VIEW_DDL = /^\s*(create(\s+or\s+replace)?|drop)\s+semantic\s+view\b/i;
-const NO_DDL ="Read only: OneLake Studio never writes, and a semantic model is not made or dropped " +
+const NO_DDL ="Not run: a semantic model is not made or dropped " +
   `in SQL — open one in the tree, or name it ${MODEL_CATALOG}.<workspace>.<model> in a query.`;
 
 /**

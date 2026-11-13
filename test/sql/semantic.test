@@ -36,9 +36,9 @@ cat1
 statement error
 CREATE SEMANTIC VIEW cat1.x FROM 'x.bim'
 ----
-Read only
+Not run
 
 statement error
 DROP SEMANTIC VIEW semanticmodel.cat1.Sales
 ----
-Read only
+Not run

@@ -102,8 +102,8 @@ function createCore({
 
   // Set below: what an engine, a tab and the command line ask for by the time anything can ask.
   let onelake = null, semviews = null, rebindStore = null, onStoreCleared = () => {};
-  let resolveSqlTable = null, resolveSqlFile = null, nameModelTables = null, cachedSqlTables = null;
-  let openSqlModel = null, saveQuery = null, exportExplore = null, openApp = null, modelReport = null, openExcel = null, keepOffline = null;
+  let resolveSqlTable = null, resolveSqlFile = null, resolveSqlLakehouse = null, nameModelTables = null, cachedSqlTables = null;
+  let openSqlModel = null, saveQuery = null, openSqlFile = null, exportExplore = null, openApp = null, modelReport = null, openExcel = null, keepOffline = null;
   let createSemanticModel = null;
 
   // What an engine asks of this window, whichever engine it is.
@@ -119,6 +119,14 @@ function createCore({
       getToken: opts => hostToken(opts),
       resolveTable: (ref, o) => (resolveSqlTable ? resolveSqlTable(ref, o) : Promise.reject(new Error('OneLake Studio is still starting'))),
       resolveFile: (ref, o) => (resolveSqlFile ? resolveSqlFile(ref, o) : Promise.reject(new Error('OneLake Studio is still starting'))),
+      resolveLakehouse: (ref, o) => (resolveSqlLakehouse ? resolveSqlLakehouse(ref, o) : Promise.reject(new Error('OneLake Studio is still starting'))),
+      // A write changed a lakehouse: its listing is read again, so the tree shows what is there now.
+      onWritten: w => {
+        if (!onelake) return;
+        const lh = { workspace: w.workspace, item: w.item };
+        const again = w.kind === 'files' ? onelake.files(lh, w.dir || '', { fresh: true }) : onelake.tables(lh, { fresh: true });
+        again.catch(e => log(`${w.workspace}/${w.item} was written, and its listing could not be read again — ${(e && e.message) || e}`));
+      },
       offlineReason: () => connectivity.reason(),
       checkConnectivity: () => connectivity.check(),
       onRowsRead: location => { if (onelake) onelake.rowsRead(location).catch(() => {}); },
@@ -190,6 +198,7 @@ function createCore({
   });
   const { adoptLooseQueries } = queries;
   saveQuery = queries.saveQuery;
+  openSqlFile = queries.openSqlFile;
   adoptLooseQueries().then(() => view.queriesChanged(), () => {});
   engines.setCacheRoot(engines.fileCacheRootFor());
   engines.setCacheAccount(storeAccount);
@@ -227,6 +236,7 @@ function createCore({
                                       offlineReason: () => connectivity.reason() });
   resolveSqlTable = sqlTables.resolve;
   resolveSqlFile = sqlTables.resolveFile;
+  resolveSqlLakehouse = sqlTables.lakehouseOf;
   nameModelTables = sqlTables.nameTables;
   // Semantic views: pointers to model files, kept per account in the extension's storage.
   // A view made or dropped is in the engine's catalog (SHOW ALL TABLES) by the next statement.
@@ -595,7 +605,7 @@ function createCore({
   }
 
   return {
-    engines, onelake, semviews, rebindStore, exportExplore, openApp, createSemanticModel, modelReport, openExcel, keepOffline, openSqlModel, nameModelTables, saveQuery,
+    engines, onelake, semviews, rebindStore, exportExplore, openApp, createSemanticModel, modelReport, openExcel, keepOffline, openSqlModel, nameModelTables, saveQuery, openSqlFile,
     onStoreCleared: () => onStoreCleared(),
     // The cache folder moved from `old` (setCacheRoot): the store's Files/ bytes go to the new one too, and
     // this account's model copies move there, their views with them. Waited for before `old` is deleted.

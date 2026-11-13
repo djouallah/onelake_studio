@@ -169,6 +169,23 @@ path in `Files/`, or an app no export created.
 **A database file is still a file.** Once attached, its tables are `<name>.<schema>.<table>`, which is not
 a OneLake table's name.
 
+## A write's target
+
+**A write goes to a lakehouse, so a write's target can leave out the kind.** Where SQL writes a table
+([ARCHITECTURE.md](ARCHITECTURE.md#sql-writes)), its name is the five parts, or `<workspace>.<lakehouse>.<table>` for a
+table in `dbo`:
+
+| Written | Means |
+| --- | --- |
+| `INSERT INTO lakehouse.aemo.data.dbo.monthly …` | The table `monthly` in `dbo` of lakehouse `data`, in workspace `aemo`. |
+| `INSERT INTO aemo.data.monthly …` | The same table. |
+| `CREATE SCHEMA lakehouse.aemo.data.raw`, `CREATE SCHEMA aemo.data.raw` | The schema `raw` in that lakehouse. |
+| `INSERT INTO warehouse.aemo.data.dbo.t …` | Refused: only a lakehouse is written. |
+| `INSERT INTO memory.main.t …` | Refused: `memory` is the engine's own, as are `lake`, `system_internal` and the kinds. |
+
+The three-part form is a write's target only. Anywhere else a three-part name is DuckDB's own (`memory.main.t`) or a
+semantic model's (`semanticmodel.aemo.nem`), and a table is read by its five parts.
+
 ## Spelling a name
 
 **Bare when it can be, quoted when it must.** A part stays bare only if it matches

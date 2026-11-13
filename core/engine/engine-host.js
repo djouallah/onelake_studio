@@ -33,7 +33,8 @@ const fsp = require('node:fs/promises');
 const { join } = require('node:path');
 const os = require('node:os');
 const { randomBytes, createHash } = require('node:crypto');
-const { sqlStr, quoteIdent, ONELAKE_SCOPES, scopeOfUrl, oneLakeScopes, assertReads, checkedRead, tableRefs, fileRefs, filesReadBy, namedError, catalogStatement, readsCatalog, withoutComments, COLUMNS_NOT_READ } = require('../sql');
+const { sqlStr, quoteIdent, ONELAKE_SCOPES, scopeOfUrl, oneLakeScopes, assertReads, checkedRead, readsOnly, writeOf, checkPlan, ICE_PREFIX,
+        tableRefs, fileRefs, filesReadBy, namedError, catalogStatement, readsCatalog, withoutComments, COLUMNS_NOT_READ } = require('../sql');
 const { SQL_KINDS, sqlName, abfssUrl, MODEL_CATALOG, modelSqlName } = require('../names');
 const { revalidate, sameAnswer } = require('../onelake/store');
 const { mapPool } = require('../onelake/http');
@@ -204,6 +205,10 @@ async function trimFileCache(dir, maxBytes, onWarn) {
 // Each becomes a view DuckDB lists (syncCatalog), so SHOW ALL TABLES and information_schema see
 // what the tree has seen without a single request to OneLake.
 //
+// `resolveLakehouse` finds a lakehouse a write names: { workspace, item, warehouse, scope }, the warehouse its
+// Iceberg catalog answers to and the storage scope its files are written under. `onWritten` hears what a write
+// changed: { kind: 'tables' | 'files', workspace, item, dir }, for the listings to be read again.
+//
 // `checkConnectivity` asks whether the internet is still there, once a read has failed. `onRowsRead`
 // gets a table's metadata location when a statement has read its rows, and `onFileRead` a file's
 // abfss:// URL when a statement has read that. `onTablesUsed` gets the tables each such statement
@@ -218,6 +223,7 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
                             allowedPaths = [], lockdown = true,
                             httpProxy = '', bundledExtensions = null,
                             fileCacheDir = null, fileCacheMaxBytes = 0, lakeFolder = 'lake', resolveTable = null, resolveFile = null,
+                            resolveLakehouse = null, onWritten = () => {},
                             catalogTables = null, offlineReason = () => null, checkConnectivity = null,
                             onRowsRead = () => {}, onFileRead = () => {}, onTablesUsed = () => {}, serve = null, remote = null } = {}) {
   let instance = null;
@@ -1058,6 +1064,119 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
     } finally { try { c.closeSync(); } catch (_) {} }
   }
 
+  // ---------------------------------------------------------------------------
+  // Writes: a lakehouse's Tables, through its Iceberg catalog, and its Files/
+  // ---------------------------------------------------------------------------
+  // DuckDB writes Iceberg only through a catalog, so a write to a table attaches the lakehouse's Iceberg REST
+  // catalog for that one statement, under a name of its own, and detaches it after. Nothing stays attached for a
+  // listing to find, two statements never share one, and each is attached with the token of its time. The
+  // options are the ones OneLake's catalog takes: it vends no credentials (DuckDB writes the files with the
+  // storage secret) and has no staged create. The token is a secret's, as an ATTACH's TOKEN shows in
+  // duckdb_databases().
+  const ICEBERG_URI = 'https://onelake.table.fabric.microsoft.com/iceberg';
+  const iceAttached = new Set();
+  let iceSecretToken = null;
+  async function iceAttach(warehouse) {
+    if (remote) return instance.icebergAttach({ warehouse: String(warehouse) });
+    await init();
+    if (!capabilities.iceberg) throw new Error("Not run: DuckDB's iceberg extension isn't loaded, so nothing is written to a lakehouse's tables.");
+    const name = `${ICE_PREFIX}${randomBytes(8).toString('hex')}`;
+    await admin(async () => {
+      if (!secretToken) throw new Error('Not run: a write to OneLake needs a sign-in.');
+      if (iceSecretToken !== secretToken) {
+        const p = await conn.prepare('CREATE OR REPLACE SECRET onelake_iceberg (TYPE iceberg, TOKEN ?)');
+        p.bindVarchar(1, secretToken);
+        await p.run();
+        iceSecretToken = secretToken;
+      }
+      await conn.run(`ATTACH ${sqlStr(warehouse)} AS ${quoteIdent(name)} (TYPE iceberg, URI ${sqlStr(ICEBERG_URI)}, SECRET onelake_iceberg,
+        ACCESS_DELEGATION_MODE 'none', STAGE_CREATE_TABLES false, SKIP_CREATE_TABLE_METADATA_UPDATES true, DEFAULT_SCHEMA 'dbo')`);
+      iceAttached.add(name);
+    });
+    return name;
+  }
+  async function iceDetach(name) {
+    if (remote) return instance.icebergDetach({ name: String(name) });
+    if (!iceAttached.delete(String(name))) return false;
+    await admin(() => conn.run(`DETACH ${quoteIdent(name)}`));
+    return true;
+  }
+
+  // DuckDB's plan of a statement, bound where it runs (the server, on the shared engine), as checkPlan reads it.
+  async function planOf(statement, owner) {
+    const r = await withConn(c => c.runAndReadAll(`SELECT json_serialize_plan(${sqlStr(statement)}) AS plan`), owner);
+    const { plan } = r.getRowObjectsJson()[0];
+    return typeof plan === 'string' ? JSON.parse(plan) : plan;
+  }
+
+  // A Delta table isn't written: its Iceberg face in OneLake is read only, and SQL here writes Iceberg.
+  async function refuseDelta(ref) {
+    let r = null;
+    try { r = await resolveTable({ kind: 'lakehouse', ...ref }, {}); }
+    catch (_) { return; }   // not there: a CREATE makes it, and anything else fails on DuckDB's word
+    if (r && r.deltaTable) notRunError(`${sqlName(r)} is a Delta table, and SQL here writes Iceberg tables only`);
+  }
+  const notRunError = why => { throw new Error(`Not run: ${why}.`); };
+
+  /**
+   * One statement that writes (sql.js writeOf), run: refused unless DuckDB's own plan of it writes what its text
+   * says, where it says. Never sent twice: a failure is said, not tried again. `emit` streams its answer in batches.
+   */
+  async function runWrite(sql, { owner, begin = () => {}, signal, emit = null }) {
+    const w = writeOf(sql);
+    const why = offlineReason();
+    if (why) {
+      throw Object.assign(new Error(`Not run: a write needs OneLake, and ${why === 'no internet' ? 'there is no internet' : 'you are not signed in'}.`), { offline: true });
+    }
+    if (!resolveLakehouse) throw new Error('Not run: this engine writes to no lakehouse.');
+    // The token first: the write's catalog is attached with it.
+    await ensureAuth();
+    const lh = await resolveLakehouse({ workspace: w.ref.workspace, item: w.ref.item, name: sql.slice(w.start, w.end) });
+    let attached = null, sent = false;
+    const place = text => sql.slice(0, w.start) + text + sql.slice(w.end);
+    try {
+      let statement, expect;
+      if (w.target === 'file') {
+        const url = abfssUrl(lh.workspace, `${lh.item}/Files`) + w.ref.path.slice('/Files'.length);
+        statement = place(sqlStr(url));
+        expect = { plan: w.plan, file: url };
+      } else {
+        if (w.target === 'table') await refuseDelta(w.ref);
+        await allowStorage([lh.scope]);
+        attached = await iceAttach(lh.warehouse);
+        statement = place([attached, w.ref.schema, ...(w.target === 'table' ? [w.ref.table] : [])].map(quoteIdent).join('.'));
+        expect = { plan: w.plan, catalog: attached };
+      }
+      const never = () => false;
+      const res = await withAuthRetry(() => withTables(statement, async run => {
+        checkPlan(await planOf(run, owner), expect);
+        begin();
+        sent = true;
+        if (!emit) return runAll(run, owner);
+        return { done: true, numRows: await withConn(c => runStreaming(c, run, emit), owner) };
+      }, never, { signal }), never);
+      return res;
+    } finally {
+      if (attached) await iceDetach(attached).catch(e => onWarn(`a write's Iceberg catalog was not detached — ${e.message}`));
+      // What it wrote, read again: the listing, and a table's new snapshot into the lake, so the next read is of it.
+      // Behind the answer, once it was sent, whatever happened: a statement that failed may still have committed.
+      if (sent) written(w, lh);
+    }
+  }
+  function written(w, lh) {
+    const item = { workspace: lh.workspace, item: lh.item };
+    if (w.target === 'file') {
+      const dir = w.ref.path.replace(/^\/Files\/?/, '').split('/').slice(0, -1).join('/');
+      try { onWritten({ kind: 'files', ...item, dir }); } catch (_) {}
+      return;
+    }
+    try { onWritten({ kind: 'tables', ...item }); } catch (_) {}
+    if (w.target === 'table') {
+      sourceOf({ kind: 'lakehouse', ...w.ref }, { fresh: true })
+        .catch(e => onWarn(`${w.ref.workspace}.${w.ref.item}.${w.ref.schema}.${w.ref.table} was written, and its new snapshot isn't read yet — ${e.message}`));
+    }
+  }
+
   // Every statement, streamed chunk by chunk off its own connection. `onBatch` gets one
   // batch per ~BATCH_ROWS rows: the columns (DuckDB's own type names) on every batch, and
   // rows as plain JSON-safe objects.
@@ -1162,8 +1281,13 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
       return true;
     }
     return {
-      // The page's SQL may read, never write: refused here at once, then asked of DuckDB's parser.
+      // The page's SQL reads, or writes to a lakehouse (runWrite). A read is checked here at once, then asked of
+      // DuckDB's parser; a write is held to DuckDB's own plan of it.
       async query(sql) {
+        if (!readsOnly(sql)) {
+          writeOf(sql);
+          return stoppable(async (begin, signal) => { await init(); return runWrite(sql, { owner, begin, signal }); });
+        }
         assertReads(sql);
         return stoppable(async (begin, signal) => {
           await init();
@@ -1178,6 +1302,10 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
       },
 
       async stream(sql, emit) {
+        if (!readsOnly(sql)) {
+          writeOf(sql);
+          return stoppable(async (begin, signal) => { await init(); return runWrite(sql, { owner, begin, signal, emit }); });
+        }
         assertReads(sql);
         return stoppable(async (begin, signal) => {
           await init();
@@ -1319,8 +1447,8 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
   }
 
   // The command line's query (agent.js): the same engine as the page's, on connections the
-  // page's Stop does not reach. Its guard is stricter, reads only: the page's setup statements
-  // are the page's. Not a page method. `signal`: the command line went away, so its query
+  // page's Stop does not reach. It reads, or writes to a lakehouse as a tab does (runWrite); the page's setup
+  // statements are the page's. Not a page method. `signal`: the command line went away, so its query
   // stops (only its own: another agent's goes on). `mark` goes in front of what runs, for Logs to show.
   async function agentQuery(sql, { signal, fresh = false, used = true, mark = '' } = {}) {
     const token = authToken;
@@ -1332,6 +1460,12 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
     const stop = () => { for (const c of mine) { try { c.interrupt(); } catch (_) {} } };
     if (signal) signal.addEventListener('abort', stop, { once: true });
     try {
+      if (!readsOnly(sql)) {
+        writeOf(sql);
+        await init();
+        if (signal && signal.aborted) throw new Error('nobody is waiting for this any more');
+        return await runWrite(sql, { owner });
+      }
       assertReads(sql);
       await init();
       const statement = mark + await checkedRead(sql, serialize);
@@ -1464,7 +1598,8 @@ function createEngineHost({ extensionDir, onLog = () => {}, onCatalog = () => {}
   }
 
   const api = { call, close, copyToTemp, exportTo, agentQuery, keepTable, othersRunning, catalogChanged, warm, maxRows, forTab, boot, stats,
-                readLog, emptyLog, relisten, setStorageToken, allowStorage: allowStorageHere, lakeTable, lakeName, lakeSync: syncLakeTable, lakeTables, lakeStats, lakeFetch, lakeStop, keepWhole, logs, clearLogs };
+                readLog, emptyLog, relisten, setStorageToken, allowStorage: allowStorageHere, lakeTable, lakeName, lakeSync: syncLakeTable, lakeTables, lakeStats, lakeFetch, lakeStop, keepWhole, logs, clearLogs,
+                icebergAttach: ({ warehouse }) => iceAttach(warehouse), icebergDetach: ({ name }) => iceDetach(name) };
   return api;
 }
 

@@ -15,7 +15,7 @@
   RMDir /r "$INSTDIR\app"
 !macroend
 
-; A model file, .yaml, .yml or .bim, is OneLake Studio's to open from Windows' "Open with", and never made
+; A model file, .yaml, .yml or .bim, or a .sql file, is OneLake Studio's to open from Windows' "Open with", and never made
 ; its default: .fabricapp is the only file the app takes (tauri.conf.json fileAssociations). Windows lets
 ; only the person make it .yaml's default (Open with > Always); then a YAML that is not a model goes on to
 ; the program that had it, before a window shows (main.rs open_elsewhere).
@@ -29,6 +29,7 @@
   !insertmacro OpenWithModel ".yaml"
   !insertmacro OpenWithModel ".yml"
   !insertmacro OpenWithModel ".bim"
+  !insertmacro OpenWithModel ".sql"
   System::Call 'shell32::SHChangeNotify(i 0x8000000, i 0, i 0, i 0)'
 !macroend
 
@@ -37,5 +38,6 @@
   DeleteRegValue SHCTX "Software\Classes\.yaml\OpenWithProgids" "OneLakeStudio.Model"
   DeleteRegValue SHCTX "Software\Classes\.yml\OpenWithProgids" "OneLakeStudio.Model"
   DeleteRegValue SHCTX "Software\Classes\.bim\OpenWithProgids" "OneLakeStudio.Model"
+  DeleteRegValue SHCTX "Software\Classes\.sql\OpenWithProgids" "OneLakeStudio.Model"
   DeleteRegKey SHCTX "Software\Classes\OneLakeStudio.Model"
 !macroend

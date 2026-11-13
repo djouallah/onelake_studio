@@ -30,7 +30,7 @@ SHOW ALL TABLES;
 | --- | --- | --- |
 | **One name per object** | A table has five parts and a model has three. A file is `'lakehouse.<workspace>.<item>/Files/<path>'`. | [NAMING.md](NAMING.md), [`core/names.js`](../core/names.js) |
 | **SQL only** | A model is read with `AGG("measure")` in SQL. There is no DAX query. Excel's MDX is a second way in, and is compiled to that same SQL. An exported Fabric app on a semantic model runs the DAX that dax-sql makes of that SQL. | [`page/semantic.js`](../page/semantic.js), [`xmla/`](../xmla/) |
-| **Read only** | Nothing is written to Fabric or OneLake. The host takes one read per statement, from a tab or the command line, and DuckDB's own parser checks it. The three exceptions each ask first: Export to Fabric (the app), Create Semantic Model, and Upload Files… into a lakehouse's `Files/`. | `assertReads` and `checkedRead` in [`core/sql.js`](../core/sql.js) |
+| **Reads, and writes to a lakehouse only** | A statement reads, or writes to a lakehouse: its tables as Iceberg, through its Iceberg catalog, and its `Files/` by `COPY … TO` ([SQL writes](#sql-writes)). SQL writes nothing else, and DuckDB's own plan of each write is checked first. Export to Fabric (the app), Create Semantic Model and Upload Files… each ask first. | `assertReads`, `checkedRead`, `writeOf` and `checkPlan` in [`core/sql.js`](../core/sql.js), `runWrite` in [`core/engine/engine-host.js`](../core/engine/engine-host.js) |
 | **Cache first** | Every answer from OneLake or Fabric is kept on this machine and served from there first. It is trusted until using it fails, then read again once. | [`core/onelake/onelake.js`](../core/onelake/onelake.js), [`core/onelake/store.js`](../core/onelake/store.js) |
 | **Works offline** | A feature that reads data works from what this machine holds, with no network. What isn't held says so at once, never on a timeout. Only writing to Fabric needs a connection: Export to Fabric, Create Semantic Model and Upload Files…. The exported Fabric app is online by design, and this rule doesn't apply to it. | [`core/onelake/connectivity.js`](../core/onelake/connectivity.js), [`core/onelake/http.js`](../core/onelake/http.js), the lake in [`core/lake/tableservice.js`](../core/lake/tableservice.js) |
 | **The host does the work** | Sign-in, the read-only guard and OneLake's listings, metadata and `Files/` bytes are in the host, and DuckDB's reads are in the server it starts. A tab is a view: it holds no token and makes no network request. | [`core/host.js`](../core/host.js), [`extension/panel.js`](../extension/panel.js), [`core/engine/engine-client.js`](../core/engine/engine-client.js) |
@@ -39,7 +39,7 @@ SHOW ALL TABLES;
 ## Out of scope
 
 - DAX queries (`EVALUATE`).
-- Writing to OneLake, DDL, or editing data in the grid.
+- Writing a Delta table, a warehouse or anything outside a lakehouse; `DROP`; editing data in the grid.
 - `CREATE` and `DROP SEMANTIC VIEW`: a model exists because Fabric has it, not because SQL made it.
 - ER diagrams for lakehouse tables: they declare no keys.
 - vscode.dev: the engine is a native library, so this needs desktop VS Code.
@@ -85,7 +85,8 @@ and joins at step 3.
    The host opens it from its local copy, reading it from Fabric the first time.
 2. **Compile.** `semantic.statement` has dax-sql rewrite a model query as plain SQL over five-part table
    names. A statement that names no model passes through unchanged.
-3. **Check.** `assertReads` in the host refuses more than one statement, and anything that isn't a read.
+3. **Check.** `assertReads` in the host refuses more than one statement, and anything that isn't a read. A
+   statement that isn't a read goes to [SQL writes](#sql-writes) instead.
    `checkedRead` then asks DuckDB's parser, in this window's own empty DuckDB, what the statement is, so that
    misreading SQL's lexing isn't enough to write. `PIVOT` is the one read the parser can't speak for, and runs with
    its comments gone. A statement that doesn't parse goes on, for DuckDB's own error and where it is.
@@ -185,10 +186,10 @@ The engine is **DuckDB 2.0 running natively in a process of its own** ([The serv
 - **Reading files:** `Files/` objects are named as in [NAMING.md](NAMING.md#files), and DuckDB reads them as `abfss://` URLs.
 - **Lockdown:** file access is limited to the temp directory, `https://`, `abfss://` and `zip://` over a
   remote archive. Nothing loads after it: every extension is loaded before, and autoload is off.
-- **What a statement may be:** from a tab or the command line, one read, or an `EXPLAIN` of one. Never `COPY`,
-  `INSERT`, `EXPORT`, `PRAGMA`, anything that creates, drops or attaches, a Quack function, the log's own switches,
-  a `ducklake_` function, `query()`, a function that writes, or an Azure URL whose host isn't
-  OneLake's.
+- **What a statement may be:** from a tab or the command line, one read, or an `EXPLAIN` of one, or one of
+  [SQL's writes](#sql-writes) to a lakehouse. Never `EXPORT`, `PRAGMA`, `DROP`, anything that attaches, a Quack
+  function, the log's own switches, a `ducklake_` function, `query()`, a function that writes, a write's own
+  catalog, or an Azure URL whose host isn't OneLake's.
 - **How a tab sets up a file:** by host methods, `fileView`, `attachFile` and `releaseFiles`, not by SQL. A tab takes
   away only what it made, and what it made goes when it closes. A view's source is one read too, and an attach is
   always `READ_ONLY`, from OneLake or a copy the host made.
@@ -344,7 +345,7 @@ A table can be part here and part on OneLake, and DuckDB opens each file where i
 - **What a statement can't do to it:** DuckLake's own functions write, and one deletes files from a `SELECT`. The guard
   and the server refuse any `ducklake_` function by name. The lake's metadata is a database called `system_internal`
   (`system_internal.ducklake_snapshot`, `ducklake_data_file`, `studio_synced` and the rest), which a statement reads
-  like any table, and can't write, since a statement is one read.
+  like any table, and can't write, since a statement writes only to a lakehouse, through its own catalog.
 
 ## The cache
 
@@ -462,8 +463,10 @@ once and counts, though the answer still comes through the host.
   none open, in the next window too.
 - **New Query** (the **+** on *Queries*) opens a new tab with `SHOW ALL TABLES` in its box, not run. A saved query
   opens in a new tab too. **Save Query** (Ctrl+S) writes it back, or keeps a new one under *Queries* as `Query N`.
-- **Run** (Ctrl+Enter) runs the statement under the cursor, or the selection. **Plan** shows where it
-  spends its time.
+- **Run** (Ctrl+Enter) runs the statement under the cursor, or the selection. A selection with several statements
+  runs each in turn, in order, and stops at the first that fails, with the cursor on it; the status line says which
+  one is running (`2/3 · …`), and the last one's rows are shown. **Plan** shows where one statement spends its time.
+- **A statement can write** to a lakehouse ([SQL writes](#sql-writes)), with no question asked.
 - **Errors:** the status line says what DuckDB says, and the cursor goes where it says it is.
 - **Variables:** `SET VARIABLE year = 2024` keeps a value in that tab and `getvariable('year')`
   reads it. **Clear Query Variables** forgets them, in every tab of the window.
@@ -694,10 +697,50 @@ from. **A tab** runs it on the native engine. **The Fabric app** runs the
 same files on DuckDB-WASM. Its page ([`fabric_app/site/index.html`](../fabric_app/site/index.html)) names the model in
 its header and is black, always; the chrome is the text's colour, and colour is for the data.
 
+## SQL writes
+
+A statement in the SQL box or the command line's `sql` can write to a lakehouse, and to nothing else
+([`core/sql.js`](../core/sql.js) `writeOf` and `checkPlan`, [`core/engine/engine-host.js`](../core/engine/engine-host.js)
+`runWrite`). There is no dialog: running it is the consent.
+
+| Statement | Where it writes |
+| --- | --- |
+| `CREATE TABLE … (…)`, `CREATE TABLE … AS …`, `INSERT INTO`, `UPDATE`, `DELETE`, `MERGE INTO`, `ALTER TABLE` | A lakehouse table, as Iceberg |
+| `CREATE SCHEMA` | A lakehouse with schemas |
+| `COPY (…) TO 'lakehouse.<ws>.<lh>/Files/<path>'` | A file in its `Files/`: Parquet, CSV or JSON |
+
+- **The names:** a table is `lakehouse.<ws>.<lh>.<schema>.<table>`, or `<ws>.<lh>.<table>` in its `dbo`, only as a
+  write's target ([NAMING.md](NAMING.md#a-writes-target)). A schema is `lakehouse.<ws>.<lh>.<schema>` or
+  `<ws>.<lh>.<schema>`.
+- **What is refused, before anything runs:** `DROP` of anything, for now; what DuckDB's Iceberg writer doesn't have
+  (`CREATE OR REPLACE`, `INSERT OR REPLACE`, `ON CONFLICT`, `TRUNCATE`, `COPY … FROM`); a view, a macro, a secret or any
+  other `CREATE`; a temporary table; a table that is Delta in OneLake, whose Iceberg face is read only; a warehouse, a
+  SQL or mirrored database; a name of the engine's own (`memory`, `lake`, `system_internal`, …); and a `COPY` to
+  anywhere but a lakehouse's `Files/`. What OneLake's catalog itself turns down fails with its own error.
+- **How a table is written:** DuckDB writes Iceberg only through a catalog. So the host attaches the lakehouse's
+  Iceberg REST catalog (`https://onelake.table.fabric.microsoft.com/iceberg`, the warehouse by the item's GUIDs) in the
+  server, for that one statement, under a name of its own (`ice_` and 16 hex digits), and detaches it after: nothing
+  stays attached for a listing to find, and two statements never share one. The options are those OneLake takes: no
+  vended credentials (DuckDB writes the data files with the storage secret, scoped to the workspace's GUID) and no
+  staged create. The token is an Iceberg secret's, as an `ATTACH`'s `TOKEN` shows in `duckdb_databases()`. The write's
+  target is named as that catalog's table, as a file's name is given its URL, and the statement's reads go through the
+  lake as any read does. No statement may name such a catalog itself.
+- **Checked by DuckDB, then run.** The statement's text says what it writes and where (`writeOf`). Then DuckDB's own
+  plan of it, as it will run (`json_serialize_plan`, bound in the server against the real catalogs), must agree: the
+  kind of statement (`LOGICAL_INSERT`, `LOGICAL_CREATE_TABLE`, …), and the catalog it writes, which must be the one
+  attached for it, or for a `COPY` the file's URL (`checkPlan`). Being wrong about the text writes nowhere else.
+- **Each statement is its own commit.** A write is never sent twice: a failure is said, not retried.
+- **Afterwards:** the lakehouse's table listing is read again, and a table's new snapshot is synced into the lake, so
+  the tree and the next read show it. After a `COPY`, its folder is listed again.
+- **Offline:** a write is refused at once. It needs a connection, as Export does.
+
 ## Opening files from disk
 
-A model file or an app's file on this machine opens in a tab, as one from the tree does (`openPath` in
+A model file, an app's file or a `.sql` file on this machine opens in a tab, as one from the tree does (`openPath` in
 [`extension/extension.js`](../extension/extension.js), the command `onelakeStudio.openPath`).
+- **A `.sql` file** opens in the SQL box, not run, in a tab named after it, as a saved query does. **Save** writes it
+  back to that file, and only a file opened so can be written (`openSqlFile` in [`core/queries.js`](../core/queries.js)).
+  A file open already brings its tab forward.
 - **A model file**, a `.bim`, or a `.yaml`/`.yml` that is an Ossie model (a top-level `version:` and `datasets:`): its
   model, its tables OneLake's by the names in it, in the workspace that holds them (`modelFile` in
   [`core/models/models.js`](../core/models/models.js)). One whose tables more than one workspace could hold says so, and is opened from
@@ -708,8 +751,9 @@ A model file or an app's file on this machine opens in a tab, as one from the tr
   Fabric there publishes this file as it is: no Save dialog, and no question about its changes.
 - **A file named `<name>.ossie.yaml`** is a model by its name: the Apache Ossie spec names no extension, and Ossie's own
   tools (its compliance suite and grader) name a model `*.ossie.yaml`. Studio's own copies are named so too.
-- **In VS Code**, a `.fabricapp` and a `*.ossie.yaml` open in OneLake Studio by default (custom editors that hand them
-  over and close their own tab; *Reopen Editor With… > Text Editor* shows the text). When the desktop app is installed,
+- **In VS Code**, a `.fabricapp`, a `*.ossie.yaml` and a `.sql` file open in OneLake Studio by default (custom editors
+  that hand them over and close their own tab; *Reopen Editor With… > Text Editor* shows the text). None of them is a
+  text editor, so no SQL extension starts for a `.sql` file. When the desktop app is installed,
   they open in the app: the editor finds it by the key its installer writes (`OneLakeStudio.Model`'s open command) and
   starts it with the file. Without the app, or if it fails to start, they open in the extension. This matters for a
   Windows double-click on a `*.ossie.yaml`: Windows goes by the last extension only, `.yaml`, whose default is often
@@ -1000,8 +1044,9 @@ personal skills, and it follows the extension through updates.
   With no folder there is no conversion to wait for, and the error names the closest listed tables.
 - **A folder that is no table fails at once.** With neither `_delta_log` nor `metadata/` in it, it is not a valid OneLake
   table. `ls` and `find` say so, `exists` says no, and `SHOW ALL TABLES` leaves it out.
-- **`export`** is the command line's one write: the same code path as Explore's button, with the same questions asked
-  in VS Code.
+- **`sql`** writes to a lakehouse as a tab does ([SQL writes](#sql-writes)), with nothing asked. Several statements run
+  in turn: the first that fails stops them, and the last one's rows are the answer.
+- **`export`** is the same code path as Explore's button, with the same questions asked in VS Code.
 
 ## Keep offline
 

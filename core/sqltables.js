@@ -10,7 +10,7 @@
 
 const { revalidate } = require('./onelake/store');
 const { offlineError } = require('./onelake/http');
-const { sqlKind, sqlName, displayName, abfssUrl } = require('./names');
+const { sqlKind, sqlName, displayName, abfssUrl, DFS_HOST } = require('./names');
 const { tableDirOf } = require('./lake/deltalog');
 
 const same = (a, b) => String(a).toLowerCase() === String(b).toLowerCase();
@@ -246,7 +246,19 @@ function createSqlTables({ onelake, paths, offlineReason = () => null, tableRead
     return { workspace: ws, item: dir, schema: hit.schema || '', table: hit.table };
   }
 
-  return { resolve, resolveFile, nameTables, place, forget: () => namedFrom.clear() };
+  // A lakehouse a write names: its workspace and directory as OneLake spells them, the warehouse its Iceberg
+  // catalog answers to, and the storage scope its files are written under. OneLake's catalog gives the item's
+  // GUIDs as its prefix, and the files of a table it makes are under the workspace's GUID.
+  const GUIDS = /^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
+  async function lakehouseOf(ref, { fresh = false } = {}) {
+    const { ws, dir } = await locate({ kind: 'lakehouse', workspace: ref.workspace, item: ref.item, name: ref.name }, fresh);
+    const prefix = onelake.icebergPrefix ? await onelake.icebergPrefix({ workspace: ws, item: dir }) : null;
+    const ids = GUIDS.exec(String(prefix || ''));
+    return { workspace: ws, item: dir, warehouse: ids ? `${ids[1]}/${ids[2]}` : `${ws}/${dir}`,
+             scope: `abfss://${ids ? ids[1] : ws}@${DFS_HOST}/` };
+  }
+
+  return { resolve, resolveFile, lakehouseOf, nameTables, place, forget: () => namedFrom.clear() };
 }
 
 module.exports = { createSqlTables, editDistance, deltaTableOf };

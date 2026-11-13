@@ -7,7 +7,7 @@
 // answer — the answer alone on stdout, notes on stderr, and the exit code an agent can branch on
 // (EXIT, in bridge.js). With VS Code closed, on Windows, the same answer comes from dist/standalone.js,
 // on a sign-in of its own (signin). `serve` is always that: it stays, for Excel to connect to.
-// Written for an agent to run. Read only, but for export, which you confirm in VS Code.
+// Written for an agent to run. SQL reads, or writes to a lakehouse; export is confirmed in VS Code.
 //
 //   node cli/cli.mjs --help
 // =============================================================================
@@ -37,7 +37,7 @@ const USAGE = {
                                         rows, no V-Order, small row groups), from what this machine
                                         holds: no OneLake request; a table no query read is "not read"`,
   model: "  model <ws> <model>                  relationships, columns, measures with their DAX",
-  sql: `  sql "<sql>"                         read-only SQL; a table is kind.workspace.item.schema.table
+  sql: `  sql "<sql>"                         SQL that reads, or writes to a lakehouse; a table is kind.workspace.item.schema.table
                                         (lakehouse.aemo.data.dbo.dim_duid); a file is
                                         'lakehouse.aemo.data/Files/x.parquet'; a downloaded model is a
                                         table: SELECT d.col, AGG("measure") FROM semanticmodel.ws.model GROUP BY ALL
@@ -85,7 +85,7 @@ exit codes: 0 answered (--json: complete, truncated say how much)  1 failed, or 
             3 not signed in (signin), or no VS Code for export  4 not cached (--fresh)  5 you declined  6 timed out`;
 
 const HELP = `onelake — ask OneLake Studio: VS Code if it is open, and if not, on Windows, this
-on a sign-in of its own. Read only, but for export, which waits for your OK in VS Code.
+on a sign-in of its own. SQL reads, or writes to a lakehouse; export waits for your OK in VS Code.
 
 ${Object.values(USAGE).join("\n")}
 ${OPTIONS}`;

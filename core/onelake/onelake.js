@@ -590,6 +590,8 @@ function createOneLake({ catalog, store, prefetchEnabled = () => true, onHit = (
     rowsOutOfReach, listingFailure, listingAt,
     workspaces, items, tables, files, table, deltaState, deltaHistory, peek, prefetch, refreshTables, refreshedSince,
     models, apps, itemNamed, readBytes, versionOf, cached, rowsRead, fileRead, onRowsRead, usage,
+    // The prefix OneLake's Iceberg catalog answers an item to: its GUIDs (a write's catalog, sqltables.js).
+    icebergPrefix: lh => (catalog.ircPrefixFor ? catalog.ircPrefixFor(lh) : Promise.resolve(null)),
     onChanged: fn => listen('changed', key => fn(decode(key))),
     onTableRead,
     onRefreshFailed: fn => listen('refresh-failed', (key, e) => fn(decode(key), e)),

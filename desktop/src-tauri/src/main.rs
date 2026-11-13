@@ -48,13 +48,13 @@ fn is_model_yaml(p: &Path) -> bool {
     text.lines().any(|l| l.starts_with("datasets:")) && text.lines().any(|l| l.starts_with("version:"))
 }
 
-// The files among a start's arguments that the app opens: a .fabricapp, a .bim, a model .yaml or .yml.
+// The files among a start's arguments that the app opens: a .fabricapp, a .bim, a model .yaml or .yml, a .sql.
 fn files_in(args: &[String]) -> Vec<String> {
     args.iter().skip(1)
         .filter(|a| {
             let p = Path::new(a.as_str());
             p.is_file() && match ext_of(p).as_str() {
-                "fabricapp" | "bim" => true,
+                "fabricapp" | "bim" | "sql" => true,
                 "yaml" | "yml" => is_model_yaml(p),
                 _ => false,
             }

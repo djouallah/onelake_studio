@@ -254,7 +254,7 @@ function createHostMethods({ onelake, engine, onStatus = () => {}, saveFile = nu
     // Save Query: the SQL box's text, over the query it came from or as the next "Query N".
     'host.saveQuery': async x => {
       if (!saveQuery) throw new Error('saving queries is not available here');
-      return saveQuery({ name: x && x.name ? String(x.name) : '', sql: String((x && x.sql) ?? '') });
+      return saveQuery({ name: x && x.name ? String(x.name) : '', sql: String((x && x.sql) ?? ''), file: x && x.file ? String(x.file) : null });
     },
     'host.saveDraft': async x => {
       if (saveDraft) await saveDraft({ sql: String((x && x.sql) ?? ''), name: x && x.name ? String(x.name) : null });

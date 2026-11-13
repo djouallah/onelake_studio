@@ -6,8 +6,8 @@
 // and prints what comes back. The answer is made here, with what the extension already
 // has — its sign-in, its cache-first OneLake (onelake.js), the Fabric API, the downloaded
 // model files, the DAX compiler — so there is one sign-in and one cache, not a second copy
-// for the command line. Read only: every statement goes through the engine's guard. The one
-// exception is export, which is Explore's own Export to Fabric, confirmed in VS Code.
+// for the command line. Every statement goes through the engine's guard: it reads, or writes to a lakehouse
+// (Iceberg tables, and Files/ by COPY), as a tab's do. Export is Explore's own Export to Fabric, confirmed in VS Code.
 //
 //   ls [<ws> [<item>]]               workspaces / items + semantic models / tables
 //   models [<ws>]                    semantic models in every workspace (or one), counted
@@ -41,7 +41,7 @@ const { walkCached } = require('../core/onelake/onelake');
 const { readJob } = require('../core/onelake/syncworker');
 const { editDistance, deltaTableOf } = require('../core/sqltables');
 const { lakehouseHealth } = require('../core/lake/health');
-const { sqlStr, isShowAllTables, ALL_TABLES_COUNTED } = require('../core/sql');
+const { sqlStr, isShowAllTables, ALL_TABLES_COUNTED, statementsOf } = require('../core/sql');
 const { EXIT, checkRequest, failureJson } = require('./bridge');
 const { buildCube } = require('../xmla/cube');
 
@@ -658,20 +658,38 @@ function createAgent({ onelake, engine, modelPath, appDir, vendorDir, daxSqlPin,
       io.out(`\nExample:\n\n${m.sample}`);
     },
 
-    async sql([text], opts, io) {
+    async sql([all], opts, io) {
       const { semantic, compiler, paths } = await modules();
       // Every kept model is compiled for that, so only a statement that can name one waits for it, as in a tab.
-      if (/semantic/i.test(text)) await syncViews(io.note);
+      if (/semantic/i.test(all)) await syncViews(io.note);
       const t0 = Date.now();
       // A semantic model it names that is not a view yet: opened (its local copy, read from
       // Fabric the first time) and kept, as the panel does.
-      for (const ref of semantic.unopenedModels(text)) {
-        if (!openModel) throw new Error('semantic models cannot be opened here');
-        const v = await openModel(ref);
-        const m = await semantic.defineView(v.name, v.path, v.text, 'replace', compiler, v.schema);
-        defined.add(m.name.toLowerCase());
+      const compiled = async text => {
+        for (const ref of semantic.unopenedModels(text)) {
+          if (!openModel) throw new Error('semantic models cannot be opened here');
+          const v = await openModel(ref);
+          const m = await semantic.defineView(v.name, v.path, v.text, 'replace', compiler, v.schema);
+          defined.add(m.name.toLowerCase());
+        }
+        return semantic.statement(text, compiler);
+      };
+      // Several statements run in turn, in order, and the first that fails stops them. Each one before the last
+      // says what it did as a note; the last one's answer is the answer.
+      const parts = statementsOf(all);
+      const text = parts.length ? parts[parts.length - 1] : all;
+      for (let i = 0; i < parts.length - 1; i++) {
+        try {
+          const st = await compiled(parts[i]);
+          const res = await (await engine()).agentQuery(st ? st.sql : parts[i], { signal: opts.signal, fresh: !!opts.fresh });
+          const n = res.numRows != null ? res.numRows : (res.rows || []).length;
+          io.note(`${i + 1}/${parts.length}: ${n.toLocaleString('en')} row(s)`);
+        } catch (e) {
+          if (e && typeof e === 'object') e.message = `statement ${i + 1} of ${parts.length}: ${e.message}`;
+          throw e;
+        }
       }
-      const st = await semantic.statement(text, compiler);
+      const st = await compiled(text);
       const run = st ? st.sql : text;
       if (st && opts.showSql) {
         const shown = st.compiled ?? st.sql;

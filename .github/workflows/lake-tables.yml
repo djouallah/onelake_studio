@@ -5,7 +5,7 @@
 #            followed commit by commit; the table service on files it "downloads" from the fixtures.
 #   onelake: the same cases uploaded to fabriccat (workspace tmp, lakehouse data, Tables/test/lakeci_*), read
 #            there, and the table service for real: what a statement reads comes down over HTTPS, and reads with
-#            the token gone.
+#            the token gone. Then SQL's writes there: Iceberg tables and a file (test/js/onelake-writes.test.mjs).
 #   export:  Export to Fabric from this checkout, published to the same workspace (test/js/export-fabric.test.mjs);
 #            then the app's page in Chrome, reading a table of that lakehouse (test/js/run-fabric-app.mjs), and
 #            the app whole on a local Rayfin backend, from its sign-in to its Report (test/js/run-fabric-local.mjs).
@@ -123,6 +123,13 @@ jobs:
       - run: node --test test/js/onelake-tables.test.mjs
         env:
           LAKE_FIXTURES: ${{ env.FIXTURES_DIR }}
+          NO_SKIP: 1
+      # SQL's writes: DuckDB's Iceberg writes through the lakehouse's Iceberg catalog, and a COPY to its Files/,
+      # on the engine with its lockdown. The tables a run makes are dropped by the test, past the engine.
+      - run: node --test test/js/onelake-writes.test.mjs
+        env:
+          ONELAKE_CI_WORKSPACE: ${{ vars.ONELAKE_CI_WORKSPACE }}
+          ONELAKE_CI_LAKEHOUSE: ${{ vars.ONELAKE_CI_LAKEHOUSE }}
           NO_SKIP: 1
 
   # Export to Fabric, for real, as the same identity (test/js/export-fabric.test.mjs): a model file of

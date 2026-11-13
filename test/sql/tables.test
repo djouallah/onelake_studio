@@ -6,7 +6,7 @@
 statement error
 SELECT * FROM query_table('lakehouse.cat2.lh.dbo.t')
 ----
-Read only
+Not run
 
 query TT
 SELECT column_name, column_type FROM (DESCRIBE lakehouse.cat2.lh.dbo.t)

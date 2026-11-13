@@ -105,7 +105,7 @@ test("everything the page sends to read is allowed", () => {
 });
 
 test("everything that could write is refused, and says it is read only", () => {
-  for (const sql of REFUSED) assert.throws(() => assertReads(sql), /Read only/, sql);
+  for (const sql of REFUSED) assert.throws(() => assertReads(sql), /Not run/, sql);
 });
 
 // The second wall, with DuckDB's parser played by a fake: what it says stands, whatever the scanner
@@ -117,9 +117,9 @@ const SYNTAX = { error: true, error_type: "parser", error_message: 'syntax error
 
 test("the parser has the last word on what the scanner took for a read", async () => {
   assert.equal(await checkedRead("SELECT 1", parser(ONE_SELECT)), "SELECT 1");
-  await assert.rejects(checkedRead("SELECT 1", parser(NOT_SELECT)), /Read only/);
+  await assert.rejects(checkedRead("SELECT 1", parser(NOT_SELECT)), /Not run/);
   await assert.rejects(checkedRead("SELECT 1", parser({ error: false, statements: [{}, {}] })), /one statement at a time/);
-  await assert.rejects(checkedRead("EXPLAIN SELECT 1", parser(NOT_SELECT)), /Read only/);
+  await assert.rejects(checkedRead("EXPLAIN SELECT 1", parser(NOT_SELECT)), /Not run/);
   await assert.rejects(checkedRead("COPY t TO 'x'", parser(ONE_SELECT)), /COPY is not a read/, "and the scanner refuses first");
 });
 
@@ -142,13 +142,13 @@ test("a PIVOT, which the parser can't write as JSON, runs with its comments gone
     assert.doesNotMatch(run, /\/\*|--/, sql);
     assert.match(run, /PIVOT/, sql);
   }
-  await assert.rejects(checkedRead("SELECT 'pivot' AS a", parser(NOT_SELECT)), /Read only/, "the word in a string is no PIVOT");
+  await assert.rejects(checkedRead("SELECT 'pivot' AS a", parser(NOT_SELECT)), /Not run/, "the word in a string is no PIVOT");
 });
 
 test("a PIVOT's parser says it can be a query: what can't be one as a subquery is no read", async () => {
   const asked = [];
   const answer = async sql => { asked.push(sql); return asked.length === 1 ? NOT_SELECT : SYNTAX; };
-  await assert.rejects(checkedRead("SELECT 1 FROM (PIVOT t ON a)", answer), /Read only/);
+  await assert.rejects(checkedRead("SELECT 1 FROM (PIVOT t ON a)", answer), /Not run/);
   assert.equal(asked[1], "SELECT * FROM (SELECT 1 FROM (PIVOT t ON a)\n)");
 });
 
@@ -159,7 +159,7 @@ test("a statement that names the catalog, a subquery's SHOW too, has it synced f
 
 test("the command line's refusal names what it refused", () => {
   assert.throws(() => assertReads("DROP TABLE memory.main.not_a_table"),
-    { message: "Read only: OneLake Studio never writes, and DROP is not a read." });
+    { message: "Not run: DROP is not a read." });
   assert.throws(() => assertReads("/* hidden */ detach x;"), /DETACH is not a read/);
 });
 
@@ -372,4 +372,136 @@ test("a download is written whole, tried again once after a failure, and a refus
     assert.equal(await busy(url, dst), 4);
     assert.equal(calls, 2);
   } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
+// -----------------------------------------------------------------------------
+// Writes: to a lakehouse, and nothing else
+// -----------------------------------------------------------------------------
+const { writeOf, checkPlan, statementsOf, readsOnly } = require("../../core/sql.js");
+
+test("a write is found with what it writes, and where, in either name", () => {
+  const table = (sql, what, ref) => {
+    const w = writeOf(sql);
+    assert.equal(w.what, what, sql);
+    assert.equal(w.target, "table", sql);
+    assert.deepEqual(w.ref, ref, sql);
+    return w;
+  };
+  const t = { workspace: "aemo", item: "data", schema: "dbo", table: "monthly" };
+  table("INSERT INTO lakehouse.aemo.data.dbo.monthly SELECT 1", "insert", t);
+  table("insert into aemo.data.monthly values (1)", "insert", t);
+  table('INSERT INTO "aemo"."data"."monthly" BY NAME SELECT 1 AS a', "insert", t);
+  table("UPDATE aemo.data.monthly SET a = 1", "update", t);
+  table("DELETE FROM lakehouse.aemo.data.dbo.monthly WHERE a = 1", "delete", t);
+  table("MERGE INTO aemo.data.monthly m USING (SELECT 1 AS a) s ON m.a = s.a WHEN NOT MATCHED THEN INSERT VALUES (s.a)", "merge", t);
+  table("CREATE TABLE aemo.data.monthly (a INT)", "create table", t);
+  table("CREATE TABLE IF NOT EXISTS aemo.data.monthly AS SELECT 1 AS a", "create table", t);
+  table("ALTER TABLE aemo.data.monthly ADD COLUMN b INT", "alter", t);
+  table("WITH s AS (SELECT 1 AS a) INSERT INTO aemo.data.monthly SELECT * FROM s", "insert", t);
+  table('/* why */ INSERT INTO lakehouse."ANZ Retail"."gold-1".sales."order" SELECT 1', "insert",
+        { workspace: "ANZ Retail", item: "gold-1", schema: "sales", table: "order" });
+  const s = writeOf("CREATE SCHEMA lakehouse.aemo.data.raw");
+  assert.deepEqual([s.what, s.target, s.ref], ["create schema", "schema", { workspace: "aemo", item: "data", schema: "raw" }]);
+  assert.deepEqual(writeOf("CREATE SCHEMA IF NOT EXISTS aemo.data.raw").ref, { workspace: "aemo", item: "data", schema: "raw" });
+});
+
+test("where the target is written is where it is named again", () => {
+  const sql = "INSERT INTO  aemo . data . monthly SELECT * FROM lakehouse.aemo.data.dbo.scada";
+  const w = writeOf(sql);
+  assert.equal(sql.slice(w.start, w.end), "aemo . data . monthly");
+  const c = "COPY (SELECT 1) TO 'lakehouse.aemo.data/Files/out/x.parquet' (FORMAT parquet)";
+  const f = writeOf(c);
+  assert.equal(f.what, "copy");
+  assert.equal(f.target, "file");
+  assert.equal(c.slice(f.start, f.end), "'lakehouse.aemo.data/Files/out/x.parquet'");
+  assert.deepEqual([f.ref.workspace, f.ref.item, f.ref.path], ["aemo", "data", "/Files/out/x.parquet"]);
+  assert.equal(writeOf("COPY lakehouse.aemo.data.dbo.t TO 'lakehouse.aemo.data/Files/t.csv'").target, "file");
+});
+
+test("what isn't one of DuckDB's Iceberg writes to a lakehouse is refused, saying why", () => {
+  const refused = [
+    ["DROP TABLE aemo.data.monthly", /DROP is blocked/],
+    ["drop schema lakehouse.aemo.data.raw cascade", /DROP is blocked/],
+    ["TRUNCATE aemo.data.monthly", /TRUNCATE isn't/],
+    ["CREATE OR REPLACE TABLE aemo.data.monthly AS SELECT 1", /CREATE OR REPLACE isn't/],
+    ["INSERT OR REPLACE INTO aemo.data.monthly SELECT 1", /INSERT OR REPLACE isn't/],
+    ["INSERT INTO aemo.data.monthly SELECT 1 ON CONFLICT DO NOTHING", /ON CONFLICT isn't/],
+    ["CREATE VIEW aemo.data.v AS SELECT 1", /CREATE VIEW isn't a write to a lakehouse/],
+    ["CREATE TEMP TABLE x AS SELECT 1", /temporary/],
+    ["CREATE MACRO m() AS 1", /CREATE MACRO isn't/],
+    ["CREATE SECRET s (TYPE azure)", /CREATE SECRET isn't/],
+    ["ALTER VIEW aemo.data.v RENAME TO w", /only ALTER TABLE/],
+    ["INSERT INTO warehouse.aemo.data.dbo.t SELECT 1", /lakehouse only/],
+    ["INSERT INTO memory.main.t SELECT 1", /engine's own/],
+    ["INSERT INTO lake.main.t_x SELECT 1", /engine's own/],
+    ["INSERT INTO system_internal.main.ducklake_data_file SELECT 1", /engine's own/],
+    ["INSERT INTO t SELECT 1", /a write goes to a lakehouse table/],
+    ["INSERT INTO lakehouse.aemo.data.monthly SELECT 1", /a write goes to a lakehouse table/],
+    ["CREATE SCHEMA raw", /a schema is made in a lakehouse/],
+    ["COPY (SELECT 1) TO 'x.csv'", /COPY writes to a lakehouse's Files/],
+    ["COPY (SELECT 1) TO 'C:/Users/me/x.csv'", /COPY writes to a lakehouse's Files/],
+    ["COPY (SELECT 1) TO 'abfss://ws@onelake.dfs.fabric.microsoft.com/lh/Files/x.csv'", /COPY writes to a lakehouse's Files/],
+    ["COPY (SELECT 1) TO 'lakehouse.aemo.data/Tables/dbo/t/x.parquet'", /a table's name/],
+    ["COPY (SELECT 1) TO 'warehouse.aemo.data/Files/x.csv'", /COPY writes to a lakehouse's Files|only a lakehouse/],
+    ["COPY aemo.data.t FROM 'lakehouse.aemo.data/Files/x.csv'", /COPY … FROM loads a table/],
+    ["COPY FROM DATABASE a TO b", /COPY/],
+    ["ATTACH ':memory:' AS x", /ATTACH is not a read, nor one of the writes/],
+    ["DETACH lakehouse", /DETACH is not a read/],
+    ["SET enable_external_access = true", /SET is not a read/],
+    ["PRAGMA database_list", /PRAGMA is not a read/],
+    ["INSTALL httpfs", /INSTALL is not a read/],
+    ["CALL ducklake_cleanup_old_files('lake')", /the lake is kept by the engine/],
+    ["INSERT INTO ice_0123456789abcdef.dbo.t SELECT 1", /a write's catalog is the engine's own/],
+    ["SELECT * FROM ice_0123456789abcdef.dbo.t", /a write's catalog is the engine's own/],
+    ["INSERT INTO aemo.data.t SELECT 1; DROP TABLE aemo.data.t", /one statement at a time/],
+  ];
+  for (const [sql, why] of refused) {
+    assert.throws(() => (readsOnly(sql) ? null : writeOf(sql)), err => /^Not run: /.test(err.message) && why.test(err.message), sql);
+  }
+});
+
+test("a read is no write, and goes the read's way", () => {
+  for (const sql of ["SELECT 1", "WITH x AS (SELECT 1) SELECT * FROM x", "EXPLAIN SELECT 1", "SHOW ALL TABLES"]) {
+    assert.equal(readsOnly(sql), true, sql);
+  }
+  for (const sql of ["INSERT INTO aemo.data.t SELECT 1", "COPY (SELECT 1) TO 'lakehouse.a.b/Files/x.csv'"]) {
+    assert.equal(readsOnly(sql), false, sql);
+  }
+});
+
+// DuckDB's plan, as json_serialize_plan answers it (its shape on DuckDB 2.0).
+const planned = (type, where) => ({ error: false, plans: [{ type, ...where }] });
+const tableAt = catalog => ({ table_info: { qualified_name: { path: [catalog, "dbo", "t"] } } });
+
+test("DuckDB's plan has the last word: the kind of statement, and the catalog or file it writes", () => {
+  const ice = "ice_0123456789abcdef";
+  assert.doesNotThrow(() => checkPlan(planned("LOGICAL_INSERT", tableAt(ice)), { plan: "LOGICAL_INSERT", catalog: ice }));
+  assert.doesNotThrow(() => checkPlan(planned("LOGICAL_CREATE_TABLE", { info: { qualified_name: { path: ["ICE_0123456789ABCDEF", "dbo", "t"] } } }),
+    { plan: "LOGICAL_CREATE_TABLE", catalog: ice }));
+  assert.doesNotThrow(() => checkPlan(planned("LOGICAL_ALTER", { info: { catalog: ice, schema: "dbo", name: "t" } }),
+    { plan: "LOGICAL_ALTER", catalog: ice }));
+  const url = "abfss://aemo@onelake.dfs.fabric.microsoft.com/data.Lakehouse/Files/x.csv";
+  assert.doesNotThrow(() => checkPlan(planned("LOGICAL_COPY_TO_FILE", { file_path: url }), { plan: "LOGICAL_COPY_TO_FILE", file: url }));
+
+  assert.throws(() => checkPlan(planned("LOGICAL_INSERT", tableAt("memory")), { plan: "LOGICAL_INSERT", catalog: ice }),
+    /would write to memory, not the lakehouse/);
+  assert.throws(() => checkPlan(planned("LOGICAL_DROP", { info: { catalog: ice } }), { plan: "LOGICAL_INSERT", catalog: ice }),
+    /plans this as DROP, not INSERT/);
+  assert.throws(() => checkPlan(planned("LOGICAL_COPY_TO_FILE", { file_path: "C:/x.csv" }), { plan: "LOGICAL_COPY_TO_FILE", file: url }),
+    /would write C:\/x\.csv/);
+  assert.throws(() => checkPlan({ error: false, plans: [{ type: "LOGICAL_INSERT" }, { type: "LOGICAL_DROP" }] }, { plan: "LOGICAL_INSERT", catalog: ice }),
+    /more than one statement/);
+  assert.throws(() => checkPlan(planned("LOGICAL_INSERT", {}), { plan: "LOGICAL_INSERT", catalog: ice }), /^Error: Not run|Not run/);
+  // DuckDB's own error stands as it says it: a table that isn't there.
+  assert.throws(() => checkPlan({ error: true, error_type: "catalog", error_message: "Table with name t does not exist!" }, { plan: "LOGICAL_INSERT", catalog: ice }),
+    { message: "Table with name t does not exist!" });
+  assert.throws(() => checkPlan({ error: true, error_type: "serialization", error_message: "not serializable" }, { plan: "LOGICAL_INSERT", catalog: ice }),
+    /Not run: DuckDB could not show its plan/);
+});
+
+test("several statements are split where DuckDB splits them", () => {
+  assert.deepEqual(statementsOf("SELECT 1; SELECT 2;"), ["SELECT 1", "SELECT 2"]);
+  assert.deepEqual(statementsOf("SELECT ';'; -- a ; comment\nSELECT $$;$$ /* ; */"), ["SELECT ';'", "-- a ; comment\nSELECT $$;$$ /* ; */"]);
+  assert.deepEqual(statementsOf("SELECT 1 /* only */; -- nothing\n;"), ["SELECT 1 /* only */"]);
+  assert.deepEqual(statementsOf(""), []);
 });
